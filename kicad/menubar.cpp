@@ -53,11 +53,11 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     // wxWidgets handles the Mac Application menu behind the scenes, but that means
     // we always have to start from scratch with a new wxMenuBar.
     wxMenuBar*  oldMenuBar = GetMenuBar();
-    WX_MENUBAR* menuBar    = new WX_MENUBAR();
+    WX_MENUBAR* menuBar = new WX_MENUBAR();
 
     //-- File menu -----------------------------------------------------------
     //
-    ACTION_MENU*  fileMenu    = new ACTION_MENU( false, controlTool );
+    ACTION_MENU*  fileMenu = new ACTION_MENU( false, controlTool );
     FILE_HISTORY& fileHistory = GetFileHistory();
 
     fileHistory.SetClearText( _( "Clear Recent Projects" ) );
@@ -103,13 +103,14 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     fileMenu->Add( KICAD_MANAGER_ACTIONS::closeProject );
 
     fileMenu->AppendSeparator();
-    wxMenuItem* restoreItem = fileMenu->Add( KICAD_MANAGER_ACTIONS::restoreLocalHistory );
+    wxMenuItem*       restoreItem = fileMenu->Add( KICAD_MANAGER_ACTIONS::restoreLocalHistory );
     ACTION_CONDITIONS historyCond;
-    historyCond.Enable( [&]( const SELECTION& )
-    {
-        return Pgm().GetCommonSettings()->m_System.local_history_enabled
-               && Kiway().LocalHistory().HistoryExists( Prj().GetProjectPath() );
-    } );
+    historyCond.Enable(
+            [&]( const SELECTION& )
+            {
+                return Pgm().GetCommonSettings()->m_System.local_history_enabled
+                       && Kiway().LocalHistory().HistoryExists( Prj().GetProjectPath() );
+            } );
     RegisterUIUpdateHandler( restoreItem->GetId(), historyCond );
 
     fileMenu->AppendSeparator();
@@ -122,28 +123,20 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     importMenu->SetTitle( _( "Import Non-KiCad Project..." ) );
     importMenu->SetIcon( BITMAPS::import_project );
 
-    importMenu->Add( _( "Altium Project..." ),
-                     _( "Import Altium Schematic and PCB (*.PrjPcb)" ),
-                     ID_IMPORT_ALTIUM_PROJECT,
-                     BITMAPS::import_project );
-    importMenu->Add( _( "CADSTAR Project..." ),
-                     _( "Import CADSTAR Archive Schematic and PCB (*.csa, *.cpa)" ),
-                     ID_IMPORT_CADSTAR_ARCHIVE_PROJECT,
+    importMenu->Add( _( "Altium Project..." ), _( "Import Altium Schematic and PCB (*.PrjPcb)" ),
+                     ID_IMPORT_ALTIUM_PROJECT, BITMAPS::import_project );
+    importMenu->Add( _( "CADSTAR Project..." ), _( "Import CADSTAR Archive Schematic and PCB (*.csa, *.cpa)" ),
+                     ID_IMPORT_CADSTAR_ARCHIVE_PROJECT, BITMAPS::import_project );
+
+    importMenu->Add( _( "EAGLE Project..." ), _( "Import EAGLE CAD XML schematic and board" ), ID_IMPORT_EAGLE_PROJECT,
                      BITMAPS::import_project );
 
-    importMenu->Add( _( "EAGLE Project..." ),
-                     _( "Import EAGLE CAD XML schematic and board" ),
-                     ID_IMPORT_EAGLE_PROJECT,
-                     BITMAPS::import_project );
-
-    importMenu->Add( _( "EasyEDA (JLCEDA) Std Backup..." ),
-                     _( "Import EasyEDA (JLCEDA) Standard schematic and board" ),
-                     ID_IMPORT_EASYEDA_PROJECT,
-                     BITMAPS::import_project );
+    importMenu->Add( _( "EasyEDA (JLCEDA) Std Backup..." ), _( "Import EasyEDA (JLCEDA) Standard schematic and board" ),
+                     ID_IMPORT_EASYEDA_PROJECT, BITMAPS::import_project );
 
     importMenu->Add( _( "EasyEDA (JLCEDA) Pro Project..." ),
-                     _( "Import EasyEDA (JLCEDA) Professional schematic and board" ),
-                     ID_IMPORT_EASYEDAPRO_PROJECT, BITMAPS::import_project );
+                     _( "Import EasyEDA (JLCEDA) Professional schematic and board" ), ID_IMPORT_EASYEDAPRO_PROJECT,
+                     BITMAPS::import_project );
 
     fileMenu->Add( importMenu );
 
@@ -170,10 +163,8 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     wxString editCfgEnv;
     if( wxGetEnv( wxS( "KICAD_EDIT_ADVANCED_CFG" ), &editCfgEnv ); editCfgEnv == wxS( "1" ) )
     {
-        editMenu->Add( _( "Edit Advanced Config..." ),
-                        _( "Edit advanced settings" ),
-                        ID_EDIT_ADVANCED_CFG,
-                        BITMAPS::editor );
+        editMenu->Add( _( "Edit Advanced Config..." ), _( "Edit advanced settings" ), ID_EDIT_ADVANCED_CFG,
+                       BITMAPS::editor );
     }
 
     //-- View menu -----------------------------------------------------------
@@ -210,20 +201,18 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     toolsMenu->Add( KICAD_MANAGER_ACTIONS::viewGerbers );
     toolsMenu->Add( KICAD_MANAGER_ACTIONS::convertImage );
     toolsMenu->Add( KICAD_MANAGER_ACTIONS::showCalculator );
+    toolsMenu->Add( KICAD_MANAGER_ACTIONS::showAiAssistant );
     toolsMenu->Add( KICAD_MANAGER_ACTIONS::editDrawingSheet );
 
     wxMenuItem* pcmMenuItem = toolsMenu->Add( KICAD_MANAGER_ACTIONS::showPluginManager );
 
-    if( KIPLATFORM::POLICY::GetPolicyBool( POLICY_KEY_PCM )
-        == KIPLATFORM::POLICY::PBOOL::DISABLED )
+    if( KIPLATFORM::POLICY::GetPolicyBool( POLICY_KEY_PCM ) == KIPLATFORM::POLICY::PBOOL::DISABLED )
     {
         pcmMenuItem->Enable( false );
     }
 
     toolsMenu->AppendSeparator();
-    toolsMenu->Add( _( "Edit Local File..." ),
-                    _( "Edit local file in text editor" ),
-                    ID_EDIT_LOCAL_FILE_IN_TEXT_EDITOR,
+    toolsMenu->Add( _( "Edit Local File..." ), _( "Edit local file in text editor" ), ID_EDIT_LOCAL_FILE_IN_TEXT_EDITOR,
                     BITMAPS::editor );
 
     //-- Preferences menu -----------------------------------------------
@@ -242,9 +231,9 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
 
     //-- Menubar -------------------------------------------------------------
     //
-    menuBar->Append( fileMenu,  _( "&File" ) );
-    menuBar->Append( editMenu,  _( "&Edit" ) );
-    menuBar->Append( viewMenu,  _( "&View" ) );
+    menuBar->Append( fileMenu, _( "&File" ) );
+    menuBar->Append( editMenu, _( "&Edit" ) );
+    menuBar->Append( viewMenu, _( "&View" ) );
     menuBar->Append( toolsMenu, _( "&Tools" ) );
     menuBar->Append( prefsMenu, _( "&Preferences" ) );
     AddStandardHelpMenu( menuBar );

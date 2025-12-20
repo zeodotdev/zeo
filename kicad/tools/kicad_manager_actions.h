@@ -51,6 +51,7 @@ public:
     static TOOL_ACTION editDrawingSheet;
     static TOOL_ACTION openTextEditor;
     static TOOL_ACTION showPluginManager;
+    static TOOL_ACTION showAiAssistant;
 
     static TOOL_ACTION editOtherSch;
     static TOOL_ACTION editOtherPCB;

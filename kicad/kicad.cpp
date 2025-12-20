@@ -94,7 +94,7 @@ bool PGM_KICAD::OnPgmInit()
 {
     App().SetAppDisplayName( wxT( "KiCad" ) );
 
-#if defined(DEBUG)
+#if defined( DEBUG )
     wxString absoluteArgv0 = wxStandardPaths::Get().GetExecutablePath();
 
     if( !wxIsAbsolutePath( absoluteArgv0 ) )
@@ -131,13 +131,10 @@ bool PGM_KICAD::OnPgmInit()
     {
         wxString name;
         FRAME_T  type;
-    } frameTypes[] = { { wxT( "pcb" ), FRAME_PCB_EDITOR },
-                       { wxT( "fpedit" ), FRAME_FOOTPRINT_EDITOR },
-                       { wxT( "sch" ), FRAME_SCH },
-                       { wxT( "calc" ), FRAME_CALC },
-                       { wxT( "bm2cmp" ), FRAME_BM2CMP },
-                       { wxT( "ds" ), FRAME_PL_EDITOR },
-                       { wxT( "gerb" ), FRAME_GERBER },
+    } frameTypes[] = { { wxT( "pcb" ), FRAME_PCB_EDITOR }, { wxT( "fpedit" ), FRAME_FOOTPRINT_EDITOR },
+                       { wxT( "sch" ), FRAME_SCH },        { wxT( "calc" ), FRAME_CALC },
+                       { wxT( "bm2cmp" ), FRAME_BM2CMP },  { wxT( "ds" ), FRAME_PL_EDITOR },
+                       { wxT( "gerb" ), FRAME_GERBER },    { wxT( "agent" ), FRAME_AGENT },
                        { wxT( "" ), FRAME_T_COUNT } };
 
     wxString frameName;
@@ -179,8 +176,7 @@ bool PGM_KICAD::OnPgmInit()
 
     bool skipPythonInit = false;
 
-    if( appType == FRAME_BM2CMP || appType == FRAME_PL_EDITOR || appType == FRAME_GERBER
-        || appType == FRAME_CALC )
+    if( appType == FRAME_BM2CMP || appType == FRAME_PL_EDITOR || appType == FRAME_GERBER || appType == FRAME_CALC )
         skipPythonInit = true;
 
     if( !InitPgm( false, skipPythonInit ) )
@@ -213,8 +209,8 @@ bool PGM_KICAD::OnPgmInit()
         }
 
         // The versioned TEMPLATE_DIR takes precedence over the search stack template path.
-        if( std::optional<wxString> v = ENV_VAR::GetVersionedEnvVarValue( GetLocalEnvVariables(),
-                                                                          wxT( "TEMPLATE_DIR" ) ) )
+        if( std::optional<wxString> v =
+                    ENV_VAR::GetVersionedEnvVarValue( GetLocalEnvVariables(), wxT( "TEMPLATE_DIR" ) ) )
         {
             if( !v->IsEmpty() )
                 m_bm.m_search.Insert( *v, 0 );
@@ -231,8 +227,8 @@ bool PGM_KICAD::OnPgmInit()
             m_bm.m_search.Insert( it->second.GetValue(), 0 );
     }
 
-    wxFrame*      frame = nullptr;
-    KIWAY_PLAYER* playerFrame = nullptr;
+    wxFrame*             frame = nullptr;
+    KIWAY_PLAYER*        playerFrame = nullptr;
     KICAD_MANAGER_FRAME* managerFrame = nullptr;
 
     if( appType == KICAD_MAIN_FRAME_T )
@@ -370,8 +366,9 @@ bool PGM_KICAD::OnPgmInit()
         {
             wxFileName fn( projToLoad );
 
-            if( fn.Exists() && (   fn.GetExt() == FILEEXT::ProjectFileExtension
-                                || fn.GetExt() == FILEEXT::LegacyProjectFileExtension ) )
+            if( fn.Exists()
+                && ( fn.GetExt() == FILEEXT::ProjectFileExtension
+                     || fn.GetExt() == FILEEXT::LegacyProjectFileExtension ) )
             {
                 fn.MakeAbsolute();
 
@@ -428,7 +425,7 @@ void PGM_KICAD::OnPgmExit()
 
 void PGM_KICAD::MacOpenFile( const wxString& aFileName )
 {
-#if defined(__WXMAC__)
+#if defined( __WXMAC__ )
 
     KICAD_MANAGER_FRAME* frame = (KICAD_MANAGER_FRAME*) App().GetTopWindow();
 
@@ -450,15 +447,12 @@ void PGM_KICAD::Destroy()
 }
 
 
-KIWAY  Kiway( KFCTL_CPP_PROJECT_SUITE );
+KIWAY Kiway( KFCTL_CPP_PROJECT_SUITE );
 
 #ifdef NDEBUG
 // Define a custom assertion handler
-void CustomAssertHandler(const wxString& file,
-                         int line,
-                         const wxString& func,
-                         const wxString& cond,
-                         const wxString& msg)
+void CustomAssertHandler( const wxString& file, int line, const wxString& func, const wxString& cond,
+                          const wxString& msg )
 {
     Pgm().HandleAssert( file, line, func, cond, msg );
 }
@@ -469,7 +463,8 @@ void CustomAssertHandler(const wxString& file,
  */
 struct APP_KICAD : public wxApp
 {
-    APP_KICAD() : wxApp()
+    APP_KICAD() :
+            wxApp()
     {
         SetPgm( &program );
 
@@ -478,7 +473,7 @@ struct APP_KICAD : public wxApp
     }
 
 
-    bool OnInit()           override
+    bool OnInit() override
     {
 #ifdef NDEBUG
         // These checks generate extra assert noise
@@ -511,7 +506,7 @@ struct APP_KICAD : public wxApp
         return true;
     }
 
-    int  OnExit()           override
+    int OnExit() override
     {
         program.OnPgmExit();
 
@@ -521,13 +516,13 @@ struct APP_KICAD : public wxApp
         return wxApp::OnExit();
     }
 
-    int OnRun()             override
+    int OnRun() override
     {
         try
         {
             return wxApp::OnRun();
         }
-        catch(...)
+        catch( ... )
         {
             Pgm().HandleException( std::current_exception() );
         }
@@ -557,7 +552,7 @@ struct APP_KICAD : public wxApp
                     if( dlgs.back() == dialog )
                         dlgs.pop_back();
                     // If an out-of-order, remove all dialogs added after the closed one
-                    else if( auto it = std::find( dlgs.begin(), dlgs.end(), dialog ) ; it != dlgs.end() )
+                    else if( auto it = std::find( dlgs.begin(), dlgs.end(), dialog ); it != dlgs.end() )
                         dlgs.erase( it, dlgs.end() );
                 }
             }
@@ -599,12 +594,12 @@ struct APP_KICAD : public wxApp
         {
             throw;
         }
-        catch(...)
+        catch( ... )
         {
             Pgm().HandleException( std::current_exception() );
         }
 
-        return false;   // continue on. Return false to abort program
+        return false; // continue on. Return false to abort program
     }
 #endif
 
@@ -614,10 +609,7 @@ struct APP_KICAD : public wxApp
      * @see http://wiki.wxwidgets.org/WxMac-specific_topics
      */
 #if defined( __WXMAC__ )
-    void MacOpenFile( const wxString& aFileName ) override
-    {
-        Pgm().MacOpenFile( aFileName );
-    }
+    void MacOpenFile( const wxString& aFileName ) override { Pgm().MacOpenFile( aFileName ); }
 #endif
 };
 
@@ -630,4 +622,3 @@ PROJECT& Prj()
 {
     return Kiway.Prj();
 }
-

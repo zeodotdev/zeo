@@ -62,6 +62,8 @@ enum FRAME_T
 
     FRAME_CALC,
 
+    FRAME_AGENT,
+
     KIWAY_PLAYER_COUNT, // counts subset of FRAME_T's which are KIWAY_PLAYER derivatives
 
     // Kicad project manager is not a KIWAY_PLAYER
@@ -128,4 +130,4 @@ enum FRAME_T
 //TEXT_EDITOR_FRAME_T,
 
 
-#endif  // FRAME_T_H_
+#endif // FRAME_T_H_

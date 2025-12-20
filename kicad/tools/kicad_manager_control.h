@@ -39,7 +39,7 @@ class KICAD_MANAGER_CONTROL : public TOOL_INTERACTIVE
 {
 public:
     KICAD_MANAGER_CONTROL();
-    ~KICAD_MANAGER_CONTROL() override { }
+    ~KICAD_MANAGER_CONTROL() override {}
 
     /// @copydoc TOOL_INTERACTIVE::Reset()
     void Reset( RESET_REASON aReason ) override;
@@ -74,6 +74,7 @@ public:
 
     int ShowDesignBlockLibTable( const TOOL_EVENT& aEvent );
     int ShowPluginManager( const TOOL_EVENT& aEvent );
+    int ShowAiAssistant( const TOOL_EVENT& aEvent );
 
     ///< Set up handlers for various events.
     void setTransitions() override;
@@ -86,8 +87,8 @@ private:
     wxFileName newProjectDirectory( wxString* aFileName = nullptr, bool isRepo = false );
 
 private:
-    KICAD_MANAGER_FRAME* m_frame;           ///< Pointer to the currently used edit/draw frame.
-    bool                 m_inShowPlayer;    ///< Re-entrancy guard
+    KICAD_MANAGER_FRAME* m_frame;        ///< Pointer to the currently used edit/draw frame.
+    bool                 m_inShowPlayer; ///< Re-entrancy guard
 };
 
 #endif

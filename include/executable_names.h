@@ -38,5 +38,6 @@ extern const wxString GERBVIEW_EXE;
 extern const wxString BITMAPCONVERTER_EXE;
 extern const wxString PCB_CALCULATOR_EXE;
 extern const wxString PL_EDITOR_EXE;
+extern const wxString KICAD_AGENT_EXE;
 
-#endif  // INCLUDE__EXECUTABLE_NAMES_H_
+#endif // INCLUDE__EXECUTABLE_NAMES_H_

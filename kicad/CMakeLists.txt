@@ -269,6 +269,10 @@ if( APPLE )
             execute_process( COMMAND ${CMAKE_COMMAND} -E create_symlink \"${OSX_BUNDLE_MAIN}/${OSX_BUNDLE_APP_DIR}/\${bundle_name}\" \"\${symlink_name}\"
                 WORKING_DIRECTORY ${KICAD_BIN}
             )
+            # Explicitly fix damaged app error by removing quarantine and force signing
+            message( STATUS \"Ad-hoc signing \${bundle_name}...\" )
+            execute_process( COMMAND xattr -cr \"${OSX_BUNDLE_INSTALL_DIR}/${OSX_BUNDLE_APP_DIR}/\${bundle_name}\" )
+            execute_process( COMMAND codesign --force --deep --sign - \"${OSX_BUNDLE_INSTALL_DIR}/${OSX_BUNDLE_APP_DIR}/\${bundle_name}\" )
         endfunction( move_to_main_bundle )
 
         # move all app bundles
@@ -278,6 +282,7 @@ if( APPLE )
         move_to_main_bundle( \"pcb_calculator.app\" \"PCB Calculator.app\" )
         move_to_main_bundle( \"pcbnew.app\" \"PCB Editor.app\" )
         move_to_main_bundle( \"pl_editor.app\" \"Page Layout Editor.app\" )
+        move_to_main_bundle( \"Agent.app\" \"Agent.app\" )
 
         cmake_policy( SET CMP0012 NEW )
         if ( ${PYTHON_FRAMEWORK_HELPER} AND ${KICAD_APPLE_MAKE_RELOCATEABLE_BUNDLE} )

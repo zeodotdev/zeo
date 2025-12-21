@@ -106,24 +106,24 @@
 #include <ki_exception.h>
 
 
-#define KIFACE_VERSION      1
-#define KIFACE_GETTER       KIFACE_1
+#define KIFACE_VERSION 1
+#define KIFACE_GETTER KIFACE_1
 
 // The KIFACE acquisition function is declared extern "C" so its name should not
 // be mangled.
-#define KIFACE_INSTANCE_NAME_AND_VERSION   "KIFACE_1"
+#define KIFACE_INSTANCE_NAME_AND_VERSION "KIFACE_1"
 
 #ifndef SWIG
-#if defined(__linux__) || defined(__FreeBSD__)
- #define LIB_ENV_VAR    wxT( "LD_LIBRARY_PATH" )
-#elif defined(__WXMAC__)
- #define LIB_ENV_VAR    wxT( "DYLD_LIBRARY_PATH" )
-#elif defined(_WIN32)
- #define LIB_ENV_VAR    wxT( "PATH" )
+#if defined( __linux__ ) || defined( __FreeBSD__ )
+#define LIB_ENV_VAR wxT( "LD_LIBRARY_PATH" )
+#elif defined( __WXMAC__ )
+#define LIB_ENV_VAR wxT( "DYLD_LIBRARY_PATH" )
+#elif defined( _WIN32 )
+#define LIB_ENV_VAR wxT( "PATH" )
 #else
- #error Platform support missing
+#error Platform support missing
 #endif
-#endif  // SWIG
+#endif // SWIG
 
 class wxConfigBase;
 class wxWindow;
@@ -209,20 +209,16 @@ struct KIFACE
      *         and old school cast.  dynamic_cast is problematic since it needs typeinfo probably
      *         not contained in the caller's link image.
      */
-    virtual wxWindow* CreateKiWindow( wxWindow* aParent, int aClassId,
-                                      KIWAY* aKIWAY, int aCtlBits = 0 ) = 0;
+    virtual wxWindow* CreateKiWindow( wxWindow* aParent, int aClassId, KIWAY* aKIWAY, int aCtlBits = 0 ) = 0;
 
     /**
      * Saving a file under a different name is delegated to the various KIFACEs because
      * the project doesn't know the internal format of the various files (which may have
      * paths in them that need updating).
      */
-    virtual void SaveFileAs( const wxString& srcProjectBasePath,
-                             const wxString& srcProjectName,
-                             const wxString& newProjectBasePath,
-                             const wxString& newProjectName,
-                             const wxString& srcFilePath,
-                             wxString& aErrors )
+    virtual void SaveFileAs( const wxString& srcProjectBasePath, const wxString& srcProjectName,
+                             const wxString& newProjectBasePath, const wxString& newProjectName,
+                             const wxString& srcFilePath, wxString& aErrors )
     {
         // If a KIFACE owns files then it needs to implement this....
     }
@@ -245,15 +241,9 @@ struct KIFACE
      */
     virtual void GetActions( std::vector<TOOL_ACTION*>& aActions ) const = 0;
 
-    virtual int HandleJob( JOB* aJob, REPORTER* aReporter, PROGRESS_REPORTER* aProgressReporter )
-    {
-        return 0;
-    }
+    virtual int HandleJob( JOB* aJob, REPORTER* aReporter, PROGRESS_REPORTER* aProgressReporter ) { return 0; }
 
-    virtual bool HandleJobConfig( JOB* aJob, wxWindow* aParent )
-    {
-        return 0;
-    }
+    virtual bool HandleJobConfig( JOB* aJob, wxWindow* aParent ) { return 0; }
 
     virtual void PreloadLibraries( KIWAY* aKiway ) {}
 
@@ -290,19 +280,20 @@ struct KIFACE
  */
 class KICOMMON_API KIWAY : public wxEvtHandler
 {
-    friend struct PGM_SINGLE_TOP;        // can use set_kiface()
+    friend struct PGM_SINGLE_TOP; // can use set_kiface()
 
 public:
     /// Known KIFACE implementations
     enum FACE_T
     {
-        FACE_SCH,               ///< eeschema DSO
-        FACE_PCB,               ///< pcbnew DSO
+        FACE_SCH, ///< eeschema DSO
+        FACE_PCB, ///< pcbnew DSO
         FACE_CVPCB,
         FACE_GERBVIEW,
         FACE_PL_EDITOR,
         FACE_PCB_CALCULATOR,
         FACE_BMP2CMP,
+        FACE_AGENT,
         FACE_PYTHON,
 
         KIWAY_FACE_COUNT
@@ -347,8 +338,7 @@ public:
      *
      * @throw IO_ERROR if the *.kiface file could not be found, filled with text saying what.
      */
-    virtual KIWAY_PLAYER* Player( FRAME_T aFrameType, bool doCreate = true,
-                                  wxTopLevelWindow* aParent = nullptr );
+    virtual KIWAY_PLAYER* Player( FRAME_T aFrameType, bool doCreate = true, wxTopLevelWindow* aParent = nullptr );
 
     /**
      * Call the KIWAY_PLAYER::Close( bool force ) function on the window and if not vetoed,
@@ -382,8 +372,8 @@ public:
      * The recipient receives this in its #KIWAY_PLAYER::KiwayMailIn() function and can
      * efficiently switch() based on @a aCommand in there.
      */
-    virtual void ExpressMail( FRAME_T aDestination, MAIL_T aCommand, std::string& aPayload,
-                              wxWindow* aSource = nullptr, bool aFromOtherThread = false );
+    virtual void ExpressMail( FRAME_T aDestination, MAIL_T aCommand, std::string& aPayload, wxWindow* aSource = nullptr,
+                              bool aFromOtherThread = false );
 
     /**
      * Append all registered actions to the given list.
@@ -441,7 +431,7 @@ public:
      *
      * @param aTop is the top most wxFrame in the entire program.
      */
-    void SetTop( wxFrame* aTop );
+    void     SetTop( wxFrame* aTop );
     wxFrame* GetTop() { return m_top; }
 
     void OnKiCadExit();
@@ -461,7 +451,7 @@ public:
      * @return Pointer to blocking dialog window or null if none
      */
     wxWindow* GetBlockingDialog();
-    void SetBlockingDialog( wxWindow* aWin );
+    void      SetBlockingDialog( wxWindow* aWin );
 
 private:
     /// Get the [path &] name of the DSO holding the requested FACE_T.
@@ -484,14 +474,14 @@ private:
      */
     KIWAY_PLAYER* GetPlayerFrame( FRAME_T aFrameType );
 
-    static KIFACE*  m_kiface[KIWAY_FACE_COUNT];
-    static int      m_kiface_version[KIWAY_FACE_COUNT];
+    static KIFACE* m_kiface[KIWAY_FACE_COUNT];
+    static int     m_kiface_version[KIWAY_FACE_COUNT];
 
-    int             m_ctl;
+    int m_ctl;
 
-    wxFrame*        m_top;      // Usually m_top is the Project manager
+    wxFrame* m_top; // Usually m_top is the Project manager
 
-    wxWindowID      m_blockingDialog;
+    wxWindowID m_blockingDialog;
 
     // An array to store the window ID of PLAYER frames which were run.
     // A non empty name means only a PLAYER was run at least one time.
@@ -501,7 +491,7 @@ private:
     // to know if still exists (or GetPlayerFrame( FRAME_T aFrameType )
     std::atomic<wxWindowID> m_playerFrameId[KIWAY_PLAYER_COUNT];
 
-    LOCAL_HISTORY*  m_local_history;
+    LOCAL_HISTORY* m_local_history;
 };
 
 
@@ -530,14 +520,15 @@ typedef KIFACE* KIFACE_GETTER_FUNC( int* aKIFACEversion, int aKIWAYversion, PGM_
 #ifndef SWIG
 
 /// No name mangling.  Each KIFACE (DSO/DLL) will implement this once.
-extern "C" {
-#if defined(BUILD_KIWAY_DLL)
-    KIFACE_API KIFACE* KIFACE_GETTER(  int* aKIFACEversion, int aKIWAYversion, PGM_BASE* aProgram );
+extern "C"
+{
+#if defined( BUILD_KIWAY_DLL )
+    KIFACE_API KIFACE* KIFACE_GETTER( int* aKIFACEversion, int aKIWAYversion, PGM_BASE* aProgram );
 #else
-    KIFACE* KIFACE_GETTER(  int* aKIFACEversion, int aKIWAYversion, PGM_BASE* aProgram );
+    KIFACE* KIFACE_GETTER( int* aKIFACEversion, int aKIWAYversion, PGM_BASE* aProgram );
 #endif
 }
 
-#endif  // SWIG
+#endif // SWIG
 
-#endif  // KIWAY_H_
+#endif // KIWAY_H_

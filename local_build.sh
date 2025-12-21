@@ -16,15 +16,16 @@ BREW_PREFIX=$(brew --prefix)
 cmake \
     -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
     -DCMAKE_PREFIX_PATH="$BREW_PREFIX" \
-    -DKICAD_SCRIPTING_WXPYTHON=ON \
+    -DKICAD_SCRIPTING_WXPYTHON=OFF \
     -DKICAD_USE_EGL=ON \
     -DKICAD_SPICE=OFF \
     -DKICAD_BUILD_QA_TESTS=OFF \
+    -DOCC_INCLUDE_DIR="$BREW_PREFIX/include/opencascade" \
     ../../
 
 # Build KiCad and the Agent
 # Adjust -j to your core count
-make -j$(sysctl -n hw.ncpu) common kicad kicad_agent
+make -j$(sysctl -n hw.ncpu) common kicad agent
 
 echo "Build complete. To install/run:"
 echo "  cd $BUILD_DIR"

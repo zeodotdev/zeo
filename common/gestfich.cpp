@@ -115,7 +115,7 @@ wxString FindKicadFile( const wxString& shortname )
         wxT( "Contents/Applications/bitmap2component.app/Contents/MacOS/" ),
         wxT( "Contents/Applications/pcb_calculator.app/Contents/MacOS/" ),
         wxT( "Contents/Applications/pl_editor.app/Contents/MacOS/" ),
-        wxT( "Contents/Applications/kicad_agent.app/Contents/MacOS/" ),
+        wxT( "Contents/Applications/Agent.app/Contents/MacOS/" ),
 #else
         wxT( "/usr/bin/" ),
         wxT( "/usr/local/bin/" ),

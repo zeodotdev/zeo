@@ -34,7 +34,7 @@ const wxString GERBVIEW_EXE( wxS( "gerbview.exe" ) );
 const wxString BITMAPCONVERTER_EXE( wxS( "bitmap2component.exe" ) );
 const wxString PCB_CALCULATOR_EXE( wxS( "pcb_calculator.exe" ) );
 const wxString PL_EDITOR_EXE( wxS( "pl_editor.exe" ) );
-const wxString KICAD_AGENT_EXE( wxS( "kicad_agent.exe" ) );
+const wxString KICAD_AGENT_EXE( wxS( "agent.exe" ) );
 #else
 const wxString CVPCB_EXE( wxS( "cvpcb" ) );
 const wxString PCBNEW_EXE( wxS( "pcbnew" ) );
@@ -43,5 +43,5 @@ const wxString GERBVIEW_EXE( wxS( "gerbview" ) );
 const wxString BITMAPCONVERTER_EXE( wxS( "bitmap2component" ) );
 const wxString PCB_CALCULATOR_EXE( wxS( "pcb_calculator" ) );
 const wxString PL_EDITOR_EXE( wxS( "pl_editor" ) );
-const wxString KICAD_AGENT_EXE( wxS( "kicad_agent" ) );
+const wxString KICAD_AGENT_EXE( wxS( "agent" ) );
 #endif

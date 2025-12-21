@@ -72,6 +72,20 @@ if [ -d "$STAMP_DIR" ]; then
     rm -f "$STAMP_DIR/kicad-install"
 fi
 
+# Clean up previous artifacts that cause install conflicts
+BUILD_OUTPUT_DIR="$BUILDER_DIR/build/kicad-dest"
+if [ -d "$BUILD_OUTPUT_DIR" ]; then
+    echo "Cleaning up previous build artifacts from destination..."
+    # Clean generic .app bundles from staging area
+    rm -rf "$BUILD_OUTPUT_DIR"/*.app
+    rm -rf "$BUILD_OUTPUT_DIR"/*.kiface
+    
+    # Also clean them from inside the bundle to ensure fresh copy
+    if [ -d "$BUILD_OUTPUT_DIR/KiCad.app/Contents/Applications" ]; then
+         rm -rf "$BUILD_OUTPUT_DIR/KiCad.app/Contents/Applications"/*.app
+    fi
+fi
+
 # Use --no-retry-failed-build to fail fast if something is wrong
 # Target 'kicad' builds the main suite.
 # We pass the local source directory so it builds OUR code.
@@ -81,6 +95,51 @@ fi
     --kicad-source-dir="$KICAD_SOURCE_DIR" \
     --target kicad \
     --extra-kicad-cmake-args='-DKICAD_BUNDLE_FILENAME="KiCad_Agentic_dev"'
+
+# --- Explicit Install Step ---
+
+echo "Performing explicit make install..."
+# build.py might not trigger a full install or specific targets might be skipped in wrapping.
+# We go directly to the inner build directory and install everything.
+# We go directly to the inner build directory and install everything.
+# Ensure absolute path
+INNER_BUILD_DIR="$(cd "$BUILDER_DIR/build/kicad/src/kicad-build" && pwd)"
+echo "Inner Build Dir: $INNER_BUILD_DIR"
+
+if [ ! -d "$INNER_BUILD_DIR" ]; then
+    echo "Error: Inner build directory not found at $INNER_BUILD_DIR"
+    exit 1
+fi
+
+# Clean up conflicting artifacts (symlinks or old dirs) in destination before explicit install
+# This prevents "File exists" errors if build.py created symlinks (e.g. Agent.app -> ...)
+# This is CRITICAL because build.py re-populates these, causing the subsequent make install to fail.
+DEST_DIR="$BUILDER_DIR/build/kicad-dest"
+if [ -d "$DEST_DIR" ]; then
+    echo "Cleaning destination for explicit install..."
+    rm -rf "$DEST_DIR/agent.app"
+    rm -rf "$DEST_DIR/Agent.app"
+    rm -rf "$DEST_DIR/gerbview.app"
+    rm -rf "$DEST_DIR/GerbView.app"
+fi
+
+pushd "$INNER_BUILD_DIR" > /dev/null
+echo "Entering $INNER_BUILD_DIR"
+# Run install. This installs to kicad-dest (CMAKE_INSTALL_PREFIX is set to it by builder)
+make install
+popd > /dev/null
+
+# Verify validation
+echo "Verifying explicit install..."
+if [ ! -d "$DEST_DIR/agent.app" ] && [ ! -d "$DEST_DIR/Agent.app" ]; then
+    echo "Error: agent.app failed to install to $DEST_DIR"
+    exit 1
+fi
+if [ -z "$(ls -A "$DEST_DIR/agent.app" 2>/dev/null)" ] && [ -z "$(ls -A "$DEST_DIR/Agent.app" 2>/dev/null)" ]; then
+    echo "Error: agent.app installed but is empty!"
+    exit 1
+fi
+echo "Explicit install verification passed."
 
 # --- Artifact Bundling ---
 
@@ -108,7 +167,10 @@ echo "Scanning for additional applications to bundle..."
 
 # Find all .app folders in build output that are NOT the main bundle
 # We look in kicad-dest
-find "$BUILD_OUTPUT_DIR" -maxdepth 1 -name "*.app" | while read app_path; do
+# Find all .app folders in build output that are NOT the main bundle
+# We look in kicad-dest
+# Use -type d to avoid copying symlinks (which might be broken or circular when moved)
+find "$BUILD_OUTPUT_DIR" -maxdepth 1 -type d -name "*.app" | while read app_path; do
     app_name=$(basename "$app_path")
     
     # Skip the main bundle itself to avoid recursion
@@ -127,6 +189,16 @@ find "$BUILD_OUTPUT_DIR" -maxdepth 1 -name "*.kiface" | while read kiface_path; 
     kiface_name=$(basename "$kiface_path")
     echo "Bundling $kiface_name..."
     cp "$kiface_path" "$DEST_FRAMEWORKS_DIR/"
+done
+
+
+
+echo "Signing bundled applications..."
+# Re-sign the bundled applications to ensure validity after copying
+# Use ad-hoc signing (-) which is sufficient for local development
+find "$DEST_APPS_DIR" -maxdepth 1 -type d -name "*.app" | while read app_path; do
+    echo "Signing $app_path..."
+    codesign --force --deep --sign - "$app_path"
 done
 
 echo "Build and bundling complete."

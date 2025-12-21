@@ -59,6 +59,8 @@ function( refix_kicad_bundle target )
     file( GLOB_RECURSE pycs ${target}/*.pyc )
     file( REMOVE ${pycs}  )
 
+    sign_bundle( ${target} )
+
     string( TIMESTAMP end_time )
     # message( "Refixing start time: ${start_time}\nRefixing end time: ${end_time}" )
 endfunction( )
@@ -214,3 +216,26 @@ function( refix_prereqs target )
 endfunction( )
 
 cmake_policy( POP )
+
+function( sign_bundle target )
+    message( STATUS "Signing bundle at ${target}" )
+
+    # Remove quarantine attribute
+    execute_process(
+        COMMAND xattr -cr ${target}
+        RESULT_VARIABLE xattr_rv
+        ERROR_QUIET
+    )
+
+    # Recursively sign everything
+    execute_process(
+        COMMAND codesign --force --deep --sign - ${target}
+        RESULT_VARIABLE codesign_rv
+        OUTPUT_VARIABLE codesign_ov
+        ERROR_VARIABLE codesign_ev
+    )
+
+    if( NOT codesign_rv STREQUAL "0" )
+        message( WARNING "Codesign failed: ${codesign_rv}\n${codesign_ev}" )
+    endif()
+endfunction()

@@ -874,7 +874,9 @@ find_package( Fontconfig REQUIRED )
 include( MinGWResourceCompiler )
 
 # Find ngspice library, required for integrated circuit simulator
-find_package( ngspice REQUIRED )
+if( KICAD_SPICE )
+    find_package( ngspice REQUIRED )
+endif()
 
 # Find OpenCascade, required for STEP plugin and tools
 find_package(OCC)
@@ -1260,7 +1262,7 @@ add_subdirectory( common )
 add_subdirectory( 3d-viewer )
 add_subdirectory( eeschema )
 add_subdirectory( gerbview )
-add_subdirectory( kicad_agent )
+add_subdirectory( agent )
 add_subdirectory( pcbnew )
 add_subdirectory( pagelayout_editor )
 add_subdirectory( bitmap2component )

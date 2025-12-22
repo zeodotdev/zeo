@@ -1,7 +1,10 @@
 #ifndef AGENT_FRAME_H
 #define AGENT_FRAME_H
-
 #include <kiway_player.h>
+#include <wx/html/htmlwin.h>
+#include <wx/choice.h>
+#include <wx/textctrl.h>
+#include <wx/button.h>
 
 class AGENT_FRAME : public KIWAY_PLAYER
 {
@@ -17,14 +20,18 @@ public:
     wxWindow* GetToolCanvas() const override { return (wxWindow*) this; }
 
     // Event handlers
-    void onRunQuery( wxCommandEvent& aEvent );
-    void onCancel( wxCommandEvent& aEvent );
+    // Event handlers
+    void OnSend( wxCommandEvent& aEvent );
+    void OnStop( wxCommandEvent& aEvent ); // Shared handler or toggle?
+    void OnModelSelection( wxCommandEvent& aEvent );
+    void OnTextEnter( wxCommandEvent& aEvent );
     void OnExit( wxCommandEvent& event );
 
 private:
-    wxButton*   m_btnRun;
-    wxButton*   m_btnCancel;
-    wxTextCtrl* m_textCtrl;
+    wxHtmlWindow* m_chatWindow;
+    wxTextCtrl*   m_inputCtrl;
+    wxChoice*     m_modelChoice;
+    wxButton*     m_actionButton; // Send/Stop
 
     DECLARE_EVENT_TABLE()
 };

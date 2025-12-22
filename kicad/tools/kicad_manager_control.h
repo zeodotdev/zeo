@@ -74,7 +74,6 @@ public:
 
     int ShowDesignBlockLibTable( const TOOL_EVENT& aEvent );
     int ShowPluginManager( const TOOL_EVENT& aEvent );
-    int ShowAiAssistant( const TOOL_EVENT& aEvent );
 
     ///< Set up handlers for various events.
     void setTransitions() override;

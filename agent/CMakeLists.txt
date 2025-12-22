@@ -46,8 +46,13 @@ if( APPLE )
         )
     
     # RPATH for finding Python and other Frameworks relative to the app bundle
+    # RPATH for finding Python and other Frameworks relative to the app bundle
+    # Since Agent.app is nested in KiCad.app/Contents/Applications, we need up 4 levels
+    # RPATH for finding Python and other Frameworks relative to the app bundle
+    # Since Agent.app is nested in KiCad.app/Contents/Applications, we need up 4 levels
+    # Python lib id is @rpath/Versions/3.9/Python, so we need .../Python.framework in rpath
     set_target_properties( agent PROPERTIES INSTALL_RPATH
-        "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework/Versions/Current" )
+        "@executable_path/../Frameworks;@executable_path/../../../../Frameworks;@executable_path/../../../../Frameworks/Python.framework" )
     set_target_properties( agent PROPERTIES BUILD_WITH_INSTALL_RPATH 1 )
 endif()
 
@@ -75,8 +80,10 @@ set_target_properties( agent_kiface PROPERTIES
 
 if( APPLE )
     # KIFACE needs RPATH too if loaded
+    # KIFACE needs RPATH too if loaded
+    # KIFACE needs RPATH too if loaded
     set_target_properties( agent_kiface PROPERTIES INSTALL_RPATH
-        "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework/Versions/Current" )
+        "@executable_path/../Frameworks;@executable_path/../../../../Frameworks;@executable_path/../../../../Frameworks/Python.framework" )
     set_target_properties( agent_kiface PROPERTIES BUILD_WITH_INSTALL_RPATH 1 )
     
     # Puts binaries into the *.app bundle while linking

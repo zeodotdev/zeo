@@ -16,7 +16,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 {
     // --- UI Layout ---
     // Top: Chat History (Expandable)
-    // Bottom: Controls (Fixed)
+    // Bottom: Input Container (Unified)
 
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
@@ -26,38 +26,46 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_chatWindow->SetPage( "<html><body><p>Welcome to KiCad Agent.</p></body></html>" );
     mainSizer->Add( m_chatWindow, 1, wxEXPAND | wxALL, 5 );
 
-    // 2. Input & Controls Area
-    // We want: Text Input at bottom. Send button at bottom right of text input. Model dropdown to the left.
-    // Let's us a FlexGridSizer or just nested BoxSizers.
+    // 2. Input Container (Unified Look)
+    // Vertical Sizer: Text Area Top, Controls Bottom
+    wxBoxSizer* inputContainerSizer = new wxBoxSizer( wxVERTICAL );
 
-    wxBoxSizer* bottomSizer = new wxBoxSizer( wxHORIZONTAL );
-
-    // Left: Model Dropdown (Vertical alignment top or center? changing to bottom as per request "other side")
-    // "Model dropdown on other side of text input area" implies left side if button is right.
-    wxBoxSizer* leftControlSizer = new wxBoxSizer( wxVERTICAL );
-    wxString    choices[] = { "Gemini 1.5 Pro", "Gemini 1.5 Flash" };
-    m_modelChoice = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, choices );
-    m_modelChoice->SetSelection( 0 );
-    leftControlSizer->Add( m_modelChoice, 0, wxALIGN_BOTTOM | wxBOTTOM,
-                           5 ); // Align to bottom to match text input bottom?
-    // Actually standard UI usually aligns top of controls. Let's try aligning to bottom to match the requested "bottom" theme.
-
-    bottomSizer->Add( leftControlSizer, 0, wxEXPAND | wxRIGHT, 5 );
-
-    // Center: Text Input (Expandable)
-    m_inputCtrl = new wxTextCtrl( this, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 60 ),
+    // 2a. Text Input (Top)
+    m_inputCtrl = new wxTextCtrl( this, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 80 ),
                                   wxTE_MULTILINE | wxTE_PROCESS_ENTER );
-    bottomSizer->Add( m_inputCtrl, 1, wxEXPAND | wxRIGHT, 5 );
+    // m_inputCtrl->SetHint( "Ask anything" ); // Requires newer wxWidgets, might be ignored on old
+    inputContainerSizer->Add( m_inputCtrl, 1, wxEXPAND | wxALL, 0 );
 
-    // Right: Send Button (Aligned to bottom)
-    wxBoxSizer* rightControlSizer = new wxBoxSizer( wxVERTICAL );
-    rightControlSizer->AddStretchSpacer(); // Push button to bottom
-    m_actionButton = new wxButton( this, wxID_ANY, "Send" );
-    rightControlSizer->Add( m_actionButton, 0, wxALIGN_BOTTOM );
+    // 2b. Control Row (Bottom)
+    wxBoxSizer* controlsSizer = new wxBoxSizer( wxHORIZONTAL );
 
-    bottomSizer->Add( rightControlSizer, 0, wxEXPAND );
+    // Plus Button
+    m_plusButton = new wxButton( this, wxID_ANY, "+", wxDefaultPosition, wxSize( 30, -1 ) );
+    controlsSizer->Add( m_plusButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
-    mainSizer->Add( bottomSizer, 0, wxEXPAND | wxALL, 10 );
+    // Mode Selection
+    wxString modeChoices[] = { "Planning", "Execution" };
+    m_modeChoice = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, modeChoices );
+    m_modeChoice->SetSelection( 0 );
+    controlsSizer->Add( m_modeChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+
+    // Model Selection
+    wxString modelChoices[] = { "Gemini 1.5 Pro", "Gemini 1.5 Flash" };
+    m_modelChoice = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, modelChoices );
+    m_modelChoice->SetSelection( 0 );
+    controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+
+    // Spacer
+    controlsSizer->AddStretchSpacer();
+
+    // Send Button
+    m_actionButton = new wxButton( this, wxID_ANY, "->" ); // Arrow icon would be better
+    controlsSizer->Add( m_actionButton, 0, wxALIGN_CENTER_VERTICAL );
+
+    inputContainerSizer->Add( controlsSizer, 0, wxEXPAND | wxTOP | wxBOTTOM, 5 );
+
+    // Add Input Container to Main Sizer
+    mainSizer->Add( inputContainerSizer, 0, wxEXPAND | wxALL, 10 );
 
     SetSizer( mainSizer );
     Layout();

@@ -30,6 +30,8 @@ public:
 private:
     wxHtmlWindow* m_chatWindow;
     wxTextCtrl*   m_inputCtrl;
+    wxButton*     m_plusButton;
+    wxChoice*     m_modeChoice;
     wxChoice*     m_modelChoice;
     wxButton*     m_actionButton; // Send/Stop
 

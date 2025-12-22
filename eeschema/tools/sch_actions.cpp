@@ -38,7 +38,7 @@ class DESIGN_BLOCK;
 // specialized, but we don't translate on initialization and instead do it in the getters.
 
 #undef _
-#define _(s) s
+#define _( s ) s
 
 // clang-format off
 
@@ -1200,6 +1200,13 @@ TOOL_ACTION SCH_ACTIONS::showPcbNew( TOOL_ACTION_ARGS()
         .FriendlyName( _( "Switch to PCB Editor" ) )
         .Tooltip( _( "Open PCB in board editor" ) )
         .Icon( BITMAPS::icon_pcbnew_24 ) );
+
+TOOL_ACTION SCH_ACTIONS::showAgent( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.showAgent" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Open Agent" ) )
+        .Tooltip( _( "Open the AI Agent" ) )
+        .Icon( BITMAPS::icon_kicad ) );
 
 TOOL_ACTION SCH_ACTIONS::exportNetlist( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.exportNetlist" )

@@ -3,6 +3,7 @@
 #include <kiway.h>
 #include "agent_frame.h"
 #include <cstdio>
+#include <wx/app.h>
 
 // The KIFACE implementation
 class KIFACE_AGENT : public KIFACE_BASE
@@ -16,6 +17,11 @@ public:
     bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits, KIWAY* aKiway ) override
     {
         printf( "AGENT: OnKifaceStart called\n" );
+        if( wxTheApp )
+            printf( "AGENT: wxTheApp is %p\n", (void*) wxTheApp );
+        else
+            printf( "AGENT: wxTheApp is NULL\n" );
+
         return start_common( aCtlBits );
     }
 

@@ -184,6 +184,7 @@ public:
     static TOOL_ACTION editWithLibEdit;
     static TOOL_ACTION editLibSymbolWithLibEdit;
     static TOOL_ACTION showPcbNew;
+    static TOOL_ACTION showAgent;
     static TOOL_ACTION importFPAssignments;
     static TOOL_ACTION exportNetlist;
     static TOOL_ACTION generateBOM;

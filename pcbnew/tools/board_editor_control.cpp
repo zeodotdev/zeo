@@ -90,7 +90,7 @@ class ZONE_CONTEXT_MENU : public ACTION_MENU
 {
 public:
     ZONE_CONTEXT_MENU() :
-        ACTION_MENU( true )
+            ACTION_MENU( true )
     {
         SetIcon( BITMAPS::add_zone );
         SetTitle( _( "Zones" ) );
@@ -113,10 +113,7 @@ public:
     }
 
 protected:
-    ACTION_MENU* create() const override
-    {
-        return new ZONE_CONTEXT_MENU();
-    }
+    ACTION_MENU* create() const override { return new ZONE_CONTEXT_MENU(); }
 };
 
 
@@ -124,7 +121,7 @@ class LOCK_CONTEXT_MENU : public CONDITIONAL_MENU
 {
 public:
     LOCK_CONTEXT_MENU( TOOL_INTERACTIVE* aTool ) :
-        CONDITIONAL_MENU( aTool )
+            CONDITIONAL_MENU( aTool )
     {
         SetIcon( BITMAPS::locked );
         SetTitle( _( "Locking" ) );
@@ -134,21 +131,18 @@ public:
         AddItem( PCB_ACTIONS::toggleLock, SELECTION_CONDITIONS::ShowAlways );
     }
 
-    ACTION_MENU* create() const override
-    {
-        return new LOCK_CONTEXT_MENU( this->m_tool );
-    }
+    ACTION_MENU* create() const override { return new LOCK_CONTEXT_MENU( this->m_tool ); }
 };
 
 
 BOARD_EDITOR_CONTROL::BOARD_EDITOR_CONTROL() :
-    PCB_TOOL_BASE( "pcbnew.EditorControl" ),
-    m_frame( nullptr ),
-    m_inPlaceFootprint( false ),
-    m_placingFootprint( false )
+        PCB_TOOL_BASE( "pcbnew.EditorControl" ),
+        m_frame( nullptr ),
+        m_inPlaceFootprint( false ),
+        m_placingFootprint( false )
 {
     m_placeOrigin = std::make_unique<KIGFX::ORIGIN_VIEWITEM>( KIGFX::COLOR4D( 0.8, 0.0, 0.0, 1.0 ),
-                                                             KIGFX::ORIGIN_VIEWITEM::CIRCLE_CROSS );
+                                                              KIGFX::ORIGIN_VIEWITEM::CIRCLE_CROSS );
 }
 
 
@@ -181,16 +175,10 @@ int BOARD_EDITOR_CONTROL::OnAngleSnapModeChanged( const TOOL_EVENT& aEvent )
 
     switch( mode )
     {
-    case LEADER_MODE::DIRECT:
-        f->SelectLeftToolbarAction( PCB_ACTIONS::lineModeFree );
-        break;
-    case LEADER_MODE::DEG90:
-        f->SelectLeftToolbarAction( PCB_ACTIONS::lineMode90 );
-        break;
+    case LEADER_MODE::DIRECT: f->SelectLeftToolbarAction( PCB_ACTIONS::lineModeFree ); break;
+    case LEADER_MODE::DEG90: f->SelectLeftToolbarAction( PCB_ACTIONS::lineMode90 ); break;
     case LEADER_MODE::DEG45:
-    default:
-        f->SelectLeftToolbarAction( PCB_ACTIONS::lineMode45 );
-        break;
+    default: f->SelectLeftToolbarAction( PCB_ACTIONS::lineMode45 ); break;
     }
 
     return 0;
@@ -208,23 +196,20 @@ int BOARD_EDITOR_CONTROL::ChangeLineMode( const TOOL_EVENT& aEvent )
 
 bool BOARD_EDITOR_CONTROL::Init()
 {
-    auto activeToolCondition =
-            [this]( const SELECTION& aSel )
-            {
-                return ( !m_frame->ToolStackIsEmpty() );
-            };
+    auto activeToolCondition = [this]( const SELECTION& aSel )
+    {
+        return ( !m_frame->ToolStackIsEmpty() );
+    };
 
-    auto inactiveStateCondition =
-            [this]( const SELECTION& aSel )
-            {
-                return ( m_frame->ToolStackIsEmpty() && aSel.Size() == 0 );
-            };
+    auto inactiveStateCondition = [this]( const SELECTION& aSel )
+    {
+        return ( m_frame->ToolStackIsEmpty() && aSel.Size() == 0 );
+    };
 
-    auto placeModuleCondition =
-            [this]( const SELECTION& aSel )
-            {
-                return m_frame->IsCurrentTool( PCB_ACTIONS::placeFootprint ) && aSel.GetSize() == 0;
-            };
+    auto placeModuleCondition = [this]( const SELECTION& aSel )
+    {
+        return m_frame->IsCurrentTool( PCB_ACTIONS::placeFootprint ) && aSel.GetSize() == 0;
+    };
 
     auto& ctxMenu = m_menu->GetMenu();
 
@@ -276,14 +261,13 @@ bool BOARD_EDITOR_CONTROL::Init()
 
         // Functor to say if the PCB_EDIT_FRAME is in a given mode
         // Capture the tool pointer and tool mode by value
-        auto toolActiveFunctor =
-                [=]( DRAWING_TOOL::MODE aMode )
-                {
-                    return [=]( const SELECTION& sel )
-                           {
-                               return drawingTool->GetDrawingMode() == aMode;
-                           };
-                };
+        auto toolActiveFunctor = [=]( DRAWING_TOOL::MODE aMode )
+        {
+            return [=]( const SELECTION& sel )
+            {
+                return drawingTool->GetDrawingMode() == aMode;
+            };
+        };
 
         menu.AddMenu( zoneMenu.get(), toolActiveFunctor( DRAWING_TOOL::MODE::ZONE ), 300 );
     }
@@ -421,8 +405,7 @@ int BOARD_EDITOR_CONTROL::ImportSpecctraSession( const TOOL_EVENT& aEvent )
 
     fullFileName = wxFileSelector( _( "Specctra Session File" ), path, name,
                                    wxT( "." ) + wxString( FILEEXT::SpecctraSessionFileExtension ),
-                                   FILEEXT::SpecctraSessionFileWildcard(), wxFD_OPEN | wxFD_CHANGE_DIR,
-                                   frame() );
+                                   FILEEXT::SpecctraSessionFileWildcard(), wxFD_OPEN | wxFD_CHANGE_DIR, frame() );
 
     if( !fullFileName.IsEmpty() )
         getEditFrame<PCB_EDIT_FRAME>()->ImportSpecctraSession( fullFileName );
@@ -433,8 +416,8 @@ int BOARD_EDITOR_CONTROL::ImportSpecctraSession( const TOOL_EVENT& aEvent )
 
 int BOARD_EDITOR_CONTROL::ExportSpecctraDSN( const TOOL_EVENT& aEvent )
 {
-    wxString    fullFileName = m_frame->GetLastPath( LAST_PATH_SPECCTRADSN );
-    wxFileName  fn;
+    wxString   fullFileName = m_frame->GetLastPath( LAST_PATH_SPECCTRADSN );
+    wxFileName fn;
 
     if( fullFileName.IsEmpty() )
     {
@@ -483,8 +466,8 @@ int BOARD_EDITOR_CONTROL::ExportNetlist( const TOOL_EVENT& aEvent )
 
     if( !fn.IsDirWritable() )
     {
-        DisplayErrorMessage( m_frame, wxString::Format( _( "Insufficient permissions to folder '%s'." ),
-                                                        fn.GetPath() ) );
+        DisplayErrorMessage( m_frame,
+                             wxString::Format( _( "Insufficient permissions to folder '%s'." ), fn.GetPath() ) );
         return 0;
     }
 
@@ -496,9 +479,8 @@ int BOARD_EDITOR_CONTROL::ExportNetlist( const TOOL_EVENT& aEvent )
 
     for( const FOOTPRINT* footprint : board()->Footprints() )
     {
-        COMPONENT* component = new COMPONENT( footprint->GetFPID(), footprint->GetReference(),
-                                              footprint->GetValue(), footprint->GetPath(),
-                                              { footprint->m_Uuid } );
+        COMPONENT* component = new COMPONENT( footprint->GetFPID(), footprint->GetReference(), footprint->GetValue(),
+                                              footprint->GetPath(), { footprint->m_Uuid } );
 
         for( const PAD* pad : footprint->Pads() )
         {
@@ -535,7 +517,7 @@ int BOARD_EDITOR_CONTROL::GenerateGerbers( const TOOL_EVENT& aEvent )
     m_frame->SetPlotSettings( plotSettings );
 
     DIALOG_PLOT dlg( m_frame );
-    dlg.ShowQuasiModal(  );
+    dlg.ShowQuasiModal();
 
     return 0;
 }
@@ -551,33 +533,31 @@ int BOARD_EDITOR_CONTROL::RepairBoard( const TOOL_EVENT& aEvent )
     std::set<KIID> ids;
     int            duplicates = 0;
 
-    auto processItem =
-            [&]( EDA_ITEM* aItem )
+    auto processItem = [&]( EDA_ITEM* aItem )
+    {
+        if( ids.count( aItem->m_Uuid ) )
+        {
+            duplicates++;
+            const_cast<KIID&>( aItem->m_Uuid ) = KIID();
+        }
+
+        ids.insert( aItem->m_Uuid );
+
+        BOARD_CONNECTED_ITEM* cItem = dynamic_cast<BOARD_CONNECTED_ITEM*>( aItem );
+
+        if( cItem && cItem->GetNetCode() )
+        {
+            NETINFO_ITEM* netinfo = cItem->GetNet();
+
+            if( netinfo && !board()->FindNet( netinfo->GetNetname() ) )
             {
-                if( ids.count( aItem->m_Uuid ) )
-                {
-                    duplicates++;
-                    const_cast<KIID&>( aItem->m_Uuid ) = KIID();
-                }
+                board()->Add( netinfo );
 
-                ids.insert( aItem->m_Uuid );
-
-                BOARD_CONNECTED_ITEM* cItem = dynamic_cast<BOARD_CONNECTED_ITEM*>( aItem );
-
-                if( cItem && cItem->GetNetCode() )
-                {
-                    NETINFO_ITEM* netinfo = cItem->GetNet();
-
-                    if( netinfo && !board()->FindNet( netinfo->GetNetname() ) )
-                    {
-                        board()->Add( netinfo );
-
-                        details += wxString::Format( _( "Orphaned net %s re-parented.\n" ),
-                                                     netinfo->GetNetname() );
-                        errors++;
-                    }
-                }
-            };
+                details += wxString::Format( _( "Orphaned net %s re-parented.\n" ), netinfo->GetNetname() );
+                errors++;
+            }
+        }
+    };
 
     // Footprint IDs are the most important, so give them the first crack at "claiming" a
     // particular KIID.
@@ -706,8 +686,7 @@ int BOARD_EDITOR_CONTROL::ShowEeschema( const TOOL_EVENT& aEvent )
     wxString        msg;
     PCB_EDIT_FRAME* boardFrame = m_frame;
     PROJECT&        project = boardFrame->Prj();
-    wxFileName      schematic( project.GetProjectPath(), project.GetProjectName(),
-                               FILEEXT::KiCadSchematicFileExtension );
+    wxFileName schematic( project.GetProjectPath(), project.GetProjectName(), FILEEXT::KiCadSchematicFileExtension );
 
     if( !schematic.FileExists() )
     {
@@ -750,7 +729,6 @@ int BOARD_EDITOR_CONTROL::ShowEeschema( const TOOL_EVENT& aEvent )
             }
             catch( const IO_ERROR& err )
             {
-
                 DisplayErrorMessage( boardFrame, _( "Eeschema failed to load." ) + wxS( "\n" ) + err.What() );
                 return 0;
             }
@@ -782,6 +760,21 @@ int BOARD_EDITOR_CONTROL::ShowEeschema( const TOOL_EVENT& aEvent )
         }
 
         frame->Raise();
+    }
+
+    return 0;
+}
+
+
+int BOARD_EDITOR_CONTROL::ShowAgent( const TOOL_EVENT& aEvent )
+{
+    KIWAY_PLAYER* frame = m_frame->Kiway().Player( FRAME_AGENT, true );
+
+    if( frame )
+    {
+        frame->Show( true );
+        frame->Raise();
+        frame->Maximize(); // Optional
     }
 
     return 0;
@@ -852,7 +845,7 @@ int BOARD_EDITOR_CONTROL::TrackWidthInc( const TOOL_EVENT& aEvent )
                     int candidate = bds.m_NetSettings->GetDefaultNetclass()->GetTrackWidth();
 
                     if( i > 0 )
-                        candidate = bds.m_TrackWidthList[ i ];
+                        candidate = bds.m_TrackWidthList[i];
 
                     if( candidate > track->GetWidth() )
                     {
@@ -870,8 +863,7 @@ int BOARD_EDITOR_CONTROL::TrackWidthInc( const TOOL_EVENT& aEvent )
 
     ROUTER_TOOL* routerTool = m_toolMgr->GetTool<ROUTER_TOOL>();
 
-    if( routerTool && routerTool->IsToolActive()
-        && routerTool->Router()->Mode() == PNS::PNS_MODE_ROUTE_DIFF_PAIR )
+    if( routerTool && routerTool->IsToolActive() && routerTool->Router()->Mode() == PNS::PNS_MODE_ROUTE_DIFF_PAIR )
     {
         int widthIndex = bds.GetDiffPairIndex() + 1;
 
@@ -889,8 +881,8 @@ int BOARD_EDITOR_CONTROL::TrackWidthInc( const TOOL_EVENT& aEvent )
         int widthIndex = bds.GetTrackWidthIndex();
 
         if( routerTool && routerTool->IsToolActive()
-            && routerTool->Router()->GetState() == PNS::ROUTER::RouterState::ROUTE_TRACK
-            && bds.m_UseConnectedTrackWidth && !bds.m_TempOverrideTrackWidth )
+            && routerTool->Router()->GetState() == PNS::ROUTER::RouterState::ROUTE_TRACK && bds.m_UseConnectedTrackWidth
+            && !bds.m_TempOverrideTrackWidth )
         {
             bds.m_TempOverrideTrackWidth = true;
         }
@@ -934,7 +926,7 @@ int BOARD_EDITOR_CONTROL::TrackWidthDec( const TOOL_EVENT& aEvent )
                     int candidate = bds.m_NetSettings->GetDefaultNetclass()->GetTrackWidth();
 
                     if( i > 0 )
-                        candidate = bds.m_TrackWidthList[ i ];
+                        candidate = bds.m_TrackWidthList[i];
 
                     if( candidate < track->GetWidth() )
                     {
@@ -952,8 +944,7 @@ int BOARD_EDITOR_CONTROL::TrackWidthDec( const TOOL_EVENT& aEvent )
 
     ROUTER_TOOL* routerTool = m_toolMgr->GetTool<ROUTER_TOOL>();
 
-    if( routerTool && routerTool->IsToolActive()
-            && routerTool->Router()->Mode() == PNS::PNS_MODE_ROUTE_DIFF_PAIR )
+    if( routerTool && routerTool->IsToolActive() && routerTool->Router()->Mode() == PNS::PNS_MODE_ROUTE_DIFF_PAIR )
     {
         int widthIndex = bds.GetDiffPairIndex() - 1;
 
@@ -971,8 +962,8 @@ int BOARD_EDITOR_CONTROL::TrackWidthDec( const TOOL_EVENT& aEvent )
         int widthIndex = bds.GetTrackWidthIndex();
 
         if( routerTool && routerTool->IsToolActive()
-            && routerTool->Router()->GetState() == PNS::ROUTER::RouterState::ROUTE_TRACK
-            && bds.m_UseConnectedTrackWidth && !bds.m_TempOverrideTrackWidth )
+            && routerTool->Router()->GetState() == PNS::ROUTER::RouterState::ROUTE_TRACK && bds.m_UseConnectedTrackWidth
+            && !bds.m_TempOverrideTrackWidth )
         {
             bds.m_TempOverrideTrackWidth = true;
         }
@@ -1016,8 +1007,8 @@ int BOARD_EDITOR_CONTROL::ViaSizeInc( const TOOL_EVENT& aEvent )
                     VIA_DIMENSION dims( bds.m_NetSettings->GetDefaultNetclass()->GetViaDiameter(),
                                         bds.m_NetSettings->GetDefaultNetclass()->GetViaDrill() );
 
-                    if( i> 0 )
-                        dims = bds.m_ViasDimensionsList[ i ];
+                    if( i > 0 )
+                        dims = bds.m_ViasDimensionsList[i];
 
                     // TODO(JE) padstacks
                     if( dims.m_Diameter > via->GetWidth( PADSTACK::ALL_LAYERS ) )
@@ -1073,7 +1064,7 @@ int BOARD_EDITOR_CONTROL::ViaSizeDec( const TOOL_EVENT& aEvent )
                                         bds.m_NetSettings->GetDefaultNetclass()->GetViaDrill() );
 
                     if( i > 0 )
-                        dims = bds.m_ViasDimensionsList[ i ];
+                        dims = bds.m_ViasDimensionsList[i];
 
                     // TODO(JE) padstacks
                     if( dims.m_Diameter < via->GetWidth( PADSTACK::ALL_LAYERS ) )
@@ -1150,33 +1141,31 @@ int BOARD_EDITOR_CONTROL::PlaceFootprint( const TOOL_EVENT& aEvent )
     TOOL_EVENT pushedEvent = aEvent;
     m_frame->PushTool( aEvent );
 
-    auto setCursor =
-            [&]()
+    auto setCursor = [&]()
+    {
+        m_frame->GetCanvas()->SetCurrentCursor( KICURSOR::PENCIL );
+    };
+
+    auto cleanup = [&]()
+    {
+        m_toolMgr->RunAction( ACTIONS::selectionClear );
+        commit.Revert();
+
+        if( fromOtherCommand )
+        {
+            PICKED_ITEMS_LIST* undo = m_frame->PopCommandFromUndoList();
+
+            if( undo )
             {
-                m_frame->GetCanvas()->SetCurrentCursor( KICURSOR::PENCIL );
-            };
+                m_frame->PutDataInPreviousState( undo );
+                m_frame->ClearListAndDeleteItems( undo );
+                delete undo;
+            }
+        }
 
-    auto cleanup =
-            [&] ()
-            {
-                m_toolMgr->RunAction( ACTIONS::selectionClear );
-                commit.Revert();
-
-                if( fromOtherCommand )
-                {
-                    PICKED_ITEMS_LIST* undo = m_frame->PopCommandFromUndoList();
-
-                    if( undo )
-                    {
-                        m_frame->PutDataInPreviousState( undo );
-                        m_frame->ClearListAndDeleteItems( undo );
-                        delete undo;
-                    }
-                }
-
-                fp = nullptr;
-                m_placingFootprint = false;
-            };
+        fp = nullptr;
+        m_placingFootprint = false;
+    };
 
     Activate();
     // Must be done after Activate() so that it gets set into the correct context
@@ -1302,7 +1291,7 @@ int BOARD_EDITOR_CONTROL::PlaceFootprint( const TOOL_EVENT& aEvent )
             {
                 m_toolMgr->RunAction( ACTIONS::selectionClear );
                 commit.Push( _( "Place Footprint" ) );
-                fp = nullptr;  // to indicate that there is no footprint that we currently modify
+                fp = nullptr; // to indicate that there is no footprint that we currently modify
                 m_placingFootprint = false;
             }
         }
@@ -1322,8 +1311,7 @@ int BOARD_EDITOR_CONTROL::PlaceFootprint( const TOOL_EVENT& aEvent )
             // Calling 'Properties' action clears the selection, so we need to restore it
             reselect = true;
         }
-        else if( fp && (   ZONE_FILLER_TOOL::IsZoneFillAction( evt )
-                        || evt->IsAction( &ACTIONS::redo ) ) )
+        else if( fp && ( ZONE_FILLER_TOOL::IsZoneFillAction( evt ) || evt->IsAction( &ACTIONS::redo ) ) )
         {
             wxBell();
         }
@@ -1439,8 +1427,8 @@ int BOARD_EDITOR_CONTROL::modifyLockSelected( MODIFY_MODE aMode )
 }
 
 
-static bool mergeZones( EDA_DRAW_FRAME* aFrame, BOARD_COMMIT& aCommit,
-                        std::vector<ZONE*>& aOriginZones, std::vector<ZONE*>& aMergedZones )
+static bool mergeZones( EDA_DRAW_FRAME* aFrame, BOARD_COMMIT& aCommit, std::vector<ZONE*>& aOriginZones,
+                        std::vector<ZONE*>& aMergedZones )
 {
     aCommit.Modify( aOriginZones[0] );
 
@@ -1489,7 +1477,7 @@ int BOARD_EDITOR_CONTROL::ZoneMerge( const TOOL_EVENT& aEvent )
 
     int netcode = -1;
 
-    ZONE* firstZone = nullptr;
+    ZONE*              firstZone = nullptr;
     std::vector<ZONE*> toMerge, merged;
 
     for( EDA_ITEM* item : selection )
@@ -1650,7 +1638,7 @@ void BOARD_EDITOR_CONTROL::doCrossProbePcbToSch( const TOOL_EVENT& aEvent, bool 
 
 int BOARD_EDITOR_CONTROL::AssignNetclass( const TOOL_EVENT& aEvent )
 {
-    PCB_SELECTION_TOOL*  selectionTool = m_toolMgr->GetTool<PCB_SELECTION_TOOL>();
+    PCB_SELECTION_TOOL* selectionTool = m_toolMgr->GetTool<PCB_SELECTION_TOOL>();
 
     const PCB_SELECTION& selection = selectionTool->RequestSelection(
             []( const VECTOR2I& aPt, GENERAL_COLLECTOR& aCollector, PCB_SELECTION_TOOL* sTool )
@@ -1658,8 +1646,8 @@ int BOARD_EDITOR_CONTROL::AssignNetclass( const TOOL_EVENT& aEvent )
                 // Iterate from the back so we don't have to worry about removals.
                 for( int i = aCollector.GetCount() - 1; i >= 0; --i )
                 {
-                    if( !dynamic_cast<BOARD_CONNECTED_ITEM*>( aCollector[ i ] ) )
-                        aCollector.Remove( aCollector[ i ] );
+                    if( !dynamic_cast<BOARD_CONNECTED_ITEM*>( aCollector[i] ) )
+                        aCollector.Remove( aCollector[i] );
                 }
 
                 sTool->FilterCollectorForLockedItems( aCollector );
@@ -1693,22 +1681,23 @@ int BOARD_EDITOR_CONTROL::AssignNetclass( const TOOL_EVENT& aEvent )
     canvas()->ForceRefresh();
 
     DIALOG_ASSIGN_NETCLASS dlg( m_frame, netNames, board()->GetNetClassAssignmentCandidates(),
-            [this]( const std::vector<wxString>& aNetNames )
-            {
-                PCB_SELECTION_TOOL*  selTool = m_toolMgr->GetTool<PCB_SELECTION_TOOL>();
-                selTool->ClearSelection();
+                                [this]( const std::vector<wxString>& aNetNames )
+                                {
+                                    PCB_SELECTION_TOOL* selTool = m_toolMgr->GetTool<PCB_SELECTION_TOOL>();
+                                    selTool->ClearSelection();
 
-                for( const wxString& curr_netName : aNetNames )
-                {
-                    int curr_netCode = board()->GetNetInfo().GetNetItem( curr_netName )->GetNetCode();
+                                    for( const wxString& curr_netName : aNetNames )
+                                    {
+                                        int curr_netCode =
+                                                board()->GetNetInfo().GetNetItem( curr_netName )->GetNetCode();
 
-                    if( curr_netCode > 0 )
-                        selTool->SelectAllItemsOnNet( curr_netCode );
-                }
+                                        if( curr_netCode > 0 )
+                                            selTool->SelectAllItemsOnNet( curr_netCode );
+                                    }
 
-                canvas()->ForceRefresh();
-                m_frame->UpdateMsgPanel();
-            } );
+                                    canvas()->ForceRefresh();
+                                    m_frame->UpdateMsgPanel();
+                                } );
 
     if( dlg.ShowModal() == wxID_OK )
     {
@@ -1753,7 +1742,7 @@ int BOARD_EDITOR_CONTROL::EditFpInFpEditor( const TOOL_EVENT& aEvent )
             fp_editor->LoadFootprintFromLibrary( fp->GetFPID() );
 
         fp_editor->Show( true );
-        fp_editor->Raise();        // Iconize( false );
+        fp_editor->Raise(); // Iconize( false );
     }
 
     if( selection.IsHover() )
@@ -1763,8 +1752,8 @@ int BOARD_EDITOR_CONTROL::EditFpInFpEditor( const TOOL_EVENT& aEvent )
 }
 
 
-void BOARD_EDITOR_CONTROL::DoSetDrillOrigin( KIGFX::VIEW* aView, PCB_BASE_FRAME* aFrame,
-                                             EDA_ITEM* originViewItem, const VECTOR2D& aPosition )
+void BOARD_EDITOR_CONTROL::DoSetDrillOrigin( KIGFX::VIEW* aView, PCB_BASE_FRAME* aFrame, EDA_ITEM* originViewItem,
+                                             const VECTOR2D& aPosition )
 {
     aFrame->GetDesignSettings().SetAuxOrigin( VECTOR2I( aPosition ) );
     originViewItem->SetPosition( aPosition );
@@ -1799,11 +1788,11 @@ int BOARD_EDITOR_CONTROL::DrillOrigin( const TOOL_EVENT& aEvent )
     picker->ClearHandlers();
 
     picker->SetClickHandler(
-            [this] ( const VECTOR2D& pt ) -> bool
+            [this]( const VECTOR2D& pt ) -> bool
             {
                 m_frame->SaveCopyInUndoList( m_placeOrigin.get(), UNDO_REDO::DRILLORIGIN );
                 DoSetDrillOrigin( getView(), m_frame, m_placeOrigin.get(), pt );
-                return false;   // drill origin is a one-shot; don't continue with tool
+                return false; // drill origin is a one-shot; don't continue with tool
             } );
 
     m_toolMgr->RunAction( ACTIONS::pickerTool, &aEvent );
@@ -1814,93 +1803,94 @@ int BOARD_EDITOR_CONTROL::DrillOrigin( const TOOL_EVENT& aEvent )
 
 void BOARD_EDITOR_CONTROL::setTransitions()
 {
-    Go( &BOARD_EDITOR_CONTROL::New,                    ACTIONS::doNew.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::Open,                   ACTIONS::open.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::Save,                   ACTIONS::save.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::SaveAs,                 ACTIONS::saveAs.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::SaveCopy,               ACTIONS::saveCopy.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::Revert,                 ACTIONS::revert.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::PageSettings,           ACTIONS::pageSettings.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::Plot,                   ACTIONS::plot.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::New, ACTIONS::doNew.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::Open, ACTIONS::open.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::Save, ACTIONS::save.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::SaveAs, ACTIONS::saveAs.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::SaveCopy, ACTIONS::saveCopy.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::Revert, ACTIONS::revert.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::PageSettings, ACTIONS::pageSettings.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::Plot, ACTIONS::plot.MakeEvent() );
 
-    Go( &BOARD_EDITOR_CONTROL::Search,                 ACTIONS::showSearch.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::Find,                   ACTIONS::find.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::FindNext,               ACTIONS::findNext.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::FindNext,               ACTIONS::findPrevious.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::Search, ACTIONS::showSearch.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::Find, ACTIONS::find.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::FindNext, ACTIONS::findNext.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::FindNext, ACTIONS::findPrevious.MakeEvent() );
 
-    Go( &BOARD_EDITOR_CONTROL::OpenNonKicadBoard,      PCB_ACTIONS::openNonKicadBoard.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ExportFootprints,       PCB_ACTIONS::exportFootprints.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::BoardSetup,             PCB_ACTIONS::boardSetup.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ImportNetlist,          PCB_ACTIONS::importNetlist.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ImportSpecctraSession,  PCB_ACTIONS::importSpecctraSession.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ExportSpecctraDSN,      PCB_ACTIONS::exportSpecctraDSN.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::OpenNonKicadBoard, PCB_ACTIONS::openNonKicadBoard.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ExportFootprints, PCB_ACTIONS::exportFootprints.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::BoardSetup, PCB_ACTIONS::boardSetup.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ImportNetlist, PCB_ACTIONS::importNetlist.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ImportSpecctraSession, PCB_ACTIONS::importSpecctraSession.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ExportSpecctraDSN, PCB_ACTIONS::exportSpecctraDSN.MakeEvent() );
 
     if( ADVANCED_CFG::GetCfg().m_ShowPcbnewExportNetlist && m_frame && m_frame->GetExportNetlistAction() )
         Go( &BOARD_EDITOR_CONTROL::ExportNetlist, m_frame->GetExportNetlistAction()->MakeEvent() );
 
-    Go( &BOARD_EDITOR_CONTROL::GenerateDrillFiles,     PCB_ACTIONS::generateDrillFiles.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::GenerateGerbers,        PCB_ACTIONS::generateGerbers.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::GeneratePosFile,        PCB_ACTIONS::generatePosFile.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::GenFootprintsReport,    PCB_ACTIONS::generateReportFile.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::GenD356File,            PCB_ACTIONS::generateD356File.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::GenBOMFileFromBoard,    PCB_ACTIONS::generateBOM.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::GenIPC2581File,         PCB_ACTIONS::generateIPC2581File.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::GenerateODBPPFiles,     PCB_ACTIONS::generateODBPPFile.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::GenerateDrillFiles, PCB_ACTIONS::generateDrillFiles.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::GenerateGerbers, PCB_ACTIONS::generateGerbers.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::GeneratePosFile, PCB_ACTIONS::generatePosFile.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::GenFootprintsReport, PCB_ACTIONS::generateReportFile.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::GenD356File, PCB_ACTIONS::generateD356File.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::GenBOMFileFromBoard, PCB_ACTIONS::generateBOM.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::GenIPC2581File, PCB_ACTIONS::generateIPC2581File.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::GenerateODBPPFiles, PCB_ACTIONS::generateODBPPFile.MakeEvent() );
 
-    Go( &BOARD_EDITOR_CONTROL::ExportGenCAD,           PCB_ACTIONS::exportGenCAD.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ExportVRML,             PCB_ACTIONS::exportVRML.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ExportIDF,              PCB_ACTIONS::exportIDF.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ExportSTEP,             PCB_ACTIONS::exportSTEP.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ExportCmpFile,          PCB_ACTIONS::exportCmpFile.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ExportHyperlynx,        PCB_ACTIONS::exportHyperlynx.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ExportGenCAD, PCB_ACTIONS::exportGenCAD.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ExportVRML, PCB_ACTIONS::exportVRML.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ExportIDF, PCB_ACTIONS::exportIDF.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ExportSTEP, PCB_ACTIONS::exportSTEP.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ExportCmpFile, PCB_ACTIONS::exportCmpFile.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ExportHyperlynx, PCB_ACTIONS::exportHyperlynx.MakeEvent() );
 
     // Track & via size control
-    Go( &BOARD_EDITOR_CONTROL::TrackWidthInc,          PCB_ACTIONS::trackWidthInc.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::TrackWidthDec,          PCB_ACTIONS::trackWidthDec.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ViaSizeInc,             PCB_ACTIONS::viaSizeInc.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ViaSizeDec,             PCB_ACTIONS::viaSizeDec.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::AutoTrackWidth,         PCB_ACTIONS::autoTrackWidth.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::TrackWidthInc, PCB_ACTIONS::trackWidthInc.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::TrackWidthDec, PCB_ACTIONS::trackWidthDec.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ViaSizeInc, PCB_ACTIONS::viaSizeInc.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ViaSizeDec, PCB_ACTIONS::viaSizeDec.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::AutoTrackWidth, PCB_ACTIONS::autoTrackWidth.MakeEvent() );
 
     // Zone actions
-    Go( &BOARD_EDITOR_CONTROL::ZoneMerge,              PCB_ACTIONS::zoneMerge.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ZoneDuplicate,          PCB_ACTIONS::zoneDuplicate.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ZoneMerge, PCB_ACTIONS::zoneMerge.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ZoneDuplicate, PCB_ACTIONS::zoneDuplicate.MakeEvent() );
 
     // Placing tools
-    Go( &BOARD_EDITOR_CONTROL::PlaceFootprint,         PCB_ACTIONS::placeFootprint.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::DrillOrigin,            PCB_ACTIONS::drillOrigin.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::DrillOrigin,            PCB_ACTIONS::drillResetOrigin.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::DrillOrigin,            PCB_ACTIONS::drillSetOrigin.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::PlaceFootprint, PCB_ACTIONS::placeFootprint.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::DrillOrigin, PCB_ACTIONS::drillOrigin.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::DrillOrigin, PCB_ACTIONS::drillResetOrigin.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::DrillOrigin, PCB_ACTIONS::drillSetOrigin.MakeEvent() );
 
-    Go( &BOARD_EDITOR_CONTROL::EditFpInFpEditor,       PCB_ACTIONS::editFpInFpEditor.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::EditFpInFpEditor,       PCB_ACTIONS::editLibFpInFpEditor.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::EditFpInFpEditor, PCB_ACTIONS::editFpInFpEditor.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::EditFpInFpEditor, PCB_ACTIONS::editLibFpInFpEditor.MakeEvent() );
 
     // Cross-select
-    Go( &BOARD_EDITOR_CONTROL::CrossProbeToSch,        EVENTS::PointSelectedEvent );
-    Go( &BOARD_EDITOR_CONTROL::CrossProbeToSch,        EVENTS::SelectedEvent );
-    Go( &BOARD_EDITOR_CONTROL::CrossProbeToSch,        EVENTS::UnselectedEvent );
-    Go( &BOARD_EDITOR_CONTROL::CrossProbeToSch,        EVENTS::ClearedEvent );
+    Go( &BOARD_EDITOR_CONTROL::CrossProbeToSch, EVENTS::PointSelectedEvent );
+    Go( &BOARD_EDITOR_CONTROL::CrossProbeToSch, EVENTS::SelectedEvent );
+    Go( &BOARD_EDITOR_CONTROL::CrossProbeToSch, EVENTS::UnselectedEvent );
+    Go( &BOARD_EDITOR_CONTROL::CrossProbeToSch, EVENTS::ClearedEvent );
     Go( &BOARD_EDITOR_CONTROL::ExplicitCrossProbeToSch, PCB_ACTIONS::selectOnSchematic.MakeEvent() );
 
     // Other
-    Go( &BOARD_EDITOR_CONTROL::ToggleLockSelected,     PCB_ACTIONS::toggleLock.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::LockSelected,           PCB_ACTIONS::lock.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::UnlockSelected,         PCB_ACTIONS::unlock.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ToggleLockSelected, PCB_ACTIONS::toggleLock.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::LockSelected, PCB_ACTIONS::lock.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::UnlockSelected, PCB_ACTIONS::unlock.MakeEvent() );
 
-    Go( &BOARD_EDITOR_CONTROL::AssignNetclass,         PCB_ACTIONS::assignNetClass.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::AssignNetclass, PCB_ACTIONS::assignNetClass.MakeEvent() );
 
     Go( &BOARD_EDITOR_CONTROL::UpdatePCBFromSchematic, ACTIONS::updatePcbFromSchematic.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::UpdateSchematicFromPCB, ACTIONS::updateSchematicFromPcb.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ShowEeschema,           PCB_ACTIONS::showEeschema.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ToggleLayersManager,    PCB_ACTIONS::showLayersManager.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ToggleProperties,       ACTIONS::showProperties.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ToggleNetInspector,     PCB_ACTIONS::showNetInspector.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ToggleLibraryTree,      PCB_ACTIONS::showDesignBlockPanel.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ToggleSearch,           PCB_ACTIONS::showSearch.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::TogglePythonConsole,    PCB_ACTIONS::showPythonConsole.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::RepairBoard,            PCB_ACTIONS::repairBoard.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ShowEeschema, PCB_ACTIONS::showEeschema.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ShowAgent, PCB_ACTIONS::showAgent.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ToggleLayersManager, PCB_ACTIONS::showLayersManager.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ToggleProperties, ACTIONS::showProperties.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ToggleNetInspector, PCB_ACTIONS::showNetInspector.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ToggleLibraryTree, PCB_ACTIONS::showDesignBlockPanel.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ToggleSearch, PCB_ACTIONS::showSearch.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::TogglePythonConsole, PCB_ACTIONS::showPythonConsole.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::RepairBoard, PCB_ACTIONS::repairBoard.MakeEvent() );
     // Line modes: explicit, next, and notification
-    Go( &BOARD_EDITOR_CONTROL::ChangeLineMode,        PCB_ACTIONS::lineModeFree.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ChangeLineMode,        PCB_ACTIONS::lineMode90.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ChangeLineMode,        PCB_ACTIONS::lineMode45.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::OnAngleSnapModeChanged,PCB_ACTIONS::angleSnapModeChanged.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ChangeLineMode, PCB_ACTIONS::lineModeFree.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ChangeLineMode, PCB_ACTIONS::lineMode90.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ChangeLineMode, PCB_ACTIONS::lineMode45.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::OnAngleSnapModeChanged, PCB_ACTIONS::angleSnapModeChanged.MakeEvent() );
 }

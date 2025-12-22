@@ -38,15 +38,16 @@ class SCH_EDIT_FRAME;
 class SCH_EDITOR_CONTROL : public wxEvtHandler, public SCH_TOOL_BASE<SCH_EDIT_FRAME>
 {
 public:
-    SCH_EDITOR_CONTROL()  :
+    SCH_EDITOR_CONTROL() :
             SCH_TOOL_BASE<SCH_EDIT_FRAME>( "eeschema.EditorControl" ),
             m_probingPcbToSch( false ),
             m_pickerItem( nullptr ),
             m_duplicateIsHoverSelection( false ),
             m_highlightBusMembers( false )
-    { }
+    {
+    }
 
-    ~SCH_EDITOR_CONTROL() { }
+    ~SCH_EDITOR_CONTROL() {}
 
     int New( const TOOL_EVENT& aEvent );
     int Open( const TOOL_EVENT& aEvent );
@@ -120,6 +121,7 @@ public:
     int EditSymbolFields( const TOOL_EVENT& aEvent );
     int EditSymbolLibraryLinks( const TOOL_EVENT& aEvent );
     int ShowPcbNew( const TOOL_EVENT& aEvent );
+    int ShowAgent( const TOOL_EVENT& aEvent );
     int UpdatePCB( const TOOL_EVENT& aEvent );
     int UpdateFromPCB( const TOOL_EVENT& aEvent );
     int ImportFPAssignments( const TOOL_EVENT& aEvent );
@@ -169,14 +171,10 @@ public:
      * @param aSearchType A #SCH_SEARCH_T value used to determine what to search for.
      * @param aSearchText The text to search for, either in value, reference or elsewhere.
      */
-    SCH_ITEM* FindSymbolAndItem( const wxString* aPath, const wxString* aReference,
-                                 bool aSearchHierarchy, SCH_SEARCH_T aSearchType,
-                                 const wxString& aSearchText );
+    SCH_ITEM* FindSymbolAndItem( const wxString* aPath, const wxString* aReference, bool aSearchHierarchy,
+                                 SCH_SEARCH_T aSearchType, const wxString& aSearchText );
 
-    void SetHighlightBusMembers( bool aHighlightBusMembers )
-    {
-        m_highlightBusMembers = aHighlightBusMembers;
-    }
+    void SetHighlightBusMembers( bool aHighlightBusMembers ) { m_highlightBusMembers = aHighlightBusMembers; }
 
     bool GetHighlightBusMembers() const { return m_highlightBusMembers; }
 
@@ -196,12 +194,11 @@ private:
 
     void doCrossProbeSchToPcb( const TOOL_EVENT& aEvent, bool aForce );
 
-    void updatePastedSymbol( SCH_SYMBOL* aSymbol, const SCH_SHEET_PATH& aPastePath,
-                             const KIID_PATH& aClipPath, bool aForceKeepAnnotations );
+    void updatePastedSymbol( SCH_SYMBOL* aSymbol, const SCH_SHEET_PATH& aPastePath, const KIID_PATH& aClipPath,
+                             bool aForceKeepAnnotations );
 
-    SCH_SHEET_PATH updatePastedSheet( SCH_SHEET* aSheet, const SCH_SHEET_PATH& aPastePath,
-                                      const KIID_PATH& aClipPath, bool aForceKeepAnnotations,
-                                      SCH_SHEET_LIST* aPastedSheets,
+    SCH_SHEET_PATH updatePastedSheet( SCH_SHEET* aSheet, const SCH_SHEET_PATH& aPastePath, const KIID_PATH& aClipPath,
+                                      bool aForceKeepAnnotations, SCH_SHEET_LIST* aPastedSheets,
                                       std::map<SCH_SHEET_PATH, SCH_REFERENCE_LIST>& aPastedSymbols );
 
     void setPastedSymbolInstances( const SCH_SCREEN* aScreen );
@@ -243,22 +240,22 @@ private:
     void setTransitions() override;
 
 private:
-    bool        m_probingPcbToSch;          // Recursion guard for PCB to schematic cross-probing
-    EDA_ITEM*   m_pickerItem;               // Current item for picker highlighting.
+    bool      m_probingPcbToSch; // Recursion guard for PCB to schematic cross-probing
+    EDA_ITEM* m_pickerItem;      // Current item for picker highlighting.
 
-    std::string m_duplicateClipboard;       // Temporary storage for Duplicate action
+    std::string m_duplicateClipboard; // Temporary storage for Duplicate action
     bool        m_duplicateIsHoverSelection;
 
-    bool        m_highlightBusMembers;
+    bool m_highlightBusMembers;
 
     // A map of sheet filename --> screens for the clipboard contents.  We use these to hook up
     // cut/paste operations for unsaved sheet content.
-    std::map<wxString, SCH_SCREEN*>          m_supplementaryClipboard;
+    std::map<wxString, SCH_SCREEN*> m_supplementaryClipboard;
 
     // A map of KIID_PATH --> symbol instances for the clipboard contents.
     std::map<KIID_PATH, SCH_SYMBOL_INSTANCE> m_clipboardSymbolInstances;
 
-    std::set<SCH_SYMBOL*>                    m_pastedSymbols;
+    std::set<SCH_SYMBOL*> m_pastedSymbols;
 };
 
 

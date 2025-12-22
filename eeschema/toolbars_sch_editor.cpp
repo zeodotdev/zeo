@@ -46,10 +46,9 @@
 #include <wx/choice.h>
 
 
-ACTION_TOOLBAR_CONTROL SCH_ACTION_TOOLBAR_CONTROLS::currentVariant(
-        "control.currentVariant",
-        _( "Current Variant" ),
-        _( "Control to select the current schematic variant" ) );
+ACTION_TOOLBAR_CONTROL
+        SCH_ACTION_TOOLBAR_CONTROLS::currentVariant( "control.currentVariant", _( "Current Variant" ),
+                                                     _( "Control to select the current schematic variant" ) );
 
 
 std::optional<TOOLBAR_CONFIGURATION> SCH_EDIT_TOOLBAR_SETTINGS::DefaultToolbarConfig( TOOLBAR_LOC aToolbar )
@@ -202,6 +201,7 @@ std::optional<TOOLBAR_CONFIGURATION> SCH_EDIT_TOOLBAR_SETTINGS::DefaultToolbarCo
               .AppendAction( SCH_ACTIONS::generateBOM );
 
         config.AppendSeparator()
+              .AppendAction( SCH_ACTIONS::showAgent )
               .AppendAction( SCH_ACTIONS::showPcbNew );
 
         if( ADVANCED_CFG::GetCfg().m_EnableVariantsUI )
@@ -225,49 +225,47 @@ void SCH_EDIT_FRAME::configureToolbars()
 
     if( ADVANCED_CFG::GetCfg().m_EnableVariantsUI )
     {
-    // Variant selection drop down control on main tool bar.
-    auto variantSelectionCtrlFactory =
-        [this]( ACTION_TOOLBAR* aToolbar )
+        // Variant selection drop down control on main tool bar.
+        auto variantSelectionCtrlFactory = [this]( ACTION_TOOLBAR* aToolbar )
         {
             std::optional<wxString> currentVariantName = Schematic().GetCurrentVariant();
-            wxString tmp = currentVariantName ? *currentVariantName : GetDefaultVariantName();
+            wxString                tmp = currentVariantName ? *currentVariantName : GetDefaultVariantName();
 
-            m_currentVariantCtrl = new wxChoice( aToolbar, ID_TOOLBAR_SCH_SELECT_VARAIANT, wxDefaultPosition,
-                                                 wxDefaultSize, Schematic().GetVariantNamesForUI(), 0,
-                                                 wxDefaultValidator, tmp );
+            m_currentVariantCtrl =
+                    new wxChoice( aToolbar, ID_TOOLBAR_SCH_SELECT_VARAIANT, wxDefaultPosition, wxDefaultSize,
+                                  Schematic().GetVariantNamesForUI(), 0, wxDefaultValidator, tmp );
 
             m_currentVariantCtrl->SetToolTip( _( "Select the current variant to display and edit." ) );
             aToolbar->Add( m_currentVariantCtrl );
             UpdateVariantSelectionCtrl( Schematic().GetVariantNamesForUI() );
         };
 
-    RegisterCustomToolbarControlFactory( SCH_ACTION_TOOLBAR_CONTROLS::currentVariant, variantSelectionCtrlFactory );
+        RegisterCustomToolbarControlFactory( SCH_ACTION_TOOLBAR_CONTROLS::currentVariant, variantSelectionCtrlFactory );
     }
 
     // IPC/Scripting plugin control
     // TODO (ISM): Clean this up to make IPC actions just normal tool actions to get rid of this entire
     // control
-    auto pluginControlFactory =
-        [this]( ACTION_TOOLBAR* aToolbar )
+    auto pluginControlFactory = [this]( ACTION_TOOLBAR* aToolbar )
+    {
+        // Add scripting console and API plugins
+        bool scriptingAvailable = SCRIPTING::IsWxAvailable();
+
+#ifdef KICAD_IPC_API
+        bool haveApiPlugins = Pgm().GetCommonSettings()->m_Api.enable_server
+                              && !Pgm().GetPluginManager().GetActionsForScope( PluginActionScope() ).empty();
+#else
+        bool haveApiPlugins = false;
+#endif
+
+        if( scriptingAvailable || haveApiPlugins )
         {
-            // Add scripting console and API plugins
-            bool scriptingAvailable = SCRIPTING::IsWxAvailable();
+            aToolbar->AddScaledSeparator( aToolbar->GetParent() );
 
-            #ifdef KICAD_IPC_API
-            bool haveApiPlugins = Pgm().GetCommonSettings()->m_Api.enable_server &&
-                    !Pgm().GetPluginManager().GetActionsForScope( PluginActionScope() ).empty();
-            #else
-            bool haveApiPlugins = false;
-            #endif
-
-            if( scriptingAvailable || haveApiPlugins )
-            {
-                aToolbar->AddScaledSeparator( aToolbar->GetParent() );
-
-                if( haveApiPlugins )
-                    AddApiPluginTools( aToolbar );
-            }
-        };
+            if( haveApiPlugins )
+                AddApiPluginTools( aToolbar );
+        }
+    };
 
     RegisterCustomToolbarControlFactory( ACTION_TOOLBAR_CONTROLS::ipcScripting, pluginControlFactory );
 }
@@ -280,7 +278,7 @@ void SCH_EDIT_FRAME::UpdateVariantSelectionCtrl( const wxArrayString& aVariantNa
 
     // Fall back to the default if nothing is currently selected.
     wxString currentSelection = GetDefaultVariantName();
-    int selectionIndex = m_currentVariantCtrl->GetSelection();
+    int      selectionIndex = m_currentVariantCtrl->GetSelection();
 
     if( selectionIndex != wxNOT_FOUND )
         currentSelection = m_currentVariantCtrl->GetString( selectionIndex );

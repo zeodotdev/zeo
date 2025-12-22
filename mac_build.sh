@@ -184,12 +184,33 @@ find "$BUILD_OUTPUT_DIR" -maxdepth 1 -type d -name "*.app" | while read app_path
     cp -R "$app_path" "$DEST_APPS_DIR/"
 done
 
+DEST_PLUGINS_DIR="$KICAD_APP_BUNDLE/Contents/PlugIns"
+mkdir -p "$DEST_PLUGINS_DIR"
+
 echo "Scanning for additional .kiface files..."
 find "$BUILD_OUTPUT_DIR" -maxdepth 1 -name "*.kiface" | while read kiface_path; do
     kiface_name=$(basename "$kiface_path")
     echo "Bundling $kiface_name..."
-    cp "$kiface_path" "$DEST_FRAMEWORKS_DIR/"
+    cp "$kiface_path" "$DEST_PLUGINS_DIR/"
 done
+
+echo "Fixing up _agent.kiface dependencies..."
+AGENT_KIFACE="$DEST_PLUGINS_DIR/_agent.kiface"
+if [ -f "$AGENT_KIFACE" ]; then
+    otool -L "$AGENT_KIFACE" | grep "\t/" | while read -r line; do
+        # Extract path (first token)
+        libpath=$(echo "$line" | awk '{print $1}')
+        libname=$(basename "$libpath")
+        
+        # Don't touch system libs (/usr/lib, /System/Library)
+        if [[ "$libpath" == /usr/lib* ]] || [[ "$libpath" == /System/Library* ]]; then
+            continue
+        fi
+        
+        echo "Changing $libpath to @rpath/$libname"
+        install_name_tool -change "$libpath" "@rpath/$libname" "$AGENT_KIFACE"
+    done
+fi
 
 
 

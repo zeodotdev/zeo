@@ -47,14 +47,14 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
     // wxWidgets handles the Mac Application menu behind the scenes, but that means
     // we always have to start from scratch with a new wxMenuBar.
     wxMenuBar*  oldMenuBar = GetMenuBar();
-    WX_MENUBAR* menuBar    = new WX_MENUBAR();
+    WX_MENUBAR* menuBar = new WX_MENUBAR();
 
     //-- File menu -----------------------------------------------------------
     //
-    ACTION_MENU*   fileMenu = new ACTION_MENU( false, selTool );
+    ACTION_MENU*        fileMenu = new ACTION_MENU( false, selTool );
     static ACTION_MENU* openRecentMenu;
 
-    if( Kiface().IsSingle() )   // When not under a project mgr
+    if( Kiface().IsSingle() ) // When not under a project mgr
     {
         FILE_HISTORY& fileHistory = GetFileHistory();
 
@@ -102,12 +102,11 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
     submenuImport->SetIcon( BITMAPS::import );
 
     submenuImport->Add( _( "Non-KiCad Schematic..." ),
-                _( "Replace current schematic sheet with one imported from another application" ),
-                ID_IMPORT_NON_KICAD_SCH,
-                BITMAPS::import_document );
+                        _( "Replace current schematic sheet with one imported from another application" ),
+                        ID_IMPORT_NON_KICAD_SCH, BITMAPS::import_document );
 
     submenuImport->Add( SCH_ACTIONS::importFPAssignments, ACTION_MENU::NORMAL, _( "Footprint Assignments..." ) );
-    submenuImport->Add( SCH_ACTIONS::importGraphics,      ACTION_MENU::NORMAL, _( "Graphics..." ) );
+    submenuImport->Add( SCH_ACTIONS::importGraphics, ACTION_MENU::NORMAL, _( "Graphics..." ) );
 
     fileMenu->Add( submenuImport );
 
@@ -116,8 +115,8 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
     ACTION_MENU* submenuExport = new ACTION_MENU( false, selTool );
     submenuExport->SetTitle( _( "Export" ) );
     submenuExport->SetIcon( BITMAPS::export_file );
-    submenuExport->Add( SCH_ACTIONS::drawSheetOnClipboard,   ACTION_MENU::NORMAL, _( "Drawing to Clipboard" ) );
-    submenuExport->Add( SCH_ACTIONS::exportNetlist,          ACTION_MENU::NORMAL, _( "Netlist..." ) );
+    submenuExport->Add( SCH_ACTIONS::drawSheetOnClipboard, ACTION_MENU::NORMAL, _( "Drawing to Clipboard" ) );
+    submenuExport->Add( SCH_ACTIONS::exportNetlist, ACTION_MENU::NORMAL, _( "Netlist..." ) );
     submenuExport->Add( SCH_ACTIONS::exportSymbolsToLibrary, ACTION_MENU::NORMAL, _( "Symbols..." ) );
     fileMenu->Add( submenuExport );
 
@@ -166,9 +165,9 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
     submenuAttributes->SetTitle( _( "Attributes" ) );
 
     submenuAttributes->Add( SCH_ACTIONS::setExcludeFromSimulation, ACTION_MENU::CHECK );
-    submenuAttributes->Add( SCH_ACTIONS::setExcludeFromBOM,        ACTION_MENU::CHECK );
-    submenuAttributes->Add( SCH_ACTIONS::setExcludeFromBoard,      ACTION_MENU::CHECK );
-    submenuAttributes->Add( SCH_ACTIONS::setDNP,                   ACTION_MENU::CHECK );
+    submenuAttributes->Add( SCH_ACTIONS::setExcludeFromBOM, ACTION_MENU::CHECK );
+    submenuAttributes->Add( SCH_ACTIONS::setExcludeFromBoard, ACTION_MENU::CHECK );
+    submenuAttributes->Add( SCH_ACTIONS::setDNP, ACTION_MENU::CHECK );
 
     editMenu->Add( submenuAttributes );
 
@@ -188,12 +187,14 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
         showHidePanels->Add( SCH_ACTIONS::showNetNavigator, ACTION_MENU::CHECK );
 
     showHidePanels->Add( SCH_ACTIONS::showDesignBlockPanel, ACTION_MENU::CHECK, _( "Design Blocks" ) );
-    wxMenuItem* remoteSymbolItem = showHidePanels->Add( SCH_ACTIONS::showRemoteSymbolPanel, ACTION_MENU::CHECK, _( "Remote Symbols" ) );
+    wxMenuItem* remoteSymbolItem =
+            showHidePanels->Add( SCH_ACTIONS::showRemoteSymbolPanel, ACTION_MENU::CHECK, _( "Remote Symbols" ) );
 
     if( m_remoteSymbolPane && !m_remoteSymbolPane->HasDataSources() )
     {
         remoteSymbolItem->Enable( false );
-        remoteSymbolItem->SetHelp( _( "Install a remote symbol server using the Plugin and Content Manger to enable" ) );
+        remoteSymbolItem->SetHelp(
+                _( "Install a remote symbol server using the Plugin and Content Manger to enable" ) );
     }
 
     viewMenu->Add( showHidePanels );
@@ -218,18 +219,17 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
     viewMenu->Add( SCH_ACTIONS::navigateNext );
 
 
-
     viewMenu->AppendSeparator();
-    viewMenu->Add( SCH_ACTIONS::toggleHiddenPins,      ACTION_MENU::CHECK );
-    viewMenu->Add( SCH_ACTIONS::toggleHiddenFields,    ACTION_MENU::CHECK );
+    viewMenu->Add( SCH_ACTIONS::toggleHiddenPins, ACTION_MENU::CHECK );
+    viewMenu->Add( SCH_ACTIONS::toggleHiddenFields, ACTION_MENU::CHECK );
     viewMenu->Add( SCH_ACTIONS::toggleDirectiveLabels, ACTION_MENU::CHECK );
-    viewMenu->Add( SCH_ACTIONS::toggleERCErrors,       ACTION_MENU::CHECK );
-    viewMenu->Add( SCH_ACTIONS::toggleERCWarnings,     ACTION_MENU::CHECK );
-    viewMenu->Add( SCH_ACTIONS::toggleERCExclusions,   ACTION_MENU::CHECK );
-    viewMenu->Add( SCH_ACTIONS::markSimExclusions,     ACTION_MENU::CHECK );
-    viewMenu->Add( SCH_ACTIONS::toggleOPVoltages,      ACTION_MENU::CHECK );
-    viewMenu->Add( SCH_ACTIONS::toggleOPCurrents,      ACTION_MENU::CHECK );
-    viewMenu->Add( SCH_ACTIONS::togglePinAltIcons,     ACTION_MENU::CHECK );
+    viewMenu->Add( SCH_ACTIONS::toggleERCErrors, ACTION_MENU::CHECK );
+    viewMenu->Add( SCH_ACTIONS::toggleERCWarnings, ACTION_MENU::CHECK );
+    viewMenu->Add( SCH_ACTIONS::toggleERCExclusions, ACTION_MENU::CHECK );
+    viewMenu->Add( SCH_ACTIONS::markSimExclusions, ACTION_MENU::CHECK );
+    viewMenu->Add( SCH_ACTIONS::toggleOPVoltages, ACTION_MENU::CHECK );
+    viewMenu->Add( SCH_ACTIONS::toggleOPCurrents, ACTION_MENU::CHECK );
+    viewMenu->Add( SCH_ACTIONS::togglePinAltIcons, ACTION_MENU::CHECK );
 
 #ifdef __APPLE__
     viewMenu->AppendSeparator();
@@ -295,6 +295,7 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
 
     toolsMenu->Add( ACTIONS::updatePcbFromSchematic )->Enable( !Kiface().IsSingle() );
     toolsMenu->Add( SCH_ACTIONS::showPcbNew );
+    toolsMenu->Add( SCH_ACTIONS::showAgent );
 
     if( !Kiface().IsSingle() )
         toolsMenu->Add( ACTIONS::showProjectManager );
@@ -358,16 +359,15 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
 
     //-- Menubar -------------------------------------------------------------
     //
-    menuBar->Append( fileMenu,    _( "&File" ) );
-    menuBar->Append( editMenu,    _( "&Edit" ) );
-    menuBar->Append( viewMenu,    _( "&View" ) );
-    menuBar->Append( placeMenu,   _( "&Place" ) );
+    menuBar->Append( fileMenu, _( "&File" ) );
+    menuBar->Append( editMenu, _( "&Edit" ) );
+    menuBar->Append( viewMenu, _( "&View" ) );
+    menuBar->Append( placeMenu, _( "&Place" ) );
     menuBar->Append( inspectMenu, _( "&Inspect" ) );
-    menuBar->Append( toolsMenu,   _( "&Tools" ) );
-    menuBar->Append( prefsMenu,   _( "P&references" ) );
+    menuBar->Append( toolsMenu, _( "&Tools" ) );
+    menuBar->Append( prefsMenu, _( "P&references" ) );
     AddStandardHelpMenu( menuBar );
 
     SetMenuBar( menuBar );
     delete oldMenuBar;
 }
-

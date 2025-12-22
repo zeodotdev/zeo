@@ -180,9 +180,8 @@ static wxString getBuildDirectoryRoot()
         fn.RemoveLastDir();
     }
 
-    wxASSERT_MSG(
-            fn.GetDirCount() > 0,
-            wxString::Format( wxT( "Could not find build root directory above %s" ), execPath ) );
+    wxASSERT_MSG( fn.GetDirCount() > 0,
+                  wxString::Format( wxT( "Could not find build root directory above %s" ), execPath ) );
 
     return fn.GetPath();
 }
@@ -366,9 +365,8 @@ wxString PATHS::GetStockPlugins3DPath()
     //     /path/to/bundlename.app/Contents/PlugIns
     // If we are an aux binary, the path will be something like
     //     /path/to/bundlename.app/Contents/Applications/<standalone>.app/Contents/PlugIns
-    if( dirs.GetCount() >= 6 &&
-        dirs[dirs.GetCount() - 4] == wxT( "Applications" ) &&
-        dirs[dirs.GetCount() - 6].Lower().EndsWith( wxT( "app" ) ) )
+    if( dirs.GetCount() >= 6 && dirs[dirs.GetCount() - 4] == wxT( "Applications" )
+        && dirs[dirs.GetCount() - 6].Lower().EndsWith( wxT( "app" ) ) )
     {
         fn.RemoveLastDir();
         fn.RemoveLastDir();
@@ -477,7 +475,7 @@ wxString PATHS::GetLogsPath()
 
 bool PATHS::EnsurePathExists( const wxString& aPath, bool aPathToFile )
 {
-    wxString   pathString = aPath;
+    wxString pathString = aPath;
     if( !aPathToFile )
     {
         // ensures the path is treated fully as directory
@@ -521,13 +519,13 @@ void PATHS::EnsureUserPathsExist()
 
     if( !tmp.DirExists() )
     {
-        wxString msg = wxString::Format(
-                _( "KiCad was unable to use '%s'.\n"
-                   "\n"
-                   "1. Disable 'Controlled folder access' in Windows settings or Group Policy\n"
-                   "2. Make sure no other antivirus software interferes with KiCad\n"
-                   "3. Make sure you have correct permissions set up" ),
-                tmp.GetPath() );
+        wxString msg =
+                wxString::Format( _( "KiCad was unable to use '%s'.\n"
+                                     "\n"
+                                     "1. Disable 'Controlled folder access' in Windows settings or Group Policy\n"
+                                     "2. Make sure no other antivirus software interferes with KiCad\n"
+                                     "3. Make sure you have correct permissions set up" ),
+                                  tmp.GetPath() );
 
         wxMessageBox( msg, _( "Warning" ), wxICON_WARNING );
     }
@@ -538,14 +536,25 @@ void PATHS::EnsureUserPathsExist()
 #ifdef __WXMAC__
 wxString PATHS::GetOSXKicadUserDataDir()
 {
+    printf( "DEBUG: PATHS::GetOSXKicadUserDataDir called\n" );
     // According to wxWidgets documentation for GetUserDataDir:
     // Mac: ~/Library/Application Support/appname
+    if( wxTheApp )
+    {
+        printf( "DEBUG: wxTheApp is %p\n", (void*) wxTheApp );
+        printf( "DEBUG: App name: %s\n", (const char*) wxTheApp->GetAppName().utf8_str() );
+    }
+    else
+    {
+        printf( "DEBUG: wxTheApp is NULL in GetOSXKicadUserDataDir\n" );
+    }
+
     wxFileName udir( wxStandardPaths::Get().GetUserDataDir(), wxEmptyString );
 
     // Since appname is different if started via launcher or standalone binary
     // map all to "kicad" here
     udir.RemoveLastDir();
-    udir.AppendDir(  wxT( "kicad" ) );
+    udir.AppendDir( wxT( "kicad" ) );
 
     return udir.GetPath();
 }
@@ -571,9 +580,8 @@ wxString PATHS::GetOSXKicadDataDir()
     //     /path/to/bundlename.app/Contents/SharedSupport
     // If we are an aux binary, the path will be something like
     //     /path/to/bundlename.app/Contents/Applications/<standalone>.app/Contents/SharedSupport
-    if( dirs.GetCount() >= 6 &&
-        dirs[dirs.GetCount() - 4] == wxT( "Applications" ) &&
-        dirs[dirs.GetCount() - 6].Lower().EndsWith( wxT( "app" ) ) )
+    if( dirs.GetCount() >= 6 && dirs[dirs.GetCount() - 4] == wxT( "Applications" )
+        && dirs[dirs.GetCount() - 6].Lower().EndsWith( wxT( "app" ) ) )
     {
         ddir.RemoveLastDir();
         ddir.RemoveLastDir();
@@ -601,7 +609,7 @@ wxString PATHS::GetWindowsFontConfigDir()
 
 wxString PATHS::getWindowsKiCadRoot()
 {
-    wxFileName root( GetExecutablePath() +  wxT( "/../" ) );
+    wxFileName root( GetExecutablePath() + wxT( "/../" ) );
     root.MakeAbsolute();
 
     return root.GetPathWithSep();

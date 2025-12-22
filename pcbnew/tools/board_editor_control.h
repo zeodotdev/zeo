@@ -30,8 +30,9 @@
 #include <tools/pcb_tool_base.h>
 #include <tool/tool_menu.h>
 
-namespace KIGFX {
-    class ORIGIN_VIEWITEM;
+namespace KIGFX
+{
+class ORIGIN_VIEWITEM;
 }
 
 class PCB_EDIT_FRAME;
@@ -91,6 +92,7 @@ public:
     int UpdatePCBFromSchematic( const TOOL_EVENT& aEvent );
     int UpdateSchematicFromPCB( const TOOL_EVENT& aEvent );
     int ShowEeschema( const TOOL_EVENT& aEvent );
+    int ShowAgent( const TOOL_EVENT& aEvent );
     int ToggleLayersManager( const TOOL_EVENT& aEvent );
     int ToggleProperties( const TOOL_EVENT& aEvent );
     int ToggleNetInspector( const TOOL_EVENT& aEvent );
@@ -145,8 +147,7 @@ public:
     int DrillOrigin( const TOOL_EVENT& aEvent );
 
     ///< Low-level access (below undo) to setting the drill origin.
-    static void DoSetDrillOrigin( KIGFX::VIEW* aView, PCB_BASE_FRAME* aFrame,
-                                  EDA_ITEM* aItem, const VECTOR2D& aPoint );
+    static void DoSetDrillOrigin( KIGFX::VIEW* aView, PCB_BASE_FRAME* aFrame, EDA_ITEM* aItem, const VECTOR2D& aPoint );
 
     // Line-mode handlers
     int ChangeLineMode( const TOOL_EVENT& aEvent );
@@ -154,7 +155,12 @@ public:
 
 private:
     ///< How to modify a property for selected items.
-    enum MODIFY_MODE { ON, OFF, TOGGLE };
+    enum MODIFY_MODE
+    {
+        ON,
+        OFF,
+        TOGGLE
+    };
 
     int modifyLockSelected( MODIFY_MODE aMode );
 
@@ -164,9 +170,9 @@ private:
     void doCrossProbePcbToSch( const TOOL_EVENT& aEvent, bool aForce );
 
 private:
-    PCB_EDIT_FRAME*  m_frame;
-    bool             m_inPlaceFootprint;      // Re-entrancy guard for tool.
-    bool             m_placingFootprint;      // Re-entrancy guard for placement loop.
+    PCB_EDIT_FRAME* m_frame;
+    bool            m_inPlaceFootprint; // Re-entrancy guard for tool.
+    bool            m_placingFootprint; // Re-entrancy guard for placement loop.
 
     std::unique_ptr<KIGFX::ORIGIN_VIEWITEM> m_placeOrigin;
 };

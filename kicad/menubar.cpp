@@ -192,6 +192,7 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     //
     ACTION_MENU* toolsMenu = new ACTION_MENU( false, controlTool );
 
+    toolsMenu->Add( KICAD_MANAGER_ACTIONS::showAiAssistant );
     toolsMenu->Add( KICAD_MANAGER_ACTIONS::editSchematic );
     toolsMenu->Add( KICAD_MANAGER_ACTIONS::editSymbols );
     toolsMenu->Add( KICAD_MANAGER_ACTIONS::editPCB );
@@ -201,7 +202,6 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     toolsMenu->Add( KICAD_MANAGER_ACTIONS::viewGerbers );
     toolsMenu->Add( KICAD_MANAGER_ACTIONS::convertImage );
     toolsMenu->Add( KICAD_MANAGER_ACTIONS::showCalculator );
-    toolsMenu->Add( KICAD_MANAGER_ACTIONS::showAiAssistant );
     toolsMenu->Add( KICAD_MANAGER_ACTIONS::editDrawingSheet );
 
     wxMenuItem* pcmMenuItem = toolsMenu->Add( KICAD_MANAGER_ACTIONS::showPluginManager );

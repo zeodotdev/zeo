@@ -44,7 +44,7 @@
 // specialized, but we don't translate on initialization and instead do it in the getters.
 
 #undef _
-#define _(s) s
+#define _( s ) s
 
 // clang-format off
 
@@ -1575,6 +1575,13 @@ TOOL_ACTION PCB_ACTIONS::showEeschema( TOOL_ACTION_ARGS()
         .FriendlyName( _( "Switch to Schematic Editor" ) )
         .Tooltip( _( "Open schematic in schematic editor" ) )
         .Icon( BITMAPS::icon_eeschema_24 ) );
+
+TOOL_ACTION PCB_ACTIONS::showAgent( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.EditorControl.showAgent" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Open Agent" ) )
+        .Tooltip( _( "Open the AI Agent" ) )
+        .Icon( BITMAPS::icon_kicad ) );
 
 
 // PCB_CONTROL

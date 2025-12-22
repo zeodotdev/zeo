@@ -45,16 +45,16 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
     // wxWidgets handles the Mac Application menu behind the scenes, but that means
     // we always have to start from scratch with a new wxMenuBar.
     wxMenuBar*  oldMenuBar = GetMenuBar();
-    WX_MENUBAR* menuBar    = new WX_MENUBAR();
+    WX_MENUBAR* menuBar = new WX_MENUBAR();
 
     // Recreate all menus:
 
     //-- File menu -----------------------------------------------------------
     //
-    ACTION_MENU*   fileMenu = new ACTION_MENU( false, selTool );
+    ACTION_MENU*        fileMenu = new ACTION_MENU( false, selTool );
     static ACTION_MENU* openRecentMenu;
 
-    if( Kiface().IsSingle() )   // not when under a project mgr
+    if( Kiface().IsSingle() ) // not when under a project mgr
     {
         FILE_HISTORY& fileHistory = GetFileHistory();
 
@@ -108,9 +108,9 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
     submenuImport->SetTitle( _( "Import" ) );
     submenuImport->SetIcon( BITMAPS::import );
 
-    submenuImport->Add( PCB_ACTIONS::importNetlist,          ACTION_MENU::NORMAL, _( "Netlist..." ) );
-    submenuImport->Add( PCB_ACTIONS::importSpecctraSession,  ACTION_MENU::NORMAL, _( "Specctra Session..." ) );
-    submenuImport->Add( PCB_ACTIONS::placeImportedGraphics,  ACTION_MENU::NORMAL, _( "Graphics..." ) );
+    submenuImport->Add( PCB_ACTIONS::importNetlist, ACTION_MENU::NORMAL, _( "Netlist..." ) );
+    submenuImport->Add( PCB_ACTIONS::importSpecctraSession, ACTION_MENU::NORMAL, _( "Specctra Session..." ) );
+    submenuImport->Add( PCB_ACTIONS::placeImportedGraphics, ACTION_MENU::NORMAL, _( "Graphics..." ) );
     submenuImport->Add( PCB_ACTIONS::openNonKicadBoard );
 
     fileMenu->AppendSeparator();
@@ -122,18 +122,18 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
     submenuExport->SetIcon( BITMAPS::export_file );
 
     submenuExport->Add( PCB_ACTIONS::exportSpecctraDSN, ACTION_MENU::NORMAL, _( "Specctra DSN..." ) );
-    submenuExport->Add( PCB_ACTIONS::exportGenCAD,      ACTION_MENU::NORMAL, _( "GenCAD..." ) );
-    submenuExport->Add( PCB_ACTIONS::exportVRML,        ACTION_MENU::NORMAL, _( "VRML..." ) );
-    submenuExport->Add( PCB_ACTIONS::exportIDF,         ACTION_MENU::NORMAL, _( "IDFv3..." ) );
-    submenuExport->Add( PCB_ACTIONS::exportSTEP,        ACTION_MENU::NORMAL, _( "STEP/GLB/BREP/XAO/PLY/STL..." ) );
-    submenuExport->Add( PCB_ACTIONS::exportCmpFile,     ACTION_MENU::NORMAL, _( "Footprint Association (.cmp) File..." ) );
-    submenuExport->Add( PCB_ACTIONS::exportHyperlynx,   ACTION_MENU::NORMAL, _( "Hyperlynx..." ) );
+    submenuExport->Add( PCB_ACTIONS::exportGenCAD, ACTION_MENU::NORMAL, _( "GenCAD..." ) );
+    submenuExport->Add( PCB_ACTIONS::exportVRML, ACTION_MENU::NORMAL, _( "VRML..." ) );
+    submenuExport->Add( PCB_ACTIONS::exportIDF, ACTION_MENU::NORMAL, _( "IDFv3..." ) );
+    submenuExport->Add( PCB_ACTIONS::exportSTEP, ACTION_MENU::NORMAL, _( "STEP/GLB/BREP/XAO/PLY/STL..." ) );
+    submenuExport->Add( PCB_ACTIONS::exportCmpFile, ACTION_MENU::NORMAL, _( "Footprint Association (.cmp) File..." ) );
+    submenuExport->Add( PCB_ACTIONS::exportHyperlynx, ACTION_MENU::NORMAL, _( "Hyperlynx..." ) );
 
     if( ADVANCED_CFG::GetCfg().m_ShowPcbnewExportNetlist && m_exportNetlistAction )
         submenuExport->Add( *m_exportNetlistAction );
 
     submenuExport->AppendSeparator();
-    submenuExport->Add( PCB_ACTIONS::exportFootprints,  ACTION_MENU::NORMAL, _( "Footprints..." ) );
+    submenuExport->Add( PCB_ACTIONS::exportFootprints, ACTION_MENU::NORMAL, _( "Footprints..." ) );
 
     fileMenu->Add( submenuExport );
 
@@ -216,10 +216,10 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
 
     ACTION_MENU* showHidePanels = new ACTION_MENU( false, selTool );
     showHidePanels->SetTitle( _( "Panels" ) );
-    showHidePanels->Add( ACTIONS::showProperties,                 ACTION_MENU::CHECK );
-    showHidePanels->Add( PCB_ACTIONS::showSearch,                 ACTION_MENU::CHECK );
-    showHidePanels->Add( PCB_ACTIONS::showLayersManager,          ACTION_MENU::CHECK );
-    showHidePanels->Add( PCB_ACTIONS::showNetInspector,           ACTION_MENU::CHECK );
+    showHidePanels->Add( ACTIONS::showProperties, ACTION_MENU::CHECK );
+    showHidePanels->Add( PCB_ACTIONS::showSearch, ACTION_MENU::CHECK );
+    showHidePanels->Add( PCB_ACTIONS::showLayersManager, ACTION_MENU::CHECK );
+    showHidePanels->Add( PCB_ACTIONS::showNetInspector, ACTION_MENU::CHECK );
 
     if( ADVANCED_CFG::GetCfg().m_EnablePcbDesignBlocks )
         showHidePanels->Add( PCB_ACTIONS::showDesignBlockPanel, ACTION_MENU::CHECK, _( "Design Blocks" ) );
@@ -245,23 +245,23 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
     drawingModeSubMenu->SetTitle( _( "&Drawing Mode" ) );
     drawingModeSubMenu->SetIcon( BITMAPS::add_zone );
 
-    drawingModeSubMenu->Add( PCB_ACTIONS::zoneDisplayFilled,   ACTION_MENU::CHECK );
-    drawingModeSubMenu->Add( PCB_ACTIONS::zoneDisplayOutline,  ACTION_MENU::CHECK );
+    drawingModeSubMenu->Add( PCB_ACTIONS::zoneDisplayFilled, ACTION_MENU::CHECK );
+    drawingModeSubMenu->Add( PCB_ACTIONS::zoneDisplayOutline, ACTION_MENU::CHECK );
 
     if( ADVANCED_CFG::GetCfg().m_ExtraZoneDisplayModes )
     {
-        drawingModeSubMenu->Add( PCB_ACTIONS::zoneDisplayFractured,    ACTION_MENU::CHECK );
+        drawingModeSubMenu->Add( PCB_ACTIONS::zoneDisplayFractured, ACTION_MENU::CHECK );
         drawingModeSubMenu->Add( PCB_ACTIONS::zoneDisplayTriangulated, ACTION_MENU::CHECK );
     }
 
     drawingModeSubMenu->AppendSeparator();
-    drawingModeSubMenu->Add( PCB_ACTIONS::padDisplayMode,      ACTION_MENU::CHECK );
-    drawingModeSubMenu->Add( PCB_ACTIONS::viaDisplayMode,      ACTION_MENU::CHECK );
-    drawingModeSubMenu->Add( PCB_ACTIONS::trackDisplayMode,    ACTION_MENU::CHECK );
+    drawingModeSubMenu->Add( PCB_ACTIONS::padDisplayMode, ACTION_MENU::CHECK );
+    drawingModeSubMenu->Add( PCB_ACTIONS::viaDisplayMode, ACTION_MENU::CHECK );
+    drawingModeSubMenu->Add( PCB_ACTIONS::trackDisplayMode, ACTION_MENU::CHECK );
 
     drawingModeSubMenu->AppendSeparator();
-    drawingModeSubMenu->Add( PCB_ACTIONS::graphicsOutlines,    ACTION_MENU::CHECK );
-    drawingModeSubMenu->Add( PCB_ACTIONS::textOutlines,        ACTION_MENU::CHECK );
+    drawingModeSubMenu->Add( PCB_ACTIONS::graphicsOutlines, ACTION_MENU::CHECK );
+    drawingModeSubMenu->Add( PCB_ACTIONS::textOutlines, ACTION_MENU::CHECK );
 
     viewMenu->Add( drawingModeSubMenu );
 
@@ -270,12 +270,12 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
     contrastModeSubMenu->SetTitle( _( "&Contrast Mode" ) );
     contrastModeSubMenu->SetIcon( BITMAPS::contrast_mode );
 
-    contrastModeSubMenu->Add( ACTIONS::highContrastMode,    ACTION_MENU::CHECK );
+    contrastModeSubMenu->Add( ACTIONS::highContrastMode, ACTION_MENU::CHECK );
     contrastModeSubMenu->Add( PCB_ACTIONS::layerAlphaDec );
     contrastModeSubMenu->Add( PCB_ACTIONS::layerAlphaInc );
     viewMenu->Add( contrastModeSubMenu );
 
-    viewMenu->Add( PCB_ACTIONS::flipBoard,                  ACTION_MENU::CHECK );
+    viewMenu->Add( PCB_ACTIONS::flipBoard, ACTION_MENU::CHECK );
 
 #ifdef __APPLE__
     viewMenu->AppendSeparator();
@@ -390,6 +390,7 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
 
     toolsMenu->Add( ACTIONS::updatePcbFromSchematic )->Enable( !Kiface().IsSingle() );
     toolsMenu->Add( PCB_ACTIONS::showEeschema );
+    toolsMenu->Add( PCB_ACTIONS::showAgent );
 
     if( !Kiface().IsSingle() )
         toolsMenu->Add( ACTIONS::showProjectManager );
@@ -469,17 +470,16 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
 
     //--MenuBar -----------------------------------------------------------
     //
-    menuBar->Append( fileMenu,    _( "&File" ) );
-    menuBar->Append( editMenu,    _( "&Edit" ) );
-    menuBar->Append( viewMenu,    _( "&View" ) );
-    menuBar->Append( placeMenu,   _( "&Place" ) );
-    menuBar->Append( routeMenu,   _( "Ro&ute" ) );
+    menuBar->Append( fileMenu, _( "&File" ) );
+    menuBar->Append( editMenu, _( "&Edit" ) );
+    menuBar->Append( viewMenu, _( "&View" ) );
+    menuBar->Append( placeMenu, _( "&Place" ) );
+    menuBar->Append( routeMenu, _( "Ro&ute" ) );
     menuBar->Append( inspectMenu, _( "&Inspect" ) );
-    menuBar->Append( toolsMenu,   _( "&Tools" ) );
-    menuBar->Append( prefsMenu,   _( "P&references" ) );
+    menuBar->Append( toolsMenu, _( "&Tools" ) );
+    menuBar->Append( prefsMenu, _( "P&references" ) );
     AddStandardHelpMenu( menuBar );
 
     SetMenuBar( menuBar );
     delete oldMenuBar;
-
 }

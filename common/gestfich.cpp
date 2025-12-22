@@ -116,6 +116,7 @@ wxString FindKicadFile( const wxString& shortname )
         wxT( "Contents/Applications/pcb_calculator.app/Contents/MacOS/" ),
         wxT( "Contents/Applications/pl_editor.app/Contents/MacOS/" ),
         wxT( "Contents/Applications/Agent.app/Contents/MacOS/" ),
+        wxT( "../../Applications/Agent.app/Contents/MacOS/" ),
 #else
         wxT( "/usr/bin/" ),
         wxT( "/usr/local/bin/" ),
@@ -132,6 +133,7 @@ wxString FindKicadFile( const wxString& shortname )
         // make relative paths absolute
         fullFileName = Pgm().GetExecutablePath() + possibilities[i] + shortname;
 #endif
+        printf( "DEBUG: FindKicadFile checking: %s\n", (const char*) fullFileName.c_str() );
 
         if( wxFileExists( fullFileName ) )
             return fullFileName;

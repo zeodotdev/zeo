@@ -51,12 +51,14 @@ KIFACE* KIWAY::m_kiface[KIWAY_FACE_COUNT];
 int     KIWAY::m_kiface_version[KIWAY_FACE_COUNT];
 
 
-
-KIWAY::KIWAY( int aCtlBits, wxFrame* aTop ):
-     m_ctl( aCtlBits ), m_top( nullptr ), m_blockingDialog( wxID_NONE ), m_local_history( nullptr )
+KIWAY::KIWAY( int aCtlBits, wxFrame* aTop ) :
+        m_ctl( aCtlBits ),
+        m_top( nullptr ),
+        m_blockingDialog( wxID_NONE ),
+        m_local_history( nullptr )
 {
     m_local_history = new LOCAL_HISTORY();
-    SetTop( aTop );     // hook player_destroy_handler() into aTop.
+    SetTop( aTop ); // hook player_destroy_handler() into aTop.
 
     // Set the array of all known frame window IDs to empty = wxID_NONE,
     // once they are be created, they are added with FRAME_T as index to this array.
@@ -114,28 +116,27 @@ void KIWAY::SetTop( wxFrame* aTop )
 
 const wxString KIWAY::dso_search_path( FACE_T aFaceId )
 {
-    const char*   name;
+    const char* name;
 
     switch( aFaceId )
     {
-    case FACE_SCH:              name = KIFACE_PREFIX "eeschema";            break;
-    case FACE_PCB:              name = KIFACE_PREFIX "pcbnew";              break;
-    case FACE_CVPCB:            name = KIFACE_PREFIX "cvpcb";               break;
-    case FACE_GERBVIEW:         name = KIFACE_PREFIX "gerbview";            break;
-    case FACE_PL_EDITOR:        name = KIFACE_PREFIX "pl_editor";           break;
-    case FACE_PCB_CALCULATOR:   name = KIFACE_PREFIX "pcb_calculator";      break;
-    case FACE_BMP2CMP:          name = KIFACE_PREFIX "bitmap2component";    break;
-    case FACE_PYTHON:           name = KIFACE_PREFIX "kipython";            break;
+    case FACE_SCH: name = KIFACE_PREFIX "eeschema"; break;
+    case FACE_PCB: name = KIFACE_PREFIX "pcbnew"; break;
+    case FACE_CVPCB: name = KIFACE_PREFIX "cvpcb"; break;
+    case FACE_GERBVIEW: name = KIFACE_PREFIX "gerbview"; break;
+    case FACE_PL_EDITOR: name = KIFACE_PREFIX "pl_editor"; break;
+    case FACE_PCB_CALCULATOR: name = KIFACE_PREFIX "pcb_calculator"; break;
+    case FACE_BMP2CMP: name = KIFACE_PREFIX "bitmap2component"; break;
+    case FACE_PYTHON: name = KIFACE_PREFIX "kipython"; break;
+    case FACE_AGENT: name = KIFACE_PREFIX "agent"; break; // or "kicad_agent" if dso name is that
 
-    default:
-        wxASSERT_MSG( 0, wxT( "caller has a bug, passed a bad aFaceId" ) );
-        return wxEmptyString;
+    default: wxASSERT_MSG( 0, wxT( "caller has a bug, passed a bad aFaceId" ) ); return wxEmptyString;
     }
 
 #ifndef __WXMAC__
     wxString path;
 
-    if( m_ctl & (KFCTL_STANDALONE | KFCTL_CPP_PROJECT_SUITE) )
+    if( m_ctl & ( KFCTL_STANDALONE | KFCTL_CPP_PROJECT_SUITE ) )
     {
         // The 2 *.cpp program launchers: single_top.cpp and kicad.cpp expect
         // the *.kiface's to reside in same directory as their binaries do.
@@ -174,14 +175,15 @@ const wxString KIWAY::dso_search_path( FACE_T aFaceId )
         fn.AppendDir( wxT( "PlugIns" ) );
         fn.SetName( name );
 #else
-        const char*   dirName;
+        const char* dirName;
 
         // The subdirectories usually have the same name as the kiface
         switch( aFaceId )
         {
-            case FACE_PL_EDITOR: dirName = "pagelayout_editor";   break;
-            case FACE_PYTHON:    dirName = "scripting";           break;
-            default:             dirName = name + 1;              break;
+        case FACE_PL_EDITOR: dirName = "pagelayout_editor"; break;
+        case FACE_PYTHON: dirName = "scripting"; break;
+        case FACE_AGENT: dirName = "agent"; break;
+        default: dirName = name + 1; break;
         }
 
         fn.RemoveLastDir();
@@ -251,13 +253,13 @@ KIFACE* KIWAY::KiFACE( FACE_T aFaceId, bool doLoad )
 
         wxDynamicLibrary dso;
 
-        void*   addr = nullptr;
+        void* addr = nullptr;
 
         // For some reason wxDynamicLibrary::Load() crashes in some languages
         // (chinese for instance) when loading the dynamic library.
         // The crash happens for Eeschema.
         // So switch to "C" locale during loading (LC_COLLATE is enough).
-        int lc_new_type = LC_COLLATE;
+        int         lc_new_type = LC_COLLATE;
         std::string user_locale = setlocale( lc_new_type, nullptr );
         setlocale( lc_new_type, "C" );
 
@@ -284,8 +286,7 @@ KIFACE* KIWAY::KiFACE( FACE_T aFaceId, bool doLoad )
             // Failure: error reporting UI was done via wxLogSysError().
             // No further reporting required here.  Assume the same thing applies here as
             // above with the Load() call.  This has not been tested.
-            msg.Printf( _( "Could not read instance name and version from kiface library '%s'." ),
-                        dname );
+            msg.Printf( _( "Could not read instance name and version from kiface library '%s'." ), dname );
             THROW_IO_ERROR( msg );
         }
         else
@@ -295,8 +296,7 @@ KIFACE* KIWAY::KiFACE( FACE_T aFaceId, bool doLoad )
             KIFACE* kiface = ki_getter( &m_kiface_version[aFaceId], KIFACE_VERSION, &Pgm() );
 
             // KIFACE_GETTER_FUNC function comment (API) says the non-NULL is unconditional.
-            wxASSERT_MSG( kiface,
-                          wxT( "attempted DSO has a bug, failed to return a KIFACE*" ) );
+            wxASSERT_MSG( kiface, wxT( "attempted DSO has a bug, failed to return a KIFACE*" ) );
 
             wxDllType dsoHandle = dso.Detach();
 
@@ -309,7 +309,7 @@ KIFACE* KIWAY::KiFACE( FACE_T aFaceId, bool doLoad )
             {
                 startSuccess = kiface->OnKifaceStart( &Pgm(), m_ctl, this );
             }
-            catch (...)
+            catch( ... )
             {
                 // OnKiFaceStart may generate an exception
                 // Before we continue and ultimately unload our module to retry we need
@@ -346,38 +346,31 @@ KIWAY::FACE_T KIWAY::KifaceType( FRAME_T aFrameType )
     case FRAME_SCH_SYMBOL_EDITOR:
     case FRAME_SCH_VIEWER:
     case FRAME_SYMBOL_CHOOSER:
-    case FRAME_SIMULATOR:
-        return FACE_SCH;
+    case FRAME_SIMULATOR: return FACE_SCH;
 
     case FRAME_PCB_EDITOR:
     case FRAME_FOOTPRINT_EDITOR:
     case FRAME_FOOTPRINT_VIEWER:
     case FRAME_FOOTPRINT_CHOOSER:
     case FRAME_FOOTPRINT_WIZARD:
-    case FRAME_PCB_DISPLAY3D:
-        return FACE_PCB;
+    case FRAME_PCB_DISPLAY3D: return FACE_PCB;
 
     case FRAME_CVPCB:
-    case FRAME_CVPCB_DISPLAY:
-        return FACE_CVPCB;
+    case FRAME_CVPCB_DISPLAY: return FACE_CVPCB;
 
-    case FRAME_PYTHON:
-        return FACE_PYTHON;
+    case FRAME_PYTHON: return FACE_PYTHON;
 
-    case FRAME_GERBER:
-        return FACE_GERBVIEW;
+    case FRAME_GERBER: return FACE_GERBVIEW;
 
-    case FRAME_PL_EDITOR:
-        return FACE_PL_EDITOR;
+    case FRAME_PL_EDITOR: return FACE_PL_EDITOR;
 
-    case FRAME_CALC:
-        return FACE_PCB_CALCULATOR;
+    case FRAME_CALC: return FACE_PCB_CALCULATOR;
 
-    case FRAME_BM2CMP:
-        return FACE_BMP2CMP;
+    case FRAME_BM2CMP: return FACE_BMP2CMP;
 
-    default:
-        return FACE_T( -1 );
+    case FRAME_AGENT: return FACE_AGENT;
+
+    default: return FACE_T( -1 );
     }
 }
 
@@ -432,14 +425,12 @@ KIWAY_PLAYER* KIWAY::Player( FRAME_T aFrameType, bool doCreate, wxTopLevelWindow
             if( !kiface )
                 return nullptr;
 
-            frame = (KIWAY_PLAYER*) kiface->CreateKiWindow(
-                                            aParent,    // Parent window of frame in modal mode,
-                                                        // NULL in non modal mode
-                                            aFrameType,
-                                            this,
-                                            m_ctl       // questionable need, these same flags
-                                                        // were passed to KIFACE::OnKifaceStart()
-                                            );
+            frame = (KIWAY_PLAYER*) kiface->CreateKiWindow( aParent, // Parent window of frame in modal mode,
+                                                                     // NULL in non modal mode
+                                                            aFrameType, this,
+                                                            m_ctl // questionable need, these same flags
+                                                                  // were passed to KIFACE::OnKifaceStart()
+            );
             if( frame )
                 m_playerFrameId[aFrameType].store( frame->GetId() );
 
@@ -491,7 +482,7 @@ bool KIWAY::PlayersClose( bool doForce )
 {
     bool ret = true;
 
-    for( unsigned i=0; i < KIWAY_PLAYER_COUNT;  ++i )
+    for( unsigned i = 0; i < KIWAY_PLAYER_COUNT; ++i )
         ret = ret && PlayerClose( FRAME_T( i ), doForce );
 
     return ret;
@@ -504,8 +495,8 @@ void KIWAY::PlayerDidClose( FRAME_T aFrameType )
 }
 
 
-void KIWAY::ExpressMail( FRAME_T aDestination, MAIL_T aCommand, std::string& aPayload,
-                         wxWindow* aSource, bool aFromOtherThread  )
+void KIWAY::ExpressMail( FRAME_T aDestination, MAIL_T aCommand, std::string& aPayload, wxWindow* aSource,
+                         bool aFromOtherThread )
 {
     std::unique_ptr<KIWAY_EXPRESS> mail = std::make_unique<KIWAY_EXPRESS>( aDestination, aCommand, aPayload, aSource );
 
@@ -540,7 +531,7 @@ void KIWAY::SetLanguage( int aLanguage )
     {
         wxString lang;
 
-        for( unsigned ii = 0;  LanguagesList[ii].m_KI_Lang_Identifier != 0; ii++ )
+        for( unsigned ii = 0; LanguagesList[ii].m_KI_Lang_Identifier != 0; ii++ )
         {
             if( aLanguage == LanguagesList[ii].m_KI_Lang_Identifier )
             {
@@ -553,9 +544,7 @@ void KIWAY::SetLanguage( int aLanguage )
             }
         }
 
-        DisplayErrorMessage( nullptr,
-                             wxString::Format( _( "Unable to switch language to %s" ), lang ),
-                             errMsg );
+        DisplayErrorMessage( nullptr, wxString::Format( _( "Unable to switch language to %s" ), lang ), errMsg );
         return;
     }
 
@@ -574,7 +563,7 @@ void KIWAY::SetLanguage( int aLanguage )
         // so a static_cast is used.
         EDA_BASE_FRAME* top = static_cast<EDA_BASE_FRAME*>( m_top );
 
-        if ( top )
+        if( top )
         {
             top->ShowChangedLanguage();
             wxCommandEvent e( EDA_LANG_CHANGED );
@@ -583,9 +572,9 @@ void KIWAY::SetLanguage( int aLanguage )
     }
 #endif
 
-    for( unsigned i=0;  i < KIWAY_PLAYER_COUNT;  ++i )
+    for( unsigned i = 0; i < KIWAY_PLAYER_COUNT; ++i )
     {
-        KIWAY_PLAYER* frame = GetPlayerFrame( ( FRAME_T )i );
+        KIWAY_PLAYER* frame = GetPlayerFrame( (FRAME_T) i );
 
         if( frame )
         {
@@ -610,9 +599,9 @@ void KIWAY::CommonSettingsChanged( int aFlags )
             top->CommonSettingsChanged( aFlags );
     }
 
-    for( unsigned i=0;  i < KIWAY_PLAYER_COUNT;  ++i )
+    for( unsigned i = 0; i < KIWAY_PLAYER_COUNT; ++i )
     {
-        KIWAY_PLAYER* frame = GetPlayerFrame( ( FRAME_T )i );
+        KIWAY_PLAYER* frame = GetPlayerFrame( (FRAME_T) i );
 
         if( frame )
             frame->CommonSettingsChanged( aFlags );
@@ -633,9 +622,9 @@ void KIWAY::ClearFileHistory()
             top->ClearFileHistory();
     }
 
-    for( unsigned i=0;  i < KIWAY_PLAYER_COUNT;  ++i )
+    for( unsigned i = 0; i < KIWAY_PLAYER_COUNT; ++i )
     {
-        KIWAY_PLAYER* frame = GetPlayerFrame( ( FRAME_T )i );
+        KIWAY_PLAYER* frame = GetPlayerFrame( (FRAME_T) i );
 
         if( frame )
             frame->ClearFileHistory();
@@ -661,15 +650,15 @@ void KIWAY::ProjectChanged()
     }
 
     // Cancel an in-progress load of libraries; handled through the schematic and PCB ifaces
-    if ( KIFACE* schface = KiFACE( KIWAY::FACE_SCH ) )
+    if( KIFACE* schface = KiFACE( KIWAY::FACE_SCH ) )
         schface->ProjectChanged();
 
-    if ( KIFACE* pcbface = KiFACE( KIWAY::FACE_PCB ) )
+    if( KIFACE* pcbface = KiFACE( KIWAY::FACE_PCB ) )
         pcbface->ProjectChanged();
 
-    for( unsigned i=0;  i < KIWAY_PLAYER_COUNT;  ++i )
+    for( unsigned i = 0; i < KIWAY_PLAYER_COUNT; ++i )
     {
-        KIWAY_PLAYER* frame = GetPlayerFrame( ( FRAME_T )i );
+        KIWAY_PLAYER* frame = GetPlayerFrame( (FRAME_T) i );
 
         if( frame )
             frame->ProjectChanged();

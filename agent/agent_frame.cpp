@@ -16,6 +16,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         KIWAY_PLAYER( aKiway, aParent, FRAME_AGENT, "Agent", wxDefaultPosition, wxDefaultSize, wxDEFAULT_FRAME_STYLE,
                       "agent_frame_name", schIUScale )
 {
+    printf( "AGENT: AGENT_FRAME constructor called\n" );
     SetTitle( "KiCad Agent" );
     wxIcon icon;
     icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_kicad ) );

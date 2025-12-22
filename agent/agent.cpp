@@ -2,6 +2,7 @@
 #include <pgm_base.h>
 #include <kiway.h>
 #include "agent_frame.h"
+#include <cstdio>
 
 // The KIFACE implementation
 class KIFACE_AGENT : public KIFACE_BASE
@@ -12,7 +13,11 @@ public:
     {
     }
 
-    bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits, KIWAY* aKiway ) override { return start_common( aCtlBits ); }
+    bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits, KIWAY* aKiway ) override
+    {
+        printf( "AGENT: OnKifaceStart called\n" );
+        return start_common( aCtlBits );
+    }
 
     void OnKifaceEnd() override { end_common(); }
 
@@ -23,6 +28,7 @@ public:
         case FRAME_AGENT:
         {
             AGENT_FRAME* frame = new AGENT_FRAME( aKiway, aParent );
+            printf( "AGENT: CreateKiWindow AGENT_FRAME created: %p\n", frame );
             return frame;
         }
         default: return nullptr;

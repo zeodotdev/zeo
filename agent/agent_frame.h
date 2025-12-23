@@ -36,6 +36,9 @@ private:
     wxButton*     m_actionButton;  // Send/Stop
     wxButton*     m_selectionPill; // Displays selected item info
 
+    wxPanel* m_inputPanel;           // Wrapper for input area styling
+    wxString m_lastSelectionPayload; // Store full context
+
     // Event handlers
     void OnSelectionPillClick( wxCommandEvent& aEvent );
     void OnInputKeyDown( wxKeyEvent& aEvent );

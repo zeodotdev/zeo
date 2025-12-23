@@ -26,29 +26,37 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // 1. Chat History Area
     m_chatWindow = new wxHtmlWindow( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHW_SCROLLBAR_AUTO );
     // Set a default page content or styling if needed
-    m_chatWindow->SetPage( "<html><body><p>Welcome to KiCad Agent.</p></body></html>" );
+    m_chatWindow->SetPage(
+            "<html><body bgcolor='#2D2D2D' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>" );
     mainSizer->Add( m_chatWindow, 1, wxEXPAND | wxALL, 5 );
 
     // 2. Input Container (Unified Look)
-    // Vertical Sizer: Text Area Top, Controls Bottom
+    // Create m_inputPanel for dark styling
+    m_inputPanel = new wxPanel( this, wxID_ANY );
+    m_inputPanel->SetBackgroundColour( wxColour( 30, 30, 30 ) ); // Dark prompt area
+
+    // Use a vertical BoxSizer for the panel
+    wxBoxSizer* outerInputSizer = new wxBoxSizer( wxVERTICAL );
+
+    // Use an inner sizer for content padding
     wxBoxSizer* inputContainerSizer = new wxBoxSizer( wxVERTICAL );
 
     // Status Pill (Selection Info)
-    m_selectionPill = new wxButton( this, wxID_ANY, "No Selection", wxDefaultPosition, wxDefaultSize );
+    m_selectionPill = new wxButton( m_inputPanel, wxID_ANY, "No Selection", wxDefaultPosition, wxDefaultSize );
     m_selectionPill->Hide(); // Hide on load
-    inputContainerSizer->Add( m_selectionPill, 0, wxALIGN_LEFT | wxALL, 2 );
+    inputContainerSizer->Add( m_selectionPill, 0, wxALIGN_LEFT | wxBOTTOM, 2 );
 
     // 2a. Text Input (Top)
-    m_inputCtrl = new wxTextCtrl( this, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 80 ),
+    m_inputCtrl = new wxTextCtrl( m_inputPanel, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 80 ),
                                   wxTE_MULTILINE | wxTE_PROCESS_ENTER | wxTE_RICH2 );
     // m_inputCtrl->SetHint( "Ask anything" ); // Requires newer wxWidgets, might be ignored on old
-    inputContainerSizer->Add( m_inputCtrl, 1, wxEXPAND | wxALL, 0 );
+    inputContainerSizer->Add( m_inputCtrl, 1, wxEXPAND | wxBOTTOM, 5 );
 
     // 2b. Control Row (Bottom)
     wxBoxSizer* controlsSizer = new wxBoxSizer( wxHORIZONTAL );
 
     // Plus Button
-    m_plusButton = new wxButton( this, wxID_ANY, "+", wxDefaultPosition, wxSize( 30, -1 ) );
+    m_plusButton = new wxButton( m_inputPanel, wxID_ANY, "+", wxDefaultPosition, wxSize( 30, -1 ) );
     controlsSizer->Add( m_plusButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     // Mode Selection
@@ -67,13 +75,18 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     controlsSizer->AddStretchSpacer();
 
     // Send Button
-    m_actionButton = new wxButton( this, wxID_ANY, "->" ); // Arrow icon would be better
+    m_actionButton = new wxButton( m_inputPanel, wxID_ANY, "->" ); // Arrow icon would be better
     controlsSizer->Add( m_actionButton, 0, wxALIGN_CENTER_VERTICAL );
 
-    inputContainerSizer->Add( controlsSizer, 0, wxEXPAND | wxTOP | wxBOTTOM, 5 );
+    inputContainerSizer->Add( controlsSizer, 0, wxEXPAND );
 
-    // Add Input Container to Main Sizer
-    mainSizer->Add( inputContainerSizer, 0, wxEXPAND | wxALL, 10 );
+    // Add inner sizer to outer sizer with padding
+    outerInputSizer->Add( inputContainerSizer, 1, wxEXPAND | wxALL, 10 );
+
+    m_inputPanel->SetSizer( outerInputSizer );
+
+    // Add Input Container to Main Sizer (No border so background fills area)
+    mainSizer->Add( m_inputPanel, 0, wxEXPAND );
 
     SetSizer( mainSizer );
     Layout();
@@ -102,11 +115,8 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
     {
         std::string payload = aEvent.GetPayload();
         printf( "AGENT_FRAME::KiwayMailIn: Received payload '%s'\n", payload.c_str() );
-        // Basic parsing for now: just display it
-        // Expected "SELECTION|<APP>|<DESC>"
+        m_lastSelectionPayload = payload;
 
-        // Find second pipe to get description
-        size_t firstPipe = payload.find( '|' );
         if( payload.empty() || payload == "CLEARED" )
         {
             m_selectionPill->Show( false );
@@ -118,12 +128,13 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
             if( firstPipe != std::string::npos )
             {
                 std::string desc = payload.substr( firstPipe + 1 );
-                m_selectionPill->SetLabel( desc );
+                // Label format: "Add: <Description>"
+                m_selectionPill->SetLabel( "Add: " + desc );
                 m_selectionPill->Show( true );
             }
             else
             {
-                m_selectionPill->SetLabel( payload );
+                m_selectionPill->SetLabel( "Add: " + payload );
                 m_selectionPill->Show( true );
             }
         }
@@ -136,6 +147,15 @@ void AGENT_FRAME::OnSelectionPillClick( wxCommandEvent& aEvent )
     wxString label = m_selectionPill->GetLabel();
     if( !label.IsEmpty() )
     {
+        // Strip "Add: " prefix if present for the tag
+        if( label.StartsWith( "Add: " ) )
+            label = label.Mid( 5 );
+
+        // Hide pill on click
+        m_selectionPill->Hide();
+        Layout(); // specific layout for input panel/frame?
+        // Layout(); // Calling global Layout() might be heavy, but safest.
+
         // Append @{Label} to input
         wxString currentText = m_inputCtrl->GetValue();
         if( !currentText.IsEmpty() && !currentText.EndsWith( " " ) )

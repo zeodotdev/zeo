@@ -33,8 +33,13 @@ private:
     wxButton*     m_plusButton;
     wxChoice*     m_modeChoice;
     wxChoice*     m_modelChoice;
-    wxButton*     m_actionButton;    // Send/Stop
-    wxTextCtrl*   m_selectionStatus; // Displays selected item info
+    wxButton*     m_actionButton;  // Send/Stop
+    wxButton*     m_selectionPill; // Displays selected item info
+
+    // Event handlers
+    void OnSelectionPillClick( wxCommandEvent& aEvent );
+    void OnInputKeyDown( wxKeyEvent& aEvent );
+    void OnInputText( wxCommandEvent& aEvent );
 
     DECLARE_EVENT_TABLE()
 };

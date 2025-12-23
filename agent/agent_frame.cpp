@@ -34,14 +34,13 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     wxBoxSizer* inputContainerSizer = new wxBoxSizer( wxVERTICAL );
 
     // Status Pill (Selection Info)
-    m_selectionStatus = new wxTextCtrl( this, wxID_ANY, "No Selection", wxDefaultPosition, wxDefaultSize,
-                                        wxTE_READONLY | wxTE_CENTER );
-    m_selectionStatus->SetBackgroundColour( wxColour( 240, 240, 240 ) ); // Light gray
-    inputContainerSizer->Add( m_selectionStatus, 0, wxEXPAND | wxALL, 2 );
+    m_selectionPill = new wxButton( this, wxID_ANY, "No Selection", wxDefaultPosition, wxDefaultSize );
+    m_selectionPill->Hide(); // Hide on load
+    inputContainerSizer->Add( m_selectionPill, 0, wxALIGN_LEFT | wxALL, 2 );
 
     // 2a. Text Input (Top)
     m_inputCtrl = new wxTextCtrl( this, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 80 ),
-                                  wxTE_MULTILINE | wxTE_PROCESS_ENTER );
+                                  wxTE_MULTILINE | wxTE_PROCESS_ENTER | wxTE_RICH2 );
     // m_inputCtrl->SetHint( "Ask anything" ); // Requires newer wxWidgets, might be ignored on old
     inputContainerSizer->Add( m_inputCtrl, 1, wxEXPAND | wxALL, 0 );
 
@@ -83,7 +82,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Bind Events
     m_actionButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSend, this );
     m_inputCtrl->Bind( wxEVT_TEXT_ENTER, &AGENT_FRAME::OnTextEnter, this );
-    // m_modelChoice->Bind( wxEVT_CHOICE, &AGENT_FRAME::OnModelSelection, this );
+    m_selectionPill->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSelectionPillClick, this );
+    m_inputCtrl->Bind( wxEVT_KEY_DOWN, &AGENT_FRAME::OnInputKeyDown, this );
+    m_inputCtrl->Bind( wxEVT_TEXT, &AGENT_FRAME::OnInputText, this );
 }
 
 AGENT_FRAME::~AGENT_FRAME()
@@ -108,7 +109,7 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
         size_t firstPipe = payload.find( '|' );
         if( payload.empty() || payload == "CLEARED" )
         {
-            m_selectionStatus->Show( false );
+            m_selectionPill->Show( false );
         }
         else
         {
@@ -117,17 +118,102 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
             if( firstPipe != std::string::npos )
             {
                 std::string desc = payload.substr( firstPipe + 1 );
-                m_selectionStatus->SetValue( desc );
-                m_selectionStatus->Show( true );
+                m_selectionPill->SetLabel( desc );
+                m_selectionPill->Show( true );
             }
             else
             {
-                m_selectionStatus->SetValue( payload );
-                m_selectionStatus->Show( true );
+                m_selectionPill->SetLabel( payload );
+                m_selectionPill->Show( true );
             }
         }
         Layout(); // Important to refresh layout after showing/hiding
     }
+}
+
+void AGENT_FRAME::OnSelectionPillClick( wxCommandEvent& aEvent )
+{
+    wxString label = m_selectionPill->GetLabel();
+    if( !label.IsEmpty() )
+    {
+        // Append @{Label} to input
+        wxString currentText = m_inputCtrl->GetValue();
+        if( !currentText.IsEmpty() && !currentText.EndsWith( " " ) )
+            m_inputCtrl->AppendText( " " );
+
+        // Insert text (formatted by OnInputText)
+        m_inputCtrl->AppendText( "@{" + label + "} " );
+        m_inputCtrl->SetFocus();
+    }
+}
+
+void AGENT_FRAME::OnInputText( wxCommandEvent& aEvent )
+{
+    // Dynamic Highlighting: Bold valid @{...} tags
+    long     currentPos = m_inputCtrl->GetInsertionPoint();
+    wxString text = m_inputCtrl->GetValue();
+
+    // 1. Reset all to normal
+    wxTextAttr normalStyle;
+    normalStyle.SetFontWeight( wxFONTWEIGHT_NORMAL );
+    m_inputCtrl->SetStyle( 0, text.Length(), normalStyle );
+
+    // 2. Scan for @{...} pairs
+    size_t start = 0;
+    while( ( start = text.find( "@{", start ) ) != wxString::npos )
+    {
+        size_t end = text.find( "}", start );
+        if( end != wxString::npos )
+        {
+            // Apply Bold to @{...}
+            wxTextAttr boldStyle;
+            boldStyle.SetFontWeight( wxFONTWEIGHT_BOLD );
+            m_inputCtrl->SetStyle( start, end + 1, boldStyle );
+            start = end + 1;
+        }
+        else
+        {
+            break; // No more closed tags
+        }
+    }
+
+    // Restore insertion point/selection (SetStyle might affect it?)
+    // Actually, SetStyle preserves insertion point usually, but let's be safe if needed.
+    // In wxWidgets, SetStyle shouldn't move cursor.
+}
+
+void AGENT_FRAME::OnInputKeyDown( wxKeyEvent& aEvent )
+{
+    int key = aEvent.GetKeyCode();
+
+    if( key == WXK_BACK || key == WXK_DELETE )
+    {
+        long     pos = m_inputCtrl->GetInsertionPoint();
+        wxString text = m_inputCtrl->GetValue();
+
+        if( pos > 0 )
+        {
+            // Atomic deletion for @{...}
+            // Check if we are deleting a '}'
+            if( pos <= text.Length() && text[pos - 1] == '}' )
+            {
+                // Verify matching @{
+                long openBrace = text.rfind( "@{", pos - 1 );
+                if( openBrace != wxString::npos )
+                {
+                    // Ensure no other '}' in between (simple nesting check)
+                    wxString content = text.SubString( openBrace, pos - 1 );
+                    // content is like @{tag}
+                    if( content.find( '}' ) == content.Length() - 1 ) // Last char is the only closing brace
+                    {
+                        m_inputCtrl->Remove( openBrace, pos );
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    aEvent.Skip(); // Default processing
 }
 
 void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )

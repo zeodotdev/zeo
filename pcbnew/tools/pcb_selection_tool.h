@@ -49,7 +49,7 @@ class PCB_TABLE;
 
 namespace KIGFX
 {
-    class GAL;
+class GAL;
 }
 
 
@@ -76,10 +76,7 @@ public:
 
     void OnIdle( wxIdleEvent& aEvent );
 
-    bool IsFootprintEditor()
-    {
-        return m_isFootprintEditor;
-    }
+    bool IsFootprintEditor() { return m_isFootprintEditor; }
 
     /**
      * The main loop.
@@ -108,7 +105,7 @@ public:
     int SelectTable( const TOOL_EVENT& aEvent );
 
     ///< Clear current selection event handler.
-    int ClearSelection( const TOOL_EVENT& aEvent );
+    int  ClearSelection( const TOOL_EVENT& aEvent );
     void ClearSelection( bool aQuietMode = false );
 
     ///< Select all items on the board
@@ -139,8 +136,7 @@ public:
     /**
      * Selects multiple PCB items within a specified area.
      */
-    void SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, bool aSubtractive = false,
-                         bool aExclusiveOr = false );
+    void SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, bool aSubtractive = false, bool aExclusiveOr = false );
 
     /**
      * Take necessary actions to mark an item as found.
@@ -186,10 +182,7 @@ public:
      */
     void RebuildSelection();
 
-    PCB_SELECTION_FILTER_OPTIONS& GetFilter()
-    {
-        return m_filter;
-    }
+    PCB_SELECTION_FILTER_OPTIONS& GetFilter() { return m_filter; }
 
     ///< Set up handlers for various events.
     void setTransitions() override;
@@ -234,8 +227,7 @@ public:
      * Check the "allow free pads" setting and if disabled, replace any pads in the collector
      * with their parent footprints.
      */
-    void FilterCollectorForFreePads( GENERAL_COLLECTOR& aCollector,
-                                     bool aForcePromotion = false ) const;
+    void FilterCollectorForFreePads( GENERAL_COLLECTOR& aCollector, bool aForcePromotion = false ) const;
 
     /**
      * Promote any table cell selections to the whole table.
@@ -256,39 +248,20 @@ public:
     /**
      * Drop footprints that are not directly selected
     */
-    void FilterCollectorForFootprints( GENERAL_COLLECTOR& aCollector,
-                                       const VECTOR2I& aWhere ) const;
+    void FilterCollectorForFootprints( GENERAL_COLLECTOR& aCollector, const VECTOR2I& aWhere ) const;
 
 protected:
-    KIGFX::PCB_VIEW* view() const
-    {
-        return static_cast<KIGFX::PCB_VIEW*>( getView() );
-    }
+    KIGFX::PCB_VIEW* view() const { return static_cast<KIGFX::PCB_VIEW*>( getView() ); }
 
-    KIGFX::VIEW_CONTROLS* controls() const
-    {
-        return getViewControls();
-    }
+    KIGFX::VIEW_CONTROLS* controls() const { return getViewControls(); }
 
-    PCB_BASE_FRAME* frame() const
-    {
-        return getEditFrame<PCB_BASE_FRAME>();
-    }
+    PCB_BASE_FRAME* frame() const { return getEditFrame<PCB_BASE_FRAME>(); }
 
-    PCB_BASE_EDIT_FRAME* editFrame() const
-    {
-        return getEditFrame<PCB_BASE_EDIT_FRAME>();
-    }
+    PCB_BASE_EDIT_FRAME* editFrame() const { return getEditFrame<PCB_BASE_EDIT_FRAME>(); }
 
-    BOARD* board() const
-    {
-        return getModel<BOARD>();
-    }
+    BOARD* board() const { return getModel<BOARD>(); }
 
-    PCB_DRAW_PANEL_GAL* canvas() const
-    {
-        return static_cast<PCB_DRAW_PANEL_GAL*>( frame()->GetCanvas() );
-    }
+    PCB_DRAW_PANEL_GAL* canvas() const { return static_cast<PCB_DRAW_PANEL_GAL*>( frame()->GetCanvas() ); }
 
     virtual bool ctrlClickHighlights() override;
 
@@ -309,8 +282,7 @@ private:
      * @param aClientFilter a callback to allow tool- or action-specific filtering.
      * @return whether or not the selection is empty.
      */
-    bool selectPoint( const VECTOR2I& aWhere, bool aOnDrag = false,
-                      bool* aSelectionCancelledFlag = nullptr,
+    bool selectPoint( const VECTOR2I& aWhere, bool aOnDrag = false, bool* aSelectionCancelledFlag = nullptr,
                       CLIENT_SELECTION_FILTER aClientFilter = nullptr );
 
     /**
@@ -321,8 +293,7 @@ private:
      * @param aClientFilter A callback to allow tool- or action-specific filtering.
      * @return whether or not the selection is empty.
      */
-    bool selectCursor( bool aForceSelect = false,
-                       CLIENT_SELECTION_FILTER aClientFilter = nullptr );
+    bool selectCursor( bool aForceSelect = false, CLIENT_SELECTION_FILTER aClientFilter = nullptr );
 
     bool selectTableCells( PCB_TABLE* aTable );
 
@@ -384,7 +355,7 @@ private:
      * @param aStopCondition Indicates where to stop selecting more items.
      */
     void selectAllConnectedTracks( const std::vector<BOARD_CONNECTED_ITEM*>& aStartItems,
-                                   STOP_CONDITION aStopCondition );
+                                   STOP_CONDITION                            aStopCondition );
 
     /**
      * Select all non-closed shapes that are graphically connected to the given start items.
@@ -427,8 +398,7 @@ private:
     int filterSelection( const TOOL_EVENT& aEvent );
 
     ///< Return true if the given item passes the current SELECTION_FILTER_OPTIONS.
-    bool itemPassesFilter( BOARD_ITEM* aItem, bool aMultiSelect,
-                           PCB_SELECTION_FILTER_OPTIONS* aRejected = nullptr );
+    bool itemPassesFilter( BOARD_ITEM* aItem, bool aMultiSelect, PCB_SELECTION_FILTER_OPTIONS* aRejected = nullptr );
 
     /**
      * Take necessary action mark an item as unselected.
@@ -479,25 +449,27 @@ private:
 
     void unhighlightInternal( EDA_ITEM* aItem, int aHighlightMode, bool aUsingOverlay );
 
-private:
-    PCB_BASE_FRAME*          m_frame;                // Pointer to the parent frame
-    bool                     m_isFootprintEditor;
+    void syncSelectionWithAgent();
 
-    PCB_SELECTION            m_selection;            // Current state of selection
+private:
+    PCB_BASE_FRAME* m_frame; // Pointer to the parent frame
+    bool            m_isFootprintEditor;
+
+    PCB_SELECTION m_selection; // Current state of selection
 
     PCB_SELECTION_FILTER_OPTIONS m_filter;
 
-    KICURSOR                 m_nonModifiedCursor;    // Cursor in the absence of shift/ctrl/alt
+    KICURSOR m_nonModifiedCursor; // Cursor in the absence of shift/ctrl/alt
 
-    PCB_GROUP*               m_enteredGroup;         // If non-null, selections are limited to
-                                                     // members of this group
-    KIGFX::VIEW_GROUP        m_enteredGroupOverlay;  // Overlay for the entered group's frame.
+    PCB_GROUP* m_enteredGroup;               // If non-null, selections are limited to
+                                             // members of this group
+    KIGFX::VIEW_GROUP m_enteredGroupOverlay; // Overlay for the entered group's frame.
 
-    SELECTION_MODE           m_selectionMode;        // Current selection mode
+    SELECTION_MODE m_selectionMode; // Current selection mode
 
     /// Private state (opaque pointer/compilation firewall)
     class PRIV;
-    std::unique_ptr<PRIV>    m_priv;
+    std::unique_ptr<PRIV> m_priv;
 };
 
 #endif /* PCB_SELECTION_TOOL_H */

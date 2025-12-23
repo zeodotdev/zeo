@@ -47,9 +47,9 @@ class GAL;
 
 namespace PREVIEW
 {
-class SELECTION_AREA;
+    class SELECTION_AREA;
 }
-}
+} // namespace KIGFX
 
 
 class SCH_CONDITIONS : public SELECTION_CONDITIONS
@@ -123,8 +123,7 @@ public:
      * @param aPromoteGroups [optional] If true, group selections are promoted the items within the group
      */
     SCH_SELECTION& RequestSelection( const std::vector<KICAD_T>& aScanTypes = { SCH_LOCATE_ANY_T },
-                                     bool aPromoteCellSelections = false,
-                                     bool aPromoteGroups = false );
+                                     bool aPromoteCellSelections = false, bool aPromoteGroups = false );
 
     /**
      * Perform a click-type selection at a point (usually the cursor position).
@@ -245,8 +244,7 @@ private:
      * @param aSelectedOnly If true, remove non-selected items from #collector
      */
     void narrowSelection( SCH_COLLECTOR& collector, const VECTOR2I& aWhere, bool aCheckLocked,
-                          bool aSelectedOnly = false,
-                          SCH_SELECTION_FILTER_OPTIONS* aRejected = nullptr );
+                          bool aSelectedOnly = false, SCH_SELECTION_FILTER_OPTIONS* aRejected = nullptr );
 
     /**
      * Perform a click-type selection at a point (usually the cursor position).
@@ -279,8 +277,7 @@ private:
     int SetSelectRect( const TOOL_EVENT& aEvent );
     int SetSelectPoly( const TOOL_EVENT& aEvent );
 
-    void SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, bool aSubtractive = false,
-                         bool aExclusiveOr = false );
+    void SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, bool aSubtractive = false, bool aExclusiveOr = false );
 
     /**
      * Handle a table cell drag selection within a table.
@@ -345,6 +342,8 @@ private:
      */
     void updateReferencePoint();
 
+    void syncSelectionWithAgent();
+
     /**
      * @return true if the given point is contained in any of selected items' bounding boxes.
      */
@@ -381,9 +380,9 @@ private:
     int  m_unit;           // Fixed unit filter (for symbol editor)
     int  m_bodyStyle;      // Fixed DeMorgan filter (for symbol editor)
 
-    SCH_GROUP*        m_enteredGroup;         // If non-null, selections are limited to
-                                              // members of this group
-    KIGFX::VIEW_GROUP m_enteredGroupOverlay;  // Overlay for the entered group's frame.
+    SCH_GROUP* m_enteredGroup;               // If non-null, selections are limited to
+                                             // members of this group
+    KIGFX::VIEW_GROUP m_enteredGroupOverlay; // Overlay for the entered group's frame.
 
     SCH_SELECTION_FILTER_OPTIONS m_filter;
 

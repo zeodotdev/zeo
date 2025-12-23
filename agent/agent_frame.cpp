@@ -1,5 +1,8 @@
 #include "agent_frame.h"
-#include <wx/button.h>
+#include <kiway_express.h>
+#include <mail_type.h>
+#include <wx/log.h>
+#include <sstream>
 #include <wx/sizer.h>
 #include <wx/textctrl.h>
 #include <wx/msgdlg.h>
@@ -30,6 +33,12 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Vertical Sizer: Text Area Top, Controls Bottom
     wxBoxSizer* inputContainerSizer = new wxBoxSizer( wxVERTICAL );
 
+    // Status Pill (Selection Info)
+    m_selectionStatus = new wxTextCtrl( this, wxID_ANY, "No Selection", wxDefaultPosition, wxDefaultSize,
+                                        wxTE_READONLY | wxTE_CENTER );
+    m_selectionStatus->SetBackgroundColour( wxColour( 240, 240, 240 ) ); // Light gray
+    inputContainerSizer->Add( m_selectionStatus, 0, wxEXPAND | wxALL, 2 );
+
     // 2a. Text Input (Top)
     m_inputCtrl = new wxTextCtrl( this, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 80 ),
                                   wxTE_MULTILINE | wxTE_PROCESS_ENTER );
@@ -44,16 +53,16 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     controlsSizer->Add( m_plusButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     // Mode Selection
-    wxString modeChoices[] = { "Planning", "Execution" };
-    m_modeChoice = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, modeChoices );
-    m_modeChoice->SetSelection( 0 );
-    controlsSizer->Add( m_modeChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+    // wxString modeChoices[] = { "Planning", "Execution" };
+    // m_modeChoice = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, modeChoices );
+    // m_modeChoice->SetSelection( 0 );
+    // controlsSizer->Add( m_modeChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     // Model Selection
-    wxString modelChoices[] = { "Gemini 1.5 Pro", "Gemini 1.5 Flash" };
-    m_modelChoice = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, modelChoices );
-    m_modelChoice->SetSelection( 0 );
-    controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+    // wxString modelChoices[] = { "Gemini 1.5 Pro", "Gemini 1.5 Flash" };
+    // m_modelChoice = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, modelChoices );
+    // m_modelChoice->SetSelection( 0 );
+    // controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     // Spacer
     controlsSizer->AddStretchSpacer();
@@ -88,7 +97,37 @@ void AGENT_FRAME::ShowChangedLanguage()
 
 void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 {
-    // Handle messages from KiCad
+    if( aEvent.Command() == MAIL_SELECTION )
+    {
+        std::string payload = aEvent.GetPayload();
+        printf( "AGENT_FRAME::KiwayMailIn: Received payload '%s'\n", payload.c_str() );
+        // Basic parsing for now: just display it
+        // Expected "SELECTION|<APP>|<DESC>"
+
+        // Find second pipe to get description
+        size_t firstPipe = payload.find( '|' );
+        if( payload.empty() || payload == "CLEARED" )
+        {
+            m_selectionStatus->Show( false );
+        }
+        else
+        {
+            // Expected format: APP|DESCRIPTION
+            size_t firstPipe = payload.find( '|' );
+            if( firstPipe != std::string::npos )
+            {
+                std::string desc = payload.substr( firstPipe + 1 );
+                m_selectionStatus->SetValue( desc );
+                m_selectionStatus->Show( true );
+            }
+            else
+            {
+                m_selectionStatus->SetValue( payload );
+                m_selectionStatus->Show( true );
+            }
+        }
+        Layout(); // Important to refresh layout after showing/hiding
+    }
 }
 
 void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )

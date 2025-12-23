@@ -58,6 +58,12 @@ using namespace std::placeholders;
 #include <geometry/geometry_utils.h>
 #include <wx/event.h>
 #include <wx/timer.h>
+
+#include <kiway.h>
+#include <frame_type.h>
+
+#include <kiway_express.h>
+#include <mail_type.h>
 #include <wx/log.h>
 #include <wx/debug.h>
 #include <core/profile.h>
@@ -68,7 +74,8 @@ struct LAYER_OPACITY_ITEM
 {
     PCB_LAYER_ID      m_Layer;
     double            m_Opacity;
-    const BOARD_ITEM* m_Item;;
+    const BOARD_ITEM* m_Item;
+    ;
 };
 
 
@@ -76,7 +83,7 @@ class SELECT_MENU : public ACTION_MENU
 {
 public:
     SELECT_MENU() :
-        ACTION_MENU( true )
+            ACTION_MENU( true )
     {
         SetTitle( _( "Select" ) );
 
@@ -97,10 +104,7 @@ public:
     }
 
 private:
-    ACTION_MENU* create() const override
-    {
-        return new SELECT_MENU();
-    }
+    ACTION_MENU* create() const override { return new SELECT_MENU(); }
 };
 
 
@@ -124,17 +128,17 @@ PCB_SELECTION_TOOL::PCB_SELECTION_TOOL() :
         m_priv( std::make_unique<PRIV>() )
 {
     m_filter.lockedItems = false;
-    m_filter.footprints  = true;
-    m_filter.text        = true;
-    m_filter.tracks      = true;
-    m_filter.vias        = true;
-    m_filter.pads        = true;
-    m_filter.graphics    = true;
-    m_filter.zones       = true;
-    m_filter.keepouts    = true;
-    m_filter.dimensions  = true;
-    m_filter.points      = true;
-    m_filter.otherItems  = true;
+    m_filter.footprints = true;
+    m_filter.text = true;
+    m_filter.tracks = true;
+    m_filter.vias = true;
+    m_filter.pads = true;
+    m_filter.graphics = true;
+    m_filter.zones = true;
+    m_filter.keepouts = true;
+    m_filter.dimensions = true;
+    m_filter.points = true;
+    m_filter.otherItems = true;
 }
 
 
@@ -165,52 +169,47 @@ bool PCB_SELECTION_TOOL::Init()
 
     auto& menu = m_menu->GetMenu();
 
-    auto activeToolCondition =
-            [this] ( const SELECTION& aSel )
-            {
-                PCB_BASE_FRAME* pcbFrame = getEditFrame<PCB_BASE_FRAME>();
-                return pcbFrame && !pcbFrame->ToolStackIsEmpty();
-            };
+    auto activeToolCondition = [this]( const SELECTION& aSel )
+    {
+        PCB_BASE_FRAME* pcbFrame = getEditFrame<PCB_BASE_FRAME>();
+        return pcbFrame && !pcbFrame->ToolStackIsEmpty();
+    };
 
-    auto haveHighlight =
-            [this]( const SELECTION& sel )
-            {
-                KIGFX::RENDER_SETTINGS* cfg = m_toolMgr->GetView()->GetPainter()->GetSettings();
+    auto haveHighlight = [this]( const SELECTION& sel )
+    {
+        KIGFX::RENDER_SETTINGS* cfg = m_toolMgr->GetView()->GetPainter()->GetSettings();
 
-                return !cfg->GetHighlightNetCodes().empty();
-            };
+        return !cfg->GetHighlightNetCodes().empty();
+    };
 
-    auto groupEnterCondition =
-            SELECTION_CONDITIONS::Count( 1 ) && SELECTION_CONDITIONS::HasType( PCB_GROUP_T );
+    auto groupEnterCondition = SELECTION_CONDITIONS::Count( 1 ) && SELECTION_CONDITIONS::HasType( PCB_GROUP_T );
 
-    auto inGroupCondition =
-            [this] ( const SELECTION& )
-            {
-                return m_enteredGroup != nullptr;
-            };
+    auto inGroupCondition = [this]( const SELECTION& )
+    {
+        return m_enteredGroup != nullptr;
+    };
 
-    auto tableCellSelection = SELECTION_CONDITIONS::MoreThan( 0 )
-                                && SELECTION_CONDITIONS::OnlyTypes( tableCellTypes );
+    auto tableCellSelection = SELECTION_CONDITIONS::MoreThan( 0 ) && SELECTION_CONDITIONS::OnlyTypes( tableCellTypes );
 
     if( frame && frame->IsType( FRAME_PCB_EDITOR ) )
     {
-        menu.AddMenu( selectMenu.get(), SELECTION_CONDITIONS::NotEmpty  );
+        menu.AddMenu( selectMenu.get(), SELECTION_CONDITIONS::NotEmpty );
         menu.AddSeparator( 1000 );
     }
 
     // "Cancel" goes at the top of the context menu when a tool is active
-    menu.AddItem( ACTIONS::cancelInteractive,           activeToolCondition, 1 );
-    menu.AddItem( ACTIONS::groupEnter,                  groupEnterCondition, 1 );
-    menu.AddItem( ACTIONS::groupLeave,                  inGroupCondition,    1 );
-    menu.AddItem( PCB_ACTIONS::applyDesignBlockLayout,  groupEnterCondition, 1 );
-    menu.AddItem( PCB_ACTIONS::placeLinkedDesignBlock,  groupEnterCondition, 1 );
+    menu.AddItem( ACTIONS::cancelInteractive, activeToolCondition, 1 );
+    menu.AddItem( ACTIONS::groupEnter, groupEnterCondition, 1 );
+    menu.AddItem( ACTIONS::groupLeave, inGroupCondition, 1 );
+    menu.AddItem( PCB_ACTIONS::applyDesignBlockLayout, groupEnterCondition, 1 );
+    menu.AddItem( PCB_ACTIONS::placeLinkedDesignBlock, groupEnterCondition, 1 );
     menu.AddItem( PCB_ACTIONS::saveToLinkedDesignBlock, groupEnterCondition, 1 );
-    menu.AddItem( PCB_ACTIONS::clearHighlight,          haveHighlight,       1 );
-    menu.AddSeparator(                                  haveHighlight,       1 );
+    menu.AddItem( PCB_ACTIONS::clearHighlight, haveHighlight, 1 );
+    menu.AddSeparator( haveHighlight, 1 );
 
-    menu.AddItem( ACTIONS::selectColumns,               tableCellSelection,  2 );
-    menu.AddItem( ACTIONS::selectRows,                  tableCellSelection,  2 );
-    menu.AddItem( ACTIONS::selectTable,                 tableCellSelection,  2 );
+    menu.AddItem( ACTIONS::selectColumns, tableCellSelection, 2 );
+    menu.AddItem( ACTIONS::selectRows, tableCellSelection, 2 );
+    menu.AddItem( ACTIONS::selectTable, tableCellSelection, 2 );
 
     menu.AddSeparator( 1 );
 
@@ -298,7 +297,7 @@ int PCB_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
         else if( evt->IsMouseDown( BUT_LEFT ) )
         {
             // Avoid triggering when running under other tools
-            PCB_POINT_EDITOR *pt_tool = m_toolMgr->GetTool<PCB_POINT_EDITOR>();
+            PCB_POINT_EDITOR* pt_tool = m_toolMgr->GetTool<PCB_POINT_EDITOR>();
 
             if( m_frame->ToolStackIsEmpty() && pt_tool && !pt_tool->HasPoint() )
             {
@@ -393,7 +392,7 @@ int PCB_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
             if( field >= 0 )
             {
                 const int          delta = evt->Parameter<int>();
-                ACTIONS::INCREMENT params { delta > 0 ? 1 : -1, field };
+                ACTIONS::INCREMENT params{ delta > 0 ? 1 : -1, field };
 
                 m_toolMgr->RunAction( ACTIONS::increment, params );
             }
@@ -441,12 +440,12 @@ int PCB_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
                      || ( m_selection.Empty() && dragAction != MOUSE_DRAG_ACTION::DRAG_ANY ) )
             {
                 if( m_selectionMode == SELECTION_MODE::INSIDE_RECTANGLE
-                        || m_selectionMode == SELECTION_MODE::TOUCHING_RECTANGLE )
+                    || m_selectionMode == SELECTION_MODE::TOUCHING_RECTANGLE )
                 {
                     SelectRectArea( aEvent );
                 }
                 else if( m_selectionMode == SELECTION_MODE::INSIDE_LASSO
-                            || m_selectionMode == SELECTION_MODE::TOUCHING_LASSO )
+                         || m_selectionMode == SELECTION_MODE::TOUCHING_LASSO )
                 {
                     SelectPolyArea( aEvent );
                 }
@@ -461,35 +460,34 @@ int PCB_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
                 // Don't allow starting a drag from a zone filled area that isn't already selected
                 auto zoneFilledAreaFilter =
                         []( const VECTOR2I& aWhere, GENERAL_COLLECTOR& aCollector, PCB_SELECTION_TOOL* aTool )
+                {
+                    int                 accuracy = aCollector.GetGuide()->Accuracy();
+                    std::set<EDA_ITEM*> remove;
+
+                    for( EDA_ITEM* item : aCollector )
+                    {
+                        if( item->Type() == PCB_ZONE_T )
                         {
-                            int accuracy = aCollector.GetGuide()->Accuracy();
-                            std::set<EDA_ITEM*> remove;
+                            ZONE* zone = static_cast<ZONE*>( item );
 
-                            for( EDA_ITEM* item : aCollector )
+                            if( !zone->HitTestForCorner( aWhere, accuracy * 2 )
+                                && !zone->HitTestForEdge( aWhere, accuracy ) )
                             {
-                                if( item->Type() == PCB_ZONE_T )
-                                {
-                                    ZONE* zone = static_cast<ZONE*>( item );
-
-                                    if( !zone->HitTestForCorner( aWhere, accuracy * 2 )
-                                            && !zone->HitTestForEdge( aWhere, accuracy ) )
-                                    {
-                                        remove.insert( zone );
-                                    }
-                                }
+                                remove.insert( zone );
                             }
+                        }
+                    }
 
-                            for( EDA_ITEM* item : remove )
-                                aCollector.Remove( item );
-                        };
+                    for( EDA_ITEM* item : remove )
+                        aCollector.Remove( item );
+                };
 
                 // See if we can drag before falling back to SelectRectArea()
                 bool doDrag = false;
 
                 if( evt->HasPosition() )
                 {
-                    if( m_selection.Empty()
-                        && selectPoint( evt->DragOrigin(), false, nullptr, zoneFilledAreaFilter ) )
+                    if( m_selection.Empty() && selectPoint( evt->DragOrigin(), false, nullptr, zoneFilledAreaFilter ) )
                     {
                         m_selection.SetIsHover( true );
                         doDrag = true;
@@ -507,8 +505,8 @@ int PCB_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
                     size_t arcs = m_selection.CountType( PCB_ARC_T );
                     size_t vias = m_selection.CountType( PCB_VIA_T );
                     // Note: multi-track dragging is currently supported, but not multi-via
-                    bool   routable = ( segs >= 1 || arcs >= 1 || vias == 1 )
-                                        && ( segs + arcs + vias == m_selection.GetSize() );
+                    bool routable =
+                            ( segs >= 1 || arcs >= 1 || vias == 1 ) && ( segs + arcs + vias == m_selection.GetSize() );
 
                     if( routable && trackDragAction == TRACK_DRAG_ACTION::DRAG )
                         m_toolMgr->RunAction( PCB_ACTIONS::drag45Degree );
@@ -572,11 +570,8 @@ int PCB_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
         if( m_frame->ToolStackIsEmpty() )
         {
             // move cursor prediction
-            if( !hasModifier()
-                    && dragAction == MOUSE_DRAG_ACTION::DRAG_SELECTED
-                    && !m_selection.Empty()
-                    && evt->HasPosition()
-                    && selectionContains( evt->Position() ) )
+            if( !hasModifier() && dragAction == MOUSE_DRAG_ACTION::DRAG_SELECTED && !m_selection.Empty()
+                && evt->HasPosition() && selectionContains( evt->Position() ) )
             {
                 m_nonModifiedCursor = KICURSOR::MOVING;
             }
@@ -660,7 +655,12 @@ PCB_SELECTION& PCB_SELECTION_TOOL::RequestSelection( CLIENT_SELECTION_FILTER aCl
 
     if( aClientFilter )
     {
-        enum DISPOSITION { BEFORE = 1, AFTER, BOTH };
+        enum DISPOSITION
+        {
+            BEFORE = 1,
+            AFTER,
+            BOTH
+        };
 
         std::map<EDA_ITEM*, DISPOSITION> itemDispositions;
         GENERAL_COLLECTORS_GUIDE         guide = getCollectorsGuide();
@@ -671,7 +671,7 @@ PCB_SELECTION& PCB_SELECTION_TOOL::RequestSelection( CLIENT_SELECTION_FILTER aCl
         for( EDA_ITEM* item : m_selection )
         {
             collector.Append( item );
-            itemDispositions[ item ] = BEFORE;
+            itemDispositions[item] = BEFORE;
         }
 
         aClientFilter( VECTOR2I(), collector, this );
@@ -679,9 +679,9 @@ PCB_SELECTION& PCB_SELECTION_TOOL::RequestSelection( CLIENT_SELECTION_FILTER aCl
         for( EDA_ITEM* item : collector )
         {
             if( itemDispositions.count( item ) )
-                itemDispositions[ item ] = BOTH;
+                itemDispositions[item] = BOTH;
             else
-                itemDispositions[ item ] = AFTER;
+                itemDispositions[item] = AFTER;
         }
 
         // Unhighlight the BEFORE items before highlighting the AFTER items.
@@ -718,8 +718,7 @@ PCB_SELECTION& PCB_SELECTION_TOOL::RequestSelection( CLIENT_SELECTION_FILTER aCl
 
 const GENERAL_COLLECTORS_GUIDE PCB_SELECTION_TOOL::getCollectorsGuide() const
 {
-    GENERAL_COLLECTORS_GUIDE guide( board()->GetVisibleLayers(), (PCB_LAYER_ID) view()->GetTopLayer(),
-                                    view() );
+    GENERAL_COLLECTORS_GUIDE guide( board()->GetVisibleLayers(), (PCB_LAYER_ID) view()->GetTopLayer(), view() );
 
     bool padsDisabled = !board()->IsElementVisible( LAYER_PADS );
 
@@ -733,10 +732,10 @@ const GENERAL_COLLECTORS_GUIDE PCB_SELECTION_TOOL::getCollectorsGuide() const
     guide.SetIgnoreThroughHolePads( padsDisabled );
     guide.SetIgnoreFPValues( !board()->IsElementVisible( LAYER_FP_VALUES ) );
     guide.SetIgnoreFPReferences( !board()->IsElementVisible( LAYER_FP_REFERENCES ) );
-    guide.SetIgnoreThroughVias( ! board()->IsElementVisible( LAYER_VIAS ) );
-    guide.SetIgnoreBlindBuriedVias( ! board()->IsElementVisible( LAYER_VIAS ) );
-    guide.SetIgnoreMicroVias( ! board()->IsElementVisible( LAYER_VIAS ) );
-    guide.SetIgnoreTracks( ! board()->IsElementVisible( LAYER_TRACKS ) );
+    guide.SetIgnoreThroughVias( !board()->IsElementVisible( LAYER_VIAS ) );
+    guide.SetIgnoreBlindBuriedVias( !board()->IsElementVisible( LAYER_VIAS ) );
+    guide.SetIgnoreMicroVias( !board()->IsElementVisible( LAYER_VIAS ) );
+    guide.SetIgnoreTracks( !board()->IsElementVisible( LAYER_TRACKS ) );
 
     return guide;
 }
@@ -744,7 +743,8 @@ const GENERAL_COLLECTORS_GUIDE PCB_SELECTION_TOOL::getCollectorsGuide() const
 
 bool PCB_SELECTION_TOOL::ctrlClickHighlights()
 {
-    return m_frame && m_frame->GetPcbNewSettings() && m_frame->GetPcbNewSettings()->m_CtrlClickHighlight && !m_isFootprintEditor;
+    return m_frame && m_frame->GetPcbNewSettings() && m_frame->GetPcbNewSettings()->m_CtrlClickHighlight
+           && !m_isFootprintEditor;
 }
 
 
@@ -760,20 +760,20 @@ bool PCB_SELECTION_TOOL::selectPoint( const VECTOR2I& aWhere, bool aOnDrag, bool
     if( m_enteredGroup && !m_enteredGroup->GetBoundingBox().Contains( aWhere ) )
         ExitGroup();
 
-    collector.Collect( board(), m_isFootprintEditor ? GENERAL_COLLECTOR::FootprintItems
-                                                    : GENERAL_COLLECTOR::AllBoardItems,
+    collector.Collect( board(),
+                       m_isFootprintEditor ? GENERAL_COLLECTOR::FootprintItems : GENERAL_COLLECTOR::AllBoardItems,
                        aWhere, guide );
 
     // Remove unselectable items
     for( int i = collector.GetCount() - 1; i >= 0; --i )
     {
-        if( !Selectable( collector[ i ] ) || ( aOnDrag && collector[i]->IsLocked() ) )
+        if( !Selectable( collector[i] ) || ( aOnDrag && collector[i]->IsLocked() ) )
             collector.Remove( i );
     }
 
     m_selection.ClearReferencePoint();
 
-    size_t preFilterCount = collector.GetCount();
+    size_t                       preFilterCount = collector.GetCount();
     PCB_SELECTION_FILTER_OPTIONS rejected;
     rejected.SetAll( false );
 
@@ -816,8 +816,7 @@ bool PCB_SELECTION_TOOL::selectPoint( const VECTOR2I& aWhere, bool aOnDrag, bool
         }
         catch( const std::exception& exc )
         {
-            wxLogWarning( wxS( "Exception '%s' occurred attempting to guess selection candidates." ),
-                          exc.what() );
+            wxLogWarning( wxS( "Exception '%s' occurred attempting to guess selection candidates." ), exc.what() );
             return false;
         }
     }
@@ -869,16 +868,19 @@ bool PCB_SELECTION_TOOL::selectPoint( const VECTOR2I& aWhere, bool aOnDrag, bool
     if( addedCount == 1 )
     {
         m_toolMgr->ProcessEvent( EVENTS::PointSelectedEvent );
+        syncSelectionWithAgent();
         return true;
     }
     else if( addedCount > 1 )
     {
         m_toolMgr->ProcessEvent( EVENTS::SelectedEvent );
+        syncSelectionWithAgent();
         return true;
     }
     else if( anySubtracted )
     {
         m_toolMgr->ProcessEvent( EVENTS::UnselectedEvent );
+        syncSelectionWithAgent();
         return true;
     }
 
@@ -899,16 +901,13 @@ bool PCB_SELECTION_TOOL::selectCursor( bool aForceSelect, CLIENT_SELECTION_FILTE
 
 
 // Some navigation actions are allowed in selectMultiple
-const TOOL_ACTION* allowedActions[] = { &ACTIONS::panUp,          &ACTIONS::panDown,
-                                        &ACTIONS::panLeft,        &ACTIONS::panRight,
-                                        &ACTIONS::cursorUp,       &ACTIONS::cursorDown,
-                                        &ACTIONS::cursorLeft,     &ACTIONS::cursorRight,
-                                        &ACTIONS::cursorUpFast,   &ACTIONS::cursorDownFast,
-                                        &ACTIONS::cursorLeftFast, &ACTIONS::cursorRightFast,
-                                        &ACTIONS::zoomIn,         &ACTIONS::zoomOut,
-                                        &ACTIONS::zoomInCenter,   &ACTIONS::zoomOutCenter,
-                                        &ACTIONS::zoomCenter,     &ACTIONS::zoomFitScreen,
-                                        &ACTIONS::zoomFitObjects, nullptr };
+const TOOL_ACTION* allowedActions[] = {
+    &ACTIONS::panUp,        &ACTIONS::panDown,        &ACTIONS::panLeft,        &ACTIONS::panRight,
+    &ACTIONS::cursorUp,     &ACTIONS::cursorDown,     &ACTIONS::cursorLeft,     &ACTIONS::cursorRight,
+    &ACTIONS::cursorUpFast, &ACTIONS::cursorDownFast, &ACTIONS::cursorLeftFast, &ACTIONS::cursorRightFast,
+    &ACTIONS::zoomIn,       &ACTIONS::zoomOut,        &ACTIONS::zoomInCenter,   &ACTIONS::zoomOutCenter,
+    &ACTIONS::zoomCenter,   &ACTIONS::zoomFitScreen,  &ACTIONS::zoomFitObjects, nullptr
+};
 
 
 static void passEvent( TOOL_EVENT* const aEvent, const TOOL_ACTION* const aAllowedActions[] )
@@ -926,8 +925,8 @@ static void passEvent( TOOL_EVENT* const aEvent, const TOOL_ACTION* const aAllow
 
 bool PCB_SELECTION_TOOL::selectTableCells( PCB_TABLE* aTable )
 {
-    bool cancelled = false;     // Was the tool canceled while it was running?
-    m_multiple = true;          // Multiple selection mode is active
+    bool cancelled = false; // Was the tool canceled while it was running?
+    m_multiple = true;      // Multiple selection mode is active
 
     for( PCB_TABLECELL* cell : aTable->GetCells() )
     {
@@ -937,11 +936,10 @@ bool PCB_SELECTION_TOOL::selectTableCells( PCB_TABLE* aTable )
             cell->ClearFlags( CANDIDATE );
     }
 
-    auto wasSelected =
-            []( EDA_ITEM* aItem )
-            {
-                return ( aItem->GetFlags() & CANDIDATE ) > 0;
-            };
+    auto wasSelected = []( EDA_ITEM* aItem )
+    {
+        return ( aItem->GetFlags() & CANDIDATE ) > 0;
+    };
 
     while( TOOL_EVENT* evt = Wait() )
     {
@@ -1002,8 +1000,9 @@ bool PCB_SELECTION_TOOL::selectTableCells( PCB_TABLE* aTable )
 
             if( anySubtracted )
                 m_toolMgr->ProcessEvent( EVENTS::UnselectedEvent );
+            syncSelectionWithAgent();
 
-            break;  // Stop waiting for events
+            break; // Stop waiting for events
         }
         else
         {
@@ -1014,7 +1013,7 @@ bool PCB_SELECTION_TOOL::selectTableCells( PCB_TABLE* aTable )
 
     getViewControls()->SetAutoPan( false );
 
-    m_multiple = false;         // Multiple selection mode is inactive
+    m_multiple = false; // Multiple selection mode is inactive
 
     if( !cancelled )
         m_selection.ClearReferencePoint();
@@ -1025,9 +1024,9 @@ bool PCB_SELECTION_TOOL::selectTableCells( PCB_TABLE* aTable )
 
 int PCB_SELECTION_TOOL::SelectRectArea( const TOOL_EVENT& aEvent )
 {
-    bool cancelled = false;     // Was the tool canceled while it was running?
-    m_multiple = true;          // Multiple selection mode is active
-    KIGFX::VIEW*   view = getView();
+    bool cancelled = false; // Was the tool canceled while it was running?
+    m_multiple = true;      // Multiple selection mode is active
+    KIGFX::VIEW* view = getView();
 
     KIGFX::PREVIEW::SELECTION_AREA area;
     view->Add( &area );
@@ -1043,8 +1042,7 @@ int PCB_SELECTION_TOOL::SelectRectArea( const TOOL_EVENT& aEvent )
         if( view->IsMirroredX() )
             greedySelection = !greedySelection;
 
-        m_frame->GetCanvas()->SetCurrentCursor( !greedySelection ? KICURSOR::SELECT_WINDOW
-                                                                 : KICURSOR::SELECT_LASSO );
+        m_frame->GetCanvas()->SetCurrentCursor( !greedySelection ? KICURSOR::SELECT_WINDOW : KICURSOR::SELECT_LASSO );
 
         if( evt->IsCancelInteractive() || evt->IsActivate() )
         {
@@ -1060,6 +1058,7 @@ int PCB_SELECTION_TOOL::SelectRectArea( const TOOL_EVENT& aEvent )
                 {
                     ClearSelection( true /*quiet mode*/ );
                     m_toolMgr->ProcessEvent( EVENTS::UnselectedEvent );
+                    syncSelectionWithAgent();
                 }
             }
 
@@ -1127,7 +1126,7 @@ int PCB_SELECTION_TOOL::SetSelectRect( const TOOL_EVENT& aEvent )
 
 int PCB_SELECTION_TOOL::SelectPolyArea( const TOOL_EVENT& aEvent )
 {
-    bool cancelled = false;    // Was the tool canceled while it was running?
+    bool cancelled = false; // Was the tool canceled while it was running?
 
     SELECTION_MODE selectionMode = SELECTION_MODE::TOUCHING_LASSO;
     m_frame->GetCanvas()->SetCurrentCursor( KICURSOR::SELECT_LASSO );
@@ -1158,24 +1157,20 @@ int PCB_SELECTION_TOOL::SelectPolyArea( const TOOL_EVENT& aEvent )
             evt->SetPassEvent( false );
             break;
         }
-        else if(   evt->IsDrag( BUT_LEFT )
-                || evt->IsClick( BUT_LEFT )
-                || evt->IsAction( &ACTIONS::cursorClick ) )
+        else if( evt->IsDrag( BUT_LEFT ) || evt->IsClick( BUT_LEFT ) || evt->IsAction( &ACTIONS::cursorClick ) )
         {
             points.Append( evt->Position() );
         }
-        else if(   evt->IsDblClick( BUT_LEFT )
-                || evt->IsAction( &ACTIONS::cursorDblClick )
-                || evt->IsAction( &ACTIONS::finishInteractive ) )
+        else if( evt->IsDblClick( BUT_LEFT ) || evt->IsAction( &ACTIONS::cursorDblClick )
+                 || evt->IsAction( &ACTIONS::finishInteractive ) )
         {
             area.GetPoly().GenerateBBoxCache();
             SelectMultiple( area, m_subtractive, m_exclusive_or );
             evt->SetPassEvent( false );
             break;
         }
-        else if(   evt->IsAction( &PCB_ACTIONS::deleteLastPoint )
-                || evt->IsAction( &ACTIONS::doDelete )
-                || evt->IsAction( &ACTIONS::undo ) )
+        else if( evt->IsAction( &PCB_ACTIONS::deleteLastPoint ) || evt->IsAction( &ACTIONS::doDelete )
+                 || evt->IsAction( &ACTIONS::undo ) )
         {
             if( points.GetPointCount() > 0 )
             {
@@ -1197,6 +1192,7 @@ int PCB_SELECTION_TOOL::SelectPolyArea( const TOOL_EVENT& aEvent )
                 {
                     ClearSelection( true /*quiet mode*/ );
                     m_toolMgr->ProcessEvent( EVENTS::UnselectedEvent );
+                    syncSelectionWithAgent();
                 }
             }
         }
@@ -1224,8 +1220,7 @@ int PCB_SELECTION_TOOL::SelectPolyArea( const TOOL_EVENT& aEvent )
 }
 
 
-void PCB_SELECTION_TOOL::SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, bool aSubtractive,
-                                         bool aExclusiveOr )
+void PCB_SELECTION_TOOL::SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, bool aSubtractive, bool aExclusiveOr )
 {
     KIGFX::VIEW* view = getView();
 
@@ -1233,17 +1228,21 @@ void PCB_SELECTION_TOOL::SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, 
     bool anySubtracted = false;
 
     SELECTION_MODE selectionMode = aArea.GetMode();
-    bool containedMode = (    selectionMode == SELECTION_MODE::INSIDE_RECTANGLE
-                           || selectionMode == SELECTION_MODE::INSIDE_LASSO ) ? true : false;
-    bool boxMode = (    selectionMode == SELECTION_MODE::INSIDE_RECTANGLE
-                     || selectionMode == SELECTION_MODE::TOUCHING_RECTANGLE ) ? true : false;
+    bool           containedMode =
+            ( selectionMode == SELECTION_MODE::INSIDE_RECTANGLE || selectionMode == SELECTION_MODE::INSIDE_LASSO )
+                              ? true
+                              : false;
+    bool boxMode =
+            ( selectionMode == SELECTION_MODE::INSIDE_RECTANGLE || selectionMode == SELECTION_MODE::TOUCHING_RECTANGLE )
+                    ? true
+                    : false;
 
     std::vector<KIGFX::VIEW::LAYER_ITEM_PAIR> candidates;
-    BOX2I selectionBox = aArea.ViewBBox();
+    BOX2I                                     selectionBox = aArea.ViewBBox();
     view->Query( selectionBox, candidates ); // Get the list of nearby items
 
-    GENERAL_COLLECTOR collector;
-    GENERAL_COLLECTOR padsCollector;
+    GENERAL_COLLECTOR   collector;
+    GENERAL_COLLECTOR   padsCollector;
     std::set<EDA_ITEM*> group_items;
 
     for( PCB_GROUP* group : board()->Groups() )
@@ -1254,12 +1253,10 @@ void PCB_SELECTION_TOOL::SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, 
 
         std::unordered_set<EDA_ITEM*>& newset = group->GetItems();
 
-        auto boxContained =
-                [&]( const BOX2I& aBox )
-                {
-                    return boxMode ? selectionBox.Contains( aBox )
-                                   : KIGEOM::BoxHitTest( aArea.GetPoly(), aBox, true );
-                };
+        auto boxContained = [&]( const BOX2I& aBox )
+        {
+            return boxMode ? selectionBox.Contains( aBox ) : KIGEOM::BoxHitTest( aArea.GetPoly(), aBox, true );
+        };
 
         // If we are not greedy and have selected the whole group, add just one item
         // to allow it to be promoted to the group later
@@ -1279,12 +1276,11 @@ void PCB_SELECTION_TOOL::SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, 
             group_items.emplace( group_item );
     }
 
-    auto hitTest =
-            [&]( const EDA_ITEM* aItem )
-            {
-                return boxMode ? aItem->HitTest( selectionBox, containedMode )
-                               : aItem->HitTest( aArea.GetPoly(), containedMode );
-            };
+    auto hitTest = [&]( const EDA_ITEM* aItem )
+    {
+        return boxMode ? aItem->HitTest( selectionBox, containedMode )
+                       : aItem->HitTest( aArea.GetPoly(), containedMode );
+    };
 
     for( const auto& [item, layer] : candidates )
     {
@@ -1293,8 +1289,7 @@ void PCB_SELECTION_TOOL::SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, 
 
         BOARD_ITEM* boardItem = static_cast<BOARD_ITEM*>( item );
 
-        if( Selectable( boardItem ) && hitTest( boardItem )
-                && ( !containedMode || !group_items.count( boardItem ) ) )
+        if( Selectable( boardItem ) && hitTest( boardItem ) && ( !containedMode || !group_items.count( boardItem ) ) )
         {
             if( boardItem->Type() == PCB_PAD_T && !m_isFootprintEditor )
                 padsCollector.Append( boardItem );
@@ -1356,6 +1351,7 @@ void PCB_SELECTION_TOOL::SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, 
         m_toolMgr->ProcessEvent( EVENTS::SelectedEvent );
     else if( anySubtracted )
         m_toolMgr->ProcessEvent( EVENTS::UnselectedEvent );
+    syncSelectionWithAgent();
 }
 
 
@@ -1371,7 +1367,6 @@ int PCB_SELECTION_TOOL::disambiguateCursor( const TOOL_EVENT& aEvent )
 
     return 0;
 }
-
 
 
 int PCB_SELECTION_TOOL::CursorSelection( const TOOL_EVENT& aEvent )
@@ -1400,18 +1395,18 @@ int PCB_SELECTION_TOOL::SelectAll( const TOOL_EVENT& aEvent )
     selectionBox.SetMaximum();
 
     getView()->Query( selectionBox,
-            [&]( KIGFX::VIEW_ITEM* viewItem ) -> bool
-            {
-                if( viewItem->IsBOARD_ITEM() )
-                {
-                    BOARD_ITEM* item = static_cast<BOARD_ITEM*>( viewItem );
+                      [&]( KIGFX::VIEW_ITEM* viewItem ) -> bool
+                      {
+                          if( viewItem->IsBOARD_ITEM() )
+                          {
+                              BOARD_ITEM* item = static_cast<BOARD_ITEM*>( viewItem );
 
-                    if( item && Selectable( item ) && itemPassesFilter( item, true, nullptr ) )
-                        collection.Append( item );
-                }
+                              if( item && Selectable( item ) && itemPassesFilter( item, true, nullptr ) )
+                                  collection.Append( item );
+                          }
 
-                return true;
-            } );
+                          return true;
+                      } );
 
     FilterCollectorForHierarchy( collection, true );
 
@@ -1433,18 +1428,18 @@ int PCB_SELECTION_TOOL::UnselectAll( const TOOL_EVENT& aEvent )
     selectionBox.SetMaximum();
 
     getView()->Query( selectionBox,
-            [&]( KIGFX::VIEW_ITEM* viewItem ) -> bool
-            {
-                if( viewItem->IsBOARD_ITEM() )
-                {
-                    BOARD_ITEM* item = static_cast<BOARD_ITEM*>( viewItem );
+                      [&]( KIGFX::VIEW_ITEM* viewItem ) -> bool
+                      {
+                          if( viewItem->IsBOARD_ITEM() )
+                          {
+                              BOARD_ITEM* item = static_cast<BOARD_ITEM*>( viewItem );
 
-                    if( item && Selectable( item ) )
-                        unselect( item );
-                }
+                              if( item && Selectable( item ) )
+                                  unselect( item );
+                          }
 
-                return true;
-            } );
+                          return true;
+                      } );
 
     m_toolMgr->ProcessEvent( EVENTS::UnselectedEvent );
 
@@ -1466,7 +1461,7 @@ void connectedItemFilter( const VECTOR2I&, GENERAL_COLLECTOR& aCollector, PCB_SE
 
         if( !item )
             aCollector.Remove( i );
-        else if ( representedNets.count( item->GetNetCode() ) )
+        else if( representedNets.count( item->GetNetCode() ) )
             aCollector.Remove( i );
         else
             representedNets.insert( item->GetNetCode() );
@@ -1498,8 +1493,8 @@ int PCB_SELECTION_TOOL::unrouteSelected( const TOOL_EVENT& aEvent )
     // to pads, enable filter for these items, regardless the curent filter options
     // via filter is not changed, because it can be useful to keep via filter disabled
     struct PCB_SELECTION_FILTER_OPTIONS save_filter = m_filter;
-    m_filter.tracks      = true;
-    m_filter.pads        = true;
+    m_filter.tracks = true;
+    m_filter.pads = true;
 
     // Clear selection so we don't delete our footprints/pads
     ClearSelection( true );
@@ -1509,7 +1504,7 @@ int PCB_SELECTION_TOOL::unrouteSelected( const TOOL_EVENT& aEvent )
     m_toolMgr->RunAction( ACTIONS::doDelete );
     ClearSelection( true );
 
-    m_filter = save_filter;     // restore current filter options
+    m_filter = save_filter; // restore current filter options
 
     // Reselect our footprint/pads as they were in our original selection
     for( EDA_ITEM* item : selectedItems )
@@ -1575,9 +1570,8 @@ int PCB_SELECTION_TOOL::expandConnection( const TOOL_EVENT& aEvent )
 
     for( const EDA_ITEM* item : m_selection.GetItems() )
     {
-        if(   item->Type() == PCB_FOOTPRINT_T
-           || item->Type() == PCB_GENERATOR_T
-           || ( static_cast<const BOARD_ITEM*>( item )->IsConnected() ) )
+        if( item->Type() == PCB_FOOTPRINT_T || item->Type() == PCB_GENERATOR_T
+            || ( static_cast<const BOARD_ITEM*>( item )->IsConnected() ) )
         {
             initialCount++;
         }
@@ -1651,7 +1645,7 @@ int PCB_SELECTION_TOOL::expandConnection( const TOOL_EVENT& aEvent )
 
 
 void PCB_SELECTION_TOOL::selectAllConnectedTracks( const std::vector<BOARD_CONNECTED_ITEM*>& aStartItems,
-                                                   STOP_CONDITION aStopCondition )
+                                                   STOP_CONDITION                            aStopCondition )
 {
     PROF_TIMER refreshTimer;
     double     refreshIntervalMs = 500; // Refresh display with this interval to indicate progress
@@ -1727,8 +1721,7 @@ void PCB_SELECTION_TOOL::selectAllConnectedTracks( const std::vector<BOARD_CONNE
                 break;
             }
 
-            default:
-                break;
+            default: break;
             }
         }
 
@@ -1745,13 +1738,9 @@ void PCB_SELECTION_TOOL::selectAllConnectedTracks( const std::vector<BOARD_CONNE
             break;
         }
 
-        case PCB_VIA_T:
-            activePts.push_back( { startItem->GetPosition(), startItem->GetLayerSet() } );
-            break;
+        case PCB_VIA_T: activePts.push_back( { startItem->GetPosition(), startItem->GetLayerSet() } ); break;
 
-        case PCB_PAD_T:
-            activePts.push_back( { startItem->GetPosition(), startItem->GetLayerSet() } );
-            break;
+        case PCB_PAD_T: activePts.push_back( { startItem->GetPosition(), startItem->GetLayerSet() } ); break;
 
         case PCB_SHAPE_T:
         {
@@ -1763,8 +1752,7 @@ void PCB_SELECTION_TOOL::selectAllConnectedTracks( const std::vector<BOARD_CONNE
             break;
         }
 
-        default:
-            break;
+        default: break;
         }
 
         bool expand = true;
@@ -1977,14 +1965,11 @@ bool PCB_SELECTION_TOOL::isExpandableGraphicShape( const EDA_ITEM* aItem ) const
         {
         case SHAPE_T::SEGMENT:
         case SHAPE_T::ARC:
-        case SHAPE_T::BEZIER:
-            return !shape->IsOnCopperLayer();
+        case SHAPE_T::BEZIER: return !shape->IsOnCopperLayer();
 
-        case SHAPE_T::POLY:
-            return !shape->IsOnCopperLayer() && !shape->IsClosed();
+        case SHAPE_T::POLY: return !shape->IsOnCopperLayer() && !shape->IsClosed();
 
-        default:
-            return false;
+        default: return false;
         }
     }
 
@@ -1995,7 +1980,7 @@ bool PCB_SELECTION_TOOL::isExpandableGraphicShape( const EDA_ITEM* aItem ) const
 void PCB_SELECTION_TOOL::selectAllConnectedShapes( const std::vector<PCB_SHAPE*>& aStartItems )
 {
     std::stack<PCB_SHAPE*> toSearch;
-    std::set<PCB_SHAPE*> toCleanup;
+    std::set<PCB_SHAPE*>   toCleanup;
 
     for( PCB_SHAPE* startItem : aStartItems )
         toSearch.push( startItem );
@@ -2003,17 +1988,16 @@ void PCB_SELECTION_TOOL::selectAllConnectedShapes( const std::vector<PCB_SHAPE*>
     GENERAL_COLLECTOR        collector;
     GENERAL_COLLECTORS_GUIDE guide = getCollectorsGuide();
 
-    auto searchPoint =
-            [&]( const VECTOR2I& aWhere )
-            {
-                collector.Collect( board(), { PCB_SHAPE_T }, aWhere, guide );
+    auto searchPoint = [&]( const VECTOR2I& aWhere )
+    {
+        collector.Collect( board(), { PCB_SHAPE_T }, aWhere, guide );
 
-                for( EDA_ITEM* item : collector )
-                {
-                    if( isExpandableGraphicShape( item ) )
-                        toSearch.push( static_cast<PCB_SHAPE*>( item ) );
-                }
-            };
+        for( EDA_ITEM* item : collector )
+        {
+            if( isExpandableGraphicShape( item ) )
+                toSearch.push( static_cast<PCB_SHAPE*>( item ) );
+        }
+    };
 
     while( !toSearch.empty() )
     {
@@ -2135,8 +2119,8 @@ int PCB_SELECTION_TOOL::grabUnconnected( const TOOL_EVENT& aEvent )
             }
 
             // Figure out if we are the source or the target node on the ratnest
-            const CN_ANCHOR* other = edge.GetSourceNode()->Parent() == pad ? edge.GetTargetNode().get()
-                                                                           : edge.GetSourceNode().get();
+            const CN_ANCHOR* other =
+                    edge.GetSourceNode()->Parent() == pad ? edge.GetTargetNode().get() : edge.GetSourceNode().get();
 
             wxCHECK2( other && !other->Dirty(), continue );
 
@@ -2165,10 +2149,7 @@ void PCB_SELECTION_TOOL::SelectAllItemsOnNet( int aNetCode, bool aSelect )
 {
     std::shared_ptr<CONNECTIVITY_DATA> conn = board()->GetConnectivity();
 
-    for( BOARD_ITEM* item : conn->GetNetItems( aNetCode, { PCB_TRACE_T,
-                                                           PCB_ARC_T,
-                                                           PCB_VIA_T,
-                                                           PCB_SHAPE_T } ) )
+    for( BOARD_ITEM* item : conn->GetNetItems( aNetCode, { PCB_TRACE_T, PCB_ARC_T, PCB_VIA_T, PCB_SHAPE_T } ) )
     {
         if( itemPassesFilter( item, true, nullptr ) )
             aSelect ? select( item ) : unselect( item );
@@ -2192,6 +2173,7 @@ int PCB_SELECTION_TOOL::selectNet( const TOOL_EVENT& aEvent )
             m_toolMgr->ProcessEvent( EVENTS::SelectedEvent );
         else
             m_toolMgr->ProcessEvent( EVENTS::UnselectedEvent );
+        syncSelectionWithAgent();
 
         return 0;
     }
@@ -2215,6 +2197,7 @@ int PCB_SELECTION_TOOL::selectNet( const TOOL_EVENT& aEvent )
         m_toolMgr->ProcessEvent( EVENTS::SelectedEvent );
     else
         m_toolMgr->ProcessEvent( EVENTS::UnselectedEvent );
+    syncSelectionWithAgent();
 
     return 0;
 }
@@ -2286,8 +2269,7 @@ void PCB_SELECTION_TOOL::selectConnections( const std::vector<BOARD_ITEM*>& aIte
             break;
         }
 
-        default:
-            break;
+        default: break;
         }
     }
 
@@ -2326,10 +2308,7 @@ void PCB_SELECTION_TOOL::selectConnections( const std::vector<BOARD_ITEM*>& aIte
 
     for( int netCode : netcodeList )
     {
-        for( BOARD_ITEM* item : conn->GetNetItems( netCode, { PCB_TRACE_T,
-                                                              PCB_ARC_T,
-                                                              PCB_VIA_T,
-                                                              PCB_SHAPE_T } ) )
+        for( BOARD_ITEM* item : conn->GetNetItems( netCode, { PCB_TRACE_T, PCB_ARC_T, PCB_VIA_T, PCB_SHAPE_T } ) )
         {
             localConnectionList.insert( item );
         }
@@ -2454,16 +2433,14 @@ void PCB_SELECTION_TOOL::zoomFitSelection()
     BOX2I        selectionBox = m_selection.GetBoundingBox();
     KIGFX::VIEW* view = getView();
 
-    VECTOR2D     screenSize = view->ToWorld( ToVECTOR2D( m_frame->GetCanvas()->GetClientSize() ),
-                                             false );
+    VECTOR2D screenSize = view->ToWorld( ToVECTOR2D( m_frame->GetCanvas()->GetClientSize() ), false );
     screenSize.x = std::max( 10.0, screenSize.x );
     screenSize.y = std::max( 10.0, screenSize.y );
 
     if( selectionBox.GetWidth() != 0 || selectionBox.GetHeight() != 0 )
     {
         VECTOR2D vsize = selectionBox.GetSize();
-        double   scale = view->GetScale() / std::max( fabs( vsize.x / screenSize.x ),
-                                                      fabs( vsize.y / screenSize.y ) );
+        double   scale = view->GetScale() / std::max( fabs( vsize.x / screenSize.x ), fabs( vsize.y / screenSize.y ) );
         view->SetScale( scale );
         view->SetCenter( selectionBox.Centre() );
         view->Add( &m_selection );
@@ -2500,7 +2477,7 @@ void PCB_SELECTION_TOOL::ZoomFitCrossProbeBBox( const BOX2I& aBBox )
 #endif // DEFAULT_PCBNEW_CODE
 
 #ifndef DEFAULT_PCBNEW_CODE // Do the scaled zoom
-    auto bbSize = bbox.Inflate( KiROUND( bbox.GetWidth() * 0.2 ) ).GetSize();
+    auto     bbSize = bbox.Inflate( KiROUND( bbox.GetWidth() * 0.2 ) ).GetSize();
     VECTOR2D screenSize = view->ToWorld( ToVECTOR2D( m_frame->GetCanvas()->GetClientSize() ), false );
 
     // This code tries to come up with a zoom factor that doesn't simply zoom in
@@ -2535,8 +2512,7 @@ void PCB_SELECTION_TOOL::ZoomFitCrossProbeBBox( const BOX2I& aBBox )
     double ratio = std::max( -1.0, fabs( bbSize.y / screenSize.y ) );
 
     // Original KiCad code for how much to scale the zoom
-    double kicadRatio = std::max( fabs( bbSize.x / screenSize.x ),
-                                  fabs( bbSize.y / screenSize.y ) );
+    double kicadRatio = std::max( fabs( bbSize.x / screenSize.x ), fabs( bbSize.y / screenSize.y ) );
 
     // LUT to scale zoom ratio to provide reasonable schematic context.  Must work
     // with footprints of varying sizes (e.g. 0402 package and 200 pin BGA).
@@ -2544,16 +2520,8 @@ void PCB_SELECTION_TOOL::ZoomFitCrossProbeBBox( const BOX2I& aBBox )
     //
     // "first" = compRatio (footprint height / default text height)
     // "second" = Amount to scale ratio by
-    std::vector<std::pair<double, double>> lut {
-        { 1, 8 },
-        { 1.5, 5 },
-        { 3, 3 },
-        { 4.5, 2.5 },
-        { 8, 2.0 },
-        { 12, 1.7 },
-        { 16, 1.5 },
-        { 24, 1.3 },
-        { 32, 1.0 },
+    std::vector<std::pair<double, double>> lut{
+        { 1, 8 }, { 1.5, 5 }, { 3, 3 }, { 4.5, 2.5 }, { 8, 2.0 }, { 12, 1.7 }, { 16, 1.5 }, { 24, 1.3 }, { 32, 1.0 },
     };
 
 
@@ -2638,9 +2606,7 @@ void PCB_SELECTION_TOOL::FindItem( BOARD_ITEM* aItem )
             break;
         }
 
-        default:
-            select( aItem );
-            m_frame->FocusOnLocation( aItem->GetPosition() );
+        default: select( aItem ); m_frame->FocusOnLocation( aItem->GetPosition() );
         }
 
         // If the item has a bounding box, then zoom out if needed
@@ -2674,11 +2640,14 @@ void PCB_SELECTION_TOOL::FindItem( BOARD_ITEM* aItem )
             }
         }
         // Inform other potentially interested tools
+        // Inform other potentially interested tools
         m_toolMgr->ProcessEvent( EVENTS::SelectedEvent );
+        syncSelectionWithAgent();
     }
     else if( cleared )
     {
         m_toolMgr->ProcessEvent( EVENTS::ClearedEvent );
+        syncSelectionWithAgent();
     }
 
     m_frame->GetCanvas()->ForceRefresh();
@@ -2699,19 +2668,15 @@ static bool itemIsIncludedByFilter( const BOARD_ITEM& aItem, const BOARD& aBoard
     {
         const FOOTPRINT& footprint = static_cast<const FOOTPRINT&>( aItem );
 
-        return aFilterOptions.includeFootprints && ( aFilterOptions.includeLockedFootprints
-                                                     || !footprint.IsLocked() );
+        return aFilterOptions.includeFootprints && ( aFilterOptions.includeLockedFootprints || !footprint.IsLocked() );
     }
 
     case PCB_TRACE_T:
-    case PCB_ARC_T:
-        return aFilterOptions.includeTracks;
+    case PCB_ARC_T: return aFilterOptions.includeTracks;
 
-    case PCB_VIA_T:
-        return aFilterOptions.includeVias;
+    case PCB_VIA_T: return aFilterOptions.includeVias;
 
-    case PCB_ZONE_T:
-        return aFilterOptions.includeZones;
+    case PCB_ZONE_T: return aFilterOptions.includeZones;
 
     case PCB_SHAPE_T:
     case PCB_TARGET_T:
@@ -2729,8 +2694,7 @@ static bool itemIsIncludedByFilter( const BOARD_ITEM& aItem, const BOARD& aBoard
     case PCB_TEXT_T:
     case PCB_TEXTBOX_T:
     case PCB_TABLE_T:
-    case PCB_TABLECELL_T:
-        return aFilterOptions.includePcbTexts;
+    case PCB_TABLECELL_T: return aFilterOptions.includePcbTexts;
 
     default:
         // Filter dialog is inclusive, not exclusive.  If it's not included, then it doesn't
@@ -2800,7 +2764,7 @@ void PCB_SELECTION_TOOL::FilterCollectedItems( GENERAL_COLLECTOR& aCollector, bo
 
 
 bool PCB_SELECTION_TOOL::itemPassesFilter( BOARD_ITEM* aItem, bool aMultiSelect,
-                                          PCB_SELECTION_FILTER_OPTIONS* aRejected )
+                                           PCB_SELECTION_FILTER_OPTIONS* aRejected )
 {
     if( !m_filter.lockedItems )
     {
@@ -2894,8 +2858,7 @@ bool PCB_SELECTION_TOOL::itemPassesFilter( BOARD_ITEM* aItem, bool aMultiSelect,
     {
         ZONE* zone = static_cast<ZONE*>( aItem );
 
-        if( ( !m_filter.zones && !zone->GetIsRuleArea() )
-            || ( !m_filter.keepouts && zone->GetIsRuleArea() ) )
+        if( ( !m_filter.zones && !zone->GetIsRuleArea() ) || ( !m_filter.keepouts && zone->GetIsRuleArea() ) )
         {
             if( aRejected )
             {
@@ -3028,38 +2991,37 @@ void PCB_SELECTION_TOOL::RebuildSelection()
 
     bool enteredGroupFound = false;
 
-    INSPECTOR_FUNC inspector =
-            [&]( EDA_ITEM* item, void* testData )
-            {
-                if( item->IsSelected() )
-                {
-                    EDA_ITEM* parent = item->GetParent();
+    INSPECTOR_FUNC inspector = [&]( EDA_ITEM* item, void* testData )
+    {
+        if( item->IsSelected() )
+        {
+            EDA_ITEM* parent = item->GetParent();
 
-                    // Let selected parents handle their children.
-                    if( parent && parent->IsSelected() )
-                        return INSPECT_RESULT::CONTINUE;
-
-                    highlight( item, SELECTED, &m_selection );
-                }
-
-                if( item->Type() == PCB_GROUP_T )
-                {
-                    if( item == m_enteredGroup )
-                    {
-                        item->SetFlags( ENTERED );
-                        enteredGroupFound = true;
-                    }
-                    else
-                    {
-                        item->ClearFlags( ENTERED );
-                    }
-                }
-
+            // Let selected parents handle their children.
+            if( parent && parent->IsSelected() )
                 return INSPECT_RESULT::CONTINUE;
-            };
 
-    board()->Visit( inspector, nullptr, m_isFootprintEditor ? GENERAL_COLLECTOR::FootprintItems
-                                                            : GENERAL_COLLECTOR::AllBoardItems );
+            highlight( item, SELECTED, &m_selection );
+        }
+
+        if( item->Type() == PCB_GROUP_T )
+        {
+            if( item == m_enteredGroup )
+            {
+                item->SetFlags( ENTERED );
+                enteredGroupFound = true;
+            }
+            else
+            {
+                item->ClearFlags( ENTERED );
+            }
+        }
+
+        return INSPECT_RESULT::CONTINUE;
+    };
+
+    board()->Visit( inspector, nullptr,
+                    m_isFootprintEditor ? GENERAL_COLLECTOR::FootprintItems : GENERAL_COLLECTOR::AllBoardItems );
 
     if( !enteredGroupFound )
     {
@@ -3071,35 +3033,33 @@ void PCB_SELECTION_TOOL::RebuildSelection()
 
 bool PCB_SELECTION_TOOL::Selectable( const BOARD_ITEM* aItem, bool checkVisibilityOnly ) const
 {
-    const RENDER_SETTINGS* settings = getView()->GetPainter()->GetSettings();
+    const RENDER_SETTINGS*     settings = getView()->GetPainter()->GetSettings();
     const PCB_DISPLAY_OPTIONS& options = frame()->GetDisplayOptions();
 
-    auto visibleLayers =
-            [&]() -> LSET
-            {
-                if( m_isFootprintEditor )
-                {
-                    LSET set;
+    auto visibleLayers = [&]() -> LSET
+    {
+        if( m_isFootprintEditor )
+        {
+            LSET set;
 
-                    for( PCB_LAYER_ID layer : LSET::AllLayersMask() )
-                        set.set( layer, view()->IsLayerVisible( layer ) );
+            for( PCB_LAYER_ID layer : LSET::AllLayersMask() )
+                set.set( layer, view()->IsLayerVisible( layer ) );
 
-                    return set;
-                }
-                else
-                {
-                    return board()->GetVisibleLayers();
-                }
-            };
+            return set;
+        }
+        else
+        {
+            return board()->GetVisibleLayers();
+        }
+    };
 
-    auto layerVisible =
-            [&]( PCB_LAYER_ID aLayer )
-            {
-                if( m_isFootprintEditor )
-                    return view()->IsLayerVisible( aLayer );
-                else
-                    return board()->IsLayerVisible( aLayer );
-            };
+    auto layerVisible = [&]( PCB_LAYER_ID aLayer )
+    {
+        if( m_isFootprintEditor )
+            return view()->IsLayerVisible( aLayer );
+        else
+            return board()->IsLayerVisible( aLayer );
+    };
 
     if( settings->GetHighContrast() )
     {
@@ -3142,9 +3102,7 @@ bool PCB_SELECTION_TOOL::Selectable( const BOARD_ITEM* aItem, bool checkVisibili
 
         // If the footprint has no items except the reference and value fields, include the
         // footprint in the selections.
-        if( footprint->GraphicalItems().empty()
-                && footprint->Pads().empty()
-                && footprint->Zones().empty() )
+        if( footprint->GraphicalItems().empty() && footprint->Pads().empty() && footprint->Zones().empty() )
         {
             return true;
         }
@@ -3167,7 +3125,7 @@ bool PCB_SELECTION_TOOL::Selectable( const BOARD_ITEM* aItem, bool checkVisibili
                 return true;
         }
 
-        for( const PCB_POINT* point: footprint->Points() )
+        for( const PCB_POINT* point : footprint->Points() )
         {
             if( Selectable( point, true ) )
                 return true;
@@ -3385,10 +3343,9 @@ bool PCB_SELECTION_TOOL::Selectable( const BOARD_ITEM* aItem, bool checkVisibili
     // These are not selectable
     case PCB_NETINFO_T:
     case NOT_USED:
-    case TYPE_NOT_INIT:
-        return false;
+    case TYPE_NOT_INIT: return false;
 
-    default:    // Suppress warnings
+    default: // Suppress warnings
         break;
     }
 
@@ -3409,8 +3366,8 @@ void PCB_SELECTION_TOOL::select( EDA_ITEM* aItem )
             return;
     }
 
-    if( m_enteredGroup && !PCB_GROUP::WithinScope( static_cast<BOARD_ITEM*>( aItem ), m_enteredGroup,
-                                                   m_isFootprintEditor ) )
+    if( m_enteredGroup
+        && !PCB_GROUP::WithinScope( static_cast<BOARD_ITEM*>( aItem ), m_enteredGroup, m_isFootprintEditor ) )
     {
         ExitGroup();
     }
@@ -3448,7 +3405,7 @@ void PCB_SELECTION_TOOL::highlightInternal( EDA_ITEM* aItem, int aMode, bool aUs
         aItem->SetBrightened();
 
     if( aUsingOverlay && aMode != BRIGHTENED )
-        view()->Hide( aItem, true );    // Hide the original item, so it is shown only on overlay
+        view()->Hide( aItem, true ); // Hide the original item, so it is shown only on overlay
 
     if( aItem->IsBOARD_ITEM() )
     {
@@ -3482,8 +3439,8 @@ void PCB_SELECTION_TOOL::unhighlightInternal( EDA_ITEM* aItem, int aMode, bool a
 
     if( aUsingOverlay && aMode != BRIGHTENED )
     {
-        view()->Hide( aItem, false );   // Restore original item visibility...
-        view()->Update( aItem );        // ... and make sure it's redrawn un-selected
+        view()->Hide( aItem, false ); // Restore original item visibility...
+        view()->Update( aItem );      // ... and make sure it's redrawn un-selected
     }
 
     if( aItem->IsBOARD_ITEM() )
@@ -3662,9 +3619,7 @@ int PCB_SELECTION_TOOL::hitTestDistance( const VECTOR2I& aWhere, BOARD_ITEM* aIt
         break;
     }
 
-    default:
-        aItem->GetEffectiveShape()->Collide( loc, aMaxDistance, &distance );
-        break;
+    default: aItem->GetEffectiveShape()->Collide( loc, aMaxDistance, &distance ); break;
     }
 
     return distance;
@@ -3683,25 +3638,24 @@ void PCB_SELECTION_TOOL::pruneObscuredSelectionCandidates( GENERAL_COLLECTOR& aC
     wxCHECK( settings, /* void */ );
 
     PCB_LAYER_ID activeLayer = m_frame->GetActiveLayer();
-    LSET visibleLayers = m_frame->GetBoard()->GetVisibleLayers();
-    LSET enabledLayers = m_frame->GetBoard()->GetEnabledLayers();
-    LSEQ enabledLayerStack = enabledLayers.SeqStackupTop2Bottom( activeLayer );
+    LSET         visibleLayers = m_frame->GetBoard()->GetVisibleLayers();
+    LSET         enabledLayers = m_frame->GetBoard()->GetEnabledLayers();
+    LSEQ         enabledLayerStack = enabledLayers.SeqStackupTop2Bottom( activeLayer );
 
     wxCHECK( !enabledLayerStack.empty(), /* void */ );
 
-    auto isZoneFillKeepout =
-            []( const BOARD_ITEM* aItem ) -> bool
-            {
-                if( aItem->Type() == PCB_ZONE_T )
-                {
-                    const ZONE* zone = static_cast<const ZONE*>( aItem );
+    auto isZoneFillKeepout = []( const BOARD_ITEM* aItem ) -> bool
+    {
+        if( aItem->Type() == PCB_ZONE_T )
+        {
+            const ZONE* zone = static_cast<const ZONE*>( aItem );
 
-                    if( zone->GetIsRuleArea() && zone->GetDoNotAllowZoneFills() )
-                        return true;
-                }
+            if( zone->GetIsRuleArea() && zone->GetDoNotAllowZoneFills() )
+                return true;
+        }
 
-                return false;
-            };
+        return false;
+    };
 
     std::vector<LAYER_OPACITY_ITEM> opacityStackup;
 
@@ -3745,9 +3699,9 @@ void PCB_SELECTION_TOOL::pruneObscuredSelectionCandidates( GENERAL_COLLECTOR& aC
 
     std::set<const BOARD_ITEM*> visibleItems;
     std::set<const BOARD_ITEM*> itemsToRemove;
-    double minAlphaLimit = ADVANCED_CFG::GetCfg().m_PcbSelectionVisibilityRatio;
-    double currentStackupOpacity = 0.0;
-    PCB_LAYER_ID lastVisibleLayer = PCB_LAYER_ID::UNDEFINED_LAYER;
+    double                      minAlphaLimit = ADVANCED_CFG::GetCfg().m_PcbSelectionVisibilityRatio;
+    double                      currentStackupOpacity = 0.0;
+    PCB_LAYER_ID                lastVisibleLayer = PCB_LAYER_ID::UNDEFINED_LAYER;
 
     for( const LAYER_OPACITY_ITEM& opacityItem : opacityStackup )
     {
@@ -3760,32 +3714,30 @@ void PCB_SELECTION_TOOL::pruneObscuredSelectionCandidates( GENERAL_COLLECTOR& aC
         }
 
         // Objects to ignore and fallback to the old selection behavior.
-        auto ignoreItem =
-                [&]()
-                {
-                    const BOARD_ITEM* item = opacityItem.m_Item;
+        auto ignoreItem = [&]()
+        {
+            const BOARD_ITEM* item = opacityItem.m_Item;
 
-                    wxCHECK( item, false );
+            wxCHECK( item, false );
 
-                    // Check items that span multiple layers for visibility.
-                    if( visibleItems.count( item ) )
-                        return true;
+            // Check items that span multiple layers for visibility.
+            if( visibleItems.count( item ) )
+                return true;
 
-                    // Don't prune child items of a footprint that is already visible.
-                    if( item->GetParent()
-                            && ( item->GetParent()->Type() == PCB_FOOTPRINT_T )
-                            && visibleItems.count( item->GetParent() ) )
-                    {
-                        return true;
-                    }
+            // Don't prune child items of a footprint that is already visible.
+            if( item->GetParent() && ( item->GetParent()->Type() == PCB_FOOTPRINT_T )
+                && visibleItems.count( item->GetParent() ) )
+            {
+                return true;
+            }
 
-                    // Keepout zones are transparent but for some reason, PCB_PAINTER::GetColor()
-                    // returns the color of the zone it prevents from filling.
-                    if( isZoneFillKeepout( item ) )
-                        return true;
+            // Keepout zones are transparent but for some reason, PCB_PAINTER::GetColor()
+            // returns the color of the zone it prevents from filling.
+            if( isZoneFillKeepout( item ) )
+                return true;
 
-                    return false;
-                };
+            return false;
+        };
 
         // Everything on the currently selected layer is visible;
         if( opacityItem.m_Layer == enabledLayerStack[0] )
@@ -3831,16 +3783,12 @@ void PCB_SELECTION_TOOL::pruneObscuredSelectionCandidates( GENERAL_COLLECTOR& aC
 // We currently check for pads and text mostly covering a footprint, but we don't check for
 // smaller footprints mostly covering a larger footprint.
 //
-void PCB_SELECTION_TOOL::GuessSelectionCandidates( GENERAL_COLLECTOR& aCollector,
-                                                   const VECTOR2I& aWhere ) const
+void PCB_SELECTION_TOOL::GuessSelectionCandidates( GENERAL_COLLECTOR& aCollector, const VECTOR2I& aWhere ) const
 {
-    static const LSET silkLayers( { B_SilkS, F_SilkS } );
-    static const LSET courtyardLayers( { B_CrtYd, F_CrtYd } );
-    static std::vector<KICAD_T> singleLayerSilkTypes = { PCB_FIELD_T,
-                                                         PCB_TEXT_T,   PCB_TEXTBOX_T,
-                                                         PCB_TABLE_T,  PCB_TABLECELL_T,
-                                                         PCB_SHAPE_T,
-                                                         PCB_BARCODE_T };
+    static const LSET           silkLayers( { B_SilkS, F_SilkS } );
+    static const LSET           courtyardLayers( { B_CrtYd, F_CrtYd } );
+    static std::vector<KICAD_T> singleLayerSilkTypes = { PCB_FIELD_T,     PCB_TEXT_T,  PCB_TEXTBOX_T, PCB_TABLE_T,
+                                                         PCB_TABLECELL_T, PCB_SHAPE_T, PCB_BARCODE_T };
 
     if( ADVANCED_CFG::GetCfg().m_PcbSelectionVisibilityRatio != 1.0 )
         pruneObscuredSelectionCandidates( aCollector );
@@ -3862,7 +3810,7 @@ void PCB_SELECTION_TOOL::GuessSelectionCandidates( GENERAL_COLLECTOR& aCollector
         {
             BOARD_ITEM* item = aCollector[i];
 
-            if( item->IsType( singleLayerSilkTypes ) && silkLayers[ item->GetLayer() ] )
+            if( item->IsType( singleLayerSilkTypes ) && silkLayers[item->GetLayer()] )
                 preferred.insert( item );
         }
     }
@@ -3904,7 +3852,7 @@ void PCB_SELECTION_TOOL::GuessSelectionCandidates( GENERAL_COLLECTOR& aCollector
         BOARD_ITEM* item = aCollector[i];
         int         itemSlop = hitTestDistance( where, item, maxSlop );
 
-        itemsBySloppiness[ item ] = itemSlop;
+        itemsBySloppiness[item] = itemSlop;
 
         if( itemSlop < minSlop )
             minSlop = itemSlop;
@@ -3931,8 +3879,7 @@ void PCB_SELECTION_TOOL::GuessSelectionCandidates( GENERAL_COLLECTOR& aCollector
         BOARD_ITEM* item = aCollector[i];
         double      area = 0.0;
 
-        if( item->Type() == PCB_ZONE_T
-                && static_cast<ZONE*>( item )->HitTestForEdge( where, maxSlop / 2 ) )
+        if( item->Type() == PCB_ZONE_T && static_cast<ZONE*>( item )->HitTestForEdge( where, maxSlop / 2 ) )
         {
             // Zone borders are very specific, so make them "small"
             area = (double) SEG::Square( singlePixel ) * MAX_SLOP;
@@ -3964,8 +3911,7 @@ void PCB_SELECTION_TOOL::GuessSelectionCandidates( GENERAL_COLLECTOR& aCollector
     }
 
     std::sort( itemsByArea.begin(), itemsByArea.end(),
-               []( const std::pair<BOARD_ITEM*, double>& lhs,
-                   const std::pair<BOARD_ITEM*, double>& rhs ) -> bool
+               []( const std::pair<BOARD_ITEM*, double>& lhs, const std::pair<BOARD_ITEM*, double>& rhs ) -> bool
                {
                    return lhs.second < rhs.second;
                } );
@@ -3974,7 +3920,7 @@ void PCB_SELECTION_TOOL::GuessSelectionCandidates( GENERAL_COLLECTOR& aCollector
 
     for( int i = 1; i < (int) itemsByArea.size(); ++i )
     {
-        if( itemsByArea[i].second > itemsByArea[i-1].second * sizeRatio )
+        if( itemsByArea[i].second > itemsByArea[i - 1].second * sizeRatio )
             rejecting = true;
 
         if( rejecting )
@@ -3995,7 +3941,7 @@ void PCB_SELECTION_TOOL::GuessSelectionCandidates( GENERAL_COLLECTOR& aCollector
     }
 
     // Hopefully we've now got what the user wanted.
-    if( (unsigned) aCollector.GetCount() > rejected.size() )  // do not remove everything
+    if( (unsigned) aCollector.GetCount() > rejected.size() ) // do not remove everything
     {
         for( BOARD_ITEM* item : rejected )
             aCollector.Transfer( item );
@@ -4145,8 +4091,7 @@ void PCB_SELECTION_TOOL::FilterCollectorForTableCells( GENERAL_COLLECTOR& aColle
 }
 
 
-void PCB_SELECTION_TOOL::FilterCollectorForFreePads( GENERAL_COLLECTOR& aCollector,
-                                                     bool aForcePromotion ) const
+void PCB_SELECTION_TOOL::FilterCollectorForFreePads( GENERAL_COLLECTOR& aCollector, bool aForcePromotion ) const
 {
     std::set<BOARD_ITEM*> to_add;
 
@@ -4183,14 +4128,13 @@ void PCB_SELECTION_TOOL::FilterCollectorForMarkers( GENERAL_COLLECTOR& aCollecto
 }
 
 
-void PCB_SELECTION_TOOL::FilterCollectorForFootprints( GENERAL_COLLECTOR& aCollector,
-                                                       const VECTOR2I& aWhere ) const
+void PCB_SELECTION_TOOL::FilterCollectorForFootprints( GENERAL_COLLECTOR& aCollector, const VECTOR2I& aWhere ) const
 {
     const RENDER_SETTINGS* settings = getView()->GetPainter()->GetSettings();
-    BOX2D viewport = getView()->GetViewport();
-    BOX2I extents = BOX2ISafe( viewport );
+    BOX2D                  viewport = getView()->GetViewport();
+    BOX2I                  extents = BOX2ISafe( viewport );
 
-    bool need_direct_hit = false;
+    bool       need_direct_hit = false;
     FOOTPRINT* single_fp = nullptr;
 
     // If the designer is not modifying the existing selection AND we already have
@@ -4230,23 +4174,22 @@ void PCB_SELECTION_TOOL::FilterCollectorForFootprints( GENERAL_COLLECTOR& aColle
         }
     }
 
-    auto visibleLayers =
-            [&]() -> LSET
-            {
-                if( m_isFootprintEditor )
-                {
-                    LSET set;
+    auto visibleLayers = [&]() -> LSET
+    {
+        if( m_isFootprintEditor )
+        {
+            LSET set;
 
-                    for( PCB_LAYER_ID layer : LSET::AllLayersMask() )
-                        set.set( layer, view()->IsLayerVisible( layer ) );
+            for( PCB_LAYER_ID layer : LSET::AllLayersMask() )
+                set.set( layer, view()->IsLayerVisible( layer ) );
 
-                    return set;
-                }
-                else
-                {
-                    return board()->GetVisibleLayers();
-                }
-            };
+            return set;
+        }
+        else
+        {
+            return board()->GetVisibleLayers();
+        }
+    };
 
     LSET layers = visibleLayers();
 
@@ -4267,7 +4210,7 @@ void PCB_SELECTION_TOOL::FilterCollectorForFootprints( GENERAL_COLLECTOR& aColle
     for( int i = aCollector.GetCount() - 1; i >= 0; --i )
     {
         BOARD_ITEM* item = aCollector[i];
-        FOOTPRINT* fp = dyn_cast<FOOTPRINT*>( item );
+        FOOTPRINT*  fp = dyn_cast<FOOTPRINT*>( item );
 
         if( !fp )
             continue;
@@ -4279,7 +4222,7 @@ void PCB_SELECTION_TOOL::FilterCollectorForFootprints( GENERAL_COLLECTOR& aColle
         BOX2I bbox = fp->GetLayerBoundingBox( layers );
 
         // If the point clicked is not inside the visible bounding box, we can also remove it.
-        if( !bbox.Contains( aWhere) )
+        if( !bbox.Contains( aWhere ) )
             aCollector.Remove( item );
 
         bool has_hit = false;
@@ -4349,7 +4292,7 @@ int PCB_SELECTION_TOOL::SelectColumns( const TOOL_EVENT& aEvent )
         }
     }
 
-    for( auto& [ table, col ] : columns )
+    for( auto& [table, col] : columns )
     {
         for( int row = 0; row < table->GetRowCount(); ++row )
         {
@@ -4384,7 +4327,7 @@ int PCB_SELECTION_TOOL::SelectRows( const TOOL_EVENT& aEvent )
         }
     }
 
-    for( auto& [ table, row ] : rows )
+    for( auto& [table, row] : rows )
     {
         for( int col = 0; col < table->GetColCount(); ++col )
         {
@@ -4436,41 +4379,73 @@ int PCB_SELECTION_TOOL::SelectTable( const TOOL_EVENT& aEvent )
 
 void PCB_SELECTION_TOOL::setTransitions()
 {
-    Go( &PCB_SELECTION_TOOL::UpdateMenu,            ACTIONS::updateMenu.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::UpdateMenu, ACTIONS::updateMenu.MakeEvent() );
 
-    Go( &PCB_SELECTION_TOOL::Main,                  ACTIONS::selectionActivate.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::CursorSelection,       ACTIONS::selectionCursor.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::ClearSelection,        ACTIONS::selectionClear.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::Main, ACTIONS::selectionActivate.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::CursorSelection, ACTIONS::selectionCursor.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::ClearSelection, ACTIONS::selectionClear.MakeEvent() );
 
-    Go( &PCB_SELECTION_TOOL::AddItemToSel,          ACTIONS::selectItem.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::AddItemsToSel,         ACTIONS::selectItems.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::RemoveItemFromSel,     ACTIONS::unselectItem.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::RemoveItemsFromSel,    ACTIONS::unselectItems.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::ReselectItem,          ACTIONS::reselectItem.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::SelectionMenu,         ACTIONS::selectionMenu.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::AddItemToSel, ACTIONS::selectItem.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::AddItemsToSel, ACTIONS::selectItems.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::RemoveItemFromSel, ACTIONS::unselectItem.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::RemoveItemsFromSel, ACTIONS::unselectItems.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::ReselectItem, ACTIONS::reselectItem.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::SelectionMenu, ACTIONS::selectionMenu.MakeEvent() );
 
-    Go( &PCB_SELECTION_TOOL::filterSelection,       PCB_ACTIONS::filterSelection.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::expandConnection,      PCB_ACTIONS::selectConnection.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::unrouteSelected,       PCB_ACTIONS::unrouteSelected.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::unrouteSegment,        PCB_ACTIONS::unrouteSegment.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::selectNet,             PCB_ACTIONS::selectNet.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::selectNet,             PCB_ACTIONS::deselectNet.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::selectUnconnected,     PCB_ACTIONS::selectUnconnected.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::grabUnconnected,       PCB_ACTIONS::grabUnconnected.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::syncSelection,         PCB_ACTIONS::syncSelection.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::filterSelection, PCB_ACTIONS::filterSelection.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::expandConnection, PCB_ACTIONS::selectConnection.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::unrouteSelected, PCB_ACTIONS::unrouteSelected.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::unrouteSegment, PCB_ACTIONS::unrouteSegment.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::selectNet, PCB_ACTIONS::selectNet.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::selectNet, PCB_ACTIONS::deselectNet.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::selectUnconnected, PCB_ACTIONS::selectUnconnected.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::grabUnconnected, PCB_ACTIONS::grabUnconnected.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::syncSelection, PCB_ACTIONS::syncSelection.MakeEvent() );
     Go( &PCB_SELECTION_TOOL::syncSelectionWithNets, PCB_ACTIONS::syncSelectionWithNets.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::selectSameSheet,       PCB_ACTIONS::selectSameSheet.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::selectSheetContents,   PCB_ACTIONS::selectOnSheetFromEeschema.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::updateSelection,       EVENTS::SelectedItemsModified );
-    Go( &PCB_SELECTION_TOOL::updateSelection,       EVENTS::SelectedItemsMoved );
-    Go( &PCB_SELECTION_TOOL::SelectColumns,         ACTIONS::selectColumns.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::SelectRows,            ACTIONS::selectRows.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::SelectTable,           ACTIONS::selectTable.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::selectSameSheet, PCB_ACTIONS::selectSameSheet.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::selectSheetContents, PCB_ACTIONS::selectOnSheetFromEeschema.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::updateSelection, EVENTS::SelectedItemsModified );
+    Go( &PCB_SELECTION_TOOL::updateSelection, EVENTS::SelectedItemsMoved );
+    Go( &PCB_SELECTION_TOOL::SelectColumns, ACTIONS::selectColumns.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::SelectRows, ACTIONS::selectRows.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::SelectTable, ACTIONS::selectTable.MakeEvent() );
 
-    Go( &PCB_SELECTION_TOOL::SetSelectPoly,         ACTIONS::selectSetLasso.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::SetSelectRect,         ACTIONS::selectSetRect.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::SelectAll,             ACTIONS::selectAll.MakeEvent() );
-    Go( &PCB_SELECTION_TOOL::UnselectAll,           ACTIONS::unselectAll.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::SetSelectPoly, ACTIONS::selectSetLasso.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::SetSelectRect, ACTIONS::selectSetRect.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::SelectAll, ACTIONS::selectAll.MakeEvent() );
+    Go( &PCB_SELECTION_TOOL::UnselectAll, ACTIONS::unselectAll.MakeEvent() );
 
-    Go( &PCB_SELECTION_TOOL::disambiguateCursor,    EVENTS::DisambiguatePoint );
+    Go( &PCB_SELECTION_TOOL::disambiguateCursor, EVENTS::DisambiguatePoint );
+}
+
+void PCB_SELECTION_TOOL::syncSelectionWithAgent()
+{
+    // Check if Agent is running
+    KIWAY_PLAYER* agent = m_frame->Kiway().Player( FRAME_AGENT, false );
+    if( !agent )
+    {
+        printf( "PCB_SELECTION_TOOL::syncSelectionWithAgent: Agent not found\n" );
+        return;
+    }
+
+    std::string payload = "SELECTION|PCB|";
+    int         count = m_selection.GetSize();
+
+    if( count == 0 )
+    {
+        payload = "CLEARED";
+    }
+    else if( count == 1 )
+    {
+        EDA_ITEM* item = m_selection.Front();
+        wxString  desc = item->GetItemDescription( m_frame, true );
+        payload += desc.ToStdString();
+    }
+    else
+    {
+        payload += std::to_string( count ) + " items selected";
+    }
+
+    printf( "PCB_SELECTION_TOOL::syncSelectionWithAgent: Sending payload '%s'\n", payload.c_str() );
+    m_frame->Kiway().ExpressMail( FRAME_AGENT, MAIL_SELECTION, payload );
 }

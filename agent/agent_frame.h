@@ -33,7 +33,8 @@ private:
     wxButton*     m_plusButton;
     wxChoice*     m_modeChoice;
     wxChoice*     m_modelChoice;
-    wxButton*     m_actionButton; // Send/Stop
+    wxButton*     m_actionButton;    // Send/Stop
+    wxTextCtrl*   m_selectionStatus; // Displays selected item info
 
     DECLARE_EVENT_TABLE()
 };

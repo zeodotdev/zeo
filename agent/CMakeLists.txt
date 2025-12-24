@@ -10,7 +10,10 @@ include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
     ${CMAKE_SOURCE_DIR}/common
     ${CMAKE_SOURCE_DIR}/common/dialogs
+    ${CMAKE_SOURCE_DIR}/common
+    ${CMAKE_SOURCE_DIR}/common/dialogs
     ${CMAKE_SOURCE_DIR}/utility
+    ${CMAKE_SOURCE_DIR}/thirdparty/nlohmann_json
     ${INC_AFTER}
     )
 
@@ -19,6 +22,8 @@ include_directories(
 set( AGENT_SRCS
     agent.cpp
     agent_frame.cpp
+    agent_openai_client_temp.cpp
+    agent_thread.cpp
 )
 
 # Resources for the macOS bundle
@@ -34,6 +39,8 @@ endif()
 add_executable( agent WIN32 MACOSX_BUNDLE
     agent.cpp
     agent_frame.cpp
+    agent_openai_client_temp.cpp
+    agent_thread.cpp
     ${CMAKE_SOURCE_DIR}/common/single_top.cpp
     ${AGENT_RESOURCES}
     )

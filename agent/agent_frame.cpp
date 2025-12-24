@@ -1,4 +1,5 @@
 #include "agent_frame.h"
+#include "agent_thread.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -15,7 +16,8 @@ END_EVENT_TABLE()
 
 AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         KIWAY_PLAYER( aKiway, aParent, FRAME_AGENT, "Agent", wxDefaultPosition, wxDefaultSize, wxDEFAULT_FRAME_STYLE,
-                      "agent_frame_name", schIUScale )
+                      "agent_frame_name", schIUScale ),
+        m_workerThread( nullptr )
 {
     // --- UI Layout ---
     // Top: Chat History (Expandable)
@@ -98,6 +100,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_selectionPill->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSelectionPillClick, this );
     m_inputCtrl->Bind( wxEVT_KEY_DOWN, &AGENT_FRAME::OnInputKeyDown, this );
     m_inputCtrl->Bind( wxEVT_TEXT, &AGENT_FRAME::OnInputText, this );
+
+    // Bind Thread Events
+    Bind( wxEVT_AGENT_UPDATE, &AGENT_FRAME::OnAgentUpdate, this );
+    Bind( wxEVT_AGENT_COMPLETE, &AGENT_FRAME::OnAgentComplete, this );
 }
 
 AGENT_FRAME::~AGENT_FRAME()
@@ -238,34 +244,94 @@ void AGENT_FRAME::OnInputKeyDown( wxKeyEvent& aEvent )
 
 void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 {
+    // If thread is running, this button acts as Stop
+    if( m_workerThread )
+    {
+        OnStop( aEvent );
+        return;
+    }
+
     wxString text = m_inputCtrl->GetValue();
     if( text.IsEmpty() )
         return;
 
-    // Echo user message to chat
-    wxString currentHtml = m_chatWindow->ToText(); // Simple way to get content? No, ToText is plain text.
-    // For now, let's just append. HTML window doesn't have a simple "Append".
-    // We usually reconstruct the page or use obscure internal methods.
-    // Let's verify what we have available.
-    // For this mock-up, let's just replace the page with accumulated content concept (simulation).
-    // In reality we would manage a message list and render it.
-
+    // Display User Message
     wxString msgHtml = wxString::Format( "<p><b>User:</b> %s</p>", text );
     m_chatWindow->AppendToPage( msgHtml );
+    m_chatWindow->AppendToPage( "<p><b>Agent:</b> " ); // Start Agent response block
 
-    // Clear Input
+    // Clear Input and Update UI
     m_inputCtrl->Clear();
-
-    // Simulate thinking state
     m_actionButton->SetLabel( "Stop" );
+    // m_inputCtrl->Enable( false ); // Optional: disable input during generation
 
-    // In a real app, we'd start a thread/process here.
+    // Create and Run Thread
+    // TODO: proper system prompt management
+    std::string systemPrompt = "You are a helpful assistant for KiCad PCB design.";
+
+    // Pass payload if available
+    std::string payload = m_lastSelectionPayload.ToStdString();
+
+    m_workerThread = new AGENT_THREAD( this, text.ToStdString(), systemPrompt, payload );
+    if( m_workerThread->Run() != wxTHREAD_NO_ERROR )
+    {
+        wxLogMessage( "Error: Could not create worker thread." );
+        delete m_workerThread;
+        m_workerThread = nullptr;
+        m_actionButton->SetLabel( "->" );
+        // m_inputCtrl->Enable( true );
+    }
 }
 
 void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
 {
-    // Stop generation
-    m_actionButton->SetLabel( "Send" );
+    if( m_workerThread )
+    {
+        m_workerThread->Delete(); // soft delete, checks TestDestroy()
+        m_workerThread = nullptr;
+    }
+    m_chatWindow->AppendToPage( "</p><p><i>(Stopped)</i></p>" );
+    m_actionButton->SetLabel( "->" );
+    // m_inputCtrl->Enable( true );
+}
+
+void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
+{
+    wxString content = aEvent.GetString();
+
+    // Escape HTML special chars?
+    // For now, raw text append. Ideally convert generic newlines to <br>.
+    content.Replace( "\n", "<br>" );
+
+    // Append to the current paragraph started in OnSend
+    m_chatWindow->AppendToPage( content );
+
+    // Auto-scroll
+    // m_chatWindow->ScrollToAnchor( "" ); // invalid anchor might scroll to bottom?
+    // Or GetVirtualSize
+    int x, y;
+    m_chatWindow->GetVirtualSize( &x, &y );
+    m_chatWindow->Scroll( 0, y );
+}
+
+void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
+{
+    // Thread has finished naturally
+    if( m_workerThread )
+    {
+        m_workerThread->Wait(); // Join
+        delete m_workerThread;
+        m_workerThread = nullptr;
+    }
+
+    m_chatWindow->AppendToPage( "</p>" ); // Close Agent block
+    m_actionButton->SetLabel( "->" );
+    // m_inputCtrl->Enable( true );
+
+    if( aEvent.GetInt() == 0 ) // Failure
+    {
+        m_chatWindow->AppendToPage( "<p><i>(Error generating response)</i></p>" );
+    }
 }
 
 void AGENT_FRAME::OnTextEnter( wxCommandEvent& aEvent )

@@ -58,6 +58,11 @@
 #include <sch_sheet_pin.h>
 #include <sch_table.h>
 #include <sch_connection.h>
+#include <sch_shape.h>
+#include <sch_text.h>
+#include <sch_junction.h>
+#include <sch_label.h>
+#include <sch_bitmap.h>
 #include <sch_reference_list.h>
 #include <tool/tool_event.h>
 #include <tool/tool_manager.h>
@@ -3799,6 +3804,80 @@ void SCH_SELECTION_TOOL::syncSelectionWithAgent()
                 selectionArray.push_back( jItem );
                 if( summary.empty() )
                     summary = "Pin " + jItem["number"].get<std::string>();
+            }
+            else if( item->Type() == SCH_SHAPE_T )
+            {
+                SCH_SHAPE*     shape = static_cast<SCH_SHAPE*>( item );
+                nlohmann::json jItem;
+                jItem["type"] = "shape";
+                jItem["uuid"] = shape->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == SCH_TEXT_T || item->Type() == SCH_TEXTBOX_T )
+            {
+                SCH_TEXT*      textItem = static_cast<SCH_TEXT*>( item );
+                nlohmann::json jItem;
+                jItem["type"] = "text";
+                jItem["text"] = textItem->GetShownText( true ).ToStdString();
+                jItem["uuid"] = textItem->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == SCH_LABEL_T || item->Type() == SCH_GLOBAL_LABEL_T
+                     || item->Type() == SCH_HIER_LABEL_T || item->Type() == SCH_DIRECTIVE_LABEL_T )
+            {
+                SCH_LABEL_BASE* label = static_cast<SCH_LABEL_BASE*>( item );
+                nlohmann::json  jItem;
+                jItem["type"] = "label";
+                jItem["text"] = label->GetShownText( true ).ToStdString();
+                jItem["uuid"] = label->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == SCH_JUNCTION_T )
+            {
+                SCH_JUNCTION*  junction = static_cast<SCH_JUNCTION*>( item );
+                nlohmann::json jItem;
+                jItem["type"] = "junction";
+                jItem["uuid"] = junction->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == SCH_NO_CONNECT_T )
+            {
+                nlohmann::json jItem;
+                jItem["type"] = "no_connect";
+                jItem["uuid"] = item->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == SCH_FIELD_T )
+            {
+                SCH_FIELD*     field = static_cast<SCH_FIELD*>( item );
+                nlohmann::json jItem;
+                jItem["type"] = "field";
+                jItem["text"] = field->GetShownText( true ).ToStdString();
+                jItem["field_name"] = field->GetShownName().ToStdString();
+                jItem["uuid"] = field->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == SCH_BITMAP_T )
+            {
+                nlohmann::json jItem;
+                jItem["type"] = "bitmap";
+                jItem["uuid"] = item->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == SCH_TABLE_T )
+            {
+                nlohmann::json jItem;
+                jItem["type"] = "table";
+                jItem["uuid"] = item->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else
+            {
+                // Generic fallback
+                nlohmann::json jItem;
+                jItem["type"] = "item";
+                jItem["uuid"] = item->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
             }
         }
     }

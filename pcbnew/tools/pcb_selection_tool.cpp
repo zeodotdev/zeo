@@ -42,7 +42,11 @@ using namespace std::placeholders;
 #include <pcb_base_edit_frame.h>
 #include <pcb_track.h>
 #include <pad.h>
+#include <pcb_track.h>
+#include <pad.h>
 #include <zone.h>
+#include <pcb_shape.h>
+#include <pcb_text.h>
 #include <collectors.h>
 #include <dialog_filter_selection.h>
 #include <view/view_controls.h>
@@ -4489,6 +4493,82 @@ void PCB_SELECTION_TOOL::syncSelectionWithAgent()
                 if( FOOTPRINT* fp = dynamic_cast<FOOTPRINT*>( pad->GetParent() ) )
                     jItem["parent_ref"] = fp->GetReference().ToStdString();
 
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == PCB_SHAPE_T )
+            {
+                PCB_SHAPE*     shape = static_cast<PCB_SHAPE*>( item );
+                nlohmann::json jItem;
+                jItem["type"] = "shape"; // Distinguish? shape->GetShape() returns types like SHAPE_SEGMENT
+                jItem["layer"] = shape->GetLayerName().ToStdString();
+                jItem["net_name"] = shape->GetNetname().ToStdString();
+                jItem["width"] = shape->GetWidth();
+                jItem["uuid"] = shape->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == PCB_TEXT_T || item->Type() == PCB_TEXTBOX_T )
+            {
+                PCB_TEXT*      text = static_cast<PCB_TEXT*>( item );
+                nlohmann::json jItem;
+                jItem["type"] = "text";
+                jItem["text"] = text->GetShownText( true ).ToStdString();
+                jItem["layer"] = text->GetLayerName().ToStdString();
+                jItem["uuid"] = text->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == PCB_ZONE_T )
+            {
+                ZONE*          zone = static_cast<ZONE*>( item );
+                nlohmann::json jItem;
+                jItem["type"] = "zone";
+                jItem["net_name"] = zone->GetNetname().ToStdString();
+                jItem["layer"] = zone->GetLayerName().ToStdString();
+                jItem["uuid"] = zone->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == PCB_TARGET_T )
+            {
+                nlohmann::json jItem;
+                jItem["type"] = "target";
+                if( BOARD_ITEM* bi = dynamic_cast<BOARD_ITEM*>( item ) )
+                    jItem["layer"] = bi->GetLayerName().ToStdString();
+                jItem["uuid"] = item->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == PCB_GROUP_T )
+            {
+                nlohmann::json jItem;
+                jItem["type"] = "group";
+                jItem["uuid"] = item->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == PCB_REFERENCE_IMAGE_T )
+            {
+                nlohmann::json jItem;
+                jItem["type"] = "image";
+                if( BOARD_ITEM* bi = dynamic_cast<BOARD_ITEM*>( item ) )
+                    jItem["layer"] = bi->GetLayerName().ToStdString();
+                jItem["uuid"] = item->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == PCB_DIMENSION_T || item->Type() == PCB_DIM_ALIGNED_T
+                     || item->Type() == PCB_DIM_LEADER_T || item->Type() == PCB_DIM_CENTER_T
+                     || item->Type() == PCB_DIM_RADIAL_T || item->Type() == PCB_DIM_ORTHOGONAL_T )
+            {
+                nlohmann::json jItem;
+                jItem["type"] = "dimension";
+                if( BOARD_ITEM* bi = dynamic_cast<BOARD_ITEM*>( item ) )
+                    jItem["layer"] = bi->GetLayerName().ToStdString();
+                jItem["uuid"] = item->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else
+            {
+                nlohmann::json jItem;
+                jItem["type"] = "item";
+                if( BOARD_ITEM* boardItem = dynamic_cast<BOARD_ITEM*>( item ) )
+                    jItem["layer"] = boardItem->GetLayerName().ToStdString();
+                jItem["uuid"] = item->m_Uuid.AsString();
                 selectionArray.push_back( jItem );
             }
         }

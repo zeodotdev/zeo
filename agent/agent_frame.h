@@ -5,7 +5,10 @@
 #include <wx/choice.h>
 #include <wx/textctrl.h>
 #include <wx/button.h>
+#include <wx/timer.h>
+#include <string>
 
+// Forward Declarations
 class AGENT_THREAD;
 
 class AGENT_FRAME : public KIWAY_PLAYER
@@ -21,8 +24,6 @@ public:
 
     wxWindow* GetToolCanvas() const override { return (wxWindow*) this; }
 
-    // Event handlers
-    // Event handlers
     // Event handlers
     void OnSend( wxCommandEvent& aEvent );
     void OnStop( wxCommandEvent& aEvent );
@@ -43,8 +44,13 @@ private:
     wxButton*     m_actionButton;  // Send/Stop
     wxButton*     m_selectionPill; // Displays selected item info
 
-    wxPanel* m_inputPanel;           // Wrapper for input area styling
-    wxString m_lastSelectionPayload; // Store full context
+    wxPanel* m_inputPanel; // Wrapper for input area styling
+
+    // JSON Payloads
+    std::string m_schJson;
+    std::string m_pcbJson;
+    std::string m_schSummary;
+    std::string m_pcbSummary;
 
     AGENT_THREAD* m_workerThread;
 

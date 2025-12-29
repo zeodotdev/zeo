@@ -24,6 +24,7 @@ set( AGENT_SRCS
     agent_frame.cpp
     agent_openai_client_temp.cpp
     agent_thread.cpp
+    agent_thread.cpp
 )
 
 # Resources for the macOS bundle
@@ -40,6 +41,7 @@ add_executable( agent WIN32 MACOSX_BUNDLE
     agent.cpp
     agent_frame.cpp
     agent_openai_client_temp.cpp
+    agent_thread.cpp
     agent_thread.cpp
     ${CMAKE_SOURCE_DIR}/common/single_top.cpp
     ${AGENT_RESOURCES}

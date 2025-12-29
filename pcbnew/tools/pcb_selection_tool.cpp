@@ -58,11 +58,17 @@ using namespace std::placeholders;
 #include <geometry/geometry_utils.h>
 #include <wx/event.h>
 #include <wx/timer.h>
+#include <sstream>
+#include <footprint.h>
+#include <pcb_track.h>
+#include <pad.h>
+#include <pcb_text.h>
 
 #include <kiway.h>
 #include <frame_type.h>
 
 #include <kiway_express.h>
+#include <nlohmann/json.hpp>
 #include <mail_type.h>
 #include <wx/log.h>
 #include <wx/debug.h>
@@ -4424,28 +4430,69 @@ void PCB_SELECTION_TOOL::syncSelectionWithAgent()
     KIWAY_PLAYER* agent = m_frame->Kiway().Player( FRAME_AGENT, false );
     if( !agent )
     {
-        printf( "PCB_SELECTION_TOOL::syncSelectionWithAgent: Agent not found\n" );
+        // Don't log spam if not running
         return;
     }
 
-    std::string payload = "SELECTION|PCB|";
-    int         count = m_selection.GetSize();
+    nlohmann::json root;
+    root["header"] = "PCB";
 
-    if( count == 0 )
+    // 1. Process Selection
+    nlohmann::json selectionArray = nlohmann::json::array();
+
+    if( !m_selection.Empty() )
     {
-        payload = "CLEARED";
+        for( auto item : m_selection )
+        {
+            if( item->Type() == PCB_FOOTPRINT_T )
+            {
+                FOOTPRINT*     fp = static_cast<FOOTPRINT*>( item );
+                nlohmann::json jItem;
+                jItem["ref"] = fp->GetReference().ToStdString();
+                jItem["value"] = fp->GetValue().ToStdString();
+                jItem["x"] = fp->GetPosition().x;
+                jItem["y"] = fp->GetPosition().y;
+                jItem["rot"] = fp->GetOrientation().AsDegrees();
+                jItem["layer"] = fp->GetLayerName().ToStdString();
+                jItem["uuid"] = fp->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+        }
     }
-    else if( count == 1 )
+    root["selection"] = selectionArray;
+
+    // 2. Process All Footprints
+    nlohmann::json footprintsArray = nlohmann::json::array();
+    if( m_frame->GetBoard() )
     {
-        EDA_ITEM* item = m_selection.Front();
-        wxString  desc = item->GetItemDescription( m_frame, true );
-        payload += desc.ToStdString();
+        for( FOOTPRINT* fp : m_frame->GetBoard()->Footprints() )
+        {
+            nlohmann::json jItem;
+            jItem["ref"] = fp->GetReference().ToStdString();
+            jItem["value"] = fp->GetValue().ToStdString();
+            jItem["x"] = fp->GetPosition().x;
+            jItem["y"] = fp->GetPosition().y;
+            jItem["rot"] = fp->GetOrientation().AsDegrees();
+            jItem["layer"] = fp->GetLayerName().ToStdString();
+            jItem["uuid"] = fp->m_Uuid.AsString();
+            footprintsArray.push_back( jItem );
+        }
     }
-    else
+    root["project_footprints"] = footprintsArray;
+
+    // 3. Board Context
+    if( m_frame->GetBoard() )
     {
-        payload += std::to_string( count ) + " items selected";
+        nlohmann::json context;
+        auto           bbox = m_frame->GetBoard()->GetBoardEdgesBoundingBox();
+        context["bbox_width"] = bbox.GetWidth();
+        context["bbox_height"] = bbox.GetHeight();
+        root["board_context"] = context;
     }
 
-    printf( "PCB_SELECTION_TOOL::syncSelectionWithAgent: Sending payload '%s'\n", payload.c_str() );
+    // Send Payload
+    std::string jsonStr = root.dump();
+    std::string payload = "JSON_PAYLOAD\nPCB\n" + jsonStr;
     m_frame->Kiway().ExpressMail( FRAME_AGENT, MAIL_SELECTION, payload );
 }
+// End of syncSelectionWithAgent

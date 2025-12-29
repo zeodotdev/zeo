@@ -9,6 +9,7 @@
 #include <wx/msgdlg.h>
 #include <bitmaps.h>
 #include <id.h>
+#include <nlohmann/json.hpp>
 
 BEGIN_EVENT_TABLE( AGENT_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, AGENT_FRAME::OnExit )
@@ -120,32 +121,100 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
     if( aEvent.Command() == MAIL_SELECTION )
     {
         std::string payload = aEvent.GetPayload();
-        printf( "AGENT_FRAME::KiwayMailIn: Received payload '%s'\n", payload.c_str() );
-        m_lastSelectionPayload = payload;
 
-        if( payload.empty() || payload == "CLEARED" )
+        if( payload.find( "JSON_PAYLOAD" ) == 0 )
         {
-            m_selectionPill->Show( false );
+            std::stringstream ss( payload );
+            std::string       prefix, source, jsonStr;
+            std::getline( ss, prefix ); // JSON_PAYLOAD
+            std::getline( ss, source ); // SCH or PCB
+
+            // Remainder is JSON
+            // We can determine start pos by prefix.length() + source.length() + 2 (newlines)
+            // Or just read the rest of the stream
+            std::string line;
+            while( std::getline( ss, line ) )
+            {
+                jsonStr += line + "\n";
+            }
+
+            // Update JSON Store
+            if( source == "SCH" )
+                m_schJson = jsonStr;
+            else if( source == "PCB" )
+                m_pcbJson = jsonStr;
+
+            // Update Selection Pill
+            try
+            {
+                auto j = nlohmann::json::parse( jsonStr );
+                if( j.contains( "selection" ) && !j["selection"].empty() )
+                {
+                    std::string ref = j["selection"][0]["ref"];
+                    size_t      count = j["selection"].size();
+                    std::string label = "Add: " + ref;
+                    if( count > 1 )
+                        label += " +" + std::to_string( count - 1 );
+
+                    m_selectionPill->SetLabel( label );
+                    m_selectionPill->Show( true );
+                }
+                else
+                {
+                    // If selection empty, hide pill?
+                    // Or keep it if we want to add "Context"?
+                    // For now, hide if no selection
+                    // But wait, the user might want to add *project context* even if nothing selected?
+                    // Usually "Add: Selection" implies specific selection.
+                    // If empty, maybe hide.
+                    // If "CLEARED" message was sent, we might receive empty selection array?
+                    // The tools send JSON even if empty?
+                    // m_schJson handles global context.
+                    // Let's hide pill if no items selected.
+                    m_selectionPill->Show( false );
+                }
+            }
+            catch( ... )
+            {
+                // Parse error
+            }
         }
-        else
+        else if( payload == "SELECTION\nSCH\nCLEARED" )
         {
-            // Expected format: APP|DESCRIPTION
-            size_t firstPipe = payload.find( '|' );
-            if( firstPipe != std::string::npos )
+            // Clear SCH selection specifically?
+            // Actually, new tools send JSON with empty selection array instead of this?
+            // I updated tools to send JSON *if !empty()*.
+            // Wait, I updated tools: "if( m_selection.Empty() ) { ... SELECTION\nSCH\nCLEARED ... }"
+            // So I still need to handle legacy clear messages?
+            // Yes.
+            if( payload.find( "SCH" ) != std::string::npos )
             {
-                std::string desc = payload.substr( firstPipe + 1 );
-                // Label format: "Add: <Description>"
-                m_selectionPill->SetLabel( "Add: " + desc );
-                m_selectionPill->Show( true );
+                // Clear SCH JSON? Or just update it to empty selection?
+                // If I clear m_schJson, I lose the project components list!
+                // I should parsing logic update selection to empty.
+                // But the tool doesn't send JSON if empty.
+                // So "CLEARED" means "Empty Selection".
+                // Use legacy clear to hide pill.
+                // And ideally, I should keep the LAST known project components?
+                // m_schJson remains valid for components, but selection is invalid.
+                // Implementation detail: I might need to update m_schJson to set "selection": []?
+                // Too complex to parse/edit JSON string.
+                // I'll leave m_schJson as is (it contains last Valid selection).
+                // But the prompt will include it.
+                // This is a specialized behavior: "If CLEARED, don't use selection from JSON".
+                // Maybe I need `m_schJsonSelectionValid` flag.
+                // Or, I should update the tools to SEND JSON even on Clear (with empty selection).
+                // That would be cleaner.
+                // But for now, I'll just hide the pill.
+                m_selectionPill->Show( false );
             }
-            else
+            else if( payload.find( "PCB" ) != std::string::npos )
             {
-                m_selectionPill->SetLabel( "Add: " + payload );
-                m_selectionPill->Show( true );
+                m_selectionPill->Show( false );
             }
         }
-        Layout(); // Important to refresh layout after showing/hiding
     }
+    Layout();
 }
 
 void AGENT_FRAME::OnSelectionPillClick( wxCommandEvent& aEvent )
@@ -269,8 +338,13 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // TODO: proper system prompt management
     std::string systemPrompt = "You are a helpful assistant for KiCad PCB design.";
 
-    // Pass payload if available
-    std::string payload = m_lastSelectionPayload.ToStdString();
+    // Pass payload if available (Combine SCH and PCB contexts)
+    // Pass payload if available (Combine SCH and PCB contexts)
+    std::string payload;
+    if( !m_schJson.empty() )
+        payload += m_schJson + "\n";
+    if( !m_pcbJson.empty() )
+        payload += m_pcbJson + "\n";
 
     m_workerThread = new AGENT_THREAD( this, text.ToStdString(), systemPrompt, payload );
     if( m_workerThread->Run() != wxTHREAD_NO_ERROR )

@@ -23,6 +23,7 @@
  */
 
 #include <kiway.h>
+#include <nlohmann/json.hpp>
 #include <frame_type.h>
 
 #include <advanced_config.h>
@@ -56,8 +57,14 @@
 #include <sch_no_connect.h>
 #include <sch_sheet_pin.h>
 #include <sch_table.h>
+#include <sch_connection.h>
+#include <sch_reference_list.h>
 #include <tool/tool_event.h>
 #include <tool/tool_manager.h>
+#include <sstream>
+#include <sch_symbol.h>
+#include <sch_text.h>
+#include <sch_sheet.h>
 #include <tools/ee_grid_helper.h>
 #include <tools/sch_move_tool.h>
 #include <tools/sch_point_editor.h>
@@ -3710,28 +3717,164 @@ void SCH_SELECTION_TOOL::syncSelectionWithAgent()
     KIWAY_PLAYER* agent = m_frame->Kiway().Player( FRAME_AGENT, false );
     if( !agent )
     {
-        printf( "SCH_SELECTION_TOOL::syncSelectionWithAgent: Agent not found\n" );
+        // Don't log spam
+    }
+
+    SCH_EDIT_FRAME* editFrame = dynamic_cast<SCH_EDIT_FRAME*>( m_frame );
+    if( !editFrame )
         return;
-    }
 
-    std::string payload = "SELECTION|SCH|";
-    int         count = m_selection.GetSize();
+    nlohmann::json root;
+    root["header"] = "SCH";
 
-    if( count == 0 )
-    {
-        payload = "CLEARED";
-    }
-    else if( count == 1 )
-    {
-        EDA_ITEM* item = m_selection.Front();
-        wxString  desc = item->GetItemDescription( m_frame, true );
-        payload += desc.ToStdString();
-    }
-    else
-    {
-        payload += std::to_string( count ) + " items selected";
-    }
+    // 1. Process Selection
+    nlohmann::json selectionArray = nlohmann::json::array();
+    std::string    summary;
 
-    printf( "SCH_SELECTION_TOOL::syncSelectionWithAgent: Sending payload '%s'\n", payload.c_str() );
+    if( !m_selection.Empty() )
+    {
+        for( auto item : m_selection )
+        {
+            if( item->Type() == SCH_SYMBOL_T )
+            {
+                SCH_SYMBOL*    symbol = static_cast<SCH_SYMBOL*>( item );
+                nlohmann::json jItem;
+                jItem["ref"] = symbol->GetRef( &editFrame->GetCurrentSheet() ).ToStdString();
+                // GetValue argument order: bool aResolve, SCH_SHEET_PATH* aPath, bool aAllowExtraText
+                jItem["value"] = symbol->GetValue( true, &editFrame->GetCurrentSheet(), true ).ToStdString();
+
+                // GetFootprint replacement: GetField( FIELD_T::FOOTPRINT )->GetShownText()
+                if( SCH_FIELD* fpField = symbol->GetField( FIELD_T::FOOTPRINT ) )
+                    jItem["footprint"] = fpField->GetShownText( &editFrame->GetCurrentSheet(), true ).ToStdString();
+                else
+                    jItem["footprint"] = "";
+
+                jItem["lib"] = symbol->GetLibId().Format().c_str();
+                jItem["uuid"] = symbol->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+
+                if( summary.empty() )
+                    summary = jItem["ref"];
+            }
+            else if( item->Type() == SCH_LINE_T )
+            {
+                SCH_LINE*      line = static_cast<SCH_LINE*>( item );
+                nlohmann::json jItem;
+                jItem["type"] = "wire";
+                jItem["start_x"] = line->GetStartPoint().x;
+                jItem["start_y"] = line->GetStartPoint().y;
+                jItem["end_x"] = line->GetEndPoint().x;
+                jItem["end_y"] = line->GetEndPoint().y;
+
+                if( SCH_CONNECTION* conn = line->Connection( &editFrame->GetCurrentSheet() ) )
+                {
+                    jItem["net_name"] = conn->Name().ToStdString();
+                    jItem["net_code"] = conn->NetCode();
+                }
+
+                selectionArray.push_back( jItem );
+                if( summary.empty() )
+                    summary = "Wire";
+            }
+            else if( item->Type() == SCH_PIN_T )
+            {
+                SCH_PIN*       pin = static_cast<SCH_PIN*>( item );
+                nlohmann::json jItem;
+                jItem["type"] = "pin";
+                jItem["number"] = pin->GetShownNumber().ToStdString();
+                jItem["name"] = pin->GetShownName().ToStdString();
+
+                if( SCH_SYMBOL* parent = dynamic_cast<SCH_SYMBOL*>( pin->GetParentSymbol() ) )
+                {
+                    jItem["parent_ref"] = parent->GetRef( &editFrame->GetCurrentSheet() ).ToStdString();
+                    jItem["parent_uuid"] = parent->m_Uuid.AsString();
+                }
+
+                if( SCH_CONNECTION* conn = pin->Connection( &editFrame->GetCurrentSheet() ) )
+                {
+                    jItem["net_name"] = conn->Name().ToStdString();
+                    jItem["net_code"] = conn->NetCode();
+                }
+
+                selectionArray.push_back( jItem );
+                if( summary.empty() )
+                    summary = "Pin " + jItem["number"].get<std::string>();
+            }
+        }
+    }
+    root["selection"] = selectionArray;
+
+    // 2. Process All Components (Current Sheet for now)
+    nlohmann::json componentsArray = nlohmann::json::array();
+    for( SCH_ITEM* item : m_frame->GetScreen()->Items().OfType( SCH_SYMBOL_T ) )
+    {
+        SCH_SYMBOL*    symbol = static_cast<SCH_SYMBOL*>( item );
+        nlohmann::json jItem;
+        jItem["ref"] = symbol->GetRef( &editFrame->GetCurrentSheet() ).ToStdString();
+        jItem["value"] = symbol->GetValue( true, &editFrame->GetCurrentSheet(), true ).ToStdString();
+
+        if( SCH_FIELD* fpField = symbol->GetField( FIELD_T::FOOTPRINT ) )
+            jItem["footprint"] = fpField->GetShownText( &editFrame->GetCurrentSheet(), true ).ToStdString();
+        else
+            jItem["footprint"] = "";
+
+        jItem["lib"] = symbol->GetLibId().Format().c_str();
+        jItem["uuid"] = symbol->m_Uuid.AsString();
+        componentsArray.push_back( jItem );
+    }
+    root["project_components"] = componentsArray;
+
+    // 3. Process Connection Graph (Embed in SCH Payload)
+    CONNECTION_GRAPH* graph = editFrame->Schematic().ConnectionGraph();
+
+    nlohmann::json netsArray = nlohmann::json::array();
+
+    // Iterate through all nets in the graph
+    for( const auto& [key, subgraphs] : graph->GetNetMap() )
+    {
+        // Skip unnamed/empty nets if desired, but "Net-(...)" are useful.
+        if( key.Name.IsEmpty() )
+            continue;
+
+        nlohmann::json netObj;
+        netObj["name"] = key.Name.ToStdString();
+        netObj["code"] = key.Netcode;
+
+        nlohmann::json pinsArray = nlohmann::json::array();
+
+        // Iterate subgraphs for this net
+        for( CONNECTION_SUBGRAPH* subgraph : subgraphs )
+        {
+            // Iterate items in subgraph
+            for( SCH_ITEM* item : subgraph->GetItems() )
+            {
+                if( item->Type() == SCH_PIN_T )
+                {
+                    SCH_PIN* pin = static_cast<SCH_PIN*>( item );
+                    if( SCH_SYMBOL* parent = dynamic_cast<SCH_SYMBOL*>( pin->GetParentSymbol() ) )
+                    {
+                        nlohmann::json pinObj;
+                        // Use the sheet path from the subgraph to correctly resolve the reference
+                        pinObj["ref"] = parent->GetRef( &subgraph->GetSheet() ).ToStdString();
+                        pinObj["num"] = pin->GetShownNumber().ToStdString();
+                        pinsArray.push_back( pinObj );
+                    }
+                }
+            }
+        }
+
+        // Only add nets that actually have connected pins
+        if( !pinsArray.empty() )
+        {
+            netObj["pins"] = pinsArray;
+            netsArray.push_back( netObj );
+        }
+    }
+    root["connectivity"] = netsArray;
+
+    // Send Payload
+    std::string jsonStr = root.dump();
+    std::string payload = "JSON_PAYLOAD\nSCH\n" + jsonStr;
     m_frame->Kiway().ExpressMail( FRAME_AGENT, MAIL_SELECTION, payload );
 }
+// End of syncSelectionWithAgent

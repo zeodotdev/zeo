@@ -40,6 +40,8 @@ using namespace std::placeholders;
 #include <pcb_marker.h>
 #include <pcb_generator.h>
 #include <pcb_base_edit_frame.h>
+#include <pcb_track.h>
+#include <pad.h>
 #include <zone.h>
 #include <collectors.h>
 #include <dialog_filter_selection.h>
@@ -4448,6 +4450,7 @@ void PCB_SELECTION_TOOL::syncSelectionWithAgent()
             {
                 FOOTPRINT*     fp = static_cast<FOOTPRINT*>( item );
                 nlohmann::json jItem;
+                jItem["type"] = "footprint";
                 jItem["ref"] = fp->GetReference().ToStdString();
                 jItem["value"] = fp->GetValue().ToStdString();
                 jItem["x"] = fp->GetPosition().x;
@@ -4455,6 +4458,37 @@ void PCB_SELECTION_TOOL::syncSelectionWithAgent()
                 jItem["rot"] = fp->GetOrientation().AsDegrees();
                 jItem["layer"] = fp->GetLayerName().ToStdString();
                 jItem["uuid"] = fp->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == PCB_TRACE_T || item->Type() == PCB_VIA_T || item->Type() == PCB_ARC_T )
+            {
+                PCB_TRACK*     track = static_cast<PCB_TRACK*>( item );
+                nlohmann::json jItem;
+                jItem["type"] = ( item->Type() == PCB_VIA_T ) ? "via" : "track";
+                jItem["net_name"] = track->GetNetname().ToStdString();
+                jItem["net_code"] = track->GetNetCode();
+                jItem["width"] = track->GetWidth();
+                jItem["layer"] = track->GetLayerName().ToStdString();
+                jItem["start_x"] = track->GetStart().x;
+                jItem["start_y"] = track->GetStart().y;
+                jItem["end_x"] = track->GetEnd().x;
+                jItem["end_y"] = track->GetEnd().y;
+                jItem["uuid"] = track->m_Uuid.AsString();
+                selectionArray.push_back( jItem );
+            }
+            else if( item->Type() == PCB_PAD_T )
+            {
+                PAD*           pad = static_cast<PAD*>( item );
+                nlohmann::json jItem;
+                jItem["type"] = "pad";
+                jItem["net_name"] = pad->GetNetname().ToStdString();
+                jItem["net_code"] = pad->GetNetCode();
+                jItem["layer"] = pad->GetLayerName().ToStdString();
+                jItem["number"] = pad->GetNumber().ToStdString();
+                jItem["uuid"] = pad->m_Uuid.AsString();
+                if( FOOTPRINT* fp = dynamic_cast<FOOTPRINT*>( pad->GetParent() ) )
+                    jItem["parent_ref"] = fp->GetReference().ToStdString();
+
                 selectionArray.push_back( jItem );
             }
         }

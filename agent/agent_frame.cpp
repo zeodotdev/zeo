@@ -150,9 +150,35 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
                 auto j = nlohmann::json::parse( jsonStr );
                 if( j.contains( "selection" ) && !j["selection"].empty() )
                 {
-                    std::string ref = j["selection"][0]["ref"];
-                    size_t      count = j["selection"].size();
-                    std::string label = "Add: " + ref;
+                    nlohmann::json& firstItem = j["selection"][0];
+                    std::string     label = "Add: Selection"; // Default
+
+                    if( firstItem.contains( "ref" ) )
+                    {
+                        label = "Add: " + firstItem["ref"].get<std::string>();
+                    }
+                    else if( firstItem.contains( "type" ) )
+                    {
+                        std::string type = firstItem["type"].get<std::string>();
+                        if( type == "pin" || type == "pad" )
+                        {
+                            std::string num =
+                                    firstItem.contains( "number" ) ? firstItem["number"].get<std::string>() : "?";
+                            label = "Add: " + type + " " + num;
+                        }
+                        else if( type == "wire" || type == "track" )
+                        {
+                            label = "Add: " + type;
+                            if( firstItem.contains( "net_name" ) )
+                                label += " (" + firstItem["net_name"].get<std::string>() + ")";
+                        }
+                        else
+                        {
+                            label = "Add: " + type;
+                        }
+                    }
+
+                    size_t count = j["selection"].size();
                     if( count > 1 )
                         label += " +" + std::to_string( count - 1 );
 

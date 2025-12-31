@@ -46,6 +46,10 @@
 #include <libraries/symbol_library_adapter.h>
 #include <widgets/sch_design_block_pane.h>
 #include <wx/log.h>
+#include <nlohmann/json.hpp>
+#include <sch_text.h>
+#include <nlohmann/json.hpp>
+#include <sch_text.h>
 #include <trace_helpers.h>
 
 SCH_ITEM* SCH_EDITOR_CONTROL::FindSymbolAndItem( const wxString* aPath, const wxString* aReference,
@@ -89,6 +93,12 @@ SCH_ITEM* SCH_EDITOR_CONTROL::FindSymbolAndItem( const wxString* aPath, const wx
                 symbol = candidate;
                 sheetWithSymbolFound = &sheet;
 
+
+                // The 'break;' here would break out of the inner loop, but it's syntactically misplaced
+                // and 'item' is not necessarily the 'candidate' symbol.
+                // The original code continues with pin/symbol logic.
+                // break; // Removed to maintain original logic flow and avoid syntax error.
+
                 if( aSearchType == HIGHLIGHT_PIN )
                 {
                     pin = symbol->GetPin( aSearchText );
@@ -127,8 +137,7 @@ SCH_ITEM* SCH_EDITOR_CONTROL::FindSymbolAndItem( const wxString* aPath, const wx
     {
         if( *sheetWithSymbolFound != m_frame->GetCurrentSheet() )
         {
-            m_frame->GetToolManager()->RunAction<SCH_SHEET_PATH*>( SCH_ACTIONS::changeSheet,
-                                                                   sheetWithSymbolFound );
+            m_frame->GetToolManager()->RunAction<SCH_SHEET_PATH*>( SCH_ACTIONS::changeSheet, sheetWithSymbolFound );
         }
 
         if( crossProbingSettings.center_on_items )
@@ -202,10 +211,10 @@ void SCH_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
     char                line[1024];
 
     strncpy( line, cmdline, sizeof( line ) - 1 );
-    line[ sizeof( line ) - 1 ] = '\0';
+    line[sizeof( line ) - 1] = '\0';
 
     char* idcmd = strtok( line, " \n\r" );
-    char* text  = strtok( nullptr, "\"\n\r" );
+    char* text = strtok( nullptr, "\"\n\r" );
 
     if( idcmd == nullptr )
         return;
@@ -260,7 +269,7 @@ void SCH_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
     /* look for a complement */
     idcmd = strtok( nullptr, " \n\r" );
 
-    if( idcmd == nullptr )    // Highlight symbol only (from CvPcb or Pcbnew)
+    if( idcmd == nullptr ) // Highlight symbol only (from CvPcb or Pcbnew)
     {
         // Highlight symbol part_ref, or clear Highlight, if part_ref is not existing
         editor->FindSymbolAndItem( nullptr, &part_ref, true, HIGHLIGHT_SYMBOL, wxEmptyString );
@@ -335,8 +344,7 @@ void SCH_EDIT_FRAME::SendSelectItemsToPcb( const std::vector<EDA_ITEM*>& aItems,
             break;
         }
 
-        default:
-            break;
+        default: break;
         }
     }
 
@@ -362,8 +370,7 @@ void SCH_EDIT_FRAME::SendSelectItemsToPcb( const std::vector<EDA_ITEM*>& aItems,
         // Typically ExpressMail is going to be s-expression packets, but since
         // we have existing interpreter of the selection packet on the other
         // side in place, we use that here.
-        Kiway().ExpressMail( FRAME_PCB_EDITOR, aForce ? MAIL_SELECTION_FORCE : MAIL_SELECTION,
-                             command, this );
+        Kiway().ExpressMail( FRAME_PCB_EDITOR, aForce ? MAIL_SELECTION_FORCE : MAIL_SELECTION, command, this );
     }
 }
 
@@ -460,11 +467,10 @@ void SCH_EDIT_FRAME::SendCrossProbeClearHighlight()
 }
 
 
-bool findSymbolsAndPins(
-        const SCH_SHEET_LIST& aSchematicSheetList, const SCH_SHEET_PATH& aSheetPath,
-        std::unordered_map<wxString, std::vector<SCH_REFERENCE>>&             aSyncSymMap,
-        std::unordered_map<wxString, std::unordered_map<wxString, SCH_PIN*>>& aSyncPinMap,
-        bool                                                                  aRecursive = false )
+bool findSymbolsAndPins( const SCH_SHEET_LIST& aSchematicSheetList, const SCH_SHEET_PATH& aSheetPath,
+                         std::unordered_map<wxString, std::vector<SCH_REFERENCE>>&             aSyncSymMap,
+                         std::unordered_map<wxString, std::unordered_map<wxString, SCH_PIN*>>& aSyncPinMap,
+                         bool                                                                  aRecursive = false )
 {
     if( aRecursive )
     {
@@ -474,8 +480,7 @@ bool findSymbolsAndPins(
             if( candidate == aSheetPath || !candidate.IsContainedWithin( aSheetPath ) )
                 continue;
 
-            findSymbolsAndPins( aSchematicSheetList, candidate, aSyncSymMap, aSyncPinMap,
-                                aRecursive );
+            findSymbolsAndPins( aSchematicSheetList, candidate, aSyncSymMap, aSyncPinMap, aRecursive );
         }
     }
 
@@ -540,11 +545,10 @@ bool findSymbolsAndPins(
 }
 
 
-bool sheetContainsOnlyWantedItems(
-        const SCH_SHEET_LIST& aSchematicSheetList, const SCH_SHEET_PATH& aSheetPath,
-        std::unordered_map<wxString, std::vector<SCH_REFERENCE>>&             aSyncSymMap,
-        std::unordered_map<wxString, std::unordered_map<wxString, SCH_PIN*>>& aSyncPinMap,
-        std::unordered_map<SCH_SHEET_PATH, bool>&                             aCache )
+bool sheetContainsOnlyWantedItems( const SCH_SHEET_LIST& aSchematicSheetList, const SCH_SHEET_PATH& aSheetPath,
+                                   std::unordered_map<wxString, std::vector<SCH_REFERENCE>>&             aSyncSymMap,
+                                   std::unordered_map<wxString, std::unordered_map<wxString, SCH_PIN*>>& aSyncPinMap,
+                                   std::unordered_map<SCH_SHEET_PATH, bool>&                             aCache )
 {
     auto cacheIt = aCache.find( aSheetPath );
 
@@ -557,8 +561,8 @@ bool sheetContainsOnlyWantedItems(
         if( candidate == aSheetPath || !candidate.IsContainedWithin( aSheetPath ) )
             continue;
 
-        bool childRet = sheetContainsOnlyWantedItems( aSchematicSheetList, candidate, aSyncSymMap,
-                                                      aSyncPinMap, aCache );
+        bool childRet =
+                sheetContainsOnlyWantedItems( aSchematicSheetList, candidate, aSyncSymMap, aSyncPinMap, aCache );
 
         if( !childRet )
         {
@@ -570,7 +574,7 @@ bool sheetContainsOnlyWantedItems(
     SCH_REFERENCE_LIST references;
     aSheetPath.GetSymbols( references, false, true );
 
-    if( references.GetCount() == 0 )    // Empty sheet, obviously do not contain wanted items
+    if( references.GetCount() == 0 ) // Empty sheet, obviously do not contain wanted items
     {
         aCache.emplace( aSheetPath, false );
         return false;
@@ -613,8 +617,7 @@ bool sheetContainsOnlyWantedItems(
 
 
 std::optional<std::tuple<SCH_SHEET_PATH, SCH_ITEM*, std::vector<SCH_ITEM*>>>
-findItemsFromSyncSelection( const SCHEMATIC& aSchematic, const std::string aSyncStr,
-                            bool aFocusOnFirst )
+findItemsFromSyncSelection( const SCHEMATIC& aSchematic, const std::string aSyncStr, bool aFocusOnFirst )
 {
     wxArrayString syncArray = wxStringTokenize( aSyncStr, wxS( "," ) );
 
@@ -675,124 +678,116 @@ findItemsFromSyncSelection( const SCHEMATIC& aSchematic, const std::string aSync
             break;
         }
 
-        default:
-            break;
+        default: break;
         }
     }
 
     // Lambda definitions
-    auto flattenSyncMaps =
-            [&syncSymMap, &syncPinMap]() -> std::vector<SCH_ITEM*>
+    auto flattenSyncMaps = [&syncSymMap, &syncPinMap]() -> std::vector<SCH_ITEM*>
+    {
+        std::vector<SCH_ITEM*> allVec;
+
+        for( const auto& [symRef, symbols] : syncSymMap )
+        {
+            for( const SCH_REFERENCE& ref : symbols )
+                allVec.push_back( ref.GetSymbol() );
+        }
+
+        for( const auto& [symRef, pinMap] : syncPinMap )
+        {
+            for( const auto& [padNum, pin] : pinMap )
             {
-                std::vector<SCH_ITEM*> allVec;
+                if( pin )
+                    allVec.push_back( pin );
+            }
+        }
 
-                for( const auto& [symRef, symbols] : syncSymMap )
-                {
-                    for( const SCH_REFERENCE& ref : symbols )
-                        allVec.push_back( ref.GetSymbol() );
-                }
+        return allVec;
+    };
 
-                for( const auto& [symRef, pinMap] : syncPinMap )
-                {
-                    for( const auto& [padNum, pin] : pinMap )
-                    {
-                        if( pin )
-                            allVec.push_back( pin );
-                    }
-                }
+    auto clearSyncMaps = [&syncSymMap, &syncPinMap]()
+    {
+        for( auto& [symRef, symbols] : syncSymMap )
+            symbols.clear();
 
-                return allVec;
-            };
+        for( auto& [reference, pins] : syncPinMap )
+        {
+            for( auto& [number, pin] : pins )
+                pin = nullptr;
+        }
+    };
 
-    auto clearSyncMaps =
-            [&syncSymMap, &syncPinMap]()
+    auto syncMapsValuesEmpty = [&syncSymMap, &syncPinMap]() -> bool
+    {
+        for( const auto& [symRef, symbols] : syncSymMap )
+        {
+            if( symbols.size() > 0 )
+                return false;
+        }
+
+        for( const auto& [symRef, pins] : syncPinMap )
+        {
+            for( const auto& [padNum, pin] : pins )
             {
-                for( auto& [symRef, symbols] : syncSymMap )
-                    symbols.clear();
+                if( pin )
+                    return false;
+            }
+        }
 
-                for( auto& [reference, pins] : syncPinMap )
-                {
-                    for( auto& [number, pin] : pins )
-                        pin = nullptr;
-                }
-            };
+        return true;
+    };
 
-    auto syncMapsValuesEmpty =
-            [&syncSymMap, &syncPinMap]() -> bool
+    auto checkFocusItems = [&]( const SCH_SHEET_PATH& aSheet )
+    {
+        if( focusSymbol )
+        {
+            auto findIt = syncSymMap.find( *focusSymbol );
+
+            if( findIt != syncSymMap.end() )
             {
-                for( const auto& [symRef, symbols] : syncSymMap )
-                {
-                    if( symbols.size() > 0 )
-                        return false;
-                }
+                if( findIt->second.size() > 0 )
+                    focusItemResults[aSheet].push_back( findIt->second.front().GetSymbol() );
+            }
+        }
+        else if( focusPin )
+        {
+            auto findIt = syncPinMap.find( focusPin->first );
 
-                for( const auto& [symRef, pins] : syncPinMap )
-                {
-                    for( const auto& [padNum, pin] : pins )
-                    {
-                        if( pin )
-                            return false;
-                    }
-                }
-
-                return true;
-            };
-
-    auto checkFocusItems =
-            [&]( const SCH_SHEET_PATH& aSheet )
+            if( findIt != syncPinMap.end() )
             {
-                if( focusSymbol )
-                {
-                    auto findIt = syncSymMap.find( *focusSymbol );
+                if( findIt->second[focusPin->second] )
+                    focusItemResults[aSheet].push_back( findIt->second[focusPin->second] );
+            }
+        }
+    };
 
-                    if( findIt != syncSymMap.end() )
-                    {
-                        if( findIt->second.size() > 0 )
-                            focusItemResults[aSheet].push_back( findIt->second.front().GetSymbol() );
-                    }
-                }
-                else if( focusPin )
-                {
-                    auto findIt = syncPinMap.find( focusPin->first );
+    auto makeRetForSheet = [&]( const SCH_SHEET_PATH& aSheet, SCH_ITEM* aFocusItem )
+    {
+        clearSyncMaps();
 
-                    if( findIt != syncPinMap.end() )
-                    {
-                        if( findIt->second[focusPin->second] )
-                            focusItemResults[aSheet].push_back( findIt->second[focusPin->second] );
-                    }
-                }
-            };
+        // Fill sync maps
+        findSymbolsAndPins( allSheetsList, aSheet, syncSymMap, syncPinMap );
+        std::vector<SCH_ITEM*> itemsVector = flattenSyncMaps();
 
-    auto makeRetForSheet =
-            [&]( const SCH_SHEET_PATH& aSheet, SCH_ITEM* aFocusItem )
+        // Add fully wanted sheets to vector
+        for( SCH_ITEM* item : aSheet.LastScreen()->Items().OfType( SCH_SHEET_T ) )
+        {
+            KIID_PATH kiidPath = aSheet.Path();
+            kiidPath.push_back( item->m_Uuid );
+
+            std::optional<SCH_SHEET_PATH> subsheetPath = allSheetsList.GetSheetPathByKIIDPath( kiidPath );
+
+            if( !subsheetPath )
+                continue;
+
+            if( sheetContainsOnlyWantedItems( allSheetsList, *subsheetPath, syncSymMap, syncPinMap, fullyWantedCache ) )
             {
-                clearSyncMaps();
+                itemsVector.push_back( item );
+            }
+        }
 
-                // Fill sync maps
-                findSymbolsAndPins( allSheetsList, aSheet, syncSymMap, syncPinMap );
-                std::vector<SCH_ITEM*> itemsVector = flattenSyncMaps();
-
-                // Add fully wanted sheets to vector
-                for( SCH_ITEM* item : aSheet.LastScreen()->Items().OfType( SCH_SHEET_T ) )
-                {
-                    KIID_PATH kiidPath = aSheet.Path();
-                    kiidPath.push_back( item->m_Uuid );
-
-                    std::optional<SCH_SHEET_PATH> subsheetPath =
-                            allSheetsList.GetSheetPathByKIIDPath( kiidPath );
-
-                    if( !subsheetPath )
-                        continue;
-
-                    if( sheetContainsOnlyWantedItems( allSheetsList, *subsheetPath, syncSymMap,
-                                                      syncPinMap, fullyWantedCache ) )
-                    {
-                        itemsVector.push_back( item );
-                    }
-                }
-
-                return std::make_tuple( aSheet, aFocusItem, itemsVector );
-            };
+        return std::make_tuple( aSheet, aFocusItem, itemsVector );
+    };
 
     if( aFocusOnFirst )
     {
@@ -849,8 +844,8 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
         LIBRARY_MANAGER&              manager = Pgm().GetLibraryManager();
         SYMBOL_LIBRARY_ADAPTER*       adapter = PROJECT_SCH::SymbolLibAdapter( &Prj() );
-        std::optional<LIBRARY_TABLE*> optTable = manager.Table( LIBRARY_TABLE_TYPE::SYMBOL,
-                                                                LIBRARY_TABLE_SCOPE::PROJECT );
+        std::optional<LIBRARY_TABLE*> optTable =
+                manager.Table( LIBRARY_TABLE_TYPE::SYMBOL, LIBRARY_TABLE_SCOPE::PROJECT );
 
         wxCHECK_RET( optTable.has_value(), "Could not load symbol lib table." );
         LIBRARY_TABLE* table = optTable.value();
@@ -902,9 +897,77 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         break;
     }
 
-    case MAIL_CROSS_PROBE:
-        ExecuteRemoteCommand( payload.c_str() );
+    case MAIL_CROSS_PROBE: ExecuteRemoteCommand( payload.c_str() ); break;
+
+    case MAIL_AGENT_REQUEST:
+    {
+        std::string    request = payload;
+        nlohmann::json response;
+
+        if( request == "GET_SCH_INFO" )
+        {
+            response["items"] = nlohmann::json::array();
+            SCH_SHEET_LIST sheets = Schematic().Hierarchy();
+
+            for( const SCH_SHEET_PATH& sheet : sheets )
+            {
+                for( SCH_ITEM* item : sheet.LastScreen()->Items() )
+                {
+                    if( item->Type() == SCH_SYMBOL_T )
+                    {
+                        SCH_SYMBOL*    sym = static_cast<SCH_SYMBOL*>( item );
+                        nlohmann::json jsonItem;
+                        jsonItem["type"] = "symbol";
+                        jsonItem["uuid"] = sym->m_Uuid.AsString().ToStdString();
+                        jsonItem["reference"] = sym->GetRef( &sheet ).ToStdString();
+                        jsonItem["value"] = sym->GetValue( true, &sheet, true ).ToStdString();
+                        jsonItem["footprint"] = sym->GetFootprintFieldText( true, &sheet, true ).ToStdString();
+                        jsonItem["position"] = { { "x", sym->GetPosition().x }, { "y", sym->GetPosition().y } };
+                        response["items"].push_back( jsonItem );
+                    }
+                    else if( item->Type() == SCH_LABEL_T || item->Type() == SCH_GLOBAL_LABEL_T )
+                    {
+                        SCH_TEXT*      text = static_cast<SCH_TEXT*>( item );
+                        nlohmann::json jsonItem;
+                        jsonItem["type"] = "label";
+                        jsonItem["uuid"] = text->m_Uuid.AsString().ToStdString();
+                        jsonItem["text"] = text->GetText().ToStdString();
+                        jsonItem["position"] = { { "x", text->GetPosition().x }, { "y", text->GetPosition().y } };
+                        response["items"].push_back( jsonItem );
+                    }
+                }
+            }
+        }
+        else if( request == "GET_CONNECTION_INFO" )
+        {
+            response["nets"] = nlohmann::json::array();
+            for( const auto& net : Schematic().ConnectionGraph()->GetNetMap() )
+            {
+                nlohmann::json netJson;
+                netJson["name"] = net.first.Name.ToStdString();
+                netJson["pins"] = nlohmann::json::array();
+
+                for( CONNECTION_SUBGRAPH* subgraph : net.second )
+                {
+                    for( SCH_ITEM* item : subgraph->GetItems() )
+                    {
+                        if( item->Type() == SCH_PIN_T )
+                        {
+                            SCH_PIN* pin = static_cast<SCH_PIN*>( item );
+                            netJson["pins"].push_back(
+                                    pin->GetParentSymbol()->GetRef( &subgraph->GetSheet() ).ToStdString() + "."
+                                    + pin->GetShownNumber().ToStdString() );
+                        }
+                    }
+                }
+                response["nets"].push_back( netJson );
+            }
+        }
+
+        std::string responseStr = response.dump();
+        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, responseStr, this );
         break;
+    }
 
     case MAIL_SELECTION:
         if( !eeconfig()->m_CrossProbing.on_selection )
@@ -942,8 +1005,7 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
             m_syncingPcbToSchSelection = true; // recursion guard
 
-            GetToolManager()->GetTool<SCH_SELECTION_TOOL>()->SyncSelection( sheetPath, focusItem,
-                                                                            items );
+            GetToolManager()->GetTool<SCH_SELECTION_TOOL>()->SyncSelection( sheetPath, focusItem, items );
 
             m_syncingPcbToSchSelection = false;
 
@@ -986,7 +1048,7 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
             RecalculateConnections( nullptr, GLOBAL_CLEANUP );
 
         NETLIST_EXPORTER_KICAD exporter( &Schematic() );
-        STRING_FORMATTER formatter;
+        STRING_FORMATTER       formatter;
 
         exporter.Format( &formatter, GNL_ALL | GNL_OPT_KICAD );
 
@@ -1084,9 +1146,7 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
         break;
 
-    case MAIL_SCH_UPDATE:
-        m_toolManager->RunAction( ACTIONS::updateSchematicFromPcb );
-        break;
+    case MAIL_SCH_UPDATE: m_toolManager->RunAction( ACTIONS::updateSchematicFromPcb ); break;
 
     case MAIL_RELOAD_LIB:
         m_designBlocksPane->RefreshLibs();
@@ -1094,6 +1154,5 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         break;
 
     default:;
-
     }
 }

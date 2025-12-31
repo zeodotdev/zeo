@@ -66,7 +66,7 @@ public:
     enum class PRIORITY
     {
         INVALID = -1,
-        NONE    = 0,
+        NONE = 0,
         PIN,
         SHEET_PIN,
         HIER_LABEL,
@@ -77,21 +77,22 @@ public:
     };
 
     explicit CONNECTION_SUBGRAPH( CONNECTION_GRAPH* aGraph ) :
-              m_graph( aGraph ),
-              m_dirty( false ),
-              m_absorbed( false ),
-              m_is_bus_member( false ),
-              m_absorbed_by( nullptr ),
-              m_code( -1 ),
-              m_multiple_drivers( false ),
-              m_strong_driver( false ),
-              m_local_driver( false ),
-              m_bus_entry( nullptr ),
-              m_hier_parent( nullptr ),
-              m_driver( nullptr ),
-              m_no_connect( nullptr ),
-              m_driver_connection( nullptr )
-    {}
+            m_graph( aGraph ),
+            m_dirty( false ),
+            m_absorbed( false ),
+            m_is_bus_member( false ),
+            m_absorbed_by( nullptr ),
+            m_code( -1 ),
+            m_multiple_drivers( false ),
+            m_strong_driver( false ),
+            m_local_driver( false ),
+            m_bus_entry( nullptr ),
+            m_hier_parent( nullptr ),
+            m_driver( nullptr ),
+            m_no_connect( nullptr ),
+            m_driver_connection( nullptr )
+    {
+    }
 
     ~CONNECTION_SUBGRAPH()
     {
@@ -128,8 +129,7 @@ public:
 
     /// Return the resolved netclasses for the item, and the source item providing the netclass
     /// @param aItem the item to query for netclass assignments
-    const std::vector<std::pair<wxString, SCH_ITEM*>>
-    GetNetclassesForDriver( SCH_ITEM* aItem ) const;
+    const std::vector<std::pair<wxString, SCH_ITEM*>> GetNetclassesForDriver( SCH_ITEM* aItem ) const;
 
     /// Combine another subgraph on the same sheet into this one.
     void Absorb( CONNECTION_SUBGRAPH* aOther );
@@ -141,14 +141,11 @@ public:
     void UpdateItemConnections();
 
     /// Provide a read-only reference to the items in the subgraph.
-    const std::set<SCH_ITEM*>& GetItems() const
-    {
-        return m_items;
-    }
+    const std::set<SCH_ITEM*>& GetItems() const { return m_items; }
 
     /// Find all items in the subgraph as well as child subgraphs recursively.
     void getAllConnectedItems( std::set<std::pair<SCH_SHEET_PATH, SCH_ITEM*>>& aItems,
-                               std::set<CONNECTION_SUBGRAPH*>& aSubgraphs );
+                               std::set<CONNECTION_SUBGRAPH*>&                 aSubgraphs );
 
     /**
      * Return the priority (higher is more important) of a candidate driver
@@ -178,34 +175,22 @@ public:
      * @return pointer to the SCH_ITEM whose name sets the subgraph netname.
      *         N.B. This item may not be in the subgraph.
      */
-    const SCH_ITEM* GetDriver() const
-    {
-        return m_driver;
-    }
+    const SCH_ITEM* GetDriver() const { return m_driver; }
 
     /**
      * @return #SCH_CONNECTION object for m_driver on #m_sheet.
      */
-    const SCH_CONNECTION* GetDriverConnection() const
-    {
-        return m_driver_connection;
-    }
+    const SCH_CONNECTION* GetDriverConnection() const { return m_driver_connection; }
 
     /**
      * @return pointer to the item causing a no-connect or nullptr if none.
      */
-    const SCH_ITEM* GetNoConnect() const
-    {
-        return m_no_connect;
-    }
+    const SCH_ITEM* GetNoConnect() const { return m_no_connect; }
 
-    const SCH_SHEET_PATH& GetSheet() const
-    {
-        return m_sheet;
-    }
+    const SCH_SHEET_PATH& GetSheet() const { return m_sheet; }
 
-    const std::unordered_map< std::shared_ptr<SCH_CONNECTION>,
-                        std::unordered_set<CONNECTION_SUBGRAPH*> >& GetBusParents() const
+    const std::unordered_map<std::shared_ptr<SCH_CONNECTION>, std::unordered_set<CONNECTION_SUBGRAPH*>>&
+    GetBusParents() const
     {
         return m_bus_parents;
     }
@@ -219,10 +204,7 @@ public:
 
     // Use this to keep a connection pointer that is not owned by any item
     // This will be destroyed with the subgraph
-    void StoreImplicitConnection( SCH_CONNECTION* aConnection )
-    {
-        m_bus_element_connections.insert( aConnection );
-    }
+    void StoreImplicitConnection( SCH_CONNECTION* aConnection ) { m_bus_element_connections.insert( aConnection ); }
 
 private:
     wxString driverName( SCH_ITEM* aItem ) const;
@@ -274,16 +256,14 @@ private:
      * a net with label D7, this map will contain an entry for the D7 bus member, and
      * the set will contain a pointer to the D7 net subgraph.
      */
-    std::unordered_map< std::shared_ptr<SCH_CONNECTION>,
-                        std::unordered_set<CONNECTION_SUBGRAPH*> > m_bus_neighbors;
+    std::unordered_map<std::shared_ptr<SCH_CONNECTION>, std::unordered_set<CONNECTION_SUBGRAPH*>> m_bus_neighbors;
 
     /**
      * If this is a net, this vector contains links to any same-sheet buses that contain it.
      * The string key is the name of the connection that forms the link (which isn't necessarily
      * the same as the name of the connection driving this subgraph)
      */
-    std::unordered_map< std::shared_ptr<SCH_CONNECTION>,
-                        std::unordered_set<CONNECTION_SUBGRAPH*> > m_bus_parents;
+    std::unordered_map<std::shared_ptr<SCH_CONNECTION>, std::unordered_set<CONNECTION_SUBGRAPH*>> m_bus_parents;
 
     /// Cache for lookup of any hierarchical (sheet) pins on this subgraph (for referring down).
     std::set<SCH_SHEET_PIN*> m_hier_pins;
@@ -299,7 +279,7 @@ private:
     std::unordered_set<CONNECTION_SUBGRAPH*> m_hier_children;
 
     /// A cache of escaped netnames from schematic items.
-    mutable std::mutex m_driver_name_cache_mutex;
+    mutable std::mutex                              m_driver_name_cache_mutex;
     mutable std::unordered_map<SCH_ITEM*, wxString> m_driver_name_cache;
 
     /// Fully-resolved driver for the subgraph (might not exist in this subgraph).
@@ -326,10 +306,10 @@ private:
 
 struct NET_NAME_CODE_CACHE_KEY
 {
-    wxString  Name;
-    int       Netcode;
+    wxString Name;
+    int      Netcode;
 
-    bool operator==(const NET_NAME_CODE_CACHE_KEY& other) const
+    bool operator==( const NET_NAME_CODE_CACHE_KEY& other ) const
     {
         return Name == other.Name && Netcode == other.Netcode;
     }
@@ -337,17 +317,17 @@ struct NET_NAME_CODE_CACHE_KEY
 
 namespace std
 {
-    template <>
-    struct hash<NET_NAME_CODE_CACHE_KEY>
+template <>
+struct hash<NET_NAME_CODE_CACHE_KEY>
+{
+    std::size_t operator()( const NET_NAME_CODE_CACHE_KEY& k ) const
     {
-        std::size_t operator()( const NET_NAME_CODE_CACHE_KEY& k ) const
-        {
-            const std::size_t prime = 19937;
+        const std::size_t prime = 19937;
 
-            return hash<wxString>()( k.Name ) ^ ( hash<int>()( k.Netcode ) * prime );
-        }
-    };
-}
+        return hash<wxString>()( k.Name ) ^ ( hash<int>()( k.Netcode ) * prime );
+    }
+};
+} // namespace std
 
 /// Associate a #NET_CODE_NAME with all the subgraphs in that net.
 typedef std::unordered_map<NET_NAME_CODE_CACHE_KEY, std::vector<CONNECTION_SUBGRAPH*>> NET_MAP;
@@ -359,16 +339,14 @@ class CONNECTION_GRAPH
 {
 public:
     CONNECTION_GRAPH( SCHEMATIC* aSchematic = nullptr ) :
-              m_last_net_code( 1 ),
-              m_last_bus_code( 1 ),
-              m_last_subgraph_code( 1 ),
-              m_schematic( aSchematic )
-    {}
-
-    ~CONNECTION_GRAPH()
+            m_last_net_code( 1 ),
+            m_last_bus_code( 1 ),
+            m_last_subgraph_code( 1 ),
+            m_schematic( aSchematic )
     {
-        Reset();
     }
+
+    ~CONNECTION_GRAPH() { Reset(); }
 
     // We own at least one list of raw pointers.  Don't let the compiler fill in copy c'tors that
     // will only land us in trouble.
@@ -381,10 +359,7 @@ public:
 
     void Reset();
 
-    void SetSchematic( SCHEMATIC* aSchematic )
-    {
-        m_schematic = aSchematic;
-    }
+    void SetSchematic( SCHEMATIC* aSchematic ) { m_schematic = aSchematic; }
 
     void SetLastCodes( const CONNECTION_GRAPH* aOther )
     {
@@ -402,7 +377,7 @@ public:
      */
     void Recalculate( const SCH_SHEET_LIST& aSheetList, bool aUnconditional = false,
                       std::function<void( SCH_ITEM* )>* aChangedItemHandler = nullptr,
-                      PROGRESS_REPORTER* aProgressReporter = nullptr );
+                      PROGRESS_REPORTER*                aProgressReporter = nullptr );
 
     /**
      * Return a bus alias pointer for the given name if it exists (from cache)
@@ -439,8 +414,7 @@ public:
      * @param aPath is a sheet path to look on.
      * @return the subgraph matching the query, or nullptr if none is found.
      */
-    CONNECTION_SUBGRAPH* FindSubgraphByName( const wxString& aNetName,
-                                             const SCH_SHEET_PATH& aPath );
+    CONNECTION_SUBGRAPH* FindSubgraphByName( const wxString& aNetName, const SCH_SHEET_PATH& aPath );
 
     /**
      * Retrieve a subgraph for the given net name, if one exists.
@@ -471,8 +445,7 @@ public:
      * @param aItems A vector of items whose presence should be removed from the graph.
      * @return The full set of all items associated with the input items that were removed.
      */
-    std::set<std::pair<SCH_SHEET_PATH, SCH_ITEM*>> ExtractAffectedItems(
-            const std::set<SCH_ITEM*> &aItems );
+    std::set<std::pair<SCH_SHEET_PATH, SCH_ITEM*>> ExtractAffectedItems( const std::set<SCH_ITEM*>& aItems );
 
     /**
      * Combine the input graph contents into the current graph.
@@ -499,19 +472,16 @@ public:
     */
     bool IsMinor() const
     {
-        return static_cast<ssize_t>( m_items.size() )
-               < ADVANCED_CFG::GetCfg().m_MinorSchematicGraphSize;
+        return static_cast<ssize_t>( m_items.size() ) < ADVANCED_CFG::GetCfg().m_MinorSchematicGraphSize;
     }
 
 private:
-
     /**
      * Update the connectivity of a symbol and its pins.
      * This is called by updateItemConnectivity() for each symbol
      * in the schematic.
      */
-    void updateSymbolConnectivity( const SCH_SHEET_PATH& aSheet,
-                                   SCH_SYMBOL* aSymbol,
+    void updateSymbolConnectivity( const SCH_SHEET_PATH& aSheet, SCH_SYMBOL* aSymbol,
                                    std::map<VECTOR2I, std::vector<SCH_ITEM*>>& aConnectionMap );
 
     /**
@@ -519,17 +489,14 @@ private:
      * This is called by updateItemConnectivity() for each pin
      * in the schematic.
      */
-    void updatePinConnectivity( const SCH_SHEET_PATH& aSheet,
-                                SCH_PIN* aPin,
-                                SCH_CONNECTION* aConnection );
+    void updatePinConnectivity( const SCH_SHEET_PATH& aSheet, SCH_PIN* aPin, SCH_CONNECTION* aConnection );
 
     /**
      * Update the connectivity of items that are not pins or symbols.
      * This is called by updateItemConnectivity() for each item
      * in the schematic that is not a symbol or pin.
      */
-    void updateGenericItemConnectivity( const SCH_SHEET_PATH& aSheet,
-                                        SCH_ITEM* aItem,
+    void updateGenericItemConnectivity( const SCH_SHEET_PATH& aSheet, SCH_ITEM* aItem,
                                         std::map<VECTOR2I, std::vector<SCH_ITEM*>>& aConnectionMap );
 
     /**
@@ -559,8 +526,7 @@ private:
      * @param aSheet is the path to the sheet of all items in the list.
      * @param aItemList is a list of items to consider.
      */
-    void updateItemConnectivity( const SCH_SHEET_PATH& aSheet,
-                                 const std::vector<SCH_ITEM*>& aItemList );
+    void updateItemConnectivity( const SCH_SHEET_PATH& aSheet, const std::vector<SCH_ITEM*>& aItemList );
 
     /**
      * Generate the connection graph (after all item connectivity has been updated).
@@ -579,8 +545,7 @@ private:
      * and re-created.  Otherwise, we will preserve existing net classes that do not
      * conflict with the new net classes.
      */
-    void buildConnectionGraph( std::function<void( SCH_ITEM* )>* aChangedItemHandler,
-                               bool aUnconditional );
+    void buildConnectionGraph( std::function<void( SCH_ITEM* )>* aChangedItemHandler, bool aUnconditional );
 
     /**
      * Generate individual item subgraphs on a per-sheet basis.
@@ -661,8 +626,7 @@ private:
      * @param aSearch is the net connection to search for.
      * @returns a member of aBusConnection that matches aSearch.
      */
-    static SCH_CONNECTION* matchBusMember( SCH_CONNECTION* aBusConnection,
-                                           SCH_CONNECTION* aSearch );
+    static SCH_CONNECTION* matchBusMember( SCH_CONNECTION* aBusConnection, SCH_CONNECTION* aSearch );
 
     /**
      * Build a new default connection for the given item based on its properties.
@@ -673,8 +637,7 @@ private:
      * @param aSubgraph is used to determine the sheet to use and retrieve the cached name.
      * @return a connection generated from the item, or nullptr if item is not valid.
      */
-    std::shared_ptr<SCH_CONNECTION> getDefaultConnection( SCH_ITEM* aItem,
-                                                          CONNECTION_SUBGRAPH* aSubgraph );
+    std::shared_ptr<SCH_CONNECTION> getDefaultConnection( SCH_ITEM* aItem, CONNECTION_SUBGRAPH* aSubgraph );
 
     void recacheSubgraphName( CONNECTION_SUBGRAPH* aSubgraph, const wxString& aOldName );
 
@@ -822,8 +785,7 @@ private:
 
     std::unordered_map<wxString, std::vector<const CONNECTION_SUBGRAPH*>> m_global_label_cache;
 
-    std::map< std::pair<SCH_SHEET_PATH, wxString>,
-              std::vector<const CONNECTION_SUBGRAPH*> > m_local_label_cache;
+    std::map<std::pair<SCH_SHEET_PATH, wxString>, std::vector<const CONNECTION_SUBGRAPH*>> m_local_label_cache;
 
     std::unordered_map<wxString, std::vector<CONNECTION_SUBGRAPH*>> m_net_name_to_subgraphs_map;
 
@@ -837,7 +799,7 @@ private:
 
     int m_last_subgraph_code;
 
-    SCHEMATIC* m_schematic;     ///< The schematic this graph represents.
+    SCHEMATIC* m_schematic; ///< The schematic this graph represents.
 };
 
 #endif

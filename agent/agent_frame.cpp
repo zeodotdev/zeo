@@ -3,6 +3,7 @@
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
+#include <kiway.h>
 #include <sstream>
 #include <wx/sizer.h>
 #include <wx/textctrl.h>
@@ -62,6 +63,12 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_plusButton = new wxButton( m_inputPanel, wxID_ANY, "+", wxDefaultPosition, wxSize( 30, -1 ) );
     controlsSizer->Add( m_plusButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
+    // Tool Execution Button (Hidden by default)
+    m_toolButton = new wxButton( m_inputPanel, wxID_ANY, "Run Tool", wxDefaultPosition, wxDefaultSize );
+    m_toolButton->SetForegroundColour( *wxCYAN ); // Make it stand out?
+    m_toolButton->Hide();
+    controlsSizer->Add( m_toolButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+
     // Mode Selection
     // wxString modeChoices[] = { "Planning", "Execution" };
     // m_modeChoice = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, modeChoices );
@@ -69,10 +76,15 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // controlsSizer->Add( m_modeChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     // Model Selection
-    // wxString modelChoices[] = { "Gemini 1.5 Pro", "Gemini 1.5 Flash" };
-    // m_modelChoice = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, modelChoices );
-    // m_modelChoice->SetSelection( 0 );
-    // controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+    // Model Selection
+    wxArrayString modelChoices;
+    modelChoices.Add( "GPT-4o" );
+    modelChoices.Add( "Claude 3.5 Sonnet" );
+    modelChoices.Add( "Claude 3 Opus" );
+
+    m_modelChoice = new wxChoice( m_inputPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, modelChoices );
+    m_modelChoice->SetSelection( 0 ); // Default to GPT-4o
+    controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     // Spacer
     controlsSizer->AddStretchSpacer();
@@ -99,12 +111,16 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_actionButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSend, this );
     m_inputCtrl->Bind( wxEVT_TEXT_ENTER, &AGENT_FRAME::OnTextEnter, this );
     m_selectionPill->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSelectionPillClick, this );
+    m_toolButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnToolClick, this );
     m_inputCtrl->Bind( wxEVT_KEY_DOWN, &AGENT_FRAME::OnInputKeyDown, this );
     m_inputCtrl->Bind( wxEVT_TEXT, &AGENT_FRAME::OnInputText, this );
 
     // Bind Thread Events
     Bind( wxEVT_AGENT_UPDATE, &AGENT_FRAME::OnAgentUpdate, this );
     Bind( wxEVT_AGENT_COMPLETE, &AGENT_FRAME::OnAgentComplete, this );
+
+    // Initialize History
+    m_chatHistory = nlohmann::json::array();
 }
 
 AGENT_FRAME::~AGENT_FRAME()
@@ -118,7 +134,11 @@ void AGENT_FRAME::ShowChangedLanguage()
 
 void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 {
-    if( aEvent.Command() == MAIL_SELECTION )
+    if( aEvent.Command() == MAIL_AGENT_RESPONSE )
+    {
+        m_toolResponse = aEvent.GetPayload();
+    }
+    else if( aEvent.Command() == MAIL_SELECTION )
     {
         std::string payload = aEvent.GetPayload();
 
@@ -362,9 +382,22 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 
     // Create and Run Thread
     // TODO: proper system prompt management
-    std::string systemPrompt = "You are a helpful assistant for KiCad PCB design.";
+    std::string systemPrompt = R"(You are a helpful assistant for KiCad PCB design.
+You have access to the following tools to query the project state.
+To use a tool, you MUST format your response as follows:
+THOUGHT: [Your reasoning here]
+TOOL_CALL: [ToolName]
 
-    // Pass payload if available (Combine SCH and PCB contexts)
+Available Tools:
+- get_board_info: Returns board stackup, layers, and design rules.
+- get_pcb_info: Returns all footprints, tracks, zones, and nets on the PCB.
+- get_sch_info: Returns all symbols, wires, and text in the Schematic.
+- get_connection_info: Returns the netlist connectivity graph.
+
+When you need information, explain your thought process and then output the TOOL_CALL.
+Wait for the tool output before providing the final answer.
+)";
+
     // Pass payload if available (Combine SCH and PCB contexts)
     std::string payload;
     if( !m_schJson.empty() )
@@ -372,7 +405,14 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     if( !m_pcbJson.empty() )
         payload += m_pcbJson + "\n";
 
-    m_workerThread = new AGENT_THREAD( this, text.ToStdString(), systemPrompt, payload );
+    // Update History
+    m_chatHistory.push_back( { { "role", "user" }, { "content", text.ToStdString() } } );
+    m_currentResponse = ""; // Reset accumulator
+
+    // Get selected model
+    wxString modelNameProp = m_modelChoice->GetStringSelection();
+
+    m_workerThread = new AGENT_THREAD( this, m_chatHistory, systemPrompt, payload, modelNameProp.ToStdString() );
     if( m_workerThread->Run() != wxTHREAD_NO_ERROR )
     {
         wxLogMessage( "Error: Could not create worker thread." );
@@ -404,6 +444,7 @@ void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
     content.Replace( "\n", "<br>" );
 
     // Append to the current paragraph started in OnSend
+    m_currentResponse += content;
     m_chatWindow->AppendToPage( content );
 
     // Auto-scroll
@@ -426,11 +467,140 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
 
     m_chatWindow->AppendToPage( "</p>" ); // Close Agent block
     m_actionButton->SetLabel( "->" );
-    // m_inputCtrl->Enable( true );
+
+    // Add Assistant response to history
+    if( !m_currentResponse.empty() )
+    {
+        m_chatHistory.push_back( { { "role", "assistant" }, { "content", m_currentResponse } } );
+    }
 
     if( aEvent.GetInt() == 0 ) // Failure
     {
         m_chatWindow->AppendToPage( "<p><i>(Error generating response)</i></p>" );
+    }
+    else
+    {
+        // Parse for Tool Calls
+        size_t toolPos = m_currentResponse.rfind( "TOOL_CALL: " );
+        if( toolPos != std::string::npos )
+        {
+            size_t start = toolPos + 11;
+            size_t end = m_currentResponse.find_first_of( "\n\r", start );
+            if( end == std::string::npos )
+                end = m_currentResponse.length();
+
+            std::string toolName = m_currentResponse.substr( start, end - start );
+            // Clean whitespace
+            toolName.erase( 0, toolName.find_first_not_of( " \t" ) );
+            toolName.erase( toolName.find_last_not_of( " \t" ) + 1 );
+
+            m_pendingTool = toolName;
+
+            // Show Approve Button
+            m_toolButton->SetLabel( "Run " + toolName );
+            m_toolButton->Show();
+            m_toolButton->GetParent()->Layout(); // Re-layout input panel
+            Layout();
+        }
+    }
+}
+
+void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
+{
+    if( m_pendingTool.empty() )
+        return;
+
+    m_toolButton->Hide();
+    m_toolButton->GetParent()->Layout();
+
+    m_chatWindow->AppendToPage( "<p><i>Executing " + m_pendingTool + "...</i></p>" );
+
+    // Execute
+    std::string result = SendRequest( FRAME_AGENT, m_pendingTool ); // Assuming internal dispatch handles tool names
+    // Actually, SendRequest determines destination based on IDs?
+    // My previous code in implementations dispatch used strings "GET_BOARD_INFO" etc.
+    // I need to map "get_board_info" to proper Kiway Request or just pass string.
+    // Agent -> PCB/SCH dispatch uses SendRequest( int aDest, ... ).
+    // I need to determine Dest!
+    int dest = FRAME_T::FRAME_PCB_EDITOR; // Default to PCB?
+    if( m_pendingTool.find( "sch" ) != std::string::npos )
+        dest = FRAME_T::FRAME_SCH;
+
+    // The previous implementation used "get_board_info" strings directly in the JSON payloads?
+    // Let's verify how `agent_openai_client` did it.
+    // It called `m_parent->SendRequest( FRAME_PCB_EDITOR, "GET_BOARD_INFO" )`.
+
+    // Map tool name to command
+    std::string cmd;
+    if( m_pendingTool == "get_board_info" )
+    {
+        dest = FRAME_PCB_EDITOR;
+        cmd = "GET_BOARD_INFO";
+    }
+    else if( m_pendingTool == "get_pcb_info" )
+    {
+        dest = FRAME_PCB_EDITOR;
+        cmd = "GET_PCB_INFO";
+    }
+    else if( m_pendingTool == "get_sch_info" )
+    {
+        dest = FRAME_SCH;
+        cmd = "GET_SCH_INFO";
+    }
+    else if( m_pendingTool == "get_connection_info" )
+    {
+        dest = FRAME_SCH;
+        cmd = "GET_CONNECTION_INFO";
+    }
+
+    std::string toolOutput = SendRequest( dest, cmd );
+
+    // Append Tool Output to History as User message (or System)?
+    // "Tool Output: [JSON]"
+    std::string toolMsg = "Tool Output (" + m_pendingTool + "):\n" + toolOutput;
+    m_chatHistory.push_back( { { "role", "user" }, { "content", toolMsg } } );
+
+    m_chatWindow->AppendToPage( "<p><b>System:</b> Tool Output received.</p>" );
+    m_chatWindow->AppendToPage( "<p><b>Agent:</b> " );
+
+    // Resume Agent
+    std::string systemPrompt = "You are a helpful assistant..."; // Just reuse, threaded.
+    // Note: Reuse the same system prompt string from OnSend? It's local.
+    // Ideally duplicate it or make member.
+    // For now, I'll copy the string:
+    std::string prompt = R"(You are a helpful assistant for KiCad PCB design.
+You have access to the following tools to query the project state.
+To use a tool, you MUST format your response as follows:
+THOUGHT: [Your reasoning here]
+TOOL_CALL: [ToolName]
+
+Available Tools:
+- get_board_info: Returns board stackup, layers, and design rules.
+- get_pcb_info: Returns all footprints, tracks, zones, and nets on the PCB.
+- get_sch_info: Returns all symbols, wires, and text in the Schematic.
+- get_connection_info: Returns the netlist connectivity graph.
+
+When you need information, explain your thought process and then output the TOOL_CALL.
+Wait for the tool output before providing the final answer.
+)";
+
+    // Payload (Context) is still valid?
+    std::string payload;
+    if( !m_schJson.empty() )
+        payload += m_schJson + "\n";
+    if( !m_pcbJson.empty() )
+        payload += m_pcbJson + "\n";
+
+    wxString model = m_modelChoice->GetStringSelection();
+
+    m_currentResponse = "";
+    m_actionButton->SetLabel( "Stop" );
+
+    m_workerThread = new AGENT_THREAD( this, m_chatHistory, prompt, payload, model.ToStdString() );
+    if( m_workerThread->Run() != wxTHREAD_NO_ERROR )
+    {
+        wxLogMessage( "Error creating thread" );
+        m_actionButton->SetLabel( "->" );
     }
 }
 
@@ -448,10 +618,23 @@ void AGENT_FRAME::OnTextEnter( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnModelSelection( wxCommandEvent& aEvent )
 {
-    // Handle model change
+    // Handle model change if we need immediate feedback, otherwise just read in OnSend
 }
 
 void AGENT_FRAME::OnExit( wxCommandEvent& event )
 {
-    Close();
+    Close( true );
+}
+
+std::string AGENT_FRAME::SendRequest( int aDest, const std::string& aPayload )
+{
+    m_toolResponse = "";
+    std::string payloadCopy = aPayload;
+    Kiway().ExpressMail( (FRAME_T) aDest, MAIL_AGENT_REQUEST, payloadCopy );
+
+    // Note: Kiway().ExpressMail is pseudo-synchronous for local handling in the same process,
+    // but if it were truly async we'd need a wait loop here.
+    // For now, assuming immediate processing by the target frame.
+
+    return m_toolResponse;
 }

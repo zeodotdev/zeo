@@ -58,6 +58,7 @@
 #include <netlist_reader/netlist_reader.h>
 #include <widgets/pcb_design_block_pane.h>
 #include <wx/log.h>
+#include <nlohmann/json.hpp>
 
 /* Execute a remote command sent via a socket on port KICAD_PCB_PORT_SERVICE_NUMBER
  *
@@ -73,23 +74,23 @@
  */
 void PCB_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
 {
-    char        line[1024];
-    char*       idcmd;
-    char*       text;
-    int         netcode = -1;
-    bool        multiHighlight = false;
-    BOARD*      pcb = GetBoard();
+    char   line[1024];
+    char*  idcmd;
+    char*  text;
+    int    netcode = -1;
+    bool   multiHighlight = false;
+    BOARD* pcb = GetBoard();
 
     CROSS_PROBING_SETTINGS& crossProbingSettings = GetPcbNewSettings()->m_CrossProbing;
 
     KIGFX::VIEW*            view = m_toolManager->GetView();
     KIGFX::RENDER_SETTINGS* renderSettings = view->GetPainter()->GetSettings();
 
-    strncpy( line, cmdline, sizeof(line) - 1 );
-    line[sizeof(line) - 1] = 0;
+    strncpy( line, cmdline, sizeof( line ) - 1 );
+    line[sizeof( line ) - 1] = 0;
 
     idcmd = strtok( line, " \n\r" );
-    text  = strtok( nullptr, "\"\n\r" );
+    text = strtok( nullptr, "\"\n\r" );
 
     if( idcmd == nullptr )
         return;
@@ -152,7 +153,7 @@ void PCB_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
             return;
 
         wxStringTokenizer netsTok = wxStringTokenizer( From_UTF8( text ), ",", wxTOKEN_STRTOK );
-        bool first = true;
+        bool              first = true;
 
         while( netsTok.HasMoreTokens() )
         {
@@ -202,12 +203,11 @@ void PCB_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
 
         pcb->HighLightON();
 
-        auto merge_area =
-                [netcode, &bbox]( BOARD_CONNECTED_ITEM* aItem )
-                {
-                    if( aItem->GetNetCode() == netcode )
-                        bbox.Merge( aItem->GetBoundingBox() );
-                };
+        auto merge_area = [netcode, &bbox]( BOARD_CONNECTED_ITEM* aItem )
+        {
+            if( aItem->GetNetCode() == netcode )
+                bbox.Merge( aItem->GetBoundingBox() );
+        };
 
         if( crossProbingSettings.center_on_items )
         {
@@ -264,8 +264,7 @@ std::string FormatProbeItem( BOARD_ITEM* aItem )
         PAD*       pad = static_cast<PAD*>( aItem );
         FOOTPRINT* footprint = pad->GetParentFootprint();
 
-        return fmt::format( "$PART: \"{}\" $PAD: \"{}\"",
-                            TO_UTF8( footprint->GetReference() ),
+        return fmt::format( "$PART: \"{}\" $PAD: \"{}\"", TO_UTF8( footprint->GetReference() ),
                             TO_UTF8( pad->GetNumber() ) );
     }
 
@@ -284,14 +283,11 @@ std::string FormatProbeItem( BOARD_ITEM* aItem )
         else
             break;
 
-        return fmt::format( "$PART: \"{}\" {} \"{}\"",
-                            TO_UTF8( footprint->GetReference() ),
-                            text_key,
+        return fmt::format( "$PART: \"{}\" {} \"{}\"", TO_UTF8( footprint->GetReference() ), text_key,
                             TO_UTF8( field->GetText() ) );
     }
 
-    default:
-        break;
+    default: break;
     }
 
     return "";
@@ -323,8 +319,8 @@ void collectItemsForSyncParts( ItemContainer& aItems, std::set<wxString>& parts 
 
         case PCB_PAD_T:
         {
-            PAD*      pad = static_cast<PAD*>( item );
-            wxString  ref = pad->GetParentFootprint()->GetReference();
+            PAD*     pad = static_cast<PAD*>( item );
+            wxString ref = pad->GetParentFootprint()->GetReference();
 
             parts.emplace( wxT( "P" ) + EscapeString( ref, CTX_IPC ) + wxT( "/" )
                            + EscapeString( pad->GetNumber(), CTX_IPC ) );
@@ -337,8 +333,7 @@ void collectItemsForSyncParts( ItemContainer& aItems, std::set<wxString>& parts 
 }
 
 
-void PCB_EDIT_FRAME::SendSelectItemsToSch( const std::deque<EDA_ITEM*>& aItems,
-                                           EDA_ITEM* aFocusItem, bool aForce )
+void PCB_EDIT_FRAME::SendSelectItemsToSch( const std::deque<EDA_ITEM*>& aItems, EDA_ITEM* aFocusItem, bool aForce )
 {
     std::string command = "$SELECT: ";
 
@@ -387,8 +382,7 @@ void PCB_EDIT_FRAME::SendSelectItemsToSch( const std::deque<EDA_ITEM*>& aItems,
         // Typically ExpressMail is going to be s-expression packets, but since
         // we have existing interpreter of the selection packet on the other
         // side in place, we use that here.
-        Kiway().ExpressMail( FRAME_SCH, aForce ? MAIL_SELECTION_FORCE : MAIL_SELECTION, command,
-                             this );
+        Kiway().ExpressMail( FRAME_SCH, aForce ? MAIL_SELECTION_FORCE : MAIL_SELECTION, command, this );
     }
 }
 
@@ -484,8 +478,7 @@ std::vector<BOARD_ITEM*> PCB_EDIT_FRAME::FindItemsFromSyncSelection( std::string
             {
                 if( syncData.StartsWith( fpRefEscaped ) )
                 {
-                    wxString selectPadNumberEscaped =
-                            syncData.substr( fpRefEscaped.size() + 1 ); // Skips the slash
+                    wxString selectPadNumberEscaped = syncData.substr( fpRefEscaped.size() + 1 ); // Skips the slash
 
                     wxString selectPadNumber = UnescapeString( selectPadNumberEscaped );
 
@@ -504,12 +497,11 @@ std::vector<BOARD_ITEM*> PCB_EDIT_FRAME::FindItemsFromSyncSelection( std::string
         }
     }
 
-    std::sort(
-            orderPairs.begin(), orderPairs.end(),
-            []( const std::pair<int, BOARD_ITEM*>& a, const std::pair<int, BOARD_ITEM*>& b ) -> bool
-            {
-                return a.first < b.first;
-            } );
+    std::sort( orderPairs.begin(), orderPairs.end(),
+               []( const std::pair<int, BOARD_ITEM*>& a, const std::pair<int, BOARD_ITEM*>& b ) -> bool
+               {
+                   return a.first < b.first;
+               } );
 
     std::vector<BOARD_ITEM*> items;
     items.reserve( orderPairs.size() );
@@ -546,8 +538,7 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
                 if( !netname.IsEmpty() )
                 {
-                    component->AddNet( pad->GetNumber(), netname, pad->GetPinFunction(),
-                                       pad->GetPinType() );
+                    component->AddNet( pad->GetNumber(), netname, pad->GetPinFunction(), pad->GetPinType() );
                 }
             }
 
@@ -600,9 +591,66 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
         break;
 
-    case MAIL_CROSS_PROBE:
-        ExecuteRemoteCommand( payload.c_str() );
+
+    case MAIL_CROSS_PROBE: ExecuteRemoteCommand( payload.c_str() ); break;
+
+    case MAIL_AGENT_REQUEST:
+    {
+        std::string    request = payload;
+        nlohmann::json response;
+
+        if( request == "GET_BOARD_INFO" )
+        {
+            BOARD*                 board = GetBoard();
+            BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+
+            response["design_rules"] = { { "min_track_width", bds.m_TrackMinWidth },
+                                         { "min_clearance", bds.m_MinClearance },
+                                         { "min_via_diameter", bds.m_ViasMinSize } };
+
+            response["layers"] = nlohmann::json::array();
+            for( PCB_LAYER_ID layer : board->GetEnabledLayers().Seq() )
+            {
+                response["layers"].push_back( { { "id", layer },
+                                                { "name", board->GetLayerName( layer ).ToStdString() },
+                                                { "type", IsCopperLayer( layer ) ? "copper" : "technical" } } );
+            }
+        }
+        else if( request == "GET_PCB_INFO" )
+        {
+            BOARD* board = GetBoard();
+            response["items"] = nlohmann::json::array();
+
+            for( FOOTPRINT* fp : board->Footprints() )
+            {
+                nlohmann::json item;
+                item["type"] = "footprint";
+                item["uuid"] = fp->m_Uuid.AsString().ToStdString();
+                item["reference"] = fp->GetReference().ToStdString();
+                item["value"] = fp->GetValue().ToStdString();
+                item["layer"] = board->GetLayerName( fp->GetLayer() ).ToStdString();
+                item["position"] = { { "x", fp->GetPosition().x }, { "y", fp->GetPosition().y } };
+                response["items"].push_back( item );
+            }
+
+            for( PCB_TRACK* track : board->Tracks() )
+            {
+                nlohmann::json item;
+                item["type"] = track->Type() == PCB_VIA_T ? "via" : "track";
+                item["uuid"] = track->m_Uuid.AsString().ToStdString();
+                item["net"] = track->GetNetname().ToStdString();
+                item["layer"] = board->GetLayerName( track->GetLayer() ).ToStdString();
+                item["width"] = track->GetWidth();
+                item["start"] = { { "x", track->GetStart().x }, { "y", track->GetStart().y } };
+                item["end"] = { { "x", track->GetEnd().x }, { "y", track->GetEnd().y } };
+                response["items"].push_back( item );
+            }
+        }
+
+        std::string responseStr = response.dump();
+        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, responseStr, this );
         break;
+    }
 
 
     case MAIL_SELECTION:
@@ -633,8 +681,7 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                 wxFAIL;
             }
 
-            std::vector<BOARD_ITEM*> items =
-                    FindItemsFromSyncSelection( paramStr.substr( modeEnd + 1 ) );
+            std::vector<BOARD_ITEM*> items = FindItemsFromSyncSelection( paramStr.substr( modeEnd + 1 ) );
 
             m_probingSchToPcb = true; // recursion guard
 
@@ -650,7 +697,8 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
             if( GetPcbNewSettings()->m_CrossProbing.flash_selection )
             {
-                wxLogTrace( traceCrossProbeFlash, "MAIL_SELECTION(_FORCE) PCB: flash enabled, items=%zu", items.size() );
+                wxLogTrace( traceCrossProbeFlash, "MAIL_SELECTION(_FORCE) PCB: flash enabled, items=%zu",
+                            items.size() );
                 if( items.empty() )
                 {
                     wxLogTrace( traceCrossProbeFlash, "MAIL_SELECTION(_FORCE) PCB: nothing to flash" );
@@ -671,9 +719,7 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         break;
     }
 
-    case MAIL_PCB_UPDATE:
-        m_toolManager->RunAction( ACTIONS::updatePcbFromSchematic );
-        break;
+    case MAIL_PCB_UPDATE: m_toolManager->RunAction( ACTIONS::updatePcbFromSchematic ); break;
 
     case MAIL_IMPORT_FILE:
     {
@@ -721,17 +767,11 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         break;
     }
 
-    case MAIL_RELOAD_PLUGINS:
-        GetToolManager()->RunAction( ACTIONS::pluginsReload );
-        break;
+    case MAIL_RELOAD_PLUGINS: GetToolManager()->RunAction( ACTIONS::pluginsReload ); break;
 
-    case MAIL_RELOAD_LIB:
-        m_designBlocksPane->RefreshLibs();
-        break;
+    case MAIL_RELOAD_LIB: m_designBlocksPane->RefreshLibs(); break;
 
     // many many others.
-    default:
-        ;
+    default:;
     }
 }
-

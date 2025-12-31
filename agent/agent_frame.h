@@ -1,5 +1,6 @@
 #ifndef AGENT_FRAME_H
 #define AGENT_FRAME_H
+
 #include <kiway_player.h>
 #include <wx/html/htmlwin.h>
 #include <wx/choice.h>
@@ -7,6 +8,8 @@
 #include <wx/button.h>
 #include <wx/timer.h>
 #include <string>
+#include <vector>
+#include <nlohmann/json.hpp>
 
 // Forward Declarations
 class AGENT_THREAD;
@@ -27,39 +30,43 @@ public:
     // Event handlers
     void OnSend( wxCommandEvent& aEvent );
     void OnStop( wxCommandEvent& aEvent );
-    void OnModelSelection( wxCommandEvent& aEvent );
-    void OnTextEnter( wxCommandEvent& aEvent );
-    void OnExit( wxCommandEvent& event );
-
-    // Thread Event Handlers
     void OnAgentUpdate( wxCommandEvent& aEvent );
     void OnAgentComplete( wxCommandEvent& aEvent );
+    void OnTextEnter( wxCommandEvent& aEvent );
+    void OnSelectionPillClick( wxCommandEvent& aEvent );
+    void OnToolClick( wxCommandEvent& aEvent );
+    void OnModelSelection( wxCommandEvent& aEvent );
+    void OnExit( wxCommandEvent& event );
+    void OnInputKeyDown( wxKeyEvent& aEvent );
+    void OnInputText( wxCommandEvent& aEvent );
+
+    // Tool call helper
+    std::string SendRequest( int aDest, const std::string& aPayload );
+
+    DECLARE_EVENT_TABLE()
 
 private:
     wxHtmlWindow* m_chatWindow;
     wxTextCtrl*   m_inputCtrl;
+    wxButton*     m_actionButton;
     wxButton*     m_plusButton;
-    wxChoice*     m_modeChoice;
+    wxButton*     m_selectionPill;
+    wxButton*     m_toolButton;
     wxChoice*     m_modelChoice;
-    wxButton*     m_actionButton;  // Send/Stop
-    wxButton*     m_selectionPill; // Displays selected item info
+    wxPanel*      m_inputPanel;
 
-    wxPanel* m_inputPanel; // Wrapper for input area styling
+    AGENT_THREAD* m_workerThread;
 
-    // JSON Payloads
+    std::string m_toolResponse;
     std::string m_schJson;
     std::string m_pcbJson;
     std::string m_schSummary;
     std::string m_pcbSummary;
 
-    AGENT_THREAD* m_workerThread;
-
-    // Event handlers
-    void OnSelectionPillClick( wxCommandEvent& aEvent );
-    void OnInputKeyDown( wxKeyEvent& aEvent );
-    void OnInputText( wxCommandEvent& aEvent );
-
-    DECLARE_EVENT_TABLE()
+    // Chat State
+    nlohmann::json m_chatHistory;     // Full history
+    std::string    m_currentResponse; // Streaming accumulator
+    std::string    m_pendingTool;     // Tool waiting for approval
 };
 
 #endif // AGENT_FRAME_H

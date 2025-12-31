@@ -19,11 +19,11 @@ include_directories(
 
 
 # Sources for the standalone executable
+# Sources for the standalone executable
 set( AGENT_SRCS
     agent.cpp
     agent_frame.cpp
-    agent_openai_client_temp.cpp
-    agent_thread.cpp
+    agent_llm_client.cpp
     agent_thread.cpp
 )
 
@@ -40,8 +40,7 @@ endif()
 add_executable( agent WIN32 MACOSX_BUNDLE
     agent.cpp
     agent_frame.cpp
-    agent_openai_client_temp.cpp
-    agent_thread.cpp
+    agent_llm_client.cpp
     agent_thread.cpp
     ${CMAKE_SOURCE_DIR}/common/single_top.cpp
     ${AGENT_RESOURCES}

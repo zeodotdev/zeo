@@ -63,11 +63,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_plusButton = new wxButton( m_inputPanel, wxID_ANY, "+", wxDefaultPosition, wxSize( 30, -1 ) );
     controlsSizer->Add( m_plusButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
-    // Tool Execution Button (Hidden by default)
-    m_toolButton = new wxButton( m_inputPanel, wxID_ANY, "Run Tool", wxDefaultPosition, wxDefaultSize );
-    m_toolButton->SetForegroundColour( *wxCYAN ); // Make it stand out?
-    m_toolButton->Hide();
-    controlsSizer->Add( m_toolButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+    // Tool Execution Button (Inline now, removed button)
+    // m_toolButton = new wxButton( m_inputPanel, wxID_ANY, "Run Tool", wxDefaultPosition, wxDefaultSize );
+    // m_toolButton->Hide();
+    // controlsSizer->Add( m_toolButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     // Mode Selection
     // wxString modeChoices[] = { "Planning", "Execution" };
@@ -77,13 +76,13 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Model Selection
     // Model Selection
+    // Model Selection
     wxArrayString modelChoices;
-    modelChoices.Add( "GPT-4o" );
-    modelChoices.Add( "Claude 3.5 Sonnet" );
     modelChoices.Add( "Claude 3 Opus" );
+    modelChoices.Add( "GPT-4o" );
 
     m_modelChoice = new wxChoice( m_inputPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, modelChoices );
-    m_modelChoice->SetSelection( 0 ); // Default to GPT-4o
+    m_modelChoice->SetSelection( 0 ); // Default to Claude 3 Opus
     controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     // Spacer
@@ -111,7 +110,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_actionButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSend, this );
     m_inputCtrl->Bind( wxEVT_TEXT_ENTER, &AGENT_FRAME::OnTextEnter, this );
     m_selectionPill->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSelectionPillClick, this );
-    m_toolButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnToolClick, this );
+    // m_toolButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnToolClick, this );
+    m_chatWindow->Bind( wxEVT_HTML_LINK_CLICKED, &AGENT_FRAME::OnHtmlLinkClick, this );
     m_inputCtrl->Bind( wxEVT_KEY_DOWN, &AGENT_FRAME::OnInputKeyDown, this );
     m_inputCtrl->Bind( wxEVT_TEXT, &AGENT_FRAME::OnInputText, this );
 
@@ -137,6 +137,7 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
     if( aEvent.Command() == MAIL_AGENT_RESPONSE )
     {
         m_toolResponse = aEvent.GetPayload();
+        // wxLogMessage( "Agent received response: %s", m_toolResponse.c_str() ); // Removed to prevent pop-ups
     }
     else if( aEvent.Command() == MAIL_SELECTION )
     {
@@ -430,6 +431,7 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
         m_workerThread->Delete(); // soft delete, checks TestDestroy()
         m_workerThread = nullptr;
     }
+    m_stopRequested = true; // Signal sync loops to stop
     m_chatWindow->AppendToPage( "</p><p><i>(Stopped)</i></p>" );
     m_actionButton->SetLabel( "->" );
     // m_inputCtrl->Enable( true );
@@ -439,20 +441,38 @@ void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
 {
     wxString content = aEvent.GetString();
 
-    // Escape HTML special chars?
-    // For now, raw text append. Ideally convert generic newlines to <br>.
-    content.Replace( "\n", "<br>" );
-
-    // Append to the current paragraph started in OnSend
+    // Accumulate RAW text for parsing
     m_currentResponse += content;
-    m_chatWindow->AppendToPage( content );
+
+    // Display with HTML formatting
+    wxString displayContent = content;
+    displayContent.Replace( "\n", "<br>" );
+    m_chatWindow->AppendToPage( displayContent );
 
     // Auto-scroll
-    // m_chatWindow->ScrollToAnchor( "" ); // invalid anchor might scroll to bottom?
-    // Or GetVirtualSize
     int x, y;
     m_chatWindow->GetVirtualSize( &x, &y );
     m_chatWindow->Scroll( 0, y );
+
+    // Check for TOOL_CALL to force stop
+    // We check m_currentResponse (raw)
+    size_t toolPos = m_currentResponse.rfind( "TOOL_CALL:" );
+    if( toolPos != std::string::npos )
+    {
+        // Check if we have the full line (newline after TOOL_CALL)
+        size_t lineEnd = m_currentResponse.find( '\n', toolPos );
+        if( lineEnd != std::string::npos )
+        {
+            // Complete TOOL_CALL detected. Stop generation immediately.
+            if( m_workerThread )
+            {
+                // Request thread to exit. OnAgentComplete will be called naturally.
+                m_workerThread->Delete();
+                m_workerThread = nullptr;
+                m_chatWindow->AppendToPage( "<p><i>(Tool Call Detected - Stopping Generation)</i></p>" );
+            }
+        }
+    }
 }
 
 void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
@@ -490,18 +510,42 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
                 end = m_currentResponse.length();
 
             std::string toolName = m_currentResponse.substr( start, end - start );
-            // Clean whitespace
-            toolName.erase( 0, toolName.find_first_not_of( " \t" ) );
-            toolName.erase( toolName.find_last_not_of( " \t" ) + 1 );
+            // Clean whitespace and newlines
+            toolName.erase( 0, toolName.find_first_not_of( " \t\r\n" ) );
+            toolName.erase( toolName.find_last_not_of( " \t\r\n" ) + 1 );
 
             m_pendingTool = toolName;
 
-            // Show Approve Button
-            m_toolButton->SetLabel( "Run " + toolName );
-            m_toolButton->Show();
-            m_toolButton->GetParent()->Layout(); // Re-layout input panel
+            // Show Inline Approve Link with Colors
+            std::string html = "<p><b>Tool Request:</b> " + toolName
+                               + " <a href=\"tool:approve\" style=\"color: #00AA00; font-weight: bold;\">[Approve]</a>"
+                               + " <a href=\"tool:deny\" style=\"color: #AA0000; font-weight: bold;\">[Deny]</a></p>";
+            m_chatWindow->AppendToPage( html );
+
+            // Allow user to click. Execution halted until link clicked.
             Layout();
         }
+    }
+}
+
+void AGENT_FRAME::OnHtmlLinkClick( wxHtmlLinkEvent& aEvent )
+{
+    wxString href = aEvent.GetLinkInfo().GetHref();
+    if( href == "tool:approve" )
+    {
+        OnToolClick( aEvent );
+    }
+    else if( href == "tool:deny" )
+    {
+        m_chatWindow->AppendToPage( "<p><i>Tool call denied by user.</i></p>" );
+        m_chatHistory.push_back( { { "role", "user" }, { "content", "Tool execution denied." } } );
+        // Optionally resume generation or wait for user input?
+        // Usually better to let user type why.
+    }
+    else
+    {
+        // Open standard links in browser?
+        wxLaunchDefaultBrowser( href );
     }
 }
 
@@ -510,8 +554,8 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     if( m_pendingTool.empty() )
         return;
 
-    m_toolButton->Hide();
-    m_toolButton->GetParent()->Layout();
+    // m_toolButton->Hide();
+    // m_toolButton->GetParent()->Layout();
 
     m_chatWindow->AppendToPage( "<p><i>Executing " + m_pendingTool + "...</i></p>" );
 
@@ -523,15 +567,10 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     // Agent -> PCB/SCH dispatch uses SendRequest( int aDest, ... ).
     // I need to determine Dest!
     int dest = FRAME_T::FRAME_PCB_EDITOR; // Default to PCB?
-    if( m_pendingTool.find( "sch" ) != std::string::npos )
-        dest = FRAME_T::FRAME_SCH;
-
-    // The previous implementation used "get_board_info" strings directly in the JSON payloads?
-    // Let's verify how `agent_openai_client` did it.
-    // It called `m_parent->SendRequest( FRAME_PCB_EDITOR, "GET_BOARD_INFO" )`.
-
     // Map tool name to command
     std::string cmd;
+
+    // Logic to select destination and command
     if( m_pendingTool == "get_board_info" )
     {
         dest = FRAME_PCB_EDITOR;
@@ -552,6 +591,18 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
         dest = FRAME_SCH;
         cmd = "GET_CONNECTION_INFO";
     }
+    else
+    {
+        // Fallback for unknowns
+        m_chatWindow->AppendToPage( "<p><i>Error: Unknown tool '" + m_pendingTool + "'</i></p>" );
+        return;
+    }
+
+    // UPDATE UI immediately
+    m_actionButton->SetLabel( "Stop" );
+    // Note: To force UI update before blocking call, we can yield or refresh
+    m_actionButton->Refresh();
+    m_actionButton->Update();
 
     std::string toolOutput = SendRequest( dest, cmd );
 
@@ -582,6 +633,7 @@ Available Tools:
 
 When you need information, explain your thought process and then output the TOOL_CALL.
 Wait for the tool output before providing the final answer.
+IMPORTANT: You must STOP generating text immediately after the TOOL_CALL line. Do not hallucinate the result.
 )";
 
     // Payload (Context) is still valid?
@@ -632,9 +684,24 @@ std::string AGENT_FRAME::SendRequest( int aDest, const std::string& aPayload )
     std::string payloadCopy = aPayload;
     Kiway().ExpressMail( (FRAME_T) aDest, MAIL_AGENT_REQUEST, payloadCopy );
 
-    // Note: Kiway().ExpressMail is pseudo-synchronous for local handling in the same process,
-    // but if it were truly async we'd need a wait loop here.
-    // For now, assuming immediate processing by the target frame.
+    // Wait for response (Sync)
+    // We expect the target frame to reply via MAIL_AGENT_RESPONSE which sets m_toolResponse
+    wxLongLong start = wxGetLocalTimeMillis();
+    m_stopRequested = false;                                                      // Reset stop flag
+    while( m_toolResponse.empty() && ( wxGetLocalTimeMillis() - start < 10000 ) ) // 10s timeout
+    {
+        wxYield(); // Process events (including the MailIn event and Stop button)
+        if( m_stopRequested )
+        {
+            return "Error: Tool execution cancelled by user.";
+        }
+        wxMilliSleep( 10 );
+    }
+
+    if( m_toolResponse.empty() )
+    {
+        return "Error: Tool execution timed out or returned empty response.";
+    }
 
     return m_toolResponse;
 }

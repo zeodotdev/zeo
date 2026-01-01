@@ -596,7 +596,11 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
     case MAIL_AGENT_REQUEST:
     {
-        std::string    request = payload;
+        std::string request = payload;
+        // Trim whitespace just in case
+        request.erase( 0, request.find_first_not_of( " \n\r\t" ) );
+        request.erase( request.find_last_not_of( " \n\r\t" ) + 1 );
+
         nlohmann::json response;
 
         if( request == "GET_BOARD_INFO" )
@@ -646,6 +650,13 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                 response["items"].push_back( item );
             }
         }
+        else
+        {
+            response["error"] = "Unknown command: '" + request + "'";
+            wxLogMessage( "PCB received unknown Agent Request: '%s'", request.c_str() );
+        }
+
+        // wxLogMessage( "PCB processing Agent Request: %s", request.c_str() ); // Removed alert
 
         std::string responseStr = response.dump();
         Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, responseStr, this );

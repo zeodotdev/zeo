@@ -901,7 +901,11 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
     case MAIL_AGENT_REQUEST:
     {
-        std::string    request = payload;
+        std::string request = payload;
+        // Trim whitespace
+        request.erase( 0, request.find_first_not_of( " \n\r\t" ) );
+        request.erase( request.find_last_not_of( " \n\r\t" ) + 1 );
+
         nlohmann::json response;
 
         if( request == "GET_SCH_INFO" )

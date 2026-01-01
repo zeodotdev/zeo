@@ -34,6 +34,7 @@ public:
     void OnAgentComplete( wxCommandEvent& aEvent );
     void OnTextEnter( wxCommandEvent& aEvent );
     void OnSelectionPillClick( wxCommandEvent& aEvent );
+    void OnHtmlLinkClick( wxHtmlLinkEvent& aEvent );
     void OnToolClick( wxCommandEvent& aEvent );
     void OnModelSelection( wxCommandEvent& aEvent );
     void OnExit( wxCommandEvent& event );
@@ -67,6 +68,7 @@ private:
     nlohmann::json m_chatHistory;     // Full history
     std::string    m_currentResponse; // Streaming accumulator
     std::string    m_pendingTool;     // Tool waiting for approval
+    bool           m_stopRequested;   // Flag for sync wait loops
 };
 
 #endif // AGENT_FRAME_H

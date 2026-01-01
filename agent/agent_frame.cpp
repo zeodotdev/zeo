@@ -11,6 +11,7 @@
 #include <bitmaps.h>
 #include <id.h>
 #include <nlohmann/json.hpp>
+#include <wx/settings.h>
 
 BEGIN_EVENT_TABLE( AGENT_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, AGENT_FRAME::OnExit )
@@ -28,16 +29,17 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
     // 1. Chat History Area
-    m_chatWindow = new wxHtmlWindow( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHW_SCROLLBAR_AUTO );
+    m_chatWindow =
+            new wxHtmlWindow( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHW_SCROLLBAR_AUTO | wxBORDER_NONE );
     // Set a default page content or styling if needed
     m_chatWindow->SetPage(
-            "<html><body bgcolor='#2D2D2D' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>" );
-    mainSizer->Add( m_chatWindow, 1, wxEXPAND | wxALL, 5 );
+            "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>" );
+    mainSizer->Add( m_chatWindow, 1, wxEXPAND | wxALL, 0 ); // Remove ALL padding for clean edge
 
     // 2. Input Container (Unified Look)
     // Create m_inputPanel for dark styling
     m_inputPanel = new wxPanel( this, wxID_ANY );
-    m_inputPanel->SetBackgroundColour( wxColour( 30, 30, 30 ) ); // Dark prompt area
+    m_inputPanel->SetBackgroundColour( wxColour( "#1E1E1E" ) ); // 1E1E1E
 
     // Use a vertical BoxSizer for the panel
     wxBoxSizer* outerInputSizer = new wxBoxSizer( wxVERTICAL );
@@ -45,15 +47,25 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Use an inner sizer for content padding
     wxBoxSizer* inputContainerSizer = new wxBoxSizer( wxVERTICAL );
 
-    // Status Pill (Selection Info)
+    // Status Pill (Selection Info / Add Context)
     m_selectionPill = new wxButton( m_inputPanel, wxID_ANY, "No Selection", wxDefaultPosition, wxDefaultSize );
+    // Removed custom colors to keep native round look
     m_selectionPill->Hide(); // Hide on load
-    inputContainerSizer->Add( m_selectionPill, 0, wxALIGN_LEFT | wxBOTTOM, 2 );
+    // Match vertical spacing of bottom buttons (approx 5px padding)
+    inputContainerSizer->Add( m_selectionPill, 0, wxALIGN_LEFT | wxBOTTOM, 5 );
 
     // 2a. Text Input (Top)
     m_inputCtrl = new wxTextCtrl( m_inputPanel, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 80 ),
-                                  wxTE_MULTILINE | wxTE_PROCESS_ENTER | wxTE_RICH2 );
-    // m_inputCtrl->SetHint( "Ask anything" ); // Requires newer wxWidgets, might be ignored on old
+                                  wxTE_MULTILINE | wxTE_PROCESS_ENTER | wxTE_RICH2 | wxBORDER_NONE );
+    m_inputCtrl->SetBackgroundColour( wxColour( "#1E1E1E" ) );
+    m_inputCtrl->SetForegroundColour( wxColour( "#FFFFFF" ) );
+
+    // Sync Font with Buttons
+    // We can't easily get the button font before creating buttons, but we can get system font
+    wxFont font = wxSystemSettings::GetFont( wxSYS_DEFAULT_GUI_FONT );
+    font.SetPointSize( 14 ); // Increased to 14
+    m_inputCtrl->SetFont( font );
+
     inputContainerSizer->Add( m_inputCtrl, 1, wxEXPAND | wxBOTTOM, 5 );
 
     // 2b. Control Row (Bottom)
@@ -63,19 +75,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_plusButton = new wxButton( m_inputPanel, wxID_ANY, "+", wxDefaultPosition, wxSize( 30, -1 ) );
     controlsSizer->Add( m_plusButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
-    // Tool Execution Button (Inline now, removed button)
-    // m_toolButton = new wxButton( m_inputPanel, wxID_ANY, "Run Tool", wxDefaultPosition, wxDefaultSize );
-    // m_toolButton->Hide();
-    // controlsSizer->Add( m_toolButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
-
-    // Mode Selection
-    // wxString modeChoices[] = { "Planning", "Execution" };
-    // m_modeChoice = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, modeChoices );
-    // m_modeChoice->SetSelection( 0 );
-    // controlsSizer->Add( m_modeChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
-
-    // Model Selection
-    // Model Selection
     // Model Selection
     wxArrayString modelChoices;
     modelChoices.Add( "Claude 3 Opus" );
@@ -99,7 +98,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     m_inputPanel->SetSizer( outerInputSizer );
 
-    // Add Input Container to Main Sizer (No border so background fills area)
+    // Add Input Container to Main Sizer
     mainSizer->Add( m_inputPanel, 0, wxEXPAND );
 
     SetSizer( mainSizer );

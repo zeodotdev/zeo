@@ -5,6 +5,7 @@
 #include <wx/settings.h>
 #include <id.h>
 #include <kiway.h>
+#include <wx/log.h>
 
 #include <base_units.h>
 
@@ -63,15 +64,31 @@ void TERMINAL_FRAME::OnTextEnter( wxCommandEvent& aEvent )
 
     // Determine Destination
     FRAME_T dest = FRAME_SCH; // Default
-    if( cmd.Contains( "_pcb_" ) || cmd.Contains( "_component_" ) || cmd.Contains( "_net_" )
-        || cmd.Contains( "_board_" ) )
+
+    if( cmd.Contains( "_sch_" ) )
+    {
+        dest = FRAME_SCH;
+    }
+    else if( cmd.Contains( "_pcb_" ) || cmd.Contains( "_component_" ) || cmd.Contains( "_net_" )
+             || cmd.Contains( "_board_" ) )
     {
         dest = FRAME_PCB_EDITOR;
     }
 
     // Send Request
     std::string payload = cmd.ToStdString();
-    Kiway().ExpressMail( dest, MAIL_AGENT_REQUEST, payload, this );
+
+    KIWAY_PLAYER* player = Kiway().Player( dest, false );
+    if( player )
+    {
+        Kiway().ExpressMail( dest, MAIL_AGENT_REQUEST, payload, this );
+    }
+    else
+    {
+        wxString errorMsg;
+        errorMsg.Printf( "Error: Target editor (ID %d) is not open. Please open Schematic or PCB Editor.", dest );
+        m_outputCtrl->AppendText( errorMsg + "\n" );
+    }
 }
 
 void TERMINAL_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )

@@ -34,6 +34,7 @@
 #include <board.h>
 #include <board_design_settings.h>
 #include <fmt.h>
+#include <wx/log.h>
 #include <footprint.h>
 #include <pad.h>
 #include <pcb_track.h>
@@ -603,7 +604,11 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
         nlohmann::json response;
 
-        if( request == "GET_BOARD_INFO" )
+        if( request.rfind( "echo", 0 ) == 0 )
+        {
+            response["echo"] = request.length() > 5 ? request.substr( 5 ) : "";
+        }
+        else if( request.rfind( "get_board_info", 0 ) == 0 || request.rfind( "GET_BOARD_INFO", 0 ) == 0 )
         {
             BOARD*                 board = GetBoard();
             BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
@@ -631,13 +636,19 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                                                     { "uuid", fp->m_Uuid.AsString().ToStdString() } } );
             }
         }
-        else if( request.rfind( "get_component_details", 0 ) == 0 )
+        else if( request.rfind( "get_component_details", 0 ) == 0 || request.rfind( "get_pcb_component", 0 ) == 0 )
         {
-            // Parse "get_component_details Ref"
-            std::string ref = request.substr( 21 ); // Length of command
-            // Trim
-            ref.erase( 0, ref.find_first_not_of( " \"\t\r\n" ) );
-            ref.erase( ref.find_last_not_of( " \"\t\r\n" ) + 1 );
+            // Parse "get_component_details Ref" or "get_pcb_component Ref"
+            // Find first space to determine offset
+            size_t      spacePos = request.find( ' ' );
+            std::string ref = "";
+            if( spacePos != std::string::npos )
+            {
+                ref = request.substr( spacePos + 1 );
+                // Trim
+                ref.erase( 0, ref.find_first_not_of( " \"\t\r\n" ) );
+                ref.erase( ref.find_last_not_of( " \"\t\r\n" ) + 1 );
+            }
 
             BOARD*     board = GetBoard();
             FOOTPRINT* target = nullptr;
@@ -656,11 +667,10 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                 response["value"] = target->GetValue().ToStdString();
                 response["layer"] = board->GetLayerName( target->GetLayer() ).ToStdString();
                 response["position"] = { { "x", target->GetPosition().x }, { "y", target->GetPosition().y } };
-                // Add pads / connections if needed later, keeping it simple for now
             }
             else
             {
-                response["error"] = "Component not found: " + ref;
+                response["error"] = "Component not found: '" + ref + "'";
             }
         }
         else if( request.rfind( "get_pcb_nets", 0 ) == 0 )
@@ -724,6 +734,7 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
         std::string responseStr = response.dump();
         Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, responseStr, this );
+        Kiway().ExpressMail( FRAME_TERMINAL, MAIL_AGENT_RESPONSE, responseStr, this );
         break;
     }
 

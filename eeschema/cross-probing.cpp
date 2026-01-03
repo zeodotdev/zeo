@@ -24,6 +24,7 @@
  */
 
 #include <fmt.h>
+#include <wx/log.h>
 #include <kiface_base.h>
 #include <kiway.h>
 #include <kiway_express.h>
@@ -908,7 +909,11 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
         nlohmann::json response;
 
-        if( request.rfind( "get_sch_sheets", 0 ) == 0 )
+        if( request.rfind( "echo", 0 ) == 0 )
+        {
+            response["echo"] = request.length() > 5 ? request.substr( 5 ) : "";
+        }
+        else if( request.rfind( "get_sch_sheets", 0 ) == 0 )
         {
             response["sheets"] = nlohmann::json::array();
             SCH_SHEET_LIST sheets = Schematic().Hierarchy();
@@ -1016,6 +1021,7 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
         std::string responseStr = response.dump();
         Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, responseStr, this );
+        Kiway().ExpressMail( FRAME_TERMINAL, MAIL_AGENT_RESPONSE, responseStr, this );
         break;
     }
 

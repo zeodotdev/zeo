@@ -620,36 +620,100 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                                                 { "type", IsCopperLayer( layer ) ? "copper" : "technical" } } );
             }
         }
-        else if( request == "GET_PCB_INFO" )
+        else if( request.rfind( "get_pcb_components", 0 ) == 0 ) // Starts with
         {
             BOARD* board = GetBoard();
-            response["items"] = nlohmann::json::array();
-
+            response["components"] = nlohmann::json::array();
             for( FOOTPRINT* fp : board->Footprints() )
             {
-                nlohmann::json item;
-                item["type"] = "footprint";
-                item["uuid"] = fp->m_Uuid.AsString().ToStdString();
-                item["reference"] = fp->GetReference().ToStdString();
-                item["value"] = fp->GetValue().ToStdString();
-                item["layer"] = board->GetLayerName( fp->GetLayer() ).ToStdString();
-                item["position"] = { { "x", fp->GetPosition().x }, { "y", fp->GetPosition().y } };
-                response["items"].push_back( item );
-            }
-
-            for( PCB_TRACK* track : board->Tracks() )
-            {
-                nlohmann::json item;
-                item["type"] = track->Type() == PCB_VIA_T ? "via" : "track";
-                item["uuid"] = track->m_Uuid.AsString().ToStdString();
-                item["net"] = track->GetNetname().ToStdString();
-                item["layer"] = board->GetLayerName( track->GetLayer() ).ToStdString();
-                item["width"] = track->GetWidth();
-                item["start"] = { { "x", track->GetStart().x }, { "y", track->GetStart().y } };
-                item["end"] = { { "x", track->GetEnd().x }, { "y", track->GetEnd().y } };
-                response["items"].push_back( item );
+                response["components"].push_back( { { "reference", fp->GetReference().ToStdString() },
+                                                    { "value", fp->GetValue().ToStdString() },
+                                                    { "uuid", fp->m_Uuid.AsString().ToStdString() } } );
             }
         }
+        else if( request.rfind( "get_component_details", 0 ) == 0 )
+        {
+            // Parse "get_component_details Ref"
+            std::string ref = request.substr( 21 ); // Length of command
+            // Trim
+            ref.erase( 0, ref.find_first_not_of( " \"\t\r\n" ) );
+            ref.erase( ref.find_last_not_of( " \"\t\r\n" ) + 1 );
+
+            BOARD*     board = GetBoard();
+            FOOTPRINT* target = nullptr;
+            for( FOOTPRINT* fp : board->Footprints() )
+            {
+                if( fp->GetReference() == ref )
+                {
+                    target = fp;
+                    break;
+                }
+            }
+
+            if( target )
+            {
+                response["reference"] = target->GetReference().ToStdString();
+                response["value"] = target->GetValue().ToStdString();
+                response["layer"] = board->GetLayerName( target->GetLayer() ).ToStdString();
+                response["position"] = { { "x", target->GetPosition().x }, { "y", target->GetPosition().y } };
+                // Add pads / connections if needed later, keeping it simple for now
+            }
+            else
+            {
+                response["error"] = "Component not found: " + ref;
+            }
+        }
+        else if( request.rfind( "get_pcb_nets", 0 ) == 0 )
+        {
+            BOARD* board = GetBoard();
+            response["nets"] = nlohmann::json::array();
+            for( const auto& net : board->GetNetInfo().NetsByName() )
+            {
+                response["nets"].push_back(
+                        { { "name", net.first.ToStdString() }, { "code", net.second->GetNetCode() } } );
+            }
+        }
+        else if( request.rfind( "get_net_details", 0 ) == 0 )
+        {
+            std::string netName = request.substr( 15 );
+            netName.erase( 0, netName.find_first_not_of( " \"\t\r\n" ) );
+            netName.erase( netName.find_last_not_of( " \"\t\r\n" ) + 1 );
+
+            BOARD*        board = GetBoard();
+            NETINFO_ITEM* netInfo = board->GetNetInfo().GetNetItem( netName );
+
+            if( netInfo )
+            {
+                response["net_name"] = netName;
+                response["net_code"] = netInfo->GetNetCode();
+                response["track_count"] = 0;
+                // Ideally iterate tracks filtered by net, but for now just summary or filtered list
+                // To avoid massive payloads, we might just return count or key items?
+                // Let's return tracks for this net.
+                response["tracks"] = nlohmann::json::array();
+                int trackCount = 0;
+                for( PCB_TRACK* track : board->Tracks() )
+                {
+                    if( track->GetNetCode() == netInfo->GetNetCode() )
+                    {
+                        if( trackCount++ > 100 )
+                            break; // Limit return size
+                        nlohmann::json trk;
+                        trk["type"] = track->Type() == PCB_VIA_T ? "via" : "track";
+                        trk["start"] = { { "x", track->GetStart().x }, { "y", track->GetStart().y } };
+                        trk["end"] = { { "x", track->GetEnd().x }, { "y", track->GetEnd().y } };
+                        trk["layer"] = board->GetLayerName( track->GetLayer() ).ToStdString();
+                        response["tracks"].push_back( trk );
+                    }
+                }
+                response["track_count_total"] = trackCount;
+            }
+            else
+            {
+                response["error"] = "Net not found: " + netName;
+            }
+        }
+
         else
         {
             response["error"] = "Unknown command: '" + request + "'";

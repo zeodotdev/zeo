@@ -475,6 +475,7 @@ set( BMAPS_MID
     push_pad_settings
     puzzle_piece
     py_script
+    py_script_24
     ray_tracing
     recent
     redo

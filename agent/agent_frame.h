@@ -14,6 +14,11 @@
 // Forward Declarations
 class AGENT_THREAD;
 
+enum
+{
+    ID_CHAT_COPY = wxID_HIGHEST + 1001
+};
+
 class AGENT_FRAME : public KIWAY_PLAYER
 {
 public:
@@ -40,6 +45,8 @@ public:
     void OnExit( wxCommandEvent& event );
     void OnInputKeyDown( wxKeyEvent& aEvent );
     void OnInputText( wxCommandEvent& aEvent );
+    void OnChatRightClick( wxMouseEvent& aEvent );
+    void OnPopupClick( wxCommandEvent& aEvent );
 
     // Tool call helper
     std::string SendRequest( int aDest, const std::string& aPayload );

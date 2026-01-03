@@ -12,6 +12,8 @@
 #include <id.h>
 #include <nlohmann/json.hpp>
 #include <wx/settings.h>
+#include <wx/clipbrd.h>
+#include <wx/menu.h>
 
 BEGIN_EVENT_TABLE( AGENT_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, AGENT_FRAME::OnExit )
@@ -98,6 +100,12 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     m_inputPanel->SetSizer( outerInputSizer );
 
+    // ACCELERATOR TABLE for Cmd+C
+    wxAcceleratorEntry entries[1];
+    entries[0].Set( wxACCEL_CTRL, (int) 'C', ID_CHAT_COPY );
+    wxAcceleratorTable accel( 1, entries );
+    SetAcceleratorTable( accel );
+
     // Add Input Container to Main Sizer
     mainSizer->Add( m_inputPanel, 0, wxEXPAND );
 
@@ -111,6 +119,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_selectionPill->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSelectionPillClick, this );
     // m_toolButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnToolClick, this );
     m_chatWindow->Bind( wxEVT_HTML_LINK_CLICKED, &AGENT_FRAME::OnHtmlLinkClick, this );
+    m_chatWindow->Bind( wxEVT_RIGHT_DOWN, &AGENT_FRAME::OnChatRightClick, this );
+    Bind( wxEVT_MENU, &AGENT_FRAME::OnPopupClick, this, ID_CHAT_COPY );
     m_inputCtrl->Bind( wxEVT_KEY_DOWN, &AGENT_FRAME::OnInputKeyDown, this );
     m_inputCtrl->Bind( wxEVT_TEXT, &AGENT_FRAME::OnInputText, this );
 
@@ -386,13 +396,18 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 You have access to the following tools to query the project state.
 To use a tool, you MUST format your response as follows:
 THOUGHT: [Your reasoning here]
-TOOL_CALL: [ToolName]
+TOOL_CALL: [ToolName] [Arguments...]
 
 Available Tools:
+- get_pcb_components: Returns a list of footprints on the PCB (Ref, Value, UUID).
+- get_component_details "RefDes": Returns details (Value, Layer, Position) for a specific component (e.g., "R1").
+- get_pcb_nets: Returns a list of all net names and codes.
+- get_net_details "NetName": Returns tracks and pads for a specific net (e.g., "+3V3").
 - get_board_info: Returns board stackup, layers, and design rules.
-- get_pcb_info: Returns all footprints, tracks, zones, and nets on the PCB.
-- get_sch_info: Returns all symbols, wires, and text in the Schematic.
-- get_connection_info: Returns the netlist connectivity graph.
+- get_sch_sheets: Returns the schematic sheet hierarchy (Path, Name).
+- get_sch_components "SheetPath": Returns symbols on a specific sheet (or all if path is empty).
+- get_sch_symbol_details "RefDes": Returns details (Value, Footprint, Pin map) for a symbol.
+- get_connection_graph: Returns the full netlist connectivity graph.
 
 When you need information, explain your thought process and then output the TOOL_CALL.
 Wait for the tool output before providing the final answer.
@@ -567,75 +582,72 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     // I need to determine Dest!
     int dest = FRAME_T::FRAME_PCB_EDITOR; // Default to PCB?
     // Map tool name to command
-    std::string cmd;
+    std::string toolToRun = m_pendingTool; // Full command string including args
 
-    // Logic to select destination and command
-    if( m_pendingTool == "get_board_info" )
+    // Parse command name (first word) to determine destination
+    std::stringstream ss( toolToRun );
+    std::string       commandName;
+    ss >> commandName;
+
+    if( commandName == "get_pcb_components" || commandName == "get_component_details" || commandName == "get_pcb_nets"
+        || commandName == "get_net_details" || commandName == "get_board_info" )
     {
         dest = FRAME_PCB_EDITOR;
-        cmd = "GET_BOARD_INFO";
     }
-    else if( m_pendingTool == "get_pcb_info" )
-    {
-        dest = FRAME_PCB_EDITOR;
-        cmd = "GET_PCB_INFO";
-    }
-    else if( m_pendingTool == "get_sch_info" )
+    else if( commandName == "get_sch_sheets" || commandName == "get_sch_components"
+             || commandName == "get_sch_symbol_details" || commandName == "get_connection_graph" )
     {
         dest = FRAME_SCH;
-        cmd = "GET_SCH_INFO";
-    }
-    else if( m_pendingTool == "get_connection_info" )
-    {
-        dest = FRAME_SCH;
-        cmd = "GET_CONNECTION_INFO";
     }
     else
     {
-        // Fallback for unknowns
-        m_chatWindow->AppendToPage( "<p><i>Error: Unknown tool '" + m_pendingTool + "'</i></p>" );
+        m_chatHistory.push_back(
+                { { "role", "user" }, { "content", "Error: Unknown tool command '" + commandName + "'" } } );
+        m_pendingTool = "";
+        // RenderChat(); // Assuming RenderChat is a function that updates the UI based on m_chatHistory
         return;
     }
 
-    // UPDATE UI immediately
-    m_actionButton->SetLabel( "Stop" );
-    // Note: To force UI update before blocking call, we can yield or refresh
-    m_actionButton->Refresh();
-    m_actionButton->Update();
+    // UPDATE UI immediately to show processing state (buttons gone)
+    m_pendingTool = "";
+    // RenderChat(); // Assuming RenderChat is a function that updates the UI based on m_chatHistory
 
-    std::string toolOutput = SendRequest( dest, cmd );
+    // Force UI refresh
+    wxYield();
+
+    // Pass the FULL string (e.g. "get_component_details R1") as the payload
+    std::string toolOutput = SendRequest( dest, toolToRun );
 
     // Append Tool Output to History as User message (or System)?
     // "Tool Output: [JSON]"
-    std::string toolMsg = "Tool Output (" + m_pendingTool + "):\n" + toolOutput;
+    std::string toolMsg = "Tool Output (" + toolToRun + "):\n" + toolOutput;
     m_chatHistory.push_back( { { "role", "user" }, { "content", toolMsg } } );
 
     m_chatWindow->AppendToPage( "<p><b>System:</b> Tool Output received.</p>" );
     m_chatWindow->AppendToPage( "<p><b>Agent:</b> " );
 
     // Resume Agent
-    std::string systemPrompt = "You are a helpful assistant..."; // Just reuse, threaded.
-    // Note: Reuse the same system prompt string from OnSend? It's local.
-    // Ideally duplicate it or make member.
-    // For now, I'll copy the string:
-    std::string prompt = R"(You are a helpful assistant for KiCad PCB design.
+    std::string systemPrompt = R"(You are a helpful assistant for KiCad PCB design.
 You have access to the following tools to query the project state.
 To use a tool, you MUST format your response as follows:
 THOUGHT: [Your reasoning here]
-TOOL_CALL: [ToolName]
+TOOL_CALL: [ToolName] [Arguments...]
 
 Available Tools:
-- get_board_info: Returns board stackup, layers, and design rules.
-- get_pcb_info: Returns all footprints, tracks, zones, and nets on the PCB.
-- get_sch_info: Returns all symbols, wires, and text in the Schematic.
-- get_connection_info: Returns the netlist connectivity graph.
+- get_pcb_components: Returns a list of all components on the PCB (Ref, Value, UUID).
+- get_component_details "RefDes": Returns detailed info (Location, Layer, Net Connections) for a specific component (e.g., "R1").
+- get_pcb_nets: Returns a list of all nets on the PCB.
+- get_net_details "NetName": Returns tracks, vias, and pads associated with a specific net.
+- get_sch_sheets: Returns the schematic sheet hierarchy.
+- get_sch_components "SheetPath": Returns components on a specific sheet (or all if path is empty).
+- get_sch_symbol_details "RefDes": Returns symbol fields and pins for a specific symbol in the schematic.
+- get_connection_graph: Returns the full netlist connectivity graph.
 
 When you need information, explain your thought process and then output the TOOL_CALL.
 Wait for the tool output before providing the final answer.
 IMPORTANT: You must STOP generating text immediately after the TOOL_CALL line. Do not hallucinate the result.
 )";
 
-    // Payload (Context) is still valid?
     std::string payload;
     if( !m_schJson.empty() )
         payload += m_schJson + "\n";
@@ -647,7 +659,7 @@ IMPORTANT: You must STOP generating text immediately after the TOOL_CALL line. D
     m_currentResponse = "";
     m_actionButton->SetLabel( "Stop" );
 
-    m_workerThread = new AGENT_THREAD( this, m_chatHistory, prompt, payload, model.ToStdString() );
+    m_workerThread = new AGENT_THREAD( this, m_chatHistory, systemPrompt, payload, model.ToStdString() );
     if( m_workerThread->Run() != wxTHREAD_NO_ERROR )
     {
         wxLogMessage( "Error creating thread" );
@@ -703,4 +715,32 @@ std::string AGENT_FRAME::SendRequest( int aDest, const std::string& aPayload )
     }
 
     return m_toolResponse;
+}
+
+void AGENT_FRAME::OnChatRightClick( wxMouseEvent& aEvent )
+{
+    wxString selection = m_chatWindow->SelectionToText();
+    if( !selection.IsEmpty() )
+    {
+        wxMenu menu;
+        menu.Append( ID_CHAT_COPY, "Copy" );
+        menu.Enable( ID_CHAT_COPY, true );
+        PopupMenu( &menu );
+    }
+}
+
+void AGENT_FRAME::OnPopupClick( wxCommandEvent& aEvent )
+{
+    if( aEvent.GetId() == ID_CHAT_COPY )
+    {
+        wxString selection = m_chatWindow->SelectionToText();
+        if( !selection.IsEmpty() )
+        {
+            if( wxTheClipboard->Open() )
+            {
+                wxTheClipboard->SetData( new wxTextDataObject( selection ) );
+                wxTheClipboard->Close();
+            }
+        }
+    }
 }

@@ -262,3 +262,11 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::showAiAssistant( TOOL_ACTION_ARGS()
                                                             .Tooltip( _( "Open Agent (Cmd+K)" ) )
                                                             .Icon( BITMAPS::icon_kicad )
                                                             .Parameter( FRAME_AGENT ) );
+
+TOOL_ACTION KICAD_MANAGER_ACTIONS::showTerminal( TOOL_ACTION_ARGS()
+                                                         .Name( "kicad.Control.showTerminal" )
+                                                         .Scope( AS_GLOBAL )
+                                                         .FriendlyName( _( "Terminal" ) )
+                                                         .Tooltip( _( "Show Terminal" ) )
+                                                         .Icon( BITMAPS::py_script_24 )
+                                                         .Parameter( FRAME_TERMINAL ) );

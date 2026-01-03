@@ -492,6 +492,7 @@ enum class BITMAPS : unsigned int
     push_pad_settings,
     puzzle_piece,
     py_script,
+    py_script_24,
     question_mark,
     ray_tracing,
     reannotate_down_left,
@@ -693,6 +694,9 @@ enum class BITMAPS : unsigned int
 };
 
 
-inline bool operator!( const BITMAPS& aBitmap ) { return aBitmap == BITMAPS::INVALID_BITMAP; }
+inline bool operator!( const BITMAPS& aBitmap )
+{
+    return aBitmap == BITMAPS::INVALID_BITMAP;
+}
 
 #endif // BITMAPS_PNG_BITMAPS_LIST__H

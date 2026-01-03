@@ -294,6 +294,7 @@ public:
         FACE_PCB_CALCULATOR,
         FACE_BMP2CMP,
         FACE_AGENT,
+        FACE_TERMINAL,
         FACE_PYTHON,
 
         KIWAY_FACE_COUNT

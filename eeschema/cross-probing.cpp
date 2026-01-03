@@ -908,10 +908,53 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
         nlohmann::json response;
 
-        if( request == "GET_SCH_INFO" )
+        if( request.rfind( "get_sch_sheets", 0 ) == 0 )
         {
-            response["items"] = nlohmann::json::array();
+            response["sheets"] = nlohmann::json::array();
             SCH_SHEET_LIST sheets = Schematic().Hierarchy();
+            for( const SCH_SHEET_PATH& sheet : sheets )
+            {
+                response["sheets"].push_back( { { "path", sheet.PathHumanReadable().ToStdString() },
+                                                { "name", sheet.Last()->GetName().ToStdString() } } );
+            }
+        }
+        else if( request.rfind( "get_sch_components", 0 ) == 0 )
+        {
+            // Optional arg: SheetPath
+            std::string sheetFilter = request.substr( 18 );
+            sheetFilter.erase( 0, sheetFilter.find_first_not_of( " \"\t\r\n" ) );
+            sheetFilter.erase( sheetFilter.find_last_not_of( " \"\t\r\n" ) + 1 );
+
+            response["components"] = nlohmann::json::array();
+            SCH_SHEET_LIST sheets = Schematic().Hierarchy();
+
+            for( const SCH_SHEET_PATH& sheet : sheets )
+            {
+                // Filter? Getting path string match might be tricky, checking simplified check
+                if( !sheetFilter.empty() && sheet.PathHumanReadable() != sheetFilter )
+                    continue;
+
+                for( SCH_ITEM* item : sheet.LastScreen()->Items() )
+                {
+                    if( item->Type() == SCH_SYMBOL_T )
+                    {
+                        SCH_SYMBOL* sym = static_cast<SCH_SYMBOL*>( item );
+                        response["components"].push_back(
+                                { { "reference", sym->GetRef( &sheet ).ToStdString() },
+                                  { "value", sym->GetValue( true, &sheet, true ).ToStdString() },
+                                  { "sheet", sheet.PathHumanReadable().ToStdString() } } );
+                    }
+                }
+            }
+        }
+        else if( request.rfind( "get_sch_symbol_details", 0 ) == 0 )
+        {
+            std::string ref = request.substr( 22 );
+            ref.erase( 0, ref.find_first_not_of( " \"\t\r\n" ) );
+            ref.erase( ref.find_last_not_of( " \"\t\r\n" ) + 1 );
+
+            SCH_SHEET_LIST sheets = Schematic().Hierarchy();
+            bool           found = false;
 
             for( const SCH_SHEET_PATH& sheet : sheets )
             {
@@ -919,30 +962,33 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                 {
                     if( item->Type() == SCH_SYMBOL_T )
                     {
-                        SCH_SYMBOL*    sym = static_cast<SCH_SYMBOL*>( item );
-                        nlohmann::json jsonItem;
-                        jsonItem["type"] = "symbol";
-                        jsonItem["uuid"] = sym->m_Uuid.AsString().ToStdString();
-                        jsonItem["reference"] = sym->GetRef( &sheet ).ToStdString();
-                        jsonItem["value"] = sym->GetValue( true, &sheet, true ).ToStdString();
-                        jsonItem["footprint"] = sym->GetFootprintFieldText( true, &sheet, true ).ToStdString();
-                        jsonItem["position"] = { { "x", sym->GetPosition().x }, { "y", sym->GetPosition().y } };
-                        response["items"].push_back( jsonItem );
-                    }
-                    else if( item->Type() == SCH_LABEL_T || item->Type() == SCH_GLOBAL_LABEL_T )
-                    {
-                        SCH_TEXT*      text = static_cast<SCH_TEXT*>( item );
-                        nlohmann::json jsonItem;
-                        jsonItem["type"] = "label";
-                        jsonItem["uuid"] = text->m_Uuid.AsString().ToStdString();
-                        jsonItem["text"] = text->GetText().ToStdString();
-                        jsonItem["position"] = { { "x", text->GetPosition().x }, { "y", text->GetPosition().y } };
-                        response["items"].push_back( jsonItem );
+                        SCH_SYMBOL* sym = static_cast<SCH_SYMBOL*>( item );
+                        if( sym->GetRef( &sheet ) == ref )
+                        {
+                            response["reference"] = ref;
+                            response["value"] = sym->GetValue( true, &sheet, true ).ToStdString();
+                            response["footprint"] = sym->GetFootprintFieldText( true, &sheet, true ).ToStdString();
+                            response["position"] = { { "x", sym->GetPosition().x }, { "y", sym->GetPosition().y } };
+                            // Add pins?
+                            response["pins"] = nlohmann::json::array();
+                            std::vector<SCH_PIN*> pins = sym->GetPins( &sheet );
+                            for( SCH_PIN* pin : pins )
+                            {
+                                response["pins"].push_back( { { "number", pin->GetNumber().ToStdString() },
+                                                              { "name", pin->GetName().ToStdString() } } );
+                            }
+                            found = true;
+                            break;
+                        }
                     }
                 }
+                if( found )
+                    break;
             }
+            if( !found )
+                response["error"] = "Symbol not found: " + ref;
         }
-        else if( request == "GET_CONNECTION_INFO" )
+        else if( request == "get_connection_graph" )
         {
             response["nets"] = nlohmann::json::array();
             for( const auto& net : Schematic().ConnectionGraph()->GetNetMap() )

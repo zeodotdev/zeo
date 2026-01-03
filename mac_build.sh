@@ -121,6 +121,8 @@ if [ -d "$DEST_DIR" ]; then
     rm -rf "$DEST_DIR/Agent.app"
     rm -rf "$DEST_DIR/gerbview.app"
     rm -rf "$DEST_DIR/GerbView.app"
+    rm -rf "$DEST_DIR/terminal.app"
+    rm -rf "$DEST_DIR/Terminal.app"
 fi
 
 pushd "$INNER_BUILD_DIR" > /dev/null
@@ -209,6 +211,24 @@ if [ -f "$AGENT_KIFACE" ]; then
         
         echo "Changing $libpath to @rpath/$libname"
         install_name_tool -change "$libpath" "@rpath/$libname" "$AGENT_KIFACE"
+    done
+fi
+
+echo "Fixing up _terminal.kiface dependencies..."
+TERMINAL_KIFACE="$DEST_PLUGINS_DIR/_terminal.kiface"
+if [ -f "$TERMINAL_KIFACE" ]; then
+    otool -L "$TERMINAL_KIFACE" | grep "\t/" | while read -r line; do
+        # Extract path (first token)
+        libpath=$(echo "$line" | awk '{print $1}')
+        libname=$(basename "$libpath")
+        
+        # Don't touch system libs (/usr/lib, /System/Library)
+        if [[ "$libpath" == /usr/lib* ]] || [[ "$libpath" == /System/Library* ]]; then
+            continue
+        fi
+        
+        echo "Changing $libpath to @rpath/$libname"
+        install_name_tool -change "$libpath" "@rpath/$libname" "$TERMINAL_KIFACE"
     done
 fi
 

@@ -680,6 +680,11 @@ int KICAD_MANAGER_CONTROL::UpdateMenu( const TOOL_EVENT& aEvent )
 }
 
 
+int KICAD_MANAGER_CONTROL::ShowTerminal( const TOOL_EVENT& aEvent )
+{
+    return ShowPlayer( aEvent );
+}
+
 int KICAD_MANAGER_CONTROL::ShowPlayer( const TOOL_EVENT& aEvent )
 {
     FRAME_T       playerType = aEvent.Parameter<FRAME_T>();
@@ -916,6 +921,7 @@ void KICAD_MANAGER_CONTROL::setTransitions()
 
     Go( &KICAD_MANAGER_CONTROL::Execute, KICAD_MANAGER_ACTIONS::editOtherSch.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::Execute, KICAD_MANAGER_ACTIONS::editOtherPCB.MakeEvent() );
+    Go( &KICAD_MANAGER_CONTROL::ShowTerminal, KICAD_MANAGER_ACTIONS::showTerminal.MakeEvent() );
 
     Go( &KICAD_MANAGER_CONTROL::ShowPluginManager, KICAD_MANAGER_ACTIONS::showPluginManager.MakeEvent() );
 }

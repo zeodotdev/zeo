@@ -63,6 +63,8 @@
 #include <id.h>
 #include <dialogs/dialog_settings_diff.h>
 #include <diff_manager.h>
+#include <python_scripting.h> // Fixed include path
+// #include <Python.h> // Included by python_scripting.h if KICAD_SCRIPTING is defined
 
 
 /* Execute a remote command sent via a socket on port KICAD_PCB_PORT_SERVICE_NUMBER
@@ -624,192 +626,269 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         replaceAll( safePayload, "\xe2\x80\x99", "'" );
 
         nlohmann::json j_in = nlohmann::json::parse( safePayload, nullptr, false );
-        if( !j_in.is_discarded() && j_in.contains( "type" ) && j_in["type"] == "propose_settings" )
+        if( !j_in.is_discarded() )
         {
-            std::vector<SETTING_CHANGE> changes;
-            if( j_in.contains( "changes" ) )
+            if( j_in.contains( "type" ) && j_in["type"] == "python" && j_in.contains( "code" ) )
             {
-                for( const auto& c : j_in["changes"] )
+#ifdef KICAD_SCRIPTING
+                // Execute Python Code
+                std::string code = j_in["code"];
+                std::string result;
+
+                // We need to capture stdout/stderr.
+                // Approach:
+                // 1. Redirect stdout/stderr to StringIO
+                // 2. Exec code
+                // 3. Get value
+                // 4. Restore
+
+                // We use a unique variable name for capture to avoid collisions
+                std::string wrapper = "import sys\n"
+                                      "from io import StringIO\n"
+                                      "_agent_capture = StringIO()\n"
+                                      "_agent_restore_out = sys.stdout\n"
+                                      "_agent_restore_err = sys.stderr\n"
+                                      "sys.stdout = _agent_capture\n"
+                                      "sys.stderr = _agent_capture\n"
+                                      "try:\n"
+                                      "    exec(\"\"\""
+                                      + code
+                                      + "\"\"\")\n" // Triple quote for safety? user code might contain quotes.
+                                        "except Exception as e:\n"
+                                        "    import traceback\n"
+                                        "    traceback.print_exc()\n"
+                                        "finally:\n"
+                                        "    sys.stdout = _agent_restore_out\n"
+                                        "    sys.stderr = _agent_restore_err\n"
+                                        "_agent_result = _agent_capture.getvalue()\n";
+
+                // Actually, PyRun_SimpleString executes in __main__.
+                // We should ensure SCRIPTING is initialized.
+                if( SCRIPTING::IsWxAvailable() )
                 {
-                    SETTING_CHANGE change;
-                    change.m_settingKey = From_UTF8( c.value( "key", "" ).c_str() );
-                    change.m_oldValue = From_UTF8( c.value( "old", "" ).c_str() );
-                    change.m_newValue = From_UTF8( c.value( "new", "" ).c_str() );
-                    changes.push_back( change );
-                }
-            }
+                    // This runs the code
+                    PyRun_SimpleString( wrapper.c_str() );
 
-            DIALOG_SETTINGS_DIFF dlg( this, changes );
-            int                  ret = dlg.ShowModal();
+                    // Now extract _agent_result
+                    // We can use a small helper script to print it to a file or standard stdout?
+                    // No, we want to get it into C++.
+                    // python_scripting.cpp doesn't expose "GetValue".
+                    // But we can use PyRun_String and PyDict_GetItemString if we had access.
+                    // Since we only have PyRun_SimpleString exposed easily in some contexts (or need to include <Python.h>),
+                    // let's look at what headers we have.
+                    // We are in pcbnew/cross-probing.cpp.
+                    // We can include <python_scripting.h> which includes <Python.h>
 
-            nlohmann::json response;
-            response["type"] = "propose_settings_response";
-            response["status"] = ( ret == wxID_OK ) ? "approved" : "denied";
-
-            std::string payload_out = response.dump();
-            Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, payload_out );
-            break;
-        }
-        std::string request = payload;
-        // Trim whitespace just in case
-        request.erase( 0, request.find_first_not_of( " \n\r\t" ) );
-        request.erase( request.find_last_not_of( " \n\r\t" ) + 1 );
-
-        nlohmann::json response;
-
-        if( request.rfind( "echo", 0 ) == 0 )
-        {
-            response["echo"] = request.length() > 5 ? request.substr( 5 ) : "";
-        }
-        else if( request.rfind( "get_board_info", 0 ) == 0 || request.rfind( "GET_BOARD_INFO", 0 ) == 0 )
-        {
-            BOARD*                 board = GetBoard();
-            BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
-
-            response["design_rules"] = { { "min_track_width", bds.m_TrackMinWidth },
-                                         { "min_clearance", bds.m_MinClearance },
-                                         { "min_via_diameter", bds.m_ViasMinSize } };
-
-            response["layers"] = nlohmann::json::array();
-            for( PCB_LAYER_ID layer : board->GetEnabledLayers().Seq() )
-            {
-                response["layers"].push_back( { { "id", layer },
-                                                { "name", board->GetLayerName( layer ).ToStdString() },
-                                                { "type", IsCopperLayer( layer ) ? "copper" : "technical" } } );
-            }
-        }
-        else if( request.rfind( "get_pcb_components", 0 ) == 0 ) // Starts with
-        {
-            BOARD* board = GetBoard();
-            response["components"] = nlohmann::json::array();
-            for( FOOTPRINT* fp : board->Footprints() )
-            {
-                response["components"].push_back( { { "reference", fp->GetReference().ToStdString() },
-                                                    { "value", fp->GetValue().ToStdString() },
-                                                    { "uuid", fp->m_Uuid.AsString().ToStdString() } } );
-            }
-        }
-        else if( request == "test_diff" )
-        {
-            BOX2I bbox = GetBoard()->GetBoundingBox();
-            if( bbox.GetWidth() == 0 || bbox.GetHeight() == 0 )
-                bbox = BOX2I( VECTOR2I( 0, 0 ), VECTOR2I( 100000000, 100000000 ) ); // Default 100mm box if empty
-
-            DIFF_CALLBACKS callbacks;
-            callbacks.onUndo = [this]()
-            {
-                wxLogMessage( "Diff: Undo Clicked" );
-            };
-            callbacks.onRedo = [this]()
-            {
-                wxLogMessage( "Diff: Redo Clicked" );
-            };
-
-            DIFF_MANAGER::GetInstance().RegisterOverlay( this->GetCanvas()->GetView(), callbacks );
-            DIFF_MANAGER::GetInstance().ShowDiff( bbox );
-            response["status"] = "diff_shown";
-        }
-        else if( request.rfind( "get_component_details", 0 ) == 0 || request.rfind( "get_pcb_component", 0 ) == 0 )
-        {
-            // Parse "get_component_details Ref" or "get_pcb_component Ref"
-            // Find first space to determine offset
-            size_t      spacePos = request.find( ' ' );
-            std::string ref = "";
-            if( spacePos != std::string::npos )
-            {
-                ref = request.substr( spacePos + 1 );
-                // Trim
-                ref.erase( 0, ref.find_first_not_of( " \"\t\r\n" ) );
-                ref.erase( ref.find_last_not_of( " \"\t\r\n" ) + 1 );
-            }
-
-            BOARD*     board = GetBoard();
-            FOOTPRINT* target = nullptr;
-            for( FOOTPRINT* fp : board->Footprints() )
-            {
-                if( fp->GetReference() == ref )
-                {
-                    target = fp;
-                    break;
-                }
-            }
-
-            if( target )
-            {
-                response["reference"] = target->GetReference().ToStdString();
-                response["value"] = target->GetValue().ToStdString();
-                response["layer"] = board->GetLayerName( target->GetLayer() ).ToStdString();
-                response["position"] = { { "x", target->GetPosition().x }, { "y", target->GetPosition().y } };
-            }
-            else
-            {
-                response["error"] = "Component not found: '" + ref + "'";
-            }
-        }
-        else if( request.rfind( "get_pcb_nets", 0 ) == 0 )
-        {
-            BOARD* board = GetBoard();
-            response["nets"] = nlohmann::json::array();
-            for( const auto& net : board->GetNetInfo().NetsByName() )
-            {
-                response["nets"].push_back(
-                        { { "name", net.first.ToStdString() }, { "code", net.second->GetNetCode() } } );
-            }
-        }
-        else if( request.rfind( "get_net_details", 0 ) == 0 )
-        {
-            std::string netName = request.substr( 15 );
-            netName.erase( 0, netName.find_first_not_of( " \"\t\r\n" ) );
-            netName.erase( netName.find_last_not_of( " \"\t\r\n" ) + 1 );
-
-            BOARD*        board = GetBoard();
-            NETINFO_ITEM* netInfo = board->GetNetInfo().GetNetItem( netName );
-
-            if( netInfo )
-            {
-                response["net_name"] = netName;
-                response["net_code"] = netInfo->GetNetCode();
-                response["track_count"] = 0;
-                // Ideally iterate tracks filtered by net, but for now just summary or filtered list
-                // To avoid massive payloads, we might just return count or key items?
-                // Let's return tracks for this net.
-                response["tracks"] = nlohmann::json::array();
-                int trackCount = 0;
-                for( PCB_TRACK* track : board->Tracks() )
-                {
-                    if( track->GetNetCode() == netInfo->GetNetCode() )
+                    // Extracting result:
+                    PyObject* main_module = PyImport_AddModule( "__main__" );
+                    PyObject* main_dict = PyModule_GetDict( main_module );
+                    PyObject* res_obj = PyDict_GetItemString( main_dict, "_agent_result" );
+                    if( res_obj )
                     {
-                        if( trackCount++ > 100 )
-                            break; // Limit return size
-                        nlohmann::json trk;
-                        trk["type"] = track->Type() == PCB_VIA_T ? "via" : "track";
-                        trk["start"] = { { "x", track->GetStart().x }, { "y", track->GetStart().y } };
-                        trk["end"] = { { "x", track->GetEnd().x }, { "y", track->GetEnd().y } };
-                        trk["layer"] = board->GetLayerName( track->GetLayer() ).ToStdString();
-                        response["tracks"].push_back( trk );
+                        const char* res_str = PyUnicode_AsUTF8( res_obj );
+                        if( res_str )
+                            result = res_str;
                     }
                 }
-                response["track_count_total"] = trackCount;
+                else
+                {
+                    result = "Error: Python Scripting is not available.";
+                }
+
+                Kiway().ExpressMail( FRAME_TERMINAL, MAIL_AGENT_RESPONSE, result );
+#else
+                std::string err = "Error: Scripting not enabled.";
+                Kiway().ExpressMail( FRAME_TERMINAL, MAIL_AGENT_RESPONSE, err );
+#endif
             }
+            else if( j_in.contains( "type" ) && j_in["type"] == "propose_settings" )
+            {
+                std::vector<SETTING_CHANGE> changes;
+                if( j_in.contains( "changes" ) )
+                {
+                    for( const auto& c : j_in["changes"] )
+                    {
+                        SETTING_CHANGE change;
+                        change.m_settingKey = From_UTF8( c.value( "key", "" ).c_str() );
+                        change.m_oldValue = From_UTF8( c.value( "old", "" ).c_str() );
+                        change.m_newValue = From_UTF8( c.value( "new", "" ).c_str() );
+                        changes.push_back( change );
+                    }
+                }
+
+                DIALOG_SETTINGS_DIFF dlg( this, changes );
+                int                  ret = dlg.ShowModal();
+
+                nlohmann::json response;
+                response["type"] = "propose_settings_response";
+                response["status"] = ( ret == wxID_OK ) ? "approved" : "denied";
+
+                std::string payload_out = response.dump();
+                Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, payload_out );
+                break;
+            }
+            std::string request = payload;
+            // Trim whitespace just in case
+            request.erase( 0, request.find_first_not_of( " \n\r\t" ) );
+            request.erase( request.find_last_not_of( " \n\r\t" ) + 1 );
+
+            nlohmann::json response;
+
+            if( request.rfind( "echo", 0 ) == 0 )
+            {
+                response["echo"] = request.length() > 5 ? request.substr( 5 ) : "";
+            }
+            else if( request.rfind( "get_board_info", 0 ) == 0 || request.rfind( "GET_BOARD_INFO", 0 ) == 0 )
+            {
+                BOARD*                 board = GetBoard();
+                BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+
+                response["design_rules"] = { { "min_track_width", bds.m_TrackMinWidth },
+                                             { "min_clearance", bds.m_MinClearance },
+                                             { "min_via_diameter", bds.m_ViasMinSize } };
+
+                response["layers"] = nlohmann::json::array();
+                for( PCB_LAYER_ID layer : board->GetEnabledLayers().Seq() )
+                {
+                    response["layers"].push_back( { { "id", layer },
+                                                    { "name", board->GetLayerName( layer ).ToStdString() },
+                                                    { "type", IsCopperLayer( layer ) ? "copper" : "technical" } } );
+                }
+            }
+            else if( request.rfind( "get_pcb_components", 0 ) == 0 ) // Starts with
+            {
+                BOARD* board = GetBoard();
+                response["components"] = nlohmann::json::array();
+                for( FOOTPRINT* fp : board->Footprints() )
+                {
+                    response["components"].push_back( { { "reference", fp->GetReference().ToStdString() },
+                                                        { "value", fp->GetValue().ToStdString() },
+                                                        { "uuid", fp->m_Uuid.AsString().ToStdString() } } );
+                }
+            }
+            else if( request == "test_diff" )
+            {
+                BOX2I bbox = GetBoard()->GetBoundingBox();
+                if( bbox.GetWidth() == 0 || bbox.GetHeight() == 0 )
+                    bbox = BOX2I( VECTOR2I( 0, 0 ), VECTOR2I( 100000000, 100000000 ) ); // Default 100mm box if empty
+
+                DIFF_CALLBACKS callbacks;
+                callbacks.onUndo = []()
+                {
+                    wxLogMessage( "Diff: Undo Clicked" );
+                };
+                callbacks.onRedo = []()
+                {
+                    wxLogMessage( "Diff: Redo Clicked" );
+                };
+
+                DIFF_MANAGER::GetInstance().RegisterOverlay( this->GetCanvas()->GetView(), callbacks );
+                DIFF_MANAGER::GetInstance().ShowDiff( bbox );
+                response["status"] = "diff_shown";
+            }
+            else if( request.rfind( "get_component_details", 0 ) == 0 || request.rfind( "get_pcb_component", 0 ) == 0 )
+            {
+                // Parse "get_component_details Ref" or "get_pcb_component Ref"
+                // Find first space to determine offset
+                size_t      spacePos = request.find( ' ' );
+                std::string ref = "";
+                if( spacePos != std::string::npos )
+                {
+                    ref = request.substr( spacePos + 1 );
+                    // Trim
+                    ref.erase( 0, ref.find_first_not_of( " \"\t\r\n" ) );
+                    ref.erase( ref.find_last_not_of( " \"\t\r\n" ) + 1 );
+                }
+
+                BOARD*     board = GetBoard();
+                FOOTPRINT* target = nullptr;
+                for( FOOTPRINT* fp : board->Footprints() )
+                {
+                    if( fp->GetReference() == ref )
+                    {
+                        target = fp;
+                        break;
+                    }
+                }
+
+                if( target )
+                {
+                    response["reference"] = target->GetReference().ToStdString();
+                    response["value"] = target->GetValue().ToStdString();
+                    response["layer"] = board->GetLayerName( target->GetLayer() ).ToStdString();
+                    response["position"] = { { "x", target->GetPosition().x }, { "y", target->GetPosition().y } };
+                }
+                else
+                {
+                    response["error"] = "Component not found: '" + ref + "'";
+                }
+            }
+            else if( request.rfind( "get_pcb_nets", 0 ) == 0 )
+            {
+                BOARD* board = GetBoard();
+                response["nets"] = nlohmann::json::array();
+                for( const auto& net : board->GetNetInfo().NetsByName() )
+                {
+                    response["nets"].push_back(
+                            { { "name", net.first.ToStdString() }, { "code", net.second->GetNetCode() } } );
+                }
+            }
+            else if( request.rfind( "get_net_details", 0 ) == 0 )
+            {
+                std::string netName = request.substr( 15 );
+                netName.erase( 0, netName.find_first_not_of( " \"\t\r\n" ) );
+                netName.erase( netName.find_last_not_of( " \"\t\r\n" ) + 1 );
+
+                BOARD*        board = GetBoard();
+                NETINFO_ITEM* netInfo = board->GetNetInfo().GetNetItem( netName );
+
+                if( netInfo )
+                {
+                    response["net_name"] = netName;
+                    response["net_code"] = netInfo->GetNetCode();
+                    response["track_count"] = 0;
+                    // Ideally iterate tracks filtered by net, but for now just summary or filtered list
+                    // To avoid massive payloads, we might just return count or key items?
+                    // Let's return tracks for this net.
+                    response["tracks"] = nlohmann::json::array();
+                    int trackCount = 0;
+                    for( PCB_TRACK* track : board->Tracks() )
+                    {
+                        if( track->GetNetCode() == netInfo->GetNetCode() )
+                        {
+                            if( trackCount++ > 100 )
+                                break; // Limit return size
+                            nlohmann::json trk;
+                            trk["type"] = track->Type() == PCB_VIA_T ? "via" : "track";
+                            trk["start"] = { { "x", track->GetStart().x }, { "y", track->GetStart().y } };
+                            trk["end"] = { { "x", track->GetEnd().x }, { "y", track->GetEnd().y } };
+                            trk["layer"] = board->GetLayerName( track->GetLayer() ).ToStdString();
+                            response["tracks"].push_back( trk );
+                        }
+                    }
+                    response["track_count_total"] = trackCount;
+                }
+                else
+                {
+                    response["error"] = "Net not found: " + netName;
+                }
+            }
+
             else
             {
-                response["error"] = "Net not found: " + netName;
+                response["error"] = "Unknown command: '" + request + "'";
+                wxLogMessage( "PCB received unknown Agent Request: '%s'", request.c_str() );
             }
+
+            // wxLogMessage( "PCB processing Agent Request: %s", request.c_str() ); // Removed alert
+
+            std::string responseStr = response.dump();
+            Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, responseStr, this );
+            Kiway().ExpressMail( FRAME_TERMINAL, MAIL_AGENT_RESPONSE, responseStr, this );
+            break;
         }
-
-        else
-        {
-            response["error"] = "Unknown command: '" + request + "'";
-            wxLogMessage( "PCB received unknown Agent Request: '%s'", request.c_str() );
-        }
-
-        // wxLogMessage( "PCB processing Agent Request: %s", request.c_str() ); // Removed alert
-
-        std::string responseStr = response.dump();
-        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, responseStr, this );
-        Kiway().ExpressMail( FRAME_TERMINAL, MAIL_AGENT_RESPONSE, responseStr, this );
-        break;
     }
+    break;
 
     case MAIL_SHOW_DIFF:
     {
@@ -960,6 +1039,7 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
         break;
     }
+
 
     case MAIL_RELOAD_PLUGINS: GetToolManager()->RunAction( ACTIONS::pluginsReload ); break;
 

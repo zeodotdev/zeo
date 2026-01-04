@@ -689,11 +689,11 @@ void AGENT_FRAME::OnExit( wxCommandEvent& event )
     Close( true );
 }
 
-std::string AGENT_FRAME::SendRequest( int aDest, const std::string& aPayload )
+std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayload )
 {
     m_toolResponse = "";
     std::string payloadCopy = aPayload;
-    Kiway().ExpressMail( (FRAME_T) aDest, MAIL_AGENT_REQUEST, payloadCopy );
+    Kiway().ExpressMail( static_cast<FRAME_T>( aDestFrame ), MAIL_AGENT_REQUEST, payloadCopy );
 
     // Wait for response (Sync)
     // We expect the target frame to reply via MAIL_AGENT_RESPONSE which sets m_toolResponse

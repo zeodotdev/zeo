@@ -82,6 +82,8 @@
 #include <wx/log.h>
 #include <kiway_express.h>
 #include <mail_type.h>
+#include <diff_manager.h>
+
 
 #include "symb_transforms_utils.h"
 
@@ -510,7 +512,14 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
         // Single click? Select single object
         else if( evt->IsClick( BUT_LEFT ) )
         {
+            if( DIFF_MANAGER::GetInstance().HandleClick( evt->Position() ) )
+            {
+                evt->SetPassEvent();
+                continue;
+            }
+
             // If the timer has stopped, then we have already run the disambiguate routine
+
             // and we don't want to register an extra click here
             if( !m_disambiguateTimer.IsRunning() )
             {

@@ -70,7 +70,7 @@ void TERMINAL_FRAME::OnTextEnter( wxCommandEvent& aEvent )
         dest = FRAME_SCH;
     }
     else if( cmd.Contains( "_pcb_" ) || cmd.Contains( "_component_" ) || cmd.Contains( "_net_" )
-             || cmd.Contains( "_board_" ) )
+             || cmd.Contains( "_board_" ) || cmd.Contains( "test_diff" ) || cmd.Contains( "propose_settings" ) )
     {
         dest = FRAME_PCB_EDITOR;
     }

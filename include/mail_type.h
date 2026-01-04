@@ -58,7 +58,9 @@ enum MAIL_T
     MAIL_RELOAD_PLUGINS, // Reload python plugins
     MAIL_REFRESH_SYMBOL, // Refresh symbol in symbol viewer
     MAIL_AGENT_REQUEST,  // Agent -> Editor request (JSON payload)
-    MAIL_AGENT_RESPONSE  // Editor -> Agent response (JSON payload)
+    MAIL_AGENT_RESPONSE, // Editor -> Agent response (JSON payload)
+    MAIL_SHOW_DIFF       // Agent -> Editor: Show diff overlay (JSON payload)
+
 };
 
 #endif // MAIL_TYPE_H_

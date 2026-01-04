@@ -442,6 +442,7 @@ set( COMMON_DLG_SRCS
     dialogs/dialog_assign_netclass_base.cpp
     dialogs/dialog_book_reporter.cpp
     dialogs/dialog_book_reporter_base.cpp
+    dialogs/dialog_settings_diff.cpp
     dialogs/dialog_color_picker.cpp
     dialogs/dialog_color_picker_base.cpp
     dialogs/dialog_configure_paths.cpp
@@ -609,6 +610,8 @@ set( COMMON_PREVIEW_ITEMS_SRCS
     preview_items/ruler_item.cpp
     preview_items/selection_area.cpp
     preview_items/simple_overlay_item.cpp
+    preview_items/diff_overlay_item.cpp
+
     preview_items/snap_indicator.cpp
     preview_items/two_point_assistant.cpp
     )
@@ -744,6 +747,8 @@ set( COMMON_SRCS
     tool/actions.cpp
     tool/common_control.cpp
     tool/construction_manager.cpp
+    diff_manager.cpp
+
     tool/common_tools.cpp
     tool/conditional_menu.cpp
     tool/design_block_control.cpp

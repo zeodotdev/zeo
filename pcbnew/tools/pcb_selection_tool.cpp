@@ -59,6 +59,8 @@ using namespace std::placeholders;
 #include <tools/pcb_point_editor.h>
 #include <tools/pcb_selection_tool.h>
 #include <tools/pcb_actions.h>
+#include <diff_manager.h>
+
 #include <tools/board_inspection_tool.h>
 #include <ratsnest/ratsnest_data.h>
 #include <geometry/geometry_utils.h>
@@ -319,9 +321,16 @@ int PCB_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
         }
         else if( evt->IsClick( BUT_LEFT ) )
         {
+            if( DIFF_MANAGER::GetInstance().HandleClick( evt->Position() ) )
+            {
+                evt->SetPassEvent();
+                continue;
+            }
+
             // If there is no disambiguation, this routine is still running and will
             // register a `click` event when released
             if( m_disambiguateTimer.IsRunning() )
+
             {
                 m_disambiguateTimer.Stop();
 

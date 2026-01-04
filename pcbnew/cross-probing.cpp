@@ -60,6 +60,10 @@
 #include <widgets/pcb_design_block_pane.h>
 #include <wx/log.h>
 #include <nlohmann/json.hpp>
+#include <id.h>
+#include <dialogs/dialog_settings_diff.h>
+#include <diff_manager.h>
+
 
 /* Execute a remote command sent via a socket on port KICAD_PCB_PORT_SERVICE_NUMBER
  *
@@ -597,6 +601,55 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
     case MAIL_AGENT_REQUEST:
     {
+        std::string safePayload = payload;
+        // Sanitization for smart quotes and other common copy-paste artifacts
+        // UTF-8 sequences:
+        // Left Double Quote: \xe2\x80\x9c -> "
+        // Right Double Quote: \xe2\x80\x9d -> "
+        // Left Single Quote: \xe2\x80\x98 -> '
+        // Right Single Quote: \xe2\x80\x99 -> '
+        auto replaceAll = [&]( std::string& str, const std::string& from, const std::string& to )
+        {
+            size_t start_pos = 0;
+            while( ( start_pos = str.find( from, start_pos ) ) != std::string::npos )
+            {
+                str.replace( start_pos, from.length(), to );
+                start_pos += to.length();
+            }
+        };
+
+        replaceAll( safePayload, "\xe2\x80\x9c", "\"" );
+        replaceAll( safePayload, "\xe2\x80\x9d", "\"" );
+        replaceAll( safePayload, "\xe2\x80\x98", "'" );
+        replaceAll( safePayload, "\xe2\x80\x99", "'" );
+
+        nlohmann::json j_in = nlohmann::json::parse( safePayload, nullptr, false );
+        if( !j_in.is_discarded() && j_in.contains( "type" ) && j_in["type"] == "propose_settings" )
+        {
+            std::vector<SETTING_CHANGE> changes;
+            if( j_in.contains( "changes" ) )
+            {
+                for( const auto& c : j_in["changes"] )
+                {
+                    SETTING_CHANGE change;
+                    change.m_settingKey = From_UTF8( c.value( "key", "" ).c_str() );
+                    change.m_oldValue = From_UTF8( c.value( "old", "" ).c_str() );
+                    change.m_newValue = From_UTF8( c.value( "new", "" ).c_str() );
+                    changes.push_back( change );
+                }
+            }
+
+            DIALOG_SETTINGS_DIFF dlg( this, changes );
+            int                  ret = dlg.ShowModal();
+
+            nlohmann::json response;
+            response["type"] = "propose_settings_response";
+            response["status"] = ( ret == wxID_OK ) ? "approved" : "denied";
+
+            std::string payload_out = response.dump();
+            Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, payload_out );
+            break;
+        }
         std::string request = payload;
         // Trim whitespace just in case
         request.erase( 0, request.find_first_not_of( " \n\r\t" ) );
@@ -635,6 +688,26 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                                                     { "value", fp->GetValue().ToStdString() },
                                                     { "uuid", fp->m_Uuid.AsString().ToStdString() } } );
             }
+        }
+        else if( request == "test_diff" )
+        {
+            BOX2I bbox = GetBoard()->GetBoundingBox();
+            if( bbox.GetWidth() == 0 || bbox.GetHeight() == 0 )
+                bbox = BOX2I( VECTOR2I( 0, 0 ), VECTOR2I( 100000000, 100000000 ) ); // Default 100mm box if empty
+
+            DIFF_CALLBACKS callbacks;
+            callbacks.onUndo = [this]()
+            {
+                wxLogMessage( "Diff: Undo Clicked" );
+            };
+            callbacks.onRedo = [this]()
+            {
+                wxLogMessage( "Diff: Redo Clicked" );
+            };
+
+            DIFF_MANAGER::GetInstance().RegisterOverlay( this->GetCanvas()->GetView(), callbacks );
+            DIFF_MANAGER::GetInstance().ShowDiff( bbox );
+            response["status"] = "diff_shown";
         }
         else if( request.rfind( "get_component_details", 0 ) == 0 || request.rfind( "get_pcb_component", 0 ) == 0 )
         {
@@ -735,6 +808,41 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         std::string responseStr = response.dump();
         Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, responseStr, this );
         Kiway().ExpressMail( FRAME_TERMINAL, MAIL_AGENT_RESPONSE, responseStr, this );
+        break;
+    }
+
+    case MAIL_SHOW_DIFF:
+    {
+        try
+        {
+            nlohmann::json j = nlohmann::json::parse( payload );
+            if( j.contains( "x" ) && j.contains( "y" ) && j.contains( "w" ) && j.contains( "h" ) )
+            {
+                BOX2I bbox( VECTOR2I( j["x"], j["y"] ), VECTOR2I( j["w"], j["h"] ) );
+                // SCH_EDIT_FRAME and PCB_EDIT_FRAME handle Undo/Redo similarly via dispatching events
+                // to themselves or calling standard methods if available.
+                // PCB_EDIT_FRAME has Undo/Redo? It inherits from PCB_BASE_EDIT_FRAME.
+                // Let's assume we can dispatch wxCommandEvent for ID_EDIT_UNDO/REDO.
+
+                DIFF_CALLBACKS callbacks;
+                callbacks.onUndo = [this]()
+                {
+                    wxCommandEvent evt( wxEVT_COMMAND_MENU_SELECTED, wxID_UNDO );
+                    this->ProcessEvent( evt );
+                };
+                callbacks.onRedo = [this]()
+                {
+                    wxCommandEvent evt( wxEVT_COMMAND_MENU_SELECTED, wxID_REDO );
+                    this->ProcessEvent( evt );
+                };
+
+                DIFF_MANAGER::GetInstance().RegisterOverlay( this->GetCanvas()->GetView(), callbacks );
+                DIFF_MANAGER::GetInstance().ShowDiff( bbox );
+            }
+        }
+        catch( ... )
+        {
+        }
         break;
     }
 

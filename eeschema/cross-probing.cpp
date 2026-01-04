@@ -52,6 +52,9 @@
 #include <nlohmann/json.hpp>
 #include <sch_text.h>
 #include <trace_helpers.h>
+#include <id.h>
+#include <diff_manager.h>
+
 
 SCH_ITEM* SCH_EDITOR_CONTROL::FindSymbolAndItem( const wxString* aPath, const wxString* aReference,
                                                  bool aSearchHierarchy, SCH_SEARCH_T aSearchType,
@@ -1024,6 +1027,37 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         Kiway().ExpressMail( FRAME_TERMINAL, MAIL_AGENT_RESPONSE, responseStr, this );
         break;
     }
+
+    case MAIL_SHOW_DIFF:
+    {
+        try
+        {
+            nlohmann::json j = nlohmann::json::parse( payload );
+            if( j.contains( "x" ) && j.contains( "y" ) && j.contains( "w" ) && j.contains( "h" ) )
+            {
+                BOX2I          bbox( VECTOR2I( j["x"], j["y"] ), VECTOR2I( j["w"], j["h"] ) );
+                DIFF_CALLBACKS callbacks;
+                callbacks.onUndo = [this]()
+                {
+                    wxCommandEvent evt( wxEVT_COMMAND_MENU_SELECTED, wxID_UNDO );
+                    this->ProcessEvent( evt );
+                };
+                callbacks.onRedo = [this]()
+                {
+                    wxCommandEvent evt( wxEVT_COMMAND_MENU_SELECTED, wxID_REDO );
+                    this->ProcessEvent( evt );
+                };
+
+                DIFF_MANAGER::GetInstance().RegisterOverlay( this->GetCanvas()->GetView(), callbacks );
+                DIFF_MANAGER::GetInstance().ShowDiff( bbox );
+            }
+        }
+        catch( ... )
+        {
+        }
+        break;
+    }
+
 
     case MAIL_SELECTION:
         if( !eeconfig()->m_CrossProbing.on_selection )

@@ -41,6 +41,7 @@ TERMINAL_FRAME::TERMINAL_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Initial Message
     m_outputCtrl->AppendText( "KiCad Dev Terminal\n" );
     m_outputCtrl->AppendText( "Type 'pcb' to enter PCB Scripting Mode.\n" );
+    m_outputCtrl->AppendText( "Type 'sch' to enter Schematic Scripting Mode.\n" );
     m_outputCtrl->AppendText( "Type 'exit' to switch back to System Shell.\n\n" );
     m_outputCtrl->AppendText( GetPrompt() );
 
@@ -273,6 +274,97 @@ void TERMINAL_FRAME::ExecuteCommand( const wxString& aCmd )
                         "Use 'cd <path>' to navigate to your project or 'pcb <filename.kicad_pcb>'.\n" );
                 m_outputCtrl->AppendText( "Running standard python.\n" );
                 RunLocalPython( "import pcbnew\n" );
+            }
+        }
+    }
+    else if( aCmd.StartsWith( "sch" ) )
+    {
+        if( EnsurePython() )
+        {
+            m_mode = MODE_SCH;
+            m_outputCtrl->AppendText( "Entering Schematic Mode (Standard Python with auto-loaded Schematic).\n" );
+
+            wxString schFile;
+            wxString arg = aCmd.Mid( 3 ).Trim( false ).Trim(); // Get rest of line
+
+            if( !arg.IsEmpty() )
+            {
+                schFile = arg;
+                if( !wxFileName::FileExists( schFile ) )
+                {
+                    // Try resolving relative to CWD
+                    wxFileName fn( schFile );
+                    if( fn.MakeAbsolute( wxGetCwd() ) && fn.FileExists() )
+                        schFile = fn.GetFullPath();
+                }
+            }
+
+            // Auto-load Schematic attempts
+            if( schFile.IsEmpty() )
+            {
+                // 1. Try Project Manager
+                schFile = Prj().GetProjectFullName();
+
+                if( !schFile.IsEmpty() )
+                {
+                    wxFileName fn( schFile );
+                    if( fn.GetExt() == "kicad_pro" )
+                    {
+                        fn.SetExt( FILEEXT::KiCadSchematicFileExtension );
+                        schFile = fn.GetFullPath();
+                    }
+                }
+
+                // 2. Try CWD for .kicad_sch
+                if( schFile.IsEmpty() || !wxFileExists( schFile ) )
+                {
+                    wxDir    dir( wxGetCwd() );
+                    wxString filename;
+                    if( dir.GetFirst( &filename, "*.kicad_sch", wxDIR_FILES ) )
+                    {
+                        schFile = wxGetCwd() + wxFileName::GetPathSeparator() + filename;
+                    }
+                }
+            }
+
+            // Correction for missing extension
+            if( !schFile.IsEmpty() && !schFile.EndsWith( FILEEXT::KiCadSchematicFileExtension ) )
+            {
+                if( !wxFileExists( schFile ) )
+                    schFile += FILEEXT::KiCadSchematicFileExtension;
+            }
+
+            if( !schFile.IsEmpty() && wxFileExists( schFile ) )
+            {
+                m_outputCtrl->AppendText( "Loading Schematic: " + schFile + "\n" );
+                // Attempt to import kiutils
+                wxString loadCmd =
+                        wxString::Format( "try:\n"
+                                          "    import kiutils.symbol\n"
+                                          "    import kiutils.items\n"
+                                          "    import kiutils.schematic\n"
+                                          "    schematic = kiutils.schematic.Schematic.from_file(\"%s\")\n"
+                                          "    sch = schematic\n"
+                                          "    print(\"Schematic loaded. Access via 'schematic' or 'sch'.\")\n"
+                                          "    print(\"Using 'kiutils' library.\")\n"
+                                          "except ImportError:\n"
+                                          "    print(\"Error: 'kiutils' python library not found.\")\n"
+                                          "    print(\"Please install it via pip: pip install kiutils\")\n"
+                                          "except Exception as e:\n"
+                                          "    print(f\"Failed to load schematic: {e}\")\n",
+                                          schFile );
+                RunLocalPython( loadCmd );
+            }
+            else
+            {
+                m_outputCtrl->AppendText( "Warning: No Schematic file found to auto-load.\n" );
+                m_outputCtrl->AppendText( "Current Directory: " + wxGetCwd() + "\n" );
+                if( !arg.IsEmpty() )
+                    m_outputCtrl->AppendText( "File not found: " + arg + "\n" );
+
+                m_outputCtrl->AppendText(
+                        "Use 'cd <path>' to navigate to your project or 'sch <filename.kicad_sch>'.\n" );
+                m_outputCtrl->AppendText( "Running standard python.\n" );
             }
         }
     }

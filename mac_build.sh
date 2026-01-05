@@ -234,6 +234,26 @@ fi
 
 
 
+echo "Bundling kiutils..."
+# Install kiutils into the bundle's site-packages
+# Path determined from previous exploration: Python.framework/Versions/Current/lib/python3.9/site-packages
+# We use the system pip/python to install into the target directory.
+# 'Current' symlink should be reliable given the framework structure.
+
+PYTHON_SITE_PACKAGES="$KICAD_APP_BUNDLE/Contents/Frameworks/Python.framework/Versions/Current/lib/python3.9/site-packages"
+
+if [ -d "$PYTHON_SITE_PACKAGES" ]; then
+    echo "Installing kiutils to $PYTHON_SITE_PACKAGES"
+    # Use pip3, assume available since we checked for python deps? Or just use python3 -m pip
+    # ignoring installed build dependencies to avoid messing with system, just target install
+    python3 -m pip install --target "$PYTHON_SITE_PACKAGES" kiutils
+else
+    echo "Warning: Python site-packages directory not found at:"
+    echo "  $PYTHON_SITE_PACKAGES"
+    echo "Skipping kiutils bundling."
+fi
+
+
 echo "Signing bundled applications..."
 # Re-sign the bundled applications to ensure validity after copying
 # Use ad-hoc signing (-) which is sufficient for local development

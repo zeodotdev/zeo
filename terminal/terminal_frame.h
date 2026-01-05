@@ -33,7 +33,8 @@ public:
     {
         MODE_SYSTEM,
         MODE_PYTHON,
-        MODE_PCB
+        MODE_PCB,
+        MODE_SCH
     };
 
     DECLARE_EVENT_TABLE()
@@ -51,6 +52,7 @@ private:
     const wxString PROMPT_SYSTEM = "sys> ";
     const wxString PROMPT_PYTHON = ">>> ";
     const wxString PROMPT_PCB = "pcb> ";
+    const wxString PROMPT_SCH = "sch> ";
 
     wxString GetPrompt() const
     {
@@ -58,6 +60,7 @@ private:
         {
         case MODE_PYTHON: return PROMPT_PYTHON;
         case MODE_PCB: return PROMPT_PCB;
+        case MODE_SCH: return PROMPT_SCH;
         default: return PROMPT_SYSTEM;
         }
     }

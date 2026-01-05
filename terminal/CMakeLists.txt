@@ -73,6 +73,8 @@ set_target_properties( terminal_kiface PROPERTIES
     OUTPUT_NAME terminal
     PREFIX ${KIFACE_PREFIX}
     SUFFIX ${KIFACE_SUFFIX}
+    CXX_VISIBILITY_PRESET default
+    VISIBILITY_INLINES_HIDDEN OFF
     )
 
 if( APPLE )

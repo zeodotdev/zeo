@@ -94,7 +94,7 @@ fi
     --arch=$(uname -m) \
     --kicad-source-dir="$KICAD_SOURCE_DIR" \
     --target kicad \
-    --extra-kicad-cmake-args='-DKICAD_BUNDLE_FILENAME="KiCad_Agentic_dev"'
+    --extra-kicad-cmake-args='-DKICAD_BUNDLE_FILENAME="KiCad_Agentic_dev" -DKICAD_SCRIPTING=ON -DKICAD_SCRIPTING_MODULES=ON -DKICAD_SCRIPTING_WXPYTHON=ON'
 
 # --- Explicit Install Step ---
 

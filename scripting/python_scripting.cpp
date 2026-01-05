@@ -27,7 +27,7 @@
  * @brief methods to add scripting capabilities inside Pcbnew
  */
 
-#include <python_scripting.h>
+#include "python_scripting.h"
 
 #undef pid_t
 #include <pybind11/embed.h>
@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <memory>
 
 #include <env_vars.h>
 #include <trace_helpers.h>
@@ -116,12 +117,12 @@ try:
 
 except Exception as e:
     exception_output = "".join(traceback.format_exc())
-    )", pybind11::globals(), locals );
+    )",
+                    pybind11::globals(), locals );
 
     const auto getLocal = [&]( const wxString& aName ) -> wxString
     {
-        return wxString( locals[aName.ToStdString().c_str()].cast<std::string>().c_str(),
-                         wxConvUTF8 );
+        return wxString( locals[aName.ToStdString().c_str()].cast<std::string>().c_str(), wxConvUTF8 );
     };
 
     // e.g. "4.0.7 gtk3 (phoenix) wxWidgets 3.0.4"
@@ -147,14 +148,13 @@ except Exception as e:
     else
     {
         wxVersionInfo wxVI = wxGetLibraryVersionInfo();
-        wxString wxVersion = wxString::Format( wxT( "%d.%d.%d" ),
-                                           wxVI.GetMajor(), wxVI.GetMinor(), wxVI.GetMicro() );
+        wxString wxVersion = wxString::Format( wxT( "%d.%d.%d" ), wxVI.GetMajor(), wxVI.GetMinor(), wxVI.GetMicro() );
         version = version.Mid( idx + 10 );
 
         long wxPy_major = 0;
         long wxPy_minor = 0;
         long wxPy_micro = 0;
-        long wxPy_rev   = 0;
+        long wxPy_rev = 0;
 
         // Compile a regex to extract the wxPython version
         wxRegEx re( "([0-9]+)\\.([0-9]+)\\.?([0-9]+)?\\.?([0-9]+)?" );
@@ -203,7 +203,7 @@ except Exception as e:
 
 bool SCRIPTING::IsModuleLoaded( std::string& aModule )
 {
-    PyLOCK    lock;
+    PyLOCK lock;
     using namespace pybind11::literals;
     auto locals = pybind11::dict( "modulename"_a = aModule );
 
@@ -213,7 +213,8 @@ loaded = False
 if modulename in sys.modules:
     loaded = True
 
-    )", pybind11::globals(), locals );
+    )",
+                    pybind11::globals(), locals );
 
     return locals["loaded"].cast<bool>();
 }
@@ -222,7 +223,7 @@ if modulename in sys.modules:
 bool SCRIPTING::scriptingSetup()
 {
 #if defined( __WINDOWS__ )
-  #ifdef _MSC_VER
+#ifdef _MSC_VER
     // Under vcpkg/msvc, we need to explicitly set the python home or else it'll start consuming
     // system python registry keys and the like instead of the Python distributed with KiCad.
     // We are going to follow the "unix" layout for the msvc/vcpkg distributions so executable
@@ -262,13 +263,13 @@ bool SCRIPTING::scriptingSetup()
 
         wxSetEnv( wxT( "PATH" ), envPath );
     }
-  #else
+#else
     // Intended for msys2 but we could probably use the msvc equivalent code too
     // If our python.exe (in kicad/bin) exists, force our kicad python environment
     wxString kipython = FindKicadFile( "python.exe" );
 
     // we need only the path:
-    wxFileName fn( kipython  );
+    wxFileName fn( kipython );
     kipython = fn.GetPath();
 
     // If our python install is existing inside kicad, use it
@@ -287,7 +288,7 @@ bool SCRIPTING::scriptingSetup()
         kipython << wxT( ";" ) << ppath;
         wxSetEnv( wxT( "PATH" ), kipython );
     }
-  #endif
+#endif
 #elif defined( __WXMAC__ )
 
     // Prevent Mac builds from generating JIT versions as this will break
@@ -303,7 +304,7 @@ bool SCRIPTING::scriptingSetup()
     // $(KICAD_PATH)/scripting/plugins is always added in kicadplugins.i
     if( wxGetenv( "KICAD_PATH" ) != nullptr )
     {
-        pypath += wxT( ":" ) + wxString( wxGetenv("KICAD_PATH") );
+        pypath += wxT( ":" ) + wxString( wxGetenv( "KICAD_PATH" ) );
     }
 
     // OSX_BUNDLE_PYTHON_SITE_PACKAGES_DIR is provided via the build system.
@@ -319,8 +320,8 @@ bool SCRIPTING::scriptingSetup()
     // Hack for run from build dir option
     if( wxGetEnv( wxT( "KICAD_RUN_FROM_BUILD_DIR" ), nullptr ) )
     {
-        pypath = wxString( wxT( PYTHON_SITE_PACKAGE_PATH ) ) + wxT( "/../:" )
-                 + wxT( PYTHON_SITE_PACKAGE_PATH ) + wxT( ":" ) + wxT( PYTHON_DEST );
+        pypath = wxString( wxT( PYTHON_SITE_PACKAGE_PATH ) ) + wxT( "/../:" ) + wxT( PYTHON_SITE_PACKAGE_PATH )
+                 + wxT( ":" ) + wxT( PYTHON_DEST );
     }
 
     // set $PYTHONPATH
@@ -328,8 +329,7 @@ bool SCRIPTING::scriptingSetup()
 
     wxString pyhome;
 
-    pyhome += Pgm().GetExecutablePath() +
-              wxT( "Contents/Frameworks/Python.framework/Versions/Current" );
+    pyhome += Pgm().GetExecutablePath() + wxT( "Contents/Frameworks/Python.framework/Versions/Current" );
 
     if( wxGetEnv( wxT( "KICAD_RUN_FROM_BUILD_DIR" ), nullptr ) )
     {
@@ -374,7 +374,7 @@ wxString PyEscapeString( const wxString& aSource )
 {
     wxString converted;
 
-    for( wxUniChar c: aSource )
+    for( wxUniChar c : aSource )
     {
         if( c == '\\' )
             converted += "\\\\";
@@ -398,18 +398,16 @@ void UpdatePythonEnvVar( const wxString& aVar, const wxString& aValue )
     if( !Py_IsInitialized() )
         return;
 
-    wxLogTrace( traceEnvVars, "UpdatePythonEnvVar: Updating Python variable %s = %s",
-                aVar, aValue );
+    wxLogTrace( traceEnvVars, "UpdatePythonEnvVar: Updating Python variable %s = %s", aVar, aValue );
 
     wxString escapedVar = PyEscapeString( aVar );
     wxString escapedVal = PyEscapeString( aValue );
 
     snprintf( cmd, sizeof( cmd ),
-              "# coding=utf-8\n"      // The values could potentially be UTF8.
+              "# coding=utf-8\n" // The values could potentially be UTF8.
               "import os\n"
               "os.environ[\"%s\"]=\"%s\"\n",
-              TO_UTF8( escapedVar ),
-              TO_UTF8( escapedVal ) );
+              TO_UTF8( escapedVar ), TO_UTF8( escapedVal ) );
 
     PyLOCK lock;
 
@@ -422,13 +420,13 @@ void UpdatePythonEnvVar( const wxString& aVar, const wxString& aValue )
 
 wxString PyStringToWx( PyObject* aString )
 {
-    wxString    ret;
+    wxString ret;
 
     if( !aString )
         return ret;
 
     const char* str_res = nullptr;
-    PyObject* temp_bytes = PyUnicode_AsEncodedString( aString, "UTF-8", "strict" );
+    PyObject*   temp_bytes = PyUnicode_AsEncodedString( aString, "UTF-8", "strict" );
 
     if( temp_bytes != nullptr )
     {
@@ -447,7 +445,7 @@ wxString PyStringToWx( PyObject* aString )
 
 wxArrayString PyArrayStringToWx( PyObject* aArrayString )
 {
-    wxArrayString   ret;
+    wxArrayString ret;
 
     if( !aArrayString )
         return ret;
@@ -461,7 +459,7 @@ wxArrayString PyArrayStringToWx( PyObject* aArrayString )
         if( element )
         {
             const char* str_res = nullptr;
-            PyObject* temp_bytes = PyUnicode_AsEncodedString( element, "UTF-8", "strict" );
+            PyObject*   temp_bytes = PyUnicode_AsEncodedString( element, "UTF-8", "strict" );
 
             if( temp_bytes != nullptr )
             {
@@ -487,9 +485,9 @@ wxString PyErrStringWithTraceback()
     if( !PyErr_Occurred() )
         return err;
 
-    PyObject*   type;
-    PyObject*   value;
-    PyObject*   traceback;
+    PyObject* type;
+    PyObject* value;
+    PyObject* traceback;
 
     PyErr_Fetch( &type, &value, &traceback );
 
@@ -507,8 +505,7 @@ wxString PyErrStringWithTraceback()
     PyObject* tracebackModule = PyImport_Import( tracebackModuleString );
     Py_DECREF( tracebackModuleString );
 
-    PyObject* formatException = PyObject_GetAttrString( tracebackModule,
-                                                        "format_exception" );
+    PyObject* formatException = PyObject_GetAttrString( tracebackModule, "format_exception" );
     Py_DECREF( tracebackModule );
 
     PyObject* args = Py_BuildValue( "(O,O,O)", type, value, traceback );
@@ -521,7 +518,7 @@ wxString PyErrStringWithTraceback()
 
     wxArrayString res = PyArrayStringToWx( result );
 
-    for( unsigned i = 0; i<res.Count(); i++ )
+    for( unsigned i = 0; i < res.Count(); i++ )
     {
         err += res[i] + wxT( "\n" );
     }
@@ -542,13 +539,9 @@ wxString SCRIPTING::PyScriptingPath( PATH_TYPE aPathType )
     //@todo This should this be a user configurable variable eg KISCRIPT?
     switch( aPathType )
     {
-    case STOCK:
-        path = PATHS::GetStockScriptingPath();
-        break;
+    case STOCK: path = PATHS::GetStockScriptingPath(); break;
 
-    case USER:
-        path = PATHS::GetUserScriptingPath();
-        break;
+    case USER: path = PATHS::GetUserScriptingPath(); break;
 
     case THIRDPARTY:
     {
@@ -581,4 +574,43 @@ wxString SCRIPTING::PyPluginsPath( PATH_TYPE aPathType )
     // Note we are using unix path separator, because window separator sometimes
     // creates issues when passing a command string to a python method by PyRun_SimpleString
     return PyScriptingPath( aPathType ) + '/' + "plugins";
+}
+
+// Global Implementations
+
+static std::unique_ptr<SCRIPTING> g_scripting;
+
+bool InitPythonScripting( const char* aStockScriptingPath, const char* aUserScriptingPath )
+{
+    // We ignore the passed paths as SCRIPTING class determines them automatically.
+    // If specific paths are needed, we might need to modify SCRIPTING class.
+
+    if( !Py_IsInitialized() )
+    {
+        try
+        {
+            g_scripting = std::make_unique<SCRIPTING>();
+        }
+        catch( ... )
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsWxPythonLoaded()
+{
+    return SCRIPTING::IsWxAvailable();
+}
+
+void RedirectStdio()
+{
+    // TODO: Implement stdio redirection if needed globally.
+    // Ideally this should use SCRIPTING facilities.
+}
+
+wxWindow* CreatePythonShellWindow( wxWindow* parent, const wxString& aFramenameId )
+{
+    return nullptr; // Not implemented yet
 }

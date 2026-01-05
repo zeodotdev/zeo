@@ -16,6 +16,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/3d-viewer
     ${CMAKE_SOURCE_DIR}/pcbnew
     ${CMAKE_SOURCE_DIR}/kicad
+    ${CMAKE_SOURCE_DIR}/scripting
     ${INC_AFTER}
     )
 

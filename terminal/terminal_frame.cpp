@@ -34,12 +34,13 @@ TERMINAL_FRAME::TERMINAL_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     wxFont font = wxSystemSettings::GetFont( wxSYS_ANSI_FIXED_FONT );
     font.SetPointSize( 12 );
     m_outputCtrl->SetFont( font );
-    m_outputCtrl->SetBackgroundColour( wxColour( 30, 30, 30 ) ); // Dark Grey
-    m_outputCtrl->SetForegroundColour( wxColour( 0, 255, 0 ) );  // Green
+    m_outputCtrl->SetBackgroundColour( wxColour( 30, 30, 30 ) );    // Dark Grey
+    m_outputCtrl->SetForegroundColour( wxColour( 255, 255, 255 ) ); // White
+    m_outputCtrl->SetDefaultStyle( wxTextAttr( wxColour( 255, 255, 255 ), wxColour( 30, 30, 30 ) ) );
 
     // Initial Message
-    m_outputCtrl->AppendText( "KiCad Hybrid Terminal\n" );
-    m_outputCtrl->AppendText( "Type 'pcb' or 'python' to enter PCB Scripting Mode.\n" );
+    m_outputCtrl->AppendText( "KiCad Dev Terminal\n" );
+    m_outputCtrl->AppendText( "Type 'pcb' to enter PCB Scripting Mode.\n" );
     m_outputCtrl->AppendText( "Type 'exit' to switch back to System Shell.\n\n" );
     m_outputCtrl->AppendText( GetPrompt() );
 
@@ -160,6 +161,12 @@ void TERMINAL_FRAME::OnChar( wxKeyEvent& aEvent )
     aEvent.Skip();
 }
 
+#include <wx/msgdlg.h>
+#include <wx/dir.h>
+#include <python_scripting.h>
+#include <project.h>                 // For Prj()
+#include <wildcards_and_files_ext.h> // For PcbFileExtension
+
 void TERMINAL_FRAME::ExecuteCommand( const wxString& aCmd )
 {
     // Add to history
@@ -172,26 +179,116 @@ void TERMINAL_FRAME::ExecuteCommand( const wxString& aCmd )
     // Check for Internal Commands
     if( aCmd == "exit" )
     {
-        if( m_mode == MODE_PCB_PYTHON )
+        if( m_mode != MODE_SYSTEM )
         {
             m_mode = MODE_SYSTEM;
-            m_outputCtrl->AppendText( "Exited Python Mode.\n" );
+            m_outputCtrl->AppendText( "Exited to System Shell.\n" );
         }
         else
         {
             Close( true );
-            return;
+            return; // Close destroys window
         }
     }
-    else if( aCmd == "pcb" || aCmd == "python" )
+    else if( aCmd.StartsWith( "pcb" ) )
     {
-        m_mode = MODE_PCB_PYTHON;
-        m_outputCtrl->AppendText( "Entering PCB Python Mode.\n" );
+        if( EnsurePython() )
+        {
+            m_mode = MODE_PCB;
+            m_outputCtrl->AppendText( "Entering PCB Mode (Standard Python with auto-loaded PCB).\n" );
+
+            wxString pcbFile;
+            wxString arg = aCmd.Mid( 3 ).Trim( false ).Trim(); // Get rest of line
+
+            if( !arg.IsEmpty() )
+            {
+                pcbFile = arg;
+                if( !wxFileName::FileExists( pcbFile ) )
+                {
+                    // Try resolving relative to CWD
+                    wxFileName fn( pcbFile );
+                    if( fn.MakeAbsolute( wxGetCwd() ) && fn.FileExists() )
+                        pcbFile = fn.GetFullPath();
+                }
+            }
+
+            // Auto-load PCB attempts
+            if( pcbFile.IsEmpty() )
+            {
+                // 1. Try Project Manager
+                pcbFile = Prj().GetProjectFullName();
+
+                if( !pcbFile.IsEmpty() )
+                {
+                    wxFileName fn( pcbFile );
+                    if( fn.GetExt() == "kicad_pro" )
+                    {
+                        fn.SetExt( FILEEXT::KiCadPcbFileExtension );
+                        pcbFile = fn.GetFullPath();
+                    }
+                }
+
+                // 2. Try CWD for .kicad_pcb
+                if( pcbFile.IsEmpty() || !wxFileExists( pcbFile ) )
+                {
+                    wxDir    dir( wxGetCwd() );
+                    wxString filename;
+                    if( dir.GetFirst( &filename, "*.kicad_pcb", wxDIR_FILES ) )
+                    {
+                        pcbFile = wxGetCwd() + wxFileName::GetPathSeparator() + filename;
+                    }
+                }
+            }
+
+            // Correction for missing extension
+            if( !pcbFile.IsEmpty() && !pcbFile.EndsWith( FILEEXT::KiCadPcbFileExtension ) )
+            {
+                // Only append if file doesn't exist as is? Or assume user forgot extension?
+                // Let's assume user forgot if it doesn't exist.
+                if( !wxFileExists( pcbFile ) )
+                    pcbFile += FILEEXT::KiCadPcbFileExtension;
+            }
+
+            if( !pcbFile.IsEmpty() && wxFileExists( pcbFile ) )
+            {
+                m_outputCtrl->AppendText( "Loading PCB: " + pcbFile + "\n" );
+                wxString loadCmd = wxString::Format( "import pcbnew\n"
+                                                     "try:\n"
+                                                     "    board = pcbnew.LoadBoard(\"%s\")\n"
+                                                     "    p = board\n"
+                                                     "    print(\"PCB loaded. Access via 'board' or 'p'.\")\n"
+                                                     "except Exception as e:\n"
+                                                     "    print(f\"Failed to load board: {e}\")\n",
+                                                     pcbFile );
+                RunLocalPython( loadCmd );
+            }
+            else
+            {
+                m_outputCtrl->AppendText( "Warning: No PCB file found to auto-load.\n" );
+                m_outputCtrl->AppendText( "Current Directory: " + wxGetCwd() + "\n" );
+                if( !arg.IsEmpty() )
+                    m_outputCtrl->AppendText( "File not found: " + arg + "\n" );
+
+                m_outputCtrl->AppendText(
+                        "Use 'cd <path>' to navigate to your project or 'pcb <filename.kicad_pcb>'.\n" );
+                m_outputCtrl->AppendText( "Running standard python.\n" );
+                RunLocalPython( "import pcbnew\n" );
+            }
+        }
+    }
+    else if( aCmd == "python" )
+    {
+        if( EnsurePython() )
+        {
+            m_mode = MODE_PYTHON;
+            m_outputCtrl->AppendText( "Entering Standard Python Mode.\n" );
+            // Maybe clear context?
+            // For now, share the same interpreter session.
+        }
     }
     else if( aCmd == "clear" )
     {
         m_outputCtrl->Clear();
-        // m_lastPromptPos reset handled below
     }
     else if( aCmd.StartsWith( "cd " ) && m_mode == MODE_SYSTEM )
     {
@@ -210,7 +307,7 @@ void TERMINAL_FRAME::ExecuteCommand( const wxString& aCmd )
         if( m_mode == MODE_SYSTEM )
             ProcessSystemCommand( aCmd );
         else
-            ProcessAgentCommand( aCmd );
+            RunLocalPython( aCmd );
     }
 
     // Ready for next command
@@ -225,9 +322,7 @@ void TERMINAL_FRAME::ProcessSystemCommand( const wxString& aCmd )
         return;
 
     wxArrayString output, errors;
-    // Redirect stderr to stdout to capture everything
-    // Use wxExecute with wxEXEC_SYNC to simplify for now, though it blocks UI
-    int code = wxExecute( aCmd, output, errors, wxEXEC_SYNC );
+    long          ret = wxExecute( aCmd, output, errors, wxEXEC_SYNC );
 
     for( const wxString& line : output )
         m_outputCtrl->AppendText( line + "\n" );
@@ -238,101 +333,95 @@ void TERMINAL_FRAME::ProcessSystemCommand( const wxString& aCmd )
 
 void TERMINAL_FRAME::ProcessAgentCommand( const wxString& aCmd )
 {
-    if( aCmd.IsEmpty() )
+    // Deprecated / Unused logic for remote execution
+    RunLocalPython( aCmd );
+}
+
+bool TERMINAL_FRAME::EnsurePython()
+{
+#ifdef KICAD_SCRIPTING
+    if( m_pythonInitialized )
+        return true;
+
+    if( !SCRIPTING::IsWxAvailable() )
+    {
+        // Initialize Python Scripting
+        wxString stockPath = SCRIPTING::PyScriptingPath( SCRIPTING::STOCK );
+        wxString userPath = SCRIPTING::PyScriptingPath( SCRIPTING::USER );
+
+        if( !InitPythonScripting( stockPath.ToUTF8(), userPath.ToUTF8() ) )
+        {
+            m_outputCtrl->AppendText( "Error: Failed to initialize Python Scripting environment.\n" );
+            return false;
+        }
+    }
+
+    // We just return true if compiled with scripting.
+    // Real initialization might happen on first run if not already done.
+    m_pythonInitialized = true;
+    return true;
+#else
+    m_outputCtrl->AppendText( "Error: This build of Terminal does not support Python.\n" );
+    return false;
+#endif
+}
+
+void TERMINAL_FRAME::RunLocalPython( const wxString& aCmd )
+{
+#ifdef KICAD_SCRIPTING
+    if( !EnsurePython() )
         return;
 
-    // Route to PCB Editor
-    FRAME_T dest = FRAME_PCB_EDITOR;
+    // Acquire GIL
+    PyLOCK lock;
 
-    // Construct Payload
-    // If it starts with '.', treat as magic/agent command?
-    // For now, treat EVERYTHING as a "python" type request if in Python mode
+    // Capture stdout/stderr
+    // Assuming simple string execution for now
 
-    // But wait, "test_diff" etc are "agent requests" not python commands.
-    // Let's support legacy agent commands too.
+    std::string code = aCmd.ToStdString();
 
-    std::string payloadStr;
+    // Redirect logic similar to cross-probing.cpp
+    std::string wrapper = "import sys\n"
+                          "from io import StringIO\n"
+                          "_term_capture = StringIO()\n"
+                          "_term_restore_out = sys.stdout\n"
+                          "_term_restore_err = sys.stderr\n"
+                          "sys.stdout = _term_capture\n"
+                          "sys.stderr = _term_capture\n"
+                          "try:\n"
+                          "    exec(\"\"\""
+                          + code
+                          + "\"\"\")\n"
+                            "except Exception as e:\n"
+                            "    import traceback\n"
+                            "    traceback.print_exc()\n"
+                            "finally:\n"
+                            "    sys.stdout = _term_restore_out\n"
+                            "    sys.stderr = _term_restore_err\n"
+                            "_term_result = _term_capture.getvalue()\n";
 
-    if( aCmd == "test_diff" || aCmd == "propose_settings" || aCmd.StartsWith( "get_" ) )
+    PyRun_SimpleString( wrapper.c_str() );
+
+    // Extract result
+    PyObject* main_module = PyImport_AddModule( "__main__" );
+    PyObject* main_dict = PyModule_GetDict( main_module );
+    PyObject* res_obj = PyDict_GetItemString( main_dict, "_term_result" );
+    if( res_obj )
     {
-        // Legacy Agent JSON command
-        // Construct JSON manually for now to avoid dependency here?
-        // Actually, let's just send the string. logic in cross-probing handles parsing.
-        // IF we send raw string "test_diff", it fails JSON parse.
-        // user previously typed "test_diff" and it worked? Ah no, previous implementation used string contains.
-        // BUT cross-probing.cpp expects JSON now?
-        // "nlohmann::json j_in = nlohmann::json::parse( SafePayload )"
-
-        // So "test_diff" is NOT valid JSON.
-        // We should ideally wrap it.
-        // Or the user is expected to type JSON? "test_diff" was a hack in `terminal_frame.cpp` previously?
-        // Looking at previous code:
-        // "Kiway().ExpressMail( dest, MAIL_AGENT_REQUEST, payload...)"
-        // And `cross-probing.cpp` parses it.
-
-        // If the user types "test_diff", that's not JSON.
-        // I should fix this to send properly formatted requests.
-
-        if( aCmd == "test_diff" )
-        {
-            payloadStr = "{ \"type\": \"test_diff\" }";
-        }
-        else if( aCmd == "propose_settings" )
-        {
-            payloadStr = "{ \"type\": \"propose_settings\" }";
-        }
-        else
-        {
-            // Assume it's a python command
-            // Escape quotes?
-            // Simple JSON construction:
-            wxString escaped = aCmd;
-            escaped.Replace( "\\", "\\\\" );
-            escaped.Replace( "\"", "\\\"" );
-            escaped.Replace( "\n", "\\n" );
-
-            payloadStr = "{ \"type\": \"python\", \"code\": \"" + escaped.ToStdString() + "\" }";
-        }
+        const char* res_str = PyUnicode_AsUTF8( res_obj );
+        if( res_str )
+            m_outputCtrl->AppendText( wxString::FromUTF8( res_str ) );
     }
-    else
-    {
-        // Default Python Wrapper
-        wxString escaped = aCmd;
-        escaped.Replace( "\\", "\\\\" );
-        escaped.Replace( "\"", "\\\"" );
-        escaped.Replace( "\n", "\\n" );
-
-        payloadStr = "{ \"type\": \"python\", \"code\": \"" + escaped.ToStdString() + "\" }";
-    }
-
-    KIWAY_PLAYER* player = Kiway().Player( dest, false );
-    if( player )
-    {
-        Kiway().ExpressMail( dest, MAIL_AGENT_REQUEST, payloadStr, this );
-    }
-    else
-    {
-        m_outputCtrl->AppendText( "Error: PCB Editor not open.\n" );
-    }
+#endif
 }
 
 void TERMINAL_FRAME::OnTextEnter( wxCommandEvent& aEvent )
 {
-    // Legacy handler, unused
+    // Unused
 }
 
 void TERMINAL_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 {
-    if( aEvent.Command() == MAIL_AGENT_RESPONSE )
-    {
-        std::string payload = aEvent.GetPayload();
-        // Parse JSON? Or just print result
-        // Agent response is usually JSON.
-        // If python, we might change the response format.
-        // For now, direct dump.
-        m_outputCtrl->AppendText( payload + "\n" );
-
-        // Force scroll to bottom?
-        m_outputCtrl->ShowPosition( m_outputCtrl->GetLastPosition() );
-    }
+    // Handle incoming mail if needed (e.g. from PCB editor if we still want that)
+    // For now, ignore since we are running local python.
 }

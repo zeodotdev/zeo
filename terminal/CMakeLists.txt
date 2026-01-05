@@ -12,7 +12,9 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/common/dialogs
     ${CMAKE_SOURCE_DIR}/utility
     ${CMAKE_SOURCE_DIR}/thirdparty/nlohmann_json
+    ${CMAKE_SOURCE_DIR}/scripting
     ${INC_AFTER}
+    ${PYTHON_INCLUDE_DIRS}
     )
 
 # Sources for the standalone executable
@@ -38,8 +40,6 @@ endif()
 # Create the standalone executable
 # Uses single_top.cpp as the main entry point which loads the KIFACE
 add_executable( terminal WIN32 MACOSX_BUNDLE
-    terminal.cpp
-    terminal_frame.cpp
     ${CMAKE_SOURCE_DIR}/common/single_top.cpp
     ${TERMINAL_RESOURCES}
     )
@@ -115,4 +115,9 @@ target_link_libraries( terminal_kiface
     gal
     kicommon
     ${wxWidgets_LIBRARIES}
+    scripting
+    ${PYTHON_LIBRARIES}
     )
+
+target_compile_definitions( terminal PRIVATE KICAD_SCRIPTING )
+target_compile_definitions( terminal_kiface PRIVATE KICAD_SCRIPTING )

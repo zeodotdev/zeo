@@ -32,7 +32,8 @@ public:
     enum TERMINAL_MODE
     {
         MODE_SYSTEM,
-        MODE_PCB_PYTHON
+        MODE_PYTHON,
+        MODE_PCB
     };
 
     DECLARE_EVENT_TABLE()
@@ -45,11 +46,25 @@ private:
     std::vector<wxString> m_history;
     int                   m_historyIndex;
     TERMINAL_MODE         m_mode;
+    bool                  m_pythonInitialized;
 
     const wxString PROMPT_SYSTEM = "sys> ";
-    const wxString PROMPT_PYTHON = "pcb> ";
+    const wxString PROMPT_PYTHON = ">>> ";
+    const wxString PROMPT_PCB = "pcb> ";
 
-    wxString GetPrompt() const { return m_mode == MODE_PCB_PYTHON ? PROMPT_PYTHON : PROMPT_SYSTEM; }
+    wxString GetPrompt() const
+    {
+        switch( m_mode )
+        {
+        case MODE_PYTHON: return PROMPT_PYTHON;
+        case MODE_PCB: return PROMPT_PCB;
+        default: return PROMPT_SYSTEM;
+        }
+    }
+
+    // Helper to ensure python is ready
+    bool EnsurePython();
+    void RunLocalPython( const wxString& aCmd );
 };
 
 #endif // TERMINAL_FRAME_H

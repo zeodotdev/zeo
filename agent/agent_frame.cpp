@@ -405,10 +405,15 @@ Available Modes:
 - pcb: PCB Editor python shell (pre-loaded 'board').
 - sch: Schematic Editor python shell (pre-loaded 'schematic').
 
+Commands:
+- run_terminal_command create_agent [mode]
+- run_terminal_command list
+- run_terminal_command [id] [mode] [command]
+
 Examples:
+- run_terminal_command create_agent pcb
 - run_terminal_command sys ls -la
 - run_terminal_command pcb print(len(board.GetTracks()))
-- run_terminal_command sch print(len(schematic.symbol_instances))
 
 When you need information, explain your thought process and then output the TOOL_CALL.
 Wait for the tool output before providing the final answer.
@@ -642,6 +647,11 @@ Available Modes:
 - sys: System shell.
 - pcb: PCB Editor python shell.
 - sch: Schematic Editor python shell.
+
+Commands:
+- run_terminal_command create_agent [mode]
+- run_terminal_command list
+- run_terminal_command [id] [mode] [command]
 
 When you need information, explain your thought process and then output the TOOL_CALL.
 Wait for the tool output before providing the final answer.

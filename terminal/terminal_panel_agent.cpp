@@ -5,9 +5,9 @@ AGENT_TERMINAL_PANEL::AGENT_TERMINAL_PANEL( wxWindow* aParent, TERMINAL_MODE aMo
         TERMINAL_PANEL( aParent, aMode )
 {
     // Customize Appearance
-    // Green text for Agent
-    m_outputCtrl->SetForegroundColour( wxColour( 0, 255, 0 ) ); // Bright Green
-    m_outputCtrl->SetDefaultStyle( wxTextAttr( wxColour( 0, 255, 0 ), wxColour( 30, 30, 30 ) ) );
+    // Green text for Agent - User requested removal (keep white)
+    // m_outputCtrl->SetForegroundColour( wxColour( 0, 255, 0 ) ); // Bright Green
+    // m_outputCtrl->SetDefaultStyle( wxTextAttr( wxColour( 0, 255, 0 ), wxColour( 30, 30, 30 ) ) );
 
     // Clear and set custom welcome message
     // Note: TERMINAL_PANEL constructor already printed its welcome message.

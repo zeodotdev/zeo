@@ -219,6 +219,20 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
         return result;
     }
 
+    if( cmd.StartsWith( "create_agent " ) )
+    {
+        // "create_agent sys", "create_agent pcb"
+        wxString                      modeStr = cmd.Mid( 13 ).Trim( false );
+        TERMINAL_PANEL::TERMINAL_MODE mode = TERMINAL_PANEL::MODE_SYSTEM;
+        if( modeStr == "pcb" )
+            mode = TERMINAL_PANEL::MODE_PCB;
+        if( modeStr == "sch" )
+            mode = TERMINAL_PANEL::MODE_SCH;
+
+        AddAgentTerminal( mode );
+        return "Agent Terminal created. ID: " + std::to_string( m_notebook->GetPageCount() - 1 );
+    }
+
     if( cmd.StartsWith( "create " ) )
     {
         // "create sys", "create pcb"
@@ -230,7 +244,7 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
             mode = TERMINAL_PANEL::MODE_SCH;
 
         AddTerminal( mode );
-        return "Terminal created. ID: " + std::to_string( m_notebook->GetPageCount() - 1 );
+        return "Dev Terminal created. ID: " + std::to_string( m_notebook->GetPageCount() - 1 );
     }
 
     wxString firstArg = cmd.BeforeFirst( ' ' );

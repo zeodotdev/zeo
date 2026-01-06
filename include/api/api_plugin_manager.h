@@ -18,6 +18,9 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifndef API_PLUGIN_MANAGER_H
+#define API_PLUGIN_MANAGER_H
+
 #include <deque>
 #include <memory>
 #include <set>
@@ -107,3 +110,5 @@ private:
     [[maybe_unused]] long     m_lastPid;
     [[maybe_unused]] wxTimer* m_raiseTimer;
 };
+
+#endif // API_PLUGIN_MANAGER_H

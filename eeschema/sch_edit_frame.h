@@ -24,8 +24,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef  SCH_EDIT_FRAME_H
-#define  SCH_EDIT_FRAME_H
+#ifndef SCH_EDIT_FRAME_H
+#define SCH_EDIT_FRAME_H
 
 #include <stddef.h>
 #include <vector>
@@ -65,6 +65,10 @@ class DIALOG_SYMBOL_FIELDS_TABLE;
 class RESCUER;
 class HIERARCHY_PANE;
 class API_HANDLER_SCH;
+#ifdef KICAD_IPC_API
+class KICAD_API_SERVER;
+class API_HANDLER_COMMON;
+#endif
 class DIALOG_SCHEMATIC_SETUP;
 class PROGRESS_REPORTER;
 class wxSearchCtrl;
@@ -90,13 +94,13 @@ class NET_NAVIGATOR_ITEM_DATA : public wxTreeItemData
 {
 public:
     NET_NAVIGATOR_ITEM_DATA( const SCH_SHEET_PATH& aSheetPath, const SCH_ITEM* aItem ) :
-        m_sheetPath( aSheetPath ),
-        m_item( aItem )
+            m_sheetPath( aSheetPath ),
+            m_item( aItem )
     {
     }
 
     NET_NAVIGATOR_ITEM_DATA() :
-        m_item( nullptr )
+            m_item( nullptr )
     {
     }
 
@@ -120,7 +124,7 @@ public:
     }
 
 private:
-    SCH_SHEET_PATH m_sheetPath;
+    SCH_SHEET_PATH  m_sheetPath;
     const SCH_ITEM* m_item;
 };
 
@@ -306,13 +310,9 @@ public:
      */
     void SendCrossProbeClearHighlight();
 
-    const wxString& GetHighlightedConnection() const
-    {
-        return m_highlightedConn;
-    }
+    const wxString& GetHighlightedConnection() const { return m_highlightedConn; }
 
-    void SetHighlightedConnection( const wxString& aConnection,
-                                   const NET_NAVIGATOR_ITEM_DATA* aSelection = nullptr );
+    void SetHighlightedConnection( const wxString& aConnection, const NET_NAVIGATOR_ITEM_DATA* aSelection = nullptr );
 
     void DirtyHighlightedConnection() { m_highlightedConnChanged = true; }
 
@@ -377,9 +377,8 @@ public:
      * number * 100.  In other words the first sheet uses 100 to 199, the second sheet uses
      * 200 to 299, and so on.
      */
-    void AnnotateSymbols( SCH_COMMIT* aCommit, ANNOTATE_SCOPE_T aAnnotateScope,
-                          ANNOTATE_ORDER_T aSortOption, ANNOTATE_ALGO_T aAlgoOption,
-                          bool aRecursive, int aStartNumber, bool aResetAnnotation,
+    void AnnotateSymbols( SCH_COMMIT* aCommit, ANNOTATE_SCOPE_T aAnnotateScope, ANNOTATE_ORDER_T aSortOption,
+                          ANNOTATE_ALGO_T aAlgoOption, bool aRecursive, int aStartNumber, bool aResetAnnotation,
                           bool aRepairTimestamps, REPORTER& aReporter );
 
     /**
@@ -398,9 +397,8 @@ public:
      * @param aAnnotateScope See #ANNOTATE_SCOPE_T Check the current sheet only if true.
      *                       Otherwise check the entire schematic.
      */
-    int CheckAnnotate( ANNOTATION_ERROR_HANDLER aErrorHandler,
-                       ANNOTATE_SCOPE_T         aAnnotateScope = ANNOTATE_ALL,
-                       bool                     aRecursive = true );
+    int CheckAnnotate( ANNOTATION_ERROR_HANDLER aErrorHandler, ANNOTATE_SCOPE_T aAnnotateScope = ANNOTATE_ALL,
+                       bool aRecursive = true );
 
     /**
      * Run a modal version of the annotate dialog for a specific purpose.
@@ -517,8 +515,7 @@ public:
      * @param aSchematicFileName is the absolute path and file name of the file to test.
      * @return true if the user accepts the potential file name clash risk.
      */
-    bool AllowCaseSensitiveFileNameClashes( const wxString& aOldName,
-                                            const wxString& aSchematicFileName );
+    bool AllowCaseSensitiveFileNameClashes( const wxString& aOldName, const wxString& aSchematicFileName );
 
     /**
      * Edit an existing sheet or add a new sheet to the schematic.
@@ -553,9 +550,8 @@ public:
      *                                  the hierarchy navigator panel to be updated.
      * @param aSourceSheetFilename is an optional filename to copy the new sheet from
      */
-    bool EditSheetProperties( SCH_SHEET* aSheet, SCH_SHEET_PATH* aHierarchy,
-                              bool* aIsUndoable = nullptr, bool* aClearAnnotationNewItems = nullptr,
-                              bool* aUpdateHierarchyNavigator = nullptr,
+    bool EditSheetProperties( SCH_SHEET* aSheet, SCH_SHEET_PATH* aHierarchy, bool* aIsUndoable = nullptr,
+                              bool* aClearAnnotationNewItems = nullptr, bool* aUpdateHierarchyNavigator = nullptr,
                               wxString* aSourceSheetFilename = nullptr );
 
     void InitSheet( SCH_SHEET* aSheet, const wxString& aNewFilename );
@@ -645,8 +641,7 @@ public:
      * @param aTypeCommand is the command type (see enum UNDO_REDO).
      * @param aAppend set to true to add the item to the previous undo list.
      */
-    void SaveCopyInUndoList( SCH_SCREEN* aScreen, SCH_ITEM* aItemToCopy, UNDO_REDO aTypeCommand,
-                             bool aAppend );
+    void SaveCopyInUndoList( SCH_SCREEN* aScreen, SCH_ITEM* aItemToCopy, UNDO_REDO aTypeCommand, bool aAppend );
 
     /**
      * Create a new entry in undo list of commands.
@@ -655,8 +650,7 @@ public:
      * @param aTypeCommand is the command type (see enum UNDO_REDO).
      * @param aAppend set to true to add the item to the previous undo list.
      */
-    void SaveCopyInUndoList( const PICKED_ITEMS_LIST& aItemsList, UNDO_REDO aTypeCommand,
-                             bool aAppend );
+    void SaveCopyInUndoList( const PICKED_ITEMS_LIST& aItemsList, UNDO_REDO aTypeCommand, bool aAppend );
 
     /**
      * Restore an undo or redo command to put data pointed by \a aList in the previous state.
@@ -689,20 +683,14 @@ public:
      *
      * Such objects are owned by this container and must be cloned.
      */
-    const std::vector<std::unique_ptr<SCH_ITEM>>& GetRepeatItems() const
-    {
-        return m_items_to_repeat;
-    }
+    const std::vector<std::unique_ptr<SCH_ITEM>>& GetRepeatItems() const { return m_items_to_repeat; }
 
     /**
      * Clear the list of items which are to be repeated with the insert key.
      *
      * These objects are owned by this container.
      */
-    void ClearRepeatItemsList()
-    {
-        m_items_to_repeat.clear();
-    }
+    void ClearRepeatItemsList() { m_items_to_repeat.clear(); }
 
     EDA_ITEM* ResolveItem( const KIID& aId, bool aAllowNullptrReturn = false ) const override;
 
@@ -774,7 +762,7 @@ public:
 
     const BOX2I GetDocumentExtents( bool aIncludeAllVisible = true ) const override;
 
-    int GetSchematicJunctionSize();
+    int    GetSchematicJunctionSize();
     double GetSchematicHopOverScale();
 
     void FocusOnItem( EDA_ITEM* aItem, bool aAllowScroll = true ) override;
@@ -834,10 +822,7 @@ public:
     /**
      * @return the name of the wxAuiPaneInfo managing the Hierarchy Navigator panel.
      */
-    static const wxString SchematicHierarchyPaneName()
-    {
-        return wxT( "SchematicHierarchy" );
-    }
+    static const wxString SchematicHierarchyPaneName() { return wxT( "SchematicHierarchy" ); }
 
     /**
      * @return the name of the wxAuiPaneInfo managing the Search panel.
@@ -864,16 +849,12 @@ public:
      */
     void RemoveSchematicChangeListener( wxEvtHandler* aListener );
 
-    static const wxString NetNavigatorPaneName()
-    {
-        return wxS( "NetNavigator" );
-    }
+    static const wxString NetNavigatorPaneName() { return wxS( "NetNavigator" ); }
 
     void RefreshNetNavigator( const NET_NAVIGATOR_ITEM_DATA* aSelection = nullptr );
 
     void MakeNetNavigatorNode( const wxString& aNetName, wxTreeItemId aParentId,
-                               const NET_NAVIGATOR_ITEM_DATA* aSelection,
-                               bool aSingleSheetSchematic );
+                               const NET_NAVIGATOR_ITEM_DATA* aSelection, bool aSingleSheetSchematic );
 
     void SelectNetNavigatorItem( const NET_NAVIGATOR_ITEM_DATA* aSelection = nullptr );
 
@@ -882,10 +863,7 @@ public:
     void ToggleNetNavigator();
     void FindNetInInspector( const wxString& aNetName );
 
-    PLUGIN_ACTION_SCOPE PluginActionScope() const override
-    {
-        return PLUGIN_ACTION_SCOPE::SCHEMATIC;
-    }
+    PLUGIN_ACTION_SCOPE PluginActionScope() const override { return PLUGIN_ACTION_SCOPE::SCHEMATIC; }
 
     DECLARE_EVENT_TABLE()
 
@@ -1029,16 +1007,16 @@ private:
         ID_NET_NAVIGATOR_SEARCH_REGEX
     };
 
-    SCHEMATIC*                  m_schematic;          ///< The currently loaded schematic
-    wxString                    m_highlightedConn;    ///< The highlighted net or bus or empty string.
+    SCHEMATIC* m_schematic;       ///< The currently loaded schematic
+    wxString   m_highlightedConn; ///< The highlighted net or bus or empty string.
 
-    wxPageSetupDialogData       m_pageSetupData;
-    std::vector<std::unique_ptr<SCH_ITEM>> m_items_to_repeat;  ///< For the repeat-last-item cmd
+    wxPageSetupDialogData                  m_pageSetupData;
+    std::vector<std::unique_ptr<SCH_ITEM>> m_items_to_repeat; ///< For the repeat-last-item cmd
 
-    wxString                    m_netListerCommand;   ///< Command line to call a custom net list
-                                                      ///< generator.
-    int                         m_exec_flags;         ///< Flags of the wxExecute() function
-                                                      ///< to call a custom net list generator.
+    wxString m_netListerCommand; ///< Command line to call a custom net list
+                                 ///< generator.
+    int m_exec_flags;            ///< Flags of the wxExecute() function
+                                 ///< to call a custom net list generator.
 
     DIALOG_ERC*                 m_ercDialog;
     DIALOG_BOOK_REPORTER*       m_diffSymbolDialog;
@@ -1047,33 +1025,34 @@ private:
     DIALOG_SCHEMATIC_SETUP*     m_schematicSetupDialog;
 
 
-    wxTreeCtrl*                 m_netNavigator;
-    wxSearchCtrl*               m_netNavigatorFilter;
-    BITMAP_BUTTON*              m_netNavigatorMenuButton;
-    wxString                    m_netNavigatorFilterValue;
-    wxString                    m_netNavigatorMenuNetName;
+    wxTreeCtrl*    m_netNavigator;
+    wxSearchCtrl*  m_netNavigatorFilter;
+    BITMAP_BUTTON* m_netNavigatorMenuButton;
+    wxString       m_netNavigatorFilterValue;
+    wxString       m_netNavigatorMenuNetName;
 
-	bool                        m_syncingPcbToSchSelection; // Recursion guard when synchronizing selection from PCB
+    bool m_syncingPcbToSchSelection; // Recursion guard when synchronizing selection from PCB
     // Cross-probe flashing support
-    wxTimer                     m_crossProbeFlashTimer;   ///< Timer to toggle selection visibility
-    int                         m_crossProbeFlashPhase = 0;
-    std::vector<KIID>           m_crossProbeFlashItems;   ///< Items to flash
-    bool                        m_crossProbeFlashing = false;
-    bool                        m_show_search;
-    bool                        m_highlightedConnChanged;
+    wxTimer           m_crossProbeFlashTimer; ///< Timer to toggle selection visibility
+    int               m_crossProbeFlashPhase = 0;
+    std::vector<KIID> m_crossProbeFlashItems; ///< Items to flash
+    bool              m_crossProbeFlashing = false;
+    bool              m_show_search;
+    bool              m_highlightedConnChanged;
 
-    std::vector<wxEvtHandler*>  m_schematicChangeListeners;
+    std::vector<wxEvtHandler*> m_schematicChangeListeners;
 
-    std::vector<LIB_ID>         m_designBlockHistoryList;
-    SCH_DESIGN_BLOCK_PANE*      m_designBlocksPane;
-    PANEL_REMOTE_SYMBOL*        m_remoteSymbolPane;
+    std::vector<LIB_ID>    m_designBlockHistoryList;
+    SCH_DESIGN_BLOCK_PANE* m_designBlocksPane;
+    PANEL_REMOTE_SYMBOL*   m_remoteSymbolPane;
 
-    wxChoice*                   m_currentVariantCtrl;
+    wxChoice* m_currentVariantCtrl;
 
 #ifdef KICAD_IPC_API
-    std::unique_ptr<API_HANDLER_SCH> m_apiHandler;
+    std::unique_ptr<API_HANDLER_SCH>    m_apiHandler;
+    std::unique_ptr<API_HANDLER_COMMON> m_apiHandlerCommon;
 #endif
 };
 
 
-#endif  // SCH_EDIT_FRAME_H
+#endif // SCH_EDIT_FRAME_H

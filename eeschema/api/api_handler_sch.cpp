@@ -79,7 +79,8 @@ API_HANDLER_SCH::handleGetOpenDocuments( const HANDLER_CONTEXT<GetOpenDocuments>
     wxFileName fn( m_frame->GetCurrentFileName() );
 
     doc.set_type( DocumentType::DOCTYPE_SCHEMATIC );
-    doc.set_board_filename( fn.GetFullName() );
+    // Use sheet_path for schematic documents, not board_filename
+    doc.mutable_sheet_path()->set_path_human_readable( "/" );
 
     response.mutable_documents()->Add( std::move( doc ) );
     return response;
@@ -280,7 +281,39 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
 void API_HANDLER_SCH::deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& aItemsToDelete,
                                            const std::string&                  aClientName )
 {
-    // TODO
+    SCH_SCREEN* screen = m_frame->GetScreen();
+
+    if( !screen )
+        return;
+
+    COMMIT* commit = getCurrentCommit( aClientName );
+
+    for( auto& [id, status] : aItemsToDelete )
+    {
+        SCH_ITEM* item = nullptr;
+
+        for( SCH_ITEM* candidate : screen->Items() )
+        {
+            if( candidate->m_Uuid == id )
+            {
+                item = candidate;
+                break;
+            }
+        }
+
+        if( item )
+        {
+            commit->Remove( item, screen );
+            status = ItemDeletionStatus::IDS_OK;
+        }
+        else
+        {
+            status = ItemDeletionStatus::IDS_NONEXISTENT;
+        }
+    }
+
+    if( !m_activeClients.count( aClientName ) )
+        pushCurrentCommit( aClientName, _( "Deleted items via API" ) );
 }
 
 
@@ -289,7 +322,16 @@ std::optional<EDA_ITEM*> API_HANDLER_SCH::getItemFromDocument( const DocumentSpe
     if( !validateDocument( aDocument ) )
         return std::nullopt;
 
-    // TODO
+    SCH_SCREEN* screen = m_frame->GetScreen();
+
+    if( !screen )
+        return std::nullopt;
+
+    for( SCH_ITEM* item : screen->Items() )
+    {
+        if( item->m_Uuid == aId )
+            return item;
+    }
 
     return std::nullopt;
 }

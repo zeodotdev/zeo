@@ -73,3 +73,41 @@ message DirectiveLabel
   kiapi.common.types.Vector2 position = 2;
   Text                       text     = 3;
 }
+
+message Pin
+{
+  kiapi.common.types.KIID              id          = 1;
+  kiapi.common.types.Vector2           position    = 2;
+  kiapi.common.types.Angle             angle       = 3;
+  string                               name        = 4;
+  string                               number      = 5;
+  kiapi.common.types.ElectricalPinType electrical_type = 6;
+}
+
+message Field
+{
+  kiapi.common.types.KIID           id         = 1;
+  kiapi.common.types.Vector2        position   = 2;
+  kiapi.common.types.TextAttributes attributes = 3;
+  string                            text       = 4;
+  string                            name       = 5;
+  int32                             id_int     = 6;
+}
+
+message Symbol
+{
+  kiapi.common.types.KIID              id                 = 1;
+  kiapi.common.types.Vector2           position           = 2;
+  kiapi.common.types.Angle             angle              = 3;
+  bool                                 mirror_x           = 4;
+  bool                                 mirror_y           = 5;
+  kiapi.common.types.LibraryIdentifier lib_id             = 6;
+  int32                                unit               = 7;
+  bool                                 dnp                = 8;
+  bool                                 exclude_from_bom   = 9;
+  bool                                 exclude_from_board = 10;
+  bool                                 exclude_from_sim   = 11;
+
+  repeated Field                       fields             = 12;
+  repeated Pin                         pins               = 13;
+}

@@ -32,6 +32,7 @@ GitLab CI pipeline status can be viewed for Linux and Windows builds of the late
 ## Subdirectories
 
 * [3d-viewer](3d-viewer)         - Sourcecode of the 3D viewer
+* [agent](Agent) - Sourcecode for the agent sidebar
 * [bitmap2component](bitmap2component)  - Sourcecode of the bitmap to PCB artwork converter
 * [cmake](cmake)      - Modules for the CMAKE build tool
 * [common](common)            - Sourcecode of the common library
@@ -52,6 +53,7 @@ GitLab CI pipeline status can be viewed for Linux and Windows builds of the late
     - [bitmaps_png](resources/bitmaps_png)       - Menu and program icons
     - [project_template](resources/project_template)          - Project template
 * [scripting](scripting)         - Python integration for KiCad
+* [terminal](Terminal) - Terminal for dev and agent use
 * [thirdparty](thirdparty)           - Sourcecode of external libraries used in KiCad but not written by the KiCad team
 * [tools](tools)             - Helpers for developing, testing and building
 * [translation](translation) - Translation data files (managed through [Weblate](https://hosted.weblate.org/projects/kicad/master-source/) for most languages)

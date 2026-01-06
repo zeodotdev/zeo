@@ -87,8 +87,7 @@ void KICAD_API_SERVER::Start()
 
     if( !PATHS::EnsurePathExists( socket.GetPath() ) )
     {
-        wxLogTrace( traceApi, wxString::Format( "Server: socket path %s could not be created",
-                                                socket.GetPath() ) );
+        wxLogTrace( traceApi, wxString::Format( "Server: socket path %s could not be created", socket.GetPath() ) );
         return;
     }
 
@@ -105,8 +104,8 @@ void KICAD_API_SERVER::Start()
     {
         if( socket.Exists() )
         {
-            wxLogTrace( traceApi, wxString::Format( "Server: cleaning up stale socket path %s",
-                                                    socket.GetFullPath() ) );
+            wxLogTrace( traceApi,
+                        wxString::Format( "Server: cleaning up stale socket path %s", socket.GetFullPath() ) );
             wxRemoveFile( socket.GetFullPath() );
         }
     }
@@ -118,15 +117,18 @@ void KICAD_API_SERVER::Start()
 
         if( socket.Exists() )
         {
-            wxLogTrace( traceApi, wxString::Format( "Server: PID socket path %s already exists!",
-                                                    socket.GetFullPath() ) );
+            wxLogTrace( traceApi,
+                        wxString::Format( "Server: PID socket path %s already exists!", socket.GetFullPath() ) );
             return;
         }
     }
 
-    m_server = std::make_unique<KINNG_REQUEST_SERVER>(
-            fmt::format( "ipc://{}", socket.GetFullPath().ToStdString() ) );
-    m_server->SetCallback( [&]( std::string* aRequest ) { onApiRequest( aRequest ); } );
+    m_server = std::make_unique<KINNG_REQUEST_SERVER>( fmt::format( "ipc://{}", socket.GetFullPath().ToStdString() ) );
+    m_server->SetCallback(
+            [&]( std::string* aRequest )
+            {
+                onApiRequest( aRequest );
+            } );
 
     m_logFilePath.AssignDir( PATHS::GetLogsPath() );
     m_logFilePath.SetName( s_logFileName );
@@ -206,7 +208,7 @@ void KICAD_API_SERVER::onApiRequest( std::string* aRequest )
 void KICAD_API_SERVER::handleApiEvent( wxCommandEvent& aEvent )
 {
     std::string& requestString = *static_cast<std::string*>( aEvent.GetClientData() );
-    ApiRequest request;
+    ApiRequest   request;
 
     if( !request.ParseFromString( requestString ) )
     {
@@ -223,8 +225,7 @@ void KICAD_API_SERVER::handleApiEvent( wxCommandEvent& aEvent )
     if( ADVANCED_CFG::GetCfg().m_EnableAPILogging )
         log( "Request: " + request.Utf8DebugString() );
 
-    if( !request.header().kicad_token().empty() &&
-        request.header().kicad_token().compare( m_token ) != 0 )
+    if( !request.header().kicad_token().empty() && request.header().kicad_token().compare( m_token ) != 0 )
     {
         ApiResponse error;
         error.mutable_header()->set_kicad_token( m_token );
@@ -290,10 +291,9 @@ void KICAD_API_SERVER::log( const std::string& aOutput )
     if( !fp )
         return;
 
-    wxString out;
+    wxString   out;
     wxDateTime now = wxDateTime::Now();
 
-    fprintf( fp, "%s", TO_UTF8( out.Format( wxS( "%s: %s" ),
-                                            now.FormatISOCombined(), aOutput ) ) );
+    fprintf( fp, "%s", TO_UTF8( out.Format( wxS( "%s: %s" ), now.FormatISOCombined(), aOutput ) ) );
     fclose( fp );
 }

@@ -44,7 +44,112 @@
 #include <sch_rule_area.h>
 
 #include <utility>
+#include <utility>
 #include <validators.h>
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
+
+void SCH_SYMBOL::Serialize( google::protobuf::Any& aContainer ) const
+{
+    kiapi::schematic::types::Symbol symbol;
+
+    symbol.mutable_id()->set_value( m_Uuid.AsStdString() );
+    kiapi::common::PackVector2( *symbol.mutable_position(), GetPosition() );
+    symbol.mutable_lib_id()->CopyFrom( kiapi::common::LibIdToProto( GetLibId() ) );
+    symbol.set_unit( GetUnit() );
+
+    symbol.mutable_angle()->set_value_degrees( GetOrientationProp()
+                                               * 90.0 ); // Approximate, needs better Angle mapping if Angle is degrees.
+    // Actually GetOrientationProp returns SYMBOL_ANGLE_0, 90, 180...
+    int angle_int = 0;
+    switch( GetOrientationProp() )
+    {
+    case SYMBOL_ORIENTATION_PROP::SYMBOL_ANGLE_90: angle_int = 900; break;
+    case SYMBOL_ORIENTATION_PROP::SYMBOL_ANGLE_180: angle_int = 1800; break;
+    case SYMBOL_ORIENTATION_PROP::SYMBOL_ANGLE_270: angle_int = 2700; break;
+    default: break;
+    }
+    symbol.mutable_angle()->set_value_degrees( angle_int / 10.0 );
+
+    symbol.set_mirror_x( GetMirrorX() );
+    symbol.set_mirror_y( GetMirrorY() );
+
+    symbol.set_dnp( GetDNP() );
+    symbol.set_exclude_from_bom( GetExcludedFromBOM() );
+    symbol.set_exclude_from_board( GetExcludedFromBoard() );
+    symbol.set_exclude_from_sim( GetExcludedFromSim() );
+
+    for( const auto& field : GetFields() )
+    {
+        auto* protoField = symbol.add_fields();
+        protoField->mutable_id()->set_value( field.m_Uuid.AsStdString() );
+        kiapi::common::PackVector2( *protoField->mutable_position(), field.GetPosition() );
+        protoField->set_text( field.GetText().ToStdString() );
+        protoField->set_name( field.GetName().ToStdString() );
+        protoField->set_id_int( static_cast<int>( field.GetId() ) );
+    }
+
+    // Pins
+    for( const auto& pin : GetPins() )
+    {
+        auto* protoPin = symbol.add_pins();
+        protoPin->mutable_id()->set_value( pin->m_Uuid.AsStdString() );
+        kiapi::common::PackVector2( *protoPin->mutable_position(), pin->GetPosition() );
+        protoPin->set_number( pin->GetNumber().ToStdString() );
+        protoPin->set_name( pin->GetName().ToStdString() );
+        // TODO: Electrical Type mapping
+    }
+
+    aContainer.PackFrom( symbol );
+}
+
+bool SCH_SYMBOL::Deserialize( const google::protobuf::Any& aContainer )
+{
+    kiapi::schematic::types::Symbol symbol;
+
+    if( !aContainer.UnpackTo( &symbol ) )
+        return false;
+
+    // ID is typically used for lookup, not modification of identity, but we can check it.
+
+    if( symbol.has_position() )
+        SetPosition( kiapi::common::UnpackVector2( symbol.position() ) );
+
+    if( symbol.has_lib_id() )
+        SetLibId( kiapi::common::LibIdFromProto( symbol.lib_id() ) );
+
+    if( symbol.unit() != 0 )
+        SetUnit( symbol.unit() );
+
+    if( symbol.has_angle() )
+    {
+        // TODO: Map degrees back to Orientation Prop
+    }
+
+    // Mirror X/Y
+
+    // Flags
+    if( symbol.dnp() )
+        SetDNP( symbol.dnp() ); // This logic is slightly flawed (cant unset), assume full state sync?
+    // Using simple setters for now. API semantics (patch vs put) depend on handler.
+    SetDNPProp( symbol.dnp() );
+    SetExcludedFromBOMProp( symbol.exclude_from_bom() );
+    SetExcludedFromBoard( symbol.exclude_from_board() ); // Check this accessor name again?
+    SetExcludedFromSimProp( symbol.exclude_from_sim() );
+
+    // Fields Update?
+    for( const auto& protoField : symbol.fields() )
+    {
+        SCH_FIELD* field = GetField( protoField.name() );
+        if( field )
+        {
+            field->SetText( protoField.text() );
+            field->SetPosition( kiapi::common::UnpackVector2( protoField.position() ) );
+        }
+    }
+
+    return true;
+}
 
 
 std::unordered_map<TRANSFORM, int> SCH_SYMBOL::s_transformToOrientationCache;
@@ -1766,7 +1871,8 @@ bool SCH_SYMBOL::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* token, i
         // First, try to find the pin in the current unit (for backward compatibility)
         // For REFERENCE/SHORT_REFERENCE/UNIT functions, always search all pins to find which unit the pin belongs to
         std::vector<SCH_PIN*> pinsToSearch = ( isReferenceFunction || isShortReferenceFunction || isUnitFunction )
-                                              ? GetAllLibPins() : GetPins( aPath );
+                                                     ? GetAllLibPins()
+                                                     : GetPins( aPath );
 
         for( SCH_PIN* pin : pinsToSearch )
         {

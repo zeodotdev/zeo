@@ -20,7 +20,12 @@ TERMINAL_PANEL::TERMINAL_PANEL( wxWindow* aParent, TERMINAL_MODE aMode ) :
         m_historyIndex( 0 ),
         m_mode( aMode ),
         m_lastPromptPos( 0 ),
-        m_pythonInitialized( false )
+        m_pythonInitialized( false ),
+        m_process( nullptr ),
+        m_shellStdin( nullptr ),
+        m_shellStdout( nullptr ),
+        m_shellStderr( nullptr ),
+        m_pid( -1 )
 {
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
@@ -57,6 +62,7 @@ TERMINAL_PANEL::TERMINAL_PANEL( wxWindow* aParent, TERMINAL_MODE aMode ) :
 
 TERMINAL_PANEL::~TERMINAL_PANEL()
 {
+    CleanupShell();
 }
 
 void TERMINAL_PANEL::SetMode( TERMINAL_MODE aMode )
@@ -389,18 +395,6 @@ void TERMINAL_PANEL::ExecuteCommand( const wxString& aCmd )
             m_outputCtrl->AppendText( "Entering Python Mode.\n" );
         }
     }
-    else if( aCmd.StartsWith( "cd " ) && m_mode == MODE_SYSTEM )
-    {
-        wxString path = aCmd.Mid( 3 ).Trim().Trim( false );
-        if( wxSetWorkingDirectory( path ) )
-        {
-            // Success
-        }
-        else
-        {
-            m_outputCtrl->AppendText( "cd: no such file or directory: " + path + "\n" );
-        }
-    }
     else
     {
         if( m_mode == MODE_SYSTEM )
@@ -414,29 +408,158 @@ void TERMINAL_PANEL::ExecuteCommand( const wxString& aCmd )
     m_outputCtrl->SetInsertionPointEnd();
 }
 
+void TERMINAL_PANEL::InitShell()
+{
+    if( m_process )
+        return;
+
+    m_process = new wxProcess( this );
+    m_process->Redirect();
+
+    // Use zsh or bash
+    wxString shell = "/bin/zsh"; // Mac default usually
+    if( !wxFileExists( shell ) )
+        shell = "/bin/bash";
+
+    // Launch persistent shell
+    // Interactive mode might be needed for some things (-i), but -s is safer for piping
+    m_pid = wxExecute( shell + " -s", wxEXEC_ASYNC, m_process );
+
+    if( m_pid > 0 )
+    {
+        m_shellStdin = m_process->GetOutputStream();
+        m_shellStdout = m_process->GetInputStream();
+        m_shellStderr = m_process->GetErrorStream();
+    }
+    else
+    {
+        m_outputCtrl->AppendText( "Error: Failed to launch system shell.\n" );
+        delete m_process;
+        m_process = nullptr;
+    }
+}
+
+void TERMINAL_PANEL::CleanupShell()
+{
+    if( m_process )
+    {
+        // Unhook from this panel to prevent event callbacks
+        m_process->Detach();
+
+        if( m_process->GetOutputStream() )
+        {
+            // Try clean exit
+            wxTextOutputStream os( *m_process->GetOutputStream() );
+            os << "exit\n";
+            m_process->CloseOutput();
+        }
+
+        if( m_pid > 0 && wxProcess::Exists( m_pid ) )
+        {
+            // Force Kill
+            wxProcess::Kill( m_pid, wxSIGKILL );
+        }
+
+        // CRITICAL FIX: Do NOT delete m_process.
+        // wxWidgets maintains a reference in wxExecuteData that triggers a crash (Use-After-Free)
+        // when the process signal is handled asynchronously if this object is deleted.
+        // The leak is minimal and necessary to prevent SIGSEGV on close.
+        m_process = nullptr;
+        m_pid = -1;
+    }
+}
+
 std::string TERMINAL_PANEL::ProcessSystemCommand( const wxString& aCmd )
 {
-    if( aCmd.IsEmpty() )
-        return "";
+    InitShell();
+    if( !m_process || !m_shellStdin )
+        return "Error: Shell not running.\n";
 
-    wxArrayString output, errors;
-    long          ret = wxExecute( aCmd, output, errors, wxEXEC_SYNC );
+    // Write Command + Sentinel
+    // Use a unique sentinel that is unlikely to appear in output
+    wxString sentinel = "__KICAD_AGENT_CMD_END__";
+    wxString cmdLine = aCmd + "\n";
+    cmdLine += "echo \"" + sentinel + "\"\n";
 
-    std::string result;
+    // Clear any pending output first? (Flush)
+    // Actually, hard to flush without blocking. We assume sync flow.
 
-    for( const wxString& line : output )
+    // Write
+    m_shellStdin->Write( cmdLine.c_str(), cmdLine.Length() );
+
+    // Read Loop
+    std::string fullOutput;
+    bool        sentinelFound = false;
+
+    // Safety timeout?
+    wxLongLong startTime = wxGetLocalTimeMillis();
+    long       timeoutMs = 15000; // 15 seconds timeout
+
+    while( !sentinelFound )
     {
-        m_outputCtrl->AppendText( line + "\n" );
-        result += line.ToStdString() + "\n";
+        // Check streams
+        bool hasData = false;
+
+        // STDOUT
+        if( m_shellStdout && m_shellStdout->CanRead() )
+        {
+            char buf[1024];
+            m_shellStdout->Read( buf, sizeof( buf ) - 1 );
+            size_t count = m_shellStdout->LastRead();
+            if( count > 0 )
+            {
+                buf[count] = 0;
+                wxString chunk = wxString::FromUTF8( buf );
+
+                // Check marker in chunk
+                int pos = chunk.Find( sentinel );
+                if( pos != wxNOT_FOUND )
+                {
+                    sentinelFound = true;
+                    chunk = chunk.Left( pos ); // Keep only before marker
+                    // Remove trailing newline from echo if possible?
+                    chunk.Trim();
+                }
+
+                m_outputCtrl->AppendText( chunk );
+                fullOutput += chunk.ToStdString();
+                hasData = true;
+            }
+        }
+
+        // STDERR
+        if( m_shellStderr && m_shellStderr->CanRead() )
+        {
+            char buf[1024];
+            m_shellStderr->Read( buf, sizeof( buf ) - 1 );
+            size_t count = m_shellStderr->LastRead();
+            if( count > 0 )
+            {
+                buf[count] = 0;
+                wxString chunk = wxString::FromUTF8( buf );
+                m_outputCtrl->AppendText( chunk );
+                fullOutput += chunk.ToStdString();
+                hasData = true;
+            }
+        }
+
+        if( !hasData )
+        {
+            wxYield(); // Process GUI events
+            wxMilliSleep( 10 );
+        }
+
+        if( wxGetLocalTimeMillis() - startTime > timeoutMs )
+        {
+            m_outputCtrl->AppendText( "\n[Timeout waiting for shell response]\n" );
+            break;
+        }
     }
 
-    for( const wxString& line : errors )
-    {
-        m_outputCtrl->AppendText( line + "\n" );
-        result += line.ToStdString() + "\n";
-    }
+    // Newline for visual separation
+    m_outputCtrl->AppendText( "\n" );
 
-    return result;
+    return fullOutput;
 }
 
 bool TERMINAL_PANEL::EnsurePython()

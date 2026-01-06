@@ -309,10 +309,31 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
         return panel->RunLocalPython( rest ); // fallback
     }
 
-    // No ID (Active Tab)
-    TERMINAL_PANEL* active = GetActivePanel();
+    // No ID (Active Tab) -> CHANGED: Default to dedicated Agent Tab
+    TERMINAL_PANEL* active = nullptr;
+
+    // Search for existing Agent Terminal
+    for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
+    {
+        TERMINAL_PANEL* p = GetPanel( i );
+        if( dynamic_cast<AGENT_TERMINAL_PANEL*>( p ) )
+        {
+            active = p;
+            break;
+        }
+    }
+
+    // If no Agent Terminal exists, create one
     if( !active )
-        return "Error: No active terminal.";
+    {
+        // AddAgentTerminal returns void, we need to get the pointer
+        AddAgentTerminal( TERMINAL_PANEL::MODE_SYSTEM );
+        // It's the last one now
+        active = GetPanel( m_notebook->GetPageCount() - 1 );
+    }
+
+    if( !active )
+        return "Error: Could not create/find Agent terminal.";
 
     // "run_terminal_command sys ls"
     // firstArg = "sys", rest = "ls"

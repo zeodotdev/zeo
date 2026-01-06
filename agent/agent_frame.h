@@ -76,6 +76,11 @@ private:
     std::string    m_currentResponse; // Streaming accumulator
     std::string    m_pendingTool;     // Tool waiting for approval
     bool           m_stopRequested;   // Flag for sync wait loops
+
+    // HTML Rendering
+    wxString m_fullHtmlContent; // Complete HTML buffer
+    void     AppendHtml( const wxString& aHtml );
+    void     SetHtml( const wxString& aHtml );
 };
 
 #endif // AGENT_FRAME_H

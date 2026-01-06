@@ -34,8 +34,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_chatWindow =
             new wxHtmlWindow( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHW_SCROLLBAR_AUTO | wxBORDER_NONE );
     // Set a default page content or styling if needed
-    m_chatWindow->SetPage(
-            "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>" );
+    m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>";
+    m_chatWindow->SetPage( m_fullHtmlContent );
     mainSizer->Add( m_chatWindow, 1, wxEXPAND | wxALL, 0 ); // Remove ALL padding for clean edge
 
     // 2. Input Container (Unified Look)
@@ -139,6 +139,26 @@ AGENT_FRAME::~AGENT_FRAME()
 void AGENT_FRAME::ShowChangedLanguage()
 {
     KIWAY_PLAYER::ShowChangedLanguage();
+}
+
+void AGENT_FRAME::AppendHtml( const wxString& aHtml )
+{
+    m_fullHtmlContent += aHtml;
+    SetHtml( m_fullHtmlContent );
+}
+
+void AGENT_FRAME::SetHtml( const wxString& aHtml )
+{
+    m_fullHtmlContent = aHtml; // Ensure sync
+
+    // Save scroll position
+    int x, y;
+    m_chatWindow->GetViewStart( &x, &y );
+
+    m_chatWindow->SetPage( m_fullHtmlContent );
+
+    // Restore scroll position
+    m_chatWindow->Scroll( x, y );
 }
 
 void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
@@ -382,8 +402,8 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 
     // Display User Message
     wxString msgHtml = wxString::Format( "<p><b>User:</b> %s</p>", text );
-    m_chatWindow->AppendToPage( msgHtml );
-    m_chatWindow->AppendToPage( "<p><b>Agent:</b> " ); // Start Agent response block
+    AppendHtml( msgHtml );
+    AppendHtml( "<p><b>Agent:</b> " ); // Start Agent response block
 
     // Clear Input and Update UI
     m_inputCtrl->Clear();
@@ -452,7 +472,7 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
         m_workerThread = nullptr;
     }
     m_stopRequested = true; // Signal sync loops to stop
-    m_chatWindow->AppendToPage( "</p><p><i>(Stopped)</i></p>" );
+    AppendHtml( "</p><p><i>(Stopped)</i></p>" );
     m_actionButton->SetLabel( "->" );
     // m_inputCtrl->Enable( true );
 }
@@ -467,7 +487,7 @@ void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
     // Display with HTML formatting
     wxString displayContent = content;
     displayContent.Replace( "\n", "<br>" );
-    m_chatWindow->AppendToPage( displayContent );
+    AppendHtml( displayContent );
 
     // Auto-scroll
     int x, y;
@@ -475,7 +495,6 @@ void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
     m_chatWindow->Scroll( 0, y );
 
     // Check for TOOL_CALL to force stop
-    // We check m_currentResponse (raw)
     size_t toolPos = m_currentResponse.rfind( "TOOL_CALL:" );
     if( toolPos != std::string::npos )
     {
@@ -483,13 +502,33 @@ void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
         size_t lineEnd = m_currentResponse.find( '\n', toolPos );
         if( lineEnd != std::string::npos )
         {
-            // Complete TOOL_CALL detected. Stop generation immediately.
-            if( m_workerThread )
+            // NEW: Check for code block starter "```" after tool call
+            // If present, we must wait for the CLOSING "```" before stopping.
+            size_t codeStart = m_currentResponse.find( "```", toolPos );
+            bool   shouldStop = true;
+
+            if( codeStart != std::string::npos )
             {
-                // Request thread to exit. OnAgentComplete will be called naturally.
-                m_workerThread->Delete();
-                m_workerThread = nullptr;
-                m_chatWindow->AppendToPage( "<p><i>(Tool Call Detected - Stopping Generation)</i></p>" );
+                // We have a code block. Check if it is closed.
+                size_t codeEnd = m_currentResponse.find( "```", codeStart + 3 );
+                if( codeEnd == std::string::npos )
+                {
+                    // Code block is OPEN. Continue generating.
+                    shouldStop = false;
+                }
+                // Else: Code block is CLOSED. We can stop.
+            }
+
+            if( shouldStop )
+            {
+                // Complete TOOL_CALL detected. Stop generation immediately.
+                if( m_workerThread )
+                {
+                    // Request thread to exit. OnAgentComplete will be called naturally.
+                    m_workerThread->Delete();
+                    m_workerThread = nullptr;
+                    m_chatWindow->AppendToPage( "<p><i>(Tool Call Detected - Stopping Generation)</i></p>" );
+                }
             }
         }
     }
@@ -505,7 +544,8 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
         m_workerThread = nullptr;
     }
 
-    m_chatWindow->AppendToPage( "</p>" ); // Close Agent block
+
+    AppendHtml( "</p>" ); // Close Agent block
     m_actionButton->SetLabel( "->" );
 
     // Add Assistant response to history
@@ -516,7 +556,7 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
 
     if( aEvent.GetInt() == 0 ) // Failure
     {
-        m_chatWindow->AppendToPage( "<p><i>(Error generating response)</i></p>" );
+        AppendHtml( "<p><i>(Error generating response)</i></p>" );
     }
     else
     {
@@ -525,11 +565,53 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
         if( toolPos != std::string::npos )
         {
             size_t start = toolPos + 11;
-            size_t end = m_currentResponse.find_first_of( "\n\r", start );
-            if( end == std::string::npos )
-                end = m_currentResponse.length();
+            // Stop at end of string (since we force stopped)
+            size_t end = m_currentResponse.length();
 
             std::string toolName = m_currentResponse.substr( start, end - start );
+
+            // Clean up Markdown Code Blocks if present
+            // Agent might output: run_terminal_command pcb ``` print(1) ```
+            // We want to verify if it contains a code block and strip the fences.
+
+            size_t fenceStart = toolName.find( "```" );
+            if( fenceStart != std::string::npos )
+            {
+                // Strip opening fence
+                // Also strip language identifier if present (e.g. ```python)
+                size_t contentStart = toolName.find( '\n', fenceStart );
+                if( contentStart == std::string::npos )
+                    contentStart = fenceStart + 3; // Fallback if no newline
+                else
+                    contentStart++; // Skip newline
+
+                // Find closing fence
+                size_t fenceEnd = toolName.rfind( "```" );
+                if( fenceEnd != std::string::npos && fenceEnd > contentStart )
+                {
+                    // Extract inside
+                    std::string pre = toolName.substr( 0, fenceStart );
+                    std::string core = toolName.substr( contentStart, fenceEnd - contentStart );
+
+                    // Combine: "run_terminal_command pcb " + "print(1)"
+                    // We need to ensure spaces.
+                    toolName = pre + " " + core;
+                }
+            }
+
+            // Normal whitespace cleaning
+            // Replace newlines with spaces?
+            // NO. PCB/SCH commands (python) might need newlines.
+            // But 'sys' commands usually don't.
+            // `run_terminal_command` expects [mode] [cmd].
+            // If cmd is python code with newlines, we should preserve them?
+            // Existing logic `ExecuteCommandForAgent` splits by space... wait.
+            // If existing `ExecuteCommandForAgent` splits by space, multi-line python will break.
+            // I need to check `ExecuteCommandForAgent` logic later.
+            // For now, let's just trim outer whitespace.
+
+            toolName.erase( 0, toolName.find_first_not_of( " \t\r\n" ) );
+            toolName.erase( toolName.find_last_not_of( " \t\r\n" ) + 1 );
             // Clean whitespace and newlines
             toolName.erase( 0, toolName.find_first_not_of( " \t\r\n" ) );
             toolName.erase( toolName.find_last_not_of( " \t\r\n" ) + 1 );
@@ -540,7 +622,7 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
             std::string html = "<p><b>Tool Request:</b> " + toolName
                                + " <a href=\"tool:approve\" style=\"color: #00AA00; font-weight: bold;\">[Approve]</a>"
                                + " <a href=\"tool:deny\" style=\"color: #AA0000; font-weight: bold;\">[Deny]</a></p>";
-            m_chatWindow->AppendToPage( html );
+            AppendHtml( html );
 
             // Allow user to click. Execution halted until link clicked.
             Layout();
@@ -557,7 +639,7 @@ void AGENT_FRAME::OnHtmlLinkClick( wxHtmlLinkEvent& aEvent )
     }
     else if( href == "tool:deny" )
     {
-        m_chatWindow->AppendToPage( "<p><i>Tool call denied by user.</i></p>" );
+        AppendHtml( "<p><i>Tool call denied by user.</i></p>" );
         m_chatHistory.push_back( { { "role", "user" }, { "content", "Tool execution denied." } } );
         // Optionally resume generation or wait for user input?
         // Usually better to let user type why.
@@ -577,7 +659,17 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     // m_toolButton->Hide();
     // m_toolButton->GetParent()->Layout();
 
-    m_chatWindow->AppendToPage( "<p><i>Executing " + m_pendingTool + "...</i></p>" );
+    // Show "Running..." terminal box
+    wxString placeholderId = wxString::Format( "term_%lu", wxGetLocalTimeMillis().GetValue() );
+    wxString runningBox = wxString::Format( "<table width='100%%' bgcolor='#1e1e1e' cellpadding='10'><tr><td>"
+                                            "<font color='#4ec9b0' face='Courier New' size='2'>&gt; %s</font><br>"
+                                            "<font color='#d4d4d4' face='Courier New' size='2'><i>Running...</i></font>"
+                                            "</td></tr></table><!--%s-->", // Comment mark for replacement
+                                            m_pendingTool, placeholderId );
+    AppendHtml( runningBox );
+
+    // Force draw
+    wxYield();
 
     // Execute
     std::string result = SendRequest( FRAME_AGENT, m_pendingTool ); // Assuming internal dispatch handles tool names
@@ -633,8 +725,23 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     std::string toolMsg = "Tool Output (" + toolToRun + "):\n" + toolOutput;
     m_chatHistory.push_back( { { "role", "user" }, { "content", toolMsg } } );
 
-    m_chatWindow->AppendToPage( "<p><b>System:</b> Tool Output received.</p>" );
-    m_chatWindow->AppendToPage( "<p><b>Agent:</b> " );
+    // Styled Terminal Execution Box (Result)
+    wxString htmlOutput = toolOutput;
+    htmlOutput.Replace( "\n", "<br>" );
+    htmlOutput.Replace( " ", "&nbsp;" );
+
+    wxString finalTermBox = wxString::Format( "<table width='100%%' bgcolor='#1e1e1e' cellpadding='10'><tr><td>"
+                                              "<font color='#4ec9b0' face='Courier New' size='2'>&gt; %s</font><br>"
+                                              "<font color='#d4d4d4' face='Courier New' size='2'>%s</font>"
+                                              "</td></tr></table>",
+                                              toolToRun, htmlOutput );
+
+    // REPLACE the running box in m_fullHtmlContent
+    // We look for runningBox string.
+    m_fullHtmlContent.Replace( runningBox, finalTermBox );
+    SetHtml( m_fullHtmlContent );
+
+    AppendHtml( "<p><b>Agent:</b> " );
 
     // Resume Agent
     std::string systemPrompt = R"(You are a helpful assistant for KiCad PCB design.

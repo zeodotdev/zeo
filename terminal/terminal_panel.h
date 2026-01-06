@@ -45,6 +45,15 @@ protected:
     TERMINAL_MODE         m_mode;
     bool                  m_pythonInitialized;
 
+    // Persistent Shell
+    wxProcess*      m_process;
+    wxOutputStream* m_shellStdin;
+    wxInputStream*  m_shellStdout;
+    wxInputStream*  m_shellStderr;
+    long            m_pid;
+    void            InitShell();
+    void            CleanupShell();
+
     const wxString PROMPT_SYSTEM = "sys> ";
     const wxString PROMPT_PYTHON = ">>> ";
     const wxString PROMPT_PCB = "pcb> ";

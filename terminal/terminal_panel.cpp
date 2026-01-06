@@ -43,8 +43,7 @@ TERMINAL_PANEL::TERMINAL_PANEL( wxWindow* aParent, TERMINAL_MODE aMode ) :
 
     // Initial Message
     m_outputCtrl->AppendText( "KiCad Dev Terminal\n" );
-    m_outputCtrl->AppendText( "Type 'pcb' to enter PCB Scripting Mode.\n" );
-    m_outputCtrl->AppendText( "Type 'sch' to enter Schematic Scripting Mode.\n" );
+    m_outputCtrl->AppendText( "Type 'ipc' to enter IPC Python Shell.\n" );
     m_outputCtrl->AppendText( "Type 'exit' to switch back to System Shell.\n\n" );
     m_outputCtrl->AppendText( GetPrompt() );
 
@@ -76,8 +75,7 @@ wxString TERMINAL_PANEL::GetTitle() const
     {
     case MODE_SYSTEM: return "System";
     case MODE_PYTHON: return "Python";
-    case MODE_PCB: return "PCB";
-    case MODE_SCH: return "Schematic";
+    case MODE_IPC: return "IPC Shell";
     default: return "Terminal";
     }
 }
@@ -87,8 +85,7 @@ wxString TERMINAL_PANEL::GetPrompt() const
     switch( m_mode )
     {
     case MODE_PYTHON: return PROMPT_PYTHON;
-    case MODE_PCB: return PROMPT_PCB;
-    case MODE_SCH: return PROMPT_SCH;
+    case MODE_IPC: return PROMPT_IPC;
     default: return PROMPT_SYSTEM;
     }
 }
@@ -203,188 +200,15 @@ void TERMINAL_PANEL::ExecuteCommand( const wxString& aCmd )
     {
         m_outputCtrl->Clear();
     }
-    else if( aCmd.StartsWith( "pcb" ) )
-    {
-        // Switch mode logic
-        if( EnsurePython() )
-        {
-            m_mode = MODE_PCB;
-            m_outputCtrl->AppendText( "Entering PCB Mode (Standard Python with auto-loaded PCB).\n" );
-
-            wxString pcbFile;
-            wxString arg = aCmd.Mid( 3 ).Trim( false ).Trim(); // Get rest of line
-
-            if( !arg.IsEmpty() )
-            {
-                pcbFile = arg;
-                if( !wxFileName::FileExists( pcbFile ) )
-                {
-                    // Try resolving relative to CWD
-                    wxFileName fn( pcbFile );
-                    if( fn.MakeAbsolute( wxGetCwd() ) && fn.FileExists() )
-                        pcbFile = fn.GetFullPath();
-                }
-            }
-
-            // Auto-load PCB attempts
-            if( pcbFile.IsEmpty() )
-            {
-                // 1. Try Project Manager via Parent Frame
-                TERMINAL_FRAME* frame = wxDynamicCast( wxGetTopLevelParent( this ), TERMINAL_FRAME );
-                if( frame )
-                {
-                    pcbFile = frame->Prj().GetProjectFullName();
-
-                    if( !pcbFile.IsEmpty() )
-                    {
-                        wxFileName fn( pcbFile );
-                        if( fn.GetExt() == "kicad_pro" )
-                        {
-                            fn.SetExt( FILEEXT::KiCadPcbFileExtension );
-                            pcbFile = fn.GetFullPath();
-                        }
-                    }
-                }
-
-                // 2. Try CWD for .kicad_pcb
-                if( pcbFile.IsEmpty() || !wxFileExists( pcbFile ) )
-                {
-                    wxDir    dir( wxGetCwd() );
-                    wxString filename;
-                    if( dir.GetFirst( &filename, "*.kicad_pcb", wxDIR_FILES ) )
-                    {
-                        pcbFile = wxGetCwd() + wxFileName::GetPathSeparator() + filename;
-                    }
-                }
-            }
-
-            // Correction for missing extension
-            if( !pcbFile.IsEmpty() && !pcbFile.EndsWith( FILEEXT::KiCadPcbFileExtension ) )
-            {
-                if( !wxFileExists( pcbFile ) )
-                    pcbFile += FILEEXT::KiCadPcbFileExtension;
-            }
-
-            if( !pcbFile.IsEmpty() && wxFileExists( pcbFile ) )
-            {
-                m_outputCtrl->AppendText( "Loading PCB: " + pcbFile + "\n" );
-                wxString loadCmd = wxString::Format( "import pcbnew\n"
-                                                     "try:\n"
-                                                     "    board = pcbnew.LoadBoard(\"%s\")\n"
-                                                     "    p = board\n"
-                                                     "    print(\"PCB loaded. Access via 'board' or 'p'.\")\n"
-                                                     "except Exception as e:\n"
-                                                     "    print(f\"Failed to load board: {e}\")\n",
-                                                     pcbFile );
-                RunLocalPython( loadCmd );
-            }
-            else
-            {
-                m_outputCtrl->AppendText( "Warning: No PCB file found to auto-load.\n" );
-                m_outputCtrl->AppendText( "Current Directory: " + wxGetCwd() + "\n" );
-                if( !arg.IsEmpty() )
-                    m_outputCtrl->AppendText( "File not found: " + arg + "\n" );
-
-                m_outputCtrl->AppendText(
-                        "Use 'cd <path>' to navigate to your project or 'pcb <filename.kicad_pcb>'.\n" );
-                m_outputCtrl->AppendText( "Running standard python.\n" );
-                RunLocalPython( "import pcbnew\n" );
-            }
-        }
-    }
-    else if( aCmd.StartsWith( "sch" ) )
+    else if( aCmd == "ipc" )
     {
         if( EnsurePython() )
         {
-            m_mode = MODE_SCH;
-            m_outputCtrl->AppendText( "Entering Schematic Mode (Standard Python with auto-loaded Schematic).\n" );
-
-            wxString schFile;
-            wxString arg = aCmd.Mid( 3 ).Trim( false ).Trim(); // Get rest of line
-
-            if( !arg.IsEmpty() )
-            {
-                schFile = arg;
-                if( !wxFileName::FileExists( schFile ) )
-                {
-                    // Try resolving relative to CWD
-                    wxFileName fn( schFile );
-                    if( fn.MakeAbsolute( wxGetCwd() ) && fn.FileExists() )
-                        schFile = fn.GetFullPath();
-                }
-            }
-
-            // Auto-load Schematic attempts
-            if( schFile.IsEmpty() )
-            {
-                // 1. Try Project Manager via Parent Frame
-                TERMINAL_FRAME* frame = wxDynamicCast( wxGetTopLevelParent( this ), TERMINAL_FRAME );
-                if( frame )
-                {
-                    schFile = frame->Prj().GetProjectFullName();
-
-                    if( !schFile.IsEmpty() )
-                    {
-                        wxFileName fn( schFile );
-                        if( fn.GetExt() == "kicad_pro" )
-                        {
-                            fn.SetExt( FILEEXT::KiCadSchematicFileExtension );
-                            schFile = fn.GetFullPath();
-                        }
-                    }
-                }
-
-                // 2. Try CWD for .kicad_sch
-                if( schFile.IsEmpty() || !wxFileExists( schFile ) )
-                {
-                    wxDir    dir( wxGetCwd() );
-                    wxString filename;
-                    if( dir.GetFirst( &filename, "*.kicad_sch", wxDIR_FILES ) )
-                    {
-                        schFile = wxGetCwd() + wxFileName::GetPathSeparator() + filename;
-                    }
-                }
-            }
-
-            // Correction for missing extension
-            if( !schFile.IsEmpty() && !schFile.EndsWith( FILEEXT::KiCadSchematicFileExtension ) )
-            {
-                if( !wxFileExists( schFile ) )
-                    schFile += FILEEXT::KiCadSchematicFileExtension;
-            }
-
-            if( !schFile.IsEmpty() && wxFileExists( schFile ) )
-            {
-                m_outputCtrl->AppendText( "Loading Schematic: " + schFile + "\n" );
-                // Attempt to import kiutils
-                wxString loadCmd =
-                        wxString::Format( "try:\n"
-                                          "    import kiutils.symbol\n"
-                                          "    import kiutils.items\n"
-                                          "    import kiutils.schematic\n"
-                                          "    schematic = kiutils.schematic.Schematic.from_file(\"%s\")\n"
-                                          "    sch = schematic\n"
-                                          "    print(\"Schematic loaded. Access via 'schematic' or 'sch'.\")\n"
-                                          "    print(\"Using 'kiutils' library.\")\n"
-                                          "except ImportError:\n"
-                                          "    print(\"Error: 'kiutils' python library not found.\")\n"
-                                          "    print(\"Please install it via pip: pip install kiutils\")\n"
-                                          "except Exception as e:\n"
-                                          "    print(f\"Failed to load schematic: {e}\")\n",
-                                          schFile );
-                RunLocalPython( loadCmd );
-            }
-            else
-            {
-                m_outputCtrl->AppendText( "Warning: No Schematic file found to auto-load.\n" );
-                m_outputCtrl->AppendText( "Current Directory: " + wxGetCwd() + "\n" );
-                if( !arg.IsEmpty() )
-                    m_outputCtrl->AppendText( "File not found: " + arg + "\n" );
-
-                m_outputCtrl->AppendText(
-                        "Use 'cd <path>' to navigate to your project or 'sch <filename.kicad_sch>'.\n" );
-                m_outputCtrl->AppendText( "Running standard python.\n" );
-            }
+            m_mode = MODE_IPC;
+            m_outputCtrl->AppendText( "Entering IPC Python Shell.\n" );
+            m_outputCtrl->AppendText( "Usage:\n" );
+            m_outputCtrl->AppendText( "  import kipy\n" );
+            m_outputCtrl->AppendText( "  kicad = kipy.KiCad()\n" );
         }
     }
     else if( aCmd == "python" )

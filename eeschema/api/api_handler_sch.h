@@ -47,25 +47,21 @@ protected:
 
     bool validateDocumentInternal( const DocumentSpecifier& aDocument ) const override;
 
-    HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> createItemForType( KICAD_T aType,
-                                                                 EDA_ITEM* aContainer );
+    HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> createItemForType( KICAD_T aType, EDA_ITEM* aContainer );
 
-    HANDLER_RESULT<types::ItemRequestStatus> handleCreateUpdateItemsInternal( bool aCreate,
-            const std::string& aClientName,
-            const types::ItemHeader &aHeader,
-            const google::protobuf::RepeatedPtrField<google::protobuf::Any>& aItems,
-            std::function<void(commands::ItemStatus, google::protobuf::Any)> aItemHandler )
-            override;
+    HANDLER_RESULT<types::ItemRequestStatus> handleCreateUpdateItemsInternal(
+            bool aCreate, const std::string& aClientName, const types::ItemHeader& aHeader,
+            const google::protobuf::RepeatedPtrField<google::protobuf::Any>&   aItems,
+            std::function<void( commands::ItemStatus, google::protobuf::Any )> aItemHandler ) override;
 
     void deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& aItemsToDelete,
-                              const std::string& aClientName ) override;
+                              const std::string&                  aClientName ) override;
 
-    std::optional<EDA_ITEM*> getItemFromDocument( const DocumentSpecifier& aDocument,
-                                                  const KIID& aId ) override;
+    std::optional<EDA_ITEM*> getItemFromDocument( const DocumentSpecifier& aDocument, const KIID& aId ) override;
 
 private:
-    HANDLER_RESULT<commands::GetOpenDocumentsResponse> handleGetOpenDocuments(
-            const HANDLER_CONTEXT<commands::GetOpenDocuments>& aCtx );
+    HANDLER_RESULT<commands::GetOpenDocumentsResponse>
+    handleGetOpenDocuments( const HANDLER_CONTEXT<commands::GetOpenDocuments>& aCtx );
 
     SCH_EDIT_FRAME* m_frame;
 };

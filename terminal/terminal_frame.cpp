@@ -221,13 +221,13 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
 
     if( cmd.StartsWith( "create_agent " ) )
     {
-        // "create_agent sys", "create_agent pcb"
+        // "create_agent sys", "create_agent ipc"
         wxString                      modeStr = cmd.Mid( 13 ).Trim( false );
         TERMINAL_PANEL::TERMINAL_MODE mode = TERMINAL_PANEL::MODE_SYSTEM;
-        if( modeStr == "pcb" )
-            mode = TERMINAL_PANEL::MODE_PCB;
-        if( modeStr == "sch" )
-            mode = TERMINAL_PANEL::MODE_SCH;
+        if( modeStr == "ipc" )
+            mode = TERMINAL_PANEL::MODE_IPC;
+        if( modeStr == "python" )
+            mode = TERMINAL_PANEL::MODE_PYTHON;
 
         AddAgentTerminal( mode );
         return "Agent Terminal created. ID: " + std::to_string( m_notebook->GetPageCount() - 1 );
@@ -235,13 +235,13 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
 
     if( cmd.StartsWith( "create " ) )
     {
-        // "create sys", "create pcb"
+        // "create sys", "create ipc"
         wxString                      modeStr = cmd.Mid( 7 ).Trim( false );
         TERMINAL_PANEL::TERMINAL_MODE mode = TERMINAL_PANEL::MODE_SYSTEM;
-        if( modeStr == "pcb" )
-            mode = TERMINAL_PANEL::MODE_PCB;
-        if( modeStr == "sch" )
-            mode = TERMINAL_PANEL::MODE_SCH;
+        if( modeStr == "ipc" )
+            mode = TERMINAL_PANEL::MODE_IPC;
+        if( modeStr == "python" )
+            mode = TERMINAL_PANEL::MODE_PYTHON;
 
         AddTerminal( mode );
         return "Dev Terminal created. ID: " + std::to_string( m_notebook->GetPageCount() - 1 );
@@ -290,7 +290,7 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
         // Let's implement smart dispatch here.
         if( modeArg == "sys" )
             return panel->ProcessSystemCommand( actualCmd );
-        if( modeArg == "pcb" || modeArg == "sch" )
+        if( modeArg == "ipc" || modeArg == "python" )
             return panel->RunLocalPython( actualCmd ); // Pre-req: mode switch?
 
         // If mode is just implied by current panel state?
@@ -339,7 +339,7 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
     // firstArg = "sys", rest = "ls"
     if( firstArg == "sys" )
         return active->ProcessSystemCommand( rest );
-    if( firstArg == "pcb" || firstArg == "sch" )
+    if( firstArg == "ipc" || firstArg == "python" )
     {
         // Handle auto-switch/init if we want to be nice, or just run python.
         // If we execute "pcb", the panel outputs "Entering PCB Mode".

@@ -38,8 +38,7 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
         API_HANDLER_EDITOR(),
         m_frame( aFrame )
 {
-    registerHandler<GetOpenDocuments, GetOpenDocumentsResponse>(
-            &API_HANDLER_SCH::handleGetOpenDocuments );
+    registerHandler<GetOpenDocuments, GetOpenDocumentsResponse>( &API_HANDLER_SCH::handleGetOpenDocuments );
 }
 
 
@@ -62,8 +61,8 @@ bool API_HANDLER_SCH::validateDocumentInternal( const DocumentSpecifier& aDocume
 }
 
 
-HANDLER_RESULT<GetOpenDocumentsResponse> API_HANDLER_SCH::handleGetOpenDocuments(
-        const HANDLER_CONTEXT<GetOpenDocuments>& aCtx )
+HANDLER_RESULT<GetOpenDocumentsResponse>
+API_HANDLER_SCH::handleGetOpenDocuments( const HANDLER_CONTEXT<GetOpenDocuments>& aCtx )
 {
     if( aCtx.Request.type() != DocumentType::DOCTYPE_SCHEMATIC )
     {
@@ -74,7 +73,7 @@ HANDLER_RESULT<GetOpenDocumentsResponse> API_HANDLER_SCH::handleGetOpenDocuments
         return tl::unexpected( e );
     }
 
-    GetOpenDocumentsResponse response;
+    GetOpenDocumentsResponse         response;
     common::types::DocumentSpecifier doc;
 
     wxFileName fn( m_frame->GetCurrentFileName() );
@@ -87,8 +86,7 @@ HANDLER_RESULT<GetOpenDocumentsResponse> API_HANDLER_SCH::handleGetOpenDocuments
 }
 
 
-HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> API_HANDLER_SCH::createItemForType( KICAD_T aType,
-        EDA_ITEM* aContainer )
+HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> API_HANDLER_SCH::createItemForType( KICAD_T aType, EDA_ITEM* aContainer )
 {
     if( !aContainer )
     {
@@ -131,11 +129,10 @@ HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> API_HANDLER_SCH::createItemForType( KI
 }
 
 
-HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsInternal( bool aCreate,
-        const std::string& aClientName,
-        const types::ItemHeader &aHeader,
+HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsInternal(
+        bool aCreate, const std::string& aClientName, const types::ItemHeader& aHeader,
         const google::protobuf::RepeatedPtrField<google::protobuf::Any>& aItems,
-        std::function<void( ItemStatus, google::protobuf::Any )> aItemHandler )
+        std::function<void( ItemStatus, google::protobuf::Any )>         aItemHandler )
 {
     ApiResponseStatus e;
 
@@ -154,7 +151,7 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
     }
 
     SCH_SCREEN* screen = m_frame->GetScreen();
-    EE_RTREE& screenItems = screen->Items();
+    EE_RTREE&   screenItems = screen->Items();
 
     std::map<KIID, EDA_ITEM*> itemUuidMap;
 
@@ -177,18 +174,16 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
             if( !container )
             {
                 e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-                e.set_error_message( fmt::format(
-                        "The requested container {} is not a valid schematic item container",
-                        containerId.AsStdString() ) );
+                e.set_error_message( fmt::format( "The requested container {} is not a valid schematic item container",
+                                                  containerId.AsStdString() ) );
                 return tl::unexpected( e );
             }
         }
         else
         {
             e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-            e.set_error_message( fmt::format(
-                    "The requested container {} does not exist in this document",
-                    containerId.AsStdString() ) );
+            e.set_error_message( fmt::format( "The requested container {} does not exist in this document",
+                                              containerId.AsStdString() ) );
             return tl::unexpected( e );
         }
     }
@@ -197,20 +192,18 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
 
     for( const google::protobuf::Any& anyItem : aItems )
     {
-        ItemStatus status;
+        ItemStatus             status;
         std::optional<KICAD_T> type = TypeNameFromAny( anyItem );
 
         if( !type )
         {
             status.set_code( ItemStatusCode::ISC_INVALID_TYPE );
-            status.set_error_message( fmt::format( "Could not decode a valid type from {}",
-                                                   anyItem.type_url() ) );
+            status.set_error_message( fmt::format( "Could not decode a valid type from {}", anyItem.type_url() ) );
             aItemHandler( status, anyItem );
             continue;
         }
 
-        HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> creationResult =
-                createItemForType( *type, container );
+        HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> creationResult = createItemForType( *type, container );
 
         if( !creationResult )
         {
@@ -225,24 +218,23 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
         if( !item->Deserialize( anyItem ) )
         {
             e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-            e.set_error_message( fmt::format( "could not unpack {} from request",
-                                              item->GetClass().ToStdString() ) );
+            e.set_error_message( fmt::format( "could not unpack {} from request", item->GetClass().ToStdString() ) );
             return tl::unexpected( e );
         }
 
         if( aCreate && itemUuidMap.count( item->m_Uuid ) )
         {
             status.set_code( ItemStatusCode::ISC_EXISTING );
-            status.set_error_message( fmt::format( "an item with UUID {} already exists",
-                                                   item->m_Uuid.AsStdString() ) );
+            status.set_error_message(
+                    fmt::format( "an item with UUID {} already exists", item->m_Uuid.AsStdString() ) );
             aItemHandler( status, anyItem );
             continue;
         }
         else if( !aCreate && !itemUuidMap.count( item->m_Uuid ) )
         {
             status.set_code( ItemStatusCode::ISC_NONEXISTENT );
-            status.set_error_message( fmt::format( "an item with UUID {} does not exist",
-                                                   item->m_Uuid.AsStdString() ) );
+            status.set_error_message(
+                    fmt::format( "an item with UUID {} does not exist", item->m_Uuid.AsStdString() ) );
             aItemHandler( status, anyItem );
             continue;
         }
@@ -286,14 +278,13 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
 
 
 void API_HANDLER_SCH::deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& aItemsToDelete,
-                                           const std::string& aClientName )
+                                           const std::string&                  aClientName )
 {
     // TODO
 }
 
 
-std::optional<EDA_ITEM*> API_HANDLER_SCH::getItemFromDocument( const DocumentSpecifier& aDocument,
-                                                               const KIID& aId )
+std::optional<EDA_ITEM*> API_HANDLER_SCH::getItemFromDocument( const DocumentSpecifier& aDocument, const KIID& aId )
 {
     if( !validateDocument( aDocument ) )
         return std::nullopt;

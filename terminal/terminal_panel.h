@@ -12,9 +12,8 @@ public:
     enum TERMINAL_MODE
     {
         MODE_SYSTEM,
-        MODE_PYTHON,
-        MODE_PCB,
-        MODE_SCH
+        MODE_PYTHON, // Standard Embedded Python
+        MODE_IPC     // IPC Python Shell (kicad-python)
     };
 
     TERMINAL_PANEL( wxWindow* aParent, TERMINAL_MODE aMode = MODE_SYSTEM );
@@ -56,8 +55,7 @@ protected:
 
     const wxString PROMPT_SYSTEM = "sys> ";
     const wxString PROMPT_PYTHON = ">>> ";
-    const wxString PROMPT_PCB = "pcb> ";
-    const wxString PROMPT_SCH = "sch> ";
+    const wxString PROMPT_IPC = "ipc> ";
 
     virtual wxString GetPrompt() const;
     bool             EnsurePython();

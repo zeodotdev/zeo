@@ -254,6 +254,46 @@ else
 fi
 
 
+echo "Building and bundling kicad-python..."
+
+KICAD_PYTHON_DIR="$(cd "$SCRIPT_DIR/../kicad-python" && pwd)"
+
+if [ -d "$KICAD_PYTHON_DIR" ]; then
+    echo "Processing kicad-python at $KICAD_PYTHON_DIR"
+
+    # Copy protos from kicad-agent (source) to kicad-python
+    echo "Copying protobuf files..."
+    mkdir -p "$KICAD_PYTHON_DIR/kicad/api/proto"
+    cp -r "$KICAD_SOURCE_DIR/api/proto/"* "$KICAD_PYTHON_DIR/kicad/api/proto/"
+    
+    # host build deps
+    echo "Installing build dependencies..."
+    python3 -m pip install mypy-protobuf protoletariat
+
+    # Run proto generation
+    echo "Generating python protobuf bindings..."
+    pushd "$KICAD_PYTHON_DIR" > /dev/null
+    python3 tools/generate_protos.py
+    popd > /dev/null
+    
+    # Install into bundle
+    if [ -d "$PYTHON_SITE_PACKAGES" ]; then
+        echo "Installing kicad-python dependencies to $PYTHON_SITE_PACKAGES"
+        # Step 1: Install dependencies with binary wheels for cp39
+        python3 -m pip install --target "$PYTHON_SITE_PACKAGES" --upgrade --python-version 3.9 --only-binary=:all: "protobuf>=6.33" "pynng>=0.8.0" typing_extensions
+
+        echo "Installing kicad-python package..."
+        # Step 2: Install kicad-python source without deps (deps are already installed)
+        python3 -m pip install --target "$PYTHON_SITE_PACKAGES" --no-deps --upgrade "$KICAD_PYTHON_DIR"
+    else
+         echo "Warning: Python site-packages directory not found, skipping kicad-python install."
+    fi
+
+else
+    echo "Warning: kicad-python directory not found at $KICAD_PYTHON_DIR"
+fi
+
+
 echo "Signing bundled applications..."
 # Re-sign the bundled applications to ensure validity after copying
 # Use ad-hoc signing (-) which is sufficient for local development

@@ -79,11 +79,11 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Model Selection
     wxArrayString modelChoices;
-    modelChoices.Add( "Claude 3 Opus" );
+    modelChoices.Add( "Claude 4.5 Opus" );
     modelChoices.Add( "GPT-4o" );
 
     m_modelChoice = new wxChoice( m_inputPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, modelChoices );
-    m_modelChoice->SetSelection( 0 ); // Default to Claude 3 Opus
+    m_modelChoice->SetSelection( 0 ); // Default to Claude 4.5 Opus
     controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     // Spacer
@@ -392,22 +392,23 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 
     // Create and Run Thread
     // TODO: proper system prompt management
+    // Create and Run Thread
+    // TODO: proper system prompt management
     std::string systemPrompt = R"(You are a helpful assistant for KiCad PCB design.
-You have access to the following tools to query the project state.
-To use a tool, you MUST format your response as follows:
+You have access to the Terminal to query and modify the project state using Python scripting.
+To use the terminal, you MUST format your response as follows:
 THOUGHT: [Your reasoning here]
-TOOL_CALL: [ToolName] [Arguments...]
+TOOL_CALL: run_terminal_command [mode] [command]
 
-Available Tools:
-- get_pcb_components: Returns a list of footprints on the PCB (Ref, Value, UUID).
-- get_component_details "RefDes": Returns details (Value, Layer, Position) for a specific component (e.g., "R1").
-- get_pcb_nets: Returns a list of all net names and codes.
-- get_net_details "NetName": Returns tracks and pads for a specific net (e.g., "+3V3").
-- get_board_info: Returns board stackup, layers, and design rules.
-- get_sch_sheets: Returns the schematic sheet hierarchy (Path, Name).
-- get_sch_components "SheetPath": Returns symbols on a specific sheet (or all if path is empty).
-- get_sch_symbol_details "RefDes": Returns details (Value, Footprint, Pin map) for a symbol.
-- get_connection_graph: Returns the full netlist connectivity graph.
+Available Modes:
+- sys: System shell (e.g., ls, git, grep).
+- pcb: PCB Editor python shell (pre-loaded 'board').
+- sch: Schematic Editor python shell (pre-loaded 'schematic').
+
+Examples:
+- run_terminal_command sys ls -la
+- run_terminal_command pcb print(len(board.GetTracks()))
+- run_terminal_command sch print(len(schematic.symbol_instances))
 
 When you need information, explain your thought process and then output the TOOL_CALL.
 Wait for the tool output before providing the final answer.
@@ -589,8 +590,12 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     std::string       commandName;
     ss >> commandName;
 
-    if( commandName == "get_pcb_components" || commandName == "get_component_details" || commandName == "get_pcb_nets"
-        || commandName == "get_net_details" || commandName == "get_board_info" )
+    if( commandName == "run_terminal_command" )
+    {
+        dest = FRAME_TERMINAL;
+    }
+    else if( commandName == "get_pcb_components" || commandName == "get_component_details"
+             || commandName == "get_pcb_nets" || commandName == "get_net_details" || commandName == "get_board_info" )
     {
         dest = FRAME_PCB_EDITOR;
     }
@@ -628,20 +633,15 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
 
     // Resume Agent
     std::string systemPrompt = R"(You are a helpful assistant for KiCad PCB design.
-You have access to the following tools to query the project state.
-To use a tool, you MUST format your response as follows:
+You have access to the Terminal.
+To use the terminal, you MUST format your response as follows:
 THOUGHT: [Your reasoning here]
-TOOL_CALL: [ToolName] [Arguments...]
+TOOL_CALL: run_terminal_command [mode] [command]
 
-Available Tools:
-- get_pcb_components: Returns a list of all components on the PCB (Ref, Value, UUID).
-- get_component_details "RefDes": Returns detailed info (Location, Layer, Net Connections) for a specific component (e.g., "R1").
-- get_pcb_nets: Returns a list of all nets on the PCB.
-- get_net_details "NetName": Returns tracks, vias, and pads associated with a specific net.
-- get_sch_sheets: Returns the schematic sheet hierarchy.
-- get_sch_components "SheetPath": Returns components on a specific sheet (or all if path is empty).
-- get_sch_symbol_details "RefDes": Returns symbol fields and pins for a specific symbol in the schematic.
-- get_connection_graph: Returns the full netlist connectivity graph.
+Available Modes:
+- sys: System shell.
+- pcb: PCB Editor python shell.
+- sch: Schematic Editor python shell.
 
 When you need information, explain your thought process and then output the TOOL_CALL.
 Wait for the tool output before providing the final answer.

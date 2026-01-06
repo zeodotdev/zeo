@@ -21,6 +21,8 @@ include_directories(
 set( TERMINAL_SRCS
     terminal.cpp
     terminal_frame.cpp
+    terminal_panel.cpp
+    terminal_panel_agent.cpp
 )
 
 # Resources for the macOS bundle

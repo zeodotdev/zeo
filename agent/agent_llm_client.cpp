@@ -216,8 +216,8 @@ bool AGENT_LLM_CLIENT::AskStreamAnthropic( const nlohmann::json& aMessages, cons
 
     // Map UI names to API names
     std::string apiModel = "claude-3-5-sonnet-20240620";
-    if( m_modelName == "Claude 3 Opus" )
-        apiModel = "claude-3-opus-20240229";
+    if( m_modelName == "Claude 4.5 Opus" )
+        apiModel = "claude-opus-4-5-20251101";
 
     // wxLogMessage( "Anthropic Request: Model=%s", apiModel.c_str() ); // Removed to prevent pop-ups
 

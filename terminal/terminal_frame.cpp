@@ -1,4 +1,5 @@
 #include "terminal_frame.h"
+#include "terminal_panel_agent.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/sizer.h>
@@ -6,56 +7,108 @@
 #include <id.h>
 #include <kiway.h>
 #include <wx/log.h>
-#include <wx/utils.h>
-#include <wx/process.h>
-#include <wx/txtstrm.h>
+#include <wx/menu.h>   // For menu IDs
+#include <wx/button.h> // For wxButton
 
-#include <base_units.h>
+// Define IDs for new commands
+enum
+{
+    ID_NEW_TAB = wxID_HIGHEST + 1,
+    ID_NEW_AGENT_TAB,
+    ID_CLOSE_TAB
+};
 
 BEGIN_EVENT_TABLE( TERMINAL_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, TERMINAL_FRAME::OnExit )
+EVT_MENU( ID_NEW_TAB, TERMINAL_FRAME::OnNewTab )
+EVT_MENU( ID_NEW_AGENT_TAB, TERMINAL_FRAME::OnNewAgentTab )
+EVT_MENU( ID_CLOSE_TAB, TERMINAL_FRAME::OnCloseTab )
 END_EVENT_TABLE()
 
 TERMINAL_FRAME::TERMINAL_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         KIWAY_PLAYER( aKiway, aParent, FRAME_TERMINAL, "Terminal", wxDefaultPosition, wxDefaultSize,
-                      wxDEFAULT_FRAME_STYLE, "terminal_frame_name", schIUScale ),
-        m_historyIndex( 0 ),
-        m_mode( MODE_SYSTEM ),
-        m_lastPromptPos( 0 )
+                      wxDEFAULT_FRAME_STYLE, "terminal_frame_name", schIUScale )
 {
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
-    // Unified Output/Input Area
-    // wxTE_PROCESS_ENTER needed to catch Enter key in OnKeyDown on some platforms/configs
-    m_outputCtrl = new wxTextCtrl( this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize,
-                                   wxTE_MULTILINE | wxTE_RICH2 | wxTE_PROCESS_ENTER | wxTE_NOHIDESEL );
+    // Add Toolbar for "New Terminal"
+    wxBoxSizer* topBarSizer = new wxBoxSizer( wxHORIZONTAL );
 
-    // Set Monospace Font & Colors
-    wxFont font = wxSystemSettings::GetFont( wxSYS_ANSI_FIXED_FONT );
-    font.SetPointSize( 12 );
-    m_outputCtrl->SetFont( font );
-    m_outputCtrl->SetBackgroundColour( wxColour( 30, 30, 30 ) );    // Dark Grey
-    m_outputCtrl->SetForegroundColour( wxColour( 255, 255, 255 ) ); // White
-    m_outputCtrl->SetDefaultStyle( wxTextAttr( wxColour( 255, 255, 255 ), wxColour( 30, 30, 30 ) ) );
+    // Dev Terminal Button
+    wxButton* newTabBtn =
+            new wxButton( this, ID_NEW_TAB, "+ New Dev Terminal", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
+    topBarSizer->Add( newTabBtn, 0, wxALIGN_CENTER_VERTICAL | wxALL, 5 );
 
-    // Initial Message
-    m_outputCtrl->AppendText( "KiCad Dev Terminal\n" );
-    m_outputCtrl->AppendText( "Type 'pcb' to enter PCB Scripting Mode.\n" );
-    m_outputCtrl->AppendText( "Type 'sch' to enter Schematic Scripting Mode.\n" );
-    m_outputCtrl->AppendText( "Type 'exit' to switch back to System Shell.\n\n" );
-    m_outputCtrl->AppendText( GetPrompt() );
+    // Agent Terminal Button (Green Text via SetForegroundColour if allowed, or just normal button)
+    // wxButton color support varies by OS. On macOS standard buttons might not change color easily without custom paint.
+    // Let's rely on text label for distinction or `SetForegroundColour`.
+    wxButton* newAgentTabBtn = new wxButton( this, ID_NEW_AGENT_TAB, "+ New Agent Terminal", wxDefaultPosition,
+                                             wxDefaultSize, wxBU_EXACTFIT );
+    // Try setting color (might not work on all macOS versions/themes perfectly but good intent)
+    // newAgentTabBtn->SetForegroundColour( wxColour( 0, 128, 0 ) );
+    topBarSizer->Add( newAgentTabBtn, 0, wxALIGN_CENTER_VERTICAL | wxALL, 5 );
 
-    m_lastPromptPos = m_outputCtrl->GetLastPosition();
+    topBarSizer->AddStretchSpacer();
 
-    mainSizer->Add( m_outputCtrl, 1, wxEXPAND | wxALL, 0 );
+    mainSizer->Add( topBarSizer, 0, wxEXPAND | wxALL, 0 );
+
+    // Create Notebook
+    m_notebook = new wxAuiNotebook( this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                    wxAUI_NB_TOP | wxAUI_NB_TAB_SPLIT | wxAUI_NB_TAB_MOVE | wxAUI_NB_SCROLL_BUTTONS
+                                            | wxAUI_NB_MIDDLE_CLICK_CLOSE );
+    // Removed wxAUI_NB_CLOSE_ON_ACTIVE_TAB from default set to manage manually?
+    // Actually, AUI styles apply to whole notebook.
+    // We can toggle CLOSE_ON_ACTIVE_TAB dynamicallly or use SetCloseButton(idx, bool).
+
+    // Connect events via Bind/Connect or Event Table
+    m_notebook->Bind( wxEVT_AUINOTEBOOK_PAGE_CLOSE, &TERMINAL_FRAME::OnTabClosed, this );
+    m_notebook->Bind( wxEVT_AUINOTEBOOK_PAGE_CLOSED, &TERMINAL_FRAME::OnTabClosedDone, this );
+
+    // Bind buttons
+    newTabBtn->Bind( wxEVT_BUTTON, &TERMINAL_FRAME::OnNewTab, this );
+    newAgentTabBtn->Bind( wxEVT_BUTTON, &TERMINAL_FRAME::OnNewAgentTab, this );
+
+    mainSizer->Add( m_notebook, 1, wxEXPAND | wxALL, 0 );
 
     SetSizer( mainSizer );
     Layout();
-    SetSize( 800, 600 ); // Larger default size
+    SetSize( 800, 600 );
 
-    // Bind Events
-    m_outputCtrl->Bind( wxEVT_KEY_DOWN, &TERMINAL_FRAME::OnKeyDown, this );
-    m_outputCtrl->Bind( wxEVT_CHAR, &TERMINAL_FRAME::OnChar, this );
+    // Add initial terminal
+    AddTerminal( TERMINAL_PANEL::MODE_SYSTEM );
+
+    // Setup Menu (Optional, but good for keyboard shortcuts)
+    wxMenuBar* menuBar = new wxMenuBar();
+    wxMenu*    fileMenu = new wxMenu();
+    fileMenu->Append( ID_NEW_TAB, "New Dev Terminal\tCtrl+T" );
+    fileMenu->Append( ID_NEW_AGENT_TAB, "New Agent Terminal\tCtrl+Shift+T" );
+    fileMenu->Append( ID_CLOSE_TAB, "Close Terminal\tCtrl+W" );
+    fileMenu->AppendSeparator();
+    fileMenu->Append( wxID_EXIT, "Exit" );
+    menuBar->Append( fileMenu, "File" );
+    SetMenuBar( menuBar );
+}
+
+void TERMINAL_FRAME::UpdateTabClosing()
+{
+    // If 1 tab, remove close buttons. If >1, enable them.
+    // For AuiNotebook, we can change the window style `wxAUI_NB_CLOSE_ON_ACTIVE_TAB` or use `SetCloseButton` if supported.
+    // SetCloseButton is not standard wxAuiNotebook API in 3.0? It usually requires AuiTabCtrl access.
+    // Simplest: Toggle the Style flag.
+
+    long style = m_notebook->GetWindowStyleFlag();
+    if( m_notebook->GetPageCount() <= 1 )
+    {
+        style &= ~wxAUI_NB_CLOSE_ON_ACTIVE_TAB;
+        style &= ~wxAUI_NB_CLOSE_BUTTON; // Also remove global close button if present
+    }
+    else
+    {
+        style |= wxAUI_NB_CLOSE_ON_ACTIVE_TAB;
+        // style |= wxAUI_NB_CLOSE_BUTTON;
+    }
+    m_notebook->SetWindowStyleFlag( style );
+    m_notebook->Refresh(); // Redraw tabs
 }
 
 TERMINAL_FRAME::~TERMINAL_FRAME()
@@ -67,453 +120,213 @@ void TERMINAL_FRAME::OnExit( wxCommandEvent& event )
     Close( true );
 }
 
-void TERMINAL_FRAME::OnKeyDown( wxKeyEvent& aEvent )
+void TERMINAL_FRAME::OnNewTab( wxCommandEvent& event )
 {
-    int key = aEvent.GetKeyCode();
+    AddTerminal( TERMINAL_PANEL::MODE_SYSTEM );
+}
 
-    if( key == WXK_RETURN || key == WXK_NUMPAD_ENTER )
+void TERMINAL_FRAME::OnNewAgentTab( wxCommandEvent& event )
+{
+    AddAgentTerminal( TERMINAL_PANEL::MODE_SYSTEM );
+}
+
+void TERMINAL_FRAME::OnCloseTab( wxCommandEvent& event )
+{
+    int sel = m_notebook->GetSelection();
+    if( sel != wxNOT_FOUND && m_notebook->GetPageCount() > 1 )
     {
-        long currentPos = m_outputCtrl->GetLastPosition();
-        // If cursor is before prompt, move it to end? For now, assume user types at end.
-
-        wxString fullText = m_outputCtrl->GetValue();
-        if( m_lastPromptPos < fullText.Length() )
-        {
-            wxString cmd = fullText.Mid( m_lastPromptPos );
-            // Remove newlines if any
-            cmd.Trim().Trim( false );
-
-            m_outputCtrl->AppendText( "\n" ); // Move to next line
-            ExecuteCommand( cmd );
-
-            // Prompt is added by ExecuteCommand or its sub-methods
-        }
-        else
-        {
-            // Empty command
-            m_outputCtrl->AppendText( "\n" + GetPrompt() );
-            m_lastPromptPos = m_outputCtrl->GetLastPosition();
-        }
-
-        return;
+        m_notebook->DeletePage( sel );
+        UpdateTabClosing();
     }
-    else if( key == WXK_UP )
+}
+
+void TERMINAL_FRAME::OnTabClosed( wxAuiNotebookEvent& event )
+{
+    // Check if we are trying to close the last tab
+    if( m_notebook->GetPageCount() <= 1 )
     {
-        if( m_history.empty() )
-            return;
-
-        if( m_historyIndex > 0 )
-            m_historyIndex--;
-
-        // Replace current input with history
-        if( m_historyIndex >= 0 && m_historyIndex < (int) m_history.size() )
-        {
-            m_outputCtrl->Remove( m_lastPromptPos, m_outputCtrl->GetLastPosition() );
-            m_outputCtrl->AppendText( m_history[m_historyIndex] );
-        }
-        return;
-    }
-    else if( key == WXK_DOWN )
-    {
-        if( m_history.empty() )
-            return;
-
-        if( m_historyIndex < (int) m_history.size() )
-            m_historyIndex++;
-
-        m_outputCtrl->Remove( m_lastPromptPos, m_outputCtrl->GetLastPosition() );
-
-        if( m_historyIndex < (int) m_history.size() )
-        {
-            m_outputCtrl->AppendText( m_history[m_historyIndex] );
-        }
-        return;
-    }
-    else if( key == WXK_BACK || key == WXK_LEFT )
-    {
-        // Prevent moving/deleting before prompt
-        long pos = m_outputCtrl->GetInsertionPoint();
-        if( pos <= m_lastPromptPos )
-        {
-            // Allow Left if we are strictly greater than prompt pos?
-            // Actually, simplest is just block if at boundary and trying to go back
-            if( key == WXK_LEFT && pos == m_lastPromptPos )
-                return;
-            if( key == WXK_BACK && pos == m_lastPromptPos )
-                return;
-        }
-    }
-    else if( key == WXK_HOME )
-    {
-        m_outputCtrl->SetInsertionPoint( m_lastPromptPos );
+        event.Veto();
         return;
     }
 
-    aEvent.Skip();
+    // We need to update styles AFTER the page is removed.
+    // Event is "PAGE_CLOSE", so page is still there.
+    // We can't update style to remove button comfortably here for the *remaining* tab if we are closing the second to last.
+    // We should use CallAfter or similar.
+    // Or check `GetPageCount() - 1`
+
+    // Ideally, we let it close, then update.
+    // But wxAuiNotebookEvent doesn't have a "CLOSED" event that guarantees count update immediately in all versions?
+    // Actually `wxEVT_AUINOTEBOOK_PAGE_CLOSED` exists.
 }
 
-void TERMINAL_FRAME::OnChar( wxKeyEvent& aEvent )
+void TERMINAL_FRAME::OnTabClosedDone( wxAuiNotebookEvent& event )
 {
-    // Prevent typing before prompt
-    if( m_outputCtrl->GetInsertionPoint() < m_lastPromptPos )
-    {
-        m_outputCtrl->SetInsertionPointEnd();
-    }
-    aEvent.Skip();
+    UpdateTabClosing();
+    event.Skip();
 }
 
-#include <wx/msgdlg.h>
-#include <wx/dir.h>
-#include <python_scripting.h>
-#include <project.h>                 // For Prj()
-#include <wildcards_and_files_ext.h> // For PcbFileExtension
-
-void TERMINAL_FRAME::ExecuteCommand( const wxString& aCmd )
+void TERMINAL_FRAME::AddTerminal( TERMINAL_PANEL::TERMINAL_MODE aMode )
 {
-    // Add to history
-    if( aCmd.Length() > 0 )
-    {
-        m_history.push_back( aCmd );
-        m_historyIndex = m_history.size(); // Reset to end
-    }
-
-    // Check for Internal Commands
-    if( aCmd == "exit" )
-    {
-        if( m_mode != MODE_SYSTEM )
-        {
-            m_mode = MODE_SYSTEM;
-            m_outputCtrl->AppendText( "Exited to System Shell.\n" );
-        }
-        else
-        {
-            Close( true );
-            return; // Close destroys window
-        }
-    }
-    else if( aCmd.StartsWith( "pcb" ) )
-    {
-        if( EnsurePython() )
-        {
-            m_mode = MODE_PCB;
-            m_outputCtrl->AppendText( "Entering PCB Mode (Standard Python with auto-loaded PCB).\n" );
-
-            wxString pcbFile;
-            wxString arg = aCmd.Mid( 3 ).Trim( false ).Trim(); // Get rest of line
-
-            if( !arg.IsEmpty() )
-            {
-                pcbFile = arg;
-                if( !wxFileName::FileExists( pcbFile ) )
-                {
-                    // Try resolving relative to CWD
-                    wxFileName fn( pcbFile );
-                    if( fn.MakeAbsolute( wxGetCwd() ) && fn.FileExists() )
-                        pcbFile = fn.GetFullPath();
-                }
-            }
-
-            // Auto-load PCB attempts
-            if( pcbFile.IsEmpty() )
-            {
-                // 1. Try Project Manager
-                pcbFile = Prj().GetProjectFullName();
-
-                if( !pcbFile.IsEmpty() )
-                {
-                    wxFileName fn( pcbFile );
-                    if( fn.GetExt() == "kicad_pro" )
-                    {
-                        fn.SetExt( FILEEXT::KiCadPcbFileExtension );
-                        pcbFile = fn.GetFullPath();
-                    }
-                }
-
-                // 2. Try CWD for .kicad_pcb
-                if( pcbFile.IsEmpty() || !wxFileExists( pcbFile ) )
-                {
-                    wxDir    dir( wxGetCwd() );
-                    wxString filename;
-                    if( dir.GetFirst( &filename, "*.kicad_pcb", wxDIR_FILES ) )
-                    {
-                        pcbFile = wxGetCwd() + wxFileName::GetPathSeparator() + filename;
-                    }
-                }
-            }
-
-            // Correction for missing extension
-            if( !pcbFile.IsEmpty() && !pcbFile.EndsWith( FILEEXT::KiCadPcbFileExtension ) )
-            {
-                // Only append if file doesn't exist as is? Or assume user forgot extension?
-                // Let's assume user forgot if it doesn't exist.
-                if( !wxFileExists( pcbFile ) )
-                    pcbFile += FILEEXT::KiCadPcbFileExtension;
-            }
-
-            if( !pcbFile.IsEmpty() && wxFileExists( pcbFile ) )
-            {
-                m_outputCtrl->AppendText( "Loading PCB: " + pcbFile + "\n" );
-                wxString loadCmd = wxString::Format( "import pcbnew\n"
-                                                     "try:\n"
-                                                     "    board = pcbnew.LoadBoard(\"%s\")\n"
-                                                     "    p = board\n"
-                                                     "    print(\"PCB loaded. Access via 'board' or 'p'.\")\n"
-                                                     "except Exception as e:\n"
-                                                     "    print(f\"Failed to load board: {e}\")\n",
-                                                     pcbFile );
-                RunLocalPython( loadCmd );
-            }
-            else
-            {
-                m_outputCtrl->AppendText( "Warning: No PCB file found to auto-load.\n" );
-                m_outputCtrl->AppendText( "Current Directory: " + wxGetCwd() + "\n" );
-                if( !arg.IsEmpty() )
-                    m_outputCtrl->AppendText( "File not found: " + arg + "\n" );
-
-                m_outputCtrl->AppendText(
-                        "Use 'cd <path>' to navigate to your project or 'pcb <filename.kicad_pcb>'.\n" );
-                m_outputCtrl->AppendText( "Running standard python.\n" );
-                RunLocalPython( "import pcbnew\n" );
-            }
-        }
-    }
-    else if( aCmd.StartsWith( "sch" ) )
-    {
-        if( EnsurePython() )
-        {
-            m_mode = MODE_SCH;
-            m_outputCtrl->AppendText( "Entering Schematic Mode (Standard Python with auto-loaded Schematic).\n" );
-
-            wxString schFile;
-            wxString arg = aCmd.Mid( 3 ).Trim( false ).Trim(); // Get rest of line
-
-            if( !arg.IsEmpty() )
-            {
-                schFile = arg;
-                if( !wxFileName::FileExists( schFile ) )
-                {
-                    // Try resolving relative to CWD
-                    wxFileName fn( schFile );
-                    if( fn.MakeAbsolute( wxGetCwd() ) && fn.FileExists() )
-                        schFile = fn.GetFullPath();
-                }
-            }
-
-            // Auto-load Schematic attempts
-            if( schFile.IsEmpty() )
-            {
-                // 1. Try Project Manager
-                schFile = Prj().GetProjectFullName();
-
-                if( !schFile.IsEmpty() )
-                {
-                    wxFileName fn( schFile );
-                    if( fn.GetExt() == "kicad_pro" )
-                    {
-                        fn.SetExt( FILEEXT::KiCadSchematicFileExtension );
-                        schFile = fn.GetFullPath();
-                    }
-                }
-
-                // 2. Try CWD for .kicad_sch
-                if( schFile.IsEmpty() || !wxFileExists( schFile ) )
-                {
-                    wxDir    dir( wxGetCwd() );
-                    wxString filename;
-                    if( dir.GetFirst( &filename, "*.kicad_sch", wxDIR_FILES ) )
-                    {
-                        schFile = wxGetCwd() + wxFileName::GetPathSeparator() + filename;
-                    }
-                }
-            }
-
-            // Correction for missing extension
-            if( !schFile.IsEmpty() && !schFile.EndsWith( FILEEXT::KiCadSchematicFileExtension ) )
-            {
-                if( !wxFileExists( schFile ) )
-                    schFile += FILEEXT::KiCadSchematicFileExtension;
-            }
-
-            if( !schFile.IsEmpty() && wxFileExists( schFile ) )
-            {
-                m_outputCtrl->AppendText( "Loading Schematic: " + schFile + "\n" );
-                // Attempt to import kiutils
-                wxString loadCmd =
-                        wxString::Format( "try:\n"
-                                          "    import kiutils.symbol\n"
-                                          "    import kiutils.items\n"
-                                          "    import kiutils.schematic\n"
-                                          "    schematic = kiutils.schematic.Schematic.from_file(\"%s\")\n"
-                                          "    sch = schematic\n"
-                                          "    print(\"Schematic loaded. Access via 'schematic' or 'sch'.\")\n"
-                                          "    print(\"Using 'kiutils' library.\")\n"
-                                          "except ImportError:\n"
-                                          "    print(\"Error: 'kiutils' python library not found.\")\n"
-                                          "    print(\"Please install it via pip: pip install kiutils\")\n"
-                                          "except Exception as e:\n"
-                                          "    print(f\"Failed to load schematic: {e}\")\n",
-                                          schFile );
-                RunLocalPython( loadCmd );
-            }
-            else
-            {
-                m_outputCtrl->AppendText( "Warning: No Schematic file found to auto-load.\n" );
-                m_outputCtrl->AppendText( "Current Directory: " + wxGetCwd() + "\n" );
-                if( !arg.IsEmpty() )
-                    m_outputCtrl->AppendText( "File not found: " + arg + "\n" );
-
-                m_outputCtrl->AppendText(
-                        "Use 'cd <path>' to navigate to your project or 'sch <filename.kicad_sch>'.\n" );
-                m_outputCtrl->AppendText( "Running standard python.\n" );
-            }
-        }
-    }
-    else if( aCmd == "python" )
-    {
-        if( EnsurePython() )
-        {
-            m_mode = MODE_PYTHON;
-            m_outputCtrl->AppendText( "Entering Standard Python Mode.\n" );
-            // Maybe clear context?
-            // For now, share the same interpreter session.
-        }
-    }
-    else if( aCmd == "clear" )
-    {
-        m_outputCtrl->Clear();
-    }
-    else if( aCmd.StartsWith( "cd " ) && m_mode == MODE_SYSTEM )
-    {
-        wxString path = aCmd.Mid( 3 ).Trim().Trim( false );
-        if( wxSetWorkingDirectory( path ) )
-        {
-            // Success
-        }
-        else
-        {
-            m_outputCtrl->AppendText( "cd: no such file or directory: " + path + "\n" );
-        }
-    }
-    else
-    {
-        if( m_mode == MODE_SYSTEM )
-            ProcessSystemCommand( aCmd );
-        else
-            RunLocalPython( aCmd );
-    }
-
-    // Ready for next command
-    m_outputCtrl->AppendText( GetPrompt() );
-    m_lastPromptPos = m_outputCtrl->GetLastPosition();
-    m_outputCtrl->SetInsertionPointEnd();
+    TERMINAL_PANEL* panel = new TERMINAL_PANEL( m_notebook, aMode );
+    m_notebook->AddPage( panel, panel->GetTitle(), true );
+    UpdateTabClosing();
 }
 
-void TERMINAL_FRAME::ProcessSystemCommand( const wxString& aCmd )
+void TERMINAL_FRAME::AddAgentTerminal( TERMINAL_PANEL::TERMINAL_MODE aMode )
 {
-    if( aCmd.IsEmpty() )
-        return;
-
-    wxArrayString output, errors;
-    long          ret = wxExecute( aCmd, output, errors, wxEXEC_SYNC );
-
-    for( const wxString& line : output )
-        m_outputCtrl->AppendText( line + "\n" );
-
-    for( const wxString& line : errors )
-        m_outputCtrl->AppendText( line + "\n" );
+    AGENT_TERMINAL_PANEL* panel = new AGENT_TERMINAL_PANEL( m_notebook, aMode );
+    m_notebook->AddPage( panel, panel->GetTitle(), true );
+    UpdateTabClosing();
 }
 
-void TERMINAL_FRAME::ProcessAgentCommand( const wxString& aCmd )
+TERMINAL_PANEL* TERMINAL_FRAME::GetActivePanel()
 {
-    // Deprecated / Unused logic for remote execution
-    RunLocalPython( aCmd );
+    wxWindow* page = m_notebook->GetCurrentPage();
+    return wxDynamicCast( page, TERMINAL_PANEL );
 }
 
-bool TERMINAL_FRAME::EnsurePython()
+TERMINAL_PANEL* TERMINAL_FRAME::GetPanel( int aIndex )
 {
-#ifdef KICAD_SCRIPTING
-    if( m_pythonInitialized )
-        return true;
-
-    if( !SCRIPTING::IsWxAvailable() )
+    if( aIndex >= 0 && aIndex < (int) m_notebook->GetPageCount() )
     {
-        // Initialize Python Scripting
-        wxString stockPath = SCRIPTING::PyScriptingPath( SCRIPTING::STOCK );
-        wxString userPath = SCRIPTING::PyScriptingPath( SCRIPTING::USER );
+        return wxDynamicCast( m_notebook->GetPage( aIndex ), TERMINAL_PANEL );
+    }
+    return nullptr;
+}
 
-        if( !InitPythonScripting( stockPath.ToUTF8(), userPath.ToUTF8() ) )
+std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
+{
+    // Format: "run_terminal_command [tab_id] [mode] [command...]"
+    // Or legacy: "run_terminal_command [mode] [command...]" (implies active tab)
+
+    wxString cmd = aCmd;
+    if( cmd.StartsWith( "run_terminal_command " ) )
+        cmd = cmd.Mid( 21 );
+    cmd.Trim( false ).Trim();
+
+    if( cmd == "list" )
+    {
+        std::string result = "Open Terminals:\n";
+        for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
         {
-            m_outputCtrl->AppendText( "Error: Failed to initialize Python Scripting environment.\n" );
-            return false;
+            TERMINAL_PANEL* p = GetPanel( i );
+            if( p )
+            {
+                result += std::to_string( i ) + ": " + p->GetTitle().ToStdString() + "\n";
+            }
         }
+        return result;
     }
 
-    // We just return true if compiled with scripting.
-    // Real initialization might happen on first run if not already done.
-    m_pythonInitialized = true;
-    return true;
-#else
-    m_outputCtrl->AppendText( "Error: This build of Terminal does not support Python.\n" );
-    return false;
-#endif
-}
-
-void TERMINAL_FRAME::RunLocalPython( const wxString& aCmd )
-{
-#ifdef KICAD_SCRIPTING
-    if( !EnsurePython() )
-        return;
-
-    // Acquire GIL
-    PyLOCK lock;
-
-    // Capture stdout/stderr
-    // Assuming simple string execution for now
-
-    std::string code = aCmd.ToStdString();
-
-    // Redirect logic similar to cross-probing.cpp
-    std::string wrapper = "import sys\n"
-                          "from io import StringIO\n"
-                          "_term_capture = StringIO()\n"
-                          "_term_restore_out = sys.stdout\n"
-                          "_term_restore_err = sys.stderr\n"
-                          "sys.stdout = _term_capture\n"
-                          "sys.stderr = _term_capture\n"
-                          "try:\n"
-                          "    exec(\"\"\""
-                          + code
-                          + "\"\"\")\n"
-                            "except Exception as e:\n"
-                            "    import traceback\n"
-                            "    traceback.print_exc()\n"
-                            "finally:\n"
-                            "    sys.stdout = _term_restore_out\n"
-                            "    sys.stderr = _term_restore_err\n"
-                            "_term_result = _term_capture.getvalue()\n";
-
-    PyRun_SimpleString( wrapper.c_str() );
-
-    // Extract result
-    PyObject* main_module = PyImport_AddModule( "__main__" );
-    PyObject* main_dict = PyModule_GetDict( main_module );
-    PyObject* res_obj = PyDict_GetItemString( main_dict, "_term_result" );
-    if( res_obj )
+    if( cmd.StartsWith( "create " ) )
     {
-        const char* res_str = PyUnicode_AsUTF8( res_obj );
-        if( res_str )
-            m_outputCtrl->AppendText( wxString::FromUTF8( res_str ) );
-    }
-#endif
-}
+        // "create sys", "create pcb"
+        wxString                      modeStr = cmd.Mid( 7 ).Trim( false );
+        TERMINAL_PANEL::TERMINAL_MODE mode = TERMINAL_PANEL::MODE_SYSTEM;
+        if( modeStr == "pcb" )
+            mode = TERMINAL_PANEL::MODE_PCB;
+        if( modeStr == "sch" )
+            mode = TERMINAL_PANEL::MODE_SCH;
 
-void TERMINAL_FRAME::OnTextEnter( wxCommandEvent& aEvent )
-{
-    // Unused
+        AddTerminal( mode );
+        return "Terminal created. ID: " + std::to_string( m_notebook->GetPageCount() - 1 );
+    }
+
+    wxString firstArg = cmd.BeforeFirst( ' ' );
+    wxString rest = cmd.AfterFirst( ' ' );
+
+    // Check if first arg is a number (tab ID)
+    long tabId;
+    if( firstArg.ToLong( &tabId ) )
+    {
+        // Targeted command
+        TERMINAL_PANEL* panel = GetPanel( (int) tabId );
+        if( !panel )
+            return "Error: Invalid terminal ID " + firstArg.ToStdString();
+
+        // Now parse mode/cmd from rest
+        // "run_terminal_command 1 pcb print(x)"
+        // rest = "pcb print(x)"
+        wxString modeArg = rest.BeforeFirst( ' ' );
+        wxString actualCmd = rest.AfterFirst( ' ' );
+
+        // Mode switch check
+        if( modeArg == "sys" && panel->GetMode() != TERMINAL_PANEL::MODE_SYSTEM )
+            panel->SetMode( TERMINAL_PANEL::MODE_SYSTEM ); // Or check if compatible?
+        // Actually, panel handles mode switching via ExecuteCommand usually.
+        // But for explicit Agent commands, we might want to force it?
+        // Let's iterate: panel->ExecuteCommand handles the heavy lifting but requires "pcb ..." prefix for mode switch?
+        // If the command is "pcb ...", panel switches mode.
+        // So we just pass "modeArg actualCmd" to panel?
+        // i.e. we reconstruct command.
+
+        panel->ExecuteCommand( rest );                           // Just pass the rest!
+        return "Command sent to tab " + std::to_string( tabId ); // Wait, we need Output!
+        // TERMINAL_PANEL::ExecuteCommand returns void (UI upate).
+        // We implemented ProcessSystemCommand/RunLocalPython returning string in Panel.
+        // But ExecuteCommand determines logic.
+        // Refactoring needed: ExecuteCommand should probably return string?
+        // Or we duplicate the dispatch logic here for Agent?
+        // Agent wants output.
+        // Let's look at `panel->ExecuteCommand`. It adds output to CTRL.
+        // Capture is tricky if we just call ExecuteCommand.
+        // We should call the specific helper functions if we know what we are doing.
+
+        // Let's implement smart dispatch here.
+        if( modeArg == "sys" )
+            return panel->ProcessSystemCommand( actualCmd );
+        if( modeArg == "pcb" || modeArg == "sch" )
+            return panel->RunLocalPython( actualCmd ); // Pre-req: mode switch?
+
+        // If mode is just implied by current panel state?
+        // Agent Prompt says: "run_terminal_command [mode] [command]"
+        // If we supply ID: "run_terminal_command [id] [mode] [command]"
+
+        // For python modes, we need to ensure python is init.
+        // RunLocalPython does that.
+        // But auto-loading pcb/sch is done in ExecuteCommand "pcb" handler.
+        // If Agent says "pcb print...", we want that auto-load.
+        // We should move `EnsurePython` and mode switch logic to be accessible/return string.
+        // Or simplest: Just call `RunLocalPython`.
+        // If specific setup needed, Agent does it?
+        // Let's stick to: "sys" -> ProcessSystemCommand. "pcb/sch" -> RunLocalPython (with optional setup if needed).
+
+        return panel->RunLocalPython( rest ); // fallback
+    }
+
+    // No ID (Active Tab)
+    TERMINAL_PANEL* active = GetActivePanel();
+    if( !active )
+        return "Error: No active terminal.";
+
+    // "run_terminal_command sys ls"
+    // firstArg = "sys", rest = "ls"
+    if( firstArg == "sys" )
+        return active->ProcessSystemCommand( rest );
+    if( firstArg == "pcb" || firstArg == "sch" )
+    {
+        // Handle auto-switch/init if we want to be nice, or just run python.
+        // If we execute "pcb", the panel outputs "Entering PCB Mode".
+        // But that returns void.
+        // We want the OUTPUT of the command "print(...)".
+        // If the command is JUST "pcb file", we return nothing useful?
+        // Agent usage: "run_terminal_command pcb print(...)"
+        // We should run python code `print(...)`.
+        // If we need to init PCB, maybe we should have `RunLocalPython` handle it?
+        // No, `RunLocalPython` executes raw code.
+        return active->RunLocalPython( rest );
+    }
+
+    return "Error: Unknown mode/command format.";
 }
 
 void TERMINAL_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 {
-    // Handle incoming mail if needed (e.g. from PCB editor if we still want that)
-    // For now, ignore since we are running local python.
+    if( aEvent.Command() == MAIL_AGENT_REQUEST )
+    {
+        std::string payload = aEvent.GetPayload();
+        std::string result = ExecuteCommandForAgent( payload );
+        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, result );
+    }
 }

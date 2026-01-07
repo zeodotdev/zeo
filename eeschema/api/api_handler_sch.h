@@ -63,6 +63,12 @@ private:
     HANDLER_RESULT<commands::GetOpenDocumentsResponse>
     handleGetOpenDocuments( const HANDLER_CONTEXT<commands::GetOpenDocuments>& aCtx );
 
+    HANDLER_RESULT<commands::GetItemsResponse>
+    handleGetItems( const HANDLER_CONTEXT<commands::GetItems>& aCtx );
+
+    HANDLER_RESULT<commands::GetItemsResponse>
+    handleGetItemsById( const HANDLER_CONTEXT<commands::GetItemsById>& aCtx );
+
     SCH_EDIT_FRAME* m_frame;
 };
 

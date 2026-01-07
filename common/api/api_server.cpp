@@ -168,6 +168,7 @@ void KICAD_API_SERVER::RegisterHandler( API_HANDLER* aHandler )
 {
     wxCHECK( aHandler, /* void */ );
     m_handlers.insert( aHandler );
+    wxLogTrace( traceApi, "API_SERVER[%p]: Registered handler %p, total handlers: %zu", this, aHandler, m_handlers.size() );
 }
 
 
@@ -241,6 +242,8 @@ void KICAD_API_SERVER::handleApiEvent( wxCommandEvent& aEvent )
     }
 
     API_RESULT result;
+
+    wxLogTrace( traceApi, "API_SERVER[%p]: Processing request, checking %zu handlers", this, m_handlers.size() );
 
     for( API_HANDLER* handler : m_handlers )
     {

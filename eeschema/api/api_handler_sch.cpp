@@ -21,9 +21,23 @@
 #include <api/api_handler_sch.h>
 #include <api/api_sch_utils.h>
 #include <api/api_utils.h>
+#include <api/api_enums.h>
 #include <magic_enum.hpp>
 #include <sch_commit.h>
 #include <sch_edit_frame.h>
+#include <sch_symbol.h>
+#include <sch_sheet.h>
+#include <sch_sheet_pin.h>
+#include <sch_label.h>
+#include <sch_line.h>
+#include <sch_junction.h>
+#include <sch_no_connect.h>
+#include <sch_bus_entry.h>
+#include <sch_text.h>
+#include <sch_textbox.h>
+#include <sch_shape.h>
+#include <sch_bitmap.h>
+#include <sch_table.h>
 #include <wx/filename.h>
 
 #include <api/common/types/base_types.pb.h>
@@ -35,10 +49,12 @@ using kiapi::common::types::ItemRequestStatus;
 
 
 API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
-        API_HANDLER_EDITOR(),
+        API_HANDLER_EDITOR( aFrame ),
         m_frame( aFrame )
 {
     registerHandler<GetOpenDocuments, GetOpenDocumentsResponse>( &API_HANDLER_SCH::handleGetOpenDocuments );
+    registerHandler<GetItems, GetItemsResponse>( &API_HANDLER_SCH::handleGetItems );
+    registerHandler<GetItemsById, GetItemsResponse>( &API_HANDLER_SCH::handleGetItemsById );
 }
 
 
@@ -80,9 +96,15 @@ API_HANDLER_SCH::handleGetOpenDocuments( const HANDLER_CONTEXT<GetOpenDocuments>
 
     doc.set_type( DocumentType::DOCTYPE_SCHEMATIC );
     // Use sheet_path for schematic documents, not board_filename
-    doc.mutable_sheet_path()->set_path_human_readable( "/" );
+    // Must set the path field (with at least root sheet) for oneof to be recognized
+    types::SheetPath* sheetPath = doc.mutable_sheet_path();
+    sheetPath->set_path_human_readable( "/" );
 
-    response.mutable_documents()->Add( std::move( doc ) );
+    // Add a placeholder KIID for the root sheet path
+    // This ensures the sheet_path oneof field is properly serialized
+    sheetPath->add_path()->set_value( m_frame->GetCurrentSheet().Last()->m_Uuid.AsStdString() );
+
+    *response.mutable_documents()->Add() = doc;
     return response;
 }
 
@@ -334,4 +356,253 @@ std::optional<EDA_ITEM*> API_HANDLER_SCH::getItemFromDocument( const DocumentSpe
     }
 
     return std::nullopt;
+}
+
+
+HANDLER_RESULT<GetItemsResponse> API_HANDLER_SCH::handleGetItems( const HANDLER_CONTEXT<GetItems>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateItemHeaderDocument( aCtx.Request.header() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    GetItemsResponse response;
+
+    SCH_SCREEN* screen = m_frame->GetScreen();
+
+    if( !screen )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "no screen available" );
+        return tl::unexpected( e );
+    }
+
+    std::vector<SCH_ITEM*> items;
+    std::set<KICAD_T> typesRequested, typesInserted;
+    bool handledAnything = false;
+
+    for( int typeRaw : aCtx.Request.types() )
+    {
+        auto typeMessage = static_cast<common::types::KiCadObjectType>( typeRaw );
+        KICAD_T type = FromProtoEnum<KICAD_T>( typeMessage );
+
+        if( type == TYPE_NOT_INIT )
+            continue;
+
+        typesRequested.emplace( type );
+
+        if( typesInserted.count( type ) )
+            continue;
+
+        switch( type )
+        {
+        case SCH_SYMBOL_T:
+        {
+            handledAnything = true;
+
+            for( SCH_ITEM* item : screen->Items() )
+            {
+                if( item->Type() == SCH_SYMBOL_T )
+                    items.emplace_back( item );
+            }
+
+            typesInserted.insert( SCH_SYMBOL_T );
+            break;
+        }
+
+        case SCH_PIN_T:
+        {
+            // Pins are nested inside symbols
+            handledAnything = true;
+
+            for( SCH_ITEM* item : screen->Items() )
+            {
+                if( SCH_SYMBOL* symbol = dynamic_cast<SCH_SYMBOL*>( item ) )
+                {
+                    for( SCH_PIN* pin : symbol->GetPins() )
+                        items.emplace_back( pin );
+                }
+            }
+
+            typesInserted.insert( SCH_PIN_T );
+            break;
+        }
+
+        case SCH_FIELD_T:
+        {
+            // Fields are nested inside symbols
+            handledAnything = true;
+
+            for( SCH_ITEM* item : screen->Items() )
+            {
+                if( SCH_SYMBOL* symbol = dynamic_cast<SCH_SYMBOL*>( item ) )
+                {
+                    for( SCH_FIELD& field : symbol->GetFields() )
+                        items.emplace_back( &field );
+                }
+            }
+
+            typesInserted.insert( SCH_FIELD_T );
+            break;
+        }
+
+        case SCH_SHEET_PIN_T:
+        {
+            // Sheet pins are nested inside sheets
+            handledAnything = true;
+
+            for( SCH_ITEM* item : screen->Items() )
+            {
+                if( SCH_SHEET* sheet = dynamic_cast<SCH_SHEET*>( item ) )
+                {
+                    for( SCH_SHEET_PIN* pin : sheet->GetPins() )
+                        items.emplace_back( pin );
+                }
+            }
+
+            typesInserted.insert( SCH_SHEET_PIN_T );
+            break;
+        }
+
+        // Handle all top-level schematic item types
+        case SCH_JUNCTION_T:
+        case SCH_NO_CONNECT_T:
+        case SCH_BUS_WIRE_ENTRY_T:
+        case SCH_BUS_BUS_ENTRY_T:
+        case SCH_LINE_T:
+        case SCH_SHAPE_T:
+        case SCH_BITMAP_T:
+        case SCH_TEXTBOX_T:
+        case SCH_TEXT_T:
+        case SCH_TABLE_T:
+        case SCH_TABLECELL_T:
+        case SCH_LABEL_T:
+        case SCH_GLOBAL_LABEL_T:
+        case SCH_HIER_LABEL_T:
+        case SCH_DIRECTIVE_LABEL_T:
+        case SCH_SHEET_T:
+        {
+            handledAnything = true;
+
+            for( SCH_ITEM* item : screen->Items() )
+            {
+                if( item->Type() == type )
+                    items.emplace_back( item );
+            }
+
+            typesInserted.insert( type );
+            break;
+        }
+
+        default:
+            break;
+        }
+    }
+
+    if( !handledAnything )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "none of the requested types are valid for a Schematic object" );
+        return tl::unexpected( e );
+    }
+
+    for( const SCH_ITEM* item : items )
+    {
+        if( !typesRequested.count( item->Type() ) )
+            continue;
+
+        google::protobuf::Any itemBuf;
+        item->Serialize( itemBuf );
+        response.mutable_items()->Add( std::move( itemBuf ) );
+    }
+
+    response.set_status( ItemRequestStatus::IRS_OK );
+    return response;
+}
+
+
+HANDLER_RESULT<GetItemsResponse> API_HANDLER_SCH::handleGetItemsById(
+        const HANDLER_CONTEXT<GetItemsById>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateItemHeaderDocument( aCtx.Request.header() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    GetItemsResponse response;
+
+    SCH_SCREEN* screen = m_frame->GetScreen();
+
+    if( !screen )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "no screen available" );
+        return tl::unexpected( e );
+    }
+
+    // Build map of all items including nested ones
+    std::map<KIID, SCH_ITEM*> itemMap;
+
+    for( SCH_ITEM* item : screen->Items() )
+    {
+        itemMap[item->m_Uuid] = item;
+
+        // Add nested items from symbols
+        if( SCH_SYMBOL* symbol = dynamic_cast<SCH_SYMBOL*>( item ) )
+        {
+            for( SCH_PIN* pin : symbol->GetPins() )
+                itemMap[pin->m_Uuid] = pin;
+
+            for( SCH_FIELD& field : symbol->GetFields() )
+                itemMap[field.m_Uuid] = &field;
+        }
+
+        // Add nested items from sheets
+        if( SCH_SHEET* sheet = dynamic_cast<SCH_SHEET*>( item ) )
+        {
+            for( SCH_SHEET_PIN* pin : sheet->GetPins() )
+                itemMap[pin->m_Uuid] = pin;
+        }
+    }
+
+    std::vector<SCH_ITEM*> items;
+
+    for( const kiapi::common::types::KIID& id : aCtx.Request.items() )
+    {
+        KIID kiid( id.value() );
+
+        if( itemMap.count( kiid ) )
+            items.emplace_back( itemMap.at( kiid ) );
+    }
+
+    if( items.empty() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "none of the requested IDs were found or valid" );
+        return tl::unexpected( e );
+    }
+
+    for( const SCH_ITEM* item : items )
+    {
+        google::protobuf::Any itemBuf;
+        item->Serialize( itemBuf );
+        response.mutable_items()->Add( std::move( itemBuf ) );
+    }
+
+    response.set_status( ItemRequestStatus::IRS_OK );
+    return response;
 }

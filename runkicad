@@ -1,0 +1,104 @@
+#!/bin/bash
+# Run KiCad from terminal for debugging
+# Usage: ./runkicad [schematic.kicad_sch | board.kicad_pcb | project.kicad_pro]
+
+KICAD_APP="/Users/gmp/workspaces/KiCAD_agentic/KiCAD_packaging/kicad-mac-builder/build/kicad-dest/KiCad.app"
+KICAD_BIN="$KICAD_APP/Contents/MacOS/kicad"
+
+# Clean up stale API files
+cleanup_api() {
+    echo "Cleaning up stale API files..."
+    rm -f /tmp/kicad/api.lock
+    rm -f /tmp/kicad/api.sock
+}
+
+# Ensure API is enabled in config
+ensure_api_enabled() {
+    CONFIG_FILE="$HOME/Library/Preferences/kicad/9.99/kicad_common.json"
+    if [ -f "$CONFIG_FILE" ]; then
+        if grep -q '"enable_server": false' "$CONFIG_FILE"; then
+            echo "Enabling API server in config..."
+            sed -i '' 's/"enable_server": false/"enable_server": true/' "$CONFIG_FILE"
+        fi
+    fi
+}
+
+# Check API status
+check_api() {
+    echo "API Status:"
+    if [ -S /tmp/kicad/api.sock ]; then
+        echo "  Socket: /tmp/kicad/api.sock exists"
+        ls -la /tmp/kicad/api.sock
+    else
+        echo "  Socket: NOT FOUND"
+    fi
+    if [ -f /tmp/kicad/api.lock ]; then
+        echo "  Lock: /tmp/kicad/api.lock exists"
+    fi
+}
+
+# Kill existing KiCad processes
+kill_kicad() {
+    echo "Killing existing KiCad processes..."
+    pkill -9 -f "KiCad.app/Contents/MacOS/kicad" 2>/dev/null
+    sleep 1
+}
+
+case "${1:-}" in
+    --kill)
+        kill_kicad
+        cleanup_api
+        echo "Done."
+        exit 0
+        ;;
+    --status)
+        check_api
+        echo ""
+        echo "KiCad processes:"
+        pgrep -l -f kicad || echo "  None running"
+        exit 0
+        ;;
+    --restart)
+        kill_kicad
+        cleanup_api
+        ensure_api_enabled
+        echo "Starting KiCad..."
+        "$KICAD_BIN" &
+        sleep 3
+        check_api
+        exit 0
+        ;;
+    --help|-h)
+        echo "Usage: $0 [OPTIONS] [FILE]"
+        echo ""
+        echo "Options:"
+        echo "  --kill      Kill KiCad and clean up API files"
+        echo "  --status    Show API and process status"
+        echo "  --restart   Kill, clean up, and restart KiCad"
+        echo "  --help      Show this help"
+        echo ""
+        echo "FILE can be:"
+        echo "  *.kicad_sch  - Open schematic in Eeschema"
+        echo "  *.kicad_pcb  - Open board in Pcbnew"
+        echo "  *.kicad_pro  - Open project"
+        echo ""
+        echo "Examples:"
+        echo "  $0 --restart"
+        echo "  $0 myboard.kicad_pcb"
+        echo "  $0 --status"
+        exit 0
+        ;;
+esac
+
+ensure_api_enabled
+
+if [ -n "${1:-}" ]; then
+    echo "Opening: $1"
+    open -a "$KICAD_APP" "$1"
+else
+    echo "Starting KiCad..."
+    "$KICAD_BIN" &
+fi
+
+sleep 2
+check_api

@@ -23,6 +23,7 @@ set( TERMINAL_SRCS
     terminal_frame.cpp
     terminal_panel.cpp
     terminal_panel_agent.cpp
+    python_exec_thread.cpp
 )
 
 # Resources for the macOS bundle

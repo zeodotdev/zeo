@@ -1,5 +1,6 @@
 #include "terminal_panel.h"
 #include "terminal_frame.h"
+#include "python_exec_thread.h"
 #include <wx/sizer.h>
 #include <wx/settings.h>
 #include <wx/log.h>
@@ -25,7 +26,9 @@ TERMINAL_PANEL::TERMINAL_PANEL( wxWindow* aParent, TERMINAL_MODE aMode ) :
         m_shellStdin( nullptr ),
         m_shellStdout( nullptr ),
         m_shellStderr( nullptr ),
-        m_pid( -1 )
+        m_pid( -1 ),
+        m_pythonThread( nullptr ),
+        m_pythonRunning( false )
 {
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
@@ -57,10 +60,23 @@ TERMINAL_PANEL::TERMINAL_PANEL( wxWindow* aParent, TERMINAL_MODE aMode ) :
     // Bind Events
     m_outputCtrl->Bind( wxEVT_KEY_DOWN, &TERMINAL_PANEL::OnKeyDown, this );
     m_outputCtrl->Bind( wxEVT_CHAR, &TERMINAL_PANEL::OnChar, this );
+
+    // Bind Python execution events
+    Bind( wxEVT_PYTHON_OUTPUT, &TERMINAL_PANEL::OnPythonOutput, this );
+    Bind( wxEVT_PYTHON_COMPLETE, &TERMINAL_PANEL::OnPythonComplete, this );
 }
 
 TERMINAL_PANEL::~TERMINAL_PANEL()
 {
+    // Stop any running Python thread
+    if( m_pythonThread )
+    {
+        m_pythonThread->RequestStop();
+        m_pythonThread->Wait();
+        delete m_pythonThread;
+        m_pythonThread = nullptr;
+    }
+
     CleanupShell();
 }
 
@@ -417,45 +433,89 @@ std::string TERMINAL_PANEL::RunLocalPython( const wxString& aCmd )
     if( !EnsurePython() )
         return "Error: Python not initialized";
 
-    PyLOCK      lock;
-    std::string code = aCmd.ToStdString();
+    // Create and start the Python execution thread
+    // The background thread will handle GIL acquisition/release
+    m_pythonRunning.store( true );
+    m_lastPythonResult.clear();
+    m_pythonThread = new PYTHON_EXEC_THREAD( this, aCmd.ToStdString() );
 
-    std::string wrapper = "import sys\n"
-                          "from io import StringIO\n"
-                          "_term_capture = StringIO()\n"
-                          "_term_restore_out = sys.stdout\n"
-                          "_term_restore_err = sys.stderr\n"
-                          "sys.stdout = _term_capture\n"
-                          "sys.stderr = _term_capture\n"
-                          "try:\n"
-                          "    exec(\"\"\""
-                          + code
-                          + "\"\"\")\n"
-                            "except Exception as e:\n"
-                            "    import traceback\n"
-                            "    traceback.print_exc()\n"
-                            "finally:\n"
-                            "    sys.stdout = _term_restore_out\n"
-                            "    sys.stderr = _term_restore_err\n"
-                            "_term_result = _term_capture.getvalue()\n";
-
-    PyRun_SimpleString( wrapper.c_str() );
-
-    std::string resultStr;
-    PyObject*   main_module = PyImport_AddModule( "__main__" );
-    PyObject*   main_dict = PyModule_GetDict( main_module );
-    PyObject*   res_obj = PyDict_GetItemString( main_dict, "_term_result" );
-    if( res_obj )
+    if( m_pythonThread->Run() != wxTHREAD_NO_ERROR )
     {
-        const char* res_str = PyUnicode_AsUTF8( res_obj );
-        if( res_str )
+        delete m_pythonThread;
+        m_pythonThread = nullptr;
+        m_pythonRunning.store( false );
+        return "Error: Failed to start Python execution thread";
+    }
+
+    // Poll for completion while processing wx events
+    // The main thread doesn't need the GIL - the background thread manages it
+    wxLongLong startTime = wxGetLocalTimeMillis();
+    long       timeoutMs = 60000; // 60 seconds timeout for Python execution
+
+    while( m_pythonRunning.load() )
+    {
+        // Process wx events - this allows API_REQUEST_EVENTs to be handled
+        wxYield();
+        wxMilliSleep( 10 );
+
+        // Check for timeout
+        if( wxGetLocalTimeMillis() - startTime > timeoutMs )
         {
-            resultStr = res_str;
-            m_outputCtrl->AppendText( wxString::FromUTF8( res_str ) );
+            if( m_pythonThread )
+            {
+                m_pythonThread->RequestStop();
+                // Don't wait here - just mark as timed out
+            }
+            m_pythonRunning.store( false );
+
+            m_outputCtrl->AppendText( "[Timeout waiting for Python execution]\n" );
+
+            // Clean up thread
+            if( m_pythonThread )
+            {
+                m_pythonThread->Wait();
+                delete m_pythonThread;
+                m_pythonThread = nullptr;
+            }
+
+            return "Error: Python execution timed out";
         }
     }
-    return resultStr;
+
+    // Clean up thread
+    if( m_pythonThread )
+    {
+        m_pythonThread->Wait();
+        delete m_pythonThread;
+        m_pythonThread = nullptr;
+    }
+
+    return m_lastPythonResult;
 #else
     return "Error: Scripting not supported";
 #endif
+}
+
+
+void TERMINAL_PANEL::OnPythonOutput( wxThreadEvent& aEvent )
+{
+    wxString output = aEvent.GetString();
+    if( !output.IsEmpty() )
+    {
+        m_outputCtrl->AppendText( output );
+    }
+}
+
+
+void TERMINAL_PANEL::OnPythonComplete( wxThreadEvent& aEvent )
+{
+    wxString result = aEvent.GetString();
+
+    if( !result.IsEmpty() )
+    {
+        m_outputCtrl->AppendText( result );
+    }
+
+    m_lastPythonResult = result.ToStdString();
+    m_pythonRunning.store( false );
 }

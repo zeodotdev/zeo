@@ -3,8 +3,13 @@
 
 #include <wx/panel.h>
 #include <wx/textctrl.h>
+#include <wx/thread.h>
 #include <vector>
 #include <string>
+#include <atomic>
+
+// Forward declaration
+class PYTHON_EXEC_THREAD;
 
 class TERMINAL_PANEL : public wxPanel
 {
@@ -59,6 +64,14 @@ protected:
 
     virtual wxString GetPrompt() const;
     bool             EnsurePython();
+
+    // Python thread execution support
+    PYTHON_EXEC_THREAD* m_pythonThread;
+    std::atomic<bool>   m_pythonRunning;
+    std::string         m_lastPythonResult;
+
+    void OnPythonOutput( wxThreadEvent& aEvent );
+    void OnPythonComplete( wxThreadEvent& aEvent );
 };
 
 #endif // TERMINAL_PANEL_H

@@ -33,6 +33,8 @@
 #include <sch_painter.h>
 #include <sch_junction.h>
 #include <sch_edit_frame.h>
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
 #include <sch_connection.h>
 #include <schematic.h>
 #include <settings/color_settings.h>
@@ -68,6 +70,39 @@ void SCH_JUNCTION::swapData( SCH_ITEM* aItem )
     std::swap( m_pos, item->m_pos );
     std::swap( m_diameter, item->m_diameter );
     std::swap( m_color, item->m_color );
+}
+
+
+void SCH_JUNCTION::Serialize( google::protobuf::Any& aContainer ) const
+{
+    kiapi::schematic::types::Junction junction;
+
+    junction.mutable_id()->set_value( m_Uuid.AsStdString() );
+    kiapi::common::PackVector2( *junction.mutable_position(), m_pos );
+    junction.set_diameter( m_diameter );
+
+    // Color is stored but not serialized for now (requires conversion logic)
+    // TODO: Add color serialization when needed
+
+    aContainer.PackFrom( junction );
+}
+
+
+bool SCH_JUNCTION::Deserialize( const google::protobuf::Any& aContainer )
+{
+    kiapi::schematic::types::Junction junction;
+
+    if( !aContainer.UnpackTo( &junction ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( junction.id().value() );
+    m_pos = kiapi::common::UnpackVector2( junction.position() );
+    m_diameter = junction.diameter();
+
+    // Color deserialization - use default for now
+    m_color = COLOR4D::UNSPECIFIED;
+
+    return true;
 }
 
 

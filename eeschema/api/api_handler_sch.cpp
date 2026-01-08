@@ -39,6 +39,9 @@
 #include <sch_bitmap.h>
 #include <sch_table.h>
 #include <wx/filename.h>
+#include <tool/tool_manager.h>
+#include <tool/actions.h>
+#include <tools/sch_selection_tool.h>
 
 #include <api/common/types/base_types.pb.h>
 
@@ -55,6 +58,12 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
     registerHandler<GetOpenDocuments, GetOpenDocumentsResponse>( &API_HANDLER_SCH::handleGetOpenDocuments );
     registerHandler<GetItems, GetItemsResponse>( &API_HANDLER_SCH::handleGetItems );
     registerHandler<GetItemsById, GetItemsResponse>( &API_HANDLER_SCH::handleGetItemsById );
+
+    // Selection handlers
+    registerHandler<GetSelection, SelectionResponse>( &API_HANDLER_SCH::handleGetSelection );
+    registerHandler<AddToSelection, SelectionResponse>( &API_HANDLER_SCH::handleAddToSelection );
+    registerHandler<RemoveFromSelection, SelectionResponse>( &API_HANDLER_SCH::handleRemoveFromSelection );
+    registerHandler<ClearSelection, Empty>( &API_HANDLER_SCH::handleClearSelection );
 }
 
 
@@ -111,30 +120,33 @@ API_HANDLER_SCH::handleGetOpenDocuments( const HANDLER_CONTEXT<GetOpenDocuments>
 
 HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> API_HANDLER_SCH::createItemForType( KICAD_T aType, EDA_ITEM* aContainer )
 {
-    if( !aContainer )
+    // Some item types require a container - validate those specifically
+    // Top-level items (wires, junctions, labels, etc.) don't need a container
+    if( aType == SCH_PIN_T )
     {
-        ApiResponseStatus e;
-        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-        e.set_error_message( "Tried to create an item in a null container" );
-        return tl::unexpected( e );
+        if( !aContainer || !dynamic_cast<SCH_SYMBOL*>( aContainer ) )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( aContainer
+                ? fmt::format( "Tried to create a pin in {}, which is not a symbol",
+                               aContainer->GetFriendlyName().ToStdString() )
+                : "Tried to create a pin without a symbol container" );
+            return tl::unexpected( e );
+        }
     }
-
-    if( aType == SCH_PIN_T && !dynamic_cast<SCH_SYMBOL*>( aContainer ) )
+    else if( aType == SCH_SHEET_PIN_T )
     {
-        ApiResponseStatus e;
-        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-        e.set_error_message( fmt::format( "Tried to create a pin in {}, which is not a symbol",
-                                          aContainer->GetFriendlyName().ToStdString() ) );
-        return tl::unexpected( e );
-    }
-    else if( aType == SCH_SYMBOL_T && !dynamic_cast<SCHEMATIC*>( aContainer ) )
-    {
-        ApiResponseStatus e;
-        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-        e.set_error_message( fmt::format( "Tried to create a symbol in {}, which is not a "
-                                          "schematic",
-                                          aContainer->GetFriendlyName().ToStdString() ) );
-        return tl::unexpected( e );
+        if( !aContainer || !dynamic_cast<SCH_SHEET*>( aContainer ) )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( aContainer
+                ? fmt::format( "Tried to create a sheet pin in {}, which is not a sheet",
+                               aContainer->GetFriendlyName().ToStdString() )
+                : "Tried to create a sheet pin without a sheet container" );
+            return tl::unexpected( e );
+        }
     }
 
     std::unique_ptr<EDA_ITEM> created = CreateItemForType( aType, aContainer );
@@ -604,5 +616,180 @@ HANDLER_RESULT<GetItemsResponse> API_HANDLER_SCH::handleGetItemsById(
     }
 
     response.set_status( ItemRequestStatus::IRS_OK );
+    return response;
+}
+
+
+std::optional<SCH_ITEM*> API_HANDLER_SCH::getItemById( const KIID& aId )
+{
+    SCH_SCREEN* screen = m_frame->GetScreen();
+
+    if( !screen )
+        return std::nullopt;
+
+    // Search top-level items
+    for( SCH_ITEM* item : screen->Items() )
+    {
+        if( item->m_Uuid == aId )
+            return item;
+
+        // Search nested items in symbols
+        if( SCH_SYMBOL* symbol = dynamic_cast<SCH_SYMBOL*>( item ) )
+        {
+            for( SCH_PIN* pin : symbol->GetPins() )
+            {
+                if( pin->m_Uuid == aId )
+                    return pin;
+            }
+
+            for( SCH_FIELD& field : symbol->GetFields() )
+            {
+                if( field.m_Uuid == aId )
+                    return &field;
+            }
+        }
+
+        // Search nested items in sheets
+        if( SCH_SHEET* sheet = dynamic_cast<SCH_SHEET*>( item ) )
+        {
+            for( SCH_SHEET_PIN* pin : sheet->GetPins() )
+            {
+                if( pin->m_Uuid == aId )
+                    return pin;
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
+
+HANDLER_RESULT<SelectionResponse> API_HANDLER_SCH::handleGetSelection(
+        const HANDLER_CONTEXT<GetSelection>& aCtx )
+{
+    if( !validateItemHeaderDocument( aCtx.Request.header() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    std::set<KICAD_T> filter;
+
+    for( int typeRaw : aCtx.Request.types() )
+    {
+        auto typeMessage = static_cast<types::KiCadObjectType>( typeRaw );
+        KICAD_T type = FromProtoEnum<KICAD_T>( typeMessage );
+
+        if( type == TYPE_NOT_INIT )
+            continue;
+
+        filter.insert( type );
+    }
+
+    TOOL_MANAGER* mgr = m_frame->GetToolManager();
+    SCH_SELECTION_TOOL* selectionTool = mgr->GetTool<SCH_SELECTION_TOOL>();
+
+    SelectionResponse response;
+
+    for( EDA_ITEM* item : selectionTool->GetSelection() )
+    {
+        if( filter.empty() || filter.contains( item->Type() ) )
+            item->Serialize( *response.add_items() );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleClearSelection(
+        const HANDLER_CONTEXT<ClearSelection>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateItemHeaderDocument( aCtx.Request.header() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    TOOL_MANAGER* mgr = m_frame->GetToolManager();
+    mgr->RunAction( ACTIONS::selectionClear );
+    m_frame->Refresh();
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<SelectionResponse> API_HANDLER_SCH::handleAddToSelection(
+        const HANDLER_CONTEXT<AddToSelection>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateItemHeaderDocument( aCtx.Request.header() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    TOOL_MANAGER* mgr = m_frame->GetToolManager();
+    SCH_SELECTION_TOOL* selectionTool = mgr->GetTool<SCH_SELECTION_TOOL>();
+
+    std::vector<EDA_ITEM*> toAdd;
+
+    for( const types::KIID& id : aCtx.Request.items() )
+    {
+        if( std::optional<SCH_ITEM*> item = getItemById( KIID( id.value() ) ) )
+            toAdd.emplace_back( *item );
+    }
+
+    selectionTool->AddItemsToSel( &toAdd );
+    m_frame->Refresh();
+
+    SelectionResponse response;
+
+    for( EDA_ITEM* item : selectionTool->GetSelection() )
+        item->Serialize( *response.add_items() );
+
+    return response;
+}
+
+
+HANDLER_RESULT<SelectionResponse> API_HANDLER_SCH::handleRemoveFromSelection(
+        const HANDLER_CONTEXT<RemoveFromSelection>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateItemHeaderDocument( aCtx.Request.header() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    TOOL_MANAGER* mgr = m_frame->GetToolManager();
+    SCH_SELECTION_TOOL* selectionTool = mgr->GetTool<SCH_SELECTION_TOOL>();
+
+    std::vector<EDA_ITEM*> toRemove;
+
+    for( const types::KIID& id : aCtx.Request.items() )
+    {
+        if( std::optional<SCH_ITEM*> item = getItemById( KIID( id.value() ) ) )
+            toRemove.emplace_back( *item );
+    }
+
+    selectionTool->RemoveItemsFromSel( &toRemove );
+    m_frame->Refresh();
+
+    SelectionResponse response;
+
+    for( EDA_ITEM* item : selectionTool->GetSelection() )
+        item->Serialize( *response.add_items() );
+
     return response;
 }

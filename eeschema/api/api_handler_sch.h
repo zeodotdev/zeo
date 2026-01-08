@@ -21,12 +21,15 @@
 #ifndef KICAD_API_HANDLER_SCH_H
 #define KICAD_API_HANDLER_SCH_H
 
+#include <google/protobuf/empty.pb.h>
+
 #include <api/api_handler_editor.h>
 #include <api/common/commands/editor_commands.pb.h>
 #include <kiid.h>
 
 using namespace kiapi;
 using namespace kiapi::common;
+using google::protobuf::Empty;
 
 class SCH_EDIT_FRAME;
 class SCH_ITEM;
@@ -68,6 +71,22 @@ private:
 
     HANDLER_RESULT<commands::GetItemsResponse>
     handleGetItemsById( const HANDLER_CONTEXT<commands::GetItemsById>& aCtx );
+
+    // Selection handlers
+    HANDLER_RESULT<commands::SelectionResponse>
+    handleGetSelection( const HANDLER_CONTEXT<commands::GetSelection>& aCtx );
+
+    HANDLER_RESULT<commands::SelectionResponse>
+    handleAddToSelection( const HANDLER_CONTEXT<commands::AddToSelection>& aCtx );
+
+    HANDLER_RESULT<commands::SelectionResponse>
+    handleRemoveFromSelection( const HANDLER_CONTEXT<commands::RemoveFromSelection>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleClearSelection( const HANDLER_CONTEXT<commands::ClearSelection>& aCtx );
+
+    // Helper to get item by KIID (searches all items including nested)
+    std::optional<SCH_ITEM*> getItemById( const KIID& aId );
 
     SCH_EDIT_FRAME* m_frame;
 };

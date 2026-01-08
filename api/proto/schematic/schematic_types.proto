@@ -41,6 +41,22 @@ message Line
   SchematicLayer layer = 4;
 }
 
+/// Represents a junction (connection point) in the schematic
+message Junction
+{
+  kiapi.common.types.KIID    id       = 1;
+  kiapi.common.types.Vector2 position = 2;
+  int32                      diameter = 3;  // In nanometers, 0 for default
+  uint32                     color    = 4;  // RGBA color, 0 for default
+}
+
+/// Represents a no-connect marker in the schematic
+message NoConnect
+{
+  kiapi.common.types.KIID    id       = 1;
+  kiapi.common.types.Vector2 position = 2;
+}
+
 message Text
 {
   kiapi.common.types.Text text = 1;

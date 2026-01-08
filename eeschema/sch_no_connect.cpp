@@ -34,6 +34,8 @@
 #include <geometry/geometry_utils.h>
 #include <sch_no_connect.h>
 #include <settings/color_settings.h>
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
 #include <default_values.h>    // For some default values
 #include <core/mirror.h>
 #include <trigo.h>
@@ -64,6 +66,31 @@ void SCH_NO_CONNECT::swapData( SCH_ITEM* aItem )
     SCH_NO_CONNECT* item = (SCH_NO_CONNECT*)aItem;
     std::swap( m_pos, item->m_pos );
     std::swap( m_size, item->m_size );
+}
+
+
+void SCH_NO_CONNECT::Serialize( google::protobuf::Any& aContainer ) const
+{
+    kiapi::schematic::types::NoConnect noConnect;
+
+    noConnect.mutable_id()->set_value( m_Uuid.AsStdString() );
+    kiapi::common::PackVector2( *noConnect.mutable_position(), m_pos );
+
+    aContainer.PackFrom( noConnect );
+}
+
+
+bool SCH_NO_CONNECT::Deserialize( const google::protobuf::Any& aContainer )
+{
+    kiapi::schematic::types::NoConnect noConnect;
+
+    if( !aContainer.UnpackTo( &noConnect ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( noConnect.id().value() );
+    m_pos = kiapi::common::UnpackVector2( noConnect.position() );
+
+    return true;
 }
 
 

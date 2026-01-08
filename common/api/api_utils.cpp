@@ -33,6 +33,7 @@ namespace kiapi::common
 KICOMMON_API std::optional<KICAD_T> TypeNameFromAny( const google::protobuf::Any& aMessage )
 {
     static const std::map<std::string, KICAD_T> s_types = {
+        // PCB (board) types
         { "type.googleapis.com/kiapi.board.types.Track", PCB_TRACE_T },
         { "type.googleapis.com/kiapi.board.types.Arc", PCB_ARC_T },
         { "type.googleapis.com/kiapi.board.types.Via", PCB_VIA_T },
@@ -47,6 +48,18 @@ KICOMMON_API std::optional<KICAD_T> TypeNameFromAny( const google::protobuf::Any
         { "type.googleapis.com/kiapi.board.types.Group", PCB_GROUP_T },
         { "type.googleapis.com/kiapi.board.types.Field", PCB_FIELD_T },
         { "type.googleapis.com/kiapi.board.types.FootprintInstance", PCB_FOOTPRINT_T },
+
+        // Schematic types
+        { "type.googleapis.com/kiapi.schematic.types.Line", SCH_LINE_T },
+        { "type.googleapis.com/kiapi.schematic.types.Junction", SCH_JUNCTION_T },
+        { "type.googleapis.com/kiapi.schematic.types.NoConnect", SCH_NO_CONNECT_T },
+        { "type.googleapis.com/kiapi.schematic.types.LocalLabel", SCH_LABEL_T },
+        { "type.googleapis.com/kiapi.schematic.types.GlobalLabel", SCH_GLOBAL_LABEL_T },
+        { "type.googleapis.com/kiapi.schematic.types.HierarchicalLabel", SCH_HIER_LABEL_T },
+        { "type.googleapis.com/kiapi.schematic.types.DirectiveLabel", SCH_DIRECTIVE_LABEL_T },
+        { "type.googleapis.com/kiapi.schematic.types.Pin", SCH_PIN_T },
+        { "type.googleapis.com/kiapi.schematic.types.Field", SCH_FIELD_T },
+        { "type.googleapis.com/kiapi.schematic.types.Symbol", SCH_SYMBOL_T },
     };
 
     auto it = s_types.find( aMessage.type_url() );

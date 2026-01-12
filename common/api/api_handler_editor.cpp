@@ -26,6 +26,71 @@
 
 using namespace kiapi::common::commands;
 
+// Static member definitions for re-entrancy protection
+std::recursive_mutex API_HANDLER_EDITOR::s_commitMutex;
+bool API_HANDLER_EDITOR::s_handlingCommit = false;
+
+// IPC shell blocking flag - stored in wxApp to ensure it's shared across all kifaces
+// We use wxTheApp's client data because static variables are NOT shared across kifaces
+// on macOS (each .kiface is a separate dynamic library with its own copy of statics)
+// Deferred operations stay in static storage since they're executed by the kiface that queued them
+static std::vector<std::function<void()>> s_deferredOperations;
+static std::mutex s_deferredMutex;
+
+// Unique key for IPC shell blocking flag in wxApp client data
+static const char* IPC_SHELL_BLOCKING_KEY = "IPC_SHELL_BLOCKING";
+
+void SetIPCShellBlocking( bool aBlocking )
+{
+    fprintf( stderr, "SetIPCShellBlocking: Setting to %d, wxTheApp=%p\n", aBlocking, (void*)wxTheApp );
+    fflush( stderr );
+
+    if( wxTheApp )
+    {
+        // Use client data pointer as a boolean flag (non-null = blocking)
+        wxTheApp->SetClientData( aBlocking ? (void*)IPC_SHELL_BLOCKING_KEY : nullptr );
+    }
+}
+
+bool IsIPCShellBlocking()
+{
+    bool blocking = wxTheApp && wxTheApp->GetClientData() != nullptr;
+    fprintf( stderr, "IsIPCShellBlocking: wxTheApp=%p, clientData=%p, returning %d\n",
+             (void*)wxTheApp, wxTheApp ? wxTheApp->GetClientData() : nullptr, blocking );
+    fflush( stderr );
+    return blocking;
+}
+
+void QueueDeferredOperation( std::function<void()> aOperation )
+{
+    std::lock_guard<std::mutex> lock( s_deferredMutex );
+    s_deferredOperations.push_back( std::move( aOperation ) );
+    fprintf( stderr, "QueueDeferredOperation: Queued operation, total=%zu\n", s_deferredOperations.size() );
+    fflush( stderr );
+}
+
+void ApplyDeferredOperations()
+{
+    std::vector<std::function<void()>> operations;
+
+    {
+        std::lock_guard<std::mutex> lock( s_deferredMutex );
+        operations = std::move( s_deferredOperations );
+        s_deferredOperations.clear();
+    }
+
+    fprintf( stderr, "ApplyDeferredOperations: Applying %zu operations\n", operations.size() );
+    fflush( stderr );
+
+    for( auto& op : operations )
+    {
+        op();
+    }
+
+    fprintf( stderr, "ApplyDeferredOperations: Done\n" );
+    fflush( stderr );
+}
+
 
 API_HANDLER_EDITOR::API_HANDLER_EDITOR( EDA_BASE_FRAME* aFrame ) :
         API_HANDLER(),
@@ -131,10 +196,24 @@ COMMIT* API_HANDLER_EDITOR::getCurrentCommit( const std::string& aClientName )
     if( !m_commits.count( aClientName ) )
     {
         KIID id;
-        m_commits[aClientName] = std::make_pair( id, createCommit() );
+        std::unique_ptr<COMMIT> commit = createCommit();
+
+        if( !commit )
+            return nullptr;
+
+        COMMIT* rawPtr = commit.get();
+        m_commits[aClientName] = std::make_pair( id, std::move( commit ) );
+        fprintf( stderr, "DEBUG[COMMIT-CREATE]: Created new commit %p for client '%s'\n",
+                 (void*)rawPtr, aClientName.c_str() );
+        fflush( stderr );
     }
 
-    return m_commits.at( aClientName ).second.get();
+    COMMIT* result = m_commits.at( aClientName ).second.get();
+    fprintf( stderr, "DEBUG[COMMIT-GET]: Returning commit %p for client '%s' (m_commits size=%zu)\n",
+             (void*)result, aClientName.c_str(), m_commits.size() );
+    fflush( stderr );
+
+    return result;
 }
 
 
@@ -144,11 +223,27 @@ void API_HANDLER_EDITOR::pushCurrentCommit( const std::string& aClientName,
     auto it = m_commits.find( aClientName );
 
     if( it == m_commits.end() )
+    {
+        fprintf( stderr, "DEBUG[COMMIT-PUSH]: No commit found for client '%s'\n", aClientName.c_str() );
+        fflush( stderr );
         return;
+    }
+
+    COMMIT* commitPtr = it->second.second.get();
+    fprintf( stderr, "DEBUG[COMMIT-PUSH]: Pushing and destroying commit %p for client '%s'\n",
+             (void*)commitPtr, aClientName.c_str() );
+    fflush( stderr );
 
     it->second.second->Push( aMessage.IsEmpty() ? m_defaultCommitMessage : aMessage );
+
+    fprintf( stderr, "DEBUG[COMMIT-ERASE]: About to erase commit entry for client '%s'\n", aClientName.c_str() );
+    fflush( stderr );
+
     m_commits.erase( it );
     m_activeClients.erase( aClientName );
+
+    fprintf( stderr, "DEBUG[COMMIT-ERASE]: Commit destroyed, m_commits size now=%zu\n", m_commits.size() );
+    fflush( stderr );
 }
 
 
@@ -216,11 +311,32 @@ std::optional<ApiResponseStatus> API_HANDLER_EDITOR::checkForBusy()
 }
 
 
+std::optional<ApiResponseStatus> API_HANDLER_EDITOR::checkForBusyOrIPCBlocking()
+{
+    // With idle-time API processing, requests are processed during true idle time,
+    // not during ProcessPendingEvents(), so IPC shell blocking is no longer needed.
+    // Just delegate to checkForBusy().
+    return checkForBusy();
+}
+
+
 HANDLER_RESULT<CreateItemsResponse> API_HANDLER_EDITOR::handleCreateItems(
         const HANDLER_CONTEXT<CreateItems>& aCtx )
 {
     if( std::optional<ApiResponseStatus> busy = checkForBusy() )
         return tl::unexpected( *busy );
+
+    // With idle-time API processing, requests are processed during true idle time,
+    // not during ProcessPendingEvents(), so IPC shell blocking is no longer needed.
+    std::unique_lock<std::recursive_mutex> lock( s_commitMutex, std::try_to_lock );
+    if( !lock.owns_lock() || s_handlingCommit )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BUSY );
+        e.set_error_message( "Another commit operation is in progress" );
+        return tl::unexpected( e );
+    }
+    s_handlingCommit = true;
 
     CreateItemsResponse response;
 
@@ -234,6 +350,8 @@ HANDLER_RESULT<CreateItemsResponse> API_HANDLER_EDITOR::handleCreateItems(
                 itemResult.mutable_item()->CopyFrom( aItem );
                 response.mutable_created_items()->Add( std::move( itemResult ) );
             } );
+
+    s_handlingCommit = false;
 
     if( !result.has_value() )
         return tl::unexpected( result.error() );
@@ -249,6 +367,18 @@ HANDLER_RESULT<UpdateItemsResponse> API_HANDLER_EDITOR::handleUpdateItems(
     if( std::optional<ApiResponseStatus> busy = checkForBusy() )
         return tl::unexpected( *busy );
 
+    // With idle-time API processing, requests are processed during true idle time,
+    // not during ProcessPendingEvents(), so IPC shell blocking is no longer needed.
+    std::unique_lock<std::recursive_mutex> lock( s_commitMutex, std::try_to_lock );
+    if( !lock.owns_lock() || s_handlingCommit )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BUSY );
+        e.set_error_message( "Another commit operation is in progress" );
+        return tl::unexpected( e );
+    }
+    s_handlingCommit = true;
+
     UpdateItemsResponse response;
 
     HANDLER_RESULT<ItemRequestStatus> result = handleCreateUpdateItemsInternal( false,
@@ -261,6 +391,8 @@ HANDLER_RESULT<UpdateItemsResponse> API_HANDLER_EDITOR::handleUpdateItems(
                 itemResult.mutable_item()->CopyFrom( aItem );
                 response.mutable_updated_items()->Add( std::move( itemResult ) );
             } );
+
+    s_handlingCommit = false;
 
     if( !result.has_value() )
         return tl::unexpected( result.error() );
@@ -276,10 +408,22 @@ HANDLER_RESULT<DeleteItemsResponse> API_HANDLER_EDITOR::handleDeleteItems(
     if( std::optional<ApiResponseStatus> busy = checkForBusy() )
         return tl::unexpected( *busy );
 
-    if( !validateItemHeaderDocument( aCtx.Request.header() ) )
+    // With idle-time API processing, requests are processed during true idle time,
+    // not during ProcessPendingEvents(), so IPC shell blocking is no longer needed.
+    std::unique_lock<std::recursive_mutex> lock( s_commitMutex, std::try_to_lock );
+    if( !lock.owns_lock() || s_handlingCommit )
     {
         ApiResponseStatus e;
-        // No message needed for AS_UNHANDLED; this is an internal flag for the API server
+        e.set_status( ApiStatusCode::AS_BUSY );
+        e.set_error_message( "Another commit operation is in progress" );
+        return tl::unexpected( e );
+    }
+    s_handlingCommit = true;
+
+    if( !validateItemHeaderDocument( aCtx.Request.header() ) )
+    {
+        s_handlingCommit = false;
+        ApiResponseStatus e;
         e.set_status( ApiStatusCode::AS_UNHANDLED );
         return tl::unexpected( e );
     }
@@ -297,6 +441,7 @@ HANDLER_RESULT<DeleteItemsResponse> API_HANDLER_EDITOR::handleDeleteItems(
 
     if( itemsToDelete.empty() )
     {
+        s_handlingCommit = false;
         ApiResponseStatus e;
         e.set_status( ApiStatusCode::AS_BAD_REQUEST );
         e.set_error_message( "no valid items to delete were given" );
@@ -304,6 +449,8 @@ HANDLER_RESULT<DeleteItemsResponse> API_HANDLER_EDITOR::handleDeleteItems(
     }
 
     deleteItemsInternal( itemsToDelete, aCtx.ClientName );
+
+    s_handlingCommit = false;
 
     DeleteItemsResponse response;
 

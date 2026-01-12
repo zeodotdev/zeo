@@ -335,6 +335,13 @@ void SCH_IO_KICAD_SEXPR::SaveSchematicFile( const wxString& aFileName, SCH_SHEET
     wxCHECK_RET( aSheet != nullptr, "NULL SCH_SHEET object." );
     wxCHECK_RET( !aFileName.IsEmpty(), "No schematic file name defined." );
 
+    // DEBUG: Log save operation
+    fprintf( stderr, "DEBUG[SAVE]: SaveSchematicFile() called\n" );
+    fprintf( stderr, "DEBUG[SAVE]:   File: %s\n", (const char*)aFileName.utf8_str() );
+    fprintf( stderr, "DEBUG[SAVE]:   Sheet: %p, Screen: %p\n",
+             (void*)aSheet, (void*)(aSheet ? aSheet->GetScreen() : nullptr) );
+    fflush( stderr );
+
     wxString sanityResult = aSheet->GetScreen()->GroupsSanityCheck();
 
     if( sanityResult != wxEmptyString && m_queryUserCallback )
@@ -421,6 +428,23 @@ void SCH_IO_KICAD_SEXPR::Format( SCH_SHEET* aSheet )
         if( item->Type() != SCH_MARKER_T )
             save_map.insert( item );
     }
+
+    // DEBUG: Log what items are being saved
+    fprintf( stderr, "DEBUG[SAVE]: Format() saving %zu items from screen %p\n",
+             save_map.size(), (void*)screen );
+    int wireCount = 0;
+    for( SCH_ITEM* item : save_map )
+    {
+        if( item->Type() == SCH_LINE_T )
+        {
+            SCH_LINE* line = static_cast<SCH_LINE*>( item );
+            fprintf( stderr, "DEBUG[SAVE]:   Wire %d: (%d,%d)->(%d,%d)\n",
+                     wireCount++,
+                     line->GetStartPoint().x, line->GetStartPoint().y,
+                     line->GetEndPoint().x, line->GetEndPoint().y );
+        }
+    }
+    fflush( stderr );
 
     for( SCH_ITEM* item : save_map )
     {

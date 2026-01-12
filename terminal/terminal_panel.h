@@ -4,6 +4,7 @@
 #include <wx/panel.h>
 #include <wx/textctrl.h>
 #include <wx/thread.h>
+#include <wx/timer.h>
 #include <vector>
 #include <string>
 #include <atomic>
@@ -69,9 +70,13 @@ protected:
     PYTHON_EXEC_THREAD* m_pythonThread;
     std::atomic<bool>   m_pythonRunning;
     std::string         m_lastPythonResult;
+    wxTimer             m_pythonPollTimer;
+    wxLongLong          m_pythonStartTime;
 
     void OnPythonOutput( wxThreadEvent& aEvent );
     void OnPythonComplete( wxThreadEvent& aEvent );
+    void OnPythonPollTimer( wxTimerEvent& aEvent );
+    void FinishPythonExecution();
 };
 
 #endif // TERMINAL_PANEL_H

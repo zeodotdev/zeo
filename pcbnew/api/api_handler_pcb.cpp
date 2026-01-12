@@ -271,18 +271,30 @@ HANDLER_RESULT<Empty> API_HANDLER_PCB::handleRevertDocument(
 void API_HANDLER_PCB::pushCurrentCommit( const std::string& aClientName, const wxString& aMessage )
 {
     API_HANDLER_EDITOR::pushCurrentCommit( aClientName, aMessage );
-    frame()->Refresh();
+
+    // Note: We intentionally don't call Refresh() here because the commit->Push()
+    // already triggers view updates via PostEvent(TA_MODEL_CHANGE) and OnModify().
+    // Calling Refresh() during API handler execution (which happens during wxYield)
+    // can cause issues on macOS with nested event processing.
 }
 
 
 std::unique_ptr<COMMIT> API_HANDLER_PCB::createCommit()
 {
+    wxASSERT( frame() != nullptr );
+
+    if( !frame() )
+        return nullptr;
+
     return std::make_unique<BOARD_COMMIT>( frame() );
 }
 
 
 std::optional<BOARD_ITEM*> API_HANDLER_PCB::getItemById( const KIID& aId ) const
 {
+    if( !frame() || !frame()->GetBoard() )
+        return std::nullopt;
+
     BOARD_ITEM* item = frame()->GetBoard()->ResolveItem( aId, true );
 
     if( !item )
@@ -295,6 +307,9 @@ std::optional<BOARD_ITEM*> API_HANDLER_PCB::getItemById( const KIID& aId ) const
 bool API_HANDLER_PCB::validateDocumentInternal( const DocumentSpecifier& aDocument ) const
 {
     if( aDocument.type() != DocumentType::DOCTYPE_PCB )
+        return false;
+
+    if( !frame() )
         return false;
 
     wxFileName fn( frame()->GetCurrentFileName() );
@@ -367,6 +382,13 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_PCB::handleCreateUpdateItemsIntern
         return tl::unexpected( e );
     }
 
+    if( !frame() || !frame()->GetBoard() )
+    {
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Frame or board is not available" );
+        return tl::unexpected( e );
+    }
+
     BOARD* board = frame()->GetBoard();
     BOARD_ITEM_CONTAINER* container = board;
 
@@ -399,6 +421,13 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_PCB::handleCreateUpdateItemsIntern
     }
 
     BOARD_COMMIT* commit = static_cast<BOARD_COMMIT*>( getCurrentCommit( aClientName ) );
+
+    if( !commit )
+    {
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Failed to create commit - frame may be invalid" );
+        return tl::unexpected( e );
+    }
 
     for( const google::protobuf::Any& anyItem : aItems )
     {
@@ -723,6 +752,9 @@ HANDLER_RESULT<GetItemsResponse> API_HANDLER_PCB::handleGetItemsById(
 void API_HANDLER_PCB::deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& aItemsToDelete,
                                            const std::string& aClientName )
 {
+    if( !frame() || !frame()->GetBoard() )
+        return;
+
     BOARD* board = frame()->GetBoard();
     std::vector<BOARD_ITEM*> validatedItems;
 
@@ -739,6 +771,9 @@ void API_HANDLER_PCB::deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& a
     }
 
     COMMIT* commit = getCurrentCommit( aClientName );
+
+    if( !commit )
+        return;
 
     for( BOARD_ITEM* item : validatedItems )
         commit->Remove( item );
@@ -813,7 +848,9 @@ HANDLER_RESULT<Empty> API_HANDLER_PCB::handleClearSelection(
 
     TOOL_MANAGER* mgr = frame()->GetToolManager();
     mgr->RunAction( ACTIONS::selectionClear );
-    frame()->Refresh();
+
+    // Note: The selection tool handles UI updates via events.
+    // We don't call Refresh() here to avoid issues with nested event processing on macOS.
 
     return Empty();
 }
@@ -845,7 +882,9 @@ HANDLER_RESULT<SelectionResponse> API_HANDLER_PCB::handleAddToSelection(
     }
 
     selectionTool->AddItemsToSel( &toAdd );
-    frame()->Refresh();
+
+    // Note: The selection tool handles UI updates via events.
+    // We don't call Refresh() here to avoid issues with nested event processing on macOS.
 
     SelectionResponse response;
 
@@ -882,7 +921,9 @@ HANDLER_RESULT<SelectionResponse> API_HANDLER_PCB::handleRemoveFromSelection(
     }
 
     selectionTool->RemoveItemsFromSel( &toRemove );
-    frame()->Refresh();
+
+    // Note: The selection tool handles UI updates via events.
+    // We don't call Refresh() here to avoid issues with nested event processing on macOS.
 
     SelectionResponse response;
 
@@ -1597,7 +1638,10 @@ HANDLER_RESULT<Empty> API_HANDLER_PCB::handleSetVisibleLayers(
     frame()->GetBoard()->SetVisibleLayers( visible );
     frame()->GetAppearancePanel()->OnBoardChanged();
     frame()->GetCanvas()->SyncLayersVisibility( frame()->GetBoard() );
-    frame()->Refresh();
+
+    // Note: OnBoardChanged() and SyncLayersVisibility() handle UI updates.
+    // We don't call Refresh() here to avoid issues with nested event processing on macOS.
+
     return Empty();
 }
 
@@ -1701,7 +1745,9 @@ HANDLER_RESULT<Empty> API_HANDLER_PCB::handleSetBoardEditorAppearanceSettings(
 
     frame()->SetDisplayOptions( options );
     frame()->GetCanvas()->GetView()->UpdateAllLayersColor();
-    frame()->GetCanvas()->Refresh();
+
+    // Note: UpdateAllLayersColor() should trigger necessary repaints.
+    // We don't call Refresh() here to avoid issues with nested event processing on macOS.
 
     return Empty();
 }

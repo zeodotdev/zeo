@@ -21,14 +21,38 @@
 #ifndef KICAD_API_SERVER_H
 #define KICAD_API_SERVER_H
 
+#include <cstdint>
 #include <memory>
 #include <set>
 #include <string>
+#include <queue>
+#include <map>
+#include <mutex>
+#include <atomic>
+#include <condition_variable>
 
 #include <wx/event.h>
 #include <wx/filename.h>
 
 #include <kicommon.h>
+
+
+/**
+ * Structure to track a pending API request and its reply.
+ * Each request gets a unique ID to avoid race conditions when multiple
+ * NNG threads are waiting for replies simultaneously.
+ */
+struct PENDING_REQUEST
+{
+    uint64_t    id;             ///< Unique request ID
+    std::string request;        ///< The serialized request data
+    std::string reply;          ///< The serialized reply (filled by main thread)
+    bool        replyReady;     ///< True when reply is ready to be sent
+
+    PENDING_REQUEST() : id( 0 ), replyReady( false ) {}
+    PENDING_REQUEST( uint64_t aId, const std::string& aRequest )
+        : id( aId ), request( aRequest ), replyReady( false ) {}
+};
 
 class API_HANDLER;
 class KINNG_REQUEST_SERVER;
@@ -74,19 +98,26 @@ public:
 private:
 
     /**
-     * Callback that executes on the server thread and generates an event that will be handled by
-     * the wxWidgets event loop to process an incoming request.  Temporarily takes ownership of the
-     * request pointer so that it can be passed through the event system.
+     * Callback that executes on the server thread and queues the request for processing
+     * during idle time. This avoids processing requests during ProcessPendingEvents()
+     * which can cause issues with nested event processing on macOS.
      *
      * @param aRequest is a pointer to a string containing bytes that came in over the wire
      */
     void onApiRequest( std::string* aRequest );
 
     /**
-     * Event handler that receives the event on the main thread sent by onApiRequest
-     * @param aEvent will contain a pointer to an incoming API request string in the client data
+     * Idle event handler that processes queued API requests when the event loop is truly idle.
+     * This ensures API requests are not processed during ProcessPendingEvents() calls.
      */
-    void handleApiEvent( wxCommandEvent& aEvent );
+    void onIdle( wxIdleEvent& aEvent );
+
+    /**
+     * Process a single API request. Called from onIdle when a request is available.
+     * @param aRequestId the unique ID of this request
+     * @param aRequest the serialized request string
+     */
+    void processApiRequest( uint64_t aRequestId, const std::string& aRequest );
 
     void log( const std::string& aOutput );
 
@@ -101,6 +132,20 @@ private:
     static wxString s_logFileName;
 
     wxFileName m_logFilePath;
+
+    // Thread-safe queue for pending API requests processed during idle time
+    // This avoids processing during ProcessPendingEvents() which causes issues on macOS
+    // Each request has a unique ID to ensure replies go to the correct waiting thread
+    std::queue<uint64_t> m_requestQueue;              ///< Queue of request IDs to process
+    std::map<uint64_t, PENDING_REQUEST> m_pendingRequests;  ///< Map of ID -> pending request
+    std::mutex m_queueMutex;                          ///< Protects queue and pending map
+    std::atomic<bool> m_hasQueuedRequests;
+    std::atomic<uint64_t> m_nextRequestId;            ///< Counter for unique request IDs
+
+    // Condition variable for signaling when any reply is ready
+    // Each waiting thread checks its specific request's replyReady flag
+    std::condition_variable m_replyReady;
+    std::mutex m_replyMutex;
 };
 
 #endif //KICAD_API_SERVER_H

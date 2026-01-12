@@ -9,9 +9,11 @@
 #include <wx/txtstrm.h>
 #include <wx/msgdlg.h>
 #include <wx/dir.h>
+#include <wx/app.h>
 #include <project.h>
 #include <wildcards_and_files_ext.h>
 #include <python_scripting.h>
+#include <api/api_handler_editor.h>
 
 BEGIN_EVENT_TABLE( TERMINAL_PANEL, wxPanel )
 END_EVENT_TABLE()
@@ -64,10 +66,18 @@ TERMINAL_PANEL::TERMINAL_PANEL( wxWindow* aParent, TERMINAL_MODE aMode ) :
     // Bind Python execution events
     Bind( wxEVT_PYTHON_OUTPUT, &TERMINAL_PANEL::OnPythonOutput, this );
     Bind( wxEVT_PYTHON_COMPLETE, &TERMINAL_PANEL::OnPythonComplete, this );
+
+    // Set up timer for non-blocking Python execution polling
+    // The timer needs an owner to send events to
+    m_pythonPollTimer.SetOwner( this );
+    Bind( wxEVT_TIMER, &TERMINAL_PANEL::OnPythonPollTimer, this, m_pythonPollTimer.GetId() );
 }
 
 TERMINAL_PANEL::~TERMINAL_PANEL()
 {
+    // Stop poll timer
+    m_pythonPollTimer.Stop();
+
     // Stop any running Python thread
     if( m_pythonThread )
     {
@@ -75,6 +85,13 @@ TERMINAL_PANEL::~TERMINAL_PANEL()
         m_pythonThread->Wait();
         delete m_pythonThread;
         m_pythonThread = nullptr;
+    }
+
+    // Clear IPC shell blocking flag if we were running Python
+    if( m_pythonRunning.load() )
+    {
+        m_pythonRunning.store( false );
+        SetIPCShellBlocking( false );
     }
 
     CleanupShell();
@@ -238,9 +255,17 @@ void TERMINAL_PANEL::ExecuteCommand( const wxString& aCmd )
     else
     {
         if( m_mode == MODE_SYSTEM )
+        {
             ProcessSystemCommand( aCmd );
+        }
         else
+        {
+            // RunLocalPython now returns immediately and uses a timer for completion.
+            // The prompt will be shown by FinishPythonExecution() when Python completes.
             RunLocalPython( aCmd );
+            m_outputCtrl->SetInsertionPointEnd();
+            return; // Don't show prompt yet - timer will handle it
+        }
     }
 
     m_outputCtrl->AppendText( GetPrompt() );
@@ -433,6 +458,14 @@ std::string TERMINAL_PANEL::RunLocalPython( const wxString& aCmd )
     if( !EnsurePython() )
         return "Error: Python not initialized";
 
+    // If Python is already running, return error
+    if( m_pythonRunning.load() )
+        return "Error: Python execution already in progress";
+
+    // Enable IPC shell blocking - this causes API modifications to be deferred
+    // instead of executed immediately, to avoid macOS event loop corruption
+    SetIPCShellBlocking( true );
+
     // Create and start the Python execution thread
     // The background thread will handle GIL acquisition/release
     m_pythonRunning.store( true );
@@ -444,43 +477,73 @@ std::string TERMINAL_PANEL::RunLocalPython( const wxString& aCmd )
         delete m_pythonThread;
         m_pythonThread = nullptr;
         m_pythonRunning.store( false );
+        SetIPCShellBlocking( false );  // Clear blocking flag on failure
         return "Error: Failed to start Python execution thread";
     }
 
-    // Poll for completion while processing wx events
-    // The main thread doesn't need the GIL - the background thread manages it
-    wxLongLong startTime = wxGetLocalTimeMillis();
-    long       timeoutMs = 60000; // 60 seconds timeout for Python execution
+    // Record start time for timeout checking
+    m_pythonStartTime = wxGetLocalTimeMillis();
 
-    while( m_pythonRunning.load() )
+    // Start timer to poll for completion - this allows API events to be
+    // processed through the NORMAL event loop, avoiding nested event
+    // processing which causes memory corruption on macOS.
+    fprintf( stderr, "RunLocalPython: Starting timer\n" );
+    fflush( stderr );
+    m_pythonPollTimer.Start( 50 ); // Poll every 50ms
+
+    // Return empty string - the result will be shown when Python completes
+    // via the timer callback
+    return "";
+#else
+    return "Error: Scripting not supported";
+#endif
+}
+
+
+void TERMINAL_PANEL::OnPythonPollTimer( wxTimerEvent& aEvent )
+{
+    fprintf( stderr, "TIMER: m_pythonRunning=%d\n", m_pythonRunning.load() );
+    fflush( stderr );
+
+    // Check if Python has completed
+    if( !m_pythonRunning.load() )
     {
-        // Process wx events - this allows API_REQUEST_EVENTs to be handled
-        wxYield();
-        wxMilliSleep( 10 );
-
-        // Check for timeout
-        if( wxGetLocalTimeMillis() - startTime > timeoutMs )
-        {
-            if( m_pythonThread )
-            {
-                m_pythonThread->RequestStop();
-                // Don't wait here - just mark as timed out
-            }
-            m_pythonRunning.store( false );
-
-            m_outputCtrl->AppendText( "[Timeout waiting for Python execution]\n" );
-
-            // Clean up thread
-            if( m_pythonThread )
-            {
-                m_pythonThread->Wait();
-                delete m_pythonThread;
-                m_pythonThread = nullptr;
-            }
-
-            return "Error: Python execution timed out";
-        }
+        fprintf( stderr, "TIMER: Python completed, calling FinishPythonExecution\n" );
+        fflush( stderr );
+        FinishPythonExecution();
+        return;
     }
+
+    // Check for timeout (60 seconds)
+    long timeoutMs = 60000;
+    if( wxGetLocalTimeMillis() - m_pythonStartTime > timeoutMs )
+    {
+        fprintf( stderr, "TIMER: Timeout!\n" );
+        fflush( stderr );
+        m_pythonPollTimer.Stop();
+
+        if( m_pythonThread )
+        {
+            m_pythonThread->RequestStop();
+            m_pythonThread->Wait();
+            delete m_pythonThread;
+            m_pythonThread = nullptr;
+        }
+        m_pythonRunning.store( false );
+
+        // Clear blocking flag - deferred operations were already scheduled via CallAfter
+        SetIPCShellBlocking( false );
+
+        m_outputCtrl->AppendText( "[Timeout waiting for Python execution]\n" );
+        m_outputCtrl->AppendText( GetPrompt() );
+        m_lastPromptPos = m_outputCtrl->GetLastPosition();
+    }
+}
+
+
+void TERMINAL_PANEL::FinishPythonExecution()
+{
+    m_pythonPollTimer.Stop();
 
     // Clean up thread
     if( m_pythonThread )
@@ -490,10 +553,16 @@ std::string TERMINAL_PANEL::RunLocalPython( const wxString& aCmd )
         m_pythonThread = nullptr;
     }
 
-    return m_lastPythonResult;
-#else
-    return "Error: Scripting not supported";
-#endif
+    // Clear IPC shell blocking flag - Python execution is complete
+    // Deferred operations were already scheduled via CallAfter by each handler,
+    // they will execute now that we're clearing the blocking flag
+    fprintf( stderr, "FinishPythonExecution: Clearing IPC shell blocking\n" );
+    fflush( stderr );
+    SetIPCShellBlocking( false );
+
+    // Show the prompt for next command
+    m_outputCtrl->AppendText( GetPrompt() );
+    m_lastPromptPos = m_outputCtrl->GetLastPosition();
 }
 
 
@@ -509,6 +578,9 @@ void TERMINAL_PANEL::OnPythonOutput( wxThreadEvent& aEvent )
 
 void TERMINAL_PANEL::OnPythonComplete( wxThreadEvent& aEvent )
 {
+    fprintf( stderr, "OnPythonComplete: called\n" );
+    fflush( stderr );
+
     wxString result = aEvent.GetString();
 
     if( !result.IsEmpty() )

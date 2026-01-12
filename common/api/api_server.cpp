@@ -53,7 +53,9 @@ wxDEFINE_EVENT( API_REQUEST_EVENT, wxCommandEvent );
 KICAD_API_SERVER::KICAD_API_SERVER() :
         wxEvtHandler(),
         m_token( KIID().AsStdString() ),
-        m_readyToReply( false )
+        m_readyToReply( false ),
+        m_hasQueuedRequests( false ),
+        m_nextRequestId( 1 )
 {
     if( !Pgm().GetCommonSettings()->m_Api.enable_server )
     {
@@ -141,7 +143,11 @@ void KICAD_API_SERVER::Start()
 
     wxLogTrace( traceApi, wxString::Format( "Server: listening at %s", SocketPath() ) );
 
-    Bind( API_REQUEST_EVENT, &KICAD_API_SERVER::handleApiEvent, this );
+    // Bind idle handler to wxTheApp for processing API requests during true idle time
+    // This avoids processing during ProcessPendingEvents() which causes issues on macOS
+    // We bind to wxTheApp because idle events are more reliably delivered to the app
+    if( wxTheApp )
+        wxTheApp->Bind( wxEVT_IDLE, &KICAD_API_SERVER::onIdle, this );
 }
 
 
@@ -151,7 +157,16 @@ void KICAD_API_SERVER::Stop()
         return;
 
     wxLogTrace( traceApi, "Stopping server" );
-    Unbind( API_REQUEST_EVENT, &KICAD_API_SERVER::handleApiEvent, this );
+    if( wxTheApp )
+        wxTheApp->Unbind( wxEVT_IDLE, &KICAD_API_SERVER::onIdle, this );
+
+    // Wake up any waiting NNG threads by marking all pending requests as ready
+    {
+        std::lock_guard<std::mutex> queueLock( m_queueMutex );
+        for( auto& [id, pending] : m_pendingRequests )
+            pending.replyReady = true;
+    }
+    m_replyReady.notify_all();
 
     m_server->Stop();
     m_server.reset( nullptr );
@@ -193,97 +208,199 @@ void KICAD_API_SERVER::onApiRequest( std::string* aRequest )
         notHandled.mutable_status()->set_error_message( "KiCad is not ready to reply" );
         m_server->Reply( notHandled.SerializeAsString() );
         log( "Got incoming request but was not yet ready to reply." );
+        // Note: Do NOT delete aRequest - it's managed by KINNG internally
         return;
     }
 
-    wxCommandEvent* evt = new wxCommandEvent( API_REQUEST_EVENT );
+    // Assign a unique ID to this request for tracking
+    uint64_t requestId = m_nextRequestId.fetch_add( 1 );
 
-    // We don't actually need write access to this string, but client data is non-const
-    evt->SetClientData( static_cast<void*>( aRequest ) );
+    // Queue the request for processing during idle time
+    // This avoids processing during ProcessPendingEvents() which causes issues on macOS
+    fprintf( stderr, "API_SERVER: Queueing request %lu for idle-time processing\n", requestId );
+    fflush( stderr );
+    {
+        std::lock_guard<std::mutex> queueLock( m_queueMutex );
+        m_pendingRequests[requestId] = PENDING_REQUEST( requestId, *aRequest );
+        m_requestQueue.push( requestId );
+        m_hasQueuedRequests.store( true );
+    }
 
-    // Takes ownership and frees the wxCommandEvent
-    QueueEvent( evt );
+    // Note: Do NOT delete aRequest - it's managed by KINNG internally
+
+    // Wake the main thread's event loop to process the request during idle time
+    wxWakeUpIdle();
+
+    // Wait for THIS request's reply to be ready (each request waits for its own reply)
+    std::string replyString;
+    {
+        std::unique_lock<std::mutex> lock( m_replyMutex );
+
+        // Wait until our specific request has its reply ready
+        m_replyReady.wait( lock, [this, requestId]()
+        {
+            std::lock_guard<std::mutex> queueLock( m_queueMutex );
+            auto it = m_pendingRequests.find( requestId );
+            return it == m_pendingRequests.end() || it->second.replyReady;
+        } );
+
+        // Retrieve and remove our reply
+        {
+            std::lock_guard<std::mutex> queueLock( m_queueMutex );
+            auto it = m_pendingRequests.find( requestId );
+            if( it != m_pendingRequests.end() )
+            {
+                replyString = std::move( it->second.reply );
+                m_pendingRequests.erase( it );
+            }
+        }
+    }
+
+    // Send the reply back to the client
+    m_server->Reply( replyString );
 }
 
 
-void KICAD_API_SERVER::handleApiEvent( wxCommandEvent& aEvent )
+void KICAD_API_SERVER::onIdle( wxIdleEvent& aEvent )
 {
-    std::string& requestString = *static_cast<std::string*>( aEvent.GetClientData() );
-    ApiRequest   request;
+    // Allow other idle handlers to run
+    aEvent.Skip();
 
-    if( !request.ParseFromString( requestString ) )
+    // Check if we have any queued requests to process
+    if( !m_hasQueuedRequests.load() )
+        return;
+
+    uint64_t requestId = 0;
+    std::string requestString;
+
+    // Get one request from the queue
+    {
+        std::lock_guard<std::mutex> lock( m_queueMutex );
+        if( m_requestQueue.empty() )
+        {
+            m_hasQueuedRequests.store( false );
+            return;
+        }
+
+        requestId = m_requestQueue.front();
+        m_requestQueue.pop();
+
+        auto it = m_pendingRequests.find( requestId );
+        if( it == m_pendingRequests.end() )
+        {
+            // Request was somehow removed, skip it
+            if( m_requestQueue.empty() )
+                m_hasQueuedRequests.store( false );
+            return;
+        }
+
+        requestString = it->second.request;
+
+        if( m_requestQueue.empty() )
+            m_hasQueuedRequests.store( false );
+    }
+
+    fprintf( stderr, "API_SERVER: onIdle processing request %lu\n", requestId );
+    fflush( stderr );
+
+    // Process the request and store the reply
+    processApiRequest( requestId, requestString );
+}
+
+
+void KICAD_API_SERVER::processApiRequest( uint64_t aRequestId, const std::string& aRequestString )
+{
+    ApiRequest request;
+    std::string replyString;
+
+    if( !request.ParseFromString( aRequestString ) )
     {
         ApiResponse error;
         error.mutable_header()->set_kicad_token( m_token );
         error.mutable_status()->set_status( ApiStatusCode::AS_BAD_REQUEST );
         error.mutable_status()->set_error_message( "request could not be parsed" );
-        m_server->Reply( error.SerializeAsString() );
+        replyString = error.SerializeAsString();
 
         if( ADVANCED_CFG::GetCfg().m_EnableAPILogging )
             log( "Response (ERROR): " + error.Utf8DebugString() );
-    }
-
-    if( ADVANCED_CFG::GetCfg().m_EnableAPILogging )
-        log( "Request: " + request.Utf8DebugString() );
-
-    if( !request.header().kicad_token().empty() && request.header().kicad_token().compare( m_token ) != 0 )
-    {
-        ApiResponse error;
-        error.mutable_header()->set_kicad_token( m_token );
-        error.mutable_status()->set_status( ApiStatusCode::AS_TOKEN_MISMATCH );
-        error.mutable_status()->set_error_message(
-                "the provided kicad_token did not match this KiCad instance's token" );
-        m_server->Reply( error.SerializeAsString() );
-
-        if( ADVANCED_CFG::GetCfg().m_EnableAPILogging )
-            log( "Response (ERROR): " + error.Utf8DebugString() );
-
-        return;
-    }
-
-    API_RESULT result;
-
-    wxLogTrace( traceApi, "API_SERVER[%p]: Processing request, checking %zu handlers", this, m_handlers.size() );
-
-    for( API_HANDLER* handler : m_handlers )
-    {
-        result = handler->Handle( request );
-
-        if( result.has_value() )
-            break;
-        else if( result.error().status() != ApiStatusCode::AS_UNHANDLED )
-            break;
-    }
-
-    // Note: at the point we call Reply(), we no longer own requestString.
-
-    if( result.has_value() )
-    {
-        result->mutable_header()->set_kicad_token( m_token );
-        m_server->Reply( result->SerializeAsString() );
-
-        if( ADVANCED_CFG::GetCfg().m_EnableAPILogging )
-            log( "Response: " + result->Utf8DebugString() );
     }
     else
     {
-        ApiResponse error;
-        error.mutable_status()->CopyFrom( result.error() );
-        error.mutable_header()->set_kicad_token( m_token );
-
-        if( result.error().status() == ApiStatusCode::AS_UNHANDLED )
-        {
-            std::string type = "<unparseable Any>";
-            google::protobuf::Any::ParseAnyTypeUrl( request.message().type_url(), &type );
-            std::string msg = fmt::format( "no handler available for request of type {}", type );
-            error.mutable_status()->set_error_message( msg );
-        }
-
-        m_server->Reply( error.SerializeAsString() );
-
         if( ADVANCED_CFG::GetCfg().m_EnableAPILogging )
-            log( "Response (ERROR): " + error.Utf8DebugString() );
+            log( "Request: " + request.Utf8DebugString() );
+
+        if( !request.header().kicad_token().empty() && request.header().kicad_token().compare( m_token ) != 0 )
+        {
+            ApiResponse error;
+            error.mutable_header()->set_kicad_token( m_token );
+            error.mutable_status()->set_status( ApiStatusCode::AS_TOKEN_MISMATCH );
+            error.mutable_status()->set_error_message(
+                    "the provided kicad_token did not match this KiCad instance's token" );
+            replyString = error.SerializeAsString();
+
+            if( ADVANCED_CFG::GetCfg().m_EnableAPILogging )
+                log( "Response (ERROR): " + error.Utf8DebugString() );
+        }
+        else
+        {
+            API_RESULT result;
+
+            wxLogTrace( traceApi, "API_SERVER[%p]: Processing request %lu, checking %zu handlers",
+                        this, aRequestId, m_handlers.size() );
+
+            for( API_HANDLER* handler : m_handlers )
+            {
+                result = handler->Handle( request );
+
+                if( result.has_value() )
+                    break;
+                else if( result.error().status() != ApiStatusCode::AS_UNHANDLED )
+                    break;
+            }
+
+            if( result.has_value() )
+            {
+                result->mutable_header()->set_kicad_token( m_token );
+                replyString = result->SerializeAsString();
+
+                if( ADVANCED_CFG::GetCfg().m_EnableAPILogging )
+                    log( "Response: " + result->Utf8DebugString() );
+            }
+            else
+            {
+                ApiResponse error;
+                error.mutable_status()->CopyFrom( result.error() );
+                error.mutable_header()->set_kicad_token( m_token );
+
+                if( result.error().status() == ApiStatusCode::AS_UNHANDLED )
+                {
+                    std::string type = "<unparseable Any>";
+                    google::protobuf::Any::ParseAnyTypeUrl( request.message().type_url(), &type );
+                    std::string msg = fmt::format( "no handler available for request of type {}", type );
+                    error.mutable_status()->set_error_message( msg );
+                }
+
+                replyString = error.SerializeAsString();
+
+                if( ADVANCED_CFG::GetCfg().m_EnableAPILogging )
+                    log( "Response (ERROR): " + error.Utf8DebugString() );
+            }
+        }
     }
+
+    // Store the reply in this request's pending entry and mark it ready
+    {
+        std::lock_guard<std::mutex> queueLock( m_queueMutex );
+        auto it = m_pendingRequests.find( aRequestId );
+        if( it != m_pendingRequests.end() )
+        {
+            it->second.reply = std::move( replyString );
+            it->second.replyReady = true;
+        }
+    }
+
+    // Wake all waiting threads - each will check if its specific reply is ready
+    m_replyReady.notify_all();
 }
 
 

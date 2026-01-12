@@ -25,6 +25,23 @@
 #include <api/common/commands/editor_commands.pb.h>
 #include <commit.h>
 #include <kiid.h>
+#include <kicommon.h>
+#include <mutex>
+#include <functional>
+#include <vector>
+
+// Global functions to control IPC shell blocking - exported from libkicommon
+// so all kifaces share the same flag
+KICOMMON_API void SetIPCShellBlocking( bool aBlocking );
+KICOMMON_API bool IsIPCShellBlocking();
+
+// Queue a deferred operation to be executed later via CallAfter
+// This is used to defer API modifications during IPC shell execution on macOS
+KICOMMON_API void QueueDeferredOperation( std::function<void()> aOperation );
+
+// Apply all queued deferred operations - should be called via CallAfter
+// after IPC shell Python execution completes
+KICOMMON_API void ApplyDeferredOperations();
 
 using namespace kiapi::common;
 using kiapi::common::types::DocumentSpecifier;
@@ -53,6 +70,13 @@ protected:
      * @return an error status if busy, std::nullopt if not busy
      */
     virtual std::optional<ApiResponseStatus> checkForBusy();
+
+    /**
+     * Checks if the editor can accept modification commands
+     * This also checks for IPC shell blocking in addition to regular busy state
+     * @return an error status if busy or blocked, std::nullopt if OK
+     */
+    std::optional<ApiResponseStatus> checkForBusyOrIPCBlocking();
 
     HANDLER_RESULT<commands::BeginCommitResponse> handleBeginCommit(
         const HANDLER_CONTEXT<commands::BeginCommit>& aCtx );
@@ -110,6 +134,10 @@ protected:
     std::set<std::string> m_activeClients;
 
     EDA_BASE_FRAME* m_frame;
+
+    // Re-entrancy protection for nested event processing (e.g., IPC shell on macOS)
+    static std::recursive_mutex s_commitMutex;
+    static bool s_handlingCommit;
 };
 
 #endif //KICAD_API_HANDLER_EDITOR_H

@@ -641,7 +641,7 @@
       {
         "filename": "basic_test.kicad_sch",
         "name": "basic_test",
-        "uuid": "00000000-0000-0000-0000-000000000000"
+        "uuid": "64c481bc-ea0a-4f9c-a176-3729f4987c58"
       }
     ],
     "used_designators": ""
@@ -649,7 +649,7 @@
   "sheets": [
     [
       "64c481bc-ea0a-4f9c-a176-3729f4987c58",
-      ""
+      "basic_test"
     ]
   ],
   "text_variables": {},

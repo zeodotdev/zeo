@@ -1433,9 +1433,6 @@ bool SCHEMATIC::IsComplexHierarchy() const
 
 void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
 {
-    fprintf( stderr, "DEBUG[CLEANUP]: CleanUp() called\n" );
-    fflush( stderr );
-
     SCH_SELECTION_TOOL*          selectionTool = m_schematicHolder ? m_schematicHolder->GetSelectionTool() : nullptr;
     std::vector<SCH_LINE*>       lines;
     std::vector<SCH_JUNCTION*>   junctions;
@@ -1449,10 +1446,6 @@ void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
     auto remove_item = [&]( SCH_ITEM* aItem, const char* reason ) -> void
     {
         changed = true;
-
-        fprintf( stderr, "DEBUG[CLEANUP]: Removing item %p (type=%d) - reason: %s\n",
-                 (void*)aItem, aItem->Type(), reason );
-        fflush( stderr );
 
         if( !( aItem->GetFlags() & STRUCT_DELETED ) )
         {
@@ -1538,9 +1531,6 @@ void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
 
     // Would be nice to put lines in a canonical form here by swapping
     //  start <-> end as needed but I don't know what swapping breaks.
-    fprintf( stderr, "DEBUG[CLEANUP]: Starting line cleanup loop\n" );
-    fflush( stderr );
-
     while( changed )
     {
         changed = false;
@@ -1551,20 +1541,6 @@ void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
             if( item->GetLayer() == LAYER_WIRE || item->GetLayer() == LAYER_BUS )
                 lines.push_back( static_cast<SCH_LINE*>( item ) );
         }
-
-        fprintf( stderr, "DEBUG[CLEANUP]: Found %zu wire/bus lines on screen\n", lines.size() );
-        for( size_t i = 0; i < lines.size() && i < 10; ++i )
-        {
-            SCH_LINE* l = lines[i];
-            fprintf( stderr, "DEBUG[CLEANUP]:   line[%zu] %p: (%d,%d)->(%d,%d) layer=%d\n",
-                     i, (void*)l,
-                     l->GetStartPoint().x, l->GetStartPoint().y,
-                     l->GetEndPoint().x, l->GetEndPoint().y,
-                     l->GetLayer() );
-        }
-        if( lines.size() > 10 )
-            fprintf( stderr, "DEBUG[CLEANUP]:   ... and %zu more lines\n", lines.size() - 10 );
-        fflush( stderr );
 
         // Sort by minimum X position
         std::sort( lines.begin(), lines.end(),
@@ -1582,27 +1558,12 @@ void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
 
             if( firstLine->IsNull() )
             {
-                fprintf( stderr, "DEBUG[CLEANUP]: Line %p is NULL (start==end at %d,%d)\n",
-                         (void*)firstLine, firstLine->GetStartPoint().x, firstLine->GetStartPoint().y );
-                fflush( stderr );
                 remove_item( firstLine, "zero-length line (IsNull)" );
                 continue;
             }
 
             int  firstRightXEdge = maxX( firstLine );
             auto it2 = it1;
-
-            // Only log for lines with large coordinates (API-added lines)
-            bool verboseLog = (firstRightXEdge > 10000000);
-            if( verboseLog )
-            {
-                fprintf( stderr, "DEBUG[CLEANUP]: Processing firstLine %p (%d,%d)->(%d,%d), rightEdge=%d\n",
-                         (void*)firstLine,
-                         firstLine->GetStartPoint().x, firstLine->GetStartPoint().y,
-                         firstLine->GetEndPoint().x, firstLine->GetEndPoint().y,
-                         firstRightXEdge );
-                fflush( stderr );
-            }
 
             for( ++it2; it2 != lines.end(); ++it2 )
             {
@@ -1611,15 +1572,7 @@ void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
 
                 // impossible to overlap remaining lines
                 if( secondLeftXEdge > firstRightXEdge )
-                {
-                    if( verboseLog )
-                    {
-                        fprintf( stderr, "DEBUG[CLEANUP]:   Breaking - secondLine %p leftEdge=%d > firstRightEdge=%d\n",
-                                 (void*)secondLine, secondLeftXEdge, firstRightXEdge );
-                        fflush( stderr );
-                    }
                     break;
-                }
 
                 // No Y axis overlap
                 if( !( std::max( minY( firstLine ), minY( secondLine ) )
@@ -1641,16 +1594,6 @@ void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
                 if( firstLine->IsEndPoint( secondLine->GetStartPoint() )
                     && firstLine->IsEndPoint( secondLine->GetEndPoint() ) )
                 {
-                    fprintf( stderr, "DEBUG[CLEANUP]: Removing identical line %p\n", (void*)secondLine );
-                    fprintf( stderr, "DEBUG[CLEANUP]:   firstLine %p: (%d,%d)->(%d,%d)\n",
-                             (void*)firstLine,
-                             firstLine->GetStartPoint().x, firstLine->GetStartPoint().y,
-                             firstLine->GetEndPoint().x, firstLine->GetEndPoint().y );
-                    fprintf( stderr, "DEBUG[CLEANUP]:   secondLine %p: (%d,%d)->(%d,%d)\n",
-                             (void*)secondLine,
-                             secondLine->GetStartPoint().x, secondLine->GetStartPoint().y,
-                             secondLine->GetEndPoint().x, secondLine->GetEndPoint().y );
-                    fflush( stderr );
                     remove_item( secondLine, "identical line" );
                     continue;
                 }
@@ -1661,19 +1604,6 @@ void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
 
                 if( mergedLine != nullptr )
                 {
-                    fprintf( stderr, "DEBUG[CLEANUP]: Merging lines %p and %p into new line %p\n",
-                             (void*)firstLine, (void*)secondLine, (void*)mergedLine );
-                    fprintf( stderr, "DEBUG[CLEANUP]:   first: (%d,%d)->(%d,%d)\n",
-                             firstLine->GetStartPoint().x, firstLine->GetStartPoint().y,
-                             firstLine->GetEndPoint().x, firstLine->GetEndPoint().y );
-                    fprintf( stderr, "DEBUG[CLEANUP]:   second: (%d,%d)->(%d,%d)\n",
-                             secondLine->GetStartPoint().x, secondLine->GetStartPoint().y,
-                             secondLine->GetEndPoint().x, secondLine->GetEndPoint().y );
-                    fprintf( stderr, "DEBUG[CLEANUP]:   merged: (%d,%d)->(%d,%d)\n",
-                             mergedLine->GetStartPoint().x, mergedLine->GetStartPoint().y,
-                             mergedLine->GetEndPoint().x, mergedLine->GetEndPoint().y );
-                    fflush( stderr );
-
                     remove_item( firstLine, "merged with another line" );
                     remove_item( secondLine, "merged with another line" );
 
@@ -1692,9 +1622,6 @@ void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
             }
         }
     }
-
-    fprintf( stderr, "DEBUG[CLEANUP]: CleanUp() finished\n" );
-    fflush( stderr );
 }
 
 

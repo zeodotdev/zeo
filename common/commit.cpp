@@ -45,24 +45,6 @@ COMMIT::~COMMIT()
 
 COMMIT& COMMIT::Stage( EDA_ITEM* aItem, CHANGE_TYPE aChangeType, BASE_SCREEN* aScreen, RECURSE_MODE aRecurse )
 {
-    // DEBUG: Validate item at entry to Stage
-    fprintf( stderr, "DEBUG[STAGE-1]: Stage entry - aItem=%p, aScreen=%p, changeType=%d\n",
-             (void*)aItem, (void*)aScreen, aChangeType );
-    fflush( stderr );
-
-    if( aItem )
-    {
-        // Try to read basic fields to verify memory is valid
-        KICAD_T itemType = aItem->Type();
-        fprintf( stderr, "DEBUG[STAGE-2]: Item type=%d\n", itemType );
-        fflush( stderr );
-
-        // This is the call that crashes - check parent pointer
-        EDA_ITEM* parentPtr = aItem->GetParent();
-        fprintf( stderr, "DEBUG[STAGE-3]: Item parent=%p\n", (void*)parentPtr );
-        fflush( stderr );
-    }
-
     int       flags = aChangeType & CHT_FLAGS;
     int       changeType = aChangeType & CHT_TYPE;
     EDA_ITEM* undoItem = undoLevelItem( aItem );

@@ -155,17 +155,9 @@ void SCH_COMMIT::pushLibEdit( const wxString& aMessage, int aCommitFlags )
 
 void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
 {
-    fprintf( stderr, "DEBUG[PUSH-SCH-EDIT]: pushSchEdit() called\n" );
-    fflush( stderr );
-
     // Objects potentially interested in changes:
     PICKED_ITEMS_LIST   undoList;
     KIGFX::VIEW*        view = m_toolMgr->GetView();
-
-    fprintf( stderr, "DEBUG[PUSH-SCH-EDIT]: m_toolMgr=%p, view=%p\n",
-             (void*)m_toolMgr, (void*)view );
-    fflush( stderr );
-
     SCH_EDIT_FRAME*     frame = static_cast<SCH_EDIT_FRAME*>( m_toolMgr->GetToolHolder() );
     SCH_SELECTION_TOOL* selTool = m_toolMgr->GetTool<SCH_SELECTION_TOOL>();
     SCH_GROUP*          enteredGroup = selTool ? selTool->GetEnteredGroup() : nullptr;
@@ -264,10 +256,6 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
         {
         case CHT_ADD:
         {
-            fprintf( stderr, "DEBUG[CHT_ADD]: Adding item %p (type=%d), changeFlags=%d, CHT_DONE=%d\n",
-                     (void*)schItem, schItem->Type(), changeFlags, changeFlags & CHT_DONE );
-            fflush( stderr );
-
             if( enteredGroup && schItem->IsGroupableType() && !schItem->GetParentGroup() )
                 selTool->GetEnteredGroup()->AddItem( schItem );
 
@@ -278,40 +266,15 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
 
             if( !( changeFlags & CHT_DONE ) )
             {
-                fprintf( stderr, "DEBUG[CHT_ADD]: CHT_DONE not set, adding to screen and view\n" );
-                fflush( stderr );
-
                 if( !screen->CheckIfOnDrawList( schItem ) )  // don't want a loop!
-                {
-                    fprintf( stderr, "DEBUG[CHT_ADD]: Calling screen->Append()\n" );
-                    fflush( stderr );
                     screen->Append( schItem );
-                }
 
                 if( view )
-                {
-                    fprintf( stderr, "DEBUG[CHT_ADD]: Calling view->Add() on item %p\n", (void*)schItem );
-                    fflush( stderr );
                     view->Add( schItem );
-                }
-                else
-                {
-                    fprintf( stderr, "DEBUG[CHT_ADD]: ERROR - view is NULL!\n" );
-                    fflush( stderr );
-                }
-            }
-            else
-            {
-                fprintf( stderr, "DEBUG[CHT_ADD]: CHT_DONE is set, skipping screen/view add\n" );
-                fflush( stderr );
             }
 
             if( frame )
-            {
-                fprintf( stderr, "DEBUG[CHT_ADD]: Calling frame->UpdateItem()\n" );
-                fflush( stderr );
                 frame->UpdateItem( schItem, true, true );
-            }
 
             bulkAddedItems.push_back( schItem );
 
@@ -480,10 +443,6 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
 
 void SCH_COMMIT::Push( const wxString& aMessage, int aCommitFlags )
 {
-    fprintf( stderr, "DEBUG[PUSH]: Push() called, Empty()=%d, m_toolMgr=%p\n",
-             Empty() ? 1 : 0, (void*)m_toolMgr );
-    fflush( stderr );
-
     if( Empty() )
         return;
 
@@ -492,32 +451,16 @@ void SCH_COMMIT::Push( const wxString& aMessage, int aCommitFlags )
     else
         pushSchEdit( aMessage, aCommitFlags );
 
-    fprintf( stderr, "DEBUG[PUSH]: After pushSchEdit, getting frame from m_toolMgr\n" );
-    fflush( stderr );
-
     if( SCH_BASE_FRAME* frame = static_cast<SCH_BASE_FRAME*>( m_toolMgr->GetToolHolder() ) )
     {
-        fprintf( stderr, "DEBUG[PUSH]: Got frame=%p, GetCanvas()=%p\n",
-                 (void*)frame, (void*)frame->GetCanvas() );
-        fflush( stderr );
-
         if( !( aCommitFlags & SKIP_SET_DIRTY ) )
             frame->OnModify();
 
         if( frame && frame->GetCanvas() )
         {
-            fprintf( stderr, "DEBUG[PUSH]: Calling Refresh() on canvas\n" );
-            fflush( stderr );
             frame->GetCanvas()->Refresh();
             frame->GetCanvas()->Update();  // Force immediate repaint on macOS
-            fprintf( stderr, "DEBUG[PUSH]: Refresh() + Update() completed\n" );
-            fflush( stderr );
         }
-    }
-    else
-    {
-        fprintf( stderr, "DEBUG[PUSH]: ERROR - GetToolHolder() returned NULL!\n" );
-        fflush( stderr );
     }
 
     clear();

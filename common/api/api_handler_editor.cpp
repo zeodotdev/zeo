@@ -201,19 +201,10 @@ COMMIT* API_HANDLER_EDITOR::getCurrentCommit( const std::string& aClientName )
         if( !commit )
             return nullptr;
 
-        COMMIT* rawPtr = commit.get();
         m_commits[aClientName] = std::make_pair( id, std::move( commit ) );
-        fprintf( stderr, "DEBUG[COMMIT-CREATE]: Created new commit %p for client '%s'\n",
-                 (void*)rawPtr, aClientName.c_str() );
-        fflush( stderr );
     }
 
-    COMMIT* result = m_commits.at( aClientName ).second.get();
-    fprintf( stderr, "DEBUG[COMMIT-GET]: Returning commit %p for client '%s' (m_commits size=%zu)\n",
-             (void*)result, aClientName.c_str(), m_commits.size() );
-    fflush( stderr );
-
-    return result;
+    return m_commits.at( aClientName ).second.get();
 }
 
 
@@ -223,27 +214,12 @@ void API_HANDLER_EDITOR::pushCurrentCommit( const std::string& aClientName,
     auto it = m_commits.find( aClientName );
 
     if( it == m_commits.end() )
-    {
-        fprintf( stderr, "DEBUG[COMMIT-PUSH]: No commit found for client '%s'\n", aClientName.c_str() );
-        fflush( stderr );
         return;
-    }
-
-    COMMIT* commitPtr = it->second.second.get();
-    fprintf( stderr, "DEBUG[COMMIT-PUSH]: Pushing and destroying commit %p for client '%s'\n",
-             (void*)commitPtr, aClientName.c_str() );
-    fflush( stderr );
 
     it->second.second->Push( aMessage.IsEmpty() ? m_defaultCommitMessage : aMessage );
 
-    fprintf( stderr, "DEBUG[COMMIT-ERASE]: About to erase commit entry for client '%s'\n", aClientName.c_str() );
-    fflush( stderr );
-
     m_commits.erase( it );
     m_activeClients.erase( aClientName );
-
-    fprintf( stderr, "DEBUG[COMMIT-ERASE]: Commit destroyed, m_commits size now=%zu\n", m_commits.size() );
-    fflush( stderr );
 }
 
 

@@ -69,29 +69,12 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
 
 std::unique_ptr<COMMIT> API_HANDLER_SCH::createCommit()
 {
-    fprintf( stderr, "DEBUG[SCH-CREATE-COMMIT]: this=%p, m_frame=%p\n", (void*)this, (void*)m_frame );
-    fflush( stderr );
-
     wxASSERT( m_frame != nullptr );
 
     if( !m_frame )
-    {
-        fprintf( stderr, "DEBUG[SCH-CREATE-COMMIT]: ERROR - m_frame is null!\n" );
-        fflush( stderr );
         return nullptr;
-    }
 
-    // Try to access m_frame to verify it's valid
-    fprintf( stderr, "DEBUG[SCH-CREATE-COMMIT]: m_frame->GetName()=%s\n",
-             m_frame->GetName().ToStdString().c_str() );
-    fflush( stderr );
-
-    auto commit = std::make_unique<SCH_COMMIT>( m_frame );
-
-    fprintf( stderr, "DEBUG[SCH-CREATE-COMMIT]: SCH_COMMIT created at %p\n", (void*)commit.get() );
-    fflush( stderr );
-
-    return commit;
+    return std::make_unique<SCH_COMMIT>( m_frame );
 }
 
 
@@ -191,10 +174,6 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
         const google::protobuf::RepeatedPtrField<google::protobuf::Any>& aItems,
         std::function<void( ItemStatus, google::protobuf::Any )>         aItemHandler )
 {
-    fprintf( stderr, "DEBUG[HANDLER-ENTRY]: handleCreateUpdateItemsInternal - this=%p, m_frame=%p, aCreate=%d, client='%s', items=%d\n",
-             (void*)this, (void*)m_frame, aCreate, aClientName.c_str(), aItems.size() );
-    fflush( stderr );
-
     ApiResponseStatus e;
 
     auto containerResult = validateItemHeaderDocument( aHeader );
@@ -259,10 +238,6 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
 
     COMMIT* commit = getCurrentCommit( aClientName );
 
-    fprintf( stderr, "DEBUG[GET-COMMIT]: Got commit=%p for client='%s'\n",
-             (void*)commit, aClientName.c_str() );
-    fflush( stderr );
-
     if( !commit )
     {
         e.set_status( ApiStatusCode::AS_BAD_REQUEST );
@@ -270,15 +245,8 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
         return tl::unexpected( e );
     }
 
-    fprintf( stderr, "DEBUG[LOOP-START]: Starting to process %d items\n", aItems.size() );
-    fflush( stderr );
-
-    int itemIndex = 0;
     for( const google::protobuf::Any& anyItem : aItems )
     {
-        fprintf( stderr, "DEBUG[ITEM-%d]: Processing item %d of %d\n", itemIndex, itemIndex, aItems.size() );
-        fflush( stderr );
-
         ItemStatus             status;
         std::optional<KICAD_T> type = TypeNameFromAny( anyItem );
 
@@ -302,36 +270,11 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
 
         std::unique_ptr<EDA_ITEM> item( std::move( *creationResult ) );
 
-        // DEBUG: Validate item immediately after creation
-        fprintf( stderr, "DEBUG[1]: Item created at %p, type=%d\n", (void*)item.get(), item->Type() );
-        fflush( stderr );
-
-        // DEBUG: Check parent pointer before deserialization
-        EDA_ITEM* parentBefore = item->GetParent();
-        fprintf( stderr, "DEBUG[2]: Before Deserialize - parent=%p\n", (void*)parentBefore );
-        fflush( stderr );
-
         if( !item->Deserialize( anyItem ) )
         {
             e.set_status( ApiStatusCode::AS_BAD_REQUEST );
             e.set_error_message( fmt::format( "could not unpack {} from request", item->GetClass().ToStdString() ) );
             return tl::unexpected( e );
-        }
-
-        // DEBUG: Check parent pointer after deserialization
-        EDA_ITEM* parentAfter = item->GetParent();
-        fprintf( stderr, "DEBUG[3]: After Deserialize - parent=%p\n", (void*)parentAfter );
-        fflush( stderr );
-
-        // DEBUG: If it's a line, show coordinates
-        if( item->Type() == SCH_LINE_T )
-        {
-            SCH_LINE* line = static_cast<SCH_LINE*>( item.get() );
-            fprintf( stderr, "DEBUG[3a]: SCH_LINE coords: (%d,%d)->(%d,%d), layer=%d, IsNull=%d\n",
-                     line->GetStartPoint().x, line->GetStartPoint().y,
-                     line->GetEndPoint().x, line->GetEndPoint().y,
-                     line->GetLayer(), line->IsNull() ? 1 : 0 );
-            fflush( stderr );
         }
 
         if( aCreate && itemUuidMap.count( item->m_Uuid ) )
@@ -356,44 +299,8 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
 
         if( aCreate )
         {
-            // DEBUG: Check before Serialize
-            fprintf( stderr, "DEBUG[4]: Before Serialize - item=%p, parent=%p\n",
-                     (void*)item.get(), (void*)item->GetParent() );
-            fflush( stderr );
-
             item->Serialize( newItem );
-
-            // DEBUG: Check after Serialize, before Add
-            EDA_ITEM* rawPtr = item.get();
-            fprintf( stderr, "DEBUG[5]: After Serialize - item=%p, parent=%p, about to Add\n",
-                     (void*)rawPtr, (void*)rawPtr->GetParent() );
-            fflush( stderr );
-
-            // DEBUG: Check the COMMIT object itself - vtable might be corrupted
-            fprintf( stderr, "DEBUG[6]: commit=%p, about to call Add\n", (void*)commit );
-            fflush( stderr );
-
-            // Try to read the vtable pointer (first 8 bytes of object)
-            void** vtablePtr = reinterpret_cast<void**>( commit );
-            fprintf( stderr, "DEBUG[7]: commit vtable=%p\n", (void*)*vtablePtr );
-            fflush( stderr );
-
-            // DEBUG: Check if commit is still in m_commits (should always be true here)
-            fprintf( stderr, "DEBUG[8]: m_commits.count('%s')=%zu, m_activeClients.count=%zu\n",
-                     aClientName.c_str(), m_commits.count( aClientName ), m_activeClients.count( aClientName ) );
-            fflush( stderr );
-
-            // DEBUG: Verify commit->Empty() as a sanity check (calls non-virtual method)
-            fprintf( stderr, "DEBUG[9]: commit->Empty()=%d\n", commit->Empty() );
-            fflush( stderr );
-
-            fprintf( stderr, "DEBUG[10]: About to call commit->Add() now...\n" );
-            fflush( stderr );
-
             commit->Add( item.release(), screen );
-
-            fprintf( stderr, "DEBUG[11]: commit->Add() returned successfully\n" );
-            fflush( stderr );
         }
         else
         {
@@ -412,14 +319,17 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
         }
 
         aItemHandler( status, newItem );
-        itemIndex++;
     }
-
-    fprintf( stderr, "DEBUG[LOOP-END]: Finished processing all items\n" );
-    fflush( stderr );
 
     // Push the commit AFTER all items are processed (not inside the loop!)
     // This was causing use-after-free when processing multiple items in one request
+    // Only auto-push if client hasn't called begin_commit (i.e., not in m_activeClients)
+    //
+    // NOTE: Due to API routing, BeginCommit (which has no document field) may be
+    // handled by a different handler instance than CreateItems. This means
+    // m_activeClients may not contain the client even if begin_commit() was called.
+    // This is a known limitation - fixing it requires adding a document field to
+    // the BeginCommit protobuf message.
     if( !m_activeClients.count( aClientName ) )
         pushCurrentCommit( aClientName, aCreate ? _( "Added items via API" ) : _( "Updated items via API" ) );
 

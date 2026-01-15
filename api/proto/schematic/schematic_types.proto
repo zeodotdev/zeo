@@ -127,3 +127,54 @@ message Symbol
   repeated Field                       fields             = 12;
   repeated Pin                         pins               = 13;
 }
+
+/// Represents which side of a sheet a pin is attached to
+enum SheetPinSide
+{
+  SPS_UNKNOWN = 0;
+  SPS_LEFT    = 1;
+  SPS_RIGHT   = 2;
+  SPS_TOP     = 3;
+  SPS_BOTTOM  = 4;
+}
+
+/// Shape of a hierarchical label or sheet pin
+enum LabelShape
+{
+  LS_UNKNOWN     = 0;
+  LS_INPUT       = 1;
+  LS_OUTPUT      = 2;
+  LS_BIDI        = 3;
+  LS_TRISTATE    = 4;
+  LS_UNSPECIFIED = 5;
+}
+
+/// Represents a sheet pin (hierarchical connection point on a sheet)
+message SheetPin
+{
+  kiapi.common.types.KIID    id       = 1;
+  string                     name     = 2;
+  kiapi.common.types.Vector2 position = 3;
+  SheetPinSide               side     = 4;
+  LabelShape                 shape    = 5;
+}
+
+/// Represents a hierarchical sheet in the schematic
+message Sheet
+{
+  kiapi.common.types.KIID      id                   = 1;
+  kiapi.common.types.Vector2   position             = 2;
+  kiapi.common.types.Vector2   size                 = 3;
+  string                       name                 = 4;
+  string                       filename             = 5;
+  string                       page_number          = 6;
+  bool                         dnp                  = 7;
+  bool                         exclude_from_bom     = 8;
+  bool                         exclude_from_board   = 9;
+  bool                         exclude_from_sim     = 10;
+  kiapi.common.types.Distance  border_width         = 11;
+  kiapi.common.types.Color     border_color         = 12;
+  kiapi.common.types.Color     background_color     = 13;
+  repeated SheetPin            pins                 = 14;
+  repeated Field               fields               = 15;
+}

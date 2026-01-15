@@ -49,6 +49,7 @@
 
 #include <api/common/types/base_types.pb.h>
 #include <widgets/appearance_controls.h>
+#include <wx/wfstream.h>
 #include <widgets/report_severity.h>
 
 using namespace kiapi::common::commands;
@@ -118,6 +119,11 @@ API_HANDLER_PCB::API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame ) :
             &API_HANDLER_PCB::handleSetBoardEditorAppearanceSettings );
     registerHandler<InjectDrcError, InjectDrcErrorResponse>(
             &API_HANDLER_PCB::handleInjectDrcError );
+
+    // Document management handlers
+    registerHandler<CreateDocument, CreateDocumentResponse>( &API_HANDLER_PCB::handleCreateDocument );
+    registerHandler<OpenDocument, OpenDocumentResponse>( &API_HANDLER_PCB::handleOpenDocument );
+    registerHandler<CloseDocument, Empty>( &API_HANDLER_PCB::handleCloseDocument );
 }
 
 
@@ -1793,4 +1799,185 @@ HANDLER_RESULT<InjectDrcErrorResponse> API_HANDLER_PCB::handleInjectDrcError(
     response.mutable_marker()->set_value( marker->GetUUID().AsStdString() );
 
     return response;
+}
+
+
+//
+// Document Management Handlers
+//
+
+HANDLER_RESULT<CreateDocumentResponse> API_HANDLER_PCB::handleCreateDocument(
+        const HANDLER_CONTEXT<CreateDocument>& aCtx )
+{
+    if( aCtx.Request.type() != DocumentType::DOCTYPE_PCB )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    wxString path = wxString::FromUTF8( aCtx.Request.path() );
+
+    if( path.IsEmpty() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Path cannot be empty" );
+        return tl::unexpected( e );
+    }
+
+    // Check if file already exists
+    if( wxFileName::FileExists( path ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "File already exists: " + path.ToStdString() );
+        return tl::unexpected( e );
+    }
+
+    // Create directories if needed
+    wxFileName fn( path );
+    fn.Mkdir( wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
+
+    // If a template is provided, copy it
+    if( !aCtx.Request.template_path().empty() )
+    {
+        wxString templatePath = wxString::FromUTF8( aCtx.Request.template_path() );
+
+        if( !wxFileName::FileExists( templatePath ) )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( "Template file not found: " + templatePath.ToStdString() );
+            return tl::unexpected( e );
+        }
+
+        if( !wxCopyFile( templatePath, path ) )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( "Failed to copy template file" );
+            return tl::unexpected( e );
+        }
+    }
+    else
+    {
+        // Create a minimal empty board file
+        wxFileOutputStream output( path );
+
+        if( !output.IsOk() )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( "Failed to create file: " + path.ToStdString() );
+            return tl::unexpected( e );
+        }
+
+        wxString content = wxT( "(kicad_pcb (version 20231014) (generator \"api\"))\n" );
+        output.Write( content.c_str(), content.length() );
+    }
+
+    CreateDocumentResponse response;
+    response.mutable_document()->set_type( DocumentType::DOCTYPE_PCB );
+
+    // Open the document if requested
+    if( aCtx.Request.open_after_create() )
+    {
+        if( !frame()->OpenProjectFiles( std::vector<wxString>{ path } ) )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( "Created file but failed to open it" );
+            return tl::unexpected( e );
+        }
+
+        wxFileName openedFn( path );
+        response.mutable_document()->set_board_filename( openedFn.GetFullName().ToStdString() );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<OpenDocumentResponse> API_HANDLER_PCB::handleOpenDocument(
+        const HANDLER_CONTEXT<OpenDocument>& aCtx )
+{
+    if( aCtx.Request.type() != DocumentType::DOCTYPE_PCB )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    wxString path = wxString::FromUTF8( aCtx.Request.path() );
+
+    if( path.IsEmpty() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Path cannot be empty" );
+        return tl::unexpected( e );
+    }
+
+    if( !wxFileName::FileExists( path ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "File not found: " + path.ToStdString() );
+        return tl::unexpected( e );
+    }
+
+    if( !frame()->OpenProjectFiles( std::vector<wxString>{ path } ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Failed to open board: " + path.ToStdString() );
+        return tl::unexpected( e );
+    }
+
+    OpenDocumentResponse response;
+    response.mutable_document()->set_type( DocumentType::DOCTYPE_PCB );
+
+    wxFileName fn( path );
+    response.mutable_document()->set_board_filename( fn.GetFullName().ToStdString() );
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_PCB::handleCloseDocument(
+        const HANDLER_CONTEXT<CloseDocument>& aCtx )
+{
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    // Save first if requested
+    if( aCtx.Request.save_changes() && !aCtx.Request.force() )
+    {
+        if( !frame()->SaveBoard() )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( "Failed to save document before closing" );
+            return tl::unexpected( e );
+        }
+    }
+
+    // Clear the board - doAskAboutUnsavedChanges=false since we handle that above
+    frame()->Clear_Pcb( false );
+
+    return Empty();
 }

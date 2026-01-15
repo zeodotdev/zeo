@@ -87,6 +87,68 @@ message RevertDocument
   kiapi.common.types.DocumentSpecifier document = 1;
 }
 
+//
+// Document Management Commands
+//
+
+/// Creates a new document of the specified type
+message CreateDocument
+{
+  // Type of document to create (schematic, board, etc.)
+  kiapi.common.types.DocumentType type = 1;
+
+  // Full path for the new file
+  string path = 2;
+
+  // Optional: template file to copy from
+  string template_path = 3;
+
+  // Whether to open the document in the editor after creation
+  bool open_after_create = 4;
+}
+
+message CreateDocumentResponse
+{
+  // The created document's specifier
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+/// Opens an existing document
+message OpenDocument
+{
+  // Type of document to open
+  kiapi.common.types.DocumentType type = 1;
+
+  // Full path to the document file
+  string path = 2;
+}
+
+message OpenDocumentResponse
+{
+  // The opened document's specifier
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+/// Closes a document
+message CloseDocument
+{
+  // The document to close
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // If true, save any pending changes before closing
+  bool save_changes = 2;
+
+  // If true, close without prompting even if there are unsaved changes
+  bool force = 3;
+}
+
+/// Switches the active document in the editor
+message SetActiveDocument
+{
+  // The document to make active
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
 /*
  * Runs a TOOL_ACTION using the TOOL_MANAGER of a given frame.
  * WARNING: The TOOL_ACTIONs are specifically *not* an API.

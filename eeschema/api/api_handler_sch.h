@@ -25,14 +25,40 @@
 
 #include <api/api_handler_editor.h>
 #include <api/common/commands/editor_commands.pb.h>
+#include <api/schematic/schematic_commands.pb.h>
 #include <kiid.h>
 
 using namespace kiapi;
 using namespace kiapi::common;
 using google::protobuf::Empty;
 
+// Forward declarations for schematic-specific types
+namespace kiapi { namespace schematic { namespace commands {
+    class GetSheetHierarchy;
+    class GetSheetHierarchyResponse;
+    class SheetHierarchyNode;
+    class GetCurrentSheet;
+    class GetCurrentSheetResponse;
+    class NavigateToSheet;
+    class CreateSheet;
+    class CreateSheetResponse;
+    class DeleteSheet;
+    class GetSheetProperties;
+    class GetSheetPropertiesResponse;
+    class SetSheetProperties;
+    class CreateSheetPin;
+    class CreateSheetPinResponse;
+    class DeleteSheetPin;
+    class GetSheetPins;
+    class GetSheetPinsResponse;
+    class SyncSheetPins;
+    class SyncSheetPinsResponse;
+} } }
+
 class SCH_EDIT_FRAME;
 class SCH_ITEM;
+class SCH_SHEET;
+class SCH_SHEET_PATH;
 
 
 class API_HANDLER_SCH : public API_HANDLER_EDITOR
@@ -52,10 +78,10 @@ protected:
 
     HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> createItemForType( KICAD_T aType, EDA_ITEM* aContainer );
 
-    HANDLER_RESULT<types::ItemRequestStatus> handleCreateUpdateItemsInternal(
-            bool aCreate, const std::string& aClientName, const types::ItemHeader& aHeader,
+    HANDLER_RESULT<common::types::ItemRequestStatus> handleCreateUpdateItemsInternal(
+            bool aCreate, const std::string& aClientName, const common::types::ItemHeader& aHeader,
             const google::protobuf::RepeatedPtrField<google::protobuf::Any>&   aItems,
-            std::function<void( commands::ItemStatus, google::protobuf::Any )> aItemHandler ) override;
+            std::function<void( common::commands::ItemStatus, google::protobuf::Any )> aItemHandler ) override;
 
     void deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& aItemsToDelete,
                               const std::string&                  aClientName ) override;
@@ -92,8 +118,64 @@ private:
     HANDLER_RESULT<commands::AddLibraryResponse>
     handleAddLibrary( const HANDLER_CONTEXT<commands::AddLibrary>& aCtx );
 
+    // Document management handlers
+    HANDLER_RESULT<commands::CreateDocumentResponse>
+    handleCreateDocument( const HANDLER_CONTEXT<commands::CreateDocument>& aCtx );
+
+    HANDLER_RESULT<commands::OpenDocumentResponse>
+    handleOpenDocument( const HANDLER_CONTEXT<commands::OpenDocument>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleCloseDocument( const HANDLER_CONTEXT<commands::CloseDocument>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetActiveDocument( const HANDLER_CONTEXT<commands::SetActiveDocument>& aCtx );
+
+    // Sheet hierarchy handlers
+    HANDLER_RESULT<schematic::commands::GetSheetHierarchyResponse>
+    handleGetSheetHierarchy( const HANDLER_CONTEXT<schematic::commands::GetSheetHierarchy>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetCurrentSheetResponse>
+    handleGetCurrentSheet( const HANDLER_CONTEXT<schematic::commands::GetCurrentSheet>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleNavigateToSheet( const HANDLER_CONTEXT<schematic::commands::NavigateToSheet>& aCtx );
+
+    // Sheet CRUD handlers
+    HANDLER_RESULT<schematic::commands::CreateSheetResponse>
+    handleCreateSheet( const HANDLER_CONTEXT<schematic::commands::CreateSheet>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleDeleteSheet( const HANDLER_CONTEXT<schematic::commands::DeleteSheet>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetSheetPropertiesResponse>
+    handleGetSheetProperties( const HANDLER_CONTEXT<schematic::commands::GetSheetProperties>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetSheetProperties( const HANDLER_CONTEXT<schematic::commands::SetSheetProperties>& aCtx );
+
+    // Sheet pin handlers
+    HANDLER_RESULT<schematic::commands::CreateSheetPinResponse>
+    handleCreateSheetPin( const HANDLER_CONTEXT<schematic::commands::CreateSheetPin>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleDeleteSheetPin( const HANDLER_CONTEXT<schematic::commands::DeleteSheetPin>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetSheetPinsResponse>
+    handleGetSheetPins( const HANDLER_CONTEXT<schematic::commands::GetSheetPins>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::SyncSheetPinsResponse>
+    handleSyncSheetPins( const HANDLER_CONTEXT<schematic::commands::SyncSheetPins>& aCtx );
+
     // Helper to get item by KIID (searches all items including nested)
     std::optional<SCH_ITEM*> getItemById( const KIID& aId );
+
+    // Helper to build sheet hierarchy node
+    void buildSheetHierarchyNode( const SCH_SHEET_PATH& aPath,
+                                  schematic::commands::SheetHierarchyNode* aNode );
+
+    // Helper to find sheet by KIID
+    SCH_SHEET* findSheetById( const KIID& aId );
 
     SCH_EDIT_FRAME* m_frame;
 };

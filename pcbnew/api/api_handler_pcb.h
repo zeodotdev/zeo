@@ -154,6 +154,16 @@ private:
     HANDLER_RESULT<InjectDrcErrorResponse> handleInjectDrcError(
             const HANDLER_CONTEXT<InjectDrcError>& aCtx );
 
+    // Document management handlers
+    HANDLER_RESULT<commands::CreateDocumentResponse>
+    handleCreateDocument( const HANDLER_CONTEXT<commands::CreateDocument>& aCtx );
+
+    HANDLER_RESULT<commands::OpenDocumentResponse>
+    handleOpenDocument( const HANDLER_CONTEXT<commands::OpenDocument>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleCloseDocument( const HANDLER_CONTEXT<commands::CloseDocument>& aCtx );
+
 protected:
     std::unique_ptr<COMMIT> createCommit() override;
 

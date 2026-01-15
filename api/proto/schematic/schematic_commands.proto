@@ -17,8 +17,175 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/*
+ * Commands related to schematic document and sheet management
+ */
+
 syntax = "proto3";
 
-package kiapi.schematic.types;
+package kiapi.schematic.commands;
+
+import "common/types/base_types.proto";
+import "schematic/schematic_types.proto";
+
+//
+// Sheet Hierarchy Commands
+//
+
+/// Information about a sheet in the hierarchy
+message SheetHierarchyNode
+{
+  kiapi.common.types.KIID      id              = 1;
+  kiapi.common.types.SheetPath path            = 2;
+  string                       name            = 3;
+  string                       filename        = 4;
+  string                       page_number     = 5;
+  repeated SheetHierarchyNode  children        = 6;
+}
+
+/// Retrieves the full sheet hierarchy tree
+message GetSheetHierarchy
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetSheetHierarchyResponse
+{
+  SheetHierarchyNode root = 1;
+}
+
+/// Gets the currently displayed sheet
+message GetCurrentSheet
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetCurrentSheetResponse
+{
+  kiapi.common.types.SheetPath    current_sheet = 1;
+  kiapi.schematic.types.Sheet     sheet_info    = 2;
+}
+
+/// Navigates to a specific sheet in the hierarchy
+message NavigateToSheet
+{
+  kiapi.common.types.DocumentSpecifier document     = 1;
+  kiapi.common.types.SheetPath         target_sheet = 2;
+}
+
+//
+// Sheet CRUD Commands
+//
+
+/// Creates a new hierarchical sheet in the schematic
+message CreateSheet
+{
+  // Specifies the parent document/sheet where the new sheet will be added
+  kiapi.common.types.ItemHeader header = 1;
+
+  // Sheet properties
+  string                        name     = 2;
+  string                        filename = 3;
+  kiapi.common.types.Vector2    position = 4;
+  kiapi.common.types.Vector2    size     = 5;
+
+  // If true, create the .kicad_sch file on disk
+  bool                          create_file = 6;
+}
+
+message CreateSheetResponse
+{
+  kiapi.common.types.KIID      sheet_id       = 1;
+  kiapi.common.types.SheetPath new_sheet_path = 2;
+}
+
+/// Deletes a sheet from the hierarchy
+message DeleteSheet
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID              sheet_id = 2;
+
+  // If true, also delete the .kicad_sch file from disk
+  bool                                 delete_file = 3;
+}
+
+/// Gets properties of a specific sheet
+message GetSheetProperties
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID              sheet_id = 2;
+}
+
+message GetSheetPropertiesResponse
+{
+  kiapi.schematic.types.Sheet sheet = 1;
+}
+
+/// Updates properties of a sheet
+message SetSheetProperties
+{
+  kiapi.common.types.DocumentSpecifier document    = 1;
+  kiapi.common.types.KIID              sheet_id    = 2;
+
+  // Optional fields - only provided fields will be updated
+  optional string                      name        = 3;
+  optional string                      filename    = 4;
+  optional string                      page_number = 5;
+}
+
+//
+// Sheet Pin Commands
+//
+
+/// Creates a new sheet pin on a sheet
+message CreateSheetPin
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID              sheet_id = 2;
+
+  string                               name     = 3;
+  kiapi.schematic.types.LabelShape     shape    = 4;
+  kiapi.schematic.types.SheetPinSide   side     = 5;
+  kiapi.common.types.Vector2           position = 6;
+}
+
+message CreateSheetPinResponse
+{
+  kiapi.common.types.KIID pin_id = 1;
+}
+
+/// Deletes a sheet pin
+message DeleteSheetPin
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID              pin_id   = 2;
+}
+
+/// Gets all pins on a specific sheet
+message GetSheetPins
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID              sheet_id = 2;
+}
+
+message GetSheetPinsResponse
+{
+  repeated kiapi.schematic.types.SheetPin pins = 1;
+}
+
+/// Synchronizes sheet pins with hierarchical labels in the child sheet
+message SyncSheetPins
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // If empty, sync all sheets in the hierarchy
+  kiapi.common.types.KIID              sheet_id = 2;
+}
+
+message SyncSheetPinsResponse
+{
+  int32 pins_added   = 1;
+  int32 pins_removed = 2;
+}
 
 

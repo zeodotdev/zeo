@@ -21,6 +21,7 @@
 #include <sch_pin.h>
 #include <lib_symbol.h>
 #include <sch_bitmap.h>
+#include <sch_symbol.h>
 #include <sch_bus_entry.h>
 #include <sch_field.h>
 #include <sch_group.h>
@@ -65,8 +66,9 @@ std::unique_ptr<EDA_ITEM> CreateItemForType( KICAD_T aType, EDA_ITEM* aContainer
 
     case SCH_SYMBOL_T:
     {
-        // TODO: constructing currently requires more than just a "container" LIB_SYMBOL
-        return nullptr;
+        // Create empty symbol - library symbol will be resolved after deserialization
+        // in handleCreateUpdateItemsInternal
+        return std::make_unique<SCH_SYMBOL>();
     }
 
     case SCH_SHEET_PIN_T:

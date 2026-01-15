@@ -438,3 +438,84 @@ message ParseAndCreateItemsFromString
 
   string contents = 2;
 }
+
+
+// Scope for library table operations
+enum LibraryTableScope
+{
+  LTS_UNKNOWN = 0;  // Will default to BOTH
+  LTS_GLOBAL  = 1;  // Global library table (user-level)
+  LTS_PROJECT = 2;  // Project-specific library table
+  LTS_BOTH    = 3;  // Search both tables
+}
+
+// Information about a configured library
+message LibraryInfo
+{
+  // The library nickname (used in LIB_ID)
+  string nickname = 1;
+
+  // The URI/path to the library
+  string uri = 2;
+
+  // Plugin type (e.g., "KiCad", "Legacy", etc.)
+  string type = 3;
+
+  // Optional description
+  string description = 4;
+
+  // Whether the library was successfully loaded
+  bool is_loaded = 5;
+
+  // Whether the library is read-only
+  bool is_read_only = 6;
+
+  // Which scope this library belongs to
+  LibraryTableScope scope = 7;
+}
+
+// Retrieves a list of configured libraries for the current document type
+message GetLibraries
+{
+  // Which scope to query (global, project, or both)
+  LibraryTableScope scope = 1;
+}
+
+message GetLibrariesResponse
+{
+  repeated LibraryInfo libraries = 1;
+}
+
+// Adds an existing library to the library table
+message AddLibrary
+{
+  // The file path to the library (will be converted to URI)
+  string file_path = 1;
+
+  // Optional: specify a nickname (if not provided, derived from file name)
+  string nickname = 2;
+
+  // Which table to add to (global or project)
+  LibraryTableScope scope = 3;
+}
+
+enum AddLibraryStatus
+{
+  ALS_UNKNOWN         = 0;
+  ALS_OK              = 1;  // Library was added successfully
+  ALS_ALREADY_EXISTS  = 2;  // A library with this nickname already exists
+  ALS_FILE_NOT_FOUND  = 3;  // The specified file path does not exist
+  ALS_INVALID_FORMAT  = 4;  // The file is not a valid library format
+  ALS_TABLE_NOT_FOUND = 5;  // The specified table doesn't exist (e.g., no project loaded)
+}
+
+message AddLibraryResponse
+{
+  AddLibraryStatus status = 1;
+
+  // The actual nickname used (may differ from requested if auto-generated)
+  string nickname = 2;
+
+  // Error message if status is not OK
+  string error_message = 3;
+}

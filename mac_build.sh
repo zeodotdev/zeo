@@ -9,28 +9,32 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Define paths relative to the script
-# Configured based on user workspaces: 
-# KiCAD_source_code/kicad-agent/mac_build.sh (SCRIPT_DIR)
-# KiCAD_packaging/kicad-mac-builder (BUILDER_DIR)
-KICAD_SOURCE_DIR="$SCRIPT_DIR/../" # Go up one level from kicad-agent to get KiCAD_source_code root if that's the intention, 
-                                   # OR if this script is INSIDE the source root, just SCRIPT_DIR.
-                                   # Looking at the file tree: 
-                                   # /Users/gmp/workspaces/KiCAD_agentic/KiCAD_source_code/kicad-agent/mac_build.sh
-                                   # /Users/gmp/workspaces/KiCAD_agentic/KiCAD_source_code/ is likely what we want if we want "all applications of kicad_source_code"
-                                   # However, strict standard KiCad source structure usually forces the root.
-                                   # Let's assume the user wants to build the repo this script is in.
+# Configured based on user workspaces:
+# code/kicad-agent/mac_build.sh (SCRIPT_DIR)
+# packaging/kicad-mac-builder (BUILDER_DIR)
+# libraries/kicad-symbols, kicad-footprints, etc. (LIBRARIES_DIR)
 KICAD_SOURCE_DIR="$SCRIPT_DIR"
 
 # Correct path to builder relative to this script
-# ../../KiCAD_packaging/kicad-mac-builder
-BUILDER_DIR="$(cd "$SCRIPT_DIR/../../KiCAD_packaging/kicad-mac-builder" && pwd)"
+# ../../packaging/kicad-mac-builder
+BUILDER_DIR="$(cd "$SCRIPT_DIR/../../packaging/kicad-mac-builder" && pwd)"
 
-echo "Source Dir:  $KICAD_SOURCE_DIR"
-echo "Builder Dir: $BUILDER_DIR"
+# Path to KiCad libraries (symbols, footprints, 3D models, templates)
+# ../../libraries
+LIBRARIES_DIR="$(cd "$SCRIPT_DIR/../../libraries" && pwd)"
+
+echo "Source Dir:    $KICAD_SOURCE_DIR"
+echo "Builder Dir:   $BUILDER_DIR"
+echo "Libraries Dir: $LIBRARIES_DIR"
 
 if [ ! -d "$BUILDER_DIR" ]; then
     echo "Error: kicad-mac-builder directory not found at $BUILDER_DIR"
     exit 1
+fi
+
+if [ ! -d "$LIBRARIES_DIR" ]; then
+    echo "Warning: Libraries directory not found at $LIBRARIES_DIR"
+    echo "Global libraries (symbols, footprints, 3D models) will not be available."
 fi
 
 # --- Dependency Check ---
@@ -142,6 +146,77 @@ if [ -z "$(ls -A "$DEST_DIR/agent.app" 2>/dev/null)" ] && [ -z "$(ls -A "$DEST_D
     exit 1
 fi
 echo "Explicit install verification passed."
+
+# --- KiCad Libraries Build ---
+# Build and install global libraries (symbols, footprints, 3D models, templates)
+# These are built from the local libraries directory and installed into SharedSupport
+
+if [ -d "$LIBRARIES_DIR" ]; then
+    SHARED_SUPPORT="$DEST_DIR/KiCad.app/Contents/SharedSupport"
+    mkdir -p "$SHARED_SUPPORT"
+
+    # Function to build and install a library
+    build_library() {
+        local lib_name="$1"
+        local lib_path="$LIBRARIES_DIR/$lib_name"
+
+        if [ ! -d "$lib_path" ]; then
+            echo "Warning: $lib_name not found at $lib_path, skipping..."
+            return 0
+        fi
+
+        echo "Building $lib_name..."
+        local build_dir=$(mktemp -d)
+
+        pushd "$build_dir" > /dev/null
+        cmake "$lib_path" -DCMAKE_INSTALL_PREFIX="$SHARED_SUPPORT" > /dev/null
+        make install > /dev/null
+        popd > /dev/null
+
+        rm -rf "$build_dir"
+        echo "$lib_name installed."
+    }
+
+    echo "Installing KiCad libraries to SharedSupport..."
+
+    # Build each library
+    build_library "kicad-symbols"
+    build_library "kicad-footprints"
+    build_library "kicad-packages3D"
+    build_library "kicad-templates"
+
+    # Verify installation
+    echo "Verifying library installation..."
+    LIB_CHECK_FAILED=0
+
+    if [ ! -d "$SHARED_SUPPORT/symbols" ] || [ -z "$(ls -A "$SHARED_SUPPORT/symbols" 2>/dev/null)" ]; then
+        echo "Warning: Symbol libraries not found or empty"
+        LIB_CHECK_FAILED=1
+    fi
+
+    if [ ! -d "$SHARED_SUPPORT/footprints" ] || [ -z "$(ls -A "$SHARED_SUPPORT/footprints" 2>/dev/null)" ]; then
+        echo "Warning: Footprint libraries not found or empty"
+        LIB_CHECK_FAILED=1
+    fi
+
+    if [ ! -d "$SHARED_SUPPORT/3dmodels" ] || [ -z "$(ls -A "$SHARED_SUPPORT/3dmodels" 2>/dev/null)" ]; then
+        echo "Warning: 3D model libraries not found or empty"
+        LIB_CHECK_FAILED=1
+    fi
+
+    if [ ! -d "$SHARED_SUPPORT/template" ] || [ -z "$(ls -A "$SHARED_SUPPORT/template" 2>/dev/null)" ]; then
+        echo "Warning: Templates not found or empty"
+        LIB_CHECK_FAILED=1
+    fi
+
+    if [ $LIB_CHECK_FAILED -eq 0 ]; then
+        echo "Library installation verified successfully."
+    else
+        echo "Warning: Some libraries may not have installed correctly."
+    fi
+else
+    echo "Skipping library installation (libraries directory not found)."
+fi
 
 # --- Artifact Bundling ---
 

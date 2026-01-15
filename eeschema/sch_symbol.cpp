@@ -128,14 +128,21 @@ bool SCH_SYMBOL::Deserialize( const google::protobuf::Any& aContainer )
 
     // Mirror X/Y
 
-    // Flags
-    if( symbol.dnp() )
-        SetDNP( symbol.dnp() ); // This logic is slightly flawed (cant unset), assume full state sync?
-    // Using simple setters for now. API semantics (patch vs put) depend on handler.
-    SetDNPProp( symbol.dnp() );
-    SetExcludedFromBOMProp( symbol.exclude_from_bom() );
-    SetExcludedFromBoard( symbol.exclude_from_board() ); // Check this accessor name again?
-    SetExcludedFromSimProp( symbol.exclude_from_sim() );
+    // Flags - use Prop setters only if we have a valid Schematic reference
+    // (newly created symbols via API won't have one until added to the screen)
+    if( Schematic() )
+    {
+        SetDNPProp( symbol.dnp() );
+        SetExcludedFromBOMProp( symbol.exclude_from_bom() );
+        SetExcludedFromSimProp( symbol.exclude_from_sim() );
+    }
+    else
+    {
+        // For symbols not yet added to a schematic, use basic setters
+        if( symbol.dnp() )
+            SetDNP( symbol.dnp() );
+    }
+    SetExcludedFromBoard( symbol.exclude_from_board() );
 
     // Fields Update?
     for( const auto& protoField : symbol.fields() )

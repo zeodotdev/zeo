@@ -85,6 +85,13 @@ private:
     HANDLER_RESULT<Empty>
     handleClearSelection( const HANDLER_CONTEXT<commands::ClearSelection>& aCtx );
 
+    // Library management handlers
+    HANDLER_RESULT<commands::GetLibrariesResponse>
+    handleGetLibraries( const HANDLER_CONTEXT<commands::GetLibraries>& aCtx );
+
+    HANDLER_RESULT<commands::AddLibraryResponse>
+    handleAddLibrary( const HANDLER_CONTEXT<commands::AddLibrary>& aCtx );
+
     // Helper to get item by KIID (searches all items including nested)
     std::optional<SCH_ITEM*> getItemById( const KIID& aId );
 

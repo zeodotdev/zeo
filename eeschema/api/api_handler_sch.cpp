@@ -26,6 +26,7 @@
 #include <sch_commit.h>
 #include <sch_edit_frame.h>
 #include <sch_symbol.h>
+#include <lib_symbol.h>
 #include <sch_sheet.h>
 #include <sch_sheet_pin.h>
 #include <sch_label.h>
@@ -42,6 +43,11 @@
 #include <tool/tool_manager.h>
 #include <tool/actions.h>
 #include <tools/sch_selection_tool.h>
+#include <project_sch.h>
+#include <libraries/symbol_library_adapter.h>
+#include <libraries/library_manager.h>
+#include <libraries/library_table.h>
+#include <pgm_base.h>
 
 #include <api/common/types/base_types.pb.h>
 
@@ -64,6 +70,10 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
     registerHandler<AddToSelection, SelectionResponse>( &API_HANDLER_SCH::handleAddToSelection );
     registerHandler<RemoveFromSelection, SelectionResponse>( &API_HANDLER_SCH::handleRemoveFromSelection );
     registerHandler<ClearSelection, Empty>( &API_HANDLER_SCH::handleClearSelection );
+
+    // Library management handlers
+    registerHandler<GetLibraries, GetLibrariesResponse>( &API_HANDLER_SCH::handleGetLibraries );
+    registerHandler<AddLibrary, AddLibraryResponse>( &API_HANDLER_SCH::handleAddLibrary );
 }
 
 
@@ -275,6 +285,45 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
             e.set_status( ApiStatusCode::AS_BAD_REQUEST );
             e.set_error_message( fmt::format( "could not unpack {} from request", item->GetClass().ToStdString() ) );
             return tl::unexpected( e );
+        }
+
+        // For SCH_SYMBOL, we need to resolve the library symbol from the lib_id
+        if( aCreate && item->Type() == SCH_SYMBOL_T )
+        {
+            SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item.get() );
+            LIB_ID libId = symbol->GetLibId();
+
+            if( !libId.IsValid() )
+            {
+                status.set_code( ItemStatusCode::ISC_INVALID_TYPE );
+                status.set_error_message( "Symbol has invalid or empty lib_id" );
+                aItemHandler( status, anyItem );
+                continue;
+            }
+
+            LIB_SYMBOL* libSymbol = m_frame->GetLibSymbol( libId );
+
+            if( !libSymbol )
+            {
+                status.set_code( ItemStatusCode::ISC_INVALID_TYPE );
+                status.set_error_message( fmt::format( "Library symbol '{}' not found",
+                                                       libId.GetUniStringLibId().ToStdString() ) );
+                aItemHandler( status, anyItem );
+                continue;
+            }
+
+            // Flatten the library symbol (handles inheritance) and set it on the symbol
+            std::unique_ptr<LIB_SYMBOL> flattenedSymbol = libSymbol->Flatten();
+            flattenedSymbol->SetParent();
+            symbol->SetLibSymbol( flattenedSymbol.release() );
+
+            // Update fields from library symbol
+            symbol->UpdateFields( &m_frame->GetCurrentSheet(),
+                                  true,   // updateStyle
+                                  false,  // updateRef
+                                  false,  // updateOtherFields
+                                  true,   // resetRef
+                                  true ); // resetOtherFields
         }
 
         if( aCreate && itemUuidMap.count( item->m_Uuid ) )
@@ -888,5 +937,195 @@ HANDLER_RESULT<SelectionResponse> API_HANDLER_SCH::handleRemoveFromSelection(
     for( EDA_ITEM* item : selectionTool->GetSelection() )
         item->Serialize( *response.add_items() );
 
+    return response;
+}
+
+
+HANDLER_RESULT<GetLibrariesResponse> API_HANDLER_SCH::handleGetLibraries(
+        const HANDLER_CONTEXT<GetLibraries>& aCtx )
+{
+    GetLibrariesResponse response;
+
+    SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &m_frame->Prj() );
+
+    if( !adapter )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Symbol library adapter not available" );
+        return tl::unexpected( e );
+    }
+
+    // Determine which scopes to query
+    LIBRARY_TABLE_SCOPE queryScope = LIBRARY_TABLE_SCOPE::BOTH;
+
+    switch( aCtx.Request.scope() )
+    {
+    case LibraryTableScope::LTS_GLOBAL:
+        queryScope = LIBRARY_TABLE_SCOPE::GLOBAL;
+        break;
+    case LibraryTableScope::LTS_PROJECT:
+        queryScope = LIBRARY_TABLE_SCOPE::PROJECT;
+        break;
+    case LibraryTableScope::LTS_BOTH:
+    case LibraryTableScope::LTS_UNKNOWN:
+    default:
+        queryScope = LIBRARY_TABLE_SCOPE::BOTH;
+        break;
+    }
+
+    // Get all library rows
+    std::vector<LIBRARY_TABLE_ROW*> rows = adapter->Rows( queryScope, true /* include invalid */ );
+
+    for( LIBRARY_TABLE_ROW* row : rows )
+    {
+        LibraryInfo* libInfo = response.add_libraries();
+        libInfo->set_nickname( row->Nickname().ToStdString() );
+        libInfo->set_uri( row->URI().ToStdString() );
+        libInfo->set_type( row->Type().ToStdString() );
+        libInfo->set_description( row->Description().ToStdString() );
+
+        // Check if library is loaded
+        std::optional<LIB_STATUS> status = adapter->GetLibraryStatus( row->Nickname() );
+        libInfo->set_is_loaded( status.has_value() && status->load_status == LOAD_STATUS::LOADED );
+
+        // Check if library is read-only
+        libInfo->set_is_read_only( !adapter->IsWritable( row->Nickname() ) );
+
+        // Determine scope of this row based on the row's scope property
+        if( row->Scope() == LIBRARY_TABLE_SCOPE::GLOBAL )
+        {
+            libInfo->set_scope( LibraryTableScope::LTS_GLOBAL );
+        }
+        else if( row->Scope() == LIBRARY_TABLE_SCOPE::PROJECT )
+        {
+            libInfo->set_scope( LibraryTableScope::LTS_PROJECT );
+        }
+        else
+        {
+            // Check global table as fallback
+            LIBRARY_TABLE* globalTable = adapter->GlobalTable();
+            if( globalTable && globalTable->HasRow( row->Nickname() ) )
+            {
+                libInfo->set_scope( LibraryTableScope::LTS_GLOBAL );
+            }
+            else
+            {
+                libInfo->set_scope( LibraryTableScope::LTS_PROJECT );
+            }
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<AddLibraryResponse> API_HANDLER_SCH::handleAddLibrary(
+        const HANDLER_CONTEXT<AddLibrary>& aCtx )
+{
+    AddLibraryResponse response;
+
+    wxString filePath( aCtx.Request.file_path() );
+
+    // Validate that the file exists
+    if( !wxFileName::FileExists( filePath ) && !wxFileName::DirExists( filePath ) )
+    {
+        response.set_status( AddLibraryStatus::ALS_FILE_NOT_FOUND );
+        response.set_error_message( fmt::format( "File or directory not found: {}",
+                                                  aCtx.Request.file_path() ) );
+        return response;
+    }
+
+    // Determine the nickname
+    wxString nickname;
+    if( !aCtx.Request.nickname().empty() )
+    {
+        nickname = wxString( aCtx.Request.nickname() );
+    }
+    else
+    {
+        // Derive nickname from filename
+        wxFileName fn( filePath );
+        nickname = fn.GetName();
+    }
+
+    // Determine which table to add to
+    LIBRARY_TABLE_SCOPE tableScope = LIBRARY_TABLE_SCOPE::GLOBAL;
+
+    switch( aCtx.Request.scope() )
+    {
+    case LibraryTableScope::LTS_PROJECT:
+        tableScope = LIBRARY_TABLE_SCOPE::PROJECT;
+        break;
+    case LibraryTableScope::LTS_GLOBAL:
+    case LibraryTableScope::LTS_BOTH:
+    case LibraryTableScope::LTS_UNKNOWN:
+    default:
+        tableScope = LIBRARY_TABLE_SCOPE::GLOBAL;
+        break;
+    }
+
+    // Get the library manager
+    LIBRARY_MANAGER& libMgr = Pgm().GetLibraryManager();
+    std::optional<LIBRARY_TABLE*> table = libMgr.Table( LIBRARY_TABLE_TYPE::SYMBOL, tableScope );
+
+    if( !table.has_value() || !table.value() )
+    {
+        response.set_status( AddLibraryStatus::ALS_TABLE_NOT_FOUND );
+        response.set_error_message( tableScope == LIBRARY_TABLE_SCOPE::PROJECT
+            ? "No project library table available. Is a project loaded?"
+            : "Global library table not available" );
+        return response;
+    }
+
+    LIBRARY_TABLE* libTable = table.value();
+
+    // Check if a library with this nickname already exists
+    if( libTable->HasRow( nickname ) )
+    {
+        response.set_status( AddLibraryStatus::ALS_ALREADY_EXISTS );
+        response.set_nickname( nickname.ToStdString() );
+        response.set_error_message( fmt::format( "Library '{}' already exists in the table",
+                                                  nickname.ToStdString() ) );
+        return response;
+    }
+
+    // Determine the plugin type based on file extension
+    wxString pluginType = wxT( "KiCad" );  // Default to KiCad format
+    wxFileName fn( filePath );
+    wxString ext = fn.GetExt().Lower();
+
+    if( ext == wxT( "lib" ) )
+        pluginType = wxT( "Legacy" );
+    else if( ext == wxT( "kicad_sym" ) )
+        pluginType = wxT( "KiCad" );
+
+    // Create a new row and add it to the table
+    LIBRARY_TABLE_ROW& newRow = libTable->InsertRow();
+    newRow.SetNickname( nickname );
+    newRow.SetURI( filePath );
+    newRow.SetType( pluginType );
+    newRow.SetScope( tableScope );
+
+    // Save the table
+    LIBRARY_RESULT<void> saveResult = libTable->Save();
+
+    if( !saveResult.has_value() )
+    {
+        response.set_status( AddLibraryStatus::ALS_INVALID_FORMAT );
+        response.set_error_message( fmt::format( "Failed to save library table: {}",
+                                                  saveResult.error().message.ToStdString() ) );
+        return response;
+    }
+
+    // Notify the adapter that tables have changed
+    SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &m_frame->Prj() );
+    if( adapter )
+    {
+        adapter->GlobalTablesChanged( { LIBRARY_TABLE_TYPE::SYMBOL } );
+    }
+
+    response.set_status( AddLibraryStatus::ALS_OK );
+    response.set_nickname( nickname.ToStdString() );
     return response;
 }

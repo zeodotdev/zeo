@@ -2,7 +2,7 @@
 # Run KiCad from terminal for debugging
 # Usage: ./runkicad [schematic.kicad_sch | board.kicad_pcb | project.kicad_pro]
 
-KICAD_APP="/Users/gmp/workspaces/KiCAD_agentic/KiCAD_packaging/kicad-mac-builder/build/kicad-dest/KiCad.app"
+KICAD_APP="/Users/gmp/workspaces/KiCAD_agentic/packaging/kicad-mac-builder/build/kicad-dest/KiCad.app"
 KICAD_BIN="$KICAD_APP/Contents/MacOS/kicad"
 
 # Clean up stale API files

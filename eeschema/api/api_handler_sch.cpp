@@ -612,11 +612,8 @@ HANDLER_RESULT<GetItemsResponse> API_HANDLER_SCH::handleGetItems( const HANDLER_
         {
             handledAnything = true;
 
-            for( SCH_ITEM* item : screen->Items() )
-            {
-                if( item->Type() == type )
-                    items.emplace_back( item );
-            }
+            for( SCH_ITEM* item : screen->Items().OfType( type ) )
+                items.emplace_back( item );
 
             typesInserted.insert( type );
             break;
@@ -1397,19 +1394,20 @@ void API_HANDLER_SCH::buildSheetHierarchyNode( const SCH_SHEET_PATH& aPath,
     aNode->set_filename( sheet->GetFileName().ToStdString() );
     aNode->set_page_number( aPath.GetPageNumber().ToStdString() );
 
-    // Get children
+    // Get direct children by iterating over sheets on this sheet's screen.
+    // SCH_SHEET_LIST builds paths starting from the given sheet, so direct children
+    // have size 2 (the starting sheet + the child), regardless of the full aPath depth.
     SCH_SHEET_LIST sheetList( sheet );
 
     for( const SCH_SHEET_PATH& childPath : sheetList )
     {
-        // Skip if this is the same as the parent (the first entry is always the sheet itself)
-        if( childPath == aPath )
-            continue;
-
-        // Only add direct children (one level deeper)
-        if( childPath.size() == aPath.size() + 1 )
+        // Direct children have size 2 (the starting sheet + the child)
+        if( childPath.size() == 2 )
         {
-            buildSheetHierarchyNode( childPath, aNode->add_children() );
+            // Build the full path by appending the child to the current path
+            SCH_SHEET_PATH fullChildPath = aPath;
+            fullChildPath.push_back( childPath.Last() );
+            buildSheetHierarchyNode( fullChildPath, aNode->add_children() );
         }
     }
 }
@@ -1455,10 +1453,41 @@ API_HANDLER_SCH::handleGetSheetHierarchy(
 
     kiapi::schematic::commands::GetSheetHierarchyResponse response;
 
-    SCH_SHEET_PATH rootPath;
-    rootPath.push_back( &m_frame->Schematic().Root() );
+    // Use top-level sheets for hierarchy building to support both old and new schematic formats.
+    // Old schematics have a single root sheet; new ones use a virtual root with top-level sheets.
+    std::vector<SCH_SHEET*> topLevelSheets = m_frame->Schematic().GetTopLevelSheets();
 
-    buildSheetHierarchyNode( rootPath, response.mutable_root() );
+    if( topLevelSheets.empty() )
+    {
+        // Fall back to virtual root if no top-level sheets
+        SCH_SHEET_PATH rootPath;
+        rootPath.push_back( &m_frame->Schematic().Root() );
+        buildSheetHierarchyNode( rootPath, response.mutable_root() );
+    }
+    else if( topLevelSheets.size() == 1 )
+    {
+        // Single top-level sheet - use it as the root
+        SCH_SHEET_PATH rootPath;
+        rootPath.push_back( topLevelSheets[0] );
+        buildSheetHierarchyNode( rootPath, response.mutable_root() );
+    }
+    else
+    {
+        // Multiple top-level sheets - create virtual root node with children
+        auto* rootNode = response.mutable_root();
+        rootNode->mutable_id()->set_value( m_frame->Schematic().Root().m_Uuid.AsStdString() );
+        rootNode->mutable_path()->set_path_human_readable( "/" );
+        rootNode->set_name( "" );
+        rootNode->set_filename( "" );
+        rootNode->set_page_number( "" );
+
+        for( SCH_SHEET* sheet : topLevelSheets )
+        {
+            SCH_SHEET_PATH sheetPath;
+            sheetPath.push_back( sheet );
+            buildSheetHierarchyNode( sheetPath, rootNode->add_children() );
+        }
+    }
 
     return response;
 }

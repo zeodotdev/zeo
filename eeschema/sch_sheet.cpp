@@ -50,6 +50,8 @@
 #include <properties/property_validators.h>
 #include <pgm_base.h>
 #include <wx/log.h>
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
 
 SCH_SHEET::SCH_SHEET( EDA_ITEM* aParent, const VECTOR2I& aPos, VECTOR2I aSize ) :
         SCH_ITEM( aParent, SCH_SHEET_T ),
@@ -134,6 +136,132 @@ SCH_SHEET::~SCH_SHEET()
 EDA_ITEM* SCH_SHEET::Clone() const
 {
     return new SCH_SHEET( *this );
+}
+
+
+void SCH_SHEET::Serialize( google::protobuf::Any& aContainer ) const
+{
+    kiapi::schematic::types::Sheet sheet;
+
+    sheet.mutable_id()->set_value( m_Uuid.AsStdString() );
+    kiapi::common::PackVector2( *sheet.mutable_position(), GetPosition() );
+    kiapi::common::PackVector2( *sheet.mutable_size(), GetSize() );
+    sheet.set_name( GetName().ToStdString() );
+    sheet.set_filename( GetFileName().ToStdString() );
+
+    // Get page number from the current path if available
+    SCHEMATIC* schematic = Schematic();
+    if( schematic )
+    {
+        SCH_SHEET_LIST sheetList = schematic->Hierarchy();
+        for( const SCH_SHEET_PATH& path : sheetList )
+        {
+            if( path.Last() == this )
+            {
+                sheet.set_page_number( path.GetPageNumber().ToStdString() );
+                break;
+            }
+        }
+    }
+
+    sheet.set_dnp( GetDNP() );
+    sheet.set_exclude_from_bom( GetExcludedFromBOM() );
+    sheet.set_exclude_from_board( GetExcludedFromBoard() );
+    sheet.set_exclude_from_sim( GetExcludedFromSim() );
+
+    sheet.mutable_border_width()->set_value_nm( GetBorderWidth() );
+    kiapi::common::PackColor( *sheet.mutable_border_color(), GetBorderColor() );
+    kiapi::common::PackColor( *sheet.mutable_background_color(), GetBackgroundColor() );
+
+    // Serialize sheet pins
+    for( const SCH_SHEET_PIN* pin : m_pins )
+    {
+        auto* protoPin = sheet.add_pins();
+        protoPin->mutable_id()->set_value( pin->m_Uuid.AsStdString() );
+        protoPin->set_name( pin->GetText().ToStdString() );
+        kiapi::common::PackVector2( *protoPin->mutable_position(), pin->GetPosition() );
+
+        // Map SHEET_SIDE to SheetPinSide
+        switch( pin->GetSide() )
+        {
+        case SHEET_SIDE::LEFT:   protoPin->set_side( kiapi::schematic::types::SPS_LEFT ); break;
+        case SHEET_SIDE::RIGHT:  protoPin->set_side( kiapi::schematic::types::SPS_RIGHT ); break;
+        case SHEET_SIDE::TOP:    protoPin->set_side( kiapi::schematic::types::SPS_TOP ); break;
+        case SHEET_SIDE::BOTTOM: protoPin->set_side( kiapi::schematic::types::SPS_BOTTOM ); break;
+        default:                 protoPin->set_side( kiapi::schematic::types::SPS_UNKNOWN ); break;
+        }
+
+        // Map LABEL_FLAG_SHAPE to LabelShape
+        switch( pin->GetShape() )
+        {
+        case L_INPUT:       protoPin->set_shape( kiapi::schematic::types::LS_INPUT ); break;
+        case L_OUTPUT:      protoPin->set_shape( kiapi::schematic::types::LS_OUTPUT ); break;
+        case L_BIDI:        protoPin->set_shape( kiapi::schematic::types::LS_BIDI ); break;
+        case L_TRISTATE:    protoPin->set_shape( kiapi::schematic::types::LS_TRISTATE ); break;
+        case L_UNSPECIFIED: protoPin->set_shape( kiapi::schematic::types::LS_UNSPECIFIED ); break;
+        default:            protoPin->set_shape( kiapi::schematic::types::LS_UNKNOWN ); break;
+        }
+    }
+
+    // Serialize fields
+    for( const SCH_FIELD& field : m_fields )
+    {
+        auto* protoField = sheet.add_fields();
+        protoField->mutable_id()->set_value( field.m_Uuid.AsStdString() );
+        kiapi::common::PackVector2( *protoField->mutable_position(), field.GetPosition() );
+        protoField->set_text( field.GetText().ToStdString() );
+        protoField->set_name( field.GetName().ToStdString() );
+        protoField->set_id_int( static_cast<int>( field.GetId() ) );
+    }
+
+    aContainer.PackFrom( sheet );
+}
+
+
+bool SCH_SHEET::Deserialize( const google::protobuf::Any& aContainer )
+{
+    kiapi::schematic::types::Sheet sheet;
+
+    if( !aContainer.UnpackTo( &sheet ) )
+        return false;
+
+    if( sheet.has_position() )
+        SetPosition( kiapi::common::UnpackVector2( sheet.position() ) );
+
+    if( sheet.has_size() )
+        m_size = kiapi::common::UnpackVector2( sheet.size() );
+
+    // Set name field
+    if( !sheet.name().empty() )
+    {
+        SCH_FIELD* nameField = GetField( FIELD_T::SHEET_NAME );
+        if( nameField )
+            nameField->SetText( wxString::FromUTF8( sheet.name() ) );
+    }
+
+    // Set filename field
+    if( !sheet.filename().empty() )
+    {
+        SCH_FIELD* filenameField = GetField( FIELD_T::SHEET_FILENAME );
+        if( filenameField )
+            filenameField->SetText( wxString::FromUTF8( sheet.filename() ) );
+    }
+
+    SetDNP( sheet.dnp() );
+    SetExcludedFromBOM( sheet.exclude_from_bom() );
+    SetExcludedFromBoard( sheet.exclude_from_board() );
+    SetExcludedFromSim( sheet.exclude_from_sim() );
+
+    if( sheet.has_border_width() )
+        SetBorderWidth( sheet.border_width().value_nm() );
+
+    if( sheet.has_border_color() )
+        SetBorderColor( kiapi::common::UnpackColor( sheet.border_color() ) );
+
+    if( sheet.has_background_color() )
+        SetBackgroundColor( kiapi::common::UnpackColor( sheet.background_color() ) );
+
+    return true;
 }
 
 

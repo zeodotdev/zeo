@@ -472,6 +472,9 @@ public:
 
     EDA_ITEM* Clone() const override;
 
+    void Serialize( google::protobuf::Any& aContainer ) const override;
+    bool Deserialize( const google::protobuf::Any& aContainer ) override;
+
     /**
      * @return the list of #SCH_SHEET_INSTANCE objects for this sheet.
      */

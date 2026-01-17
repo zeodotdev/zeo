@@ -57,37 +57,121 @@ message NoConnect
   kiapi.common.types.Vector2 position = 2;
 }
 
+/// A schematic-specific text object (SCH_TEXT)
 message Text
 {
-  kiapi.common.types.Text text = 1;
+  kiapi.common.types.KIID id = 1;
+  kiapi.common.types.Text text = 2;
+  SchematicLayer layer = 3;
+}
+
+/// A schematic-specific textbox object (SCH_TEXTBOX)
+message TextBox
+{
+  kiapi.common.types.KIID id = 1;
+  kiapi.common.types.TextBox text_box = 2;
+  SchematicLayer layer = 3;
+}
+
+/// A schematic-specific graphic shape (SCH_SHAPE)
+message SchematicGraphicShape
+{
+  kiapi.common.types.KIID id = 1;
+  kiapi.common.types.GraphicShape shape = 2;
+  SchematicLayer layer = 3;
 }
 
 message LocalLabel
 {
   kiapi.common.types.KIID    id       = 1;
   kiapi.common.types.Vector2 position = 2;
-  Text                       text     = 3;
+  kiapi.common.types.Text    text     = 3;
 }
 
 message GlobalLabel
 {
   kiapi.common.types.KIID    id       = 1;
   kiapi.common.types.Vector2 position = 2;
-  Text                       text     = 3;
+  kiapi.common.types.Text    text     = 3;
 }
 
 message HierarchicalLabel
 {
   kiapi.common.types.KIID    id       = 1;
   kiapi.common.types.Vector2 position = 2;
-  Text                       text     = 3;
+  kiapi.common.types.Text    text     = 3;
 }
 
 message DirectiveLabel
 {
   kiapi.common.types.KIID    id       = 1;
   kiapi.common.types.Vector2 position = 2;
-  Text                       text     = 3;
+  kiapi.common.types.Text    text     = 3;
+}
+
+/// Represents a bitmap/image in the schematic
+message Bitmap
+{
+  kiapi.common.types.KIID    id       = 1;
+  kiapi.common.types.Vector2 position = 2;  // Position of the image center
+  double                     scale    = 3;  // Scale factor (1.0 = original size)
+  bytes                      data     = 4;  // Image data (PNG format)
+}
+
+/// Represents a table cell in the schematic
+message TableCell
+{
+  kiapi.common.types.KIID id       = 1;
+  string                  text     = 2;
+  int32                   col_span = 3;  // Number of columns this cell spans
+  int32                   row_span = 4;  // Number of rows this cell spans
+}
+
+/// Represents a table in the schematic
+message Table
+{
+  kiapi.common.types.KIID    id          = 1;
+  kiapi.common.types.Vector2 position    = 2;
+  int32                      columns     = 3;  // Number of columns
+  int32                      rows        = 4;  // Number of rows
+  repeated TableCell         cells       = 5;
+  bool                       header_on   = 6;  // Whether first row is a header
+  int32                      col_width   = 7;  // Default column width in nm
+  int32                      row_height  = 8;  // Default row height in nm
+}
+
+/// Represents a group of schematic items
+message SchematicGroup
+{
+  kiapi.common.types.KIID  id       = 1;
+  string                   name     = 2;       // Group name
+  repeated kiapi.common.types.KIID members = 3; // IDs of grouped items
+  bool                     locked   = 4;       // Whether the group is locked
+}
+
+/// Type of bus entry
+enum BusEntryType
+{
+  BET_UNKNOWN     = 0;
+  BET_WIRE_TO_BUS = 1;  // Connects a wire to a bus
+  BET_BUS_TO_BUS  = 2;  // Connects a bus to another bus
+}
+
+/// Represents a bus entry (wire-to-bus or bus-to-bus connection point)
+message BusEntry
+{
+  kiapi.common.types.KIID    id       = 1;
+  kiapi.common.types.Vector2 position = 2;  // Start position
+  kiapi.common.types.Vector2 size     = 3;  // Size/offset to end position
+  BusEntryType               type     = 4;
+
+  // Stroke properties
+  int32                      width    = 5;  // Line width in nm, 0 for default
+  uint32                     color    = 6;  // RGBA color, 0 for default
+
+  // Dangling state (read-only, set by connectivity analysis)
+  bool                       start_dangling = 7;
+  bool                       end_dangling   = 8;
 }
 
 message Pin

@@ -46,6 +46,8 @@
 #include <core/kicad_algo.h>
 #include <tools/sch_navigate_tool.h>
 #include <trigo.h>
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
 
 
 SCH_TEXT::SCH_TEXT( const VECTOR2I& aPos, const wxString& aText, SCH_LAYER_ID aLayer, KICAD_T aType ) :
@@ -665,6 +667,51 @@ int SCH_TEXT::compare( const SCH_ITEM& aOther, int aCompareFlags ) const
         return GetTextHeight() - tmp.GetTextHeight();
 
     return 0;
+}
+
+
+void SCH_TEXT::Serialize( google::protobuf::Any& aContainer ) const
+{
+    using namespace kiapi::common;
+    kiapi::schematic::types::Text schText;
+
+    schText.mutable_id()->set_value( m_Uuid.AsStdString() );
+
+    // Serialize the base EDA_TEXT properties
+    google::protobuf::Any any;
+    EDA_TEXT::Serialize( any );
+    any.UnpackTo( schText.mutable_text() );
+
+    // Ensure position is set (EDA_TEXT::Serialize already does this, but we override for clarity)
+    PackVector2( *schText.mutable_text()->mutable_position(), GetPosition() );
+
+    // Layer mapping - schematic layers are represented differently
+    // For now, we just store the layer as-is since SchematicLayer enum needs expansion
+    // schText.set_layer( ... );
+
+    aContainer.PackFrom( schText );
+}
+
+
+bool SCH_TEXT::Deserialize( const google::protobuf::Any& aContainer )
+{
+    using namespace kiapi::common;
+    kiapi::schematic::types::Text schText;
+
+    if( !aContainer.UnpackTo( &schText ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( schText.id().value() );
+
+    // Deserialize the base EDA_TEXT properties
+    google::protobuf::Any any;
+    any.PackFrom( schText.text() );
+    EDA_TEXT::Deserialize( any );
+
+    // Set position from the text message
+    SetPosition( UnpackVector2( schText.text().position() ) );
+
+    return true;
 }
 
 

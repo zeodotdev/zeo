@@ -42,6 +42,9 @@
 #include "sch_painter.h"
 #include "plotters/plotter.h"
 
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
+
 
 SCH_BUS_ENTRY_BASE::SCH_BUS_ENTRY_BASE( KICAD_T aType, const VECTOR2I& pos, bool aFlipY ) :
     SCH_ITEM( nullptr, aType )
@@ -619,6 +622,83 @@ double SCH_BUS_ENTRY_BASE::Similarity( const SCH_ITEM& aItem ) const
         return 0.0;
 
     return 1.0;
+}
+
+
+void SCH_BUS_ENTRY_BASE::Serialize( google::protobuf::Any& aContainer ) const
+{
+    kiapi::schematic::types::BusEntry busEntry;
+
+    busEntry.mutable_id()->set_value( m_Uuid.AsStdString() );
+    kiapi::common::PackVector2( *busEntry.mutable_position(), m_pos );
+    kiapi::common::PackVector2( *busEntry.mutable_size(), m_size );
+
+    // Set the entry type based on the actual class
+    if( Type() == SCH_BUS_WIRE_ENTRY_T )
+        busEntry.set_type( kiapi::schematic::types::BET_WIRE_TO_BUS );
+    else if( Type() == SCH_BUS_BUS_ENTRY_T )
+        busEntry.set_type( kiapi::schematic::types::BET_BUS_TO_BUS );
+    else
+        busEntry.set_type( kiapi::schematic::types::BET_UNKNOWN );
+
+    // Stroke properties
+    busEntry.set_width( m_stroke.GetWidth() );
+
+    // Color as RGBA uint32
+    if( m_stroke.GetColor() != COLOR4D::UNSPECIFIED )
+    {
+        COLOR4D color = m_stroke.GetColor();
+        uint32_t rgba = ( static_cast<uint32_t>( color.r * 255 ) << 24 ) |
+                        ( static_cast<uint32_t>( color.g * 255 ) << 16 ) |
+                        ( static_cast<uint32_t>( color.b * 255 ) << 8 ) |
+                        static_cast<uint32_t>( color.a * 255 );
+        busEntry.set_color( rgba );
+    }
+
+    // Dangling state
+    busEntry.set_start_dangling( m_isStartDangling );
+    busEntry.set_end_dangling( m_isEndDangling );
+
+    aContainer.PackFrom( busEntry );
+}
+
+
+bool SCH_BUS_ENTRY_BASE::Deserialize( const google::protobuf::Any& aContainer )
+{
+    kiapi::schematic::types::BusEntry busEntry;
+
+    if( !aContainer.UnpackTo( &busEntry ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( busEntry.id().value() );
+    m_pos = kiapi::common::UnpackVector2( busEntry.position() );
+    m_size = kiapi::common::UnpackVector2( busEntry.size() );
+
+    // Stroke properties
+    if( busEntry.width() > 0 )
+        m_stroke.SetWidth( busEntry.width() );
+    else
+        m_stroke.SetWidth( 0 );  // Use default
+
+    // Color
+    if( busEntry.color() != 0 )
+    {
+        uint32_t rgba = busEntry.color();
+        double r = ( ( rgba >> 24 ) & 0xFF ) / 255.0;
+        double g = ( ( rgba >> 16 ) & 0xFF ) / 255.0;
+        double b = ( ( rgba >> 8 ) & 0xFF ) / 255.0;
+        double a = ( rgba & 0xFF ) / 255.0;
+        m_stroke.SetColor( COLOR4D( r, g, b, a ) );
+    }
+    else
+    {
+        m_stroke.SetColor( COLOR4D::UNSPECIFIED );
+    }
+
+    // Dangling state is read-only, so we don't deserialize it
+    // It will be set by connectivity analysis
+
+    return true;
 }
 
 

@@ -43,9 +43,32 @@ public:
     bool AskStream( const nlohmann::json& aMessages, const std::string& aSystem, const std::string& aPayload,
                     std::function<void( const std::string& )> aCallback );
 
+    /**
+     * Load API keys from environment file.
+     * Searches for .env file in standard locations.
+     * @param aEnvFilePath Optional explicit path to .env file.
+     * @return True if keys were loaded successfully.
+     */
+    static bool LoadApiKeys( const std::string& aEnvFilePath = "" );
+
+    /**
+     * Get the OpenAI API key.
+     */
+    static const std::string& GetOpenAIKey() { return s_openaiApiKey; }
+
+    /**
+     * Get the Anthropic API key.
+     */
+    static const std::string& GetAnthropicKey() { return s_anthropicApiKey; }
+
 private:
     AGENT_FRAME* m_parent;
     std::string  m_modelName;
+
+    // API keys loaded from .env file
+    static std::string s_openaiApiKey;
+    static std::string s_anthropicApiKey;
+    static bool        s_keysLoaded;
 
     // Helper to request via OpenAI API
     bool AskStreamOpenAI( const nlohmann::json& aMessages, const std::string& aSystem, const std::string& aPayload,

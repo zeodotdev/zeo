@@ -188,4 +188,391 @@ message SyncSheetPinsResponse
   int32 pins_removed = 2;
 }
 
+//
+// Annotation Commands
+//
+
+/// Scope for annotation operations
+enum AnnotateScope
+{
+  AS_UNKNOWN       = 0;
+  AS_ALL           = 1;  // Annotate all sheets
+  AS_CURRENT_SHEET = 2;  // Annotate current sheet only
+  AS_SELECTION     = 3;  // Annotate selected symbols only
+}
+
+/// Sort order for annotation
+enum AnnotateOrder
+{
+  AO_UNKNOWN = 0;
+  AO_X_Y     = 1;  // Sort by X then Y coordinate
+  AO_Y_X     = 2;  // Sort by Y then X coordinate
+}
+
+/// Algorithm for annotation numbering
+enum AnnotateAlgorithm
+{
+  AA_UNKNOWN      = 0;
+  AA_INCREMENTAL  = 1;  // Keep existing numbers, fill gaps
+  AA_RESTART      = 2;  // Restart numbering from start_number
+}
+
+/// Annotates symbols with reference designators
+message AnnotateSymbols
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Scope of annotation
+  AnnotateScope scope = 2;
+
+  // Sort order for assigning numbers
+  AnnotateOrder order = 3;
+
+  // Numbering algorithm
+  AnnotateAlgorithm algorithm = 4;
+
+  // Starting number for annotation
+  int32 start_number = 5;
+
+  // If true, clear existing annotation first
+  bool reset_existing = 6;
+
+  // If true, include subsheets when scope is CURRENT_SHEET or SELECTION
+  bool recursive = 7;
+
+  // If true, repair duplicate timestamps
+  bool repair_timestamps = 8;
+}
+
+message AnnotateSymbolsResponse
+{
+  // Number of symbols annotated
+  int32 symbols_annotated = 1;
+
+  // Detailed annotation results
+  repeated AnnotationResult results = 2;
+}
+
+message AnnotationResult
+{
+  kiapi.common.types.KIID symbol_id = 1;
+  string previous_ref = 2;
+  string new_ref = 3;
+}
+
+/// Clears annotation from symbols
+message ClearAnnotation
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Scope of annotation clearing
+  AnnotateScope scope = 2;
+
+  // If true, include subsheets when scope is CURRENT_SHEET or SELECTION
+  bool recursive = 3;
+}
+
+message ClearAnnotationResponse
+{
+  // Number of symbols cleared
+  int32 symbols_cleared = 1;
+}
+
+/// Checks for annotation errors (duplicates, missing, etc.)
+message CheckAnnotation
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Scope of check
+  AnnotateScope scope = 2;
+
+  // If true, include subsheets when scope is CURRENT_SHEET or SELECTION
+  bool recursive = 3;
+}
+
+message AnnotationError
+{
+  // Type of error (ERCE_DUPLICATE_REFERENCE, ERCE_UNANNOTATED, etc.)
+  string error_type = 1;
+
+  // Human-readable error message
+  string message = 2;
+
+  // Affected symbols
+  repeated kiapi.common.types.KIID symbol_ids = 3;
+}
+
+message CheckAnnotationResponse
+{
+  // Number of errors found
+  int32 error_count = 1;
+
+  // Detailed error list
+  repeated AnnotationError errors = 2;
+}
+
+//
+// ERC (Electrical Rules Check) Commands
+//
+
+/// Runs ERC tests on the schematic
+message RunERC
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // If true, run all tests. If false, only run enabled tests from settings.
+  bool run_all_tests = 2;
+}
+
+/// ERC violation severity
+enum ERCSeverity
+{
+  ERC_SEV_UNKNOWN  = 0;
+  ERC_SEV_ERROR    = 1;
+  ERC_SEV_WARNING  = 2;
+  ERC_SEV_EXCLUDED = 3;
+}
+
+/// An ERC violation
+message ERCViolation
+{
+  // Unique marker ID
+  kiapi.common.types.KIID id = 1;
+
+  // Error code string (e.g., "ERCE_PIN_TO_PIN_ERROR")
+  string error_code = 2;
+
+  // Human-readable description
+  string description = 3;
+
+  // Severity of the violation
+  ERCSeverity severity = 4;
+
+  // Sheet where the violation occurs
+  kiapi.common.types.SheetPath sheet_path = 5;
+
+  // Position of the marker
+  kiapi.common.types.Vector2 position = 6;
+
+  // IDs of items involved in the violation
+  repeated kiapi.common.types.KIID item_ids = 7;
+}
+
+message RunERCResponse
+{
+  // Total number of errors
+  int32 error_count = 1;
+
+  // Total number of warnings
+  int32 warning_count = 2;
+
+  // List of violations
+  repeated ERCViolation violations = 3;
+}
+
+/// Gets current ERC violations without re-running checks
+message GetERCViolations
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Optional: filter by severity
+  ERCSeverity filter_severity = 2;
+
+  // Optional: filter by sheet path
+  kiapi.common.types.SheetPath filter_sheet = 3;
+}
+
+message GetERCViolationsResponse
+{
+  repeated ERCViolation violations = 1;
+}
+
+/// Clears/excludes specific ERC markers
+message ClearERCMarkers
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // If empty, clear all markers. Otherwise, clear only specified markers.
+  repeated kiapi.common.types.KIID marker_ids = 2;
+}
+
+message ClearERCMarkersResponse
+{
+  int32 markers_cleared = 1;
+}
+
+/// Excludes a specific ERC violation (marks it as ignored)
+message ExcludeERCViolation
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // The marker to exclude
+  kiapi.common.types.KIID marker_id = 2;
+}
+
+//
+// Connectivity Commands
+//
+
+/// Type of connection
+enum ConnectionType
+{
+  CT_UNKNOWN   = 0;
+  CT_NONE      = 1;  // No connection (dangling)
+  CT_NET       = 2;  // Electrical net (single signal)
+  CT_BUS       = 3;  // Bus vector (e.g., D[0..7])
+  CT_BUS_GROUP = 4;  // Bus group (e.g., {DATA, ADDR, CTRL})
+}
+
+/// Information about a net or bus connection
+message ConnectionInfo
+{
+  // Type of connection
+  ConnectionType type = 1;
+
+  // Net or bus name (fully qualified)
+  string name = 2;
+
+  // Sheet path where this connection is defined
+  kiapi.common.types.SheetPath sheet_path = 3;
+
+  // ID of the item that drives this connection (label, pin, etc.)
+  kiapi.common.types.KIID driver_id = 4;
+
+  // For buses: the member net names
+  repeated string bus_members = 5;
+
+  // For bus vectors: prefix and range
+  string vector_prefix = 6;
+  int32 vector_start = 7;
+  int32 vector_end = 8;
+}
+
+/// Information about a net in the schematic
+message NetInfo
+{
+  // Net name (fully qualified)
+  string name = 1;
+
+  // Net code (unique identifier within the schematic)
+  int32 net_code = 2;
+
+  // Number of connection points
+  int32 connection_count = 3;
+
+  // IDs of items connected to this net
+  repeated kiapi.common.types.KIID item_ids = 4;
+}
+
+/// Information about a bus in the schematic
+message BusInfo
+{
+  // Bus name
+  string name = 1;
+
+  // Type: true for bus vector (D[0..7]), false for bus group ({A, B, C})
+  bool is_vector = 2;
+
+  // For vectors: prefix and range
+  string vector_prefix = 3;
+  int32 vector_start = 4;
+  int32 vector_end = 5;
+
+  // Member names (either generated from vector or explicit group members)
+  repeated string members = 6;
+
+  // IDs of bus line segments
+  repeated kiapi.common.types.KIID bus_line_ids = 7;
+}
+
+/// Gets all nets in the schematic
+message GetNets
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Optional: filter by sheet path (empty for all sheets)
+  kiapi.common.types.SheetPath filter_sheet = 2;
+}
+
+message GetNetsResponse
+{
+  repeated NetInfo nets = 1;
+}
+
+/// Gets all buses in the schematic
+message GetBuses
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Optional: filter by sheet path (empty for all sheets)
+  kiapi.common.types.SheetPath filter_sheet = 2;
+}
+
+message GetBusesResponse
+{
+  repeated BusInfo buses = 1;
+}
+
+/// Gets connectivity information for a specific item
+message GetNetForItem
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // ID of the item to query
+  kiapi.common.types.KIID item_id = 2;
+
+  // Sheet path context (for items that may have different connections on different sheets)
+  kiapi.common.types.SheetPath sheet_path = 3;
+}
+
+message GetNetForItemResponse
+{
+  // Connection info for the item
+  ConnectionInfo connection = 1;
+
+  // True if the item is connected, false if dangling
+  bool is_connected = 2;
+}
+
+/// Gets members of a specific bus
+message GetBusMembers
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Bus name to query
+  string bus_name = 2;
+}
+
+message GetBusMembersResponse
+{
+  // Member net names
+  repeated string members = 1;
+
+  // Whether it's a vector bus
+  bool is_vector = 2;
+
+  // Vector info (if applicable)
+  string vector_prefix = 3;
+  int32 vector_start = 4;
+  int32 vector_end = 5;
+}
+
+/// Gets all items connected to a specific net
+message GetNetItems
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Net name to query
+  string net_name = 2;
+}
+
+message GetNetItemsResponse
+{
+  // IDs of all items on this net
+  repeated kiapi.common.types.KIID item_ids = 1;
+
+  // Connection points (positions where items connect)
+  repeated kiapi.common.types.Vector2 connection_points = 2;
+}
+
 

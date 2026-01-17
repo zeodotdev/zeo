@@ -442,6 +442,44 @@ message TitleBlockInfo
   string comment9 = 13;
 }
 
+// Standard paper sizes
+enum PageSizeType
+{
+  PST_UNKNOWN = 0;
+  PST_A5 = 1;
+  PST_A4 = 2;
+  PST_A3 = 3;
+  PST_A2 = 4;
+  PST_A1 = 5;
+  PST_A0 = 6;
+  PST_A = 7;       // ANSI A (Letter)
+  PST_B = 8;       // ANSI B (Tabloid/Ledger)
+  PST_C = 9;       // ANSI C
+  PST_D = 10;      // ANSI D
+  PST_E = 11;      // ANSI E
+  PST_GERBER = 12;
+  PST_USLETTER = 13;
+  PST_USLEGAL = 14;
+  PST_USLEDGER = 15;
+  PST_USER = 16;   // Custom size
+}
+
+// Page/paper settings for a document
+message PageInfo
+{
+  // Paper size type (A4, Letter, etc.)
+  PageSizeType size_type = 1;
+
+  // True for portrait, false for landscape
+  bool portrait = 2;
+
+  // Width in millimeters (used when size_type is PST_USER, or to report actual size)
+  double width_mm = 3;
+
+  // Height in millimeters (used when size_type is PST_USER, or to report actual size)
+  double height_mm = 4;
+}
+
 enum AxisAlignment
 {
   AA_UNKNOWN = 0;

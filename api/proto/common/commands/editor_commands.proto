@@ -467,6 +467,28 @@ message GetTitleBlockInfo
   kiapi.common.types.DocumentSpecifier document = 1;
 }
 
+// Sets the title block information for a document
+// returns Empty on success
+message SetTitleBlockInfo
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.TitleBlockInfo title_block = 2;
+}
+
+// returns common.types.PageInfo
+message GetPageSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+// Sets the page settings for a document
+// returns Empty on success
+message SetPageSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.PageInfo page_info = 2;
+}
+
 message SaveDocumentToString
 {
   kiapi.common.types.DocumentSpecifier document = 1;

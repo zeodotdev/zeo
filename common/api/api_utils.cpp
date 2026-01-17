@@ -60,6 +60,10 @@ KICOMMON_API std::optional<KICAD_T> TypeNameFromAny( const google::protobuf::Any
         { "type.googleapis.com/kiapi.schematic.types.Pin", SCH_PIN_T },
         { "type.googleapis.com/kiapi.schematic.types.Field", SCH_FIELD_T },
         { "type.googleapis.com/kiapi.schematic.types.Symbol", SCH_SYMBOL_T },
+        { "type.googleapis.com/kiapi.schematic.types.Text", SCH_TEXT_T },
+        { "type.googleapis.com/kiapi.schematic.types.SchematicGraphicShape", SCH_SHAPE_T },
+        { "type.googleapis.com/kiapi.schematic.types.TextBox", SCH_TEXTBOX_T },
+        { "type.googleapis.com/kiapi.schematic.types.BusEntry", SCH_BUS_WIRE_ENTRY_T },
     };
 
     auto it = s_types.find( aMessage.type_url() );

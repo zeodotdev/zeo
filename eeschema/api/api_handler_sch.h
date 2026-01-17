@@ -53,6 +53,32 @@ namespace kiapi { namespace schematic { namespace commands {
     class GetSheetPinsResponse;
     class SyncSheetPins;
     class SyncSheetPinsResponse;
+    // Annotation commands
+    class AnnotateSymbols;
+    class AnnotateSymbolsResponse;
+    class ClearAnnotation;
+    class ClearAnnotationResponse;
+    class CheckAnnotation;
+    class CheckAnnotationResponse;
+    // ERC commands
+    class RunERC;
+    class RunERCResponse;
+    class GetERCViolations;
+    class GetERCViolationsResponse;
+    class ClearERCMarkers;
+    class ClearERCMarkersResponse;
+    class ExcludeERCViolation;
+    // Connectivity commands
+    class GetNets;
+    class GetNetsResponse;
+    class GetBuses;
+    class GetBusesResponse;
+    class GetNetForItem;
+    class GetNetForItemResponse;
+    class GetBusMembers;
+    class GetBusMembersResponse;
+    class GetNetItems;
+    class GetNetItemsResponse;
 } } }
 
 class SCH_EDIT_FRAME;
@@ -166,6 +192,59 @@ private:
 
     HANDLER_RESULT<schematic::commands::SyncSheetPinsResponse>
     handleSyncSheetPins( const HANDLER_CONTEXT<schematic::commands::SyncSheetPins>& aCtx );
+
+    // Annotation handlers
+    HANDLER_RESULT<schematic::commands::AnnotateSymbolsResponse>
+    handleAnnotateSymbols( const HANDLER_CONTEXT<schematic::commands::AnnotateSymbols>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::ClearAnnotationResponse>
+    handleClearAnnotation( const HANDLER_CONTEXT<schematic::commands::ClearAnnotation>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::CheckAnnotationResponse>
+    handleCheckAnnotation( const HANDLER_CONTEXT<schematic::commands::CheckAnnotation>& aCtx );
+
+    // ERC handlers
+    HANDLER_RESULT<schematic::commands::RunERCResponse>
+    handleRunERC( const HANDLER_CONTEXT<schematic::commands::RunERC>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetERCViolationsResponse>
+    handleGetERCViolations( const HANDLER_CONTEXT<schematic::commands::GetERCViolations>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::ClearERCMarkersResponse>
+    handleClearERCMarkers( const HANDLER_CONTEXT<schematic::commands::ClearERCMarkers>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleExcludeERCViolation( const HANDLER_CONTEXT<schematic::commands::ExcludeERCViolation>& aCtx );
+
+    // Connectivity handlers
+    HANDLER_RESULT<schematic::commands::GetNetsResponse>
+    handleGetNets( const HANDLER_CONTEXT<schematic::commands::GetNets>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetBusesResponse>
+    handleGetBuses( const HANDLER_CONTEXT<schematic::commands::GetBuses>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetNetForItemResponse>
+    handleGetNetForItem( const HANDLER_CONTEXT<schematic::commands::GetNetForItem>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetBusMembersResponse>
+    handleGetBusMembers( const HANDLER_CONTEXT<schematic::commands::GetBusMembers>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetNetItemsResponse>
+    handleGetNetItems( const HANDLER_CONTEXT<schematic::commands::GetNetItems>& aCtx );
+
+    // Title block handlers
+    HANDLER_RESULT<types::TitleBlockInfo>
+    handleGetTitleBlockInfo( const HANDLER_CONTEXT<commands::GetTitleBlockInfo>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetTitleBlockInfo( const HANDLER_CONTEXT<commands::SetTitleBlockInfo>& aCtx );
+
+    // Page settings handlers
+    HANDLER_RESULT<types::PageInfo>
+    handleGetPageSettings( const HANDLER_CONTEXT<commands::GetPageSettings>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetPageSettings( const HANDLER_CONTEXT<commands::SetPageSettings>& aCtx );
 
     // Helper to get item by KIID (searches all items including nested)
     std::optional<SCH_ITEM*> getItemById( const KIID& aId );

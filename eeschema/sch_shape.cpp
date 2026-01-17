@@ -33,6 +33,8 @@
 #include <geometry/geometry_utils.h>
 #include <schematic.h>
 #include <sch_shape.h>
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
 
 
 SCH_SHAPE::SCH_SHAPE( SHAPE_T aShape, SCH_LAYER_ID aLayer, int aLineWidth, FILL_T aFillType,
@@ -532,6 +534,45 @@ int SCH_SHAPE::compare( const SCH_ITEM& aOther, int aCompareFlags ) const
         return 1;
 
     return 0;
+}
+
+
+void SCH_SHAPE::Serialize( google::protobuf::Any& aContainer ) const
+{
+    using namespace kiapi::common;
+    kiapi::schematic::types::SchematicGraphicShape schShape;
+
+    schShape.mutable_id()->set_value( m_Uuid.AsStdString() );
+
+    // Serialize the base EDA_SHAPE properties
+    google::protobuf::Any any;
+    EDA_SHAPE::Serialize( any );
+    any.UnpackTo( schShape.mutable_shape() );
+
+    // Layer mapping - schematic layers are represented differently
+    // For now, we just store the layer as-is since SchematicLayer enum needs expansion
+    // schShape.set_layer( ... );
+
+    aContainer.PackFrom( schShape );
+}
+
+
+bool SCH_SHAPE::Deserialize( const google::protobuf::Any& aContainer )
+{
+    using namespace kiapi::common;
+    kiapi::schematic::types::SchematicGraphicShape schShape;
+
+    if( !aContainer.UnpackTo( &schShape ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( schShape.id().value() );
+
+    // Deserialize the base EDA_SHAPE properties
+    google::protobuf::Any any;
+    any.PackFrom( schShape.shape() );
+    EDA_SHAPE::Deserialize( any );
+
+    return true;
 }
 
 

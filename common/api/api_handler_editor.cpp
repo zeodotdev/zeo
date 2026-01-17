@@ -225,6 +225,15 @@ void API_HANDLER_EDITOR::pushCurrentCommit( const std::string& aClientName,
 
 HANDLER_RESULT<bool> API_HANDLER_EDITOR::validateDocument( const DocumentSpecifier& aDocument )
 {
+    // First check if the document type matches what this handler expects.
+    // If not, return AS_UNHANDLED so the server can try other handlers.
+    if( aDocument.type() != thisDocumentType() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
     if( !validateDocumentInternal( aDocument ) )
     {
         ApiResponseStatus e;

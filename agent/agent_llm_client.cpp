@@ -5,25 +5,141 @@
 #include <curl/curl.h>
 #include <ki_exception.h>
 #include <nlohmann/json.hpp>
-#include <wx/log.h>
+#include <wx/filename.h>
+#include <wx/stdpaths.h>
+#include <wx/utils.h>
 #include <sstream>
-
-// --- SECRET KEY PLACEHOLDERS ---
-// TODO: Load from secure storage or settings
-#define OPENAI_API_KEY                                                                                                 \
-    "sk-proj-t2JQs-qzIqBMcBypENk5dceWZWTFwfTtTMzNS0D-"                                                                 \
-    "m2h9XFoe9LeQYbRnE2TVOpOTEQEhgbdrXIT3BlbkFJ77EH9uZhjvSVZC8MjGxmq16CWFfvKoqQZk839cWDIjwTAsHlf16nCyL5MzsKsoZSyipAdR" \
-    "xXUA"
-
-#define ANTHROPIC_API_KEY                                                                                              \
-    "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"
+#include <fstream>
 
 using json = nlohmann::json;
+
+// Static member definitions
+std::string AGENT_LLM_CLIENT::s_openaiApiKey;
+std::string AGENT_LLM_CLIENT::s_anthropicApiKey;
+bool        AGENT_LLM_CLIENT::s_keysLoaded = false;
+
+// Helper to trim whitespace from string
+static std::string trimString( const std::string& str )
+{
+    size_t start = str.find_first_not_of( " \t\r\n" );
+    if( start == std::string::npos )
+        return "";
+    size_t end = str.find_last_not_of( " \t\r\n" );
+    return str.substr( start, end - start + 1 );
+}
+
+bool AGENT_LLM_CLIENT::LoadApiKeys( const std::string& aEnvFilePath )
+{
+    if( s_keysLoaded )
+        return true;
+
+    std::vector<std::string> searchPaths;
+
+    // If explicit path provided, try it first
+    if( !aEnvFilePath.empty() )
+    {
+        searchPaths.push_back( aEnvFilePath );
+    }
+
+    // Standard search locations for .env file
+    // 1. Environment variable pointing to dev folder
+    const char* devPath = std::getenv( "KICAD_AGENT_DEV_PATH" );
+    if( devPath )
+    {
+        searchPaths.push_back( std::string( devPath ) + "/.env" );
+    }
+
+    // 2. User's home directory dev folder
+    wxString homeDir = wxGetHomeDir();
+    searchPaths.push_back( std::string( homeDir.mb_str() ) + "/workspaces/KiCAD_agentic/dev/.env" );
+
+    // 3. Current working directory
+    searchPaths.push_back( ".env" );
+
+    // 4. KiCad config directory
+    wxString configDir = wxStandardPaths::Get().GetUserConfigDir();
+    searchPaths.push_back( std::string( configDir.mb_str() ) + "/kicad/.env" );
+
+    // Try each path
+    for( const auto& path : searchPaths )
+    {
+        std::ifstream file( path );
+        if( !file.is_open() )
+            continue;
+
+        // Keys found at this path
+
+        std::string line;
+        while( std::getline( file, line ) )
+        {
+            // Skip empty lines and comments
+            line = trimString( line );
+            if( line.empty() || line[0] == '#' )
+                continue;
+
+            // Parse KEY=VALUE
+            size_t eqPos = line.find( '=' );
+            if( eqPos == std::string::npos )
+                continue;
+
+            std::string key = trimString( line.substr( 0, eqPos ) );
+            std::string value = trimString( line.substr( eqPos + 1 ) );
+
+            // Remove quotes if present
+            if( value.length() >= 2 )
+            {
+                if( ( value.front() == '"' && value.back() == '"' ) ||
+                    ( value.front() == '\'' && value.back() == '\'' ) )
+                {
+                    value = value.substr( 1, value.length() - 2 );
+                }
+            }
+
+            if( key == "OPENAI_API_KEY" )
+            {
+                s_openaiApiKey = value;
+            }
+            else if( key == "ANTHROPIC_API_KEY" )
+            {
+                s_anthropicApiKey = value;
+            }
+        }
+
+        file.close();
+
+        // Check if we got at least one key
+        if( !s_openaiApiKey.empty() || !s_anthropicApiKey.empty() )
+        {
+            s_keysLoaded = true;
+            return true;
+        }
+    }
+
+    // Also check environment variables as fallback
+    const char* openaiEnv = std::getenv( "OPENAI_API_KEY" );
+    const char* anthropicEnv = std::getenv( "ANTHROPIC_API_KEY" );
+
+    if( openaiEnv )
+        s_openaiApiKey = openaiEnv;
+    if( anthropicEnv )
+        s_anthropicApiKey = anthropicEnv;
+
+    if( !s_openaiApiKey.empty() || !s_anthropicApiKey.empty() )
+    {
+        s_keysLoaded = true;
+        return true;
+    }
+
+    // No keys found - will fail when API calls are made
+    return false;
+}
 
 AGENT_LLM_CLIENT::AGENT_LLM_CLIENT( AGENT_FRAME* aParent ) :
         m_parent( aParent ),
         m_modelName( "GPT-4o" )
 {
+    // Ensure API keys are loaded
+    LoadApiKeys();
 }
 
 AGENT_LLM_CLIENT::~AGENT_LLM_CLIENT()
@@ -147,7 +263,7 @@ bool AGENT_LLM_CLIENT::AskStreamOpenAI( const nlohmann::json& aMessages, const s
     KICAD_CURL_EASY curl;
     curl.SetURL( "https://api.openai.com/v1/chat/completions" );
     curl.SetHeader( "Content-Type", "application/json" );
-    curl.SetHeader( "Authorization", "Bearer " + std::string( OPENAI_API_KEY ) );
+    curl.SetHeader( "Authorization", "Bearer " + s_openaiApiKey );
 
     std::string fullSystemPrompt = aSystem;
     if( !aPayload.empty() )
@@ -207,7 +323,7 @@ bool AGENT_LLM_CLIENT::AskStreamAnthropic( const nlohmann::json& aMessages, cons
     KICAD_CURL_EASY curl;
     curl.SetURL( "https://api.anthropic.com/v1/messages" );
     curl.SetHeader( "content-type", "application/json" );
-    curl.SetHeader( "x-api-key", ANTHROPIC_API_KEY );
+    curl.SetHeader( "x-api-key", s_anthropicApiKey );
     curl.SetHeader( "anthropic-version", "2023-06-01" );
 
     std::string fullSystemPrompt = aSystem;

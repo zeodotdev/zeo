@@ -53,9 +53,20 @@
 #include <libraries/library_table.h>
 #include <pgm_base.h>
 #include <kiway.h>
+#include <erc/erc.h>
+#include <sch_marker.h>
+#include <sch_reference_list.h>
+#include <rc_item.h>
+#include <reporter.h>
+#include <connection_graph.h>
+#include <sch_connection.h>
+#include <project/net_settings.h>
+#include <title_block.h>
+#include <page_info.h>
 
 #include <api/common/types/base_types.pb.h>
 #include <api/schematic/schematic_commands.pb.h>
+#include <api/schematic/schematic_types.pb.h>
 
 using namespace kiapi::common::commands;
 using kiapi::common::types::CommandStatus;
@@ -104,6 +115,32 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
     registerHandler<DeleteSheetPin, Empty>( &API_HANDLER_SCH::handleDeleteSheetPin );
     registerHandler<GetSheetPins, GetSheetPinsResponse>( &API_HANDLER_SCH::handleGetSheetPins );
     registerHandler<SyncSheetPins, SyncSheetPinsResponse>( &API_HANDLER_SCH::handleSyncSheetPins );
+
+    // Annotation handlers
+    registerHandler<AnnotateSymbols, AnnotateSymbolsResponse>( &API_HANDLER_SCH::handleAnnotateSymbols );
+    registerHandler<ClearAnnotation, ClearAnnotationResponse>( &API_HANDLER_SCH::handleClearAnnotation );
+    registerHandler<CheckAnnotation, CheckAnnotationResponse>( &API_HANDLER_SCH::handleCheckAnnotation );
+
+    // ERC handlers
+    registerHandler<RunERC, RunERCResponse>( &API_HANDLER_SCH::handleRunERC );
+    registerHandler<GetERCViolations, GetERCViolationsResponse>( &API_HANDLER_SCH::handleGetERCViolations );
+    registerHandler<ClearERCMarkers, ClearERCMarkersResponse>( &API_HANDLER_SCH::handleClearERCMarkers );
+    registerHandler<ExcludeERCViolation, Empty>( &API_HANDLER_SCH::handleExcludeERCViolation );
+
+    // Connectivity handlers
+    registerHandler<GetNets, GetNetsResponse>( &API_HANDLER_SCH::handleGetNets );
+    registerHandler<GetBuses, GetBusesResponse>( &API_HANDLER_SCH::handleGetBuses );
+    registerHandler<GetNetForItem, GetNetForItemResponse>( &API_HANDLER_SCH::handleGetNetForItem );
+    registerHandler<GetBusMembers, GetBusMembersResponse>( &API_HANDLER_SCH::handleGetBusMembers );
+    registerHandler<GetNetItems, GetNetItemsResponse>( &API_HANDLER_SCH::handleGetNetItems );
+
+    // Title block handlers
+    registerHandler<GetTitleBlockInfo, types::TitleBlockInfo>( &API_HANDLER_SCH::handleGetTitleBlockInfo );
+    registerHandler<SetTitleBlockInfo, Empty>( &API_HANDLER_SCH::handleSetTitleBlockInfo );
+
+    // Page settings handlers
+    registerHandler<GetPageSettings, types::PageInfo>( &API_HANDLER_SCH::handleGetPageSettings );
+    registerHandler<SetPageSettings, Empty>( &API_HANDLER_SCH::handleSetPageSettings );
 }
 
 
@@ -296,6 +333,17 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
             status.set_error_message( fmt::format( "Could not decode a valid type from {}", anyItem.type_url() ) );
             aItemHandler( status, anyItem );
             continue;
+        }
+
+        // Special handling for BusEntry: check the type field to determine the actual C++ type
+        if( *type == SCH_BUS_WIRE_ENTRY_T )
+        {
+            kiapi::schematic::types::BusEntry busEntry;
+            if( anyItem.UnpackTo( &busEntry ) )
+            {
+                if( busEntry.type() == kiapi::schematic::types::BET_BUS_TO_BUS )
+                    type = SCH_BUS_BUS_ENTRY_T;
+            }
         }
 
         HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> creationResult = createItemForType( *type, container );
@@ -2342,4 +2390,1005 @@ API_HANDLER_SCH::handleSyncSheetPins(
     response.set_pins_removed( pinsRemoved );
 
     return response;
+}
+
+
+// =============================================================================
+// Annotation Handlers
+// =============================================================================
+
+HANDLER_RESULT<kiapi::schematic::commands::AnnotateSymbolsResponse>
+API_HANDLER_SCH::handleAnnotateSymbols(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::AnnotateSymbols>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    kiapi::schematic::commands::AnnotateSymbolsResponse response;
+
+    // Map protobuf enums to KiCad enums
+    ANNOTATE_SCOPE_T scope = ANNOTATE_ALL;
+    switch( aCtx.Request.scope() )
+    {
+    case kiapi::schematic::commands::AS_CURRENT_SHEET: scope = ANNOTATE_CURRENT_SHEET; break;
+    case kiapi::schematic::commands::AS_SELECTION:     scope = ANNOTATE_SELECTION; break;
+    default:                                           scope = ANNOTATE_ALL; break;
+    }
+
+    ANNOTATE_ORDER_T order = SORT_BY_X_POSITION;
+    switch( aCtx.Request.order() )
+    {
+    case kiapi::schematic::commands::AO_Y_X: order = SORT_BY_Y_POSITION; break;
+    default:                                 order = SORT_BY_X_POSITION; break;
+    }
+
+    ANNOTATE_ALGO_T algo = INCREMENTAL_BY_REF;
+    switch( aCtx.Request.algorithm() )
+    {
+    case kiapi::schematic::commands::AA_RESTART: algo = SHEET_NUMBER_X_100; break;
+    default:                                     algo = INCREMENTAL_BY_REF; break;
+    }
+
+    int startNumber = aCtx.Request.start_number() > 0 ? aCtx.Request.start_number() : 1;
+
+    // Create a reporter to capture annotation results
+    class ApiAnnotationReporter : public REPORTER
+    {
+    public:
+        REPORTER& Report( const wxString& aText, SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override
+        {
+            if( aSeverity == RPT_SEVERITY_ACTION )
+                m_messages.push_back( aText.ToStdString() );
+            return *this;
+        }
+
+        bool HasMessage() const override { return !m_messages.empty(); }
+        std::vector<std::string> m_messages;
+    };
+
+    ApiAnnotationReporter reporter;
+
+    SCH_COMMIT commit( m_frame );
+    m_frame->AnnotateSymbols( &commit, scope, order, algo, aCtx.Request.recursive(),
+                              startNumber, aCtx.Request.reset_existing(),
+                              aCtx.Request.repair_timestamps(), reporter );
+    commit.Push( _( "API: Annotate Symbols" ) );
+
+    response.set_symbols_annotated( reporter.m_messages.size() );
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::ClearAnnotationResponse>
+API_HANDLER_SCH::handleClearAnnotation(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::ClearAnnotation>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    kiapi::schematic::commands::ClearAnnotationResponse response;
+
+    ANNOTATE_SCOPE_T scope = ANNOTATE_ALL;
+    switch( aCtx.Request.scope() )
+    {
+    case kiapi::schematic::commands::AS_CURRENT_SHEET: scope = ANNOTATE_CURRENT_SHEET; break;
+    case kiapi::schematic::commands::AS_SELECTION:     scope = ANNOTATE_SELECTION; break;
+    default:                                           scope = ANNOTATE_ALL; break;
+    }
+
+    // Count symbols before clearing
+    SCH_REFERENCE_LIST refs;
+    m_frame->Schematic().Hierarchy().GetSymbols( refs );
+    int annotatedBefore = 0;
+    for( size_t i = 0; i < refs.GetCount(); i++ )
+    {
+        if( refs[i].GetSymbol()->IsAnnotated( &refs[i].GetSheetPath() ) )
+            annotatedBefore++;
+    }
+
+    class NullReporter : public REPORTER
+    {
+    public:
+        REPORTER& Report( const wxString&, SEVERITY = RPT_SEVERITY_UNDEFINED ) override { return *this; }
+        bool HasMessage() const override { return false; }
+    };
+
+    NullReporter reporter;
+    m_frame->DeleteAnnotation( scope, aCtx.Request.recursive(), reporter );
+
+    // Count symbols after clearing
+    refs.Clear();
+    m_frame->Schematic().Hierarchy().GetSymbols( refs );
+    int annotatedAfter = 0;
+    for( size_t i = 0; i < refs.GetCount(); i++ )
+    {
+        if( refs[i].GetSymbol()->IsAnnotated( &refs[i].GetSheetPath() ) )
+            annotatedAfter++;
+    }
+
+    response.set_symbols_cleared( annotatedBefore - annotatedAfter );
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::CheckAnnotationResponse>
+API_HANDLER_SCH::handleCheckAnnotation(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::CheckAnnotation>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    kiapi::schematic::commands::CheckAnnotationResponse response;
+
+    ANNOTATE_SCOPE_T scope = ANNOTATE_ALL;
+    switch( aCtx.Request.scope() )
+    {
+    case kiapi::schematic::commands::AS_CURRENT_SHEET: scope = ANNOTATE_CURRENT_SHEET; break;
+    case kiapi::schematic::commands::AS_SELECTION:     scope = ANNOTATE_SELECTION; break;
+    default:                                           scope = ANNOTATE_ALL; break;
+    }
+
+    // Collect errors
+    std::vector<std::tuple<ERCE_T, wxString, KIID, KIID>> errors;
+
+    auto errorHandler = [&]( ERCE_T aType, const wxString& aMsg,
+                             SCH_REFERENCE* aRef1, SCH_REFERENCE* aRef2 )
+    {
+        KIID id1 = aRef1 ? aRef1->GetSymbol()->m_Uuid : KIID();
+        KIID id2 = aRef2 ? aRef2->GetSymbol()->m_Uuid : KIID();
+        errors.push_back( { aType, aMsg, id1, id2 } );
+    };
+
+    int errorCount = m_frame->CheckAnnotate( errorHandler, scope, aCtx.Request.recursive() );
+
+    response.set_error_count( errorCount );
+
+    for( const auto& [errorType, msg, id1, id2] : errors )
+    {
+        auto* error = response.add_errors();
+
+        // Map error type to string
+        switch( errorType )
+        {
+        case ERCE_DUPLICATE_REFERENCE:    error->set_error_type( "ERCE_DUPLICATE_REFERENCE" ); break;
+        case ERCE_UNANNOTATED:            error->set_error_type( "ERCE_UNANNOTATED" ); break;
+        default:                          error->set_error_type( "ERCE_UNKNOWN" ); break;
+        }
+
+        error->set_message( msg.ToStdString() );
+
+        if( !id1.AsString().IsEmpty() )
+            error->add_symbol_ids()->set_value( id1.AsStdString() );
+        if( !id2.AsString().IsEmpty() )
+            error->add_symbol_ids()->set_value( id2.AsStdString() );
+    }
+
+    return response;
+}
+
+
+// =============================================================================
+// ERC Handlers
+// =============================================================================
+
+HANDLER_RESULT<kiapi::schematic::commands::RunERCResponse>
+API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands::RunERC>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    kiapi::schematic::commands::RunERCResponse response;
+
+    // Run ERC tests
+    ERC_TESTER tester( &m_frame->Schematic() );
+    tester.RunTests( nullptr, m_frame, nullptr, &m_frame->Prj(), nullptr );
+
+    // Collect markers from all screens
+    int errorCount = 0;
+    int warningCount = 0;
+
+    SCH_SCREENS screens( m_frame->Schematic().Root() );
+
+    for( SCH_SCREEN* screen = screens.GetFirst(); screen; screen = screens.GetNext() )
+    {
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_MARKER_T ) )
+        {
+            SCH_MARKER* marker = static_cast<SCH_MARKER*>( item );
+            const std::shared_ptr<RC_ITEM>& rcItem = marker->GetRCItem();
+
+            auto* violation = response.add_violations();
+            violation->mutable_id()->set_value( marker->m_Uuid.AsStdString() );
+            violation->set_error_code( std::to_string( rcItem->GetErrorCode() ) );
+            violation->set_description( rcItem->GetErrorText( true ).ToStdString() );
+
+            // Set severity
+            switch( marker->GetSeverity() )
+            {
+            case RPT_SEVERITY_ERROR:
+                violation->set_severity( kiapi::schematic::commands::ERC_SEV_ERROR );
+                errorCount++;
+                break;
+            case RPT_SEVERITY_WARNING:
+                violation->set_severity( kiapi::schematic::commands::ERC_SEV_WARNING );
+                warningCount++;
+                break;
+            case RPT_SEVERITY_EXCLUSION:
+                violation->set_severity( kiapi::schematic::commands::ERC_SEV_EXCLUDED );
+                break;
+            default:
+                violation->set_severity( kiapi::schematic::commands::ERC_SEV_UNKNOWN );
+                break;
+            }
+
+            // Position
+            violation->mutable_position()->set_x_nm( marker->GetPosition().x );
+            violation->mutable_position()->set_y_nm( marker->GetPosition().y );
+
+            // Item IDs
+            if( rcItem->GetMainItemID() != niluuid )
+                violation->add_item_ids()->set_value( rcItem->GetMainItemID().AsStdString() );
+            if( rcItem->GetAuxItemID() != niluuid )
+                violation->add_item_ids()->set_value( rcItem->GetAuxItemID().AsStdString() );
+        }
+    }
+
+    response.set_error_count( errorCount );
+    response.set_warning_count( warningCount );
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::GetERCViolationsResponse>
+API_HANDLER_SCH::handleGetERCViolations(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::GetERCViolations>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    kiapi::schematic::commands::GetERCViolationsResponse response;
+
+    SCH_SCREENS screens( m_frame->Schematic().Root() );
+
+    for( SCH_SCREEN* screen = screens.GetFirst(); screen; screen = screens.GetNext() )
+    {
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_MARKER_T ) )
+        {
+            SCH_MARKER* marker = static_cast<SCH_MARKER*>( item );
+            const std::shared_ptr<RC_ITEM>& rcItem = marker->GetRCItem();
+
+            // Apply severity filter if specified
+            if( aCtx.Request.filter_severity() != kiapi::schematic::commands::ERC_SEV_UNKNOWN )
+            {
+                bool matches = false;
+                switch( marker->GetSeverity() )
+                {
+                case RPT_SEVERITY_ERROR:
+                    matches = aCtx.Request.filter_severity() == kiapi::schematic::commands::ERC_SEV_ERROR;
+                    break;
+                case RPT_SEVERITY_WARNING:
+                    matches = aCtx.Request.filter_severity() == kiapi::schematic::commands::ERC_SEV_WARNING;
+                    break;
+                case RPT_SEVERITY_EXCLUSION:
+                    matches = aCtx.Request.filter_severity() == kiapi::schematic::commands::ERC_SEV_EXCLUDED;
+                    break;
+                default:
+                    break;
+                }
+                if( !matches )
+                    continue;
+            }
+
+            auto* violation = response.add_violations();
+            violation->mutable_id()->set_value( marker->m_Uuid.AsStdString() );
+            violation->set_error_code( std::to_string( rcItem->GetErrorCode() ) );
+            violation->set_description( rcItem->GetErrorText( true ).ToStdString() );
+
+            switch( marker->GetSeverity() )
+            {
+            case RPT_SEVERITY_ERROR:
+                violation->set_severity( kiapi::schematic::commands::ERC_SEV_ERROR );
+                break;
+            case RPT_SEVERITY_WARNING:
+                violation->set_severity( kiapi::schematic::commands::ERC_SEV_WARNING );
+                break;
+            case RPT_SEVERITY_EXCLUSION:
+                violation->set_severity( kiapi::schematic::commands::ERC_SEV_EXCLUDED );
+                break;
+            default:
+                violation->set_severity( kiapi::schematic::commands::ERC_SEV_UNKNOWN );
+                break;
+            }
+
+            violation->mutable_position()->set_x_nm( marker->GetPosition().x );
+            violation->mutable_position()->set_y_nm( marker->GetPosition().y );
+
+            if( rcItem->GetMainItemID() != niluuid )
+                violation->add_item_ids()->set_value( rcItem->GetMainItemID().AsStdString() );
+            if( rcItem->GetAuxItemID() != niluuid )
+                violation->add_item_ids()->set_value( rcItem->GetAuxItemID().AsStdString() );
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::ClearERCMarkersResponse>
+API_HANDLER_SCH::handleClearERCMarkers(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::ClearERCMarkers>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    kiapi::schematic::commands::ClearERCMarkersResponse response;
+
+    std::set<KIID> idsToRemove;
+    for( const auto& id : aCtx.Request.marker_ids() )
+        idsToRemove.insert( KIID( id.value() ) );
+
+    int markersCleared = 0;
+    SCH_SCREENS screens( m_frame->Schematic().Root() );
+
+    for( SCH_SCREEN* screen = screens.GetFirst(); screen; screen = screens.GetNext() )
+    {
+        std::vector<SCH_MARKER*> toRemove;
+
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_MARKER_T ) )
+        {
+            SCH_MARKER* marker = static_cast<SCH_MARKER*>( item );
+
+            // If no specific IDs given, clear all. Otherwise, only clear specified IDs.
+            if( idsToRemove.empty() || idsToRemove.count( marker->m_Uuid ) )
+                toRemove.push_back( marker );
+        }
+
+        for( SCH_MARKER* marker : toRemove )
+        {
+            screen->Remove( marker );
+            markersCleared++;
+        }
+    }
+
+    response.set_markers_cleared( markersCleared );
+
+    m_frame->GetCanvas()->Refresh();
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty>
+API_HANDLER_SCH::handleExcludeERCViolation(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::ExcludeERCViolation>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    KIID markerId( aCtx.Request.marker_id().value() );
+    SCH_SCREENS screens( m_frame->Schematic().Root() );
+
+    for( SCH_SCREEN* screen = screens.GetFirst(); screen; screen = screens.GetNext() )
+    {
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_MARKER_T ) )
+        {
+            SCH_MARKER* marker = static_cast<SCH_MARKER*>( item );
+
+            if( marker->m_Uuid == markerId )
+            {
+                marker->SetExcluded( true );
+                m_frame->GetCanvas()->Refresh();
+                return Empty();
+            }
+        }
+    }
+
+    // Marker not found
+    ApiResponseStatus e;
+    e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+    e.set_error_message( "ERC marker not found" );
+    return tl::unexpected( e );
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::GetNetsResponse>
+API_HANDLER_SCH::handleGetNets(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::GetNets>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    kiapi::schematic::commands::GetNetsResponse response;
+
+    // Get the connection graph
+    CONNECTION_GRAPH* graph = m_frame->Schematic().ConnectionGraph();
+
+    if( !graph )
+    {
+        // No connectivity data available, return empty list
+        return response;
+    }
+
+    // Get net map (net codes to subgraphs)
+    const auto& netMap = graph->GetNetMap();
+
+    std::map<wxString, kiapi::schematic::commands::NetInfo*> netInfoMap;
+
+    for( const auto& [netCode, subgraphs] : netMap )
+    {
+        if( subgraphs.empty() )
+            continue;
+
+        wxString netName = subgraphs[0]->GetNetName();
+
+        if( netName.IsEmpty() )
+            continue;
+
+        // Skip bus connections, we only want nets
+        if( subgraphs[0]->GetDriverConnection() &&
+            subgraphs[0]->GetDriverConnection()->IsBus() )
+            continue;
+
+        // Get or create NetInfo for this net
+        kiapi::schematic::commands::NetInfo* netInfo;
+        auto it = netInfoMap.find( netName );
+
+        if( it == netInfoMap.end() )
+        {
+            netInfo = response.add_nets();
+            netInfo->set_name( netName.ToStdString() );
+            netInfo->set_net_code( netCode.Netcode );
+            netInfoMap[netName] = netInfo;
+        }
+        else
+        {
+            netInfo = it->second;
+        }
+
+        // Add items from this subgraph
+        for( SCH_ITEM* item : subgraphs[0]->GetItems() )
+        {
+            netInfo->add_item_ids()->set_value( item->m_Uuid.AsStdString() );
+        }
+
+        netInfo->set_connection_count( netInfo->item_ids_size() );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::GetBusesResponse>
+API_HANDLER_SCH::handleGetBuses(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::GetBuses>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    kiapi::schematic::commands::GetBusesResponse response;
+
+    // Get the connection graph
+    CONNECTION_GRAPH* graph = m_frame->Schematic().ConnectionGraph();
+
+    if( !graph )
+        return response;
+
+    const auto& netMap = graph->GetNetMap();
+
+    std::map<wxString, kiapi::schematic::commands::BusInfo*> busInfoMap;
+
+    for( const auto& [netCode, subgraphs] : netMap )
+    {
+        if( subgraphs.empty() )
+            continue;
+
+        // Only process bus connections
+        if( !subgraphs[0]->GetDriverConnection() ||
+            !subgraphs[0]->GetDriverConnection()->IsBus() )
+            continue;
+
+        const SCH_CONNECTION* conn = subgraphs[0]->GetDriverConnection();
+        wxString busName = conn->GetNetName();
+
+        if( busName.IsEmpty() )
+            continue;
+
+        // Check if we already have this bus
+        if( busInfoMap.count( busName ) )
+            continue;
+
+        kiapi::schematic::commands::BusInfo* busInfo = response.add_buses();
+        busInfo->set_name( busName.ToStdString() );
+        busInfoMap[busName] = busInfo;
+
+        // Check if it's a vector bus (e.g., D[0..7]) vs bus group (e.g., {A, B, C})
+        if( conn->Type() == CONNECTION_TYPE::BUS )
+        {
+            busInfo->set_is_vector( true );
+
+            // Get vector info
+            wxString prefix = conn->VectorPrefix();
+            busInfo->set_vector_prefix( prefix.ToStdString() );
+            busInfo->set_vector_start( conn->VectorStart() );
+            busInfo->set_vector_end( conn->VectorEnd() );
+
+            // Generate member names
+            for( int i = conn->VectorStart(); i <= conn->VectorEnd(); i++ )
+            {
+                busInfo->add_members( fmt::format( "{}{}", prefix.ToStdString(), i ) );
+            }
+        }
+        else if( conn->Type() == CONNECTION_TYPE::BUS_GROUP )
+        {
+            busInfo->set_is_vector( false );
+
+            // Get members from the bus group
+            for( const auto& member : conn->Members() )
+            {
+                busInfo->add_members( member->GetNetName().ToStdString() );
+            }
+        }
+
+        // Add bus line IDs
+        for( SCH_ITEM* item : subgraphs[0]->GetItems() )
+        {
+            if( item->Type() == SCH_LINE_T &&
+                static_cast<SCH_LINE*>( item )->GetLayer() == LAYER_BUS )
+            {
+                busInfo->add_bus_line_ids()->set_value( item->m_Uuid.AsStdString() );
+            }
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::GetNetForItemResponse>
+API_HANDLER_SCH::handleGetNetForItem(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::GetNetForItem>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    kiapi::schematic::commands::GetNetForItemResponse response;
+
+    KIID itemId( aCtx.Request.item_id().value() );
+
+    // Find the item
+    std::optional<SCH_ITEM*> itemOpt = getItemById( itemId );
+
+    if( !itemOpt || !*itemOpt )
+    {
+        response.set_is_connected( false );
+        return response;
+    }
+
+    SCH_ITEM* item = *itemOpt;
+
+    // Get connection info for the item
+    SCH_CONNECTION* conn = item->Connection();
+
+    if( !conn )
+    {
+        response.set_is_connected( false );
+        return response;
+    }
+
+    response.set_is_connected( true );
+
+    auto* connInfo = response.mutable_connection();
+
+    // Set connection type
+    switch( conn->Type() )
+    {
+    case CONNECTION_TYPE::NET:
+        connInfo->set_type( kiapi::schematic::commands::CT_NET );
+        break;
+    case CONNECTION_TYPE::BUS:
+        connInfo->set_type( kiapi::schematic::commands::CT_BUS );
+        connInfo->set_vector_prefix( conn->VectorPrefix().ToStdString() );
+        connInfo->set_vector_start( conn->VectorStart() );
+        connInfo->set_vector_end( conn->VectorEnd() );
+        break;
+    case CONNECTION_TYPE::BUS_GROUP:
+        connInfo->set_type( kiapi::schematic::commands::CT_BUS_GROUP );
+        for( const auto& member : conn->Members() )
+            connInfo->add_bus_members( member->GetNetName().ToStdString() );
+        break;
+    default:
+        connInfo->set_type( kiapi::schematic::commands::CT_NONE );
+        response.set_is_connected( false );
+        break;
+    }
+
+    connInfo->set_name( conn->GetNetName().ToStdString() );
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::GetBusMembersResponse>
+API_HANDLER_SCH::handleGetBusMembers(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::GetBusMembers>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    kiapi::schematic::commands::GetBusMembersResponse response;
+
+    wxString busName = wxString::FromUTF8( aCtx.Request.bus_name() );
+    wxString unescaped = UnescapeString( busName );
+
+    wxString prefix;
+    std::vector<wxString> members;
+
+    // Try parsing as a vector bus (e.g., "D[0..7]")
+    if( NET_SETTINGS::ParseBusVector( unescaped, &prefix, &members ) )
+    {
+        response.set_is_vector( true );
+        response.set_vector_prefix( prefix.ToStdString() );
+
+        // Extract start/end from member names
+        if( !members.empty() )
+        {
+            // Members are already expanded like "D0", "D1", etc.
+            // Try to extract the range
+            long start = 0, end = 0;
+            if( members.size() >= 1 )
+            {
+                wxString firstMember = members.front();
+                wxString lastMember = members.back();
+
+                // Extract number from end of member name
+                size_t firstNumPos = firstMember.find_first_of( "0123456789" );
+                size_t lastNumPos = lastMember.find_first_of( "0123456789" );
+
+                if( firstNumPos != wxString::npos )
+                    firstMember.Mid( firstNumPos ).ToLong( &start );
+                if( lastNumPos != wxString::npos )
+                    lastMember.Mid( lastNumPos ).ToLong( &end );
+            }
+
+            response.set_vector_start( static_cast<int>( start ) );
+            response.set_vector_end( static_cast<int>( end ) );
+        }
+
+        for( const wxString& member : members )
+            response.add_members( member.ToStdString() );
+    }
+    // Try parsing as a bus group (e.g., "{SDA, SCL}")
+    else if( NET_SETTINGS::ParseBusGroup( unescaped, &prefix, &members ) )
+    {
+        response.set_is_vector( false );
+
+        if( !prefix.IsEmpty() )
+            response.set_vector_prefix( prefix.ToStdString() );
+
+        for( const wxString& member : members )
+            response.add_members( member.ToStdString() );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::GetNetItemsResponse>
+API_HANDLER_SCH::handleGetNetItems(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::GetNetItems>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    kiapi::schematic::commands::GetNetItemsResponse response;
+
+    wxString netName = wxString::FromUTF8( aCtx.Request.net_name() );
+
+    CONNECTION_GRAPH* graph = m_frame->Schematic().ConnectionGraph();
+
+    if( !graph )
+        return response;
+
+    const auto& netMap = graph->GetNetMap();
+
+    for( const auto& [netCode, subgraphs] : netMap )
+    {
+        for( const CONNECTION_SUBGRAPH* subgraph : subgraphs )
+        {
+            if( subgraph->GetNetName() == netName )
+            {
+                for( SCH_ITEM* item : subgraph->GetItems() )
+                {
+                    response.add_item_ids()->set_value( item->m_Uuid.AsStdString() );
+
+                    // Add connection points
+                    for( const VECTOR2I& pt : item->GetConnectionPoints() )
+                    {
+                        auto* point = response.add_connection_points();
+                        point->set_x_nm( pt.x );
+                        point->set_y_nm( pt.y );
+                    }
+                }
+            }
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<types::TitleBlockInfo> API_HANDLER_SCH::handleGetTitleBlockInfo(
+        const HANDLER_CONTEXT<GetTitleBlockInfo>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    SCH_SCREEN* screen = m_frame->GetScreen();
+    const TITLE_BLOCK& block = screen->GetTitleBlock();
+
+    types::TitleBlockInfo response;
+
+    response.set_title( block.GetTitle().ToUTF8() );
+    response.set_date( block.GetDate().ToUTF8() );
+    response.set_revision( block.GetRevision().ToUTF8() );
+    response.set_company( block.GetCompany().ToUTF8() );
+    response.set_comment1( block.GetComment( 0 ).ToUTF8() );
+    response.set_comment2( block.GetComment( 1 ).ToUTF8() );
+    response.set_comment3( block.GetComment( 2 ).ToUTF8() );
+    response.set_comment4( block.GetComment( 3 ).ToUTF8() );
+    response.set_comment5( block.GetComment( 4 ).ToUTF8() );
+    response.set_comment6( block.GetComment( 5 ).ToUTF8() );
+    response.set_comment7( block.GetComment( 6 ).ToUTF8() );
+    response.set_comment8( block.GetComment( 7 ).ToUTF8() );
+    response.set_comment9( block.GetComment( 8 ).ToUTF8() );
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetTitleBlockInfo(
+        const HANDLER_CONTEXT<SetTitleBlockInfo>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    SCH_SCREEN* screen = m_frame->GetScreen();
+    TITLE_BLOCK block = screen->GetTitleBlock();
+
+    const types::TitleBlockInfo& info = aCtx.Request.title_block();
+
+    if( !info.title().empty() )
+        block.SetTitle( wxString::FromUTF8( info.title() ) );
+    if( !info.date().empty() )
+        block.SetDate( wxString::FromUTF8( info.date() ) );
+    if( !info.revision().empty() )
+        block.SetRevision( wxString::FromUTF8( info.revision() ) );
+    if( !info.company().empty() )
+        block.SetCompany( wxString::FromUTF8( info.company() ) );
+    if( !info.comment1().empty() )
+        block.SetComment( 0, wxString::FromUTF8( info.comment1() ) );
+    if( !info.comment2().empty() )
+        block.SetComment( 1, wxString::FromUTF8( info.comment2() ) );
+    if( !info.comment3().empty() )
+        block.SetComment( 2, wxString::FromUTF8( info.comment3() ) );
+    if( !info.comment4().empty() )
+        block.SetComment( 3, wxString::FromUTF8( info.comment4() ) );
+    if( !info.comment5().empty() )
+        block.SetComment( 4, wxString::FromUTF8( info.comment5() ) );
+    if( !info.comment6().empty() )
+        block.SetComment( 5, wxString::FromUTF8( info.comment6() ) );
+    if( !info.comment7().empty() )
+        block.SetComment( 6, wxString::FromUTF8( info.comment7() ) );
+    if( !info.comment8().empty() )
+        block.SetComment( 7, wxString::FromUTF8( info.comment8() ) );
+    if( !info.comment9().empty() )
+        block.SetComment( 8, wxString::FromUTF8( info.comment9() ) );
+
+    screen->SetTitleBlock( block );
+
+    // Mark the schematic as modified
+    m_frame->OnModify();
+
+    return Empty();
+}
+
+
+// Helper to convert PAGE_SIZE_TYPE to proto enum
+static types::PageSizeType toProtoPageSize( PAGE_SIZE_TYPE aType )
+{
+    switch( aType )
+    {
+    case PAGE_SIZE_TYPE::A5:       return types::PST_A5;
+    case PAGE_SIZE_TYPE::A4:       return types::PST_A4;
+    case PAGE_SIZE_TYPE::A3:       return types::PST_A3;
+    case PAGE_SIZE_TYPE::A2:       return types::PST_A2;
+    case PAGE_SIZE_TYPE::A1:       return types::PST_A1;
+    case PAGE_SIZE_TYPE::A0:       return types::PST_A0;
+    case PAGE_SIZE_TYPE::A:        return types::PST_A;
+    case PAGE_SIZE_TYPE::B:        return types::PST_B;
+    case PAGE_SIZE_TYPE::C:        return types::PST_C;
+    case PAGE_SIZE_TYPE::D:        return types::PST_D;
+    case PAGE_SIZE_TYPE::E:        return types::PST_E;
+    case PAGE_SIZE_TYPE::GERBER:   return types::PST_GERBER;
+    case PAGE_SIZE_TYPE::USLetter: return types::PST_USLETTER;
+    case PAGE_SIZE_TYPE::USLegal:  return types::PST_USLEGAL;
+    case PAGE_SIZE_TYPE::USLedger: return types::PST_USLEDGER;
+    case PAGE_SIZE_TYPE::User:     return types::PST_USER;
+    default:                       return types::PST_UNKNOWN;
+    }
+}
+
+
+// Helper to convert proto enum to PAGE_SIZE_TYPE
+static PAGE_SIZE_TYPE fromProtoPageSize( types::PageSizeType aType )
+{
+    switch( aType )
+    {
+    case types::PST_A5:       return PAGE_SIZE_TYPE::A5;
+    case types::PST_A4:       return PAGE_SIZE_TYPE::A4;
+    case types::PST_A3:       return PAGE_SIZE_TYPE::A3;
+    case types::PST_A2:       return PAGE_SIZE_TYPE::A2;
+    case types::PST_A1:       return PAGE_SIZE_TYPE::A1;
+    case types::PST_A0:       return PAGE_SIZE_TYPE::A0;
+    case types::PST_A:        return PAGE_SIZE_TYPE::A;
+    case types::PST_B:        return PAGE_SIZE_TYPE::B;
+    case types::PST_C:        return PAGE_SIZE_TYPE::C;
+    case types::PST_D:        return PAGE_SIZE_TYPE::D;
+    case types::PST_E:        return PAGE_SIZE_TYPE::E;
+    case types::PST_GERBER:   return PAGE_SIZE_TYPE::GERBER;
+    case types::PST_USLETTER: return PAGE_SIZE_TYPE::USLetter;
+    case types::PST_USLEGAL:  return PAGE_SIZE_TYPE::USLegal;
+    case types::PST_USLEDGER: return PAGE_SIZE_TYPE::USLedger;
+    case types::PST_USER:     return PAGE_SIZE_TYPE::User;
+    default:                  return PAGE_SIZE_TYPE::A3;  // Default
+    }
+}
+
+
+HANDLER_RESULT<types::PageInfo> API_HANDLER_SCH::handleGetPageSettings(
+        const HANDLER_CONTEXT<GetPageSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    SCH_SCREEN* screen = m_frame->GetScreen();
+    const PAGE_INFO& pageInfo = screen->GetPageSettings();
+
+    types::PageInfo response;
+
+    response.set_size_type( toProtoPageSize( pageInfo.GetType() ) );
+    response.set_portrait( pageInfo.IsPortrait() );
+    response.set_width_mm( pageInfo.GetWidthMM() );
+    response.set_height_mm( pageInfo.GetHeightMM() );
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetPageSettings(
+        const HANDLER_CONTEXT<SetPageSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    SCH_SCREEN* screen = m_frame->GetScreen();
+    const types::PageInfo& info = aCtx.Request.page_info();
+
+    PAGE_SIZE_TYPE sizeType = fromProtoPageSize( info.size_type() );
+
+    // For custom size, set the dimensions first
+    if( sizeType == PAGE_SIZE_TYPE::User )
+    {
+        PAGE_INFO::SetCustomWidthMils( info.width_mm() * 1000.0 / 25.4 );
+        PAGE_INFO::SetCustomHeightMils( info.height_mm() * 1000.0 / 25.4 );
+    }
+
+    PAGE_INFO pageInfo( sizeType, info.portrait() );
+
+    screen->SetPageSettings( pageInfo );
+
+    // Mark the schematic as modified
+    m_frame->OnModify();
+
+    return Empty();
 }

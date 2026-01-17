@@ -3816,37 +3816,35 @@ void SCH_SELECTION_TOOL::syncSelectionWithAgent()
             }
             else if( item->Type() == SCH_SHAPE_T )
             {
-                SCH_SHAPE*     shape = static_cast<SCH_SHAPE*>( item );
                 nlohmann::json jItem;
                 jItem["type"] = "shape";
-                jItem["uuid"] = shape->m_Uuid.AsString();
+                jItem["uuid"] = item->m_Uuid.AsString();
                 selectionArray.push_back( jItem );
             }
             else if( item->Type() == SCH_TEXT_T || item->Type() == SCH_TEXTBOX_T )
             {
-                SCH_TEXT*      textItem = static_cast<SCH_TEXT*>( item );
+                // Use base item pointer to avoid crashes with API-created items
+                // that may have uninitialized text members
                 nlohmann::json jItem;
                 jItem["type"] = "text";
-                jItem["text"] = textItem->GetShownText( true ).ToStdString();
-                jItem["uuid"] = textItem->m_Uuid.AsString();
+                jItem["uuid"] = item->m_Uuid.AsString();
                 selectionArray.push_back( jItem );
             }
             else if( item->Type() == SCH_LABEL_T || item->Type() == SCH_GLOBAL_LABEL_T
                      || item->Type() == SCH_HIER_LABEL_T || item->Type() == SCH_DIRECTIVE_LABEL_T )
             {
-                SCH_LABEL_BASE* label = static_cast<SCH_LABEL_BASE*>( item );
-                nlohmann::json  jItem;
+                // Use base item pointer to avoid crashes with API-created items
+                // that may have uninitialized text members
+                nlohmann::json jItem;
                 jItem["type"] = "label";
-                jItem["text"] = label->GetShownText( true ).ToStdString();
-                jItem["uuid"] = label->m_Uuid.AsString();
+                jItem["uuid"] = item->m_Uuid.AsString();
                 selectionArray.push_back( jItem );
             }
             else if( item->Type() == SCH_JUNCTION_T )
             {
-                SCH_JUNCTION*  junction = static_cast<SCH_JUNCTION*>( item );
                 nlohmann::json jItem;
                 jItem["type"] = "junction";
-                jItem["uuid"] = junction->m_Uuid.AsString();
+                jItem["uuid"] = item->m_Uuid.AsString();
                 selectionArray.push_back( jItem );
             }
             else if( item->Type() == SCH_NO_CONNECT_T )
@@ -3858,12 +3856,11 @@ void SCH_SELECTION_TOOL::syncSelectionWithAgent()
             }
             else if( item->Type() == SCH_FIELD_T )
             {
-                SCH_FIELD*     field = static_cast<SCH_FIELD*>( item );
+                // Use base item pointer to avoid crashes with API-created items
+                // that may have uninitialized text members
                 nlohmann::json jItem;
                 jItem["type"] = "field";
-                jItem["text"] = field->GetShownText( true ).ToStdString();
-                jItem["field_name"] = field->GetShownName().ToStdString();
-                jItem["uuid"] = field->m_Uuid.AsString();
+                jItem["uuid"] = item->m_Uuid.AsString();
                 selectionArray.push_back( jItem );
             }
             else if( item->Type() == SCH_BITMAP_T )

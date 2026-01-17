@@ -143,6 +143,9 @@ public:
         return new SCH_TEXTBOX( *this );
     }
 
+    void Serialize( google::protobuf::Any& aContainer ) const override;
+    bool Deserialize( const google::protobuf::Any& aContainer ) override;
+
     void GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_ITEM>& aList ) override;
 
     double Similarity( const SCH_ITEM& aOther ) const override;

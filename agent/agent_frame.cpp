@@ -3,6 +3,7 @@
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
+#include <wx/app.h>
 #include <kiway.h>
 #include <sstream>
 #include <fstream>
@@ -876,15 +877,18 @@ std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayloa
     // Wait for response (Sync)
     // We expect the target frame to reply via MAIL_AGENT_RESPONSE which sets m_toolResponse
     wxLongLong start = wxGetLocalTimeMillis();
-    m_stopRequested = false;                                                      // Reset stop flag
-    while( m_toolResponse.empty() && ( wxGetLocalTimeMillis() - start < 10000 ) ) // 10s timeout
+    m_stopRequested = false;                                                       // Reset stop flag
+    while( m_toolResponse.empty() && ( wxGetLocalTimeMillis() - start < 35000 ) )  // 35s timeout (longer than terminal's 30s)
     {
-        wxYield(); // Process events (including the MailIn event and Stop button)
+        // Process all pending events to keep UI responsive
+        while( wxTheApp->Pending() )
+            wxTheApp->Dispatch();
+
         if( m_stopRequested )
         {
             return "Error: Tool execution cancelled by user.";
         }
-        wxMilliSleep( 10 );
+        wxMilliSleep( 20 );
     }
 
     if( m_toolResponse.empty() )

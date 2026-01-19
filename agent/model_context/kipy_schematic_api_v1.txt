@@ -28,6 +28,37 @@ CRITICAL CODE FORMATTING RULES
 3. Keep code blocks SHORT - complex operations may timeout
 
 ================================================================================
+SCHEMATIC DESIGN WORKFLOW (FOLLOW THIS ORDER!)
+================================================================================
+
+For reliable schematic creation, follow this 4-phase workflow:
+
+PHASE 1: PART PLACEMENT
+  - Choose all components needed for the circuit
+  - Place each component at well-spaced positions (20-30mm apart minimum)
+  - Use positions in the visible area (100-200mm X, 80-150mm Y)
+  - Print pin positions for EACH component after placing it
+
+PHASE 2: CONNECTION PLANNING (do this mentally or in comments)
+  - Define what connects to what conceptually:
+    "VCC pin connects to R1 pin 1"
+    "R1 pin 2 connects to Q1 gate"
+  - Identify switch nodes and power rails
+  - Plan wire routing (what goes horizontal vs vertical)
+
+PHASE 3: WIRING (using EXACT pin positions)
+  - Retrieve actual pin positions from each symbol
+  - Wire using ONLY the positions returned by the API
+  - NEVER use rounded or "cleaned up" positions
+  - Store pin positions in variables before wiring
+
+PHASE 4: VALIDATION
+  - List all wires and verify they connect to intended pins
+  - Check that wire endpoints match pin positions exactly
+  - Add junctions where 3+ wires meet
+  - Run ERC if available
+
+================================================================================
 SCHEMATIC PAGE COORDINATES
 ================================================================================
 
@@ -60,6 +91,34 @@ KiCad uses NANOMETERS internally for all positions and sizes:
   - 1 mm = 1,000,000 nm
   - Use Vector2.from_xy_mm(x_mm, y_mm) for millimeter input (RECOMMENDED)
   - Use Vector2.from_xy(x_nm, y_nm) for nanometer input
+
+================================================================================
+CRITICAL: PIN POSITIONS ARE CORRECT - USE THEM EXACTLY!
+================================================================================
+
+When you read pin positions from placed symbols, they may appear to have very
+small offsets from the symbol center. THIS IS CORRECT BEHAVIOR - do NOT try
+to "fix" or "round" these positions!
+
+Example output you might see:
+  MOSFET pins:
+    D(2): (110.025, 79.949) mm
+    G(1): (109.949, 80.000) mm
+    S(3): (110.025, 80.051) mm
+
+CORRECT behavior: Use these EXACT positions for wiring!
+  drain_pos = mosfet.pins[0].position  # Use directly!
+  sch.add_wire(some_position, drain_pos)
+
+WRONG behavior (DO NOT DO THIS):
+  # NEVER round or "clean up" positions like this:
+  sch.add_wire(Vector2.from_xy_mm(110, 80), ...)  # BAD! Won't connect!
+
+The small offsets represent the actual pin locations on the symbol graphics.
+Wires MUST connect to these exact positions to make electrical connections.
+
+RULE: Always store pin.position in a variable and use it directly for wiring.
+      Never substitute a "cleaner" coordinate - it will NOT connect!
 
 ================================================================================
 GEOMETRY TYPES (pre-imported: Vector2)
@@ -411,23 +470,40 @@ Connectors:
 WIRING BEST PRACTICES
 ================================================================================
 
+CRITICAL RULES:
 1. ALWAYS place all symbols FIRST, THEN add wires
-2. Get actual pin positions from placed symbols: pin_pos = symbol.pins[0].position
-3. Connect wires directly to pin positions, not guessed coordinates
-4. Use junctions where 3+ wires meet: sch.add_junction(position)
-5. For horizontal wires: ensure start.y == end.y (use pin positions!)
-6. For vertical wires: ensure start.x == end.x (use pin positions!)
+2. ALWAYS use pin.position directly - NEVER use rounded coordinates
+3. Store pin positions in variables BEFORE creating wires
+4. Use junctions where 3+ wires meet
 
-Example wiring pattern:
+CORRECT wiring pattern (components placed at different Y positions):
   # Place components
   r1 = sch.add_symbol("Device:R", Vector2.from_xy_mm(150, 100))
-  r2 = sch.add_symbol("Device:R", Vector2.from_xy_mm(180, 100))
+  c1 = sch.add_symbol("Device:C", Vector2.from_xy_mm(180, 120))
 
-  # Get actual pin positions
+  # Store EXACT pin positions (do NOT modify these!)
   r1_pin2 = r1.pins[1].position
-  r2_pin1 = r2.pins[0].position
+  c1_pin1 = c1.pins[0].position
 
-  # Wire between actual pin positions
-  sch.add_wire(r1_pin2, r2_pin1)
+  # Wire with L-shape routing (horizontal then vertical)
+  # Create intermediate point at same X as c1, same Y as r1_pin2
+  mid_x = c1_pin1.x
+  mid_y = r1_pin2.y
+  mid_point = Vector2.from_xy(mid_x, mid_y)
+
+  sch.add_wire(r1_pin2, mid_point)       # Horizontal segment
+  sch.add_wire(mid_point, c1_pin1)       # Vertical segment
+
+CORRECT wiring for aligned components:
+  # When pins are already aligned (same X or same Y)
+  r1 = sch.add_symbol("Device:R", Vector2.from_xy_mm(150, 100))
+  r2 = sch.add_symbol("Device:R", Vector2.from_xy_mm(150, 130))  # Same X
+
+  # Direct vertical wire using EXACT positions
+  sch.add_wire(r1.pins[1].position, r2.pins[0].position)
+
+WRONG (DO NOT DO THIS):
+  # NEVER use hardcoded positions when pin positions are available!
+  sch.add_wire(Vector2.from_xy_mm(150, 100), Vector2.from_xy_mm(180, 100))  # BAD!
 
 ================================================================================

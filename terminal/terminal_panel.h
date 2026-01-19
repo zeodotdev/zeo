@@ -35,6 +35,10 @@ public:
     void             SetMode( TERMINAL_MODE aMode );
     virtual wxString GetTitle() const;
 
+    // Python execution state accessors (for synchronous agent requests)
+    bool        IsPythonRunning() const { return m_pythonRunning.load(); }
+    std::string GetLastPythonResult() const { return m_lastPythonResult; }
+
     // Event handlers
     void OnKeyDown( wxKeyEvent& aEvent );
     void OnChar( wxKeyEvent& aEvent );

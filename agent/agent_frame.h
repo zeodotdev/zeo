@@ -9,7 +9,10 @@
 #include <wx/timer.h>
 #include <string>
 #include <vector>
+#include <memory>
 #include <nlohmann/json.hpp>
+
+#include "agent_llm_client.h"
 
 // Forward Declarations
 class AGENT_THREAD;
@@ -77,10 +80,28 @@ private:
     std::string    m_pendingTool;     // Tool waiting for approval
     bool           m_stopRequested;   // Flag for sync wait loops
 
+    // Model Context
+    std::string    m_modelContext;    // Loaded API reference for current model
+    std::string    m_currentModel;    // Currently selected model name
+    void           LoadModelContext();
+    std::string    GetSystemPrompt();
+
     // HTML Rendering
     wxString m_fullHtmlContent; // Complete HTML buffer
     void     AppendHtml( const wxString& aHtml );
     void     SetHtml( const wxString& aHtml );
+
+    // Native Tool Calling
+    std::vector<LLM_TOOL>              m_tools;              // Available tools
+    std::unique_ptr<AGENT_LLM_CLIENT>  m_llmClient;          // LLM client instance
+    nlohmann::json                     m_pendingToolCalls;   // Tool calls awaiting execution
+
+    void InitializeTools();                                                    // Setup tool definitions
+    std::string ExecuteTool( const std::string& aName, const nlohmann::json& aInput );  // Execute a single tool
+    void HandleLLMEvent( const LLM_EVENT& aEvent );                           // Process LLM events
+    void ContinueConversation();                                               // Continue after tool results
+    void AddToolResultToHistory( const std::string& aToolUseId, const std::string& aResult );
+    void AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBlocks );
 };
 
 #endif // AGENT_FRAME_H

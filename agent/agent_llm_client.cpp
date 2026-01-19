@@ -165,6 +165,23 @@ struct StreamContext
     bool                                      isAnthropic;  // Flag for parser
 };
 
+// Context for tool-aware streaming callback
+struct ToolStreamContext
+{
+    std::function<void( const LLM_EVENT& )> callback;
+    std::string                             buffer;           // For accumulating SSE data
+    std::string                             fullResponse;     // For error reporting
+
+    // Current tool use being accumulated
+    bool                                    inToolUse = false;
+    std::string                             currentToolId;
+    std::string                             currentToolName;
+    std::string                             currentToolInputJson;  // Partial JSON accumulator
+
+    // Track all tool calls in this response
+    std::vector<LLM_EVENT>                  pendingToolCalls;
+};
+
 static size_t StreamWriteCallback( void* aContents, size_t aSize, size_t aNmemb, void* aUserp )
 {
     size_t         realSize = aSize * aNmemb;
@@ -236,6 +253,154 @@ static size_t StreamWriteCallback( void* aContents, size_t aSize, size_t aNmemb,
                 {
                 }
             }
+        }
+    }
+
+    return realSize;
+}
+
+// Streaming callback for tool-aware Anthropic responses
+static size_t ToolStreamWriteCallback( void* aContents, size_t aSize, size_t aNmemb, void* aUserp )
+{
+    size_t            realSize = aSize * aNmemb;
+    ToolStreamContext* ctx = static_cast<ToolStreamContext*>( aUserp );
+
+    // Append new data
+    ctx->buffer.append( static_cast<const char*>( aContents ), realSize );
+    ctx->fullResponse.append( static_cast<const char*>( aContents ), realSize );
+
+    // Process complete lines
+    size_t lastNewline = ctx->buffer.find_last_of( "\n" );
+    if( lastNewline == std::string::npos )
+        return realSize;
+
+    std::string processChunk = ctx->buffer.substr( 0, lastNewline + 1 );
+    ctx->buffer = ctx->buffer.substr( lastNewline + 1 );
+
+    std::stringstream lineStream( processChunk );
+    std::string       line;
+    while( std::getline( lineStream, line ) )
+    {
+        if( !line.empty() && line.back() == '\r' )
+            line.pop_back();
+
+        // Anthropic SSE Format: event: ..., data: JSON
+        if( line.rfind( "data: ", 0 ) != 0 )
+            continue;
+
+        std::string payload = line.substr( 6 );
+        try
+        {
+            auto j = json::parse( payload );
+            if( !j.contains( "type" ) )
+                continue;
+
+            std::string type = j["type"];
+
+            // Handle text content deltas
+            if( type == "content_block_delta" && j.contains( "delta" ) )
+            {
+                auto& delta = j["delta"];
+
+                // Text delta
+                if( delta.contains( "type" ) && delta["type"] == "text_delta" && delta.contains( "text" ) )
+                {
+                    LLM_EVENT event;
+                    event.type = LLM_EVENT_TYPE::TEXT;
+                    event.text = delta["text"];
+                    if( ctx->callback )
+                        ctx->callback( event );
+                }
+                // Tool input JSON delta (partial JSON accumulation)
+                else if( delta.contains( "type" ) && delta["type"] == "input_json_delta" && delta.contains( "partial_json" ) )
+                {
+                    ctx->currentToolInputJson += delta["partial_json"].get<std::string>();
+                }
+            }
+            // Content block start - check for tool_use
+            else if( type == "content_block_start" && j.contains( "content_block" ) )
+            {
+                auto& block = j["content_block"];
+                if( block.contains( "type" ) && block["type"] == "tool_use" )
+                {
+                    ctx->inToolUse = true;
+                    ctx->currentToolId = block.value( "id", "" );
+                    ctx->currentToolName = block.value( "name", "" );
+                    ctx->currentToolInputJson.clear();
+                }
+            }
+            // Content block stop - finalize tool call if we were in one
+            else if( type == "content_block_stop" )
+            {
+                if( ctx->inToolUse )
+                {
+                    // Parse the accumulated JSON input
+                    LLM_EVENT toolEvent;
+                    toolEvent.type = LLM_EVENT_TYPE::TOOL_USE;
+                    toolEvent.tool_use_id = ctx->currentToolId;
+                    toolEvent.tool_name = ctx->currentToolName;
+
+                    try
+                    {
+                        if( !ctx->currentToolInputJson.empty() )
+                            toolEvent.tool_input = json::parse( ctx->currentToolInputJson );
+                        else
+                            toolEvent.tool_input = json::object();
+                    }
+                    catch( ... )
+                    {
+                        toolEvent.tool_input = json::object();
+                    }
+
+                    // Emit the tool use event
+                    if( ctx->callback )
+                        ctx->callback( toolEvent );
+
+                    // Add to pending calls
+                    ctx->pendingToolCalls.push_back( toolEvent );
+
+                    // Reset state
+                    ctx->inToolUse = false;
+                    ctx->currentToolId.clear();
+                    ctx->currentToolName.clear();
+                    ctx->currentToolInputJson.clear();
+                }
+            }
+            // Message delta - check for stop reason
+            else if( type == "message_delta" && j.contains( "delta" ) )
+            {
+                auto& delta = j["delta"];
+                if( delta.contains( "stop_reason" ) )
+                {
+                    std::string stopReason = delta["stop_reason"];
+                    if( stopReason == "tool_use" )
+                    {
+                        // Signal that tool calls are ready to execute
+                        LLM_EVENT doneEvent;
+                        doneEvent.type = LLM_EVENT_TYPE::TOOL_USE_DONE;
+                        if( ctx->callback )
+                            ctx->callback( doneEvent );
+                    }
+                    else if( stopReason == "end_turn" )
+                    {
+                        // Model finished, no more tool calls
+                        LLM_EVENT endEvent;
+                        endEvent.type = LLM_EVENT_TYPE::END_TURN;
+                        if( ctx->callback )
+                            ctx->callback( endEvent );
+                    }
+                }
+            }
+            // Message stop - final signal
+            else if( type == "message_stop" )
+            {
+                // If we haven't sent END_TURN yet, send it now
+                // (This handles cases where stop_reason wasn't in message_delta)
+            }
+        }
+        catch( ... )
+        {
+            // JSON parse error - skip this line
         }
     }
 
@@ -371,6 +536,99 @@ bool AGENT_LLM_CLIENT::AskStreamAnthropic( const nlohmann::json& aMessages, cons
     {
         if( aCallback )
             aCallback( "Error: " + std::string( e.what() ) );
+        return false;
+    }
+}
+
+bool AGENT_LLM_CLIENT::AskStreamWithTools( const nlohmann::json& aMessages, const std::string& aSystem,
+                                           const std::vector<LLM_TOOL>& aTools,
+                                           std::function<void( const LLM_EVENT& )> aCallback )
+{
+    // Currently only implemented for Anthropic
+    if( m_modelName.find( "Claude" ) != std::string::npos )
+    {
+        return AskStreamAnthropicWithTools( aMessages, aSystem, aTools, aCallback );
+    }
+    else
+    {
+        // OpenAI tool calling not yet implemented
+        LLM_EVENT errorEvent;
+        errorEvent.type = LLM_EVENT_TYPE::ERROR;
+        errorEvent.error_message = "Tool calling not yet implemented for OpenAI models";
+        if( aCallback )
+            aCallback( errorEvent );
+        return false;
+    }
+}
+
+bool AGENT_LLM_CLIENT::AskStreamAnthropicWithTools( const nlohmann::json& aMessages, const std::string& aSystem,
+                                                    const std::vector<LLM_TOOL>& aTools,
+                                                    std::function<void( const LLM_EVENT& )> aCallback )
+{
+    KICAD_CURL_EASY curl;
+    curl.SetURL( "https://api.anthropic.com/v1/messages" );
+    curl.SetHeader( "content-type", "application/json" );
+    curl.SetHeader( "x-api-key", s_anthropicApiKey );
+    curl.SetHeader( "anthropic-version", "2023-06-01" );
+
+    // Map UI names to API names
+    std::string apiModel = "claude-3-5-sonnet-20240620";
+    if( m_modelName == "Claude 4.5 Opus" )
+        apiModel = "claude-opus-4-5-20251101";
+
+    json requestBody;
+    requestBody["model"] = apiModel;
+    requestBody["system"] = aSystem;
+    requestBody["messages"] = aMessages;
+    requestBody["max_tokens"] = 4096;
+    requestBody["stream"] = true;
+
+    // Add tools array
+    if( !aTools.empty() )
+    {
+        requestBody["tools"] = json::array();
+        for( const auto& tool : aTools )
+        {
+            json toolObj;
+            toolObj["name"] = tool.name;
+            toolObj["description"] = tool.description;
+            toolObj["input_schema"] = tool.input_schema;
+            requestBody["tools"].push_back( toolObj );
+        }
+    }
+
+    std::string jsonStr = requestBody.dump();
+    curl.SetPostFields( jsonStr );
+
+    ToolStreamContext ctx;
+    ctx.callback = aCallback;
+
+    CURL* rawCurl = curl.GetCurl();
+    curl_easy_setopt( rawCurl, CURLOPT_WRITEFUNCTION, ToolStreamWriteCallback );
+    curl_easy_setopt( rawCurl, CURLOPT_WRITEDATA, &ctx );
+
+    try
+    {
+        curl.Perform();
+        long http_code = curl.GetResponseStatusCode();
+        if( http_code != 200 )
+        {
+            LLM_EVENT errorEvent;
+            errorEvent.type = LLM_EVENT_TYPE::ERROR;
+            errorEvent.error_message = "Anthropic API error " + std::to_string( http_code ) + ": " + ctx.fullResponse;
+            if( aCallback )
+                aCallback( errorEvent );
+            return false;
+        }
+        return true;
+    }
+    catch( const std::exception& e )
+    {
+        LLM_EVENT errorEvent;
+        errorEvent.type = LLM_EVENT_TYPE::ERROR;
+        errorEvent.error_message = std::string( e.what() );
+        if( aCallback )
+            aCallback( errorEvent );
         return false;
     }
 }

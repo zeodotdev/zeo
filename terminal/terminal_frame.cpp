@@ -197,10 +197,108 @@ TERMINAL_PANEL* TERMINAL_FRAME::GetPanel( int aIndex )
 
 std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
 {
-    // Format: "run_terminal_command [tab_id] [mode] [command...]"
-    // Or legacy: "run_terminal_command [mode] [command...]" (implies active tab)
+    // Format options:
+    //   run_shell sch <python_code>     - IPC Python shell with kipy/sch pre-imported
+    //   run_shell pcb <python_code>     - IPC Python shell with kipy/board pre-imported
+    //   run_terminal <bash_command>     - Unix shell command
+    //   run_terminal_command [mode] [command]  - Legacy format (deprecated)
 
     wxString cmd = aCmd;
+
+    // Handle new simplified commands
+    if( cmd.StartsWith( "run_shell " ) )
+    {
+        wxString rest = cmd.Mid( 10 ).Trim( false );
+        wxString mode = rest.BeforeFirst( ' ' );
+        wxString code = rest.AfterFirst( ' ' );
+
+        // Find or create agent terminal
+        TERMINAL_PANEL* active = nullptr;
+        for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
+        {
+            TERMINAL_PANEL* p = GetPanel( i );
+            if( dynamic_cast<AGENT_TERMINAL_PANEL*>( p ) )
+            {
+                active = p;
+                break;
+            }
+        }
+        if( !active )
+        {
+            AddAgentTerminal( TERMINAL_PANEL::MODE_SYSTEM );
+            active = GetPanel( m_notebook->GetPageCount() - 1 );
+        }
+        if( !active )
+            return "Error: Could not create/find Agent terminal.";
+
+        std::string initCode;
+        if( mode == "sch" )
+        {
+            initCode =
+                "import kipy\n"
+                "from kipy.geometry import Vector2\n"
+                "kicad = kipy.KiCad()\n"
+                "sch = kicad.get_schematic()\n";
+        }
+        else if( mode == "pcb" )
+        {
+            initCode =
+                "import kipy\n"
+                "from kipy.geometry import Vector2\n"
+                "kicad = kipy.KiCad()\n"
+                "board = kicad.get_board()\n";
+        }
+
+        // Start Python execution (async)
+        active->RunLocalPython( initCode + code.ToStdString() );
+
+        // Wait for Python to complete (with timeout)
+        wxLongLong startTime = wxGetLocalTimeMillis();
+        const long timeoutMs = 30000; // 30 second timeout
+
+        while( active->IsPythonRunning() )
+        {
+            wxMilliSleep( 50 );
+            wxYield(); // Allow UI events and timers to process
+
+            if( wxGetLocalTimeMillis() - startTime > timeoutMs )
+            {
+                return "Error: Python execution timed out after 30 seconds";
+            }
+        }
+
+        // Return the result
+        std::string result = active->GetLastPythonResult();
+        return result.empty() ? "(no output)" : result;
+    }
+
+    if( cmd.StartsWith( "run_terminal " ) )
+    {
+        wxString bashCmd = cmd.Mid( 13 ).Trim( false );
+
+        // Find or create agent terminal
+        TERMINAL_PANEL* active = nullptr;
+        for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
+        {
+            TERMINAL_PANEL* p = GetPanel( i );
+            if( dynamic_cast<AGENT_TERMINAL_PANEL*>( p ) )
+            {
+                active = p;
+                break;
+            }
+        }
+        if( !active )
+        {
+            AddAgentTerminal( TERMINAL_PANEL::MODE_SYSTEM );
+            active = GetPanel( m_notebook->GetPageCount() - 1 );
+        }
+        if( !active )
+            return "Error: Could not create/find Agent terminal.";
+
+        return active->ProcessSystemCommand( bashCmd );
+    }
+
+    // Legacy format: run_terminal_command [mode] [command]
     if( cmd.StartsWith( "run_terminal_command " ) )
         cmd = cmd.Mid( 21 );
     cmd.Trim( false ).Trim();
@@ -287,24 +385,31 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
         // Capture is tricky if we just call ExecuteCommand.
         // We should call the specific helper functions if we know what we are doing.
 
-        // Let's implement smart dispatch here.
+        // Smart dispatch based on mode
         if( modeArg == "sys" )
             return panel->ProcessSystemCommand( actualCmd );
+        if( modeArg == "sch" )
+        {
+            // Schematic mode: pre-import kipy, connect to schematic, import Vector2
+            std::string initCode =
+                "import kipy\n"
+                "from kipy.geometry import Vector2\n"
+                "kicad = kipy.KiCad()\n"
+                "sch = kicad.get_schematic()\n";
+            return panel->RunLocalPython( initCode + actualCmd.ToStdString() );
+        }
+        if( modeArg == "pcb" )
+        {
+            // PCB mode: pre-import kipy, connect to board, import Vector2
+            std::string initCode =
+                "import kipy\n"
+                "from kipy.geometry import Vector2\n"
+                "kicad = kipy.KiCad()\n"
+                "board = kicad.get_board()\n";
+            return panel->RunLocalPython( initCode + actualCmd.ToStdString() );
+        }
         if( modeArg == "ipc" || modeArg == "python" )
-            return panel->RunLocalPython( actualCmd ); // Pre-req: mode switch?
-
-        // If mode is just implied by current panel state?
-        // Agent Prompt says: "run_terminal_command [mode] [command]"
-        // If we supply ID: "run_terminal_command [id] [mode] [command]"
-
-        // For python modes, we need to ensure python is init.
-        // RunLocalPython does that.
-        // But auto-loading pcb/sch is done in ExecuteCommand "pcb" handler.
-        // If Agent says "pcb print...", we want that auto-load.
-        // We should move `EnsurePython` and mode switch logic to be accessible/return string.
-        // Or simplest: Just call `RunLocalPython`.
-        // If specific setup needed, Agent does it?
-        // Let's stick to: "sys" -> ProcessSystemCommand. "pcb/sch" -> RunLocalPython (with optional setup if needed).
+            return panel->RunLocalPython( actualCmd );
 
         return panel->RunLocalPython( rest ); // fallback
     }
@@ -339,17 +444,29 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
     // firstArg = "sys", rest = "ls"
     if( firstArg == "sys" )
         return active->ProcessSystemCommand( rest );
+    if( firstArg == "sch" )
+    {
+        // Schematic mode: pre-import kipy, connect to schematic, import Vector2
+        std::string initCode =
+            "import kipy\n"
+            "from kipy.geometry import Vector2\n"
+            "kicad = kipy.KiCad()\n"
+            "sch = kicad.get_schematic()\n";
+        return active->RunLocalPython( initCode + rest.ToStdString() );
+    }
+    if( firstArg == "pcb" )
+    {
+        // PCB mode: pre-import kipy, connect to board, import Vector2
+        std::string initCode =
+            "import kipy\n"
+            "from kipy.geometry import Vector2\n"
+            "kicad = kipy.KiCad()\n"
+            "board = kicad.get_board()\n";
+        return active->RunLocalPython( initCode + rest.ToStdString() );
+    }
     if( firstArg == "ipc" || firstArg == "python" )
     {
-        // Handle auto-switch/init if we want to be nice, or just run python.
-        // If we execute "pcb", the panel outputs "Entering PCB Mode".
-        // But that returns void.
-        // We want the OUTPUT of the command "print(...)".
-        // If the command is JUST "pcb file", we return nothing useful?
-        // Agent usage: "run_terminal_command pcb print(...)"
-        // We should run python code `print(...)`.
-        // If we need to init PCB, maybe we should have `RunLocalPython` handle it?
-        // No, `RunLocalPython` executes raw code.
+        // Raw IPC/python mode - no pre-imports
         return active->RunLocalPython( rest );
     }
 

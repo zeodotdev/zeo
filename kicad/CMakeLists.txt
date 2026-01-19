@@ -13,6 +13,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/pcbnew
     ${CMAKE_SOURCE_DIR}/eeschema
     ${CMAKE_SOURCE_DIR}/kicad/pcm
+    ${CMAKE_SOURCE_DIR}/agent
     ${INC_AFTER}
     )
 
@@ -49,6 +50,9 @@ set( KICAD_SRCS
     toolbars_kicad_manager.cpp
     tools/kicad_manager_actions.cpp
     tools/kicad_manager_control.cpp
+    session_manager.cpp
+    ${CMAKE_SOURCE_DIR}/agent/agent_auth.cpp
+    ${CMAKE_SOURCE_DIR}/agent/agent_keychain.cpp
     )
 
 set( KICAD_CLI_SRCS
@@ -159,6 +163,7 @@ if( APPLE )
         kicommon
         core
         ${wxWidgets_LIBRARIES}
+        "-framework Security"
         )
 
     set_target_properties( kicad-cli PROPERTIES

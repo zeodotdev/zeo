@@ -37,6 +37,7 @@ class PROJECT_TREE;
 class PROJECT_TREE_PANE;
 class LOCAL_HISTORY_PANE;
 class UPDATE_MANAGER;
+class SESSION_MANAGER;
 
 /**
  * The main KiCad project manager frame.  It is not a KIWAY_PLAYER.
@@ -151,6 +152,8 @@ public:
     bool CloseProject( bool aSave );
     void LoadProject( const wxFileName& aProjectFileName );
 
+    PANEL_KICAD_LAUNCHER* GetLauncherPanel() const { return m_launcher; }
+
     void OpenJobsFile( const wxFileName& aFileName, bool aCreate = false,
                        bool aResaveProjectPreferences = true );
 
@@ -247,6 +250,9 @@ private:
     BITMAP_BUTTON*                          m_pcmButton;
     int                                     m_pcmUpdateCount;
     std::unique_ptr<UPDATE_MANAGER>         m_updateManager;
+    std::unique_ptr<SESSION_MANAGER>        m_sessionManager;
+public:
+    SESSION_MANAGER* GetSessionManager() const { return m_sessionManager.get(); }
 };
 
 

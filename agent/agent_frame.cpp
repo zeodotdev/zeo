@@ -1,6 +1,8 @@
 #include "agent_frame.h"
 #include "agent_thread.h"
 #include "agent_chat_history.h"
+#include "agent_auth.h"
+#include "agent_keychain.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -12,6 +14,7 @@
 #include <wx/msgdlg.h>
 #include <wx/stdpaths.h>
 #include <wx/filename.h>
+#include <wx/stattext.h>
 #include <bitmaps.h>
 #include <id.h>
 #include <nlohmann/json.hpp>
@@ -22,15 +25,20 @@
 #include <wx/bitmap.h>
 #include <wx/icon.h>
 
+using json = nlohmann::json;
+
 BEGIN_EVENT_TABLE( AGENT_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, AGENT_FRAME::OnExit )
+
 END_EVENT_TABLE()
 
 AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         KIWAY_PLAYER( aKiway, aParent, FRAME_AGENT, "Agent", wxDefaultPosition, wxDefaultSize, wxDEFAULT_FRAME_STYLE,
                       "agent_frame_name", schIUScale ),
-        m_workerThread( nullptr )
+        m_workerThread( nullptr ),
+        m_authWebUrl( "https://www.harold.so/auth" )  // Default auth web page URL
 {
+
     // --- UI Layout ---
     
     // Create Toolbar
@@ -117,8 +125,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     inputContainerSizer->Add( controlsSizer, 0, wxEXPAND );
 
+
+    
     // Add inner sizer to outer sizer with padding
-    outerInputSizer->Add( inputContainerSizer, 1, wxEXPAND | wxALL, 10 );
+    outerInputSizer->Add( inputContainerSizer, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10 );
 
     m_inputPanel->SetSizer( outerInputSizer );
 
@@ -139,6 +149,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_actionButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSend, this );
     m_inputCtrl->Bind( wxEVT_TEXT_ENTER, &AGENT_FRAME::OnTextEnter, this );
     m_selectionPill->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSelectionPillClick, this );
+
     // m_toolButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnToolClick, this );
     m_chatWindow->Bind( wxEVT_HTML_LINK_CLICKED, &AGENT_FRAME::OnHtmlLinkClick, this );
     m_chatWindow->Bind( wxEVT_RIGHT_DOWN, &AGENT_FRAME::OnChatRightClick, this );
@@ -179,10 +190,65 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Load model context (API reference)
     LoadModelContext();
+
+    // Initialize authentication
+    m_auth = new AGENT_AUTH();
+    
+    // Load Supabase configuration from JSON file
+    std::string supabaseUrl, supabaseKey;
+    
+    // Try loading from supabase_config.json in source directory
+    wxFileName configPath( __FILE__ );
+    configPath.SetFullName( "supabase_config.json" );
+    
+    if( wxFileExists( configPath.GetFullPath() ) )
+    {
+        std::ifstream configFile( configPath.GetFullPath().ToStdString() );
+        
+        if( configFile.is_open() )
+        {
+            try
+            {
+                json config = json::parse( configFile );
+                supabaseUrl = config.value( "project_url", "" );
+                supabaseKey = config.value( "publishable_key", "" );
+                
+                wxLogTrace( "Agent", "Loaded Supabase config from %s", configPath.GetFullPath() );
+            }
+            catch( const std::exception& e )
+            {
+                wxLogWarning( "Failed to parse supabase_config.json: %s", e.what() );
+            }
+            configFile.close();
+        }
+    }
+    
+    if( !supabaseUrl.empty() && !supabaseKey.empty() )
+    {
+        m_auth->Configure( supabaseUrl, supabaseKey );
+        wxLogTrace( "Agent", "Supabase authentication configured" );
+    }
+    else
+    {
+        wxLogWarning( "Supabase configuration not found. Authentication features will be disabled." );
+        wxLogWarning( "Create supabase_config.json or set KICAD_AGENT_SUPABASE_URL/KEY environment variables." );
+    }
+
+    // Create menu bar
+    wxMenuBar* menuBar = new wxMenuBar();
+    wxMenu* fileMenu = new wxMenu();
+    fileMenu->Append( wxID_EXIT, "E&xit\tAlt-X", "Exit application" );
+    
+    menuBar->Append( fileMenu, "&File" );
+    SetMenuBar( menuBar );
+    
+    // Update auth UI state
+    UpdateAuthUI();
 }
 
 AGENT_FRAME::~AGENT_FRAME()
 {
+    delete m_auth;
 }
 
 void AGENT_FRAME::LoadModelContext()
@@ -607,6 +673,13 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     if( m_actionButton->GetLabel() == "Stop" )
     {
         OnStop( aEvent );
+        return;
+    }
+
+    // Check authentication first
+    if( !CheckAuthentication() )
+    {
+        AppendHtml( "<p><i>Please sign in to continue.</i></p>" );
         return;
     }
 
@@ -2044,4 +2117,21 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
         // Update DB ID so new messages go to this history
         m_chatHistoryDb.SetConversationId( selectedId );
     }
+}
+
+// ============================================================================
+// Authentication Methods
+// ============================================================================
+
+void AGENT_FRAME::UpdateAuthUI()
+{
+}
+
+bool AGENT_FRAME::CheckAuthentication()
+{
+    if( m_auth )
+    {
+        return m_auth->IsAuthenticated();
+    }
+    return true; // No auth configured, allow access
 }

@@ -57,6 +57,7 @@
 
 #include "pgm_kicad.h"
 #include "kicad_manager_frame.h"
+#include "session_manager.h"
 
 #include <kiplatform/app.h>
 #include <kiplatform/environment.h>
@@ -610,6 +611,34 @@ struct APP_KICAD : public wxApp
      */
 #if defined( __WXMAC__ )
     void MacOpenFile( const wxString& aFileName ) override { Pgm().MacOpenFile( aFileName ); }
+
+    void MacOpenURL( const wxString& aUrl ) override
+    {
+        // Handle custom URL scheme for authentication: kicad-agent://callback?access_token=...
+        if( aUrl.StartsWith( "kicad-agent://" ) )
+        {
+            // Find the launcher panel and pass the URL
+            wxWindow* topWindow = GetTopWindow();
+            if( topWindow && dynamic_cast<KICAD_MANAGER_FRAME*>( topWindow ) ) 
+            {
+                KICAD_MANAGER_FRAME* frame = static_cast<KICAD_MANAGER_FRAME*>( topWindow );
+                if( frame )
+                {
+                    if( frame->GetSessionManager() )
+                    {
+                        frame->GetSessionManager()->HandleDeepLink( aUrl );
+                        
+                        // Bring app to front
+                        if( frame->IsIconized() )
+                            frame->Iconize( false );
+                        frame->Show( true );
+                        frame->Raise();
+                        frame->RequestUserAttention();
+                    }
+                }
+            }
+        }
+    }
 #endif
 };
 

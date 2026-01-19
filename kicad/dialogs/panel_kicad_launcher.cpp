@@ -30,7 +30,6 @@
 
 #include "panel_kicad_launcher.h"
 
-
 PANEL_KICAD_LAUNCHER::PANEL_KICAD_LAUNCHER( wxWindow* aParent ) :
         PANEL_KICAD_LAUNCHER_BASE( aParent ),
         m_frame( static_cast<KICAD_MANAGER_FRAME*>( aParent->GetParent() ) )

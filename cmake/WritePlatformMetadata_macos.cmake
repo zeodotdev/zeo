@@ -61,3 +61,7 @@ configure_file( ${PROJECT_SOURCE_DIR}/resources/macos/plist/pcbnew.Info.plist.in
 configure_file( ${PROJECT_SOURCE_DIR}/resources/macos/plist/pleditor.Info.plist.in
                 ${PROJECT_BINARY_DIR}/pagelayout_editor/Info.plist
                 @ONLY )
+
+configure_file( ${PROJECT_SOURCE_DIR}/resources/macos/plist/agent.Info.plist.in
+                ${PROJECT_BINARY_DIR}/agent/Info.plist
+                @ONLY )

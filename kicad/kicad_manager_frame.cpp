@@ -136,6 +136,8 @@ END_EVENT_TABLE()
 #include <wx/xml/xml.h>
 #include <widgets/wx_aui_art_providers.h>
 
+#include <session_manager.h>
+
 KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& title,
                                           const wxPoint& pos, const wxSize&   size ) :
         EDA_BASE_FRAME( parent, KICAD_MAIN_FRAME_T, title, pos, size, KICAD_DEFAULT_DRAWFRAME_STYLE,
@@ -149,6 +151,7 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
         m_pcmButton( nullptr ),
         m_pcmUpdateCount( 0 )
 {
+    m_sessionManager = std::make_unique<SESSION_MANAGER>( this );
     const int defaultLeftWinWidth = FromDIP( 250 );
 
     m_leftWinWidth = defaultLeftWinWidth; // Default value
@@ -309,6 +312,8 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
 
               // Don't skip, otherwise the frame gets too big
           } );
+
+    m_sessionManager->Initialize();
 }
 
 
@@ -381,7 +386,20 @@ void KICAD_MANAGER_FRAME::onNotebookPageCloseRequest( wxAuiNotebookEvent& evt )
 wxStatusBar* KICAD_MANAGER_FRAME::OnCreateStatusBar( int number, long style, wxWindowID id,
                                                      const wxString& name )
 {
-    return new KISTATUSBAR( number, this, id );
+    auto* statusBar = new KISTATUSBAR( number, this, id, 
+       static_cast<KISTATUSBAR::STYLE_FLAGS>( KISTATUSBAR::DEFAULT_STYLE | KISTATUSBAR::LABEL_BUTTON ) );
+
+    if( auto* btn = statusBar->GetLabelButton() )
+    {
+        btn->Bind( wxEVT_LEFT_UP, &SESSION_MANAGER::OnSessionButtonClick, m_sessionManager.get() );
+    }
+
+    if( auto* bmp = statusBar->GetProfileBitmap() )
+    {
+        bmp->Bind( wxEVT_LEFT_UP, &SESSION_MANAGER::OnSessionButtonClick, m_sessionManager.get() );
+    }
+
+    return statusBar;
 }
 
 

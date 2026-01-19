@@ -31,6 +31,7 @@
 class wxGauge;
 class wxButton;
 class wxStaticText;
+class wxStaticBitmap;
 class BITMAP_BUTTON;
 
 /**
@@ -50,6 +51,7 @@ public:
         NONE_STYLE        = 0x00,
         NOTIFICATION_ICON = 0x01,
         CANCEL_BUTTON     = 0x02,
+        LABEL_BUTTON      = 0x04,
     };
 
     static constexpr auto DEFAULT_STYLE =
@@ -100,6 +102,26 @@ public:
      */
     void SetNotificationCount( int aCount );
 
+    /**
+     * Set the text of the label button.
+     */
+    void SetLabelButtonText( const wxString& aText );
+
+    /**
+     * Get the label button.
+     */
+    wxStaticText* GetLabelButton() const { return m_labelButton; }
+
+    /**
+     * Set the profile bitmap image.
+     */
+    void SetProfileBitmap( const wxBitmap& aBitmap );
+
+    /**
+     * Get the profile bitmap control.
+     */
+    wxStaticBitmap* GetProfileBitmap() const { return m_profileBitmap; }
+
 private:
     void onSize( wxSizeEvent& aEvent );
     void onBackgroundProgressClick( wxMouseEvent& aEvent );
@@ -110,6 +132,7 @@ private:
         BGJOB_LABEL,
         BGJOB_GAUGE,
         BGJOB_CANCEL,
+        LABEL_BUTTON,
         NOTIFICATION
     };
 
@@ -120,6 +143,8 @@ private:
     wxButton*      m_backgroundStopButton;
     wxStaticText*  m_backgroundTxt;
     BITMAP_BUTTON* m_notificationsButton;
+    wxStaticText*  m_labelButton;
+    wxStaticBitmap* m_profileBitmap;
     int            m_normalFieldsCount;
     STYLE_FLAGS    m_styleFlags;
 };

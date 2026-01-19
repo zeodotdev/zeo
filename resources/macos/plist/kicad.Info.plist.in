@@ -40,5 +40,16 @@
     <key>LSRequiresCarbon</key>                     <true/>
     <key>NSHumanReadableCopyright</key>             <string>Copyright The KiCad Developers</string>
     <key>NSHighResolutionCapable</key>              <true/>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>org.kicad-pcb.kicad-agent</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>kicad-agent</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>

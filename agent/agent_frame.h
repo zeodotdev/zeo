@@ -19,12 +19,16 @@
 
 // Forward Declarations
 class AGENT_THREAD;
+class AGENT_AUTH;
+class wxStaticText;
 
 enum
 {
     ID_CHAT_COPY = wxID_HIGHEST + 1001,
     ID_CHAT_HISTORY_TOOL,
     ID_NEW_CHAT,
+    ID_LOGIN,
+    ID_LOGOUT,
     ID_CHAT_HISTORY_MENU_BASE = 2000
 };
 
@@ -96,6 +100,8 @@ private:
     wxPanel*      m_inputPanel;
 
     AGENT_THREAD* m_workerThread;
+    AGENT_AUTH*   m_auth;
+    std::string   m_authWebUrl;      // URL to auth web page (e.g., https://www.harold.so/auth)
 
     std::string m_toolResponse;
     std::string m_schJson;
@@ -127,6 +133,10 @@ private:
     wxString m_fullHtmlContent; // Complete HTML buffer
     void     AppendHtml( const wxString& aHtml );
     void     SetHtml( const wxString& aHtml );
+
+    // Auth helpers
+    void UpdateAuthUI();
+    bool CheckAuthentication(); // Returns true if authenticated
 
     // Native Tool Calling
     std::vector<LLM_TOOL>              m_tools;              // Available tools

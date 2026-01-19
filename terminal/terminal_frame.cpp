@@ -4,7 +4,6 @@
 #include <mail_type.h>
 #include <wx/sizer.h>
 #include <wx/settings.h>
-#include <wx/app.h>
 #include <id.h>
 #include <kiway.h>
 #include <wx/log.h>
@@ -254,17 +253,13 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
         active->RunLocalPython( initCode + code.ToStdString() );
 
         // Wait for Python to complete (with timeout)
-        // Use SafeYield with event processing to keep UI responsive
         wxLongLong startTime = wxGetLocalTimeMillis();
         const long timeoutMs = 30000; // 30 second timeout
 
         while( active->IsPythonRunning() )
         {
-            // Process all pending events including paint, timer, etc.
-            while( wxTheApp->Pending() )
-                wxTheApp->Dispatch();
-
-            wxMilliSleep( 20 ); // Shorter sleep for more responsive UI
+            wxMilliSleep( 50 );
+            wxYield(); // Allow UI events and timers to process
 
             if( wxGetLocalTimeMillis() - startTime > timeoutMs )
             {

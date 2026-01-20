@@ -43,32 +43,74 @@ bool AGENT_LLM_CLIENT::LoadApiKeys( const std::string& aEnvFilePath )
     }
 
     // Standard search locations for .env file
-    // 1. Environment variable pointing to dev folder
-    const char* devPath = std::getenv( "KICAD_AGENT_DEV_PATH" );
+    // 1. Environment variable pointing to custom location
+    const char* devPath = std::getenv( "KICAD_AGENT_ENV_PATH" );
     if( devPath )
     {
-        searchPaths.push_back( std::string( devPath ) + "/.env" );
+        searchPaths.push_back( std::string( devPath ) );
     }
 
-    // 2. User's home directory dev folder
-    wxString homeDir = wxGetHomeDir();
-    searchPaths.push_back( std::string( homeDir.mb_str() ) + "/workspaces/KiCAD_agentic/dev/.env" );
+    // 2. Relative to executable - search parent directories for various patterns
+    //    Primary location: .../code/kicad-agent/agent/.env
+    wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+    wxString exeDir = exePath.GetPath();
+
+    fprintf( stderr, "[ENV] Executable path: %s\n", exeDir.ToStdString().c_str() );
+
+    wxFileName searchPath( exeDir, "" );
+    for( int i = 0; i < 8; i++ )  // Search up to 8 levels up
+    {
+        // Pattern 1: agent/.env (if we're in kicad-agent directory)
+        wxFileName agentEnvPath = searchPath;
+        agentEnvPath.AppendDir( "agent" );
+        agentEnvPath.SetFullName( ".env" );
+        searchPaths.push_back( std::string( agentEnvPath.GetFullPath().mb_str() ) );
+
+        // Pattern 2: kicad-agent/agent/.env
+        wxFileName kicadAgentEnvPath = searchPath;
+        kicadAgentEnvPath.AppendDir( "kicad-agent" );
+        kicadAgentEnvPath.AppendDir( "agent" );
+        kicadAgentEnvPath.SetFullName( ".env" );
+        searchPaths.push_back( std::string( kicadAgentEnvPath.GetFullPath().mb_str() ) );
+
+        // Pattern 3: code/kicad-agent/agent/.env (full path from workspace root)
+        wxFileName codeKicadAgentEnvPath = searchPath;
+        codeKicadAgentEnvPath.AppendDir( "code" );
+        codeKicadAgentEnvPath.AppendDir( "kicad-agent" );
+        codeKicadAgentEnvPath.AppendDir( "agent" );
+        codeKicadAgentEnvPath.SetFullName( ".env" );
+        searchPaths.push_back( std::string( codeKicadAgentEnvPath.GetFullPath().mb_str() ) );
+
+        searchPath.RemoveLastDir();
+    }
 
     // 3. Current working directory
     searchPaths.push_back( ".env" );
 
     // 4. KiCad config directory
     wxString configDir = wxStandardPaths::Get().GetUserConfigDir();
-    searchPaths.push_back( std::string( configDir.mb_str() ) + "/kicad/.env" );
+    searchPaths.push_back( std::string( configDir.mb_str() ) + "/kicad-agent/.env" );
+
+    // 5. User's home directory .config/kicad-agent/.env
+    wxString homeDir = wxGetHomeDir();
+    searchPaths.push_back( std::string( homeDir.mb_str() ) + "/.config/kicad-agent/.env" );
 
     // Try each path
+    fprintf( stderr, "[ENV] Searching for .env file in %zu locations...\n", searchPaths.size() );
+
     for( const auto& path : searchPaths )
     {
         std::ifstream file( path );
         if( !file.is_open() )
+        {
+            // Only log first few paths to avoid spam
+            static int logCount = 0;
+            if( logCount++ < 5 )
+                fprintf( stderr, "[ENV]   Not found: %s\n", path.c_str() );
             continue;
+        }
 
-        // Keys found at this path
+        fprintf( stderr, "[ENV]   FOUND: %s\n", path.c_str() );
 
         std::string line;
         while( std::getline( file, line ) )
@@ -111,8 +153,17 @@ bool AGENT_LLM_CLIENT::LoadApiKeys( const std::string& aEnvFilePath )
         // Check if we got at least one key
         if( !s_openaiApiKey.empty() || !s_anthropicApiKey.empty() )
         {
+            fprintf( stderr, "[ENV] API keys loaded successfully!\n" );
+            fprintf( stderr, "[ENV]   Anthropic key: %s\n",
+                     s_anthropicApiKey.empty() ? "(not set)" : "(set)" );
+            fprintf( stderr, "[ENV]   OpenAI key: %s\n",
+                     s_openaiApiKey.empty() ? "(not set)" : "(set)" );
             s_keysLoaded = true;
             return true;
+        }
+        else
+        {
+            fprintf( stderr, "[ENV]   File found but no valid keys parsed!\n" );
         }
     }
 
@@ -127,11 +178,15 @@ bool AGENT_LLM_CLIENT::LoadApiKeys( const std::string& aEnvFilePath )
 
     if( !s_openaiApiKey.empty() || !s_anthropicApiKey.empty() )
     {
+        fprintf( stderr, "[ENV] API keys loaded from environment variables\n" );
         s_keysLoaded = true;
         return true;
     }
 
     // No keys found - will fail when API calls are made
+    fprintf( stderr, "[ENV] ERROR: No API keys found in any location!\n" );
+    fprintf( stderr, "[ENV] Please create a .env file at: code/kicad-agent/agent/.env\n" );
+    fprintf( stderr, "[ENV] Or set KICAD_AGENT_ENV_PATH environment variable\n" );
     return false;
 }
 
@@ -646,14 +701,9 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
                                                  const std::vector<LLM_TOOL>& aTools,
                                                  wxEvtHandler* aHandler )
 {
-    fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Starting\n" );
-    fflush( stderr );
-
     // Check if a request is already in progress
     if( m_requestInProgress.load() )
     {
-        fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Request already in progress\n" );
-        fflush( stderr );
         PostLLMError( aHandler, "Another LLM request is already in progress" );
         return false;
     }
@@ -662,10 +712,6 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
     m_cancelRequested.store( false );
     m_requestInProgress.store( true );
 
-    fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Creating thread for model '%s'\n",
-             m_modelName.c_str() );
-    fflush( stderr );
-
     // Create and start the background thread
     LLM_REQUEST_THREAD* thread = new LLM_REQUEST_THREAD(
         this, aHandler, m_modelName, aMessages, aSystem, aTools );
@@ -673,29 +719,19 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
     // wxThread requires Create() before Run()
     if( thread->Create() != wxTHREAD_NO_ERROR )
     {
-        fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Failed to create thread\n" );
-        fflush( stderr );
         delete thread;
         m_requestInProgress.store( false );
         PostLLMError( aHandler, "Failed to create LLM request thread" );
         return false;
     }
 
-    fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Thread created, starting...\n" );
-    fflush( stderr );
-
     if( thread->Run() != wxTHREAD_NO_ERROR )
     {
-        fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Failed to run thread\n" );
-        fflush( stderr );
         delete thread;
         m_requestInProgress.store( false );
         PostLLMError( aHandler, "Failed to start LLM request thread" );
         return false;
     }
-
-    fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Thread running\n" );
-    fflush( stderr );
 
     // Thread is running - it will post events and clean up when done
     return true;
@@ -736,9 +772,6 @@ LLM_REQUEST_THREAD::~LLM_REQUEST_THREAD()
 
 void* LLM_REQUEST_THREAD::Entry()
 {
-    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Thread started\n" );
-    fflush( stderr );
-
     // Get the cancel flag from the client
     m_cancelFlag = &m_client->m_cancelRequested;
 
@@ -746,14 +779,9 @@ void* LLM_REQUEST_THREAD::Entry()
     CURL* curl = curl_easy_init();
     if( !curl )
     {
-        fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Failed to init curl\n" );
-        fflush( stderr );
         PostLLMError( m_handler, "Failed to initialize curl" );
         return nullptr;
     }
-
-    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Curl initialized\n" );
-    fflush( stderr );
 
     // Build the request
     std::string apiModel = "claude-sonnet-4-20250514";
@@ -761,10 +789,6 @@ void* LLM_REQUEST_THREAD::Entry()
         apiModel = "claude-opus-4-5-20251101";
     else if( m_model == "Claude 4 Sonnet" )
         apiModel = "claude-sonnet-4-20250514";
-
-    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Using model '%s' -> API model '%s'\n",
-             m_model.c_str(), apiModel.c_str() );
-    fflush( stderr );
 
     json requestBody;
     requestBody["model"] = apiModel;
@@ -789,10 +813,6 @@ void* LLM_REQUEST_THREAD::Entry()
 
     std::string requestBodyStr = requestBody.dump();
 
-    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Request body size: %zu bytes\n",
-             requestBodyStr.size() );
-    fflush( stderr );
-
     // Set up curl options
     curl_easy_setopt( curl, CURLOPT_URL, "https://api.anthropic.com/v1/messages" );
     curl_easy_setopt( curl, CURLOPT_POST, 1L );
@@ -804,9 +824,6 @@ void* LLM_REQUEST_THREAD::Entry()
     headers = curl_slist_append( headers, "Content-Type: application/json" );
 
     std::string apiKey = AGENT_LLM_CLIENT::GetAnthropicKey();
-    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: API key length: %zu\n", apiKey.length() );
-    fflush( stderr );
-
     headers = curl_slist_append( headers, ( "x-api-key: " + apiKey ).c_str() );
     headers = curl_slist_append( headers, "anthropic-version: 2023-06-01" );
     curl_easy_setopt( curl, CURLOPT_HTTPHEADER, headers );
@@ -820,14 +837,8 @@ void* LLM_REQUEST_THREAD::Entry()
     curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, StreamWriteCallback );
     curl_easy_setopt( curl, CURLOPT_WRITEDATA, &ctx );
 
-    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Starting curl_easy_perform...\n" );
-    fflush( stderr );
-
     // Perform the request (this blocks until complete or cancelled)
     CURLcode res = curl_easy_perform( curl );
-
-    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: curl_easy_perform returned %d\n", res );
-    fflush( stderr );
 
     // Clean up headers
     curl_slist_free_all( headers );
@@ -836,8 +847,6 @@ void* LLM_REQUEST_THREAD::Entry()
     if( res != CURLE_OK )
     {
         std::string errorMsg = "Curl error: " + std::string( curl_easy_strerror( res ) );
-        fprintf( stderr, "LLM_REQUEST_THREAD::Entry: %s\n", errorMsg.c_str() );
-        fflush( stderr );
         PostLLMError( m_handler, errorMsg );
         curl_easy_cleanup( curl );
         return nullptr;
@@ -847,30 +856,19 @@ void* LLM_REQUEST_THREAD::Entry()
     long http_code = 0;
     curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &http_code );
 
-    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: HTTP status code: %ld\n", http_code );
-    fflush( stderr );
-
     if( http_code != 200 )
     {
         std::string errorMsg = "Anthropic API error: HTTP " + std::to_string( http_code );
-        fprintf( stderr, "LLM_REQUEST_THREAD::Entry: %s\n", errorMsg.c_str() );
-        fflush( stderr );
         PostLLMError( m_handler, errorMsg );
         curl_easy_cleanup( curl );
         return nullptr;
     }
-
-    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Posting completion event\n" );
-    fflush( stderr );
 
     // Post completion event
     LLMStreamComplete complete;
     complete.success = true;
     complete.http_status_code = http_code;
     PostLLMComplete( m_handler, complete );
-
-    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Thread done\n" );
-    fflush( stderr );
 
     curl_easy_cleanup( curl );
     return nullptr;
@@ -882,14 +880,9 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
     size_t realsize = size * nmemb;
     StreamContext* ctx = static_cast<StreamContext*>( userp );
 
-    fprintf( stderr, "LLM_REQUEST_THREAD::StreamWriteCallback: Received %zu bytes\n", realsize );
-    fflush( stderr );
-
     // Check for cancellation
     if( ctx->cancelFlag && ctx->cancelFlag->load() )
     {
-        fprintf( stderr, "LLM_REQUEST_THREAD::StreamWriteCallback: Cancellation requested\n" );
-        fflush( stderr );
         return 0; // Returning 0 tells curl to abort
     }
 
@@ -902,9 +895,6 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
     {
         std::string event = ctx->buffer.substr( 0, pos );
         ctx->buffer.erase( 0, pos + 2 );
-
-        fprintf( stderr, "LLM_REQUEST_THREAD: SSE event block: '%s'\n", event.c_str() );
-        fflush( stderr );
 
         // Parse SSE event - find the data line
         // SSE format can be "event: xxx\ndata: yyy" or just "data: yyy"
@@ -922,15 +912,7 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
         }
 
         if( data.empty() )
-        {
-            fprintf( stderr, "LLM_REQUEST_THREAD: No data found in event\n" );
-            fflush( stderr );
             continue;
-        }
-
-        fprintf( stderr, "LLM_REQUEST_THREAD: Parsed data: '%s'\n",
-                 data.length() > 100 ? (data.substr(0,100) + "...").c_str() : data.c_str() );
-        fflush( stderr );
 
         // Skip [DONE] marker
         if( data == "[DONE]" )
@@ -942,9 +924,6 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
 
             // Handle different event types
             std::string eventType = j.value( "type", "" );
-
-            fprintf( stderr, "LLM_REQUEST_THREAD: Event type: '%s'\n", eventType.c_str() );
-            fflush( stderr );
 
             if( eventType == "content_block_start" )
             {
@@ -964,20 +943,12 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                 auto delta = j.value( "delta", json::object() );
                 std::string deltaType = delta.value( "type", "" );
 
-                fprintf( stderr, "LLM_REQUEST_THREAD: Delta type: '%s'\n", deltaType.c_str() );
-                fflush( stderr );
-
                 if( deltaType == "text_delta" )
                 {
                     std::string text = delta.value( "text", "" );
-                    fprintf( stderr, "LLM_REQUEST_THREAD: Text delta: '%s'\n", text.c_str() );
-                    fflush( stderr );
 
                     if( !text.empty() )
                     {
-                        fprintf( stderr, "LLM_REQUEST_THREAD: Posting TEXT chunk\n" );
-                        fflush( stderr );
-
                         LLMStreamChunk chunk;
                         chunk.type = LLMChunkType::TEXT;
                         chunk.text = text;
@@ -1038,10 +1009,9 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                 PostLLMChunk( ctx->handler, chunk );
             }
         }
-        catch( const json::exception& e )
+        catch( const json::exception& )
         {
-            // JSON parse error - log but continue
-            fprintf( stderr, "LLM_REQUEST_THREAD: JSON parse error: %s\n", e.what() );
+            // JSON parse error - skip this event and continue
         }
     }
 

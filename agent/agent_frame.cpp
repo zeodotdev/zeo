@@ -177,15 +177,38 @@ void AGENT_FRAME::LoadModelContext()
     const char* devPath = std::getenv( "KICAD_AGENT_DEV_PATH" );
     if( devPath )
     {
-        searchPaths.push_back( std::string( devPath ) + "/../code/kicad-agent/agent/model_context/kipy_schematic_api_v1.txt" );
+        searchPaths.push_back( std::string( devPath ) + "/../code/kicad-agent/agent/model_context/kipy_schematic_api_v3.txt" );
     }
 
-    // 2. User's home directory dev folder
-    wxString homeDir = wxGetHomeDir();
-    searchPaths.push_back( std::string( homeDir.mb_str() ) + "/workspaces/KiCAD_agentic/code/kicad-agent/agent/model_context/kipy_schematic_api_v1.txt" );
+    // 2. Relative to executable - search up directory tree for source location
+    //    This handles various build configurations where:
+    //    - Executable may be in: .../code/kicad-agent/build/...
+    //    - Source is in: .../code/kicad-agent/agent/model_context/
+    wxFileName searchPath( exePath.GetPath(), "" );
+    for( int i = 0; i < 6; i++ )  // Search up to 6 levels up
+    {
+        wxFileName testPath = searchPath;
+        testPath.AppendDir( "agent" );
+        testPath.AppendDir( "model_context" );
+        testPath.SetFullName( "kipy_schematic_api_v3.txt" );
+        searchPaths.push_back( std::string( testPath.GetFullPath().mb_str() ) );
 
-    // 3. Relative to executable (for installed builds)
-    searchPaths.push_back( std::string( exePath.GetPath().mb_str() ) + "/../Resources/model_context/kipy_schematic_api_v1.txt" );
+        // Also try kicad-agent/agent/model_context path
+        wxFileName altPath = searchPath;
+        altPath.AppendDir( "kicad-agent" );
+        altPath.AppendDir( "agent" );
+        altPath.AppendDir( "model_context" );
+        altPath.SetFullName( "kipy_schematic_api_v3.txt" );
+        searchPaths.push_back( std::string( altPath.GetFullPath().mb_str() ) );
+
+        searchPath.RemoveLastDir();
+    }
+
+    // 3. Relative to executable (for installed builds - macOS app bundle)
+    searchPaths.push_back( std::string( exePath.GetPath().mb_str() ) + "/../Resources/model_context/kipy_schematic_api_v3.txt" );
+
+    // 4. Relative to executable (for installed builds - Linux/Windows)
+    searchPaths.push_back( std::string( exePath.GetPath().mb_str() ) + "/../share/kicad-agent/model_context/kipy_schematic_api_v3.txt" );
 
     // Try each path
     m_modelContext = "";

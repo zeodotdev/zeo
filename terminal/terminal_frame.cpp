@@ -235,13 +235,39 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
         std::string initCode;
 
         // Common initialization: add kicad-python to sys.path if not already there
+        // Searches in order: env var, relative paths from executable, then direct import
         std::string commonInit =
             "import sys\n"
             "import os\n"
-            "# Add kicad-python to path for kipy module\n"
-            "_kipy_path = os.path.expanduser('~/workspaces/KiCAD_agentic/code/kicad-python')\n"
-            "if _kipy_path not in sys.path:\n"
-            "    sys.path.insert(0, _kipy_path)\n";
+            "# Find kicad-python/kipy module\n"
+            "_kipy_found = False\n"
+            "_search_paths = []\n"
+            "# 1. Check environment variable\n"
+            "if os.environ.get('KICAD_PYTHON_PATH'):\n"
+            "    _search_paths.append(os.environ['KICAD_PYTHON_PATH'])\n"
+            "# 2. Search relative to current directory and parent directories\n"
+            "_cwd = os.getcwd()\n"
+            "for _i in range(6):\n"
+            "    _search_paths.append(os.path.join(_cwd, 'kicad-python'))\n"
+            "    _search_paths.append(os.path.join(_cwd, 'code', 'kicad-python'))\n"
+            "    _cwd = os.path.dirname(_cwd)\n"
+            "# 3. Try each search path\n"
+            "for _p in _search_paths:\n"
+            "    if os.path.isdir(_p) and _p not in sys.path:\n"
+            "        sys.path.insert(0, _p)\n"
+            "        try:\n"
+            "            import kipy\n"
+            "            _kipy_found = True\n"
+            "            break\n"
+            "        except ImportError:\n"
+            "            sys.path.remove(_p)\n"
+            "# 4. Try direct import (if kipy is installed)\n"
+            "if not _kipy_found:\n"
+            "    try:\n"
+            "        import kipy\n"
+            "        _kipy_found = True\n"
+            "    except ImportError:\n"
+            "        pass\n";
 
         if( mode == "sch" )
         {
@@ -575,13 +601,39 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
         std::string initCode;
 
         // Common initialization: add kicad-python to sys.path if not already there
+        // Searches in order: env var, relative paths from executable, then direct import
         std::string commonInit =
             "import sys\n"
             "import os\n"
-            "# Add kicad-python to path for kipy module\n"
-            "_kipy_path = os.path.expanduser('~/workspaces/KiCAD_agentic/code/kicad-python')\n"
-            "if _kipy_path not in sys.path:\n"
-            "    sys.path.insert(0, _kipy_path)\n";
+            "# Find kicad-python/kipy module\n"
+            "_kipy_found = False\n"
+            "_search_paths = []\n"
+            "# 1. Check environment variable\n"
+            "if os.environ.get('KICAD_PYTHON_PATH'):\n"
+            "    _search_paths.append(os.environ['KICAD_PYTHON_PATH'])\n"
+            "# 2. Search relative to current directory and parent directories\n"
+            "_cwd = os.getcwd()\n"
+            "for _i in range(6):\n"
+            "    _search_paths.append(os.path.join(_cwd, 'kicad-python'))\n"
+            "    _search_paths.append(os.path.join(_cwd, 'code', 'kicad-python'))\n"
+            "    _cwd = os.path.dirname(_cwd)\n"
+            "# 3. Try each search path\n"
+            "for _p in _search_paths:\n"
+            "    if os.path.isdir(_p) and _p not in sys.path:\n"
+            "        sys.path.insert(0, _p)\n"
+            "        try:\n"
+            "            import kipy\n"
+            "            _kipy_found = True\n"
+            "            break\n"
+            "        except ImportError:\n"
+            "            sys.path.remove(_p)\n"
+            "# 4. Try direct import (if kipy is installed)\n"
+            "if not _kipy_found:\n"
+            "    try:\n"
+            "        import kipy\n"
+            "        _kipy_found = True\n"
+            "    except ImportError:\n"
+            "        pass\n";
 
         if( mode == "sch" )
         {

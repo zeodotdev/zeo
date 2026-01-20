@@ -1,5 +1,6 @@
 #include "agent_llm_client.h"
 #include "agent_frame.h"
+#include "agent_events.h"
 #include <id.h>
 #include <kicad_curl/kicad_curl_easy.h>
 #include <curl/curl.h>
@@ -136,7 +137,9 @@ bool AGENT_LLM_CLIENT::LoadApiKeys( const std::string& aEnvFilePath )
 
 AGENT_LLM_CLIENT::AGENT_LLM_CLIENT( AGENT_FRAME* aParent ) :
         m_parent( aParent ),
-        m_modelName( "GPT-4o" )
+        m_modelName( "GPT-4o" ),
+        m_requestInProgress( false ),
+        m_cancelRequested( false )
 {
     // Ensure API keys are loaded
     LoadApiKeys();
@@ -631,4 +634,423 @@ bool AGENT_LLM_CLIENT::AskStreamAnthropicWithTools( const nlohmann::json& aMessa
             aCallback( errorEvent );
         return false;
     }
+}
+
+
+// ============================================================================
+// Async LLM Streaming Implementation
+// ============================================================================
+
+bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
+                                                 const std::string& aSystem,
+                                                 const std::vector<LLM_TOOL>& aTools,
+                                                 wxEvtHandler* aHandler )
+{
+    fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Starting\n" );
+    fflush( stderr );
+
+    // Check if a request is already in progress
+    if( m_requestInProgress.load() )
+    {
+        fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Request already in progress\n" );
+        fflush( stderr );
+        PostLLMError( aHandler, "Another LLM request is already in progress" );
+        return false;
+    }
+
+    // Reset cancel flag
+    m_cancelRequested.store( false );
+    m_requestInProgress.store( true );
+
+    fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Creating thread for model '%s'\n",
+             m_modelName.c_str() );
+    fflush( stderr );
+
+    // Create and start the background thread
+    LLM_REQUEST_THREAD* thread = new LLM_REQUEST_THREAD(
+        this, aHandler, m_modelName, aMessages, aSystem, aTools );
+
+    // wxThread requires Create() before Run()
+    if( thread->Create() != wxTHREAD_NO_ERROR )
+    {
+        fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Failed to create thread\n" );
+        fflush( stderr );
+        delete thread;
+        m_requestInProgress.store( false );
+        PostLLMError( aHandler, "Failed to create LLM request thread" );
+        return false;
+    }
+
+    fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Thread created, starting...\n" );
+    fflush( stderr );
+
+    if( thread->Run() != wxTHREAD_NO_ERROR )
+    {
+        fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Failed to run thread\n" );
+        fflush( stderr );
+        delete thread;
+        m_requestInProgress.store( false );
+        PostLLMError( aHandler, "Failed to start LLM request thread" );
+        return false;
+    }
+
+    fprintf( stderr, "AGENT_LLM_CLIENT::AskStreamWithToolsAsync: Thread running\n" );
+    fflush( stderr );
+
+    // Thread is running - it will post events and clean up when done
+    return true;
+}
+
+
+// ============================================================================
+// LLM_REQUEST_THREAD Implementation
+// ============================================================================
+
+LLM_REQUEST_THREAD::LLM_REQUEST_THREAD( AGENT_LLM_CLIENT* aClient,
+                                         wxEvtHandler* aHandler,
+                                         const std::string& aModel,
+                                         const nlohmann::json& aMessages,
+                                         const std::string& aSystem,
+                                         const std::vector<LLM_TOOL>& aTools ) :
+        wxThread( wxTHREAD_DETACHED ),
+        m_client( aClient ),
+        m_handler( aHandler ),
+        m_model( aModel ),
+        m_messages( aMessages ),
+        m_system( aSystem ),
+        m_tools( aTools ),
+        m_cancelFlag( nullptr )
+{
+}
+
+
+LLM_REQUEST_THREAD::~LLM_REQUEST_THREAD()
+{
+    // Mark request as no longer in progress
+    if( m_client )
+    {
+        m_client->m_requestInProgress.store( false );
+    }
+}
+
+
+void* LLM_REQUEST_THREAD::Entry()
+{
+    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Thread started\n" );
+    fflush( stderr );
+
+    // Get the cancel flag from the client
+    m_cancelFlag = &m_client->m_cancelRequested;
+
+    // Initialize curl
+    CURL* curl = curl_easy_init();
+    if( !curl )
+    {
+        fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Failed to init curl\n" );
+        fflush( stderr );
+        PostLLMError( m_handler, "Failed to initialize curl" );
+        return nullptr;
+    }
+
+    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Curl initialized\n" );
+    fflush( stderr );
+
+    // Build the request
+    std::string apiModel = "claude-sonnet-4-20250514";
+    if( m_model == "Claude 4.5 Opus" )
+        apiModel = "claude-opus-4-5-20251101";
+    else if( m_model == "Claude 4 Sonnet" )
+        apiModel = "claude-sonnet-4-20250514";
+
+    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Using model '%s' -> API model '%s'\n",
+             m_model.c_str(), apiModel.c_str() );
+    fflush( stderr );
+
+    json requestBody;
+    requestBody["model"] = apiModel;
+    requestBody["system"] = m_system;
+    requestBody["messages"] = m_messages;
+    requestBody["max_tokens"] = 4096;
+    requestBody["stream"] = true;
+
+    // Add tools
+    if( !m_tools.empty() )
+    {
+        requestBody["tools"] = json::array();
+        for( const auto& tool : m_tools )
+        {
+            json toolObj;
+            toolObj["name"] = tool.name;
+            toolObj["description"] = tool.description;
+            toolObj["input_schema"] = tool.input_schema;
+            requestBody["tools"].push_back( toolObj );
+        }
+    }
+
+    std::string requestBodyStr = requestBody.dump();
+
+    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Request body size: %zu bytes\n",
+             requestBodyStr.size() );
+    fflush( stderr );
+
+    // Set up curl options
+    curl_easy_setopt( curl, CURLOPT_URL, "https://api.anthropic.com/v1/messages" );
+    curl_easy_setopt( curl, CURLOPT_POST, 1L );
+    curl_easy_setopt( curl, CURLOPT_POSTFIELDS, requestBodyStr.c_str() );
+    curl_easy_setopt( curl, CURLOPT_POSTFIELDSIZE, requestBodyStr.size() );
+
+    // Headers
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append( headers, "Content-Type: application/json" );
+
+    std::string apiKey = AGENT_LLM_CLIENT::GetAnthropicKey();
+    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: API key length: %zu\n", apiKey.length() );
+    fflush( stderr );
+
+    headers = curl_slist_append( headers, ( "x-api-key: " + apiKey ).c_str() );
+    headers = curl_slist_append( headers, "anthropic-version: 2023-06-01" );
+    curl_easy_setopt( curl, CURLOPT_HTTPHEADER, headers );
+
+    // Set up streaming callback
+    StreamContext ctx;
+    ctx.handler = m_handler;
+    ctx.cancelFlag = m_cancelFlag;
+    ctx.inToolInput = false;
+
+    curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, StreamWriteCallback );
+    curl_easy_setopt( curl, CURLOPT_WRITEDATA, &ctx );
+
+    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Starting curl_easy_perform...\n" );
+    fflush( stderr );
+
+    // Perform the request (this blocks until complete or cancelled)
+    CURLcode res = curl_easy_perform( curl );
+
+    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: curl_easy_perform returned %d\n", res );
+    fflush( stderr );
+
+    // Clean up headers
+    curl_slist_free_all( headers );
+
+    // Check result
+    if( res != CURLE_OK )
+    {
+        std::string errorMsg = "Curl error: " + std::string( curl_easy_strerror( res ) );
+        fprintf( stderr, "LLM_REQUEST_THREAD::Entry: %s\n", errorMsg.c_str() );
+        fflush( stderr );
+        PostLLMError( m_handler, errorMsg );
+        curl_easy_cleanup( curl );
+        return nullptr;
+    }
+
+    // Check HTTP status
+    long http_code = 0;
+    curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &http_code );
+
+    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: HTTP status code: %ld\n", http_code );
+    fflush( stderr );
+
+    if( http_code != 200 )
+    {
+        std::string errorMsg = "Anthropic API error: HTTP " + std::to_string( http_code );
+        fprintf( stderr, "LLM_REQUEST_THREAD::Entry: %s\n", errorMsg.c_str() );
+        fflush( stderr );
+        PostLLMError( m_handler, errorMsg );
+        curl_easy_cleanup( curl );
+        return nullptr;
+    }
+
+    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Posting completion event\n" );
+    fflush( stderr );
+
+    // Post completion event
+    LLMStreamComplete complete;
+    complete.success = true;
+    complete.http_status_code = http_code;
+    PostLLMComplete( m_handler, complete );
+
+    fprintf( stderr, "LLM_REQUEST_THREAD::Entry: Thread done\n" );
+    fflush( stderr );
+
+    curl_easy_cleanup( curl );
+    return nullptr;
+}
+
+
+size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, size_t nmemb, void* userp )
+{
+    size_t realsize = size * nmemb;
+    StreamContext* ctx = static_cast<StreamContext*>( userp );
+
+    fprintf( stderr, "LLM_REQUEST_THREAD::StreamWriteCallback: Received %zu bytes\n", realsize );
+    fflush( stderr );
+
+    // Check for cancellation
+    if( ctx->cancelFlag && ctx->cancelFlag->load() )
+    {
+        fprintf( stderr, "LLM_REQUEST_THREAD::StreamWriteCallback: Cancellation requested\n" );
+        fflush( stderr );
+        return 0; // Returning 0 tells curl to abort
+    }
+
+    // Append to buffer
+    ctx->buffer.append( static_cast<char*>( contents ), realsize );
+
+    // Process complete SSE events (lines ending with \n\n)
+    size_t pos;
+    while( ( pos = ctx->buffer.find( "\n\n" ) ) != std::string::npos )
+    {
+        std::string event = ctx->buffer.substr( 0, pos );
+        ctx->buffer.erase( 0, pos + 2 );
+
+        fprintf( stderr, "LLM_REQUEST_THREAD: SSE event block: '%s'\n", event.c_str() );
+        fflush( stderr );
+
+        // Parse SSE event - find the data line
+        // SSE format can be "event: xxx\ndata: yyy" or just "data: yyy"
+        std::string data;
+        size_t dataPos = event.find( "data: " );
+        if( dataPos != std::string::npos )
+        {
+            // Extract from "data: " to the end of that line
+            size_t dataStart = dataPos + 6;
+            size_t lineEnd = event.find( '\n', dataStart );
+            if( lineEnd == std::string::npos )
+                data = event.substr( dataStart );
+            else
+                data = event.substr( dataStart, lineEnd - dataStart );
+        }
+
+        if( data.empty() )
+        {
+            fprintf( stderr, "LLM_REQUEST_THREAD: No data found in event\n" );
+            fflush( stderr );
+            continue;
+        }
+
+        fprintf( stderr, "LLM_REQUEST_THREAD: Parsed data: '%s'\n",
+                 data.length() > 100 ? (data.substr(0,100) + "...").c_str() : data.c_str() );
+        fflush( stderr );
+
+        // Skip [DONE] marker
+        if( data == "[DONE]" )
+            continue;
+
+        try
+        {
+            json j = json::parse( data );
+
+            // Handle different event types
+            std::string eventType = j.value( "type", "" );
+
+            fprintf( stderr, "LLM_REQUEST_THREAD: Event type: '%s'\n", eventType.c_str() );
+            fflush( stderr );
+
+            if( eventType == "content_block_start" )
+            {
+                auto contentBlock = j.value( "content_block", json::object() );
+                std::string blockType = contentBlock.value( "type", "" );
+
+                if( blockType == "tool_use" )
+                {
+                    ctx->currentToolId = contentBlock.value( "id", "" );
+                    ctx->currentToolName = contentBlock.value( "name", "" );
+                    ctx->currentToolInput = "";
+                    ctx->inToolInput = true;
+                }
+            }
+            else if( eventType == "content_block_delta" )
+            {
+                auto delta = j.value( "delta", json::object() );
+                std::string deltaType = delta.value( "type", "" );
+
+                fprintf( stderr, "LLM_REQUEST_THREAD: Delta type: '%s'\n", deltaType.c_str() );
+                fflush( stderr );
+
+                if( deltaType == "text_delta" )
+                {
+                    std::string text = delta.value( "text", "" );
+                    fprintf( stderr, "LLM_REQUEST_THREAD: Text delta: '%s'\n", text.c_str() );
+                    fflush( stderr );
+
+                    if( !text.empty() )
+                    {
+                        fprintf( stderr, "LLM_REQUEST_THREAD: Posting TEXT chunk\n" );
+                        fflush( stderr );
+
+                        LLMStreamChunk chunk;
+                        chunk.type = LLMChunkType::TEXT;
+                        chunk.text = text;
+                        PostLLMChunk( ctx->handler, chunk );
+                    }
+                }
+                else if( deltaType == "input_json_delta" )
+                {
+                    std::string partial = delta.value( "partial_json", "" );
+                    ctx->currentToolInput += partial;
+                }
+            }
+            else if( eventType == "content_block_stop" )
+            {
+                if( ctx->inToolInput )
+                {
+                    // Tool use block complete
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::TOOL_USE;
+                    chunk.tool_use_id = ctx->currentToolId;
+                    chunk.tool_name = ctx->currentToolName;
+                    chunk.tool_input_json = ctx->currentToolInput;
+                    PostLLMChunk( ctx->handler, chunk );
+
+                    ctx->inToolInput = false;
+                    ctx->currentToolId.clear();
+                    ctx->currentToolName.clear();
+                    ctx->currentToolInput.clear();
+                }
+            }
+            else if( eventType == "message_delta" )
+            {
+                auto delta = j.value( "delta", json::object() );
+                std::string stopReason = delta.value( "stop_reason", "" );
+
+                if( stopReason == "tool_use" )
+                {
+                    // Signal that tool use is complete, ready to execute
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::TOOL_USE_DONE;
+                    PostLLMChunk( ctx->handler, chunk );
+                }
+                else if( stopReason == "end_turn" )
+                {
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::END_TURN;
+                    PostLLMChunk( ctx->handler, chunk );
+                }
+            }
+            else if( eventType == "error" )
+            {
+                auto error = j.value( "error", json::object() );
+                std::string errorMsg = error.value( "message", "Unknown error" );
+
+                LLMStreamChunk chunk;
+                chunk.type = LLMChunkType::ERROR;
+                chunk.error_message = errorMsg;
+                PostLLMChunk( ctx->handler, chunk );
+            }
+        }
+        catch( const json::exception& e )
+        {
+            // JSON parse error - log but continue
+            fprintf( stderr, "LLM_REQUEST_THREAD: JSON parse error: %s\n", e.what() );
+        }
+    }
+
+    return realsize;
+}
+
+
+void LLM_REQUEST_THREAD::ParseAndPostEvents( StreamContext& ctx, const std::string& data )
+{
+    // This method is not used - parsing is done inline in StreamWriteCallback
+    // Kept for potential future use
 }

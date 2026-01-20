@@ -30,7 +30,8 @@ TERMINAL_PANEL::TERMINAL_PANEL( wxWindow* aParent, TERMINAL_MODE aMode ) :
         m_shellStderr( nullptr ),
         m_pid( -1 ),
         m_pythonThread( nullptr ),
-        m_pythonRunning( false )
+        m_pythonRunning( false ),
+        m_pythonTimedOut( false )
 {
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
@@ -531,12 +532,13 @@ void TERMINAL_PANEL::OnPythonPollTimer( wxTimerEvent& aEvent )
         }
         m_pythonRunning.store( false );
 
-        // Clear blocking flag - deferred operations were already scheduled via CallAfter
-        SetIPCShellBlocking( false );
+        // Set timeout flag before finishing (callback will check this)
+        m_pythonTimedOut = true;
 
         m_outputCtrl->AppendText( "[Timeout waiting for Python execution]\n" );
-        m_outputCtrl->AppendText( GetPrompt() );
-        m_lastPromptPos = m_outputCtrl->GetLastPosition();
+
+        // Use FinishPythonExecution to handle callback and cleanup consistently
+        FinishPythonExecution();
     }
 }
 
@@ -559,6 +561,27 @@ void TERMINAL_PANEL::FinishPythonExecution()
     fprintf( stderr, "FinishPythonExecution: Clearing IPC shell blocking\n" );
     fflush( stderr );
     SetIPCShellBlocking( false );
+
+    // Invoke completion callback if set (for async agent requests)
+    if( m_pythonCompletionCallback )
+    {
+        bool success = !m_pythonTimedOut;
+        std::string result = m_pythonTimedOut
+            ? "Error: Python execution timed out"
+            : ( m_lastPythonResult.empty() ? "(no output)" : m_lastPythonResult );
+
+        fprintf( stderr, "FinishPythonExecution: Invoking callback, success=%d\n", success );
+        fflush( stderr );
+
+        // Call the callback (this will typically send ExpressMail back to agent)
+        m_pythonCompletionCallback( result, success );
+
+        // Clear callback after invoking (single-shot)
+        m_pythonCompletionCallback = nullptr;
+    }
+
+    // Reset timeout flag
+    m_pythonTimedOut = false;
 
     // Show the prompt for next command
     m_outputCtrl->AppendText( GetPrompt() );
@@ -590,4 +613,16 @@ void TERMINAL_PANEL::OnPythonComplete( wxThreadEvent& aEvent )
 
     m_lastPythonResult = result.ToStdString();
     m_pythonRunning.store( false );
+}
+
+
+void TERMINAL_PANEL::SetPythonCompletionCallback( PythonCompletionCallback aCallback )
+{
+    m_pythonCompletionCallback = aCallback;
+}
+
+
+void TERMINAL_PANEL::ClearPythonCompletionCallback()
+{
+    m_pythonCompletionCallback = nullptr;
 }

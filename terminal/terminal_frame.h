@@ -4,6 +4,7 @@
 #include <kiway_player.h>
 #include <wx/aui/auibook.h>
 #include "terminal_panel.h"
+#include <string>
 
 class TERMINAL_FRAME : public KIWAY_PLAYER
 {
@@ -32,13 +33,22 @@ public:
     TERMINAL_PANEL* GetActivePanel();
     TERMINAL_PANEL* GetPanel( int aIndex );
 
-    // Agent Command Dispatch
+    // Agent Command Dispatch (legacy synchronous - will be deprecated)
     std::string ExecuteCommandForAgent( const wxString& aCmd );
+
+    // Async Agent Command Dispatch (non-blocking, sends result via ExpressMail)
+    void ExecuteCommandForAgentAsync( const wxString& aCmd );
 
     DECLARE_EVENT_TABLE()
 
 private:
     wxAuiNotebook* m_notebook;
+
+    // Track if we have an active async request
+    bool m_asyncRequestPending;
+
+    // Helper to send result back to agent via ExpressMail
+    void SendAgentResponse( const std::string& aResult );
 };
 
 #endif // TERMINAL_FRAME_H

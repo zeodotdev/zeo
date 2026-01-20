@@ -13,6 +13,8 @@
 #include <nlohmann/json.hpp>
 
 #include "agent_llm_client.h"
+#include "agent_state.h"
+#include "agent_events.h"
 
 // Forward Declarations
 class AGENT_THREAD;
@@ -51,8 +53,28 @@ public:
     void OnChatRightClick( wxMouseEvent& aEvent );
     void OnPopupClick( wxCommandEvent& aEvent );
 
-    // Tool call helper
+    // Async tool execution event handlers
+    void OnToolExecutionComplete( wxCommandEvent& aEvent );
+    void OnToolExecutionError( wxCommandEvent& aEvent );
+    void OnToolExecutionTimeout( wxTimerEvent& aEvent );
+    void OnToolExecutionProgress( wxCommandEvent& aEvent );
+
+    // Async LLM streaming event handlers
+    void OnLLMStreamChunk( wxThreadEvent& aEvent );
+    void OnLLMStreamComplete( wxThreadEvent& aEvent );
+    void OnLLMStreamError( wxThreadEvent& aEvent );
+
+    // Tool call helper (legacy synchronous - will be deprecated)
     std::string SendRequest( int aDest, const std::string& aPayload );
+
+    // Async tool execution (new non-blocking interface)
+    void ExecuteToolAsync( const std::string& aToolName,
+                           const nlohmann::json& aInput,
+                           const std::string& aToolUseId );
+
+    // State machine helpers
+    AgentConversationState GetConversationState() const;
+    bool                   CanAcceptUserInput() const;
 
     DECLARE_EVENT_TABLE()
 
@@ -80,6 +102,11 @@ private:
     std::string    m_pendingTool;     // Tool waiting for approval
     bool           m_stopRequested;   // Flag for sync wait loops
 
+    // Async Tool Execution State
+    AgentConversationContext m_conversationCtx;  // State machine context
+    wxTimer                  m_toolTimeoutTimer; // Timer for tool execution timeout
+    static const int         TOOL_TIMEOUT_MS = 30000; // 30 second timeout
+
     // Model Context
     std::string    m_modelContext;    // Loaded API reference for current model
     std::string    m_currentModel;    // Currently selected model name
@@ -102,6 +129,15 @@ private:
     void ContinueConversation();                                               // Continue after tool results
     void AddToolResultToHistory( const std::string& aToolUseId, const std::string& aResult );
     void AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBlocks );
+
+    // Async tool execution helpers
+    void ProcessToolResult( const std::string& aToolUseId, const std::string& aResult, bool aSuccess );
+    void ContinueConversationWithToolResult();  // Non-blocking continuation
+    std::string BuildToolPayload( const std::string& aToolName, const nlohmann::json& aInput );
+
+    // Async LLM streaming helpers
+    void StartAsyncLLMRequest();  // Start an async LLM request
+    void HandleLLMChunk( const LLMStreamChunk& aChunk );  // Process a streaming chunk
 };
 
 #endif // AGENT_FRAME_H

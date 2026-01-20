@@ -27,7 +27,8 @@ END_EVENT_TABLE()
 
 TERMINAL_FRAME::TERMINAL_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         KIWAY_PLAYER( aKiway, aParent, FRAME_TERMINAL, "Terminal", wxDefaultPosition, wxDefaultSize,
-                      wxDEFAULT_FRAME_STYLE, "terminal_frame_name", schIUScale )
+                      wxDEFAULT_FRAME_STYLE, "terminal_frame_name", schIUScale ),
+        m_asyncRequestPending( false )
 {
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
@@ -232,9 +233,19 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
             return "Error: Could not create/find Agent terminal.";
 
         std::string initCode;
+
+        // Common initialization: add kicad-python to sys.path if not already there
+        std::string commonInit =
+            "import sys\n"
+            "import os\n"
+            "# Add kicad-python to path for kipy module\n"
+            "_kipy_path = os.path.expanduser('~/workspaces/KiCAD_agentic/code/kicad-python')\n"
+            "if _kipy_path not in sys.path:\n"
+            "    sys.path.insert(0, _kipy_path)\n";
+
         if( mode == "sch" )
         {
-            initCode =
+            initCode = commonInit +
                 "import kipy\n"
                 "from kipy.geometry import Vector2\n"
                 "kicad = kipy.KiCad()\n"
@@ -242,7 +253,7 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
         }
         else if( mode == "pcb" )
         {
-            initCode =
+            initCode = commonInit +
                 "import kipy\n"
                 "from kipy.geometry import Vector2\n"
                 "kicad = kipy.KiCad()\n"
@@ -475,10 +486,201 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
 
 void TERMINAL_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 {
+    fprintf( stderr, "TERMINAL KiwayMailIn: Received command=%d\n", aEvent.Command() );
+    fflush( stderr );
+
     if( aEvent.Command() == MAIL_AGENT_REQUEST )
     {
         std::string payload = aEvent.GetPayload();
-        std::string result = ExecuteCommandForAgent( payload );
-        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, result );
+        fprintf( stderr, "TERMINAL KiwayMailIn: MAIL_AGENT_REQUEST, payload='%.100s...'\n", payload.c_str() );
+        fflush( stderr );
+
+        // Use async execution to avoid blocking the UI thread
+        ExecuteCommandForAgentAsync( payload );
     }
+}
+
+
+void TERMINAL_FRAME::SendAgentResponse( const std::string& aResult )
+{
+    fprintf( stderr, "TERMINAL_FRAME: Sending response to agent: %.100s...\n",
+             aResult.c_str() );
+    fflush( stderr );
+
+    m_asyncRequestPending = false;
+
+    // ExpressMail takes a non-const reference, so we need a copy
+    std::string result = aResult;
+    Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, result );
+}
+
+
+void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
+{
+    fprintf( stderr, "TERMINAL ExecuteCommandForAgentAsync: called with cmd='%.100s...'\n", aCmd.ToStdString().c_str() );
+    fflush( stderr );
+
+    // If already processing a request, return error
+    if( m_asyncRequestPending )
+    {
+        fprintf( stderr, "TERMINAL ExecuteCommandForAgentAsync: Already processing a request\n" );
+        fflush( stderr );
+        SendAgentResponse( "Error: Another request is already in progress" );
+        return;
+    }
+
+    wxString cmd = aCmd;
+    cmd.Trim( false );  // Trim leading whitespace
+    cmd.Trim( true );   // Trim trailing whitespace
+
+    fprintf( stderr, "TERMINAL ExecuteCommandForAgentAsync: After trim, cmd starts with: '%.20s'\n", cmd.ToStdString().c_str() );
+    fflush( stderr );
+
+    // Handle new simplified commands (run_shell sch/pcb <code>)
+    if( cmd.StartsWith( "run_shell " ) || cmd.StartsWith( wxT("run_shell ") ) )
+    {
+        fprintf( stderr, "TERMINAL ExecuteCommandForAgentAsync: Handling run_shell command\n" );
+        fflush( stderr );
+
+        wxString rest = cmd.Mid( 10 ).Trim( false );
+        wxString mode = rest.BeforeFirst( ' ' );
+        wxString code = rest.AfterFirst( ' ' );
+
+        fprintf( stderr, "ExecuteCommandForAgentAsync: mode='%s', code_len=%zu\n",
+                 mode.ToStdString().c_str(), code.length() );
+        fflush( stderr );
+
+        // Find or create agent terminal
+        TERMINAL_PANEL* active = nullptr;
+        for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
+        {
+            TERMINAL_PANEL* p = GetPanel( i );
+            if( dynamic_cast<AGENT_TERMINAL_PANEL*>( p ) )
+            {
+                active = p;
+                break;
+            }
+        }
+        if( !active )
+        {
+            AddAgentTerminal( TERMINAL_PANEL::MODE_SYSTEM );
+            active = GetPanel( m_notebook->GetPageCount() - 1 );
+        }
+        if( !active )
+        {
+            SendAgentResponse( "Error: Could not create/find Agent terminal." );
+            return;
+        }
+
+        std::string initCode;
+
+        // Common initialization: add kicad-python to sys.path if not already there
+        std::string commonInit =
+            "import sys\n"
+            "import os\n"
+            "# Add kicad-python to path for kipy module\n"
+            "_kipy_path = os.path.expanduser('~/workspaces/KiCAD_agentic/code/kicad-python')\n"
+            "if _kipy_path not in sys.path:\n"
+            "    sys.path.insert(0, _kipy_path)\n";
+
+        if( mode == "sch" )
+        {
+            initCode = commonInit +
+                "import kipy\n"
+                "from kipy.geometry import Vector2\n"
+                "kicad = kipy.KiCad()\n"
+                "sch = kicad.get_schematic()\n";
+        }
+        else if( mode == "pcb" )
+        {
+            initCode = commonInit +
+                "import kipy\n"
+                "from kipy.geometry import Vector2\n"
+                "kicad = kipy.KiCad()\n"
+                "board = kicad.get_board()\n";
+        }
+
+        // Set up completion callback BEFORE starting execution
+        fprintf( stderr, "ExecuteCommandForAgentAsync: Setting up callback and starting Python\n" );
+        fflush( stderr );
+
+        m_asyncRequestPending = true;
+        active->SetPythonCompletionCallback(
+            [this]( const std::string& result, bool success ) {
+                fprintf( stderr, "ExecuteCommandForAgentAsync: Callback invoked, success=%d\n", success );
+                fflush( stderr );
+                // This will be called from the main thread when Python completes
+                SendAgentResponse( result );
+            } );
+
+        // Start Python execution (async, returns immediately)
+        std::string fullCode = initCode + code.ToStdString();
+        fprintf( stderr, "ExecuteCommandForAgentAsync: Calling RunLocalPython with code_len=%zu\n", fullCode.size() );
+        fflush( stderr );
+
+        std::string immediateResult = active->RunLocalPython( fullCode );
+
+        fprintf( stderr, "ExecuteCommandForAgentAsync: RunLocalPython returned '%s'\n", immediateResult.c_str() );
+        fflush( stderr );
+
+        // Check if RunLocalPython returned an immediate error (didn't start async execution)
+        if( !immediateResult.empty() && immediateResult.find( "Error:" ) == 0 )
+        {
+            fprintf( stderr, "ExecuteCommandForAgentAsync: Immediate error, clearing callback\n" );
+            fflush( stderr );
+            // Clear callback and send error response immediately
+            active->ClearPythonCompletionCallback();
+            SendAgentResponse( immediateResult );
+        }
+        else
+        {
+            fprintf( stderr, "ExecuteCommandForAgentAsync: Async execution started, waiting for callback\n" );
+            fflush( stderr );
+        }
+        // Otherwise, execution started - callback will be invoked when done
+        return;
+    }
+
+    // Handle run_terminal (bash commands) - these are still synchronous but fast
+    if( cmd.StartsWith( "run_terminal " ) )
+    {
+        wxString bashCmd = cmd.Mid( 13 ).Trim( false );
+
+        TERMINAL_PANEL* active = nullptr;
+        for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
+        {
+            TERMINAL_PANEL* p = GetPanel( i );
+            if( dynamic_cast<AGENT_TERMINAL_PANEL*>( p ) )
+            {
+                active = p;
+                break;
+            }
+        }
+        if( !active )
+        {
+            AddAgentTerminal( TERMINAL_PANEL::MODE_SYSTEM );
+            active = GetPanel( m_notebook->GetPageCount() - 1 );
+        }
+        if( !active )
+        {
+            SendAgentResponse( "Error: Could not create/find Agent terminal." );
+            return;
+        }
+
+        // System commands are still synchronous (they're typically fast)
+        std::string result = active->ProcessSystemCommand( bashCmd );
+        SendAgentResponse( result );
+        return;
+    }
+
+    // Legacy format and other commands - fall back to sync version for now
+    // Note: The sync version still has blocking waits for Python, so we should
+    // eventually migrate all Python commands to async
+    fprintf( stderr, "TERMINAL ExecuteCommandForAgentAsync: FALLBACK to sync ExecuteCommandForAgent for cmd='%.50s...'\n",
+             aCmd.ToStdString().c_str() );
+    fflush( stderr );
+    std::string result = ExecuteCommandForAgent( aCmd );
+    fprintf( stderr, "TERMINAL ExecuteCommandForAgentAsync: Sync result='%.100s...'\n", result.c_str() );
+    fflush( stderr );
+    SendAgentResponse( result );
 }

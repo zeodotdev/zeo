@@ -4,9 +4,13 @@
 #include <string>
 #include <functional>
 #include <vector>
+#include <map>
+#include <atomic>
 #include <nlohmann/json.hpp>
+#include <wx/thread.h>
 
 class AGENT_FRAME;
+class wxEvtHandler;
 
 /**
  * Tool definition for native tool calling.
@@ -49,6 +53,8 @@ struct LLM_EVENT
  */
 class AGENT_LLM_CLIENT
 {
+    friend class LLM_REQUEST_THREAD;  // Allow thread to access private members
+
 public:
     AGENT_LLM_CLIENT( AGENT_FRAME* aParent );
     ~AGENT_LLM_CLIENT();
@@ -80,7 +86,7 @@ public:
                     std::function<void( const std::string& )> aCallback );
 
     /**
-     * Send a streaming chat completion request with native tool calling.
+     * Send a streaming chat completion request with native tool calling (BLOCKING).
      * @param aMessages The full chat history as a JSON array.
      * @param aSystem The system prompt/instruction.
      * @param aTools Vector of tool definitions.
@@ -90,6 +96,36 @@ public:
     bool AskStreamWithTools( const nlohmann::json& aMessages, const std::string& aSystem,
                              const std::vector<LLM_TOOL>& aTools,
                              std::function<void( const LLM_EVENT& )> aCallback );
+
+    /**
+     * Send a streaming chat completion request with native tool calling (ASYNC/NON-BLOCKING).
+     * This method returns immediately. Results are delivered via wx events to the handler.
+     *
+     * Events posted:
+     * - EVT_LLM_STREAM_CHUNK: For each streaming chunk (text, tool_use, etc.)
+     * - EVT_LLM_STREAM_COMPLETE: When streaming finishes successfully
+     * - EVT_LLM_STREAM_ERROR: If an error occurs
+     *
+     * @param aMessages The full chat history as a JSON array.
+     * @param aSystem The system prompt/instruction.
+     * @param aTools Vector of tool definitions.
+     * @param aHandler The event handler to receive streaming events (typically AGENT_FRAME).
+     * @return True if the request was started, false if it couldn't be started.
+     */
+    bool AskStreamWithToolsAsync( const nlohmann::json& aMessages, const std::string& aSystem,
+                                   const std::vector<LLM_TOOL>& aTools,
+                                   wxEvtHandler* aHandler );
+
+    /**
+     * Check if an async LLM request is currently in progress.
+     */
+    bool IsRequestInProgress() const { return m_requestInProgress.load(); }
+
+    /**
+     * Cancel any in-progress async request.
+     * The request may not stop immediately but will be cancelled as soon as possible.
+     */
+    void CancelRequest() { m_cancelRequested.store( true ); }
 
     /**
      * Load API keys from environment file.
@@ -113,6 +149,10 @@ private:
     AGENT_FRAME* m_parent;
     std::string  m_modelName;
 
+    // Async request state
+    std::atomic<bool> m_requestInProgress;
+    std::atomic<bool> m_cancelRequested;
+
     // API keys loaded from .env file
     static std::string s_openaiApiKey;
     static std::string s_anthropicApiKey;
@@ -126,10 +166,60 @@ private:
     bool AskStreamAnthropic( const nlohmann::json& aMessages, const std::string& aSystem, const std::string& aPayload,
                              std::function<void( const std::string& )> aCallback );
 
-    // Helper to request via Anthropic API with native tools
+    // Helper to request via Anthropic API with native tools (blocking)
     bool AskStreamAnthropicWithTools( const nlohmann::json& aMessages, const std::string& aSystem,
                                       const std::vector<LLM_TOOL>& aTools,
                                       std::function<void( const LLM_EVENT& )> aCallback );
+};
+
+
+/**
+ * Background thread for async LLM streaming requests.
+ * Runs curl.Perform() in a background thread and posts events to the main thread.
+ */
+class LLM_REQUEST_THREAD : public wxThread
+{
+public:
+    LLM_REQUEST_THREAD( AGENT_LLM_CLIENT* aClient,
+                        wxEvtHandler* aHandler,
+                        const std::string& aModel,
+                        const nlohmann::json& aMessages,
+                        const std::string& aSystem,
+                        const std::vector<LLM_TOOL>& aTools );
+
+    virtual ~LLM_REQUEST_THREAD();
+
+protected:
+    virtual void* Entry() override;
+
+private:
+    AGENT_LLM_CLIENT*     m_client;
+    wxEvtHandler*         m_handler;
+    std::string           m_model;
+    nlohmann::json        m_messages;
+    std::string           m_system;
+    std::vector<LLM_TOOL> m_tools;
+
+    // Flag to check if cancellation was requested
+    std::atomic<bool>* m_cancelFlag;
+
+    // Curl write callback that posts events
+    static size_t StreamWriteCallback( void* contents, size_t size, size_t nmemb, void* userp );
+
+    // Context for the streaming callback
+    struct StreamContext
+    {
+        wxEvtHandler*     handler;
+        std::atomic<bool>* cancelFlag;
+        std::string       buffer;           // Buffer for incomplete SSE data
+        std::string       currentToolId;    // Current tool_use block ID
+        std::string       currentToolName;  // Current tool name
+        std::string       currentToolInput; // Accumulated tool input JSON
+        bool              inToolInput;      // Currently accumulating tool input
+    };
+
+    // Parse SSE events and post to main thread
+    void ParseAndPostEvents( StreamContext& ctx, const std::string& data );
 };
 
 #endif // AGENT_LLM_CLIENT_H

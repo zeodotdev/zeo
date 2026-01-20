@@ -8,6 +8,7 @@
 #include <vector>
 #include <string>
 #include <atomic>
+#include <functional>
 
 // Forward declaration
 class PYTHON_EXEC_THREAD;
@@ -38,6 +39,12 @@ public:
     // Python execution state accessors (for synchronous agent requests)
     bool        IsPythonRunning() const { return m_pythonRunning.load(); }
     std::string GetLastPythonResult() const { return m_lastPythonResult; }
+
+    // Async completion callback support
+    // Callback signature: (result_string, success_flag)
+    using PythonCompletionCallback = std::function<void( const std::string&, bool )>;
+    void SetPythonCompletionCallback( PythonCompletionCallback aCallback );
+    void ClearPythonCompletionCallback();
 
     // Event handlers
     void OnKeyDown( wxKeyEvent& aEvent );
@@ -76,6 +83,10 @@ protected:
     std::string         m_lastPythonResult;
     wxTimer             m_pythonPollTimer;
     wxLongLong          m_pythonStartTime;
+
+    // Async completion callback (set by caller for non-blocking notification)
+    PythonCompletionCallback m_pythonCompletionCallback;
+    bool                     m_pythonTimedOut;  // Flag to track timeout status
 
     void OnPythonOutput( wxThreadEvent& aEvent );
     void OnPythonComplete( wxThreadEvent& aEvent );

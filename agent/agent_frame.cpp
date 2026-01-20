@@ -131,6 +131,17 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( wxEVT_AGENT_UPDATE, &AGENT_FRAME::OnAgentUpdate, this );
     Bind( wxEVT_AGENT_COMPLETE, &AGENT_FRAME::OnAgentComplete, this );
 
+    // Bind Async Tool Execution Events
+    Bind( EVT_TOOL_EXECUTION_COMPLETE, &AGENT_FRAME::OnToolExecutionComplete, this );
+    Bind( EVT_TOOL_EXECUTION_ERROR, &AGENT_FRAME::OnToolExecutionError, this );
+    Bind( EVT_TOOL_EXECUTION_PROGRESS, &AGENT_FRAME::OnToolExecutionProgress, this );
+    m_toolTimeoutTimer.Bind( wxEVT_TIMER, &AGENT_FRAME::OnToolExecutionTimeout, this );
+
+    // Bind Async LLM Streaming Events
+    Bind( EVT_LLM_STREAM_CHUNK, &AGENT_FRAME::OnLLMStreamChunk, this );
+    Bind( EVT_LLM_STREAM_COMPLETE, &AGENT_FRAME::OnLLMStreamComplete, this );
+    Bind( EVT_LLM_STREAM_ERROR, &AGENT_FRAME::OnLLMStreamError, this );
+
     // Bind Model Change Event
     m_modelChoice->Bind( wxEVT_CHOICE, &AGENT_FRAME::OnModelSelection, this );
 
@@ -255,10 +266,61 @@ void AGENT_FRAME::SetHtml( const wxString& aHtml )
 
 void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 {
+    fprintf( stderr, "AGENT KiwayMailIn: Received command=%d\n", aEvent.Command() );
+    fflush( stderr );
+
     if( aEvent.Command() == MAIL_AGENT_RESPONSE )
     {
-        m_toolResponse = aEvent.GetPayload();
-        // wxLogMessage( "Agent received response: %s", m_toolResponse.c_str() ); // Removed to prevent pop-ups
+        std::string payload = aEvent.GetPayload();
+        fprintf( stderr, "AGENT KiwayMailIn: MAIL_AGENT_RESPONSE received, payload='%.100s...'\n",
+                 payload.c_str() );
+        fprintf( stderr, "AGENT KiwayMailIn: IsToolExecuting=%d\n", m_conversationCtx.IsToolExecuting() );
+        fflush( stderr );
+
+        // Check if we're in async tool execution mode
+        if( m_conversationCtx.IsToolExecuting() )
+        {
+            fprintf( stderr, "AGENT KiwayMailIn: In async mode, finding executing tool\n" );
+            fprintf( stderr, "AGENT KiwayMailIn: PendingToolCallCount=%zu\n",
+                     m_conversationCtx.GetPendingToolCallCount() );
+            fflush( stderr );
+
+            // Find the executing tool call to get its ID
+            PendingToolCall* executing = m_conversationCtx.GetExecutingToolCall();
+            fprintf( stderr, "AGENT KiwayMailIn: GetExecutingToolCall returned %s\n",
+                     executing ? executing->tool_name.c_str() : "null" );
+            fflush( stderr );
+
+            if( executing )
+            {
+                fprintf( stderr, "AGENT KiwayMailIn: Found executing tool '%s', posting result\n",
+                         executing->tool_name.c_str() );
+                fflush( stderr );
+
+                // Post tool completion event
+                ToolExecutionResult* result = new ToolExecutionResult();
+                result->tool_use_id = executing->tool_use_id;
+                result->tool_name = executing->tool_name;
+                result->result = payload;
+                result->success = !payload.empty() && payload.find( "Error:" ) != 0;
+                result->execution_time_ms = ( wxGetLocalTimeMillis() - executing->start_time ).GetValue();
+
+                PostToolResult( this, *result );
+                fprintf( stderr, "AGENT KiwayMailIn: PostToolResult called\n" );
+                fflush( stderr );
+                delete result;  // PostToolResult copies the data
+            }
+            else
+            {
+                fprintf( stderr, "AGENT KiwayMailIn: No executing tool found!\n" );
+                fflush( stderr );
+            }
+        }
+        else
+        {
+            // Legacy sync mode - just store the response
+            m_toolResponse = payload;
+        }
     }
     else if( aEvent.Command() == MAIL_SELECTION )
     {
@@ -516,22 +578,16 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_pendingToolCalls = nlohmann::json::array(); // Reset pending tool calls
     m_stopRequested = false; // Reset stop flag
 
+    // Transition state machine to WAITING_FOR_LLM
+    m_conversationCtx.Reset();  // Start fresh
+    m_conversationCtx.TransitionTo( AgentConversationState::WAITING_FOR_LLM );
+
     // Get selected model and configure LLM client
     wxString modelNameProp = m_modelChoice->GetStringSelection();
     m_llmClient->SetModel( modelNameProp.ToStdString() );
 
-    // Use native tool calling
-    m_llmClient->AskStreamWithTools(
-        m_chatHistory,
-        systemPrompt,
-        m_tools,
-        [this]( const LLM_EVENT& event )
-        {
-            // Handle events on UI thread (curl callback runs during Perform)
-            HandleLLMEvent( event );
-            wxYield(); // Allow UI updates during streaming
-        }
-    );
+    // Use async native tool calling (non-blocking)
+    StartAsyncLLMRequest();
 }
 
 void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
@@ -543,8 +599,17 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
         m_workerThread = nullptr;
     }
 
+    // Cancel any in-progress async LLM request
+    if( m_llmClient && m_llmClient->IsRequestInProgress() )
+    {
+        m_llmClient->CancelRequest();
+    }
+
     // Signal to stop - affects tool execution loops and streaming callbacks
     m_stopRequested = true;
+
+    // Transition state machine to IDLE
+    m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
 
     AppendHtml( "</p><p><i>(Stopped)</i></p>" );
     m_actionButton->SetLabel( "->" );
@@ -1052,50 +1117,54 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
     }
     case LLM_EVENT_TYPE::TOOL_USE_DONE:
     {
-        // All tool calls received, execute them
+        fprintf( stderr, "AGENT HandleLLMEvent: TOOL_USE_DONE received\n" );
+        fflush( stderr );
+
+        // All tool calls received, execute them asynchronously
         if( m_pendingToolCalls.is_array() && !m_pendingToolCalls.empty() )
         {
+            fprintf( stderr, "AGENT HandleLLMEvent: %zu pending tool calls\n", m_pendingToolCalls.size() );
+            fflush( stderr );
+
+            // Transition to TOOL_USE_DETECTED state
+            m_conversationCtx.TransitionTo( AgentConversationState::TOOL_USE_DETECTED );
+
             // Add assistant message with tool use blocks to history
             AddAssistantToolUseToHistory( m_pendingToolCalls );
 
-            // Execute each tool and collect results
+            // Queue all tools for async execution
             for( const auto& toolCall : m_pendingToolCalls )
             {
                 std::string toolId = toolCall.value( "id", "" );
                 std::string toolName = toolCall.value( "name", "" );
                 json toolInput = toolCall.value( "input", json::object() );
 
-                // Show "Running..." state
-                wxString runningHtml = wxString::Format(
-                    "<br><font color='#888888'><i>Running %s...</i></font>", toolName );
-                AppendHtml( runningHtml );
-                wxYield();
+                fprintf( stderr, "AGENT HandleLLMEvent: Queueing tool '%s' id='%s'\n",
+                         toolName.c_str(), toolId.c_str() );
+                fflush( stderr );
 
-                // Execute tool
-                std::string result = ExecuteTool( toolName, toolInput );
-
-                // Add result to history
-                AddToolResultToHistory( toolId, result );
-
-                // Display result
-                wxString htmlResult = result;
-                htmlResult.Replace( "\n", "<br>" );
-                htmlResult.Replace( " ", "&nbsp;" );
-
-                wxString resultBox = wxString::Format(
-                    "<br><table width='100%%' bgcolor='#1e1e1e' cellpadding='10'><tr><td>"
-                    "<font color='#4ec9b0' face='Courier New' size='2'>✓ Result:</font><br>"
-                    "<font color='#d4d4d4' face='Courier New' size='2'>%s</font>"
-                    "</td></tr></table>",
-                    htmlResult );
-                AppendHtml( resultBox );
+                PendingToolCall pending( toolId, toolName, toolInput );
+                m_conversationCtx.AddPendingToolCall( pending );
             }
 
-            // Clear pending calls
+            // Clear the JSON array (tools are now in state machine)
             m_pendingToolCalls = json::array();
 
-            // Continue conversation
-            ContinueConversation();
+            // Start executing the first tool asynchronously
+            PendingToolCall* first = m_conversationCtx.GetNextPendingToolCall();
+            if( first )
+            {
+                fprintf( stderr, "AGENT HandleLLMEvent: Starting first tool '%s'\n", first->tool_name.c_str() );
+                fflush( stderr );
+
+                // Show "Running..." state
+                wxString runningHtml = wxString::Format(
+                    "<br><font color='#888888'><i>Running %s...</i></font>", first->tool_name );
+                AppendHtml( runningHtml );
+
+                // Execute async - returns immediately, result comes via event
+                ExecuteToolAsync( first->tool_name, first->tool_input, first->tool_use_id );
+            }
         }
         break;
     }
@@ -1110,6 +1179,9 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
         {
             m_chatHistory.push_back( { { "role", "assistant" }, { "content", m_currentResponse } } );
         }
+
+        // Transition back to IDLE
+        m_conversationCtx.SetState( AgentConversationState::IDLE );
         break;
     }
     case LLM_EVENT_TYPE::ERROR:
@@ -1197,4 +1269,557 @@ void AGENT_FRAME::AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBl
 
     // Reset accumulated text
     m_currentResponse = "";
+}
+
+// ============================================================================
+// ASYNC TOOL EXECUTION METHODS
+// ============================================================================
+
+AgentConversationState AGENT_FRAME::GetConversationState() const
+{
+    return m_conversationCtx.GetState();
+}
+
+
+bool AGENT_FRAME::CanAcceptUserInput() const
+{
+    return m_conversationCtx.CanAcceptUserInput();
+}
+
+
+void AGENT_FRAME::ExecuteToolAsync( const std::string& aToolName,
+                                     const nlohmann::json& aInput,
+                                     const std::string& aToolUseId )
+{
+    // IMPORTANT: Copy parameters immediately since they may be references to data
+    // inside a vector that could be reallocated during this function
+    std::string toolName = aToolName;
+    nlohmann::json toolInput = aInput;
+    std::string toolUseId = aToolUseId;
+
+    fprintf( stderr, "AGENT ExecuteToolAsync: tool=%s id=%s\n",
+             toolName.c_str(), toolUseId.c_str() );
+    fflush( stderr );
+    wxLogDebug( "AGENT: ExecuteToolAsync called: tool=%s id=%s",
+                toolName.c_str(), toolUseId.c_str() );
+
+    // Transition to EXECUTING_TOOL state
+    if( !m_conversationCtx.TransitionTo( AgentConversationState::EXECUTING_TOOL ) )
+    {
+        wxLogDebug( "AGENT: Failed to transition to EXECUTING_TOOL state" );
+        PostToolError( this, toolUseId, "Invalid state for tool execution" );
+        return;
+    }
+
+    // Mark the existing pending tool call as executing (don't add a duplicate!)
+    PendingToolCall* existingTool = m_conversationCtx.FindPendingToolCall( toolUseId );
+    if( existingTool )
+    {
+        existingTool->start_time = wxGetLocalTimeMillis();
+        existingTool->is_executing = true;
+    }
+
+    // Build the payload for the terminal
+    std::string payload = BuildToolPayload( toolName, toolInput );
+
+    fprintf( stderr, "AGENT ExecuteToolAsync: Sending MAIL_AGENT_REQUEST to FRAME_TERMINAL, payload='%.100s...'\n",
+             payload.c_str() );
+    fflush( stderr );
+
+    // Check if payload is an error (BuildToolPayload can return errors)
+    if( payload.find( "Error:" ) == 0 )
+    {
+        fprintf( stderr, "AGENT ExecuteToolAsync: BuildToolPayload returned error: %s\n", payload.c_str() );
+        fflush( stderr );
+        // Post error result immediately
+        PostToolError( this, toolUseId, payload );
+        return;
+    }
+
+    // Ensure terminal frame exists before sending mail
+    // Player() with doCreate=true will create the frame if it doesn't exist
+    KIWAY_PLAYER* terminal = Kiway().Player( FRAME_TERMINAL, true );
+    if( !terminal )
+    {
+        fprintf( stderr, "AGENT ExecuteToolAsync: Failed to create terminal frame!\n" );
+        fflush( stderr );
+        PostToolError( this, toolUseId, "Error: Could not create terminal frame" );
+        return;
+    }
+
+    fprintf( stderr, "AGENT ExecuteToolAsync: Terminal frame exists, sending ExpressMail\n" );
+    fflush( stderr );
+
+    // Send async request to terminal
+    Kiway().ExpressMail( FRAME_TERMINAL, MAIL_AGENT_REQUEST, payload );
+
+    fprintf( stderr, "AGENT ExecuteToolAsync: ExpressMail sent, starting timeout timer\n" );
+    fflush( stderr );
+
+    // Start timeout timer
+    m_toolTimeoutTimer.StartOnce( TOOL_TIMEOUT_MS );
+
+    wxLogDebug( "AGENT: Tool execution started, timeout timer set for %d ms", TOOL_TIMEOUT_MS );
+}
+
+
+std::string AGENT_FRAME::BuildToolPayload( const std::string& aToolName, const nlohmann::json& aInput )
+{
+    fprintf( stderr, "AGENT BuildToolPayload: aToolName='%s' (len=%zu)\n",
+             aToolName.c_str(), aToolName.length() );
+    fprintf( stderr, "AGENT BuildToolPayload: aInput=%s\n", aInput.dump().c_str() );
+    fflush( stderr );
+
+    // Build the command string for the terminal based on tool name
+    if( aToolName == "run_shell" )
+    {
+        fprintf( stderr, "AGENT BuildToolPayload: Matched run_shell\n" );
+        fflush( stderr );
+
+        std::string code = aInput.value( "code", "" );
+        std::string mode = aInput.value( "mode", "sch" );
+
+        fprintf( stderr, "AGENT BuildToolPayload: mode='%s', code_len=%zu\n", mode.c_str(), code.length() );
+        fflush( stderr );
+
+        if( code.empty() )
+            return "Error: run_shell requires 'code' parameter";
+
+        return "run_shell " + mode + " " + code;
+    }
+    else if( aToolName == "run_terminal" )
+    {
+        fprintf( stderr, "AGENT BuildToolPayload: Matched run_terminal\n" );
+        fflush( stderr );
+
+        std::string command = aInput.value( "command", "" );
+
+        if( command.empty() )
+            return "Error: run_terminal requires 'command' parameter";
+
+        return "run_terminal " + command;
+    }
+
+    fprintf( stderr, "AGENT BuildToolPayload: No match! Returning error\n" );
+    fflush( stderr );
+    return "Error: Unknown tool '" + aToolName + "'";
+}
+
+
+void AGENT_FRAME::OnToolExecutionComplete( wxCommandEvent& aEvent )
+{
+    wxLogDebug( "AGENT: OnToolExecutionComplete called" );
+
+    // Stop the timeout timer
+    m_toolTimeoutTimer.Stop();
+
+    // Get the result from the event
+    ToolExecutionResult* result = static_cast<ToolExecutionResult*>( aEvent.GetClientData() );
+    if( !result )
+    {
+        wxLogDebug( "AGENT: No result data in event" );
+        return;
+    }
+
+    // Process the result
+    ProcessToolResult( result->tool_use_id, result->result, result->success );
+
+    // Clean up
+    delete result;
+}
+
+
+void AGENT_FRAME::OnToolExecutionError( wxCommandEvent& aEvent )
+{
+    wxLogDebug( "AGENT: OnToolExecutionError called" );
+
+    // Stop the timeout timer
+    m_toolTimeoutTimer.Stop();
+
+    // Get the error from the event
+    ToolExecutionResult* result = static_cast<ToolExecutionResult*>( aEvent.GetClientData() );
+    if( !result )
+    {
+        wxLogDebug( "AGENT: No error data in event" );
+        return;
+    }
+
+    // Process as error
+    ProcessToolResult( result->tool_use_id, result->error_message, false );
+
+    // Clean up
+    delete result;
+}
+
+
+void AGENT_FRAME::OnToolExecutionTimeout( wxTimerEvent& aEvent )
+{
+    wxLogDebug( "AGENT: OnToolExecutionTimeout called" );
+
+    // Find any executing tool calls
+    for( size_t i = 0; i < m_conversationCtx.GetPendingToolCallCount(); i++ )
+    {
+        PendingToolCall* tool = m_conversationCtx.GetNextPendingToolCall();
+        if( tool && tool->is_executing )
+        {
+            wxLogDebug( "AGENT: Tool '%s' timed out", tool->tool_name.c_str() );
+
+            ProcessToolResult( tool->tool_use_id,
+                               "Error: Tool execution timed out after 30 seconds",
+                               false );
+            break;
+        }
+    }
+}
+
+
+void AGENT_FRAME::OnToolExecutionProgress( wxCommandEvent& aEvent )
+{
+    // Handle progress updates (optional - for streaming output)
+    ToolExecutionProgress* progress = static_cast<ToolExecutionProgress*>( aEvent.GetClientData() );
+    if( !progress )
+        return;
+
+    // Display progress in the chat
+    if( !progress->output_chunk.empty() )
+    {
+        wxString chunk = progress->output_chunk;
+        chunk.Replace( "\n", "<br>" );
+        AppendHtml( chunk );
+    }
+
+    delete progress;
+}
+
+
+void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
+                                      const std::string& aResult,
+                                      bool aSuccess )
+{
+    wxLogDebug( "AGENT: ProcessToolResult: id=%s success=%d result_len=%zu",
+                aToolUseId.c_str(), aSuccess, aResult.size() );
+
+    // Store the result in collected results
+    AgentConversationContext::ToolResult toolResult;
+    toolResult.tool_use_id = aToolUseId;
+    toolResult.result = aResult;
+    m_conversationCtx.completed_tool_results.push_back( toolResult );
+
+    // Also store as last (for backward compatibility)
+    m_conversationCtx.last_tool_use_id = aToolUseId;
+    m_conversationCtx.last_tool_result = aResult;
+
+    // Remove from pending
+    m_conversationCtx.RemovePendingToolCall( aToolUseId );
+
+    // Display result in UI
+    wxString htmlResult = aResult;
+    htmlResult.Replace( "\n", "<br>" );
+    htmlResult.Replace( " ", "&nbsp;" );
+
+    wxString statusIcon = aSuccess ? "✓" : "✗";
+    wxString statusColor = aSuccess ? "#4ec9b0" : "#f44747";
+
+    wxString resultBox = wxString::Format(
+        "<br><table width='100%%' bgcolor='#1e1e1e' cellpadding='10'><tr><td>"
+        "<font color='%s' face='Courier New' size='2'>%s Result:</font><br>"
+        "<font color='#d4d4d4' face='Courier New' size='2'>%s</font>"
+        "</td></tr></table>",
+        statusColor, statusIcon, htmlResult );
+    AppendHtml( resultBox );
+
+    // Transition to PROCESSING_TOOL_RESULT
+    m_conversationCtx.TransitionTo( AgentConversationState::PROCESSING_TOOL_RESULT );
+
+    // Check if there are more pending tools
+    if( m_conversationCtx.HasPendingToolCalls() )
+    {
+        // Execute next tool
+        PendingToolCall* next = m_conversationCtx.GetNextPendingToolCall();
+        if( next )
+        {
+            // Show "Running..." state
+            wxString runningHtml = wxString::Format(
+                "<br><font color='#888888'><i>Running %s...</i></font>", next->tool_name );
+            AppendHtml( runningHtml );
+
+            ExecuteToolAsync( next->tool_name, next->tool_input, next->tool_use_id );
+        }
+    }
+    else
+    {
+        // All tools done, continue conversation
+        ContinueConversationWithToolResult();
+    }
+}
+
+
+void AGENT_FRAME::ContinueConversationWithToolResult()
+{
+    wxLogDebug( "AGENT: ContinueConversationWithToolResult called with %zu results",
+                m_conversationCtx.completed_tool_results.size() );
+
+    // Add all collected tool results to history as a single user message
+    // with multiple tool_result content blocks (per Anthropic API spec)
+    using json = nlohmann::json;
+
+    if( !m_conversationCtx.completed_tool_results.empty() )
+    {
+        json toolResultMsg;
+        toolResultMsg["role"] = "user";
+        json content = json::array();
+
+        for( const auto& result : m_conversationCtx.completed_tool_results )
+        {
+            content.push_back( {
+                { "type", "tool_result" },
+                { "tool_use_id", result.tool_use_id },
+                { "content", result.result }
+            } );
+        }
+
+        toolResultMsg["content"] = content;
+        m_chatHistory.push_back( toolResultMsg );
+
+        // Clear collected results
+        m_conversationCtx.completed_tool_results.clear();
+    }
+
+    // Transition to WAITING_FOR_LLM
+    m_conversationCtx.TransitionTo( AgentConversationState::WAITING_FOR_LLM );
+
+    // Continue the conversation
+    AppendHtml( "<p><b>Agent:</b> " );
+    m_currentResponse = "";
+
+    wxString model = m_modelChoice->GetStringSelection();
+    m_llmClient->SetModel( model.ToStdString() );
+
+    std::string systemPrompt = GetSystemPrompt();
+
+    // Use async LLM streaming (non-blocking)
+    StartAsyncLLMRequest();
+}
+
+
+// ============================================================================
+// Async LLM Streaming Event Handlers
+// ============================================================================
+
+void AGENT_FRAME::StartAsyncLLMRequest()
+{
+    wxString model = m_modelChoice->GetStringSelection();
+    m_llmClient->SetModel( model.ToStdString() );
+
+    std::string systemPrompt = GetSystemPrompt();
+
+    // Start async request - returns immediately
+    if( !m_llmClient->AskStreamWithToolsAsync( m_chatHistory, systemPrompt, m_tools, this ) )
+    {
+        wxLogDebug( "AGENT: Failed to start async LLM request" );
+        AppendHtml( "<p><font color='red'>Error: Failed to start LLM request</font></p>" );
+        m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
+        m_actionButton->SetLabel( "->" );
+    }
+}
+
+
+void AGENT_FRAME::OnLLMStreamChunk( wxThreadEvent& aEvent )
+{
+    // Get the chunk data from the event payload
+    LLMStreamChunk* chunk = aEvent.GetPayload<LLMStreamChunk*>();
+    if( !chunk )
+        return;
+
+    // Process the chunk
+    HandleLLMChunk( *chunk );
+
+    // Clean up
+    delete chunk;
+}
+
+
+void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
+{
+    // Ignore events if stop was requested
+    if( m_stopRequested )
+        return;
+
+    switch( aChunk.type )
+    {
+    case LLMChunkType::TEXT:
+    {
+        // Accumulate text and display
+        m_currentResponse += aChunk.text;
+
+        wxString displayContent = aChunk.text;
+        displayContent.Replace( "\n", "<br>" );
+        AppendHtml( displayContent );
+
+        // Auto-scroll
+        int x, y;
+        m_chatWindow->GetVirtualSize( &x, &y );
+        m_chatWindow->Scroll( 0, y );
+        break;
+    }
+    case LLMChunkType::TOOL_USE:
+    {
+        // Parse tool input JSON
+        nlohmann::json toolInput;
+        try
+        {
+            if( !aChunk.tool_input_json.empty() )
+            {
+                toolInput = nlohmann::json::parse( aChunk.tool_input_json );
+            }
+        }
+        catch( const nlohmann::json::exception& e )
+        {
+            wxLogDebug( "AGENT: Failed to parse tool input JSON: %s", e.what() );
+            toolInput = nlohmann::json::object();
+        }
+
+        // Store tool call for execution
+        nlohmann::json toolCall;
+        toolCall["type"] = "tool_use";
+        toolCall["id"] = aChunk.tool_use_id;
+        toolCall["name"] = aChunk.tool_name;
+        toolCall["input"] = toolInput;
+
+        m_pendingToolCalls.push_back( toolCall );
+
+        // Display tool call in UI
+        wxString toolHtml = wxString::Format(
+            "<br><font color='#569cd6'>🔧 Tool:</font> <b>%s</b><br>"
+            "<font color='#6a9955' face='Courier New' size='2'>%s</font>",
+            aChunk.tool_name, aChunk.tool_input_json );
+        AppendHtml( toolHtml );
+        break;
+    }
+    case LLMChunkType::TOOL_USE_DONE:
+    {
+        fprintf( stderr, "AGENT HandleLLMChunk: TOOL_USE_DONE received\n" );
+        fflush( stderr );
+
+        // All tool calls received, execute them asynchronously
+        if( m_pendingToolCalls.is_array() && !m_pendingToolCalls.empty() )
+        {
+            fprintf( stderr, "AGENT HandleLLMChunk: %zu pending tool calls\n", m_pendingToolCalls.size() );
+            fflush( stderr );
+
+            // Transition to TOOL_USE_DETECTED state
+            m_conversationCtx.TransitionTo( AgentConversationState::TOOL_USE_DETECTED );
+
+            // Add assistant message with tool use blocks to history
+            AddAssistantToolUseToHistory( m_pendingToolCalls );
+
+            // Queue all tools for async execution
+            for( const auto& toolCall : m_pendingToolCalls )
+            {
+                std::string toolId = toolCall.value( "id", "" );
+                std::string toolName = toolCall.value( "name", "" );
+                nlohmann::json toolInput = toolCall.value( "input", nlohmann::json::object() );
+
+                fprintf( stderr, "AGENT HandleLLMChunk: Queueing tool '%s' id='%s'\n",
+                         toolName.c_str(), toolId.c_str() );
+                fflush( stderr );
+
+                PendingToolCall pending( toolId, toolName, toolInput );
+                m_conversationCtx.AddPendingToolCall( pending );
+            }
+
+            // Clear the JSON array (tools are now in state machine)
+            m_pendingToolCalls = nlohmann::json::array();
+
+            // Start executing the first tool asynchronously
+            PendingToolCall* first = m_conversationCtx.GetNextPendingToolCall();
+            if( first )
+            {
+                fprintf( stderr, "AGENT HandleLLMChunk: Starting first tool '%s'\n", first->tool_name.c_str() );
+                fflush( stderr );
+
+                // Show "Running..." state
+                wxString runningHtml = wxString::Format(
+                    "<br><font color='#888888'><i>Running %s...</i></font>", first->tool_name );
+                AppendHtml( runningHtml );
+
+                // Execute async - returns immediately, result comes via event
+                ExecuteToolAsync( first->tool_name, first->tool_input, first->tool_use_id );
+            }
+        }
+        break;
+    }
+    case LLMChunkType::END_TURN:
+    {
+        // Model finished
+        AppendHtml( "</p>" );
+        m_actionButton->SetLabel( "->" );
+
+        // Add final assistant message to history if there's accumulated text
+        if( !m_currentResponse.empty() )
+        {
+            m_chatHistory.push_back( {
+                { "role", "assistant" },
+                { "content", m_currentResponse }
+            } );
+        }
+
+        m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
+        break;
+    }
+    case LLMChunkType::ERROR:
+    {
+        wxString errorHtml = wxString::Format( "<p><font color='red'><b>Error:</b> %s</font></p>",
+                                               aChunk.error_message );
+        AppendHtml( errorHtml );
+        m_actionButton->SetLabel( "->" );
+        m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
+        break;
+    }
+    }
+}
+
+
+void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
+{
+    wxLogDebug( "AGENT: OnLLMStreamComplete called" );
+
+    // Get completion data
+    LLMStreamComplete* complete = aEvent.GetPayload<LLMStreamComplete*>();
+    if( complete )
+    {
+        if( !complete->success )
+        {
+            wxString errorHtml = wxString::Format( "<p><font color='red'><b>Error:</b> %s</font></p>",
+                                                   complete->error_message );
+            AppendHtml( errorHtml );
+        }
+        delete complete;
+    }
+
+    // If we're still waiting for LLM (no tool calls), transition to IDLE
+    if( m_conversationCtx.GetState() == AgentConversationState::WAITING_FOR_LLM )
+    {
+        m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
+        m_actionButton->SetLabel( "->" );
+    }
+}
+
+
+void AGENT_FRAME::OnLLMStreamError( wxThreadEvent& aEvent )
+{
+    wxLogDebug( "AGENT: OnLLMStreamError called" );
+
+    // Get error data
+    LLMStreamComplete* complete = aEvent.GetPayload<LLMStreamComplete*>();
+    if( complete )
+    {
+        wxString errorHtml = wxString::Format( "<p><font color='red'><b>Error:</b> %s</font></p>",
+                                               complete->error_message );
+        AppendHtml( errorHtml );
+        delete complete;
+    }
+
+    m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
+    m_actionButton->SetLabel( "->" );
 }

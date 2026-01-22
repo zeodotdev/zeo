@@ -79,6 +79,82 @@ namespace kiapi { namespace schematic { namespace commands {
     class GetBusMembersResponse;
     class GetNetItems;
     class GetNetItemsResponse;
+    // Grid settings commands
+    class GetGridSettings;
+    class GetGridSettingsResponse;
+    class SetGridSettings;
+    // ERC settings commands
+    class GetERCSettings;
+    class GetERCSettingsResponse;
+    class SetERCSettings;
+    // Net class commands
+    class AssignNetToClass;
+    // Editor preferences commands
+    class GetEditorPreferences;
+    class GetEditorPreferencesResponse;
+    class SetEditorPreferences;
+    // Simulation settings commands
+    class GetSimulationSettings;
+    class GetSimulationSettingsResponse;
+    class SetSimulationSettings;
+    // Library query commands
+    class GetLibrarySymbols;
+    class GetLibrarySymbolsResponse;
+    class SearchLibrarySymbols;
+    class SearchLibrarySymbolsResponse;
+    class GetSymbolInfo;
+    class GetSymbolInfoResponse;
+    class GetTransformedPinPosition;
+    class GetTransformedPinPositionResponse;
+    // Simulation commands
+    class RunSimulation;
+    class RunSimulationResponse;
+    class GetSimulationResults;
+    class GetSimulationResultsResponse;
+    // Export commands
+    class ExportNetlist;
+    class ExportNetlistResponse;
+    class ExportBOM;
+    class ExportBOMResponse;
+    class ExportPlot;
+    class ExportPlotResponse;
+    // Undo/Redo commands
+    class GetUndoHistory;
+    class GetUndoHistoryResponse;
+    class Undo;
+    class UndoResponse;
+    class Redo;
+    class RedoResponse;
+    // Viewport commands
+    class GetViewport;
+    class GetViewportResponse;
+    class SetViewport;
+    class ZoomToFit;
+    class ZoomToItems;
+    // Highlighting commands
+    class HighlightNet;
+    class ClearHighlight;
+    // Cross-probe commands
+    class CrossProbeToBoard;
+    class CrossProbeResponse;
+    class CrossProbeFromBoard;
+    class CrossProbeFromBoardResponse;
+    // ERC Pin Type Matrix commands
+    class GetPinTypeMatrix;
+    class GetPinTypeMatrixResponse;
+    class SetPinTypeMatrix;
+    // Design Block commands
+    class GetDesignBlocks;
+    class GetDesignBlocksResponse;
+    class SearchDesignBlocks;
+    class SearchDesignBlocksResponse;
+    class SaveSelectionAsDesignBlock;
+    class SaveSheetAsDesignBlock;
+    class SaveDesignBlockResponse;
+    class DeleteDesignBlock;
+    class DeleteDesignBlockResponse;
+    class PlaceDesignBlock;
+    class PlaceDesignBlockResponse;
 } } }
 
 class SCH_EDIT_FRAME;
@@ -143,6 +219,9 @@ private:
 
     HANDLER_RESULT<commands::AddLibraryResponse>
     handleAddLibrary( const HANDLER_CONTEXT<commands::AddLibrary>& aCtx );
+
+    HANDLER_RESULT<commands::RemoveLibraryResponse>
+    handleRemoveLibrary( const HANDLER_CONTEXT<commands::RemoveLibrary>& aCtx );
 
     // Document management handlers
     HANDLER_RESULT<commands::CreateDocumentResponse>
@@ -231,6 +310,131 @@ private:
 
     HANDLER_RESULT<schematic::commands::GetNetItemsResponse>
     handleGetNetItems( const HANDLER_CONTEXT<schematic::commands::GetNetItems>& aCtx );
+
+    // Grid settings handlers
+    HANDLER_RESULT<schematic::commands::GetGridSettingsResponse>
+    handleGetGridSettings( const HANDLER_CONTEXT<schematic::commands::GetGridSettings>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetGridSettings( const HANDLER_CONTEXT<schematic::commands::SetGridSettings>& aCtx );
+
+    // ERC settings handlers
+    HANDLER_RESULT<schematic::commands::GetERCSettingsResponse>
+    handleGetERCSettings( const HANDLER_CONTEXT<schematic::commands::GetERCSettings>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetERCSettings( const HANDLER_CONTEXT<schematic::commands::SetERCSettings>& aCtx );
+
+    // Net class handlers
+    HANDLER_RESULT<Empty>
+    handleAssignNetToClass( const HANDLER_CONTEXT<schematic::commands::AssignNetToClass>& aCtx );
+
+    // Editor preferences handlers
+    HANDLER_RESULT<schematic::commands::GetEditorPreferencesResponse>
+    handleGetEditorPreferences( const HANDLER_CONTEXT<schematic::commands::GetEditorPreferences>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetEditorPreferences( const HANDLER_CONTEXT<schematic::commands::SetEditorPreferences>& aCtx );
+
+    // Simulation settings handlers
+    HANDLER_RESULT<schematic::commands::GetSimulationSettingsResponse>
+    handleGetSimulationSettings( const HANDLER_CONTEXT<schematic::commands::GetSimulationSettings>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetSimulationSettings( const HANDLER_CONTEXT<schematic::commands::SetSimulationSettings>& aCtx );
+
+    // Library query handlers
+    HANDLER_RESULT<schematic::commands::GetLibrarySymbolsResponse>
+    handleGetLibrarySymbols( const HANDLER_CONTEXT<schematic::commands::GetLibrarySymbols>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::SearchLibrarySymbolsResponse>
+    handleSearchLibrarySymbols( const HANDLER_CONTEXT<schematic::commands::SearchLibrarySymbols>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetSymbolInfoResponse>
+    handleGetSymbolInfo( const HANDLER_CONTEXT<schematic::commands::GetSymbolInfo>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetTransformedPinPositionResponse>
+    handleGetTransformedPinPosition( const HANDLER_CONTEXT<schematic::commands::GetTransformedPinPosition>& aCtx );
+
+    // Simulation handlers
+    HANDLER_RESULT<schematic::commands::RunSimulationResponse>
+    handleRunSimulation( const HANDLER_CONTEXT<schematic::commands::RunSimulation>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetSimulationResultsResponse>
+    handleGetSimulationResults( const HANDLER_CONTEXT<schematic::commands::GetSimulationResults>& aCtx );
+
+    // Export handlers
+    HANDLER_RESULT<schematic::commands::ExportNetlistResponse>
+    handleExportNetlist( const HANDLER_CONTEXT<schematic::commands::ExportNetlist>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::ExportBOMResponse>
+    handleExportBOM( const HANDLER_CONTEXT<schematic::commands::ExportBOM>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::ExportPlotResponse>
+    handleExportPlot( const HANDLER_CONTEXT<schematic::commands::ExportPlot>& aCtx );
+
+    // Undo/Redo handlers
+    HANDLER_RESULT<schematic::commands::GetUndoHistoryResponse>
+    handleGetUndoHistory( const HANDLER_CONTEXT<schematic::commands::GetUndoHistory>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::UndoResponse>
+    handleUndo( const HANDLER_CONTEXT<schematic::commands::Undo>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::RedoResponse>
+    handleRedo( const HANDLER_CONTEXT<schematic::commands::Redo>& aCtx );
+
+    // Viewport handlers
+    HANDLER_RESULT<schematic::commands::GetViewportResponse>
+    handleGetViewport( const HANDLER_CONTEXT<schematic::commands::GetViewport>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetViewport( const HANDLER_CONTEXT<schematic::commands::SetViewport>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleZoomToFit( const HANDLER_CONTEXT<schematic::commands::ZoomToFit>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleZoomToItems( const HANDLER_CONTEXT<schematic::commands::ZoomToItems>& aCtx );
+
+    // Highlighting handlers
+    HANDLER_RESULT<Empty>
+    handleHighlightNet( const HANDLER_CONTEXT<schematic::commands::HighlightNet>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleClearHighlight( const HANDLER_CONTEXT<schematic::commands::ClearHighlight>& aCtx );
+
+    // Cross-probe handlers
+    HANDLER_RESULT<schematic::commands::CrossProbeResponse>
+    handleCrossProbeToBoard( const HANDLER_CONTEXT<schematic::commands::CrossProbeToBoard>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::CrossProbeFromBoardResponse>
+    handleCrossProbeFromBoard( const HANDLER_CONTEXT<schematic::commands::CrossProbeFromBoard>& aCtx );
+
+    // ERC Pin Type Matrix handlers
+    HANDLER_RESULT<schematic::commands::GetPinTypeMatrixResponse>
+    handleGetPinTypeMatrix( const HANDLER_CONTEXT<schematic::commands::GetPinTypeMatrix>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetPinTypeMatrix( const HANDLER_CONTEXT<schematic::commands::SetPinTypeMatrix>& aCtx );
+
+    // Design Block handlers
+    HANDLER_RESULT<schematic::commands::GetDesignBlocksResponse>
+    handleGetDesignBlocks( const HANDLER_CONTEXT<schematic::commands::GetDesignBlocks>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::SearchDesignBlocksResponse>
+    handleSearchDesignBlocks( const HANDLER_CONTEXT<schematic::commands::SearchDesignBlocks>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::SaveDesignBlockResponse>
+    handleSaveSelectionAsDesignBlock( const HANDLER_CONTEXT<schematic::commands::SaveSelectionAsDesignBlock>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::SaveDesignBlockResponse>
+    handleSaveSheetAsDesignBlock( const HANDLER_CONTEXT<schematic::commands::SaveSheetAsDesignBlock>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::DeleteDesignBlockResponse>
+    handleDeleteDesignBlock( const HANDLER_CONTEXT<schematic::commands::DeleteDesignBlock>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::PlaceDesignBlockResponse>
+    handlePlaceDesignBlock( const HANDLER_CONTEXT<schematic::commands::PlaceDesignBlock>& aCtx );
 
     // Title block handlers
     HANDLER_RESULT<types::TitleBlockInfo>

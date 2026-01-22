@@ -603,3 +603,29 @@ message AddLibraryResponse
   // Error message if status is not OK
   string error_message = 3;
 }
+
+// Removes a library from the library table
+message RemoveLibrary
+{
+  // The nickname of the library to remove
+  string nickname = 1;
+
+  // Which table to remove from (global or project)
+  LibraryTableScope scope = 2;
+}
+
+enum RemoveLibraryStatus
+{
+  RLS_UNKNOWN        = 0;
+  RLS_OK             = 1;  // Library was removed successfully
+  RLS_NOT_FOUND      = 2;  // No library with this nickname exists in the table
+  RLS_TABLE_NOT_FOUND = 3; // The specified table doesn't exist (e.g., no project loaded)
+}
+
+message RemoveLibraryResponse
+{
+  RemoveLibraryStatus status = 1;
+
+  // Error message if status is not OK
+  string error_message = 2;
+}

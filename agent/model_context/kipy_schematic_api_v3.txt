@@ -256,6 +256,77 @@ sch.get_unconnected_pins() -> List[dict]
     """
 
 ================================================================================
+AUTO-WIRING WITH L-SHAPED ROUTING (RECOMMENDED FOR MOST CONNECTIONS!)
+================================================================================
+
+These functions automatically create clean orthogonal (right-angle) wire routes.
+Use these instead of wire_pins() when pins are not aligned!
+
+sch.auto_wire(symbol1, pin_id1, symbol2, pin_id2, style="L") -> List[Wire]
+    """Automatically wire between two pins using L-shaped orthogonal routing.
+
+    This creates clean right-angle wire routes instead of diagonal lines.
+    The routing automatically chooses horizontal-first or vertical-first
+    based on the relative positions of the pins.
+
+    Args:
+        symbol1: First symbol
+        pin_id1: Pin on first symbol (name or number)
+        symbol2: Second symbol
+        pin_id2: Pin on second symbol (name or number)
+        style: Routing style:
+               - "L": Auto-choose best L-route (DEFAULT - use this!)
+               - "L_horizontal_first": Go horizontal, then vertical
+               - "L_vertical_first": Go vertical, then horizontal
+               - "direct": Single straight wire (may be diagonal)
+
+    Returns:
+        List of Wire objects (1 wire if aligned, 2 wires for L-route)
+
+    Example:
+        mosfet = sch.add_symbol("Device:Q_NMOS_GSD", Vector2.from_xy_mm(100, 80))
+        resistor = sch.add_symbol("Device:R", Vector2.from_xy_mm(130, 60))
+        # Creates L-shaped route from drain to resistor
+        wires = sch.auto_wire(mosfet, "D", resistor, "1")
+    """
+
+sch.auto_wire_to_point(symbol, pin_id, point_mm, style="L") -> List[Wire]
+    """Automatically wire from a pin to a coordinate point.
+
+    Args:
+        symbol: The symbol containing the pin
+        pin_id: Pin identifier (name or number)
+        point_mm: Target point as (x_mm, y_mm) tuple
+        style: Routing style (same as auto_wire)
+
+    Example:
+        # Wire from MOSFET source to switch node junction
+        wires = sch.auto_wire_to_point(mosfet, "S", (100, 90))
+    """
+
+sch.connect_to_junction(pins, junction_mm, style="L") -> Tuple[List[Wire], Junction]
+    """Connect multiple pins to a common junction point (star connection).
+
+    This is perfect for nodes like switch nodes in buck converters where
+    multiple components meet at one point.
+
+    Args:
+        pins: List of (symbol, pin_id) tuples
+        junction_mm: Junction location as (x_mm, y_mm)
+        style: Routing style for each wire
+
+    Returns:
+        Tuple of (list of all wires, junction object)
+
+    Example:
+        # Buck converter switch node: MOSFET source + diode cathode + inductor
+        wires, junction = sch.connect_to_junction(
+            [(mosfet, "S"), (diode, "K"), (inductor, "1")],
+            junction_mm=(100, 90)
+        )
+    """
+
+================================================================================
 IMPORTANT: WHY USE PIN-BASED WIRING?
 ================================================================================
 
@@ -269,39 +340,32 @@ SOLUTION: Pin-based wiring uses EXACT positions:
   # This ALWAYS connects correctly!
   sch.wire_pins(r1, "2", r2, "1")
 
-ALWAYS prefer:
-  - sch.wire_pins() for direct connections
-  - sch.wire_path() for routed connections
-  - sch.wire_from_pin() / sch.wire_to_pin() for junctions
+ALWAYS prefer (in order of preference):
+  1. sch.auto_wire() - L-shaped routing, works for any pin positions
+  2. sch.connect_to_junction() - for star connections (3+ components to one point)
+  3. sch.wire_pins() - direct connections when pins are aligned
+  4. sch.auto_wire_to_point() - pin to coordinate with L-routing
+  5. sch.wire_from_pin() / sch.wire_to_pin() - for manual junction wiring
 
 ================================================================================
-*** WARNING: PIN POSITION CLUSTERING ***
+PIN POSITION NOTES
 ================================================================================
 
-KNOWN ISSUE: Some symbols (especially transistors like BSS138) report ALL pins
-at nearly the SAME position (within 0.1mm of each other at symbol center).
+PIN ROTATION SUPPORT:
+  The get_pin_position() function now automatically transforms pin positions
+  to account for symbol rotation and mirroring. This means pins on rotated
+  symbols will report their correct world-space positions.
 
-Example - BSS138 MOSFET pin positions:
-  Gate:   (95.20, 59.69)mm
-  Source: (95.28, 59.74)mm  <- Only 0.05mm difference!
-  Drain:  (95.28, 59.64)mm  <- Only 0.1mm difference!
-
-This is a LIMITATION of the KiCad IPC API - pin positions may not reflect
-the actual visual/electrical connection points in the schematic.
-
-WORKAROUNDS:
-  1. Use SIMPLE components first (resistors, capacitors work well)
-  2. For transistors, use wire_pins() and accept some may show "unconnected"
-  3. Verify connections VISUALLY in KiCad after placement
-  4. For complex circuits, place components with EXTRA spacing (40-50mm)
-  5. Use Device:Q_NPN_BCE or Device:Q_NMOS_GSD generic symbols when possible
-     (they may have better pin position reporting)
+CLUSTERING NOTE: Some symbols (especially transistors) have pins very close
+together in the symbol definition. This is normal - use auto_wire() which
+handles this correctly.
 
 RECOMMENDED APPROACH FOR MULTI-PIN COMPONENTS:
-  1. Place the component
-  2. Print ALL pin positions to see the actual layout
-  3. If pins are clustered, wire to the component CENTER
-  4. Let KiCad's internal connectivity handle the connection
+  1. Place components using add_symbol() with desired angle/mirror
+  2. Use auto_wire() or connect_to_junction() for wiring - these use exact
+     pin positions automatically
+  3. For complex nodes (3+ components), use connect_to_junction()
+  4. Prefer generic symbols (Device:Q_NMOS_GSD) for better pin spacing
 
 ================================================================================
 IMPORTANT UNITS - READ CAREFULLY!

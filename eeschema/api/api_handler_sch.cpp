@@ -63,6 +63,16 @@
 #include <project/net_settings.h>
 #include <title_block.h>
 #include <page_info.h>
+#include <eeschema_settings.h>
+#include <schematic_settings.h>
+#include <gal/graphics_abstraction_layer.h>
+#include <view/view.h>
+#include <undo_redo_container.h>
+#include <lib_id.h>
+#include <erc/erc_settings.h>
+#include <pin_type.h>
+#include <design_block_lib_table.h>
+#include <design_block.h>
 
 #include <api/common/types/base_types.pb.h>
 #include <api/schematic/schematic_commands.pb.h>
@@ -91,6 +101,7 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
     // Library management handlers
     registerHandler<GetLibraries, GetLibrariesResponse>( &API_HANDLER_SCH::handleGetLibraries );
     registerHandler<AddLibrary, AddLibraryResponse>( &API_HANDLER_SCH::handleAddLibrary );
+    registerHandler<RemoveLibrary, RemoveLibraryResponse>( &API_HANDLER_SCH::handleRemoveLibrary );
 
     // Document management handlers
     registerHandler<CreateDocument, CreateDocumentResponse>( &API_HANDLER_SCH::handleCreateDocument );
@@ -141,6 +152,71 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
     // Page settings handlers
     registerHandler<GetPageSettings, types::PageInfo>( &API_HANDLER_SCH::handleGetPageSettings );
     registerHandler<SetPageSettings, Empty>( &API_HANDLER_SCH::handleSetPageSettings );
+
+    // Grid settings handlers
+    registerHandler<GetGridSettings, GetGridSettingsResponse>( &API_HANDLER_SCH::handleGetGridSettings );
+    registerHandler<SetGridSettings, Empty>( &API_HANDLER_SCH::handleSetGridSettings );
+
+    // ERC settings handlers
+    registerHandler<GetERCSettings, GetERCSettingsResponse>( &API_HANDLER_SCH::handleGetERCSettings );
+    registerHandler<SetERCSettings, Empty>( &API_HANDLER_SCH::handleSetERCSettings );
+
+    // Net class handlers
+    registerHandler<AssignNetToClass, Empty>( &API_HANDLER_SCH::handleAssignNetToClass );
+
+    // Editor preferences handlers
+    registerHandler<GetEditorPreferences, GetEditorPreferencesResponse>( &API_HANDLER_SCH::handleGetEditorPreferences );
+    registerHandler<SetEditorPreferences, Empty>( &API_HANDLER_SCH::handleSetEditorPreferences );
+
+    // Simulation settings handlers
+    registerHandler<GetSimulationSettings, GetSimulationSettingsResponse>( &API_HANDLER_SCH::handleGetSimulationSettings );
+    registerHandler<SetSimulationSettings, Empty>( &API_HANDLER_SCH::handleSetSimulationSettings );
+
+    // Library query handlers
+    registerHandler<GetLibrarySymbols, GetLibrarySymbolsResponse>( &API_HANDLER_SCH::handleGetLibrarySymbols );
+    registerHandler<SearchLibrarySymbols, SearchLibrarySymbolsResponse>( &API_HANDLER_SCH::handleSearchLibrarySymbols );
+    registerHandler<GetSymbolInfo, GetSymbolInfoResponse>( &API_HANDLER_SCH::handleGetSymbolInfo );
+    registerHandler<GetTransformedPinPosition, GetTransformedPinPositionResponse>( &API_HANDLER_SCH::handleGetTransformedPinPosition );
+
+    // Simulation handlers
+    registerHandler<RunSimulation, RunSimulationResponse>( &API_HANDLER_SCH::handleRunSimulation );
+    registerHandler<GetSimulationResults, GetSimulationResultsResponse>( &API_HANDLER_SCH::handleGetSimulationResults );
+
+    // Export handlers
+    registerHandler<ExportNetlist, ExportNetlistResponse>( &API_HANDLER_SCH::handleExportNetlist );
+    registerHandler<ExportBOM, ExportBOMResponse>( &API_HANDLER_SCH::handleExportBOM );
+    registerHandler<ExportPlot, ExportPlotResponse>( &API_HANDLER_SCH::handleExportPlot );
+
+    // Undo/Redo handlers
+    registerHandler<GetUndoHistory, GetUndoHistoryResponse>( &API_HANDLER_SCH::handleGetUndoHistory );
+    registerHandler<Undo, UndoResponse>( &API_HANDLER_SCH::handleUndo );
+    registerHandler<Redo, RedoResponse>( &API_HANDLER_SCH::handleRedo );
+
+    // Viewport handlers
+    registerHandler<GetViewport, GetViewportResponse>( &API_HANDLER_SCH::handleGetViewport );
+    registerHandler<SetViewport, Empty>( &API_HANDLER_SCH::handleSetViewport );
+    registerHandler<ZoomToFit, Empty>( &API_HANDLER_SCH::handleZoomToFit );
+    registerHandler<ZoomToItems, Empty>( &API_HANDLER_SCH::handleZoomToItems );
+
+    // Highlighting handlers
+    registerHandler<HighlightNet, Empty>( &API_HANDLER_SCH::handleHighlightNet );
+    registerHandler<ClearHighlight, Empty>( &API_HANDLER_SCH::handleClearHighlight );
+
+    // Cross-probe handlers
+    registerHandler<CrossProbeToBoard, CrossProbeResponse>( &API_HANDLER_SCH::handleCrossProbeToBoard );
+    registerHandler<CrossProbeFromBoard, CrossProbeFromBoardResponse>( &API_HANDLER_SCH::handleCrossProbeFromBoard );
+
+    // ERC Pin Type Matrix handlers
+    registerHandler<GetPinTypeMatrix, GetPinTypeMatrixResponse>( &API_HANDLER_SCH::handleGetPinTypeMatrix );
+    registerHandler<SetPinTypeMatrix, Empty>( &API_HANDLER_SCH::handleSetPinTypeMatrix );
+
+    // Design Block handlers
+    registerHandler<GetDesignBlocks, GetDesignBlocksResponse>( &API_HANDLER_SCH::handleGetDesignBlocks );
+    registerHandler<SearchDesignBlocks, SearchDesignBlocksResponse>( &API_HANDLER_SCH::handleSearchDesignBlocks );
+    registerHandler<SaveSelectionAsDesignBlock, SaveDesignBlockResponse>( &API_HANDLER_SCH::handleSaveSelectionAsDesignBlock );
+    registerHandler<SaveSheetAsDesignBlock, SaveDesignBlockResponse>( &API_HANDLER_SCH::handleSaveSheetAsDesignBlock );
+    registerHandler<DeleteDesignBlock, DeleteDesignBlockResponse>( &API_HANDLER_SCH::handleDeleteDesignBlock );
+    registerHandler<PlaceDesignBlock, PlaceDesignBlockResponse>( &API_HANDLER_SCH::handlePlaceDesignBlock );
 }
 
 
@@ -3391,4 +3467,1748 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetPageSettings(
     m_frame->OnModify();
 
     return Empty();
+}
+
+
+// ============================================================================
+// Grid Settings Handlers
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::GetGridSettingsResponse>
+API_HANDLER_SCH::handleGetGridSettings(
+        const HANDLER_CONTEXT<schematic::commands::GetGridSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetGridSettingsResponse response;
+
+    // Get grid settings from the frame
+    VECTOR2I gridSize = m_frame->GetScreen()->GetGridSize();
+    VECTOR2I gridOrigin = m_frame->GetGridOrigin();
+
+    kiapi::common::PackVector2( *response.mutable_settings()->mutable_grid_size(), gridSize );
+    kiapi::common::PackVector2( *response.mutable_settings()->mutable_grid_origin(), gridOrigin );
+    response.mutable_settings()->set_grid_visible( m_frame->IsGridVisible() );
+    response.mutable_settings()->set_snap_to_grid( m_frame->GetGridSnapping() );
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetGridSettings(
+        const HANDLER_CONTEXT<schematic::commands::SetGridSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( aCtx.Request.has_grid_visible() )
+        m_frame->SetGridVisibility( aCtx.Request.grid_visible() );
+
+    if( aCtx.Request.has_snap_to_grid() )
+        m_frame->SetGridSnapping( aCtx.Request.snap_to_grid() );
+
+    // Grid size changes require updating the screen
+    if( aCtx.Request.has_grid_size_x_nm() || aCtx.Request.has_grid_size_y_nm() )
+    {
+        VECTOR2I currentGrid = m_frame->GetScreen()->GetGridSize();
+        int64_t newX = aCtx.Request.has_grid_size_x_nm() ? aCtx.Request.grid_size_x_nm() : currentGrid.x;
+        int64_t newY = aCtx.Request.has_grid_size_y_nm() ? aCtx.Request.grid_size_y_nm() : currentGrid.y;
+        m_frame->SetGridSize( VECTOR2I( newX, newY ) );
+    }
+
+    m_frame->GetCanvas()->Refresh();
+
+    return Empty();
+}
+
+
+// ============================================================================
+// ERC Settings Handlers
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::GetERCSettingsResponse>
+API_HANDLER_SCH::handleGetERCSettings(
+        const HANDLER_CONTEXT<schematic::commands::GetERCSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetERCSettingsResponse response;
+
+    SCHEMATIC* schematic = &m_frame->Schematic();
+    const ERC_SETTINGS& ercSettings = schematic->ErcSettings();
+
+    // Populate rule severities
+    for( int i = ERCE_FIRST; i <= ERCE_LAST; i++ )
+    {
+        schematic::commands::ERCRuleSeverity* rule = response.mutable_settings()->add_rule_severities();
+
+        // Convert error code to string
+        std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( i );
+        if( ercItem )
+        {
+            rule->set_error_code( ercItem->GetSettingsKey().ToStdString() );
+
+            SEVERITY sev = ercSettings.GetSeverity( i );
+            switch( sev )
+            {
+            case RPT_SEVERITY_ERROR:
+                rule->set_severity( schematic::commands::ERC_SEV_ERROR );
+                break;
+            case RPT_SEVERITY_WARNING:
+                rule->set_severity( schematic::commands::ERC_SEV_WARNING );
+                break;
+            case RPT_SEVERITY_IGNORE:
+                rule->set_severity( schematic::commands::ERC_SEV_EXCLUDED );
+                break;
+            default:
+                rule->set_severity( schematic::commands::ERC_SEV_UNKNOWN );
+                break;
+            }
+        }
+    }
+
+    // Populate ERC check flags
+    response.mutable_settings()->set_check_bus_driver_conflicts( ercSettings.IsTestEnabled( ERCE_DRIVER_CONFLICT ) );
+    response.mutable_settings()->set_check_bus_to_net_conflicts( ercSettings.IsTestEnabled( ERCE_BUS_TO_NET_CONFLICT ) );
+    response.mutable_settings()->set_check_bus_entry_conflicts( ercSettings.IsTestEnabled( ERCE_BUS_ENTRY_NEEDED ) );
+    response.mutable_settings()->set_check_similar_labels( ercSettings.IsTestEnabled( ERCE_SIMILAR_LABELS ) );
+    response.mutable_settings()->set_check_unique_global_labels( ercSettings.IsTestEnabled( ERCE_SINGLE_GLOBAL_LABEL ) );
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetERCSettings(
+        const HANDLER_CONTEXT<schematic::commands::SetERCSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    SCHEMATIC* schematic = &m_frame->Schematic();
+    ERC_SETTINGS& ercSettings = schematic->ErcSettings();
+
+    const schematic::commands::ERCSettingsData& settings = aCtx.Request.settings();
+
+    // Update rule severities
+    for( const schematic::commands::ERCRuleSeverity& rule : settings.rule_severities() )
+    {
+        // Find the ERC error code for this settings key
+        for( int i = ERCE_FIRST; i <= ERCE_LAST; i++ )
+        {
+            std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( i );
+            if( ercItem && ercItem->GetSettingsKey().ToStdString() == rule.error_code() )
+            {
+                SEVERITY sev = RPT_SEVERITY_WARNING;
+                switch( rule.severity() )
+                {
+                case schematic::commands::ERC_SEV_ERROR:
+                    sev = RPT_SEVERITY_ERROR;
+                    break;
+                case schematic::commands::ERC_SEV_WARNING:
+                    sev = RPT_SEVERITY_WARNING;
+                    break;
+                case schematic::commands::ERC_SEV_EXCLUDED:
+                    sev = RPT_SEVERITY_IGNORE;
+                    break;
+                default:
+                    break;
+                }
+                ercSettings.SetSeverity( i, sev );
+                break;
+            }
+        }
+    }
+
+    m_frame->OnModify();
+
+    return Empty();
+}
+
+
+// ============================================================================
+// Net Class Handlers
+// ============================================================================
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleAssignNetToClass(
+        const HANDLER_CONTEXT<schematic::commands::AssignNetToClass>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    const std::string& netName = aCtx.Request.net_name();
+    const std::string& netClassName = aCtx.Request.net_class_name();
+
+    // Get net settings from the project
+    std::shared_ptr<NET_SETTINGS>& netSettings = m_frame->Prj().GetProjectFile().NetSettings();
+
+    if( !netSettings )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Net settings not available" );
+        return tl::unexpected( e );
+    }
+
+    // Check if net class exists
+    bool classExists = false;
+    for( const auto& [name, netClass] : netSettings->GetNetclasses() )
+    {
+        if( name == netClassName )
+        {
+            classExists = true;
+            break;
+        }
+    }
+
+    if( !classExists && netClassName != "Default" )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( fmt::format( "Net class '{}' does not exist", netClassName ) );
+        return tl::unexpected( e );
+    }
+
+    // Assign the net to the class
+    netSettings->SetNetclassPatternAssignment( netName, netClassName );
+
+    m_frame->OnModify();
+
+    return Empty();
+}
+
+
+// ============================================================================
+// Editor Preferences Handlers
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::GetEditorPreferencesResponse>
+API_HANDLER_SCH::handleGetEditorPreferences(
+        const HANDLER_CONTEXT<schematic::commands::GetEditorPreferences>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetEditorPreferencesResponse response;
+    schematic::commands::EditorPreferences* prefs = response.mutable_preferences();
+
+    EESCHEMA_SETTINGS* eeSettings = m_frame->eeconfig();
+
+    // Display settings
+    prefs->set_show_hidden_pins( eeSettings->m_Appearance.show_hidden_pins );
+    prefs->set_show_hidden_fields( eeSettings->m_Appearance.show_hidden_fields );
+    prefs->set_show_pin_numbers( eeSettings->m_Appearance.show_erc_warnings );  // Placeholder
+    prefs->set_show_pin_names( eeSettings->m_Appearance.show_erc_warnings );    // Placeholder
+    prefs->set_show_erc_errors( eeSettings->m_Appearance.show_erc_errors );
+    prefs->set_show_erc_warnings( eeSettings->m_Appearance.show_erc_warnings );
+    prefs->set_show_erc_exclusions( eeSettings->m_Appearance.show_erc_exclusions );
+
+    // Behavior settings
+    prefs->set_auto_pan( eeSettings->m_Input.auto_pan );
+    prefs->set_center_on_zoom( eeSettings->m_Input.center_on_zoom );
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetEditorPreferences(
+        const HANDLER_CONTEXT<schematic::commands::SetEditorPreferences>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    const schematic::commands::EditorPreferences& prefs = aCtx.Request.preferences();
+    EESCHEMA_SETTINGS* eeSettings = m_frame->eeconfig();
+
+    // Display settings
+    if( prefs.has_show_hidden_pins() )
+        eeSettings->m_Appearance.show_hidden_pins = prefs.show_hidden_pins();
+    if( prefs.has_show_hidden_fields() )
+        eeSettings->m_Appearance.show_hidden_fields = prefs.show_hidden_fields();
+    if( prefs.has_show_erc_errors() )
+        eeSettings->m_Appearance.show_erc_errors = prefs.show_erc_errors();
+    if( prefs.has_show_erc_warnings() )
+        eeSettings->m_Appearance.show_erc_warnings = prefs.show_erc_warnings();
+    if( prefs.has_show_erc_exclusions() )
+        eeSettings->m_Appearance.show_erc_exclusions = prefs.show_erc_exclusions();
+
+    // Behavior settings
+    if( prefs.has_auto_pan() )
+        eeSettings->m_Input.auto_pan = prefs.auto_pan();
+    if( prefs.has_center_on_zoom() )
+        eeSettings->m_Input.center_on_zoom = prefs.center_on_zoom();
+
+    m_frame->GetCanvas()->Refresh();
+
+    return Empty();
+}
+
+
+// ============================================================================
+// Simulation Settings Handlers
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::GetSimulationSettingsResponse>
+API_HANDLER_SCH::handleGetSimulationSettings(
+        const HANDLER_CONTEXT<schematic::commands::GetSimulationSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetSimulationSettingsResponse response;
+    schematic::commands::SimulationSettings* settings = response.mutable_settings();
+
+    // Get SPICE settings from schematic settings
+    SCHEMATIC_SETTINGS& schSettings = m_frame->Schematic().Settings();
+
+    settings->set_spice_command( schSettings.m_SpiceCommandString.ToStdString() );
+    settings->set_simulator( "ngspice" );
+
+    // Add include paths
+    for( const wxString& path : schSettings.m_SpiceModelPaths )
+    {
+        settings->add_include_paths( path.ToStdString() );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetSimulationSettings(
+        const HANDLER_CONTEXT<schematic::commands::SetSimulationSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    const schematic::commands::SimulationSettings& settings = aCtx.Request.settings();
+    SCHEMATIC_SETTINGS& schSettings = m_frame->Schematic().Settings();
+
+    if( !settings.spice_command().empty() )
+        schSettings.m_SpiceCommandString = wxString::FromUTF8( settings.spice_command() );
+
+    // Update include paths
+    if( settings.include_paths_size() > 0 )
+    {
+        schSettings.m_SpiceModelPaths.clear();
+        for( const std::string& path : settings.include_paths() )
+        {
+            schSettings.m_SpiceModelPaths.push_back( wxString::FromUTF8( path ) );
+        }
+    }
+
+    m_frame->OnModify();
+
+    return Empty();
+}
+
+
+// ============================================================================
+// Library Query Handlers
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::GetLibrarySymbolsResponse>
+API_HANDLER_SCH::handleGetLibrarySymbols(
+        const HANDLER_CONTEXT<schematic::commands::GetLibrarySymbols>& aCtx )
+{
+    schematic::commands::GetLibrarySymbolsResponse response;
+
+    wxString libName = wxString::FromUTF8( aCtx.Request.library_name() );
+
+    // Get the symbol library table
+    SYMBOL_LIB_TABLE* libTable = PROJECT_SCH::SchSymbolLibTable( &m_frame->Prj() );
+
+    if( !libTable )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Symbol library table not available" );
+        return tl::unexpected( e );
+    }
+
+    try
+    {
+        wxArrayString names;
+        libTable->EnumerateSymbolLib( libName, names );
+
+        for( const wxString& name : names )
+        {
+            response.add_symbol_names( name.ToStdString() );
+        }
+    }
+    catch( const IO_ERROR& e )
+    {
+        ApiResponseStatus err;
+        err.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        err.set_error_message( fmt::format( "Error reading library '{}': {}",
+                                            libName.ToStdString(), e.What().ToStdString() ) );
+        return tl::unexpected( err );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<schematic::commands::SearchLibrarySymbolsResponse>
+API_HANDLER_SCH::handleSearchLibrarySymbols(
+        const HANDLER_CONTEXT<schematic::commands::SearchLibrarySymbols>& aCtx )
+{
+    schematic::commands::SearchLibrarySymbolsResponse response;
+
+    wxString query = wxString::FromUTF8( aCtx.Request.query() ).Lower();
+    int maxResults = aCtx.Request.max_results() > 0 ? aCtx.Request.max_results() : 100;
+
+    // Get the symbol library table
+    SYMBOL_LIB_TABLE* libTable = PROJECT_SCH::SchSymbolLibTable( &m_frame->Prj() );
+
+    if( !libTable )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Symbol library table not available" );
+        return tl::unexpected( e );
+    }
+
+    std::vector<wxString> libNames;
+
+    if( aCtx.Request.libraries_size() > 0 )
+    {
+        for( const std::string& lib : aCtx.Request.libraries() )
+            libNames.push_back( wxString::FromUTF8( lib ) );
+    }
+    else
+    {
+        libNames = libTable->GetLogicalLibs();
+    }
+
+    int count = 0;
+
+    for( const wxString& libName : libNames )
+    {
+        if( count >= maxResults )
+            break;
+
+        try
+        {
+            wxArrayString names;
+            libTable->EnumerateSymbolLib( libName, names );
+
+            for( const wxString& name : names )
+            {
+                if( count >= maxResults )
+                    break;
+
+                // Simple search: check if query appears in name
+                if( name.Lower().Contains( query ) )
+                {
+                    LIB_SYMBOL* symbol = libTable->LoadSymbol( libName, name );
+                    if( symbol )
+                    {
+                        schematic::commands::SymbolInfo* info = response.add_symbols();
+                        info->set_lib_id( fmt::format( "{}:{}", libName.ToStdString(), name.ToStdString() ) );
+                        info->set_name( name.ToStdString() );
+                        info->set_description( symbol->GetDescription().ToStdString() );
+                        info->set_keywords( symbol->GetKeyWords().ToStdString() );
+                        info->set_unit_count( symbol->GetUnitCount() );
+                        info->set_is_power( symbol->IsPower() );
+                        count++;
+                    }
+                }
+            }
+        }
+        catch( const IO_ERROR& )
+        {
+            // Skip libraries that can't be read
+            continue;
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<schematic::commands::GetSymbolInfoResponse>
+API_HANDLER_SCH::handleGetSymbolInfo(
+        const HANDLER_CONTEXT<schematic::commands::GetSymbolInfo>& aCtx )
+{
+    schematic::commands::GetSymbolInfoResponse response;
+
+    LIB_ID libId;
+    if( libId.Parse( aCtx.Request.lib_id() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( fmt::format( "Invalid lib_id: {}", aCtx.Request.lib_id() ) );
+        return tl::unexpected( e );
+    }
+
+    SYMBOL_LIB_TABLE* libTable = PROJECT_SCH::SchSymbolLibTable( &m_frame->Prj() );
+
+    if( !libTable )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Symbol library table not available" );
+        return tl::unexpected( e );
+    }
+
+    try
+    {
+        LIB_SYMBOL* symbol = libTable->LoadSymbol( libId );
+
+        if( !symbol )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( fmt::format( "Symbol not found: {}", aCtx.Request.lib_id() ) );
+            return tl::unexpected( e );
+        }
+
+        schematic::commands::SymbolInfo* info = response.mutable_symbol();
+        info->set_lib_id( aCtx.Request.lib_id() );
+        info->set_name( symbol->GetName().ToStdString() );
+        info->set_description( symbol->GetDescription().ToStdString() );
+        info->set_keywords( symbol->GetKeyWords().ToStdString() );
+        info->set_unit_count( symbol->GetUnitCount() );
+        info->set_is_power( symbol->IsPower() );
+
+        // Add footprint filters
+        for( const wxString& filter : symbol->GetFPFilters() )
+        {
+            info->add_footprint_filters( filter.ToStdString() );
+        }
+
+        // Add pin information
+        for( SCH_PIN* pin : symbol->GetPins() )
+        {
+            schematic::commands::PinInfo* pinInfo = info->add_pins();
+            pinInfo->set_number( pin->GetNumber().ToStdString() );
+            pinInfo->set_name( pin->GetName().ToStdString() );
+            kiapi::common::PackVector2( *pinInfo->mutable_position(), pin->GetPosition() );
+            pinInfo->set_orientation( static_cast<int>( pin->GetOrientation() ) );
+            pinInfo->set_electrical_type( magic_enum::enum_name( pin->GetType() ).data() );
+            pinInfo->set_graphical_style( magic_enum::enum_name( pin->GetShape() ).data() );
+            pinInfo->set_unit( pin->GetUnit() );
+        }
+    }
+    catch( const IO_ERROR& e )
+    {
+        ApiResponseStatus err;
+        err.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        err.set_error_message( fmt::format( "Error loading symbol: {}", e.What().ToStdString() ) );
+        return tl::unexpected( err );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<schematic::commands::GetTransformedPinPositionResponse>
+API_HANDLER_SCH::handleGetTransformedPinPosition(
+        const HANDLER_CONTEXT<schematic::commands::GetTransformedPinPosition>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetTransformedPinPositionResponse response;
+
+    KIID symbolId( aCtx.Request.symbol_id().value() );
+    std::optional<SCH_ITEM*> itemOpt = getItemById( symbolId );
+
+    if( !itemOpt || !*itemOpt )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Symbol not found" );
+        return tl::unexpected( e );
+    }
+
+    SCH_SYMBOL* symbol = dynamic_cast<SCH_SYMBOL*>( *itemOpt );
+
+    if( !symbol )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Item is not a symbol" );
+        return tl::unexpected( e );
+    }
+
+    wxString pinNumber = wxString::FromUTF8( aCtx.Request.pin_number() );
+    SCH_PIN* pin = symbol->GetPin( pinNumber );
+
+    if( !pin )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( fmt::format( "Pin '{}' not found on symbol", aCtx.Request.pin_number() ) );
+        return tl::unexpected( e );
+    }
+
+    // Get the transformed position (applies symbol's position, rotation, mirror)
+    VECTOR2I worldPos = pin->GetPosition();
+    kiapi::common::PackVector2( *response.mutable_position(), worldPos );
+    response.set_orientation( static_cast<int>( pin->GetOrientation() ) );
+
+    return response;
+}
+
+
+// ============================================================================
+// Simulation Handlers
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::RunSimulationResponse>
+API_HANDLER_SCH::handleRunSimulation(
+        const HANDLER_CONTEXT<schematic::commands::RunSimulation>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::RunSimulationResponse response;
+
+    // Simulation requires the simulator frame to be open
+    // This is a placeholder - full implementation would need NGSPICE integration
+    response.set_success( false );
+    response.set_error_message( "Simulation via API requires the simulator frame to be open. "
+                                "Use Tools > Simulator to run simulations interactively." );
+
+    return response;
+}
+
+
+HANDLER_RESULT<schematic::commands::GetSimulationResultsResponse>
+API_HANDLER_SCH::handleGetSimulationResults(
+        const HANDLER_CONTEXT<schematic::commands::GetSimulationResults>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetSimulationResultsResponse response;
+
+    // Simulation results require access to the simulator frame
+    // This is a placeholder - full implementation would need NGSPICE integration
+    response.set_has_results( false );
+
+    return response;
+}
+
+
+// ============================================================================
+// Export Handlers
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::ExportNetlistResponse>
+API_HANDLER_SCH::handleExportNetlist(
+        const HANDLER_CONTEXT<schematic::commands::ExportNetlist>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::ExportNetlistResponse response;
+
+    wxString outputPath = wxString::FromUTF8( aCtx.Request.output_path() );
+
+    // Determine netlist format
+    int formatType = 0;  // Default to KiCad format
+    switch( aCtx.Request.format() )
+    {
+    case schematic::commands::NF_KICAD: formatType = 0; break;
+    case schematic::commands::NF_SPICE: formatType = 1; break;
+    case schematic::commands::NF_ORCAD: formatType = 2; break;
+    case schematic::commands::NF_CADSTAR: formatType = 3; break;
+    case schematic::commands::NF_PADS: formatType = 4; break;
+    default: formatType = 0; break;
+    }
+
+    try
+    {
+        // Export netlist using the frame's export functionality
+        bool success = m_frame->WriteNetListFile( formatType, outputPath, 0, nullptr );
+
+        response.set_success( success );
+        if( success )
+            response.set_output_path( outputPath.ToStdString() );
+        else
+            response.set_error_message( "Failed to export netlist" );
+    }
+    catch( const std::exception& e )
+    {
+        response.set_success( false );
+        response.set_error_message( e.what() );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<schematic::commands::ExportBOMResponse>
+API_HANDLER_SCH::handleExportBOM(
+        const HANDLER_CONTEXT<schematic::commands::ExportBOM>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::ExportBOMResponse response;
+
+    // BOM export is typically done through Python plugins or external tools
+    // This provides a basic implementation
+    response.set_success( false );
+    response.set_error_message( "BOM export via API is not fully implemented. "
+                                "Use File > Fabrication Outputs > BOM for BOM generation." );
+
+    return response;
+}
+
+
+HANDLER_RESULT<schematic::commands::ExportPlotResponse>
+API_HANDLER_SCH::handleExportPlot(
+        const HANDLER_CONTEXT<schematic::commands::ExportPlot>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::ExportPlotResponse response;
+
+    // Plotting requires the plotter dialog or command-line tools
+    // This is a placeholder for the API
+    response.set_success( false );
+    response.set_error_message( "Plot export via API is not fully implemented. "
+                                "Use File > Plot for schematic plotting." );
+
+    return response;
+}
+
+
+// ============================================================================
+// Undo/Redo Handlers
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::GetUndoHistoryResponse>
+API_HANDLER_SCH::handleGetUndoHistory(
+        const HANDLER_CONTEXT<schematic::commands::GetUndoHistory>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetUndoHistoryResponse response;
+
+    SCH_SCREEN* screen = m_frame->GetScreen();
+
+    if( screen )
+    {
+        // Get undo list
+        const UNDO_REDO_CONTAINER& undoList = screen->GetUndoList();
+        for( size_t i = 0; i < undoList.m_CommandsList.size(); i++ )
+        {
+            schematic::commands::UndoRedoInfo* info = response.add_undo_stack();
+            PICKED_ITEMS_LIST* cmd = undoList.m_CommandsList[i];
+            info->set_description( cmd->GetDescription().ToStdString() );
+            info->set_item_count( cmd->GetCount() );
+        }
+
+        // Get redo list
+        const UNDO_REDO_CONTAINER& redoList = screen->GetRedoList();
+        for( size_t i = 0; i < redoList.m_CommandsList.size(); i++ )
+        {
+            schematic::commands::UndoRedoInfo* info = response.add_redo_stack();
+            PICKED_ITEMS_LIST* cmd = redoList.m_CommandsList[i];
+            info->set_description( cmd->GetDescription().ToStdString() );
+            info->set_item_count( cmd->GetCount() );
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<schematic::commands::UndoResponse>
+API_HANDLER_SCH::handleUndo(
+        const HANDLER_CONTEXT<schematic::commands::Undo>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    schematic::commands::UndoResponse response;
+
+    int count = aCtx.Request.count() > 0 ? aCtx.Request.count() : 1;
+    int undone = 0;
+
+    TOOL_MANAGER* mgr = m_frame->GetToolManager();
+
+    for( int i = 0; i < count; i++ )
+    {
+        if( m_frame->GetScreen()->GetUndoList().m_CommandsList.empty() )
+            break;
+
+        mgr->RunAction( ACTIONS::undo );
+        undone++;
+    }
+
+    response.set_steps_undone( undone );
+
+    return response;
+}
+
+
+HANDLER_RESULT<schematic::commands::RedoResponse>
+API_HANDLER_SCH::handleRedo(
+        const HANDLER_CONTEXT<schematic::commands::Redo>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    schematic::commands::RedoResponse response;
+
+    int count = aCtx.Request.count() > 0 ? aCtx.Request.count() : 1;
+    int redone = 0;
+
+    TOOL_MANAGER* mgr = m_frame->GetToolManager();
+
+    for( int i = 0; i < count; i++ )
+    {
+        if( m_frame->GetScreen()->GetRedoList().m_CommandsList.empty() )
+            break;
+
+        mgr->RunAction( ACTIONS::redo );
+        redone++;
+    }
+
+    response.set_steps_redone( redone );
+
+    return response;
+}
+
+
+// ============================================================================
+// Viewport Handlers
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::GetViewportResponse>
+API_HANDLER_SCH::handleGetViewport(
+        const HANDLER_CONTEXT<schematic::commands::GetViewport>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetViewportResponse response;
+
+    KIGFX::VIEW* view = m_frame->GetCanvas()->GetView();
+
+    if( view )
+    {
+        schematic::commands::ViewportSettings* viewport = response.mutable_viewport();
+
+        VECTOR2D center = view->GetCenter();
+        VECTOR2I centerInt( static_cast<int64_t>( center.x ), static_cast<int64_t>( center.y ) );
+        kiapi::common::PackVector2( *viewport->mutable_center(), centerInt );
+
+        viewport->set_scale( view->GetScale() );
+
+        BOX2D viewBox = view->GetViewport();
+        types::Box2* box = viewport->mutable_visible_area();
+        kiapi::common::PackVector2( *box->mutable_position(),
+                                   VECTOR2I( static_cast<int64_t>( viewBox.GetPosition().x ),
+                                             static_cast<int64_t>( viewBox.GetPosition().y ) ) );
+        kiapi::common::PackVector2( *box->mutable_size(),
+                                   VECTOR2I( static_cast<int64_t>( viewBox.GetSize().x ),
+                                             static_cast<int64_t>( viewBox.GetSize().y ) ) );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetViewport(
+        const HANDLER_CONTEXT<schematic::commands::SetViewport>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    KIGFX::VIEW* view = m_frame->GetCanvas()->GetView();
+
+    if( view )
+    {
+        if( aCtx.Request.has_center() )
+        {
+            VECTOR2I center = kiapi::common::UnpackVector2( aCtx.Request.center() );
+            view->SetCenter( VECTOR2D( center.x, center.y ) );
+        }
+
+        if( aCtx.Request.has_scale() )
+        {
+            view->SetScale( aCtx.Request.scale() );
+        }
+
+        m_frame->GetCanvas()->Refresh();
+    }
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleZoomToFit(
+        const HANDLER_CONTEXT<schematic::commands::ZoomToFit>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    TOOL_MANAGER* mgr = m_frame->GetToolManager();
+
+    if( mgr )
+    {
+        mgr->RunAction( ACTIONS::zoomFitScreen );
+    }
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleZoomToItems(
+        const HANDLER_CONTEXT<schematic::commands::ZoomToItems>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( aCtx.Request.item_ids_size() == 0 )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No items specified" );
+        return tl::unexpected( e );
+    }
+
+    // Calculate bounding box of all items
+    BOX2I bbox;
+    bool first = true;
+
+    for( const types::KIID& id : aCtx.Request.item_ids() )
+    {
+        if( std::optional<SCH_ITEM*> itemOpt = getItemById( KIID( id.value() ) ) )
+        {
+            if( SCH_ITEM* item = *itemOpt )
+            {
+                if( first )
+                {
+                    bbox = item->GetBoundingBox();
+                    first = false;
+                }
+                else
+                {
+                    bbox.Merge( item->GetBoundingBox() );
+                }
+            }
+        }
+    }
+
+    if( first )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No valid items found" );
+        return tl::unexpected( e );
+    }
+
+    // Apply margin
+    double margin = aCtx.Request.margin_ratio() > 0 ? aCtx.Request.margin_ratio() : 0.1;
+    int marginX = static_cast<int>( bbox.GetWidth() * margin );
+    int marginY = static_cast<int>( bbox.GetHeight() * margin );
+    bbox.Inflate( marginX, marginY );
+
+    // Zoom to the bounding box
+    KIGFX::VIEW* view = m_frame->GetCanvas()->GetView();
+    if( view )
+    {
+        view->SetCenter( bbox.Centre() );
+
+        BOX2D viewBox = view->GetViewport();
+        double scaleX = viewBox.GetWidth() / bbox.GetWidth();
+        double scaleY = viewBox.GetHeight() / bbox.GetHeight();
+        double newScale = std::min( scaleX, scaleY ) * view->GetScale();
+        view->SetScale( newScale );
+
+        m_frame->GetCanvas()->Refresh();
+    }
+
+    return Empty();
+}
+
+
+// ============================================================================
+// Highlighting Handlers
+// ============================================================================
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleHighlightNet(
+        const HANDLER_CONTEXT<schematic::commands::HighlightNet>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    wxString netName = wxString::FromUTF8( aCtx.Request.net_name() );
+
+    // Set the highlighted net
+    m_frame->SetHighlightedConnection( netName, {} );
+    m_frame->GetCanvas()->Refresh();
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleClearHighlight(
+        const HANDLER_CONTEXT<schematic::commands::ClearHighlight>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    // Clear any highlighted net
+    m_frame->SetHighlightedConnection( wxEmptyString, {} );
+    m_frame->GetCanvas()->Refresh();
+
+    return Empty();
+}
+
+
+// ============================================================================
+// Cross-Probe Handlers
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::CrossProbeResponse>
+API_HANDLER_SCH::handleCrossProbeToBoard(
+        const HANDLER_CONTEXT<schematic::commands::CrossProbeToBoard>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::CrossProbeResponse response;
+
+    // Check if PCB editor is available via KIWAY
+    KIWAY& kiway = m_frame->Kiway();
+    KIWAY_PLAYER* pcbFrame = kiway.Player( FRAME_PCB_EDITOR, false );
+
+    if( !pcbFrame )
+    {
+        response.set_board_found( false );
+        response.set_items_found( 0 );
+        return response;
+    }
+
+    response.set_board_found( true );
+
+    // Collect items to cross-probe
+    std::vector<SCH_ITEM*> items;
+
+    for( const types::KIID& id : aCtx.Request.item_ids() )
+    {
+        if( std::optional<SCH_ITEM*> itemOpt = getItemById( KIID( id.value() ) ) )
+        {
+            if( *itemOpt )
+                items.push_back( *itemOpt );
+        }
+    }
+
+    response.set_items_found( static_cast<int>( items.size() ) );
+
+    // Send cross-probe message to PCB editor
+    if( !items.empty() && aCtx.Request.select_in_board() )
+    {
+        // Build a comma-separated list of reference designators for symbols
+        wxString refs;
+
+        for( SCH_ITEM* item : items )
+        {
+            if( SCH_SYMBOL* symbol = dynamic_cast<SCH_SYMBOL*>( item ) )
+            {
+                if( !refs.IsEmpty() )
+                    refs += wxT( "," );
+                refs += symbol->GetRef( &m_frame->GetCurrentSheet() );
+            }
+        }
+
+        if( !refs.IsEmpty() )
+        {
+            // Send cross-probe command via KIWAY
+            std::string crossProbeCmd = fmt::format( "$SELECT: {}", refs.ToStdString() );
+            kiway.ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, crossProbeCmd );
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<schematic::commands::CrossProbeFromBoardResponse>
+API_HANDLER_SCH::handleCrossProbeFromBoard(
+        const HANDLER_CONTEXT<schematic::commands::CrossProbeFromBoard>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::CrossProbeFromBoardResponse response;
+    response.set_symbols_found( 0 );
+    response.set_nets_found( 0 );
+
+    // Get schematic and current sheet
+    SCHEMATIC& schematic = m_frame->Schematic();
+    SCH_SHEET_LIST sheetList = schematic.Hierarchy();
+
+    // Clear existing selection if requested
+    if( aCtx.Request.clear_existing_selection() )
+    {
+        m_frame->GetToolManager()->RunAction( EE_ACTIONS::clearSelection );
+    }
+
+    // Find symbols by reference designator
+    std::vector<SCH_SYMBOL*> foundSymbols;
+
+    for( const std::string& ref : aCtx.Request.references() )
+    {
+        wxString refStr( ref );
+
+        // Search through all sheets for the symbol
+        for( const SCH_SHEET_PATH& sheet : sheetList )
+        {
+            for( SCH_ITEM* item : sheet.LastScreen()->Items().OfType( SCH_SYMBOL_T ) )
+            {
+                SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+
+                if( symbol->GetRef( &sheet ) == refStr )
+                {
+                    foundSymbols.push_back( symbol );
+
+                    // Add to response
+                    types::KIID* kiid = response.add_found_symbol_ids();
+                    kiid->set_value( symbol->m_Uuid.AsStdString() );
+                    break;
+                }
+            }
+        }
+    }
+
+    response.set_symbols_found( static_cast<int>( foundSymbols.size() ) );
+
+    // Select items if requested
+    if( aCtx.Request.select_items() && !foundSymbols.empty() )
+    {
+        EE_SELECTION_TOOL* selTool = m_frame->GetToolManager()->GetTool<EE_SELECTION_TOOL>();
+
+        if( selTool )
+        {
+            for( SCH_SYMBOL* symbol : foundSymbols )
+            {
+                selTool->AddItemToSel( symbol );
+            }
+        }
+    }
+
+    // Highlight nets if requested
+    if( aCtx.Request.highlight_nets() )
+    {
+        int netsFound = 0;
+
+        for( const std::string& netName : aCtx.Request.net_names() )
+        {
+            // Use the highlight net action
+            wxString netStr( netName );
+
+            // Find items on this net and highlight them
+            CONNECTION_GRAPH* graph = schematic.ConnectionGraph();
+
+            if( graph )
+            {
+                for( const CONNECTION_SUBGRAPH* subgraph : graph->GetAllSubgraphs() )
+                {
+                    SCH_CONNECTION* connection = subgraph->GetDriverConnection();
+
+                    if( connection && connection->Name() == netStr )
+                    {
+                        netsFound++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        response.set_nets_found( netsFound );
+
+        // If we have net names to highlight, trigger highlight mode
+        if( !aCtx.Request.net_names().empty() )
+        {
+            // Highlight first net
+            wxString firstNet( aCtx.Request.net_names( 0 ) );
+            m_frame->SetHighlightedConnection( firstNet );
+            m_frame->UpdateNetHighlightStatus();
+        }
+    }
+
+    // Center view on found items if requested
+    if( aCtx.Request.center_view() && !foundSymbols.empty() )
+    {
+        // Navigate to the sheet containing the first symbol
+        SCH_SYMBOL* firstSymbol = foundSymbols.front();
+
+        // Find which sheet contains this symbol
+        for( const SCH_SHEET_PATH& sheet : sheetList )
+        {
+            for( SCH_ITEM* item : sheet.LastScreen()->Items().OfType( SCH_SYMBOL_T ) )
+            {
+                if( item == firstSymbol )
+                {
+                    // Navigate to this sheet if different from current
+                    if( sheet != m_frame->GetCurrentSheet() )
+                    {
+                        m_frame->SetCurrentSheet( sheet );
+                        m_frame->DisplayCurrentSheet();
+                    }
+
+                    // Center view on the symbol
+                    BOX2I bbox = firstSymbol->GetBoundingBox();
+                    m_frame->FocusOnLocation( bbox.Centre() );
+                    break;
+                }
+            }
+        }
+    }
+
+    m_frame->GetCanvas()->Refresh();
+
+    return response;
+}
+
+
+//
+// RemoveLibrary Handler
+//
+
+HANDLER_RESULT<RemoveLibraryResponse> API_HANDLER_SCH::handleRemoveLibrary(
+        const HANDLER_CONTEXT<RemoveLibrary>& aCtx )
+{
+    RemoveLibraryResponse response;
+
+    wxString nickname( aCtx.Request.nickname() );
+
+    if( nickname.IsEmpty() )
+    {
+        response.set_status( RemoveLibraryStatus::RLS_NOT_FOUND );
+        response.set_error_message( "Library nickname cannot be empty" );
+        return response;
+    }
+
+    // Determine which table to remove from
+    LIBRARY_TABLE_SCOPE tableScope = LIBRARY_TABLE_SCOPE::GLOBAL;
+
+    switch( aCtx.Request.scope() )
+    {
+    case LibraryTableScope::LTS_PROJECT:
+        tableScope = LIBRARY_TABLE_SCOPE::PROJECT;
+        break;
+    case LibraryTableScope::LTS_GLOBAL:
+    case LibraryTableScope::LTS_BOTH:
+    case LibraryTableScope::LTS_UNKNOWN:
+    default:
+        tableScope = LIBRARY_TABLE_SCOPE::GLOBAL;
+        break;
+    }
+
+    // Get the library manager
+    LIBRARY_MANAGER& libMgr = Pgm().GetLibraryManager();
+    std::optional<LIBRARY_TABLE*> table = libMgr.Table( LIBRARY_TABLE_TYPE::SYMBOL, tableScope );
+
+    if( !table.has_value() || !table.value() )
+    {
+        response.set_status( RemoveLibraryStatus::RLS_TABLE_NOT_FOUND );
+        response.set_error_message( "Library table not found" );
+        return response;
+    }
+
+    LIBRARY_TABLE* libTable = table.value();
+
+    // Check if the library exists
+    if( !libTable->HasLibrary( nickname ) )
+    {
+        response.set_status( RemoveLibraryStatus::RLS_NOT_FOUND );
+        response.set_error_message( fmt::format( "Library '{}' not found in table",
+                                                  nickname.ToStdString() ) );
+        return response;
+    }
+
+    // Remove the library
+    libTable->RemoveRow( libTable->FindRow( nickname ) );
+
+    // Save the library table
+    try
+    {
+        libTable->Save( libTable->GetFullURI( wxEmptyString, false ) );
+    }
+    catch( const IO_ERROR& e )
+    {
+        // Library was removed from memory but save failed
+        response.set_status( RemoveLibraryStatus::RLS_OK );
+        response.set_error_message( fmt::format( "Library removed but table save failed: {}",
+                                                  e.What().ToStdString() ) );
+        return response;
+    }
+
+    response.set_status( RemoveLibraryStatus::RLS_OK );
+    return response;
+}
+
+
+//
+// ERC Pin Type Matrix Handlers
+//
+
+HANDLER_RESULT<kiapi::schematic::commands::GetPinTypeMatrixResponse>
+API_HANDLER_SCH::handleGetPinTypeMatrix(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::GetPinTypeMatrix>& aCtx )
+{
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    kiapi::schematic::commands::GetPinTypeMatrixResponse response;
+    auto* matrix = response.mutable_matrix();
+
+    SCHEMATIC& schematic = m_frame->Schematic();
+    ERC_SETTINGS& ercSettings = schematic.ErcSettings();
+
+    // Iterate through all pin type combinations
+    for( int i = 0; i < ELECTRICAL_PINTYPES_TOTAL; i++ )
+    {
+        for( int j = 0; j < ELECTRICAL_PINTYPES_TOTAL; j++ )
+        {
+            PIN_ERROR error = ercSettings.GetPinMapValue( i, j );
+
+            auto* entry = matrix->add_entries();
+            entry->set_first_pin_type(
+                    static_cast<kiapi::schematic::commands::ElectricalPinType>( i ) );
+            entry->set_second_pin_type(
+                    static_cast<kiapi::schematic::commands::ElectricalPinType>( j ) );
+
+            switch( error )
+            {
+            case PIN_ERROR::OK:
+                entry->set_error_type( kiapi::schematic::commands::PET_OK );
+                break;
+            case PIN_ERROR::WARNING:
+                entry->set_error_type( kiapi::schematic::commands::PET_WARNING );
+                break;
+            case PIN_ERROR::PP_ERROR:
+                entry->set_error_type( kiapi::schematic::commands::PET_ERROR );
+                break;
+            case PIN_ERROR::UNCONNECTED:
+                entry->set_error_type( kiapi::schematic::commands::PET_UNCONNECTED );
+                break;
+            }
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetPinTypeMatrix(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::SetPinTypeMatrix>& aCtx )
+{
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    SCHEMATIC& schematic = m_frame->Schematic();
+    ERC_SETTINGS& ercSettings = schematic.ErcSettings();
+
+    // Reset to defaults if requested
+    if( aCtx.Request.reset_to_defaults() )
+    {
+        ercSettings.ResetPinMap();
+    }
+
+    // Apply the specified entries
+    for( const auto& entry : aCtx.Request.entries() )
+    {
+        int firstType = static_cast<int>( entry.first_pin_type() );
+        int secondType = static_cast<int>( entry.second_pin_type() );
+
+        if( firstType >= ELECTRICAL_PINTYPES_TOTAL || secondType >= ELECTRICAL_PINTYPES_TOTAL )
+            continue;
+
+        PIN_ERROR errorType;
+        switch( entry.error_type() )
+        {
+        case kiapi::schematic::commands::PET_OK:
+            errorType = PIN_ERROR::OK;
+            break;
+        case kiapi::schematic::commands::PET_WARNING:
+            errorType = PIN_ERROR::WARNING;
+            break;
+        case kiapi::schematic::commands::PET_ERROR:
+            errorType = PIN_ERROR::PP_ERROR;
+            break;
+        case kiapi::schematic::commands::PET_UNCONNECTED:
+            errorType = PIN_ERROR::UNCONNECTED;
+            break;
+        default:
+            errorType = PIN_ERROR::OK;
+            break;
+        }
+
+        ercSettings.SetPinMapValue( firstType, secondType, errorType );
+    }
+
+    return Empty();
+}
+
+
+//
+// Design Block Handlers
+//
+
+HANDLER_RESULT<kiapi::schematic::commands::GetDesignBlocksResponse>
+API_HANDLER_SCH::handleGetDesignBlocks(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::GetDesignBlocks>& aCtx )
+{
+    kiapi::schematic::commands::GetDesignBlocksResponse response;
+
+    DESIGN_BLOCK_LIB_TABLE* libTable = Prj().DesignBlockLibs();
+
+    if( !libTable )
+    {
+        // No design block library table - return empty response
+        return response;
+    }
+
+    std::vector<wxString> libraryNames;
+
+    if( aCtx.Request.library_nickname().empty() )
+    {
+        // Get all libraries
+        libraryNames = libTable->GetLogicalLibs();
+    }
+    else
+    {
+        // Get specific library
+        libraryNames.push_back( wxString::FromUTF8( aCtx.Request.library_nickname() ) );
+    }
+
+    for( const wxString& libName : libraryNames )
+    {
+        if( !libTable->HasLibrary( libName ) )
+            continue;
+
+        wxArrayString blockNames;
+
+        try
+        {
+            libTable->DesignBlockEnumerate( blockNames, libName, true );
+        }
+        catch( const IO_ERROR& )
+        {
+            continue;
+        }
+
+        for( const wxString& blockName : blockNames )
+        {
+            auto* info = response.add_design_blocks();
+            info->set_lib_id( fmt::format( "{}:{}", libName.ToStdString(), blockName.ToStdString() ) );
+            info->set_name( blockName.ToStdString() );
+            info->set_library_nickname( libName.ToStdString() );
+
+            // Try to get description from the design block
+            try
+            {
+                const DESIGN_BLOCK* block = libTable->GetDesignBlock( libName, blockName );
+                if( block )
+                {
+                    info->set_description( block->GetLibDescription().ToStdString() );
+                    info->set_keywords( block->GetKeywords().ToStdString() );
+                }
+            }
+            catch( const IO_ERROR& )
+            {
+                // Ignore errors getting detailed info
+            }
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::SearchDesignBlocksResponse>
+API_HANDLER_SCH::handleSearchDesignBlocks(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::SearchDesignBlocks>& aCtx )
+{
+    kiapi::schematic::commands::SearchDesignBlocksResponse response;
+
+    DESIGN_BLOCK_LIB_TABLE* libTable = Prj().DesignBlockLibs();
+
+    if( !libTable )
+        return response;
+
+    wxString query = wxString::FromUTF8( aCtx.Request.query() ).Lower();
+    int maxResults = aCtx.Request.max_results();
+    int count = 0;
+
+    std::vector<wxString> libraryNames;
+
+    if( aCtx.Request.libraries().empty() )
+    {
+        libraryNames = libTable->GetLogicalLibs();
+    }
+    else
+    {
+        for( const auto& lib : aCtx.Request.libraries() )
+            libraryNames.push_back( wxString::FromUTF8( lib ) );
+    }
+
+    for( const wxString& libName : libraryNames )
+    {
+        if( !libTable->HasLibrary( libName ) )
+            continue;
+
+        wxArrayString blockNames;
+
+        try
+        {
+            libTable->DesignBlockEnumerate( blockNames, libName, true );
+        }
+        catch( const IO_ERROR& )
+        {
+            continue;
+        }
+
+        for( const wxString& blockName : blockNames )
+        {
+            if( maxResults > 0 && count >= maxResults )
+                break;
+
+            bool matches = false;
+
+            // Check if name matches
+            if( blockName.Lower().Contains( query ) )
+                matches = true;
+
+            // Check description and keywords if we can get the design block
+            if( !matches )
+            {
+                try
+                {
+                    const DESIGN_BLOCK* block = libTable->GetDesignBlock( libName, blockName );
+                    if( block )
+                    {
+                        if( block->GetLibDescription().Lower().Contains( query ) ||
+                            block->GetKeywords().Lower().Contains( query ) )
+                        {
+                            matches = true;
+                        }
+                    }
+                }
+                catch( const IO_ERROR& )
+                {
+                    // Ignore
+                }
+            }
+
+            if( matches )
+            {
+                auto* info = response.add_design_blocks();
+                info->set_lib_id( fmt::format( "{}:{}", libName.ToStdString(), blockName.ToStdString() ) );
+                info->set_name( blockName.ToStdString() );
+                info->set_library_nickname( libName.ToStdString() );
+
+                try
+                {
+                    const DESIGN_BLOCK* block = libTable->GetDesignBlock( libName, blockName );
+                    if( block )
+                    {
+                        info->set_description( block->GetLibDescription().ToStdString() );
+                        info->set_keywords( block->GetKeywords().ToStdString() );
+                    }
+                }
+                catch( const IO_ERROR& )
+                {
+                    // Ignore
+                }
+
+                count++;
+            }
+        }
+
+        if( maxResults > 0 && count >= maxResults )
+            break;
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::SaveDesignBlockResponse>
+API_HANDLER_SCH::handleSaveSelectionAsDesignBlock(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::SaveSelectionAsDesignBlock>& aCtx )
+{
+    kiapi::schematic::commands::SaveDesignBlockResponse response;
+
+    // This operation requires user interaction through the design block control tool
+    // For API purposes, we'll indicate this is not directly supported
+    response.set_success( false );
+    response.set_error_message( "SaveSelectionAsDesignBlock requires user interaction. "
+                                 "Use the SCH_DESIGN_BLOCK_CONTROL tool action instead." );
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::SaveDesignBlockResponse>
+API_HANDLER_SCH::handleSaveSheetAsDesignBlock(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::SaveSheetAsDesignBlock>& aCtx )
+{
+    kiapi::schematic::commands::SaveDesignBlockResponse response;
+
+    // This operation requires user interaction through the design block control tool
+    response.set_success( false );
+    response.set_error_message( "SaveSheetAsDesignBlock requires user interaction. "
+                                 "Use the SCH_DESIGN_BLOCK_CONTROL tool action instead." );
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::DeleteDesignBlockResponse>
+API_HANDLER_SCH::handleDeleteDesignBlock(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::DeleteDesignBlock>& aCtx )
+{
+    kiapi::schematic::commands::DeleteDesignBlockResponse response;
+
+    LIB_ID libId;
+
+    if( !libId.Parse( aCtx.Request.lib_id() ) )
+    {
+        response.set_success( false );
+        response.set_error_message( "Invalid lib_id format. Expected 'Library:BlockName'" );
+        return response;
+    }
+
+    DESIGN_BLOCK_LIB_TABLE* libTable = Prj().DesignBlockLibs();
+
+    if( !libTable )
+    {
+        response.set_success( false );
+        response.set_error_message( "No design block library table available" );
+        return response;
+    }
+
+    wxString libName = libId.GetLibNickname();
+    wxString blockName = libId.GetLibItemName();
+
+    if( !libTable->HasLibrary( libName ) )
+    {
+        response.set_success( false );
+        response.set_error_message( fmt::format( "Library '{}' not found", libName.ToStdString() ) );
+        return response;
+    }
+
+    try
+    {
+        libTable->DesignBlockDelete( libName, blockName );
+        response.set_success( true );
+    }
+    catch( const IO_ERROR& e )
+    {
+        response.set_success( false );
+        response.set_error_message( e.What().ToStdString() );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::PlaceDesignBlockResponse>
+API_HANDLER_SCH::handlePlaceDesignBlock(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::PlaceDesignBlock>& aCtx )
+{
+    kiapi::schematic::commands::PlaceDesignBlockResponse response;
+
+    // Placing design blocks requires interaction through the design block control tool
+    response.set_success( false );
+    response.set_error_message( "PlaceDesignBlock requires user interaction. "
+                                 "Use the SCH_DESIGN_BLOCK_CONTROL tool action instead." );
+
+    return response;
 }

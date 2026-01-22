@@ -19,6 +19,8 @@
 
 #include "python_exec_thread.h"
 #include <python_scripting.h>
+#include <unistd.h>    // for write(), close()
+#include <stdlib.h>    // for mkstemps()
 
 // Define the custom events
 wxDEFINE_EVENT( wxEVT_PYTHON_OUTPUT, wxThreadEvent );
@@ -52,24 +54,71 @@ void* PYTHON_EXEC_THREAD::Entry()
 
     try
     {
-        // Wrap code with output capture
-        // This captures both stdout and stderr to a StringIO buffer
-        std::string wrapper = "import sys\n"
-                              "from io import StringIO\n"
-                              "_term_capture = StringIO()\n"
-                              "_term_restore_out = sys.stdout\n"
-                              "_term_restore_err = sys.stderr\n"
-                              "sys.stdout = _term_capture\n"
-                              "sys.stderr = _term_capture\n"
-                              "try:\n"
-                              "    exec(\"\"\"" + m_code + "\"\"\")\n"
-                              "except Exception as e:\n"
-                              "    import traceback\n"
-                              "    traceback.print_exc()\n"
-                              "finally:\n"
-                              "    sys.stdout = _term_restore_out\n"
-                              "    sys.stderr = _term_restore_err\n"
-                              "_term_result = _term_capture.getvalue()\n";
+        // Write code to a temp file to avoid string escaping issues with exec()
+        // This handles \n in f-strings, multi-line strings, and other edge cases
+        std::string tempFilePath;
+        {
+            // Create temp file with Python code
+            char tempTemplate[] = "/tmp/kicad_agent_XXXXXX.py";
+            int fd = mkstemps( tempTemplate, 3 );  // .py suffix
+            if( fd != -1 )
+            {
+                tempFilePath = tempTemplate;
+                write( fd, m_code.c_str(), m_code.length() );
+                close( fd );
+            }
+        }
+
+        std::string wrapper;
+        if( !tempFilePath.empty() )
+        {
+            // Use temp file approach - more robust
+            wrapper = "import sys\n"
+                      "from io import StringIO\n"
+                      "_term_capture = StringIO()\n"
+                      "_term_restore_out = sys.stdout\n"
+                      "_term_restore_err = sys.stderr\n"
+                      "sys.stdout = _term_capture\n"
+                      "sys.stderr = _term_capture\n"
+                      "_term_code_file = '" + tempFilePath + "'\n"
+                      "try:\n"
+                      "    with open(_term_code_file, 'r') as f:\n"
+                      "        _term_code = f.read()\n"
+                      "    exec(compile(_term_code, _term_code_file, 'exec'))\n"
+                      "except Exception as e:\n"
+                      "    import traceback\n"
+                      "    traceback.print_exc()\n"
+                      "finally:\n"
+                      "    sys.stdout = _term_restore_out\n"
+                      "    sys.stderr = _term_restore_err\n"
+                      "    import os\n"
+                      "    try:\n"
+                      "        os.remove(_term_code_file)\n"
+                      "    except:\n"
+                      "        pass\n"
+                      "_term_result = _term_capture.getvalue()\n";
+        }
+        else
+        {
+            // Fallback to original approach if temp file creation fails
+            // Note: This may have issues with escape sequences in code
+            wrapper = "import sys\n"
+                      "from io import StringIO\n"
+                      "_term_capture = StringIO()\n"
+                      "_term_restore_out = sys.stdout\n"
+                      "_term_restore_err = sys.stderr\n"
+                      "sys.stdout = _term_capture\n"
+                      "sys.stderr = _term_capture\n"
+                      "try:\n"
+                      "    exec(\"\"\"" + m_code + "\"\"\")\n"
+                      "except Exception as e:\n"
+                      "    import traceback\n"
+                      "    traceback.print_exc()\n"
+                      "finally:\n"
+                      "    sys.stdout = _term_restore_out\n"
+                      "    sys.stderr = _term_restore_err\n"
+                      "_term_result = _term_capture.getvalue()\n";
+        }
 
         int retCode = PyRun_SimpleString( wrapper.c_str() );
 

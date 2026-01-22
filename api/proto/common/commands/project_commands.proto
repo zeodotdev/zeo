@@ -51,6 +51,48 @@ message SetNetClasses
 }
 
 
+/// Creates a new net class
+message CreateNetClass
+{
+  kiapi.common.project.NetClass net_class = 1;
+}
+
+enum CreateNetClassStatus
+{
+  CNCS_UNKNOWN        = 0;
+  CNCS_OK             = 1;  // Net class was created successfully
+  CNCS_ALREADY_EXISTS = 2;  // A net class with this name already exists
+  CNCS_INVALID_NAME   = 3;  // The net class name is invalid (empty or reserved)
+}
+
+message CreateNetClassResponse
+{
+  CreateNetClassStatus status = 1;
+  string error_message = 2;
+}
+
+
+/// Deletes a net class by name
+message DeleteNetClass
+{
+  string name = 1;  // Name of the net class to delete
+}
+
+enum DeleteNetClassStatus
+{
+  DNCS_UNKNOWN      = 0;
+  DNCS_OK           = 1;  // Net class was deleted successfully
+  DNCS_NOT_FOUND    = 2;  // Net class does not exist
+  DNCS_CANNOT_DELETE_DEFAULT = 3;  // Cannot delete the "Default" net class
+}
+
+message DeleteNetClassResponse
+{
+  DeleteNetClassStatus status = 1;
+  string error_message = 2;
+}
+
+
 message ExpandTextVariables
 {
   kiapi.common.types.DocumentSpecifier document = 1;

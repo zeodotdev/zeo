@@ -49,6 +49,8 @@ API_HANDLER_COMMON::API_HANDLER_COMMON() :
             &API_HANDLER_COMMON::handleGetKiCadBinaryPath );
     registerHandler<GetNetClasses, NetClassesResponse>( &API_HANDLER_COMMON::handleGetNetClasses );
     registerHandler<SetNetClasses, Empty>( &API_HANDLER_COMMON::handleSetNetClasses );
+    registerHandler<CreateNetClass, CreateNetClassResponse>( &API_HANDLER_COMMON::handleCreateNetClass );
+    registerHandler<DeleteNetClass, DeleteNetClassResponse>( &API_HANDLER_COMMON::handleDeleteNetClass );
     registerHandler<Ping, Empty>( &API_HANDLER_COMMON::handlePing );
     registerHandler<GetTextExtents, types::Box2>( &API_HANDLER_COMMON::handleGetTextExtents );
     registerHandler<GetTextAsShapes, GetTextAsShapesResponse>(
@@ -152,6 +154,89 @@ HANDLER_RESULT<Empty> API_HANDLER_COMMON::handleSetNetClasses(
     netSettings->SetNetclasses( netClasses );
 
     return Empty();
+}
+
+
+HANDLER_RESULT<CreateNetClassResponse> API_HANDLER_COMMON::handleCreateNetClass(
+        const HANDLER_CONTEXT<CreateNetClass>& aCtx )
+{
+    CreateNetClassResponse reply;
+
+    std::shared_ptr<NET_SETTINGS>& netSettings =
+            Pgm().GetSettingsManager().Prj().GetProjectFile().m_NetSettings;
+
+    wxString name = wxString::FromUTF8( aCtx.Request.net_class().name() );
+
+    if( name.IsEmpty() )
+    {
+        reply.set_status( CreateNetClassStatus::CNCS_INVALID_NAME );
+        reply.set_error_message( "Net class name cannot be empty" );
+        return reply;
+    }
+
+    if( name == wxT( "Default" ) )
+    {
+        reply.set_status( CreateNetClassStatus::CNCS_INVALID_NAME );
+        reply.set_error_message( "Cannot create net class with reserved name 'Default'" );
+        return reply;
+    }
+
+    auto netClasses = netSettings->GetNetclasses();
+
+    if( netClasses.contains( name ) )
+    {
+        reply.set_status( CreateNetClassStatus::CNCS_ALREADY_EXISTS );
+        reply.set_error_message( "A net class with this name already exists" );
+        return reply;
+    }
+
+    // Create the new net class
+    auto newNetClass = std::make_shared<NETCLASS>( name, false );
+
+    // Deserialize properties from the proto message
+    google::protobuf::Any any;
+    any.PackFrom( aCtx.Request.net_class() );
+    newNetClass->Deserialize( any );
+
+    netClasses.insert( { name, newNetClass } );
+    netSettings->SetNetclasses( netClasses );
+
+    reply.set_status( CreateNetClassStatus::CNCS_OK );
+    return reply;
+}
+
+
+HANDLER_RESULT<DeleteNetClassResponse> API_HANDLER_COMMON::handleDeleteNetClass(
+        const HANDLER_CONTEXT<DeleteNetClass>& aCtx )
+{
+    DeleteNetClassResponse reply;
+
+    std::shared_ptr<NET_SETTINGS>& netSettings =
+            Pgm().GetSettingsManager().Prj().GetProjectFile().m_NetSettings;
+
+    wxString name = wxString::FromUTF8( aCtx.Request.name() );
+
+    if( name == wxT( "Default" ) )
+    {
+        reply.set_status( DeleteNetClassStatus::DNCS_CANNOT_DELETE_DEFAULT );
+        reply.set_error_message( "Cannot delete the Default net class" );
+        return reply;
+    }
+
+    auto netClasses = netSettings->GetNetclasses();
+
+    if( !netClasses.contains( name ) )
+    {
+        reply.set_status( DeleteNetClassStatus::DNCS_NOT_FOUND );
+        reply.set_error_message( "Net class not found" );
+        return reply;
+    }
+
+    netClasses.erase( name );
+    netSettings->SetNetclasses( netClasses );
+
+    reply.set_status( DeleteNetClassStatus::DNCS_OK );
+    return reply;
 }
 
 

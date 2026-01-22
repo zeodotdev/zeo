@@ -50,6 +50,12 @@ private:
     HANDLER_RESULT<Empty> handleSetNetClasses(
         const HANDLER_CONTEXT<commands::SetNetClasses>& aCtx );
 
+    HANDLER_RESULT<commands::CreateNetClassResponse> handleCreateNetClass(
+        const HANDLER_CONTEXT<commands::CreateNetClass>& aCtx );
+
+    HANDLER_RESULT<commands::DeleteNetClassResponse> handleDeleteNetClass(
+        const HANDLER_CONTEXT<commands::DeleteNetClass>& aCtx );
+
     HANDLER_RESULT<Empty> handlePing( const HANDLER_CONTEXT<commands::Ping>& aCtx );
 
     HANDLER_RESULT<types::Box2> handleGetTextExtents(

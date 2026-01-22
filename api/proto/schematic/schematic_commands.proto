@@ -576,3 +576,684 @@ message GetNetItemsResponse
 }
 
 
+//
+// Grid Settings Commands
+//
+
+/// Grid settings for the schematic editor
+message GridSettings
+{
+  kiapi.common.types.Vector2 grid_size = 1;    // Grid spacing in nm
+  kiapi.common.types.Vector2 grid_origin = 2;  // Grid origin in nm
+  bool grid_visible = 3;
+  bool snap_to_grid = 4;
+}
+
+/// Gets current grid settings
+message GetGridSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetGridSettingsResponse
+{
+  GridSettings settings = 1;
+}
+
+/// Sets grid settings
+message SetGridSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  optional int64 grid_size_x_nm = 2;   // Grid X spacing in nm
+  optional int64 grid_size_y_nm = 3;   // Grid Y spacing in nm
+  optional bool grid_visible = 4;
+  optional bool snap_to_grid = 5;
+}
+
+
+//
+// ERC Settings Commands
+//
+
+/// Individual ERC rule severity setting
+message ERCRuleSeverity
+{
+  string error_code = 1;      // ERC error code (e.g., "ERCE_PIN_NOT_CONNECTED")
+  ERCSeverity severity = 2;   // Severity level
+}
+
+/// ERC settings for the schematic
+message ERCSettingsData
+{
+  repeated ERCRuleSeverity rule_severities = 1;
+  bool check_bus_driver_conflicts = 2;
+  bool check_bus_to_net_conflicts = 3;
+  bool check_bus_entry_conflicts = 4;
+  bool check_similar_labels = 5;
+  bool check_unique_global_labels = 6;
+}
+
+/// Gets current ERC settings
+message GetERCSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetERCSettingsResponse
+{
+  ERCSettingsData settings = 1;
+}
+
+/// Sets ERC settings
+message SetERCSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  ERCSettingsData settings = 2;
+}
+
+
+//
+// Net Class Commands
+//
+
+/// Assigns a net to a specific net class
+message AssignNetToClass
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string net_name = 2;
+  string net_class_name = 3;
+}
+
+
+//
+// Editor Preferences Commands
+//
+
+/// Editor preferences for the schematic editor
+message EditorPreferences
+{
+  // Display settings
+  optional bool show_hidden_pins = 1;
+  optional bool show_hidden_fields = 2;
+  optional bool show_pin_numbers = 3;
+  optional bool show_pin_names = 4;
+  optional bool show_erc_errors = 5;
+  optional bool show_erc_warnings = 6;
+  optional bool show_erc_exclusions = 7;
+
+  // Behavior settings
+  optional bool auto_place_fields = 10;
+  optional bool auto_pan = 11;
+  optional int32 auto_pan_acceleration = 12;
+  optional bool center_on_zoom = 13;
+
+  // Drawing defaults
+  optional int32 default_wire_width_nm = 20;
+  optional int32 default_bus_width_nm = 21;
+  optional int32 default_junction_size_nm = 22;
+  optional int32 default_text_size_nm = 23;
+}
+
+/// Gets editor preferences
+message GetEditorPreferences
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetEditorPreferencesResponse
+{
+  EditorPreferences preferences = 1;
+}
+
+/// Sets editor preferences
+message SetEditorPreferences
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  EditorPreferences preferences = 2;
+}
+
+
+//
+// Simulation Settings Commands
+//
+
+/// SPICE simulation settings
+message SimulationSettings
+{
+  string spice_command = 1;              // Default SPICE command (e.g., ".tran 1u 1m")
+  repeated string include_paths = 2;     // SPICE include paths
+  map<string, string> model_overrides = 3; // Symbol to model mappings
+  optional string simulator = 4;         // Simulator name (e.g., "ngspice")
+}
+
+/// Gets simulation settings
+message GetSimulationSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetSimulationSettingsResponse
+{
+  SimulationSettings settings = 1;
+}
+
+/// Sets simulation settings
+message SetSimulationSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  SimulationSettings settings = 2;
+}
+
+
+//
+// Library Query Commands
+//
+
+/// Information about a library symbol
+message SymbolInfo
+{
+  string lib_id = 1;                     // Full library:symbol identifier
+  string name = 2;                       // Symbol name
+  string description = 3;                // Symbol description
+  string keywords = 4;                   // Space-separated keywords
+  repeated string footprint_filters = 5; // Footprint filter patterns
+  int32 unit_count = 6;                  // Number of units
+  repeated PinInfo pins = 7;             // Pin information
+  bool is_power = 8;                     // True if power symbol
+  string datasheet = 9;                  // Datasheet URL or path
+}
+
+/// Information about a symbol pin
+message PinInfo
+{
+  string number = 1;                     // Pin number (electrical identifier)
+  string name = 2;                       // Pin name
+  kiapi.common.types.Vector2 position = 3;  // Position relative to symbol origin
+  int32 orientation = 4;                 // Orientation in degrees (0, 90, 180, 270)
+  string electrical_type = 5;            // Type: input, output, bidirectional, etc.
+  string graphical_style = 6;            // Style: line, inverted, clock, etc.
+  int32 unit = 7;                        // Unit number (for multi-unit symbols)
+}
+
+/// Gets all symbols in a library
+message GetLibrarySymbols
+{
+  string library_name = 1;               // Library nickname
+}
+
+message GetLibrarySymbolsResponse
+{
+  repeated string symbol_names = 1;      // List of symbol names in the library
+}
+
+/// Searches for symbols across libraries
+message SearchLibrarySymbols
+{
+  string query = 1;                      // Search query (matches name, description, keywords)
+  repeated string libraries = 2;         // Libraries to search (empty = all)
+  int32 max_results = 3;                 // Maximum results (0 = no limit)
+}
+
+message SearchLibrarySymbolsResponse
+{
+  repeated SymbolInfo symbols = 1;
+}
+
+/// Gets detailed information about a specific symbol
+message GetSymbolInfo
+{
+  string lib_id = 1;                     // "Library:SymbolName" format
+}
+
+message GetSymbolInfoResponse
+{
+  SymbolInfo symbol = 1;
+}
+
+/// Gets the transformed position of a specific pin on a placed symbol
+message GetTransformedPinPosition
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID symbol_id = 2;
+  string pin_number = 3;
+}
+
+message GetTransformedPinPositionResponse
+{
+  kiapi.common.types.Vector2 position = 1;  // World position in nm
+  int32 orientation = 2;                     // World orientation in degrees
+}
+
+
+//
+// Simulation Commands
+//
+
+/// Runs SPICE simulation
+message RunSimulation
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  optional string command_override = 2;  // Override default command
+}
+
+/// Simulation trace data
+message SimulationTrace
+{
+  string name = 1;                       // Signal name
+  repeated double time_values = 2;       // Time points
+  repeated double data_values = 3;       // Signal values
+}
+
+message RunSimulationResponse
+{
+  bool success = 1;
+  string error_message = 2;
+  repeated SimulationTrace traces = 3;
+}
+
+/// Gets results from previous simulation
+message GetSimulationResults
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetSimulationResultsResponse
+{
+  bool has_results = 1;
+  repeated SimulationTrace traces = 2;
+}
+
+
+//
+// Export Commands
+//
+
+/// Netlist format options
+enum NetlistFormat
+{
+  NF_UNKNOWN = 0;
+  NF_KICAD = 1;       // KiCad native format
+  NF_SPICE = 2;       // SPICE netlist
+  NF_ORCAD = 3;       // OrCAD format
+  NF_CADSTAR = 4;     // CADSTAR format
+  NF_PADS = 5;        // PADS format
+}
+
+/// Exports netlist
+message ExportNetlist
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  NetlistFormat format = 2;
+  string output_path = 3;                // Output file path
+}
+
+message ExportNetlistResponse
+{
+  bool success = 1;
+  string output_path = 2;                // Actual output path
+  string error_message = 3;
+}
+
+/// Exports BOM (Bill of Materials)
+message ExportBOM
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string output_path = 2;
+  string format = 3;                     // "csv", "xml", "json"
+  repeated string fields = 4;            // Fields to include
+  bool group_references = 5;             // Group identical components
+}
+
+message ExportBOMResponse
+{
+  bool success = 1;
+  string output_path = 2;
+  int32 component_count = 3;
+  string error_message = 4;
+}
+
+/// Plot format options
+enum PlotFormat
+{
+  PF_UNKNOWN = 0;
+  PF_PDF = 1;
+  PF_SVG = 2;
+  PF_HPGL = 3;
+  PF_PS = 4;
+  PF_DXF = 5;
+  PF_PNG = 6;
+}
+
+/// Exports plot (PDF, SVG, etc.)
+message ExportPlot
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  PlotFormat format = 2;
+  string output_path = 3;                // Output file or directory
+  bool plot_all_sheets = 4;              // Plot all sheets vs current only
+  bool black_and_white = 5;              // Black and white mode
+  optional int32 dpi = 6;                // DPI for raster formats
+}
+
+message ExportPlotResponse
+{
+  bool success = 1;
+  repeated string output_files = 2;      // Generated file paths
+  string error_message = 3;
+}
+
+
+//
+// Undo/Redo Commands
+//
+
+/// Information about an undo/redo action
+message UndoRedoInfo
+{
+  string description = 1;                // Human-readable description
+  int32 item_count = 2;                  // Number of items affected
+}
+
+/// Gets undo/redo history
+message GetUndoHistory
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetUndoHistoryResponse
+{
+  repeated UndoRedoInfo undo_stack = 1;  // Actions that can be undone
+  repeated UndoRedoInfo redo_stack = 2;  // Actions that can be redone
+}
+
+/// Performs undo operation
+message Undo
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  int32 count = 2;                       // Number of steps to undo (default 1)
+}
+
+message UndoResponse
+{
+  int32 steps_undone = 1;
+}
+
+/// Performs redo operation
+message Redo
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  int32 count = 2;                       // Number of steps to redo (default 1)
+}
+
+message RedoResponse
+{
+  int32 steps_redone = 1;
+}
+
+
+//
+// Viewport Commands
+//
+
+/// Viewport settings
+message ViewportSettings
+{
+  kiapi.common.types.Vector2 center = 1;     // View center in nm
+  double scale = 2;                           // Zoom scale (pixels per IU)
+  kiapi.common.types.Box2 visible_area = 3;  // Currently visible area
+}
+
+/// Gets current viewport
+message GetViewport
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetViewportResponse
+{
+  ViewportSettings viewport = 1;
+}
+
+/// Sets viewport
+message SetViewport
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  optional kiapi.common.types.Vector2 center = 2;  // New center position
+  optional double scale = 3;                        // New zoom scale
+}
+
+/// Zooms to fit all content
+message ZoomToFit
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+/// Zooms to fit specific items
+message ZoomToItems
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated kiapi.common.types.KIID item_ids = 2;
+  double margin_ratio = 3;               // Margin as ratio of bounds (e.g., 0.1 = 10%)
+}
+
+
+//
+// Highlighting Commands
+//
+
+/// Highlights a net
+message HighlightNet
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string net_name = 2;
+}
+
+/// Clears all highlighting
+message ClearHighlight
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+
+//
+// Cross-Probe Commands
+//
+
+/// Cross-probes items to the PCB editor
+message CrossProbeToBoard
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated kiapi.common.types.KIID item_ids = 2;  // Items to cross-probe
+  bool select_in_board = 3;                        // Select corresponding items in board
+  bool center_view = 4;                            // Center board view on items
+}
+
+message CrossProbeResponse
+{
+  bool board_found = 1;                  // True if board editor is open
+  int32 items_found = 2;                 // Number of items found in board
+}
+
+/// Cross-probes from the PCB editor to the schematic
+message CrossProbeFromBoard
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Reference designators to find (e.g., "R1", "U1")
+  repeated string references = 2;
+
+  // Net names to find/highlight
+  repeated string net_names = 3;
+
+  // Actions to perform
+  bool select_items = 4;                 // Select corresponding symbols
+  bool highlight_nets = 5;               // Highlight the specified nets
+  bool center_view = 6;                  // Center schematic view on found items
+  bool clear_existing_selection = 7;     // Clear existing selection first
+}
+
+message CrossProbeFromBoardResponse
+{
+  int32 symbols_found = 1;               // Number of symbols found by reference
+  int32 nets_found = 2;                  // Number of nets found
+  repeated kiapi.common.types.KIID found_symbol_ids = 3;  // IDs of found symbols
+}
+
+
+//
+// ERC Pin Type Matrix Commands
+//
+
+/// Pin error types for the ERC pin matrix
+enum PinErrorType
+{
+  PET_OK          = 0;   // No error
+  PET_WARNING     = 1;   // Warning
+  PET_ERROR       = 2;   // Error
+  PET_UNCONNECTED = 3;   // Unconnected
+}
+
+/// Electrical pin types (must match ELECTRICAL_PINTYPE enum)
+enum ElectricalPinType
+{
+  EPT_INPUT         = 0;
+  EPT_OUTPUT        = 1;
+  EPT_BIDI          = 2;
+  EPT_TRISTATE      = 3;
+  EPT_PASSIVE       = 4;
+  EPT_NIC           = 5;   // Not internally connected
+  EPT_UNSPECIFIED   = 6;
+  EPT_POWER_IN      = 7;
+  EPT_POWER_OUT     = 8;
+  EPT_OPENCOLLECTOR = 9;
+  EPT_OPENEMITTER   = 10;
+  EPT_NC            = 11;  // Not connected
+}
+
+/// A single entry in the ERC pin type matrix
+message PinMatrixEntry
+{
+  ElectricalPinType first_pin_type = 1;
+  ElectricalPinType second_pin_type = 2;
+  PinErrorType error_type = 3;
+}
+
+/// The full ERC pin type matrix
+message PinTypeMatrix
+{
+  repeated PinMatrixEntry entries = 1;
+}
+
+/// Gets the ERC pin type matrix
+message GetPinTypeMatrix
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetPinTypeMatrixResponse
+{
+  PinTypeMatrix matrix = 1;
+}
+
+/// Sets entries in the ERC pin type matrix
+message SetPinTypeMatrix
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated PinMatrixEntry entries = 2;  // Entries to set
+  bool reset_to_defaults = 3;           // If true, reset matrix to defaults before applying entries
+}
+
+
+//
+// Design Block Commands
+//
+
+/// Information about a design block
+message DesignBlockInfo
+{
+  string lib_id = 1;                     // "Library:BlockName" format
+  string name = 2;                       // Design block name
+  string description = 3;                // Design block description
+  string keywords = 4;                   // Space-separated keywords
+  string library_nickname = 5;           // Library nickname
+}
+
+/// Gets available design blocks
+message GetDesignBlocks
+{
+  string library_nickname = 1;           // Library to search (empty = all libraries)
+}
+
+message GetDesignBlocksResponse
+{
+  repeated DesignBlockInfo design_blocks = 1;
+}
+
+/// Searches for design blocks
+message SearchDesignBlocks
+{
+  string query = 1;                      // Search query (matches name, description, keywords)
+  repeated string libraries = 2;         // Libraries to search (empty = all)
+  int32 max_results = 3;                 // Maximum results (0 = no limit)
+}
+
+message SearchDesignBlocksResponse
+{
+  repeated DesignBlockInfo design_blocks = 1;
+}
+
+/// Saves the current selection as a design block
+message SaveSelectionAsDesignBlock
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string library_nickname = 2;           // Target library
+  string name = 3;                       // Design block name
+  string description = 4;                // Optional description
+  string keywords = 5;                   // Optional keywords
+}
+
+message SaveDesignBlockResponse
+{
+  bool success = 1;
+  string lib_id = 2;                     // The created design block ID
+  string error_message = 3;
+}
+
+/// Saves the current sheet as a design block
+message SaveSheetAsDesignBlock
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string library_nickname = 2;
+  string name = 3;
+  string description = 4;
+  string keywords = 5;
+}
+
+/// Deletes a design block
+message DeleteDesignBlock
+{
+  string lib_id = 1;                     // "Library:BlockName" to delete
+}
+
+message DeleteDesignBlockResponse
+{
+  bool success = 1;
+  string error_message = 2;
+}
+
+/// Places a design block into the schematic
+message PlaceDesignBlock
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string lib_id = 2;                     // "Library:BlockName" to place
+  kiapi.common.types.Vector2 position = 3;
+}
+
+message PlaceDesignBlockResponse
+{
+  bool success = 1;
+  repeated kiapi.common.types.KIID created_item_ids = 2;  // IDs of created items
+  string error_message = 3;
+}
+
+

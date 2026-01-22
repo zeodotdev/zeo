@@ -670,7 +670,10 @@ bool SCH_BUS_ENTRY_BASE::Deserialize( const google::protobuf::Any& aContainer )
     if( !aContainer.UnpackTo( &busEntry ) )
         return false;
 
-    const_cast<KIID&>( m_Uuid ) = KIID( busEntry.id().value() );
+    // Only overwrite UUID if a valid ID is provided in the proto
+    if( !busEntry.id().value().empty() )
+        const_cast<KIID&>( m_Uuid ) = KIID( busEntry.id().value() );
+
     m_pos = kiapi::common::UnpackVector2( busEntry.position() );
     m_size = kiapi::common::UnpackVector2( busEntry.size() );
 

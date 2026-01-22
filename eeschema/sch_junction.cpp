@@ -95,7 +95,10 @@ bool SCH_JUNCTION::Deserialize( const google::protobuf::Any& aContainer )
     if( !aContainer.UnpackTo( &junction ) )
         return false;
 
-    const_cast<KIID&>( m_Uuid ) = KIID( junction.id().value() );
+    // Only overwrite UUID if a valid ID is provided in the proto
+    if( !junction.id().value().empty() )
+        const_cast<KIID&>( m_Uuid ) = KIID( junction.id().value() );
+
     m_pos = kiapi::common::UnpackVector2( junction.position() );
     m_diameter = junction.diameter();
 

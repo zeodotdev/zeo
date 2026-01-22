@@ -87,7 +87,10 @@ bool SCH_NO_CONNECT::Deserialize( const google::protobuf::Any& aContainer )
     if( !aContainer.UnpackTo( &noConnect ) )
         return false;
 
-    const_cast<KIID&>( m_Uuid ) = KIID( noConnect.id().value() );
+    // Only overwrite UUID if a valid ID is provided in the proto
+    if( !noConnect.id().value().empty() )
+        const_cast<KIID&>( m_Uuid ) = KIID( noConnect.id().value() );
+
     m_pos = kiapi::common::UnpackVector2( noConnect.position() );
 
     return true;

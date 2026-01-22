@@ -40,6 +40,7 @@ class SCH_TOOL_BASE;
 #define SKIP_UNDO          0x0001
 #define APPEND_UNDO        0x0002
 #define SKIP_SET_DIRTY     0x0004
+#define SKIP_CLEANUP       0x0008   ///< Skip schematic cleanup (junction/wire merging) - used by API
 
 class SCH_COMMIT : public COMMIT
 {

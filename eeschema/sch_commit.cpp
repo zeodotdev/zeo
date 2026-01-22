@@ -423,10 +423,19 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
 
             if( dirtyConnectivity )
             {
+                // When SKIP_CLEANUP is set (e.g., from API operations), don't do schematic
+                // cleanup (which removes "unnecessary" junctions, merges wires, etc.)
+                // but still recalculate connectivity.
+                SCH_CLEANUP_FLAGS cleanupToUse = ( aCommitFlags & SKIP_CLEANUP )
+                                                 ? NO_CLEANUP
+                                                 : connectivityCleanUp;
+
                 wxLogTrace( wxS( "CONN_PROFILE" ),
                             wxS( "SCH_COMMIT::pushSchEdit() %s clean up connectivity rebuild." ),
-                            connectivityCleanUp == LOCAL_CLEANUP ? wxS( "local" ) : wxS( "global" ) );
-                frame->RecalculateConnections( this, connectivityCleanUp );
+                            cleanupToUse == LOCAL_CLEANUP ? wxS( "local" )
+                            : cleanupToUse == GLOBAL_CLEANUP ? wxS( "global" )
+                            : wxS( "no" ) );
+                frame->RecalculateConnections( this, cleanupToUse );
             }
         }
     }

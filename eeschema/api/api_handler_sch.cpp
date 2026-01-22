@@ -43,6 +43,7 @@
 #include <schematic.h>
 #include <wx/filename.h>
 #include <wx/wfstream.h>
+#include <wx/sstream.h>
 #include <tool/tool_manager.h>
 #include <tool/actions.h>
 #include <tools/sch_selection_tool.h>
@@ -61,17 +62,20 @@
 #include <connection_graph.h>
 #include <sch_connection.h>
 #include <project/net_settings.h>
+#include <project/project_file.h>
 #include <title_block.h>
 #include <page_info.h>
 #include <eeschema_settings.h>
 #include <schematic_settings.h>
+#include <settings/common_settings.h>
+#include <sim/spice_settings.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <view/view.h>
 #include <undo_redo_container.h>
 #include <lib_id.h>
 #include <erc/erc_settings.h>
 #include <pin_type.h>
-#include <design_block_lib_table.h>
+#include <design_block_library_adapter.h>
 #include <design_block.h>
 
 #include <api/common/types/base_types.pb.h>
@@ -153,6 +157,11 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
     registerHandler<GetPageSettings, types::PageInfo>( &API_HANDLER_SCH::handleGetPageSettings );
     registerHandler<SetPageSettings, Empty>( &API_HANDLER_SCH::handleSetPageSettings );
 
+    // Document management handlers
+    registerHandler<SaveDocument, Empty>( &API_HANDLER_SCH::handleSaveDocument );
+    registerHandler<SaveDocumentToString, SavedDocumentResponse>( &API_HANDLER_SCH::handleSaveDocumentToString );
+    registerHandler<RefreshEditor, Empty>( &API_HANDLER_SCH::handleRefreshEditor );
+
     // Grid settings handlers
     registerHandler<GetGridSettings, GetGridSettingsResponse>( &API_HANDLER_SCH::handleGetGridSettings );
     registerHandler<SetGridSettings, Empty>( &API_HANDLER_SCH::handleSetGridSettings );
@@ -228,6 +237,23 @@ std::unique_ptr<COMMIT> API_HANDLER_SCH::createCommit()
         return nullptr;
 
     return std::make_unique<SCH_COMMIT>( m_frame );
+}
+
+
+void API_HANDLER_SCH::pushCurrentCommit( const std::string& aClientName, const wxString& aMessage )
+{
+    auto it = m_commits.find( aClientName );
+
+    if( it == m_commits.end() )
+        return;
+
+    // Use SKIP_CLEANUP to prevent the schematic cleanup from removing "unnecessary" junctions.
+    // When items are created via the API, the user is in control of what gets created and
+    // we should not second-guess their intentions.
+    it->second.second->Push( aMessage.IsEmpty() ? m_defaultCommitMessage : aMessage, SKIP_CLEANUP );
+
+    m_commits.erase( it );
+    m_activeClients.erase( aClientName );
 }
 
 
@@ -3485,14 +3511,16 @@ API_HANDLER_SCH::handleGetGridSettings(
 
     schematic::commands::GetGridSettingsResponse response;
 
-    // Get grid settings from the frame
-    VECTOR2I gridSize = m_frame->GetScreen()->GetGridSize();
+    // Get grid settings from the GAL
+    KIGFX::GAL* gal = m_frame->GetCanvas()->GetGAL();
+    VECTOR2D gridSize = gal->GetGridSize();
     VECTOR2I gridOrigin = m_frame->GetGridOrigin();
 
-    kiapi::common::PackVector2( *response.mutable_settings()->mutable_grid_size(), gridSize );
+    kiapi::common::PackVector2( *response.mutable_settings()->mutable_grid_size(),
+                                VECTOR2I( KiROUND( gridSize.x ), KiROUND( gridSize.y ) ) );
     kiapi::common::PackVector2( *response.mutable_settings()->mutable_grid_origin(), gridOrigin );
     response.mutable_settings()->set_grid_visible( m_frame->IsGridVisible() );
-    response.mutable_settings()->set_snap_to_grid( m_frame->GetGridSnapping() );
+    response.mutable_settings()->set_snap_to_grid( gal->GetGridSnapping() );
 
     return response;
 }
@@ -3512,16 +3540,15 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetGridSettings(
     if( aCtx.Request.has_grid_visible() )
         m_frame->SetGridVisibility( aCtx.Request.grid_visible() );
 
-    if( aCtx.Request.has_snap_to_grid() )
-        m_frame->SetGridSnapping( aCtx.Request.snap_to_grid() );
+    // Grid size changes - update via GAL
+    KIGFX::GAL* gal = m_frame->GetCanvas()->GetGAL();
 
-    // Grid size changes require updating the screen
     if( aCtx.Request.has_grid_size_x_nm() || aCtx.Request.has_grid_size_y_nm() )
     {
-        VECTOR2I currentGrid = m_frame->GetScreen()->GetGridSize();
-        int64_t newX = aCtx.Request.has_grid_size_x_nm() ? aCtx.Request.grid_size_x_nm() : currentGrid.x;
-        int64_t newY = aCtx.Request.has_grid_size_y_nm() ? aCtx.Request.grid_size_y_nm() : currentGrid.y;
-        m_frame->SetGridSize( VECTOR2I( newX, newY ) );
+        VECTOR2D currentGrid = gal->GetGridSize();
+        double newX = aCtx.Request.has_grid_size_x_nm() ? aCtx.Request.grid_size_x_nm() : currentGrid.x;
+        double newY = aCtx.Request.has_grid_size_y_nm() ? aCtx.Request.grid_size_y_nm() : currentGrid.y;
+        gal->SetGridSize( VECTOR2D( newX, newY ) );
     }
 
     m_frame->GetCanvas()->Refresh();
@@ -3725,9 +3752,13 @@ API_HANDLER_SCH::handleGetEditorPreferences(
     prefs->set_show_erc_warnings( eeSettings->m_Appearance.show_erc_warnings );
     prefs->set_show_erc_exclusions( eeSettings->m_Appearance.show_erc_exclusions );
 
-    // Behavior settings
-    prefs->set_auto_pan( eeSettings->m_Input.auto_pan );
-    prefs->set_center_on_zoom( eeSettings->m_Input.center_on_zoom );
+    // Behavior settings - these are in COMMON_SETTINGS
+    COMMON_SETTINGS* commonSettings = Pgm().GetCommonSettings();
+    if( commonSettings )
+    {
+        prefs->set_auto_pan( commonSettings->m_Input.auto_pan );
+        prefs->set_center_on_zoom( commonSettings->m_Input.center_on_zoom );
+    }
 
     return response;
 }
@@ -3759,11 +3790,15 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetEditorPreferences(
     if( prefs.has_show_erc_exclusions() )
         eeSettings->m_Appearance.show_erc_exclusions = prefs.show_erc_exclusions();
 
-    // Behavior settings
-    if( prefs.has_auto_pan() )
-        eeSettings->m_Input.auto_pan = prefs.auto_pan();
-    if( prefs.has_center_on_zoom() )
-        eeSettings->m_Input.center_on_zoom = prefs.center_on_zoom();
+    // Behavior settings - these are in COMMON_SETTINGS
+    COMMON_SETTINGS* commonSettings = Pgm().GetCommonSettings();
+    if( commonSettings )
+    {
+        if( prefs.has_auto_pan() )
+            commonSettings->m_Input.auto_pan = prefs.auto_pan();
+        if( prefs.has_center_on_zoom() )
+            commonSettings->m_Input.center_on_zoom = prefs.center_on_zoom();
+    }
 
     m_frame->GetCanvas()->Refresh();
 
@@ -3790,13 +3825,27 @@ API_HANDLER_SCH::handleGetSimulationSettings(
     // Get SPICE settings from schematic settings
     SCHEMATIC_SETTINGS& schSettings = m_frame->Schematic().Settings();
 
-    settings->set_spice_command( schSettings.m_SpiceCommandString.ToStdString() );
     settings->set_simulator( "ngspice" );
 
-    // Add include paths
-    for( const wxString& path : schSettings.m_SpiceModelPaths )
+    // Get compatibility mode from NGSPICE_SETTINGS if available
+    if( schSettings.m_NgspiceSettings )
     {
-        settings->add_include_paths( path.ToStdString() );
+        auto mode = schSettings.m_NgspiceSettings->GetCompatibilityMode();
+        switch( mode )
+        {
+        case NGSPICE_COMPATIBILITY_MODE::PSPICE:
+            settings->set_spice_command( "pspice" );
+            break;
+        case NGSPICE_COMPATIBILITY_MODE::LTSPICE:
+            settings->set_spice_command( "ltspice" );
+            break;
+        case NGSPICE_COMPATIBILITY_MODE::HSPICE:
+            settings->set_spice_command( "hspice" );
+            break;
+        default:
+            settings->set_spice_command( "ngspice" );
+            break;
+        }
     }
 
     return response;
@@ -3817,17 +3866,18 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetSimulationSettings(
     const schematic::commands::SimulationSettings& settings = aCtx.Request.settings();
     SCHEMATIC_SETTINGS& schSettings = m_frame->Schematic().Settings();
 
-    if( !settings.spice_command().empty() )
-        schSettings.m_SpiceCommandString = wxString::FromUTF8( settings.spice_command() );
-
-    // Update include paths
-    if( settings.include_paths_size() > 0 )
+    // Set compatibility mode based on spice_command hint
+    if( schSettings.m_NgspiceSettings && !settings.spice_command().empty() )
     {
-        schSettings.m_SpiceModelPaths.clear();
-        for( const std::string& path : settings.include_paths() )
-        {
-            schSettings.m_SpiceModelPaths.push_back( wxString::FromUTF8( path ) );
-        }
+        wxString mode = wxString::FromUTF8( settings.spice_command() ).Lower();
+        if( mode == "pspice" )
+            schSettings.m_NgspiceSettings->SetCompatibilityMode( NGSPICE_COMPATIBILITY_MODE::PSPICE );
+        else if( mode == "ltspice" )
+            schSettings.m_NgspiceSettings->SetCompatibilityMode( NGSPICE_COMPATIBILITY_MODE::LTSPICE );
+        else if( mode == "hspice" )
+            schSettings.m_NgspiceSettings->SetCompatibilityMode( NGSPICE_COMPATIBILITY_MODE::HSPICE );
+        else
+            schSettings.m_NgspiceSettings->SetCompatibilityMode( NGSPICE_COMPATIBILITY_MODE::NGSPICE );
     }
 
     m_frame->OnModify();
@@ -3848,21 +3898,28 @@ API_HANDLER_SCH::handleGetLibrarySymbols(
 
     wxString libName = wxString::FromUTF8( aCtx.Request.library_name() );
 
-    // Get the symbol library table
-    SYMBOL_LIB_TABLE* libTable = PROJECT_SCH::SchSymbolLibTable( &m_frame->Prj() );
+    // Get the symbol library adapter
+    SYMBOL_LIBRARY_ADAPTER* libAdapter = PROJECT_SCH::SymbolLibAdapter( &m_frame->Prj() );
 
-    if( !libTable )
+    if( !libAdapter )
     {
         ApiResponseStatus e;
         e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-        e.set_error_message( "Symbol library table not available" );
+        e.set_error_message( "Symbol library adapter not available" );
+        return tl::unexpected( e );
+    }
+
+    if( !libAdapter->HasLibrary( libName ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( fmt::format( "Library '{}' not found", libName.ToStdString() ) );
         return tl::unexpected( e );
     }
 
     try
     {
-        wxArrayString names;
-        libTable->EnumerateSymbolLib( libName, names );
+        std::vector<wxString> names = libAdapter->GetSymbolNames( libName );
 
         for( const wxString& name : names )
         {
@@ -3891,14 +3948,14 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
     wxString query = wxString::FromUTF8( aCtx.Request.query() ).Lower();
     int maxResults = aCtx.Request.max_results() > 0 ? aCtx.Request.max_results() : 100;
 
-    // Get the symbol library table
-    SYMBOL_LIB_TABLE* libTable = PROJECT_SCH::SchSymbolLibTable( &m_frame->Prj() );
+    // Get the symbol library adapter
+    SYMBOL_LIBRARY_ADAPTER* libAdapter = PROJECT_SCH::SymbolLibAdapter( &m_frame->Prj() );
 
-    if( !libTable )
+    if( !libAdapter )
     {
         ApiResponseStatus e;
         e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-        e.set_error_message( "Symbol library table not available" );
+        e.set_error_message( "Symbol library adapter not available" );
         return tl::unexpected( e );
     }
 
@@ -3911,7 +3968,7 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
     }
     else
     {
-        libNames = libTable->GetLogicalLibs();
+        libNames = libAdapter->GetLibraryNames();
     }
 
     int count = 0;
@@ -3921,10 +3978,12 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
         if( count >= maxResults )
             break;
 
+        if( !libAdapter->HasLibrary( libName ) )
+            continue;
+
         try
         {
-            wxArrayString names;
-            libTable->EnumerateSymbolLib( libName, names );
+            std::vector<wxString> names = libAdapter->GetSymbolNames( libName );
 
             for( const wxString& name : names )
             {
@@ -3934,7 +3993,7 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
                 // Simple search: check if query appears in name
                 if( name.Lower().Contains( query ) )
                 {
-                    LIB_SYMBOL* symbol = libTable->LoadSymbol( libName, name );
+                    LIB_SYMBOL* symbol = libAdapter->LoadSymbol( libName, name );
                     if( symbol )
                     {
                         schematic::commands::SymbolInfo* info = response.add_symbols();
@@ -3967,7 +4026,8 @@ API_HANDLER_SCH::handleGetSymbolInfo(
     schematic::commands::GetSymbolInfoResponse response;
 
     LIB_ID libId;
-    if( libId.Parse( aCtx.Request.lib_id() ) )
+    // LIB_ID::Parse returns -1 on success, >= 0 (error offset) on failure
+    if( libId.Parse( aCtx.Request.lib_id() ) >= 0 )
     {
         ApiResponseStatus e;
         e.set_status( ApiStatusCode::AS_BAD_REQUEST );
@@ -3975,19 +4035,19 @@ API_HANDLER_SCH::handleGetSymbolInfo(
         return tl::unexpected( e );
     }
 
-    SYMBOL_LIB_TABLE* libTable = PROJECT_SCH::SchSymbolLibTable( &m_frame->Prj() );
+    SYMBOL_LIBRARY_ADAPTER* libAdapter = PROJECT_SCH::SymbolLibAdapter( &m_frame->Prj() );
 
-    if( !libTable )
+    if( !libAdapter )
     {
         ApiResponseStatus e;
         e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-        e.set_error_message( "Symbol library table not available" );
+        e.set_error_message( "Symbol library adapter not available" );
         return tl::unexpected( e );
     }
 
     try
     {
-        LIB_SYMBOL* symbol = libTable->LoadSymbol( libId );
+        LIB_SYMBOL* symbol = libAdapter->LoadSymbol( libId );
 
         if( !symbol )
         {
@@ -4239,29 +4299,23 @@ API_HANDLER_SCH::handleGetUndoHistory(
 
     schematic::commands::GetUndoHistoryResponse response;
 
-    SCH_SCREEN* screen = m_frame->GetScreen();
+    // Undo/redo counts from frame
+    int undoCount = m_frame->GetUndoCommandCount();
+    int redoCount = m_frame->GetRedoCommandCount();
 
-    if( screen )
+    // We can only report counts, not detailed info without accessing private members
+    for( int i = 0; i < undoCount; i++ )
     {
-        // Get undo list
-        const UNDO_REDO_CONTAINER& undoList = screen->GetUndoList();
-        for( size_t i = 0; i < undoList.m_CommandsList.size(); i++ )
-        {
-            schematic::commands::UndoRedoInfo* info = response.add_undo_stack();
-            PICKED_ITEMS_LIST* cmd = undoList.m_CommandsList[i];
-            info->set_description( cmd->GetDescription().ToStdString() );
-            info->set_item_count( cmd->GetCount() );
-        }
+        schematic::commands::UndoRedoInfo* info = response.add_undo_stack();
+        info->set_description( fmt::format( "Undo step {}", i + 1 ) );
+        info->set_item_count( 1 );
+    }
 
-        // Get redo list
-        const UNDO_REDO_CONTAINER& redoList = screen->GetRedoList();
-        for( size_t i = 0; i < redoList.m_CommandsList.size(); i++ )
-        {
-            schematic::commands::UndoRedoInfo* info = response.add_redo_stack();
-            PICKED_ITEMS_LIST* cmd = redoList.m_CommandsList[i];
-            info->set_description( cmd->GetDescription().ToStdString() );
-            info->set_item_count( cmd->GetCount() );
-        }
+    for( int i = 0; i < redoCount; i++ )
+    {
+        schematic::commands::UndoRedoInfo* info = response.add_redo_stack();
+        info->set_description( fmt::format( "Redo step {}", i + 1 ) );
+        info->set_item_count( 1 );
     }
 
     return response;
@@ -4289,7 +4343,7 @@ API_HANDLER_SCH::handleUndo(
 
     for( int i = 0; i < count; i++ )
     {
-        if( m_frame->GetScreen()->GetUndoList().m_CommandsList.empty() )
+        if( m_frame->GetUndoCommandCount() == 0 )
             break;
 
         mgr->RunAction( ACTIONS::undo );
@@ -4323,7 +4377,7 @@ API_HANDLER_SCH::handleRedo(
 
     for( int i = 0; i < count; i++ )
     {
-        if( m_frame->GetScreen()->GetRedoList().m_CommandsList.empty() )
+        if( m_frame->GetRedoCommandCount() == 0 )
             break;
 
         mgr->RunAction( ACTIONS::redo );
@@ -4626,7 +4680,7 @@ API_HANDLER_SCH::handleCrossProbeFromBoard(
     // Clear existing selection if requested
     if( aCtx.Request.clear_existing_selection() )
     {
-        m_frame->GetToolManager()->RunAction( EE_ACTIONS::clearSelection );
+        m_frame->GetToolManager()->RunAction( ACTIONS::selectionClear );
     }
 
     // Find symbols by reference designator
@@ -4661,7 +4715,7 @@ API_HANDLER_SCH::handleCrossProbeFromBoard(
     // Select items if requested
     if( aCtx.Request.select_items() && !foundSymbols.empty() )
     {
-        EE_SELECTION_TOOL* selTool = m_frame->GetToolManager()->GetTool<EE_SELECTION_TOOL>();
+        SCH_SELECTION_TOOL* selTool = m_frame->GetToolManager()->GetTool<SCH_SELECTION_TOOL>();
 
         if( selTool )
         {
@@ -4679,23 +4733,17 @@ API_HANDLER_SCH::handleCrossProbeFromBoard(
 
         for( const std::string& netName : aCtx.Request.net_names() )
         {
-            // Use the highlight net action
             wxString netStr( netName );
 
-            // Find items on this net and highlight them
+            // Find items on this net
             CONNECTION_GRAPH* graph = schematic.ConnectionGraph();
 
             if( graph )
             {
-                for( const CONNECTION_SUBGRAPH* subgraph : graph->GetAllSubgraphs() )
+                CONNECTION_SUBGRAPH* subgraph = graph->FindFirstSubgraphByName( netStr );
+                if( subgraph )
                 {
-                    SCH_CONNECTION* connection = subgraph->GetDriverConnection();
-
-                    if( connection && connection->Name() == netStr )
-                    {
-                        netsFound++;
-                        break;
-                    }
+                    netsFound++;
                 }
             }
         }
@@ -4795,7 +4843,7 @@ HANDLER_RESULT<RemoveLibraryResponse> API_HANDLER_SCH::handleRemoveLibrary(
     LIBRARY_TABLE* libTable = table.value();
 
     // Check if the library exists
-    if( !libTable->HasLibrary( nickname ) )
+    if( !libTable->HasRow( nickname ) )
     {
         response.set_status( RemoveLibraryStatus::RLS_NOT_FOUND );
         response.set_error_message( fmt::format( "Library '{}' not found in table",
@@ -4803,20 +4851,27 @@ HANDLER_RESULT<RemoveLibraryResponse> API_HANDLER_SCH::handleRemoveLibrary(
         return response;
     }
 
-    // Remove the library
-    libTable->RemoveRow( libTable->FindRow( nickname ) );
+    // Remove the library by finding and erasing from the rows vector
+    std::vector<LIBRARY_TABLE_ROW>& rows = libTable->Rows();
+    auto it = std::find_if( rows.begin(), rows.end(),
+                           [&nickname]( const LIBRARY_TABLE_ROW& row )
+                           {
+                               return row.Nickname() == nickname;
+                           } );
+
+    if( it != rows.end() )
+    {
+        rows.erase( it );
+    }
 
     // Save the library table
-    try
-    {
-        libTable->Save( libTable->GetFullURI( wxEmptyString, false ) );
-    }
-    catch( const IO_ERROR& e )
+    LIBRARY_RESULT<void> saveResult = libTable->Save();
+    if( !saveResult.has_value() )
     {
         // Library was removed from memory but save failed
         response.set_status( RemoveLibraryStatus::RLS_OK );
         response.set_error_message( fmt::format( "Library removed but table save failed: {}",
-                                                  e.What().ToStdString() ) );
+                                                  saveResult.error().message.ToStdString() ) );
         return response;
     }
 
@@ -4946,11 +5001,11 @@ API_HANDLER_SCH::handleGetDesignBlocks(
 {
     kiapi::schematic::commands::GetDesignBlocksResponse response;
 
-    DESIGN_BLOCK_LIB_TABLE* libTable = Prj().DesignBlockLibs();
+    DESIGN_BLOCK_LIBRARY_ADAPTER* libAdapter = m_frame->Prj().DesignBlockLibs();
 
-    if( !libTable )
+    if( !libAdapter )
     {
-        // No design block library table - return empty response
+        // No design block library adapter - return empty response
         return response;
     }
 
@@ -4959,7 +5014,7 @@ API_HANDLER_SCH::handleGetDesignBlocks(
     if( aCtx.Request.library_nickname().empty() )
     {
         // Get all libraries
-        libraryNames = libTable->GetLogicalLibs();
+        libraryNames = libAdapter->GetLibraryNames();
     }
     else
     {
@@ -4969,14 +5024,14 @@ API_HANDLER_SCH::handleGetDesignBlocks(
 
     for( const wxString& libName : libraryNames )
     {
-        if( !libTable->HasLibrary( libName ) )
+        if( !libAdapter->HasLibrary( libName ) )
             continue;
 
-        wxArrayString blockNames;
+        std::vector<wxString> blockNames;
 
         try
         {
-            libTable->DesignBlockEnumerate( blockNames, libName, true );
+            blockNames = libAdapter->GetDesignBlockNames( libName );
         }
         catch( const IO_ERROR& )
         {
@@ -4993,7 +5048,7 @@ API_HANDLER_SCH::handleGetDesignBlocks(
             // Try to get description from the design block
             try
             {
-                const DESIGN_BLOCK* block = libTable->GetDesignBlock( libName, blockName );
+                const DESIGN_BLOCK* block = libAdapter->GetEnumeratedDesignBlock( libName, blockName );
                 if( block )
                 {
                     info->set_description( block->GetLibDescription().ToStdString() );
@@ -5017,9 +5072,9 @@ API_HANDLER_SCH::handleSearchDesignBlocks(
 {
     kiapi::schematic::commands::SearchDesignBlocksResponse response;
 
-    DESIGN_BLOCK_LIB_TABLE* libTable = Prj().DesignBlockLibs();
+    DESIGN_BLOCK_LIBRARY_ADAPTER* libAdapter = m_frame->Prj().DesignBlockLibs();
 
-    if( !libTable )
+    if( !libAdapter )
         return response;
 
     wxString query = wxString::FromUTF8( aCtx.Request.query() ).Lower();
@@ -5030,7 +5085,7 @@ API_HANDLER_SCH::handleSearchDesignBlocks(
 
     if( aCtx.Request.libraries().empty() )
     {
-        libraryNames = libTable->GetLogicalLibs();
+        libraryNames = libAdapter->GetLibraryNames();
     }
     else
     {
@@ -5040,14 +5095,14 @@ API_HANDLER_SCH::handleSearchDesignBlocks(
 
     for( const wxString& libName : libraryNames )
     {
-        if( !libTable->HasLibrary( libName ) )
+        if( !libAdapter->HasLibrary( libName ) )
             continue;
 
-        wxArrayString blockNames;
+        std::vector<wxString> blockNames;
 
         try
         {
-            libTable->DesignBlockEnumerate( blockNames, libName, true );
+            blockNames = libAdapter->GetDesignBlockNames( libName );
         }
         catch( const IO_ERROR& )
         {
@@ -5070,7 +5125,7 @@ API_HANDLER_SCH::handleSearchDesignBlocks(
             {
                 try
                 {
-                    const DESIGN_BLOCK* block = libTable->GetDesignBlock( libName, blockName );
+                    const DESIGN_BLOCK* block = libAdapter->GetEnumeratedDesignBlock( libName, blockName );
                     if( block )
                     {
                         if( block->GetLibDescription().Lower().Contains( query ) ||
@@ -5095,7 +5150,7 @@ API_HANDLER_SCH::handleSearchDesignBlocks(
 
                 try
                 {
-                    const DESIGN_BLOCK* block = libTable->GetDesignBlock( libName, blockName );
+                    const DESIGN_BLOCK* block = libAdapter->GetEnumeratedDesignBlock( libName, blockName );
                     if( block )
                     {
                         info->set_description( block->GetLibDescription().ToStdString() );
@@ -5165,19 +5220,19 @@ API_HANDLER_SCH::handleDeleteDesignBlock(
         return response;
     }
 
-    DESIGN_BLOCK_LIB_TABLE* libTable = Prj().DesignBlockLibs();
+    DESIGN_BLOCK_LIBRARY_ADAPTER* libAdapter = m_frame->Prj().DesignBlockLibs();
 
-    if( !libTable )
+    if( !libAdapter )
     {
         response.set_success( false );
-        response.set_error_message( "No design block library table available" );
+        response.set_error_message( "No design block library adapter available" );
         return response;
     }
 
     wxString libName = libId.GetLibNickname();
     wxString blockName = libId.GetLibItemName();
 
-    if( !libTable->HasLibrary( libName ) )
+    if( !libAdapter->HasLibrary( libName ) )
     {
         response.set_success( false );
         response.set_error_message( fmt::format( "Library '{}' not found", libName.ToStdString() ) );
@@ -5186,7 +5241,7 @@ API_HANDLER_SCH::handleDeleteDesignBlock(
 
     try
     {
-        libTable->DesignBlockDelete( libName, blockName );
+        libAdapter->DeleteDesignBlock( libName, blockName );
         response.set_success( true );
     }
     catch( const IO_ERROR& e )
@@ -5211,4 +5266,84 @@ API_HANDLER_SCH::handlePlaceDesignBlock(
                                  "Use the SCH_DESIGN_BLOCK_CONTROL tool action instead." );
 
     return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSaveDocument(
+        const HANDLER_CONTEXT<SaveDocument>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    m_frame->SaveProject();
+    return Empty();
+}
+
+
+HANDLER_RESULT<SavedDocumentResponse> API_HANDLER_SCH::handleSaveDocumentToString(
+        const HANDLER_CONTEXT<SaveDocumentToString>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    SavedDocumentResponse response;
+    response.mutable_document()->CopyFrom( aCtx.Request.document() );
+
+    SCHEMATIC& schematic = m_frame->Schematic();
+
+    // Get the current sheet's file path
+    wxString filePath = schematic.Root().GetFileName();
+
+    if( filePath.IsEmpty() || !wxFileExists( filePath ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Schematic file not found on disk. Save the document first." );
+        return tl::unexpected( e );
+    }
+
+    try
+    {
+        wxFFileInputStream fileStream( filePath );
+
+        if( !fileStream.IsOk() )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( fmt::format( "Could not open file: {}", filePath.ToStdString() ) );
+            return tl::unexpected( e );
+        }
+
+        wxStringOutputStream stringStream;
+        fileStream.Read( stringStream );
+
+        response.set_contents( stringStream.GetString().ToUTF8().data() );
+    }
+    catch( const std::exception& e )
+    {
+        ApiResponseStatus err;
+        err.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        err.set_error_message( fmt::format( "Error reading schematic file: {}", e.what() ) );
+        return tl::unexpected( err );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleRefreshEditor(
+        const HANDLER_CONTEXT<RefreshEditor>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    m_frame->RefreshCanvas();
+    return Empty();
 }

@@ -123,7 +123,10 @@ bool SCH_LINE::Deserialize( const google::protobuf::Any &aContainer )
     if( !aContainer.UnpackTo( &line ) )
         return false;
 
-    const_cast<KIID&>( m_Uuid ) = KIID( line.id().value() );
+    // Only overwrite UUID if a valid ID is provided in the proto
+    if( !line.id().value().empty() )
+        const_cast<KIID&>( m_Uuid ) = KIID( line.id().value() );
+
     SetStartPoint( kiapi::common::UnpackVector2( line.start() ) );
     SetEndPoint( kiapi::common::UnpackVector2( line.end() ) );
     SCH_LAYER_ID layer =

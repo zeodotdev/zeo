@@ -178,6 +178,8 @@ protected:
 
     bool validateDocumentInternal( const DocumentSpecifier& aDocument ) const override;
 
+    void pushCurrentCommit( const std::string& aClientName, const wxString& aMessage ) override;
+
     HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> createItemForType( KICAD_T aType, EDA_ITEM* aContainer );
 
     HANDLER_RESULT<common::types::ItemRequestStatus> handleCreateUpdateItemsInternal(
@@ -449,6 +451,16 @@ private:
 
     HANDLER_RESULT<Empty>
     handleSetPageSettings( const HANDLER_CONTEXT<commands::SetPageSettings>& aCtx );
+
+    // Document management handlers
+    HANDLER_RESULT<Empty>
+    handleSaveDocument( const HANDLER_CONTEXT<commands::SaveDocument>& aCtx );
+
+    HANDLER_RESULT<commands::SavedDocumentResponse>
+    handleSaveDocumentToString( const HANDLER_CONTEXT<commands::SaveDocumentToString>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleRefreshEditor( const HANDLER_CONTEXT<commands::RefreshEditor>& aCtx );
 
     // Helper to get item by KIID (searches all items including nested)
     std::optional<SCH_ITEM*> getItemById( const KIID& aId );

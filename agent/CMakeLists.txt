@@ -26,6 +26,7 @@ set( AGENT_SRCS
     agent_thread.cpp
     agent_events.cpp
     agent_state.cpp
+    agent_chat_history.cpp
 )
 
 # Resources for the macOS bundle
@@ -45,6 +46,7 @@ add_executable( agent WIN32 MACOSX_BUNDLE
     agent_thread.cpp
     agent_events.cpp
     agent_state.cpp
+    agent_chat_history.cpp
     ${CMAKE_SOURCE_DIR}/common/single_top.cpp
     ${AGENT_RESOURCES}
     )

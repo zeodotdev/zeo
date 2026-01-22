@@ -1,5 +1,6 @@
 #include "agent_frame.h"
 #include "agent_thread.h"
+#include "agent_chat_history.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -148,6 +149,11 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Initialize History
     m_chatHistory = nlohmann::json::array();
     m_pendingToolCalls = nlohmann::json::array();
+
+    // Initialize chat history persistence with timestamp conversation ID
+    wxDateTime now = wxDateTime::Now();
+    std::string conversationId = now.Format( "%Y-%m-%d_%H-%M-%S" ).ToStdString();
+    m_chatHistoryDb.SetConversationId( conversationId );
 
     // Initialize LLM client and tools
     m_llmClient = std::make_unique<AGENT_LLM_CLIENT>( this );
@@ -610,6 +616,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 
     // Update History
     m_chatHistory.push_back( { { "role", "user" }, { "content", text.ToStdString() } } );
+    m_chatHistoryDb.Save( m_chatHistory );
     m_currentResponse = ""; // Reset accumulator
     m_pendingToolCalls = nlohmann::json::array(); // Reset pending tool calls
     m_stopRequested = false; // Reset stop flag
@@ -726,6 +733,7 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
     if( !m_currentResponse.empty() )
     {
         m_chatHistory.push_back( { { "role", "assistant" }, { "content", m_currentResponse } } );
+        m_chatHistoryDb.Save( m_chatHistory );
     }
 
     if( aEvent.GetInt() == 0 ) // Failure
@@ -1214,6 +1222,7 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
         if( !m_currentResponse.empty() )
         {
             m_chatHistory.push_back( { { "role", "assistant" }, { "content", m_currentResponse } } );
+            m_chatHistoryDb.Save( m_chatHistory );
         }
 
         // Transition back to IDLE
@@ -1273,6 +1282,7 @@ void AGENT_FRAME::AddToolResultToHistory( const std::string& aToolUseId, const s
     });
 
     m_chatHistory.push_back( toolResultMsg );
+    m_chatHistoryDb.Save( m_chatHistory );
 }
 
 void AGENT_FRAME::AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBlocks )
@@ -1302,6 +1312,7 @@ void AGENT_FRAME::AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBl
 
     assistantMsg["content"] = content;
     m_chatHistory.push_back( assistantMsg );
+    m_chatHistoryDb.Save( m_chatHistory );
 
     // Reset accumulated text
     m_currentResponse = "";
@@ -1798,6 +1809,7 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
                 { "role", "assistant" },
                 { "content", m_currentResponse }
             } );
+            m_chatHistoryDb.Save( m_chatHistory );
         }
 
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
@@ -1833,7 +1845,7 @@ void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
         delete complete;
     }
 
-    // If we're still waiting for LLM (no tool calls), transition to IDLE
+    // If we're still waiting for LLM (no tool calls), save and transition to IDLE
     if( m_conversationCtx.GetState() == AgentConversationState::WAITING_FOR_LLM )
     {
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );

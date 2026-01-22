@@ -15,6 +15,7 @@
 #include "agent_llm_client.h"
 #include "agent_state.h"
 #include "agent_events.h"
+#include "agent_chat_history.h"
 
 // Forward Declarations
 class AGENT_THREAD;
@@ -101,6 +102,9 @@ private:
     std::string    m_currentResponse; // Streaming accumulator
     std::string    m_pendingTool;     // Tool waiting for approval
     bool           m_stopRequested;   // Flag for sync wait loops
+
+    // Chat History Persistence
+    AGENT_CHAT_HISTORY m_chatHistoryDb;
 
     // Async Tool Execution State
     AgentConversationContext m_conversationCtx;  // State machine context

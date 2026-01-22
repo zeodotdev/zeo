@@ -94,7 +94,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     controlsSizer->AddStretchSpacer();
 
     // Send Button
-    m_actionButton = new wxButton( m_inputPanel, wxID_ANY, "->" ); // Arrow icon would be better
+    m_actionButton = new wxButton( m_inputPanel, wxID_ANY, "Send" ); // Arrow icon would be better
     controlsSizer->Add( m_actionButton, 0, wxALIGN_CENTER_VERTICAL );
 
     inputContainerSizer->Add( controlsSizer, 0, wxEXPAND );
@@ -655,7 +655,7 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
 
     AppendHtml( "</p><p><i>(Stopped)</i></p>" );
-    m_actionButton->SetLabel( "->" );
+    m_actionButton->SetLabel( "Send" );
 }
 
 void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
@@ -727,7 +727,7 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
 
 
     AppendHtml( "</p>" ); // Close Agent block
-    m_actionButton->SetLabel( "->" );
+    m_actionButton->SetLabel( "Send" );
 
     // Add Assistant response to history
     if( !m_currentResponse.empty() )
@@ -943,7 +943,7 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     if( m_workerThread->Run() != wxTHREAD_NO_ERROR )
     {
         wxLogMessage( "Error creating thread" );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
     }
 }
 
@@ -1216,7 +1216,7 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
     {
         // Model finished
         AppendHtml( "</p>" );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
 
         // Add final assistant message to history if there's accumulated text
         if( !m_currentResponse.empty() )
@@ -1234,7 +1234,7 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
         wxString errorHtml = wxString::Format( "<p><font color='red'><b>Error:</b> %s</font></p>",
                                                aEvent.error_message );
         AppendHtml( errorHtml );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
         break;
     }
     }
@@ -1666,7 +1666,7 @@ void AGENT_FRAME::StartAsyncLLMRequest()
         wxLogDebug( "AGENT: Failed to start async LLM request" );
         AppendHtml( "<p><font color='red'>Error: Failed to start LLM request</font></p>" );
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
     }
 }
 
@@ -1800,7 +1800,7 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
     {
         // Model finished
         AppendHtml( "</p>" );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
 
         // Add final assistant message to history if there's accumulated text
         if( !m_currentResponse.empty() )
@@ -1820,7 +1820,7 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
         wxString errorHtml = wxString::Format( "<p><font color='red'><b>Error:</b> %s</font></p>",
                                                aChunk.error_message );
         AppendHtml( errorHtml );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
         break;
     }
@@ -1849,7 +1849,7 @@ void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
     if( m_conversationCtx.GetState() == AgentConversationState::WAITING_FOR_LLM )
     {
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
     }
 }
 
@@ -1869,5 +1869,5 @@ void AGENT_FRAME::OnLLMStreamError( wxThreadEvent& aEvent )
     }
 
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-    m_actionButton->SetLabel( "->" );
+    m_actionButton->SetLabel( "Send" );
 }

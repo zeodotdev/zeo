@@ -1,5 +1,6 @@
 #include "agent_frame.h"
 #include "agent_thread.h"
+#include "agent_chat_history.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -93,7 +94,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     controlsSizer->AddStretchSpacer();
 
     // Send Button
-    m_actionButton = new wxButton( m_inputPanel, wxID_ANY, "->" ); // Arrow icon would be better
+    m_actionButton = new wxButton( m_inputPanel, wxID_ANY, "Send" ); // Arrow icon would be better
     controlsSizer->Add( m_actionButton, 0, wxALIGN_CENTER_VERTICAL );
 
     inputContainerSizer->Add( controlsSizer, 0, wxEXPAND );
@@ -148,6 +149,11 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Initialize History
     m_chatHistory = nlohmann::json::array();
     m_pendingToolCalls = nlohmann::json::array();
+
+    // Initialize chat history persistence with timestamp conversation ID
+    wxDateTime now = wxDateTime::Now();
+    std::string conversationId = now.Format( "%Y-%m-%d_%H-%M-%S" ).ToStdString();
+    m_chatHistoryDb.SetConversationId( conversationId );
 
     // Initialize LLM client and tools
     m_llmClient = std::make_unique<AGENT_LLM_CLIENT>( this );
@@ -610,6 +616,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 
     // Update History
     m_chatHistory.push_back( { { "role", "user" }, { "content", text.ToStdString() } } );
+    m_chatHistoryDb.Save( m_chatHistory );
     m_currentResponse = ""; // Reset accumulator
     m_pendingToolCalls = nlohmann::json::array(); // Reset pending tool calls
     m_stopRequested = false; // Reset stop flag
@@ -648,7 +655,7 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
 
     AppendHtml( "</p><p><i>(Stopped)</i></p>" );
-    m_actionButton->SetLabel( "->" );
+    m_actionButton->SetLabel( "Send" );
 }
 
 void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
@@ -720,12 +727,13 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
 
 
     AppendHtml( "</p>" ); // Close Agent block
-    m_actionButton->SetLabel( "->" );
+    m_actionButton->SetLabel( "Send" );
 
     // Add Assistant response to history
     if( !m_currentResponse.empty() )
     {
         m_chatHistory.push_back( { { "role", "assistant" }, { "content", m_currentResponse } } );
+        m_chatHistoryDb.Save( m_chatHistory );
     }
 
     if( aEvent.GetInt() == 0 ) // Failure
@@ -935,7 +943,7 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     if( m_workerThread->Run() != wxTHREAD_NO_ERROR )
     {
         wxLogMessage( "Error creating thread" );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
     }
 }
 
@@ -1208,12 +1216,13 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
     {
         // Model finished
         AppendHtml( "</p>" );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
 
         // Add final assistant message to history if there's accumulated text
         if( !m_currentResponse.empty() )
         {
             m_chatHistory.push_back( { { "role", "assistant" }, { "content", m_currentResponse } } );
+            m_chatHistoryDb.Save( m_chatHistory );
         }
 
         // Transition back to IDLE
@@ -1225,7 +1234,7 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
         wxString errorHtml = wxString::Format( "<p><font color='red'><b>Error:</b> %s</font></p>",
                                                aEvent.error_message );
         AppendHtml( errorHtml );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
         break;
     }
     }
@@ -1273,6 +1282,7 @@ void AGENT_FRAME::AddToolResultToHistory( const std::string& aToolUseId, const s
     });
 
     m_chatHistory.push_back( toolResultMsg );
+    m_chatHistoryDb.Save( m_chatHistory );
 }
 
 void AGENT_FRAME::AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBlocks )
@@ -1302,6 +1312,7 @@ void AGENT_FRAME::AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBl
 
     assistantMsg["content"] = content;
     m_chatHistory.push_back( assistantMsg );
+    m_chatHistoryDb.Save( m_chatHistory );
 
     // Reset accumulated text
     m_currentResponse = "";
@@ -1655,7 +1666,7 @@ void AGENT_FRAME::StartAsyncLLMRequest()
         wxLogDebug( "AGENT: Failed to start async LLM request" );
         AppendHtml( "<p><font color='red'>Error: Failed to start LLM request</font></p>" );
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
     }
 }
 
@@ -1789,7 +1800,7 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
     {
         // Model finished
         AppendHtml( "</p>" );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
 
         // Add final assistant message to history if there's accumulated text
         if( !m_currentResponse.empty() )
@@ -1798,6 +1809,7 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
                 { "role", "assistant" },
                 { "content", m_currentResponse }
             } );
+            m_chatHistoryDb.Save( m_chatHistory );
         }
 
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
@@ -1808,7 +1820,7 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
         wxString errorHtml = wxString::Format( "<p><font color='red'><b>Error:</b> %s</font></p>",
                                                aChunk.error_message );
         AppendHtml( errorHtml );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
         break;
     }
@@ -1833,11 +1845,11 @@ void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
         delete complete;
     }
 
-    // If we're still waiting for LLM (no tool calls), transition to IDLE
+    // If we're still waiting for LLM (no tool calls), save and transition to IDLE
     if( m_conversationCtx.GetState() == AgentConversationState::WAITING_FOR_LLM )
     {
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-        m_actionButton->SetLabel( "->" );
+        m_actionButton->SetLabel( "Send" );
     }
 }
 
@@ -1857,5 +1869,5 @@ void AGENT_FRAME::OnLLMStreamError( wxThreadEvent& aEvent )
     }
 
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-    m_actionButton->SetLabel( "->" );
+    m_actionButton->SetLabel( "Send" );
 }

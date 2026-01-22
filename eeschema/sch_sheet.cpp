@@ -144,8 +144,8 @@ void SCH_SHEET::Serialize( google::protobuf::Any& aContainer ) const
     kiapi::schematic::types::Sheet sheet;
 
     sheet.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2( *sheet.mutable_position(), GetPosition() );
-    kiapi::common::PackVector2( *sheet.mutable_size(), GetSize() );
+    kiapi::common::PackVector2Sch( *sheet.mutable_position(), GetPosition() );
+    kiapi::common::PackVector2Sch( *sheet.mutable_size(), GetSize() );
     sheet.set_name( GetName().ToStdString() );
     sheet.set_filename( GetFileName().ToStdString() );
 
@@ -179,7 +179,7 @@ void SCH_SHEET::Serialize( google::protobuf::Any& aContainer ) const
         auto* protoPin = sheet.add_pins();
         protoPin->mutable_id()->set_value( pin->m_Uuid.AsStdString() );
         protoPin->set_name( pin->GetText().ToStdString() );
-        kiapi::common::PackVector2( *protoPin->mutable_position(), pin->GetPosition() );
+        kiapi::common::PackVector2Sch( *protoPin->mutable_position(), pin->GetPosition() );
 
         // Map SHEET_SIDE to SheetPinSide
         switch( pin->GetSide() )
@@ -208,7 +208,7 @@ void SCH_SHEET::Serialize( google::protobuf::Any& aContainer ) const
     {
         auto* protoField = sheet.add_fields();
         protoField->mutable_id()->set_value( field.m_Uuid.AsStdString() );
-        kiapi::common::PackVector2( *protoField->mutable_position(), field.GetPosition() );
+        kiapi::common::PackVector2Sch( *protoField->mutable_position(), field.GetPosition() );
         protoField->set_text( field.GetText().ToStdString() );
         protoField->set_name( field.GetName().ToStdString() );
         protoField->set_id_int( static_cast<int>( field.GetId() ) );
@@ -226,10 +226,10 @@ bool SCH_SHEET::Deserialize( const google::protobuf::Any& aContainer )
         return false;
 
     if( sheet.has_position() )
-        SetPosition( kiapi::common::UnpackVector2( sheet.position() ) );
+        SetPosition( kiapi::common::UnpackVector2Sch( sheet.position() ) );
 
     if( sheet.has_size() )
-        m_size = kiapi::common::UnpackVector2( sheet.size() );
+        m_size = kiapi::common::UnpackVector2Sch( sheet.size() );
 
     // Set name field
     if( !sheet.name().empty() )

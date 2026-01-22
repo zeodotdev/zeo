@@ -3516,9 +3516,9 @@ API_HANDLER_SCH::handleGetGridSettings(
     VECTOR2D gridSize = gal->GetGridSize();
     VECTOR2I gridOrigin = m_frame->GetGridOrigin();
 
-    kiapi::common::PackVector2( *response.mutable_settings()->mutable_grid_size(),
-                                VECTOR2I( KiROUND( gridSize.x ), KiROUND( gridSize.y ) ) );
-    kiapi::common::PackVector2( *response.mutable_settings()->mutable_grid_origin(), gridOrigin );
+    kiapi::common::PackVector2Sch( *response.mutable_settings()->mutable_grid_size(),
+                                   VECTOR2I( KiROUND( gridSize.x ), KiROUND( gridSize.y ) ) );
+    kiapi::common::PackVector2Sch( *response.mutable_settings()->mutable_grid_origin(), gridOrigin );
     response.mutable_settings()->set_grid_visible( m_frame->IsGridVisible() );
     response.mutable_settings()->set_snap_to_grid( gal->GetGridSnapping() );
 
@@ -4077,7 +4077,7 @@ API_HANDLER_SCH::handleGetSymbolInfo(
             schematic::commands::PinInfo* pinInfo = info->add_pins();
             pinInfo->set_number( pin->GetNumber().ToStdString() );
             pinInfo->set_name( pin->GetName().ToStdString() );
-            kiapi::common::PackVector2( *pinInfo->mutable_position(), pin->GetPosition() );
+            kiapi::common::PackVector2Sch( *pinInfo->mutable_position(), pin->GetPosition() );
             pinInfo->set_orientation( static_cast<int>( pin->GetOrientation() ) );
             pinInfo->set_electrical_type( magic_enum::enum_name( pin->GetType() ).data() );
             pinInfo->set_graphical_style( magic_enum::enum_name( pin->GetShape() ).data() );
@@ -4141,7 +4141,7 @@ API_HANDLER_SCH::handleGetTransformedPinPosition(
 
     // Get the transformed position (applies symbol's position, rotation, mirror)
     VECTOR2I worldPos = pin->GetPosition();
-    kiapi::common::PackVector2( *response.mutable_position(), worldPos );
+    kiapi::common::PackVector2Sch( *response.mutable_position(), worldPos );
     response.set_orientation( static_cast<int>( pin->GetOrientation() ) );
 
     return response;
@@ -4413,18 +4413,18 @@ API_HANDLER_SCH::handleGetViewport(
 
         VECTOR2D center = view->GetCenter();
         VECTOR2I centerInt( static_cast<int64_t>( center.x ), static_cast<int64_t>( center.y ) );
-        kiapi::common::PackVector2( *viewport->mutable_center(), centerInt );
+        kiapi::common::PackVector2Sch( *viewport->mutable_center(), centerInt );
 
         viewport->set_scale( view->GetScale() );
 
         BOX2D viewBox = view->GetViewport();
         types::Box2* box = viewport->mutable_visible_area();
-        kiapi::common::PackVector2( *box->mutable_position(),
-                                   VECTOR2I( static_cast<int64_t>( viewBox.GetPosition().x ),
-                                             static_cast<int64_t>( viewBox.GetPosition().y ) ) );
-        kiapi::common::PackVector2( *box->mutable_size(),
-                                   VECTOR2I( static_cast<int64_t>( viewBox.GetSize().x ),
-                                             static_cast<int64_t>( viewBox.GetSize().y ) ) );
+        kiapi::common::PackVector2Sch( *box->mutable_position(),
+                                      VECTOR2I( static_cast<int64_t>( viewBox.GetPosition().x ),
+                                                static_cast<int64_t>( viewBox.GetPosition().y ) ) );
+        kiapi::common::PackVector2Sch( *box->mutable_size(),
+                                      VECTOR2I( static_cast<int64_t>( viewBox.GetSize().x ),
+                                                static_cast<int64_t>( viewBox.GetSize().y ) ) );
     }
 
     return response;
@@ -4445,7 +4445,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetViewport(
     {
         if( aCtx.Request.has_center() )
         {
-            VECTOR2I center = kiapi::common::UnpackVector2( aCtx.Request.center() );
+            VECTOR2I center = kiapi::common::UnpackVector2Sch( aCtx.Request.center() );
             view->SetCenter( VECTOR2D( center.x, center.y ) );
         }
 

@@ -269,4 +269,110 @@ KICOMMON_API KIID_PATH UnpackSheetPath( const types::SheetPath& aInput )
     return output;
 }
 
+
+// Schematic units: 1 IU = 100nm (SCH_IU_PER_MM = 1e4, so 1mm = 10000 IU)
+// Proto units: nanometers (1mm = 1e6 nm)
+// Conversion factor: 100 (1e6 nm/mm / 1e4 IU/mm = 100 nm/IU)
+constexpr int64_t SCH_IU_TO_NM = 100;
+
+
+KICOMMON_API void PackVector2Sch( types::Vector2& aOutput, const VECTOR2I& aInput )
+{
+    // Convert from schematic IU to nanometers (multiply by 100)
+    aOutput.set_x_nm( static_cast<int64_t>( aInput.x ) * SCH_IU_TO_NM );
+    aOutput.set_y_nm( static_cast<int64_t>( aInput.y ) * SCH_IU_TO_NM );
+}
+
+
+KICOMMON_API VECTOR2I UnpackVector2Sch( const types::Vector2& aInput )
+{
+    // Convert from nanometers to schematic IU (divide by 100)
+    return VECTOR2I( aInput.x_nm() / SCH_IU_TO_NM, aInput.y_nm() / SCH_IU_TO_NM );
+}
+
+
+KICOMMON_API void PackBox2Sch( types::Box2& aOutput, const BOX2I& aInput )
+{
+    PackVector2Sch( *aOutput.mutable_position(), aInput.GetOrigin() );
+    PackVector2Sch( *aOutput.mutable_size(), aInput.GetSize() );
+}
+
+
+KICOMMON_API BOX2I UnpackBox2Sch( const types::Box2& aInput )
+{
+    return BOX2I( UnpackVector2Sch( aInput.position() ), UnpackVector2Sch( aInput.size() ) );
+}
+
+
+KICOMMON_API void PackPolyLineSch( types::PolyLine& aOutput, const SHAPE_LINE_CHAIN& aSlc )
+{
+    for( int vertex = 0; vertex < aSlc.PointCount(); vertex = aSlc.NextShape( vertex ) )
+    {
+        if( vertex < 0 )
+            break;
+
+        types::PolyLineNode* node = aOutput.mutable_nodes()->Add();
+
+        if( aSlc.IsPtOnArc( vertex ) )
+        {
+            const SHAPE_ARC& arc = aSlc.Arc( aSlc.ArcIndex( vertex ) );
+            // Convert from schematic IU to nanometers
+            node->mutable_arc()->mutable_start()->set_x_nm(
+                static_cast<int64_t>( arc.GetP0().x ) * SCH_IU_TO_NM );
+            node->mutable_arc()->mutable_start()->set_y_nm(
+                static_cast<int64_t>( arc.GetP0().y ) * SCH_IU_TO_NM );
+            node->mutable_arc()->mutable_mid()->set_x_nm(
+                static_cast<int64_t>( arc.GetArcMid().x ) * SCH_IU_TO_NM );
+            node->mutable_arc()->mutable_mid()->set_y_nm(
+                static_cast<int64_t>( arc.GetArcMid().y ) * SCH_IU_TO_NM );
+            node->mutable_arc()->mutable_end()->set_x_nm(
+                static_cast<int64_t>( arc.GetP1().x ) * SCH_IU_TO_NM );
+            node->mutable_arc()->mutable_end()->set_y_nm(
+                static_cast<int64_t>( arc.GetP1().y ) * SCH_IU_TO_NM );
+        }
+        else
+        {
+            // Convert from schematic IU to nanometers
+            node->mutable_point()->set_x_nm(
+                static_cast<int64_t>( aSlc.CPoint( vertex ).x ) * SCH_IU_TO_NM );
+            node->mutable_point()->set_y_nm(
+                static_cast<int64_t>( aSlc.CPoint( vertex ).y ) * SCH_IU_TO_NM );
+        }
+    }
+
+    aOutput.set_closed( aSlc.IsClosed() );
+}
+
+
+KICOMMON_API SHAPE_LINE_CHAIN UnpackPolyLineSch( const types::PolyLine& aInput )
+{
+    SHAPE_LINE_CHAIN slc;
+
+    for( const types::PolyLineNode& node : aInput.nodes() )
+    {
+        if( node.has_point() )
+        {
+            // Convert from nanometers to schematic IU
+            slc.Append( VECTOR2I( node.point().x_nm() / SCH_IU_TO_NM,
+                                   node.point().y_nm() / SCH_IU_TO_NM ) );
+        }
+        else if( node.has_arc() )
+        {
+            // Convert from nanometers to schematic IU
+            slc.Append( SHAPE_ARC(
+                VECTOR2I( node.arc().start().x_nm() / SCH_IU_TO_NM,
+                          node.arc().start().y_nm() / SCH_IU_TO_NM ),
+                VECTOR2I( node.arc().mid().x_nm() / SCH_IU_TO_NM,
+                          node.arc().mid().y_nm() / SCH_IU_TO_NM ),
+                VECTOR2I( node.arc().end().x_nm() / SCH_IU_TO_NM,
+                          node.arc().end().y_nm() / SCH_IU_TO_NM ),
+                0 /* don't care about width here */ ) );
+        }
+    }
+
+    slc.SetClosed( aInput.closed() );
+
+    return slc;
+}
+
 } // namespace kiapi::common

@@ -78,7 +78,7 @@ void SCH_JUNCTION::Serialize( google::protobuf::Any& aContainer ) const
     kiapi::schematic::types::Junction junction;
 
     junction.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2( *junction.mutable_position(), m_pos );
+    kiapi::common::PackVector2Sch( *junction.mutable_position(), m_pos );
     junction.set_diameter( m_diameter );
 
     // Color is stored but not serialized for now (requires conversion logic)
@@ -99,7 +99,7 @@ bool SCH_JUNCTION::Deserialize( const google::protobuf::Any& aContainer )
     if( !junction.id().value().empty() )
         const_cast<KIID&>( m_Uuid ) = KIID( junction.id().value() );
 
-    m_pos = kiapi::common::UnpackVector2( junction.position() );
+    m_pos = kiapi::common::UnpackVector2Sch( junction.position() );
     m_diameter = junction.diameter();
 
     // Color deserialization - use default for now

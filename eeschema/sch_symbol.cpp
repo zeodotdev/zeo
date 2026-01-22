@@ -54,7 +54,7 @@ void SCH_SYMBOL::Serialize( google::protobuf::Any& aContainer ) const
     kiapi::schematic::types::Symbol symbol;
 
     symbol.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2( *symbol.mutable_position(), GetPosition() );
+    kiapi::common::PackVector2Sch( *symbol.mutable_position(), GetPosition() );
     symbol.mutable_lib_id()->CopyFrom( kiapi::common::LibIdToProto( GetLibId() ) );
     symbol.set_unit( GetUnit() );
 
@@ -83,7 +83,7 @@ void SCH_SYMBOL::Serialize( google::protobuf::Any& aContainer ) const
     {
         auto* protoField = symbol.add_fields();
         protoField->mutable_id()->set_value( field.m_Uuid.AsStdString() );
-        kiapi::common::PackVector2( *protoField->mutable_position(), field.GetPosition() );
+        kiapi::common::PackVector2Sch( *protoField->mutable_position(), field.GetPosition() );
         protoField->set_text( field.GetText().ToStdString() );
         protoField->set_name( field.GetName().ToStdString() );
         protoField->set_id_int( static_cast<int>( field.GetId() ) );
@@ -94,7 +94,7 @@ void SCH_SYMBOL::Serialize( google::protobuf::Any& aContainer ) const
     {
         auto* protoPin = symbol.add_pins();
         protoPin->mutable_id()->set_value( pin->m_Uuid.AsStdString() );
-        kiapi::common::PackVector2( *protoPin->mutable_position(), pin->GetPosition() );
+        kiapi::common::PackVector2Sch( *protoPin->mutable_position(), pin->GetPosition() );
         protoPin->set_number( pin->GetNumber().ToStdString() );
         protoPin->set_name( pin->GetName().ToStdString() );
         // TODO: Electrical Type mapping
@@ -113,7 +113,7 @@ bool SCH_SYMBOL::Deserialize( const google::protobuf::Any& aContainer )
     // ID is typically used for lookup, not modification of identity, but we can check it.
 
     if( symbol.has_position() )
-        SetPosition( kiapi::common::UnpackVector2( symbol.position() ) );
+        SetPosition( kiapi::common::UnpackVector2Sch( symbol.position() ) );
 
     if( symbol.has_lib_id() )
         SetLibId( kiapi::common::LibIdFromProto( symbol.lib_id() ) );
@@ -151,7 +151,7 @@ bool SCH_SYMBOL::Deserialize( const google::protobuf::Any& aContainer )
         if( field )
         {
             field->SetText( protoField.text() );
-            field->SetPosition( kiapi::common::UnpackVector2( protoField.position() ) );
+            field->SetPosition( kiapi::common::UnpackVector2Sch( protoField.position() ) );
         }
     }
 

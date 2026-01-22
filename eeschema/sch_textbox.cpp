@@ -582,8 +582,8 @@ void SCH_TEXTBOX::Serialize( google::protobuf::Any& aContainer ) const
     // Set the bounding box coordinates
     BOX2I bbox = BOX2I( m_start, m_end - m_start );
     bbox.Normalize();
-    PackVector2( *textBox->mutable_top_left(), bbox.GetOrigin() );
-    PackVector2( *textBox->mutable_bottom_right(), bbox.GetEnd() );
+    PackVector2Sch( *textBox->mutable_top_left(), bbox.GetOrigin() );
+    PackVector2Sch( *textBox->mutable_bottom_right(), bbox.GetEnd() );
 
     // Set text attributes
     types::TextAttributes* attrs = textBox->mutable_attributes();
@@ -603,7 +603,7 @@ void SCH_TEXTBOX::Serialize( google::protobuf::Any& aContainer ) const
     attrs->set_mirrored( IsMirrored() );
     attrs->set_multiline( IsMultilineAllowed() );
     attrs->set_keep_upright( IsKeepUpright() );
-    PackVector2( *attrs->mutable_size(), GetTextSize() );
+    PackVector2Sch( *attrs->mutable_size(), GetTextSize() );
 
     aContainer.PackFrom( schTextBox );
 }
@@ -624,8 +624,8 @@ bool SCH_TEXTBOX::Deserialize( const google::protobuf::Any& aContainer )
     SetText( wxString( textBox.text().c_str(), wxConvUTF8 ) );
 
     // Set the bounding box
-    VECTOR2I topLeft = UnpackVector2( textBox.top_left() );
-    VECTOR2I bottomRight = UnpackVector2( textBox.bottom_right() );
+    VECTOR2I topLeft = UnpackVector2Sch( textBox.top_left() );
+    VECTOR2I bottomRight = UnpackVector2Sch( textBox.bottom_right() );
     SetStart( topLeft );
     SetEnd( bottomRight );
 
@@ -640,7 +640,7 @@ bool SCH_TEXTBOX::Deserialize( const google::protobuf::Any& aContainer )
         SetMultilineAllowed( attrs.multiline() );
         SetKeepUpright( attrs.keep_upright() );
         SetTextThickness( attrs.stroke_width().value_nm() );
-        SetTextSize( UnpackVector2( attrs.size() ) );
+        SetTextSize( UnpackVector2Sch( attrs.size() ) );
         SetTextAngleDegrees( attrs.angle().value_degrees() );
         SetLineSpacing( attrs.line_spacing() );
         SetHorizJustify( FromProtoEnum<GR_TEXT_H_ALIGN_T>( attrs.horizontal_alignment() ) );

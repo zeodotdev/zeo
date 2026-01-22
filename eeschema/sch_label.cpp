@@ -1590,11 +1590,11 @@ void SCH_LABEL::Serialize( google::protobuf::Any& aContainer ) const
     kiapi::schematic::types::LocalLabel label;
 
     label.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2( *label.mutable_position(), GetPosition() );
+    kiapi::common::PackVector2Sch( *label.mutable_position(), GetPosition() );
 
     // Serialize text content and attributes
     label.mutable_text()->set_text( GetText().ToStdString() );
-    kiapi::common::PackVector2( *label.mutable_text()->mutable_position(), GetTextPos() );
+    kiapi::common::PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
 
     aContainer.PackFrom( label );
 }
@@ -1612,7 +1612,7 @@ bool SCH_LABEL::Deserialize( const google::protobuf::Any& aContainer )
     if( !label.id().value().empty() )
         const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
 
-    SetPosition( UnpackVector2( label.position() ) );
+    SetPosition( UnpackVector2Sch( label.position() ) );
 
     // Deserialize text content
     if( label.has_text() )
@@ -1705,11 +1705,11 @@ void SCH_DIRECTIVE_LABEL::Serialize( google::protobuf::Any& aContainer ) const
     kiapi::schematic::types::DirectiveLabel label;
 
     label.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2( *label.mutable_position(), GetPosition() );
+    kiapi::common::PackVector2Sch( *label.mutable_position(), GetPosition() );
 
     // Serialize text content and attributes
     label.mutable_text()->set_text( GetText().ToStdString() );
-    kiapi::common::PackVector2( *label.mutable_text()->mutable_position(), GetTextPos() );
+    kiapi::common::PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
 
     aContainer.PackFrom( label );
 }
@@ -1727,7 +1727,7 @@ bool SCH_DIRECTIVE_LABEL::Deserialize( const google::protobuf::Any& aContainer )
     if( !label.id().value().empty() )
         const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
 
-    SetPosition( UnpackVector2( label.position() ) );
+    SetPosition( UnpackVector2Sch( label.position() ) );
 
     // Deserialize text content
     if( label.has_text() )
@@ -2038,11 +2038,11 @@ void SCH_GLOBALLABEL::Serialize( google::protobuf::Any& aContainer ) const
     kiapi::schematic::types::GlobalLabel label;
 
     label.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2( *label.mutable_position(), GetPosition() );
+    kiapi::common::PackVector2Sch( *label.mutable_position(), GetPosition() );
 
     // Serialize text content and attributes
     label.mutable_text()->set_text( GetText().ToStdString() );
-    kiapi::common::PackVector2( *label.mutable_text()->mutable_position(), GetTextPos() );
+    kiapi::common::PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
 
     aContainer.PackFrom( label );
 }
@@ -2060,7 +2060,7 @@ bool SCH_GLOBALLABEL::Deserialize( const google::protobuf::Any& aContainer )
     if( !label.id().value().empty() )
         const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
 
-    SetPosition( UnpackVector2( label.position() ) );
+    SetPosition( UnpackVector2Sch( label.position() ) );
 
     // Deserialize text content
     if( label.has_text() )
@@ -2286,11 +2286,11 @@ void SCH_HIERLABEL::Serialize( google::protobuf::Any& aContainer ) const
     kiapi::schematic::types::HierarchicalLabel label;
 
     label.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2( *label.mutable_position(), GetPosition() );
+    kiapi::common::PackVector2Sch( *label.mutable_position(), GetPosition() );
 
     // Serialize text content and attributes
     label.mutable_text()->set_text( GetText().ToStdString() );
-    kiapi::common::PackVector2( *label.mutable_text()->mutable_position(), GetTextPos() );
+    kiapi::common::PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
 
     aContainer.PackFrom( label );
 }
@@ -2308,7 +2308,7 @@ bool SCH_HIERLABEL::Deserialize( const google::protobuf::Any& aContainer )
     if( !label.id().value().empty() )
         const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
 
-    SetPosition( UnpackVector2( label.position() ) );
+    SetPosition( UnpackVector2Sch( label.position() ) );
 
     // Deserialize text content
     if( label.has_text() )

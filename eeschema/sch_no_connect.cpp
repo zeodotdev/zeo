@@ -74,7 +74,7 @@ void SCH_NO_CONNECT::Serialize( google::protobuf::Any& aContainer ) const
     kiapi::schematic::types::NoConnect noConnect;
 
     noConnect.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2( *noConnect.mutable_position(), m_pos );
+    kiapi::common::PackVector2Sch( *noConnect.mutable_position(), m_pos );
 
     aContainer.PackFrom( noConnect );
 }
@@ -91,7 +91,7 @@ bool SCH_NO_CONNECT::Deserialize( const google::protobuf::Any& aContainer )
     if( !noConnect.id().value().empty() )
         const_cast<KIID&>( m_Uuid ) = KIID( noConnect.id().value() );
 
-    m_pos = kiapi::common::UnpackVector2( noConnect.position() );
+    m_pos = kiapi::common::UnpackVector2Sch( noConnect.position() );
 
     return true;
 }

@@ -107,8 +107,8 @@ void SCH_LINE::Serialize( google::protobuf::Any &aContainer ) const
     kiapi::schematic::types::Line line;
 
     line.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2( *line.mutable_start(), GetStartPoint() );
-    kiapi::common::PackVector2( *line.mutable_end(), GetEndPoint() );
+    kiapi::common::PackVector2Sch( *line.mutable_start(), GetStartPoint() );
+    kiapi::common::PackVector2Sch( *line.mutable_end(), GetEndPoint() );
     line.set_layer(
             ToProtoEnum<SCH_LAYER_ID, kiapi::schematic::types::SchematicLayer>( GetLayer() ) );
 
@@ -127,8 +127,8 @@ bool SCH_LINE::Deserialize( const google::protobuf::Any &aContainer )
     if( !line.id().value().empty() )
         const_cast<KIID&>( m_Uuid ) = KIID( line.id().value() );
 
-    SetStartPoint( kiapi::common::UnpackVector2( line.start() ) );
-    SetEndPoint( kiapi::common::UnpackVector2( line.end() ) );
+    SetStartPoint( kiapi::common::UnpackVector2Sch( line.start() ) );
+    SetEndPoint( kiapi::common::UnpackVector2Sch( line.end() ) );
     SCH_LAYER_ID layer =
             FromProtoEnum<SCH_LAYER_ID, kiapi::schematic::types::SchematicLayer>( line.layer() );
 

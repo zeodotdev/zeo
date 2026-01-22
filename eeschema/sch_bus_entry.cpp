@@ -630,8 +630,8 @@ void SCH_BUS_ENTRY_BASE::Serialize( google::protobuf::Any& aContainer ) const
     kiapi::schematic::types::BusEntry busEntry;
 
     busEntry.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2( *busEntry.mutable_position(), m_pos );
-    kiapi::common::PackVector2( *busEntry.mutable_size(), m_size );
+    kiapi::common::PackVector2Sch( *busEntry.mutable_position(), m_pos );
+    kiapi::common::PackVector2Sch( *busEntry.mutable_size(), m_size );
 
     // Set the entry type based on the actual class
     if( Type() == SCH_BUS_WIRE_ENTRY_T )
@@ -674,8 +674,8 @@ bool SCH_BUS_ENTRY_BASE::Deserialize( const google::protobuf::Any& aContainer )
     if( !busEntry.id().value().empty() )
         const_cast<KIID&>( m_Uuid ) = KIID( busEntry.id().value() );
 
-    m_pos = kiapi::common::UnpackVector2( busEntry.position() );
-    m_size = kiapi::common::UnpackVector2( busEntry.size() );
+    m_pos = kiapi::common::UnpackVector2Sch( busEntry.position() );
+    m_size = kiapi::common::UnpackVector2Sch( busEntry.size() );
 
     // Stroke properties
     if( busEntry.width() > 0 )

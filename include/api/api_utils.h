@@ -58,6 +58,40 @@ KICOMMON_API void PackVector2( types::Vector2& aOutput, const VECTOR2I& aInput )
 
 KICOMMON_API VECTOR2I UnpackVector2( const types::Vector2& aInput );
 
+/**
+ * Pack a schematic VECTOR2I (in schematic IU) to a protobuf Vector2 (in nanometers).
+ *
+ * Schematic IU are 100nm, so we multiply by 100 to convert to nanometers.
+ */
+KICOMMON_API void PackVector2Sch( types::Vector2& aOutput, const VECTOR2I& aInput );
+
+/**
+ * Unpack a protobuf Vector2 (in nanometers) to a schematic VECTOR2I (in schematic IU).
+ *
+ * Schematic IU are 100nm, so we divide by 100 to convert from nanometers.
+ */
+KICOMMON_API VECTOR2I UnpackVector2Sch( const types::Vector2& aInput );
+
+/**
+ * Pack a schematic BOX2I (in schematic IU) to a protobuf Box2 (in nanometers).
+ */
+KICOMMON_API void PackBox2Sch( types::Box2& aOutput, const BOX2I& aInput );
+
+/**
+ * Unpack a protobuf Box2 (in nanometers) to a schematic BOX2I (in schematic IU).
+ */
+KICOMMON_API BOX2I UnpackBox2Sch( const types::Box2& aInput );
+
+/**
+ * Pack a schematic SHAPE_LINE_CHAIN (in schematic IU) to a protobuf PolyLine (in nanometers).
+ */
+KICOMMON_API void PackPolyLineSch( types::PolyLine& aOutput, const SHAPE_LINE_CHAIN& aSlc );
+
+/**
+ * Unpack a protobuf PolyLine (in nanometers) to a schematic SHAPE_LINE_CHAIN (in schematic IU).
+ */
+KICOMMON_API SHAPE_LINE_CHAIN UnpackPolyLineSch( const types::PolyLine& aInput );
+
 KICOMMON_API void PackVector3D( types::Vector3D& aOutput, const VECTOR3D& aInput );
 
 KICOMMON_API VECTOR3D UnpackVector3D( const types::Vector3D& aInput );

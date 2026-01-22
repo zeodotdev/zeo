@@ -683,7 +683,7 @@ void SCH_TEXT::Serialize( google::protobuf::Any& aContainer ) const
     any.UnpackTo( schText.mutable_text() );
 
     // Ensure position is set (EDA_TEXT::Serialize already does this, but we override for clarity)
-    PackVector2( *schText.mutable_text()->mutable_position(), GetPosition() );
+    PackVector2Sch( *schText.mutable_text()->mutable_position(), GetPosition() );
 
     // Layer mapping - schematic layers are represented differently
     // For now, we just store the layer as-is since SchematicLayer enum needs expansion
@@ -709,7 +709,7 @@ bool SCH_TEXT::Deserialize( const google::protobuf::Any& aContainer )
     EDA_TEXT::Deserialize( any );
 
     // Set position from the text message
-    SetPosition( UnpackVector2( schText.text().position() ) );
+    SetPosition( UnpackVector2Sch( schText.text().position() ) );
 
     return true;
 }

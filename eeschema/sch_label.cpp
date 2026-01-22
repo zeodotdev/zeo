@@ -53,7 +53,9 @@
 #include <sch_rule_area.h>
 #include <magic_enum.hpp>
 #include <api/api_utils.h>
+#include <api/api_enums.h>
 #include <api/schematic/schematic_types.pb.h>
+#include <font/font.h>
 
 
 /* Coding polygons for global symbol graphic shapes.
@@ -1612,18 +1614,58 @@ bool SCH_LABEL::Deserialize( const google::protobuf::Any& aContainer )
     if( !label.id().value().empty() )
         const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
 
-    SetPosition( UnpackVector2Sch( label.position() ) );
-
     // Deserialize text content
+    // NOTE: We do NOT call EDA_TEXT::Deserialize here because it uses PCB unit conversion
+    // which is 100x different from schematic units. Instead, we extract text attributes
+    // manually with correct schematic unit conversion.
     if( label.has_text() )
     {
-        SetText( wxString( label.text().text().c_str(), wxConvUTF8 ) );
+        const auto& text = label.text();
 
-        // Deserialize text attributes if present
-        google::protobuf::Any textAny;
-        textAny.PackFrom( label.text() );
-        EDA_TEXT::Deserialize( textAny );
+        SetText( wxString( text.text().c_str(), wxConvUTF8 ) );
+        SetHyperlink( wxString( text.hyperlink().c_str(), wxConvUTF8 ) );
+
+        if( text.has_attributes() )
+        {
+            TEXT_ATTRIBUTES attrs = GetAttributes();
+            const auto& textAttrs = text.attributes();
+
+            attrs.m_Bold = textAttrs.bold();
+            attrs.m_Italic = textAttrs.italic();
+            attrs.m_Underlined = textAttrs.underlined();
+            attrs.m_Mirrored = textAttrs.mirrored();
+            attrs.m_Multiline = textAttrs.multiline();
+            attrs.m_KeepUpright = textAttrs.keep_upright();
+
+            // Text size needs schematic unit conversion (nm to schematic IU)
+            attrs.m_Size = UnpackVector2Sch( textAttrs.size() );
+
+            if( !textAttrs.font_name().empty() )
+            {
+                attrs.m_Font = KIFONT::FONT::GetFont(
+                        wxString( textAttrs.font_name().c_str(), wxConvUTF8 ),
+                        attrs.m_Bold, attrs.m_Italic );
+            }
+
+            attrs.m_Angle = EDA_ANGLE( textAttrs.angle().value_degrees(), DEGREES_T );
+            attrs.m_LineSpacing = textAttrs.line_spacing();
+
+            // Stroke width needs schematic unit conversion (nm to schematic IU)
+            attrs.m_StrokeWidth = textAttrs.stroke_width().value_nm() / 100;
+
+            attrs.m_Halign = FromProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>(
+                    textAttrs.horizontal_alignment() );
+            attrs.m_Valign = FromProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>(
+                    textAttrs.vertical_alignment() );
+
+            SetAttributes( attrs );
+        }
     }
+
+    // Set position from the top-level position field (NOT text.position)
+    // using schematic unit conversion
+    if( label.has_position() )
+        SetPosition( UnpackVector2Sch( label.position() ) );
 
     return true;
 }
@@ -1727,18 +1769,51 @@ bool SCH_DIRECTIVE_LABEL::Deserialize( const google::protobuf::Any& aContainer )
     if( !label.id().value().empty() )
         const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
 
-    SetPosition( UnpackVector2Sch( label.position() ) );
-
     // Deserialize text content
+    // NOTE: We do NOT call EDA_TEXT::Deserialize here because it uses PCB unit conversion
+    // which is 100x different from schematic units.
     if( label.has_text() )
     {
-        SetText( wxString( label.text().text().c_str(), wxConvUTF8 ) );
+        const auto& text = label.text();
 
-        // Deserialize text attributes if present
-        google::protobuf::Any textAny;
-        textAny.PackFrom( label.text() );
-        EDA_TEXT::Deserialize( textAny );
+        SetText( wxString( text.text().c_str(), wxConvUTF8 ) );
+        SetHyperlink( wxString( text.hyperlink().c_str(), wxConvUTF8 ) );
+
+        if( text.has_attributes() )
+        {
+            TEXT_ATTRIBUTES attrs = GetAttributes();
+            const auto& textAttrs = text.attributes();
+
+            attrs.m_Bold = textAttrs.bold();
+            attrs.m_Italic = textAttrs.italic();
+            attrs.m_Underlined = textAttrs.underlined();
+            attrs.m_Mirrored = textAttrs.mirrored();
+            attrs.m_Multiline = textAttrs.multiline();
+            attrs.m_KeepUpright = textAttrs.keep_upright();
+            attrs.m_Size = UnpackVector2Sch( textAttrs.size() );
+
+            if( !textAttrs.font_name().empty() )
+            {
+                attrs.m_Font = KIFONT::FONT::GetFont(
+                        wxString( textAttrs.font_name().c_str(), wxConvUTF8 ),
+                        attrs.m_Bold, attrs.m_Italic );
+            }
+
+            attrs.m_Angle = EDA_ANGLE( textAttrs.angle().value_degrees(), DEGREES_T );
+            attrs.m_LineSpacing = textAttrs.line_spacing();
+            attrs.m_StrokeWidth = textAttrs.stroke_width().value_nm() / 100;
+            attrs.m_Halign = FromProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>(
+                    textAttrs.horizontal_alignment() );
+            attrs.m_Valign = FromProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>(
+                    textAttrs.vertical_alignment() );
+
+            SetAttributes( attrs );
+        }
     }
+
+    // Set position from the top-level position field using schematic unit conversion
+    if( label.has_position() )
+        SetPosition( UnpackVector2Sch( label.position() ) );
 
     return true;
 }
@@ -2060,18 +2135,51 @@ bool SCH_GLOBALLABEL::Deserialize( const google::protobuf::Any& aContainer )
     if( !label.id().value().empty() )
         const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
 
-    SetPosition( UnpackVector2Sch( label.position() ) );
-
     // Deserialize text content
+    // NOTE: We do NOT call EDA_TEXT::Deserialize here because it uses PCB unit conversion
+    // which is 100x different from schematic units.
     if( label.has_text() )
     {
-        SetText( wxString( label.text().text().c_str(), wxConvUTF8 ) );
+        const auto& text = label.text();
 
-        // Deserialize text attributes if present
-        google::protobuf::Any textAny;
-        textAny.PackFrom( label.text() );
-        EDA_TEXT::Deserialize( textAny );
+        SetText( wxString( text.text().c_str(), wxConvUTF8 ) );
+        SetHyperlink( wxString( text.hyperlink().c_str(), wxConvUTF8 ) );
+
+        if( text.has_attributes() )
+        {
+            TEXT_ATTRIBUTES attrs = GetAttributes();
+            const auto& textAttrs = text.attributes();
+
+            attrs.m_Bold = textAttrs.bold();
+            attrs.m_Italic = textAttrs.italic();
+            attrs.m_Underlined = textAttrs.underlined();
+            attrs.m_Mirrored = textAttrs.mirrored();
+            attrs.m_Multiline = textAttrs.multiline();
+            attrs.m_KeepUpright = textAttrs.keep_upright();
+            attrs.m_Size = UnpackVector2Sch( textAttrs.size() );
+
+            if( !textAttrs.font_name().empty() )
+            {
+                attrs.m_Font = KIFONT::FONT::GetFont(
+                        wxString( textAttrs.font_name().c_str(), wxConvUTF8 ),
+                        attrs.m_Bold, attrs.m_Italic );
+            }
+
+            attrs.m_Angle = EDA_ANGLE( textAttrs.angle().value_degrees(), DEGREES_T );
+            attrs.m_LineSpacing = textAttrs.line_spacing();
+            attrs.m_StrokeWidth = textAttrs.stroke_width().value_nm() / 100;
+            attrs.m_Halign = FromProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>(
+                    textAttrs.horizontal_alignment() );
+            attrs.m_Valign = FromProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>(
+                    textAttrs.vertical_alignment() );
+
+            SetAttributes( attrs );
+        }
     }
+
+    // Set position from the top-level position field using schematic unit conversion
+    if( label.has_position() )
+        SetPosition( UnpackVector2Sch( label.position() ) );
 
     return true;
 }
@@ -2308,18 +2416,51 @@ bool SCH_HIERLABEL::Deserialize( const google::protobuf::Any& aContainer )
     if( !label.id().value().empty() )
         const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
 
-    SetPosition( UnpackVector2Sch( label.position() ) );
-
     // Deserialize text content
+    // NOTE: We do NOT call EDA_TEXT::Deserialize here because it uses PCB unit conversion
+    // which is 100x different from schematic units.
     if( label.has_text() )
     {
-        SetText( wxString( label.text().text().c_str(), wxConvUTF8 ) );
+        const auto& text = label.text();
 
-        // Deserialize text attributes if present
-        google::protobuf::Any textAny;
-        textAny.PackFrom( label.text() );
-        EDA_TEXT::Deserialize( textAny );
+        SetText( wxString( text.text().c_str(), wxConvUTF8 ) );
+        SetHyperlink( wxString( text.hyperlink().c_str(), wxConvUTF8 ) );
+
+        if( text.has_attributes() )
+        {
+            TEXT_ATTRIBUTES attrs = GetAttributes();
+            const auto& textAttrs = text.attributes();
+
+            attrs.m_Bold = textAttrs.bold();
+            attrs.m_Italic = textAttrs.italic();
+            attrs.m_Underlined = textAttrs.underlined();
+            attrs.m_Mirrored = textAttrs.mirrored();
+            attrs.m_Multiline = textAttrs.multiline();
+            attrs.m_KeepUpright = textAttrs.keep_upright();
+            attrs.m_Size = UnpackVector2Sch( textAttrs.size() );
+
+            if( !textAttrs.font_name().empty() )
+            {
+                attrs.m_Font = KIFONT::FONT::GetFont(
+                        wxString( textAttrs.font_name().c_str(), wxConvUTF8 ),
+                        attrs.m_Bold, attrs.m_Italic );
+            }
+
+            attrs.m_Angle = EDA_ANGLE( textAttrs.angle().value_degrees(), DEGREES_T );
+            attrs.m_LineSpacing = textAttrs.line_spacing();
+            attrs.m_StrokeWidth = textAttrs.stroke_width().value_nm() / 100;
+            attrs.m_Halign = FromProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>(
+                    textAttrs.horizontal_alignment() );
+            attrs.m_Valign = FromProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>(
+                    textAttrs.vertical_alignment() );
+
+            SetAttributes( attrs );
+        }
     }
+
+    // Set position from the top-level position field using schematic unit conversion
+    if( label.has_position() )
+        SetPosition( UnpackVector2Sch( label.position() ) );
 
     return true;
 }

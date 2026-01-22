@@ -47,7 +47,9 @@
 #include <tools/sch_navigate_tool.h>
 #include <trigo.h>
 #include <api/api_utils.h>
+#include <api/api_enums.h>
 #include <api/schematic/schematic_types.pb.h>
+#include <font/font.h>
 
 
 SCH_TEXT::SCH_TEXT( const VECTOR2I& aPos, const wxString& aText, SCH_LAYER_ID aLayer, KICAD_T aType ) :
@@ -703,13 +705,47 @@ bool SCH_TEXT::Deserialize( const google::protobuf::Any& aContainer )
 
     const_cast<KIID&>( m_Uuid ) = KIID( schText.id().value() );
 
-    // Deserialize the base EDA_TEXT properties
-    google::protobuf::Any any;
-    any.PackFrom( schText.text() );
-    EDA_TEXT::Deserialize( any );
+    // Deserialize text content
+    // NOTE: We do NOT call EDA_TEXT::Deserialize here because it uses PCB unit conversion
+    // which is 100x different from schematic units.
+    const auto& text = schText.text();
 
-    // Set position from the text message
-    SetPosition( UnpackVector2Sch( schText.text().position() ) );
+    SetText( wxString( text.text().c_str(), wxConvUTF8 ) );
+    SetHyperlink( wxString( text.hyperlink().c_str(), wxConvUTF8 ) );
+
+    if( text.has_attributes() )
+    {
+        TEXT_ATTRIBUTES attrs = GetAttributes();
+        const auto& textAttrs = text.attributes();
+
+        attrs.m_Bold = textAttrs.bold();
+        attrs.m_Italic = textAttrs.italic();
+        attrs.m_Underlined = textAttrs.underlined();
+        attrs.m_Mirrored = textAttrs.mirrored();
+        attrs.m_Multiline = textAttrs.multiline();
+        attrs.m_KeepUpright = textAttrs.keep_upright();
+        attrs.m_Size = UnpackVector2Sch( textAttrs.size() );
+
+        if( !textAttrs.font_name().empty() )
+        {
+            attrs.m_Font = KIFONT::FONT::GetFont(
+                    wxString( textAttrs.font_name().c_str(), wxConvUTF8 ),
+                    attrs.m_Bold, attrs.m_Italic );
+        }
+
+        attrs.m_Angle = EDA_ANGLE( textAttrs.angle().value_degrees(), DEGREES_T );
+        attrs.m_LineSpacing = textAttrs.line_spacing();
+        attrs.m_StrokeWidth = textAttrs.stroke_width().value_nm() / 100;
+        attrs.m_Halign = FromProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>(
+                textAttrs.horizontal_alignment() );
+        attrs.m_Valign = FromProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>(
+                textAttrs.vertical_alignment() );
+
+        SetAttributes( attrs );
+    }
+
+    // Set position from the text message with schematic unit conversion
+    SetPosition( UnpackVector2Sch( text.position() ) );
 
     return true;
 }

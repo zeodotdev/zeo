@@ -57,45 +57,29 @@ class SESSION_DROPDOWN : public wxFrame
 public:
     SESSION_DROPDOWN( wxWindow* aParent, SESSION_MANAGER* aManager, const wxPoint& aPos ) :
             wxFrame( aParent, wxID_ANY, _( "Session" ), aPos, wxDefaultSize,
-                     wxFRAME_NO_TASKBAR | wxBORDER_NONE ),
+                     wxFRAME_NO_TASKBAR | wxBORDER_SIMPLE ),
             m_manager( aManager )
     {
         SetSizeHints( wxDefaultSize, wxDefaultSize );
 
         wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
+        // Match notification list structure: frame border + inner panel border with colors
         wxColour fg, bg;
         KIPLATFORM::UI::GetInfoBarColours( fg, bg );
-        SetBackgroundColour( bg );
-        SetForegroundColour( fg );
 
-        // Use a panel for content to match styling better
-        wxPanel* panel = new wxPanel( this, wxID_ANY );
+        // Inner panel with wxBORDER_SIMPLE to match notification list's scrolled window
+        wxPanel* panel = new wxPanel( this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                      wxBORDER_SIMPLE );
         panel->SetBackgroundColour( bg );
         panel->SetForegroundColour( fg );
 
-        // Custom paint for uniform 1px inner border (app light gray background)
-        wxColour appBg = wxSystemSettings::GetColour( wxSYS_COLOUR_FRAMEBK );
-        panel->Bind( wxEVT_PAINT, [appBg]( wxPaintEvent& aEvent )
-        {
-            wxPanel* p = static_cast<wxPanel*>( aEvent.GetEventObject() );
-            wxPaintDC dc( p );
-
-            wxSize size = p->GetClientSize();
-            dc.SetPen( wxPen( appBg, 1 ) );
-            dc.SetBrush( *wxTRANSPARENT_BRUSH );
-            dc.DrawRectangle( 0, 0, size.x, size.y );
-        } );
-
         wxBoxSizer* contentSizer = new wxBoxSizer( wxVERTICAL );
-
-        // Add padding inside the panel
-        contentSizer->AddSpacer( 10 );
 
         // Signed in as...
         wxStaticText* signedInText = new wxStaticText( panel, wxID_ANY, _( "Signed in as:" ) );
         signedInText->SetFont( KIUI::GetControlFont( panel ).Bold() );
-        contentSizer->Add( signedInText, 0, wxLEFT | wxRIGHT, 10 );
+        contentSizer->Add( signedInText, 0, wxLEFT | wxRIGHT | wxTOP, 10 );
 
         wxStaticText* emailText = new wxStaticText( panel, wxID_ANY, aManager->GetAuth()->GetUserEmail() );
         contentSizer->Add( emailText, 0, wxLEFT | wxRIGHT | wxBOTTOM, 10 );
@@ -111,7 +95,7 @@ public:
         panel->SetSizer( contentSizer );
         contentSizer->Fit( panel );
 
-        mainSizer->Add( panel, 1, wxEXPAND | wxALL, 1 );
+        mainSizer->Add( panel, 1, wxEXPAND | wxALL, 0 );
 
         Bind( wxEVT_KILL_FOCUS, &SESSION_DROPDOWN::onFocusLoss, this );
         panel->Bind( wxEVT_KILL_FOCUS, &SESSION_DROPDOWN::onFocusLoss, this );

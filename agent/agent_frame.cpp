@@ -18,6 +18,9 @@
 #include <wx/settings.h>
 #include <wx/clipbrd.h>
 #include <wx/menu.h>
+#include <wx/toolbar.h>
+#include <wx/bitmap.h>
+#include <wx/icon.h>
 
 BEGIN_EVENT_TABLE( AGENT_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, AGENT_FRAME::OnExit )
@@ -29,6 +32,21 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_workerThread( nullptr )
 {
     // --- UI Layout ---
+    
+    // Create Toolbar
+    wxToolBar* toolBar = CreateToolBar( wxTB_FLAT | wxTB_HORIZONTAL );
+
+    // Create History button and add to toolbar
+    toolBar->AddStretchableSpace();
+    m_historyButton = new wxButton( toolBar, wxID_ANY, "History" );
+    m_historyButton->SetMinSize( wxSize( -1, 20 ) );  // Reduce height (~30px default -> 20px)
+    toolBar->AddControl( m_historyButton );
+    toolBar->Realize();
+
+    // Bind button click event
+    m_historyButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnHistoryTool, this );
+
+
     // Top: Chat History (Expandable)
     // Bottom: Input Container (Unified)
 
@@ -1870,4 +1888,160 @@ void AGENT_FRAME::OnLLMStreamError( wxThreadEvent& aEvent )
 
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
     m_actionButton->SetLabel( "Send" );
+}
+
+void AGENT_FRAME::OnHistoryTool( wxCommandEvent& aEvent )
+{
+    auto historyList = m_chatHistoryDb.GetHistoryList();
+
+    wxMenu menu;
+
+    // Add "New Chat" option at the top
+    menu.Append( ID_NEW_CHAT, "New Chat" );
+    Bind( wxEVT_MENU, &AGENT_FRAME::OnHistoryMenuSelect, this, ID_NEW_CHAT );
+
+    if( !historyList.empty() )
+    {
+        menu.AppendSeparator();
+
+        int id = ID_CHAT_HISTORY_MENU_BASE;
+
+        // Limit to last 20 entries to avoid massive menu
+        size_t count = 0;
+        for( const auto& entry : historyList )
+        {
+            if( count++ > 20 ) break;
+            menu.Append( id++, entry.displayName );
+        }
+
+        Bind( wxEVT_MENU, &AGENT_FRAME::OnHistoryMenuSelect, this, ID_CHAT_HISTORY_MENU_BASE, id - 1 );
+    }
+
+    PopupMenu( &menu );
+}
+
+void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
+{
+    // Handle "New Chat" selection
+    if( aEvent.GetId() == ID_NEW_CHAT )
+    {
+        // Clear current chat and start fresh
+        m_chatHistory = nlohmann::json::array();
+        m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>";
+        SetHtml( m_fullHtmlContent );
+        m_chatHistoryDb.StartNewConversation();
+        return;
+    }
+
+    int index = aEvent.GetId() - ID_CHAT_HISTORY_MENU_BASE;
+    auto historyList = m_chatHistoryDb.GetHistoryList();
+
+    if( index >= 0 && index < (int)historyList.size() )
+    {
+        std::string selectedId = historyList[index].id;
+        
+        // Load history
+        m_chatHistory = m_chatHistoryDb.Load( selectedId );
+        
+        // Clear window
+        m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p><i>Loaded history: " + historyList[index].displayName + "</i></p>";
+        
+        // Iterate history and render
+        for( const auto& msg : m_chatHistory )
+        {
+            if( msg.contains("role") && msg.contains("content") )
+            {
+                std::string role = msg["role"];
+                
+                // Content can be string or array (tool use)
+                if( msg["content"].is_string() )
+                {
+                    std::string content = msg["content"];
+                    // escape html? AppendHtml handles it roughly?
+                    // AppendHtml assumes formatted html or raw text?
+                    // Code uses AppendHtml which does NO escaping usually? 
+                    // Wait, OnAgentUpdate does Replace("\n", "<br>").
+                    // User input OnSend does wxString::Format( "<p><b>User:</b> %s</p>", text ); -> text is raw input.
+                    // So we should format.
+                    
+                    wxString display = content;
+                    display.Replace( "\n", "<br>" );
+                    
+                    if( role == "user" )
+                    {
+                        m_fullHtmlContent += "<p><b>User:</b> " + display + "</p>";
+                    }
+                    else if( role == "assistant" )
+                    {
+                         m_fullHtmlContent += "<p><b>Agent:</b> " + display + "</p>";
+                    }
+                }
+                else if( msg["content"].is_array() )
+                {
+                    // Iterate through content blocks and render each one
+                    for( const auto& block : msg["content"] )
+                    {
+                        if( !block.contains("type") )
+                            continue;
+
+                        std::string blockType = block["type"];
+
+                        if( blockType == "text" )
+                        {
+                            // Render text block
+                            std::string text = block.value("text", "");
+                            wxString display = text;
+                            display.Replace( "\n", "<br>" );
+
+                            if( role == "assistant" )
+                                m_fullHtmlContent += "<p><b>Agent:</b> " + display + "</p>";
+                            else if( role == "user" )
+                                m_fullHtmlContent += "<p><b>User:</b> " + display + "</p>";
+                        }
+                        else if( blockType == "tool_use" )
+                        {
+                            // Render tool_use block - matches live chat (lines 1202-1208)
+                            // NOTE: Live chat does NOT replace \n with <br> or spaces with &nbsp;
+                            // This allows wxHtmlWindow to naturally wrap at spaces
+                            std::string toolName = block.value("name", "unknown");
+                            std::string inputStr = block.value("input", nlohmann::json::object()).dump(2);
+
+                            wxString htmlToolCall = wxString::Format(
+                                "<br><font color='#569cd6'>🔧 Tool:</font> <b>%s</b><br>"
+                                "<font color='#6a9955' face='Courier New' size='2'>%s</font>",
+                                toolName, inputStr );
+                            m_fullHtmlContent += htmlToolCall;
+                        }
+                        else if( blockType == "tool_result" )
+                        {
+                            // Render tool_result block - matches live chat (lines 1613-1625)
+                            std::string content = block.value("content", "");
+                            bool isError = block.value("is_error", false);
+
+                            wxString htmlResult = content;
+                            htmlResult.Replace( "\n", "<br>" );
+                            htmlResult.Replace( " ", "&nbsp;" );
+
+                            wxString statusIcon = isError ? "✗" : "✓";
+                            wxString statusColor = isError ? "#f44747" : "#4ec9b0";
+
+                            wxString resultBox = wxString::Format(
+                                "<br><table width='100%%' bgcolor='#1e1e1e' cellpadding='10'><tr><td>"
+                                "<font color='%s' face='Courier New' size='2'>%s Result:</font><br>"
+                                "<font color='#d4d4d4' face='Courier New' size='2'>%s</font>"
+                                "</td></tr></table>",
+                                statusColor, statusIcon, htmlResult );
+                            m_fullHtmlContent += resultBox;
+                        }
+                    }
+                }
+            }
+        }
+        
+        m_fullHtmlContent += "</body></html>";
+        SetHtml( m_fullHtmlContent );
+        
+        // Update DB ID so new messages go to this history
+        m_chatHistoryDb.SetConversationId( selectedId );
+    }
 }

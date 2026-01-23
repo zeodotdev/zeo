@@ -23,6 +23,7 @@
 #include <wx/string.h>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <vector>
 
 /**
  * Simple JSON-based chat history persistence.
@@ -51,6 +52,23 @@ public:
      * @return The chat history, or empty array if not found.
      */
     nlohmann::json Load( const std::string& aConversationId );
+
+    struct HistoryEntry
+    {
+        std::string id;
+        std::string displayName;
+    };
+
+    /**
+     * Get a list of all saved conversations.
+     * @return Vector of history entries, sorted by ID descending (newest first).
+     */
+    std::vector<HistoryEntry> GetHistoryList();
+
+    /**
+     * Start a new conversation with a fresh timestamp-based ID.
+     */
+    void StartNewConversation();
 
 private:
     wxString GetHistoryDir();

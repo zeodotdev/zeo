@@ -21,7 +21,10 @@
 
 #include <wx/filename.h>
 #include <wx/stdpaths.h>
+#include <wx/dir.h>
+#include <wx/datetime.h>
 #include <fstream>
+#include <algorithm>
 
 AGENT_CHAT_HISTORY::AGENT_CHAT_HISTORY()
 {
@@ -101,4 +104,51 @@ nlohmann::json AGENT_CHAT_HISTORY::Load( const std::string& aConversationId )
     }
 
     return nlohmann::json::array();
+}
+
+std::vector<AGENT_CHAT_HISTORY::HistoryEntry> AGENT_CHAT_HISTORY::GetHistoryList()
+{
+    std::vector<HistoryEntry> list;
+    wxString dirPath = GetHistoryDir();
+
+    if( !wxFileName::DirExists( dirPath ) )
+        return list;
+
+    wxDir dir( dirPath );
+    if( !dir.IsOpened() )
+        return list;
+
+    wxString filename;
+    bool cont = dir.GetFirst( &filename, "*.json", wxDIR_FILES );
+    while( cont )
+    {
+        // Filename format: YYYY-MM-DD_HH-MM-SS.json
+        // ID is the filename without extension
+        wxFileName fn( dirPath, filename );
+        std::string id = fn.GetName().ToStdString();
+        
+        // Manual formatting: YYYY-MM-DD_HH-MM-SS -> YYYY-MM-DD HH:MM
+        std::string display = id;
+        if( id.length() >= 19 ) 
+        {
+            display = id.substr( 0, 10 ) + " " + id.substr( 11, 2 ) + ":" + id.substr( 14, 2 );
+        }
+
+        list.push_back( { id, display } );
+        cont = dir.GetNext( &filename );
+    }
+
+    // Sort descending (newest first)
+    std::sort( list.begin(), list.end(), []( const HistoryEntry& a, const HistoryEntry& b ) {
+        return a.id > b.id;
+    } );
+
+    return list;
+}
+
+
+void AGENT_CHAT_HISTORY::StartNewConversation()
+{
+    wxDateTime now = wxDateTime::Now();
+    m_conversationId = now.Format( "%Y-%m-%d_%H-%M-%S" ).ToStdString();
 }

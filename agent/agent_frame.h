@@ -22,7 +22,10 @@ class AGENT_THREAD;
 
 enum
 {
-    ID_CHAT_COPY = wxID_HIGHEST + 1001
+    ID_CHAT_COPY = wxID_HIGHEST + 1001,
+    ID_CHAT_HISTORY_TOOL,
+    ID_NEW_CHAT,
+    ID_CHAT_HISTORY_MENU_BASE = 2000
 };
 
 class AGENT_FRAME : public KIWAY_PLAYER
@@ -53,6 +56,8 @@ public:
     void OnInputText( wxCommandEvent& aEvent );
     void OnChatRightClick( wxMouseEvent& aEvent );
     void OnPopupClick( wxCommandEvent& aEvent );
+    void OnHistoryTool( wxCommandEvent& aEvent );
+    void OnHistoryMenuSelect( wxCommandEvent& aEvent );
 
     // Async tool execution event handlers
     void OnToolExecutionComplete( wxCommandEvent& aEvent );
@@ -86,6 +91,7 @@ private:
     wxButton*     m_plusButton;
     wxButton*     m_selectionPill;
     wxButton*     m_toolButton;
+    wxButton*     m_historyButton;
     wxChoice*     m_modelChoice;
     wxPanel*      m_inputPanel;
 

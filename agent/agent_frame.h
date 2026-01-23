@@ -92,7 +92,6 @@ private:
     wxHtmlWindow* m_chatWindow;
     wxTextCtrl*   m_inputCtrl;
     wxButton*     m_actionButton;
-    wxButton*     m_plusButton;
     wxButton*     m_selectionPill;
     wxButton*     m_toolButton;
     wxButton*     m_historyButton;

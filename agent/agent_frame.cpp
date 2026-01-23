@@ -103,10 +103,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // 2b. Control Row (Bottom)
     wxBoxSizer* controlsSizer = new wxBoxSizer( wxHORIZONTAL );
 
-    // Plus Button
-    m_plusButton = new wxButton( m_inputPanel, wxID_ANY, "+", wxDefaultPosition, wxSize( 30, -1 ) );
-    controlsSizer->Add( m_plusButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
-
     // Model Selection
     wxArrayString modelChoices;
     modelChoices.Add( "Claude 4.5 Opus" );

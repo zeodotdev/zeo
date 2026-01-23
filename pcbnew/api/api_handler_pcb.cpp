@@ -645,6 +645,7 @@ HANDLER_RESULT<GetItemsResponse> API_HANDLER_PCB::handleGetItems( const HANDLER_
         case PCB_TEXT_T:
         case PCB_TEXTBOX_T:
         case PCB_BARCODE_T:
+        case PCB_DIMENSION_T:
         {
             handledAnything = true;
             bool inserted = false;

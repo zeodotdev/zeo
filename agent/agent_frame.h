@@ -62,6 +62,7 @@ public:
     void OnPopupClick( wxCommandEvent& aEvent );
     void OnHistoryTool( wxCommandEvent& aEvent );
     void OnHistoryMenuSelect( wxCommandEvent& aEvent );
+    void OnNewChat( wxCommandEvent& aEvent );
 
     // Async tool execution event handlers
     void OnToolExecutionComplete( wxCommandEvent& aEvent );
@@ -89,14 +90,16 @@ public:
     DECLARE_EVENT_TABLE()
 
 private:
-    wxHtmlWindow* m_chatWindow;
-    wxTextCtrl*   m_inputCtrl;
-    wxButton*     m_actionButton;
-    wxButton*     m_selectionPill;
-    wxButton*     m_toolButton;
-    wxButton*     m_historyButton;
-    wxChoice*     m_modelChoice;
-    wxPanel*      m_inputPanel;
+    wxHtmlWindow*  m_chatWindow;
+    wxTextCtrl*    m_inputCtrl;
+    wxStaticText*  m_chatNameLabel;
+    wxButton*      m_actionButton;
+    wxButton*      m_selectionPill;
+    wxButton*      m_toolButton;
+    wxButton*      m_newChatButton;
+    wxButton*      m_historyButton;
+    wxChoice*      m_modelChoice;
+    wxPanel*       m_inputPanel;
 
     AGENT_THREAD* m_workerThread;
     AGENT_AUTH*   m_auth;

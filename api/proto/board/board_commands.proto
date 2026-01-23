@@ -410,3 +410,15 @@ message InteractiveMoveItems
 
   repeated kiapi.common.types.KIID items = 2;
 }
+
+// Shows a diff overlay on the board editor for testing purposes.
+// The overlay will be shown at the specified bounding box location.
+// If no bounding box is provided, uses the board's bounding box.
+message ShowDiffOverlay
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // Optional bounding box for the overlay. If not provided or has zero size,
+  // the board's bounding box will be used.
+  kiapi.common.types.Box2 bounding_box = 2;
+}

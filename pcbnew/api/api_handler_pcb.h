@@ -123,6 +123,8 @@ private:
 
     HANDLER_RESULT<Empty> handleInteractiveMoveItems( const HANDLER_CONTEXT<InteractiveMoveItems>& aCtx );
 
+    HANDLER_RESULT<Empty> handleShowDiffOverlay( const HANDLER_CONTEXT<ShowDiffOverlay>& aCtx );
+
     HANDLER_RESULT<NetsResponse> handleGetNets( const HANDLER_CONTEXT<GetNets>& aCtx );
 
     HANDLER_RESULT<NetClassForNetsResponse> handleGetNetClassForNets(

@@ -61,7 +61,7 @@ private:
     DIFF_MANAGER( const DIFF_MANAGER& ) = delete;
     DIFF_MANAGER& operator=( const DIFF_MANAGER& ) = delete;
 
-    mutable std::mutex m_mutex;
+    mutable std::recursive_mutex m_mutex;
     bool               m_active;
     BOX2I              m_currentBBox;
 

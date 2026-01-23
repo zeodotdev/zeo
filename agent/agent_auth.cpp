@@ -121,48 +121,48 @@ bool AGENT_AUTH::RefreshToken()
 
 void AGENT_AUTH::LoadSession()
 {
-    // Tokens will now persist between app sessions via keychain
-    std::string accessToken, refreshToken, userEmail, firstName, avatarUrl, expiryStr;
-    
-    if( m_keychain.GetPassword( "kicad.agent.supabase", "access_token", accessToken ) &&
-        m_keychain.GetPassword( "kicad.agent.supabase", "refresh_token", refreshToken ) &&
-        m_keychain.GetPassword( "kicad.agent.supabase", "user_email", userEmail ) &&
-        m_keychain.GetPassword( "kicad.agent.supabase", "token_expiry", expiryStr ) )
-    {
-        m_keychain.GetPassword( "kicad.agent.supabase", "first_name", firstName );
-        m_keychain.GetPassword( "kicad.agent.supabase", "avatar_url", avatarUrl );
+    // Load session as a single JSON blob to minimize keychain popups
+    std::string sessionData;
 
-        m_accessToken = accessToken;
-        m_refreshToken = refreshToken;
-        m_userEmail = userEmail;
-        m_firstName = firstName;
-        m_avatarUrl = avatarUrl;
-        
+    if( m_keychain.GetPassword( "kicad.agent.supabase", "session", sessionData ) )
+    {
         try
         {
-            m_tokenExpiry = std::stoll( expiryStr );
+            nlohmann::json session = nlohmann::json::parse( sessionData );
+            m_accessToken = session.value( "access_token", "" );
+            m_refreshToken = session.value( "refresh_token", "" );
+            m_userEmail = session.value( "user_email", "" );
+            m_firstName = session.value( "first_name", "" );
+            m_avatarUrl = session.value( "avatar_url", "" );
+            m_tokenExpiry = session.value( "token_expiry", 0LL );
             wxLogTrace( "Agent", "Loaded session for %s", m_userEmail.c_str() );
         }
-        catch( ... )
+        catch( const std::exception& e )
         {
-            m_tokenExpiry = 0;
+            wxLogTrace( "Agent", "Failed to parse session: %s", e.what() );
         }
     }
 }
 
 void AGENT_AUTH::SaveSession()
 {
-    m_keychain.SetPassword( "kicad.agent.supabase", "access_token", m_accessToken );
-    m_keychain.SetPassword( "kicad.agent.supabase", "refresh_token", m_refreshToken );
-    m_keychain.SetPassword( "kicad.agent.supabase", "user_email", m_userEmail );
-    m_keychain.SetPassword( "kicad.agent.supabase", "first_name", m_firstName );
-    m_keychain.SetPassword( "kicad.agent.supabase", "avatar_url", m_avatarUrl );
-    m_keychain.SetPassword( "kicad.agent.supabase", "token_expiry", std::to_string( m_tokenExpiry ) );
+    // Save session as a single JSON blob to minimize keychain popups
+    nlohmann::json session;
+    session["access_token"] = m_accessToken;
+    session["refresh_token"] = m_refreshToken;
+    session["user_email"] = m_userEmail;
+    session["first_name"] = m_firstName;
+    session["avatar_url"] = m_avatarUrl;
+    session["token_expiry"] = m_tokenExpiry;
+
+    m_keychain.SetPassword( "kicad.agent.supabase", "session", session.dump() );
     wxLogTrace( "Agent", "Saved session to keychain" );
 }
 
 void AGENT_AUTH::ClearSession()
 {
+    m_keychain.DeletePassword( "kicad.agent.supabase", "session" );
+    // Also clear old individual entries for migration
     m_keychain.DeletePassword( "kicad.agent.supabase", "access_token" );
     m_keychain.DeletePassword( "kicad.agent.supabase", "refresh_token" );
     m_keychain.DeletePassword( "kicad.agent.supabase", "user_email" );

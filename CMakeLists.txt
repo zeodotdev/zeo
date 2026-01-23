@@ -1297,7 +1297,7 @@ if( APPLE )
             CACHE BOOL "When signing on macOS, add a secure timestamp" FORCE )
     set( KICAD_OSX_SIGNING_USE_HARDENED_RUNTIME OFF
             CACHE BOOL "When signing on macOS, use the Hardened Runtime" FORCE )
-    set( KICAD_OSX_SIGNING_ENTITLEMENTS_FILE ""
+    set( KICAD_OSX_SIGNING_ENTITLEMENTS_FILE "${CMAKE_SOURCE_DIR}/resources/macos/kicad.entitlements"
             CACHE FILEPATH "Path to entitlements file for macOS signing" FORCE )
 
     # We have to sign the app bundle after *all* the files are copied in the bundle

@@ -63,6 +63,8 @@ public:
     void OnHistoryTool( wxCommandEvent& aEvent );
     void OnHistoryMenuSelect( wxCommandEvent& aEvent );
     void OnNewChat( wxCommandEvent& aEvent );
+    void OnSignIn( wxCommandEvent& aEvent );
+    void OnSize( wxSizeEvent& aEvent ) override;
 
     // Async tool execution event handlers
     void OnToolExecutionComplete( wxCommandEvent& aEvent );
@@ -100,6 +102,10 @@ private:
     wxButton*      m_historyButton;
     wxChoice*      m_modelChoice;
     wxPanel*       m_inputPanel;
+
+    // Sign-in overlay (shown when not authenticated)
+    wxPanel*       m_signInOverlay;
+    wxButton*      m_signInButton;
 
     AGENT_THREAD* m_workerThread;
     AGENT_AUTH*   m_auth;

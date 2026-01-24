@@ -24,6 +24,8 @@
 #include "session_manager.h"
 #include "kicad_manager_frame.h"
 #include <widgets/kistatusbar.h>
+#include <kiway.h>
+#include <mail_type.h>
 #include <wx/msgdlg.h>
 #include <wx/menu.h>
 #include <wx/utils.h>
@@ -108,8 +110,7 @@ public:
 private:
     void onSignOut( wxHyperlinkEvent& aEvent )
     {
-        m_manager->GetAuth()->SignOut();
-        m_manager->UpdateUI();
+        m_manager->SignOut();
         Close( true );
     }
 
@@ -245,12 +246,30 @@ bool SESSION_MANAGER::HandleDeepLink( const wxString& aUrl )
     if( m_auth && m_auth->HandleOAuthCallback( aUrl.ToStdString(), errorMsg ) )
     {
         UpdateUI();
+
+        // Notify agent frame that auth state changed so it can reload from keychain
+        std::string payload;
+        m_frame->Kiway().ExpressMail( FRAME_AGENT, MAIL_AUTH_STATE_CHANGED, payload, m_frame );
+
         return true;
     }
     else
     {
         wxMessageBox( _("Sign in failed: ") + errorMsg, _("Error"), wxOK | wxICON_ERROR );
         return false;
+    }
+}
+
+void SESSION_MANAGER::SignOut()
+{
+    if( m_auth )
+    {
+        m_auth->SignOut();
+        UpdateUI();
+
+        // Notify agent frame that auth state changed
+        std::string payload;
+        m_frame->Kiway().ExpressMail( FRAME_AGENT, MAIL_AUTH_STATE_CHANGED, payload, m_frame );
     }
 }
 

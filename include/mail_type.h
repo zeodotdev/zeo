@@ -59,7 +59,8 @@ enum MAIL_T
     MAIL_REFRESH_SYMBOL, // Refresh symbol in symbol viewer
     MAIL_AGENT_REQUEST,  // Agent -> Editor request (JSON payload)
     MAIL_AGENT_RESPONSE, // Editor -> Agent response (JSON payload)
-    MAIL_SHOW_DIFF       // Agent -> Editor: Show diff overlay (JSON payload)
+    MAIL_SHOW_DIFF,      // Agent -> Editor: Show diff overlay (JSON payload)
+    MAIL_AUTH_STATE_CHANGED  // Launcher -> Agent: Auth state changed (reload from keychain)
 
 };
 

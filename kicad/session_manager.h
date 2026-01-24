@@ -63,6 +63,11 @@ public:
      */
     AGENT_AUTH* GetAuth() const { return m_auth.get(); }
 
+    /**
+     * Signs out the current user and notifies the agent frame.
+     */
+    void SignOut();
+
 private:
     /**
      * Starts the OAuth flow by opening the system browser.

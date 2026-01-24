@@ -12,6 +12,7 @@
 #include <wx/sizer.h>
 #include <wx/textctrl.h>
 #include <wx/msgdlg.h>
+#include <wx/utils.h>
 #include <wx/stdpaths.h>
 #include <wx/filename.h>
 #include <wx/stattext.h>
@@ -35,6 +36,8 @@ END_EVENT_TABLE()
 AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         KIWAY_PLAYER( aKiway, aParent, FRAME_AGENT, "Agent", wxDefaultPosition, wxDefaultSize, wxDEFAULT_FRAME_STYLE,
                       "agent_frame_name", schIUScale ),
+        m_signInOverlay( nullptr ),
+        m_signInButton( nullptr ),
         m_workerThread( nullptr ),
         m_authWebUrl( "https://www.harold.so/auth" )  // Default auth web page URL
 {
@@ -180,6 +183,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Bind Model Change Event
     m_modelChoice->Bind( wxEVT_CHOICE, &AGENT_FRAME::OnModelSelection, this );
 
+    // Bind Size Event (to reposition overlay)
+    Bind( wxEVT_SIZE, &AGENT_FRAME::OnSize, this );
+
     // Initialize History
     m_chatHistory = nlohmann::json::array();
     m_pendingToolCalls = nlohmann::json::array();
@@ -243,10 +249,32 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     wxMenuBar* menuBar = new wxMenuBar();
     wxMenu* fileMenu = new wxMenu();
     fileMenu->Append( wxID_EXIT, "E&xit\tAlt-X", "Exit application" );
-    
+
     menuBar->Append( fileMenu, "&File" );
     SetMenuBar( menuBar );
-    
+
+    // Create sign-in overlay (covers entire frame when not authenticated)
+    m_signInOverlay = new wxPanel( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL );
+    m_signInOverlay->SetBackgroundColour( wxColour( 30, 30, 30, 230 ) ); // Dark semi-transparent
+
+    wxBoxSizer* overlaySizer = new wxBoxSizer( wxVERTICAL );
+    overlaySizer->AddStretchSpacer();
+
+    wxStaticText* overlayLabel = new wxStaticText( m_signInOverlay, wxID_ANY, "Sign in to use the agent" );
+    overlayLabel->SetForegroundColour( wxColour( 255, 255, 255 ) );
+    wxFont labelFont = overlayLabel->GetFont();
+    labelFont.SetPointSize( 16 );
+    overlayLabel->SetFont( labelFont );
+    overlaySizer->Add( overlayLabel, 0, wxALIGN_CENTER );
+
+    m_signInButton = new wxButton( m_signInOverlay, wxID_ANY, "Sign In" );
+    m_signInButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSignIn, this );
+    overlaySizer->Add( m_signInButton, 0, wxALIGN_CENTER | wxTOP, 15 );
+
+    overlaySizer->AddStretchSpacer();
+    m_signInOverlay->SetSizer( overlaySizer );
+    m_signInOverlay->Hide(); // Start hidden, UpdateAuthUI will show if needed
+
     // Update auth UI state
     UpdateAuthUI();
 }
@@ -573,6 +601,15 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
             {
                 m_selectionPill->Show( false );
             }
+        }
+    }
+    else if( aEvent.Command() == MAIL_AUTH_STATE_CHANGED )
+    {
+        // Reload session from keychain (tokens were saved by launcher's SESSION_MANAGER)
+        if( m_auth )
+        {
+            m_auth->LoadSession();
+            UpdateAuthUI();
         }
     }
     Layout();
@@ -2123,6 +2160,23 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::UpdateAuthUI()
 {
+    bool authenticated = m_auth && m_auth->IsAuthenticated();
+
+    if( m_signInOverlay )
+    {
+        m_signInOverlay->Show( !authenticated );
+
+        if( !authenticated )
+        {
+            // Position overlay to cover the entire client area
+            wxSize clientSize = GetClientSize();
+            m_signInOverlay->SetSize( clientSize );
+            m_signInOverlay->SetPosition( wxPoint( 0, 0 ) );
+            m_signInOverlay->Raise(); // Bring to front
+        }
+
+        Layout();
+    }
 }
 
 bool AGENT_FRAME::CheckAuthentication()
@@ -2132,4 +2186,34 @@ bool AGENT_FRAME::CheckAuthentication()
         return m_auth->IsAuthenticated();
     }
     return true; // No auth configured, allow access
+}
+
+void AGENT_FRAME::OnSignIn( wxCommandEvent& aEvent )
+{
+    if( !m_auth )
+        return;
+
+    std::string callback = "kicad-agent://callback";
+
+    std::ostringstream authUrl;
+    authUrl << m_authWebUrl << "?redirect_uri=" << callback;
+
+    if( !wxLaunchDefaultBrowser( authUrl.str() ) )
+    {
+        wxMessageBox( _( "Could not open browser. Please check your default browser settings." ),
+                      _( "Error" ), wxOK | wxICON_ERROR );
+    }
+}
+
+void AGENT_FRAME::OnSize( wxSizeEvent& aEvent )
+{
+    // Reposition overlay to cover entire client area when resized
+    if( m_signInOverlay && m_signInOverlay->IsShown() )
+    {
+        wxSize clientSize = GetClientSize();
+        m_signInOverlay->SetSize( clientSize );
+        m_signInOverlay->SetPosition( wxPoint( 0, 0 ) );
+    }
+
+    aEvent.Skip(); // Let default handling continue
 }

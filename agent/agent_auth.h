@@ -58,6 +58,12 @@ public:
      */
     bool RefreshToken();
 
+    /**
+     * Reload session from keychain.
+     * Call this when notified that auth state changed externally.
+     */
+    void LoadSession();
+
 private:
     std::string m_projectUrl;
     std::string m_anonKey;
@@ -69,9 +75,6 @@ private:
     long long   m_tokenExpiry; // Unix timestamp
 
     AGENT_KEYCHAIN m_keychain;
-
-    // Load tokens from keychain
-    void LoadSession();
 
     // Save tokens to keychain
     void SaveSession();

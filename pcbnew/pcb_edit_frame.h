@@ -27,7 +27,6 @@
 #include <settings/app_settings.h>
 #include <variant>
 #include <map>
-#include <set>
 
 class ACTION_PLUGIN;
 class PCB_SCREEN;
@@ -873,13 +872,8 @@ private:
     std::unique_ptr<API_HANDLER_COMMON> m_apiHandlerCommon;
 #endif
 
-    // Agent pending changes support (for diff view)
-    // Maps item UUID to a clone of the item's state before agent modification
-    std::map<KIID, BOARD_ITEM*> m_agentSnapshots;
-    // Items that were added by the agent (need to be removed on deny)
-    std::set<KIID>              m_agentAddedItems;
-    // Items that were deleted by the agent (need to be restored on deny)
-    std::vector<BOARD_ITEM*>    m_agentDeletedItems;
+    // Agent pending changes support (for diff view using native undo/redo)
+    int                         m_undoCountBeforeAgent = 0;  ///< Undo stack count before agent execution
     bool                        m_hasAgentPendingChanges = false;
 
 public:

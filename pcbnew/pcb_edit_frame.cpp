@@ -3252,36 +3252,11 @@ bool PCB_EDIT_FRAME::DoAutoSave()
 
 void PCB_EDIT_FRAME::TakeAgentSnapshot()
 {
-    // Clear any existing snapshot
+    // Clear any existing pending changes state
     ClearAgentPendingChanges();
 
-    BOARD* board = GetBoard();
-    if( !board )
-        return;
-
-    // Snapshot all footprints
-    for( FOOTPRINT* fp : board->Footprints() )
-    {
-        m_agentSnapshots[fp->m_Uuid] = static_cast<BOARD_ITEM*>( fp->Clone() );
-    }
-
-    // Snapshot all tracks
-    for( PCB_TRACK* track : board->Tracks() )
-    {
-        m_agentSnapshots[track->m_Uuid] = static_cast<BOARD_ITEM*>( track->Clone() );
-    }
-
-    // Snapshot all drawings
-    for( BOARD_ITEM* item : board->Drawings() )
-    {
-        m_agentSnapshots[item->m_Uuid] = static_cast<BOARD_ITEM*>( item->Clone() );
-    }
-
-    // Snapshot all zones
-    for( ZONE* zone : board->Zones() )
-    {
-        m_agentSnapshots[zone->m_Uuid] = static_cast<BOARD_ITEM*>( zone->Clone() );
-    }
+    // Record the current undo stack count - kipy API operations will create undo entries
+    m_undoCountBeforeAgent = GetUndoCommandCount();
 }
 
 
@@ -3291,93 +3266,74 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
     if( !board )
         return false;
 
-    // Helper to look up items by UUID
-    auto getItemByUuid = [board]( const KIID& uuid ) -> BOARD_ITEM*
+    // Check if any undo entries were created since we took the snapshot
+    int currentUndoCount = GetUndoCommandCount();
+    bool hasChanges = ( currentUndoCount > m_undoCountBeforeAgent );
+
+    if( !hasChanges )
     {
-        const auto& cache = board->GetItemByIdCache();
-        auto it = cache.find( uuid );
-        return ( it != cache.end() ) ? it->second : nullptr;
-    };
-
-    BOX2I changedBBox;
-    bool hasChanges = false;
-
-    // Check for modified or deleted items
-    for( auto& [uuid, snapshot] : m_agentSnapshots )
-    {
-        BOARD_ITEM* currentItem = getItemByUuid( uuid );
-
-        if( !currentItem || currentItem->Type() == NOT_USED )
-        {
-            // Item was deleted
-            hasChanges = true;
-            m_agentDeletedItems.push_back( snapshot );
-            changedBBox.Merge( snapshot->GetBoundingBox() );
-        }
-        else
-        {
-            // Check if item was modified by comparing bounding boxes and positions
-            BOX2I oldBBox = snapshot->GetBoundingBox();
-            BOX2I newBBox = currentItem->GetBoundingBox();
-
-            if( oldBBox != newBBox )
-            {
-                hasChanges = true;
-                changedBBox.Merge( oldBBox );
-                changedBBox.Merge( newBBox );
-            }
-        }
-    }
-
-    // Check for newly added items
-    auto checkNewItems = [&]( auto& container )
-    {
-        for( auto* item : container )
-        {
-            if( m_agentSnapshots.find( item->m_Uuid ) == m_agentSnapshots.end() )
-            {
-                // This is a new item
-                hasChanges = true;
-                m_agentAddedItems.insert( item->m_Uuid );
-                changedBBox.Merge( item->GetBoundingBox() );
-            }
-        }
-    };
-
-    checkNewItems( board->Footprints() );
-    checkNewItems( board->Tracks() );
-    checkNewItems( board->Drawings() );
-    checkNewItems( board->Zones() );
-
-    if( hasChanges )
-    {
-        m_hasAgentPendingChanges = true;
-
-        // Set up callbacks for the diff overlay
-        DIFF_CALLBACKS callbacks;
-        callbacks.onApprove = [this]() {
-            // Make sure we're showing "after" state before approving
-            if( m_showingAgentBefore )
-                ShowAgentChangesAfter();
-            ClearAgentPendingChanges();
-        };
-        callbacks.onDeny = [this]() {
-            // Make sure we're showing "after" state before reverting
-            if( m_showingAgentBefore )
-                ShowAgentChangesAfter();
-            RevertAgentChanges();
-        };
-        callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
-        callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
-
-        DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
-        DIFF_MANAGER::GetInstance().ShowDiff( changedBBox );
-    }
-    else
-    {
-        // No changes detected, clean up snapshots
+        // No changes detected
         ClearAgentPendingChanges();
+        return false;
     }
+
+    // Calculate bounding box from the items in the undo entries created by the agent
+    BOX2I changedBBox;
+
+    // Iterate through the new undo entries to get bounding boxes of changed items
+    for( int i = m_undoCountBeforeAgent; i < currentUndoCount; i++ )
+    {
+        PICKED_ITEMS_LIST* undoCommand = m_undoList.m_CommandsList[i];
+        if( !undoCommand )
+            continue;
+
+        for( unsigned int j = 0; j < undoCommand->GetCount(); j++ )
+        {
+            EDA_ITEM* item = undoCommand->GetPickedItem( j );
+            UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
+
+            if( item )
+            {
+                BOARD_ITEM* boardItem = dynamic_cast<BOARD_ITEM*>( item );
+                if( boardItem )
+                    changedBBox.Merge( boardItem->GetBoundingBox() );
+            }
+
+            // For CHANGED operations, also get the current item's bounding box
+            if( status == UNDO_REDO::CHANGED )
+            {
+                EDA_ITEM* link = undoCommand->GetPickedItemLink( j );
+                if( link )
+                {
+                    BOARD_ITEM* linkedItem = dynamic_cast<BOARD_ITEM*>( link );
+                    if( linkedItem )
+                        changedBBox.Merge( linkedItem->GetBoundingBox() );
+                }
+            }
+        }
+    }
+
+    m_hasAgentPendingChanges = true;
+
+    // Set up callbacks for the diff overlay
+    DIFF_CALLBACKS callbacks;
+    callbacks.onApprove = [this]() {
+        // Make sure we're showing "after" state before approving
+        if( m_showingAgentBefore )
+            ShowAgentChangesAfter();
+        ClearAgentPendingChanges();
+    };
+    callbacks.onDeny = [this]() {
+        // Make sure we're showing "after" state before reverting
+        if( m_showingAgentBefore )
+            ShowAgentChangesAfter();
+        RevertAgentChanges();
+    };
+    callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
+    callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
+
+    DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
+    DIFF_MANAGER::GetInstance().ShowDiff( changedBBox );
 
     return hasChanges;
 }
@@ -3385,85 +3341,49 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
 
 void PCB_EDIT_FRAME::ClearAgentPendingChanges()
 {
-    // Delete all snapshot clones
-    for( auto& [uuid, item] : m_agentSnapshots )
-    {
-        delete item;
-    }
-    m_agentSnapshots.clear();
-
-    // Clear deleted items list (don't delete - they were snapshots)
-    m_agentDeletedItems.clear();
-
-    m_agentAddedItems.clear();
     m_hasAgentPendingChanges = false;
     m_showingAgentBefore = false;
+    m_undoCountBeforeAgent = 0;
+
+    // Clear the diff overlay
+    DIFF_MANAGER::GetInstance().ClearDiff();
+
+    // Clear redo list to prevent accidental redo after approve
+    ClearUndoORRedoList( REDO_LIST );
 }
 
 
 void PCB_EDIT_FRAME::RevertAgentChanges()
 {
-    BOARD* board = GetBoard();
-    if( !board )
-    {
-        ClearAgentPendingChanges();
+    if( !m_hasAgentPendingChanges )
         return;
+
+    // If we're currently showing "before" state, we've already undone via the view toggle
+    // Just need to clear the redo list so changes can't be redone
+    if( m_showingAgentBefore )
+    {
+        // Already showing before state - just clear redo list
+        ClearUndoORRedoList( REDO_LIST );
     }
-
-    // Helper to look up items by UUID
-    auto getItemByUuid = [board]( const KIID& uuid ) -> BOARD_ITEM*
+    else
     {
-        const auto& cache = board->GetItemByIdCache();
-        auto it = cache.find( uuid );
-        return ( it != cache.end() ) ? it->second : nullptr;
-    };
+        // Showing "after" state - need to undo all agent changes
+        // Roll back each undo entry created by the agent without creating redo entries
+        int currentUndoCount = GetUndoCommandCount();
+        int numToUndo = currentUndoCount - m_undoCountBeforeAgent;
 
-    // Remove newly added items
-    for( const KIID& uuid : m_agentAddedItems )
-    {
-        BOARD_ITEM* item = getItemByUuid( uuid );
-        if( item && item->Type() != NOT_USED )
+        for( int i = 0; i < numToUndo; i++ )
         {
-            board->Remove( item );
-            delete item;
+            RollbackFromUndo();
         }
     }
 
-    // Restore deleted items
-    for( BOARD_ITEM* snapshot : m_agentDeletedItems )
-    {
-        BOARD_ITEM* clone = static_cast<BOARD_ITEM*>( snapshot->Clone() );
-        board->Add( clone );
-    }
+    // Clear the diff overlay
+    DIFF_MANAGER::GetInstance().ClearDiff();
 
-    // Restore modified items to their original state
-    for( auto& [uuid, snapshot] : m_agentSnapshots )
-    {
-        // Skip items that were deleted (already handled above)
-        bool wasDeleted = false;
-        for( BOARD_ITEM* deleted : m_agentDeletedItems )
-        {
-            if( deleted->m_Uuid == uuid )
-            {
-                wasDeleted = true;
-                break;
-            }
-        }
-        if( wasDeleted )
-            continue;
-
-        BOARD_ITEM* currentItem = getItemByUuid( uuid );
-        if( currentItem && currentItem->Type() != NOT_USED )
-        {
-            // Copy properties from snapshot back to current item
-            currentItem->SwapItemData( snapshot );
-        }
-    }
-
-    // Refresh the view
-    GetCanvas()->Refresh();
-
-    ClearAgentPendingChanges();
+    m_hasAgentPendingChanges = false;
+    m_showingAgentBefore = false;
+    m_undoCountBeforeAgent = 0;
 }
 
 
@@ -3472,54 +3392,17 @@ void PCB_EDIT_FRAME::ShowAgentChangesBefore()
     if( !m_hasAgentPendingChanges || m_showingAgentBefore )
         return;
 
-    BOARD* board = GetBoard();
-    if( !board )
-        return;
+    // Use native undo to show the "before" state
+    // Undo all agent changes (they'll go to redo list for later restoration)
+    int currentUndoCount = GetUndoCommandCount();
+    int numToUndo = currentUndoCount - m_undoCountBeforeAgent;
 
-    // Helper to look up items by UUID
-    auto getItemByUuid = [board]( const KIID& uuid ) -> BOARD_ITEM*
+    for( int i = 0; i < numToUndo; i++ )
     {
-        const auto& cache = board->GetItemByIdCache();
-        auto it = cache.find( uuid );
-        return ( it != cache.end() ) ? it->second : nullptr;
-    };
-
-    // Hide newly added items (they didn't exist "before")
-    for( const KIID& uuid : m_agentAddedItems )
-    {
-        BOARD_ITEM* item = getItemByUuid( uuid );
-        if( item && item->Type() != NOT_USED )
-        {
-            GetCanvas()->GetView()->SetVisible( item, false );
-        }
+        wxCommandEvent evt;
+        RestoreCopyFromUndoList( evt );
     }
 
-    // Swap modified items to show their "before" state
-    for( auto& [uuid, snapshot] : m_agentSnapshots )
-    {
-        // Skip deleted items - they're in snapshot but not on board
-        if( m_agentAddedItems.count( uuid ) > 0 )
-            continue;
-
-        BOARD_ITEM* currentItem = getItemByUuid( uuid );
-        if( currentItem && currentItem->Type() != NOT_USED )
-        {
-            // Swap data between current and snapshot
-            currentItem->SwapItemData( snapshot );
-            GetCanvas()->GetView()->Update( currentItem );
-        }
-    }
-
-    // Show deleted items (they existed "before")
-    for( BOARD_ITEM* snapshot : m_agentDeletedItems )
-    {
-        // Add a temporary clone to show
-        BOARD_ITEM* clone = static_cast<BOARD_ITEM*>( snapshot->Clone() );
-        board->Add( clone );
-        GetCanvas()->GetView()->Add( clone );
-    }
-
-    GetCanvas()->Refresh();
     m_showingAgentBefore = true;
 }
 
@@ -3529,56 +3412,15 @@ void PCB_EDIT_FRAME::ShowAgentChangesAfter()
     if( !m_hasAgentPendingChanges || !m_showingAgentBefore )
         return;
 
-    BOARD* board = GetBoard();
-    if( !board )
-        return;
+    // Use native redo to restore the "after" state
+    // Redo all agent changes that were undone by ShowAgentChangesBefore
+    int redoCount = GetRedoCommandCount();
 
-    // Helper to look up items by UUID
-    auto getItemByUuid = [board]( const KIID& uuid ) -> BOARD_ITEM*
+    for( int i = 0; i < redoCount; i++ )
     {
-        const auto& cache = board->GetItemByIdCache();
-        auto it = cache.find( uuid );
-        return ( it != cache.end() ) ? it->second : nullptr;
-    };
-
-    // Show newly added items again
-    for( const KIID& uuid : m_agentAddedItems )
-    {
-        BOARD_ITEM* item = getItemByUuid( uuid );
-        if( item && item->Type() != NOT_USED )
-        {
-            GetCanvas()->GetView()->SetVisible( item, true );
-        }
+        wxCommandEvent evt;
+        RestoreCopyFromRedoList( evt );
     }
 
-    // Swap modified items back to show their "after" state
-    for( auto& [uuid, snapshot] : m_agentSnapshots )
-    {
-        // Skip added items
-        if( m_agentAddedItems.count( uuid ) > 0 )
-            continue;
-
-        BOARD_ITEM* currentItem = getItemByUuid( uuid );
-        if( currentItem && currentItem->Type() != NOT_USED )
-        {
-            // Swap data back
-            currentItem->SwapItemData( snapshot );
-            GetCanvas()->GetView()->Update( currentItem );
-        }
-    }
-
-    // Remove the temporary clones of deleted items
-    for( BOARD_ITEM* snapshot : m_agentDeletedItems )
-    {
-        BOARD_ITEM* tempItem = getItemByUuid( snapshot->m_Uuid );
-        if( tempItem && tempItem->Type() != NOT_USED )
-        {
-            GetCanvas()->GetView()->Remove( tempItem );
-            board->Remove( tempItem );
-            delete tempItem;
-        }
-    }
-
-    GetCanvas()->Refresh();
     m_showingAgentBefore = false;
 }

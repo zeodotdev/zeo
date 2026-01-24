@@ -70,8 +70,8 @@ void DIFF_OVERLAY_ITEM::drawPreviewShape( KIGFX::VIEW* aView ) const
 
     double scale = 1.0 / gal->GetWorldScale();
 
-    // Button 1: View Before/After (Toggle)
-    drawButton( gal, 0, m_showBefore ? "View After" : "View Before", COLOR4D( 0.2, 0.2, 0.2, 0.8 ), scale );
+    // Button 1: Undo/Redo (Toggle)
+    drawButton( gal, 0, m_showBefore ? "Redo" : "Undo", COLOR4D( 0.2, 0.2, 0.2, 0.8 ), scale );
 
     // Button 2: Approve (Green)
     drawButton( gal, 1, "Approve", COLOR4D( 0.0, 0.6, 0.0, 0.9 ), scale );
@@ -128,6 +128,9 @@ void DIFF_OVERLAY_ITEM::drawButton( KIGFX::GAL* aGal, int aIndex, const wxString
     aGal->SetLineWidth( 1.0 * aScale ); // Constant stroke width
 
     aGal->DrawRectangle( rect.GetPosition(), rect.GetEnd() );
+
+    // Advance layer depth so text renders on top of button fill
+    aGal->AdvanceDepth();
 
     // Draw Text using font->Draw() for reliable rendering
     KIFONT::FONT* font = KIFONT::FONT::GetFont();

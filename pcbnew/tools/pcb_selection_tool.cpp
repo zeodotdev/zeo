@@ -323,8 +323,8 @@ int PCB_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
         {
             if( DIFF_MANAGER::GetInstance().HandleClick( evt->Position() ) )
             {
-                evt->SetPassEvent();
-                continue;
+                m_disambiguateTimer.Stop();  // Stop timer to prevent disambiguation menu
+                continue;  // Consume the event, don't pass to other tools
             }
 
             // If there is no disambiguation, this routine is still running and will
@@ -372,6 +372,13 @@ int PCB_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
         }
         else if( evt->IsDblClick( BUT_LEFT ) )
         {
+            // Check if double-clicking on diff overlay buttons - consume event if so
+            if( DIFF_MANAGER::GetInstance().HandleClick( evt->Position() ) )
+            {
+                m_disambiguateTimer.Stop();
+                continue;
+            }
+
             m_disambiguateTimer.Stop();
 
             // Double clicks make no sense in the footprint viewer

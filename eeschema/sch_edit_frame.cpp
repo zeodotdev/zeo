@@ -29,6 +29,7 @@
 #include <bitmaps.h>
 #include <confirm.h>
 #include <connection_graph.h>
+#include <diff_manager.h>
 #include <dialogs/dialog_erc.h>
 #include <dialogs/dialog_book_reporter.h>
 #include <dialogs/dialog_symbol_fields_table.h>
@@ -70,6 +71,7 @@
 #include <sim/simulator_frame.h>
 #include <tool/action_manager.h>
 #include <tool/action_toolbar.h>
+#include <tool/actions.h>
 #include <tool/common_control.h>
 #include <tool/common_tools.h>
 #include <tool/embed_tool.h>
@@ -3013,6 +3015,173 @@ bool SCH_EDIT_FRAME::doAutoSave()
     // Delegate to base auto-save behavior (commits pending local history) for now.
     return EDA_BASE_FRAME::doAutoSave();
 }
-// ... existing code ...
 
-// ... existing code ...
+
+void SCH_EDIT_FRAME::TakeAgentSnapshot()
+{
+    // Clear any existing pending changes state
+    ClearAgentPendingChanges();
+
+    // Record the current undo stack count - kipy API operations will create undo entries
+    m_undoCountBeforeAgent = GetUndoCommandCount();
+}
+
+
+bool SCH_EDIT_FRAME::DetectAgentChanges()
+{
+    // Check if any undo entries were created since we took the snapshot
+    int currentUndoCount = GetUndoCommandCount();
+    bool hasChanges = ( currentUndoCount > m_undoCountBeforeAgent );
+
+    if( !hasChanges )
+    {
+        // No changes detected
+        ClearAgentPendingChanges();
+        return false;
+    }
+
+    // Calculate bounding box from the items in the undo entries created by the agent
+    BOX2I changedBBox;
+
+    // Iterate through the new undo entries to get bounding boxes of changed items
+    for( int i = m_undoCountBeforeAgent; i < currentUndoCount; i++ )
+    {
+        PICKED_ITEMS_LIST* undoCommand = m_undoList.m_CommandsList[i];
+        if( !undoCommand )
+            continue;
+
+        for( unsigned int j = 0; j < undoCommand->GetCount(); j++ )
+        {
+            EDA_ITEM* item = undoCommand->GetPickedItem( j );
+            UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
+
+            if( item )
+            {
+                SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( item );
+                if( schItem )
+                    changedBBox.Merge( schItem->GetBoundingBox() );
+            }
+
+            // For CHANGED operations, also get the current item's bounding box
+            if( status == UNDO_REDO::CHANGED )
+            {
+                EDA_ITEM* link = undoCommand->GetPickedItemLink( j );
+                if( link )
+                {
+                    SCH_ITEM* linkedItem = dynamic_cast<SCH_ITEM*>( link );
+                    if( linkedItem )
+                        changedBBox.Merge( linkedItem->GetBoundingBox() );
+                }
+            }
+        }
+    }
+
+    m_hasAgentPendingChanges = true;
+
+    // Set up callbacks for the diff overlay
+    DIFF_CALLBACKS callbacks;
+    callbacks.onApprove = [this]() {
+        // Make sure we're showing "after" state before approving
+        if( m_showingAgentBefore )
+            ShowAgentChangesAfter();
+        ClearAgentPendingChanges();
+    };
+    callbacks.onDeny = [this]() {
+        // Make sure we're showing "after" state before reverting
+        if( m_showingAgentBefore )
+            ShowAgentChangesAfter();
+        RevertAgentChanges();
+    };
+    callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
+    callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
+
+    DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
+    DIFF_MANAGER::GetInstance().ShowDiff( changedBBox );
+
+    return hasChanges;
+}
+
+
+void SCH_EDIT_FRAME::ClearAgentPendingChanges()
+{
+    m_hasAgentPendingChanges = false;
+    m_showingAgentBefore = false;
+    m_undoCountBeforeAgent = 0;
+
+    // Clear the diff overlay
+    DIFF_MANAGER::GetInstance().ClearDiff();
+
+    // Clear redo list to prevent accidental redo after approve
+    ClearUndoORRedoList( REDO_LIST );
+}
+
+
+void SCH_EDIT_FRAME::RevertAgentChanges()
+{
+    if( !m_hasAgentPendingChanges )
+        return;
+
+    // If we're currently showing "before" state, we've already undone via the view toggle
+    // Just need to clear the redo list so changes can't be redone
+    if( m_showingAgentBefore )
+    {
+        // Already showing before state - just clear redo list
+        ClearUndoORRedoList( REDO_LIST );
+    }
+    else
+    {
+        // Showing "after" state - need to undo all agent changes
+        // Roll back each undo entry created by the agent without creating redo entries
+        int currentUndoCount = GetUndoCommandCount();
+        int numToUndo = currentUndoCount - m_undoCountBeforeAgent;
+
+        for( int i = 0; i < numToUndo; i++ )
+        {
+            RollbackSchematicFromUndo();
+        }
+    }
+
+    // Clear the diff overlay
+    DIFF_MANAGER::GetInstance().ClearDiff();
+
+    m_hasAgentPendingChanges = false;
+    m_showingAgentBefore = false;
+    m_undoCountBeforeAgent = 0;
+}
+
+
+void SCH_EDIT_FRAME::ShowAgentChangesBefore()
+{
+    if( !m_hasAgentPendingChanges || m_showingAgentBefore )
+        return;
+
+    // Use native undo to show the "before" state
+    // Undo all agent changes (they'll go to redo list for later restoration)
+    int currentUndoCount = GetUndoCommandCount();
+    int numToUndo = currentUndoCount - m_undoCountBeforeAgent;
+
+    for( int i = 0; i < numToUndo; i++ )
+    {
+        GetToolManager()->RunAction( ACTIONS::undo );
+    }
+
+    m_showingAgentBefore = true;
+}
+
+
+void SCH_EDIT_FRAME::ShowAgentChangesAfter()
+{
+    if( !m_hasAgentPendingChanges || !m_showingAgentBefore )
+        return;
+
+    // Use native redo to restore the "after" state
+    // Redo all agent changes that were undone by ShowAgentChangesBefore
+    int redoCount = GetRedoCommandCount();
+
+    for( int i = 0; i < redoCount; i++ )
+    {
+        GetToolManager()->RunAction( ACTIONS::redo );
+    }
+
+    m_showingAgentBefore = false;
+}

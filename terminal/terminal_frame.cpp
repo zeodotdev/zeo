@@ -643,6 +643,14 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                 "from kipy.geometry import Vector2\n"
                 "kicad = kipy.KiCad()\n"
                 "sch = kicad.get_schematic()\n";
+
+            // Tell SCH editor to take a snapshot before Python execution
+            nlohmann::json snapshotMsg;
+            snapshotMsg["type"] = "take_snapshot";
+            std::string snapshotPayload = snapshotMsg.dump();
+            Kiway().ExpressMail( FRAME_SCH_EDITOR, MAIL_AGENT_REQUEST, snapshotPayload );
+            fprintf( stderr, "ExecuteCommandForAgentAsync: Sent take_snapshot to SCH editor\n" );
+            fflush( stderr );
         }
         else if( mode == "pcb" )
         {
@@ -666,10 +674,11 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
         fflush( stderr );
 
         bool isPcbMode = ( mode == "pcb" );
+        bool isSchMode = ( mode == "sch" );
         m_asyncRequestPending = true;
         active->SetPythonCompletionCallback(
-            [this, isPcbMode]( const std::string& result, bool success ) {
-                fprintf( stderr, "ExecuteCommandForAgentAsync: Callback invoked, success=%d, isPcbMode=%d\n", success, isPcbMode );
+            [this, isPcbMode, isSchMode]( const std::string& result, bool success ) {
+                fprintf( stderr, "ExecuteCommandForAgentAsync: Callback invoked, success=%d, isPcbMode=%d, isSchMode=%d\n", success, isPcbMode, isSchMode );
                 fflush( stderr );
 
                 // If this was pcb mode, tell PCB editor to detect changes
@@ -680,6 +689,17 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                     std::string detectPayload = detectMsg.dump();
                     Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REQUEST, detectPayload );
                     fprintf( stderr, "ExecuteCommandForAgentAsync: Sent detect_changes to PCB editor\n" );
+                    fflush( stderr );
+                }
+
+                // If this was sch mode, tell SCH editor to detect changes
+                if( isSchMode )
+                {
+                    nlohmann::json detectMsg;
+                    detectMsg["type"] = "detect_changes";
+                    std::string detectPayload = detectMsg.dump();
+                    Kiway().ExpressMail( FRAME_SCH_EDITOR, MAIL_AGENT_REQUEST, detectPayload );
+                    fprintf( stderr, "ExecuteCommandForAgentAsync: Sent detect_changes to SCH editor\n" );
                     fflush( stderr );
                 }
 

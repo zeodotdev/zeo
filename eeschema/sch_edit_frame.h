@@ -865,6 +865,41 @@ public:
 
     PLUGIN_ACTION_SCOPE PluginActionScope() const override { return PLUGIN_ACTION_SCOPE::SCHEMATIC; }
 
+    /**
+     * Called before agent Python execution to snapshot current state.
+     */
+    void TakeAgentSnapshot();
+
+    /**
+     * Called after agent Python execution to detect and show changes.
+     * @return true if changes were detected and diff overlay is shown.
+     */
+    bool DetectAgentChanges();
+
+    /**
+     * Clear pending agent changes (called on approve).
+     */
+    void ClearAgentPendingChanges();
+
+    /**
+     * Revert pending agent changes (called on deny).
+     */
+    void RevertAgentChanges();
+
+    /**
+     * Temporarily show the "before" state (for View Before button).
+     * Does not clear snapshots - can toggle back with ShowAgentChangesAfter().
+     */
+    void ShowAgentChangesBefore();
+
+    /**
+     * Show the "after" state (for View After button).
+     * Restores the modified state after ShowAgentChangesBefore().
+     */
+    void ShowAgentChangesAfter();
+
+    bool HasAgentPendingChanges() const { return m_hasAgentPendingChanges; }
+
     DECLARE_EVENT_TABLE()
 
 protected:
@@ -1039,6 +1074,11 @@ private:
     bool              m_crossProbeFlashing = false;
     bool              m_show_search;
     bool              m_highlightedConnChanged;
+
+    // Agent pending changes support (for diff view using native undo/redo)
+    int  m_undoCountBeforeAgent = 0;    ///< Undo stack count before agent execution
+    bool m_hasAgentPendingChanges = false;
+    bool m_showingAgentBefore = false;  ///< True if currently showing "before" state
 
     std::vector<wxEvtHandler*> m_schematicChangeListeners;
 

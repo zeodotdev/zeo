@@ -910,6 +910,31 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         request.erase( 0, request.find_first_not_of( " \n\r\t" ) );
         request.erase( request.find_last_not_of( " \n\r\t" ) + 1 );
 
+        // Check for JSON commands first (agent diff view support)
+        try
+        {
+            nlohmann::json j_in = nlohmann::json::parse( request, nullptr, false );
+            if( !j_in.is_discarded() )
+            {
+                if( j_in.contains( "type" ) && j_in["type"] == "take_snapshot" )
+                {
+                    // Take a snapshot of the schematic state before agent execution
+                    TakeAgentSnapshot();
+                    break;  // No response needed
+                }
+                else if( j_in.contains( "type" ) && j_in["type"] == "detect_changes" )
+                {
+                    // Detect changes after agent execution and show diff overlay
+                    DetectAgentChanges();
+                    break;  // No response needed
+                }
+            }
+        }
+        catch( ... )
+        {
+            // Not valid JSON, fall through to string-based handlers
+        }
+
         nlohmann::json response;
 
         if( request.rfind( "echo", 0 ) == 0 )

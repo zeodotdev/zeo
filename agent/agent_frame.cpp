@@ -50,25 +50,34 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
-    // Top Bar (like terminal frame)
+    // Top Bar Panel (solid background to prevent transparency)
+    wxPanel* topBarPanel = new wxPanel( this, wxID_ANY );
+    topBarPanel->SetBackgroundColour( wxColour( "#1E1E1E" ) );
+
     wxBoxSizer* topBarSizer = new wxBoxSizer( wxHORIZONTAL );
 
     // Chat name label on the left
-    m_chatNameLabel = new wxStaticText( this, wxID_ANY, "[chat name]" );
+    m_chatNameLabel = new wxStaticText( topBarPanel, wxID_ANY, "[chat name]" );
+    m_chatNameLabel->SetForegroundColour( wxColour( "#FFFFFF" ) );
     topBarSizer->Add( m_chatNameLabel, 0, wxALIGN_CENTER_VERTICAL );
 
     topBarSizer->AddStretchSpacer();
 
     // New Chat button
-    m_newChatButton = new wxButton( this, wxID_ANY, "New Chat", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
+    m_newChatButton = new wxButton( topBarPanel, wxID_ANY, "New Chat", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
     topBarSizer->Add( m_newChatButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     // History button on the right
-    m_historyButton = new wxButton( this, wxID_ANY, "History", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
+    m_historyButton = new wxButton( topBarPanel, wxID_ANY, "History", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
     topBarSizer->Add( m_historyButton, 0, wxALIGN_CENTER_VERTICAL );
 
-    // Add top bar with left/right margins matching input area (10px), and vertical padding
-    mainSizer->Add( topBarSizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP | wxBOTTOM, 10 );
+    // Set sizer on the panel with internal padding
+    wxBoxSizer* topBarOuterSizer = new wxBoxSizer( wxVERTICAL );
+    topBarOuterSizer->Add( topBarSizer, 1, wxEXPAND | wxALL, 10 );
+    topBarPanel->SetSizer( topBarOuterSizer );
+
+    // Add top bar panel to main sizer
+    mainSizer->Add( topBarPanel, 0, wxEXPAND );
 
     // 1. Chat History Area
     m_chatWindow =

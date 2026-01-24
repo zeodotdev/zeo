@@ -40,25 +40,32 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 {
 
     // --- UI Layout ---
-    
-    // Create Toolbar
-    wxToolBar* toolBar = CreateToolBar( wxTB_FLAT | wxTB_HORIZONTAL );
 
-    // Create History button and add to toolbar
-    toolBar->AddStretchableSpace();
-    m_historyButton = new wxButton( toolBar, wxID_ANY, "History" );
-    m_historyButton->SetMinSize( wxSize( -1, 20 ) );  // Reduce height (~30px default -> 20px)
-    toolBar->AddControl( m_historyButton );
-    toolBar->Realize();
-
-    // Bind button click event
-    m_historyButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnHistoryTool, this );
-
-
-    // Top: Chat History (Expandable)
+    // Top Bar: Chat name (left) + History button (right)
+    // Middle: Chat History (Expandable)
     // Bottom: Input Container (Unified)
 
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
+
+    // Top Bar (like terminal frame)
+    wxBoxSizer* topBarSizer = new wxBoxSizer( wxHORIZONTAL );
+
+    // Chat name label on the left
+    m_chatNameLabel = new wxStaticText( this, wxID_ANY, "[chat name]" );
+    topBarSizer->Add( m_chatNameLabel, 0, wxALIGN_CENTER_VERTICAL );
+
+    topBarSizer->AddStretchSpacer();
+
+    // New Chat button
+    m_newChatButton = new wxButton( this, wxID_ANY, "New Chat", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
+    topBarSizer->Add( m_newChatButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+
+    // History button on the right
+    m_historyButton = new wxButton( this, wxID_ANY, "History", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
+    topBarSizer->Add( m_historyButton, 0, wxALIGN_CENTER_VERTICAL );
+
+    // Add top bar with left/right margins matching input area (10px), and vertical padding
+    mainSizer->Add( topBarSizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP | wxBOTTOM, 10 );
 
     // 1. Chat History Area
     m_chatWindow =
@@ -103,10 +110,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // 2b. Control Row (Bottom)
     wxBoxSizer* controlsSizer = new wxBoxSizer( wxHORIZONTAL );
 
-    // Plus Button
-    m_plusButton = new wxButton( m_inputPanel, wxID_ANY, "+", wxDefaultPosition, wxSize( 30, -1 ) );
-    controlsSizer->Add( m_plusButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
-
     // Model Selection
     wxArrayString modelChoices;
     modelChoices.Add( "Claude 4.5 Opus" );
@@ -120,7 +123,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     controlsSizer->AddStretchSpacer();
 
     // Send Button
-    m_actionButton = new wxButton( m_inputPanel, wxID_ANY, "Send" ); // Arrow icon would be better
+    m_actionButton = new wxButton( m_inputPanel, wxID_ANY, "Send" );
     controlsSizer->Add( m_actionButton, 0, wxALIGN_CENTER_VERTICAL );
 
     inputContainerSizer->Add( controlsSizer, 0, wxEXPAND );
@@ -147,6 +150,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Bind Events
     m_actionButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSend, this );
+    m_newChatButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnNewChat, this );
+    m_historyButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnHistoryTool, this );
     m_inputCtrl->Bind( wxEVT_TEXT_ENTER, &AGENT_FRAME::OnTextEnter, this );
     m_selectionPill->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSelectionPillClick, this );
 
@@ -1967,20 +1972,24 @@ void AGENT_FRAME::OnLLMStreamError( wxThreadEvent& aEvent )
     m_actionButton->SetLabel( "Send" );
 }
 
+void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
+{
+    // Clear current chat and start fresh
+    m_chatHistory = nlohmann::json::array();
+    m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>";
+    SetHtml( m_fullHtmlContent );
+    m_chatHistoryDb.StartNewConversation();
+}
+
+
 void AGENT_FRAME::OnHistoryTool( wxCommandEvent& aEvent )
 {
     auto historyList = m_chatHistoryDb.GetHistoryList();
 
     wxMenu menu;
 
-    // Add "New Chat" option at the top
-    menu.Append( ID_NEW_CHAT, "New Chat" );
-    Bind( wxEVT_MENU, &AGENT_FRAME::OnHistoryMenuSelect, this, ID_NEW_CHAT );
-
     if( !historyList.empty() )
     {
-        menu.AppendSeparator();
-
         int id = ID_CHAT_HISTORY_MENU_BASE;
 
         // Limit to last 20 entries to avoid massive menu
@@ -1999,17 +2008,6 @@ void AGENT_FRAME::OnHistoryTool( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
 {
-    // Handle "New Chat" selection
-    if( aEvent.GetId() == ID_NEW_CHAT )
-    {
-        // Clear current chat and start fresh
-        m_chatHistory = nlohmann::json::array();
-        m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>";
-        SetHtml( m_fullHtmlContent );
-        m_chatHistoryDb.StartNewConversation();
-        return;
-    }
-
     int index = aEvent.GetId() - ID_CHAT_HISTORY_MENU_BASE;
     auto historyList = m_chatHistoryDb.GetHistoryList();
 

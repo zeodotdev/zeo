@@ -117,6 +117,7 @@
 #include <widgets/pcb_net_inspector_panel.h>
 #include <widgets/wx_aui_utils.h>
 #include <kiplatform/app.h>
+#include <diff_manager.h>
 #include <kiplatform/ui.h>
 #include <core/profile.h>
 #include <math/box2_minmax.h>
@@ -3246,4 +3247,338 @@ bool PCB_EDIT_FRAME::DoAutoSave()
     // flushing zone fills or router state) they can be added here before calling the
     // base class method.
     return EDA_BASE_FRAME::doAutoSave();
+}
+
+
+void PCB_EDIT_FRAME::TakeAgentSnapshot()
+{
+    // Clear any existing snapshot
+    ClearAgentPendingChanges();
+
+    BOARD* board = GetBoard();
+    if( !board )
+        return;
+
+    // Snapshot all footprints
+    for( FOOTPRINT* fp : board->Footprints() )
+    {
+        m_agentSnapshots[fp->m_Uuid] = static_cast<BOARD_ITEM*>( fp->Clone() );
+    }
+
+    // Snapshot all tracks
+    for( PCB_TRACK* track : board->Tracks() )
+    {
+        m_agentSnapshots[track->m_Uuid] = static_cast<BOARD_ITEM*>( track->Clone() );
+    }
+
+    // Snapshot all drawings
+    for( BOARD_ITEM* item : board->Drawings() )
+    {
+        m_agentSnapshots[item->m_Uuid] = static_cast<BOARD_ITEM*>( item->Clone() );
+    }
+
+    // Snapshot all zones
+    for( ZONE* zone : board->Zones() )
+    {
+        m_agentSnapshots[zone->m_Uuid] = static_cast<BOARD_ITEM*>( zone->Clone() );
+    }
+}
+
+
+bool PCB_EDIT_FRAME::DetectAgentChanges()
+{
+    BOARD* board = GetBoard();
+    if( !board )
+        return false;
+
+    // Helper to look up items by UUID
+    auto getItemByUuid = [board]( const KIID& uuid ) -> BOARD_ITEM*
+    {
+        const auto& cache = board->GetItemByIdCache();
+        auto it = cache.find( uuid );
+        return ( it != cache.end() ) ? it->second : nullptr;
+    };
+
+    BOX2I changedBBox;
+    bool hasChanges = false;
+
+    // Check for modified or deleted items
+    for( auto& [uuid, snapshot] : m_agentSnapshots )
+    {
+        BOARD_ITEM* currentItem = getItemByUuid( uuid );
+
+        if( !currentItem || currentItem->Type() == NOT_USED )
+        {
+            // Item was deleted
+            hasChanges = true;
+            m_agentDeletedItems.push_back( snapshot );
+            changedBBox.Merge( snapshot->GetBoundingBox() );
+        }
+        else
+        {
+            // Check if item was modified by comparing bounding boxes and positions
+            BOX2I oldBBox = snapshot->GetBoundingBox();
+            BOX2I newBBox = currentItem->GetBoundingBox();
+
+            if( oldBBox != newBBox )
+            {
+                hasChanges = true;
+                changedBBox.Merge( oldBBox );
+                changedBBox.Merge( newBBox );
+            }
+        }
+    }
+
+    // Check for newly added items
+    auto checkNewItems = [&]( auto& container )
+    {
+        for( auto* item : container )
+        {
+            if( m_agentSnapshots.find( item->m_Uuid ) == m_agentSnapshots.end() )
+            {
+                // This is a new item
+                hasChanges = true;
+                m_agentAddedItems.insert( item->m_Uuid );
+                changedBBox.Merge( item->GetBoundingBox() );
+            }
+        }
+    };
+
+    checkNewItems( board->Footprints() );
+    checkNewItems( board->Tracks() );
+    checkNewItems( board->Drawings() );
+    checkNewItems( board->Zones() );
+
+    if( hasChanges )
+    {
+        m_hasAgentPendingChanges = true;
+
+        // Set up callbacks for the diff overlay
+        DIFF_CALLBACKS callbacks;
+        callbacks.onApprove = [this]() {
+            // Make sure we're showing "after" state before approving
+            if( m_showingAgentBefore )
+                ShowAgentChangesAfter();
+            ClearAgentPendingChanges();
+        };
+        callbacks.onDeny = [this]() {
+            // Make sure we're showing "after" state before reverting
+            if( m_showingAgentBefore )
+                ShowAgentChangesAfter();
+            RevertAgentChanges();
+        };
+        callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
+        callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
+
+        DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
+        DIFF_MANAGER::GetInstance().ShowDiff( changedBBox );
+    }
+    else
+    {
+        // No changes detected, clean up snapshots
+        ClearAgentPendingChanges();
+    }
+
+    return hasChanges;
+}
+
+
+void PCB_EDIT_FRAME::ClearAgentPendingChanges()
+{
+    // Delete all snapshot clones
+    for( auto& [uuid, item] : m_agentSnapshots )
+    {
+        delete item;
+    }
+    m_agentSnapshots.clear();
+
+    // Clear deleted items list (don't delete - they were snapshots)
+    m_agentDeletedItems.clear();
+
+    m_agentAddedItems.clear();
+    m_hasAgentPendingChanges = false;
+    m_showingAgentBefore = false;
+}
+
+
+void PCB_EDIT_FRAME::RevertAgentChanges()
+{
+    BOARD* board = GetBoard();
+    if( !board )
+    {
+        ClearAgentPendingChanges();
+        return;
+    }
+
+    // Helper to look up items by UUID
+    auto getItemByUuid = [board]( const KIID& uuid ) -> BOARD_ITEM*
+    {
+        const auto& cache = board->GetItemByIdCache();
+        auto it = cache.find( uuid );
+        return ( it != cache.end() ) ? it->second : nullptr;
+    };
+
+    // Remove newly added items
+    for( const KIID& uuid : m_agentAddedItems )
+    {
+        BOARD_ITEM* item = getItemByUuid( uuid );
+        if( item && item->Type() != NOT_USED )
+        {
+            board->Remove( item );
+            delete item;
+        }
+    }
+
+    // Restore deleted items
+    for( BOARD_ITEM* snapshot : m_agentDeletedItems )
+    {
+        BOARD_ITEM* clone = static_cast<BOARD_ITEM*>( snapshot->Clone() );
+        board->Add( clone );
+    }
+
+    // Restore modified items to their original state
+    for( auto& [uuid, snapshot] : m_agentSnapshots )
+    {
+        // Skip items that were deleted (already handled above)
+        bool wasDeleted = false;
+        for( BOARD_ITEM* deleted : m_agentDeletedItems )
+        {
+            if( deleted->m_Uuid == uuid )
+            {
+                wasDeleted = true;
+                break;
+            }
+        }
+        if( wasDeleted )
+            continue;
+
+        BOARD_ITEM* currentItem = getItemByUuid( uuid );
+        if( currentItem && currentItem->Type() != NOT_USED )
+        {
+            // Copy properties from snapshot back to current item
+            currentItem->SwapItemData( snapshot );
+        }
+    }
+
+    // Refresh the view
+    GetCanvas()->Refresh();
+
+    ClearAgentPendingChanges();
+}
+
+
+void PCB_EDIT_FRAME::ShowAgentChangesBefore()
+{
+    if( !m_hasAgentPendingChanges || m_showingAgentBefore )
+        return;
+
+    BOARD* board = GetBoard();
+    if( !board )
+        return;
+
+    // Helper to look up items by UUID
+    auto getItemByUuid = [board]( const KIID& uuid ) -> BOARD_ITEM*
+    {
+        const auto& cache = board->GetItemByIdCache();
+        auto it = cache.find( uuid );
+        return ( it != cache.end() ) ? it->second : nullptr;
+    };
+
+    // Hide newly added items (they didn't exist "before")
+    for( const KIID& uuid : m_agentAddedItems )
+    {
+        BOARD_ITEM* item = getItemByUuid( uuid );
+        if( item && item->Type() != NOT_USED )
+        {
+            GetCanvas()->GetView()->SetVisible( item, false );
+        }
+    }
+
+    // Swap modified items to show their "before" state
+    for( auto& [uuid, snapshot] : m_agentSnapshots )
+    {
+        // Skip deleted items - they're in snapshot but not on board
+        if( m_agentAddedItems.count( uuid ) > 0 )
+            continue;
+
+        BOARD_ITEM* currentItem = getItemByUuid( uuid );
+        if( currentItem && currentItem->Type() != NOT_USED )
+        {
+            // Swap data between current and snapshot
+            currentItem->SwapItemData( snapshot );
+            GetCanvas()->GetView()->Update( currentItem );
+        }
+    }
+
+    // Show deleted items (they existed "before")
+    for( BOARD_ITEM* snapshot : m_agentDeletedItems )
+    {
+        // Add a temporary clone to show
+        BOARD_ITEM* clone = static_cast<BOARD_ITEM*>( snapshot->Clone() );
+        board->Add( clone );
+        GetCanvas()->GetView()->Add( clone );
+    }
+
+    GetCanvas()->Refresh();
+    m_showingAgentBefore = true;
+}
+
+
+void PCB_EDIT_FRAME::ShowAgentChangesAfter()
+{
+    if( !m_hasAgentPendingChanges || !m_showingAgentBefore )
+        return;
+
+    BOARD* board = GetBoard();
+    if( !board )
+        return;
+
+    // Helper to look up items by UUID
+    auto getItemByUuid = [board]( const KIID& uuid ) -> BOARD_ITEM*
+    {
+        const auto& cache = board->GetItemByIdCache();
+        auto it = cache.find( uuid );
+        return ( it != cache.end() ) ? it->second : nullptr;
+    };
+
+    // Show newly added items again
+    for( const KIID& uuid : m_agentAddedItems )
+    {
+        BOARD_ITEM* item = getItemByUuid( uuid );
+        if( item && item->Type() != NOT_USED )
+        {
+            GetCanvas()->GetView()->SetVisible( item, true );
+        }
+    }
+
+    // Swap modified items back to show their "after" state
+    for( auto& [uuid, snapshot] : m_agentSnapshots )
+    {
+        // Skip added items
+        if( m_agentAddedItems.count( uuid ) > 0 )
+            continue;
+
+        BOARD_ITEM* currentItem = getItemByUuid( uuid );
+        if( currentItem && currentItem->Type() != NOT_USED )
+        {
+            // Swap data back
+            currentItem->SwapItemData( snapshot );
+            GetCanvas()->GetView()->Update( currentItem );
+        }
+    }
+
+    // Remove the temporary clones of deleted items
+    for( BOARD_ITEM* snapshot : m_agentDeletedItems )
+    {
+        BOARD_ITEM* tempItem = getItemByUuid( snapshot->m_Uuid );
+        if( tempItem && tempItem->Type() != NOT_USED )
+        {
+            GetCanvas()->GetView()->Remove( tempItem );
+            board->Remove( tempItem );
+            delete tempItem;
+        }
+    }
+
+    GetCanvas()->Refresh();
+    m_showingAgentBefore = false;
 }

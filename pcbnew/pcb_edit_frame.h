@@ -26,6 +26,8 @@
 #include <mail_type.h>
 #include <settings/app_settings.h>
 #include <variant>
+#include <map>
+#include <set>
 
 class ACTION_PLUGIN;
 class PCB_SCREEN;
@@ -870,6 +872,54 @@ private:
     std::unique_ptr<API_HANDLER_PCB> m_apiHandler;
     std::unique_ptr<API_HANDLER_COMMON> m_apiHandlerCommon;
 #endif
+
+    // Agent pending changes support (for diff view)
+    // Maps item UUID to a clone of the item's state before agent modification
+    std::map<KIID, BOARD_ITEM*> m_agentSnapshots;
+    // Items that were added by the agent (need to be removed on deny)
+    std::set<KIID>              m_agentAddedItems;
+    // Items that were deleted by the agent (need to be restored on deny)
+    std::vector<BOARD_ITEM*>    m_agentDeletedItems;
+    bool                        m_hasAgentPendingChanges = false;
+
+public:
+    /**
+     * Called before agent Python execution to snapshot current state.
+     */
+    void TakeAgentSnapshot();
+
+    /**
+     * Called after agent Python execution to detect and show changes.
+     * @return true if changes were detected and diff overlay is shown.
+     */
+    bool DetectAgentChanges();
+
+    /**
+     * Clear pending agent changes (called on approve).
+     */
+    void ClearAgentPendingChanges();
+
+    /**
+     * Revert pending agent changes (called on deny).
+     */
+    void RevertAgentChanges();
+
+    /**
+     * Temporarily show the "before" state (for View Before button).
+     * Does not clear snapshots - can toggle back with ShowAgentChangesAfter().
+     */
+    void ShowAgentChangesBefore();
+
+    /**
+     * Show the "after" state (for View After button).
+     * Restores the modified state after ShowAgentChangesBefore().
+     */
+    void ShowAgentChangesAfter();
+
+    bool HasAgentPendingChanges() const { return m_hasAgentPendingChanges; }
+
+private:
+    bool m_showingAgentBefore = false;  ///< True if currently showing "before" state
 };
 
 #endif  // __PCB_EDIT_FRAME_H__

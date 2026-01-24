@@ -630,10 +630,13 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         {
             if( j_in.contains( "type" ) && j_in["type"] == "python" && j_in.contains( "code" ) )
             {
-#ifdef KICAD_SCRIPTING
+#ifdef KICAD_SCRIPTING_WXPYTHON
                 // Execute Python Code
                 std::string code = j_in["code"];
                 std::string result;
+
+                // Take a snapshot of the board state before Python execution
+                TakeAgentSnapshot();
 
                 // We need to capture stdout/stderr.
                 // Approach:
@@ -662,24 +665,21 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                                         "    sys.stderr = _agent_restore_err\n"
                                         "_agent_result = _agent_capture.getvalue()\n";
 
-                // Actually, PyRun_SimpleString executes in __main__.
-                // We should ensure SCRIPTING is initialized.
-                if( SCRIPTING::IsWxAvailable() )
+                // Check if Python is initialized and scripting is available
+                if( !Py_IsInitialized() )
                 {
+                    result = "Error: Python interpreter not initialized.";
+                    ClearAgentPendingChanges();
+                }
+                else if( SCRIPTING::IsWxAvailable() )
+                {
+                    // Acquire the GIL before calling Python functions
+                    PyLOCK lock;
+
                     // This runs the code
                     PyRun_SimpleString( wrapper.c_str() );
 
-                    // Now extract _agent_result
-                    // We can use a small helper script to print it to a file or standard stdout?
-                    // No, we want to get it into C++.
-                    // python_scripting.cpp doesn't expose "GetValue".
-                    // But we can use PyRun_String and PyDict_GetItemString if we had access.
-                    // Since we only have PyRun_SimpleString exposed easily in some contexts (or need to include <Python.h>),
-                    // let's look at what headers we have.
-                    // We are in pcbnew/cross-probing.cpp.
-                    // We can include <python_scripting.h> which includes <Python.h>
-
-                    // Extracting result:
+                    // Extracting result from __main__ namespace
                     PyObject* main_module = PyImport_AddModule( "__main__" );
                     PyObject* main_dict = PyModule_GetDict( main_module );
                     PyObject* res_obj = PyDict_GetItemString( main_dict, "_agent_result" );
@@ -689,17 +689,39 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                         if( res_str )
                             result = res_str;
                     }
+
+                    // Detect changes and show diff overlay if any
+                    DetectAgentChanges();
                 }
                 else
                 {
                     result = "Error: Python Scripting is not available.";
+                    // Clean up snapshot since we didn't execute
+                    ClearAgentPendingChanges();
                 }
 
-                Kiway().ExpressMail( FRAME_TERMINAL, MAIL_AGENT_RESPONSE, result );
+                Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, result );
 #else
                 std::string err = "Error: Scripting not enabled.";
-                Kiway().ExpressMail( FRAME_TERMINAL, MAIL_AGENT_RESPONSE, err );
+                Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, err );
 #endif
+                break;  // Exit after handling Python execution
+            }
+            else if( j_in.contains( "type" ) && j_in["type"] == "take_snapshot" )
+            {
+                // Take a snapshot of the board state before kipy execution
+                fprintf( stderr, "PCB_EDIT_FRAME: Received take_snapshot request\n" );
+                fflush( stderr );
+                TakeAgentSnapshot();
+                break;  // No response needed
+            }
+            else if( j_in.contains( "type" ) && j_in["type"] == "detect_changes" )
+            {
+                // Detect changes after kipy execution and show diff overlay
+                fprintf( stderr, "PCB_EDIT_FRAME: Received detect_changes request\n" );
+                fflush( stderr );
+                DetectAgentChanges();
+                break;  // No response needed
             }
             else if( j_in.contains( "type" ) && j_in["type"] == "propose_settings" )
             {

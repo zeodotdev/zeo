@@ -52,8 +52,9 @@ namespace PREVIEW
         DIFF_OVERLAY_ITEM( const BOX2I& aBBox );
 
         // Overrides
-        void     ViewDraw( int aLayer, KIGFX::VIEW* aView ) const override;
-        wxString GetClass() const override { return "DIFF_OVERLAY_ITEM"; }
+        void          ViewDraw( int aLayer, KIGFX::VIEW* aView ) const override;
+        const BOX2I   ViewBBox() const override;
+        wxString      GetClass() const override { return "DIFF_OVERLAY_ITEM"; }
 
         /**
      * hit tests the buttons drawn by this overlay.

@@ -26,8 +26,10 @@ namespace PREVIEW
  */
 struct DIFF_CALLBACKS
 {
-    std::function<void()> onUndo;
-    std::function<void()> onRedo;
+    std::function<void()> onUndo;      ///< Called when "View Before" is clicked
+    std::function<void()> onRedo;      ///< Called when "View After" is clicked
+    std::function<void()> onApprove;   ///< Called when "Approve" is clicked
+    std::function<void()> onDeny;      ///< Called when "Deny" is clicked
 };
 
 class DIFF_MANAGER

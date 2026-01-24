@@ -133,14 +133,18 @@ bool DIFF_MANAGER::HandleClick( const VECTOR2I& aPoint )
 
 void DIFF_MANAGER::OnApprove()
 {
+    // Call the approve callback before clearing (so callback can access state if needed)
+    if( m_callbacks.onApprove )
+        m_callbacks.onApprove();
+
     ClearDiff();
 }
 
 void DIFF_MANAGER::OnDeny()
 {
-    // Revert change
-    if( m_callbacks.onUndo )
-        m_callbacks.onUndo();
+    // Call the deny callback which should revert the changes
+    if( m_callbacks.onDeny )
+        m_callbacks.onDeny();
 
     ClearDiff();
 }

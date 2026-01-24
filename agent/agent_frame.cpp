@@ -1457,8 +1457,11 @@ void AGENT_FRAME::ExecuteToolAsync( const std::string& aToolName,
         existingTool->is_executing = true;
     }
 
-    // Build the payload for the terminal
+    // Build the payload for the target frame
     std::string payload = BuildToolPayload( toolName, toolInput );
+
+    // All tool execution goes through terminal (which uses kipy for the API)
+    FRAME_T destFrame = FRAME_TERMINAL;
 
     fprintf( stderr, "AGENT ExecuteToolAsync: Sending MAIL_AGENT_REQUEST to FRAME_TERMINAL, payload='%.100s...'\n",
              payload.c_str() );
@@ -1474,22 +1477,22 @@ void AGENT_FRAME::ExecuteToolAsync( const std::string& aToolName,
         return;
     }
 
-    // Ensure terminal frame exists before sending mail
+    // Ensure destination frame exists before sending mail
     // Player() with doCreate=true will create the frame if it doesn't exist
-    KIWAY_PLAYER* terminal = Kiway().Player( FRAME_TERMINAL, true );
-    if( !terminal )
+    KIWAY_PLAYER* destPlayer = Kiway().Player( destFrame, destFrame == FRAME_TERMINAL );
+    if( !destPlayer )
     {
-        fprintf( stderr, "AGENT ExecuteToolAsync: Failed to create terminal frame!\n" );
+        fprintf( stderr, "AGENT ExecuteToolAsync: Failed to get destination frame!\n" );
         fflush( stderr );
-        PostToolError( this, toolUseId, "Error: Could not create terminal frame" );
+        PostToolError( this, toolUseId, "Error: Could not access destination frame" );
         return;
     }
 
-    fprintf( stderr, "AGENT ExecuteToolAsync: Terminal frame exists, sending ExpressMail\n" );
+    fprintf( stderr, "AGENT ExecuteToolAsync: Destination frame exists, sending ExpressMail\n" );
     fflush( stderr );
 
-    // Send async request to terminal
-    Kiway().ExpressMail( FRAME_TERMINAL, MAIL_AGENT_REQUEST, payload );
+    // Send async request to destination frame
+    Kiway().ExpressMail( destFrame, MAIL_AGENT_REQUEST, payload );
 
     fprintf( stderr, "AGENT ExecuteToolAsync: ExpressMail sent, starting timeout timer\n" );
     fflush( stderr );
@@ -1523,6 +1526,7 @@ std::string AGENT_FRAME::BuildToolPayload( const std::string& aToolName, const n
         if( code.empty() )
             return "Error: run_shell requires 'code' parameter";
 
+        // All modes go through terminal with same format
         return "run_shell " + mode + " " + code;
     }
     else if( aToolName == "run_terminal" )

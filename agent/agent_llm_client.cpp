@@ -813,6 +813,11 @@ void* LLM_REQUEST_THREAD::Entry()
 
     std::string requestBodyStr = requestBody.dump();
 
+    // Debug: Log request size and first part of messages for debugging
+    fprintf( stderr, "LLM_REQUEST_THREAD: Request size=%zu bytes, messages count=%zu\n",
+             requestBodyStr.size(), m_messages.size() );
+    fflush( stderr );
+
     // Set up curl options
     curl_easy_setopt( curl, CURLOPT_URL, "https://api.anthropic.com/v1/messages" );
     curl_easy_setopt( curl, CURLOPT_POST, 1L );
@@ -859,6 +864,15 @@ void* LLM_REQUEST_THREAD::Entry()
     if( http_code != 200 )
     {
         std::string errorMsg = "Anthropic API error: HTTP " + std::to_string( http_code );
+        // Include the response body which contains error details
+        if( !ctx.buffer.empty() )
+        {
+            errorMsg += "\nResponse: " + ctx.buffer.substr( 0, 500 ); // Limit to 500 chars
+        }
+        // Also log to stderr for debugging
+        fprintf( stderr, "LLM_REQUEST_THREAD: API error %ld\nResponse: %s\n",
+                 http_code, ctx.buffer.c_str() );
+        fflush( stderr );
         PostLLMError( m_handler, errorMsg );
         curl_easy_cleanup( curl );
         return nullptr;

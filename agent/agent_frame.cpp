@@ -548,7 +548,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // 2a. Text Input (Top)
     m_inputCtrl = new wxTextCtrl( m_inputPanel, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 60 ),
-                                  wxTE_MULTILINE | wxTE_PROCESS_ENTER | wxTE_RICH2 | wxBORDER_NONE );
+                                  wxTE_MULTILINE | wxTE_PROCESS_ENTER | wxTE_RICH | wxBORDER_NONE );
     m_inputCtrl->SetBackgroundColour( wxColour( "#1E1E1E" ) );
     m_inputCtrl->SetForegroundColour( wxColour( "#FFFFFF" ) );
 
@@ -1111,9 +1111,14 @@ void AGENT_FRAME::OnInputText( wxCommandEvent& aEvent )
     long     currentPos = m_inputCtrl->GetInsertionPoint();
     wxString text = m_inputCtrl->GetValue();
 
-    // 1. Reset all to normal
+    // Get the control's font to preserve it when setting styles
+    wxFont baseFont = m_inputCtrl->GetFont();
+
+    // 1. Reset all to normal (must include full font to preserve size)
     wxTextAttr normalStyle;
-    normalStyle.SetFontWeight( wxFONTWEIGHT_NORMAL );
+    wxFont normalFont = baseFont;
+    normalFont.SetWeight( wxFONTWEIGHT_NORMAL );
+    normalStyle.SetFont( normalFont );
     m_inputCtrl->SetStyle( 0, text.Length(), normalStyle );
 
     // 2. Scan for @{...} pairs
@@ -1123,9 +1128,11 @@ void AGENT_FRAME::OnInputText( wxCommandEvent& aEvent )
         size_t end = text.find( "}", start );
         if( end != wxString::npos )
         {
-            // Apply Bold to @{...}
+            // Apply Bold to @{...} (must include full font to preserve size)
             wxTextAttr boldStyle;
-            boldStyle.SetFontWeight( wxFONTWEIGHT_BOLD );
+            wxFont boldFont = baseFont;
+            boldFont.SetWeight( wxFONTWEIGHT_BOLD );
+            boldStyle.SetFont( boldFont );
             m_inputCtrl->SetStyle( start, end + 1, boldStyle );
             start = end + 1;
         }
@@ -1134,10 +1141,6 @@ void AGENT_FRAME::OnInputText( wxCommandEvent& aEvent )
             break; // No more closed tags
         }
     }
-
-    // Restore insertion point/selection (SetStyle might affect it?)
-    // Actually, SetStyle preserves insertion point usually, but let's be safe if needed.
-    // In wxWidgets, SetStyle shouldn't move cursor.
 }
 
 void AGENT_FRAME::OnInputKeyDown( wxKeyEvent& aEvent )

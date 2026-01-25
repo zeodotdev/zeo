@@ -648,7 +648,7 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
             nlohmann::json snapshotMsg;
             snapshotMsg["type"] = "take_snapshot";
             std::string snapshotPayload = snapshotMsg.dump();
-            Kiway().ExpressMail( FRAME_SCH_EDITOR, MAIL_AGENT_REQUEST, snapshotPayload );
+            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REQUEST, snapshotPayload );
             fprintf( stderr, "ExecuteCommandForAgentAsync: Sent take_snapshot to SCH editor\n" );
             fflush( stderr );
         }
@@ -698,7 +698,7 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                     nlohmann::json detectMsg;
                     detectMsg["type"] = "detect_changes";
                     std::string detectPayload = detectMsg.dump();
-                    Kiway().ExpressMail( FRAME_SCH_EDITOR, MAIL_AGENT_REQUEST, detectPayload );
+                    Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REQUEST, detectPayload );
                     fprintf( stderr, "ExecuteCommandForAgentAsync: Sent detect_changes to SCH editor\n" );
                     fflush( stderr );
                 }

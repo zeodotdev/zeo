@@ -3017,7 +3017,7 @@ bool SCH_EDIT_FRAME::doAutoSave()
 }
 
 
-void SCH_EDIT_FRAME::TakeAgentSnapshot()
+void SCH_EDIT_FRAME::RecordAgentUndoPosition()
 {
     // Clear any existing pending changes state
     ClearAgentPendingChanges();

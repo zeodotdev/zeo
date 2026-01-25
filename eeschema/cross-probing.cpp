@@ -918,8 +918,8 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
             {
                 if( j_in.contains( "type" ) && j_in["type"] == "take_snapshot" )
                 {
-                    // Take a snapshot of the schematic state before agent execution
-                    TakeAgentSnapshot();
+                    // Record the current undo position before agent execution
+                    RecordAgentUndoPosition();
                     break;  // No response needed
                 }
                 else if( j_in.contains( "type" ) && j_in["type"] == "detect_changes" )

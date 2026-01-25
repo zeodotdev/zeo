@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 #include <wx/thread.h>
 
+class AGENT_AUTH;
 class AGENT_FRAME;
 class wxEvtHandler;
 
@@ -128,6 +129,12 @@ public:
     void CancelRequest() { m_cancelRequested.store( true ); }
 
     /**
+     * Set the authentication manager for proxy API requests.
+     * @param aAuth Pointer to the authentication manager (owned by caller)
+     */
+    void SetAuth( AGENT_AUTH* aAuth ) { m_auth = aAuth; }
+
+    /**
      * Load API keys from environment file.
      * Searches for .env file in standard locations.
      * @param aEnvFilePath Optional explicit path to .env file.
@@ -147,6 +154,7 @@ public:
 
 private:
     AGENT_FRAME* m_parent;
+    AGENT_AUTH*  m_auth = nullptr;
     std::string  m_modelName;
 
     // Async request state

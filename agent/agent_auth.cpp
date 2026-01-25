@@ -35,7 +35,7 @@ void AGENT_AUTH::SignOut()
     m_avatarUrl.clear();
     m_tokenExpiry = 0;
     ClearSession();
-    // wxLogMessage( "Signed out" );
+    wxLogTrace( "Agent", "Signed out" );
 }
 
 bool AGENT_AUTH::IsAuthenticated()
@@ -67,6 +67,20 @@ std::string AGENT_AUTH::GetAvatarUrl()
 std::string AGENT_AUTH::GetUserEmail()
 {
     return m_userEmail;
+}
+
+std::string AGENT_AUTH::GetAccessToken()
+{
+    if( m_accessToken.empty() )
+        return "";
+
+    if( IsTokenExpired() )
+    {
+        if( !RefreshToken() )
+            return "";
+    }
+
+    return m_accessToken;
 }
 
 

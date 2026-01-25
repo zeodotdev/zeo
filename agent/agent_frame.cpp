@@ -573,13 +573,13 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // 2b. Control Row (Bottom)
     wxBoxSizer* controlsSizer = new wxBoxSizer( wxHORIZONTAL );
 
-    // Model Selection
+    // Model Selection (Claude models only - via harold.so proxy)
     wxArrayString modelChoices;
+    modelChoices.Add( "Claude 4.5 Sonnet" );
     modelChoices.Add( "Claude 4.5 Opus" );
-    modelChoices.Add( "GPT-4o" );
 
     m_modelChoice = new wxChoice( m_inputPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, modelChoices );
-    m_modelChoice->SetSelection( 0 ); // Default to Claude 4.5 Opus
+    m_modelChoice->SetSelection( 0 ); // Default to Claude 4.5 Sonnet
     controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     // Spacer
@@ -709,6 +709,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         wxLogWarning( "Supabase configuration not found. Authentication features will be disabled." );
         wxLogWarning( "Create supabase_config.json or set KICAD_AGENT_SUPABASE_URL/KEY environment variables." );
     }
+
+    // Wire auth to LLM client for proxy authentication
+    m_llmClient->SetAuth( m_auth );
 
     // Create menu bar
     wxMenuBar* menuBar = new wxMenuBar();

@@ -1,4 +1,5 @@
 #include "agent_llm_client.h"
+#include "agent_auth.h"
 #include "agent_frame.h"
 #include "agent_events.h"
 #include <id.h>
@@ -554,11 +555,11 @@ bool AGENT_LLM_CLIENT::AskStreamAnthropic( const nlohmann::json& aMessages, cons
         fullSystemPrompt += "\n\nCONTEXT:\n" + aPayload;
 
     // Map UI names to API names
-    std::string apiModel = "claude-3-5-sonnet-20240620";
+    std::string apiModel = "claude-sonnet-4-5-20250929";
     if( m_modelName == "Claude 4.5 Opus" )
         apiModel = "claude-opus-4-5-20251101";
-
-    // wxLogMessage( "Anthropic Request: Model=%s", apiModel.c_str() ); // Removed to prevent pop-ups
+    else if( m_modelName == "Claude 4.5 Sonnet" )
+        apiModel = "claude-sonnet-4-5-20250929";
 
     json requestBody;
     requestBody["model"] = apiModel;
@@ -630,9 +631,11 @@ bool AGENT_LLM_CLIENT::AskStreamAnthropicWithTools( const nlohmann::json& aMessa
     curl.SetHeader( "anthropic-version", "2023-06-01" );
 
     // Map UI names to API names
-    std::string apiModel = "claude-3-5-sonnet-20240620";
+    std::string apiModel = "claude-sonnet-4-5-20250929";
     if( m_modelName == "Claude 4.5 Opus" )
         apiModel = "claude-opus-4-5-20251101";
+    else if( m_modelName == "Claude 4.5 Sonnet" )
+        apiModel = "claude-sonnet-4-5-20250929";
 
     json requestBody;
     requestBody["model"] = apiModel;
@@ -784,11 +787,11 @@ void* LLM_REQUEST_THREAD::Entry()
     }
 
     // Build the request
-    std::string apiModel = "claude-sonnet-4-20250514";
+    std::string apiModel = "claude-sonnet-4-5-20250929";
     if( m_model == "Claude 4.5 Opus" )
         apiModel = "claude-opus-4-5-20251101";
-    else if( m_model == "Claude 4 Sonnet" )
-        apiModel = "claude-sonnet-4-20250514";
+    else if( m_model == "Claude 4.5 Sonnet" )
+        apiModel = "claude-sonnet-4-5-20250929";
 
     json requestBody;
     requestBody["model"] = apiModel;
@@ -818,19 +821,30 @@ void* LLM_REQUEST_THREAD::Entry()
              requestBodyStr.size(), m_messages.size() );
     fflush( stderr );
 
-    // Set up curl options
-    curl_easy_setopt( curl, CURLOPT_URL, "https://api.anthropic.com/v1/messages" );
+    // Get access token from auth manager
+    std::string accessToken;
+    if( m_client && m_client->m_auth )
+    {
+        accessToken = m_client->m_auth->GetAccessToken();
+    }
+
+    if( accessToken.empty() )
+    {
+        PostLLMError( m_handler, "Not authenticated. Please sign in." );
+        curl_easy_cleanup( curl );
+        return nullptr;
+    }
+
+    // Set up curl options - use harold.so proxy
+    curl_easy_setopt( curl, CURLOPT_URL, "https://www.harold.so/api/llm/messages" );
     curl_easy_setopt( curl, CURLOPT_POST, 1L );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDS, requestBodyStr.c_str() );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDSIZE, requestBodyStr.size() );
 
-    // Headers
+    // Headers - use Bearer auth for proxy
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append( headers, "Content-Type: application/json" );
-
-    std::string apiKey = AGENT_LLM_CLIENT::GetAnthropicKey();
-    headers = curl_slist_append( headers, ( "x-api-key: " + apiKey ).c_str() );
-    headers = curl_slist_append( headers, "anthropic-version: 2023-06-01" );
+    headers = curl_slist_append( headers, ( "Authorization: Bearer " + accessToken ).c_str() );
     curl_easy_setopt( curl, CURLOPT_HTTPHEADER, headers );
 
     // Set up streaming callback
@@ -863,7 +877,7 @@ void* LLM_REQUEST_THREAD::Entry()
 
     if( http_code != 200 )
     {
-        std::string errorMsg = "Anthropic API error: HTTP " + std::to_string( http_code );
+        std::string errorMsg = "LLM API error: HTTP " + std::to_string( http_code );
         // Include the response body which contains error details
         if( !ctx.buffer.empty() )
         {

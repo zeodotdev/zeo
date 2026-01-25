@@ -109,7 +109,6 @@ private:
 
     AGENT_THREAD* m_workerThread;
     AGENT_AUTH*   m_auth;
-    std::string   m_authWebUrl;      // URL to auth web page (e.g., https://www.harold.so/auth)
 
     std::string m_toolResponse;
     std::string m_schJson;

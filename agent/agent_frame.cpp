@@ -489,7 +489,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_signInOverlay( nullptr ),
         m_signInButton( nullptr ),
         m_workerThread( nullptr ),
-        m_authWebUrl( "https://www.harold.so/auth" ),  // Default auth web page URL
         m_hasPendingSchChanges( false ),
         m_hasPendingPcbChanges( false )
 {
@@ -2807,19 +2806,8 @@ bool AGENT_FRAME::CheckAuthentication()
 
 void AGENT_FRAME::OnSignIn( wxCommandEvent& aEvent )
 {
-    if( !m_auth )
-        return;
-
-    std::string callback = "kicad-agent://callback";
-
-    std::ostringstream authUrl;
-    authUrl << m_authWebUrl << "?signout=true&redirect_uri=" << callback;
-
-    if( !wxLaunchDefaultBrowser( authUrl.str() ) )
-    {
-        wxMessageBox( _( "Could not open browser. Please check your default browser settings." ),
-                      _( "Error" ), wxOK | wxICON_ERROR );
-    }
+    if( m_auth )
+        m_auth->StartOAuthFlow();
 }
 
 void AGENT_FRAME::OnSize( wxSizeEvent& aEvent )

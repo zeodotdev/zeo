@@ -878,9 +878,9 @@ private:
 
 public:
     /**
-     * Called before agent Python execution to snapshot current state.
+     * Called before agent Python execution to record the current undo position.
      */
-    void TakeAgentSnapshot();
+    void RecordAgentUndoPosition();
 
     /**
      * Called after agent Python execution to detect and show changes.

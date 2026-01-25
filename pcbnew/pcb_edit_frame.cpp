@@ -3250,7 +3250,7 @@ bool PCB_EDIT_FRAME::DoAutoSave()
 }
 
 
-void PCB_EDIT_FRAME::TakeAgentSnapshot()
+void PCB_EDIT_FRAME::RecordAgentUndoPosition()
 {
     // Clear any existing pending changes state
     ClearAgentPendingChanges();

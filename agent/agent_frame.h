@@ -77,6 +77,9 @@ public:
     void OnLLMStreamComplete( wxThreadEvent& aEvent );
     void OnLLMStreamError( wxThreadEvent& aEvent );
 
+    // Title generation event handler
+    void OnTitleGeneratedEvent( wxThreadEvent& aEvent );
+
     // Tool call helper (legacy synchronous - will be deprecated)
     std::string SendRequest( int aDest, const std::string& aPayload );
 
@@ -151,6 +154,12 @@ private:
     void     OnGeneratingTimer( wxTimerEvent& aEvent );
     void     StartGeneratingAnimation();
     void     StopGeneratingAnimation();
+
+    // Chat title generation
+    bool        m_needsTitleGeneration;  // Whether to generate title after first response
+    std::string m_firstUserMessage;      // First user message for title generation
+    void        GenerateChatTitle();     // Async call to generate title
+    void        OnTitleGenerated( const std::string& aTitle, const std::string& aConversationId ); // Handle generated title
 
     // Auth helpers
     void UpdateAuthUI();

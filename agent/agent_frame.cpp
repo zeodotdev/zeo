@@ -9,6 +9,7 @@
 #include <kiway.h>
 #include <sstream>
 #include <fstream>
+#include <thread>
 #include <wx/sizer.h>
 #include <wx/textctrl.h>
 #include <wx/msgdlg.h>
@@ -638,10 +639,17 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( EVT_LLM_STREAM_COMPLETE, &AGENT_FRAME::OnLLMStreamComplete, this );
     Bind( EVT_LLM_STREAM_ERROR, &AGENT_FRAME::OnLLMStreamError, this );
 
+    // Bind Title Generation Event
+    Bind( EVT_TITLE_GENERATED, &AGENT_FRAME::OnTitleGeneratedEvent, this );
+
     // Initialize generating animation
     m_generatingDots = 0;
     m_isGenerating = false;
     m_generatingTimer.Bind( wxEVT_TIMER, &AGENT_FRAME::OnGeneratingTimer, this );
+
+    // Initialize title generation
+    m_needsTitleGeneration = true;
+    m_firstUserMessage = "";
 
     // Bind Model Change Event
     m_modelChoice->Bind( wxEVT_CHOICE, &AGENT_FRAME::OnModelSelection, this );
@@ -930,6 +938,147 @@ void AGENT_FRAME::StopGeneratingAnimation()
     m_isGenerating = false;
     m_generatingTimer.Stop();
     m_generatingDots = 0;
+}
+
+void AGENT_FRAME::GenerateChatTitle()
+{
+    wxLogDebug( "AGENT: GenerateChatTitle called, firstUserMessage='%s'", m_firstUserMessage.c_str() );
+
+    if( m_firstUserMessage.empty() )
+    {
+        wxLogDebug( "AGENT: GenerateChatTitle - firstUserMessage is empty, returning" );
+        return;
+    }
+
+    // Capture conversation ID on main thread (must match the chat we're generating for)
+    std::string conversationId = m_chatHistoryDb.GetConversationId();
+    if( conversationId.empty() )
+    {
+        wxLogDebug( "AGENT: GenerateChatTitle - conversationId is empty, returning" );
+        return;
+    }
+
+    // Create a simple prompt for title generation
+    std::string prompt = "Generate a very short title (3-6 words maximum) for a chat that starts with this question. "
+                         "Reply with ONLY the title, no quotes, no punctuation at the end, no explanation.\n\n"
+                         "User's question: " + m_firstUserMessage;
+
+    // Capture model name on main thread (wxWidgets UI calls must be on main thread)
+    std::string modelName = m_modelChoice->GetStringSelection().ToStdString();
+    wxLogDebug( "AGENT: GenerateChatTitle - using model '%s', conversationId='%s'", modelName.c_str(), conversationId.c_str() );
+
+    // Use a background thread to generate the title
+    std::thread( [this, prompt, modelName, conversationId]() {
+        try
+        {
+            fprintf( stderr, "[TITLE] Starting title generation with model: %s, convId: %s\n", modelName.c_str(), conversationId.c_str() );
+
+            // Create a temporary LLM client for title generation
+            AGENT_LLM_CLIENT titleClient( nullptr );
+
+            titleClient.SetModel( modelName );
+
+            // Simple non-streaming request for title
+            nlohmann::json messages = nlohmann::json::array();
+            messages.push_back( { { "role", "user" }, { "content", prompt } } );
+
+            std::string title;
+            titleClient.AskStreamWithTools(
+                messages,
+                "You are a helpful assistant that generates concise chat titles.",
+                {},  // No tools needed
+                [&title]( const LLM_EVENT& event ) {
+                    if( event.type == LLM_EVENT_TYPE::TEXT )
+                    {
+                        title += event.text;
+                    }
+                }
+            );
+
+            fprintf( stderr, "[TITLE] Raw title from LLM: '%s'\n", title.c_str() );
+
+            // Clean up the title (remove quotes, trim whitespace)
+            while( !title.empty() && ( title.front() == '"' || title.front() == '\'' || title.front() == ' ' ) )
+                title.erase( 0, 1 );
+            while( !title.empty() && ( title.back() == '"' || title.back() == '\'' || title.back() == ' ' ||
+                                        title.back() == '.' || title.back() == '\n' ) )
+                title.pop_back();
+
+            fprintf( stderr, "[TITLE] Cleaned title: '%s'\n", title.c_str() );
+
+            // Post result to main thread using thread-safe event
+            if( !title.empty() )
+            {
+                fprintf( stderr, "[TITLE] Posting title to main thread for convId: %s\n", conversationId.c_str() );
+                PostTitleGenerated( this, title, conversationId );
+            }
+            else
+            {
+                fprintf( stderr, "[TITLE] Title is empty after cleanup, not posting\n" );
+            }
+        }
+        catch( const std::exception& e )
+        {
+            fprintf( stderr, "[TITLE] Exception: %s\n", e.what() );
+        }
+        catch( ... )
+        {
+            fprintf( stderr, "[TITLE] Unknown exception occurred\n" );
+        }
+    }).detach();
+}
+
+void AGENT_FRAME::OnTitleGenerated( const std::string& aTitle, const std::string& aConversationId )
+{
+    wxLogDebug( "AGENT: OnTitleGenerated called with title='%s', convId='%s'", aTitle.c_str(), aConversationId.c_str() );
+    fprintf( stderr, "[TITLE] OnTitleGenerated: '%s' for convId: %s\n", aTitle.c_str(), aConversationId.c_str() );
+
+    // Check if we're still on the same conversation
+    std::string currentConvId = m_chatHistoryDb.GetConversationId();
+
+    if( currentConvId == aConversationId )
+    {
+        // We're on the same conversation - update UI and save
+        m_chatHistoryDb.SetTitle( aTitle );
+        m_chatHistoryDb.Save( m_chatHistory );
+        m_chatNameLabel->SetLabel( wxString::FromUTF8( aTitle ) );
+        m_needsTitleGeneration = false;
+        fprintf( stderr, "[TITLE] Title saved and UI updated for current chat\n" );
+    }
+    else
+    {
+        // Different conversation - need to load, update, and save that conversation
+        fprintf( stderr, "[TITLE] Title is for different conversation, saving directly to file\n" );
+
+        // Create a temporary chat history object to save to the correct file
+        AGENT_CHAT_HISTORY tempHistory;
+        nlohmann::json messages = tempHistory.Load( aConversationId );
+        tempHistory.SetTitle( aTitle );
+        tempHistory.Save( messages );
+
+        fprintf( stderr, "[TITLE] Title saved to conversation file: %s\n", aConversationId.c_str() );
+    }
+
+    wxLogDebug( "AGENT: Title saved" );
+}
+
+void AGENT_FRAME::OnTitleGeneratedEvent( wxThreadEvent& aEvent )
+{
+    wxLogDebug( "AGENT: OnTitleGeneratedEvent received" );
+    fprintf( stderr, "[TITLE] OnTitleGeneratedEvent received\n" );
+
+    // Extract the title data from the event payload
+    TitleGeneratedData* data = aEvent.GetPayload<TitleGeneratedData*>();
+    if( data )
+    {
+        fprintf( stderr, "[TITLE] Got title from event: '%s' for convId: %s\n", data->title.c_str(), data->conversationId.c_str() );
+        OnTitleGenerated( data->title, data->conversationId );
+        delete data;
+    }
+    else
+    {
+        fprintf( stderr, "[TITLE] Event payload was null\n" );
+    }
 }
 
 void AGENT_FRAME::SetHtml( const wxString& aHtml )
@@ -1289,6 +1438,14 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // Update History
     m_chatHistory.push_back( { { "role", "user" }, { "content", text.ToStdString() } } );
     m_chatHistoryDb.Save( m_chatHistory );
+
+    // Capture first user message for title generation
+    if( m_needsTitleGeneration && m_firstUserMessage.empty() )
+    {
+        m_firstUserMessage = text.ToStdString();
+        fprintf( stderr, "[TITLE-DEBUG] Captured first user message: '%s'\n", m_firstUserMessage.c_str() );
+    }
+
     m_currentResponse = ""; // Reset accumulator
     m_pendingToolCalls = nlohmann::json::array(); // Reset pending tool calls
     m_stopRequested = false; // Reset stop flag
@@ -2550,11 +2707,19 @@ void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
     // Re-render without dots
     UpdateAgentResponse();
 
-    // If we're still waiting for LLM (no tool calls), save and transition to IDLE
+    // Ensure we're in IDLE state and button shows Send
     if( m_conversationCtx.GetState() == AgentConversationState::WAITING_FOR_LLM )
     {
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-        m_actionButton->SetLabel( "Send" );
+    }
+    m_actionButton->SetLabel( "Send" );
+
+    // Generate title after first successful response
+    // This happens regardless of state - the m_needsTitleGeneration flag is the guard
+    if( m_needsTitleGeneration && !m_firstUserMessage.empty() )
+    {
+        fprintf( stderr, "[TITLE] Triggering title generation for first message\n" );
+        GenerateChatTitle();
     }
 }
 
@@ -2582,12 +2747,24 @@ void AGENT_FRAME::OnLLMStreamError( wxThreadEvent& aEvent )
 
 void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
 {
+    // Prevent switching chats while generating
+    if( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE )
+    {
+        wxMessageBox( _( "Please wait for the current response to complete before starting a new chat." ),
+                      _( "Chat in Progress" ), wxOK | wxICON_INFORMATION );
+        return;
+    }
+
     // Clear current chat and start fresh
     m_chatHistory = nlohmann::json::array();
     m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>";
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
     m_chatNameLabel->SetLabel( "New Chat" );
+
+    // Reset title generation state
+    m_needsTitleGeneration = true;
+    m_firstUserMessage = "";
 }
 
 
@@ -2606,7 +2783,7 @@ void AGENT_FRAME::OnHistoryTool( wxCommandEvent& aEvent )
         for( const auto& entry : historyList )
         {
             if( count++ > 20 ) break;
-            menu.Append( id++, entry.displayName );
+            menu.Append( id++, wxString::FromUTF8( entry.title ) );
         }
 
         Bind( wxEVT_MENU, &AGENT_FRAME::OnHistoryMenuSelect, this, ID_CHAT_HISTORY_MENU_BASE, id - 1 );
@@ -2617,6 +2794,14 @@ void AGENT_FRAME::OnHistoryTool( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
 {
+    // Prevent switching chats while generating
+    if( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE )
+    {
+        wxMessageBox( _( "Please wait for the current response to complete before switching chats." ),
+                      _( "Chat in Progress" ), wxOK | wxICON_INFORMATION );
+        return;
+    }
+
     int index = aEvent.GetId() - ID_CHAT_HISTORY_MENU_BASE;
     auto historyList = m_chatHistoryDb.GetHistoryList();
 
@@ -2624,11 +2809,18 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
     {
         std::string selectedId = historyList[index].id;
 
-        // Load history
+        // Load history (this also loads the title into m_chatHistoryDb)
         m_chatHistory = m_chatHistoryDb.Load( selectedId );
 
-        // Update chat name label
-        m_chatNameLabel->SetLabel( historyList[index].displayName );
+        // Update chat name label with title from loaded history
+        std::string title = m_chatHistoryDb.GetTitle();
+        if( title.empty() )
+            title = historyList[index].title;  // Fallback to list title
+        m_chatNameLabel->SetLabel( wxString::FromUTF8( title ) );
+
+        // Mark that title is already generated for this chat
+        m_needsTitleGeneration = false;
+        m_firstUserMessage = "";
 
         // Clear window
         m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'>";

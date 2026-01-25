@@ -12,6 +12,9 @@ wxDEFINE_EVENT( EVT_LLM_STREAM_CHUNK, wxThreadEvent );
 wxDEFINE_EVENT( EVT_LLM_STREAM_COMPLETE, wxThreadEvent );
 wxDEFINE_EVENT( EVT_LLM_STREAM_ERROR, wxThreadEvent );
 
+// Define the custom event type for title generation
+wxDEFINE_EVENT( EVT_TITLE_GENERATED, wxThreadEvent );
+
 
 void PostToolResult( wxEvtHandler* aHandler, const ToolExecutionResult& aResult )
 {
@@ -120,5 +123,18 @@ void PostLLMError( wxEvtHandler* aHandler, const std::string& aErrorMessage )
     complete->error_message = aErrorMessage;
 
     event->SetPayload( complete );
+    wxQueueEvent( aHandler, event );
+}
+
+
+void PostTitleGenerated( wxEvtHandler* aHandler, const std::string& aTitle, const std::string& aConversationId )
+{
+    if( !aHandler )
+        return;
+
+    wxThreadEvent* event = new wxThreadEvent( EVT_TITLE_GENERATED );
+
+    // Store the title data - caller must delete
+    event->SetPayload( new TitleGeneratedData( aTitle, aConversationId ) );
     wxQueueEvent( aHandler, event );
 }

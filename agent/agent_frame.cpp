@@ -2813,7 +2813,7 @@ void AGENT_FRAME::OnSignIn( wxCommandEvent& aEvent )
     std::string callback = "kicad-agent://callback";
 
     std::ostringstream authUrl;
-    authUrl << m_authWebUrl << "?redirect_uri=" << callback;
+    authUrl << m_authWebUrl << "?signout=true&redirect_uri=" << callback;
 
     if( !wxLaunchDefaultBrowser( authUrl.str() ) )
     {

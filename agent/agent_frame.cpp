@@ -79,6 +79,111 @@ static wxString WrapLongLines( const wxString& aText, int aMaxChars = 60 )
     return result;
 }
 
+// Helper function to process inline markdown (bold, italic, code, links)
+static wxString ProcessInlineMarkdown( const wxString& aText )
+{
+    wxString processed = aText;
+
+    // Inline code `code` -> monospace
+    wxString temp;
+    bool inInlineCode = false;
+    wxString codeContent;
+    for( size_t j = 0; j < processed.length(); j++ )
+    {
+        if( processed[j] == '`' )
+        {
+            if( !inInlineCode )
+            {
+                inInlineCode = true;
+                codeContent.clear();
+            }
+            else
+            {
+                temp += "<font face='Courier' color='#ce9178'>" + codeContent + "</font>";
+                inInlineCode = false;
+            }
+        }
+        else if( inInlineCode )
+        {
+            codeContent += processed[j];
+        }
+        else
+        {
+            temp += processed[j];
+        }
+    }
+    if( inInlineCode )
+        temp += "`" + codeContent; // Unclosed backtick
+    processed = temp;
+
+    // Bold **text**
+    int boldIterations = 0;
+    while( processed.Contains( "**" ) && boldIterations < 100 )
+    {
+        boldIterations++;
+        std::string procStr = processed.ToStdString();
+        size_t start = procStr.find( "**" );
+        if( start == std::string::npos ) break;
+        size_t end = procStr.find( "**", start + 2 );
+        if( end == std::string::npos ) break;
+        wxString before = processed.Left( start );
+        wxString bold = processed.Mid( start + 2, end - start - 2 );
+        wxString after = processed.Mid( end + 2 );
+        processed = before + "<b>" + bold + "</b>" + after;
+    }
+
+    // Italic *text* (but not **)
+    temp.clear();
+    bool inItalic = false;
+    for( size_t j = 0; j < processed.length(); j++ )
+    {
+        if( processed[j] == '*' && ( j + 1 >= processed.length() || processed[j+1] != '*' ) &&
+            ( j == 0 || processed[j-1] != '*' ) )
+        {
+            if( !inItalic )
+            {
+                temp += "<i>";
+                inItalic = true;
+            }
+            else
+            {
+                temp += "</i>";
+                inItalic = false;
+            }
+        }
+        else
+        {
+            temp += processed[j];
+        }
+    }
+    if( inItalic )
+        temp += "</i>"; // Auto-close
+    processed = temp;
+
+    // Links [text](url)
+    int linkIterations = 0;
+    while( processed.Contains( "](" ) && linkIterations < 100 )
+    {
+        linkIterations++;
+        std::string procStr = processed.ToStdString();
+        size_t bracketStart = procStr.find( "[" );
+        if( bracketStart == std::string::npos ) break;
+        size_t bracketEnd = procStr.find( "](" );
+        if( bracketEnd == std::string::npos || bracketEnd < bracketStart ) break;
+        size_t parenEnd = procStr.find( ")", bracketEnd );
+        if( parenEnd == std::string::npos ) break;
+
+        wxString before = processed.Left( bracketStart );
+        wxString linkText = processed.Mid( bracketStart + 1, bracketEnd - bracketStart - 1 );
+        wxString url = processed.Mid( bracketEnd + 2, parenEnd - bracketEnd - 2 );
+        wxString after = processed.Mid( parenEnd + 1 );
+
+        processed = before + "<a href='" + url + "'>" + linkText + "</a>" + after;
+    }
+
+    return processed;
+}
+
 // Helper function to convert Markdown to HTML for wxHtmlWindow
 static wxString MarkdownToHtml( const wxString& aMarkdown )
 {
@@ -227,13 +332,14 @@ static wxString MarkdownToHtml( const wxString& aMarkdown )
             result += "<tr>";
             for( size_t c = 0; c < cells.GetCount(); c++ )
             {
+                wxString cellContent = ProcessInlineMarkdown( cells[c] );
                 if( isHeader )
                 {
-                    result += "<td bgcolor='#3d3d3d'><font color='#ffffff'><b>" + cells[c] + "</b></font></td>";
+                    result += "<td bgcolor='#3d3d3d'><font color='#ffffff'><b>" + cellContent + "</b></font></td>";
                 }
                 else
                 {
-                    result += "<td><font color='#d4d4d4'>" + cells[c] + "</font></td>";
+                    result += "<td><font color='#d4d4d4'>" + cellContent + "</font></td>";
                 }
             }
             result += "</tr>";
@@ -341,106 +447,7 @@ static wxString MarkdownToHtml( const wxString& aMarkdown )
         }
 
         // Regular paragraph - process inline formatting
-        wxString processed = trimmed;
-
-        // Inline code `code` -> monospace
-        wxString temp;
-        bool inInlineCode = false;
-        wxString codeContent;
-        for( size_t j = 0; j < processed.length(); j++ )
-        {
-            if( processed[j] == '`' )
-            {
-                if( !inInlineCode )
-                {
-                    inInlineCode = true;
-                    codeContent.clear();
-                }
-                else
-                {
-                    temp += "<font face='Courier' color='#ce9178'>" + codeContent + "</font>";
-                    inInlineCode = false;
-                }
-            }
-            else if( inInlineCode )
-            {
-                codeContent += processed[j];
-            }
-            else
-            {
-                temp += processed[j];
-            }
-        }
-        if( inInlineCode )
-            temp += "`" + codeContent; // Unclosed backtick
-        processed = temp;
-
-        // Bold **text** or __text__
-        int boldIterations = 0;
-        while( processed.Contains( "**" ) && boldIterations < 100 )
-        {
-            boldIterations++;
-            std::string procStr = processed.ToStdString();
-            size_t start = procStr.find( "**" );
-            if( start == std::string::npos ) break;
-            size_t end = procStr.find( "**", start + 2 );
-            if( end == std::string::npos ) break;
-            wxString before = processed.Left( start );
-            wxString bold = processed.Mid( start + 2, end - start - 2 );
-            wxString after = processed.Mid( end + 2 );
-            processed = before + "<b>" + bold + "</b>" + after;
-        }
-
-        // Italic *text* (but not **)
-        temp.clear();
-        bool inItalic = false;
-        for( size_t j = 0; j < processed.length(); j++ )
-        {
-            if( processed[j] == '*' && ( j + 1 >= processed.length() || processed[j+1] != '*' ) &&
-                ( j == 0 || processed[j-1] != '*' ) )
-            {
-                if( !inItalic )
-                {
-                    temp += "<i>";
-                    inItalic = true;
-                }
-                else
-                {
-                    temp += "</i>";
-                    inItalic = false;
-                }
-            }
-            else
-            {
-                temp += processed[j];
-            }
-        }
-        if( inItalic )
-            temp += "</i>"; // Auto-close
-        processed = temp;
-
-        // Links [text](url)
-        int linkIterations = 0;
-        while( processed.Contains( "](" ) && linkIterations < 100 )
-        {
-            linkIterations++;
-            std::string procStr = processed.ToStdString();
-            size_t bracketStart = procStr.find( "[" );
-            if( bracketStart == std::string::npos ) break;
-            size_t bracketEnd = procStr.find( "](" );
-            if( bracketEnd == std::string::npos || bracketEnd < bracketStart ) break;
-            size_t parenEnd = procStr.find( ")", bracketEnd );
-            if( parenEnd == std::string::npos ) break;
-
-            wxString before = processed.Left( bracketStart );
-            wxString linkText = processed.Mid( bracketStart + 1, bracketEnd - bracketStart - 1 );
-            wxString url = processed.Mid( bracketEnd + 2, parenEnd - bracketEnd - 2 );
-            wxString after = processed.Mid( parenEnd + 1 );
-
-            processed = before + "<a href='" + url + "'>" + linkText + "</a>" + after;
-        }
-
-        result += processed + "<br>";
+        result += ProcessInlineMarkdown( trimmed ) + "<br>";
     }
 
     // Close any open elements

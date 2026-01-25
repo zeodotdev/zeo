@@ -28,6 +28,57 @@
 
 using json = nlohmann::json;
 
+// Helper function to wrap long lines for wxHtmlWindow display
+// Inserts <br> tags to prevent horizontal overflow
+static wxString WrapLongLines( const wxString& aText, int aMaxChars = 60 )
+{
+    wxString result;
+    int lineLen = 0;
+
+    for( size_t i = 0; i < aText.length(); i++ )
+    {
+        wxChar ch = aText[i];
+
+        if( ch == '\n' || ( aText.Mid( i, 4 ) == "<br>" ) )
+        {
+            // Reset line length on explicit breaks
+            lineLen = 0;
+            if( ch == '\n' )
+            {
+                result += "<br>";
+                continue;
+            }
+        }
+
+        result += ch;
+        lineLen++;
+
+        // Insert break at max length, preferring to break after certain characters
+        if( lineLen >= aMaxChars )
+        {
+            // Look for a good break point (space, comma, colon, etc.)
+            bool breakInserted = false;
+            for( int j = result.length() - 1; j >= (int)result.length() - 20 && j >= 0; j-- )
+            {
+                wxChar c = result[j];
+                if( c == ' ' || c == ',' || c == ':' || c == ';' || c == '{' || c == '}' || c == '[' || c == ']' )
+                {
+                    result.insert( j + 1, "<br>" );
+                    breakInserted = true;
+                    break;
+                }
+            }
+            if( !breakInserted )
+            {
+                result += "<br>";
+            }
+            lineLen = 0;
+        }
+    }
+
+    return result;
+}
+
 BEGIN_EVENT_TABLE( AGENT_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, AGENT_FRAME::OnExit )
 
@@ -1292,12 +1343,13 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
 
         // Display tool call in UI
         std::string inputStr = aEvent.tool_input.dump( 2 );
+        wxString wrappedInput = WrapLongLines( inputStr );
         wxString htmlToolCall = wxString::Format(
-            "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td>"
-            "<font color='#4ec9b0' face='Courier New' size='2'>🔧 Tool: %s</font><br>"
-            "<font color='#d4d4d4' face='Courier New' size='2'>%s</font>"
+            "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>"
+            "<font color='#4ec9b0' size='2'><b>Tool: %s</b></font><br>"
+            "<font color='#d4d4d4' size='2'>%s</font>"
             "</td></tr></table>",
-            aEvent.tool_name, inputStr );
+            aEvent.tool_name, wrappedInput );
         AppendHtml( htmlToolCall );
         break;
     }
@@ -1703,18 +1755,20 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
 
     // Display result in UI
     wxString htmlResult = aResult;
-    htmlResult.Replace( "\n", "<br>" );
-    htmlResult.Replace( " ", "&nbsp;" );
+    htmlResult.Replace( "&", "&amp;" );
+    htmlResult.Replace( "<", "&lt;" );
+    htmlResult.Replace( ">", "&gt;" );
+    wxString wrappedResult = WrapLongLines( htmlResult );
 
     wxString statusIcon = aSuccess ? "✓" : "✗";
     wxString statusColor = aSuccess ? "#4ec9b0" : "#f44747";
 
     wxString resultBox = wxString::Format(
-        "<br><table width='100%%' bgcolor='#1e1e1e' cellpadding='10'><tr><td>"
-        "<font color='%s' face='Courier New' size='2'>%s Result:</font><br>"
-        "<font color='#d4d4d4' face='Courier New' size='2'>%s</font>"
+        "<br><table width='100%%' bgcolor='#1e1e1e' cellpadding='8'><tr><td>"
+        "<font color='%s' size='2'><b>%s Result:</b></font><br>"
+        "<font color='#d4d4d4' size='2'>%s</font>"
         "</td></tr></table>",
-        statusColor, statusIcon, htmlResult );
+        statusColor, statusIcon, wrappedResult );
     AppendHtml( resultBox );
 
     // Transition to PROCESSING_TOOL_RESULT
@@ -1877,11 +1931,14 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
 
         m_pendingToolCalls.push_back( toolCall );
 
-        // Display tool call in UI
+        // Display tool call in UI with proper word wrapping
+        wxString wrappedInput = WrapLongLines( aChunk.tool_input_json );
         wxString toolHtml = wxString::Format(
-            "<br><font color='#569cd6'>🔧 Tool:</font> <b>%s</b><br>"
-            "<font color='#6a9955' face='Courier New' size='2'>%s</font>",
-            aChunk.tool_name, aChunk.tool_input_json );
+            "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>"
+            "<font color='#4ec9b0' size='2'><b>Tool: %s</b></font><br>"
+            "<font color='#d4d4d4' size='2'>%s</font>"
+            "</td></tr></table>",
+            aChunk.tool_name, wrappedInput );
         AppendHtml( toolHtml );
         break;
     }
@@ -2117,37 +2174,40 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
                         }
                         else if( blockType == "tool_use" )
                         {
-                            // Render tool_use block - matches live chat (lines 1202-1208)
-                            // NOTE: Live chat does NOT replace \n with <br> or spaces with &nbsp;
-                            // This allows wxHtmlWindow to naturally wrap at spaces
+                            // Render tool_use block with proper word wrapping
                             std::string toolName = block.value("name", "unknown");
                             std::string inputStr = block.value("input", nlohmann::json::object()).dump(2);
+                            wxString wrappedInput = WrapLongLines( inputStr );
 
                             wxString htmlToolCall = wxString::Format(
-                                "<br><font color='#569cd6'>🔧 Tool:</font> <b>%s</b><br>"
-                                "<font color='#6a9955' face='Courier New' size='2'>%s</font>",
-                                toolName, inputStr );
+                                "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>"
+                                "<font color='#4ec9b0' size='2'><b>Tool: %s</b></font><br>"
+                                "<font color='#d4d4d4' size='2'>%s</font>"
+                                "</td></tr></table>",
+                                toolName, wrappedInput );
                             m_fullHtmlContent += htmlToolCall;
                         }
                         else if( blockType == "tool_result" )
                         {
-                            // Render tool_result block - matches live chat (lines 1613-1625)
+                            // Render tool_result block with proper word wrapping
                             std::string content = block.value("content", "");
                             bool isError = block.value("is_error", false);
 
                             wxString htmlResult = content;
-                            htmlResult.Replace( "\n", "<br>" );
-                            htmlResult.Replace( " ", "&nbsp;" );
+                            htmlResult.Replace( "&", "&amp;" );
+                            htmlResult.Replace( "<", "&lt;" );
+                            htmlResult.Replace( ">", "&gt;" );
+                            wxString wrappedResult = WrapLongLines( htmlResult );
 
                             wxString statusIcon = isError ? "✗" : "✓";
                             wxString statusColor = isError ? "#f44747" : "#4ec9b0";
 
                             wxString resultBox = wxString::Format(
-                                "<br><table width='100%%' bgcolor='#1e1e1e' cellpadding='10'><tr><td>"
-                                "<font color='%s' face='Courier New' size='2'>%s Result:</font><br>"
-                                "<font color='#d4d4d4' face='Courier New' size='2'>%s</font>"
+                                "<br><table width='100%%' bgcolor='#1e1e1e' cellpadding='8'><tr><td>"
+                                "<font color='%s' size='2'><b>%s Result:</b></font><br>"
+                                "<font color='#d4d4d4' size='2'>%s</font>"
                                 "</td></tr></table>",
-                                statusColor, statusIcon, htmlResult );
+                                statusColor, statusIcon, wrappedResult );
                             m_fullHtmlContent += resultBox;
                         }
                     }

@@ -116,16 +116,20 @@ static wxString ProcessInlineMarkdown( const wxString& aText )
         temp += "`" + codeContent; // Unclosed backtick
     processed = temp;
 
-    // Bold **text**
+    // Bold **text** - use wxString positions consistently (handles Unicode correctly)
     int boldIterations = 0;
-    while( processed.Contains( "**" ) && boldIterations < 100 )
+    while( boldIterations < 100 )
     {
         boldIterations++;
-        std::string procStr = processed.ToStdString();
-        size_t start = procStr.find( "**" );
-        if( start == std::string::npos ) break;
-        size_t end = procStr.find( "**", start + 2 );
-        if( end == std::string::npos ) break;
+        int start = processed.Find( "**" );
+        if( start == wxNOT_FOUND ) break;
+
+        // Find closing ** after the opening one
+        wxString afterStart = processed.Mid( start + 2 );
+        int endOffset = afterStart.Find( "**" );
+        if( endOffset == wxNOT_FOUND ) break;
+
+        int end = start + 2 + endOffset;
         wxString before = processed.Left( start );
         wxString bold = processed.Mid( start + 2, end - start - 2 );
         wxString after = processed.Mid( end + 2 );
@@ -160,18 +164,23 @@ static wxString ProcessInlineMarkdown( const wxString& aText )
         temp += "</i>"; // Auto-close
     processed = temp;
 
-    // Links [text](url)
+    // Links [text](url) - use wxString positions consistently
     int linkIterations = 0;
-    while( processed.Contains( "](" ) && linkIterations < 100 )
+    while( linkIterations < 100 )
     {
         linkIterations++;
-        std::string procStr = processed.ToStdString();
-        size_t bracketStart = procStr.find( "[" );
-        if( bracketStart == std::string::npos ) break;
-        size_t bracketEnd = procStr.find( "](" );
-        if( bracketEnd == std::string::npos || bracketEnd < bracketStart ) break;
-        size_t parenEnd = procStr.find( ")", bracketEnd );
-        if( parenEnd == std::string::npos ) break;
+        int bracketStart = processed.Find( "[" );
+        if( bracketStart == wxNOT_FOUND ) break;
+
+        int bracketEnd = processed.Find( "](" );
+        if( bracketEnd == wxNOT_FOUND || bracketEnd < bracketStart ) break;
+
+        // Find closing ) after ](
+        wxString afterBracket = processed.Mid( bracketEnd + 2 );
+        int parenEndOffset = afterBracket.Find( ")" );
+        if( parenEndOffset == wxNOT_FOUND ) break;
+
+        int parenEnd = bracketEnd + 2 + parenEndOffset;
 
         wxString before = processed.Left( bracketStart );
         wxString linkText = processed.Mid( bracketStart + 1, bracketEnd - bracketStart - 1 );
@@ -372,42 +381,42 @@ static wxString MarkdownToHtml( const wxString& aMarkdown )
             continue;
         }
 
-        // Headings
+        // Headings (with extra spacing after larger headings)
         if( trimmed.StartsWith( "######" ) )
         {
-            result += "<b><font size='2'>" + trimmed.Mid( 6 ).Trim( false ) + "</font></b><br>";
+            result += "<br><b><font size='2'>" + ProcessInlineMarkdown( trimmed.Mid( 6 ).Trim( false ) ) + "</font></b><br>";
             continue;
         }
         if( trimmed.StartsWith( "#####" ) )
         {
-            result += "<b><font size='2'>" + trimmed.Mid( 5 ).Trim( false ) + "</font></b><br>";
+            result += "<br><b><font size='2'>" + ProcessInlineMarkdown( trimmed.Mid( 5 ).Trim( false ) ) + "</font></b><br>";
             continue;
         }
         if( trimmed.StartsWith( "####" ) )
         {
-            result += "<b><font size='3'>" + trimmed.Mid( 4 ).Trim( false ) + "</font></b><br>";
+            result += "<br><b><font size='3'>" + ProcessInlineMarkdown( trimmed.Mid( 4 ).Trim( false ) ) + "</font></b><br>";
             continue;
         }
         if( trimmed.StartsWith( "###" ) )
         {
-            result += "<b><font size='3'>" + trimmed.Mid( 3 ).Trim( false ) + "</font></b><br>";
+            result += "<br><b><font size='3'>" + ProcessInlineMarkdown( trimmed.Mid( 3 ).Trim( false ) ) + "</font></b><br>";
             continue;
         }
         if( trimmed.StartsWith( "##" ) )
         {
-            result += "<b><font size='4'>" + trimmed.Mid( 2 ).Trim( false ) + "</font></b><br>";
+            result += "<br><b><font size='4'>" + ProcessInlineMarkdown( trimmed.Mid( 2 ).Trim( false ) ) + "</font></b><br>";
             continue;
         }
         if( trimmed.StartsWith( "#" ) )
         {
-            result += "<b><font size='5'>" + trimmed.Mid( 1 ).Trim( false ) + "</font></b><br>";
+            result += "<br><b><font size='5'>" + ProcessInlineMarkdown( trimmed.Mid( 1 ).Trim( false ) ) + "</font></b><br>";
             continue;
         }
 
         // Blockquotes
         if( trimmed.StartsWith( ">" ) )
         {
-            wxString quote = trimmed.Mid( 1 ).Trim( false );
+            wxString quote = ProcessInlineMarkdown( trimmed.Mid( 1 ).Trim( false ) );
             result += "<table width='100%' bgcolor='#3d3d3d' cellpadding='5'><tr>";
             result += "<td width='3' bgcolor='#569cd6'></td>";
             result += "<td><font color='#d4d4d4'><i>" + quote + "</i></font></td>";
@@ -423,7 +432,7 @@ static wxString MarkdownToHtml( const wxString& aMarkdown )
                 result += "<ul>";
                 inList = true;
             }
-            result += "<li>" + trimmed.Mid( 2 ) + "</li>";
+            result += "<li>" + ProcessInlineMarkdown( trimmed.Mid( 2 ) ) + "</li>";
             continue;
         }
 
@@ -435,7 +444,7 @@ static wxString MarkdownToHtml( const wxString& aMarkdown )
                 result += "<ul>";
                 inList = true;
             }
-            result += "<li>" + trimmed.Mid( 2 ).Trim( false ) + "</li>";
+            result += "<li>" + ProcessInlineMarkdown( trimmed.Mid( 2 ).Trim( false ) ) + "</li>";
             continue;
         }
 
@@ -548,14 +557,13 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // 2a. Text Input (Top)
     m_inputCtrl = new wxTextCtrl( m_inputPanel, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 60 ),
-                                  wxTE_MULTILINE | wxTE_PROCESS_ENTER | wxTE_RICH | wxBORDER_NONE );
+                                  wxTE_MULTILINE | wxTE_PROCESS_ENTER | wxBORDER_NONE );
     m_inputCtrl->SetBackgroundColour( wxColour( "#1E1E1E" ) );
     m_inputCtrl->SetForegroundColour( wxColour( "#FFFFFF" ) );
 
-    // Sync Font with Buttons
-    // We can't easily get the button font before creating buttons, but we can get system font
+    // Use system default font (matches chat name label)
     wxFont font = wxSystemSettings::GetFont( wxSYS_DEFAULT_GUI_FONT );
-    font.SetPointSize( 14 ); // Increased to 14
+    font.SetPointSize( 12 );
     m_inputCtrl->SetFont( font );
 
     inputContainerSizer->Add( m_inputCtrl, 1, wxEXPAND | wxBOTTOM, 5 );
@@ -629,6 +637,11 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( EVT_LLM_STREAM_CHUNK, &AGENT_FRAME::OnLLMStreamChunk, this );
     Bind( EVT_LLM_STREAM_COMPLETE, &AGENT_FRAME::OnLLMStreamComplete, this );
     Bind( EVT_LLM_STREAM_ERROR, &AGENT_FRAME::OnLLMStreamError, this );
+
+    // Initialize generating animation
+    m_generatingDots = 0;
+    m_isGenerating = false;
+    m_generatingTimer.Bind( wxEVT_TIMER, &AGENT_FRAME::OnGeneratingTimer, this );
 
     // Bind Model Change Event
     m_modelChoice->Bind( wxEVT_CHOICE, &AGENT_FRAME::OnModelSelection, this );
@@ -872,6 +885,51 @@ void AGENT_FRAME::AppendHtml( const wxString& aHtml )
 {
     m_fullHtmlContent += aHtml;
     SetHtml( m_fullHtmlContent );
+}
+
+void AGENT_FRAME::UpdateAgentResponse()
+{
+    // Re-render the full HTML with the current response formatted as markdown
+    wxString html = m_htmlBeforeAgentResponse;
+    html += MarkdownToHtml( m_currentResponse );
+
+    // Add animated dots if currently generating
+    if( m_isGenerating )
+    {
+        wxString dots;
+        for( int i = 0; i < m_generatingDots; i++ )
+            dots += ".";
+        html += "<font color='#888888'>" + dots + "</font>";
+    }
+
+    SetHtml( html );
+    m_fullHtmlContent = html;
+}
+
+void AGENT_FRAME::OnGeneratingTimer( wxTimerEvent& aEvent )
+{
+    // Cycle through 1, 2, 3 dots
+    m_generatingDots = ( m_generatingDots % 3 ) + 1;
+    UpdateAgentResponse();
+
+    // Auto-scroll
+    int x, y;
+    m_chatWindow->GetVirtualSize( &x, &y );
+    m_chatWindow->Scroll( 0, y );
+}
+
+void AGENT_FRAME::StartGeneratingAnimation()
+{
+    m_isGenerating = true;
+    m_generatingDots = 1;
+    m_generatingTimer.Start( 400 ); // Update every 400ms
+}
+
+void AGENT_FRAME::StopGeneratingAnimation()
+{
+    m_isGenerating = false;
+    m_generatingTimer.Stop();
+    m_generatingDots = 0;
 }
 
 void AGENT_FRAME::SetHtml( const wxString& aHtml )
@@ -1197,10 +1255,23 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     if( text.IsEmpty() )
         return;
 
-    // Display User Message
-    wxString msgHtml = wxString::Format( "<p><b>User:</b> %s</p>", text );
+    // Display User Message (right-aligned speech bubble style)
+    wxString escapedText = text;
+    escapedText.Replace( "&", "&amp;" );
+    escapedText.Replace( "<", "&lt;" );
+    escapedText.Replace( ">", "&gt;" );
+    escapedText.Replace( "\n", "<br>" );
+    wxString msgHtml = wxString::Format(
+        "<table width='100%%' cellpadding='0'><tr><td align='right'>"
+        "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
+        "<font color='#ffffff'>%s</font>"
+        "</td></tr></table>"
+        "</td></tr></table><br><br>",
+        escapedText );
     AppendHtml( msgHtml );
-    AppendHtml( "<p><b>Agent:</b> " ); // Start Agent response block
+
+    // Save HTML snapshot for markdown re-rendering during streaming
+    m_htmlBeforeAgentResponse = m_fullHtmlContent;
 
     // Clear Input and Update UI
     m_inputCtrl->Clear();
@@ -1236,6 +1307,9 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
 {
+    // Stop generating animation
+    StopGeneratingAnimation();
+
     // Handle old worker thread approach (for backwards compatibility)
     if( m_workerThread )
     {
@@ -1252,6 +1326,9 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     // Signal to stop - affects tool execution loops and streaming callbacks
     m_stopRequested = true;
 
+    // Re-render without dots
+    UpdateAgentResponse();
+
     // Transition state machine to IDLE
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
 
@@ -1266,10 +1343,8 @@ void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
     // Accumulate RAW text for parsing
     m_currentResponse += content;
 
-    // Display with HTML formatting
-    wxString displayContent = content;
-    displayContent.Replace( "\n", "<br>" );
-    AppendHtml( displayContent );
+    // Re-render full response with markdown formatting
+    UpdateAgentResponse();
 
     // Auto-scroll
     int x, y;
@@ -1318,6 +1393,9 @@ void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
 {
+    // Stop generating animation
+    StopGeneratingAnimation();
+
     // Thread has finished naturally
     if( m_workerThread )
     {
@@ -1326,8 +1404,8 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
         m_workerThread = nullptr;
     }
 
-
-    AppendHtml( "</p>" ); // Close Agent block
+    // Re-render without dots
+    UpdateAgentResponse();
     m_actionButton->SetLabel( "Send" );
 
     // Add Assistant response to history
@@ -1524,7 +1602,12 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     m_fullHtmlContent.Replace( runningBox, finalTermBox );
     SetHtml( m_fullHtmlContent );
 
-    AppendHtml( "<p><b>Agent:</b> " );
+    // Save HTML snapshot for markdown re-rendering during streaming
+    m_currentResponse = "";
+    m_htmlBeforeAgentResponse = m_fullHtmlContent;
+
+    // Start generating animation
+    StartGeneratingAnimation();
 
     // Resume Agent with system prompt including model context
     std::string systemPrompt = GetSystemPrompt();
@@ -1536,8 +1619,6 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
         payload += m_pcbJson + "\n";
 
     wxString model = m_modelChoice->GetStringSelection();
-
-    m_currentResponse = "";
     m_actionButton->SetLabel( "Stop" );
 
     m_workerThread = new AGENT_THREAD( this, m_chatHistory, systemPrompt, payload, model.ToStdString() );
@@ -1722,12 +1803,11 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
     {
     case LLM_EVENT_TYPE::TEXT:
     {
-        // Accumulate text and display
+        // Accumulate text and display with markdown formatting
         m_currentResponse += aEvent.text;
 
-        wxString displayContent = aEvent.text;
-        displayContent.Replace( "\n", "<br>" );
-        AppendHtml( displayContent );
+        // Re-render full response with markdown
+        UpdateAgentResponse();
 
         // Auto-scroll
         int x, y;
@@ -1845,8 +1925,12 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
 void AGENT_FRAME::ContinueConversation()
 {
     // Continue the conversation after tool results
-    AppendHtml( "<p><b>Agent:</b> " );
+    // Save HTML snapshot for markdown re-rendering during streaming
     m_currentResponse = "";
+    m_htmlBeforeAgentResponse = m_fullHtmlContent;
+
+    // Start generating animation
+    StartGeneratingAnimation();
 
     wxString model = m_modelChoice->GetStringSelection();
     m_llmClient->SetModel( model.ToStdString() );
@@ -2240,8 +2324,9 @@ void AGENT_FRAME::ContinueConversationWithToolResult()
     m_conversationCtx.TransitionTo( AgentConversationState::WAITING_FOR_LLM );
 
     // Continue the conversation
-    AppendHtml( "<p><b>Agent:</b> " );
+    // Save HTML snapshot for markdown re-rendering during streaming
     m_currentResponse = "";
+    m_htmlBeforeAgentResponse = m_fullHtmlContent;
 
     wxString model = m_modelChoice->GetStringSelection();
     m_llmClient->SetModel( model.ToStdString() );
@@ -2259,6 +2344,9 @@ void AGENT_FRAME::ContinueConversationWithToolResult()
 
 void AGENT_FRAME::StartAsyncLLMRequest()
 {
+    // Start the generating animation
+    StartGeneratingAnimation();
+
     wxString model = m_modelChoice->GetStringSelection();
     m_llmClient->SetModel( model.ToStdString() );
 
@@ -2268,6 +2356,7 @@ void AGENT_FRAME::StartAsyncLLMRequest()
     if( !m_llmClient->AskStreamWithToolsAsync( m_chatHistory, systemPrompt, m_tools, this ) )
     {
         wxLogDebug( "AGENT: Failed to start async LLM request" );
+        StopGeneratingAnimation();
         AppendHtml( "<p><font color='red'>Error: Failed to start LLM request</font></p>" );
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
         m_actionButton->SetLabel( "Send" );
@@ -2300,12 +2389,11 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
     {
     case LLMChunkType::TEXT:
     {
-        // Accumulate text and display
+        // Accumulate text and display with markdown formatting
         m_currentResponse += aChunk.text;
 
-        wxString displayContent = aChunk.text;
-        displayContent.Replace( "\n", "<br>" );
-        AppendHtml( displayContent );
+        // Re-render full response with markdown
+        UpdateAgentResponse();
 
         // Auto-scroll
         int x, y;
@@ -2439,6 +2527,9 @@ void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
 {
     wxLogDebug( "AGENT: OnLLMStreamComplete called" );
 
+    // Stop generating animation
+    StopGeneratingAnimation();
+
     // Get completion data
     LLMStreamComplete* complete = aEvent.GetPayload<LLMStreamComplete*>();
     if( complete )
@@ -2452,6 +2543,9 @@ void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
         delete complete;
     }
 
+    // Re-render without dots
+    UpdateAgentResponse();
+
     // If we're still waiting for LLM (no tool calls), save and transition to IDLE
     if( m_conversationCtx.GetState() == AgentConversationState::WAITING_FOR_LLM )
     {
@@ -2464,6 +2558,9 @@ void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
 void AGENT_FRAME::OnLLMStreamError( wxThreadEvent& aEvent )
 {
     wxLogDebug( "AGENT: OnLLMStreamError called" );
+
+    // Stop generating animation
+    StopGeneratingAnimation();
 
     // Get error data
     LLMStreamComplete* complete = aEvent.GetPayload<LLMStreamComplete*>();
@@ -2543,24 +2640,27 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
                 if( msg["content"].is_string() )
                 {
                     std::string content = msg["content"];
-                    // escape html? AppendHtml handles it roughly?
-                    // AppendHtml assumes formatted html or raw text?
-                    // Code uses AppendHtml which does NO escaping usually? 
-                    // Wait, OnAgentUpdate does Replace("\n", "<br>").
-                    // User input OnSend does wxString::Format( "<p><b>User:</b> %s</p>", text ); -> text is raw input.
-                    // So we should format.
-                    
                     wxString display = content;
 
                     if( role == "user" )
                     {
+                        // Right-aligned speech bubble style for user messages
+                        display.Replace( "&", "&amp;" );
+                        display.Replace( "<", "&lt;" );
+                        display.Replace( ">", "&gt;" );
                         display.Replace( "\n", "<br>" );
-                        m_fullHtmlContent += "<p><b>User:</b> " + display + "</p>";
+                        m_fullHtmlContent += wxString::Format(
+                            "<table width='100%%' cellpadding='0'><tr><td align='right'>"
+                            "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
+                            "<font color='#ffffff'>%s</font>"
+                            "</td></tr></table>"
+                            "</td></tr></table><br><br>",
+                            display );
                     }
                     else if( role == "assistant" )
                     {
-                        // Pass original content to MarkdownToHtml - it handles newlines internally
-                        m_fullHtmlContent += "<p><b>Agent:</b></p>" + MarkdownToHtml( content );
+                        // Left-aligned markdown formatted response
+                        m_fullHtmlContent += MarkdownToHtml( content );
                     }
                 }
                 else if( msg["content"].is_array() )
@@ -2581,12 +2681,23 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
 
                             if( role == "assistant" )
                             {
-                                m_fullHtmlContent += "<p><b>Agent:</b></p>" + MarkdownToHtml( display );
+                                // Left-aligned markdown formatted response
+                                m_fullHtmlContent += MarkdownToHtml( display );
                             }
                             else if( role == "user" )
                             {
+                                // Right-aligned speech bubble style for user messages
+                                display.Replace( "&", "&amp;" );
+                                display.Replace( "<", "&lt;" );
+                                display.Replace( ">", "&gt;" );
                                 display.Replace( "\n", "<br>" );
-                                m_fullHtmlContent += "<p><b>User:</b> " + display + "</p>";
+                                m_fullHtmlContent += wxString::Format(
+                                    "<table width='100%%' cellpadding='0'><tr><td align='right'>"
+                                    "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
+                                    "<font color='#ffffff'>%s</font>"
+                                    "</td></tr></table>"
+                                    "</td></tr></table><br>",
+                                    display );
                             }
                         }
                         else if( blockType == "tool_use" )

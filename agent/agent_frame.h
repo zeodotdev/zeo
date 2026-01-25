@@ -138,9 +138,19 @@ private:
     std::string    GetSystemPrompt();
 
     // HTML Rendering
-    wxString m_fullHtmlContent; // Complete HTML buffer
+    wxString m_fullHtmlContent;        // Complete HTML buffer
+    wxString m_htmlBeforeAgentResponse; // HTML snapshot before streaming starts (for markdown re-render)
     void     AppendHtml( const wxString& aHtml );
     void     SetHtml( const wxString& aHtml );
+    void     UpdateAgentResponse();    // Re-render current response with markdown
+
+    // Generating animation
+    wxTimer  m_generatingTimer;        // Timer for animating dots
+    int      m_generatingDots;         // Current dot count (0-3)
+    bool     m_isGenerating;           // Whether we're currently streaming
+    void     OnGeneratingTimer( wxTimerEvent& aEvent );
+    void     StartGeneratingAnimation();
+    void     StopGeneratingAnimation();
 
     // Auth helpers
     void UpdateAuthUI();

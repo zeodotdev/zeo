@@ -947,6 +947,30 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         break;
     }
 
+    case MAIL_AGENT_HAS_CHANGES:
+    {
+        // Query if there are pending agent changes
+        payload = HasAgentPendingChanges() ? "true" : "false";
+        break;
+    }
+
+    case MAIL_AGENT_APPROVE:
+    {
+        // Approve pending agent changes
+        if( m_showingAgentBefore )
+            ShowAgentChangesAfter();
+        ClearAgentPendingChanges();
+        break;
+    }
+
+    case MAIL_AGENT_REJECT:
+    {
+        // Reject pending agent changes
+        if( m_showingAgentBefore )
+            ShowAgentChangesAfter();
+        RevertAgentChanges();
+        break;
+    }
 
     case MAIL_SELECTION:
         if( !GetPcbNewSettings()->m_CrossProbing.on_selection )

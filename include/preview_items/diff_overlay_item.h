@@ -44,7 +44,7 @@ namespace PREVIEW
         {
             BTN_NONE = 0,
             BTN_APPROVE,
-            BTN_DENY,
+            BTN_REJECT,
             BTN_VIEW_BEFORE,
             BTN_VIEW_AFTER
         };

@@ -112,7 +112,6 @@ private:
 
     AGENT_THREAD* m_workerThread;
     AGENT_AUTH*   m_auth;
-    std::string   m_authWebUrl;      // URL to auth web page (e.g., https://www.harold.so/auth)
 
     std::string m_toolResponse;
     std::string m_schJson;
@@ -185,6 +184,14 @@ private:
     // Async LLM streaming helpers
     void StartAsyncLLMRequest();  // Start an async LLM request
     void HandleLLMChunk( const LLMStreamChunk& aChunk );  // Process a streaming chunk
+
+    // Agent change approval
+    bool m_hasPendingSchChanges;    // True if schematic has pending agent changes
+    bool m_hasPendingPcbChanges;    // True if PCB has pending agent changes
+    void CheckForPendingChanges();  // Query editors for pending changes
+    void ShowApproveRejectButtons(); // Display approve/reject buttons in chat
+    void OnApproveChanges();        // Handle approve click from chat
+    void OnRejectChanges();         // Handle reject click from chat
 };
 
 #endif // AGENT_FRAME_H

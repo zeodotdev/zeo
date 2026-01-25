@@ -124,7 +124,7 @@ bool DIFF_MANAGER::HandleClick( const VECTOR2I& aPoint )
     switch( btn )
     {
     case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_APPROVE: OnApprove(); return true;
-    case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_DENY: OnDeny(); return true;
+    case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_REJECT: OnReject(); return true;
     case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_VIEW_BEFORE: OnViewBefore(); return true;
     case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_VIEW_AFTER: OnViewAfter(); return true;
     default: return false;
@@ -140,11 +140,11 @@ void DIFF_MANAGER::OnApprove()
     ClearDiff();
 }
 
-void DIFF_MANAGER::OnDeny()
+void DIFF_MANAGER::OnReject()
 {
-    // Call the deny callback which should revert the changes
-    if( m_callbacks.onDeny )
-        m_callbacks.onDeny();
+    // Call the reject callback which should revert the changes
+    if( m_callbacks.onReject )
+        m_callbacks.onReject();
 
     ClearDiff();
 }

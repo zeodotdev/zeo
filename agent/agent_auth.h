@@ -40,6 +40,13 @@ public:
      * @return Email address, or empty string if not authenticated
      */
     std::string GetUserEmail();
+
+    /**
+     * Get the current access token for API requests.
+     * Refreshes if expired.
+     * @return Access token, or empty string if not authenticated
+     */
+    std::string GetAccessToken();
     std::string GetFirstName();
     std::string GetAvatarUrl();
 
@@ -64,9 +71,16 @@ public:
      */
     void LoadSession();
 
+    /**
+     * Start the OAuth flow by launching the browser to the auth web page.
+     * @return True if browser was launched successfully
+     */
+    bool StartOAuthFlow();
+
 private:
     std::string m_projectUrl;
     std::string m_anonKey;
+    std::string m_authWebUrl;
     std::string m_accessToken;
     std::string m_refreshToken;
     std::string m_userEmail;

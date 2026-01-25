@@ -82,7 +82,6 @@ private:
 private:
     KICAD_MANAGER_FRAME*        m_frame;
     std::unique_ptr<AGENT_AUTH> m_auth;
-    std::string                 m_authWebUrl;
 };
 
 #endif // SESSION_MANAGER_H

@@ -3250,7 +3250,7 @@ bool PCB_EDIT_FRAME::DoAutoSave()
 }
 
 
-void PCB_EDIT_FRAME::TakeAgentSnapshot()
+void PCB_EDIT_FRAME::RecordAgentUndoPosition()
 {
     // Clear any existing pending changes state
     ClearAgentPendingChanges();
@@ -3323,7 +3323,7 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
             ShowAgentChangesAfter();
         ClearAgentPendingChanges();
     };
-    callbacks.onDeny = [this]() {
+    callbacks.onReject = [this]() {
         // Make sure we're showing "after" state before reverting
         if( m_showingAgentBefore )
             ShowAgentChangesAfter();

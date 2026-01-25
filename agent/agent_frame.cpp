@@ -490,7 +490,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_signInOverlay( nullptr ),
         m_signInButton( nullptr ),
         m_workerThread( nullptr ),
-        m_authWebUrl( "https://www.harold.so/auth" )  // Default auth web page URL
+        m_hasPendingSchChanges( false ),
+        m_hasPendingPcbChanges( false )
 {
 
     // --- UI Layout ---
@@ -572,13 +573,13 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // 2b. Control Row (Bottom)
     wxBoxSizer* controlsSizer = new wxBoxSizer( wxHORIZONTAL );
 
-    // Model Selection
+    // Model Selection (Claude models only - via harold.so proxy)
     wxArrayString modelChoices;
+    modelChoices.Add( "Claude 4.5 Sonnet" );
     modelChoices.Add( "Claude 4.5 Opus" );
-    modelChoices.Add( "GPT-4o" );
 
     m_modelChoice = new wxChoice( m_inputPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, modelChoices );
-    m_modelChoice->SetSelection( 0 ); // Default to Claude 4.5 Opus
+    m_modelChoice->SetSelection( 0 ); // Default to Claude 4.5 Sonnet
     controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     // Spacer
@@ -715,6 +716,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         wxLogWarning( "Supabase configuration not found. Authentication features will be disabled." );
         wxLogWarning( "Create supabase_config.json or set KICAD_AGENT_SUPABASE_URL/KEY environment variables." );
     }
+
+    // Wire auth to LLM client for proxy authentication
+    m_llmClient->SetAuth( m_auth );
 
     // Create menu bar
     wxMenuBar* menuBar = new wxMenuBar();
@@ -1655,12 +1659,20 @@ void AGENT_FRAME::OnHtmlLinkClick( wxHtmlLinkEvent& aEvent )
     {
         OnToolClick( aEvent );
     }
-    else if( href == "tool:deny" )
+    else if( href == "tool:reject" )
     {
-        AppendHtml( "<p><i>Tool call denied by user.</i></p>" );
-        m_chatHistory.push_back( { { "role", "user" }, { "content", "Tool execution denied." } } );
+        AppendHtml( "<p><i>Tool call rejected by user.</i></p>" );
+        m_chatHistory.push_back( { { "role", "user" }, { "content", "Tool execution rejected." } } );
         // Optionally resume generation or wait for user input?
         // Usually better to let user type why.
+    }
+    else if( href == "agent:approve" )
+    {
+        OnApproveChanges();
+    }
+    else if( href == "agent:reject" )
+    {
+        OnRejectChanges();
     }
     else
     {
@@ -2424,6 +2436,9 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
         statusColor, statusIcon, wrappedResult );
     AppendHtml( resultBox );
 
+    // Check if agent made changes that need approval
+    CheckForPendingChanges();
+
     // Transition to PROCESSING_TOOL_RESULT
     m_conversationCtx.TransitionTo( AgentConversationState::PROCESSING_TOOL_RESULT );
 
@@ -2983,19 +2998,8 @@ bool AGENT_FRAME::CheckAuthentication()
 
 void AGENT_FRAME::OnSignIn( wxCommandEvent& aEvent )
 {
-    if( !m_auth )
-        return;
-
-    std::string callback = "kicad-agent://callback";
-
-    std::ostringstream authUrl;
-    authUrl << m_authWebUrl << "?redirect_uri=" << callback;
-
-    if( !wxLaunchDefaultBrowser( authUrl.str() ) )
-    {
-        wxMessageBox( _( "Could not open browser. Please check your default browser settings." ),
-                      _( "Error" ), wxOK | wxICON_ERROR );
-    }
+    if( m_auth )
+        m_auth->StartOAuthFlow();
 }
 
 void AGENT_FRAME::OnSize( wxSizeEvent& aEvent )
@@ -3009,4 +3013,95 @@ void AGENT_FRAME::OnSize( wxSizeEvent& aEvent )
     }
 
     aEvent.Skip(); // Let default handling continue
+}
+
+
+// ============================================================================
+// Agent Change Approval Methods
+// ============================================================================
+
+void AGENT_FRAME::CheckForPendingChanges()
+{
+    m_hasPendingSchChanges = false;
+    m_hasPendingPcbChanges = false;
+
+    // Query schematic editor for pending changes via ExpressMail
+    KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );
+    if( schPlayer )
+    {
+        std::string response;
+        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_HAS_CHANGES, response );
+        m_hasPendingSchChanges = ( response == "true" );
+    }
+
+    // Query PCB editor for pending changes via ExpressMail
+    KIWAY_PLAYER* pcbPlayer = Kiway().Player( FRAME_PCB_EDITOR, false );
+    if( pcbPlayer )
+    {
+        std::string response;
+        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_HAS_CHANGES, response );
+        m_hasPendingPcbChanges = ( response == "true" );
+    }
+
+    if( m_hasPendingSchChanges || m_hasPendingPcbChanges )
+        ShowApproveRejectButtons();
+}
+
+
+void AGENT_FRAME::ShowApproveRejectButtons()
+{
+    wxString label;
+    if( m_hasPendingSchChanges && m_hasPendingPcbChanges )
+        label = "Schematic and PCB";
+    else if( m_hasPendingSchChanges )
+        label = "Schematic";
+    else
+        label = "PCB";
+
+    wxString html = wxString::Format(
+        "<p><b>%s changes pending:</b> "
+        "<a href=\"agent:approve\" style=\"color: #00AA00;\">[Approve]</a> "
+        "<a href=\"agent:reject\" style=\"color: #AA0000;\">[Reject]</a></p>",
+        label );
+    AppendHtml( html );
+}
+
+
+void AGENT_FRAME::OnApproveChanges()
+{
+    // Send approve message to editors via ExpressMail
+    if( m_hasPendingSchChanges )
+    {
+        std::string payload;
+        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_APPROVE, payload );
+    }
+    if( m_hasPendingPcbChanges )
+    {
+        std::string payload;
+        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_APPROVE, payload );
+    }
+
+    m_hasPendingSchChanges = false;
+    m_hasPendingPcbChanges = false;
+    AppendHtml( "<p><i>Changes approved.</i></p>" );
+}
+
+
+void AGENT_FRAME::OnRejectChanges()
+{
+    // Send reject message to editors via ExpressMail
+    if( m_hasPendingSchChanges )
+    {
+        std::string payload;
+        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REJECT, payload );
+    }
+    if( m_hasPendingPcbChanges )
+    {
+        std::string payload;
+        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REJECT, payload );
+    }
+
+    m_hasPendingSchChanges = false;
+    m_hasPendingPcbChanges = false;
+    AppendHtml( "<p><i>Changes rejected.</i></p>" );
 }

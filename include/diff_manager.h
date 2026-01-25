@@ -29,7 +29,7 @@ struct DIFF_CALLBACKS
     std::function<void()> onUndo;      ///< Called when "View Before" is clicked
     std::function<void()> onRedo;      ///< Called when "View After" is clicked
     std::function<void()> onApprove;   ///< Called when "Approve" is clicked
-    std::function<void()> onDeny;      ///< Called when "Deny" is clicked
+    std::function<void()> onReject;    ///< Called when "Reject" is clicked
 };
 
 class DIFF_MANAGER
@@ -55,7 +55,7 @@ private:
     ~DIFF_MANAGER();
 
     void OnApprove();
-    void OnDeny();
+    void OnReject();
     void OnViewBefore();
     void OnViewAfter();
 

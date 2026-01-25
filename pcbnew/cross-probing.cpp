@@ -635,8 +635,8 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                 std::string code = j_in["code"];
                 std::string result;
 
-                // Take a snapshot of the board state before Python execution
-                TakeAgentSnapshot();
+                // Record the current undo position before Python execution
+                RecordAgentUndoPosition();
 
                 // We need to capture stdout/stderr.
                 // Approach:
@@ -709,10 +709,10 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
             }
             else if( j_in.contains( "type" ) && j_in["type"] == "take_snapshot" )
             {
-                // Take a snapshot of the board state before kipy execution
+                // Record the current undo position before kipy execution
                 fprintf( stderr, "PCB_EDIT_FRAME: Received take_snapshot request\n" );
                 fflush( stderr );
-                TakeAgentSnapshot();
+                RecordAgentUndoPosition();
                 break;  // No response needed
             }
             else if( j_in.contains( "type" ) && j_in["type"] == "detect_changes" )
@@ -947,6 +947,30 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         break;
     }
 
+    case MAIL_AGENT_HAS_CHANGES:
+    {
+        // Query if there are pending agent changes
+        payload = HasAgentPendingChanges() ? "true" : "false";
+        break;
+    }
+
+    case MAIL_AGENT_APPROVE:
+    {
+        // Approve pending agent changes
+        if( m_showingAgentBefore )
+            ShowAgentChangesAfter();
+        ClearAgentPendingChanges();
+        break;
+    }
+
+    case MAIL_AGENT_REJECT:
+    {
+        // Reject pending agent changes
+        if( m_showingAgentBefore )
+            ShowAgentChangesAfter();
+        RevertAgentChanges();
+        break;
+    }
 
     case MAIL_SELECTION:
         if( !GetPcbNewSettings()->m_CrossProbing.on_selection )

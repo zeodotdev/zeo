@@ -128,8 +128,7 @@ private:
 };
 
 SESSION_MANAGER::SESSION_MANAGER( KICAD_MANAGER_FRAME* aFrame ) :
-    m_frame( aFrame ),
-    m_authWebUrl( "https://www.harold.so/auth" )
+    m_frame( aFrame )
 {
     m_auth = std::make_unique<AGENT_AUTH>();
 }
@@ -225,19 +224,8 @@ void SESSION_MANAGER::OnSessionButtonClick( wxMouseEvent& aEvent )
 
 void SESSION_MANAGER::StartOAuthFlow()
 {
-    if( !m_auth )
-        return;
-    
-    std::string callback = "kicad-agent://callback";
-    
-    std::ostringstream authUrl;
-    authUrl << m_authWebUrl << "?redirect_uri=" << callback << "&signout=true";
-    
-    if( !wxLaunchDefaultBrowser( authUrl.str() ) )
-    {
-        wxMessageBox( _("Could not open browser. Please check your default browser settings."),
-                      _(("Error")), wxOK | wxICON_ERROR );
-    }
+    if( m_auth )
+        m_auth->StartOAuthFlow();
 }
 
 bool SESSION_MANAGER::HandleDeepLink( const wxString& aUrl )

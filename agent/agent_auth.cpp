@@ -4,12 +4,16 @@
 #include <nlohmann/json.hpp>
 #include <wx/log.h>
 #include <wx/datetime.h>
+#include <wx/utils.h>
+#include <wx/msgdlg.h>
+#include <wx/intl.h>
 #include <sstream>
 #include <map>
 
 using json = nlohmann::json;
 
 AGENT_AUTH::AGENT_AUTH() :
+        m_authWebUrl( "https://www.harold.so/auth" ),
         m_tokenExpiry( 0 )
 {
 }
@@ -35,7 +39,24 @@ void AGENT_AUTH::SignOut()
     m_avatarUrl.clear();
     m_tokenExpiry = 0;
     ClearSession();
-    // wxLogMessage( "Signed out" );
+    wxLogTrace( "Agent", "Signed out" );
+}
+
+bool AGENT_AUTH::StartOAuthFlow()
+{
+    std::string callback = "kicad-agent://callback";
+
+    std::ostringstream authUrl;
+    authUrl << m_authWebUrl << "?redirect_uri=" << callback << "&signout=true";
+
+    if( !wxLaunchDefaultBrowser( authUrl.str() ) )
+    {
+        wxMessageBox( _( "Could not open browser. Please check your default browser settings." ),
+                      _( "Error" ), wxOK | wxICON_ERROR );
+        return false;
+    }
+
+    return true;
 }
 
 bool AGENT_AUTH::IsAuthenticated()
@@ -67,6 +88,20 @@ std::string AGENT_AUTH::GetAvatarUrl()
 std::string AGENT_AUTH::GetUserEmail()
 {
     return m_userEmail;
+}
+
+std::string AGENT_AUTH::GetAccessToken()
+{
+    if( m_accessToken.empty() )
+        return "";
+
+    if( IsTokenExpired() )
+    {
+        if( !RefreshToken() )
+            return "";
+    }
+
+    return m_accessToken;
 }
 
 
@@ -121,6 +156,15 @@ bool AGENT_AUTH::RefreshToken()
 
 void AGENT_AUTH::LoadSession()
 {
+    // Clear in-memory state first - this ensures that if keychain is empty
+    // (e.g., after sign-out from another app), we don't keep stale tokens
+    m_accessToken.clear();
+    m_refreshToken.clear();
+    m_userEmail.clear();
+    m_firstName.clear();
+    m_avatarUrl.clear();
+    m_tokenExpiry = 0;
+
     // Load session as a single JSON blob to minimize keychain popups
     std::string sessionData;
 

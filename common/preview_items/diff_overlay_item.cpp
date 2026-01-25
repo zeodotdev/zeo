@@ -76,8 +76,8 @@ void DIFF_OVERLAY_ITEM::drawPreviewShape( KIGFX::VIEW* aView ) const
     // Button 2: Approve (Green)
     drawButton( gal, 1, "Approve", COLOR4D( 0.0, 0.6, 0.0, 0.9 ), scale );
 
-    // Button 3: Deny (Red)
-    drawButton( gal, 2, "Deny", COLOR4D( 0.8, 0.0, 0.0, 0.9 ), scale );
+    // Button 3: Reject (Red)
+    drawButton( gal, 2, "Reject", COLOR4D( 0.8, 0.0, 0.0, 0.9 ), scale );
 }
 
 BOX2I DIFF_OVERLAY_ITEM::getButtonRect( int aIndex, double aScale ) const
@@ -173,7 +173,7 @@ DIFF_OVERLAY_ITEM::BUTTON_ID DIFF_OVERLAY_ITEM::HitTestButtons( const VECTOR2I& 
             {
             case 0: return m_showBefore ? BTN_VIEW_AFTER : BTN_VIEW_BEFORE;
             case 1: return BTN_APPROVE;
-            case 2: return BTN_DENY;
+            case 2: return BTN_REJECT;
             }
         }
     }

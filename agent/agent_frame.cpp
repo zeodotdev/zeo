@@ -79,6 +79,389 @@ static wxString WrapLongLines( const wxString& aText, int aMaxChars = 60 )
     return result;
 }
 
+// Helper function to convert Markdown to HTML for wxHtmlWindow
+static wxString MarkdownToHtml( const wxString& aMarkdown )
+{
+    wxString result;
+    wxArrayString lines;
+
+    // Split into lines
+    wxString current;
+    for( size_t i = 0; i < aMarkdown.length(); i++ )
+    {
+        if( aMarkdown[i] == '\n' )
+        {
+            lines.Add( current );
+            current.clear();
+        }
+        else
+        {
+            current += aMarkdown[i];
+        }
+    }
+    if( !current.empty() )
+        lines.Add( current );
+
+    bool inCodeBlock = false;
+    bool inList = false;
+    bool inTable = false;
+    wxString codeBlockContent;
+
+    for( size_t i = 0; i < lines.GetCount(); i++ )
+    {
+        wxString line = lines[i];
+        wxString trimmed = line;
+        trimmed.Trim( false ).Trim( true );
+
+        // Code blocks (```)
+        if( trimmed.StartsWith( "```" ) )
+        {
+            if( !inCodeBlock )
+            {
+                inCodeBlock = true;
+                codeBlockContent.clear();
+                // Close any open list
+                if( inList )
+                {
+                    result += "</ul>";
+                    inList = false;
+                }
+            }
+            else
+            {
+                // End code block - render with dark background
+                codeBlockContent.Replace( "&", "&amp;" );
+                codeBlockContent.Replace( "<", "&lt;" );
+                codeBlockContent.Replace( ">", "&gt;" );
+                codeBlockContent.Replace( "\n", "<br>" );
+                result += "<table width='100%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>";
+                result += "<font color='#d4d4d4' size='2'>";
+                result += WrapLongLines( codeBlockContent );
+                result += "</font></td></tr></table>";
+                inCodeBlock = false;
+            }
+            continue;
+        }
+
+        if( inCodeBlock )
+        {
+            if( !codeBlockContent.empty() )
+                codeBlockContent += "\n";
+            codeBlockContent += line;
+            continue;
+        }
+
+        // Tables (lines starting with |)
+        if( trimmed.StartsWith( "|" ) && trimmed.EndsWith( "|" ) )
+        {
+            // Check if this is a separator line (|---|---|)
+            bool isSeparator = true;
+            for( size_t j = 0; j < trimmed.length(); j++ )
+            {
+                wxChar c = trimmed[j];
+                if( c != '|' && c != '-' && c != ':' && c != ' ' )
+                {
+                    isSeparator = false;
+                    break;
+                }
+            }
+
+            if( isSeparator )
+            {
+                // Mark that we've seen separator - next rows are data rows
+                // The header row was already added, so just continue
+                continue;
+            }
+
+            if( !inTable )
+            {
+                if( inList ) { result += "</ul>"; inList = false; }
+                result += "<table width='100%' cellspacing='0' cellpadding='6' bgcolor='#2d2d2d'>";
+                inTable = true;
+            }
+
+            // Parse table row - collect cells first
+            wxArrayString cells;
+            wxString cell;
+            bool inCell = false;
+            for( size_t j = 0; j < trimmed.length(); j++ )
+            {
+                if( trimmed[j] == '|' )
+                {
+                    if( inCell )
+                    {
+                        cell.Trim( false ).Trim( true );
+                        cells.Add( cell );
+                        cell.clear();
+                    }
+                    inCell = true;
+                }
+                else if( inCell )
+                {
+                    cell += trimmed[j];
+                }
+            }
+
+            // Check if next line is separator (this is header row)
+            bool isHeader = false;
+            if( i + 1 < lines.GetCount() )
+            {
+                wxString nextLine = lines[i + 1];
+                nextLine.Trim( false ).Trim( true );
+                if( nextLine.StartsWith( "|" ) )
+                {
+                    isHeader = true;
+                    for( size_t k = 0; k < nextLine.length(); k++ )
+                    {
+                        wxChar c = nextLine[k];
+                        if( c != '|' && c != '-' && c != ':' && c != ' ' )
+                        {
+                            isHeader = false;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Render row
+            result += "<tr>";
+            for( size_t c = 0; c < cells.GetCount(); c++ )
+            {
+                if( isHeader )
+                {
+                    result += "<td bgcolor='#3d3d3d'><font color='#ffffff'><b>" + cells[c] + "</b></font></td>";
+                }
+                else
+                {
+                    result += "<td><font color='#d4d4d4'>" + cells[c] + "</font></td>";
+                }
+            }
+            result += "</tr>";
+            continue;
+        }
+        else if( inTable )
+        {
+            result += "</table><br>";
+            inTable = false;
+        }
+
+        // Close list if we hit a non-list line
+        if( inList && !trimmed.StartsWith( "-" ) && !trimmed.StartsWith( "*" ) &&
+            !trimmed.StartsWith( "1." ) && !trimmed.StartsWith( "2." ) && !trimmed.StartsWith( "3." ) &&
+            !trimmed.IsEmpty() )
+        {
+            result += "</ul>";
+            inList = false;
+        }
+
+        // Empty lines
+        if( trimmed.IsEmpty() )
+        {
+            if( inList )
+            {
+                result += "</ul>";
+                inList = false;
+            }
+            result += "<br>";
+            continue;
+        }
+
+        // Headings
+        if( trimmed.StartsWith( "######" ) )
+        {
+            result += "<b><font size='2'>" + trimmed.Mid( 6 ).Trim( false ) + "</font></b><br>";
+            continue;
+        }
+        if( trimmed.StartsWith( "#####" ) )
+        {
+            result += "<b><font size='2'>" + trimmed.Mid( 5 ).Trim( false ) + "</font></b><br>";
+            continue;
+        }
+        if( trimmed.StartsWith( "####" ) )
+        {
+            result += "<b><font size='3'>" + trimmed.Mid( 4 ).Trim( false ) + "</font></b><br>";
+            continue;
+        }
+        if( trimmed.StartsWith( "###" ) )
+        {
+            result += "<b><font size='3'>" + trimmed.Mid( 3 ).Trim( false ) + "</font></b><br>";
+            continue;
+        }
+        if( trimmed.StartsWith( "##" ) )
+        {
+            result += "<b><font size='4'>" + trimmed.Mid( 2 ).Trim( false ) + "</font></b><br>";
+            continue;
+        }
+        if( trimmed.StartsWith( "#" ) )
+        {
+            result += "<b><font size='5'>" + trimmed.Mid( 1 ).Trim( false ) + "</font></b><br>";
+            continue;
+        }
+
+        // Blockquotes
+        if( trimmed.StartsWith( ">" ) )
+        {
+            wxString quote = trimmed.Mid( 1 ).Trim( false );
+            result += "<table width='100%' bgcolor='#3d3d3d' cellpadding='5'><tr>";
+            result += "<td width='3' bgcolor='#569cd6'></td>";
+            result += "<td><font color='#d4d4d4'><i>" + quote + "</i></font></td>";
+            result += "</tr></table>";
+            continue;
+        }
+
+        // Unordered lists
+        if( trimmed.StartsWith( "- " ) || trimmed.StartsWith( "* " ) )
+        {
+            if( !inList )
+            {
+                result += "<ul>";
+                inList = true;
+            }
+            result += "<li>" + trimmed.Mid( 2 ) + "</li>";
+            continue;
+        }
+
+        // Ordered lists (simple check for 1. 2. 3. etc)
+        if( trimmed.length() > 2 && trimmed[1] == '.' && trimmed[0] >= '0' && trimmed[0] <= '9' )
+        {
+            if( !inList )
+            {
+                result += "<ul>";
+                inList = true;
+            }
+            result += "<li>" + trimmed.Mid( 2 ).Trim( false ) + "</li>";
+            continue;
+        }
+
+        // Horizontal rule
+        if( trimmed == "---" || trimmed == "***" || trimmed == "___" )
+        {
+            result += "<hr>";
+            continue;
+        }
+
+        // Regular paragraph - process inline formatting
+        wxString processed = trimmed;
+
+        // Inline code `code` -> monospace
+        wxString temp;
+        bool inInlineCode = false;
+        wxString codeContent;
+        for( size_t j = 0; j < processed.length(); j++ )
+        {
+            if( processed[j] == '`' )
+            {
+                if( !inInlineCode )
+                {
+                    inInlineCode = true;
+                    codeContent.clear();
+                }
+                else
+                {
+                    temp += "<font face='Courier' color='#ce9178'>" + codeContent + "</font>";
+                    inInlineCode = false;
+                }
+            }
+            else if( inInlineCode )
+            {
+                codeContent += processed[j];
+            }
+            else
+            {
+                temp += processed[j];
+            }
+        }
+        if( inInlineCode )
+            temp += "`" + codeContent; // Unclosed backtick
+        processed = temp;
+
+        // Bold **text** or __text__
+        int boldIterations = 0;
+        while( processed.Contains( "**" ) && boldIterations < 100 )
+        {
+            boldIterations++;
+            std::string procStr = processed.ToStdString();
+            size_t start = procStr.find( "**" );
+            if( start == std::string::npos ) break;
+            size_t end = procStr.find( "**", start + 2 );
+            if( end == std::string::npos ) break;
+            wxString before = processed.Left( start );
+            wxString bold = processed.Mid( start + 2, end - start - 2 );
+            wxString after = processed.Mid( end + 2 );
+            processed = before + "<b>" + bold + "</b>" + after;
+        }
+
+        // Italic *text* (but not **)
+        temp.clear();
+        bool inItalic = false;
+        for( size_t j = 0; j < processed.length(); j++ )
+        {
+            if( processed[j] == '*' && ( j + 1 >= processed.length() || processed[j+1] != '*' ) &&
+                ( j == 0 || processed[j-1] != '*' ) )
+            {
+                if( !inItalic )
+                {
+                    temp += "<i>";
+                    inItalic = true;
+                }
+                else
+                {
+                    temp += "</i>";
+                    inItalic = false;
+                }
+            }
+            else
+            {
+                temp += processed[j];
+            }
+        }
+        if( inItalic )
+            temp += "</i>"; // Auto-close
+        processed = temp;
+
+        // Links [text](url)
+        int linkIterations = 0;
+        while( processed.Contains( "](" ) && linkIterations < 100 )
+        {
+            linkIterations++;
+            std::string procStr = processed.ToStdString();
+            size_t bracketStart = procStr.find( "[" );
+            if( bracketStart == std::string::npos ) break;
+            size_t bracketEnd = procStr.find( "](" );
+            if( bracketEnd == std::string::npos || bracketEnd < bracketStart ) break;
+            size_t parenEnd = procStr.find( ")", bracketEnd );
+            if( parenEnd == std::string::npos ) break;
+
+            wxString before = processed.Left( bracketStart );
+            wxString linkText = processed.Mid( bracketStart + 1, bracketEnd - bracketStart - 1 );
+            wxString url = processed.Mid( bracketEnd + 2, parenEnd - bracketEnd - 2 );
+            wxString after = processed.Mid( parenEnd + 1 );
+
+            processed = before + "<a href='" + url + "'>" + linkText + "</a>" + after;
+        }
+
+        result += processed + "<br>";
+    }
+
+    // Close any open elements
+    if( inList )
+        result += "</ul>";
+    if( inTable )
+        result += "</table>";
+    if( inCodeBlock )
+    {
+        codeBlockContent.Replace( "&", "&amp;" );
+        codeBlockContent.Replace( "<", "&lt;" );
+        codeBlockContent.Replace( ">", "&gt;" );
+        codeBlockContent.Replace( "\n", "<br>" );
+        result += "<table width='100%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>";
+        result += "<font color='#d4d4d4' size='2'>" + WrapLongLines( codeBlockContent ) + "</font>";
+        result += "</td></tr></table>";
+    }
+
+    return result;
+}
+
 BEGIN_EVENT_TABLE( AGENT_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, AGENT_FRAME::OnExit )
 
@@ -445,6 +828,21 @@ GUIDELINES:
 - Use tools when you need to interact with the schematic or board
 - Wait for tool results before proceeding with dependent operations
 - Be concise in your explanations
+
+RESPONSE FORMATTING:
+Your responses are rendered with Markdown support. Use these formats for clear communication:
+
+- **Headings**: Use # for main sections, ## for subsections, ### for minor sections
+- **Bold**: Use **text** for emphasis on important terms
+- **Italic**: Use *text* for subtle emphasis
+- **Code blocks**: Use ``` for multi-line code with language hint (e.g. ```python)
+- **Inline code**: Use `code` for function names, variables, file paths
+- **Lists**: Use - or * for bullet points, 1. 2. 3. for numbered lists
+- **Tables**: Use | col1 | col2 | format for structured data
+- **Blockquotes**: Use > for important notes or warnings
+- **Links**: Use [text](url) for references
+
+Keep responses concise and well-structured. Use code blocks for any Python or shell commands.
 )";
 
     // Append model context (API reference) if loaded
@@ -2139,15 +2537,16 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
                     // So we should format.
                     
                     wxString display = content;
-                    display.Replace( "\n", "<br>" );
-                    
+
                     if( role == "user" )
                     {
+                        display.Replace( "\n", "<br>" );
                         m_fullHtmlContent += "<p><b>User:</b> " + display + "</p>";
                     }
                     else if( role == "assistant" )
                     {
-                         m_fullHtmlContent += "<p><b>Agent:</b> " + display + "</p>";
+                        // Pass original content to MarkdownToHtml - it handles newlines internally
+                        m_fullHtmlContent += "<p><b>Agent:</b></p>" + MarkdownToHtml( content );
                     }
                 }
                 else if( msg["content"].is_array() )
@@ -2165,12 +2564,16 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
                             // Render text block
                             std::string text = block.value("text", "");
                             wxString display = text;
-                            display.Replace( "\n", "<br>" );
 
                             if( role == "assistant" )
-                                m_fullHtmlContent += "<p><b>Agent:</b> " + display + "</p>";
+                            {
+                                m_fullHtmlContent += "<p><b>Agent:</b></p>" + MarkdownToHtml( display );
+                            }
                             else if( role == "user" )
+                            {
+                                display.Replace( "\n", "<br>" );
                                 m_fullHtmlContent += "<p><b>User:</b> " + display + "</p>";
+                            }
                         }
                         else if( blockType == "tool_use" )
                         {

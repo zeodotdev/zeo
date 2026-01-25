@@ -25,6 +25,8 @@
 #include <gal/graphics_abstraction_layer.h>
 #include <view/view.h>
 #include <geometry/eda_angle.h> // For EDA_ANGLE
+#include <font/font.h>
+#include <font/text_attributes.h>
 
 
 using namespace KIGFX::PREVIEW;
@@ -45,6 +47,15 @@ void DIFF_OVERLAY_ITEM::ViewDraw( int aLayer, KIGFX::VIEW* aView ) const
     SIMPLE_OVERLAY_ITEM::ViewDraw( aLayer, aView );
 }
 
+const BOX2I DIFF_OVERLAY_ITEM::ViewBBox() const
+{
+    // Return a very large bounding box to ensure the overlay is never culled
+    // The buttons are positioned relative to the view, so we can't compute a fixed bbox
+    BOX2I bbox;
+    bbox.SetMaximum();
+    return bbox;
+}
+
 void DIFF_OVERLAY_ITEM::drawPreviewShape( KIGFX::VIEW* aView ) const
 {
     KIGFX::GAL* gal = aView->GetGAL();
@@ -59,8 +70,8 @@ void DIFF_OVERLAY_ITEM::drawPreviewShape( KIGFX::VIEW* aView ) const
 
     double scale = 1.0 / gal->GetWorldScale();
 
-    // Button 1: View Before/After (Toggle)
-    drawButton( gal, 0, m_showBefore ? "View After" : "View Before", COLOR4D( 0.2, 0.2, 0.2, 0.8 ), scale );
+    // Button 1: Undo/Redo (Toggle)
+    drawButton( gal, 0, m_showBefore ? "Redo" : "Undo", COLOR4D( 0.2, 0.2, 0.2, 0.8 ), scale );
 
     // Button 2: Approve (Green)
     drawButton( gal, 1, "Approve", COLOR4D( 0.0, 0.6, 0.0, 0.9 ), scale );
@@ -109,23 +120,39 @@ void DIFF_OVERLAY_ITEM::drawButton( KIGFX::GAL* aGal, int aIndex, const wxString
 {
     BOX2I rect = getButtonRect( aIndex, aScale );
 
+    // Draw button background
     aGal->SetIsFill( true );
+    aGal->SetIsStroke( true );
     aGal->SetFillColor( aColor );
     aGal->SetStrokeColor( COLOR4D( 1.0, 1.0, 1.0, 1.0 ) );
     aGal->SetLineWidth( 1.0 * aScale ); // Constant stroke width
 
     aGal->DrawRectangle( rect.GetPosition(), rect.GetEnd() );
 
-    // Draw Text
-    // aGal->SetFontBold( false );
-    // aGal->SetFontItalic( false );
-    // aGal->SetTextMirrored( false );
-    aGal->SetGlyphSize( VECTOR2D( rect.GetHeight() * 0.6, rect.GetHeight() * 0.6 ) );
-    aGal->SetHorizontalJustify( GR_TEXT_H_ALIGN_CENTER );
-    aGal->SetVerticalJustify( GR_TEXT_V_ALIGN_CENTER );
-    aGal->SetStrokeColor( COLOR4D( 1.0, 1.0, 1.0, 1.0 ) ); // Text Color
+    // Advance layer depth so text renders on top of button fill
+    aGal->AdvanceDepth();
 
-    aGal->BitmapText( aLabel, rect.Centre(), EDA_ANGLE( 0.0, DEGREES_T ) );
+    // Draw Text using font->Draw() for reliable rendering
+    KIFONT::FONT* font = KIFONT::FONT::GetFont();
+
+    // Calculate text size - use pixels converted to world units
+    double textHeightPx = 12.0;  // 12 pixel text height
+    double textHeight = textHeightPx * aScale;
+    double strokeWidth = textHeight * 0.2;  // 20% stroke width like other KiCad text
+
+    TEXT_ATTRIBUTES textAttrs;
+    textAttrs.m_Size = VECTOR2I( textHeight * 0.9, textHeight );
+    textAttrs.m_StrokeWidth = strokeWidth;
+    textAttrs.m_Halign = GR_TEXT_H_ALIGN_CENTER;
+    textAttrs.m_Valign = GR_TEXT_V_ALIGN_CENTER;
+
+    // Set GAL state for text drawing
+    aGal->SetIsFill( false );
+    aGal->SetIsStroke( true );
+    aGal->SetStrokeColor( COLOR4D( 1.0, 1.0, 1.0, 1.0 ) ); // White text
+    aGal->SetLineWidth( strokeWidth );
+
+    font->Draw( aGal, aLabel, rect.Centre(), textAttrs, KIFONT::METRICS::Default() );
 }
 
 DIFF_OVERLAY_ITEM::BUTTON_ID DIFF_OVERLAY_ITEM::HitTestButtons( const VECTOR2I& aPoint, KIGFX::VIEW* aView ) const

@@ -117,6 +117,7 @@
 #include <widgets/pcb_net_inspector_panel.h>
 #include <widgets/wx_aui_utils.h>
 #include <kiplatform/app.h>
+#include <diff_manager.h>
 #include <kiplatform/ui.h>
 #include <core/profile.h>
 #include <math/box2_minmax.h>
@@ -3246,4 +3247,180 @@ bool PCB_EDIT_FRAME::DoAutoSave()
     // flushing zone fills or router state) they can be added here before calling the
     // base class method.
     return EDA_BASE_FRAME::doAutoSave();
+}
+
+
+void PCB_EDIT_FRAME::TakeAgentSnapshot()
+{
+    // Clear any existing pending changes state
+    ClearAgentPendingChanges();
+
+    // Record the current undo stack count - kipy API operations will create undo entries
+    m_undoCountBeforeAgent = GetUndoCommandCount();
+}
+
+
+bool PCB_EDIT_FRAME::DetectAgentChanges()
+{
+    BOARD* board = GetBoard();
+    if( !board )
+        return false;
+
+    // Check if any undo entries were created since we took the snapshot
+    int currentUndoCount = GetUndoCommandCount();
+    bool hasChanges = ( currentUndoCount > m_undoCountBeforeAgent );
+
+    if( !hasChanges )
+    {
+        // No changes detected
+        ClearAgentPendingChanges();
+        return false;
+    }
+
+    // Calculate bounding box from the items in the undo entries created by the agent
+    BOX2I changedBBox;
+
+    // Iterate through the new undo entries to get bounding boxes of changed items
+    for( int i = m_undoCountBeforeAgent; i < currentUndoCount; i++ )
+    {
+        PICKED_ITEMS_LIST* undoCommand = m_undoList.m_CommandsList[i];
+        if( !undoCommand )
+            continue;
+
+        for( unsigned int j = 0; j < undoCommand->GetCount(); j++ )
+        {
+            EDA_ITEM* item = undoCommand->GetPickedItem( j );
+            UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
+
+            if( item )
+            {
+                BOARD_ITEM* boardItem = dynamic_cast<BOARD_ITEM*>( item );
+                if( boardItem )
+                    changedBBox.Merge( boardItem->GetBoundingBox() );
+            }
+
+            // For CHANGED operations, also get the current item's bounding box
+            if( status == UNDO_REDO::CHANGED )
+            {
+                EDA_ITEM* link = undoCommand->GetPickedItemLink( j );
+                if( link )
+                {
+                    BOARD_ITEM* linkedItem = dynamic_cast<BOARD_ITEM*>( link );
+                    if( linkedItem )
+                        changedBBox.Merge( linkedItem->GetBoundingBox() );
+                }
+            }
+        }
+    }
+
+    m_hasAgentPendingChanges = true;
+
+    // Set up callbacks for the diff overlay
+    DIFF_CALLBACKS callbacks;
+    callbacks.onApprove = [this]() {
+        // Make sure we're showing "after" state before approving
+        if( m_showingAgentBefore )
+            ShowAgentChangesAfter();
+        ClearAgentPendingChanges();
+    };
+    callbacks.onDeny = [this]() {
+        // Make sure we're showing "after" state before reverting
+        if( m_showingAgentBefore )
+            ShowAgentChangesAfter();
+        RevertAgentChanges();
+    };
+    callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
+    callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
+
+    DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
+    DIFF_MANAGER::GetInstance().ShowDiff( changedBBox );
+
+    return hasChanges;
+}
+
+
+void PCB_EDIT_FRAME::ClearAgentPendingChanges()
+{
+    m_hasAgentPendingChanges = false;
+    m_showingAgentBefore = false;
+    m_undoCountBeforeAgent = 0;
+
+    // Clear the diff overlay
+    DIFF_MANAGER::GetInstance().ClearDiff();
+
+    // Clear redo list to prevent accidental redo after approve
+    ClearUndoORRedoList( REDO_LIST );
+}
+
+
+void PCB_EDIT_FRAME::RevertAgentChanges()
+{
+    if( !m_hasAgentPendingChanges )
+        return;
+
+    // If we're currently showing "before" state, we've already undone via the view toggle
+    // Just need to clear the redo list so changes can't be redone
+    if( m_showingAgentBefore )
+    {
+        // Already showing before state - just clear redo list
+        ClearUndoORRedoList( REDO_LIST );
+    }
+    else
+    {
+        // Showing "after" state - need to undo all agent changes
+        // Roll back each undo entry created by the agent without creating redo entries
+        int currentUndoCount = GetUndoCommandCount();
+        int numToUndo = currentUndoCount - m_undoCountBeforeAgent;
+
+        for( int i = 0; i < numToUndo; i++ )
+        {
+            RollbackFromUndo();
+        }
+    }
+
+    // Clear the diff overlay
+    DIFF_MANAGER::GetInstance().ClearDiff();
+
+    m_hasAgentPendingChanges = false;
+    m_showingAgentBefore = false;
+    m_undoCountBeforeAgent = 0;
+}
+
+
+void PCB_EDIT_FRAME::ShowAgentChangesBefore()
+{
+    if( !m_hasAgentPendingChanges || m_showingAgentBefore )
+        return;
+
+    // Use native undo to show the "before" state
+    // Undo all agent changes (they'll go to redo list for later restoration)
+    int currentUndoCount = GetUndoCommandCount();
+    int numToUndo = currentUndoCount - m_undoCountBeforeAgent;
+
+    for( int i = 0; i < numToUndo; i++ )
+    {
+        wxCommandEvent evt;
+        RestoreCopyFromUndoList( evt );
+    }
+
+    m_showingAgentBefore = true;
+}
+
+
+void PCB_EDIT_FRAME::ShowAgentChangesAfter()
+{
+    if( !m_hasAgentPendingChanges || !m_showingAgentBefore )
+        return;
+
+    // Use native redo to restore the "after" state
+    // Redo all agent changes that were undone by ShowAgentChangesBefore
+    int redoCount = GetRedoCommandCount();
+
+    for( int i = 0; i < redoCount; i++ )
+    {
+        wxCommandEvent evt;
+        RestoreCopyFromRedoList( evt );
+    }
+
+    m_showingAgentBefore = false;
 }

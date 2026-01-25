@@ -24,6 +24,9 @@
 #include <api/api_pcb_utils.h>
 #include <api/api_enums.h>
 #include <api/api_utils.h>
+#include <diff_manager.h>
+#include <gal/graphics_abstraction_layer.h>
+#include <pcb_draw_panel_gal.h>
 #include <board_commit.h>
 #include <board_design_settings.h>
 #include <footprint.h>
@@ -98,6 +101,7 @@ API_HANDLER_PCB::API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame ) :
     registerHandler<SetBoardOrigin, Empty>( &API_HANDLER_PCB::handleSetBoardOrigin );
 
     registerHandler<InteractiveMoveItems, Empty>( &API_HANDLER_PCB::handleInteractiveMoveItems );
+    registerHandler<ShowDiffOverlay, Empty>( &API_HANDLER_PCB::handleShowDiffOverlay );
     registerHandler<GetNets, NetsResponse>( &API_HANDLER_PCB::handleGetNets );
     registerHandler<GetNetClassForNets, NetClassForNetsResponse>(
             &API_HANDLER_PCB::handleGetNetClassForNets );
@@ -1448,6 +1452,46 @@ HANDLER_RESULT<Empty> API_HANDLER_PCB::handleInteractiveMoveItems(
 
     COMMIT* commit = getCurrentCommit( aCtx.ClientName );
     mgr->PostAPIAction( PCB_ACTIONS::move, commit );
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_PCB::handleShowDiffOverlay(
+        const HANDLER_CONTEXT<ShowDiffOverlay>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOX2I bbox;
+
+    // Check if bounding_box was provided and has non-zero size
+    if( aCtx.Request.has_bounding_box() )
+    {
+        const auto& bb = aCtx.Request.bounding_box();
+        bbox = BOX2I( VECTOR2I( bb.position().x_nm(), bb.position().y_nm() ),
+                      VECTOR2I( bb.size().x_nm(), bb.size().y_nm() ) );
+    }
+
+    // If no bounding box provided or it has zero size, use board's bounding box
+    if( bbox.GetWidth() == 0 || bbox.GetHeight() == 0 )
+    {
+        BOARD* board = frame()->GetBoard();
+        bbox = board->GetBoundingBox();
+
+        // If board is empty, use a default reasonable size
+        if( bbox.GetWidth() == 0 || bbox.GetHeight() == 0 )
+            bbox = BOX2I( VECTOR2I( 0, 0 ), VECTOR2I( 100000000, 100000000 ) );
+    }
+
+    DIFF_CALLBACKS callbacks;
+    callbacks.onUndo = []() { /* Test: no-op */ };
+    callbacks.onRedo = []() { /* Test: no-op */ };
+
+    DIFF_MANAGER::GetInstance().RegisterOverlay( frame()->GetCanvas()->GetView(), callbacks );
+    DIFF_MANAGER::GetInstance().ShowDiff( bbox );
 
     return Empty();
 }

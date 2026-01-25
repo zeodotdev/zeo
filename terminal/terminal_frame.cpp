@@ -9,6 +9,7 @@
 #include <wx/log.h>
 #include <wx/menu.h>   // For menu IDs
 #include <wx/button.h> // For wxButton
+#include <nlohmann/json.hpp>
 
 // Define IDs for new commands
 enum
@@ -650,17 +651,38 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                 "from kipy.geometry import Vector2\n"
                 "kicad = kipy.KiCad()\n"
                 "board = kicad.get_board()\n";
+
+            // Tell PCB editor to take a snapshot before Python execution
+            nlohmann::json snapshotMsg;
+            snapshotMsg["type"] = "take_snapshot";
+            std::string snapshotPayload = snapshotMsg.dump();
+            Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REQUEST, snapshotPayload );
+            fprintf( stderr, "ExecuteCommandForAgentAsync: Sent take_snapshot to PCB editor\n" );
+            fflush( stderr );
         }
 
         // Set up completion callback BEFORE starting execution
         fprintf( stderr, "ExecuteCommandForAgentAsync: Setting up callback and starting Python\n" );
         fflush( stderr );
 
+        bool isPcbMode = ( mode == "pcb" );
         m_asyncRequestPending = true;
         active->SetPythonCompletionCallback(
-            [this]( const std::string& result, bool success ) {
-                fprintf( stderr, "ExecuteCommandForAgentAsync: Callback invoked, success=%d\n", success );
+            [this, isPcbMode]( const std::string& result, bool success ) {
+                fprintf( stderr, "ExecuteCommandForAgentAsync: Callback invoked, success=%d, isPcbMode=%d\n", success, isPcbMode );
                 fflush( stderr );
+
+                // If this was pcb mode, tell PCB editor to detect changes
+                if( isPcbMode )
+                {
+                    nlohmann::json detectMsg;
+                    detectMsg["type"] = "detect_changes";
+                    std::string detectPayload = detectMsg.dump();
+                    Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REQUEST, detectPayload );
+                    fprintf( stderr, "ExecuteCommandForAgentAsync: Sent detect_changes to PCB editor\n" );
+                    fflush( stderr );
+                }
+
                 // This will be called from the main thread when Python completes
                 SendAgentResponse( result );
             } );

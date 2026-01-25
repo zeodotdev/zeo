@@ -491,7 +491,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     wxBoxSizer* topBarSizer = new wxBoxSizer( wxHORIZONTAL );
 
     // Chat name label on the left
-    m_chatNameLabel = new wxStaticText( topBarPanel, wxID_ANY, "[chat name]" );
+    m_chatNameLabel = new wxStaticText( topBarPanel, wxID_ANY, "New Chat" );
     m_chatNameLabel->SetForegroundColour( wxColour( "#FFFFFF" ) );
     topBarSizer->Add( m_chatNameLabel, 0, wxALIGN_CENTER_VERTICAL );
 
@@ -2476,6 +2476,7 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
     m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>";
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
+    m_chatNameLabel->SetLabel( "New Chat" );
 }
 
 
@@ -2511,12 +2512,15 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
     if( index >= 0 && index < (int)historyList.size() )
     {
         std::string selectedId = historyList[index].id;
-        
+
         // Load history
         m_chatHistory = m_chatHistoryDb.Load( selectedId );
-        
+
+        // Update chat name label
+        m_chatNameLabel->SetLabel( historyList[index].displayName );
+
         // Clear window
-        m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p><i>Loaded history: " + historyList[index].displayName + "</i></p>";
+        m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'>";
         
         // Iterate history and render
         for( const auto& msg : m_chatHistory )

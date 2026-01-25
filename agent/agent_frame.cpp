@@ -547,7 +547,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     inputContainerSizer->Add( m_selectionPill, 0, wxALIGN_LEFT | wxBOTTOM, 5 );
 
     // 2a. Text Input (Top)
-    m_inputCtrl = new wxTextCtrl( m_inputPanel, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 80 ),
+    m_inputCtrl = new wxTextCtrl( m_inputPanel, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 60 ),
                                   wxTE_MULTILINE | wxTE_PROCESS_ENTER | wxTE_RICH2 | wxBORDER_NONE );
     m_inputCtrl->SetBackgroundColour( wxColour( "#1E1E1E" ) );
     m_inputCtrl->SetForegroundColour( wxColour( "#FFFFFF" ) );
@@ -583,8 +583,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
 
     
-    // Add inner sizer to outer sizer with padding
-    outerInputSizer->Add( inputContainerSizer, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10 );
+    // Add inner sizer to outer sizer with padding (including top margin)
+    outerInputSizer->Add( inputContainerSizer, 1, wxEXPAND | wxALL, 10 );
 
     m_inputPanel->SetSizer( outerInputSizer );
 

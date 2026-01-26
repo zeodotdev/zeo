@@ -183,11 +183,17 @@ public:
     std::string last_tool_result;
     std::string last_tool_use_id;
 
-    // Collected tool results (for batch adding to history)
+    // Collected tool results (for batch adding to history and UI display)
     struct ToolResult
     {
         std::string tool_use_id;
+        std::string tool_name;
+        std::string tool_description;  // Human-readable description for display
         std::string result;
+        bool        success;
+        bool        is_python_error;   // Whether the result contains a Python traceback
+
+        ToolResult() : success( true ), is_python_error( false ) {}
     };
     std::vector<ToolResult> completed_tool_results;
 

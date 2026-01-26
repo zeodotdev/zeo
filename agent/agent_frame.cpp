@@ -895,15 +895,58 @@ void AGENT_FRAME::ShowChangedLanguage()
 
 void AGENT_FRAME::AppendHtml( const wxString& aHtml )
 {
-    m_fullHtmlContent += aHtml;
+    // Insert content BEFORE the closing </body></html> tags to maintain valid HTML structure
+    // This is critical - content outside <body> may not be rendered by wxHtmlWindow
+    wxString closingTags = "</body></html>";
+
+    if( m_fullHtmlContent.EndsWith( closingTags ) )
+    {
+        // Remove closing tags, append content, add closing tags back
+        m_fullHtmlContent = m_fullHtmlContent.Left( m_fullHtmlContent.length() - closingTags.length() );
+        m_fullHtmlContent += aHtml;
+        m_fullHtmlContent += closingTags;
+    }
+    else
+    {
+        // No closing tags found, just append (shouldn't normally happen)
+        m_fullHtmlContent += aHtml;
+    }
+
     SetHtml( m_fullHtmlContent );
 }
 
 void AGENT_FRAME::UpdateAgentResponse()
 {
     // Re-render the full HTML with the current response formatted as markdown
+    // IMPORTANT: m_htmlBeforeAgentResponse may contain </body></html> closing tags
+    // We need to insert new content BEFORE those tags to maintain valid HTML structure
+
+    wxString closingTags = "</body></html>";
     wxString html = m_htmlBeforeAgentResponse;
+
+    // Debug: log the state of HTML building
+    fprintf( stderr, "[HTML-DEBUG] UpdateAgentResponse called\n" );
+    fprintf( stderr, "[HTML-DEBUG]   m_htmlBeforeAgentResponse length: %zu, ends with closing tags: %s\n",
+             (size_t)m_htmlBeforeAgentResponse.length(),
+             m_htmlBeforeAgentResponse.EndsWith( closingTags ) ? "YES" : "NO" );
+    fprintf( stderr, "[HTML-DEBUG]   m_currentResponse length: %zu\n", m_currentResponse.size() );
+    fprintf( stderr, "[HTML-DEBUG]   m_toolCallHtml length: %zu\n", (size_t)m_toolCallHtml.length() );
+
+    // Strip closing tags from the base HTML - we'll add them back at the end
+    if( html.EndsWith( closingTags ) )
+    {
+        html = html.Left( html.length() - closingTags.length() );
+        fprintf( stderr, "[HTML-DEBUG]   Stripped closing tags from base HTML\n" );
+    }
+
+    // Append the current response with markdown formatting
     html += MarkdownToHtml( m_currentResponse );
+
+    // Include any tool call HTML (preserved across re-renders)
+    if( !m_toolCallHtml.IsEmpty() )
+    {
+        html += m_toolCallHtml;
+    }
 
     // Add animated dots if currently generating
     if( m_isGenerating )
@@ -914,8 +957,86 @@ void AGENT_FRAME::UpdateAgentResponse()
         html += "<font color='#888888'>" + dots + "</font>";
     }
 
+    // Add closing tags back
+    html += closingTags;
+
+    fprintf( stderr, "[HTML-DEBUG]   Final HTML length: %zu\n", (size_t)html.length() );
+    fflush( stderr );
+
     SetHtml( html );
     m_fullHtmlContent = html;
+}
+
+wxString AGENT_FRAME::GetToolDescription( const std::string& aToolName, const nlohmann::json& aInput )
+{
+    // Generate human-readable description based on tool name and input
+    if( aToolName == "run_shell" || aToolName == "run_python" )
+    {
+        std::string mode = aInput.value( "mode", "python" );
+        std::string code = aInput.value( "code", "" );
+
+        // Try to extract a description from the code
+        // Look for a comment at the start like "# Description: ..." or just "# ..."
+        std::string desc;
+        size_t firstNewline = code.find( '\n' );
+        std::string firstLine = ( firstNewline != std::string::npos ) ? code.substr( 0, firstNewline ) : code;
+
+        if( firstLine.length() > 2 && firstLine[0] == '#' )
+        {
+            // Extract the comment text
+            desc = firstLine.substr( 1 );
+            // Trim leading whitespace
+            size_t start = desc.find_first_not_of( " \t" );
+            if( start != std::string::npos )
+                desc = desc.substr( start );
+            // Remove "Description:" prefix if present
+            if( desc.find( "Description:" ) == 0 )
+                desc = desc.substr( 12 );
+            // Trim again
+            start = desc.find_first_not_of( " \t" );
+            if( start != std::string::npos )
+                desc = desc.substr( start );
+        }
+
+        // If we found a description, use it
+        if( !desc.empty() && desc.length() < 100 )
+        {
+            return wxString::FromUTF8( desc );
+        }
+
+        // Otherwise, try to infer from the code content
+        if( code.find( "add_symbol" ) != std::string::npos )
+            return "Adding symbol to schematic";
+        else if( code.find( "delete" ) != std::string::npos || code.find( "remove" ) != std::string::npos )
+            return "Removing component";
+        else if( code.find( "move" ) != std::string::npos || code.find( "position" ) != std::string::npos )
+            return "Moving component";
+        else if( code.find( "connect" ) != std::string::npos || code.find( "wire" ) != std::string::npos )
+            return "Adding connections";
+        else if( code.find( "get_symbols" ) != std::string::npos || code.find( "find" ) != std::string::npos )
+            return "Searching schematic";
+        else if( code.find( "property" ) != std::string::npos || code.find( "value" ) != std::string::npos )
+            return "Modifying component properties";
+
+        // Fallback to mode-based description
+        if( mode == "kipy_schematic" )
+            return "Modifying schematic";
+        else if( mode == "kipy_pcb" )
+            return "Modifying PCB layout";
+        else
+            return "Executing Python script";
+    }
+    else if( aToolName == "run_terminal" )
+    {
+        std::string cmd = aInput.value( "command", "" );
+        if( cmd.length() > 50 )
+            cmd = cmd.substr( 0, 47 ) + "...";
+        return wxString::Format( "Running: %s", cmd );
+    }
+    else
+    {
+        return wxString::Format( "Executing %s", aToolName );
+    }
 }
 
 void AGENT_FRAME::OnGeneratingTimer( wxTimerEvent& aEvent )
@@ -1426,6 +1547,11 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // Save HTML snapshot for markdown re-rendering during streaming
     m_htmlBeforeAgentResponse = m_fullHtmlContent;
 
+    fprintf( stderr, "[HTML-DEBUG] OnSend: Captured m_htmlBeforeAgentResponse, length=%zu, ends with </body></html>: %s\n",
+             (size_t)m_htmlBeforeAgentResponse.length(),
+             m_htmlBeforeAgentResponse.EndsWith( "</body></html>" ) ? "YES" : "NO" );
+    fflush( stderr );
+
     // Clear Input and Update UI
     m_inputCtrl->Clear();
     m_actionButton->SetLabel( "Stop" );
@@ -1451,6 +1577,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     }
 
     m_currentResponse = ""; // Reset accumulator
+    m_toolCallHtml = "";    // Reset tool call HTML
     m_pendingToolCalls = nlohmann::json::array(); // Reset pending tool calls
     m_stopRequested = false; // Reset stop flag
 
@@ -1998,16 +2125,7 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
 
         m_pendingToolCalls.push_back( toolCall );
 
-        // Display tool call in UI
-        std::string inputStr = aEvent.tool_input.dump( 2 );
-        wxString wrappedInput = WrapLongLines( inputStr );
-        wxString htmlToolCall = wxString::Format(
-            "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>"
-            "<font color='#4ec9b0' size='2'><b>Tool: %s</b></font><br>"
-            "<font color='#d4d4d4' size='2'>%s</font>"
-            "</td></tr></table>",
-            aEvent.tool_name, wrappedInput );
-        AppendHtml( htmlToolCall );
+        // Don't display anything yet - we'll show a consolidated view in TOOL_USE_DONE
         break;
     }
     case LLM_EVENT_TYPE::TOOL_USE_DONE:
@@ -2015,16 +2133,25 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
         fprintf( stderr, "AGENT HandleLLMEvent: TOOL_USE_DONE received\n" );
         fflush( stderr );
 
+        // Stop generating animation since we're switching to tool execution
+        StopGeneratingAnimation();
+
         // All tool calls received, execute them asynchronously
         if( m_pendingToolCalls.is_array() && !m_pendingToolCalls.empty() )
         {
             fprintf( stderr, "AGENT HandleLLMEvent: %zu pending tool calls\n", m_pendingToolCalls.size() );
             fflush( stderr );
 
+            // IMPORTANT: Capture the current HTML state BEFORE clearing m_currentResponse
+            // The assistant's text before the tool call needs to be preserved in the HTML
+            UpdateAgentResponse();  // Render current text into HTML
+            m_htmlBeforeAgentResponse = m_fullHtmlContent;  // Capture it
+
             // Transition to TOOL_USE_DETECTED state
             m_conversationCtx.TransitionTo( AgentConversationState::TOOL_USE_DETECTED );
 
             // Add assistant message with tool use blocks to history
+            // NOTE: This clears m_currentResponse, but we've already captured it in HTML above
             AddAssistantToolUseToHistory( m_pendingToolCalls );
 
             // Queue all tools for async execution
@@ -2052,10 +2179,15 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
                 fprintf( stderr, "AGENT HandleLLMEvent: Starting first tool '%s'\n", first->tool_name.c_str() );
                 fflush( stderr );
 
-                // Show "Running..." state
-                wxString runningHtml = wxString::Format(
-                    "<br><font color='#888888'><i>Running %s...</i></font>", first->tool_name );
-                AppendHtml( runningHtml );
+                // Show "Running..." state in tool call HTML
+                wxString desc = GetToolDescription( first->tool_name, first->tool_input );
+                m_toolCallHtml = wxString::Format(
+                    "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                    "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+                    "<font color='#888888'><i>Running...</i></font>"
+                    "</td></tr></table>",
+                    desc );
+                UpdateAgentResponse();
 
                 // Execute async - returns immediately, result comes via event
                 ExecuteToolAsync( first->tool_name, first->tool_input, first->tool_use_id );
@@ -2405,10 +2537,23 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
     wxLogDebug( "AGENT: ProcessToolResult: id=%s success=%d result_len=%zu",
                 aToolUseId.c_str(), aSuccess, aResult.size() );
 
-    // Store the result in collected results
+    // Get tool info before removing from pending
+    PendingToolCall* tool = m_conversationCtx.FindPendingToolCall( aToolUseId );
+    wxString toolDesc = tool ? GetToolDescription( tool->tool_name, tool->tool_input ) : "Tool execution";
+    std::string toolName = tool ? tool->tool_name : "unknown";
+
+    // Check if this is a Python error (contains traceback)
+    bool isPythonError = ( aResult.find( "Traceback" ) != std::string::npos ) ||
+                         ( aResult.find( "Error:" ) == 0 );
+
+    // Store the result in collected results with full info for UI display
     AgentConversationContext::ToolResult toolResult;
     toolResult.tool_use_id = aToolUseId;
+    toolResult.tool_name = toolName;
+    toolResult.tool_description = toolDesc.ToStdString();
     toolResult.result = aResult;
+    toolResult.success = aSuccess && !isPythonError;
+    toolResult.is_python_error = isPythonError;
     m_conversationCtx.completed_tool_results.push_back( toolResult );
 
     // Also store as last (for backward compatibility)
@@ -2418,23 +2563,56 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
     // Remove from pending
     m_conversationCtx.RemovePendingToolCall( aToolUseId );
 
-    // Display result in UI
-    wxString htmlResult = aResult;
-    htmlResult.Replace( "&", "&amp;" );
-    htmlResult.Replace( "<", "&lt;" );
-    htmlResult.Replace( ">", "&gt;" );
-    wxString wrappedResult = WrapLongLines( htmlResult );
+    // Rebuild m_toolCallHtml from ALL completed results
+    // This ensures we don't lose previous tool results when multiple tools run
+    m_toolCallHtml = "";
 
-    wxString statusIcon = aSuccess ? "✓" : "✗";
-    wxString statusColor = aSuccess ? "#4ec9b0" : "#f44747";
+    for( const auto& completedTool : m_conversationCtx.completed_tool_results )
+    {
+        wxString statusColor;
+        wxString statusText;
+        wxString displayResult;
 
-    wxString resultBox = wxString::Format(
-        "<br><table width='100%%' bgcolor='#1e1e1e' cellpadding='8'><tr><td>"
-        "<font color='%s' size='2'><b>%s Result:</b></font><br>"
-        "<font color='#d4d4d4' size='2'>%s</font>"
-        "</td></tr></table>",
-        statusColor, statusIcon, wrappedResult );
-    AppendHtml( resultBox );
+        if( completedTool.is_python_error )
+        {
+            statusColor = "#f44747";
+            statusText = "Error";
+            displayResult = "<i>Script execution failed. The model will attempt to fix the issue.</i>";
+        }
+        else if( !completedTool.success )
+        {
+            statusColor = "#f44747";
+            statusText = "Failed";
+            wxString htmlResult = completedTool.result;
+            htmlResult.Replace( "&", "&amp;" );
+            htmlResult.Replace( "<", "&lt;" );
+            htmlResult.Replace( ">", "&gt;" );
+            if( htmlResult.length() > 200 )
+                htmlResult = htmlResult.Left( 200 ) + "...";
+            displayResult = htmlResult;
+        }
+        else
+        {
+            statusColor = "#4ec9b0";
+            statusText = "Completed";
+            wxString htmlResult = completedTool.result;
+            htmlResult.Replace( "&", "&amp;" );
+            htmlResult.Replace( "<", "&lt;" );
+            htmlResult.Replace( ">", "&gt;" );
+            if( htmlResult.length() > 500 )
+                htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
+            displayResult = htmlResult;
+        }
+
+        m_toolCallHtml += wxString::Format(
+            "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+            "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+            "<font color='%s'><b>%s</b></font><br>"
+            "<font color='#d4d4d4' size='2'>%s</font>"
+            "</td></tr></table>",
+            wxString::FromUTF8( completedTool.tool_description ),
+            statusColor, statusText, displayResult );
+    }
 
     // Check if agent made changes that need approval
     CheckForPendingChanges();
@@ -2449,17 +2627,23 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
         PendingToolCall* next = m_conversationCtx.GetNextPendingToolCall();
         if( next )
         {
-            // Show "Running..." state
-            wxString runningHtml = wxString::Format(
-                "<br><font color='#888888'><i>Running %s...</i></font>", next->tool_name );
-            AppendHtml( runningHtml );
+            // Append next tool's "Running..." to the HTML
+            wxString nextDesc = GetToolDescription( next->tool_name, next->tool_input );
+            m_toolCallHtml += wxString::Format(
+                "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+                "<font color='#888888'><i>Running...</i></font>"
+                "</td></tr></table>",
+                nextDesc );
 
+            UpdateAgentResponse();
             ExecuteToolAsync( next->tool_name, next->tool_input, next->tool_use_id );
         }
     }
     else
     {
-        // All tools done, continue conversation
+        // All tools done - update display and continue conversation
+        UpdateAgentResponse();
         ContinueConversationWithToolResult();
     }
 }
@@ -2500,9 +2684,19 @@ void AGENT_FRAME::ContinueConversationWithToolResult()
     m_conversationCtx.TransitionTo( AgentConversationState::WAITING_FOR_LLM );
 
     // Continue the conversation
+    // First, ensure the current HTML is fully rendered with tool results
+    UpdateAgentResponse();
+
     // Save HTML snapshot for markdown re-rendering during streaming
+    // This captures everything including tool call results
     m_currentResponse = "";
     m_htmlBeforeAgentResponse = m_fullHtmlContent;
+    m_toolCallHtml = "";  // Clear since it's now part of m_htmlBeforeAgentResponse
+
+    fprintf( stderr, "[HTML-DEBUG] ContinueConversationWithToolResult: Captured m_htmlBeforeAgentResponse, length=%zu, ends with </body></html>: %s\n",
+             (size_t)m_htmlBeforeAgentResponse.length(),
+             m_htmlBeforeAgentResponse.EndsWith( "</body></html>" ) ? "YES" : "NO" );
+    fflush( stderr );
 
     wxString model = m_modelChoice->GetStringSelection();
     m_llmClient->SetModel( model.ToStdString() );
@@ -2603,15 +2797,7 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
 
         m_pendingToolCalls.push_back( toolCall );
 
-        // Display tool call in UI with proper word wrapping
-        wxString wrappedInput = WrapLongLines( aChunk.tool_input_json );
-        wxString toolHtml = wxString::Format(
-            "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>"
-            "<font color='#4ec9b0' size='2'><b>Tool: %s</b></font><br>"
-            "<font color='#d4d4d4' size='2'>%s</font>"
-            "</td></tr></table>",
-            aChunk.tool_name, wrappedInput );
-        AppendHtml( toolHtml );
+        // Don't display anything yet - we'll show a consolidated view in TOOL_USE_DONE
         break;
     }
     case LLMChunkType::TOOL_USE_DONE:
@@ -2619,16 +2805,29 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
         fprintf( stderr, "AGENT HandleLLMChunk: TOOL_USE_DONE received\n" );
         fflush( stderr );
 
+        // Stop generating animation since we're switching to tool execution
+        StopGeneratingAnimation();
+
         // All tool calls received, execute them asynchronously
         if( m_pendingToolCalls.is_array() && !m_pendingToolCalls.empty() )
         {
             fprintf( stderr, "AGENT HandleLLMChunk: %zu pending tool calls\n", m_pendingToolCalls.size() );
             fflush( stderr );
 
+            // IMPORTANT: Capture the current HTML state BEFORE clearing m_currentResponse
+            // The assistant's text before the tool call needs to be preserved in the HTML
+            UpdateAgentResponse();  // Render current text into HTML
+            m_htmlBeforeAgentResponse = m_fullHtmlContent;  // Capture it
+
+            fprintf( stderr, "[HTML-DEBUG] TOOL_USE_DONE: Captured HTML before tool, length=%zu\n",
+                     (size_t)m_htmlBeforeAgentResponse.length() );
+            fflush( stderr );
+
             // Transition to TOOL_USE_DETECTED state
             m_conversationCtx.TransitionTo( AgentConversationState::TOOL_USE_DETECTED );
 
             // Add assistant message with tool use blocks to history
+            // NOTE: This clears m_currentResponse, but we've already captured it in HTML above
             AddAssistantToolUseToHistory( m_pendingToolCalls );
 
             // Queue all tools for async execution
@@ -2656,10 +2855,21 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
                 fprintf( stderr, "AGENT HandleLLMChunk: Starting first tool '%s'\n", first->tool_name.c_str() );
                 fflush( stderr );
 
-                // Show "Running..." state
-                wxString runningHtml = wxString::Format(
-                    "<br><font color='#888888'><i>Running %s...</i></font>", first->tool_name );
-                AppendHtml( runningHtml );
+                // Show "Running..." state in tool call HTML
+                wxString desc = GetToolDescription( first->tool_name, first->tool_input );
+                m_toolCallHtml = wxString::Format(
+                    "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                    "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+                    "<font color='#888888'><i>Running...</i></font>"
+                    "</td></tr></table>",
+                    desc );
+
+                fprintf( stderr, "[HTML-DEBUG] TOOL_USE_DONE (async): About to call UpdateAgentResponse\n" );
+                fprintf( stderr, "[HTML-DEBUG]   m_currentResponse length: %zu\n", m_currentResponse.size() );
+                fprintf( stderr, "[HTML-DEBUG]   m_toolCallHtml length: %zu\n", (size_t)m_toolCallHtml.length() );
+                fflush( stderr );
+
+                UpdateAgentResponse();
 
                 // Execute async - returns immediately, result comes via event
                 ExecuteToolAsync( first->tool_name, first->tool_input, first->tool_use_id );
@@ -2913,41 +3123,71 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
                         }
                         else if( blockType == "tool_use" )
                         {
-                            // Render tool_use block with proper word wrapping
+                            // Render tool_use block with human-readable description
                             std::string toolName = block.value("name", "unknown");
-                            std::string inputStr = block.value("input", nlohmann::json::object()).dump(2);
-                            wxString wrappedInput = WrapLongLines( inputStr );
+                            nlohmann::json toolInput = block.value("input", nlohmann::json::object());
+                            wxString desc = GetToolDescription( toolName, toolInput );
 
-                            wxString htmlToolCall = wxString::Format(
-                                "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>"
-                                "<font color='#4ec9b0' size='2'><b>Tool: %s</b></font><br>"
-                                "<font color='#d4d4d4' size='2'>%s</font>"
-                                "</td></tr></table>",
-                                toolName, wrappedInput );
-                            m_fullHtmlContent += htmlToolCall;
+                            // Store for pairing with result (next block)
+                            m_lastToolDesc = desc;
                         }
                         else if( blockType == "tool_result" )
                         {
-                            // Render tool_result block with proper word wrapping
+                            // Render combined tool call + result block
                             std::string content = block.value("content", "");
                             bool isError = block.value("is_error", false);
 
-                            wxString htmlResult = content;
-                            htmlResult.Replace( "&", "&amp;" );
-                            htmlResult.Replace( "<", "&lt;" );
-                            htmlResult.Replace( ">", "&gt;" );
-                            wxString wrappedResult = WrapLongLines( htmlResult );
+                            // Check if this is a Python traceback
+                            bool isPythonError = ( content.find( "Traceback" ) != std::string::npos );
 
-                            wxString statusIcon = isError ? "✗" : "✓";
-                            wxString statusColor = isError ? "#f44747" : "#4ec9b0";
+                            wxString displayResult;
+                            wxString statusColor;
+                            wxString statusText;
+
+                            if( isPythonError )
+                            {
+                                statusColor = "#f44747";
+                                statusText = "Error";
+                                displayResult = "<i>Script execution failed.</i>";
+                            }
+                            else if( isError )
+                            {
+                                statusColor = "#f44747";
+                                statusText = "Failed";
+                                wxString htmlResult = content;
+                                htmlResult.Replace( "&", "&amp;" );
+                                htmlResult.Replace( "<", "&lt;" );
+                                htmlResult.Replace( ">", "&gt;" );
+                                if( htmlResult.length() > 200 )
+                                    htmlResult = htmlResult.Left( 200 ) + "...";
+                                displayResult = htmlResult;
+                            }
+                            else
+                            {
+                                statusColor = "#4ec9b0";
+                                statusText = "Completed";
+                                wxString htmlResult = content;
+                                htmlResult.Replace( "&", "&amp;" );
+                                htmlResult.Replace( "<", "&lt;" );
+                                htmlResult.Replace( ">", "&gt;" );
+                                if( htmlResult.length() > 500 )
+                                    htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
+                                displayResult = htmlResult;
+                            }
+
+                            // Use the stored tool description from the preceding tool_use block
+                            wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
 
                             wxString resultBox = wxString::Format(
-                                "<br><table width='100%%' bgcolor='#1e1e1e' cellpadding='8'><tr><td>"
-                                "<font color='%s' size='2'><b>%s Result:</b></font><br>"
+                                "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                                "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+                                "<font color='%s'><b>%s</b></font><br>"
                                 "<font color='#d4d4d4' size='2'>%s</font>"
                                 "</td></tr></table>",
-                                statusColor, statusIcon, wrappedResult );
+                                desc, statusColor, statusText, displayResult );
                             m_fullHtmlContent += resultBox;
+
+                            m_lastToolDesc = "";  // Reset for next tool
                         }
                     }
                 }
@@ -3058,12 +3298,16 @@ void AGENT_FRAME::ShowApproveRejectButtons()
     else
         label = "PCB";
 
+    // Add approve/reject buttons to tool call HTML so they persist through re-renders
     wxString html = wxString::Format(
-        "<p><b>%s changes pending:</b> "
-        "<a href=\"agent:approve\" style=\"color: #00AA00;\">[Approve]</a> "
-        "<a href=\"agent:reject\" style=\"color: #AA0000;\">[Reject]</a></p>",
+        "<br><table width='100%%' bgcolor='#1a3a1a' cellpadding='10'><tr><td>"
+        "<font color='#88ff88'><b>%s changes pending</b></font><br>"
+        "<a href=\"agent:approve\"><font color='#00ff00'>[Approve]</font></a> "
+        "<a href=\"agent:reject\"><font color='#ff6666'>[Reject]</font></a>"
+        "</td></tr></table>",
         label );
-    AppendHtml( html );
+    m_toolCallHtml += html;
+    UpdateAgentResponse();
 }
 
 

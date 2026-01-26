@@ -142,9 +142,12 @@ private:
     // HTML Rendering
     wxString m_fullHtmlContent;        // Complete HTML buffer
     wxString m_htmlBeforeAgentResponse; // HTML snapshot before streaming starts (for markdown re-render)
+    wxString m_toolCallHtml;           // Accumulated tool call/result HTML (preserved during re-render)
+    wxString m_lastToolDesc;           // Temp storage for tool description during history replay
     void     AppendHtml( const wxString& aHtml );
     void     SetHtml( const wxString& aHtml );
     void     UpdateAgentResponse();    // Re-render current response with markdown
+    wxString GetToolDescription( const std::string& aToolName, const nlohmann::json& aInput ); // Human-readable tool description
 
     // Generating animation
     wxTimer  m_generatingTimer;        // Timer for animating dots

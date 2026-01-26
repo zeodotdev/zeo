@@ -1138,6 +1138,17 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
             m_auth->LoadSession();
             UpdateAuthUI();
         }
+
+        // If sign-in was from agent frame, bring it to front (after UI is updated)
+        std::string payload = aEvent.GetPayload();
+        if( payload.find( "source=agent" ) != std::string::npos )
+        {
+            if( IsIconized() )
+                Iconize( false );
+            Show( true );
+            Raise();
+            RequestUserAttention();
+        }
     }
     Layout();
 }
@@ -2807,7 +2818,7 @@ bool AGENT_FRAME::CheckAuthentication()
 void AGENT_FRAME::OnSignIn( wxCommandEvent& aEvent )
 {
     if( m_auth )
-        m_auth->StartOAuthFlow();
+        m_auth->StartOAuthFlow( "agent" );
 }
 
 void AGENT_FRAME::OnSize( wxSizeEvent& aEvent )

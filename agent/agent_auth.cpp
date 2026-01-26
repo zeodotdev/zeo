@@ -42,9 +42,11 @@ void AGENT_AUTH::SignOut()
     wxLogTrace( "Agent", "Signed out" );
 }
 
-bool AGENT_AUTH::StartOAuthFlow()
+bool AGENT_AUTH::StartOAuthFlow( const std::string& aSource )
 {
     std::string callback = "kicad-agent://callback";
+    if( !aSource.empty() )
+        callback += "/" + aSource;  // Use path: kicad-agent://callback/agent
 
     std::ostringstream authUrl;
     authUrl << m_authWebUrl << "?redirect_uri=" << callback << "&signout=true";

@@ -665,9 +665,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_llmClient = std::make_unique<AGENT_LLM_CLIENT>( this );
     InitializeTools();
 
-    // Load model context (API reference)
-    LoadModelContext();
-
     // Initialize authentication
     m_auth = new AGENT_AUTH();
     
@@ -753,86 +750,10 @@ AGENT_FRAME::~AGENT_FRAME()
     delete m_auth;
 }
 
-void AGENT_FRAME::LoadModelContext()
-{
-    // Determine context file based on current model
-    // For now, all models use the same kipy schematic API reference
-    wxString contextPath = wxStandardPaths::Get().GetExecutablePath();
-    wxFileName exePath( contextPath );
-
-    // Navigate to model_context folder relative to executable
-    // In dev: executable is in build folder, context is in source
-    // Try multiple paths
-    std::vector<std::string> searchPaths;
-
-    // 1. Environment variable for dev path
-    const char* devPath = std::getenv( "KICAD_AGENT_DEV_PATH" );
-    if( devPath )
-    {
-        searchPaths.push_back( std::string( devPath ) + "/../code/kicad-agent/agent/model_context/kipy_schematic_api_v5.txt" );
-    }
-
-    // 2. Relative to executable - search up directory tree for source location
-    //    This handles various build configurations where:
-    //    - Executable may be in: .../code/kicad-agent/build/...
-    //    - Source is in: .../code/kicad-agent/agent/model_context/
-    wxFileName searchPath( exePath.GetPath(), "" );
-    for( int i = 0; i < 6; i++ )  // Search up to 6 levels up
-    {
-        wxFileName testPath = searchPath;
-        testPath.AppendDir( "agent" );
-        testPath.AppendDir( "model_context" );
-        testPath.SetFullName( "kipy_schematic_api_v5.txt" );
-        searchPaths.push_back( std::string( testPath.GetFullPath().mb_str() ) );
-
-        // Also try kicad-agent/agent/model_context path
-        wxFileName altPath = searchPath;
-        altPath.AppendDir( "kicad-agent" );
-        altPath.AppendDir( "agent" );
-        altPath.AppendDir( "model_context" );
-        altPath.SetFullName( "kipy_schematic_api_v5.txt" );
-        searchPaths.push_back( std::string( altPath.GetFullPath().mb_str() ) );
-
-        searchPath.RemoveLastDir();
-    }
-
-    // 3. Relative to executable (for installed builds - macOS app bundle)
-    // When running standalone from agent.app/Contents/MacOS/agent
-    searchPaths.push_back( std::string( exePath.GetPath().mb_str() ) + "/../Resources/model_context/kipy_schematic_api_v5.txt" );
-
-    // 4. When agent runs as KIFACE loaded by main KiCad process
-    // The executable is KiCad.app/Contents/MacOS/kicad
-    // The model_context is installed to KiCad.app/Contents/SharedSupport/agent/model_context/
-    searchPaths.push_back( std::string( exePath.GetPath().mb_str() ) + "/../SharedSupport/agent/model_context/kipy_schematic_api_v5.txt" );
-
-    // 5. Relative to executable (for installed builds - Linux/Windows)
-    searchPaths.push_back( std::string( exePath.GetPath().mb_str() ) + "/../share/kicad-agent/model_context/kipy_schematic_api_v5.txt" );
-
-    // Try each path
-    m_modelContext = "";
-    fprintf( stderr, "AGENT: Searching for model context file...\n" );
-    for( const auto& path : searchPaths )
-    {
-        fprintf( stderr, "AGENT: Trying path: %s\n", path.c_str() );
-        std::ifstream file( path );
-        if( file.is_open() )
-        {
-            std::stringstream buffer;
-            buffer << file.rdbuf();
-            m_modelContext = buffer.str();
-            file.close();
-            fprintf( stderr, "AGENT: Found model context at: %s (%zu bytes)\n", path.c_str(), m_modelContext.size() );
-            break;
-        }
-    }
-    if( m_modelContext.empty() )
-    {
-        fprintf( stderr, "AGENT: WARNING - Model context file not found!\n" );
-    }
-}
-
 std::string AGENT_FRAME::GetSystemPrompt()
 {
+    // Base system prompt only - the KiPy API reference context is now injected
+    // server-side by harold.so when the request includes context_type="kipy-schematic-v5"
     std::string systemPrompt = R"(You are a helpful assistant for KiCad PCB design.
 You have access to tools to interact with schematics and boards.
 
@@ -870,14 +791,6 @@ Your responses are rendered with Markdown support. Use these formats for clear c
 
 Keep responses concise and well-structured. Use code blocks for any Python or shell commands.
 )";
-
-    // Append model context (API reference) if loaded
-    if( !m_modelContext.empty() )
-    {
-        systemPrompt += "\n\n=== KIPY SCHEMATIC API REFERENCE ===\n";
-        systemPrompt += m_modelContext;
-        systemPrompt += "\n=== END API REFERENCE ===\n";
-    }
 
     return systemPrompt;
 }
@@ -1677,12 +1590,11 @@ void AGENT_FRAME::OnTextEnter( wxCommandEvent& aEvent )
 void AGENT_FRAME::OnModelSelection( wxCommandEvent& aEvent )
 {
     // Reload model context when model changes
-    // This allows for model-specific context files in the future
+    // Track the currently selected model
     wxString newModel = m_modelChoice->GetStringSelection();
     if( newModel.ToStdString() != m_currentModel )
     {
         m_currentModel = newModel.ToStdString();
-        LoadModelContext();
     }
 }
 

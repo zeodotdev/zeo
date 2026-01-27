@@ -130,10 +130,8 @@ private:
     wxTimer                  m_toolTimeoutTimer; // Timer for tool execution timeout
     static const int         TOOL_TIMEOUT_MS = 30000; // 30 second timeout
 
-    // Model Context
-    std::string    m_modelContext;    // Loaded API reference for current model
+    // Model Context (context prompt is now injected server-side via context_type)
     std::string    m_currentModel;    // Currently selected model name
-    void           LoadModelContext();
     std::string    GetSystemPrompt();
 
     // HTML Rendering

@@ -800,6 +800,9 @@ void* LLM_REQUEST_THREAD::Entry()
     requestBody["max_tokens"] = 4096;
     requestBody["stream"] = true;
 
+    // Request server-side context injection (reduces bandwidth, enables caching)
+    requestBody["context_type"] = "kipy-schematic-v5";
+
     // Add tools
     if( !m_tools.empty() )
     {

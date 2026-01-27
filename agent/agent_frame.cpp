@@ -3338,13 +3338,23 @@ void AGENT_FRAME::CheckForPendingChanges()
 
 void AGENT_FRAME::ShowApproveRejectButtons()
 {
-    // Show the indicator button and panel
-    m_pendingChangesBtn->Show();
-    m_pendingChangesBtn->SetLabel( "Hide Changes" );
+    // Check if the button was already visible (user may have manually collapsed the panel)
+    bool wasAlreadyShowing = m_pendingChangesBtn->IsShown();
 
-    // Update and show the panel
+    // Always show the indicator button
+    m_pendingChangesBtn->Show();
+
+    // Always update the panel content
     m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
-    m_pendingChangesPanel->Show();
+
+    // Only auto-show the panel if this is the first time showing changes
+    // (respect user's choice if they manually collapsed it)
+    if( !wasAlreadyShowing )
+    {
+        m_pendingChangesBtn->SetLabel( "Hide Changes" );
+        m_pendingChangesPanel->Show();
+    }
+
     Layout();
 }
 

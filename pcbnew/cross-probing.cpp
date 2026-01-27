@@ -920,10 +920,6 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
             if( j.contains( "x" ) && j.contains( "y" ) && j.contains( "w" ) && j.contains( "h" ) )
             {
                 BOX2I bbox( VECTOR2I( j["x"], j["y"] ), VECTOR2I( j["w"], j["h"] ) );
-                // SCH_EDIT_FRAME and PCB_EDIT_FRAME handle Undo/Redo similarly via dispatching events
-                // to themselves or calling standard methods if available.
-                // PCB_EDIT_FRAME has Undo/Redo? It inherits from PCB_BASE_EDIT_FRAME.
-                // Let's assume we can dispatch wxCommandEvent for ID_EDIT_UNDO/REDO.
 
                 DIFF_CALLBACKS callbacks;
                 callbacks.onUndo = [this]()
@@ -935,6 +931,25 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                 {
                     wxCommandEvent evt( wxEVT_COMMAND_MENU_SELECTED, wxID_REDO );
                     this->ProcessEvent( evt );
+                };
+                callbacks.onApprove = [this]()
+                {
+                    ClearAgentPendingChanges();
+                    // Notify agent frame that diff was handled via overlay
+                    std::string payload = "pcb";
+                    Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+                };
+                callbacks.onReject = [this]()
+                {
+                    RevertAgentChanges();
+                    // Notify agent frame that diff was handled via overlay
+                    std::string payload = "pcb";
+                    Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+                };
+                callbacks.onRefresh = [this]()
+                {
+                    if( GetCanvas() )
+                        GetCanvas()->Refresh();
                 };
 
                 DIFF_MANAGER::GetInstance().RegisterOverlay( this->GetCanvas()->GetView(), callbacks );

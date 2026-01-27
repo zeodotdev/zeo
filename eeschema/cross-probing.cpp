@@ -1072,6 +1072,25 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                     wxCommandEvent evt( wxEVT_COMMAND_MENU_SELECTED, wxID_REDO );
                     this->ProcessEvent( evt );
                 };
+                callbacks.onApprove = [this]()
+                {
+                    ClearAgentPendingChanges();
+                    // Notify agent frame that diff was handled via overlay
+                    std::string payload = "sch";
+                    Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+                };
+                callbacks.onReject = [this]()
+                {
+                    RevertAgentChanges();
+                    // Notify agent frame that diff was handled via overlay
+                    std::string payload = "sch";
+                    Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+                };
+                callbacks.onRefresh = [this]()
+                {
+                    if( GetCanvas() )
+                        GetCanvas()->Refresh();
+                };
 
                 DIFF_MANAGER::GetInstance().RegisterOverlay( this->GetCanvas()->GetView(), callbacks );
                 DIFF_MANAGER::GetInstance().ShowDiff( bbox );

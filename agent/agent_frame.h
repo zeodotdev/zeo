@@ -195,6 +195,7 @@ private:
     void ShowApproveRejectButtons(); // Display approve/reject buttons in chat
     void OnApproveChanges();        // Handle approve click from chat
     void OnRejectChanges();         // Handle reject click from chat
+    void ClearApprovalButtons( bool aIsSchematic );  // Clear approval buttons when diff overlay dismissed
 };
 
 #endif // AGENT_FRAME_H

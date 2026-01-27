@@ -1409,6 +1409,13 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
             UpdateAuthUI();
         }
     }
+    else if( aEvent.Command() == MAIL_AGENT_DIFF_CLEARED )
+    {
+        // Diff overlay was dismissed in editor - clear the corresponding approval buttons
+        std::string payload = aEvent.GetPayload();
+        bool isSchematic = ( payload == "sch" );
+        ClearApprovalButtons( isSchematic );
+    }
     Layout();
 }
 
@@ -3327,6 +3334,23 @@ void AGENT_FRAME::OnApproveChanges()
 
     m_hasPendingSchChanges = false;
     m_hasPendingPcbChanges = false;
+
+    // Remove the approval buttons table from m_toolCallHtml
+    int tableStart = m_toolCallHtml.Find( "<table width='100%' bgcolor='#1a3a1a'" );
+    if( tableStart != wxNOT_FOUND )
+    {
+        int tableEnd = m_toolCallHtml.find( "</table>", tableStart );
+        if( tableEnd != wxNOT_FOUND )
+        {
+            int brPos = m_toolCallHtml.rfind( "<br>", tableStart );
+            if( brPos != wxNOT_FOUND && brPos > tableStart - 10 )
+                tableStart = brPos;
+            m_toolCallHtml = m_toolCallHtml.Mid( 0, tableStart )
+                           + m_toolCallHtml.Mid( tableEnd + 8 );
+        }
+    }
+    UpdateAgentResponse();
+
     AppendHtml( "<p><i>Changes approved.</i></p>" );
 }
 
@@ -3347,5 +3371,80 @@ void AGENT_FRAME::OnRejectChanges()
 
     m_hasPendingSchChanges = false;
     m_hasPendingPcbChanges = false;
+
+    // Remove the approval buttons table from m_toolCallHtml
+    int tableStart = m_toolCallHtml.Find( "<table width='100%' bgcolor='#1a3a1a'" );
+    if( tableStart != wxNOT_FOUND )
+    {
+        int tableEnd = m_toolCallHtml.find( "</table>", tableStart );
+        if( tableEnd != wxNOT_FOUND )
+        {
+            int brPos = m_toolCallHtml.rfind( "<br>", tableStart );
+            if( brPos != wxNOT_FOUND && brPos > tableStart - 10 )
+                tableStart = brPos;
+            m_toolCallHtml = m_toolCallHtml.Mid( 0, tableStart )
+                           + m_toolCallHtml.Mid( tableEnd + 8 );
+        }
+    }
+    UpdateAgentResponse();
+
     AppendHtml( "<p><i>Changes rejected.</i></p>" );
+}
+
+
+void AGENT_FRAME::ClearApprovalButtons( bool aIsSchematic )
+{
+    // Clear the pending changes flag for this editor
+    if( aIsSchematic )
+        m_hasPendingSchChanges = false;
+    else
+        m_hasPendingPcbChanges = false;
+
+    // If no more pending changes, remove the approval buttons from m_toolCallHtml
+    if( !m_hasPendingSchChanges && !m_hasPendingPcbChanges )
+    {
+        // Remove the approval buttons table from m_toolCallHtml
+        // The approval buttons are in a table with bgcolor='#1a3a1a'
+        int tableStart = m_toolCallHtml.Find( "<table width='100%' bgcolor='#1a3a1a'" );
+        if( tableStart != wxNOT_FOUND )
+        {
+            int tableEnd = m_toolCallHtml.find( "</table>", tableStart );
+            if( tableEnd != wxNOT_FOUND )
+            {
+                // Remove from the <br> before the table to the end of </table>
+                int brPos = m_toolCallHtml.rfind( "<br>", tableStart );
+                if( brPos != wxNOT_FOUND && brPos > tableStart - 10 )
+                    tableStart = brPos;
+
+                m_toolCallHtml = m_toolCallHtml.Mid( 0, tableStart )
+                               + m_toolCallHtml.Mid( tableEnd + 8 );  // 8 = len("</table>")
+            }
+        }
+
+        // Update the display
+        UpdateAgentResponse();
+        AppendHtml( "<p><i>Changes handled via overlay.</i></p>" );
+    }
+    else
+    {
+        // Still have changes in the other editor - update the label
+        wxString label = m_hasPendingSchChanges ? "Schematic" : "PCB";
+
+        // Find and update the label in the approval buttons table
+        int labelStart = m_toolCallHtml.Find( "changes pending</b>" );
+        if( labelStart != wxNOT_FOUND )
+        {
+            // Look backwards for the start of the label (after <b>)
+            int bStart = m_toolCallHtml.rfind( "<b>", labelStart );
+            if( bStart != wxNOT_FOUND )
+            {
+                // Replace the label
+                m_toolCallHtml = m_toolCallHtml.Mid( 0, bStart + 3 )
+                               + label + " "
+                               + m_toolCallHtml.Mid( labelStart );
+            }
+        }
+
+        UpdateAgentResponse();
+    }
 }

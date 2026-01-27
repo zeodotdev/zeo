@@ -3252,11 +3252,18 @@ bool PCB_EDIT_FRAME::DoAutoSave()
 
 void PCB_EDIT_FRAME::RecordAgentUndoPosition()
 {
-    // Clear any existing pending changes state
-    ClearAgentPendingChanges();
+    // If we already have pending changes, don't reset the baseline - we want to accumulate
+    // all changes since the FIRST tool call, not just the most recent one
+    if( m_hasAgentPendingChanges )
+    {
+        // Keep the original baseline, don't clear or reset
+        return;
+    }
 
+    // No existing session - start a new one
     // Record the current undo stack count - kipy API operations will create undo entries
     m_undoCountBeforeAgent = GetUndoCommandCount();
+    m_agentChangedBBox = BOX2I();  // Reset accumulated bounding box
 }
 
 
@@ -3268,20 +3275,28 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
 
     // Check if any undo entries were created since we took the snapshot
     int currentUndoCount = GetUndoCommandCount();
-    bool hasChanges = ( currentUndoCount > m_undoCountBeforeAgent );
+    bool hasNewChanges = ( currentUndoCount > m_undoCountBeforeAgent );
 
-    if( !hasChanges )
+    // If there are already pending changes and we're just adding more, we need to
+    // scan from the last known position, not from m_undoCountBeforeAgent
+    int scanFrom = m_undoCountBeforeAgent;
+    if( m_hasAgentPendingChanges )
     {
-        // No changes detected
-        ClearAgentPendingChanges();
+        // Already have pending changes, check for additional ones
+        // The bounding box will be accumulated
+    }
+
+    if( !hasNewChanges && !m_hasAgentPendingChanges )
+    {
+        // No changes detected and no existing pending changes
         return false;
     }
 
     // Calculate bounding box from the items in the undo entries created by the agent
-    BOX2I changedBBox;
+    BOX2I newChangedBBox;
 
     // Iterate through the new undo entries to get bounding boxes of changed items
-    for( int i = m_undoCountBeforeAgent; i < currentUndoCount; i++ )
+    for( int i = scanFrom; i < currentUndoCount; i++ )
     {
         PICKED_ITEMS_LIST* undoCommand = m_undoList.m_CommandsList[i];
         if( !undoCommand )
@@ -3296,7 +3311,7 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
             {
                 BOARD_ITEM* boardItem = dynamic_cast<BOARD_ITEM*>( item );
                 if( boardItem )
-                    changedBBox.Merge( boardItem->GetBoundingBox() );
+                    newChangedBBox.Merge( boardItem->GetBoundingBox() );
             }
 
             // For CHANGED operations, also get the current item's bounding box
@@ -3307,12 +3322,14 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
                 {
                     BOARD_ITEM* linkedItem = dynamic_cast<BOARD_ITEM*>( link );
                     if( linkedItem )
-                        changedBBox.Merge( linkedItem->GetBoundingBox() );
+                        newChangedBBox.Merge( linkedItem->GetBoundingBox() );
                 }
             }
         }
     }
 
+    // Merge with accumulated bounding box from previous tool calls
+    m_agentChangedBBox.Merge( newChangedBBox );
     m_hasAgentPendingChanges = true;
 
     // Set up callbacks for the diff overlay
@@ -3322,20 +3339,30 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
         if( m_showingAgentBefore )
             ShowAgentChangesAfter();
         ClearAgentPendingChanges();
+        // Notify agent frame that diff was handled via overlay
+        std::string payload = "pcb";
+        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
     };
     callbacks.onReject = [this]() {
         // Make sure we're showing "after" state before reverting
         if( m_showingAgentBefore )
             ShowAgentChangesAfter();
         RevertAgentChanges();
+        // Notify agent frame that diff was handled via overlay
+        std::string payload = "pcb";
+        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
     };
     callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
     callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
+    callbacks.onRefresh = [this]() {
+        if( GetCanvas() )
+            GetCanvas()->Refresh();
+    };
 
     DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
-    DIFF_MANAGER::GetInstance().ShowDiff( changedBBox );
+    DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
 
-    return hasChanges;
+    return hasNewChanges;
 }
 
 
@@ -3344,6 +3371,7 @@ void PCB_EDIT_FRAME::ClearAgentPendingChanges()
     m_hasAgentPendingChanges = false;
     m_showingAgentBefore = false;
     m_undoCountBeforeAgent = 0;
+    m_agentChangedBBox = BOX2I();  // Reset accumulated bounding box
 
     // Clear the diff overlay
     DIFF_MANAGER::GetInstance().ClearDiff();

@@ -1076,9 +1076,10 @@ private:
     bool              m_highlightedConnChanged;
 
     // Agent pending changes support (for diff view using native undo/redo)
-    int  m_undoCountBeforeAgent = 0;    ///< Undo stack count before agent execution
-    bool m_hasAgentPendingChanges = false;
-    bool m_showingAgentBefore = false;  ///< True if currently showing "before" state
+    int   m_undoCountBeforeAgent = 0;    ///< Undo stack count before agent execution
+    bool  m_hasAgentPendingChanges = false;
+    bool  m_showingAgentBefore = false;  ///< True if currently showing "before" state
+    BOX2I m_agentChangedBBox;            ///< Accumulated bounding box of all agent changes
 
     std::vector<wxEvtHandler*> m_schematicChangeListeners;
 

@@ -490,7 +490,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_signInButton( nullptr ),
         m_workerThread( nullptr ),
         m_hasPendingSchChanges( false ),
-        m_hasPendingPcbChanges( false )
+        m_hasPendingPcbChanges( false ),
+        m_pendingOpenSch( false ),
+        m_pendingOpenPcb( false )
 {
 
     // --- UI Layout ---
@@ -1528,6 +1530,14 @@ void AGENT_FRAME::OnHtmlLinkClick( wxHtmlLinkEvent& aEvent )
     {
         OnRejectChanges();
     }
+    else if( href == "agent:approve_open" )
+    {
+        OnApproveOpenEditor();
+    }
+    else if( href == "agent:reject_open" )
+    {
+        OnRejectOpenEditor();
+    }
     else
     {
         // Open standard links in browser?
@@ -1785,6 +1795,25 @@ void AGENT_FRAME::InitializeTools()
         { "required", json::array( { "command" } ) }
     };
     m_tools.push_back( runTerminal );
+
+    // Tool 3: open_editor - Open schematic or PCB editor with user approval
+    LLM_TOOL openEditor;
+    openEditor.name = "open_editor";
+    openEditor.description = "Request to open the schematic or PCB editor. "
+                             "This will prompt the user for approval before opening. "
+                             "Use editor_type 'sch' for schematic editor or 'pcb' for PCB editor.";
+    openEditor.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "editor_type", {
+                { "type", "string" },
+                { "enum", json::array( { "sch", "pcb" } ) },
+                { "description", "Editor to open: 'sch' for schematic, 'pcb' for PCB" }
+            }}
+        }},
+        { "required", json::array( { "editor_type" } ) }
+    };
+    m_tools.push_back( openEditor );
 }
 
 std::string AGENT_FRAME::ExecuteTool( const std::string& aName, const nlohmann::json& aInput )
@@ -2073,6 +2102,24 @@ void AGENT_FRAME::ExecuteToolAsync( const std::string& aToolName,
     {
         existingTool->start_time = wxGetLocalTimeMillis();
         existingTool->is_executing = true;
+    }
+
+    // Handle open_editor tool specially - requires user approval
+    if( toolName == "open_editor" )
+    {
+        std::string editorType = toolInput.value( "editor_type", "" );
+
+        // Store the pending request
+        m_pendingOpenSch = ( editorType == "sch" );
+        m_pendingOpenPcb = ( editorType == "pcb" );
+        m_pendingOpenToolId = toolUseId;
+
+        // Show approval buttons in chat
+        wxString editorLabel = m_pendingOpenSch ? "Schematic" : "PCB";
+        ShowOpenEditorApproval( editorLabel );
+
+        // Return immediately - tool result will be sent after user responds
+        return;
     }
 
     // Build the payload for the target frame
@@ -2573,12 +2620,12 @@ void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
         delete complete;
     }
 
-    // Re-render without dots
-    UpdateAgentResponse();
-
-    // If we're still waiting for LLM (no tool calls), save and transition to IDLE
+    // Only re-render without dots if we're still waiting for LLM response
+    // (not if we've already transitioned to tool execution which may have added UI elements)
     if( m_conversationCtx.GetState() == AgentConversationState::WAITING_FOR_LLM )
     {
+        // Re-render without dots
+        UpdateAgentResponse();
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
         m_actionButton->SetLabel( "Send" );
     }
@@ -2923,4 +2970,85 @@ void AGENT_FRAME::OnRejectChanges()
     m_hasPendingSchChanges = false;
     m_hasPendingPcbChanges = false;
     AppendHtml( "<p><i>Changes rejected.</i></p>" );
+}
+
+
+void AGENT_FRAME::ShowOpenEditorApproval( const wxString& aEditorType )
+{
+    wxString html = wxString::Format(
+        "<p><b>Open %s Editor?</b> "
+        "<a href=\"agent:approve_open\" style=\"color: #00AA00;\">[Open]</a> "
+        "<a href=\"agent:reject_open\" style=\"color: #AA0000;\">[Cancel]</a></p>",
+        aEditorType );
+    AppendHtml( html );
+}
+
+
+void AGENT_FRAME::OnApproveOpenEditor()
+{
+    bool success = false;
+    wxString editorName;
+
+    if( m_pendingOpenSch )
+    {
+        editorName = "Schematic";
+        success = DoOpenEditor( FRAME_SCH );
+    }
+    else if( m_pendingOpenPcb )
+    {
+        editorName = "PCB";
+        success = DoOpenEditor( FRAME_PCB_EDITOR );
+    }
+
+    // Display result in UI BEFORE calling ProcessToolResult (which saves HTML snapshot)
+    AppendHtml( wxString::Format( "<p><i>%s</i></p>",
+        success ? editorName + " editor opened." : "Failed to open editor." ) );
+
+    // Build tool result message
+    std::string result = success
+        ? editorName.ToStdString() + " editor opened successfully"
+        : "Failed to open " + editorName.ToStdString() + " editor";
+
+    // Clear pending state before processing result (in case of re-entrancy)
+    std::string toolId = m_pendingOpenToolId;
+    m_pendingOpenSch = false;
+    m_pendingOpenPcb = false;
+    m_pendingOpenToolId.clear();
+
+    // Send tool result back to LLM - this will continue the conversation
+    ProcessToolResult( toolId, result, success );
+}
+
+
+void AGENT_FRAME::OnRejectOpenEditor()
+{
+    wxString editorName = m_pendingOpenSch ? "Schematic" : "PCB";
+
+    // Display cancellation message BEFORE calling ProcessToolResult (which saves HTML snapshot)
+    AppendHtml( "<p><i>Editor open cancelled.</i></p>" );
+
+    // Clear pending state before processing result (in case of re-entrancy)
+    std::string toolId = m_pendingOpenToolId;
+    m_pendingOpenSch = false;
+    m_pendingOpenPcb = false;
+    m_pendingOpenToolId.clear();
+
+    // Send rejection result to LLM - this will continue the conversation
+    ProcessToolResult( toolId,
+        "User declined to open " + editorName.ToStdString() + " editor", false );
+}
+
+
+bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
+{
+    KIWAY_PLAYER* player = Kiway().Player( aFrameType, true );
+    if( !player )
+        return false;
+
+    player->Show( true );
+    if( player->IsIconized() )
+        player->Iconize( false );
+    player->Raise();
+
+    return true;
 }

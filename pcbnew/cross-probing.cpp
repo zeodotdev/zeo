@@ -987,6 +987,22 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         break;
     }
 
+    case MAIL_AGENT_VIEW_CHANGES:
+    {
+        // Zoom to the agent changes bounding box
+        if( m_hasAgentPendingChanges && m_agentChangedBBox.GetWidth() > 0 )
+        {
+            // Zoom to the changed area with some padding
+            BOX2I zoomBox = m_agentChangedBBox;
+            zoomBox.Inflate( zoomBox.GetWidth() / 4, zoomBox.GetHeight() / 4 );
+            // Convert BOX2I to BOX2D for SetViewport
+            BOX2D viewport( VECTOR2D( zoomBox.GetPosition() ), VECTOR2D( zoomBox.GetSize() ) );
+            GetCanvas()->GetView()->SetViewport( viewport );
+            GetCanvas()->Refresh();
+        }
+        break;
+    }
+
     case MAIL_SELECTION:
         if( !GetPcbNewSettings()->m_CrossProbing.on_selection )
             break;

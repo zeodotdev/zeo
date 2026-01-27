@@ -3310,15 +3310,7 @@ void AGENT_FRAME::ShowApproveRejectButtons()
 {
     // Show the indicator button and panel
     m_pendingChangesBtn->Show();
-
-    // Update button label based on pending changes
-    wxString label;
-    if( m_hasPendingSchChanges && m_hasPendingPcbChanges )
-        label = "2 changes";
-    else
-        label = "1 change";
-
-    m_pendingChangesBtn->SetLabel( label );
+    m_pendingChangesBtn->SetLabel( "Hide Changes" );
 
     // Update and show the panel
     m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
@@ -3329,9 +3321,10 @@ void AGENT_FRAME::ShowApproveRejectButtons()
 
 void AGENT_FRAME::OnPendingChangesClick( wxCommandEvent& aEvent )
 {
-    // Toggle panel visibility
+    // Toggle panel visibility and update button label
     bool isShown = m_pendingChangesPanel->IsShown();
     m_pendingChangesPanel->Show( !isShown );
+    m_pendingChangesBtn->SetLabel( isShown ? "Show Changes" : "Hide Changes" );
     Layout();
 }
 
@@ -3349,11 +3342,6 @@ void AGENT_FRAME::OnSchematicChangeHandled( bool aAccepted )
         m_pendingChangesPanel->Hide();
         m_pendingChangesBtn->Hide();
         Layout();
-    }
-    else
-    {
-        // Update button label
-        m_pendingChangesBtn->SetLabel( "1 change" );
     }
 
     AppendHtml( aAccepted ? "<p><i>Schematic changes accepted.</i></p>"
@@ -3374,11 +3362,6 @@ void AGENT_FRAME::OnPcbChangeHandled( bool aAccepted )
         m_pendingChangesPanel->Hide();
         m_pendingChangesBtn->Hide();
         Layout();
-    }
-    else
-    {
-        // Update button label
-        m_pendingChangesBtn->SetLabel( "1 change" );
     }
 
     AppendHtml( aAccepted ? "<p><i>PCB changes accepted.</i></p>"
@@ -3404,10 +3387,5 @@ void AGENT_FRAME::ClearApprovalButtons( bool aIsSchematic )
         m_pendingChangesBtn->Hide();
         Layout();
         AppendHtml( "<p><i>Changes handled via overlay.</i></p>" );
-    }
-    else
-    {
-        // Still have changes in the other editor - update button label
-        m_pendingChangesBtn->SetLabel( "1 change" );
     }
 }

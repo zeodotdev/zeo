@@ -3031,6 +3031,7 @@ void SCH_EDIT_FRAME::RecordAgentUndoPosition()
     // Record the current undo stack count - kipy API operations will create undo entries
     m_undoCountBeforeAgent = GetUndoCommandCount();
     m_agentChangedBBox = BOX2I();  // Reset accumulated bounding box
+    m_agentChangedSheetPath.clear();  // Reset sheet path
 }
 
 
@@ -3095,6 +3096,9 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
     m_agentChangedBBox.Merge( newChangedBBox );
     m_hasAgentPendingChanges = true;
 
+    // Store the current sheet path so we can navigate back to it when viewing changes
+    m_agentChangedSheetPath = GetCurrentSheet();
+
     // Set up callbacks for the diff overlay
     DIFF_CALLBACKS callbacks;
     callbacks.onApprove = [this]() {
@@ -3135,6 +3139,7 @@ void SCH_EDIT_FRAME::ClearAgentPendingChanges()
     m_showingAgentBefore = false;
     m_undoCountBeforeAgent = 0;
     m_agentChangedBBox = BOX2I();  // Reset accumulated bounding box
+    m_agentChangedSheetPath.clear();  // Reset sheet path
 
     // Clear the diff overlay
     DIFF_MANAGER::GetInstance().ClearDiff();

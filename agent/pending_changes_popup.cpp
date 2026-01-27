@@ -25,6 +25,7 @@
 #include "agent_frame.h"
 #include <kiway.h>
 #include <kiway_player.h>
+#include <mail_type.h>
 
 PENDING_CHANGES_PANEL::PENDING_CHANGES_PANEL( wxWindow* aParent, AGENT_FRAME* aAgentFrame ) :
         wxPanel( aParent, wxID_ANY ),
@@ -45,15 +46,15 @@ PENDING_CHANGES_PANEL::PENDING_CHANGES_PANEL( wxWindow* aParent, AGENT_FRAME* aA
     m_schLabel->SetForegroundColour( wxColour( "#d4d4d4" ) );
     schRowSizer->Add( m_schLabel, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, 10 );
 
-    m_viewSchBtn = new wxButton( m_schRowPanel, wxID_ANY, "view" );
+    m_viewSchBtn = new wxButton( m_schRowPanel, wxID_ANY, "View" );
     schRowSizer->Add( m_viewSchBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
-    m_acceptSchBtn = new wxButton( m_schRowPanel, wxID_ANY, "accept" );
-    m_acceptSchBtn->SetBackgroundColour( wxColour( "#2d5a2d" ) );
+    m_acceptSchBtn = new wxButton( m_schRowPanel, wxID_ANY, "Accept" );
+    m_acceptSchBtn->SetForegroundColour( wxColour( "#44dd44" ) );
     schRowSizer->Add( m_acceptSchBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
-    m_rejectSchBtn = new wxButton( m_schRowPanel, wxID_ANY, "reject" );
-    m_rejectSchBtn->SetBackgroundColour( wxColour( "#5a2d2d" ) );
+    m_rejectSchBtn = new wxButton( m_schRowPanel, wxID_ANY, "Reject" );
+    m_rejectSchBtn->SetForegroundColour( wxColour( "#dd4444" ) );
     schRowSizer->Add( m_rejectSchBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 10 );
 
     m_schRowPanel->SetSizer( schRowSizer );
@@ -68,15 +69,15 @@ PENDING_CHANGES_PANEL::PENDING_CHANGES_PANEL( wxWindow* aParent, AGENT_FRAME* aA
     m_pcbLabel->SetForegroundColour( wxColour( "#d4d4d4" ) );
     pcbRowSizer->Add( m_pcbLabel, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, 10 );
 
-    m_viewPcbBtn = new wxButton( m_pcbRowPanel, wxID_ANY, "view" );
+    m_viewPcbBtn = new wxButton( m_pcbRowPanel, wxID_ANY, "View" );
     pcbRowSizer->Add( m_viewPcbBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
-    m_acceptPcbBtn = new wxButton( m_pcbRowPanel, wxID_ANY, "accept" );
-    m_acceptPcbBtn->SetBackgroundColour( wxColour( "#2d5a2d" ) );
+    m_acceptPcbBtn = new wxButton( m_pcbRowPanel, wxID_ANY, "Accept" );
+    m_acceptPcbBtn->SetForegroundColour( wxColour( "#44dd44" ) );
     pcbRowSizer->Add( m_acceptPcbBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
-    m_rejectPcbBtn = new wxButton( m_pcbRowPanel, wxID_ANY, "reject" );
-    m_rejectPcbBtn->SetBackgroundColour( wxColour( "#5a2d2d" ) );
+    m_rejectPcbBtn = new wxButton( m_pcbRowPanel, wxID_ANY, "Reject" );
+    m_rejectPcbBtn->SetForegroundColour( wxColour( "#dd4444" ) );
     pcbRowSizer->Add( m_rejectPcbBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 10 );
 
     m_pcbRowPanel->SetSizer( pcbRowSizer );
@@ -127,8 +128,10 @@ void PENDING_CHANGES_PANEL::updateLayout()
 
 void PENDING_CHANGES_PANEL::OnViewSch( wxCommandEvent& event )
 {
-    // Activate schematic editor
+    // Activate schematic editor and zoom to changes
     m_agentFrame->Kiway().Player( FRAME_SCH, true );
+    std::string payload;
+    m_agentFrame->Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_VIEW_CHANGES, payload );
 }
 
 
@@ -156,8 +159,10 @@ void PENDING_CHANGES_PANEL::OnRejectSch( wxCommandEvent& event )
 
 void PENDING_CHANGES_PANEL::OnViewPcb( wxCommandEvent& event )
 {
-    // Activate PCB editor
+    // Activate PCB editor and zoom to changes
     m_agentFrame->Kiway().Player( FRAME_PCB_EDITOR, true );
+    std::string payload;
+    m_agentFrame->Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_VIEW_CHANGES, payload );
 }
 
 

@@ -64,7 +64,8 @@ enum MAIL_T
     MAIL_AGENT_HAS_CHANGES,   // Agent -> Editor: Query pending changes (payload set to "true"/"false")
     MAIL_AGENT_APPROVE,       // Agent -> Editor: Approve pending changes
     MAIL_AGENT_REJECT,        // Agent -> Editor: Reject pending changes
-    MAIL_AGENT_DIFF_CLEARED   // Editor -> Agent: Diff overlay was dismissed (payload: "sch" or "pcb")
+    MAIL_AGENT_DIFF_CLEARED,  // Editor -> Agent: Diff overlay was dismissed (payload: "sch" or "pcb")
+    MAIL_AGENT_VIEW_CHANGES   // Agent -> Editor: Bring editor to front and zoom to changes
 
 };
 

@@ -1127,6 +1127,56 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         break;
     }
 
+    case MAIL_AGENT_VIEW_CHANGES:
+    {
+        // Navigate to the sheet with agent changes and zoom to the bounding box
+        if( m_hasAgentPendingChanges && m_agentChangedBBox.GetWidth() > 0 )
+        {
+            // First, navigate to the sheet where the changes were made
+            if( m_agentChangedSheetPath != GetCurrentSheet() && m_agentChangedSheetPath.size() > 0 )
+            {
+                GetToolManager()->RunAction<SCH_SHEET_PATH*>( SCH_ACTIONS::changeSheet,
+                                                              &m_agentChangedSheetPath );
+
+                // After sheet change, re-register the diff overlay on the current view
+                // (the view might have changed or need updating)
+                DIFF_CALLBACKS callbacks;
+                callbacks.onApprove = [this]() {
+                    if( m_showingAgentBefore )
+                        ShowAgentChangesAfter();
+                    ClearAgentPendingChanges();
+                    std::string payload = "sch";
+                    Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+                };
+                callbacks.onReject = [this]() {
+                    if( m_showingAgentBefore )
+                        ShowAgentChangesAfter();
+                    RevertAgentChanges();
+                    std::string payload = "sch";
+                    Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+                };
+                callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
+                callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
+                callbacks.onRefresh = [this]() {
+                    if( GetCanvas() )
+                        GetCanvas()->Refresh();
+                };
+
+                DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
+                DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
+            }
+
+            // Zoom to the changed area with some padding
+            BOX2I zoomBox = m_agentChangedBBox;
+            zoomBox.Inflate( zoomBox.GetWidth() / 4, zoomBox.GetHeight() / 4 );
+            // Convert BOX2I to BOX2D for SetViewport
+            BOX2D viewport( VECTOR2D( zoomBox.GetPosition() ), VECTOR2D( zoomBox.GetSize() ) );
+            GetCanvas()->GetView()->SetViewport( viewport );
+            GetCanvas()->Refresh();
+        }
+        break;
+    }
+
     case MAIL_SELECTION:
         if( !eeconfig()->m_CrossProbing.on_selection )
             break;

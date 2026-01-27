@@ -3,6 +3,7 @@
 #include "agent_chat_history.h"
 #include "agent_auth.h"
 #include "agent_keychain.h"
+#include "pending_changes_popup.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -489,6 +490,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                       "agent_frame_name", schIUScale ),
         m_signInOverlay( nullptr ),
         m_signInButton( nullptr ),
+        m_pendingChangesBtn( nullptr ),
+        m_pendingChangesPanel( nullptr ),
         m_workerThread( nullptr ),
         m_hasPendingSchChanges( false ),
         m_hasPendingPcbChanges( false )
@@ -539,6 +542,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_chatWindow->SetPage( m_fullHtmlContent );
     mainSizer->Add( m_chatWindow, 1, wxEXPAND | wxALL, 0 ); // Remove ALL padding for clean edge
 
+    // Pending Changes Panel (between chat and input, hidden by default)
+    m_pendingChangesPanel = new PENDING_CHANGES_PANEL( this, this );
+    mainSizer->Add( m_pendingChangesPanel, 0, wxEXPAND );
+
     // 2. Input Container (Unified Look)
     // Create m_inputPanel for dark styling
     m_inputPanel = new wxPanel( this, wxID_ANY );
@@ -550,12 +557,23 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Use an inner sizer for content padding
     wxBoxSizer* inputContainerSizer = new wxBoxSizer( wxVERTICAL );
 
+    // Top row: Selection Pill (left) + Pending Changes Button (right)
+    wxBoxSizer* topRowSizer = new wxBoxSizer( wxHORIZONTAL );
+
     // Status Pill (Selection Info / Add Context)
     m_selectionPill = new wxButton( m_inputPanel, wxID_ANY, "No Selection", wxDefaultPosition, wxDefaultSize );
     // Removed custom colors to keep native round look
     m_selectionPill->Hide(); // Hide on load
-    // Match vertical spacing of bottom buttons (approx 5px padding)
-    inputContainerSizer->Add( m_selectionPill, 0, wxALIGN_LEFT | wxBOTTOM, 5 );
+    topRowSizer->Add( m_selectionPill, 0, wxALIGN_CENTER_VERTICAL );
+
+    topRowSizer->AddStretchSpacer();
+
+    // Pending Changes Button (hidden by default)
+    m_pendingChangesBtn = new wxButton( m_inputPanel, wxID_ANY, "1 change" );
+    m_pendingChangesBtn->Hide();
+    topRowSizer->Add( m_pendingChangesBtn, 0, wxALIGN_CENTER_VERTICAL );
+
+    inputContainerSizer->Add( topRowSizer, 0, wxEXPAND | wxBOTTOM, 5 );
 
     // 2a. Text Input (Top)
     m_inputCtrl = new wxTextCtrl( m_inputPanel, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 60 ),
@@ -617,6 +635,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_historyButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnHistoryTool, this );
     m_inputCtrl->Bind( wxEVT_TEXT_ENTER, &AGENT_FRAME::OnTextEnter, this );
     m_selectionPill->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSelectionPillClick, this );
+    m_pendingChangesBtn->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnPendingChangesClick, this );
 
     // m_toolButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnToolClick, this );
     m_chatWindow->Bind( wxEVT_HTML_LINK_CLICKED, &AGENT_FRAME::OnHtmlLinkClick, this );
@@ -1799,14 +1818,6 @@ void AGENT_FRAME::OnHtmlLinkClick( wxHtmlLinkEvent& aEvent )
         m_chatHistory.push_back( { { "role", "user" }, { "content", "Tool execution rejected." } } );
         // Optionally resume generation or wait for user input?
         // Usually better to let user type why.
-    }
-    else if( href == "agent:approve" )
-    {
-        OnApproveChanges();
-    }
-    else if( href == "agent:reject" )
-    {
-        OnRejectChanges();
     }
     else
     {
@@ -3297,98 +3308,81 @@ void AGENT_FRAME::CheckForPendingChanges()
 
 void AGENT_FRAME::ShowApproveRejectButtons()
 {
+    // Show the indicator button and panel
+    m_pendingChangesBtn->Show();
+
+    // Update button label based on pending changes
     wxString label;
     if( m_hasPendingSchChanges && m_hasPendingPcbChanges )
-        label = "Schematic and PCB";
-    else if( m_hasPendingSchChanges )
-        label = "Schematic";
+        label = "2 changes";
     else
-        label = "PCB";
+        label = "1 change";
 
-    // Add approve/reject buttons to tool call HTML so they persist through re-renders
-    wxString html = wxString::Format(
-        "<br><table width='100%%' bgcolor='#1a3a1a' cellpadding='10'><tr><td>"
-        "<font color='#88ff88'><b>%s changes pending</b></font><br>"
-        "<a href=\"agent:approve\"><font color='#00ff00'>[Approve]</font></a> "
-        "<a href=\"agent:reject\"><font color='#ff6666'>[Reject]</font></a>"
-        "</td></tr></table>",
-        label );
-    m_toolCallHtml += html;
-    UpdateAgentResponse();
+    m_pendingChangesBtn->SetLabel( label );
+
+    // Update and show the panel
+    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
+    m_pendingChangesPanel->Show();
+    Layout();
 }
 
 
-void AGENT_FRAME::OnApproveChanges()
+void AGENT_FRAME::OnPendingChangesClick( wxCommandEvent& aEvent )
 {
-    // Send approve message to editors via ExpressMail
-    if( m_hasPendingSchChanges )
-    {
-        std::string payload;
-        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_APPROVE, payload );
-    }
-    if( m_hasPendingPcbChanges )
-    {
-        std::string payload;
-        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_APPROVE, payload );
-    }
-
-    m_hasPendingSchChanges = false;
-    m_hasPendingPcbChanges = false;
-
-    // Remove the approval buttons table from m_toolCallHtml
-    int tableStart = m_toolCallHtml.Find( "<table width='100%' bgcolor='#1a3a1a'" );
-    if( tableStart != wxNOT_FOUND )
-    {
-        int tableEnd = m_toolCallHtml.find( "</table>", tableStart );
-        if( tableEnd != wxNOT_FOUND )
-        {
-            int brPos = m_toolCallHtml.rfind( "<br>", tableStart );
-            if( brPos != wxNOT_FOUND && brPos > tableStart - 10 )
-                tableStart = brPos;
-            m_toolCallHtml = m_toolCallHtml.Mid( 0, tableStart )
-                           + m_toolCallHtml.Mid( tableEnd + 8 );
-        }
-    }
-    UpdateAgentResponse();
-
-    AppendHtml( "<p><i>Changes approved.</i></p>" );
+    // Toggle panel visibility
+    bool isShown = m_pendingChangesPanel->IsShown();
+    m_pendingChangesPanel->Show( !isShown );
+    Layout();
 }
 
 
-void AGENT_FRAME::OnRejectChanges()
+void AGENT_FRAME::OnSchematicChangeHandled( bool aAccepted )
 {
-    // Send reject message to editors via ExpressMail
-    if( m_hasPendingSchChanges )
+    m_hasPendingSchChanges = false;
+
+    // Update panel
+    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
+
+    if( !m_hasPendingSchChanges && !m_hasPendingPcbChanges )
     {
-        std::string payload;
-        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REJECT, payload );
+        // No more pending changes - hide panel and button
+        m_pendingChangesPanel->Hide();
+        m_pendingChangesBtn->Hide();
+        Layout();
     }
-    if( m_hasPendingPcbChanges )
+    else
     {
-        std::string payload;
-        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REJECT, payload );
+        // Update button label
+        m_pendingChangesBtn->SetLabel( "1 change" );
     }
 
-    m_hasPendingSchChanges = false;
+    AppendHtml( aAccepted ? "<p><i>Schematic changes accepted.</i></p>"
+                          : "<p><i>Schematic changes rejected.</i></p>" );
+}
+
+
+void AGENT_FRAME::OnPcbChangeHandled( bool aAccepted )
+{
     m_hasPendingPcbChanges = false;
 
-    // Remove the approval buttons table from m_toolCallHtml
-    int tableStart = m_toolCallHtml.Find( "<table width='100%' bgcolor='#1a3a1a'" );
-    if( tableStart != wxNOT_FOUND )
-    {
-        int tableEnd = m_toolCallHtml.find( "</table>", tableStart );
-        if( tableEnd != wxNOT_FOUND )
-        {
-            int brPos = m_toolCallHtml.rfind( "<br>", tableStart );
-            if( brPos != wxNOT_FOUND && brPos > tableStart - 10 )
-                tableStart = brPos;
-            m_toolCallHtml = m_toolCallHtml.Mid( 0, tableStart )
-                           + m_toolCallHtml.Mid( tableEnd + 8 );
-        }
-    }
-    UpdateAgentResponse();
+    // Update panel
+    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
 
-    AppendHtml( "<p><i>Changes rejected.</i></p>" );
+    if( !m_hasPendingSchChanges && !m_hasPendingPcbChanges )
+    {
+        // No more pending changes - hide panel and button
+        m_pendingChangesPanel->Hide();
+        m_pendingChangesBtn->Hide();
+        Layout();
+    }
+    else
+    {
+        // Update button label
+        m_pendingChangesBtn->SetLabel( "1 change" );
+    }
+
+    AppendHtml( aAccepted ? "<p><i>PCB changes accepted.</i></p>"
+                          : "<p><i>PCB changes rejected.</i></p>" );
 }
 
 
@@ -3400,51 +3394,20 @@ void AGENT_FRAME::ClearApprovalButtons( bool aIsSchematic )
     else
         m_hasPendingPcbChanges = false;
 
-    // If no more pending changes, remove the approval buttons from m_toolCallHtml
+    // Update panel
+    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
+
     if( !m_hasPendingSchChanges && !m_hasPendingPcbChanges )
     {
-        // Remove the approval buttons table from m_toolCallHtml
-        // The approval buttons are in a table with bgcolor='#1a3a1a'
-        int tableStart = m_toolCallHtml.Find( "<table width='100%' bgcolor='#1a3a1a'" );
-        if( tableStart != wxNOT_FOUND )
-        {
-            int tableEnd = m_toolCallHtml.find( "</table>", tableStart );
-            if( tableEnd != wxNOT_FOUND )
-            {
-                // Remove from the <br> before the table to the end of </table>
-                int brPos = m_toolCallHtml.rfind( "<br>", tableStart );
-                if( brPos != wxNOT_FOUND && brPos > tableStart - 10 )
-                    tableStart = brPos;
-
-                m_toolCallHtml = m_toolCallHtml.Mid( 0, tableStart )
-                               + m_toolCallHtml.Mid( tableEnd + 8 );  // 8 = len("</table>")
-            }
-        }
-
-        // Update the display
-        UpdateAgentResponse();
+        // No more pending changes - hide panel and button
+        m_pendingChangesPanel->Hide();
+        m_pendingChangesBtn->Hide();
+        Layout();
         AppendHtml( "<p><i>Changes handled via overlay.</i></p>" );
     }
     else
     {
-        // Still have changes in the other editor - update the label
-        wxString label = m_hasPendingSchChanges ? "Schematic" : "PCB";
-
-        // Find and update the label in the approval buttons table
-        int labelStart = m_toolCallHtml.Find( "changes pending</b>" );
-        if( labelStart != wxNOT_FOUND )
-        {
-            // Look backwards for the start of the label (after <b>)
-            int bStart = m_toolCallHtml.rfind( "<b>", labelStart );
-            if( bStart != wxNOT_FOUND )
-            {
-                // Replace the label
-                m_toolCallHtml = m_toolCallHtml.Mid( 0, bStart + 3 )
-                               + label + " "
-                               + m_toolCallHtml.Mid( labelStart );
-            }
-        }
-
-        UpdateAgentResponse();
+        // Still have changes in the other editor - update button label
+        m_pendingChangesBtn->SetLabel( "1 change" );
     }
 }

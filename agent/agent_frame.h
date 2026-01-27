@@ -20,6 +20,7 @@
 // Forward Declarations
 class AGENT_THREAD;
 class AGENT_AUTH;
+class PENDING_CHANGES_PANEL;
 class wxStaticText;
 
 enum
@@ -65,6 +66,11 @@ public:
     void OnNewChat( wxCommandEvent& aEvent );
     void OnSignIn( wxCommandEvent& aEvent );
     void OnSize( wxSizeEvent& aEvent ) override;
+    void OnPendingChangesClick( wxCommandEvent& aEvent );
+
+    // Agent change approval (public for panel callbacks)
+    void OnSchematicChangeHandled( bool aAccepted );
+    void OnPcbChangeHandled( bool aAccepted );
 
     // Async tool execution event handlers
     void OnToolExecutionComplete( wxCommandEvent& aEvent );
@@ -105,6 +111,10 @@ private:
     wxButton*      m_historyButton;
     wxChoice*      m_modelChoice;
     wxPanel*       m_inputPanel;
+
+    // Pending changes UI
+    wxButton*               m_pendingChangesBtn;    // Shows when changes pending
+    PENDING_CHANGES_PANEL*  m_pendingChangesPanel;  // Panel for managing changes
 
     // Sign-in overlay (shown when not authenticated)
     wxPanel*       m_signInOverlay;
@@ -192,9 +202,7 @@ private:
     bool m_hasPendingSchChanges;    // True if schematic has pending agent changes
     bool m_hasPendingPcbChanges;    // True if PCB has pending agent changes
     void CheckForPendingChanges();  // Query editors for pending changes
-    void ShowApproveRejectButtons(); // Display approve/reject buttons in chat
-    void OnApproveChanges();        // Handle approve click from chat
-    void OnRejectChanges();         // Handle reject click from chat
+    void ShowApproveRejectButtons(); // Show pending changes button in control bar
     void ClearApprovalButtons( bool aIsSchematic );  // Clear approval buttons when diff overlay dismissed
 };
 

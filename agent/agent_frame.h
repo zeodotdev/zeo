@@ -20,6 +20,7 @@
 // Forward Declarations
 class AGENT_THREAD;
 class AGENT_AUTH;
+class PENDING_CHANGES_PANEL;
 class wxStaticText;
 
 enum
@@ -65,6 +66,11 @@ public:
     void OnNewChat( wxCommandEvent& aEvent );
     void OnSignIn( wxCommandEvent& aEvent );
     void OnSize( wxSizeEvent& aEvent ) override;
+    void OnPendingChangesClick( wxCommandEvent& aEvent );
+
+    // Agent change approval (public for panel callbacks)
+    void OnSchematicChangeHandled( bool aAccepted );
+    void OnPcbChangeHandled( bool aAccepted );
 
     // Async tool execution event handlers
     void OnToolExecutionComplete( wxCommandEvent& aEvent );
@@ -76,6 +82,9 @@ public:
     void OnLLMStreamChunk( wxThreadEvent& aEvent );
     void OnLLMStreamComplete( wxThreadEvent& aEvent );
     void OnLLMStreamError( wxThreadEvent& aEvent );
+
+    // Title generation event handler
+    void OnTitleGeneratedEvent( wxThreadEvent& aEvent );
 
     // Tool call helper (legacy synchronous - will be deprecated)
     std::string SendRequest( int aDest, const std::string& aPayload );
@@ -102,6 +111,10 @@ private:
     wxButton*      m_historyButton;
     wxChoice*      m_modelChoice;
     wxPanel*       m_inputPanel;
+
+    // Pending changes UI
+    wxButton*               m_pendingChangesBtn;    // Shows when changes pending
+    PENDING_CHANGES_PANEL*  m_pendingChangesPanel;  // Panel for managing changes
 
     // Sign-in overlay (shown when not authenticated)
     wxPanel*       m_signInOverlay;
@@ -137,9 +150,12 @@ private:
     // HTML Rendering
     wxString m_fullHtmlContent;        // Complete HTML buffer
     wxString m_htmlBeforeAgentResponse; // HTML snapshot before streaming starts (for markdown re-render)
+    wxString m_toolCallHtml;           // Accumulated tool call/result HTML (preserved during re-render)
+    wxString m_lastToolDesc;           // Temp storage for tool description during history replay
     void     AppendHtml( const wxString& aHtml );
     void     SetHtml( const wxString& aHtml );
     void     UpdateAgentResponse();    // Re-render current response with markdown
+    wxString GetToolDescription( const std::string& aToolName, const nlohmann::json& aInput ); // Human-readable tool description
 
     // Generating animation
     wxTimer  m_generatingTimer;        // Timer for animating dots
@@ -148,6 +164,12 @@ private:
     void     OnGeneratingTimer( wxTimerEvent& aEvent );
     void     StartGeneratingAnimation();
     void     StopGeneratingAnimation();
+
+    // Chat title generation
+    bool        m_needsTitleGeneration;  // Whether to generate title after first response
+    std::string m_firstUserMessage;      // First user message for title generation
+    void        GenerateChatTitle();     // Async call to generate title
+    void        OnTitleGenerated( const std::string& aTitle, const std::string& aConversationId ); // Handle generated title
 
     // Auth helpers
     void UpdateAuthUI();
@@ -178,18 +200,8 @@ private:
     bool m_hasPendingSchChanges;    // True if schematic has pending agent changes
     bool m_hasPendingPcbChanges;    // True if PCB has pending agent changes
     void CheckForPendingChanges();  // Query editors for pending changes
-    void ShowApproveRejectButtons(); // Display approve/reject buttons in chat
-    void OnApproveChanges();        // Handle approve click from chat
-    void OnRejectChanges();         // Handle reject click from chat
-
-    // Pending editor open request
-    bool        m_pendingOpenSch;       // True if schematic editor open is pending approval
-    bool        m_pendingOpenPcb;       // True if PCB editor open is pending approval
-    std::string m_pendingOpenToolId;    // Tool use ID for the pending open request
-    void ShowOpenEditorApproval( const wxString& aEditorType );
-    void OnApproveOpenEditor();
-    void OnRejectOpenEditor();
-    bool DoOpenEditor( FRAME_T aFrameType );
+    void ShowApproveRejectButtons(); // Show pending changes button in control bar
+    void ClearApprovalButtons( bool aIsSchematic );  // Clear approval buttons when diff overlay dismissed
 };
 
 #endif // AGENT_FRAME_H

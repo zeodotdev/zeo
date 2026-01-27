@@ -873,8 +873,9 @@ private:
 #endif
 
     // Agent pending changes support (for diff view using native undo/redo)
-    int                         m_undoCountBeforeAgent = 0;  ///< Undo stack count before agent execution
-    bool                        m_hasAgentPendingChanges = false;
+    int   m_undoCountBeforeAgent = 0;     ///< Undo stack count before agent execution
+    bool  m_hasAgentPendingChanges = false;
+    BOX2I m_agentChangedBBox;             ///< Accumulated bounding box of all agent changes
 
 public:
     /**

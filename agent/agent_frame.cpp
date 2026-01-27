@@ -3,12 +3,14 @@
 #include "agent_chat_history.h"
 #include "agent_auth.h"
 #include "agent_keychain.h"
+#include "pending_changes_popup.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
 #include <kiway.h>
 #include <sstream>
 #include <fstream>
+#include <thread>
 #include <wx/sizer.h>
 #include <wx/textctrl.h>
 #include <wx/msgdlg.h>
@@ -488,11 +490,11 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                       "agent_frame_name", schIUScale ),
         m_signInOverlay( nullptr ),
         m_signInButton( nullptr ),
+        m_pendingChangesBtn( nullptr ),
+        m_pendingChangesPanel( nullptr ),
         m_workerThread( nullptr ),
         m_hasPendingSchChanges( false ),
-        m_hasPendingPcbChanges( false ),
-        m_pendingOpenSch( false ),
-        m_pendingOpenPcb( false )
+        m_hasPendingPcbChanges( false )
 {
 
     // --- UI Layout ---
@@ -540,6 +542,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_chatWindow->SetPage( m_fullHtmlContent );
     mainSizer->Add( m_chatWindow, 1, wxEXPAND | wxALL, 0 ); // Remove ALL padding for clean edge
 
+    // Pending Changes Panel (between chat and input, hidden by default)
+    m_pendingChangesPanel = new PENDING_CHANGES_PANEL( this, this );
+    mainSizer->Add( m_pendingChangesPanel, 0, wxEXPAND );
+
     // 2. Input Container (Unified Look)
     // Create m_inputPanel for dark styling
     m_inputPanel = new wxPanel( this, wxID_ANY );
@@ -551,12 +557,23 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Use an inner sizer for content padding
     wxBoxSizer* inputContainerSizer = new wxBoxSizer( wxVERTICAL );
 
+    // Top row: Selection Pill (left) + Pending Changes Button (right)
+    wxBoxSizer* topRowSizer = new wxBoxSizer( wxHORIZONTAL );
+
     // Status Pill (Selection Info / Add Context)
     m_selectionPill = new wxButton( m_inputPanel, wxID_ANY, "No Selection", wxDefaultPosition, wxDefaultSize );
     // Removed custom colors to keep native round look
     m_selectionPill->Hide(); // Hide on load
-    // Match vertical spacing of bottom buttons (approx 5px padding)
-    inputContainerSizer->Add( m_selectionPill, 0, wxALIGN_LEFT | wxBOTTOM, 5 );
+    topRowSizer->Add( m_selectionPill, 0, wxALIGN_CENTER_VERTICAL );
+
+    topRowSizer->AddStretchSpacer();
+
+    // Pending Changes Button (hidden by default)
+    m_pendingChangesBtn = new wxButton( m_inputPanel, wxID_ANY, "1 change" );
+    m_pendingChangesBtn->Hide();
+    topRowSizer->Add( m_pendingChangesBtn, 0, wxALIGN_CENTER_VERTICAL );
+
+    inputContainerSizer->Add( topRowSizer, 0, wxEXPAND | wxBOTTOM, 5 );
 
     // 2a. Text Input (Top)
     m_inputCtrl = new wxTextCtrl( m_inputPanel, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 60 ),
@@ -618,6 +635,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_historyButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnHistoryTool, this );
     m_inputCtrl->Bind( wxEVT_TEXT_ENTER, &AGENT_FRAME::OnTextEnter, this );
     m_selectionPill->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSelectionPillClick, this );
+    m_pendingChangesBtn->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnPendingChangesClick, this );
 
     // m_toolButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnToolClick, this );
     m_chatWindow->Bind( wxEVT_HTML_LINK_CLICKED, &AGENT_FRAME::OnHtmlLinkClick, this );
@@ -641,10 +659,17 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( EVT_LLM_STREAM_COMPLETE, &AGENT_FRAME::OnLLMStreamComplete, this );
     Bind( EVT_LLM_STREAM_ERROR, &AGENT_FRAME::OnLLMStreamError, this );
 
+    // Bind Title Generation Event
+    Bind( EVT_TITLE_GENERATED, &AGENT_FRAME::OnTitleGeneratedEvent, this );
+
     // Initialize generating animation
     m_generatingDots = 0;
     m_isGenerating = false;
     m_generatingTimer.Bind( wxEVT_TIMER, &AGENT_FRAME::OnGeneratingTimer, this );
+
+    // Initialize title generation
+    m_needsTitleGeneration = true;
+    m_firstUserMessage = "";
 
     // Bind Model Change Event
     m_modelChoice->Bind( wxEVT_CHOICE, &AGENT_FRAME::OnModelSelection, this );
@@ -802,15 +827,58 @@ void AGENT_FRAME::ShowChangedLanguage()
 
 void AGENT_FRAME::AppendHtml( const wxString& aHtml )
 {
-    m_fullHtmlContent += aHtml;
+    // Insert content BEFORE the closing </body></html> tags to maintain valid HTML structure
+    // This is critical - content outside <body> may not be rendered by wxHtmlWindow
+    wxString closingTags = "</body></html>";
+
+    if( m_fullHtmlContent.EndsWith( closingTags ) )
+    {
+        // Remove closing tags, append content, add closing tags back
+        m_fullHtmlContent = m_fullHtmlContent.Left( m_fullHtmlContent.length() - closingTags.length() );
+        m_fullHtmlContent += aHtml;
+        m_fullHtmlContent += closingTags;
+    }
+    else
+    {
+        // No closing tags found, just append (shouldn't normally happen)
+        m_fullHtmlContent += aHtml;
+    }
+
     SetHtml( m_fullHtmlContent );
 }
 
 void AGENT_FRAME::UpdateAgentResponse()
 {
     // Re-render the full HTML with the current response formatted as markdown
+    // IMPORTANT: m_htmlBeforeAgentResponse may contain </body></html> closing tags
+    // We need to insert new content BEFORE those tags to maintain valid HTML structure
+
+    wxString closingTags = "</body></html>";
     wxString html = m_htmlBeforeAgentResponse;
+
+    // Debug: log the state of HTML building
+    fprintf( stderr, "[HTML-DEBUG] UpdateAgentResponse called\n" );
+    fprintf( stderr, "[HTML-DEBUG]   m_htmlBeforeAgentResponse length: %zu, ends with closing tags: %s\n",
+             (size_t)m_htmlBeforeAgentResponse.length(),
+             m_htmlBeforeAgentResponse.EndsWith( closingTags ) ? "YES" : "NO" );
+    fprintf( stderr, "[HTML-DEBUG]   m_currentResponse length: %zu\n", m_currentResponse.size() );
+    fprintf( stderr, "[HTML-DEBUG]   m_toolCallHtml length: %zu\n", (size_t)m_toolCallHtml.length() );
+
+    // Strip closing tags from the base HTML - we'll add them back at the end
+    if( html.EndsWith( closingTags ) )
+    {
+        html = html.Left( html.length() - closingTags.length() );
+        fprintf( stderr, "[HTML-DEBUG]   Stripped closing tags from base HTML\n" );
+    }
+
+    // Append the current response with markdown formatting
     html += MarkdownToHtml( m_currentResponse );
+
+    // Include any tool call HTML (preserved across re-renders)
+    if( !m_toolCallHtml.IsEmpty() )
+    {
+        html += m_toolCallHtml;
+    }
 
     // Add animated dots if currently generating
     if( m_isGenerating )
@@ -821,8 +889,86 @@ void AGENT_FRAME::UpdateAgentResponse()
         html += "<font color='#888888'>" + dots + "</font>";
     }
 
+    // Add closing tags back
+    html += closingTags;
+
+    fprintf( stderr, "[HTML-DEBUG]   Final HTML length: %zu\n", (size_t)html.length() );
+    fflush( stderr );
+
     SetHtml( html );
     m_fullHtmlContent = html;
+}
+
+wxString AGENT_FRAME::GetToolDescription( const std::string& aToolName, const nlohmann::json& aInput )
+{
+    // Generate human-readable description based on tool name and input
+    if( aToolName == "run_shell" || aToolName == "run_python" )
+    {
+        std::string mode = aInput.value( "mode", "python" );
+        std::string code = aInput.value( "code", "" );
+
+        // Try to extract a description from the code
+        // Look for a comment at the start like "# Description: ..." or just "# ..."
+        std::string desc;
+        size_t firstNewline = code.find( '\n' );
+        std::string firstLine = ( firstNewline != std::string::npos ) ? code.substr( 0, firstNewline ) : code;
+
+        if( firstLine.length() > 2 && firstLine[0] == '#' )
+        {
+            // Extract the comment text
+            desc = firstLine.substr( 1 );
+            // Trim leading whitespace
+            size_t start = desc.find_first_not_of( " \t" );
+            if( start != std::string::npos )
+                desc = desc.substr( start );
+            // Remove "Description:" prefix if present
+            if( desc.find( "Description:" ) == 0 )
+                desc = desc.substr( 12 );
+            // Trim again
+            start = desc.find_first_not_of( " \t" );
+            if( start != std::string::npos )
+                desc = desc.substr( start );
+        }
+
+        // If we found a description, use it
+        if( !desc.empty() && desc.length() < 100 )
+        {
+            return wxString::FromUTF8( desc );
+        }
+
+        // Otherwise, try to infer from the code content
+        if( code.find( "add_symbol" ) != std::string::npos )
+            return "Adding symbol to schematic";
+        else if( code.find( "delete" ) != std::string::npos || code.find( "remove" ) != std::string::npos )
+            return "Removing component";
+        else if( code.find( "move" ) != std::string::npos || code.find( "position" ) != std::string::npos )
+            return "Moving component";
+        else if( code.find( "connect" ) != std::string::npos || code.find( "wire" ) != std::string::npos )
+            return "Adding connections";
+        else if( code.find( "get_symbols" ) != std::string::npos || code.find( "find" ) != std::string::npos )
+            return "Searching schematic";
+        else if( code.find( "property" ) != std::string::npos || code.find( "value" ) != std::string::npos )
+            return "Modifying component properties";
+
+        // Fallback to mode-based description
+        if( mode == "kipy_schematic" )
+            return "Modifying schematic";
+        else if( mode == "kipy_pcb" )
+            return "Modifying PCB layout";
+        else
+            return "Executing Python script";
+    }
+    else if( aToolName == "run_terminal" )
+    {
+        std::string cmd = aInput.value( "command", "" );
+        if( cmd.length() > 50 )
+            cmd = cmd.substr( 0, 47 ) + "...";
+        return wxString::Format( "Running: %s", cmd );
+    }
+    else
+    {
+        return wxString::Format( "Executing %s", aToolName );
+    }
 }
 
 void AGENT_FRAME::OnGeneratingTimer( wxTimerEvent& aEvent )
@@ -849,6 +995,147 @@ void AGENT_FRAME::StopGeneratingAnimation()
     m_isGenerating = false;
     m_generatingTimer.Stop();
     m_generatingDots = 0;
+}
+
+void AGENT_FRAME::GenerateChatTitle()
+{
+    wxLogDebug( "AGENT: GenerateChatTitle called, firstUserMessage='%s'", m_firstUserMessage.c_str() );
+
+    if( m_firstUserMessage.empty() )
+    {
+        wxLogDebug( "AGENT: GenerateChatTitle - firstUserMessage is empty, returning" );
+        return;
+    }
+
+    // Capture conversation ID on main thread (must match the chat we're generating for)
+    std::string conversationId = m_chatHistoryDb.GetConversationId();
+    if( conversationId.empty() )
+    {
+        wxLogDebug( "AGENT: GenerateChatTitle - conversationId is empty, returning" );
+        return;
+    }
+
+    // Create a simple prompt for title generation
+    std::string prompt = "Generate a very short title (3-6 words maximum) for a chat that starts with this question. "
+                         "Reply with ONLY the title, no quotes, no punctuation at the end, no explanation.\n\n"
+                         "User's question: " + m_firstUserMessage;
+
+    // Capture model name on main thread (wxWidgets UI calls must be on main thread)
+    std::string modelName = m_modelChoice->GetStringSelection().ToStdString();
+    wxLogDebug( "AGENT: GenerateChatTitle - using model '%s', conversationId='%s'", modelName.c_str(), conversationId.c_str() );
+
+    // Use a background thread to generate the title
+    std::thread( [this, prompt, modelName, conversationId]() {
+        try
+        {
+            fprintf( stderr, "[TITLE] Starting title generation with model: %s, convId: %s\n", modelName.c_str(), conversationId.c_str() );
+
+            // Create a temporary LLM client for title generation
+            AGENT_LLM_CLIENT titleClient( nullptr );
+
+            titleClient.SetModel( modelName );
+
+            // Simple non-streaming request for title
+            nlohmann::json messages = nlohmann::json::array();
+            messages.push_back( { { "role", "user" }, { "content", prompt } } );
+
+            std::string title;
+            titleClient.AskStreamWithTools(
+                messages,
+                "You are a helpful assistant that generates concise chat titles.",
+                {},  // No tools needed
+                [&title]( const LLM_EVENT& event ) {
+                    if( event.type == LLM_EVENT_TYPE::TEXT )
+                    {
+                        title += event.text;
+                    }
+                }
+            );
+
+            fprintf( stderr, "[TITLE] Raw title from LLM: '%s'\n", title.c_str() );
+
+            // Clean up the title (remove quotes, trim whitespace)
+            while( !title.empty() && ( title.front() == '"' || title.front() == '\'' || title.front() == ' ' ) )
+                title.erase( 0, 1 );
+            while( !title.empty() && ( title.back() == '"' || title.back() == '\'' || title.back() == ' ' ||
+                                        title.back() == '.' || title.back() == '\n' ) )
+                title.pop_back();
+
+            fprintf( stderr, "[TITLE] Cleaned title: '%s'\n", title.c_str() );
+
+            // Post result to main thread using thread-safe event
+            if( !title.empty() )
+            {
+                fprintf( stderr, "[TITLE] Posting title to main thread for convId: %s\n", conversationId.c_str() );
+                PostTitleGenerated( this, title, conversationId );
+            }
+            else
+            {
+                fprintf( stderr, "[TITLE] Title is empty after cleanup, not posting\n" );
+            }
+        }
+        catch( const std::exception& e )
+        {
+            fprintf( stderr, "[TITLE] Exception: %s\n", e.what() );
+        }
+        catch( ... )
+        {
+            fprintf( stderr, "[TITLE] Unknown exception occurred\n" );
+        }
+    }).detach();
+}
+
+void AGENT_FRAME::OnTitleGenerated( const std::string& aTitle, const std::string& aConversationId )
+{
+    wxLogDebug( "AGENT: OnTitleGenerated called with title='%s', convId='%s'", aTitle.c_str(), aConversationId.c_str() );
+    fprintf( stderr, "[TITLE] OnTitleGenerated: '%s' for convId: %s\n", aTitle.c_str(), aConversationId.c_str() );
+
+    // Check if we're still on the same conversation
+    std::string currentConvId = m_chatHistoryDb.GetConversationId();
+
+    if( currentConvId == aConversationId )
+    {
+        // We're on the same conversation - update UI and save
+        m_chatHistoryDb.SetTitle( aTitle );
+        m_chatHistoryDb.Save( m_chatHistory );
+        m_chatNameLabel->SetLabel( wxString::FromUTF8( aTitle ) );
+        m_needsTitleGeneration = false;
+        fprintf( stderr, "[TITLE] Title saved and UI updated for current chat\n" );
+    }
+    else
+    {
+        // Different conversation - need to load, update, and save that conversation
+        fprintf( stderr, "[TITLE] Title is for different conversation, saving directly to file\n" );
+
+        // Create a temporary chat history object to save to the correct file
+        AGENT_CHAT_HISTORY tempHistory;
+        nlohmann::json messages = tempHistory.Load( aConversationId );
+        tempHistory.SetTitle( aTitle );
+        tempHistory.Save( messages );
+
+        fprintf( stderr, "[TITLE] Title saved to conversation file: %s\n", aConversationId.c_str() );
+    }
+
+    wxLogDebug( "AGENT: Title saved" );
+}
+
+void AGENT_FRAME::OnTitleGeneratedEvent( wxThreadEvent& aEvent )
+{
+    wxLogDebug( "AGENT: OnTitleGeneratedEvent received" );
+    fprintf( stderr, "[TITLE] OnTitleGeneratedEvent received\n" );
+
+    // Extract the title data from the event payload
+    TitleGeneratedData* data = aEvent.GetPayload<TitleGeneratedData*>();
+    if( data )
+    {
+        fprintf( stderr, "[TITLE] Got title from event: '%s' for convId: %s\n", data->title.c_str(), data->conversationId.c_str() );
+        OnTitleGenerated( data->title, data->conversationId );
+        delete data;
+    }
+    else
+    {
+        fprintf( stderr, "[TITLE] Event payload was null\n" );
+    }
 }
 
 void AGENT_FRAME::SetHtml( const wxString& aHtml )
@@ -1065,6 +1352,13 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
             RequestUserAttention();
         }
     }
+    else if( aEvent.Command() == MAIL_AGENT_DIFF_CLEARED )
+    {
+        // Diff overlay was dismissed in editor - clear the corresponding approval buttons
+        std::string payload = aEvent.GetPayload();
+        bool isSchematic = ( payload == "sch" );
+        ClearApprovalButtons( isSchematic );
+    }
     Layout();
 }
 
@@ -1203,6 +1497,11 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // Save HTML snapshot for markdown re-rendering during streaming
     m_htmlBeforeAgentResponse = m_fullHtmlContent;
 
+    fprintf( stderr, "[HTML-DEBUG] OnSend: Captured m_htmlBeforeAgentResponse, length=%zu, ends with </body></html>: %s\n",
+             (size_t)m_htmlBeforeAgentResponse.length(),
+             m_htmlBeforeAgentResponse.EndsWith( "</body></html>" ) ? "YES" : "NO" );
+    fflush( stderr );
+
     // Clear Input and Update UI
     m_inputCtrl->Clear();
     m_actionButton->SetLabel( "Stop" );
@@ -1219,7 +1518,16 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // Update History
     m_chatHistory.push_back( { { "role", "user" }, { "content", text.ToStdString() } } );
     m_chatHistoryDb.Save( m_chatHistory );
+
+    // Capture first user message for title generation
+    if( m_needsTitleGeneration && m_firstUserMessage.empty() )
+    {
+        m_firstUserMessage = text.ToStdString();
+        fprintf( stderr, "[TITLE-DEBUG] Captured first user message: '%s'\n", m_firstUserMessage.c_str() );
+    }
+
     m_currentResponse = ""; // Reset accumulator
+    m_toolCallHtml = "";    // Reset tool call HTML
     m_pendingToolCalls = nlohmann::json::array(); // Reset pending tool calls
     m_stopRequested = false; // Reset stop flag
 
@@ -1434,22 +1742,6 @@ void AGENT_FRAME::OnHtmlLinkClick( wxHtmlLinkEvent& aEvent )
         m_chatHistory.push_back( { { "role", "user" }, { "content", "Tool execution rejected." } } );
         // Optionally resume generation or wait for user input?
         // Usually better to let user type why.
-    }
-    else if( href == "agent:approve" )
-    {
-        OnApproveChanges();
-    }
-    else if( href == "agent:reject" )
-    {
-        OnRejectChanges();
-    }
-    else if( href == "agent:approve_open" )
-    {
-        OnApproveOpenEditor();
-    }
-    else if( href == "agent:reject_open" )
-    {
-        OnRejectOpenEditor();
     }
     else
     {
@@ -1793,16 +2085,7 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
 
         m_pendingToolCalls.push_back( toolCall );
 
-        // Display tool call in UI
-        std::string inputStr = aEvent.tool_input.dump( 2 );
-        wxString wrappedInput = WrapLongLines( inputStr );
-        wxString htmlToolCall = wxString::Format(
-            "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>"
-            "<font color='#4ec9b0' size='2'><b>Tool: %s</b></font><br>"
-            "<font color='#d4d4d4' size='2'>%s</font>"
-            "</td></tr></table>",
-            aEvent.tool_name, wrappedInput );
-        AppendHtml( htmlToolCall );
+        // Don't display anything yet - we'll show a consolidated view in TOOL_USE_DONE
         break;
     }
     case LLM_EVENT_TYPE::TOOL_USE_DONE:
@@ -1810,16 +2093,25 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
         fprintf( stderr, "AGENT HandleLLMEvent: TOOL_USE_DONE received\n" );
         fflush( stderr );
 
+        // Stop generating animation since we're switching to tool execution
+        StopGeneratingAnimation();
+
         // All tool calls received, execute them asynchronously
         if( m_pendingToolCalls.is_array() && !m_pendingToolCalls.empty() )
         {
             fprintf( stderr, "AGENT HandleLLMEvent: %zu pending tool calls\n", m_pendingToolCalls.size() );
             fflush( stderr );
 
+            // IMPORTANT: Capture the current HTML state BEFORE clearing m_currentResponse
+            // The assistant's text before the tool call needs to be preserved in the HTML
+            UpdateAgentResponse();  // Render current text into HTML
+            m_htmlBeforeAgentResponse = m_fullHtmlContent;  // Capture it
+
             // Transition to TOOL_USE_DETECTED state
             m_conversationCtx.TransitionTo( AgentConversationState::TOOL_USE_DETECTED );
 
             // Add assistant message with tool use blocks to history
+            // NOTE: This clears m_currentResponse, but we've already captured it in HTML above
             AddAssistantToolUseToHistory( m_pendingToolCalls );
 
             // Queue all tools for async execution
@@ -1847,10 +2139,15 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
                 fprintf( stderr, "AGENT HandleLLMEvent: Starting first tool '%s'\n", first->tool_name.c_str() );
                 fflush( stderr );
 
-                // Show "Running..." state
-                wxString runningHtml = wxString::Format(
-                    "<br><font color='#888888'><i>Running %s...</i></font>", first->tool_name );
-                AppendHtml( runningHtml );
+                // Show "Running..." state in tool call HTML
+                wxString desc = GetToolDescription( first->tool_name, first->tool_input );
+                m_toolCallHtml = wxString::Format(
+                    "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                    "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+                    "<font color='#888888'><i>Running...</i></font>"
+                    "</td></tr></table>",
+                    desc );
+                UpdateAgentResponse();
 
                 // Execute async - returns immediately, result comes via event
                 ExecuteToolAsync( first->tool_name, first->tool_input, first->tool_use_id );
@@ -2014,24 +2311,6 @@ void AGENT_FRAME::ExecuteToolAsync( const std::string& aToolName,
     {
         existingTool->start_time = wxGetLocalTimeMillis();
         existingTool->is_executing = true;
-    }
-
-    // Handle open_editor tool specially - requires user approval
-    if( toolName == "open_editor" )
-    {
-        std::string editorType = toolInput.value( "editor_type", "" );
-
-        // Store the pending request
-        m_pendingOpenSch = ( editorType == "sch" );
-        m_pendingOpenPcb = ( editorType == "pcb" );
-        m_pendingOpenToolId = toolUseId;
-
-        // Show approval buttons in chat
-        wxString editorLabel = m_pendingOpenSch ? "Schematic" : "PCB";
-        ShowOpenEditorApproval( editorLabel );
-
-        // Return immediately - tool result will be sent after user responds
-        return;
     }
 
     // Build the payload for the target frame
@@ -2218,10 +2497,23 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
     wxLogDebug( "AGENT: ProcessToolResult: id=%s success=%d result_len=%zu",
                 aToolUseId.c_str(), aSuccess, aResult.size() );
 
-    // Store the result in collected results
+    // Get tool info before removing from pending
+    PendingToolCall* tool = m_conversationCtx.FindPendingToolCall( aToolUseId );
+    wxString toolDesc = tool ? GetToolDescription( tool->tool_name, tool->tool_input ) : "Tool execution";
+    std::string toolName = tool ? tool->tool_name : "unknown";
+
+    // Check if this is a Python error (contains traceback)
+    bool isPythonError = ( aResult.find( "Traceback" ) != std::string::npos ) ||
+                         ( aResult.find( "Error:" ) == 0 );
+
+    // Store the result in collected results with full info for UI display
     AgentConversationContext::ToolResult toolResult;
     toolResult.tool_use_id = aToolUseId;
+    toolResult.tool_name = toolName;
+    toolResult.tool_description = toolDesc.ToStdString();
     toolResult.result = aResult;
+    toolResult.success = aSuccess && !isPythonError;
+    toolResult.is_python_error = isPythonError;
     m_conversationCtx.completed_tool_results.push_back( toolResult );
 
     // Also store as last (for backward compatibility)
@@ -2231,23 +2523,56 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
     // Remove from pending
     m_conversationCtx.RemovePendingToolCall( aToolUseId );
 
-    // Display result in UI
-    wxString htmlResult = aResult;
-    htmlResult.Replace( "&", "&amp;" );
-    htmlResult.Replace( "<", "&lt;" );
-    htmlResult.Replace( ">", "&gt;" );
-    wxString wrappedResult = WrapLongLines( htmlResult );
+    // Rebuild m_toolCallHtml from ALL completed results
+    // This ensures we don't lose previous tool results when multiple tools run
+    m_toolCallHtml = "";
 
-    wxString statusIcon = aSuccess ? "✓" : "✗";
-    wxString statusColor = aSuccess ? "#4ec9b0" : "#f44747";
+    for( const auto& completedTool : m_conversationCtx.completed_tool_results )
+    {
+        wxString statusColor;
+        wxString statusText;
+        wxString displayResult;
 
-    wxString resultBox = wxString::Format(
-        "<br><table width='100%%' bgcolor='#1e1e1e' cellpadding='8'><tr><td>"
-        "<font color='%s' size='2'><b>%s Result:</b></font><br>"
-        "<font color='#d4d4d4' size='2'>%s</font>"
-        "</td></tr></table>",
-        statusColor, statusIcon, wrappedResult );
-    AppendHtml( resultBox );
+        if( completedTool.is_python_error )
+        {
+            statusColor = "#f44747";
+            statusText = "Error";
+            displayResult = "<i>Script execution failed. The model will attempt to fix the issue.</i>";
+        }
+        else if( !completedTool.success )
+        {
+            statusColor = "#f44747";
+            statusText = "Failed";
+            wxString htmlResult = completedTool.result;
+            htmlResult.Replace( "&", "&amp;" );
+            htmlResult.Replace( "<", "&lt;" );
+            htmlResult.Replace( ">", "&gt;" );
+            if( htmlResult.length() > 200 )
+                htmlResult = htmlResult.Left( 200 ) + "...";
+            displayResult = htmlResult;
+        }
+        else
+        {
+            statusColor = "#4ec9b0";
+            statusText = "Completed";
+            wxString htmlResult = completedTool.result;
+            htmlResult.Replace( "&", "&amp;" );
+            htmlResult.Replace( "<", "&lt;" );
+            htmlResult.Replace( ">", "&gt;" );
+            if( htmlResult.length() > 500 )
+                htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
+            displayResult = htmlResult;
+        }
+
+        m_toolCallHtml += wxString::Format(
+            "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+            "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+            "<font color='%s'><b>%s</b></font><br>"
+            "<font color='#d4d4d4' size='2'>%s</font>"
+            "</td></tr></table>",
+            wxString::FromUTF8( completedTool.tool_description ),
+            statusColor, statusText, displayResult );
+    }
 
     // Check if agent made changes that need approval
     CheckForPendingChanges();
@@ -2262,17 +2587,23 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
         PendingToolCall* next = m_conversationCtx.GetNextPendingToolCall();
         if( next )
         {
-            // Show "Running..." state
-            wxString runningHtml = wxString::Format(
-                "<br><font color='#888888'><i>Running %s...</i></font>", next->tool_name );
-            AppendHtml( runningHtml );
+            // Append next tool's "Running..." to the HTML
+            wxString nextDesc = GetToolDescription( next->tool_name, next->tool_input );
+            m_toolCallHtml += wxString::Format(
+                "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+                "<font color='#888888'><i>Running...</i></font>"
+                "</td></tr></table>",
+                nextDesc );
 
+            UpdateAgentResponse();
             ExecuteToolAsync( next->tool_name, next->tool_input, next->tool_use_id );
         }
     }
     else
     {
-        // All tools done, continue conversation
+        // All tools done - update display and continue conversation
+        UpdateAgentResponse();
         ContinueConversationWithToolResult();
     }
 }
@@ -2313,9 +2644,19 @@ void AGENT_FRAME::ContinueConversationWithToolResult()
     m_conversationCtx.TransitionTo( AgentConversationState::WAITING_FOR_LLM );
 
     // Continue the conversation
+    // First, ensure the current HTML is fully rendered with tool results
+    UpdateAgentResponse();
+
     // Save HTML snapshot for markdown re-rendering during streaming
+    // This captures everything including tool call results
     m_currentResponse = "";
     m_htmlBeforeAgentResponse = m_fullHtmlContent;
+    m_toolCallHtml = "";  // Clear since it's now part of m_htmlBeforeAgentResponse
+
+    fprintf( stderr, "[HTML-DEBUG] ContinueConversationWithToolResult: Captured m_htmlBeforeAgentResponse, length=%zu, ends with </body></html>: %s\n",
+             (size_t)m_htmlBeforeAgentResponse.length(),
+             m_htmlBeforeAgentResponse.EndsWith( "</body></html>" ) ? "YES" : "NO" );
+    fflush( stderr );
 
     wxString model = m_modelChoice->GetStringSelection();
     m_llmClient->SetModel( model.ToStdString() );
@@ -2416,15 +2757,7 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
 
         m_pendingToolCalls.push_back( toolCall );
 
-        // Display tool call in UI with proper word wrapping
-        wxString wrappedInput = WrapLongLines( aChunk.tool_input_json );
-        wxString toolHtml = wxString::Format(
-            "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>"
-            "<font color='#4ec9b0' size='2'><b>Tool: %s</b></font><br>"
-            "<font color='#d4d4d4' size='2'>%s</font>"
-            "</td></tr></table>",
-            aChunk.tool_name, wrappedInput );
-        AppendHtml( toolHtml );
+        // Don't display anything yet - we'll show a consolidated view in TOOL_USE_DONE
         break;
     }
     case LLMChunkType::TOOL_USE_DONE:
@@ -2432,16 +2765,29 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
         fprintf( stderr, "AGENT HandleLLMChunk: TOOL_USE_DONE received\n" );
         fflush( stderr );
 
+        // Stop generating animation since we're switching to tool execution
+        StopGeneratingAnimation();
+
         // All tool calls received, execute them asynchronously
         if( m_pendingToolCalls.is_array() && !m_pendingToolCalls.empty() )
         {
             fprintf( stderr, "AGENT HandleLLMChunk: %zu pending tool calls\n", m_pendingToolCalls.size() );
             fflush( stderr );
 
+            // IMPORTANT: Capture the current HTML state BEFORE clearing m_currentResponse
+            // The assistant's text before the tool call needs to be preserved in the HTML
+            UpdateAgentResponse();  // Render current text into HTML
+            m_htmlBeforeAgentResponse = m_fullHtmlContent;  // Capture it
+
+            fprintf( stderr, "[HTML-DEBUG] TOOL_USE_DONE: Captured HTML before tool, length=%zu\n",
+                     (size_t)m_htmlBeforeAgentResponse.length() );
+            fflush( stderr );
+
             // Transition to TOOL_USE_DETECTED state
             m_conversationCtx.TransitionTo( AgentConversationState::TOOL_USE_DETECTED );
 
             // Add assistant message with tool use blocks to history
+            // NOTE: This clears m_currentResponse, but we've already captured it in HTML above
             AddAssistantToolUseToHistory( m_pendingToolCalls );
 
             // Queue all tools for async execution
@@ -2469,10 +2815,21 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
                 fprintf( stderr, "AGENT HandleLLMChunk: Starting first tool '%s'\n", first->tool_name.c_str() );
                 fflush( stderr );
 
-                // Show "Running..." state
-                wxString runningHtml = wxString::Format(
-                    "<br><font color='#888888'><i>Running %s...</i></font>", first->tool_name );
-                AppendHtml( runningHtml );
+                // Show "Running..." state in tool call HTML
+                wxString desc = GetToolDescription( first->tool_name, first->tool_input );
+                m_toolCallHtml = wxString::Format(
+                    "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                    "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+                    "<font color='#888888'><i>Running...</i></font>"
+                    "</td></tr></table>",
+                    desc );
+
+                fprintf( stderr, "[HTML-DEBUG] TOOL_USE_DONE (async): About to call UpdateAgentResponse\n" );
+                fprintf( stderr, "[HTML-DEBUG]   m_currentResponse length: %zu\n", m_currentResponse.size() );
+                fprintf( stderr, "[HTML-DEBUG]   m_toolCallHtml length: %zu\n", (size_t)m_toolCallHtml.length() );
+                fflush( stderr );
+
+                UpdateAgentResponse();
 
                 // Execute async - returns immediately, result comes via event
                 ExecuteToolAsync( first->tool_name, first->tool_input, first->tool_use_id );
@@ -2532,14 +2889,22 @@ void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
         delete complete;
     }
 
-    // Only re-render without dots if we're still waiting for LLM response
-    // (not if we've already transitioned to tool execution which may have added UI elements)
+    // Re-render without dots
+    UpdateAgentResponse();
+
+    // Ensure we're in IDLE state and button shows Send
     if( m_conversationCtx.GetState() == AgentConversationState::WAITING_FOR_LLM )
     {
-        // Re-render without dots
-        UpdateAgentResponse();
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-        m_actionButton->SetLabel( "Send" );
+    }
+    m_actionButton->SetLabel( "Send" );
+
+    // Generate title after first successful response
+    // This happens regardless of state - the m_needsTitleGeneration flag is the guard
+    if( m_needsTitleGeneration && !m_firstUserMessage.empty() )
+    {
+        fprintf( stderr, "[TITLE] Triggering title generation for first message\n" );
+        GenerateChatTitle();
     }
 }
 
@@ -2567,12 +2932,24 @@ void AGENT_FRAME::OnLLMStreamError( wxThreadEvent& aEvent )
 
 void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
 {
+    // Prevent switching chats while generating
+    if( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE )
+    {
+        wxMessageBox( _( "Please wait for the current response to complete before starting a new chat." ),
+                      _( "Chat in Progress" ), wxOK | wxICON_INFORMATION );
+        return;
+    }
+
     // Clear current chat and start fresh
     m_chatHistory = nlohmann::json::array();
     m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>";
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
     m_chatNameLabel->SetLabel( "New Chat" );
+
+    // Reset title generation state
+    m_needsTitleGeneration = true;
+    m_firstUserMessage = "";
 }
 
 
@@ -2591,7 +2968,7 @@ void AGENT_FRAME::OnHistoryTool( wxCommandEvent& aEvent )
         for( const auto& entry : historyList )
         {
             if( count++ > 20 ) break;
-            menu.Append( id++, entry.displayName );
+            menu.Append( id++, wxString::FromUTF8( entry.title ) );
         }
 
         Bind( wxEVT_MENU, &AGENT_FRAME::OnHistoryMenuSelect, this, ID_CHAT_HISTORY_MENU_BASE, id - 1 );
@@ -2602,6 +2979,14 @@ void AGENT_FRAME::OnHistoryTool( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
 {
+    // Prevent switching chats while generating
+    if( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE )
+    {
+        wxMessageBox( _( "Please wait for the current response to complete before switching chats." ),
+                      _( "Chat in Progress" ), wxOK | wxICON_INFORMATION );
+        return;
+    }
+
     int index = aEvent.GetId() - ID_CHAT_HISTORY_MENU_BASE;
     auto historyList = m_chatHistoryDb.GetHistoryList();
 
@@ -2609,11 +2994,18 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
     {
         std::string selectedId = historyList[index].id;
 
-        // Load history
+        // Load history (this also loads the title into m_chatHistoryDb)
         m_chatHistory = m_chatHistoryDb.Load( selectedId );
 
-        // Update chat name label
-        m_chatNameLabel->SetLabel( historyList[index].displayName );
+        // Update chat name label with title from loaded history
+        std::string title = m_chatHistoryDb.GetTitle();
+        if( title.empty() )
+            title = historyList[index].title;  // Fallback to list title
+        m_chatNameLabel->SetLabel( wxString::FromUTF8( title ) );
+
+        // Mark that title is already generated for this chat
+        m_needsTitleGeneration = false;
+        m_firstUserMessage = "";
 
         // Clear window
         m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'>";
@@ -2691,41 +3083,71 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
                         }
                         else if( blockType == "tool_use" )
                         {
-                            // Render tool_use block with proper word wrapping
+                            // Render tool_use block with human-readable description
                             std::string toolName = block.value("name", "unknown");
-                            std::string inputStr = block.value("input", nlohmann::json::object()).dump(2);
-                            wxString wrappedInput = WrapLongLines( inputStr );
+                            nlohmann::json toolInput = block.value("input", nlohmann::json::object());
+                            wxString desc = GetToolDescription( toolName, toolInput );
 
-                            wxString htmlToolCall = wxString::Format(
-                                "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>"
-                                "<font color='#4ec9b0' size='2'><b>Tool: %s</b></font><br>"
-                                "<font color='#d4d4d4' size='2'>%s</font>"
-                                "</td></tr></table>",
-                                toolName, wrappedInput );
-                            m_fullHtmlContent += htmlToolCall;
+                            // Store for pairing with result (next block)
+                            m_lastToolDesc = desc;
                         }
                         else if( blockType == "tool_result" )
                         {
-                            // Render tool_result block with proper word wrapping
+                            // Render combined tool call + result block
                             std::string content = block.value("content", "");
                             bool isError = block.value("is_error", false);
 
-                            wxString htmlResult = content;
-                            htmlResult.Replace( "&", "&amp;" );
-                            htmlResult.Replace( "<", "&lt;" );
-                            htmlResult.Replace( ">", "&gt;" );
-                            wxString wrappedResult = WrapLongLines( htmlResult );
+                            // Check if this is a Python traceback
+                            bool isPythonError = ( content.find( "Traceback" ) != std::string::npos );
 
-                            wxString statusIcon = isError ? "✗" : "✓";
-                            wxString statusColor = isError ? "#f44747" : "#4ec9b0";
+                            wxString displayResult;
+                            wxString statusColor;
+                            wxString statusText;
+
+                            if( isPythonError )
+                            {
+                                statusColor = "#f44747";
+                                statusText = "Error";
+                                displayResult = "<i>Script execution failed.</i>";
+                            }
+                            else if( isError )
+                            {
+                                statusColor = "#f44747";
+                                statusText = "Failed";
+                                wxString htmlResult = content;
+                                htmlResult.Replace( "&", "&amp;" );
+                                htmlResult.Replace( "<", "&lt;" );
+                                htmlResult.Replace( ">", "&gt;" );
+                                if( htmlResult.length() > 200 )
+                                    htmlResult = htmlResult.Left( 200 ) + "...";
+                                displayResult = htmlResult;
+                            }
+                            else
+                            {
+                                statusColor = "#4ec9b0";
+                                statusText = "Completed";
+                                wxString htmlResult = content;
+                                htmlResult.Replace( "&", "&amp;" );
+                                htmlResult.Replace( "<", "&lt;" );
+                                htmlResult.Replace( ">", "&gt;" );
+                                if( htmlResult.length() > 500 )
+                                    htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
+                                displayResult = htmlResult;
+                            }
+
+                            // Use the stored tool description from the preceding tool_use block
+                            wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
 
                             wxString resultBox = wxString::Format(
-                                "<br><table width='100%%' bgcolor='#1e1e1e' cellpadding='8'><tr><td>"
-                                "<font color='%s' size='2'><b>%s Result:</b></font><br>"
+                                "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                                "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+                                "<font color='%s'><b>%s</b></font><br>"
                                 "<font color='#d4d4d4' size='2'>%s</font>"
                                 "</td></tr></table>",
-                                statusColor, statusIcon, wrappedResult );
+                                desc, statusColor, statusText, displayResult );
                             m_fullHtmlContent += resultBox;
+
+                            m_lastToolDesc = "";  // Reset for next tool
                         }
                     }
                 }
@@ -2828,139 +3250,84 @@ void AGENT_FRAME::CheckForPendingChanges()
 
 void AGENT_FRAME::ShowApproveRejectButtons()
 {
-    wxString label;
-    if( m_hasPendingSchChanges && m_hasPendingPcbChanges )
-        label = "Schematic and PCB";
-    else if( m_hasPendingSchChanges )
-        label = "Schematic";
+    // Show the indicator button and panel
+    m_pendingChangesBtn->Show();
+    m_pendingChangesBtn->SetLabel( "Hide Changes" );
+
+    // Update and show the panel
+    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
+    m_pendingChangesPanel->Show();
+    Layout();
+}
+
+
+void AGENT_FRAME::OnPendingChangesClick( wxCommandEvent& aEvent )
+{
+    // Toggle panel visibility and update button label
+    bool isShown = m_pendingChangesPanel->IsShown();
+    m_pendingChangesPanel->Show( !isShown );
+    m_pendingChangesBtn->SetLabel( isShown ? "Show Changes" : "Hide Changes" );
+    Layout();
+}
+
+
+void AGENT_FRAME::OnSchematicChangeHandled( bool aAccepted )
+{
+    m_hasPendingSchChanges = false;
+
+    // Update panel
+    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
+
+    if( !m_hasPendingSchChanges && !m_hasPendingPcbChanges )
+    {
+        // No more pending changes - hide panel and button
+        m_pendingChangesPanel->Hide();
+        m_pendingChangesBtn->Hide();
+        Layout();
+    }
+
+    AppendHtml( aAccepted ? "<p><i>Schematic changes accepted.</i></p>"
+                          : "<p><i>Schematic changes rejected.</i></p>" );
+}
+
+
+void AGENT_FRAME::OnPcbChangeHandled( bool aAccepted )
+{
+    m_hasPendingPcbChanges = false;
+
+    // Update panel
+    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
+
+    if( !m_hasPendingSchChanges && !m_hasPendingPcbChanges )
+    {
+        // No more pending changes - hide panel and button
+        m_pendingChangesPanel->Hide();
+        m_pendingChangesBtn->Hide();
+        Layout();
+    }
+
+    AppendHtml( aAccepted ? "<p><i>PCB changes accepted.</i></p>"
+                          : "<p><i>PCB changes rejected.</i></p>" );
+}
+
+
+void AGENT_FRAME::ClearApprovalButtons( bool aIsSchematic )
+{
+    // Clear the pending changes flag for this editor
+    if( aIsSchematic )
+        m_hasPendingSchChanges = false;
     else
-        label = "PCB";
+        m_hasPendingPcbChanges = false;
 
-    wxString html = wxString::Format(
-        "<p><b>%s changes pending:</b> "
-        "<a href=\"agent:approve\" style=\"color: #00AA00;\">[Approve]</a> "
-        "<a href=\"agent:reject\" style=\"color: #AA0000;\">[Reject]</a></p>",
-        label );
-    AppendHtml( html );
-}
+    // Update panel
+    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
 
-
-void AGENT_FRAME::OnApproveChanges()
-{
-    // Send approve message to editors via ExpressMail
-    if( m_hasPendingSchChanges )
+    if( !m_hasPendingSchChanges && !m_hasPendingPcbChanges )
     {
-        std::string payload;
-        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_APPROVE, payload );
+        // No more pending changes - hide panel and button
+        m_pendingChangesPanel->Hide();
+        m_pendingChangesBtn->Hide();
+        Layout();
+        AppendHtml( "<p><i>Changes handled via overlay.</i></p>" );
     }
-    if( m_hasPendingPcbChanges )
-    {
-        std::string payload;
-        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_APPROVE, payload );
-    }
-
-    m_hasPendingSchChanges = false;
-    m_hasPendingPcbChanges = false;
-    AppendHtml( "<p><i>Changes approved.</i></p>" );
-}
-
-
-void AGENT_FRAME::OnRejectChanges()
-{
-    // Send reject message to editors via ExpressMail
-    if( m_hasPendingSchChanges )
-    {
-        std::string payload;
-        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REJECT, payload );
-    }
-    if( m_hasPendingPcbChanges )
-    {
-        std::string payload;
-        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REJECT, payload );
-    }
-
-    m_hasPendingSchChanges = false;
-    m_hasPendingPcbChanges = false;
-    AppendHtml( "<p><i>Changes rejected.</i></p>" );
-}
-
-
-void AGENT_FRAME::ShowOpenEditorApproval( const wxString& aEditorType )
-{
-    wxString html = wxString::Format(
-        "<p><b>Open %s Editor?</b> "
-        "<a href=\"agent:approve_open\" style=\"color: #00AA00;\">[Open]</a> "
-        "<a href=\"agent:reject_open\" style=\"color: #AA0000;\">[Cancel]</a></p>",
-        aEditorType );
-    AppendHtml( html );
-}
-
-
-void AGENT_FRAME::OnApproveOpenEditor()
-{
-    bool success = false;
-    wxString editorName;
-
-    if( m_pendingOpenSch )
-    {
-        editorName = "Schematic";
-        success = DoOpenEditor( FRAME_SCH );
-    }
-    else if( m_pendingOpenPcb )
-    {
-        editorName = "PCB";
-        success = DoOpenEditor( FRAME_PCB_EDITOR );
-    }
-
-    // Display result in UI BEFORE calling ProcessToolResult (which saves HTML snapshot)
-    AppendHtml( wxString::Format( "<p><i>%s</i></p>",
-        success ? editorName + " editor opened." : "Failed to open editor." ) );
-
-    // Build tool result message
-    std::string result = success
-        ? editorName.ToStdString() + " editor opened successfully"
-        : "Failed to open " + editorName.ToStdString() + " editor";
-
-    // Clear pending state before processing result (in case of re-entrancy)
-    std::string toolId = m_pendingOpenToolId;
-    m_pendingOpenSch = false;
-    m_pendingOpenPcb = false;
-    m_pendingOpenToolId.clear();
-
-    // Send tool result back to LLM - this will continue the conversation
-    ProcessToolResult( toolId, result, success );
-}
-
-
-void AGENT_FRAME::OnRejectOpenEditor()
-{
-    wxString editorName = m_pendingOpenSch ? "Schematic" : "PCB";
-
-    // Display cancellation message BEFORE calling ProcessToolResult (which saves HTML snapshot)
-    AppendHtml( "<p><i>Editor open cancelled.</i></p>" );
-
-    // Clear pending state before processing result (in case of re-entrancy)
-    std::string toolId = m_pendingOpenToolId;
-    m_pendingOpenSch = false;
-    m_pendingOpenPcb = false;
-    m_pendingOpenToolId.clear();
-
-    // Send rejection result to LLM - this will continue the conversation
-    ProcessToolResult( toolId,
-        "User declined to open " + editorName.ToStdString() + " editor", false );
-}
-
-
-bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
-{
-    KIWAY_PLAYER* player = Kiway().Player( aFrameType, true );
-    if( !player )
-        return false;
-
-    player->Show( true );
-    if( player->IsIconized() )
-        player->Iconize( false );
-    player->Raise();
-
-    return true;
 }

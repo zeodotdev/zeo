@@ -33,154 +33,280 @@ DIFF_MANAGER& DIFF_MANAGER::GetInstance()
 }
 
 DIFF_MANAGER::DIFF_MANAGER() :
-        m_active( false ),
-        m_view( nullptr ),
-        m_item( nullptr )
+        m_currentView( nullptr )
 {
 }
 
 DIFF_MANAGER::~DIFF_MANAGER()
 {
-    ClearDiff();
+    // Clear all views
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+    for( auto& [view, state] : m_viewStates )
+    {
+        if( view && state.item )
+        {
+            view->Remove( state.item );
+            delete state.item;
+        }
+    }
+    m_viewStates.clear();
 }
 
 void DIFF_MANAGER::ShowDiff( const BOX2I& aBBox )
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
-    m_active = true;
-    m_currentBBox = aBBox;
 
-    if( m_view )
+    if( !m_currentView )
+        return;
+
+    DIFF_VIEW_STATE& state = m_viewStates[m_currentView];
+    state.active = true;
+    state.currentBBox = aBBox;
+
+    // If we already have an item, remove it
+    if( state.item )
     {
-        // If we already have an item, remove it
-        if( m_item )
-        {
-            m_view->Remove( m_item );
-            delete m_item;
-            m_item = nullptr;
-        }
-
-        m_item = new KIGFX::PREVIEW::DIFF_OVERLAY_ITEM( aBBox );
-        m_view->Add( m_item );
-        m_view->SetVisible( m_item, true );
-        m_view->Update( m_item );
-        m_view->MarkDirty();
+        m_currentView->Remove( state.item );
+        delete state.item;
+        state.item = nullptr;
     }
+
+    state.item = new KIGFX::PREVIEW::DIFF_OVERLAY_ITEM( aBBox );
+    m_currentView->Add( state.item );
+    m_currentView->SetVisible( state.item, true );
+    m_currentView->Update( state.item );
+    m_currentView->MarkDirty();
+
+    // Trigger canvas refresh so the overlay is actually rendered
+    if( state.callbacks.onRefresh )
+        state.callbacks.onRefresh();
 }
 
 void DIFF_MANAGER::ClearDiff()
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
-    m_active = false;
 
-    if( m_view && m_item )
+    if( m_currentView )
+        ClearDiff( m_currentView );
+}
+
+void DIFF_MANAGER::ClearDiff( KIGFX::VIEW* aView )
+{
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    auto it = m_viewStates.find( aView );
+    if( it == m_viewStates.end() )
+        return;
+
+    DIFF_VIEW_STATE& state = it->second;
+    state.active = false;
+
+    if( aView && state.item )
     {
-        m_view->Remove( m_item );
-        m_view->MarkDirty();
+        aView->Remove( state.item );
+        aView->MarkDirty();
+
+        // Trigger canvas refresh so the overlay removal is visible
+        if( state.callbacks.onRefresh )
+            state.callbacks.onRefresh();
     }
 
-    if( m_item )
+    if( state.item )
     {
-        delete m_item;
-        m_item = nullptr;
+        delete state.item;
+        state.item = nullptr;
     }
 }
 
 void DIFF_MANAGER::RegisterOverlay( KIGFX::VIEW* aView, DIFF_CALLBACKS aCallbacks )
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
-    m_view = aView;
-    m_callbacks = aCallbacks;
+
+    m_currentView = aView;
+
+    // Initialize or update state for this view
+    DIFF_VIEW_STATE& state = m_viewStates[aView];
+    state.callbacks = aCallbacks;
 }
 
 void DIFF_MANAGER::UnregisterOverlay()
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
-    if( m_view && m_item )
-    {
-        m_view->Remove( m_item );
-    }
-    m_view = nullptr;
-    // Clear callbacks to prevent dangling references if frame is destroyed
-    m_callbacks = {};
 
-    if( m_item )
-    {
-        delete m_item;
-        m_item = nullptr;
-    }
+    if( m_currentView )
+        UnregisterOverlay( m_currentView );
 }
 
-// Interaction
-// Returns true if the click was handled by the overlay
+void DIFF_MANAGER::UnregisterOverlay( KIGFX::VIEW* aView )
+{
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    auto it = m_viewStates.find( aView );
+    if( it == m_viewStates.end() )
+        return;
+
+    DIFF_VIEW_STATE& state = it->second;
+
+    if( aView && state.item )
+    {
+        aView->Remove( state.item );
+    }
+
+    if( state.item )
+    {
+        delete state.item;
+        state.item = nullptr;
+    }
+
+    // Clear callbacks to prevent dangling references
+    state.callbacks = {};
+
+    m_viewStates.erase( it );
+
+    if( m_currentView == aView )
+        m_currentView = nullptr;
+}
+
+bool DIFF_MANAGER::IsDiffActive() const
+{
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    if( m_currentView )
+        return IsDiffActive( m_currentView );
+
+    return false;
+}
+
+bool DIFF_MANAGER::IsDiffActive( KIGFX::VIEW* aView ) const
+{
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    auto it = m_viewStates.find( aView );
+    if( it == m_viewStates.end() )
+        return false;
+
+    return it->second.active;
+}
+
 bool DIFF_MANAGER::HandleClick( const VECTOR2I& aPoint )
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
-    if( !m_active || !m_item || !m_view )
+
+    if( m_currentView )
+        return HandleClick( m_currentView, aPoint );
+
+    return false;
+}
+
+bool DIFF_MANAGER::HandleClick( KIGFX::VIEW* aView, const VECTOR2I& aPoint )
+{
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    auto it = m_viewStates.find( aView );
+    if( it == m_viewStates.end() )
         return false;
 
-    auto btn = m_item->HitTestButtons( aPoint, m_view );
+    DIFF_VIEW_STATE& state = it->second;
+
+    if( !state.active || !state.item || !aView )
+        return false;
+
+    auto btn = state.item->HitTestButtons( aPoint, aView );
 
     switch( btn )
     {
-    case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_APPROVE: OnApprove(); return true;
-    case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_REJECT: OnReject(); return true;
-    case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_VIEW_BEFORE: OnViewBefore(); return true;
-    case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_VIEW_AFTER: OnViewAfter(); return true;
+    case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_APPROVE: OnApprove( aView ); return true;
+    case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_REJECT: OnReject( aView ); return true;
+    case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_VIEW_BEFORE: OnViewBefore( aView ); return true;
+    case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_VIEW_AFTER: OnViewAfter( aView ); return true;
     default: return false;
     }
 }
 
-void DIFF_MANAGER::OnApprove()
+void DIFF_MANAGER::OnApprove( KIGFX::VIEW* aView )
 {
+    auto it = m_viewStates.find( aView );
+    if( it == m_viewStates.end() )
+        return;
+
+    DIFF_VIEW_STATE& state = it->second;
+
     // Call the approve callback before clearing (so callback can access state if needed)
-    if( m_callbacks.onApprove )
-        m_callbacks.onApprove();
+    if( state.callbacks.onApprove )
+        state.callbacks.onApprove();
 
-    ClearDiff();
+    ClearDiff( aView );
 }
 
-void DIFF_MANAGER::OnReject()
+void DIFF_MANAGER::OnReject( KIGFX::VIEW* aView )
 {
-    // Call the reject callback which should revert the changes
-    if( m_callbacks.onReject )
-        m_callbacks.onReject();
+    auto it = m_viewStates.find( aView );
+    if( it == m_viewStates.end() )
+        return;
 
-    ClearDiff();
+    DIFF_VIEW_STATE& state = it->second;
+
+    // Call the reject callback which should revert the changes
+    if( state.callbacks.onReject )
+        state.callbacks.onReject();
+
+    ClearDiff( aView );
 }
 
-void DIFF_MANAGER::OnViewBefore()
+void DIFF_MANAGER::OnViewBefore( KIGFX::VIEW* aView )
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
-    if( m_item && m_view )
+
+    auto it = m_viewStates.find( aView );
+    if( it == m_viewStates.end() )
+        return;
+
+    DIFF_VIEW_STATE& state = it->second;
+
+    if( state.item && aView )
     {
         // If we are currently showing AFTER (default), then Before means UNDO.
-        if( !m_item->IsShowingBefore() )
+        if( !state.item->IsShowingBefore() )
         {
-            if( m_callbacks.onUndo )
-                m_callbacks.onUndo();
-            m_item->SetShowingBefore( true );
+            if( state.callbacks.onUndo )
+                state.callbacks.onUndo();
+            state.item->SetShowingBefore( true );
         }
 
-        m_view->Update( m_item );
-        m_view->MarkDirty();
+        aView->Update( state.item );
+        aView->MarkDirty();
+
+        // Trigger canvas refresh
+        if( state.callbacks.onRefresh )
+            state.callbacks.onRefresh();
     }
 }
 
-void DIFF_MANAGER::OnViewAfter()
+void DIFF_MANAGER::OnViewAfter( KIGFX::VIEW* aView )
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
-    if( m_item && m_view )
+
+    auto it = m_viewStates.find( aView );
+    if( it == m_viewStates.end() )
+        return;
+
+    DIFF_VIEW_STATE& state = it->second;
+
+    if( state.item && aView )
     {
         // If we are currently showing BEFORE, then After means REDO.
-        if( m_item->IsShowingBefore() )
+        if( state.item->IsShowingBefore() )
         {
-            if( m_callbacks.onRedo )
-                m_callbacks.onRedo();
-            m_item->SetShowingBefore( false );
+            if( state.callbacks.onRedo )
+                state.callbacks.onRedo();
+            state.item->SetShowingBefore( false );
         }
 
-        m_view->Update( m_item );
-        m_view->MarkDirty();
+        aView->Update( state.item );
+        aView->MarkDirty();
+
+        // Trigger canvas refresh
+        if( state.callbacks.onRefresh )
+            state.callbacks.onRefresh();
     }
 }

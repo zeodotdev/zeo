@@ -73,9 +73,10 @@ public:
 
     /**
      * Start the OAuth flow by launching the browser to the auth web page.
+     * @param aSource Optional source identifier (e.g., "agent") to track where sign-in originated
      * @return True if browser was launched successfully
      */
-    bool StartOAuthFlow();
+    bool StartOAuthFlow( const std::string& aSource = "" );
 
 private:
     std::string m_projectUrl;

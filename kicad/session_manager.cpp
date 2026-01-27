@@ -236,7 +236,8 @@ bool SESSION_MANAGER::HandleDeepLink( const wxString& aUrl )
         UpdateUI();
 
         // Notify agent frame that auth state changed so it can reload from keychain
-        std::string payload;
+        // Include source in payload so agent frame knows to bring itself to front
+        std::string payload = aUrl.Contains( "callback/agent" ) ? "source=agent" : "";
         m_frame->Kiway().ExpressMail( FRAME_AGENT, MAIL_AUTH_STATE_CHANGED, payload, m_frame );
 
         return true;

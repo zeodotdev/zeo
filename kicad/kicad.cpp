@@ -627,13 +627,17 @@ struct APP_KICAD : public wxApp
                     if( frame->GetSessionManager() )
                     {
                         frame->GetSessionManager()->HandleDeepLink( aUrl );
-                        
-                        // Bring app to front
-                        if( frame->IsIconized() )
-                            frame->Iconize( false );
-                        frame->Show( true );
-                        frame->Raise();
-                        frame->RequestUserAttention();
+
+                        // If sign-in was from main page, bring it to front
+                        // (agent frame brings itself to front via MAIL_AUTH_STATE_CHANGED after updating UI)
+                        if( !aUrl.Contains( "callback/agent" ) )
+                        {
+                            if( frame->IsIconized() )
+                                frame->Iconize( false );
+                            frame->Show( true );
+                            frame->Raise();
+                            frame->RequestUserAttention();
+                        }
                     }
                 }
             }

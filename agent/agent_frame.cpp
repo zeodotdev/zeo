@@ -1427,6 +1427,17 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
             m_auth->LoadSession();
             UpdateAuthUI();
         }
+
+        // If sign-in was from agent frame, bring it to front (after UI is updated)
+        std::string payload = aEvent.GetPayload();
+        if( payload.find( "source=agent" ) != std::string::npos )
+        {
+            if( IsIconized() )
+                Iconize( false );
+            Show( true );
+            Raise();
+            RequestUserAttention();
+        }
     }
     else if( aEvent.Command() == MAIL_AGENT_DIFF_CLEARED )
     {
@@ -2076,6 +2087,25 @@ void AGENT_FRAME::InitializeTools()
         { "required", json::array( { "command" } ) }
     };
     m_tools.push_back( runTerminal );
+
+    // Tool 3: open_editor - Open schematic or PCB editor with user approval
+    LLM_TOOL openEditor;
+    openEditor.name = "open_editor";
+    openEditor.description = "Request to open the schematic or PCB editor. "
+                             "This will prompt the user for approval before opening. "
+                             "Use editor_type 'sch' for schematic editor or 'pcb' for PCB editor.";
+    openEditor.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "editor_type", {
+                { "type", "string" },
+                { "enum", json::array( { "sch", "pcb" } ) },
+                { "description", "Editor to open: 'sch' for schematic, 'pcb' for PCB" }
+            }}
+        }},
+        { "required", json::array( { "editor_type" } ) }
+    };
+    m_tools.push_back( openEditor );
 }
 
 std::string AGENT_FRAME::ExecuteTool( const std::string& aName, const nlohmann::json& aInput )
@@ -3257,7 +3287,7 @@ bool AGENT_FRAME::CheckAuthentication()
 void AGENT_FRAME::OnSignIn( wxCommandEvent& aEvent )
 {
     if( m_auth )
-        m_auth->StartOAuthFlow();
+        m_auth->StartOAuthFlow( "agent" );
 }
 
 void AGENT_FRAME::OnSize( wxSizeEvent& aEvent )

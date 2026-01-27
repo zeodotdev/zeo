@@ -921,6 +921,12 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
     size_t pos;
     while( ( pos = ctx->buffer.find( "\n\n" ) ) != std::string::npos )
     {
+        // Check for cancellation before processing each event
+        if( ctx->cancelFlag && ctx->cancelFlag->load() )
+        {
+            return 0; // Abort - handler may be destroyed
+        }
+
         std::string event = ctx->buffer.substr( 0, pos );
         ctx->buffer.erase( 0, pos + 2 );
 

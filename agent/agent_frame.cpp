@@ -775,6 +775,29 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
 AGENT_FRAME::~AGENT_FRAME()
 {
+    // Cancel any in-progress LLM request and wait for it to finish
+    // This prevents the background thread from posting events to a destroyed handler
+    if( m_llmClient )
+    {
+        m_llmClient->CancelRequest();
+
+        // Wait for the request to finish (with timeout to prevent hang)
+        int waitCount = 0;
+        const int maxWaitMs = 5000;  // 5 second timeout
+        const int sleepMs = 10;
+
+        while( m_llmClient->IsRequestInProgress() && waitCount * sleepMs < maxWaitMs )
+        {
+            wxMilliSleep( sleepMs );
+            waitCount++;
+        }
+
+        if( m_llmClient->IsRequestInProgress() )
+        {
+            wxLogWarning( "LLM request did not finish within timeout during AGENT_FRAME destruction" );
+        }
+    }
+
     delete m_auth;
 }
 

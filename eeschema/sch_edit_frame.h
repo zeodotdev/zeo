@@ -29,6 +29,8 @@
 
 #include <stddef.h>
 #include <vector>
+#include <set>
+#include <kiid.h>
 #include <wx/cmndata.h>
 #include <wx/event.h>
 #include <wx/gdicmn.h>
@@ -1081,6 +1083,11 @@ private:
     bool           m_showingAgentBefore = false;  ///< True if currently showing "before" state
     BOX2I          m_agentChangedBBox;            ///< Accumulated bounding box of all agent changes
     SCH_SHEET_PATH m_agentChangedSheetPath;       ///< Sheet path where agent changes were made
+
+    // Concurrent editing support - agent transaction tracking
+    bool           m_agentTransactionActive = false;  ///< True if agent transaction is active
+    KIID           m_agentTargetSheetUuid;            ///< Target sheet UUID for agent operations
+    std::set<KIID> m_agentWorkingSet;                 ///< Items being modified by the agent
 
     std::vector<wxEvtHandler*> m_schematicChangeListeners;
 

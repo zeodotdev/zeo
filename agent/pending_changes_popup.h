@@ -28,6 +28,10 @@
 #include <wx/button.h>
 #include <wx/stattext.h>
 #include <wx/sizer.h>
+#include <wx/listctrl.h>
+#include <vector>
+#include <kiid.h>
+#include <agent_commit.h>
 
 class AGENT_FRAME;
 
@@ -36,6 +40,9 @@ class AGENT_FRAME;
  *
  * Shows pending schematic and/or PCB changes inline between the chat
  * and input areas. Each row shows filename with view/accept/reject buttons.
+ *
+ * Also displays conflicts when user edits items that the agent is working on,
+ * with resolution options (Keep Mine, Keep Agent's, Merge Both).
  */
 class PENDING_CHANGES_PANEL : public wxPanel
 {
@@ -53,6 +60,29 @@ public:
                         const wxString& aSchFilename = wxEmptyString,
                         const wxString& aPcbFilename = wxEmptyString );
 
+    /**
+     * Set the target sheet that the agent is working on.
+     * @param aSheetName The name of the target sheet.
+     * @param aCurrentSheetName The name of the current sheet (user's view).
+     */
+    void SetTargetSheet( const wxString& aSheetName, const wxString& aCurrentSheetName );
+
+    /**
+     * Update the list of conflicts.
+     * @param aConflicts The list of conflicts to display.
+     */
+    void UpdateConflicts( const std::vector<CONFLICT_INFO>& aConflicts );
+
+    /**
+     * Clear all conflicts from the display.
+     */
+    void ClearConflicts();
+
+    /**
+     * Check if there are unresolved conflicts.
+     */
+    bool HasUnresolvedConflicts() const { return !m_conflicts.empty(); }
+
 private:
     void OnViewSch( wxCommandEvent& event );
     void OnAcceptSch( wxCommandEvent& event );
@@ -61,9 +91,20 @@ private:
     void OnAcceptPcb( wxCommandEvent& event );
     void OnRejectPcb( wxCommandEvent& event );
 
+    // Conflict resolution handlers
+    void OnKeepMine( wxCommandEvent& event );
+    void OnKeepAgent( wxCommandEvent& event );
+    void OnMergeBoth( wxCommandEvent& event );
+    void OnResolveAll( wxCommandEvent& event );
+
     void updateLayout();
+    void updateConflictDisplay();
 
     AGENT_FRAME*  m_agentFrame;
+
+    // Target sheet indicator
+    wxPanel*      m_targetSheetPanel;
+    wxStaticText* m_targetSheetLabel;
 
     // Schematic row
     wxPanel*      m_schRowPanel;
@@ -79,10 +120,25 @@ private:
     wxButton*     m_acceptPcbBtn;
     wxButton*     m_rejectPcbBtn;
 
+    // Conflict display
+    wxPanel*      m_conflictPanel;
+    wxStaticText* m_conflictHeaderLabel;
+    wxListCtrl*   m_conflictList;
+    wxButton*     m_keepMineBtn;
+    wxButton*     m_keepAgentBtn;
+    wxButton*     m_mergeBothBtn;
+    wxButton*     m_resolveAllBtn;
+
     wxBoxSizer*   m_mainSizer;
 
     bool m_hasSchChanges;
     bool m_hasPcbChanges;
+    bool m_targetingDifferentSheet;
+    wxString m_targetSheetName;
+    wxString m_currentSheetName;
+
+    // Stored conflicts for resolution
+    std::vector<CONFLICT_INFO> m_conflicts;
 };
 
 #endif // PENDING_CHANGES_PANEL_H

@@ -231,3 +231,15 @@ UNDO_REDO COMMIT::convert( CHANGE_TYPE aType ) const
     }
 }
 
+
+bool COMMIT::HasItem( const KIID& aItemId ) const
+{
+    for( const COMMIT_LINE& entry : m_entries )
+    {
+        if( entry.m_item && entry.m_item->m_Uuid == aItemId )
+            return true;
+    }
+
+    return false;
+}
+

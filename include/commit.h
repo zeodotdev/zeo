@@ -71,6 +71,15 @@ CHANGE_TYPE operator&( CHANGE_TYPE aTypeA, T aTypeB )
 class COMMIT
 {
 public:
+    /// Structure describing a single staged change
+    struct COMMIT_LINE
+    {
+        EDA_ITEM*    m_item;                ///< Main item that is added/deleted/modified
+        EDA_ITEM*    m_copy;                ///< Optional copy of the item
+        CHANGE_TYPE  m_type;                ///< Modification type
+        BASE_SCREEN* m_screen;
+    };
+
     COMMIT();
     virtual ~COMMIT();
 
@@ -144,15 +153,22 @@ public:
 
     EDA_ITEM* GetFirst() const { return m_entries.empty() ? nullptr : m_entries[0].m_item; }
 
-protected:
-    struct COMMIT_LINE
-    {
-        EDA_ITEM*    m_item;                ///< Main item that is added/deleted/modified
-        EDA_ITEM*    m_copy;                ///< Optional copy of the item
-        CHANGE_TYPE  m_type;                ///< Modification type
-        BASE_SCREEN* m_screen;
-    };
+    /// Get all staged entries (for agent commit inspection)
+    const std::vector<COMMIT_LINE>& GetEntries() const { return m_entries; }
 
+    /// Get all added items (for conflict detection)
+    const std::set<std::pair<EDA_ITEM*, BASE_SCREEN*>>& GetAddedItems() const { return m_addedItems; }
+
+    /// Get all changed items (for conflict detection)
+    const std::set<std::pair<EDA_ITEM*, BASE_SCREEN*>>& GetChangedItems() const { return m_changedItems; }
+
+    /// Get all deleted items (for conflict detection)
+    const std::set<std::pair<EDA_ITEM*, BASE_SCREEN*>>& GetDeletedItems() const { return m_deletedItems; }
+
+    /// Check if a specific item is in this commit
+    bool HasItem( const KIID& aItemId ) const;
+
+protected:
     /// Should be called in Push() & Revert() methods
     void clear()
     {

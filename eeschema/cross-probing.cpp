@@ -1361,6 +1361,121 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         SyncView();
         break;
 
+    //=========================================================================
+    // Concurrent editing support - transaction management
+    //=========================================================================
+
+    case MAIL_AGENT_BEGIN_TRANSACTION:
+    {
+        // Agent is starting a new transaction - enable conflict detection
+        try
+        {
+            nlohmann::json j = nlohmann::json::parse( payload );
+            wxString sheetUuid = j.value( "sheet_uuid", "" );
+
+            wxLogDebug( "MAIL_AGENT_BEGIN_TRANSACTION: target sheet %s", sheetUuid );
+
+            // Register this frame as listening for conflicts
+            // The actual conflict detection will be done by SCHEMATIC_LISTENER
+            m_agentTransactionActive = true;
+            m_agentTargetSheetUuid = KIID( sheetUuid.ToStdString() );
+        }
+        catch( ... )
+        {
+            wxLogWarning( "Failed to parse MAIL_AGENT_BEGIN_TRANSACTION payload" );
+        }
+        break;
+    }
+
+    case MAIL_AGENT_END_TRANSACTION:
+    {
+        // Agent is ending transaction
+        try
+        {
+            nlohmann::json j = nlohmann::json::parse( payload );
+            bool commit = j.value( "commit", false );
+
+            wxLogDebug( "MAIL_AGENT_END_TRANSACTION: commit=%d", commit );
+
+            m_agentTransactionActive = false;
+        }
+        catch( ... )
+        {
+            wxLogWarning( "Failed to parse MAIL_AGENT_END_TRANSACTION payload" );
+        }
+        break;
+    }
+
+    case MAIL_AGENT_WORKING_SET:
+    {
+        // Update the agent's working set of items for conflict detection
+        try
+        {
+            nlohmann::json j = nlohmann::json::parse( payload );
+
+            m_agentWorkingSet.clear();
+
+            if( j.contains( "items" ) && j["items"].is_array() )
+            {
+                for( const auto& item : j["items"] )
+                {
+                    if( item.is_string() )
+                    {
+                        m_agentWorkingSet.insert( KIID( item.get<std::string>() ) );
+                    }
+                }
+            }
+
+            wxLogDebug( "MAIL_AGENT_WORKING_SET: %zu items", m_agentWorkingSet.size() );
+        }
+        catch( ... )
+        {
+            wxLogWarning( "Failed to parse MAIL_AGENT_WORKING_SET payload" );
+        }
+        break;
+    }
+
+    case MAIL_AGENT_TARGET_SHEET:
+    {
+        // Set the target sheet for agent operations
+        try
+        {
+            nlohmann::json j = nlohmann::json::parse( payload );
+            wxString sheetUuid = j.value( "sheet_uuid", "" );
+
+            m_agentTargetSheetUuid = KIID( sheetUuid.ToStdString() );
+
+            wxLogDebug( "MAIL_AGENT_TARGET_SHEET: %s", sheetUuid );
+        }
+        catch( ... )
+        {
+            wxLogWarning( "Failed to parse MAIL_AGENT_TARGET_SHEET payload" );
+        }
+        break;
+    }
+
+    case MAIL_CONFLICT_RESOLVED:
+    {
+        // A conflict was resolved by the user
+        try
+        {
+            nlohmann::json j = nlohmann::json::parse( payload );
+            wxString itemUuid = j.value( "item_uuid", "" );
+            wxString resolution = j.value( "resolution", "" );
+
+            wxLogDebug( "MAIL_CONFLICT_RESOLVED: item=%s resolution=%s", itemUuid, resolution );
+
+            // Remove the item from the working set if it was resolved
+            KIID kiid( itemUuid.ToStdString() );
+            m_agentWorkingSet.erase( kiid );
+        }
+        catch( ... )
+        {
+            wxLogWarning( "Failed to parse MAIL_CONFLICT_RESOLVED payload" );
+        }
+        break;
+    }
+
     default:;
     }
 }

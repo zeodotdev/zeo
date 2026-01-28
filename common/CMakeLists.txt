@@ -15,6 +15,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/resources/bitmaps_png
     ${CMAKE_SOURCE_DIR}/3d-viewer
     ${CMAKE_SOURCE_DIR}/pcbnew
+    ${CMAKE_SOURCE_DIR}/eeschema
     ${CMAKE_SOURCE_DIR}/kicad
     ${CMAKE_SOURCE_DIR}/scripting
     ${INC_AFTER}
@@ -777,6 +778,11 @@ set( COMMON_SRCS
     tool/tool_menu.cpp
     tool/zoom_menu.cpp
     tool/zoom_tool.cpp
+
+    # Agent concurrent editing support
+    agent_commit.cpp
+    agent_workspace.cpp
+    conflict_detector.cpp
 
     settings/cvpcb_settings.cpp
 

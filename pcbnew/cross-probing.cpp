@@ -1122,6 +1122,58 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
     case MAIL_RELOAD_LIB: m_designBlocksPane->RefreshLibs(); break;
 
+    // Concurrent editing support - agent transaction management
+    case MAIL_AGENT_BEGIN_TRANSACTION:
+    {
+        // Agent is starting a transaction - track that we're in an agent operation
+        m_agentTransactionActive = true;
+        m_agentWorkingSet.clear();
+        break;
+    }
+
+    case MAIL_AGENT_END_TRANSACTION:
+    {
+        // Agent is ending a transaction
+        m_agentTransactionActive = false;
+        m_agentWorkingSet.clear();
+        break;
+    }
+
+    case MAIL_AGENT_WORKING_SET:
+    {
+        // Agent is updating its working set of items
+        // Payload is JSON array of KIID strings
+        try
+        {
+            nlohmann::json j = nlohmann::json::parse( payload );
+            m_agentWorkingSet.clear();
+            if( j.is_array() )
+            {
+                for( const auto& item : j )
+                {
+                    if( item.is_string() )
+                    {
+                        KIID kiid( item.get<std::string>() );
+                        m_agentWorkingSet.insert( kiid );
+                    }
+                }
+            }
+        }
+        catch( ... )
+        {
+            // Invalid JSON, ignore
+        }
+        break;
+    }
+
+    case MAIL_CONFLICT_RESOLVED:
+    {
+        // Agent has resolved a conflict - payload contains resolution info
+        // For now just log it; future implementation will apply resolution
+        wxLogTrace( "AGENT", "Received conflict resolution for PCB" );
+        break;
+    }
+
     // many many others.
     default:;
     }

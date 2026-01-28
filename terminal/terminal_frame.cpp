@@ -644,6 +644,14 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                 "kicad = kipy.KiCad()\n"
                 "sch = kicad.get_schematic()\n";
 
+            // Begin agent transaction for concurrent editing support
+            nlohmann::json beginMsg;
+            beginMsg["sheet_uuid"] = "";  // Empty means current sheet
+            std::string beginPayload = beginMsg.dump();
+            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_BEGIN_TRANSACTION, beginPayload );
+            fprintf( stderr, "ExecuteCommandForAgentAsync: Sent MAIL_AGENT_BEGIN_TRANSACTION to SCH editor\n" );
+            fflush( stderr );
+
             // Tell SCH editor to take a snapshot before Python execution
             nlohmann::json snapshotMsg;
             snapshotMsg["type"] = "take_snapshot";
@@ -659,6 +667,14 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                 "from kipy.geometry import Vector2\n"
                 "kicad = kipy.KiCad()\n"
                 "board = kicad.get_board()\n";
+
+            // Begin agent transaction for concurrent editing support
+            nlohmann::json beginMsg;
+            beginMsg["sheet_uuid"] = "";  // Not applicable for PCB
+            std::string beginPayload = beginMsg.dump();
+            Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_BEGIN_TRANSACTION, beginPayload );
+            fprintf( stderr, "ExecuteCommandForAgentAsync: Sent MAIL_AGENT_BEGIN_TRANSACTION to PCB editor\n" );
+            fflush( stderr );
 
             // Tell PCB editor to take a snapshot before Python execution
             nlohmann::json snapshotMsg;
@@ -681,7 +697,7 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                 fprintf( stderr, "ExecuteCommandForAgentAsync: Callback invoked, success=%d, isPcbMode=%d, isSchMode=%d\n", success, isPcbMode, isSchMode );
                 fflush( stderr );
 
-                // If this was pcb mode, tell PCB editor to detect changes
+                // If this was pcb mode, tell PCB editor to detect changes and end transaction
                 if( isPcbMode )
                 {
                     nlohmann::json detectMsg;
@@ -690,9 +706,17 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                     Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REQUEST, detectPayload );
                     fprintf( stderr, "ExecuteCommandForAgentAsync: Sent detect_changes to PCB editor\n" );
                     fflush( stderr );
+
+                    // End agent transaction for concurrent editing support
+                    nlohmann::json endMsg;
+                    endMsg["commit"] = true;
+                    std::string endPayload = endMsg.dump();
+                    Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_END_TRANSACTION, endPayload );
+                    fprintf( stderr, "ExecuteCommandForAgentAsync: Sent MAIL_AGENT_END_TRANSACTION to PCB editor\n" );
+                    fflush( stderr );
                 }
 
-                // If this was sch mode, tell SCH editor to detect changes
+                // If this was sch mode, tell SCH editor to detect changes and end transaction
                 if( isSchMode )
                 {
                     nlohmann::json detectMsg;
@@ -700,6 +724,14 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                     std::string detectPayload = detectMsg.dump();
                     Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REQUEST, detectPayload );
                     fprintf( stderr, "ExecuteCommandForAgentAsync: Sent detect_changes to SCH editor\n" );
+                    fflush( stderr );
+
+                    // End agent transaction for concurrent editing support
+                    nlohmann::json endMsg;
+                    endMsg["commit"] = true;
+                    std::string endPayload = endMsg.dump();
+                    Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_END_TRANSACTION, endPayload );
+                    fprintf( stderr, "ExecuteCommandForAgentAsync: Sent MAIL_AGENT_END_TRANSACTION to SCH editor\n" );
                     fflush( stderr );
                 }
 

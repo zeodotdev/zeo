@@ -16,6 +16,7 @@
 #include "agent_state.h"
 #include "agent_events.h"
 #include "agent_chat_history.h"
+#include <agent_workspace.h>
 
 // Forward Declarations
 class AGENT_THREAD;
@@ -23,6 +24,7 @@ class AGENT_AUTH;
 class PENDING_CHANGES_PANEL;
 class HISTORY_PANEL;
 class wxStaticText;
+struct CONFLICT_INFO;
 
 enum
 {
@@ -217,6 +219,46 @@ private:
     void CheckForPendingChanges();  // Query editors for pending changes
     void ShowApproveRejectButtons(); // Show pending changes button in control bar
     void ClearApprovalButtons( bool aIsSchematic );  // Clear approval buttons when diff overlay dismissed
+
+    // Concurrent editing support
+    AGENT_WORKSPACE m_agentWorkspace;   // Manages agent's editing context
+
+    /**
+     * Set the target sheet for agent operations.
+     * Allows agent to work on a specific sheet while user views another.
+     */
+    void SetAgentTargetSheet( const KIID& aSheetId, const wxString& aSheetName );
+
+    /**
+     * Get the agent workspace for direct access.
+     */
+    AGENT_WORKSPACE& GetAgentWorkspace() { return m_agentWorkspace; }
+
+    /**
+     * Begin a new agent transaction for concurrent editing.
+     */
+    void BeginAgentTransaction();
+
+    /**
+     * End the current agent transaction.
+     * @param aCommit If true, prepare changes for approval; if false, discard
+     */
+    void EndAgentTransaction( bool aCommit );
+
+    /**
+     * Handle conflict detection notification from editors.
+     */
+    void OnConflictDetected( const KIID& aItemId, const CONFLICT_INFO& aInfo );
+
+    /**
+     * Handle conflict resolution from UI.
+     */
+    void OnConflictResolved( const KIID& aItemId, CONFLICT_RESOLUTION aResolution );
+
+    /**
+     * Update the conflict display in the pending changes panel.
+     */
+    void UpdateConflictDisplay();
 };
 
 #endif // AGENT_FRAME_H

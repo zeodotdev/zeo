@@ -12,6 +12,8 @@
 #include <sstream>
 #include <fstream>
 #include <thread>
+#include <set>
+#include <algorithm>
 #include <wx/sizer.h>
 #include <wx/textctrl.h>
 #include <wx/msgdlg.h>
@@ -1737,6 +1739,208 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         systemPrompt += "\n\nCURRENT SCHEMATIC CONTEXT:\n" + m_schJson;
     if( !m_pcbJson.empty() )
         systemPrompt += "\n\nCURRENT PCB CONTEXT:\n" + m_pcbJson;
+
+    // Before adding new user message, fix tool_use/tool_result pairing in history.
+    // The Anthropic API requires:
+    // 1. Every tool_use must have a corresponding tool_result in the NEXT message
+    // 2. Every tool_result must reference a tool_use in the PREVIOUS message
+    // We fix both orphaned tool_uses and orphaned tool_results.
+    if( !m_chatHistory.empty() )
+    {
+        using json = nlohmann::json;
+        bool historyModified = false;
+
+        // PASS 1: Remove orphaned tool_result blocks
+        // These are tool_results that don't have a matching tool_use in the previous message
+        for( size_t i = 1; i < m_chatHistory.size(); i++ )
+        {
+            auto& msg = m_chatHistory[i];
+
+            // Only check user messages with array content
+            if( !msg.contains( "role" ) || msg["role"] != "user" )
+                continue;
+            if( !msg.contains( "content" ) || !msg["content"].is_array() )
+                continue;
+
+            // Get valid tool_use IDs from the previous message (if it's an assistant message)
+            std::set<std::string> validToolUseIds;
+            const auto& prevMsg = m_chatHistory[i - 1];
+            if( prevMsg.contains( "role" ) && prevMsg["role"] == "assistant" &&
+                prevMsg.contains( "content" ) && prevMsg["content"].is_array() )
+            {
+                for( const auto& block : prevMsg["content"] )
+                {
+                    if( block.contains( "type" ) && block["type"] == "tool_use" &&
+                        block.contains( "id" ) )
+                    {
+                        validToolUseIds.insert( block["id"].get<std::string>() );
+                    }
+                }
+            }
+
+            // Filter out orphaned tool_results from this message
+            json newContent = json::array();
+            size_t removedCount = 0;
+            for( const auto& block : msg["content"] )
+            {
+                bool keep = true;
+                if( block.contains( "type" ) && block["type"] == "tool_result" &&
+                    block.contains( "tool_use_id" ) )
+                {
+                    std::string toolUseId = block["tool_use_id"].get<std::string>();
+                    if( validToolUseIds.find( toolUseId ) == validToolUseIds.end() )
+                    {
+                        // This tool_result references a tool_use not in the previous message
+                        keep = false;
+                        removedCount++;
+                    }
+                }
+                if( keep )
+                {
+                    newContent.push_back( block );
+                }
+            }
+
+            if( removedCount > 0 )
+            {
+                fprintf( stderr, "AGENT OnSend: Removed %zu orphaned tool_result blocks from message %zu\n",
+                         removedCount, i );
+                fflush( stderr );
+
+                if( newContent.empty() )
+                {
+                    // Message is now empty, mark for removal
+                    msg["_remove"] = true;
+                }
+                else
+                {
+                    msg["content"] = newContent;
+                }
+                historyModified = true;
+            }
+        }
+
+        // Remove messages marked for removal
+        m_chatHistory.erase(
+            std::remove_if( m_chatHistory.begin(), m_chatHistory.end(),
+                []( const json& msg ) {
+                    return msg.contains( "_remove" ) && msg["_remove"] == true;
+                }),
+            m_chatHistory.end() );
+
+        // PASS 2: Add missing tool_result blocks for orphaned tool_uses
+        for( size_t i = 0; i < m_chatHistory.size(); i++ )
+        {
+            const auto& msg = m_chatHistory[i];
+
+            // Only check assistant messages
+            if( !msg.contains( "role" ) || msg["role"] != "assistant" )
+                continue;
+            if( !msg.contains( "content" ) || !msg["content"].is_array() )
+                continue;
+
+            // Collect tool_use IDs from this assistant message
+            std::set<std::string> toolUseIds;
+            for( const auto& block : msg["content"] )
+            {
+                if( block.contains( "type" ) && block["type"] == "tool_use" &&
+                    block.contains( "id" ) )
+                {
+                    toolUseIds.insert( block["id"].get<std::string>() );
+                }
+            }
+
+            if( toolUseIds.empty() )
+                continue;
+
+            // Check if the next message has tool_results for these IDs
+            std::set<std::string> foundResultIds;
+            bool nextMsgIsToolResultUser = false;
+            size_t nextMsgIdx = i + 1;
+
+            if( nextMsgIdx < m_chatHistory.size() )
+            {
+                const auto& nextMsg = m_chatHistory[nextMsgIdx];
+                if( nextMsg.contains( "role" ) && nextMsg["role"] == "user" &&
+                    nextMsg.contains( "content" ) && nextMsg["content"].is_array() )
+                {
+                    for( const auto& block : nextMsg["content"] )
+                    {
+                        if( block.contains( "type" ) && block["type"] == "tool_result" &&
+                            block.contains( "tool_use_id" ) )
+                        {
+                            foundResultIds.insert( block["tool_use_id"].get<std::string>() );
+                            nextMsgIsToolResultUser = true;
+                        }
+                    }
+                }
+            }
+
+            // Find which tool_use IDs are missing tool_results
+            std::vector<std::string> missingIds;
+            for( const auto& toolId : toolUseIds )
+            {
+                if( foundResultIds.find( toolId ) == foundResultIds.end() )
+                {
+                    missingIds.push_back( toolId );
+                }
+            }
+
+            if( missingIds.empty() )
+                continue;
+
+            // If the next message already has tool_results, add the missing ones to it
+            // Otherwise, insert a new message
+            if( nextMsgIsToolResultUser && nextMsgIdx < m_chatHistory.size() )
+            {
+                for( const auto& toolId : missingIds )
+                {
+                    m_chatHistory[nextMsgIdx]["content"].push_back( {
+                        { "type", "tool_result" },
+                        { "tool_use_id", toolId },
+                        { "content", "Tool execution was interrupted. No result available." },
+                        { "is_error", true }
+                    });
+                }
+                historyModified = true;
+
+                fprintf( stderr, "AGENT OnSend: Added %zu missing tool_result blocks to message %zu\n",
+                         missingIds.size(), nextMsgIdx );
+                fflush( stderr );
+            }
+            else
+            {
+                json toolResultMsg;
+                toolResultMsg["role"] = "user";
+                json content = json::array();
+
+                for( const auto& toolId : missingIds )
+                {
+                    content.push_back( {
+                        { "type", "tool_result" },
+                        { "tool_use_id", toolId },
+                        { "content", "Tool execution was interrupted. No result available." },
+                        { "is_error", true }
+                    });
+                }
+
+                toolResultMsg["content"] = content;
+                m_chatHistory.insert( m_chatHistory.begin() + i + 1, toolResultMsg );
+                historyModified = true;
+
+                fprintf( stderr, "AGENT OnSend: Inserted %zu tool_result blocks after message %zu\n",
+                         missingIds.size(), i );
+                fflush( stderr );
+
+                i++; // Skip the message we just inserted
+            }
+        }
+
+        if( historyModified )
+        {
+            m_chatHistoryDb.Save( m_chatHistory );
+        }
+    }
 
     // Update History
     m_chatHistory.push_back( { { "role", "user" }, { "content", text.ToStdString() } } );
@@ -3738,5 +3942,102 @@ void AGENT_FRAME::ClearApprovalButtons( bool aIsSchematic )
         m_pendingChangesBtn->Hide();
         Layout();
         AppendHtml( "<p><i>Changes handled via overlay.</i></p>" );
+    }
+}
+
+
+//=============================================================================
+// Concurrent Editing Support
+//=============================================================================
+
+void AGENT_FRAME::SetAgentTargetSheet( const KIID& aSheetId, const wxString& aSheetName )
+{
+    m_agentWorkspace.SetTargetSheet( aSheetId );
+
+    // Update the pending changes panel to show target sheet indicator
+    // The current sheet name would need to be queried from the schematic editor
+    // For now, we'll pass an empty string and let the panel handle it
+    m_pendingChangesPanel->SetTargetSheet( aSheetName, wxEmptyString );
+}
+
+
+void AGENT_FRAME::BeginAgentTransaction()
+{
+    if( m_agentWorkspace.BeginTransaction() )
+    {
+        wxLogDebug( "Agent transaction started" );
+
+        // Set up conflict callback
+        m_agentWorkspace.SetConflictCallback(
+            [this]( const KIID& aItemId, const CONFLICT_INFO& aInfo )
+            {
+                OnConflictDetected( aItemId, aInfo );
+            } );
+    }
+}
+
+
+void AGENT_FRAME::EndAgentTransaction( bool aCommit )
+{
+    if( m_agentWorkspace.EndTransaction( aCommit ) )
+    {
+        if( aCommit )
+        {
+            wxLogDebug( "Agent transaction committed - pending approval" );
+            // Changes are now staged and waiting for user approval
+            // The pending changes panel will show them
+        }
+        else
+        {
+            wxLogDebug( "Agent transaction reverted" );
+        }
+    }
+}
+
+
+void AGENT_FRAME::OnConflictDetected( const KIID& aItemId, const CONFLICT_INFO& aInfo )
+{
+    wxLogDebug( "Conflict detected for item %s: %s",
+                aItemId.AsString(), aInfo.m_propertyName );
+
+    // Update the conflict display in the pending changes panel
+    UpdateConflictDisplay();
+
+    // Optionally show a notification to the user
+    AppendHtml( wxString::Format(
+        "<p style='color: #FFA500;'><b>Conflict:</b> You modified item %s which the agent was also editing.</p>",
+        aItemId.AsString() ) );
+}
+
+
+void AGENT_FRAME::OnConflictResolved( const KIID& aItemId, CONFLICT_RESOLUTION aResolution )
+{
+    m_agentWorkspace.ResolveConflict( aItemId, aResolution );
+    UpdateConflictDisplay();
+
+    wxString resolutionStr;
+    switch( aResolution )
+    {
+    case CONFLICT_RESOLUTION::KEEP_USER:   resolutionStr = "kept your version"; break;
+    case CONFLICT_RESOLUTION::KEEP_AGENT:  resolutionStr = "kept agent's version"; break;
+    case CONFLICT_RESOLUTION::AUTO_MERGE:  resolutionStr = "merged both changes"; break;
+    default:                               resolutionStr = "resolved manually"; break;
+    }
+
+    AppendHtml( wxString::Format(
+        "<p><i>Conflict for %s: %s.</i></p>",
+        aItemId.AsString(), resolutionStr ) );
+}
+
+
+void AGENT_FRAME::UpdateConflictDisplay()
+{
+    auto conflicts = m_agentWorkspace.GetConflicts();
+    m_pendingChangesPanel->UpdateConflicts( conflicts );
+
+    // If all conflicts are resolved, re-enable accept buttons
+    if( conflicts.empty() && m_pendingChangesPanel->IsShown() )
+    {
+        m_pendingChangesPanel->ClearConflicts();
     }
 }

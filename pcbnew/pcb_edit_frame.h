@@ -27,6 +27,8 @@
 #include <settings/app_settings.h>
 #include <variant>
 #include <map>
+#include <set>
+#include <kiid.h>
 
 class ACTION_PLUGIN;
 class PCB_SCREEN;
@@ -876,6 +878,10 @@ private:
     int   m_undoCountBeforeAgent = 0;     ///< Undo stack count before agent execution
     bool  m_hasAgentPendingChanges = false;
     BOX2I m_agentChangedBBox;             ///< Accumulated bounding box of all agent changes
+
+    // Concurrent editing support (agent operates while user navigates/edits)
+    bool           m_agentTransactionActive = false;  ///< True during agent transaction
+    std::set<KIID> m_agentWorkingSet;                 ///< Items agent is working on
 
 public:
     /**

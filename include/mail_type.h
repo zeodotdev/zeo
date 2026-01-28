@@ -65,8 +65,22 @@ enum MAIL_T
     MAIL_AGENT_APPROVE,       // Agent -> Editor: Approve pending changes
     MAIL_AGENT_REJECT,        // Agent -> Editor: Reject pending changes
     MAIL_AGENT_DIFF_CLEARED,  // Editor -> Agent: Diff overlay was dismissed (payload: "sch" or "pcb")
-    MAIL_AGENT_VIEW_CHANGES   // Agent -> Editor: Bring editor to front and zoom to changes
+    MAIL_AGENT_VIEW_CHANGES,  // Agent -> Editor: Bring editor to front and zoom to changes
+
+    // Concurrent editing - transaction management
+    MAIL_AGENT_BEGIN_TRANSACTION,   // Agent -> Editor: Begin a new agent transaction (JSON: {sheet_uuid})
+    MAIL_AGENT_END_TRANSACTION,     // Agent -> Editor: End agent transaction (JSON: {commit: bool})
+    MAIL_AGENT_WORKING_SET,         // Agent -> Editor: Update working set of items (JSON: {items: [uuid...]})
+
+    // Concurrent editing - conflict detection
+    MAIL_CONFLICT_DETECTED,         // Editor -> Agent: User modified an item in agent's working set (JSON: {item_uuid, property, user_value, agent_value})
+    MAIL_CONFLICT_RESOLVED,         // Agent -> Editor: Conflict resolution decision (JSON: {item_uuid, resolution: "keep_user"|"keep_agent"|"merge"})
+
+    // Concurrent editing - sheet targeting
+    MAIL_AGENT_TARGET_SHEET,        // Agent -> Editor: Set target sheet for operations (JSON: {sheet_uuid})
+    MAIL_AGENT_GET_CURRENT_SHEET    // Agent -> Editor: Query current sheet UUID (response via MAIL_AGENT_RESPONSE)
 
 };
+
 
 #endif // MAIL_TYPE_H_

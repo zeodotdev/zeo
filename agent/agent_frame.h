@@ -116,9 +116,6 @@ private:
     wxButton*               m_pendingChangesBtn;    // Shows when changes pending
     PENDING_CHANGES_PANEL*  m_pendingChangesPanel;  // Panel for managing changes
 
-    // Context indicator UI
-    wxStaticText*           m_contextIndicator;     // Shows context usage when >90%
-
     // Sign-in overlay (shown when not authenticated)
     wxPanel*       m_signInOverlay;
     wxButton*      m_signInButton;
@@ -205,9 +202,6 @@ private:
     void CheckForPendingChanges();  // Query editors for pending changes
     void ShowApproveRejectButtons(); // Show pending changes button in control bar
     void ClearApprovalButtons( bool aIsSchematic );  // Clear approval buttons when diff overlay dismissed
-
-    // Context indicator helper
-    void UpdateContextIndicator( int aPercentUsed );
 };
 
 #endif // AGENT_FRAME_H

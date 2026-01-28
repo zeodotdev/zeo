@@ -568,15 +568,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     topRowSizer->AddStretchSpacer();
 
-    // Context Indicator (hidden by default, shows when context >90%)
-    m_contextIndicator = new wxStaticText( m_inputPanel, wxID_ANY, "" );
-    m_contextIndicator->SetForegroundColour( wxColour( "#FFA500" ) );  // Orange
-    wxFont indicatorFont = wxSystemSettings::GetFont( wxSYS_DEFAULT_GUI_FONT );
-    indicatorFont.SetPointSize( 10 );
-    m_contextIndicator->SetFont( indicatorFont );
-    m_contextIndicator->Hide();
-    topRowSizer->Add( m_contextIndicator, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 10 );
-
     // Pending Changes Button (hidden by default)
     m_pendingChangesBtn = new wxButton( m_inputPanel, wxID_ANY, "1 change" );
     m_pendingChangesBtn->Hide();
@@ -2882,8 +2873,6 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
             AppendHtml( "<p><font color='#FFA500'><i>Context was automatically "
                         "compacted to continue the conversation.</i></font></p>" );
         }
-        // Update context indicator based on usage percentage
-        UpdateContextIndicator( aChunk.context_percent_used );
         break;
     }
     }
@@ -2971,26 +2960,6 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
     // Reset title generation state
     m_needsTitleGeneration = true;
     m_firstUserMessage = "";
-
-    // Reset context indicator
-    m_contextIndicator->Hide();
-    m_inputPanel->Layout();
-}
-
-
-void AGENT_FRAME::UpdateContextIndicator( int aPercentUsed )
-{
-    if( aPercentUsed > 90 )
-    {
-        int remaining = 100 - aPercentUsed;
-        m_contextIndicator->SetLabel( wxString::Format( "%d%% until auto-compact", remaining ) );
-        m_contextIndicator->Show();
-    }
-    else
-    {
-        m_contextIndicator->Hide();
-    }
-    m_inputPanel->Layout();
 }
 
 

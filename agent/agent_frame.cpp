@@ -667,6 +667,11 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_isGenerating = false;
     m_generatingTimer.Bind( wxEVT_TIMER, &AGENT_FRAME::OnGeneratingTimer, this );
 
+    // Initialize thinking state
+    m_thinkingExpanded = false;
+    m_isThinking = false;
+    m_currentThinkingIndex = -1;
+
     // Initialize title generation
     m_needsTitleGeneration = true;
     m_firstUserMessage = "";
@@ -847,6 +852,50 @@ void AGENT_FRAME::AppendHtml( const wxString& aHtml )
     SetHtml( m_fullHtmlContent );
 }
 
+void AGENT_FRAME::RebuildThinkingHtml()
+{
+    // Rebuild thinking HTML based on current state
+    // Shows "Thinking" as a clickable link that expands/collapses content
+
+    if( m_thinkingContent.IsEmpty() && !m_isThinking )
+    {
+        m_thinkingHtml = "";
+        return;
+    }
+
+    // Escape HTML in thinking content
+    wxString escapedContent = m_thinkingContent;
+    escapedContent.Replace( "&", "&amp;" );
+    escapedContent.Replace( "<", "&lt;" );
+    escapedContent.Replace( ">", "&gt;" );
+    escapedContent.Replace( "\n", "<br>" );
+
+    // Truncate if very long
+    if( escapedContent.length() > 5000 )
+    {
+        escapedContent = escapedContent.Left( 5000 ) + "... <i>(truncated)</i>";
+    }
+
+    // Build the thinking HTML with indexed toggle link
+    // Note: wxHtmlWindow link color overrides outer font, so put font INSIDE the <a> tag
+    wxString thinkingLabel = wxString::Format(
+        "<a href='toggle:thinking:%d'><font color='#808080'>Thinking</font></a>",
+        m_currentThinkingIndex );
+
+    if( m_thinkingExpanded && !escapedContent.IsEmpty() )
+    {
+        // Expanded: show thinking content with spacing after (no <p> to avoid top margin)
+        m_thinkingHtml = wxString::Format(
+            "%s<br><font color='#606060'>%s</font><br><br>",
+            thinkingLabel, escapedContent );
+    }
+    else
+    {
+        // Collapsed: just show the label with spacing after
+        m_thinkingHtml = wxString::Format( "%s<br><br>", thinkingLabel );
+    }
+}
+
 void AGENT_FRAME::UpdateAgentResponse()
 {
     // Re-render the full HTML with the current response formatted as markdown
@@ -869,6 +918,12 @@ void AGENT_FRAME::UpdateAgentResponse()
     {
         html = html.Left( html.length() - closingTags.length() );
         fprintf( stderr, "[HTML-DEBUG]   Stripped closing tags from base HTML\n" );
+    }
+
+    // Include thinking block HTML if present (shown before response)
+    if( !m_thinkingHtml.IsEmpty() )
+    {
+        html += m_thinkingHtml;
     }
 
     // Append the current response with markdown formatting
@@ -1528,6 +1583,10 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 
     m_currentResponse = ""; // Reset accumulator
     m_toolCallHtml = "";    // Reset tool call HTML
+    m_thinkingHtml = "";    // Reset thinking block HTML
+    m_thinkingContent = ""; // Reset thinking content
+    m_thinkingExpanded = false;
+    m_isThinking = false;
     m_pendingToolCalls = nlohmann::json::array(); // Reset pending tool calls
     m_stopRequested = false; // Reset stop flag
 
@@ -1647,9 +1706,25 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
     m_actionButton->SetLabel( "Send" );
 
     // Add Assistant response to history
-    if( !m_currentResponse.empty() )
+    if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
     {
-        m_chatHistory.push_back( { { "role", "assistant" }, { "content", m_currentResponse } } );
+        nlohmann::json assistantMsg;
+        assistantMsg["role"] = "assistant";
+
+        if( !m_thinkingContent.IsEmpty() )
+        {
+            nlohmann::json content = nlohmann::json::array();
+            content.push_back( { { "type", "thinking" }, { "thinking", m_thinkingContent.ToStdString() } } );
+            if( !m_currentResponse.empty() )
+                content.push_back( { { "type", "text" }, { "text", m_currentResponse } } );
+            assistantMsg["content"] = content;
+        }
+        else
+        {
+            assistantMsg["content"] = m_currentResponse;
+        }
+
+        m_chatHistory.push_back( assistantMsg );
         m_chatHistoryDb.Save( m_chatHistory );
     }
 
@@ -1732,6 +1807,7 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
 void AGENT_FRAME::OnHtmlLinkClick( wxHtmlLinkEvent& aEvent )
 {
     wxString href = aEvent.GetLinkInfo().GetHref();
+
     if( href == "tool:approve" )
     {
         OnToolClick( aEvent );
@@ -1742,6 +1818,36 @@ void AGENT_FRAME::OnHtmlLinkClick( wxHtmlLinkEvent& aEvent )
         m_chatHistory.push_back( { { "role", "user" }, { "content", "Tool execution rejected." } } );
         // Optionally resume generation or wait for user input?
         // Usually better to let user type why.
+    }
+    else if( href.StartsWith( "toggle:thinking:" ) )
+    {
+        // Toggle thinking block by index
+        wxString indexStr = href.Mid( 16 );  // "toggle:thinking:" is 16 chars
+        long index;
+
+        if( indexStr.ToLong( &index ) && index >= 0 )
+        {
+            // Check if this is the current streaming thinking
+            if( index == m_currentThinkingIndex && m_currentThinkingIndex >= 0 &&
+                !m_thinkingContent.IsEmpty() )
+            {
+                // Toggle current streaming thinking
+                m_thinkingExpanded = !m_thinkingExpanded;
+                RebuildThinkingHtml();
+                UpdateAgentResponse();
+            }
+            else if( index < (int)m_historicalThinking.size() )
+            {
+                // Toggle historical thinking
+                if( m_historicalThinkingExpanded.count( index ) )
+                    m_historicalThinkingExpanded.erase( index );
+                else
+                    m_historicalThinkingExpanded.insert( index );
+
+                // Re-render the chat history with new toggle state
+                RenderChatHistory();
+            }
+        }
     }
     else
     {
@@ -2162,10 +2268,40 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
         m_actionButton->SetLabel( "Send" );
 
         // Add final assistant message to history if there's accumulated text
-        if( !m_currentResponse.empty() )
+        if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
         {
-            m_chatHistory.push_back( { { "role", "assistant" }, { "content", m_currentResponse } } );
+            nlohmann::json assistantMsg;
+            assistantMsg["role"] = "assistant";
+
+            if( !m_thinkingContent.IsEmpty() )
+            {
+                nlohmann::json content = nlohmann::json::array();
+                content.push_back( { { "type", "thinking" }, { "thinking", m_thinkingContent.ToStdString() } } );
+                if( !m_currentResponse.empty() )
+                    content.push_back( { { "type", "text" }, { "text", m_currentResponse } } );
+                assistantMsg["content"] = content;
+            }
+            else
+            {
+                assistantMsg["content"] = m_currentResponse;
+            }
+
+            m_chatHistory.push_back( assistantMsg );
             m_chatHistoryDb.Save( m_chatHistory );
+
+            // Preserve expanded state before re-rendering
+            if( m_thinkingExpanded && m_currentThinkingIndex >= 0 )
+                m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
+
+            // Clear streaming state
+            m_currentResponse.clear();
+            m_thinkingContent.Clear();
+            m_thinkingExpanded = false;
+            m_currentThinkingIndex = -1;
+
+            // Re-render from history to show the saved content
+            // (this also rebuilds m_historicalThinking with correct indices)
+            RenderChatHistory();
         }
 
         // Transition back to IDLE
@@ -2651,7 +2787,11 @@ void AGENT_FRAME::ContinueConversationWithToolResult()
     // This captures everything including tool call results
     m_currentResponse = "";
     m_htmlBeforeAgentResponse = m_fullHtmlContent;
-    m_toolCallHtml = "";  // Clear since it's now part of m_htmlBeforeAgentResponse
+    m_toolCallHtml = "";   // Clear since it's now part of m_htmlBeforeAgentResponse
+    m_thinkingHtml = "";   // Clear thinking for new response
+    m_thinkingContent = "";
+    m_thinkingExpanded = false;
+    m_isThinking = false;
 
     fprintf( stderr, "[HTML-DEBUG] ContinueConversationWithToolResult: Captured m_htmlBeforeAgentResponse, length=%zu, ends with </body></html>: %s\n",
              (size_t)m_htmlBeforeAgentResponse.length(),
@@ -2682,8 +2822,40 @@ void AGENT_FRAME::StartAsyncLLMRequest()
 
     std::string systemPrompt = GetSystemPrompt();
 
+    // Filter out thinking blocks from chat history before sending to API
+    // (Anthropic requires signatures for thinking blocks, which we don't store)
+    nlohmann::json filteredHistory = nlohmann::json::array();
+    for( const auto& msg : m_chatHistory )
+    {
+        if( msg.contains( "content" ) && msg["content"].is_array() )
+        {
+            // Filter content array to remove thinking blocks
+            nlohmann::json filteredContent = nlohmann::json::array();
+            for( const auto& block : msg["content"] )
+            {
+                if( !block.contains( "type" ) || block["type"] != "thinking" )
+                {
+                    filteredContent.push_back( block );
+                }
+            }
+
+            // Only add message if it has non-empty content after filtering
+            if( !filteredContent.empty() )
+            {
+                nlohmann::json filteredMsg = msg;
+                filteredMsg["content"] = filteredContent;
+                filteredHistory.push_back( filteredMsg );
+            }
+        }
+        else
+        {
+            // String content or other format - pass through as-is
+            filteredHistory.push_back( msg );
+        }
+    }
+
     // Start async request - returns immediately
-    if( !m_llmClient->AskStreamWithToolsAsync( m_chatHistory, systemPrompt, m_tools, this ) )
+    if( !m_llmClient->AskStreamWithToolsAsync( filteredHistory, systemPrompt, m_tools, this ) )
     {
         wxLogDebug( "AGENT: Failed to start async LLM request" );
         StopGeneratingAnimation();
@@ -2729,6 +2901,42 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
         int x, y;
         m_chatWindow->GetVirtualSize( &x, &y );
         m_chatWindow->Scroll( 0, y );
+        break;
+    }
+    case LLMChunkType::THINKING_START:
+    {
+        // Thinking block started - show loading animation
+        m_isThinking = true;
+        m_thinkingContent = "";
+        m_thinkingExpanded = false;
+        // Set index for this thinking block (will be the next slot after existing history)
+        m_currentThinkingIndex = static_cast<int>( m_historicalThinking.size() );
+        RebuildThinkingHtml();
+        UpdateAgentResponse();
+        break;
+    }
+    case LLMChunkType::THINKING:
+    {
+        // Stream thinking text incrementally
+        if( !aChunk.thinking_text.empty() )
+        {
+            m_thinkingContent += wxString::FromUTF8( aChunk.thinking_text );
+            RebuildThinkingHtml();
+            UpdateAgentResponse();
+
+            // Auto-scroll
+            int x, y;
+            m_chatWindow->GetVirtualSize( &x, &y );
+            m_chatWindow->Scroll( 0, y );
+        }
+        break;
+    }
+    case LLMChunkType::THINKING_DONE:
+    {
+        // Thinking complete - stop loading animation, finalize display
+        m_isThinking = false;
+        RebuildThinkingHtml();
+        UpdateAgentResponse();
         break;
     }
     case LLMChunkType::TOOL_USE:
@@ -2844,13 +3052,55 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
         m_actionButton->SetLabel( "Send" );
 
         // Add final assistant message to history if there's accumulated text
-        if( !m_currentResponse.empty() )
+        if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
         {
-            m_chatHistory.push_back( {
-                { "role", "assistant" },
-                { "content", m_currentResponse }
-            } );
+            nlohmann::json assistantMsg;
+            assistantMsg["role"] = "assistant";
+
+            // If we have thinking content, save as content array with thinking and text blocks
+            if( !m_thinkingContent.IsEmpty() )
+            {
+                nlohmann::json content = nlohmann::json::array();
+
+                // Add thinking block
+                content.push_back( {
+                    { "type", "thinking" },
+                    { "thinking", m_thinkingContent.ToStdString() }
+                } );
+
+                // Add text block if we have response text
+                if( !m_currentResponse.empty() )
+                {
+                    content.push_back( {
+                        { "type", "text" },
+                        { "text", m_currentResponse }
+                    } );
+                }
+
+                assistantMsg["content"] = content;
+            }
+            else
+            {
+                // No thinking, just save as string (backwards compatible)
+                assistantMsg["content"] = m_currentResponse;
+            }
+
+            m_chatHistory.push_back( assistantMsg );
             m_chatHistoryDb.Save( m_chatHistory );
+
+            // Preserve expanded state before re-rendering
+            if( m_thinkingExpanded && m_currentThinkingIndex >= 0 )
+                m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
+
+            // Clear streaming state
+            m_currentResponse.clear();
+            m_thinkingContent.Clear();
+            m_thinkingExpanded = false;
+            m_currentThinkingIndex = -1;
+
+            // Re-render from history to show the saved content
+            // (this also rebuilds m_historicalThinking with correct indices)
+            RenderChatHistory();
         }
 
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
@@ -2899,8 +3149,9 @@ void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
         delete complete;
     }
 
-    // Re-render without dots
-    UpdateAgentResponse();
+    // Note: Don't call UpdateAgentResponse() here - END_TURN handler already called
+    // RenderChatHistory() which renders from the saved history. Calling UpdateAgentResponse()
+    // would overwrite that with empty content since streaming state was cleared.
 
     // Ensure we're in IDLE state and button shows Send
     if( m_conversationCtx.GetState() == AgentConversationState::WAITING_FOR_LLM )
@@ -2960,6 +3211,11 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
     // Reset title generation state
     m_needsTitleGeneration = true;
     m_firstUserMessage = "";
+
+    // Clear historical thinking state
+    m_historicalThinking.clear();
+    m_historicalThinkingExpanded.clear();
+    m_currentThinkingIndex = -1;
 }
 
 
@@ -3017,23 +3273,82 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
         m_needsTitleGeneration = false;
         m_firstUserMessage = "";
 
-        // Clear window
-        m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'>";
-        
-        // Iterate history and render
-        for( const auto& msg : m_chatHistory )
-        {
-            if( msg.contains("role") && msg.contains("content") )
-            {
-                std::string role = msg["role"];
-                
-                // Content can be string or array (tool use)
-                if( msg["content"].is_string() )
-                {
-                    std::string content = msg["content"];
-                    wxString display = content;
+        // Clear historical thinking toggle state for new history
+        m_historicalThinkingExpanded.clear();
+        m_currentThinkingIndex = -1;
 
-                    if( role == "user" )
+        // Render the loaded chat history
+        RenderChatHistory();
+
+        // Update DB ID so new messages go to this history
+        m_chatHistoryDb.SetConversationId( selectedId );
+    }
+}
+
+void AGENT_FRAME::RenderChatHistory()
+{
+    // Clear historical thinking storage
+    m_historicalThinking.clear();
+
+    // Build HTML from chat history
+    m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'>";
+
+    for( const auto& msg : m_chatHistory )
+    {
+        if( !msg.contains( "role" ) || !msg.contains( "content" ) )
+            continue;
+
+        std::string role = msg["role"];
+
+        // Content can be string or array (tool use)
+        if( msg["content"].is_string() )
+        {
+            std::string content = msg["content"];
+            wxString display = content;
+
+            if( role == "user" )
+            {
+                // Right-aligned speech bubble style for user messages
+                display.Replace( "&", "&amp;" );
+                display.Replace( "<", "&lt;" );
+                display.Replace( ">", "&gt;" );
+                display.Replace( "\n", "<br>" );
+                m_fullHtmlContent += wxString::Format(
+                    "<table width='100%%' cellpadding='0'><tr><td align='right'>"
+                    "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
+                    "<font color='#ffffff'>%s</font>"
+                    "</td></tr></table>"
+                    "</td></tr></table><br><br>",
+                    display );
+            }
+            else if( role == "assistant" )
+            {
+                // Left-aligned markdown formatted response
+                m_fullHtmlContent += MarkdownToHtml( content );
+            }
+        }
+        else if( msg["content"].is_array() )
+        {
+            // Iterate through content blocks and render each one
+            for( const auto& block : msg["content"] )
+            {
+                if( !block.contains( "type" ) )
+                    continue;
+
+                std::string blockType = block["type"];
+
+                if( blockType == "text" )
+                {
+                    // Render text block
+                    std::string text = block.value( "text", "" );
+                    wxString display = text;
+
+                    if( role == "assistant" )
+                    {
+                        // Left-aligned markdown formatted response
+                        m_fullHtmlContent += MarkdownToHtml( display );
+                    }
+                    else if( role == "user" )
                     {
                         // Right-aligned speech bubble style for user messages
                         display.Replace( "&", "&amp;" );
@@ -3045,131 +3360,131 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
                             "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
                             "<font color='#ffffff'>%s</font>"
                             "</td></tr></table>"
-                            "</td></tr></table><br><br>",
+                            "</td></tr></table><br>",
                             display );
                     }
-                    else if( role == "assistant" )
+                }
+                else if( blockType == "thinking" )
+                {
+                    // Render thinking block with toggle support
+                    std::string thinking = block.value( "thinking", "" );
+                    if( !thinking.empty() )
                     {
-                        // Left-aligned markdown formatted response
-                        m_fullHtmlContent += MarkdownToHtml( content );
+                        int thinkingIndex = m_historicalThinking.size();
+                        wxString thinkingText = wxString::FromUTF8( thinking );
+
+                        // Store the raw thinking content for later toggle
+                        m_historicalThinking.push_back( thinkingText );
+
+                        // Check if this thinking block is expanded
+                        bool expanded = m_historicalThinkingExpanded.count( thinkingIndex ) > 0;
+
+                        // Generate toggle link with index
+                        wxString thinkingLabel = wxString::Format(
+                            "<a href='toggle:thinking:%d'><font color='#808080'>Thinking</font></a>",
+                            thinkingIndex );
+
+                        if( expanded )
+                        {
+                            // Escape HTML for display
+                            wxString escapedText = thinkingText;
+                            escapedText.Replace( "&", "&amp;" );
+                            escapedText.Replace( "<", "&lt;" );
+                            escapedText.Replace( ">", "&gt;" );
+                            escapedText.Replace( "\n", "<br>" );
+
+                            // Truncate if very long
+                            if( escapedText.length() > 5000 )
+                            {
+                                escapedText = escapedText.Left( 5000 ) + "... <i>(truncated)</i>";
+                            }
+
+                            m_fullHtmlContent += wxString::Format(
+                                "%s<br><font color='#606060'>%s</font><br><br>",
+                                thinkingLabel, escapedText );
+                        }
+                        else
+                        {
+                            // Collapsed: just show label
+                            m_fullHtmlContent += wxString::Format( "%s<br><br>", thinkingLabel );
+                        }
                     }
                 }
-                else if( msg["content"].is_array() )
+                else if( blockType == "tool_use" )
                 {
-                    // Iterate through content blocks and render each one
-                    for( const auto& block : msg["content"] )
+                    // Render tool_use block with human-readable description
+                    std::string toolName = block.value( "name", "unknown" );
+                    nlohmann::json toolInput = block.value( "input", nlohmann::json::object() );
+                    wxString desc = GetToolDescription( toolName, toolInput );
+
+                    // Store for pairing with result (next block)
+                    m_lastToolDesc = desc;
+                }
+                else if( blockType == "tool_result" )
+                {
+                    // Render combined tool call + result block
+                    std::string content = block.value( "content", "" );
+                    bool isError = block.value( "is_error", false );
+
+                    // Check if this is a Python traceback
+                    bool isPythonError = ( content.find( "Traceback" ) != std::string::npos );
+
+                    wxString displayResult;
+                    wxString statusColor;
+                    wxString statusText;
+
+                    if( isPythonError )
                     {
-                        if( !block.contains("type") )
-                            continue;
-
-                        std::string blockType = block["type"];
-
-                        if( blockType == "text" )
-                        {
-                            // Render text block
-                            std::string text = block.value("text", "");
-                            wxString display = text;
-
-                            if( role == "assistant" )
-                            {
-                                // Left-aligned markdown formatted response
-                                m_fullHtmlContent += MarkdownToHtml( display );
-                            }
-                            else if( role == "user" )
-                            {
-                                // Right-aligned speech bubble style for user messages
-                                display.Replace( "&", "&amp;" );
-                                display.Replace( "<", "&lt;" );
-                                display.Replace( ">", "&gt;" );
-                                display.Replace( "\n", "<br>" );
-                                m_fullHtmlContent += wxString::Format(
-                                    "<table width='100%%' cellpadding='0'><tr><td align='right'>"
-                                    "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
-                                    "<font color='#ffffff'>%s</font>"
-                                    "</td></tr></table>"
-                                    "</td></tr></table><br>",
-                                    display );
-                            }
-                        }
-                        else if( blockType == "tool_use" )
-                        {
-                            // Render tool_use block with human-readable description
-                            std::string toolName = block.value("name", "unknown");
-                            nlohmann::json toolInput = block.value("input", nlohmann::json::object());
-                            wxString desc = GetToolDescription( toolName, toolInput );
-
-                            // Store for pairing with result (next block)
-                            m_lastToolDesc = desc;
-                        }
-                        else if( blockType == "tool_result" )
-                        {
-                            // Render combined tool call + result block
-                            std::string content = block.value("content", "");
-                            bool isError = block.value("is_error", false);
-
-                            // Check if this is a Python traceback
-                            bool isPythonError = ( content.find( "Traceback" ) != std::string::npos );
-
-                            wxString displayResult;
-                            wxString statusColor;
-                            wxString statusText;
-
-                            if( isPythonError )
-                            {
-                                statusColor = "#f44747";
-                                statusText = "Error";
-                                displayResult = "<i>Script execution failed.</i>";
-                            }
-                            else if( isError )
-                            {
-                                statusColor = "#f44747";
-                                statusText = "Failed";
-                                wxString htmlResult = content;
-                                htmlResult.Replace( "&", "&amp;" );
-                                htmlResult.Replace( "<", "&lt;" );
-                                htmlResult.Replace( ">", "&gt;" );
-                                if( htmlResult.length() > 200 )
-                                    htmlResult = htmlResult.Left( 200 ) + "...";
-                                displayResult = htmlResult;
-                            }
-                            else
-                            {
-                                statusColor = "#4ec9b0";
-                                statusText = "Completed";
-                                wxString htmlResult = content;
-                                htmlResult.Replace( "&", "&amp;" );
-                                htmlResult.Replace( "<", "&lt;" );
-                                htmlResult.Replace( ">", "&gt;" );
-                                if( htmlResult.length() > 500 )
-                                    htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
-                                displayResult = htmlResult;
-                            }
-
-                            // Use the stored tool description from the preceding tool_use block
-                            wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
-
-                            wxString resultBox = wxString::Format(
-                                "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
-                                "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
-                                "<font color='%s'><b>%s</b></font><br>"
-                                "<font color='#d4d4d4' size='2'>%s</font>"
-                                "</td></tr></table>",
-                                desc, statusColor, statusText, displayResult );
-                            m_fullHtmlContent += resultBox;
-
-                            m_lastToolDesc = "";  // Reset for next tool
-                        }
+                        statusColor = "#f44747";
+                        statusText = "Error";
+                        displayResult = "<i>Script execution failed.</i>";
                     }
+                    else if( isError )
+                    {
+                        statusColor = "#f44747";
+                        statusText = "Failed";
+                        wxString htmlResult = content;
+                        htmlResult.Replace( "&", "&amp;" );
+                        htmlResult.Replace( "<", "&lt;" );
+                        htmlResult.Replace( ">", "&gt;" );
+                        if( htmlResult.length() > 200 )
+                            htmlResult = htmlResult.Left( 200 ) + "...";
+                        displayResult = htmlResult;
+                    }
+                    else
+                    {
+                        statusColor = "#4ec9b0";
+                        statusText = "Completed";
+                        wxString htmlResult = content;
+                        htmlResult.Replace( "&", "&amp;" );
+                        htmlResult.Replace( "<", "&lt;" );
+                        htmlResult.Replace( ">", "&gt;" );
+                        if( htmlResult.length() > 500 )
+                            htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
+                        displayResult = htmlResult;
+                    }
+
+                    // Use the stored tool description from the preceding tool_use block
+                    wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
+
+                    wxString resultBox = wxString::Format(
+                        "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                        "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+                        "<font color='%s'><b>%s</b></font><br>"
+                        "<font color='#d4d4d4' size='2'>%s</font>"
+                        "</td></tr></table>",
+                        desc, statusColor, statusText, displayResult );
+                    m_fullHtmlContent += resultBox;
+
+                    m_lastToolDesc = "";  // Reset for next tool
                 }
             }
         }
-        
-        m_fullHtmlContent += "</body></html>";
-        SetHtml( m_fullHtmlContent );
-        
-        // Update DB ID so new messages go to this history
-        m_chatHistoryDb.SetConversationId( selectedId );
     }
+
+    m_fullHtmlContent += "</body></html>";
+
+    SetHtml( m_fullHtmlContent );
 }
 
 // ============================================================================

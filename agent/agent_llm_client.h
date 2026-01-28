@@ -224,6 +224,8 @@ private:
         std::string       currentToolName;  // Current tool name
         std::string       currentToolInput; // Accumulated tool input JSON
         bool              inToolInput;      // Currently accumulating tool input
+        std::string       currentThinking;  // Accumulated thinking text
+        bool              inThinking;       // Currently accumulating thinking block
     };
 
     // Parse SSE events and post to main thread

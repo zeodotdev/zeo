@@ -98,12 +98,15 @@ void PostToolTimeout( wxEvtHandler* aHandler, const std::string& aToolUseId );
  */
 enum class LLMChunkType
 {
-    TEXT,           // Text content delta
-    TOOL_USE,       // Tool call with id, name, input
-    TOOL_USE_DONE,  // All tool calls parsed, ready to execute
-    END_TURN,       // Model finished (no more tool calls)
-    ERROR,          // Error occurred
-    CONTEXT_STATUS  // Context usage status from server
+    TEXT,            // Text content delta
+    THINKING_START,  // Thinking block started (show loading)
+    THINKING,        // Thinking block content delta (streamed incrementally)
+    THINKING_DONE,   // Thinking block complete
+    TOOL_USE,        // Tool call with id, name, input
+    TOOL_USE_DONE,   // All tool calls parsed, ready to execute
+    END_TURN,        // Model finished (no more tool calls)
+    ERROR,           // Error occurred
+    CONTEXT_STATUS   // Context usage status from server
 };
 
 /**
@@ -114,6 +117,7 @@ struct LLMStreamChunk
 {
     LLMChunkType   type;
     std::string    text;           // For TEXT events
+    std::string    thinking_text;  // For THINKING events (summarized thinking)
     std::string    tool_use_id;    // For TOOL_USE events
     std::string    tool_name;      // For TOOL_USE events
     std::string    tool_input_json; // For TOOL_USE events (serialized JSON)

@@ -9,6 +9,7 @@
 #include <wx/timer.h>
 #include <string>
 #include <vector>
+#include <set>
 #include <memory>
 #include <nlohmann/json.hpp>
 
@@ -151,7 +152,18 @@ private:
     wxString m_fullHtmlContent;        // Complete HTML buffer
     wxString m_htmlBeforeAgentResponse; // HTML snapshot before streaming starts (for markdown re-render)
     wxString m_toolCallHtml;           // Accumulated tool call/result HTML (preserved during re-render)
+    wxString m_thinkingHtml;           // Thinking block HTML (preserved during re-render)
+    wxString m_thinkingContent;        // Raw accumulated thinking text
+    bool     m_thinkingExpanded;       // Whether thinking is expanded (click to toggle)
+    bool     m_isThinking;             // Whether currently in thinking phase (for loading animation)
+    int      m_currentThinkingIndex;   // Index for current streaming thinking (for toggle:thinking:N links)
     wxString m_lastToolDesc;           // Temp storage for tool description during history replay
+    void     RebuildThinkingHtml();    // Rebuild thinking HTML from m_thinkingContent
+
+    // Historical thinking toggle state
+    std::vector<wxString>  m_historicalThinking;          // Thinking content from loaded history
+    std::set<int>          m_historicalThinkingExpanded;  // Which historical thinking blocks are expanded
+    void                   RenderChatHistory();           // Re-render chat history with current toggle states
     void     AppendHtml( const wxString& aHtml );
     void     SetHtml( const wxString& aHtml );
     void     UpdateAgentResponse();    // Re-render current response with markdown

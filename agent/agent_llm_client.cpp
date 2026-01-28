@@ -855,6 +855,7 @@ void* LLM_REQUEST_THREAD::Entry()
     ctx.handler = m_handler;
     ctx.cancelFlag = m_cancelFlag;
     ctx.inToolInput = false;
+    ctx.inThinking = false;
 
     curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, StreamWriteCallback );
     curl_easy_setopt( curl, CURLOPT_WRITEDATA, &ctx );
@@ -998,6 +999,16 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     ctx->currentToolInput = "";
                     ctx->inToolInput = true;
                 }
+                else if( blockType == "thinking" )
+                {
+                    ctx->currentThinking = "";
+                    ctx->inThinking = true;
+
+                    // Post THINKING_START to show loading animation
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::THINKING_START;
+                    PostLLMChunk( ctx->handler, chunk );
+                }
             }
             else if( eventType == "content_block_delta" )
             {
@@ -1021,6 +1032,20 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     std::string partial = delta.value( "partial_json", "" );
                     ctx->currentToolInput += partial;
                 }
+                else if( deltaType == "thinking_delta" )
+                {
+                    // Stream thinking text incrementally (like text_delta)
+                    std::string thinking = delta.value( "thinking", "" );
+
+                    if( !thinking.empty() )
+                    {
+                        LLMStreamChunk chunk;
+                        chunk.type = LLMChunkType::THINKING;
+                        chunk.thinking_text = thinking;
+                        PostLLMChunk( ctx->handler, chunk );
+                    }
+                }
+                // signature_delta is ignored - we don't need to display signatures
             }
             else if( eventType == "content_block_stop" )
             {
@@ -1038,6 +1063,16 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     ctx->currentToolId.clear();
                     ctx->currentToolName.clear();
                     ctx->currentToolInput.clear();
+                }
+                else if( ctx->inThinking )
+                {
+                    // Thinking block complete - post THINKING_DONE
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::THINKING_DONE;
+                    PostLLMChunk( ctx->handler, chunk );
+
+                    ctx->inThinking = false;
+                    ctx->currentThinking.clear();
                 }
             }
             else if( eventType == "message_delta" )

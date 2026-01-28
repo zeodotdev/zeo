@@ -102,7 +102,8 @@ enum class LLMChunkType
     TOOL_USE,       // Tool call with id, name, input
     TOOL_USE_DONE,  // All tool calls parsed, ready to execute
     END_TURN,       // Model finished (no more tool calls)
-    ERROR           // Error occurred
+    ERROR,          // Error occurred
+    CONTEXT_STATUS  // Context usage status from server
 };
 
 /**
@@ -118,7 +119,13 @@ struct LLMStreamChunk
     std::string    tool_input_json; // For TOOL_USE events (serialized JSON)
     std::string    error_message;  // For ERROR events
 
-    LLMStreamChunk() : type( LLMChunkType::TEXT ) {}
+    // Context status fields (for CONTEXT_STATUS events)
+    int            context_percent_used;  // 0-100
+    bool           context_compacted;     // true if context was compacted
+
+    LLMStreamChunk() : type( LLMChunkType::TEXT ),
+                       context_percent_used( 0 ),
+                       context_compacted( false ) {}
 };
 
 /**

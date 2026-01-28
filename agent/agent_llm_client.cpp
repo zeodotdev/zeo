@@ -927,8 +927,19 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
         std::string event = ctx->buffer.substr( 0, pos );
         ctx->buffer.erase( 0, pos + 2 );
 
-        // Parse SSE event - find the data line
+        // Parse SSE event - extract event type and data line
         // SSE format can be "event: xxx\ndata: yyy" or just "data: yyy"
+        std::string sseEventType;
+        size_t eventPos = event.find( "event: " );
+        if( eventPos != std::string::npos )
+        {
+            size_t eventStart = eventPos + 7;
+            size_t lineEnd = event.find( '\n', eventStart );
+            sseEventType = ( lineEnd == std::string::npos )
+                ? event.substr( eventStart )
+                : event.substr( eventStart, lineEnd - eventStart );
+        }
+
         std::string data;
         size_t dataPos = event.find( "data: " );
         if( dataPos != std::string::npos )
@@ -948,6 +959,25 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
         // Skip [DONE] marker
         if( data == "[DONE]" )
             continue;
+
+        // Handle context_status event from server
+        if( sseEventType == "context_status" )
+        {
+            try
+            {
+                json j = json::parse( data );
+                LLMStreamChunk chunk;
+                chunk.type = LLMChunkType::CONTEXT_STATUS;
+                chunk.context_percent_used = j.value( "percent_used", 0 );
+                chunk.context_compacted = j.value( "compacted", false );
+                PostLLMChunk( ctx->handler, chunk );
+            }
+            catch( const json::exception& )
+            {
+                // JSON parse error - skip this event
+            }
+            continue;
+        }
 
         try
         {

@@ -646,6 +646,21 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // m_toolButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnToolClick, this );
     m_chatWindow->Bind( wxEVT_HTML_LINK_CLICKED, &AGENT_FRAME::OnHtmlLinkClick, this );
     m_chatWindow->Bind( wxEVT_RIGHT_DOWN, &AGENT_FRAME::OnChatRightClick, this );
+    m_chatWindow->Bind( wxEVT_SCROLLWIN_THUMBTRACK, &AGENT_FRAME::OnChatScroll, this );
+    m_chatWindow->Bind( wxEVT_SCROLLWIN_THUMBRELEASE, &AGENT_FRAME::OnChatScroll, this );
+    m_chatWindow->Bind( wxEVT_SCROLLWIN_LINEUP, &AGENT_FRAME::OnChatScroll, this );
+    m_chatWindow->Bind( wxEVT_SCROLLWIN_LINEDOWN, &AGENT_FRAME::OnChatScroll, this );
+    m_chatWindow->Bind( wxEVT_SCROLLWIN_PAGEUP, &AGENT_FRAME::OnChatScroll, this );
+    m_chatWindow->Bind( wxEVT_SCROLLWIN_PAGEDOWN, &AGENT_FRAME::OnChatScroll, this );
+    m_chatWindow->Bind( wxEVT_MOUSEWHEEL, [this]( wxMouseEvent& evt ) {
+        // Detect mouse wheel scroll during generation
+        if( m_isGenerating && evt.GetWheelRotation() > 0 )
+        {
+            // Scrolling up
+            m_userScrolledUp = true;
+        }
+        evt.Skip();
+    });
     Bind( wxEVT_MENU, &AGENT_FRAME::OnPopupClick, this, ID_CHAT_COPY );
     m_inputCtrl->Bind( wxEVT_KEY_DOWN, &AGENT_FRAME::OnInputKeyDown, this );
     m_inputCtrl->Bind( wxEVT_TEXT, &AGENT_FRAME::OnInputText, this );
@@ -671,6 +686,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Initialize generating animation
     m_generatingDots = 0;
     m_isGenerating = false;
+    m_userScrolledUp = false;
     m_generatingTimer.Bind( wxEVT_TIMER, &AGENT_FRAME::OnGeneratingTimer, this );
 
     // Initialize title generation
@@ -1093,10 +1109,8 @@ void AGENT_FRAME::OnGeneratingTimer( wxTimerEvent& aEvent )
     m_generatingDots = ( m_generatingDots % 3 ) + 1;
     UpdateAgentResponse();
 
-    // Auto-scroll
-    int x, y;
-    m_chatWindow->GetVirtualSize( &x, &y );
-    m_chatWindow->Scroll( 0, y );
+    // Auto-scroll (respects user scroll position)
+    AutoScrollToBottom();
 }
 
 void AGENT_FRAME::StartGeneratingAnimation()
@@ -1266,6 +1280,82 @@ void AGENT_FRAME::SetHtml( const wxString& aHtml )
 
     // Restore scroll position
     m_chatWindow->Scroll( x, y );
+}
+
+void AGENT_FRAME::AutoScrollToBottom()
+{
+    // Only auto-scroll if user hasn't scrolled up during this generation session
+    if( m_userScrolledUp )
+        return;
+
+    // Get virtual size and client size
+    int virtWidth, virtHeight;
+    m_chatWindow->GetVirtualSize( &virtWidth, &virtHeight );
+
+    int clientWidth, clientHeight;
+    m_chatWindow->GetClientSize( &clientWidth, &clientHeight );
+
+    // Get scroll units (pixels per scroll unit)
+    int scrollUnitX, scrollUnitY;
+    m_chatWindow->GetScrollPixelsPerUnit( &scrollUnitX, &scrollUnitY );
+
+    if( scrollUnitY <= 0 )
+        scrollUnitY = 10; // Fallback
+
+    // Calculate max scroll position in scroll units
+    int maxScrollY = ( virtHeight - clientHeight ) / scrollUnitY;
+    if( maxScrollY < 0 )
+        maxScrollY = 0;
+
+    // Scroll to bottom
+    m_chatWindow->Scroll( 0, maxScrollY );
+}
+
+void AGENT_FRAME::OnChatScroll( wxScrollWinEvent& aEvent )
+{
+    // Only track scroll during generation
+    if( !m_isGenerating )
+    {
+        aEvent.Skip();
+        return;
+    }
+
+    // Get current and max scroll positions
+    int scrollX, scrollY;
+    m_chatWindow->GetViewStart( &scrollX, &scrollY );
+
+    int virtWidth, virtHeight;
+    m_chatWindow->GetVirtualSize( &virtWidth, &virtHeight );
+
+    int clientWidth, clientHeight;
+    m_chatWindow->GetClientSize( &clientWidth, &clientHeight );
+
+    int scrollUnitX, scrollUnitY;
+    m_chatWindow->GetScrollPixelsPerUnit( &scrollUnitX, &scrollUnitY );
+
+    if( scrollUnitY <= 0 )
+        scrollUnitY = 10;
+
+    int maxScrollY = ( virtHeight - clientHeight ) / scrollUnitY;
+    if( maxScrollY < 0 )
+        maxScrollY = 0;
+
+    // If user scrolls up from bottom (more than ~30 pixels), detach auto-scroll
+    int tolerance = 30 / scrollUnitY;
+    if( tolerance < 2 )
+        tolerance = 2;
+
+    if( scrollY < maxScrollY - tolerance )
+    {
+        m_userScrolledUp = true;
+    }
+    else
+    {
+        // User scrolled back to bottom, re-attach
+        m_userScrolledUp = false;
+    }
+
+    aEvent.Skip();
 }
 
 void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
@@ -1646,6 +1736,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_toolCallHtml = "";    // Reset tool call HTML
     m_pendingToolCalls = nlohmann::json::array(); // Reset pending tool calls
     m_stopRequested = false; // Reset stop flag
+    m_userScrolledUp = false; // Reset scroll tracking for new message
 
     // Transition state machine to WAITING_FOR_LLM
     m_conversationCtx.Reset();  // Start fresh
@@ -1700,10 +1791,8 @@ void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
     // Re-render full response with markdown formatting
     UpdateAgentResponse();
 
-    // Auto-scroll
-    int x, y;
-    m_chatWindow->GetVirtualSize( &x, &y );
-    m_chatWindow->Scroll( 0, y );
+    // Auto-scroll (respects user scroll position)
+    AutoScrollToBottom();
 
     // Check for TOOL_CALL to force stop
     size_t toolPos = m_currentResponse.rfind( "TOOL_CALL:" );
@@ -2182,10 +2271,8 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
         // Re-render full response with markdown
         UpdateAgentResponse();
 
-        // Auto-scroll
-        int x, y;
-        m_chatWindow->GetVirtualSize( &x, &y );
-        m_chatWindow->Scroll( 0, y );
+        // Auto-scroll (respects user scroll position)
+        AutoScrollToBottom();
         break;
     }
     case LLM_EVENT_TYPE::TOOL_USE:
@@ -2842,10 +2929,8 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
         // Re-render full response with markdown
         UpdateAgentResponse();
 
-        // Auto-scroll
-        int x, y;
-        m_chatWindow->GetVirtualSize( &x, &y );
-        m_chatWindow->Scroll( 0, y );
+        // Auto-scroll (respects user scroll position)
+        AutoScrollToBottom();
         break;
     }
     case LLMChunkType::TOOL_USE:
@@ -3320,7 +3405,29 @@ void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
     }
 
     m_fullHtmlContent += "</body></html>";
-    SetHtml( m_fullHtmlContent );
+    m_chatWindow->SetPage( m_fullHtmlContent );
+
+    // Scroll to bottom of loaded conversation (use CallAfter to ensure layout is complete)
+    m_userScrolledUp = false;
+    CallAfter( [this]() {
+        int virtWidth, virtHeight;
+        m_chatWindow->GetVirtualSize( &virtWidth, &virtHeight );
+
+        int clientWidth, clientHeight;
+        m_chatWindow->GetClientSize( &clientWidth, &clientHeight );
+
+        int scrollUnitX, scrollUnitY;
+        m_chatWindow->GetScrollPixelsPerUnit( &scrollUnitX, &scrollUnitY );
+
+        if( scrollUnitY <= 0 )
+            scrollUnitY = 10;
+
+        int maxScrollY = ( virtHeight - clientHeight ) / scrollUnitY;
+        if( maxScrollY < 0 )
+            maxScrollY = 0;
+
+        m_chatWindow->Scroll( 0, maxScrollY );
+    });
 
     // Update DB ID so new messages go to this history
     m_chatHistoryDb.SetConversationId( aConversationId );

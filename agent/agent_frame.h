@@ -62,6 +62,7 @@ public:
     void OnInputKeyDown( wxKeyEvent& aEvent );
     void OnInputText( wxCommandEvent& aEvent );
     void OnChatRightClick( wxMouseEvent& aEvent );
+    void OnChatScroll( wxScrollWinEvent& aEvent );
     void OnPopupClick( wxCommandEvent& aEvent );
     void OnHistoryTool( wxCommandEvent& aEvent );
     void OnHistoryMenuSelect( wxCommandEvent& aEvent );
@@ -164,9 +165,11 @@ private:
     wxString m_htmlBeforeAgentResponse; // HTML snapshot before streaming starts (for markdown re-render)
     wxString m_toolCallHtml;           // Accumulated tool call/result HTML (preserved during re-render)
     wxString m_lastToolDesc;           // Temp storage for tool description during history replay
+    bool     m_userScrolledUp;         // Track if user has scrolled up during generation
     void     AppendHtml( const wxString& aHtml );
     void     SetHtml( const wxString& aHtml );
     void     UpdateAgentResponse();    // Re-render current response with markdown
+    void     AutoScrollToBottom();     // Scroll to bottom only if user hasn't scrolled up
     wxString GetToolDescription( const std::string& aToolName, const nlohmann::json& aInput ); // Human-readable tool description
 
     // Generating animation

@@ -21,6 +21,7 @@
 class AGENT_THREAD;
 class AGENT_AUTH;
 class PENDING_CHANGES_PANEL;
+class HISTORY_PANEL;
 class wxStaticText;
 
 enum
@@ -30,6 +31,7 @@ enum
     ID_NEW_CHAT,
     ID_LOGIN,
     ID_LOGOUT,
+    ID_CHAT_HISTORY_SHOW_ALL = 1999,
     ID_CHAT_HISTORY_MENU_BASE = 2000
 };
 
@@ -63,7 +65,12 @@ public:
     void OnPopupClick( wxCommandEvent& aEvent );
     void OnHistoryTool( wxCommandEvent& aEvent );
     void OnHistoryMenuSelect( wxCommandEvent& aEvent );
+    void OnHistoryShowAll( wxCommandEvent& aEvent );
     void OnNewChat( wxCommandEvent& aEvent );
+
+    // History panel access (public for HISTORY_PANEL callbacks)
+    AGENT_CHAT_HISTORY& GetChatHistoryDb() { return m_chatHistoryDb; }
+    void LoadConversation( const std::string& aConversationId );
     void OnSignIn( wxCommandEvent& aEvent );
     void OnSize( wxSizeEvent& aEvent ) override;
     void OnPendingChangesClick( wxCommandEvent& aEvent );
@@ -115,6 +122,9 @@ private:
     // Pending changes UI
     wxButton*               m_pendingChangesBtn;    // Shows when changes pending
     PENDING_CHANGES_PANEL*  m_pendingChangesPanel;  // Panel for managing changes
+
+    // History panel UI
+    HISTORY_PANEL*          m_historyPanel;         // Full history list panel
 
     // Sign-in overlay (shown when not authenticated)
     wxPanel*       m_signInOverlay;

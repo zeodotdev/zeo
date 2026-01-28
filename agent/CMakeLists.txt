@@ -30,6 +30,7 @@ set( AGENT_SRCS
     agent_auth.cpp
     agent_keychain.cpp
     pending_changes_popup.cpp
+    history_panel.cpp
 )
 
 
@@ -54,6 +55,7 @@ add_executable( agent WIN32 MACOSX_BUNDLE
     agent_auth.cpp
     agent_keychain.cpp
     pending_changes_popup.cpp
+    history_panel.cpp
     ${CMAKE_SOURCE_DIR}/common/single_top.cpp
     ${AGENT_RESOURCES}
     )

@@ -4,6 +4,7 @@
 #include "agent_auth.h"
 #include "agent_keychain.h"
 #include "pending_changes_popup.h"
+#include "history_panel.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -492,6 +493,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_signInButton( nullptr ),
         m_pendingChangesBtn( nullptr ),
         m_pendingChangesPanel( nullptr ),
+        m_historyPanel( nullptr ),
         m_workerThread( nullptr ),
         m_hasPendingSchChanges( false ),
         m_hasPendingPcbChanges( false )
@@ -628,6 +630,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     SetSizer( mainSizer );
     Layout();
     SetSize( 500, 600 ); // Slightly taller for chat
+
+    // History Panel (full overlay, not in sizer - positioned absolutely)
+    m_historyPanel = new HISTORY_PANEL( this, this );
+    m_historyPanel->Hide();
 
     // Bind Events
     m_actionButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSend, this );
@@ -3074,18 +3080,55 @@ void AGENT_FRAME::OnHistoryTool( wxCommandEvent& aEvent )
     {
         int id = ID_CHAT_HISTORY_MENU_BASE;
 
-        // Limit to last 20 entries to avoid massive menu
+        // Show only last 5 entries in the dropdown
         size_t count = 0;
         for( const auto& entry : historyList )
         {
-            if( count++ > 20 ) break;
-            menu.Append( id++, wxString::FromUTF8( entry.title ) );
+            if( count++ >= 5 ) break;
+            wxString title = wxString::FromUTF8( entry.title );
+            if( title.IsEmpty() )
+                title = "Untitled Chat";
+            menu.Append( id++, title );
         }
 
         Bind( wxEVT_MENU, &AGENT_FRAME::OnHistoryMenuSelect, this, ID_CHAT_HISTORY_MENU_BASE, id - 1 );
+
+        // Add separator and "Show All" if there are more than 5 entries
+        if( historyList.size() > 5 )
+        {
+            menu.AppendSeparator();
+            menu.Append( ID_CHAT_HISTORY_SHOW_ALL, "Show All..." );
+            Bind( wxEVT_MENU, &AGENT_FRAME::OnHistoryShowAll, this, ID_CHAT_HISTORY_SHOW_ALL );
+        }
+    }
+    else
+    {
+        menu.Append( wxID_ANY, "(No history)" )->Enable( false );
     }
 
     PopupMenu( &menu );
+}
+
+
+void AGENT_FRAME::OnHistoryShowAll( wxCommandEvent& aEvent )
+{
+    // Prevent switching chats while generating
+    if( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE )
+    {
+        wxMessageBox( _( "Please wait for the current response to complete before viewing history." ),
+                      _( "Chat in Progress" ), wxOK | wxICON_INFORMATION );
+        return;
+    }
+
+    // Position history panel as full overlay covering entire client area
+    wxSize clientSize = GetClientSize();
+    m_historyPanel->SetSize( clientSize );
+    m_historyPanel->SetPosition( wxPoint( 0, 0 ) );
+
+    // Refresh and show the history panel
+    m_historyPanel->RefreshHistory();
+    m_historyPanel->Show();
+    m_historyPanel->Raise();  // Bring to front
 }
 
 void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
@@ -3103,174 +3146,184 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
 
     if( index >= 0 && index < (int)historyList.size() )
     {
-        std::string selectedId = historyList[index].id;
+        LoadConversation( historyList[index].id );
+    }
+}
 
-        // Load history (this also loads the title into m_chatHistoryDb)
-        m_chatHistory = m_chatHistoryDb.Load( selectedId );
 
-        // Update chat name label with title from loaded history
-        std::string title = m_chatHistoryDb.GetTitle();
-        if( title.empty() )
-            title = historyList[index].title;  // Fallback to list title
-        m_chatNameLabel->SetLabel( wxString::FromUTF8( title ) );
+void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
+{
+    // Hide history panel overlay if visible
+    if( m_historyPanel->IsShown() )
+    {
+        m_historyPanel->Hide();
+    }
 
-        // Mark that title is already generated for this chat
-        m_needsTitleGeneration = false;
-        m_firstUserMessage = "";
+    // Load history (this also loads the title into m_chatHistoryDb)
+    m_chatHistory = m_chatHistoryDb.Load( aConversationId );
 
-        // Clear window
-        m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'>";
-        
-        // Iterate history and render
-        for( const auto& msg : m_chatHistory )
+    // Update chat name label with title from loaded history
+    std::string title = m_chatHistoryDb.GetTitle();
+    if( title.empty() )
+        title = "Untitled Chat";
+    m_chatNameLabel->SetLabel( wxString::FromUTF8( title ) );
+
+    // Mark that title is already generated for this chat
+    m_needsTitleGeneration = false;
+    m_firstUserMessage = "";
+
+    // Clear window
+    m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'>";
+
+    // Iterate history and render
+    for( const auto& msg : m_chatHistory )
+    {
+        if( msg.contains("role") && msg.contains("content") )
         {
-            if( msg.contains("role") && msg.contains("content") )
+            std::string role = msg["role"];
+
+            // Content can be string or array (tool use)
+            if( msg["content"].is_string() )
             {
-                std::string role = msg["role"];
-                
-                // Content can be string or array (tool use)
-                if( msg["content"].is_string() )
-                {
-                    std::string content = msg["content"];
-                    wxString display = content;
+                std::string content = msg["content"];
+                wxString display = content;
 
-                    if( role == "user" )
-                    {
-                        // Right-aligned speech bubble style for user messages
-                        display.Replace( "&", "&amp;" );
-                        display.Replace( "<", "&lt;" );
-                        display.Replace( ">", "&gt;" );
-                        display.Replace( "\n", "<br>" );
-                        m_fullHtmlContent += wxString::Format(
-                            "<table width='100%%' cellpadding='0'><tr><td align='right'>"
-                            "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
-                            "<font color='#ffffff'>%s</font>"
-                            "</td></tr></table>"
-                            "</td></tr></table><br><br>",
-                            display );
-                    }
-                    else if( role == "assistant" )
-                    {
-                        // Left-aligned markdown formatted response
-                        m_fullHtmlContent += MarkdownToHtml( content );
-                    }
+                if( role == "user" )
+                {
+                    // Right-aligned speech bubble style for user messages
+                    display.Replace( "&", "&amp;" );
+                    display.Replace( "<", "&lt;" );
+                    display.Replace( ">", "&gt;" );
+                    display.Replace( "\n", "<br>" );
+                    m_fullHtmlContent += wxString::Format(
+                        "<table width='100%%' cellpadding='0'><tr><td align='right'>"
+                        "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
+                        "<font color='#ffffff'>%s</font>"
+                        "</td></tr></table>"
+                        "</td></tr></table><br><br>",
+                        display );
                 }
-                else if( msg["content"].is_array() )
+                else if( role == "assistant" )
                 {
-                    // Iterate through content blocks and render each one
-                    for( const auto& block : msg["content"] )
+                    // Left-aligned markdown formatted response
+                    m_fullHtmlContent += MarkdownToHtml( content );
+                }
+            }
+            else if( msg["content"].is_array() )
+            {
+                // Iterate through content blocks and render each one
+                for( const auto& block : msg["content"] )
+                {
+                    if( !block.contains("type") )
+                        continue;
+
+                    std::string blockType = block["type"];
+
+                    if( blockType == "text" )
                     {
-                        if( !block.contains("type") )
-                            continue;
+                        // Render text block
+                        std::string text = block.value("text", "");
+                        wxString display = text;
 
-                        std::string blockType = block["type"];
-
-                        if( blockType == "text" )
+                        if( role == "assistant" )
                         {
-                            // Render text block
-                            std::string text = block.value("text", "");
-                            wxString display = text;
-
-                            if( role == "assistant" )
-                            {
-                                // Left-aligned markdown formatted response
-                                m_fullHtmlContent += MarkdownToHtml( display );
-                            }
-                            else if( role == "user" )
-                            {
-                                // Right-aligned speech bubble style for user messages
-                                display.Replace( "&", "&amp;" );
-                                display.Replace( "<", "&lt;" );
-                                display.Replace( ">", "&gt;" );
-                                display.Replace( "\n", "<br>" );
-                                m_fullHtmlContent += wxString::Format(
-                                    "<table width='100%%' cellpadding='0'><tr><td align='right'>"
-                                    "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
-                                    "<font color='#ffffff'>%s</font>"
-                                    "</td></tr></table>"
-                                    "</td></tr></table><br>",
-                                    display );
-                            }
+                            // Left-aligned markdown formatted response
+                            m_fullHtmlContent += MarkdownToHtml( display );
                         }
-                        else if( blockType == "tool_use" )
+                        else if( role == "user" )
                         {
-                            // Render tool_use block with human-readable description
-                            std::string toolName = block.value("name", "unknown");
-                            nlohmann::json toolInput = block.value("input", nlohmann::json::object());
-                            wxString desc = GetToolDescription( toolName, toolInput );
-
-                            // Store for pairing with result (next block)
-                            m_lastToolDesc = desc;
+                            // Right-aligned speech bubble style for user messages
+                            display.Replace( "&", "&amp;" );
+                            display.Replace( "<", "&lt;" );
+                            display.Replace( ">", "&gt;" );
+                            display.Replace( "\n", "<br>" );
+                            m_fullHtmlContent += wxString::Format(
+                                "<table width='100%%' cellpadding='0'><tr><td align='right'>"
+                                "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
+                                "<font color='#ffffff'>%s</font>"
+                                "</td></tr></table>"
+                                "</td></tr></table><br>",
+                                display );
                         }
-                        else if( blockType == "tool_result" )
+                    }
+                    else if( blockType == "tool_use" )
+                    {
+                        // Render tool_use block with human-readable description
+                        std::string toolName = block.value("name", "unknown");
+                        nlohmann::json toolInput = block.value("input", nlohmann::json::object());
+                        wxString desc = GetToolDescription( toolName, toolInput );
+
+                        // Store for pairing with result (next block)
+                        m_lastToolDesc = desc;
+                    }
+                    else if( blockType == "tool_result" )
+                    {
+                        // Render combined tool call + result block
+                        std::string content = block.value("content", "");
+                        bool isError = block.value("is_error", false);
+
+                        // Check if this is a Python traceback
+                        bool isPythonError = ( content.find( "Traceback" ) != std::string::npos );
+
+                        wxString displayResult;
+                        wxString statusColor;
+                        wxString statusText;
+
+                        if( isPythonError )
                         {
-                            // Render combined tool call + result block
-                            std::string content = block.value("content", "");
-                            bool isError = block.value("is_error", false);
-
-                            // Check if this is a Python traceback
-                            bool isPythonError = ( content.find( "Traceback" ) != std::string::npos );
-
-                            wxString displayResult;
-                            wxString statusColor;
-                            wxString statusText;
-
-                            if( isPythonError )
-                            {
-                                statusColor = "#f44747";
-                                statusText = "Error";
-                                displayResult = "<i>Script execution failed.</i>";
-                            }
-                            else if( isError )
-                            {
-                                statusColor = "#f44747";
-                                statusText = "Failed";
-                                wxString htmlResult = content;
-                                htmlResult.Replace( "&", "&amp;" );
-                                htmlResult.Replace( "<", "&lt;" );
-                                htmlResult.Replace( ">", "&gt;" );
-                                if( htmlResult.length() > 200 )
-                                    htmlResult = htmlResult.Left( 200 ) + "...";
-                                displayResult = htmlResult;
-                            }
-                            else
-                            {
-                                statusColor = "#4ec9b0";
-                                statusText = "Completed";
-                                wxString htmlResult = content;
-                                htmlResult.Replace( "&", "&amp;" );
-                                htmlResult.Replace( "<", "&lt;" );
-                                htmlResult.Replace( ">", "&gt;" );
-                                if( htmlResult.length() > 500 )
-                                    htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
-                                displayResult = htmlResult;
-                            }
-
-                            // Use the stored tool description from the preceding tool_use block
-                            wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
-
-                            wxString resultBox = wxString::Format(
-                                "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
-                                "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
-                                "<font color='%s'><b>%s</b></font><br>"
-                                "<font color='#d4d4d4' size='2'>%s</font>"
-                                "</td></tr></table>",
-                                desc, statusColor, statusText, displayResult );
-                            m_fullHtmlContent += resultBox;
-
-                            m_lastToolDesc = "";  // Reset for next tool
+                            statusColor = "#f44747";
+                            statusText = "Error";
+                            displayResult = "<i>Script execution failed.</i>";
                         }
+                        else if( isError )
+                        {
+                            statusColor = "#f44747";
+                            statusText = "Failed";
+                            wxString htmlResult = content;
+                            htmlResult.Replace( "&", "&amp;" );
+                            htmlResult.Replace( "<", "&lt;" );
+                            htmlResult.Replace( ">", "&gt;" );
+                            if( htmlResult.length() > 200 )
+                                htmlResult = htmlResult.Left( 200 ) + "...";
+                            displayResult = htmlResult;
+                        }
+                        else
+                        {
+                            statusColor = "#4ec9b0";
+                            statusText = "Completed";
+                            wxString htmlResult = content;
+                            htmlResult.Replace( "&", "&amp;" );
+                            htmlResult.Replace( "<", "&lt;" );
+                            htmlResult.Replace( ">", "&gt;" );
+                            if( htmlResult.length() > 500 )
+                                htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
+                            displayResult = htmlResult;
+                        }
+
+                        // Use the stored tool description from the preceding tool_use block
+                        wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
+
+                        wxString resultBox = wxString::Format(
+                            "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                            "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+                            "<font color='%s'><b>%s</b></font><br>"
+                            "<font color='#d4d4d4' size='2'>%s</font>"
+                            "</td></tr></table>",
+                            desc, statusColor, statusText, displayResult );
+                        m_fullHtmlContent += resultBox;
+
+                        m_lastToolDesc = "";  // Reset for next tool
                     }
                 }
             }
         }
-        
-        m_fullHtmlContent += "</body></html>";
-        SetHtml( m_fullHtmlContent );
-        
-        // Update DB ID so new messages go to this history
-        m_chatHistoryDb.SetConversationId( selectedId );
     }
+
+    m_fullHtmlContent += "</body></html>";
+    SetHtml( m_fullHtmlContent );
+
+    // Update DB ID so new messages go to this history
+    m_chatHistoryDb.SetConversationId( aConversationId );
 }
 
 // ============================================================================
@@ -3315,12 +3368,19 @@ void AGENT_FRAME::OnSignIn( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnSize( wxSizeEvent& aEvent )
 {
-    // Reposition overlay to cover entire client area when resized
+    wxSize clientSize = GetClientSize();
+
+    // Reposition overlays to cover entire client area when resized
     if( m_signInOverlay && m_signInOverlay->IsShown() )
     {
-        wxSize clientSize = GetClientSize();
         m_signInOverlay->SetSize( clientSize );
         m_signInOverlay->SetPosition( wxPoint( 0, 0 ) );
+    }
+
+    if( m_historyPanel && m_historyPanel->IsShown() )
+    {
+        m_historyPanel->SetSize( clientSize );
+        m_historyPanel->SetPosition( wxPoint( 0, 0 ) );
     }
 
     aEvent.Skip(); // Let default handling continue

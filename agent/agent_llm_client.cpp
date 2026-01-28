@@ -856,17 +856,33 @@ void* LLM_REQUEST_THREAD::Entry()
     curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, StreamWriteCallback );
     curl_easy_setopt( curl, CURLOPT_WRITEDATA, &ctx );
 
+    // Set up progress callback for fast cancellation
+    // The progress callback is called frequently and can abort immediately
+    curl_easy_setopt( curl, CURLOPT_NOPROGRESS, 0L );
+    curl_easy_setopt( curl, CURLOPT_XFERINFOFUNCTION,
+        []( void* clientp, curl_off_t, curl_off_t, curl_off_t, curl_off_t ) -> int {
+            std::atomic<bool>* cancelFlag = static_cast<std::atomic<bool>*>( clientp );
+            if( cancelFlag && cancelFlag->load() )
+                return 1;  // Non-zero aborts the transfer
+            return 0;
+        });
+    curl_easy_setopt( curl, CURLOPT_XFERINFODATA, m_cancelFlag );
+
     // Perform the request (this blocks until complete or cancelled)
     CURLcode res = curl_easy_perform( curl );
 
     // Clean up headers
     curl_slist_free_all( headers );
 
+    // Check if we were cancelled - don't post events to potentially destroyed handler
+    bool wasCancelled = m_cancelFlag && m_cancelFlag->load();
+
     // Check result
     if( res != CURLE_OK )
     {
         std::string errorMsg = "Curl error: " + std::string( curl_easy_strerror( res ) );
-        PostLLMError( m_handler, errorMsg );
+        if( !wasCancelled )
+            PostLLMError( m_handler, errorMsg );
         curl_easy_cleanup( curl );
         return nullptr;
     }
@@ -887,16 +903,20 @@ void* LLM_REQUEST_THREAD::Entry()
         fprintf( stderr, "LLM_REQUEST_THREAD: API error %ld\nResponse: %s\n",
                  http_code, ctx.buffer.c_str() );
         fflush( stderr );
-        PostLLMError( m_handler, errorMsg );
+        if( !wasCancelled )
+            PostLLMError( m_handler, errorMsg );
         curl_easy_cleanup( curl );
         return nullptr;
     }
 
-    // Post completion event
-    LLMStreamComplete complete;
-    complete.success = true;
-    complete.http_status_code = http_code;
-    PostLLMComplete( m_handler, complete );
+    // Post completion event (only if not cancelled)
+    if( !wasCancelled )
+    {
+        LLMStreamComplete complete;
+        complete.success = true;
+        complete.http_status_code = http_code;
+        PostLLMComplete( m_handler, complete );
+    }
 
     curl_easy_cleanup( curl );
     return nullptr;
@@ -983,6 +1003,10 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
 
                     if( !text.empty() )
                     {
+                        // Check for cancellation before posting event
+                        if( ctx->cancelFlag && ctx->cancelFlag->load() )
+                            return 0;
+
                         LLMStreamChunk chunk;
                         chunk.type = LLMChunkType::TEXT;
                         chunk.text = text;
@@ -999,6 +1023,10 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
             {
                 if( ctx->inToolInput )
                 {
+                    // Check for cancellation before posting event
+                    if( ctx->cancelFlag && ctx->cancelFlag->load() )
+                        return 0;
+
                     // Tool use block complete
                     LLMStreamChunk chunk;
                     chunk.type = LLMChunkType::TOOL_USE;
@@ -1020,6 +1048,10 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
 
                 if( stopReason == "tool_use" )
                 {
+                    // Check for cancellation before posting event
+                    if( ctx->cancelFlag && ctx->cancelFlag->load() )
+                        return 0;
+
                     // Signal that tool use is complete, ready to execute
                     LLMStreamChunk chunk;
                     chunk.type = LLMChunkType::TOOL_USE_DONE;
@@ -1027,6 +1059,10 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                 }
                 else if( stopReason == "end_turn" )
                 {
+                    // Check for cancellation before posting event
+                    if( ctx->cancelFlag && ctx->cancelFlag->load() )
+                        return 0;
+
                     LLMStreamChunk chunk;
                     chunk.type = LLMChunkType::END_TURN;
                     PostLLMChunk( ctx->handler, chunk );
@@ -1034,6 +1070,10 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
             }
             else if( eventType == "error" )
             {
+                // Check for cancellation before posting event
+                if( ctx->cancelFlag && ctx->cancelFlag->load() )
+                    return 0;
+
                 auto error = j.value( "error", json::object() );
                 std::string errorMsg = error.value( "message", "Unknown error" );
 

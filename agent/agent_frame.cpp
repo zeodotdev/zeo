@@ -653,8 +653,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_chatWindow->Bind( wxEVT_SCROLLWIN_PAGEUP, &AGENT_FRAME::OnChatScroll, this );
     m_chatWindow->Bind( wxEVT_SCROLLWIN_PAGEDOWN, &AGENT_FRAME::OnChatScroll, this );
     m_chatWindow->Bind( wxEVT_MOUSEWHEEL, [this]( wxMouseEvent& evt ) {
-        // Detect mouse wheel scroll during generation
-        if( m_isGenerating && evt.GetWheelRotation() > 0 )
+        // Detect mouse wheel scroll during generation or tool execution
+        bool isBusy = m_isGenerating ||
+                      m_conversationCtx.GetState() != AgentConversationState::IDLE;
+        if( isBusy && evt.GetWheelRotation() > 0 )
         {
             // Scrolling up
             m_userScrolledUp = true;
@@ -797,6 +799,12 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
 AGENT_FRAME::~AGENT_FRAME()
 {
+    // Stop the generating animation timer to prevent timer events
+    m_generatingTimer.Stop();
+
+    // Stop tool timeout timer
+    m_toolTimeoutTimer.Stop();
+
     // Cancel any in-progress LLM request and wait for it to finish
     // This prevents the background thread from posting events to a destroyed handler
     if( m_llmClient )
@@ -818,6 +826,10 @@ AGENT_FRAME::~AGENT_FRAME()
         {
             wxLogWarning( "LLM request did not finish within timeout during AGENT_FRAME destruction" );
         }
+
+        // Add a small safety delay to ensure the thread has fully finished
+        // after m_requestInProgress is set to false
+        wxMilliSleep( 50 );
     }
 
     delete m_auth;
@@ -1118,6 +1130,7 @@ void AGENT_FRAME::StartGeneratingAnimation()
     m_isGenerating = true;
     m_generatingDots = 1;
     m_generatingTimer.Start( 400 ); // Update every 400ms
+    m_actionButton->SetLabel( "Stop" );
 }
 
 void AGENT_FRAME::StopGeneratingAnimation()
@@ -1125,6 +1138,8 @@ void AGENT_FRAME::StopGeneratingAnimation()
     m_isGenerating = false;
     m_generatingTimer.Stop();
     m_generatingDots = 0;
+    // Note: Don't set button to "Send" here - let the caller decide
+    // (tool execution keeps "Stop", only IDLE sets "Send")
 }
 
 void AGENT_FRAME::GenerateChatTitle()
@@ -1303,7 +1318,8 @@ void AGENT_FRAME::AutoScrollToBottom()
         scrollUnitY = 10; // Fallback
 
     // Calculate max scroll position in scroll units
-    int maxScrollY = ( virtHeight - clientHeight ) / scrollUnitY;
+    // Use ceiling division to ensure we scroll completely to the bottom
+    int maxScrollY = ( virtHeight - clientHeight + scrollUnitY - 1 ) / scrollUnitY;
     if( maxScrollY < 0 )
         maxScrollY = 0;
 
@@ -1313,8 +1329,8 @@ void AGENT_FRAME::AutoScrollToBottom()
 
 void AGENT_FRAME::OnChatScroll( wxScrollWinEvent& aEvent )
 {
-    // Only track scroll during generation
-    if( !m_isGenerating )
+    // Only track scroll during generation or tool execution
+    if( !m_isGenerating && m_conversationCtx.GetState() == AgentConversationState::IDLE )
     {
         aEvent.Skip();
         return;
@@ -1336,7 +1352,8 @@ void AGENT_FRAME::OnChatScroll( wxScrollWinEvent& aEvent )
     if( scrollUnitY <= 0 )
         scrollUnitY = 10;
 
-    int maxScrollY = ( virtHeight - clientHeight ) / scrollUnitY;
+    // Use ceiling division to match AutoScrollToBottom
+    int maxScrollY = ( virtHeight - clientHeight + scrollUnitY - 1 ) / scrollUnitY;
     if( maxScrollY < 0 )
         maxScrollY = 0;
 
@@ -1752,6 +1769,8 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
 {
+    using json = nlohmann::json;
+
     // Stop generating animation
     StopGeneratingAnimation();
 
@@ -1773,6 +1792,82 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
 
     // Re-render without dots
     UpdateAgentResponse();
+
+    // Fix orphaned tool_use blocks in chat history.
+    // The Anthropic API requires every tool_use to have a corresponding tool_result.
+    // If we stopped during tool execution, we need to add "stopped" tool_results.
+
+    // m_pendingToolCalls contains tool blocks that haven't been added to history yet
+    // (they get added at MESSAGE_STOP). Just clear these - no fake results needed.
+    if( m_pendingToolCalls.is_array() && !m_pendingToolCalls.empty() )
+    {
+        fprintf( stderr, "AGENT OnStop: Clearing %zu uncommitted tool calls\n",
+                 m_pendingToolCalls.size() );
+        fflush( stderr );
+        m_pendingToolCalls = json::array();
+    }
+
+    // m_conversationCtx has tool calls that WERE added to history (after MESSAGE_STOP).
+    // These need fake tool_result blocks to satisfy the API requirements.
+    if( m_conversationCtx.HasPendingToolCalls() )
+    {
+        std::vector<std::string> orphanedToolIds;
+
+        // Collect all pending tool IDs
+        while( m_conversationCtx.HasPendingToolCalls() )
+        {
+            PendingToolCall* pending = m_conversationCtx.GetNextPendingToolCall();
+            if( pending )
+            {
+                orphanedToolIds.push_back( pending->tool_use_id );
+                m_conversationCtx.RemovePendingToolCall( pending->tool_use_id );
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        // Also check for any executing tool
+        PendingToolCall* executing = m_conversationCtx.GetExecutingToolCall();
+        if( executing )
+        {
+            orphanedToolIds.push_back( executing->tool_use_id );
+            m_conversationCtx.RemovePendingToolCall( executing->tool_use_id );
+        }
+
+        // Add fake tool_result messages for each orphaned tool_use
+        if( !orphanedToolIds.empty() )
+        {
+            json toolResultMsg;
+            toolResultMsg["role"] = "user";
+            json content = json::array();
+
+            for( const auto& toolId : orphanedToolIds )
+            {
+                content.push_back( {
+                    { "type", "tool_result" },
+                    { "tool_use_id", toolId },
+                    { "content", "Tool execution was stopped by the user." },
+                    { "is_error", true }
+                });
+            }
+
+            toolResultMsg["content"] = content;
+            m_chatHistory.push_back( toolResultMsg );
+            m_chatHistoryDb.Save( m_chatHistory );
+
+            fprintf( stderr, "AGENT OnStop: Added %zu stopped tool_result blocks to history\n",
+                     orphanedToolIds.size() );
+            fflush( stderr );
+        }
+    }
+
+    // Clear any completed tool results that weren't added to history
+    m_conversationCtx.completed_tool_results.clear();
+
+    // Clear pending tool calls (should be empty but be safe)
+    m_conversationCtx.ClearPendingToolCalls();
 
     // Transition state machine to IDLE
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
@@ -2361,19 +2456,25 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
     }
     case LLM_EVENT_TYPE::END_TURN:
     {
-        // Model finished
+        // Model finished streaming
         AppendHtml( "</p>" );
-        m_actionButton->SetLabel( "Send" );
 
-        // Add final assistant message to history if there's accumulated text
-        if( !m_currentResponse.empty() )
+        // Only transition to idle if not executing tools
+        if( m_conversationCtx.GetState() != AgentConversationState::EXECUTING_TOOL &&
+            !m_conversationCtx.HasPendingToolCalls() )
         {
-            m_chatHistory.push_back( { { "role", "assistant" }, { "content", m_currentResponse } } );
-            m_chatHistoryDb.Save( m_chatHistory );
-        }
+            StopGeneratingAnimation();
+            m_actionButton->SetLabel( "Send" );
+            m_conversationCtx.SetState( AgentConversationState::IDLE );
 
-        // Transition back to IDLE
-        m_conversationCtx.SetState( AgentConversationState::IDLE );
+            // Add final assistant message to history if there's accumulated text
+            if( !m_currentResponse.empty() )
+            {
+                m_chatHistory.push_back( { { "role", "assistant" }, { "content", m_currentResponse } } );
+                m_chatHistoryDb.Save( m_chatHistory );
+            }
+        }
+        // else: tools are being executed, animation and button stay as is
         break;
     }
     case LLM_EVENT_TYPE::ERROR:
@@ -2381,7 +2482,9 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
         wxString errorHtml = wxString::Format( "<p><font color='red'><b>Error:</b> %s</font></p>",
                                                aEvent.error_message );
         AppendHtml( errorHtml );
+        StopGeneratingAnimation();
         m_actionButton->SetLabel( "Send" );
+        m_conversationCtx.SetState( AgentConversationState::IDLE );
         break;
     }
     }
@@ -2508,6 +2611,9 @@ void AGENT_FRAME::ExecuteToolAsync( const std::string& aToolName,
         PostToolError( this, toolUseId, "Invalid state for tool execution" );
         return;
     }
+
+    // Show Stop button during tool execution
+    m_actionButton->SetLabel( "Stop" );
 
     // Mark the existing pending tool call as executing (don't add a duplicate!)
     PendingToolCall* existingTool = m_conversationCtx.FindPendingToolCall( toolUseId );
@@ -3041,21 +3147,29 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
     }
     case LLMChunkType::END_TURN:
     {
-        // Model finished
+        // Model finished streaming
         AppendHtml( "</p>" );
-        m_actionButton->SetLabel( "Send" );
 
-        // Add final assistant message to history if there's accumulated text
-        if( !m_currentResponse.empty() )
+        // Only transition to idle if not executing tools
+        // (when tools are being executed, we stay in EXECUTING_TOOL state)
+        if( m_conversationCtx.GetState() != AgentConversationState::EXECUTING_TOOL &&
+            !m_conversationCtx.HasPendingToolCalls() )
         {
-            m_chatHistory.push_back( {
-                { "role", "assistant" },
-                { "content", m_currentResponse }
-            } );
-            m_chatHistoryDb.Save( m_chatHistory );
-        }
+            StopGeneratingAnimation();
+            m_actionButton->SetLabel( "Send" );
+            m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
 
-        m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
+            // Add final assistant message to history if there's accumulated text
+            if( !m_currentResponse.empty() )
+            {
+                m_chatHistory.push_back( {
+                    { "role", "assistant" },
+                    { "content", m_currentResponse }
+                } );
+                m_chatHistoryDb.Save( m_chatHistory );
+            }
+        }
+        // else: tools are being executed, animation and button stay as is
         break;
     }
     case LLMChunkType::ERROR:
@@ -3063,6 +3177,7 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
         wxString errorHtml = wxString::Format( "<p><font color='red'><b>Error:</b> %s</font></p>",
                                                aChunk.error_message );
         AppendHtml( errorHtml );
+        StopGeneratingAnimation();
         m_actionButton->SetLabel( "Send" );
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
         break;
@@ -3074,9 +3189,6 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
 void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
 {
     wxLogDebug( "AGENT: OnLLMStreamComplete called" );
-
-    // Stop generating animation
-    StopGeneratingAnimation();
 
     // Get completion data
     LLMStreamComplete* complete = aEvent.GetPayload<LLMStreamComplete*>();
@@ -3091,23 +3203,31 @@ void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
         delete complete;
     }
 
-    // Re-render without dots
-    UpdateAgentResponse();
-
-    // Ensure we're in IDLE state and button shows Send
-    if( m_conversationCtx.GetState() == AgentConversationState::WAITING_FOR_LLM )
+    // Only stop animation and transition to IDLE if not executing tools
+    // (when tools are running, keep the animation going)
+    if( m_conversationCtx.GetState() != AgentConversationState::EXECUTING_TOOL &&
+        !m_conversationCtx.HasPendingToolCalls() )
     {
-        m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-    }
-    m_actionButton->SetLabel( "Send" );
+        StopGeneratingAnimation();
 
-    // Generate title after first successful response
-    // This happens regardless of state - the m_needsTitleGeneration flag is the guard
-    if( m_needsTitleGeneration && !m_firstUserMessage.empty() )
-    {
-        fprintf( stderr, "[TITLE] Triggering title generation for first message\n" );
-        GenerateChatTitle();
+        // Re-render without dots
+        UpdateAgentResponse();
+
+        // Transition to IDLE if we were waiting for LLM
+        if( m_conversationCtx.GetState() == AgentConversationState::WAITING_FOR_LLM )
+        {
+            m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
+        }
+        m_actionButton->SetLabel( "Send" );
+
+        // Generate title after first successful response
+        if( m_needsTitleGeneration && !m_firstUserMessage.empty() )
+        {
+            fprintf( stderr, "[TITLE] Triggering title generation for first message\n" );
+            GenerateChatTitle();
+        }
     }
+    // else: tools are executing, keep animation running and button showing "Stop"
 }
 
 
@@ -3422,7 +3542,8 @@ void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
         if( scrollUnitY <= 0 )
             scrollUnitY = 10;
 
-        int maxScrollY = ( virtHeight - clientHeight ) / scrollUnitY;
+        // Use ceiling division to ensure we scroll completely to the bottom
+        int maxScrollY = ( virtHeight - clientHeight + scrollUnitY - 1 ) / scrollUnitY;
         if( maxScrollY < 0 )
             maxScrollY = 0;
 

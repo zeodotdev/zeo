@@ -1971,7 +1971,9 @@ void AGENT_FRAME::OnHistoryTool( wxCommandEvent& aEvent )
 void AGENT_FRAME::OnHistoryShowAll( wxCommandEvent& aEvent )
 {
     // Prevent switching chats while generating
-    if( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE )
+    bool isBusy = m_chatController ? m_chatController->IsBusy()
+                                   : ( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE );
+    if( isBusy )
     {
         wxMessageBox( _( "Please wait for the current response to complete before viewing history." ),
                       _( "Chat in Progress" ), wxOK | wxICON_INFORMATION );
@@ -1992,7 +1994,9 @@ void AGENT_FRAME::OnHistoryShowAll( wxCommandEvent& aEvent )
 void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
 {
     // Prevent switching chats while generating
-    if( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE )
+    bool isBusy = m_chatController ? m_chatController->IsBusy()
+                                   : ( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE );
+    if( isBusy )
     {
         wxMessageBox( _( "Please wait for the current response to complete before switching chats." ),
                       _( "Chat in Progress" ), wxOK | wxICON_INFORMATION );

@@ -210,7 +210,7 @@ void AGENT_LLM_CLIENT::SetModel( const std::string& aModelName )
     m_modelName = aModelName;
 }
 
-std::string AGENT_LLM_CLIENT::Ask( const std::string& aPrompt, const std::string& aSystem, const std::string& aPayload )
+std::string AGENT_LLM_CLIENT::Ask( const std::string& aPrompt, const std::string& aPayload )
 {
     return "Error: Synchronous Ask not fully implemented for multi-model. Use AskStream.";
 }
@@ -466,21 +466,21 @@ static size_t ToolStreamWriteCallback( void* aContents, size_t aSize, size_t aNm
     return realSize;
 }
 
-bool AGENT_LLM_CLIENT::AskStream( const nlohmann::json& aMessages, const std::string& aSystem,
+bool AGENT_LLM_CLIENT::AskStream( const nlohmann::json& aMessages,
                                   const std::string& aPayload, std::function<void( const std::string& )> aCallback )
 {
     // Route based on model name
     if( m_modelName.find( "Claude" ) != std::string::npos )
     {
-        return AskStreamAnthropic( aMessages, aSystem, aPayload, aCallback );
+        return AskStreamAnthropic( aMessages, aPayload, aCallback );
     }
     else
     {
-        return AskStreamOpenAI( aMessages, aSystem, aPayload, aCallback );
+        return AskStreamOpenAI( aMessages, aPayload, aCallback );
     }
 }
 
-bool AGENT_LLM_CLIENT::AskStreamOpenAI( const nlohmann::json& aMessages, const std::string& aSystem,
+bool AGENT_LLM_CLIENT::AskStreamOpenAI( const nlohmann::json& aMessages,
                                         const std::string&                        aPayload,
                                         std::function<void( const std::string& )> aCallback )
 {
@@ -489,16 +489,16 @@ bool AGENT_LLM_CLIENT::AskStreamOpenAI( const nlohmann::json& aMessages, const s
     curl.SetHeader( "Content-Type", "application/json" );
     curl.SetHeader( "Authorization", "Bearer " + s_openaiApiKey );
 
-    std::string fullSystemPrompt = aSystem;
-    if( !aPayload.empty() )
-        fullSystemPrompt += "\n\nCONTEXT:\n" + aPayload;
-
     json requestBody;
     requestBody["model"] = "gpt-4o"; // Hardcoded default for OpenAI path
 
-    // Prepend system message to history
+    // System prompt now handled server-side
     json fullMessages = json::array();
-    fullMessages.push_back( { { "role", "system" }, { "content", fullSystemPrompt } } );
+    if( !aPayload.empty() )
+    {
+        // Add payload as a user message if present
+        fullMessages.push_back( { { "role", "user" }, { "content", aPayload } } );
+    }
     for( const auto& msg : aMessages )
     {
         fullMessages.push_back( msg );
@@ -540,7 +540,7 @@ bool AGENT_LLM_CLIENT::AskStreamOpenAI( const nlohmann::json& aMessages, const s
     }
 }
 
-bool AGENT_LLM_CLIENT::AskStreamAnthropic( const nlohmann::json& aMessages, const std::string& aSystem,
+bool AGENT_LLM_CLIENT::AskStreamAnthropic( const nlohmann::json& aMessages,
                                            const std::string&                        aPayload,
                                            std::function<void( const std::string& )> aCallback )
 {
@@ -550,10 +550,6 @@ bool AGENT_LLM_CLIENT::AskStreamAnthropic( const nlohmann::json& aMessages, cons
     curl.SetHeader( "x-api-key", s_anthropicApiKey );
     curl.SetHeader( "anthropic-version", "2023-06-01" );
 
-    std::string fullSystemPrompt = aSystem;
-    if( !aPayload.empty() )
-        fullSystemPrompt += "\n\nCONTEXT:\n" + aPayload;
-
     // Map UI names to API names
     std::string apiModel = "claude-sonnet-4-5-20250929";
     if( m_modelName == "Claude 4.5 Opus" )
@@ -561,10 +557,22 @@ bool AGENT_LLM_CLIENT::AskStreamAnthropic( const nlohmann::json& aMessages, cons
     else if( m_modelName == "Claude 4.5 Sonnet" )
         apiModel = "claude-sonnet-4-5-20250929";
 
+    // System prompt now handled server-side
     json requestBody;
     requestBody["model"] = apiModel;
-    requestBody["system"] = fullSystemPrompt;
-    requestBody["messages"] = aMessages;
+
+    // Add payload as first user message if present
+    json fullMessages = json::array();
+    if( !aPayload.empty() )
+    {
+        fullMessages.push_back( { { "role", "user" }, { "content", aPayload } } );
+    }
+    for( const auto& msg : aMessages )
+    {
+        fullMessages.push_back( msg );
+    }
+
+    requestBody["messages"] = fullMessages;
     requestBody["max_tokens"] = 4096;
     requestBody["stream"] = true;
 
@@ -599,14 +607,14 @@ bool AGENT_LLM_CLIENT::AskStreamAnthropic( const nlohmann::json& aMessages, cons
     }
 }
 
-bool AGENT_LLM_CLIENT::AskStreamWithTools( const nlohmann::json& aMessages, const std::string& aSystem,
+bool AGENT_LLM_CLIENT::AskStreamWithTools( const nlohmann::json& aMessages,
                                            const std::vector<LLM_TOOL>& aTools,
                                            std::function<void( const LLM_EVENT& )> aCallback )
 {
     // Currently only implemented for Anthropic
     if( m_modelName.find( "Claude" ) != std::string::npos )
     {
-        return AskStreamAnthropicWithTools( aMessages, aSystem, aTools, aCallback );
+        return AskStreamAnthropicWithTools( aMessages, aTools, aCallback );
     }
     else
     {
@@ -620,7 +628,7 @@ bool AGENT_LLM_CLIENT::AskStreamWithTools( const nlohmann::json& aMessages, cons
     }
 }
 
-bool AGENT_LLM_CLIENT::AskStreamAnthropicWithTools( const nlohmann::json& aMessages, const std::string& aSystem,
+bool AGENT_LLM_CLIENT::AskStreamAnthropicWithTools( const nlohmann::json& aMessages,
                                                     const std::vector<LLM_TOOL>& aTools,
                                                     std::function<void( const LLM_EVENT& )> aCallback )
 {
@@ -637,9 +645,9 @@ bool AGENT_LLM_CLIENT::AskStreamAnthropicWithTools( const nlohmann::json& aMessa
     else if( m_modelName == "Claude 4.5 Sonnet" )
         apiModel = "claude-sonnet-4-5-20250929";
 
+    // System prompt now handled server-side
     json requestBody;
     requestBody["model"] = apiModel;
-    requestBody["system"] = aSystem;
     requestBody["messages"] = aMessages;
     requestBody["max_tokens"] = 4096;
     requestBody["stream"] = true;
@@ -700,7 +708,6 @@ bool AGENT_LLM_CLIENT::AskStreamAnthropicWithTools( const nlohmann::json& aMessa
 // ============================================================================
 
 bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
-                                                 const std::string& aSystem,
                                                  const std::vector<LLM_TOOL>& aTools,
                                                  wxEvtHandler* aHandler )
 {
@@ -717,7 +724,7 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
 
     // Create and start the background thread
     LLM_REQUEST_THREAD* thread = new LLM_REQUEST_THREAD(
-        this, aHandler, m_modelName, aMessages, aSystem, aTools );
+        this, aHandler, m_modelName, aMessages, aTools );
 
     // wxThread requires Create() before Run()
     if( thread->Create() != wxTHREAD_NO_ERROR )
@@ -749,14 +756,12 @@ LLM_REQUEST_THREAD::LLM_REQUEST_THREAD( AGENT_LLM_CLIENT* aClient,
                                          wxEvtHandler* aHandler,
                                          const std::string& aModel,
                                          const nlohmann::json& aMessages,
-                                         const std::string& aSystem,
                                          const std::vector<LLM_TOOL>& aTools ) :
         wxThread( wxTHREAD_DETACHED ),
         m_client( aClient ),
         m_handler( aHandler ),
         m_model( aModel ),
         m_messages( aMessages ),
-        m_system( aSystem ),
         m_tools( aTools ),
         m_cancelFlag( nullptr )
 {
@@ -795,7 +800,6 @@ void* LLM_REQUEST_THREAD::Entry()
 
     json requestBody;
     requestBody["model"] = apiModel;
-    requestBody["system"] = m_system;
     requestBody["messages"] = m_messages;
     requestBody["max_tokens"] = 4096;
     requestBody["stream"] = true;

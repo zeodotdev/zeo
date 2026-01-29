@@ -426,51 +426,6 @@ AGENT_FRAME::~AGENT_FRAME()
     delete m_auth;
 }
 
-std::string AGENT_FRAME::GetSystemPrompt()
-{
-    // Base system prompt only - the KiPy API reference context is now injected
-    // server-side by harold.so when the request includes context_type="kipy-schematic-v5"
-    std::string systemPrompt = R"(You are a helpful assistant for KiCad PCB design.
-You have access to tools to interact with schematics and boards.
-
-AVAILABLE TOOLS:
-
-1. run_shell
-   - Execute Python code in the KiCad IPC shell
-   - Parameters: mode ("sch" or "pcb"), code (Python code string)
-   - For schematic: sch object, kipy, and Vector2 are pre-imported
-   - For board: board object, kipy, and Vector2 are pre-imported
-   - Use Vector2.from_xy_mm(x, y) for positions in millimeters
-
-2. run_terminal
-   - Execute bash/shell commands
-   - Parameters: command (string)
-   - Use for file operations, git commands, etc.
-
-GUIDELINES:
-- Use tools when you need to interact with the schematic or board
-- Wait for tool results before proceeding with dependent operations
-- Be concise in your explanations
-
-RESPONSE FORMATTING:
-Your responses are rendered with Markdown support. Use these formats for clear communication:
-
-- **Headings**: Use # for main sections, ## for subsections, ### for minor sections
-- **Bold**: Use **text** for emphasis on important terms
-- **Italic**: Use *text* for subtle emphasis
-- **Code blocks**: Use ``` for multi-line code with language hint (e.g. ```python)
-- **Inline code**: Use `code` for function names, variables, file paths
-- **Lists**: Use - or * for bullet points, 1. 2. 3. for numbered lists
-- **Tables**: Use | col1 | col2 | format for structured data
-- **Blockquotes**: Use > for important notes or warnings
-- **Links**: Use [text](url) for references
-
-Keep responses concise and well-structured. Use code blocks for any Python or shell commands.
-)";
-
-    return systemPrompt;
-}
-
 void AGENT_FRAME::ShowChangedLanguage()
 {
     KIWAY_PLAYER::ShowChangedLanguage();
@@ -673,9 +628,9 @@ void AGENT_FRAME::GenerateChatTitle()
             messages.push_back( { { "role", "user" }, { "content", prompt } } );
 
             std::string title;
+            // System prompt now handled server-side
             titleClient.AskStreamWithTools(
                 messages,
-                "You are a helpful assistant that generates concise chat titles.",
                 {},  // No tools needed
                 [&title]( const LLM_EVENT& event ) {
                     if( event.type == LLM_EVENT_TYPE::TEXT )
@@ -1231,18 +1186,11 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_inputCtrl->Clear();
     m_actionButton->SetLabel( "Stop" );
 
-    // Build system prompt with model context
-    std::string systemPrompt = GetSystemPrompt();
-    if( !m_schJson.empty() )
-        systemPrompt += "\n\nCURRENT SCHEMATIC CONTEXT:\n" + m_schJson;
-    if( !m_pcbJson.empty() )
-        systemPrompt += "\n\nCURRENT PCB CONTEXT:\n" + m_pcbJson;
+    // System prompt is now handled server-side
 
     // Configure controller for this request
     if( m_chatController )
     {
-        m_chatController->SetSystemPrompt( systemPrompt );
-
         // Sync frame's history to controller before repair
         // (controller may be out of sync if conversation was loaded from disk)
         m_chatController->SetHistory( m_chatHistory );
@@ -1688,8 +1636,7 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     // Start generating animation
     StartGeneratingAnimation();
 
-    // Resume Agent with system prompt including model context
-    std::string systemPrompt = GetSystemPrompt();
+    // System prompt now handled server-side
 
     std::string payload;
     if( !m_schJson.empty() )
@@ -1700,7 +1647,7 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     wxString model = m_modelChoice->GetStringSelection();
     m_actionButton->SetLabel( "Stop" );
 
-    m_workerThread = new AGENT_THREAD( this, m_chatHistory, systemPrompt, payload, model.ToStdString() );
+    m_workerThread = new AGENT_THREAD( this, m_chatHistory, payload, model.ToStdString() );
     if( m_workerThread->Run() != wxTHREAD_NO_ERROR )
     {
         wxLogMessage( "Error creating thread" );
@@ -1830,7 +1777,7 @@ void AGENT_FRAME::StartAsyncLLMRequest()
     wxString model = m_modelChoice->GetStringSelection();
     m_llmClient->SetModel( model.ToStdString() );
 
-    std::string systemPrompt = GetSystemPrompt();
+    // System prompt now handled server-side
 
     // Filter out thinking blocks from API context before sending to API
     // (Anthropic requires signatures for thinking blocks, which we don't store)
@@ -1866,7 +1813,7 @@ void AGENT_FRAME::StartAsyncLLMRequest()
     }
 
     // Start async request - returns immediately
-    if( !m_llmClient->AskStreamWithToolsAsync( filteredHistory, systemPrompt, m_tools, this ) )
+    if( !m_llmClient->AskStreamWithToolsAsync( filteredHistory, m_tools, this ) )
     {
         wxLogDebug( "AGENT: Failed to start async LLM request" );
         StopGeneratingAnimation();

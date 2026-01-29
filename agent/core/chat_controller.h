@@ -174,13 +174,6 @@ public:
         m_sendRequestFn = aFn;
     }
 
-    /**
-     * Set the system prompt for LLM requests.
-     * Should be called before SendMessage() to include context-specific instructions.
-     * @param aPrompt The system prompt text
-     */
-    void SetSystemPrompt( const std::string& aPrompt ) { m_systemPrompt = aPrompt; }
-
     // =========================================================================
     // Event handlers - Called by frame's event table, forwarded to controller
     // =========================================================================
@@ -223,7 +216,6 @@ private:
     std::string    m_thinkingSignature; ///< Thinking block signature for API
     std::string    m_currentModel;     ///< Selected model name
     std::string    m_chatId;           ///< Current chat ID
-    std::string    m_systemPrompt;     ///< System prompt for LLM requests
 
     // -------------------------------------------------------------------------
     // State machine

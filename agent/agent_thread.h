@@ -16,7 +16,7 @@ class AGENT_FRAME; // Forward declaration
 class AGENT_THREAD : public wxThread
 {
 public:
-    AGENT_THREAD( AGENT_FRAME* aFrame, const nlohmann::json& aMessages, const std::string& aSystem,
+    AGENT_THREAD( AGENT_FRAME* aFrame, const nlohmann::json& aMessages,
                   const std::string& aContext, const std::string& aModelName );
     virtual ~AGENT_THREAD();
 
@@ -26,7 +26,6 @@ public:
 private:
     AGENT_FRAME*     m_frame;
     nlohmann::json   m_messages; // Full history
-    std::string      m_system;
     std::string      m_context;
     std::string      m_modelName;
     AGENT_LLM_CLIENT m_client;

@@ -915,14 +915,9 @@ void CHAT_CONTROLLER::StartLLMRequest()
 
     m_stopRequested = false;
 
-    // Use injected system prompt, or default if not set
-    std::string systemPrompt = m_systemPrompt.empty()
-        ? "You are a helpful KiCad assistant."
-        : m_systemPrompt;
-
+    // System prompt now handled server-side
     // Start async request - events will be forwarded to HandleLLMChunk
-    bool started = m_llmClient->AskStreamWithToolsAsync( m_apiContext, systemPrompt,
-                                                          m_tools, m_eventSink );
+    bool started = m_llmClient->AskStreamWithToolsAsync( m_apiContext, m_tools, m_eventSink );
     if( !started )
     {
         HandleLLMError( "Failed to start LLM request" );

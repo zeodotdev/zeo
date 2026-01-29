@@ -41,6 +41,7 @@ set( AGENT_SRCS
 
     # Rendering
     rendering/agent_markdown.cpp
+    rendering/agent_html_template.cpp
 
     # UI components
     ui/pending_changes_popup.cpp
@@ -164,21 +165,3 @@ install( TARGETS agent_kiface
     DESTINATION ${KICAD_BIN}
     COMPONENT binary
     )
-
-# Install model_context directory
-if( APPLE )
-    # Install to KiCad.app's SharedSupport directory (not agent.app since it's a symlink to non-existent path)
-    # The agent KIFACE runs from within KiCad, so it can find files relative to KiCad.app
-    install( DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/model_context
-        DESTINATION ${KICAD_BIN}/KiCad.app/Contents/SharedSupport/agent
-        COMPONENT binary
-        FILES_MATCHING PATTERN "*.txt"
-        )
-else()
-    # On other platforms, install to share directory
-    install( DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/model_context
-        DESTINATION ${KICAD_DATA}/kicad-agent
-        COMPONENT binary
-        FILES_MATCHING PATTERN "*.txt"
-        )
-endif()

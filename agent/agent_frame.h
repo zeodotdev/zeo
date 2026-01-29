@@ -162,7 +162,6 @@ private:
 
     // Model Context (context prompt is now injected server-side via context_type)
     std::string    m_currentModel;    // Currently selected model name
-    std::string    GetSystemPrompt();
 
     // HTML Rendering
     wxString m_fullHtmlContent;        // Complete HTML buffer

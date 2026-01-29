@@ -69,32 +69,29 @@ public:
     /**
      * Send a chat completion request.
      * @param aPrompt The user prompt.
-     * @param aSystem The system prompt/instruction.
      * @param aPayload Additional context payload (e.g. selection data).
      * @return The response content.
      */
-    std::string Ask( const std::string& aPrompt, const std::string& aSystem, const std::string& aPayload );
+    std::string Ask( const std::string& aPrompt, const std::string& aPayload );
 
     /**
      * Send a streaming chat completion request.
      * @param aMessages The full chat history as a JSON array.
-     * @param aSystem The system prompt/instruction.
      * @param aPayload Additional context payload (e.g. selection data).
      * @param aCallback The callback function to invoke with partial content updates.
      * @return True if successful, false otherwise.
      */
-    bool AskStream( const nlohmann::json& aMessages, const std::string& aSystem, const std::string& aPayload,
+    bool AskStream( const nlohmann::json& aMessages, const std::string& aPayload,
                     std::function<void( const std::string& )> aCallback );
 
     /**
      * Send a streaming chat completion request with native tool calling (BLOCKING).
      * @param aMessages The full chat history as a JSON array.
-     * @param aSystem The system prompt/instruction.
      * @param aTools Vector of tool definitions.
      * @param aCallback The callback function to invoke with LLM_EVENT updates.
      * @return True if successful, false otherwise.
      */
-    bool AskStreamWithTools( const nlohmann::json& aMessages, const std::string& aSystem,
+    bool AskStreamWithTools( const nlohmann::json& aMessages,
                              const std::vector<LLM_TOOL>& aTools,
                              std::function<void( const LLM_EVENT& )> aCallback );
 
@@ -108,12 +105,11 @@ public:
      * - EVT_LLM_STREAM_ERROR: If an error occurs
      *
      * @param aMessages The full chat history as a JSON array.
-     * @param aSystem The system prompt/instruction.
      * @param aTools Vector of tool definitions.
      * @param aHandler The event handler to receive streaming events (typically AGENT_FRAME).
      * @return True if the request was started, false if it couldn't be started.
      */
-    bool AskStreamWithToolsAsync( const nlohmann::json& aMessages, const std::string& aSystem,
+    bool AskStreamWithToolsAsync( const nlohmann::json& aMessages,
                                    const std::vector<LLM_TOOL>& aTools,
                                    wxEvtHandler* aHandler );
 
@@ -167,15 +163,15 @@ private:
     static bool        s_keysLoaded;
 
     // Helper to request via OpenAI API
-    bool AskStreamOpenAI( const nlohmann::json& aMessages, const std::string& aSystem, const std::string& aPayload,
+    bool AskStreamOpenAI( const nlohmann::json& aMessages, const std::string& aPayload,
                           std::function<void( const std::string& )> aCallback );
 
     // Helper to request via Anthropic API
-    bool AskStreamAnthropic( const nlohmann::json& aMessages, const std::string& aSystem, const std::string& aPayload,
+    bool AskStreamAnthropic( const nlohmann::json& aMessages, const std::string& aPayload,
                              std::function<void( const std::string& )> aCallback );
 
     // Helper to request via Anthropic API with native tools (blocking)
-    bool AskStreamAnthropicWithTools( const nlohmann::json& aMessages, const std::string& aSystem,
+    bool AskStreamAnthropicWithTools( const nlohmann::json& aMessages,
                                       const std::vector<LLM_TOOL>& aTools,
                                       std::function<void( const LLM_EVENT& )> aCallback );
 };
@@ -192,7 +188,6 @@ public:
                         wxEvtHandler* aHandler,
                         const std::string& aModel,
                         const nlohmann::json& aMessages,
-                        const std::string& aSystem,
                         const std::vector<LLM_TOOL>& aTools );
 
     virtual ~LLM_REQUEST_THREAD();
@@ -205,7 +200,6 @@ private:
     wxEvtHandler*         m_handler;
     std::string           m_model;
     nlohmann::json        m_messages;
-    std::string           m_system;
     std::vector<LLM_TOOL> m_tools;
 
     // Flag to check if cancellation was requested

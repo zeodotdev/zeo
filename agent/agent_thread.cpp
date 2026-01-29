@@ -6,12 +6,11 @@
 wxDEFINE_EVENT( wxEVT_AGENT_UPDATE, wxCommandEvent );
 wxDEFINE_EVENT( wxEVT_AGENT_COMPLETE, wxCommandEvent );
 
-AGENT_THREAD::AGENT_THREAD( AGENT_FRAME* aFrame, const nlohmann::json& aMessages, const std::string& aSystem,
+AGENT_THREAD::AGENT_THREAD( AGENT_FRAME* aFrame, const nlohmann::json& aMessages,
                             const std::string& aContext, const std::string& aModelName ) :
         wxThread( wxTHREAD_JOINABLE ),
         m_frame( aFrame ),
         m_messages( aMessages ),
-        m_system( aSystem ),
         m_context( aContext ),
         m_modelName( aModelName ),
         m_client( aFrame )
@@ -44,7 +43,7 @@ void* AGENT_THREAD::Entry()
     };
 
     // Execute the request
-    bool success = m_client.AskStream( m_messages, m_system, m_context, callback );
+    bool success = m_client.AskStream( m_messages, m_context, callback );
 
     // Post completion event
     if( !TestDestroy() )

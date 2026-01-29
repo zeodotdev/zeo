@@ -1,0 +1,214 @@
+#include "agent_html_template.h"
+
+wxString GetAgentHtmlTemplate()
+{
+    // HTML5 template with modern CSS for wxWebView
+    // Uses flex-direction: column-reverse for natural auto-scroll to bottom
+    // Includes JavaScript message handlers for link clicks and copy
+    return wxS( R"(<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<style>
+:root {
+    --bg-primary: #1E1E1E;
+    --bg-secondary: #2d2d2d;
+    --bg-tertiary: #3d3d3d;
+    --text-primary: #FFFFFF;
+    --text-secondary: #d4d4d4;
+    --text-muted: #808080;
+    --accent-blue: #569cd6;
+    --accent-green: #4ec9b0;
+    --accent-red: #f44747;
+    --code-orange: #ce9178;
+}
+* { box-sizing: border-box; }
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', 'Ubuntu', 'Droid Sans', sans-serif;
+    font-size: 13px; line-height: 1.4;
+    display: flex;
+    flex-direction: column-reverse;
+    overflow-y: auto;
+}
+.content-wrapper {
+    padding: 10px;
+}
+.user-msg { display: flex; justify-content: flex-end; margin: 6px 0; }
+.user-bubble { background: var(--bg-tertiary); padding: 8px 14px; border-radius: 8px; max-width: 80%; white-space: pre-wrap; }
+.assistant-msg { margin: 6px 0; }
+pre.code-block {
+    background: var(--bg-secondary); padding: 12px; border-radius: 6px;
+    font-family: Menlo, Monaco, 'Courier New', monospace;
+    font-size: 13px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;
+    color: var(--text-secondary); margin: 12px 0;
+}
+code {
+    background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px;
+    font-family: Menlo, Monaco, 'Courier New', monospace;
+    color: var(--code-orange);
+}
+.thinking-toggle { color: var(--text-muted); cursor: pointer; text-decoration: none; }
+.thinking-toggle:hover { text-decoration: underline; }
+.thinking-content { color: #606060; margin-top: 8px; padding-left: 12px; border-left: 2px solid #404040; white-space: pre-wrap; display: none; }
+.thinking-content.expanded { display: block; }
+.tool-block { background: var(--bg-secondary); padding: 12px; border-radius: 6px; margin: 12px 0; }
+.tool-status { color: var(--accent-green); font-weight: bold; }
+.tool-status-error { color: var(--accent-red); }
+.tool-prompt { color: var(--accent-green); font-family: Menlo, Monaco, 'Courier New', monospace; }
+.tool-output { color: var(--text-secondary); font-family: Menlo, Monaco, 'Courier New', monospace; font-size: 13px; white-space: pre-wrap; }
+.approve-link { color: #00AA00; font-weight: bold; cursor: pointer; text-decoration: underline; margin: 0 8px; }
+.deny-link { color: #AA0000; font-weight: bold; cursor: pointer; text-decoration: underline; margin: 0 8px; }
+a { color: var(--accent-blue); }
+blockquote {
+    border-left: 3px solid var(--accent-blue);
+    background: var(--bg-tertiary);
+    padding: 8px 12px; margin: 12px 0; margin-left: 0;
+    color: var(--text-secondary); font-style: italic;
+}
+table { border-collapse: collapse; width: 100%; margin: 12px 0; background: var(--bg-secondary); }
+th { background: var(--bg-tertiary); color: var(--text-primary); font-weight: bold; }
+th, td { padding: 8px 12px; text-align: left; border: 1px solid #404040; }
+td { color: var(--text-secondary); }
+h1, h2, h3, h4, h5, h6 { margin-top: 20px; margin-bottom: 10px; color: var(--text-primary); }
+h1 { font-size: 1.8em; } h2 { font-size: 1.5em; } h3 { font-size: 1.3em; }
+h4 { font-size: 1.1em; } h5, h6 { font-size: 1em; }
+ul, ol { padding-left: 24px; margin: 8px 0; }
+li { margin: 4px 0; }
+hr { border: none; border-top: 1px solid #404040; margin: 16px 0; }
+.generating-dots { color: var(--text-muted); }
+.error-msg { color: var(--accent-red); }
+.warning-msg { color: #FFA500; }
+p { margin: 8px 0; }
+/* Dark scrollbar styling for WebKit */
+::-webkit-scrollbar {
+    width: 12px;
+    background: var(--bg-primary);
+}
+::-webkit-scrollbar-track {
+    background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 6px;
+    border: 2px solid var(--bg-primary);
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #666;
+}
+</style>
+<script>
+function sendMsg(action, data) {
+    const msg = JSON.stringify({action, ...data});
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.agent) {
+        window.webkit.messageHandlers.agent.postMessage(msg);
+    } else if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(msg);
+    } else {
+        console.error('[AGENT] No message handler available!');
+    }
+}
+function clickLink(href) {
+    sendMsg('link_click', {href: href});
+    return false;
+}
+document.addEventListener('contextmenu', function(e) {
+    const sel = window.getSelection().toString();
+    if (sel) {
+        sendMsg('copy', {text: sel});
+    }
+});
+
+// Handle all link clicks with event delegation
+document.addEventListener('click', function(e) {
+    // Check if clicked element is a link or inside a link
+    let target = e.target;
+    while (target && target.tagName !== 'A') {
+        target = target.parentElement;
+    }
+
+    if (target && target.tagName === 'A') {
+        const href = target.getAttribute('href');
+
+        // Handle thinking toggles in JavaScript (no page reload)
+        if (href && href.startsWith('toggle:thinking:')) {
+            e.preventDefault();
+            const index = target.getAttribute('data-thinking-index');
+            const content = document.querySelector('.thinking-content[data-thinking-index="' + index + '"]');
+            if (content) {
+                if (content.style.display === 'none' || content.style.display === '') {
+                    content.style.display = 'block';
+                    sendMsg('thinking_toggled', {index: parseInt(index), expanded: true});
+                } else {
+                    content.style.display = 'none';
+                    sendMsg('thinking_toggled', {index: parseInt(index), expanded: false});
+                }
+            }
+            return false;
+        }
+
+        // Handle other links (tool approval, external links, etc.)
+        if (href && href !== '#') {
+            e.preventDefault();
+            clickLink(href);
+        }
+    }
+});
+
+// Auto-scroll coupling with flex-direction: column-reverse
+// With column-reverse: scrollTop = 0 is the visual bottom (newest messages)
+let isScrollCoupled = true;
+const SCROLL_THRESHOLD = 50; // Pixels from bottom to be considered "at bottom"
+
+// Check if user is near the bottom (scrollTop near 0)
+function isNearBottom() {
+    return window.scrollY <= SCROLL_THRESHOLD;
+}
+
+// Track user scrolling to couple/decouple
+window.addEventListener('scroll', function() {
+    if (isNearBottom()) {
+        isScrollCoupled = true;
+    } else {
+        isScrollCoupled = false;
+    }
+    // Save state to survive page reloads
+    sessionStorage.setItem('scroll_coupled', isScrollCoupled ? 'true' : 'false');
+}, { passive: true });
+
+// Auto-scroll to bottom (scrollTop = 0) if coupled
+function autoScrollIfCoupled() {
+    if (isScrollCoupled) {
+        window.scrollTo(0, 0);
+    }
+}
+
+// On page load, check coupling state and auto-scroll if needed
+window.addEventListener('load', function() {
+    const savedPos = sessionStorage.getItem('agent_scroll_pos');
+    if (savedPos !== null) {
+        // Restore saved position (from thinking toggle)
+        window.scrollTo(0, parseInt(savedPos));
+        sessionStorage.removeItem('agent_scroll_pos');
+        // Update coupling state based on restored position
+        isScrollCoupled = isNearBottom();
+    } else {
+        // Check if we should auto-scroll based on last known coupling state
+        const wasCoupled = sessionStorage.getItem('scroll_coupled');
+        if (wasCoupled === null || wasCoupled === 'true') {
+            isScrollCoupled = true;
+            window.scrollTo(0, 0); // Auto-scroll to bottom
+        } else {
+            // User was scrolling up, stay decoupled
+            isScrollCoupled = false;
+        }
+    }
+});
+</script>
+</head><body>
+<div class="content-wrapper">
+)" );
+}

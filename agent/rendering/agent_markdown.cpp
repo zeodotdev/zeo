@@ -91,7 +91,7 @@ wxString ProcessInline( const wxString& aText )
             }
             else
             {
-                temp += "<font face='Courier' color='#ce9178'>" + codeContent + "</font>";
+                temp += "<code>" + codeContent + "</code>";
                 inInlineCode = false;
             }
         }
@@ -125,7 +125,7 @@ wxString ProcessInline( const wxString& aText )
         wxString before = processed.Left( start );
         wxString bold = processed.Mid( start + 2, end - start - 2 );
         wxString after = processed.Mid( end + 2 );
-        processed = before + "<b>" + bold + "</b>" + after;
+        processed = before + "<strong>" + bold + "</strong>" + after;
     }
 
     // Italic *text* (but not **)
@@ -138,12 +138,12 @@ wxString ProcessInline( const wxString& aText )
         {
             if( !inItalic )
             {
-                temp += "<i>";
+                temp += "<em>";
                 inItalic = true;
             }
             else
             {
-                temp += "</i>";
+                temp += "</em>";
                 inItalic = false;
             }
         }
@@ -153,7 +153,7 @@ wxString ProcessInline( const wxString& aText )
         }
     }
     if( inItalic )
-        temp += "</i>"; // Auto-close
+        temp += "</em>"; // Auto-close
     processed = temp;
 
     // Links [text](url) - use wxString positions consistently
@@ -179,7 +179,7 @@ wxString ProcessInline( const wxString& aText )
         wxString url = processed.Mid( bracketEnd + 2, parenEnd - bracketEnd - 2 );
         wxString after = processed.Mid( parenEnd + 1 );
 
-        processed = before + "<a href='" + url + "'>" + linkText + "</a>" + after;
+        processed = before + "<a href=\"" + url + "\">" + linkText + "</a>" + after;
     }
 
     return processed;
@@ -234,15 +234,11 @@ wxString ToHtml( const wxString& aMarkdown )
             }
             else
             {
-                // End code block - render with dark background
+                // End code block - render with semantic HTML
                 codeBlockContent.Replace( "&", "&amp;" );
                 codeBlockContent.Replace( "<", "&lt;" );
                 codeBlockContent.Replace( ">", "&gt;" );
-                codeBlockContent.Replace( "\n", "<br>" );
-                result += "<table width='100%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>";
-                result += "<font color='#d4d4d4' size='2'>";
-                result += WrapLongLines( codeBlockContent );
-                result += "</font></td></tr></table>";
+                result += "<pre class=\"code-block\">" + codeBlockContent + "</pre>";
                 inCodeBlock = false;
             }
             continue;
@@ -281,7 +277,7 @@ wxString ToHtml( const wxString& aMarkdown )
             if( !inTable )
             {
                 if( inList ) { result += "</ul>"; inList = false; }
-                result += "<table width='100%' cellspacing='0' cellpadding='6' bgcolor='#2d2d2d'>";
+                result += "<table>";
                 inTable = true;
             }
 
@@ -335,11 +331,11 @@ wxString ToHtml( const wxString& aMarkdown )
                 wxString cellContent = ProcessInline( cells[c] );
                 if( isHeader )
                 {
-                    result += "<td bgcolor='#3d3d3d'><font color='#ffffff'><b>" + cellContent + "</b></font></td>";
+                    result += "<th>" + cellContent + "</th>";
                 }
                 else
                 {
-                    result += "<td><font color='#d4d4d4'>" + cellContent + "</font></td>";
+                    result += "<td>" + cellContent + "</td>";
                 }
             }
             result += "</tr>";
@@ -372,35 +368,35 @@ wxString ToHtml( const wxString& aMarkdown )
             continue;
         }
 
-        // Headings (with extra spacing after larger headings)
+        // Headings (semantic HTML5 tags)
         if( trimmed.StartsWith( "######" ) )
         {
-            result += "<br><b><font size='2'>" + ProcessInline( trimmed.Mid( 6 ).Trim( false ) ) + "</font></b><br>";
+            result += "<h6>" + ProcessInline( trimmed.Mid( 6 ).Trim( false ) ) + "</h6>";
             continue;
         }
         if( trimmed.StartsWith( "#####" ) )
         {
-            result += "<br><b><font size='2'>" + ProcessInline( trimmed.Mid( 5 ).Trim( false ) ) + "</font></b><br>";
+            result += "<h5>" + ProcessInline( trimmed.Mid( 5 ).Trim( false ) ) + "</h5>";
             continue;
         }
         if( trimmed.StartsWith( "####" ) )
         {
-            result += "<br><b><font size='3'>" + ProcessInline( trimmed.Mid( 4 ).Trim( false ) ) + "</font></b><br>";
+            result += "<h4>" + ProcessInline( trimmed.Mid( 4 ).Trim( false ) ) + "</h4>";
             continue;
         }
         if( trimmed.StartsWith( "###" ) )
         {
-            result += "<br><b><font size='3'>" + ProcessInline( trimmed.Mid( 3 ).Trim( false ) ) + "</font></b><br>";
+            result += "<h3>" + ProcessInline( trimmed.Mid( 3 ).Trim( false ) ) + "</h3>";
             continue;
         }
         if( trimmed.StartsWith( "##" ) )
         {
-            result += "<br><b><font size='4'>" + ProcessInline( trimmed.Mid( 2 ).Trim( false ) ) + "</font></b><br>";
+            result += "<h2>" + ProcessInline( trimmed.Mid( 2 ).Trim( false ) ) + "</h2>";
             continue;
         }
         if( trimmed.StartsWith( "#" ) )
         {
-            result += "<br><b><font size='5'>" + ProcessInline( trimmed.Mid( 1 ).Trim( false ) ) + "</font></b><br>";
+            result += "<h1>" + ProcessInline( trimmed.Mid( 1 ).Trim( false ) ) + "</h1>";
             continue;
         }
 
@@ -408,10 +404,7 @@ wxString ToHtml( const wxString& aMarkdown )
         if( trimmed.StartsWith( ">" ) )
         {
             wxString quote = ProcessInline( trimmed.Mid( 1 ).Trim( false ) );
-            result += "<table width='100%' bgcolor='#3d3d3d' cellpadding='5'><tr>";
-            result += "<td width='3' bgcolor='#569cd6'></td>";
-            result += "<td><font color='#d4d4d4'><i>" + quote + "</i></font></td>";
-            result += "</tr></table>";
+            result += "<blockquote>" + quote + "</blockquote>";
             continue;
         }
 
@@ -460,10 +453,7 @@ wxString ToHtml( const wxString& aMarkdown )
         codeBlockContent.Replace( "&", "&amp;" );
         codeBlockContent.Replace( "<", "&lt;" );
         codeBlockContent.Replace( ">", "&gt;" );
-        codeBlockContent.Replace( "\n", "<br>" );
-        result += "<table width='100%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>";
-        result += "<font color='#d4d4d4' size='2'>" + WrapLongLines( codeBlockContent ) + "</font>";
-        result += "</td></tr></table>";
+        result += "<pre class=\"code-block\">" + codeBlockContent + "</pre>";
     }
 
     return result;

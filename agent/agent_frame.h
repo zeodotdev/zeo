@@ -2,7 +2,7 @@
 #define AGENT_FRAME_H
 
 #include <kiway_player.h>
-#include <wx/html/htmlwin.h>
+#include <widgets/webview_panel.h>
 #include <wx/choice.h>
 #include <wx/textctrl.h>
 #include <wx/button.h>
@@ -59,7 +59,7 @@ public:
     void OnAgentComplete( wxCommandEvent& aEvent );
     void OnTextEnter( wxCommandEvent& aEvent );
     void OnSelectionPillClick( wxCommandEvent& aEvent );
-    void OnHtmlLinkClick( wxHtmlLinkEvent& aEvent );
+    void OnWebViewMessage( const wxString& aMessage );
     void OnToolClick( wxCommandEvent& aEvent );
     void OnModelSelection( wxCommandEvent& aEvent );
     void OnExit( wxCommandEvent& event );
@@ -114,7 +114,7 @@ public:
     DECLARE_EVENT_TABLE()
 
 private:
-    wxHtmlWindow*  m_chatWindow;
+    WEBVIEW_PANEL* m_chatWindow;
     wxTextCtrl*    m_inputCtrl;
     wxStaticText*  m_chatNameLabel;
     wxButton*      m_actionButton;
@@ -174,6 +174,9 @@ private:
     int      m_currentThinkingIndex;   // Index for current streaming thinking (for toggle:thinking:N links)
     wxString m_lastToolDesc;           // Temp storage for tool description during history replay
     bool     m_userScrolledUp;         // Track if user has scrolled up during generation
+    bool     m_htmlUpdatePending;      // Track if HTML update is already scheduled (prevent duplicate CallAfter)
+    bool     m_htmlUpdateNeeded;       // Track if HTML update is needed on next timer tick
+    wxTimer  m_htmlUpdateTimer;        // Timer for throttling HTML updates during streaming
     void     RebuildThinkingHtml();    // Rebuild thinking HTML from m_thinkingContent
 
     // Historical thinking toggle state
@@ -191,6 +194,7 @@ private:
     int      m_generatingDots;         // Current dot count (0-3)
     bool     m_isGenerating;           // Whether we're currently streaming
     void     OnGeneratingTimer( wxTimerEvent& aEvent );
+    void     OnHtmlUpdateTimer( wxTimerEvent& aEvent );
     void     StartGeneratingAnimation();
     void     StopGeneratingAnimation();
 

@@ -6,6 +6,7 @@
 #include "ui/pending_changes_popup.h"
 #include "ui/history_panel.h"
 #include "rendering/agent_markdown.h"
+#include "rendering/agent_html_template.h"
 #include "core/agent_tools.h"
 #include "core/chat_controller.h"
 #include "core/chat_events.h"
@@ -96,11 +97,16 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Add top bar panel to main sizer
     mainSizer->Add( topBarPanel, 0, wxEXPAND );
 
-    // 1. Chat History Area
-    m_chatWindow =
-            new wxHtmlWindow( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHW_SCROLLBAR_AUTO | wxBORDER_NONE );
-    // Set a default page content or styling if needed
-    m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>";
+    // 1. Chat History Area (using wxWebView for full HTML/CSS support)
+    m_chatWindow = new WEBVIEW_PANEL( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0 );
+    m_chatWindow->AddMessageHandler( wxS( "agent" ),
+        [this]( const wxString& msg ) { OnWebViewMessage( msg ); } );
+
+    // Bind the loaded event so message handlers get registered when page loads
+    m_chatWindow->BindLoadedEvent();
+
+    // Set initial page content with HTML5 template and CSS
+    m_fullHtmlContent = GetAgentHtmlTemplate() + wxS( "<p>Welcome to KiCad Agent.</p></div></body></html>" );
     m_chatWindow->SetPage( m_fullHtmlContent );
     mainSizer->Add( m_chatWindow, 1, wxEXPAND | wxALL, 0 ); // Remove ALL padding for clean edge
 
@@ -172,8 +178,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     inputContainerSizer->Add( controlsSizer, 0, wxEXPAND );
 
 
-    
-    // Add inner sizer to outer sizer with padding (including top margin)
+
+    // Add inner sizer to outer sizer with padding matching top bar (10px on all sides)
     outerInputSizer->Add( inputContainerSizer, 1, wxEXPAND | wxALL, 10 );
 
     m_inputPanel->SetSizer( outerInputSizer );
@@ -204,25 +210,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_pendingChangesBtn->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnPendingChangesClick, this );
 
     // m_toolButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnToolClick, this );
-    m_chatWindow->Bind( wxEVT_HTML_LINK_CLICKED, &AGENT_FRAME::OnHtmlLinkClick, this );
-    m_chatWindow->Bind( wxEVT_RIGHT_DOWN, &AGENT_FRAME::OnChatRightClick, this );
-    m_chatWindow->Bind( wxEVT_SCROLLWIN_THUMBTRACK, &AGENT_FRAME::OnChatScroll, this );
-    m_chatWindow->Bind( wxEVT_SCROLLWIN_THUMBRELEASE, &AGENT_FRAME::OnChatScroll, this );
-    m_chatWindow->Bind( wxEVT_SCROLLWIN_LINEUP, &AGENT_FRAME::OnChatScroll, this );
-    m_chatWindow->Bind( wxEVT_SCROLLWIN_LINEDOWN, &AGENT_FRAME::OnChatScroll, this );
-    m_chatWindow->Bind( wxEVT_SCROLLWIN_PAGEUP, &AGENT_FRAME::OnChatScroll, this );
-    m_chatWindow->Bind( wxEVT_SCROLLWIN_PAGEDOWN, &AGENT_FRAME::OnChatScroll, this );
-    m_chatWindow->Bind( wxEVT_MOUSEWHEEL, [this]( wxMouseEvent& evt ) {
-        // Detect mouse wheel scroll during generation or tool execution
-        bool isBusy = m_isGenerating ||
-                      m_conversationCtx.GetState() != AgentConversationState::IDLE;
-        if( isBusy && evt.GetWheelRotation() > 0 )
-        {
-            // Scrolling up
-            m_userScrolledUp = true;
-        }
-        evt.Skip();
-    });
+    // Note: Link clicks and right-click are now handled via JavaScript message passing
+    // through OnWebViewMessage() - see AddMessageHandler in constructor
     Bind( wxEVT_MENU, &AGENT_FRAME::OnPopupClick, this, ID_CHAT_COPY );
     m_inputCtrl->Bind( wxEVT_KEY_DOWN, &AGENT_FRAME::OnInputKeyDown, this );
     m_inputCtrl->Bind( wxEVT_TEXT, &AGENT_FRAME::OnInputText, this );
@@ -243,7 +232,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_generatingDots = 0;
     m_isGenerating = false;
     m_userScrolledUp = false;
+    m_htmlUpdatePending = false;
+    m_htmlUpdateNeeded = false;
     m_generatingTimer.Bind( wxEVT_TIMER, &AGENT_FRAME::OnGeneratingTimer, this );
+    m_htmlUpdateTimer.Bind( wxEVT_TIMER, &AGENT_FRAME::OnHtmlUpdateTimer, this );
 
     // Initialize thinking state
     m_thinkingExpanded = false;
@@ -433,9 +425,9 @@ void AGENT_FRAME::ShowChangedLanguage()
 
 void AGENT_FRAME::AppendHtml( const wxString& aHtml )
 {
-    // Insert content BEFORE the closing </body></html> tags to maintain valid HTML structure
-    // This is critical - content outside <body> may not be rendered by wxHtmlWindow
-    wxString closingTags = "</body></html>";
+    // Insert content BEFORE the closing </div></body></html> tags to maintain valid HTML structure
+    // This is critical - content outside <body> may not be rendered properly
+    wxString closingTags = "</div></body></html>";
 
     if( m_fullHtmlContent.EndsWith( closingTags ) )
     {
@@ -477,85 +469,37 @@ void AGENT_FRAME::RebuildThinkingHtml()
         escapedContent = escapedContent.Left( 5000 ) + "... <i>(truncated)</i>";
     }
 
-    // Build the thinking HTML with indexed toggle link
-    // Note: wxHtmlWindow link color overrides outer font, so put font INSIDE the <a> tag
-    wxString thinkingLabel = wxString::Format(
-        "<a href='toggle:thinking:%d'><font color='#808080'>Thinking</font></a>",
-        m_currentThinkingIndex );
+    // Always render both toggle link and content (content hidden by CSS if collapsed)
+    // JavaScript will toggle visibility without page reload
+    wxString expandedClass = m_thinkingExpanded ? " expanded" : "";
+    wxString displayStyle = m_thinkingExpanded ? "block" : "none";
 
-    if( m_thinkingExpanded && !escapedContent.IsEmpty() )
+    // Show animated dots while thinking is active
+    wxString thinkingText = "Thinking";
+    if( m_isThinking )
     {
-        // Expanded: show thinking content with spacing after (no <p> to avoid top margin)
-        m_thinkingHtml = wxString::Format(
-            "%s<br><font color='#606060'>%s</font><br><br>",
-            thinkingLabel, escapedContent );
+        // Add animated dots (1-3 dots based on m_generatingDots)
+        thinkingText += wxString( '.', m_generatingDots );
     }
-    else
-    {
-        // Collapsed: just show the label with spacing after
-        m_thinkingHtml = wxString::Format( "%s<br><br>", thinkingLabel );
-    }
+
+    m_thinkingHtml = wxString::Format(
+        "<a href=\"toggle:thinking:%d\" class=\"thinking-toggle\" data-thinking-index=\"%d\">%s</a><br>"
+        "<div class=\"thinking-content%s\" data-thinking-index=\"%d\" style=\"display:%s;\">%s</div><br>",
+        m_currentThinkingIndex, m_currentThinkingIndex, thinkingText, expandedClass, m_currentThinkingIndex, displayStyle, escapedContent );
 }
 
 void AGENT_FRAME::UpdateAgentResponse()
 {
-    // Re-render the full HTML with the current response formatted as markdown
-    // IMPORTANT: m_htmlBeforeAgentResponse may contain </body></html> closing tags
-    // We need to insert new content BEFORE those tags to maintain valid HTML structure
+    // Mark that an HTML update is needed and start the throttling timer if not running.
+    // This batches multiple rapid calls (on every character during streaming) into
+    // ~20 updates/sec max to prevent WebKit segfaults from excessive SetPage() calls.
+    m_htmlUpdateNeeded = true;
 
-    wxString closingTags = "</body></html>";
-    wxString html = m_htmlBeforeAgentResponse;
-
-    // Get current response from controller (source of truth)
-    std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
-
-    // Debug: log the state of HTML building
-    fprintf( stderr, "[HTML-DEBUG] UpdateAgentResponse called\n" );
-    fprintf( stderr, "[HTML-DEBUG]   m_htmlBeforeAgentResponse length: %zu, ends with closing tags: %s\n",
-             (size_t)m_htmlBeforeAgentResponse.length(),
-             m_htmlBeforeAgentResponse.EndsWith( closingTags ) ? "YES" : "NO" );
-    fprintf( stderr, "[HTML-DEBUG]   currentResponse length: %zu\n", currentResponse.size() );
-    fprintf( stderr, "[HTML-DEBUG]   m_toolCallHtml length: %zu\n", (size_t)m_toolCallHtml.length() );
-
-    // Strip closing tags from the base HTML - we'll add them back at the end
-    if( html.EndsWith( closingTags ) )
+    if( !m_htmlUpdateTimer.IsRunning() )
     {
-        html = html.Left( html.length() - closingTags.length() );
-        fprintf( stderr, "[HTML-DEBUG]   Stripped closing tags from base HTML\n" );
+        // Start timer with 50ms interval (20 updates per second max)
+        m_htmlUpdateTimer.Start( 50, wxTIMER_CONTINUOUS );
     }
-
-    // Include thinking block HTML if present (shown before response)
-    if( !m_thinkingHtml.IsEmpty() )
-    {
-        html += m_thinkingHtml;
-    }
-
-    // Append the current response with markdown formatting
-    html += AgentMarkdown::ToHtml( currentResponse );
-
-    // Include any tool call HTML (preserved across re-renders)
-    if( !m_toolCallHtml.IsEmpty() )
-    {
-        html += m_toolCallHtml;
-    }
-
-    // Add animated dots if currently generating
-    if( m_isGenerating )
-    {
-        wxString dots;
-        for( int i = 0; i < m_generatingDots; i++ )
-            dots += ".";
-        html += "<font color='#888888'>" + dots + "</font>";
-    }
-
-    // Add closing tags back
-    html += closingTags;
-
-    fprintf( stderr, "[HTML-DEBUG]   Final HTML length: %zu\n", (size_t)html.length() );
-    fflush( stderr );
-
-    SetHtml( html );
-    m_fullHtmlContent = html;
 }
 
 void AGENT_FRAME::OnGeneratingTimer( wxTimerEvent& aEvent )
@@ -563,9 +507,52 @@ void AGENT_FRAME::OnGeneratingTimer( wxTimerEvent& aEvent )
     // Cycle through 1, 2, 3 dots
     m_generatingDots = ( m_generatingDots % 3 ) + 1;
     UpdateAgentResponse();
+    // Auto-scroll handled by CSS flex-direction: column-reverse
+}
 
-    // Auto-scroll (respects user scroll position)
-    AutoScrollToBottom();
+void AGENT_FRAME::OnHtmlUpdateTimer( wxTimerEvent& aEvent )
+{
+    // Throttled HTML update - only update if needed
+    if( m_htmlUpdateNeeded )
+    {
+        m_htmlUpdateNeeded = false;
+
+        // Perform the actual HTML update
+        wxString html = m_htmlBeforeAgentResponse;
+        const wxString closingTags = wxS( "</div></body></html>" );
+
+        // Strip closing tags from the base HTML
+        if( html.EndsWith( closingTags ) )
+            html = html.Left( html.length() - closingTags.length() );
+
+        // Include thinking block HTML if present
+        if( !m_thinkingHtml.IsEmpty() )
+            html += m_thinkingHtml;
+
+        // Get current response from controller and append with markdown
+        std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
+        html += AgentMarkdown::ToHtml( currentResponse );
+
+        // Include any tool call HTML
+        if( !m_toolCallHtml.IsEmpty() )
+            html += m_toolCallHtml;
+
+        // Add animated dots if currently generating
+        if( m_isGenerating )
+        {
+            wxString dots;
+            for( int i = 0; i < m_generatingDots; i++ )
+                dots += ".";
+            html += "<font color='#888888'>" + dots + "</font>";
+        }
+
+        // Add closing tags back
+        html += closingTags;
+
+        // Update the page
+        SetHtml( html );
+        m_fullHtmlContent = html;
+    }
 }
 
 void AGENT_FRAME::StartGeneratingAnimation()
@@ -580,7 +567,36 @@ void AGENT_FRAME::StopGeneratingAnimation()
 {
     m_isGenerating = false;
     m_generatingTimer.Stop();
+    m_htmlUpdateTimer.Stop();
     m_generatingDots = 0;
+
+    // Perform one final HTML update if there was a pending update
+    if( m_htmlUpdateNeeded )
+    {
+        m_htmlUpdateNeeded = false;
+
+        // Perform the actual HTML update (same logic as OnHtmlUpdateTimer)
+        wxString html = m_htmlBeforeAgentResponse;
+        const wxString closingTags = wxS( "</div></body></html>" );
+
+        if( html.EndsWith( closingTags ) )
+            html = html.Left( html.length() - closingTags.length() );
+
+        if( !m_thinkingHtml.IsEmpty() )
+            html += m_thinkingHtml;
+
+        std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
+        html += AgentMarkdown::ToHtml( currentResponse );
+
+        if( !m_toolCallHtml.IsEmpty() )
+            html += m_toolCallHtml;
+
+        html += closingTags;
+
+        SetHtml( html );
+        m_fullHtmlContent = html;
+    }
+
     // Note: Don't set button to "Send" here - let the caller decide
     // (tool execution keeps "Stop", only IDLE sets "Send")
 }
@@ -730,91 +746,29 @@ void AGENT_FRAME::SetHtml( const wxString& aHtml )
 {
     m_fullHtmlContent = aHtml; // Ensure sync
 
-    // Save scroll position
-    int x, y;
-    m_chatWindow->GetViewStart( &x, &y );
-
-    m_chatWindow->SetPage( m_fullHtmlContent );
-
-    // Restore scroll position
-    m_chatWindow->Scroll( x, y );
+    // Throttle SetPage() calls using CallAfter to prevent crashes during scroll events
+    // WebKit's layer enumeration can conflict with DOM modifications
+    if( !m_htmlUpdatePending )
+    {
+        m_htmlUpdatePending = true;
+        CallAfter( [this]()
+        {
+            m_chatWindow->SetPage( m_fullHtmlContent );
+            m_htmlUpdatePending = false;
+        } );
+    }
 }
 
 void AGENT_FRAME::AutoScrollToBottom()
 {
-    // Only auto-scroll if user hasn't scrolled up during this generation session
-    if( m_userScrolledUp )
-        return;
-
-    // Get virtual size and client size
-    int virtWidth, virtHeight;
-    m_chatWindow->GetVirtualSize( &virtWidth, &virtHeight );
-
-    int clientWidth, clientHeight;
-    m_chatWindow->GetClientSize( &clientWidth, &clientHeight );
-
-    // Get scroll units (pixels per scroll unit)
-    int scrollUnitX, scrollUnitY;
-    m_chatWindow->GetScrollPixelsPerUnit( &scrollUnitX, &scrollUnitY );
-
-    if( scrollUnitY <= 0 )
-        scrollUnitY = 10; // Fallback
-
-    // Calculate max scroll position in scroll units
-    // Use ceiling division to ensure we scroll completely to the bottom
-    int maxScrollY = ( virtHeight - clientHeight + scrollUnitY - 1 ) / scrollUnitY;
-    if( maxScrollY < 0 )
-        maxScrollY = 0;
-
-    // Scroll to bottom
-    m_chatWindow->Scroll( 0, maxScrollY );
+    // Auto-scroll now handled by CSS flex-direction: column-reverse
+    // No-op kept for compatibility with existing code
 }
 
 void AGENT_FRAME::OnChatScroll( wxScrollWinEvent& aEvent )
 {
-    // Only track scroll during generation or tool execution
-    if( !m_isGenerating && m_conversationCtx.GetState() == AgentConversationState::IDLE )
-    {
-        aEvent.Skip();
-        return;
-    }
-
-    // Get current and max scroll positions
-    int scrollX, scrollY;
-    m_chatWindow->GetViewStart( &scrollX, &scrollY );
-
-    int virtWidth, virtHeight;
-    m_chatWindow->GetVirtualSize( &virtWidth, &virtHeight );
-
-    int clientWidth, clientHeight;
-    m_chatWindow->GetClientSize( &clientWidth, &clientHeight );
-
-    int scrollUnitX, scrollUnitY;
-    m_chatWindow->GetScrollPixelsPerUnit( &scrollUnitX, &scrollUnitY );
-
-    if( scrollUnitY <= 0 )
-        scrollUnitY = 10;
-
-    // Use ceiling division to match AutoScrollToBottom
-    int maxScrollY = ( virtHeight - clientHeight + scrollUnitY - 1 ) / scrollUnitY;
-    if( maxScrollY < 0 )
-        maxScrollY = 0;
-
-    // If user scrolls up from bottom (more than ~30 pixels), detach auto-scroll
-    int tolerance = 30 / scrollUnitY;
-    if( tolerance < 2 )
-        tolerance = 2;
-
-    if( scrollY < maxScrollY - tolerance )
-    {
-        m_userScrolledUp = true;
-    }
-    else
-    {
-        // User scrolled back to bottom, re-attach
-        m_userScrolledUp = false;
-    }
-
+    // Scroll tracking now handled by CSS flex-direction: column-reverse
+    // No manual scroll management needed
     aEvent.Skip();
 }
 
@@ -1124,7 +1078,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // NOTE: This method still uses legacy code because it handles KiCad-specific requirements
     // (authentication, pending editor state, system prompt with schematic/PCB context, KIWAY
     // target sheet reset) that the controller doesn't currently support.
-    // Future refactoring may add SetSystemPrompt() and other methods to the controller.
+    // System prompt is now handled server-side.
 
     // If already processing, this button acts as Stop
     if( m_actionButton->GetLabel() == "Stop" )
@@ -1166,11 +1120,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     escapedText.Replace( ">", "&gt;" );
     escapedText.Replace( "\n", "<br>" );
     wxString msgHtml = wxString::Format(
-        "<table width='100%%' cellpadding='0'><tr><td align='right'>"
-        "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
-        "<font color='#ffffff'>%s</font>"
-        "</td></tr></table>"
-        "</td></tr></table><br><br>",
+        "<div class=\"user-msg\"><div class=\"user-bubble\">%s</div></div>",
         escapedText );
     AppendHtml( msgHtml );
 
@@ -1186,9 +1136,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_inputCtrl->Clear();
     m_actionButton->SetLabel( "Stop" );
 
-    // System prompt is now handled server-side
-
-    // Configure controller for this request
+    // Configure controller for this request (system prompt now handled server-side)
     if( m_chatController )
     {
         // Sync frame's history to controller before repair
@@ -1220,6 +1168,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_pendingToolCalls = nlohmann::json::array();
     m_stopRequested = false;
     m_userScrolledUp = false;
+    m_htmlUpdatePending = false;
 
     // Transition frame's state machine (legacy - controller also has state machine)
     m_conversationCtx.Reset();
@@ -1314,8 +1263,7 @@ void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
     // Re-render full response with markdown formatting
     UpdateAgentResponse();
 
-    // Auto-scroll (respects user scroll position)
-    AutoScrollToBottom();
+    // Auto-scroll handled by CSS flex-direction: column-reverse
 
     // Check for TOOL_CALL to force stop
     size_t toolPos = m_currentResponse.rfind( "TOOL_CALL:" );
@@ -1350,7 +1298,7 @@ void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
                     // Request thread to exit. OnAgentComplete will be called naturally.
                     m_workerThread->Delete();
                     m_workerThread = nullptr;
-                    m_chatWindow->AppendToPage( "<p><i>(Tool Call Detected - Stopping Generation)</i></p>" );
+                    AppendHtml( "<p><i>(Tool Call Detected - Stopping Generation)</i></p>" );
                 }
             }
         }
@@ -1462,10 +1410,10 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
 
             m_pendingTool = toolName;
 
-            // Show Inline Approve Link with Colors
+            // Show Inline Approve Link with Colors (click handled by event delegation)
             std::string html = "<p><b>Tool Request:</b> " + toolName
-                               + " <a href=\"tool:approve\" style=\"color: #00AA00; font-weight: bold;\">[Approve]</a>"
-                               + " <a href=\"tool:deny\" style=\"color: #AA0000; font-weight: bold;\">[Deny]</a></p>";
+                               + " <a href=\"tool:approve\" class=\"approve-link\">[Approve]</a>"
+                               + " <a href=\"tool:reject\" class=\"deny-link\">[Deny]</a></p>";
             AppendHtml( html );
 
             // Allow user to click. Execution halted until link clicked.
@@ -1474,65 +1422,110 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
     }
 }
 
-void AGENT_FRAME::OnHtmlLinkClick( wxHtmlLinkEvent& aEvent )
+void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
 {
-    wxString href = aEvent.GetLinkInfo().GetHref();
+    // Parse JSON message from JavaScript
+    try
+    {
+        nlohmann::json msg = nlohmann::json::parse( aMessage.ToStdString() );
+        std::string action = msg.value( "action", "" );
 
-    if( href == "tool:approve" )
-    {
-        OnToolClick( aEvent );
-    }
-    else if( href == "tool:reject" )
-    {
-        AppendHtml( "<p><i>Tool call rejected by user.</i></p>" );
-        nlohmann::json rejectMsg = { { "role", "user" }, { "content", "Tool execution rejected." } };
-        m_chatHistory.push_back( rejectMsg );
-        m_apiContext.push_back( rejectMsg );
-        // Optionally resume generation or wait for user input?
-        // Usually better to let user type why.
-    }
-    else if( href == "agent:approve_open" )
-    {
-        OnApproveOpenEditor();
-    }
-    else if( href == "agent:reject_open" )
-    {
-        OnRejectOpenEditor();
-    }
-    else if( href.StartsWith( "toggle:thinking:" ) )
-    {
-        // Toggle thinking block by index
-        wxString indexStr = href.Mid( 16 );  // "toggle:thinking:" is 16 chars
-        long index;
-
-        if( indexStr.ToLong( &index ) && index >= 0 )
+        if( action == "link_click" )
         {
-            // Check if this is the current streaming thinking
-            if( index == m_currentThinkingIndex && m_currentThinkingIndex >= 0 &&
-                !m_thinkingContent.IsEmpty() )
-            {
-                // Toggle current streaming thinking
-                m_thinkingExpanded = !m_thinkingExpanded;
-                RebuildThinkingHtml();
-                UpdateAgentResponse();
-            }
-            else if( index < (int)m_historicalThinking.size() )
-            {
-                // Toggle historical thinking
-                if( m_historicalThinkingExpanded.count( index ) )
-                    m_historicalThinkingExpanded.erase( index );
-                else
-                    m_historicalThinkingExpanded.insert( index );
+            wxString href = wxString::FromUTF8( msg.value( "href", "" ) );
 
-                // Re-render the chat history with new toggle state
-                RenderChatHistory();
+            if( href == "tool:approve" )
+            {
+                wxCommandEvent evt;
+                OnToolClick( evt );
+            }
+            else if( href == "tool:reject" )
+            {
+                AppendHtml( "<p><i>Tool call rejected by user.</i></p>" );
+                nlohmann::json rejectMsg = { { "role", "user" }, { "content", "Tool execution rejected." } };
+                m_chatHistory.push_back( rejectMsg );
+                m_apiContext.push_back( rejectMsg );
+            }
+            else if( href == "agent:approve_open" )
+            {
+                OnApproveOpenEditor();
+            }
+            else if( href == "agent:reject_open" )
+            {
+                OnRejectOpenEditor();
+            }
+            else if( href.StartsWith( "toggle:thinking:" ) )
+            {
+                // Toggle thinking block by index
+                wxString indexStr = href.Mid( 16 );  // "toggle:thinking:" is 16 chars
+                long index;
+
+                if( indexStr.ToLong( &index ) && index >= 0 )
+                {
+                    // Check if this is the current streaming thinking
+                    if( index == m_currentThinkingIndex && m_currentThinkingIndex >= 0 &&
+                        !m_thinkingContent.IsEmpty() )
+                    {
+                        // Toggle current streaming thinking
+                        m_thinkingExpanded = !m_thinkingExpanded;
+                        RebuildThinkingHtml();
+                        UpdateAgentResponse();
+                    }
+                    else if( index < (int)m_historicalThinking.size() )
+                    {
+                        // Toggle historical thinking
+                        if( m_historicalThinkingExpanded.count( index ) )
+                            m_historicalThinkingExpanded.erase( index );
+                        else
+                            m_historicalThinkingExpanded.insert( index );
+
+                        // Re-render the chat history with new toggle state
+                        RenderChatHistory();
+                    }
+                }
+            }
+            else if( href.StartsWith( "http://" ) || href.StartsWith( "https://" ) )
+            {
+                // Open standard links in browser
+                wxLaunchDefaultBrowser( href );
             }
         }
+        else if( action == "copy" )
+        {
+            // Handle copy request from context menu
+            wxString text = wxString::FromUTF8( msg.value( "text", "" ) );
+            if( !text.IsEmpty() && wxTheClipboard->Open() )
+            {
+                wxTheClipboard->SetData( new wxTextDataObject( text ) );
+                wxTheClipboard->Close();
+            }
+        }
+        else if( action == "thinking_toggled" )
+        {
+            // Handle thinking toggle from JavaScript (no page reload needed)
+            int index = msg.value( "index", -1 );
+            bool expanded = msg.value( "expanded", false );
+
+            // Update state without reloading page
+            if( index == m_currentThinkingIndex && m_currentThinkingIndex >= 0 )
+            {
+                // Current streaming thinking
+                m_thinkingExpanded = expanded;
+            }
+            else if( index >= 0 && index < (int)m_historicalThinking.size() )
+            {
+                // Historical thinking
+                if( expanded )
+                    m_historicalThinkingExpanded.insert( index );
+                else
+                    m_historicalThinkingExpanded.erase( index );
+            }
+            // Don't call RenderChatHistory() - state is already updated in DOM via JavaScript
+        }
     }
-    else
+    catch( const std::exception& e )
     {
-        // Open standard links in browser?
-        wxLaunchDefaultBrowser( href );
+        fprintf( stderr, "AGENT: OnWebViewMessage parse error: %s\n", e.what() );
     }
 }
 
@@ -1546,10 +1539,10 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
 
     // Show "Running..." terminal box
     wxString placeholderId = wxString::Format( "term_%lu", wxGetLocalTimeMillis().GetValue() );
-    wxString runningBox = wxString::Format( "<table width='100%%' bgcolor='#1e1e1e' cellpadding='10'><tr><td>"
-                                            "<font color='#4ec9b0' face='Courier New' size='2'>&gt; %s</font><br>"
-                                            "<font color='#d4d4d4' face='Courier New' size='2'><i>Running...</i></font>"
-                                            "</td></tr></table><!--%s-->", // Comment mark for replacement
+    wxString runningBox = wxString::Format( "<div class=\"tool-block\">"
+                                            "<span class=\"tool-prompt\">&gt; %s</span><br>"
+                                            "<span class=\"tool-output\"><i>Running...</i></span>"
+                                            "</div><!--%s-->", // Comment mark for replacement
                                             m_pendingTool, placeholderId );
     AppendHtml( runningBox );
 
@@ -1618,10 +1611,10 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     htmlOutput.Replace( "\n", "<br>" );
     htmlOutput.Replace( " ", "&nbsp;" );
 
-    wxString finalTermBox = wxString::Format( "<table width='100%%' bgcolor='#1e1e1e' cellpadding='10'><tr><td>"
-                                              "<font color='#4ec9b0' face='Courier New' size='2'>&gt; %s</font><br>"
-                                              "<font color='#d4d4d4' face='Courier New' size='2'>%s</font>"
-                                              "</td></tr></table>",
+    wxString finalTermBox = wxString::Format( "<div class=\"tool-block\">"
+                                              "<span class=\"tool-prompt\">&gt; %s</span><br>"
+                                              "<span class=\"tool-output\">%s</span>"
+                                              "</div>",
                                               toolToRun, htmlOutput );
 
     // REPLACE the running box in m_fullHtmlContent
@@ -1637,7 +1630,6 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     StartGeneratingAnimation();
 
     // System prompt now handled server-side
-
     std::string payload;
     if( !m_schJson.empty() )
         payload += m_schJson + "\n";
@@ -1717,30 +1709,16 @@ std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayloa
 
 void AGENT_FRAME::OnChatRightClick( wxMouseEvent& aEvent )
 {
-    wxString selection = m_chatWindow->SelectionToText();
-    if( !selection.IsEmpty() )
-    {
-        wxMenu menu;
-        menu.Append( ID_CHAT_COPY, "Copy" );
-        menu.Enable( ID_CHAT_COPY, true );
-        PopupMenu( &menu );
-    }
+    // Right-click now handled by JavaScript contextmenu event listener
+    // See agent_html_template.cpp for implementation
+    aEvent.Skip();
 }
 
 void AGENT_FRAME::OnPopupClick( wxCommandEvent& aEvent )
 {
-    if( aEvent.GetId() == ID_CHAT_COPY )
-    {
-        wxString selection = m_chatWindow->SelectionToText();
-        if( !selection.IsEmpty() )
-        {
-            if( wxTheClipboard->Open() )
-            {
-                wxTheClipboard->SetData( new wxTextDataObject( selection ) );
-                wxTheClipboard->Close();
-            }
-        }
-    }
+    // Copy now handled by JavaScript message passing
+    // See OnWebViewMessage() for "copy" action handling
+    aEvent.Skip();
 }
 
 // ============================================================================
@@ -1777,9 +1755,8 @@ void AGENT_FRAME::StartAsyncLLMRequest()
     wxString model = m_modelChoice->GetStringSelection();
     m_llmClient->SetModel( model.ToStdString() );
 
-    // System prompt now handled server-side
-
     // Filter out thinking blocks from API context before sending to API
+    // (System prompt now handled server-side)
     // (Anthropic requires signatures for thinking blocks, which we don't store)
     // Note: m_apiContext may be compacted after context recovery
     nlohmann::json filteredHistory = nlohmann::json::array();
@@ -1935,7 +1912,7 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
     } );
 
     // UI reset
-    m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>";
+    m_fullHtmlContent = GetAgentHtmlTemplate() + wxS( "<p>Welcome to KiCad Agent.</p></div></body></html>" );
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
     m_chatNameLabel->SetLabel( "New Chat" );
@@ -2047,8 +2024,8 @@ void AGENT_FRAME::RenderChatHistory()
     // Clear historical thinking storage
     m_historicalThinking.clear();
 
-    // Build HTML from chat history
-    m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'>";
+    // Build HTML from chat history with modern template
+    m_fullHtmlContent = GetAgentHtmlTemplate();
 
     for( const auto& msg : m_chatHistory )
     {
@@ -2071,11 +2048,7 @@ void AGENT_FRAME::RenderChatHistory()
                 display.Replace( ">", "&gt;" );
                 display.Replace( "\n", "<br>" );
                 m_fullHtmlContent += wxString::Format(
-                    "<table width='100%%' cellpadding='0'><tr><td align='right'>"
-                    "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
-                    "<font color='#ffffff'>%s</font>"
-                    "</td></tr></table>"
-                    "</td></tr></table><br><br>",
+                    "<div class=\"user-msg\"><div class=\"user-bubble\">%s</div></div>",
                     display );
             }
             else if( role == "assistant" )
@@ -2115,11 +2088,7 @@ void AGENT_FRAME::RenderChatHistory()
                         display.Replace( ">", "&gt;" );
                         display.Replace( "\n", "<br>" );
                         m_fullHtmlContent += wxString::Format(
-                            "<table width='100%%' cellpadding='0'><tr><td align='right'>"
-                            "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
-                            "<font color='#ffffff'>%s</font>"
-                            "</td></tr></table>"
-                            "</td></tr></table><br>",
+                            "<div class=\"user-msg\"><div class=\"user-bubble\">%s</div></div>",
                             display );
                     }
                 }
@@ -2138,35 +2107,28 @@ void AGENT_FRAME::RenderChatHistory()
                         // Check if this thinking block is expanded
                         bool expanded = m_historicalThinkingExpanded.count( thinkingIndex ) > 0;
 
-                        // Generate toggle link with index
-                        wxString thinkingLabel = wxString::Format(
-                            "<a href='toggle:thinking:%d'><font color='#808080'>Thinking</font></a>",
-                            thinkingIndex );
+                        // Escape HTML for display
+                        wxString escapedText = thinkingText;
+                        escapedText.Replace( "&", "&amp;" );
+                        escapedText.Replace( "<", "&lt;" );
+                        escapedText.Replace( ">", "&gt;" );
+                        escapedText.Replace( "\n", "<br>" );
 
-                        if( expanded )
+                        // Truncate if very long
+                        if( escapedText.length() > 5000 )
                         {
-                            // Escape HTML for display
-                            wxString escapedText = thinkingText;
-                            escapedText.Replace( "&", "&amp;" );
-                            escapedText.Replace( "<", "&lt;" );
-                            escapedText.Replace( ">", "&gt;" );
-                            escapedText.Replace( "\n", "<br>" );
-
-                            // Truncate if very long
-                            if( escapedText.length() > 5000 )
-                            {
-                                escapedText = escapedText.Left( 5000 ) + "... <i>(truncated)</i>";
-                            }
-
-                            m_fullHtmlContent += wxString::Format(
-                                "%s<br><font color='#606060'>%s</font><br><br>",
-                                thinkingLabel, escapedText );
+                            escapedText = escapedText.Left( 5000 ) + "... <i>(truncated)</i>";
                         }
-                        else
-                        {
-                            // Collapsed: just show label
-                            m_fullHtmlContent += wxString::Format( "%s<br><br>", thinkingLabel );
-                        }
+
+                        // Always render both toggle link and content (content hidden by CSS)
+                        // JavaScript will toggle visibility without page reload
+                        wxString expandedClass = expanded ? " expanded" : "";
+                        wxString displayStyle = expanded ? "block" : "none";
+
+                        m_fullHtmlContent += wxString::Format(
+                            "<a href=\"toggle:thinking:%d\" class=\"thinking-toggle\" data-thinking-index=\"%d\">Thinking</a><br>"
+                            "<div class=\"thinking-content%s\" data-thinking-index=\"%d\" style=\"display:%s;\">%s</div><br>",
+                            thinkingIndex, thinkingIndex, expandedClass, thinkingIndex, displayStyle, escapedText );
                     }
                 }
                 else if( blockType == "tool_use" )
@@ -2189,18 +2151,18 @@ void AGENT_FRAME::RenderChatHistory()
                     bool isPythonError = ( content.find( "Traceback" ) != std::string::npos );
 
                     wxString displayResult;
-                    wxString statusColor;
+                    wxString statusClass;
                     wxString statusText;
 
                     if( isPythonError )
                     {
-                        statusColor = "#f44747";
+                        statusClass = "tool-status-error";
                         statusText = "Error";
                         displayResult = "<i>Script execution failed.</i>";
                     }
                     else if( isError )
                     {
-                        statusColor = "#f44747";
+                        statusClass = "tool-status-error";
                         statusText = "Failed";
                         wxString htmlResult = content;
                         htmlResult.Replace( "&", "&amp;" );
@@ -2212,7 +2174,7 @@ void AGENT_FRAME::RenderChatHistory()
                     }
                     else
                     {
-                        statusColor = "#4ec9b0";
+                        statusClass = "tool-status";
                         statusText = "Completed";
                         wxString htmlResult = content;
                         htmlResult.Replace( "&", "&amp;" );
@@ -2227,12 +2189,12 @@ void AGENT_FRAME::RenderChatHistory()
                     wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
 
                     wxString resultBox = wxString::Format(
-                        "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
-                        "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
-                        "<font color='%s'><b>%s</b></font><br>"
-                        "<font color='#d4d4d4' size='2'>%s</font>"
-                        "</td></tr></table><br>",
-                        desc, statusColor, statusText, displayResult );
+                        "<div class=\"tool-block\">"
+                        "<span class=\"tool-status\"><strong>Tool Call:</strong></span> %s<br>"
+                        "<span class=\"%s\"><strong>%s</strong></span><br>"
+                        "<span class=\"tool-output\">%s</span>"
+                        "</div>",
+                        desc, statusClass, statusText, displayResult );
                     m_fullHtmlContent += resultBox;
 
                     m_lastToolDesc = "";  // Reset for next tool
@@ -2247,7 +2209,7 @@ void AGENT_FRAME::RenderChatHistory()
         m_fullHtmlContent += m_toolCallHtml;
     }
 
-    m_fullHtmlContent += "</body></html>";
+    m_fullHtmlContent += "</div></body></html>";
 
     SetHtml( m_fullHtmlContent );
 }
@@ -2570,12 +2532,13 @@ void AGENT_FRAME::ShowOpenEditorApproval( const wxString& aEditorType )
 {
     // Update m_toolCallHtml instead of using AppendHtml() so the approval UI
     // survives calls to UpdateAgentResponse()
+    // Use onclick for JavaScript handling with modern CSS classes
     m_toolCallHtml = wxString::Format(
-        "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td>"
-        "<font color='#4ec9b0'><b>Open %s Editor?</b></font> "
-        "<a href=\"agent:approve_open\" style=\"color: #00AA00;\">[Open]</a> "
-        "<a href=\"agent:reject_open\" style=\"color: #AA0000;\">[Cancel]</a>"
-        "</td></tr></table>",
+        "<br><br><div class=\"tool-block\">"
+        "<span class=\"tool-status\"><b>Open %s Editor?</b></span> "
+        "<a href=\"agent:approve_open\" class=\"approve-link\">[Open]</a> "
+        "<a href=\"agent:reject_open\" class=\"deny-link\">[Cancel]</a>"
+        "</div>",
         aEditorType );
     UpdateAgentResponse();
 }
@@ -2662,8 +2625,7 @@ void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
     // Re-render full response with markdown
     UpdateAgentResponse();
 
-    // Auto-scroll (respects user scroll position)
-    AutoScrollToBottom();
+    // Auto-scroll handled by CSS flex-direction: column-reverse
 
     delete data;
 }
@@ -2704,8 +2666,7 @@ void AGENT_FRAME::OnChatThinkingDelta( wxThreadEvent& aEvent )
     RebuildThinkingHtml();
     UpdateAgentResponse();
 
-    // Auto-scroll to show thinking
-    AutoScrollToBottom();
+    // Auto-scroll handled by CSS flex-direction: column-reverse
 
     delete data;
 }
@@ -2778,14 +2739,14 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
 
     // Generate tool call HTML with "Running..." status
     m_toolCallHtml = wxString::Format(
-        "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
-        "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
-        "<font color='#888888'><i>Running...</i></font>"
-        "</td></tr></table>",
+        "<div class=\"tool-block\">"
+        "<span class=\"tool-status\"><strong>Tool Call:</strong></span> %s<br>"
+        "<span class=\"tool-output\"><i>Running...</i></span>"
+        "</div>",
         m_lastToolDesc );
 
     UpdateAgentResponse();
-    AutoScrollToBottom();
+    // Auto-scroll handled by CSS flex-direction: column-reverse
 
     delete data;
 }
@@ -2798,19 +2759,19 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
         return;
 
     // Determine status display
-    wxString statusColor;
+    wxString statusClass;
     wxString statusText;
     wxString displayResult;
 
     if( data->isPythonError )
     {
-        statusColor = "#f44747";
+        statusClass = "tool-status-error";
         statusText = "Error";
         displayResult = "<i>Script execution failed. The model will attempt to fix the issue.</i>";
     }
     else if( !data->success )
     {
-        statusColor = "#f44747";
+        statusClass = "tool-status-error";
         statusText = "Failed";
         wxString htmlResult = wxString::FromUTF8( data->result );
         htmlResult.Replace( "&", "&amp;" );
@@ -2822,7 +2783,7 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
     }
     else
     {
-        statusColor = "#4ec9b0";
+        statusClass = "tool-status";
         statusText = "Completed";
         wxString htmlResult = wxString::FromUTF8( data->result );
         htmlResult.Replace( "&", "&amp;" );
@@ -2835,18 +2796,18 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
     // Update tool call HTML with result (replace "Running..." with actual result)
     m_toolCallHtml = wxString::Format(
-        "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
-        "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
-        "<font color='%s'><b>%s</b></font><br>"
-        "<font color='#d4d4d4' size='2'>%s</font>"
-        "</td></tr></table><br>",
-        m_lastToolDesc, statusColor, statusText, displayResult );
+        "<div class=\"tool-block\">"
+        "<span class=\"tool-status\"><strong>Tool Call:</strong></span> %s<br>"
+        "<span class=\"%s\"><strong>%s</strong></span><br>"
+        "<span class=\"tool-output\">%s</span>"
+        "</div>",
+        m_lastToolDesc, statusClass, statusText, displayResult );
 
     // Check for pending approval
     CheckForPendingChanges();
 
     UpdateAgentResponse();
-    AutoScrollToBottom();
+    // Auto-scroll handled by CSS flex-direction: column-reverse
 
     delete data;
 }
@@ -3021,28 +2982,8 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
     // Update DB ID so new messages go to this history
     m_chatHistoryDb.SetConversationId( data->chatId );
 
-    // Scroll to bottom of loaded conversation (use CallAfter to ensure layout is complete)
+    // Auto-scroll to bottom handled by CSS flex-direction: column-reverse
     m_userScrolledUp = false;
-    CallAfter( [this]() {
-        int virtWidth, virtHeight;
-        m_chatWindow->GetVirtualSize( &virtWidth, &virtHeight );
-
-        int clientWidth, clientHeight;
-        m_chatWindow->GetClientSize( &clientWidth, &clientHeight );
-
-        int scrollUnitX, scrollUnitY;
-        m_chatWindow->GetScrollPixelsPerUnit( &scrollUnitX, &scrollUnitY );
-
-        if( scrollUnitY <= 0 )
-            scrollUnitY = 10;
-
-        // Use ceiling division to ensure we scroll completely to the bottom
-        int maxScrollY = ( virtHeight - clientHeight + scrollUnitY - 1 ) / scrollUnitY;
-        if( maxScrollY < 0 )
-            maxScrollY = 0;
-
-        m_chatWindow->Scroll( 0, maxScrollY );
-    });
 
     delete data;
 }

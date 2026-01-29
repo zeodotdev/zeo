@@ -800,6 +800,9 @@ void* LLM_REQUEST_THREAD::Entry()
     requestBody["max_tokens"] = 4096;
     requestBody["stream"] = true;
 
+    // Request server-side context injection (reduces bandwidth, enables caching)
+    requestBody["context_type"] = "kipy-schematic-v5";
+
     // Add tools
     if( !m_tools.empty() )
     {
@@ -852,6 +855,7 @@ void* LLM_REQUEST_THREAD::Entry()
     ctx.handler = m_handler;
     ctx.cancelFlag = m_cancelFlag;
     ctx.inToolInput = false;
+    ctx.inThinking = false;
 
     curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, StreamWriteCallback );
     curl_easy_setopt( curl, CURLOPT_WRITEDATA, &ctx );
@@ -893,6 +897,35 @@ void* LLM_REQUEST_THREAD::Entry()
 
     if( http_code != 200 )
     {
+        // Check for context_exhausted error (HTTP 400 with recovery messages)
+        if( http_code == 400 )
+        {
+            try
+            {
+                json errorJson = json::parse( ctx.buffer );
+                if( errorJson.value( "error", "" ) == "context_exhausted" &&
+                    errorJson.contains( "summarizedMessages" ) )
+                {
+                    // Send context exhausted event with recovery messages
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::CONTEXT_EXHAUSTED;
+                    chunk.summarized_messages = errorJson["summarizedMessages"];
+                    PostLLMChunk( m_handler, chunk );
+
+                    // Send completion (this was handled, not a failure)
+                    LLMStreamComplete complete;
+                    complete.success = true;
+                    PostLLMComplete( m_handler, complete );
+                    curl_easy_cleanup( curl );
+                    return nullptr;
+                }
+            }
+            catch( ... )
+            {
+                // JSON parse error - fall through to normal error handling
+            }
+        }
+
         std::string errorMsg = "LLM API error: HTTP " + std::to_string( http_code );
         // Include the response body which contains error details
         if( !ctx.buffer.empty() )
@@ -950,8 +983,19 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
         std::string event = ctx->buffer.substr( 0, pos );
         ctx->buffer.erase( 0, pos + 2 );
 
-        // Parse SSE event - find the data line
+        // Parse SSE event - extract event type and data line
         // SSE format can be "event: xxx\ndata: yyy" or just "data: yyy"
+        std::string sseEventType;
+        size_t eventPos = event.find( "event: " );
+        if( eventPos != std::string::npos )
+        {
+            size_t eventStart = eventPos + 7;
+            size_t lineEnd = event.find( '\n', eventStart );
+            sseEventType = ( lineEnd == std::string::npos )
+                ? event.substr( eventStart )
+                : event.substr( eventStart, lineEnd - eventStart );
+        }
+
         std::string data;
         size_t dataPos = event.find( "data: " );
         if( dataPos != std::string::npos )
@@ -972,6 +1016,55 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
         if( data == "[DONE]" )
             continue;
 
+        // Handle context_status event from server
+        if( sseEventType == "context_status" )
+        {
+            try
+            {
+                json j = json::parse( data );
+                LLMStreamChunk chunk;
+                chunk.type = LLMChunkType::CONTEXT_STATUS;
+                chunk.context_percent_used = j.value( "percent_used", 0 );
+                chunk.context_compacted = j.value( "compacted", false );
+                PostLLMChunk( ctx->handler, chunk );
+            }
+            catch( const json::exception& )
+            {
+                // JSON parse error - skip this event
+            }
+            continue;
+        }
+
+        // Handle context_compacting event (Scenario B: server is compacting)
+        if( sseEventType == "context_compacting" )
+        {
+            LLMStreamChunk chunk;
+            chunk.type = LLMChunkType::CONTEXT_COMPACTING;
+            PostLLMChunk( ctx->handler, chunk );
+            continue;
+        }
+
+        // Handle context_truncated event (Scenario B: mid-response truncation with recovery)
+        if( sseEventType == "context_truncated" )
+        {
+            try
+            {
+                json j = json::parse( data );
+                if( j.contains( "summarizedMessages" ) )
+                {
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::CONTEXT_TRUNCATED;
+                    chunk.summarized_messages = j["summarizedMessages"];
+                    PostLLMChunk( ctx->handler, chunk );
+                }
+            }
+            catch( const json::exception& )
+            {
+                // JSON parse error - skip this event
+            }
+            continue;
+        }
+
         try
         {
             json j = json::parse( data );
@@ -990,6 +1083,16 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     ctx->currentToolName = contentBlock.value( "name", "" );
                     ctx->currentToolInput = "";
                     ctx->inToolInput = true;
+                }
+                else if( blockType == "thinking" )
+                {
+                    ctx->currentThinking = "";
+                    ctx->inThinking = true;
+
+                    // Post THINKING_START to show loading animation
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::THINKING_START;
+                    PostLLMChunk( ctx->handler, chunk );
                 }
             }
             else if( eventType == "content_block_delta" )
@@ -1018,6 +1121,20 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     std::string partial = delta.value( "partial_json", "" );
                     ctx->currentToolInput += partial;
                 }
+                else if( deltaType == "thinking_delta" )
+                {
+                    // Stream thinking text incrementally (like text_delta)
+                    std::string thinking = delta.value( "thinking", "" );
+
+                    if( !thinking.empty() )
+                    {
+                        LLMStreamChunk chunk;
+                        chunk.type = LLMChunkType::THINKING;
+                        chunk.thinking_text = thinking;
+                        PostLLMChunk( ctx->handler, chunk );
+                    }
+                }
+                // signature_delta is ignored - we don't need to display signatures
             }
             else if( eventType == "content_block_stop" )
             {
@@ -1039,6 +1156,16 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     ctx->currentToolId.clear();
                     ctx->currentToolName.clear();
                     ctx->currentToolInput.clear();
+                }
+                else if( ctx->inThinking )
+                {
+                    // Thinking block complete - post THINKING_DONE
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::THINKING_DONE;
+                    PostLLMChunk( ctx->handler, chunk );
+
+                    ctx->inThinking = false;
+                    ctx->currentThinking.clear();
                 }
             }
             else if( eventType == "message_delta" )

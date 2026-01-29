@@ -9,6 +9,7 @@
 #include <wx/timer.h>
 #include <string>
 #include <vector>
+#include <set>
 #include <memory>
 #include <nlohmann/json.hpp>
 
@@ -143,7 +144,8 @@ private:
     std::string m_pcbSummary;
 
     // Chat State
-    nlohmann::json m_chatHistory;     // Full history
+    nlohmann::json m_chatHistory;     // Full history for display/persistence
+    nlohmann::json m_apiContext;      // Context sent to API (may be compacted)
     std::string    m_currentResponse; // Streaming accumulator
     std::string    m_pendingTool;     // Tool waiting for approval
     bool           m_stopRequested;   // Flag for sync wait loops
@@ -156,18 +158,28 @@ private:
     wxTimer                  m_toolTimeoutTimer; // Timer for tool execution timeout
     static const int         TOOL_TIMEOUT_MS = 30000; // 30 second timeout
 
-    // Model Context
-    std::string    m_modelContext;    // Loaded API reference for current model
+    // Model Context (context prompt is now injected server-side via context_type)
     std::string    m_currentModel;    // Currently selected model name
-    void           LoadModelContext();
     std::string    GetSystemPrompt();
 
     // HTML Rendering
     wxString m_fullHtmlContent;        // Complete HTML buffer
     wxString m_htmlBeforeAgentResponse; // HTML snapshot before streaming starts (for markdown re-render)
     wxString m_toolCallHtml;           // Accumulated tool call/result HTML (preserved during re-render)
+    wxString m_thinkingHtml;           // Thinking block HTML (preserved during re-render)
+    wxString m_thinkingContent;        // Raw accumulated thinking text
+    bool     m_thinkingExpanded;       // Whether thinking is expanded (click to toggle)
+    bool     m_isThinking;             // Whether currently in thinking phase (for loading animation)
+    int      m_currentThinkingIndex;   // Index for current streaming thinking (for toggle:thinking:N links)
     wxString m_lastToolDesc;           // Temp storage for tool description during history replay
     bool     m_userScrolledUp;         // Track if user has scrolled up during generation
+    void     RebuildThinkingHtml();    // Rebuild thinking HTML from m_thinkingContent
+
+    // Historical thinking toggle state
+    std::vector<wxString>  m_historicalThinking;          // Thinking content from loaded history
+    std::set<int>          m_historicalThinkingExpanded;  // Which historical thinking blocks are expanded
+    void                   RenderChatHistory();           // Re-render chat history with current toggle states
+
     void     AppendHtml( const wxString& aHtml );
     void     SetHtml( const wxString& aHtml );
     void     UpdateAgentResponse();    // Re-render current response with markdown
@@ -212,6 +224,7 @@ private:
     // Async LLM streaming helpers
     void StartAsyncLLMRequest();  // Start an async LLM request
     void HandleLLMChunk( const LLMStreamChunk& aChunk );  // Process a streaming chunk
+    void RetryLastRequest();      // Retry after context recovery
 
     // Agent change approval
     bool m_hasPendingSchChanges;    // True if schematic has pending agent changes
@@ -261,6 +274,15 @@ private:
      * Update the conflict display in the pending changes panel.
      */
     void UpdateConflictDisplay();
+
+    // Pending editor open request
+    bool        m_pendingOpenSch;       // True if schematic editor open is pending approval
+    bool        m_pendingOpenPcb;       // True if PCB editor open is pending approval
+    std::string m_pendingOpenToolId;    // Tool use ID for the pending open request
+    void ShowOpenEditorApproval( const wxString& aEditorType );
+    void OnApproveOpenEditor();
+    void OnRejectOpenEditor();
+    bool DoOpenEditor( FRAME_T aFrameType );
 };
 
 #endif // AGENT_FRAME_H

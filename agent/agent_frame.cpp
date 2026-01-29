@@ -500,7 +500,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_hasPendingSchChanges( false ),
         m_hasPendingPcbChanges( false ),
         m_pendingSchSheetPath( wxEmptyString ),
-        m_pendingPcbFilename( wxEmptyString )
+        m_pendingPcbFilename( wxEmptyString ),
+        m_pendingOpenSch( false ),
+        m_pendingOpenPcb( false )
 {
 
     // --- UI Layout ---
@@ -695,6 +697,11 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_userScrolledUp = false;
     m_generatingTimer.Bind( wxEVT_TIMER, &AGENT_FRAME::OnGeneratingTimer, this );
 
+    // Initialize thinking state
+    m_thinkingExpanded = false;
+    m_isThinking = false;
+    m_currentThinkingIndex = -1;
+
     // Initialize title generation
     m_needsTitleGeneration = true;
     m_firstUserMessage = "";
@@ -707,7 +714,14 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Initialize History
     m_chatHistory = nlohmann::json::array();
+    m_apiContext = nlohmann::json::array();
     m_pendingToolCalls = nlohmann::json::array();
+
+    // Add welcome message to chat history (but not API context) so it survives re-renders
+    m_chatHistory.push_back( {
+        { "role", "welcome" },
+        { "content", "Welcome to KiCad Agent." }
+    } );
 
     // Initialize chat history persistence with timestamp conversation ID
     wxDateTime now = wxDateTime::Now();
@@ -717,9 +731,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Initialize LLM client and tools
     m_llmClient = std::make_unique<AGENT_LLM_CLIENT>( this );
     InitializeTools();
-
-    // Load model context (API reference)
-    LoadModelContext();
 
     // Initialize authentication
     m_auth = new AGENT_AUTH();
@@ -839,86 +850,10 @@ AGENT_FRAME::~AGENT_FRAME()
     delete m_auth;
 }
 
-void AGENT_FRAME::LoadModelContext()
-{
-    // Determine context file based on current model
-    // For now, all models use the same kipy schematic API reference
-    wxString contextPath = wxStandardPaths::Get().GetExecutablePath();
-    wxFileName exePath( contextPath );
-
-    // Navigate to model_context folder relative to executable
-    // In dev: executable is in build folder, context is in source
-    // Try multiple paths
-    std::vector<std::string> searchPaths;
-
-    // 1. Environment variable for dev path
-    const char* devPath = std::getenv( "KICAD_AGENT_DEV_PATH" );
-    if( devPath )
-    {
-        searchPaths.push_back( std::string( devPath ) + "/../code/kicad-agent/agent/model_context/kipy_schematic_api_v5.txt" );
-    }
-
-    // 2. Relative to executable - search up directory tree for source location
-    //    This handles various build configurations where:
-    //    - Executable may be in: .../code/kicad-agent/build/...
-    //    - Source is in: .../code/kicad-agent/agent/model_context/
-    wxFileName searchPath( exePath.GetPath(), "" );
-    for( int i = 0; i < 6; i++ )  // Search up to 6 levels up
-    {
-        wxFileName testPath = searchPath;
-        testPath.AppendDir( "agent" );
-        testPath.AppendDir( "model_context" );
-        testPath.SetFullName( "kipy_schematic_api_v5.txt" );
-        searchPaths.push_back( std::string( testPath.GetFullPath().mb_str() ) );
-
-        // Also try kicad-agent/agent/model_context path
-        wxFileName altPath = searchPath;
-        altPath.AppendDir( "kicad-agent" );
-        altPath.AppendDir( "agent" );
-        altPath.AppendDir( "model_context" );
-        altPath.SetFullName( "kipy_schematic_api_v5.txt" );
-        searchPaths.push_back( std::string( altPath.GetFullPath().mb_str() ) );
-
-        searchPath.RemoveLastDir();
-    }
-
-    // 3. Relative to executable (for installed builds - macOS app bundle)
-    // When running standalone from agent.app/Contents/MacOS/agent
-    searchPaths.push_back( std::string( exePath.GetPath().mb_str() ) + "/../Resources/model_context/kipy_schematic_api_v5.txt" );
-
-    // 4. When agent runs as KIFACE loaded by main KiCad process
-    // The executable is KiCad.app/Contents/MacOS/kicad
-    // The model_context is installed to KiCad.app/Contents/SharedSupport/agent/model_context/
-    searchPaths.push_back( std::string( exePath.GetPath().mb_str() ) + "/../SharedSupport/agent/model_context/kipy_schematic_api_v5.txt" );
-
-    // 5. Relative to executable (for installed builds - Linux/Windows)
-    searchPaths.push_back( std::string( exePath.GetPath().mb_str() ) + "/../share/kicad-agent/model_context/kipy_schematic_api_v5.txt" );
-
-    // Try each path
-    m_modelContext = "";
-    fprintf( stderr, "AGENT: Searching for model context file...\n" );
-    for( const auto& path : searchPaths )
-    {
-        fprintf( stderr, "AGENT: Trying path: %s\n", path.c_str() );
-        std::ifstream file( path );
-        if( file.is_open() )
-        {
-            std::stringstream buffer;
-            buffer << file.rdbuf();
-            m_modelContext = buffer.str();
-            file.close();
-            fprintf( stderr, "AGENT: Found model context at: %s (%zu bytes)\n", path.c_str(), m_modelContext.size() );
-            break;
-        }
-    }
-    if( m_modelContext.empty() )
-    {
-        fprintf( stderr, "AGENT: WARNING - Model context file not found!\n" );
-    }
-}
-
 std::string AGENT_FRAME::GetSystemPrompt()
 {
+    // Base system prompt only - the KiPy API reference context is now injected
+    // server-side by harold.so when the request includes context_type="kipy-schematic-v5"
     std::string systemPrompt = R"(You are a helpful assistant for KiCad PCB design.
 You have access to tools to interact with schematics and boards.
 
@@ -957,14 +892,6 @@ Your responses are rendered with Markdown support. Use these formats for clear c
 Keep responses concise and well-structured. Use code blocks for any Python or shell commands.
 )";
 
-    // Append model context (API reference) if loaded
-    if( !m_modelContext.empty() )
-    {
-        systemPrompt += "\n\n=== KIPY SCHEMATIC API REFERENCE ===\n";
-        systemPrompt += m_modelContext;
-        systemPrompt += "\n=== END API REFERENCE ===\n";
-    }
-
     return systemPrompt;
 }
 
@@ -995,6 +922,50 @@ void AGENT_FRAME::AppendHtml( const wxString& aHtml )
     SetHtml( m_fullHtmlContent );
 }
 
+void AGENT_FRAME::RebuildThinkingHtml()
+{
+    // Rebuild thinking HTML based on current state
+    // Shows "Thinking" as a clickable link that expands/collapses content
+
+    if( m_thinkingContent.IsEmpty() && !m_isThinking )
+    {
+        m_thinkingHtml = "";
+        return;
+    }
+
+    // Escape HTML in thinking content
+    wxString escapedContent = m_thinkingContent;
+    escapedContent.Replace( "&", "&amp;" );
+    escapedContent.Replace( "<", "&lt;" );
+    escapedContent.Replace( ">", "&gt;" );
+    escapedContent.Replace( "\n", "<br>" );
+
+    // Truncate if very long
+    if( escapedContent.length() > 5000 )
+    {
+        escapedContent = escapedContent.Left( 5000 ) + "... <i>(truncated)</i>";
+    }
+
+    // Build the thinking HTML with indexed toggle link
+    // Note: wxHtmlWindow link color overrides outer font, so put font INSIDE the <a> tag
+    wxString thinkingLabel = wxString::Format(
+        "<a href='toggle:thinking:%d'><font color='#808080'>Thinking</font></a>",
+        m_currentThinkingIndex );
+
+    if( m_thinkingExpanded && !escapedContent.IsEmpty() )
+    {
+        // Expanded: show thinking content with spacing after (no <p> to avoid top margin)
+        m_thinkingHtml = wxString::Format(
+            "%s<br><font color='#606060'>%s</font><br><br>",
+            thinkingLabel, escapedContent );
+    }
+    else
+    {
+        // Collapsed: just show the label with spacing after
+        m_thinkingHtml = wxString::Format( "%s<br><br>", thinkingLabel );
+    }
+}
+
 void AGENT_FRAME::UpdateAgentResponse()
 {
     // Re-render the full HTML with the current response formatted as markdown
@@ -1017,6 +988,12 @@ void AGENT_FRAME::UpdateAgentResponse()
     {
         html = html.Left( html.length() - closingTags.length() );
         fprintf( stderr, "[HTML-DEBUG]   Stripped closing tags from base HTML\n" );
+    }
+
+    // Include thinking block HTML if present (shown before response)
+    if( !m_thinkingHtml.IsEmpty() )
+    {
+        html += m_thinkingHtml;
     }
 
     // Append the current response with markdown formatting
@@ -1702,6 +1679,37 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         return;
     }
 
+    // Auto-reject pending open editor request if user sends a new message
+    // We handle this directly here instead of calling OnRejectOpenEditor/ProcessToolResult
+    // because we don't want to trigger a new LLM request - OnSend will do that
+    if( m_pendingOpenSch || m_pendingOpenPcb )
+    {
+        wxString editorName = m_pendingOpenSch ? "Schematic" : "PCB";
+        std::string toolId = m_pendingOpenToolId;
+
+        // Clear pending state
+        m_pendingOpenSch = false;
+        m_pendingOpenPcb = false;
+        m_pendingOpenToolId.clear();
+
+        // Add tool_result directly to history so API doesn't complain about missing tool_result
+        nlohmann::json toolResultMsg;
+        toolResultMsg["role"] = "user";
+        toolResultMsg["content"] = nlohmann::json::array( {
+            {
+                { "type", "tool_result" },
+                { "tool_use_id", toolId },
+                { "content", "User declined to open " + editorName.ToStdString() + " editor" }
+            }
+        } );
+        m_chatHistory.push_back( toolResultMsg );
+        m_apiContext.push_back( toolResultMsg );
+
+        // Clear tool call UI
+        m_toolCallHtml = "";
+        m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
+    }
+
     wxString text = m_inputCtrl->GetValue();
     if( text.IsEmpty() )
         return;
@@ -1941,11 +1949,14 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         if( historyModified )
         {
             m_chatHistoryDb.Save( m_chatHistory );
+            m_apiContext = m_chatHistory;  // Sync API context after fix
         }
     }
 
-    // Update History
-    m_chatHistory.push_back( { { "role", "user" }, { "content", text.ToStdString() } } );
+    // Update History (both display and API context)
+    nlohmann::json userMsg = { { "role", "user" }, { "content", text.ToStdString() } };
+    m_chatHistory.push_back( userMsg );
+    m_apiContext.push_back( userMsg );
     m_chatHistoryDb.Save( m_chatHistory );
 
     // Capture first user message for title generation
@@ -1957,6 +1968,10 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 
     m_currentResponse = ""; // Reset accumulator
     m_toolCallHtml = "";    // Reset tool call HTML
+    m_thinkingHtml = "";    // Reset thinking block HTML
+    m_thinkingContent = ""; // Reset thinking content
+    m_thinkingExpanded = false;
+    m_isThinking = false;
     m_pendingToolCalls = nlohmann::json::array(); // Reset pending tool calls
     m_stopRequested = false; // Reset stop flag
     m_userScrolledUp = false; // Reset scroll tracking for new message
@@ -2159,9 +2174,26 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
     m_actionButton->SetLabel( "Send" );
 
     // Add Assistant response to history
-    if( !m_currentResponse.empty() )
+    if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
     {
-        m_chatHistory.push_back( { { "role", "assistant" }, { "content", m_currentResponse } } );
+        nlohmann::json assistantMsg;
+        assistantMsg["role"] = "assistant";
+
+        if( !m_thinkingContent.IsEmpty() )
+        {
+            nlohmann::json content = nlohmann::json::array();
+            content.push_back( { { "type", "thinking" }, { "thinking", m_thinkingContent.ToStdString() } } );
+            if( !m_currentResponse.empty() )
+                content.push_back( { { "type", "text" }, { "text", m_currentResponse } } );
+            assistantMsg["content"] = content;
+        }
+        else
+        {
+            assistantMsg["content"] = m_currentResponse;
+        }
+
+        m_chatHistory.push_back( assistantMsg );
+        m_apiContext.push_back( assistantMsg );
         m_chatHistoryDb.Save( m_chatHistory );
     }
 
@@ -2244,6 +2276,7 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
 void AGENT_FRAME::OnHtmlLinkClick( wxHtmlLinkEvent& aEvent )
 {
     wxString href = aEvent.GetLinkInfo().GetHref();
+
     if( href == "tool:approve" )
     {
         OnToolClick( aEvent );
@@ -2251,9 +2284,49 @@ void AGENT_FRAME::OnHtmlLinkClick( wxHtmlLinkEvent& aEvent )
     else if( href == "tool:reject" )
     {
         AppendHtml( "<p><i>Tool call rejected by user.</i></p>" );
-        m_chatHistory.push_back( { { "role", "user" }, { "content", "Tool execution rejected." } } );
+        nlohmann::json rejectMsg = { { "role", "user" }, { "content", "Tool execution rejected." } };
+        m_chatHistory.push_back( rejectMsg );
+        m_apiContext.push_back( rejectMsg );
         // Optionally resume generation or wait for user input?
         // Usually better to let user type why.
+    }
+    else if( href == "agent:approve_open" )
+    {
+        OnApproveOpenEditor();
+    }
+    else if( href == "agent:reject_open" )
+    {
+        OnRejectOpenEditor();
+    }
+    else if( href.StartsWith( "toggle:thinking:" ) )
+    {
+        // Toggle thinking block by index
+        wxString indexStr = href.Mid( 16 );  // "toggle:thinking:" is 16 chars
+        long index;
+
+        if( indexStr.ToLong( &index ) && index >= 0 )
+        {
+            // Check if this is the current streaming thinking
+            if( index == m_currentThinkingIndex && m_currentThinkingIndex >= 0 &&
+                !m_thinkingContent.IsEmpty() )
+            {
+                // Toggle current streaming thinking
+                m_thinkingExpanded = !m_thinkingExpanded;
+                RebuildThinkingHtml();
+                UpdateAgentResponse();
+            }
+            else if( index < (int)m_historicalThinking.size() )
+            {
+                // Toggle historical thinking
+                if( m_historicalThinkingExpanded.count( index ) )
+                    m_historicalThinkingExpanded.erase( index );
+                else
+                    m_historicalThinkingExpanded.insert( index );
+
+                // Re-render the chat history with new toggle state
+                RenderChatHistory();
+            }
+        }
     }
     else
     {
@@ -2314,8 +2387,9 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     }
     else
     {
-        m_chatHistory.push_back(
-                { { "role", "user" }, { "content", "Error: Unknown tool command '" + commandName + "'" } } );
+        nlohmann::json errorMsg = { { "role", "user" }, { "content", "Error: Unknown tool command '" + commandName + "'" } };
+        m_chatHistory.push_back( errorMsg );
+        m_apiContext.push_back( errorMsg );
         m_pendingTool = "";
         // RenderChat(); // Assuming RenderChat is a function that updates the UI based on m_chatHistory
         return;
@@ -2334,7 +2408,9 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     // Append Tool Output to History as User message (or System)?
     // "Tool Output: [JSON]"
     std::string toolMsg = "Tool Output (" + toolToRun + "):\n" + toolOutput;
-    m_chatHistory.push_back( { { "role", "user" }, { "content", toolMsg } } );
+    nlohmann::json toolMsgJson = { { "role", "user" }, { "content", toolMsg } };
+    m_chatHistory.push_back( toolMsgJson );
+    m_apiContext.push_back( toolMsgJson );
 
     // Styled Terminal Execution Box (Result)
     wxString htmlOutput = toolOutput;
@@ -2394,12 +2470,11 @@ void AGENT_FRAME::OnTextEnter( wxCommandEvent& aEvent )
 void AGENT_FRAME::OnModelSelection( wxCommandEvent& aEvent )
 {
     // Reload model context when model changes
-    // This allows for model-specific context files in the future
+    // Track the currently selected model
     wxString newModel = m_modelChoice->GetStringSelection();
     if( newModel.ToStdString() != m_currentModel )
     {
         m_currentModel = newModel.ToStdString();
-        LoadModelContext();
     }
 }
 
@@ -2653,7 +2728,7 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
                 // Show "Running..." state in tool call HTML
                 wxString desc = GetToolDescription( first->tool_name, first->tool_input );
                 m_toolCallHtml = wxString::Format(
-                    "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                    "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
                     "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
                     "<font color='#888888'><i>Running...</i></font>"
                     "</td></tr></table>",
@@ -2680,10 +2755,40 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
             m_conversationCtx.SetState( AgentConversationState::IDLE );
 
             // Add final assistant message to history if there's accumulated text
-            if( !m_currentResponse.empty() )
+            if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
             {
-                m_chatHistory.push_back( { { "role", "assistant" }, { "content", m_currentResponse } } );
+                nlohmann::json assistantMsg;
+                assistantMsg["role"] = "assistant";
+
+                if( !m_thinkingContent.IsEmpty() )
+                {
+                    nlohmann::json content = nlohmann::json::array();
+                    content.push_back( { { "type", "thinking" }, { "thinking", m_thinkingContent.ToStdString() } } );
+                    if( !m_currentResponse.empty() )
+                        content.push_back( { { "type", "text" }, { "text", m_currentResponse } } );
+                    assistantMsg["content"] = content;
+                }
+                else
+                {
+                    assistantMsg["content"] = m_currentResponse;
+                }
+
+                m_chatHistory.push_back( assistantMsg );
+                m_apiContext.push_back( assistantMsg );
                 m_chatHistoryDb.Save( m_chatHistory );
+
+                // Preserve expanded state before re-rendering
+                if( m_thinkingExpanded && m_currentThinkingIndex >= 0 )
+                    m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
+
+                // Clear streaming state
+                m_currentResponse.clear();
+                m_thinkingContent.Clear();
+                m_thinkingExpanded = false;
+                m_currentThinkingIndex = -1;
+
+                // Re-render from history to show the saved content
+                RenderChatHistory();
             }
         }
         // else: tools are being executed, animation and button stay as is
@@ -2748,6 +2853,7 @@ void AGENT_FRAME::AddToolResultToHistory( const std::string& aToolUseId, const s
     });
 
     m_chatHistory.push_back( toolResultMsg );
+    m_apiContext.push_back( toolResultMsg );
     m_chatHistoryDb.Save( m_chatHistory );
 }
 
@@ -2755,11 +2861,20 @@ void AGENT_FRAME::AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBl
 {
     using json = nlohmann::json;
 
-    // Build assistant message with text (if any) and tool_use blocks
+    // Build assistant message with thinking (if any), text (if any), and tool_use blocks
     json assistantMsg;
     assistantMsg["role"] = "assistant";
 
     json content = json::array();
+
+    // Add thinking block first (if present) - must come before text/tool_use
+    if( !m_thinkingContent.IsEmpty() )
+    {
+        content.push_back( {
+            { "type", "thinking" },
+            { "thinking", m_thinkingContent.ToStdString() }
+        });
+    }
 
     // Add accumulated text if present
     if( !m_currentResponse.empty() )
@@ -2778,10 +2893,23 @@ void AGENT_FRAME::AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBl
 
     assistantMsg["content"] = content;
     m_chatHistory.push_back( assistantMsg );
+    m_apiContext.push_back( assistantMsg );
     m_chatHistoryDb.Save( m_chatHistory );
 
-    // Reset accumulated text
+    // Add thinking to historical storage so next thinking gets correct index
+    if( !m_thinkingContent.IsEmpty() )
+    {
+        m_historicalThinking.push_back( m_thinkingContent );
+        if( m_thinkingExpanded )
+            m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
+    }
+
+    // Reset accumulated state
     m_currentResponse = "";
+    m_thinkingContent.Clear();
+    m_thinkingHtml.Clear();  // Clear rendered thinking HTML to avoid duplicate display
+    m_thinkingExpanded = false;
+    m_currentThinkingIndex = -1;
 }
 
 // ============================================================================
@@ -2833,6 +2961,24 @@ void AGENT_FRAME::ExecuteToolAsync( const std::string& aToolName,
     {
         existingTool->start_time = wxGetLocalTimeMillis();
         existingTool->is_executing = true;
+    }
+
+    // Handle open_editor tool specially - requires user approval
+    if( toolName == "open_editor" )
+    {
+        std::string editorType = toolInput.value( "editor_type", "" );
+
+        // Store the pending request
+        m_pendingOpenSch = ( editorType == "sch" );
+        m_pendingOpenPcb = ( editorType == "pcb" );
+        m_pendingOpenToolId = toolUseId;
+
+        // Show approval buttons in chat
+        wxString editorLabel = m_pendingOpenSch ? "Schematic" : "PCB";
+        ShowOpenEditorApproval( editorLabel );
+
+        // Return immediately - tool result will be sent after user responds
+        return;
     }
 
     // Build the payload for the target frame
@@ -3087,11 +3233,11 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
         }
 
         m_toolCallHtml += wxString::Format(
-            "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+            "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
             "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
             "<font color='%s'><b>%s</b></font><br>"
             "<font color='#d4d4d4' size='2'>%s</font>"
-            "</td></tr></table>",
+            "</td></tr></table><br>",
             wxString::FromUTF8( completedTool.tool_description ),
             statusColor, statusText, displayResult );
     }
@@ -3112,7 +3258,7 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
             // Append next tool's "Running..." to the HTML
             wxString nextDesc = GetToolDescription( next->tool_name, next->tool_input );
             m_toolCallHtml += wxString::Format(
-                "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
                 "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
                 "<font color='#888888'><i>Running...</i></font>"
                 "</td></tr></table>",
@@ -3157,6 +3303,7 @@ void AGENT_FRAME::ContinueConversationWithToolResult()
 
         toolResultMsg["content"] = content;
         m_chatHistory.push_back( toolResultMsg );
+        m_apiContext.push_back( toolResultMsg );
 
         // Clear collected results
         m_conversationCtx.completed_tool_results.clear();
@@ -3173,7 +3320,11 @@ void AGENT_FRAME::ContinueConversationWithToolResult()
     // This captures everything including tool call results
     m_currentResponse = "";
     m_htmlBeforeAgentResponse = m_fullHtmlContent;
-    m_toolCallHtml = "";  // Clear since it's now part of m_htmlBeforeAgentResponse
+    m_toolCallHtml = "";   // Clear since it's now part of m_htmlBeforeAgentResponse
+    m_thinkingHtml = "";   // Clear thinking for new response
+    m_thinkingContent = "";
+    m_thinkingExpanded = false;
+    m_isThinking = false;
 
     fprintf( stderr, "[HTML-DEBUG] ContinueConversationWithToolResult: Captured m_htmlBeforeAgentResponse, length=%zu, ends with </body></html>: %s\n",
              (size_t)m_htmlBeforeAgentResponse.length(),
@@ -3204,8 +3355,41 @@ void AGENT_FRAME::StartAsyncLLMRequest()
 
     std::string systemPrompt = GetSystemPrompt();
 
+    // Filter out thinking blocks from API context before sending to API
+    // (Anthropic requires signatures for thinking blocks, which we don't store)
+    // Note: m_apiContext may be compacted after context recovery
+    nlohmann::json filteredHistory = nlohmann::json::array();
+    for( const auto& msg : m_apiContext )
+    {
+        if( msg.contains( "content" ) && msg["content"].is_array() )
+        {
+            // Filter content array to remove thinking blocks
+            nlohmann::json filteredContent = nlohmann::json::array();
+            for( const auto& block : msg["content"] )
+            {
+                if( !block.contains( "type" ) || block["type"] != "thinking" )
+                {
+                    filteredContent.push_back( block );
+                }
+            }
+
+            // Only add message if it has non-empty content after filtering
+            if( !filteredContent.empty() )
+            {
+                nlohmann::json filteredMsg = msg;
+                filteredMsg["content"] = filteredContent;
+                filteredHistory.push_back( filteredMsg );
+            }
+        }
+        else
+        {
+            // String content or other format - pass through as-is
+            filteredHistory.push_back( msg );
+        }
+    }
+
     // Start async request - returns immediately
-    if( !m_llmClient->AskStreamWithToolsAsync( m_chatHistory, systemPrompt, m_tools, this ) )
+    if( !m_llmClient->AskStreamWithToolsAsync( filteredHistory, systemPrompt, m_tools, this ) )
     {
         wxLogDebug( "AGENT: Failed to start async LLM request" );
         StopGeneratingAnimation();
@@ -3213,6 +3397,26 @@ void AGENT_FRAME::StartAsyncLLMRequest()
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
         m_actionButton->SetLabel( "Send" );
     }
+}
+
+
+void AGENT_FRAME::RetryLastRequest()
+{
+    // Reset streaming state for retry
+    m_currentResponse.clear();
+    m_thinkingContent.Clear();
+    m_thinkingHtml.Clear();
+    m_toolCallHtml.Clear();
+    m_thinkingExpanded = false;
+    m_isThinking = false;
+    m_pendingToolCalls = nlohmann::json::array();
+
+    // Ensure we're in the right state
+    m_conversationCtx.Reset();
+    m_conversationCtx.TransitionTo( AgentConversationState::WAITING_FOR_LLM );
+
+    // Start the async LLM request (uses m_apiContext which has been compacted)
+    StartAsyncLLMRequest();
 }
 
 
@@ -3249,6 +3453,42 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
 
         // Auto-scroll (respects user scroll position)
         AutoScrollToBottom();
+        break;
+    }
+    case LLMChunkType::THINKING_START:
+    {
+        // Thinking block started - show loading animation
+        m_isThinking = true;
+        m_thinkingContent = "";
+        m_thinkingExpanded = false;
+        // Set index for this thinking block (will be the next slot after existing history)
+        m_currentThinkingIndex = static_cast<int>( m_historicalThinking.size() );
+        RebuildThinkingHtml();
+        UpdateAgentResponse();
+        break;
+    }
+    case LLMChunkType::THINKING:
+    {
+        // Stream thinking text incrementally
+        if( !aChunk.thinking_text.empty() )
+        {
+            m_thinkingContent += wxString::FromUTF8( aChunk.thinking_text );
+            RebuildThinkingHtml();
+            UpdateAgentResponse();
+
+            // Auto-scroll
+            int x, y;
+            m_chatWindow->GetVirtualSize( &x, &y );
+            m_chatWindow->Scroll( 0, y );
+        }
+        break;
+    }
+    case LLMChunkType::THINKING_DONE:
+    {
+        // Thinking complete - stop loading animation, finalize display
+        m_isThinking = false;
+        RebuildThinkingHtml();
+        UpdateAgentResponse();
         break;
     }
     case LLMChunkType::TOOL_USE:
@@ -3338,7 +3578,7 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
                 // Show "Running..." state in tool call HTML
                 wxString desc = GetToolDescription( first->tool_name, first->tool_input );
                 m_toolCallHtml = wxString::Format(
-                    "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                    "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
                     "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
                     "<font color='#888888'><i>Running...</i></font>"
                     "</td></tr></table>",
@@ -3372,13 +3612,56 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
             m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
 
             // Add final assistant message to history if there's accumulated text
-            if( !m_currentResponse.empty() )
+            if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
             {
-                m_chatHistory.push_back( {
-                    { "role", "assistant" },
-                    { "content", m_currentResponse }
-                } );
+                nlohmann::json assistantMsg;
+                assistantMsg["role"] = "assistant";
+
+                // If we have thinking content, save as content array with thinking and text blocks
+                if( !m_thinkingContent.IsEmpty() )
+                {
+                    nlohmann::json content = nlohmann::json::array();
+
+                    // Add thinking block
+                    content.push_back( {
+                        { "type", "thinking" },
+                        { "thinking", m_thinkingContent.ToStdString() }
+                    } );
+
+                    // Add text block if we have response text
+                    if( !m_currentResponse.empty() )
+                    {
+                        content.push_back( {
+                            { "type", "text" },
+                            { "text", m_currentResponse }
+                        } );
+                    }
+
+                    assistantMsg["content"] = content;
+                }
+                else
+                {
+                    // No thinking, just save as string (backwards compatible)
+                    assistantMsg["content"] = m_currentResponse;
+                }
+
+                m_chatHistory.push_back( assistantMsg );
+                m_apiContext.push_back( assistantMsg );
                 m_chatHistoryDb.Save( m_chatHistory );
+
+                // Preserve expanded state before re-rendering
+                if( m_thinkingExpanded && m_currentThinkingIndex >= 0 )
+                    m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
+
+                // Clear streaming state
+                m_currentResponse.clear();
+                m_thinkingContent.Clear();
+                m_thinkingExpanded = false;
+                m_currentThinkingIndex = -1;
+
+                // Re-render from history to show the saved content
+                // (this also rebuilds m_historicalThinking with correct indices)
+                RenderChatHistory();
             }
         }
         // else: tools are being executed, animation and button stay as is
@@ -3392,6 +3675,39 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
         StopGeneratingAnimation();
         m_actionButton->SetLabel( "Send" );
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
+        break;
+    }
+    case LLMChunkType::CONTEXT_STATUS:
+    {
+        // Show notification if context was compacted
+        if( aChunk.context_compacted )
+        {
+            AppendHtml( "<p><font color='#FFA500'><i>Context was automatically "
+                        "compacted to continue the conversation.</i></font></p>" );
+        }
+        break;
+    }
+    case LLMChunkType::CONTEXT_COMPACTING:
+    {
+        // Server is compacting context (Scenario B only) - show status
+        AppendHtml( "<p><font color='#FFA500'><i>Compacting context...</i></font></p>" );
+        break;
+    }
+    case LLMChunkType::CONTEXT_EXHAUSTED:
+    case LLMChunkType::CONTEXT_TRUNCATED:
+    {
+        // Context recovery - replace API context with compacted messages
+        if( !aChunk.summarized_messages.empty() && aChunk.summarized_messages.is_array() )
+        {
+            // Replace API context with compacted version (display history unchanged)
+            m_apiContext = aChunk.summarized_messages;
+
+            // Show notification
+            AppendHtml( "<p><font color='#FFA500'><i>Context compacted. Retrying...</i></font></p>" );
+
+            // Retry with compacted context
+            CallAfter( [this]() { RetryLastRequest(); } );
+        }
         break;
     }
     }
@@ -3417,13 +3733,12 @@ void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
 
     // Only stop animation and transition to IDLE if not executing tools
     // (when tools are running, keep the animation going)
+    // Note: Don't call UpdateAgentResponse() here - END_TURN handler already called
+    // RenderChatHistory() which renders from the saved history.
     if( m_conversationCtx.GetState() != AgentConversationState::EXECUTING_TOOL &&
         !m_conversationCtx.HasPendingToolCalls() )
     {
         StopGeneratingAnimation();
-
-        // Re-render without dots
-        UpdateAgentResponse();
 
         // Transition to IDLE if we were waiting for LLM
         if( m_conversationCtx.GetState() == AgentConversationState::WAITING_FOR_LLM )
@@ -3476,6 +3791,14 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
 
     // Clear current chat and start fresh
     m_chatHistory = nlohmann::json::array();
+    m_apiContext = nlohmann::json::array();
+
+    // Add welcome message to chat history (but not API context) so it survives re-renders
+    m_chatHistory.push_back( {
+        { "role", "welcome" },
+        { "content", "Welcome to KiCad Agent." }
+    } );
+
     m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>";
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
@@ -3484,6 +3807,11 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
     // Reset title generation state
     m_needsTitleGeneration = true;
     m_firstUserMessage = "";
+
+    // Clear historical thinking state
+    m_historicalThinking.clear();
+    m_historicalThinkingExpanded.clear();
+    m_currentThinkingIndex = -1;
 }
 
 
@@ -3567,7 +3895,6 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
     }
 }
 
-
 void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
 {
     // Hide history panel overlay if visible
@@ -3589,155 +3916,15 @@ void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
     m_needsTitleGeneration = false;
     m_firstUserMessage = "";
 
-    // Clear window
-    m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'>";
+    // Start with full history as API context
+    m_apiContext = m_chatHistory;
 
-    // Iterate history and render
-    for( const auto& msg : m_chatHistory )
-    {
-        if( msg.contains("role") && msg.contains("content") )
-        {
-            std::string role = msg["role"];
+    // Clear historical thinking toggle state for new history
+    m_historicalThinkingExpanded.clear();
+    m_currentThinkingIndex = -1;
 
-            // Content can be string or array (tool use)
-            if( msg["content"].is_string() )
-            {
-                std::string content = msg["content"];
-                wxString display = content;
-
-                if( role == "user" )
-                {
-                    // Right-aligned speech bubble style for user messages
-                    display.Replace( "&", "&amp;" );
-                    display.Replace( "<", "&lt;" );
-                    display.Replace( ">", "&gt;" );
-                    display.Replace( "\n", "<br>" );
-                    m_fullHtmlContent += wxString::Format(
-                        "<table width='100%%' cellpadding='0'><tr><td align='right'>"
-                        "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
-                        "<font color='#ffffff'>%s</font>"
-                        "</td></tr></table>"
-                        "</td></tr></table><br><br>",
-                        display );
-                }
-                else if( role == "assistant" )
-                {
-                    // Left-aligned markdown formatted response
-                    m_fullHtmlContent += MarkdownToHtml( content );
-                }
-            }
-            else if( msg["content"].is_array() )
-            {
-                // Iterate through content blocks and render each one
-                for( const auto& block : msg["content"] )
-                {
-                    if( !block.contains("type") )
-                        continue;
-
-                    std::string blockType = block["type"];
-
-                    if( blockType == "text" )
-                    {
-                        // Render text block
-                        std::string text = block.value("text", "");
-                        wxString display = text;
-
-                        if( role == "assistant" )
-                        {
-                            // Left-aligned markdown formatted response
-                            m_fullHtmlContent += MarkdownToHtml( display );
-                        }
-                        else if( role == "user" )
-                        {
-                            // Right-aligned speech bubble style for user messages
-                            display.Replace( "&", "&amp;" );
-                            display.Replace( "<", "&lt;" );
-                            display.Replace( ">", "&gt;" );
-                            display.Replace( "\n", "<br>" );
-                            m_fullHtmlContent += wxString::Format(
-                                "<table width='100%%' cellpadding='0'><tr><td align='right'>"
-                                "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
-                                "<font color='#ffffff'>%s</font>"
-                                "</td></tr></table>"
-                                "</td></tr></table><br>",
-                                display );
-                        }
-                    }
-                    else if( blockType == "tool_use" )
-                    {
-                        // Render tool_use block with human-readable description
-                        std::string toolName = block.value("name", "unknown");
-                        nlohmann::json toolInput = block.value("input", nlohmann::json::object());
-                        wxString desc = GetToolDescription( toolName, toolInput );
-
-                        // Store for pairing with result (next block)
-                        m_lastToolDesc = desc;
-                    }
-                    else if( blockType == "tool_result" )
-                    {
-                        // Render combined tool call + result block
-                        std::string content = block.value("content", "");
-                        bool isError = block.value("is_error", false);
-
-                        // Check if this is a Python traceback
-                        bool isPythonError = ( content.find( "Traceback" ) != std::string::npos );
-
-                        wxString displayResult;
-                        wxString statusColor;
-                        wxString statusText;
-
-                        if( isPythonError )
-                        {
-                            statusColor = "#f44747";
-                            statusText = "Error";
-                            displayResult = "<i>Script execution failed.</i>";
-                        }
-                        else if( isError )
-                        {
-                            statusColor = "#f44747";
-                            statusText = "Failed";
-                            wxString htmlResult = content;
-                            htmlResult.Replace( "&", "&amp;" );
-                            htmlResult.Replace( "<", "&lt;" );
-                            htmlResult.Replace( ">", "&gt;" );
-                            if( htmlResult.length() > 200 )
-                                htmlResult = htmlResult.Left( 200 ) + "...";
-                            displayResult = htmlResult;
-                        }
-                        else
-                        {
-                            statusColor = "#4ec9b0";
-                            statusText = "Completed";
-                            wxString htmlResult = content;
-                            htmlResult.Replace( "&", "&amp;" );
-                            htmlResult.Replace( "<", "&lt;" );
-                            htmlResult.Replace( ">", "&gt;" );
-                            if( htmlResult.length() > 500 )
-                                htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
-                            displayResult = htmlResult;
-                        }
-
-                        // Use the stored tool description from the preceding tool_use block
-                        wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
-
-                        wxString resultBox = wxString::Format(
-                            "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
-                            "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
-                            "<font color='%s'><b>%s</b></font><br>"
-                            "<font color='#d4d4d4' size='2'>%s</font>"
-                            "</td></tr></table>",
-                            desc, statusColor, statusText, displayResult );
-                        m_fullHtmlContent += resultBox;
-
-                        m_lastToolDesc = "";  // Reset for next tool
-                    }
-                }
-            }
-        }
-    }
-
-    m_fullHtmlContent += "</body></html>";
-    m_chatWindow->SetPage( m_fullHtmlContent );
+    // Render the loaded chat history
+    RenderChatHistory();
 
     // Scroll to bottom of loaded conversation (use CallAfter to ensure layout is complete)
     m_userScrolledUp = false;
@@ -3764,6 +3951,222 @@ void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
 
     // Update DB ID so new messages go to this history
     m_chatHistoryDb.SetConversationId( aConversationId );
+}
+
+
+void AGENT_FRAME::RenderChatHistory()
+{
+    // Clear historical thinking storage
+    m_historicalThinking.clear();
+
+    // Build HTML from chat history
+    m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'>";
+
+    for( const auto& msg : m_chatHistory )
+    {
+        if( !msg.contains( "role" ) || !msg.contains( "content" ) )
+            continue;
+
+        std::string role = msg["role"];
+
+        // Content can be string or array (tool use)
+        if( msg["content"].is_string() )
+        {
+            std::string content = msg["content"];
+            wxString display = content;
+
+            if( role == "welcome" )
+            {
+                // Welcome message - simple paragraph
+                m_fullHtmlContent += wxString::Format( "<p>%s</p>", display );
+            }
+            else if( role == "user" )
+            {
+                // Right-aligned speech bubble style for user messages
+                display.Replace( "&", "&amp;" );
+                display.Replace( "<", "&lt;" );
+                display.Replace( ">", "&gt;" );
+                display.Replace( "\n", "<br>" );
+                m_fullHtmlContent += wxString::Format(
+                    "<table width='100%%' cellpadding='0'><tr><td align='right'>"
+                    "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
+                    "<font color='#ffffff'>%s</font>"
+                    "</td></tr></table>"
+                    "</td></tr></table><br><br>",
+                    display );
+            }
+            else if( role == "assistant" )
+            {
+                // Left-aligned markdown formatted response
+                m_fullHtmlContent += MarkdownToHtml( content );
+                m_fullHtmlContent += "<br>";
+            }
+        }
+        else if( msg["content"].is_array() )
+        {
+            // Iterate through content blocks and render each one
+            for( const auto& block : msg["content"] )
+            {
+                if( !block.contains( "type" ) )
+                    continue;
+
+                std::string blockType = block["type"];
+
+                if( blockType == "text" )
+                {
+                    // Render text block
+                    std::string text = block.value( "text", "" );
+                    wxString display = text;
+
+                    if( role == "assistant" )
+                    {
+                        // Left-aligned markdown formatted response
+                        m_fullHtmlContent += MarkdownToHtml( display );
+                        m_fullHtmlContent += "<br>";
+                    }
+                    else if( role == "user" )
+                    {
+                        // Right-aligned speech bubble style for user messages
+                        display.Replace( "&", "&amp;" );
+                        display.Replace( "<", "&lt;" );
+                        display.Replace( ">", "&gt;" );
+                        display.Replace( "\n", "<br>" );
+                        m_fullHtmlContent += wxString::Format(
+                            "<table width='100%%' cellpadding='0'><tr><td align='right'>"
+                            "<table bgcolor='#3d3d3d' cellpadding='10'><tr><td>"
+                            "<font color='#ffffff'>%s</font>"
+                            "</td></tr></table>"
+                            "</td></tr></table><br>",
+                            display );
+                    }
+                }
+                else if( blockType == "thinking" )
+                {
+                    // Render thinking block with toggle support
+                    std::string thinking = block.value( "thinking", "" );
+                    if( !thinking.empty() )
+                    {
+                        int thinkingIndex = m_historicalThinking.size();
+                        wxString thinkingText = wxString::FromUTF8( thinking );
+
+                        // Store the raw thinking content for later toggle
+                        m_historicalThinking.push_back( thinkingText );
+
+                        // Check if this thinking block is expanded
+                        bool expanded = m_historicalThinkingExpanded.count( thinkingIndex ) > 0;
+
+                        // Generate toggle link with index
+                        wxString thinkingLabel = wxString::Format(
+                            "<a href='toggle:thinking:%d'><font color='#808080'>Thinking</font></a>",
+                            thinkingIndex );
+
+                        if( expanded )
+                        {
+                            // Escape HTML for display
+                            wxString escapedText = thinkingText;
+                            escapedText.Replace( "&", "&amp;" );
+                            escapedText.Replace( "<", "&lt;" );
+                            escapedText.Replace( ">", "&gt;" );
+                            escapedText.Replace( "\n", "<br>" );
+
+                            // Truncate if very long
+                            if( escapedText.length() > 5000 )
+                            {
+                                escapedText = escapedText.Left( 5000 ) + "... <i>(truncated)</i>";
+                            }
+
+                            m_fullHtmlContent += wxString::Format(
+                                "%s<br><font color='#606060'>%s</font><br><br>",
+                                thinkingLabel, escapedText );
+                        }
+                        else
+                        {
+                            // Collapsed: just show label
+                            m_fullHtmlContent += wxString::Format( "%s<br><br>", thinkingLabel );
+                        }
+                    }
+                }
+                else if( blockType == "tool_use" )
+                {
+                    // Render tool_use block with human-readable description
+                    std::string toolName = block.value( "name", "unknown" );
+                    nlohmann::json toolInput = block.value( "input", nlohmann::json::object() );
+                    wxString desc = GetToolDescription( toolName, toolInput );
+
+                    // Store for pairing with result (next block)
+                    m_lastToolDesc = desc;
+                }
+                else if( blockType == "tool_result" )
+                {
+                    // Render combined tool call + result block
+                    std::string content = block.value( "content", "" );
+                    bool isError = block.value( "is_error", false );
+
+                    // Check if this is a Python traceback
+                    bool isPythonError = ( content.find( "Traceback" ) != std::string::npos );
+
+                    wxString displayResult;
+                    wxString statusColor;
+                    wxString statusText;
+
+                    if( isPythonError )
+                    {
+                        statusColor = "#f44747";
+                        statusText = "Error";
+                        displayResult = "<i>Script execution failed.</i>";
+                    }
+                    else if( isError )
+                    {
+                        statusColor = "#f44747";
+                        statusText = "Failed";
+                        wxString htmlResult = content;
+                        htmlResult.Replace( "&", "&amp;" );
+                        htmlResult.Replace( "<", "&lt;" );
+                        htmlResult.Replace( ">", "&gt;" );
+                        if( htmlResult.length() > 200 )
+                            htmlResult = htmlResult.Left( 200 ) + "...";
+                        displayResult = htmlResult;
+                    }
+                    else
+                    {
+                        statusColor = "#4ec9b0";
+                        statusText = "Completed";
+                        wxString htmlResult = content;
+                        htmlResult.Replace( "&", "&amp;" );
+                        htmlResult.Replace( "<", "&lt;" );
+                        htmlResult.Replace( ">", "&gt;" );
+                        if( htmlResult.length() > 500 )
+                            htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
+                        displayResult = htmlResult;
+                    }
+
+                    // Use the stored tool description from the preceding tool_use block
+                    wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
+
+                    wxString resultBox = wxString::Format(
+                        "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                        "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+                        "<font color='%s'><b>%s</b></font><br>"
+                        "<font color='#d4d4d4' size='2'>%s</font>"
+                        "</td></tr></table><br>",
+                        desc, statusColor, statusText, displayResult );
+                    m_fullHtmlContent += resultBox;
+
+                    m_lastToolDesc = "";  // Reset for next tool
+                }
+            }
+        }
+    }
+
+    // Include any pending tool call UI (e.g., open editor approval)
+    if( !m_toolCallHtml.IsEmpty() )
+    {
+        m_fullHtmlContent += m_toolCallHtml;
+    }
+
+    m_fullHtmlContent += "</body></html>";
+
+    SetHtml( m_fullHtmlContent );
 }
 
 // ============================================================================
@@ -4073,4 +4476,88 @@ void AGENT_FRAME::UpdateConflictDisplay()
     {
         m_pendingChangesPanel->ClearConflicts();
     }
+}
+
+
+//=============================================================================
+// Editor Open Approval
+//=============================================================================
+
+void AGENT_FRAME::ShowOpenEditorApproval( const wxString& aEditorType )
+{
+    // Update m_toolCallHtml instead of using AppendHtml() so the approval UI
+    // survives calls to UpdateAgentResponse()
+    m_toolCallHtml = wxString::Format(
+        "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td>"
+        "<font color='#4ec9b0'><b>Open %s Editor?</b></font> "
+        "<a href=\"agent:approve_open\" style=\"color: #00AA00;\">[Open]</a> "
+        "<a href=\"agent:reject_open\" style=\"color: #AA0000;\">[Cancel]</a>"
+        "</td></tr></table>",
+        aEditorType );
+    UpdateAgentResponse();
+}
+
+
+void AGENT_FRAME::OnApproveOpenEditor()
+{
+    bool success = false;
+    wxString editorName;
+
+    if( m_pendingOpenSch )
+    {
+        editorName = "Schematic";
+        success = DoOpenEditor( FRAME_SCH );
+    }
+    else if( m_pendingOpenPcb )
+    {
+        editorName = "PCB";
+        success = DoOpenEditor( FRAME_PCB_EDITOR );
+    }
+
+    // Build tool result message
+    std::string result = success
+        ? editorName.ToStdString() + " editor opened successfully"
+        : "Failed to open " + editorName.ToStdString() + " editor";
+
+    // Clear pending state before processing result (in case of re-entrancy)
+    std::string toolId = m_pendingOpenToolId;
+    m_pendingOpenSch = false;
+    m_pendingOpenPcb = false;
+    m_pendingOpenToolId.clear();
+
+    // Send tool result back to LLM - this will continue the conversation
+    // ProcessToolResult will display the result in the tool call HTML
+    ProcessToolResult( toolId, result, success );
+}
+
+
+void AGENT_FRAME::OnRejectOpenEditor()
+{
+    wxString editorName = m_pendingOpenSch ? "Schematic" : "PCB";
+
+    // Clear pending state before processing result (in case of re-entrancy)
+    std::string toolId = m_pendingOpenToolId;
+    m_pendingOpenSch = false;
+    m_pendingOpenPcb = false;
+    m_pendingOpenToolId.clear();
+
+    // Send rejection result to LLM
+    // ProcessToolResult will display the result in the tool call HTML
+    ProcessToolResult( toolId,
+        "User declined to open " + editorName.ToStdString() + " editor", false );
+}
+
+
+bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
+{
+    KIWAY_PLAYER* player = Kiway().Player( aFrameType, true );
+    if( !player )
+        return false;
+
+    player->Show( true );
+    if( player->IsIconized() )
+        player->Iconize( false );
+    player->Raise();
+
+    return true;
 }

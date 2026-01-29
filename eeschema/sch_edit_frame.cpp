@@ -1129,12 +1129,13 @@ void SCH_EDIT_FRAME::SetCurrentSheet( const SCH_SHEET_PATH& aSheet )
 
                 DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
                 DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
+
+                // Force a canvas refresh to ensure the overlay is rendered
+                // This is needed because DisplaySheet() cleared the view before we added the overlay
+                GetCanvas()->ForceRefresh();
             }
-            else
-            {
-                // Clear the diff overlay when not on the target sheet
-                DIFF_MANAGER::GetInstance().ClearDiff();
-            }
+            // Note: We don't need to explicitly clear the diff when leaving the target sheet
+            // because DisplaySheet() already cleared all items from the view
         }
     }
 }
@@ -3235,12 +3236,12 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
 
         DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
         DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
+
+        // Force refresh to ensure the overlay is rendered
+        GetCanvas()->ForceRefresh();
     }
-    else
-    {
-        // Not on target sheet, clear any existing diff overlay
-        DIFF_MANAGER::GetInstance().ClearDiff();
-    }
+    // Note: We don't need to explicitly clear the diff when not on target sheet
+    // The commit changes already skip updating the view for non-current screens
 
     return hasNewChanges;
 }

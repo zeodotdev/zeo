@@ -689,6 +689,12 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_apiContext = nlohmann::json::array();
     m_pendingToolCalls = nlohmann::json::array();
 
+    // Add welcome message to chat history (but not API context) so it survives re-renders
+    m_chatHistory.push_back( {
+        { "role", "welcome" },
+        { "content", "Welcome to KiCad Agent." }
+    } );
+
     // Initialize chat history persistence with timestamp conversation ID
     wxDateTime now = wxDateTime::Now();
     std::string conversationId = now.Format( "%Y-%m-%d_%H-%M-%S" ).ToStdString();
@@ -2298,7 +2304,7 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
                 // Show "Running..." state in tool call HTML
                 wxString desc = GetToolDescription( first->tool_name, first->tool_input );
                 m_toolCallHtml = wxString::Format(
-                    "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                    "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
                     "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
                     "<font color='#888888'><i>Running...</i></font>"
                     "</td></tr></table>",
@@ -2793,11 +2799,11 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
         }
 
         m_toolCallHtml += wxString::Format(
-            "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+            "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
             "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
             "<font color='%s'><b>%s</b></font><br>"
             "<font color='#d4d4d4' size='2'>%s</font>"
-            "</td></tr></table>",
+            "</td></tr></table><br>",
             wxString::FromUTF8( completedTool.tool_description ),
             statusColor, statusText, displayResult );
     }
@@ -2818,7 +2824,7 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
             // Append next tool's "Running..." to the HTML
             wxString nextDesc = GetToolDescription( next->tool_name, next->tool_input );
             m_toolCallHtml += wxString::Format(
-                "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
                 "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
                 "<font color='#888888'><i>Running...</i></font>"
                 "</td></tr></table>",
@@ -3140,7 +3146,7 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
                 // Show "Running..." state in tool call HTML
                 wxString desc = GetToolDescription( first->tool_name, first->tool_input );
                 m_toolCallHtml = wxString::Format(
-                    "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                    "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
                     "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
                     "<font color='#888888'><i>Running...</i></font>"
                     "</td></tr></table>",
@@ -3342,6 +3348,13 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
     // Clear current chat and start fresh
     m_chatHistory = nlohmann::json::array();
     m_apiContext = nlohmann::json::array();
+
+    // Add welcome message to chat history (but not API context) so it survives re-renders
+    m_chatHistory.push_back( {
+        { "role", "welcome" },
+        { "content", "Welcome to KiCad Agent." }
+    } );
+
     m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>";
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
@@ -3446,7 +3459,12 @@ void AGENT_FRAME::RenderChatHistory()
             std::string content = msg["content"];
             wxString display = content;
 
-            if( role == "user" )
+            if( role == "welcome" )
+            {
+                // Welcome message - simple paragraph
+                m_fullHtmlContent += wxString::Format( "<p>%s</p>", display );
+            }
+            else if( role == "user" )
             {
                 // Right-aligned speech bubble style for user messages
                 display.Replace( "&", "&amp;" );
@@ -3465,6 +3483,7 @@ void AGENT_FRAME::RenderChatHistory()
             {
                 // Left-aligned markdown formatted response
                 m_fullHtmlContent += MarkdownToHtml( content );
+                m_fullHtmlContent += "<br>";
             }
         }
         else if( msg["content"].is_array() )
@@ -3487,6 +3506,7 @@ void AGENT_FRAME::RenderChatHistory()
                     {
                         // Left-aligned markdown formatted response
                         m_fullHtmlContent += MarkdownToHtml( display );
+                        m_fullHtmlContent += "<br>";
                     }
                     else if( role == "user" )
                     {
@@ -3608,11 +3628,11 @@ void AGENT_FRAME::RenderChatHistory()
                     wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
 
                     wxString resultBox = wxString::Format(
-                        "<br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+                        "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
                         "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
                         "<font color='%s'><b>%s</b></font><br>"
                         "<font color='#d4d4d4' size='2'>%s</font>"
-                        "</td></tr></table>",
+                        "</td></tr></table><br>",
                         desc, statusColor, statusText, displayResult );
                     m_fullHtmlContent += resultBox;
 

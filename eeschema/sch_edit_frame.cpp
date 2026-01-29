@@ -1097,10 +1097,21 @@ void SCH_EDIT_FRAME::SetCurrentSheet( const SCH_SHEET_PATH& aSheet )
         GetCanvas()->DisplaySheet( aSheet.LastScreen() );
 
         // Handle agent pending changes diff overlay visibility when switching sheets
+        fprintf( stderr, "SetCurrentSheet: m_hasAgentPendingChanges=%d, m_agentChangedSheetPath.size()=%zu\n",
+                 m_hasAgentPendingChanges, m_agentChangedSheetPath.size() );
+
         if( m_hasAgentPendingChanges && m_agentChangedSheetPath.size() > 0 )
         {
             // Check if we're now on the sheet where agent changes were made
             bool isOnTargetSheet = ( aSheet == m_agentChangedSheetPath );
+
+            fprintf( stderr, "SetCurrentSheet: isOnTargetSheet=%d, aSheet='%s', targetSheet='%s'\n",
+                     isOnTargetSheet,
+                     aSheet.PathHumanReadable( false ).ToStdString().c_str(),
+                     m_agentChangedSheetPath.PathHumanReadable( false ).ToStdString().c_str() );
+            fprintf( stderr, "SetCurrentSheet: m_agentChangedBBox=(%d,%d,%d,%d)\n",
+                     m_agentChangedBBox.GetX(), m_agentChangedBBox.GetY(),
+                     m_agentChangedBBox.GetWidth(), m_agentChangedBBox.GetHeight() );
 
             if( isOnTargetSheet )
             {
@@ -1127,12 +1138,18 @@ void SCH_EDIT_FRAME::SetCurrentSheet( const SCH_SHEET_PATH& aSheet )
                         GetCanvas()->Refresh();
                 };
 
+                fprintf( stderr, "SetCurrentSheet: Registering overlay and showing diff\n" );
+                fflush( stderr );
+
                 DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
                 DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
 
                 // Force a canvas refresh to ensure the overlay is rendered
                 // This is needed because DisplaySheet() cleared the view before we added the overlay
                 GetCanvas()->ForceRefresh();
+
+                fprintf( stderr, "SetCurrentSheet: ForceRefresh called\n" );
+                fflush( stderr );
             }
             // Note: We don't need to explicitly clear the diff when leaving the target sheet
             // because DisplaySheet() already cleared all items from the view
@@ -2383,6 +2400,51 @@ void SCH_EDIT_FRAME::DisplayCurrentSheet()
     m_hierarchy->UpdateHierarchySelection();
 
     m_schematic->OnSchSheetChanged();
+
+    // Handle agent pending changes diff overlay visibility when switching sheets
+    // This is called by the navigation tool when the user switches sheets
+    if( m_hasAgentPendingChanges && m_agentChangedSheetPath.size() > 0 )
+    {
+        bool isOnTargetSheet = ( GetCurrentSheet() == m_agentChangedSheetPath );
+
+        fprintf( stderr, "DisplayCurrentSheet: isOnTargetSheet=%d, current='%s', target='%s'\n",
+                 isOnTargetSheet,
+                 GetCurrentSheet().PathHumanReadable( false ).ToStdString().c_str(),
+                 m_agentChangedSheetPath.PathHumanReadable( false ).ToStdString().c_str() );
+        fflush( stderr );
+
+        if( isOnTargetSheet && m_agentChangedBBox.GetWidth() > 0 )
+        {
+            fprintf( stderr, "DisplayCurrentSheet: Showing diff overlay\n" );
+            fflush( stderr );
+
+            // Set up callbacks for the diff overlay
+            DIFF_CALLBACKS callbacks;
+            callbacks.onApprove = [this]() {
+                if( m_showingAgentBefore )
+                    ShowAgentChangesAfter();
+                ClearAgentPendingChanges();
+                std::string payload = "sch";
+                Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+            };
+            callbacks.onReject = [this]() {
+                if( m_showingAgentBefore )
+                    ShowAgentChangesAfter();
+                RevertAgentChanges();
+                std::string payload = "sch";
+                Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+            };
+            callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
+            callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
+            callbacks.onRefresh = [this]() {
+                if( GetCanvas() )
+                    GetCanvas()->Refresh();
+            };
+
+            DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
+            DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
+        }
+    }
 }
 
 

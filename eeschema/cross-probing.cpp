@@ -1105,7 +1105,22 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
     case MAIL_AGENT_HAS_CHANGES:
     {
         // Query if there are pending agent changes
-        payload = HasAgentPendingChanges() ? "true" : "false";
+        // Return JSON with has_changes flag and sheet path for multi-sheet support
+        nlohmann::json response;
+        response["has_changes"] = HasAgentPendingChanges();
+
+        if( HasAgentPendingChanges() && m_agentChangedSheetPath.size() > 0 )
+        {
+            // Use PathHumanReadable(false) to get full path with filename (e.g., "project/Power/")
+            // instead of just "/" for root sheets
+            response["sheet_path"] = m_agentChangedSheetPath.PathHumanReadable( false ).ToStdString();
+        }
+        else
+        {
+            response["sheet_path"] = "";
+        }
+
+        payload = response.dump();
         break;
     }
 

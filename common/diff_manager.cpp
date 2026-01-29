@@ -56,8 +56,16 @@ void DIFF_MANAGER::ShowDiff( const BOX2I& aBBox )
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
 
+    fprintf( stderr, "DIFF_MANAGER::ShowDiff: m_currentView=%p, bbox=(%d,%d,%d,%d)\n",
+             (void*)m_currentView, aBBox.GetX(), aBBox.GetY(), aBBox.GetWidth(), aBBox.GetHeight() );
+    fflush( stderr );
+
     if( !m_currentView )
+    {
+        fprintf( stderr, "DIFF_MANAGER::ShowDiff: No current view, returning\n" );
+        fflush( stderr );
         return;
+    }
 
     DIFF_VIEW_STATE& state = m_viewStates[m_currentView];
     state.active = true;
@@ -66,16 +74,24 @@ void DIFF_MANAGER::ShowDiff( const BOX2I& aBBox )
     // If we already have an item, remove it
     if( state.item )
     {
+        fprintf( stderr, "DIFF_MANAGER::ShowDiff: Removing existing item %p\n", (void*)state.item );
+        fflush( stderr );
         m_currentView->Remove( state.item );
         delete state.item;
         state.item = nullptr;
     }
 
     state.item = new KIGFX::PREVIEW::DIFF_OVERLAY_ITEM( aBBox );
+    fprintf( stderr, "DIFF_MANAGER::ShowDiff: Created new overlay item %p\n", (void*)state.item );
+    fflush( stderr );
+
     m_currentView->Add( state.item );
     m_currentView->SetVisible( state.item, true );
     m_currentView->Update( state.item );
     m_currentView->MarkDirty();
+
+    fprintf( stderr, "DIFF_MANAGER::ShowDiff: Added to view, marked dirty\n" );
+    fflush( stderr );
 
     // Trigger canvas refresh so the overlay is actually rendered
     if( state.callbacks.onRefresh )

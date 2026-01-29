@@ -498,7 +498,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_historyPanel( nullptr ),
         m_workerThread( nullptr ),
         m_hasPendingSchChanges( false ),
-        m_hasPendingPcbChanges( false )
+        m_hasPendingPcbChanges( false ),
+        m_pendingSchSheetPath( wxEmptyString ),
+        m_pendingPcbFilename( wxEmptyString )
 {
 
     // --- UI Layout ---
@@ -3840,7 +3842,20 @@ void AGENT_FRAME::CheckForPendingChanges()
     {
         std::string response;
         Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_HAS_CHANGES, response );
-        m_hasPendingSchChanges = ( response == "true" );
+
+        // Response is JSON with has_changes and sheet_path
+        try
+        {
+            nlohmann::json j = nlohmann::json::parse( response );
+            m_hasPendingSchChanges = j.value( "has_changes", false );
+            m_pendingSchSheetPath = wxString::FromUTF8( j.value( "sheet_path", "" ) );
+        }
+        catch( ... )
+        {
+            // Fallback for legacy format (plain "true"/"false")
+            m_hasPendingSchChanges = ( response == "true" );
+            m_pendingSchSheetPath = wxEmptyString;
+        }
     }
 
     // Query PCB editor for pending changes via ExpressMail
@@ -3865,8 +3880,9 @@ void AGENT_FRAME::ShowApproveRejectButtons()
     // Always show the indicator button
     m_pendingChangesBtn->Show();
 
-    // Always update the panel content
-    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
+    // Always update the panel content with sheet path information
+    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges,
+                                           m_pendingSchSheetPath, m_pendingPcbFilename );
 
     // Only auto-show the panel if this is the first time showing changes
     // (respect user's choice if they manually collapsed it)
@@ -3893,9 +3909,11 @@ void AGENT_FRAME::OnPendingChangesClick( wxCommandEvent& aEvent )
 void AGENT_FRAME::OnSchematicChangeHandled( bool aAccepted )
 {
     m_hasPendingSchChanges = false;
+    m_pendingSchSheetPath = wxEmptyString;
 
     // Update panel
-    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
+    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges,
+                                           m_pendingSchSheetPath, m_pendingPcbFilename );
 
     if( !m_hasPendingSchChanges && !m_hasPendingPcbChanges )
     {
@@ -3913,9 +3931,11 @@ void AGENT_FRAME::OnSchematicChangeHandled( bool aAccepted )
 void AGENT_FRAME::OnPcbChangeHandled( bool aAccepted )
 {
     m_hasPendingPcbChanges = false;
+    m_pendingPcbFilename = wxEmptyString;
 
     // Update panel
-    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
+    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges,
+                                           m_pendingSchSheetPath, m_pendingPcbFilename );
 
     if( !m_hasPendingSchChanges && !m_hasPendingPcbChanges )
     {
@@ -3932,14 +3952,21 @@ void AGENT_FRAME::OnPcbChangeHandled( bool aAccepted )
 
 void AGENT_FRAME::ClearApprovalButtons( bool aIsSchematic )
 {
-    // Clear the pending changes flag for this editor
+    // Clear the pending changes flag and path for this editor
     if( aIsSchematic )
+    {
         m_hasPendingSchChanges = false;
+        m_pendingSchSheetPath = wxEmptyString;
+    }
     else
+    {
         m_hasPendingPcbChanges = false;
+        m_pendingPcbFilename = wxEmptyString;
+    }
 
     // Update panel
-    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges );
+    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges,
+                                           m_pendingSchSheetPath, m_pendingPcbFilename );
 
     if( !m_hasPendingSchChanges && !m_hasPendingPcbChanges )
     {

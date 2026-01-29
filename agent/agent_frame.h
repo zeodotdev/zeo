@@ -216,6 +216,8 @@ private:
     // Agent change approval
     bool m_hasPendingSchChanges;    // True if schematic has pending agent changes
     bool m_hasPendingPcbChanges;    // True if PCB has pending agent changes
+    wxString m_pendingSchSheetPath; // Sheet path for pending schematic changes (human-readable)
+    wxString m_pendingPcbFilename;  // Filename for pending PCB changes
     void CheckForPendingChanges();  // Query editors for pending changes
     void ShowApproveRejectButtons(); // Show pending changes button in control bar
     void ClearApprovalButtons( bool aIsSchematic );  // Clear approval buttons when diff overlay dismissed

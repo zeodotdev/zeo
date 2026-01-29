@@ -120,9 +120,10 @@ enum class LLMChunkType
 struct LLMStreamChunk
 {
     LLMChunkType   type;
-    std::string    text;           // For TEXT events
-    std::string    thinking_text;  // For THINKING events (summarized thinking)
-    std::string    tool_use_id;    // For TOOL_USE events
+    std::string    text;              // For TEXT events
+    std::string    thinking_text;     // For THINKING events (summarized thinking)
+    std::string    thinking_signature; // For THINKING_DONE events (signature for API)
+    std::string    tool_use_id;       // For TOOL_USE events
     std::string    tool_name;      // For TOOL_USE events
     std::string    tool_input_json; // For TOOL_USE events (serialized JSON)
     std::string    error_message;  // For ERROR events

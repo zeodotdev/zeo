@@ -7,6 +7,8 @@
 #include "ui/history_panel.h"
 #include "rendering/agent_markdown.h"
 #include "core/agent_tools.h"
+#include "core/chat_controller.h"
+#include "core/chat_events.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -229,12 +231,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( wxEVT_AGENT_UPDATE, &AGENT_FRAME::OnAgentUpdate, this );
     Bind( wxEVT_AGENT_COMPLETE, &AGENT_FRAME::OnAgentComplete, this );
 
-    // Bind Async Tool Execution Events
-    Bind( EVT_TOOL_EXECUTION_COMPLETE, &AGENT_FRAME::OnToolExecutionComplete, this );
-    Bind( EVT_TOOL_EXECUTION_ERROR, &AGENT_FRAME::OnToolExecutionError, this );
-    Bind( EVT_TOOL_EXECUTION_PROGRESS, &AGENT_FRAME::OnToolExecutionProgress, this );
-    m_toolTimeoutTimer.Bind( wxEVT_TIMER, &AGENT_FRAME::OnToolExecutionTimeout, this );
-
     // Bind Async LLM Streaming Events
     Bind( EVT_LLM_STREAM_CHUNK, &AGENT_FRAME::OnLLMStreamChunk, this );
     Bind( EVT_LLM_STREAM_COMPLETE, &AGENT_FRAME::OnLLMStreamComplete, this );
@@ -269,9 +265,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_apiContext = nlohmann::json::array();
     m_pendingToolCalls = nlohmann::json::array();
 
-    // Add welcome message to chat history (but not API context) so it survives re-renders
+    // Add welcome message as an assistant message
     m_chatHistory.push_back( {
-        { "role", "welcome" },
+        { "role", "assistant" },
         { "content", "Welcome to KiCad Agent." }
     } );
 
@@ -329,6 +325,34 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Wire auth to LLM client for proxy authentication
     m_llmClient->SetAuth( m_auth );
+
+    // Create chat controller
+    m_chatController = std::make_unique<CHAT_CONTROLLER>( this );
+    m_chatController->SetLLMClient( m_llmClient.get() );
+    m_chatController->SetChatHistoryDb( &m_chatHistoryDb );
+    m_chatController->SetKiwayRequestFn(
+        [this]( int aFrameType, const std::string& aPayload ) -> std::string {
+            return SendRequest( aFrameType, aPayload );
+        } );
+
+    // Set model on controller
+    m_chatController->SetModel( "Claude 4.5 Sonnet" );
+
+    // Bind Controller Events
+    Bind( EVT_CHAT_TEXT_DELTA, &AGENT_FRAME::OnChatTextDelta, this );
+    Bind( EVT_CHAT_THINKING_START, &AGENT_FRAME::OnChatThinkingStart, this );
+    Bind( EVT_CHAT_THINKING_DELTA, &AGENT_FRAME::OnChatThinkingDelta, this );
+    Bind( EVT_CHAT_THINKING_DONE, &AGENT_FRAME::OnChatThinkingDone, this );
+    Bind( EVT_CHAT_TOOL_START, &AGENT_FRAME::OnChatToolStart, this );
+    Bind( EVT_CHAT_TOOL_COMPLETE, &AGENT_FRAME::OnChatToolComplete, this );
+    Bind( EVT_CHAT_TURN_COMPLETE, &AGENT_FRAME::OnChatTurnComplete, this );
+    Bind( EVT_CHAT_ERROR, &AGENT_FRAME::OnChatError, this );
+    Bind( EVT_CHAT_STATE_CHANGED, &AGENT_FRAME::OnChatStateChanged, this );
+    Bind( EVT_CHAT_TITLE_GENERATED, &AGENT_FRAME::OnChatTitleGenerated, this );
+    Bind( EVT_CHAT_HISTORY_LOADED, &AGENT_FRAME::OnChatHistoryLoaded, this );
+    Bind( EVT_CHAT_CONTEXT_STATUS, &AGENT_FRAME::OnChatContextStatus, this );
+    Bind( EVT_CHAT_CONTEXT_COMPACTING, &AGENT_FRAME::OnChatContextCompacting, this );
+    Bind( EVT_CHAT_CONTEXT_RECOVERED, &AGENT_FRAME::OnChatContextRecovered, this );
 
     // Create menu bar
     wxMenuBar* menuBar = new wxMenuBar();
@@ -527,12 +551,15 @@ void AGENT_FRAME::UpdateAgentResponse()
     wxString closingTags = "</body></html>";
     wxString html = m_htmlBeforeAgentResponse;
 
+    // Get current response from controller (source of truth)
+    std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
+
     // Debug: log the state of HTML building
     fprintf( stderr, "[HTML-DEBUG] UpdateAgentResponse called\n" );
     fprintf( stderr, "[HTML-DEBUG]   m_htmlBeforeAgentResponse length: %zu, ends with closing tags: %s\n",
              (size_t)m_htmlBeforeAgentResponse.length(),
              m_htmlBeforeAgentResponse.EndsWith( closingTags ) ? "YES" : "NO" );
-    fprintf( stderr, "[HTML-DEBUG]   m_currentResponse length: %zu\n", m_currentResponse.size() );
+    fprintf( stderr, "[HTML-DEBUG]   currentResponse length: %zu\n", currentResponse.size() );
     fprintf( stderr, "[HTML-DEBUG]   m_toolCallHtml length: %zu\n", (size_t)m_toolCallHtml.length() );
 
     // Strip closing tags from the base HTML - we'll add them back at the end
@@ -549,7 +576,7 @@ void AGENT_FRAME::UpdateAgentResponse()
     }
 
     // Append the current response with markdown formatting
-    html += AgentMarkdown::ToHtml( m_currentResponse );
+    html += AgentMarkdown::ToHtml( currentResponse );
 
     // Include any tool call HTML (preserved across re-renders)
     if( !m_toolCallHtml.IsEmpty() )
@@ -846,51 +873,45 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
         std::string payload = aEvent.GetPayload();
         fprintf( stderr, "AGENT KiwayMailIn: MAIL_AGENT_RESPONSE received, payload='%.100s...'\n",
                  payload.c_str() );
-        fprintf( stderr, "AGENT KiwayMailIn: IsToolExecuting=%d\n", m_conversationCtx.IsToolExecuting() );
         fflush( stderr );
 
-        // Check if we're in async tool execution mode
-        if( m_conversationCtx.IsToolExecuting() )
+        // Check if we're in async tool execution mode (frame's context has an executing tool)
+        // NOTE: The controller also executes tools via the synchronous SendRequest path,
+        // which expects m_toolResponse to be set. Only use async path if the FRAME
+        // actually has a tool marked as executing.
+        PendingToolCall* executing = m_conversationCtx.GetExecutingToolCall();
+
+        fprintf( stderr, "AGENT KiwayMailIn: executing=%p (state=%d)\n",
+                 (void*)executing, static_cast<int>( m_conversationCtx.GetState() ) );
+        fflush( stderr );
+
+        if( executing )
         {
-            fprintf( stderr, "AGENT KiwayMailIn: In async mode, finding executing tool\n" );
+            // Frame has an executing tool - use async path
+            fprintf( stderr, "AGENT KiwayMailIn: In async mode, found executing tool '%s'\n",
+                     executing->tool_name.c_str() );
             fprintf( stderr, "AGENT KiwayMailIn: PendingToolCallCount=%zu\n",
                      m_conversationCtx.GetPendingToolCallCount() );
             fflush( stderr );
 
-            // Find the executing tool call to get its ID
-            PendingToolCall* executing = m_conversationCtx.GetExecutingToolCall();
-            fprintf( stderr, "AGENT KiwayMailIn: GetExecutingToolCall returned %s\n",
-                     executing ? executing->tool_name.c_str() : "null" );
+            // Post tool completion event
+            ToolExecutionResult* result = new ToolExecutionResult();
+            result->tool_use_id = executing->tool_use_id;
+            result->tool_name = executing->tool_name;
+            result->result = payload;
+            result->success = !payload.empty() && payload.find( "Error:" ) != 0;
+            result->execution_time_ms = ( wxGetLocalTimeMillis() - executing->start_time ).GetValue();
+
+            PostToolResult( this, *result );
+            fprintf( stderr, "AGENT KiwayMailIn: PostToolResult called\n" );
             fflush( stderr );
-
-            if( executing )
-            {
-                fprintf( stderr, "AGENT KiwayMailIn: Found executing tool '%s', posting result\n",
-                         executing->tool_name.c_str() );
-                fflush( stderr );
-
-                // Post tool completion event
-                ToolExecutionResult* result = new ToolExecutionResult();
-                result->tool_use_id = executing->tool_use_id;
-                result->tool_name = executing->tool_name;
-                result->result = payload;
-                result->success = !payload.empty() && payload.find( "Error:" ) != 0;
-                result->execution_time_ms = ( wxGetLocalTimeMillis() - executing->start_time ).GetValue();
-
-                PostToolResult( this, *result );
-                fprintf( stderr, "AGENT KiwayMailIn: PostToolResult called\n" );
-                fflush( stderr );
-                delete result;  // PostToolResult copies the data
-            }
-            else
-            {
-                fprintf( stderr, "AGENT KiwayMailIn: No executing tool found!\n" );
-                fflush( stderr );
-            }
+            delete result;  // PostToolResult copies the data
         }
         else
         {
-            // Legacy sync mode - just store the response
+            // Sync mode (controller path) - store response for SendRequest() to pick up
+            fprintf( stderr, "AGENT KiwayMailIn: Sync mode - setting m_toolResponse\n" );
+            fflush( stderr );
             m_toolResponse = payload;
         }
     }
@@ -1145,6 +1166,11 @@ void AGENT_FRAME::OnInputKeyDown( wxKeyEvent& aEvent )
 
 void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 {
+    // NOTE: This method still uses legacy code because it handles KiCad-specific requirements
+    // (authentication, pending editor state, system prompt with schematic/PCB context, KIWAY
+    // target sheet reset) that the controller doesn't currently support.
+    // Future refactoring may add SetSystemPrompt() and other methods to the controller.
+
     // If already processing, this button acts as Stop
     if( m_actionButton->GetLabel() == "Stop" )
     {
@@ -1159,35 +1185,19 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         return;
     }
 
-    // Auto-reject pending open editor request if user sends a new message
-    // We handle this directly here instead of calling OnRejectOpenEditor/ProcessToolResult
-    // because we don't want to trigger a new LLM request - OnSend will do that
+    // Auto-reject pending open editor request if user sends a new message.
+    // Use Cancel() which handles orphaned tools and transitions to IDLE.
+    // Don't use HandleToolResult() as it would call ContinueChat() and start an LLM request,
+    // but OnSend will also start a request → we'd get duplicate requests.
     if( m_pendingOpenSch || m_pendingOpenPcb )
     {
-        wxString editorName = m_pendingOpenSch ? "Schematic" : "PCB";
-        std::string toolId = m_pendingOpenToolId;
+        if( m_chatController )
+            m_chatController->Cancel();
 
-        // Clear pending state
         m_pendingOpenSch = false;
         m_pendingOpenPcb = false;
         m_pendingOpenToolId.clear();
-
-        // Add tool_result directly to history so API doesn't complain about missing tool_result
-        nlohmann::json toolResultMsg;
-        toolResultMsg["role"] = "user";
-        toolResultMsg["content"] = nlohmann::json::array( {
-            {
-                { "type", "tool_result" },
-                { "tool_use_id", toolId },
-                { "content", "User declined to open " + editorName.ToStdString() + " editor" }
-            }
-        } );
-        m_chatHistory.push_back( toolResultMsg );
-        m_apiContext.push_back( toolResultMsg );
-
-        // Clear tool call UI
         m_toolCallHtml = "";
-        m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
     }
 
     wxString text = m_inputCtrl->GetValue();
@@ -1221,223 +1231,29 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_inputCtrl->Clear();
     m_actionButton->SetLabel( "Stop" );
 
-    // Get system prompt with model context
+    // Build system prompt with model context
     std::string systemPrompt = GetSystemPrompt();
-
-    // Append payload context to system prompt if available
     if( !m_schJson.empty() )
         systemPrompt += "\n\nCURRENT SCHEMATIC CONTEXT:\n" + m_schJson;
     if( !m_pcbJson.empty() )
         systemPrompt += "\n\nCURRENT PCB CONTEXT:\n" + m_pcbJson;
 
-    // Before adding new user message, fix tool_use/tool_result pairing in history.
-    // The Anthropic API requires:
-    // 1. Every tool_use must have a corresponding tool_result in the NEXT message
-    // 2. Every tool_result must reference a tool_use in the PREVIOUS message
-    // We fix both orphaned tool_uses and orphaned tool_results.
-    if( !m_chatHistory.empty() )
+    // Configure controller for this request
+    if( m_chatController )
     {
-        using json = nlohmann::json;
-        bool historyModified = false;
+        m_chatController->SetSystemPrompt( systemPrompt );
 
-        // PASS 1: Remove orphaned tool_result blocks
-        // These are tool_results that don't have a matching tool_use in the previous message
-        for( size_t i = 1; i < m_chatHistory.size(); i++ )
-        {
-            auto& msg = m_chatHistory[i];
+        // Sync frame's history to controller before repair
+        // (controller may be out of sync if conversation was loaded from disk)
+        m_chatController->SetHistory( m_chatHistory );
 
-            // Only check user messages with array content
-            if( !msg.contains( "role" ) || msg["role"] != "user" )
-                continue;
-            if( !msg.contains( "content" ) || !msg["content"].is_array() )
-                continue;
+        // Repair orphaned tool_use/tool_result blocks
+        m_chatController->RepairHistory();
 
-            // Get valid tool_use IDs from the previous message (if it's an assistant message)
-            std::set<std::string> validToolUseIds;
-            const auto& prevMsg = m_chatHistory[i - 1];
-            if( prevMsg.contains( "role" ) && prevMsg["role"] == "assistant" &&
-                prevMsg.contains( "content" ) && prevMsg["content"].is_array() )
-            {
-                for( const auto& block : prevMsg["content"] )
-                {
-                    if( block.contains( "type" ) && block["type"] == "tool_use" &&
-                        block.contains( "id" ) )
-                    {
-                        validToolUseIds.insert( block["id"].get<std::string>() );
-                    }
-                }
-            }
-
-            // Filter out orphaned tool_results from this message
-            json newContent = json::array();
-            size_t removedCount = 0;
-            for( const auto& block : msg["content"] )
-            {
-                bool keep = true;
-                if( block.contains( "type" ) && block["type"] == "tool_result" &&
-                    block.contains( "tool_use_id" ) )
-                {
-                    std::string toolUseId = block["tool_use_id"].get<std::string>();
-                    if( validToolUseIds.find( toolUseId ) == validToolUseIds.end() )
-                    {
-                        // This tool_result references a tool_use not in the previous message
-                        keep = false;
-                        removedCount++;
-                    }
-                }
-                if( keep )
-                {
-                    newContent.push_back( block );
-                }
-            }
-
-            if( removedCount > 0 )
-            {
-                fprintf( stderr, "AGENT OnSend: Removed %zu orphaned tool_result blocks from message %zu\n",
-                         removedCount, i );
-                fflush( stderr );
-
-                if( newContent.empty() )
-                {
-                    // Message is now empty, mark for removal
-                    msg["_remove"] = true;
-                }
-                else
-                {
-                    msg["content"] = newContent;
-                }
-                historyModified = true;
-            }
-        }
-
-        // Remove messages marked for removal
-        m_chatHistory.erase(
-            std::remove_if( m_chatHistory.begin(), m_chatHistory.end(),
-                []( const json& msg ) {
-                    return msg.contains( "_remove" ) && msg["_remove"] == true;
-                }),
-            m_chatHistory.end() );
-
-        // PASS 2: Add missing tool_result blocks for orphaned tool_uses
-        for( size_t i = 0; i < m_chatHistory.size(); i++ )
-        {
-            const auto& msg = m_chatHistory[i];
-
-            // Only check assistant messages
-            if( !msg.contains( "role" ) || msg["role"] != "assistant" )
-                continue;
-            if( !msg.contains( "content" ) || !msg["content"].is_array() )
-                continue;
-
-            // Collect tool_use IDs from this assistant message
-            std::set<std::string> toolUseIds;
-            for( const auto& block : msg["content"] )
-            {
-                if( block.contains( "type" ) && block["type"] == "tool_use" &&
-                    block.contains( "id" ) )
-                {
-                    toolUseIds.insert( block["id"].get<std::string>() );
-                }
-            }
-
-            if( toolUseIds.empty() )
-                continue;
-
-            // Check if the next message has tool_results for these IDs
-            std::set<std::string> foundResultIds;
-            bool nextMsgIsToolResultUser = false;
-            size_t nextMsgIdx = i + 1;
-
-            if( nextMsgIdx < m_chatHistory.size() )
-            {
-                const auto& nextMsg = m_chatHistory[nextMsgIdx];
-                if( nextMsg.contains( "role" ) && nextMsg["role"] == "user" &&
-                    nextMsg.contains( "content" ) && nextMsg["content"].is_array() )
-                {
-                    for( const auto& block : nextMsg["content"] )
-                    {
-                        if( block.contains( "type" ) && block["type"] == "tool_result" &&
-                            block.contains( "tool_use_id" ) )
-                        {
-                            foundResultIds.insert( block["tool_use_id"].get<std::string>() );
-                            nextMsgIsToolResultUser = true;
-                        }
-                    }
-                }
-            }
-
-            // Find which tool_use IDs are missing tool_results
-            std::vector<std::string> missingIds;
-            for( const auto& toolId : toolUseIds )
-            {
-                if( foundResultIds.find( toolId ) == foundResultIds.end() )
-                {
-                    missingIds.push_back( toolId );
-                }
-            }
-
-            if( missingIds.empty() )
-                continue;
-
-            // If the next message already has tool_results, add the missing ones to it
-            // Otherwise, insert a new message
-            if( nextMsgIsToolResultUser && nextMsgIdx < m_chatHistory.size() )
-            {
-                for( const auto& toolId : missingIds )
-                {
-                    m_chatHistory[nextMsgIdx]["content"].push_back( {
-                        { "type", "tool_result" },
-                        { "tool_use_id", toolId },
-                        { "content", "Tool execution was interrupted. No result available." },
-                        { "is_error", true }
-                    });
-                }
-                historyModified = true;
-
-                fprintf( stderr, "AGENT OnSend: Added %zu missing tool_result blocks to message %zu\n",
-                         missingIds.size(), nextMsgIdx );
-                fflush( stderr );
-            }
-            else
-            {
-                json toolResultMsg;
-                toolResultMsg["role"] = "user";
-                json content = json::array();
-
-                for( const auto& toolId : missingIds )
-                {
-                    content.push_back( {
-                        { "type", "tool_result" },
-                        { "tool_use_id", toolId },
-                        { "content", "Tool execution was interrupted. No result available." },
-                        { "is_error", true }
-                    });
-                }
-
-                toolResultMsg["content"] = content;
-                m_chatHistory.insert( m_chatHistory.begin() + i + 1, toolResultMsg );
-                historyModified = true;
-
-                fprintf( stderr, "AGENT OnSend: Inserted %zu tool_result blocks after message %zu\n",
-                         missingIds.size(), i );
-                fflush( stderr );
-
-                i++; // Skip the message we just inserted
-            }
-        }
-
-        if( historyModified )
-        {
-            m_chatHistoryDb.Save( m_chatHistory );
-            m_apiContext = m_chatHistory;  // Sync API context after fix
-        }
+        // Sync repaired history back to frame for rendering/persistence
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_apiContext = m_chatController->GetApiContext();
     }
-
-    // Update History (both display and API context)
-    nlohmann::json userMsg = { { "role", "user" }, { "content", text.ToStdString() } };
-    m_chatHistory.push_back( userMsg );
-    m_apiContext.push_back( userMsg );
-    m_chatHistoryDb.Save( m_chatHistory );
 
     // Capture first user message for title generation
     if( m_needsTitleGeneration && m_firstUserMessage.empty() )
@@ -1446,37 +1262,57 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         fprintf( stderr, "[TITLE-DEBUG] Captured first user message: '%s'\n", m_firstUserMessage.c_str() );
     }
 
-    m_currentResponse = ""; // Reset accumulator
-    m_toolCallHtml = "";    // Reset tool call HTML
-    m_thinkingHtml = "";    // Reset thinking block HTML
-    m_thinkingContent = ""; // Reset thinking content
+    // Reset frame streaming state
+    m_currentResponse = "";
+    m_toolCallHtml = "";
+    m_thinkingHtml = "";
+    m_thinkingContent = "";
     m_thinkingExpanded = false;
     m_isThinking = false;
-    m_pendingToolCalls = nlohmann::json::array(); // Reset pending tool calls
-    m_stopRequested = false; // Reset stop flag
-    m_userScrolledUp = false; // Reset scroll tracking for new message
+    m_pendingToolCalls = nlohmann::json::array();
+    m_stopRequested = false;
+    m_userScrolledUp = false;
 
-    // Transition state machine to WAITING_FOR_LLM
-    m_conversationCtx.Reset();  // Start fresh
+    // Transition frame's state machine (legacy - controller also has state machine)
+    m_conversationCtx.Reset();
     m_conversationCtx.TransitionTo( AgentConversationState::WAITING_FOR_LLM );
 
-    // Get selected model and configure LLM client
+    // Configure LLM client with selected model
     wxString modelNameProp = m_modelChoice->GetStringSelection();
     m_llmClient->SetModel( modelNameProp.ToStdString() );
 
     // Reset target sheet for new conversation turn
-    // This clears the captured sheet from the previous turn, allowing the first
-    // tool call in this turn to capture the current sheet as the new target
     std::string emptyPayload;
     Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_RESET_TARGET_SHEET, emptyPayload );
 
-    // Use async native tool calling (non-blocking)
-    StartAsyncLLMRequest();
+    // Send message via controller (handles history, starts LLM request)
+    if( m_chatController )
+    {
+        m_chatController->SendMessage( text.ToStdString() );
+
+        // Sync controller's history back to frame for rendering and persistence
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_apiContext = m_chatController->GetApiContext();
+        m_chatHistoryDb.Save( m_chatHistory );
+    }
+    else
+    {
+        // Fallback: legacy path if no controller (shouldn't happen)
+        nlohmann::json userMsg = { { "role", "user" }, { "content", text.ToStdString() } };
+        m_chatHistory.push_back( userMsg );
+        m_apiContext.push_back( userMsg );
+        m_chatHistoryDb.Save( m_chatHistory );
+        StartAsyncLLMRequest();
+    }
 }
 
 void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
 {
     using json = nlohmann::json;
+
+    // Delegate cancel logic to controller
+    if( m_chatController )
+        m_chatController->Cancel();
 
     // Stop generating animation
     StopGeneratingAnimation();
@@ -1488,93 +1324,30 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
         m_workerThread = nullptr;
     }
 
-    // Cancel any in-progress async LLM request
+    // Cancel any in-progress async LLM request (legacy - controller also does this)
     if( m_llmClient && m_llmClient->IsRequestInProgress() )
     {
         m_llmClient->CancelRequest();
     }
 
-    // Signal to stop - affects tool execution loops and streaming callbacks
+    // Signal to stop - affects tool execution loops and streaming callbacks (legacy)
     m_stopRequested = true;
 
     // Re-render without dots
     UpdateAgentResponse();
 
-    // Fix orphaned tool_use blocks in chat history.
-    // The Anthropic API requires every tool_use to have a corresponding tool_result.
-    // If we stopped during tool execution, we need to add "stopped" tool_results.
+    // Sync frame's history from controller (controller handles orphaned tool_use blocks)
+    if( m_chatController )
+    {
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_apiContext = m_chatController->GetApiContext();
+    }
 
-    // m_pendingToolCalls contains tool blocks that haven't been added to history yet
-    // (they get added at MESSAGE_STOP). Just clear these - no fake results needed.
+    // Clear uncommitted tool calls (haven't been added to history yet)
     if( m_pendingToolCalls.is_array() && !m_pendingToolCalls.empty() )
     {
-        fprintf( stderr, "AGENT OnStop: Clearing %zu uncommitted tool calls\n",
-                 m_pendingToolCalls.size() );
-        fflush( stderr );
         m_pendingToolCalls = json::array();
     }
-
-    // m_conversationCtx has tool calls that WERE added to history (after MESSAGE_STOP).
-    // These need fake tool_result blocks to satisfy the API requirements.
-    if( m_conversationCtx.HasPendingToolCalls() )
-    {
-        std::vector<std::string> orphanedToolIds;
-
-        // Collect all pending tool IDs
-        while( m_conversationCtx.HasPendingToolCalls() )
-        {
-            PendingToolCall* pending = m_conversationCtx.GetNextPendingToolCall();
-            if( pending )
-            {
-                orphanedToolIds.push_back( pending->tool_use_id );
-                m_conversationCtx.RemovePendingToolCall( pending->tool_use_id );
-            }
-            else
-            {
-                break;
-            }
-        }
-
-        // Also check for any executing tool
-        PendingToolCall* executing = m_conversationCtx.GetExecutingToolCall();
-        if( executing )
-        {
-            orphanedToolIds.push_back( executing->tool_use_id );
-            m_conversationCtx.RemovePendingToolCall( executing->tool_use_id );
-        }
-
-        // Add fake tool_result messages for each orphaned tool_use
-        if( !orphanedToolIds.empty() )
-        {
-            json toolResultMsg;
-            toolResultMsg["role"] = "user";
-            json content = json::array();
-
-            for( const auto& toolId : orphanedToolIds )
-            {
-                content.push_back( {
-                    { "type", "tool_result" },
-                    { "tool_use_id", toolId },
-                    { "content", "Tool execution was stopped by the user." },
-                    { "is_error", true }
-                });
-            }
-
-            toolResultMsg["content"] = content;
-            m_chatHistory.push_back( toolResultMsg );
-            m_chatHistoryDb.Save( m_chatHistory );
-
-            fprintf( stderr, "AGENT OnStop: Added %zu stopped tool_result blocks to history\n",
-                     orphanedToolIds.size() );
-            fflush( stderr );
-        }
-    }
-
-    // Clear any completed tool results that weren't added to history
-    m_conversationCtx.completed_tool_results.clear();
-
-    // Clear pending tool calls (should be empty but be safe)
-    m_conversationCtx.ClearPendingToolCalls();
 
     // Transition state machine to IDLE
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
@@ -1955,6 +1728,10 @@ void AGENT_FRAME::OnModelSelection( wxCommandEvent& aEvent )
     if( newModel.ToStdString() != m_currentModel )
     {
         m_currentModel = newModel.ToStdString();
+
+        // Delegate to controller
+        if( m_chatController )
+            m_chatController->SetModel( m_currentModel );
     }
 }
 
@@ -2037,690 +1814,9 @@ std::string AGENT_FRAME::ExecuteTool( const std::string& aName, const nlohmann::
         } );
 }
 
-void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
-{
-    using json = nlohmann::json;
-
-    // Ignore events if stop was requested
-    if( m_stopRequested )
-        return;
-
-    switch( aEvent.type )
-    {
-    case LLM_EVENT_TYPE::TEXT:
-    {
-        // Accumulate text and display with markdown formatting
-        m_currentResponse += aEvent.text;
-
-        // Re-render full response with markdown
-        UpdateAgentResponse();
-
-        // Auto-scroll (respects user scroll position)
-        AutoScrollToBottom();
-        break;
-    }
-    case LLM_EVENT_TYPE::TOOL_USE:
-    {
-        // Store tool call for execution
-        json toolCall;
-        toolCall["type"] = "tool_use";
-        toolCall["id"] = aEvent.tool_use_id;
-        toolCall["name"] = aEvent.tool_name;
-        toolCall["input"] = aEvent.tool_input;
-
-        if( !m_pendingToolCalls.is_array() )
-            m_pendingToolCalls = json::array();
-
-        m_pendingToolCalls.push_back( toolCall );
-
-        // Don't display anything yet - we'll show a consolidated view in TOOL_USE_DONE
-        break;
-    }
-    case LLM_EVENT_TYPE::TOOL_USE_DONE:
-    {
-        fprintf( stderr, "AGENT HandleLLMEvent: TOOL_USE_DONE received\n" );
-        fflush( stderr );
-
-        // Stop generating animation since we're switching to tool execution
-        StopGeneratingAnimation();
-
-        // All tool calls received, execute them asynchronously
-        if( m_pendingToolCalls.is_array() && !m_pendingToolCalls.empty() )
-        {
-            fprintf( stderr, "AGENT HandleLLMEvent: %zu pending tool calls\n", m_pendingToolCalls.size() );
-            fflush( stderr );
-
-            // IMPORTANT: Capture the current HTML state BEFORE clearing m_currentResponse
-            // The assistant's text before the tool call needs to be preserved in the HTML
-            UpdateAgentResponse();  // Render current text into HTML
-            m_htmlBeforeAgentResponse = m_fullHtmlContent;  // Capture it
-
-            // Transition to TOOL_USE_DETECTED state
-            m_conversationCtx.TransitionTo( AgentConversationState::TOOL_USE_DETECTED );
-
-            // Add assistant message with tool use blocks to history
-            // NOTE: This clears m_currentResponse, but we've already captured it in HTML above
-            AddAssistantToolUseToHistory( m_pendingToolCalls );
-
-            // Queue all tools for async execution
-            for( const auto& toolCall : m_pendingToolCalls )
-            {
-                std::string toolId = toolCall.value( "id", "" );
-                std::string toolName = toolCall.value( "name", "" );
-                json toolInput = toolCall.value( "input", json::object() );
-
-                fprintf( stderr, "AGENT HandleLLMEvent: Queueing tool '%s' id='%s'\n",
-                         toolName.c_str(), toolId.c_str() );
-                fflush( stderr );
-
-                PendingToolCall pending( toolId, toolName, toolInput );
-                m_conversationCtx.AddPendingToolCall( pending );
-            }
-
-            // Clear the JSON array (tools are now in state machine)
-            m_pendingToolCalls = json::array();
-
-            // Start executing the first tool asynchronously
-            PendingToolCall* first = m_conversationCtx.GetNextPendingToolCall();
-            if( first )
-            {
-                fprintf( stderr, "AGENT HandleLLMEvent: Starting first tool '%s'\n", first->tool_name.c_str() );
-                fflush( stderr );
-
-                // Show "Running..." state in tool call HTML
-                wxString desc = AgentTools::GetToolDescription( first->tool_name, first->tool_input );
-                m_toolCallHtml = wxString::Format(
-                    "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
-                    "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
-                    "<font color='#888888'><i>Running...</i></font>"
-                    "</td></tr></table>",
-                    desc );
-                UpdateAgentResponse();
-
-                // Execute async - returns immediately, result comes via event
-                ExecuteToolAsync( first->tool_name, first->tool_input, first->tool_use_id );
-            }
-        }
-        break;
-    }
-    case LLM_EVENT_TYPE::END_TURN:
-    {
-        // Model finished streaming
-        AppendHtml( "</p>" );
-
-        // Only transition to idle if not executing tools
-        if( m_conversationCtx.GetState() != AgentConversationState::EXECUTING_TOOL &&
-            !m_conversationCtx.HasPendingToolCalls() )
-        {
-            StopGeneratingAnimation();
-            m_actionButton->SetLabel( "Send" );
-            m_conversationCtx.SetState( AgentConversationState::IDLE );
-
-            // Add final assistant message to history if there's accumulated text
-            if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
-            {
-                nlohmann::json assistantMsg;
-                assistantMsg["role"] = "assistant";
-
-                if( !m_thinkingContent.IsEmpty() )
-                {
-                    nlohmann::json content = nlohmann::json::array();
-                    content.push_back( { { "type", "thinking" }, { "thinking", m_thinkingContent.ToStdString() } } );
-                    if( !m_currentResponse.empty() )
-                        content.push_back( { { "type", "text" }, { "text", m_currentResponse } } );
-                    assistantMsg["content"] = content;
-                }
-                else
-                {
-                    assistantMsg["content"] = m_currentResponse;
-                }
-
-                m_chatHistory.push_back( assistantMsg );
-                m_apiContext.push_back( assistantMsg );
-                m_chatHistoryDb.Save( m_chatHistory );
-
-                // Preserve expanded state before re-rendering
-                if( m_thinkingExpanded && m_currentThinkingIndex >= 0 )
-                    m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
-
-                // Clear streaming state
-                m_currentResponse.clear();
-                m_thinkingContent.Clear();
-                m_thinkingExpanded = false;
-                m_currentThinkingIndex = -1;
-
-                // Re-render from history to show the saved content
-                RenderChatHistory();
-            }
-        }
-        // else: tools are being executed, animation and button stay as is
-        break;
-    }
-    case LLM_EVENT_TYPE::ERROR:
-    {
-        wxString errorHtml = wxString::Format( "<p><font color='red'><b>Error:</b> %s</font></p>",
-                                               aEvent.error_message );
-        AppendHtml( errorHtml );
-        StopGeneratingAnimation();
-        m_actionButton->SetLabel( "Send" );
-        m_conversationCtx.SetState( AgentConversationState::IDLE );
-        break;
-    }
-    }
-}
-
-void AGENT_FRAME::ContinueConversation()
-{
-    // Continue the conversation after tool results
-    // Save HTML snapshot for markdown re-rendering during streaming
-    m_currentResponse = "";
-    m_htmlBeforeAgentResponse = m_fullHtmlContent;
-
-    // Start generating animation
-    StartGeneratingAnimation();
-
-    wxString model = m_modelChoice->GetStringSelection();
-    m_llmClient->SetModel( model.ToStdString() );
-
-    std::string systemPrompt = GetSystemPrompt();
-
-    m_llmClient->AskStreamWithTools(
-        m_chatHistory,
-        systemPrompt,
-        m_tools,
-        [this]( const LLM_EVENT& event )
-        {
-            // Post event to main thread for UI updates
-            wxCommandEvent* evt = new wxCommandEvent( wxEVT_AGENT_UPDATE );
-            // Store event data - we'll handle it in the callback directly for now
-            // since we're on the same thread with curl blocking
-            HandleLLMEvent( event );
-        }
-    );
-}
-
-void AGENT_FRAME::AddToolResultToHistory( const std::string& aToolUseId, const std::string& aResult )
-{
-    using json = nlohmann::json;
-
-    // Add tool result as user message with tool_result content block
-    json toolResultMsg;
-    toolResultMsg["role"] = "user";
-    toolResultMsg["content"] = json::array( {
-        {
-            { "type", "tool_result" },
-            { "tool_use_id", aToolUseId },
-            { "content", aResult }
-        }
-    });
-
-    m_chatHistory.push_back( toolResultMsg );
-    m_apiContext.push_back( toolResultMsg );
-    m_chatHistoryDb.Save( m_chatHistory );
-}
-
-void AGENT_FRAME::AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBlocks )
-{
-    using json = nlohmann::json;
-
-    // Build assistant message with thinking (if any), text (if any), and tool_use blocks
-    json assistantMsg;
-    assistantMsg["role"] = "assistant";
-
-    json content = json::array();
-
-    // Add thinking block first (if present) - must come before text/tool_use
-    if( !m_thinkingContent.IsEmpty() )
-    {
-        content.push_back( {
-            { "type", "thinking" },
-            { "thinking", m_thinkingContent.ToStdString() }
-        });
-    }
-
-    // Add accumulated text if present
-    if( !m_currentResponse.empty() )
-    {
-        content.push_back( {
-            { "type", "text" },
-            { "text", m_currentResponse }
-        });
-    }
-
-    // Add tool use blocks
-    for( const auto& toolBlock : aToolUseBlocks )
-    {
-        content.push_back( toolBlock );
-    }
-
-    assistantMsg["content"] = content;
-    m_chatHistory.push_back( assistantMsg );
-    m_apiContext.push_back( assistantMsg );
-    m_chatHistoryDb.Save( m_chatHistory );
-
-    // Add thinking to historical storage so next thinking gets correct index
-    if( !m_thinkingContent.IsEmpty() )
-    {
-        m_historicalThinking.push_back( m_thinkingContent );
-        if( m_thinkingExpanded )
-            m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
-    }
-
-    // Reset accumulated state
-    m_currentResponse = "";
-    m_thinkingContent.Clear();
-    m_thinkingHtml.Clear();  // Clear rendered thinking HTML to avoid duplicate display
-    m_thinkingExpanded = false;
-    m_currentThinkingIndex = -1;
-}
-
-// ============================================================================
-// ASYNC TOOL EXECUTION METHODS
-// ============================================================================
-
-AgentConversationState AGENT_FRAME::GetConversationState() const
-{
-    return m_conversationCtx.GetState();
-}
-
-
-bool AGENT_FRAME::CanAcceptUserInput() const
-{
-    return m_conversationCtx.CanAcceptUserInput();
-}
-
-
-void AGENT_FRAME::ExecuteToolAsync( const std::string& aToolName,
-                                     const nlohmann::json& aInput,
-                                     const std::string& aToolUseId )
-{
-    // IMPORTANT: Copy parameters immediately since they may be references to data
-    // inside a vector that could be reallocated during this function
-    std::string toolName = aToolName;
-    nlohmann::json toolInput = aInput;
-    std::string toolUseId = aToolUseId;
-
-    fprintf( stderr, "AGENT ExecuteToolAsync: tool=%s id=%s\n",
-             toolName.c_str(), toolUseId.c_str() );
-    fflush( stderr );
-    wxLogDebug( "AGENT: ExecuteToolAsync called: tool=%s id=%s",
-                toolName.c_str(), toolUseId.c_str() );
-
-    // Transition to EXECUTING_TOOL state
-    if( !m_conversationCtx.TransitionTo( AgentConversationState::EXECUTING_TOOL ) )
-    {
-        wxLogDebug( "AGENT: Failed to transition to EXECUTING_TOOL state" );
-        PostToolError( this, toolUseId, "Invalid state for tool execution" );
-        return;
-    }
-
-    // Show Stop button during tool execution
-    m_actionButton->SetLabel( "Stop" );
-
-    // Mark the existing pending tool call as executing (don't add a duplicate!)
-    PendingToolCall* existingTool = m_conversationCtx.FindPendingToolCall( toolUseId );
-    if( existingTool )
-    {
-        existingTool->start_time = wxGetLocalTimeMillis();
-        existingTool->is_executing = true;
-    }
-
-    // Handle open_editor tool specially - requires user approval
-    if( toolName == "open_editor" )
-    {
-        std::string editorType = toolInput.value( "editor_type", "" );
-
-        // Store the pending request
-        m_pendingOpenSch = ( editorType == "sch" );
-        m_pendingOpenPcb = ( editorType == "pcb" );
-        m_pendingOpenToolId = toolUseId;
-
-        // Show approval buttons in chat
-        wxString editorLabel = m_pendingOpenSch ? "Schematic" : "PCB";
-        ShowOpenEditorApproval( editorLabel );
-
-        // Return immediately - tool result will be sent after user responds
-        return;
-    }
-
-    // Build the payload for the target frame
-    std::string payload = BuildToolPayload( toolName, toolInput );
-
-    // All tool execution goes through terminal (which uses kipy for the API)
-    FRAME_T destFrame = FRAME_TERMINAL;
-
-    fprintf( stderr, "AGENT ExecuteToolAsync: Sending MAIL_AGENT_REQUEST to FRAME_TERMINAL, payload='%.100s...'\n",
-             payload.c_str() );
-    fflush( stderr );
-
-    // Check if payload is an error (BuildToolPayload can return errors)
-    if( payload.find( "Error:" ) == 0 )
-    {
-        fprintf( stderr, "AGENT ExecuteToolAsync: BuildToolPayload returned error: %s\n", payload.c_str() );
-        fflush( stderr );
-        // Post error result immediately
-        PostToolError( this, toolUseId, payload );
-        return;
-    }
-
-    // Ensure destination frame exists before sending mail
-    // Player() with doCreate=true will create the frame if it doesn't exist
-    KIWAY_PLAYER* destPlayer = Kiway().Player( destFrame, destFrame == FRAME_TERMINAL );
-    if( !destPlayer )
-    {
-        fprintf( stderr, "AGENT ExecuteToolAsync: Failed to get destination frame!\n" );
-        fflush( stderr );
-        PostToolError( this, toolUseId, "Error: Could not access destination frame" );
-        return;
-    }
-
-    fprintf( stderr, "AGENT ExecuteToolAsync: Destination frame exists, sending ExpressMail\n" );
-    fflush( stderr );
-
-    // Send async request to destination frame
-    Kiway().ExpressMail( destFrame, MAIL_AGENT_REQUEST, payload );
-
-    fprintf( stderr, "AGENT ExecuteToolAsync: ExpressMail sent, starting timeout timer\n" );
-    fflush( stderr );
-
-    // Start timeout timer
-    m_toolTimeoutTimer.StartOnce( TOOL_TIMEOUT_MS );
-
-    wxLogDebug( "AGENT: Tool execution started, timeout timer set for %d ms", TOOL_TIMEOUT_MS );
-}
-
-
-std::string AGENT_FRAME::BuildToolPayload( const std::string& aToolName, const nlohmann::json& aInput )
-{
-    fprintf( stderr, "AGENT BuildToolPayload: aToolName='%s' (len=%zu)\n",
-             aToolName.c_str(), aToolName.length() );
-    fprintf( stderr, "AGENT BuildToolPayload: aInput=%s\n", aInput.dump().c_str() );
-    fflush( stderr );
-
-    std::string result = AgentTools::BuildToolPayload( aToolName, aInput );
-
-    if( result.find( "Error:" ) == 0 )
-    {
-        fprintf( stderr, "AGENT BuildToolPayload: Error - %s\n", result.c_str() );
-    }
-    else
-    {
-        fprintf( stderr, "AGENT BuildToolPayload: Built payload for '%s'\n", aToolName.c_str() );
-    }
-    fflush( stderr );
-
-    return result;
-}
-
-
-void AGENT_FRAME::OnToolExecutionComplete( wxCommandEvent& aEvent )
-{
-    wxLogDebug( "AGENT: OnToolExecutionComplete called" );
-
-    // Stop the timeout timer
-    m_toolTimeoutTimer.Stop();
-
-    // Get the result from the event
-    ToolExecutionResult* result = static_cast<ToolExecutionResult*>( aEvent.GetClientData() );
-    if( !result )
-    {
-        wxLogDebug( "AGENT: No result data in event" );
-        return;
-    }
-
-    // Process the result
-    ProcessToolResult( result->tool_use_id, result->result, result->success );
-
-    // Clean up
-    delete result;
-}
-
-
-void AGENT_FRAME::OnToolExecutionError( wxCommandEvent& aEvent )
-{
-    wxLogDebug( "AGENT: OnToolExecutionError called" );
-
-    // Stop the timeout timer
-    m_toolTimeoutTimer.Stop();
-
-    // Get the error from the event
-    ToolExecutionResult* result = static_cast<ToolExecutionResult*>( aEvent.GetClientData() );
-    if( !result )
-    {
-        wxLogDebug( "AGENT: No error data in event" );
-        return;
-    }
-
-    // Process as error
-    ProcessToolResult( result->tool_use_id, result->error_message, false );
-
-    // Clean up
-    delete result;
-}
-
-
-void AGENT_FRAME::OnToolExecutionTimeout( wxTimerEvent& aEvent )
-{
-    wxLogDebug( "AGENT: OnToolExecutionTimeout called" );
-
-    // Find any executing tool calls
-    for( size_t i = 0; i < m_conversationCtx.GetPendingToolCallCount(); i++ )
-    {
-        PendingToolCall* tool = m_conversationCtx.GetNextPendingToolCall();
-        if( tool && tool->is_executing )
-        {
-            wxLogDebug( "AGENT: Tool '%s' timed out", tool->tool_name.c_str() );
-
-            ProcessToolResult( tool->tool_use_id,
-                               "Error: Tool execution timed out after 30 seconds",
-                               false );
-            break;
-        }
-    }
-}
-
-
-void AGENT_FRAME::OnToolExecutionProgress( wxCommandEvent& aEvent )
-{
-    // Handle progress updates (optional - for streaming output)
-    ToolExecutionProgress* progress = static_cast<ToolExecutionProgress*>( aEvent.GetClientData() );
-    if( !progress )
-        return;
-
-    // Display progress in the chat
-    if( !progress->output_chunk.empty() )
-    {
-        wxString chunk = progress->output_chunk;
-        chunk.Replace( "\n", "<br>" );
-        AppendHtml( chunk );
-    }
-
-    delete progress;
-}
-
-
-void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
-                                      const std::string& aResult,
-                                      bool aSuccess )
-{
-    wxLogDebug( "AGENT: ProcessToolResult: id=%s success=%d result_len=%zu",
-                aToolUseId.c_str(), aSuccess, aResult.size() );
-
-    // Get tool info before removing from pending
-    PendingToolCall* tool = m_conversationCtx.FindPendingToolCall( aToolUseId );
-    wxString toolDesc = tool ? AgentTools::GetToolDescription( tool->tool_name, tool->tool_input ) : "Tool execution";
-    std::string toolName = tool ? tool->tool_name : "unknown";
-
-    // Check if this is a Python error (contains traceback)
-    bool isPythonError = ( aResult.find( "Traceback" ) != std::string::npos ) ||
-                         ( aResult.find( "Error:" ) == 0 );
-
-    // Store the result in collected results with full info for UI display
-    AgentConversationContext::ToolResult toolResult;
-    toolResult.tool_use_id = aToolUseId;
-    toolResult.tool_name = toolName;
-    toolResult.tool_description = toolDesc.ToStdString();
-    toolResult.result = aResult;
-    toolResult.success = aSuccess && !isPythonError;
-    toolResult.is_python_error = isPythonError;
-    m_conversationCtx.completed_tool_results.push_back( toolResult );
-
-    // Also store as last (for backward compatibility)
-    m_conversationCtx.last_tool_use_id = aToolUseId;
-    m_conversationCtx.last_tool_result = aResult;
-
-    // Remove from pending
-    m_conversationCtx.RemovePendingToolCall( aToolUseId );
-
-    // Rebuild m_toolCallHtml from ALL completed results
-    // This ensures we don't lose previous tool results when multiple tools run
-    m_toolCallHtml = "";
-
-    for( const auto& completedTool : m_conversationCtx.completed_tool_results )
-    {
-        wxString statusColor;
-        wxString statusText;
-        wxString displayResult;
-
-        if( completedTool.is_python_error )
-        {
-            statusColor = "#f44747";
-            statusText = "Error";
-            displayResult = "<i>Script execution failed. The model will attempt to fix the issue.</i>";
-        }
-        else if( !completedTool.success )
-        {
-            statusColor = "#f44747";
-            statusText = "Failed";
-            wxString htmlResult = completedTool.result;
-            htmlResult.Replace( "&", "&amp;" );
-            htmlResult.Replace( "<", "&lt;" );
-            htmlResult.Replace( ">", "&gt;" );
-            if( htmlResult.length() > 200 )
-                htmlResult = htmlResult.Left( 200 ) + "...";
-            displayResult = htmlResult;
-        }
-        else
-        {
-            statusColor = "#4ec9b0";
-            statusText = "Completed";
-            wxString htmlResult = completedTool.result;
-            htmlResult.Replace( "&", "&amp;" );
-            htmlResult.Replace( "<", "&lt;" );
-            htmlResult.Replace( ">", "&gt;" );
-            if( htmlResult.length() > 500 )
-                htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
-            displayResult = htmlResult;
-        }
-
-        m_toolCallHtml += wxString::Format(
-            "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
-            "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
-            "<font color='%s'><b>%s</b></font><br>"
-            "<font color='#d4d4d4' size='2'>%s</font>"
-            "</td></tr></table><br>",
-            wxString::FromUTF8( completedTool.tool_description ),
-            statusColor, statusText, displayResult );
-    }
-
-    // Check if agent made changes that need approval
-    CheckForPendingChanges();
-
-    // Transition to PROCESSING_TOOL_RESULT
-    m_conversationCtx.TransitionTo( AgentConversationState::PROCESSING_TOOL_RESULT );
-
-    // Check if there are more pending tools
-    if( m_conversationCtx.HasPendingToolCalls() )
-    {
-        // Execute next tool
-        PendingToolCall* next = m_conversationCtx.GetNextPendingToolCall();
-        if( next )
-        {
-            // Append next tool's "Running..." to the HTML
-            wxString nextDesc = AgentTools::GetToolDescription( next->tool_name, next->tool_input );
-            m_toolCallHtml += wxString::Format(
-                "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
-                "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
-                "<font color='#888888'><i>Running...</i></font>"
-                "</td></tr></table>",
-                nextDesc );
-
-            UpdateAgentResponse();
-            ExecuteToolAsync( next->tool_name, next->tool_input, next->tool_use_id );
-        }
-    }
-    else
-    {
-        // All tools done - update display and continue conversation
-        UpdateAgentResponse();
-        ContinueConversationWithToolResult();
-    }
-}
-
-
-void AGENT_FRAME::ContinueConversationWithToolResult()
-{
-    wxLogDebug( "AGENT: ContinueConversationWithToolResult called with %zu results",
-                m_conversationCtx.completed_tool_results.size() );
-
-    // Add all collected tool results to history as a single user message
-    // with multiple tool_result content blocks (per Anthropic API spec)
-    using json = nlohmann::json;
-
-    if( !m_conversationCtx.completed_tool_results.empty() )
-    {
-        json toolResultMsg;
-        toolResultMsg["role"] = "user";
-        json content = json::array();
-
-        for( const auto& result : m_conversationCtx.completed_tool_results )
-        {
-            content.push_back( {
-                { "type", "tool_result" },
-                { "tool_use_id", result.tool_use_id },
-                { "content", result.result }
-            } );
-        }
-
-        toolResultMsg["content"] = content;
-        m_chatHistory.push_back( toolResultMsg );
-        m_apiContext.push_back( toolResultMsg );
-
-        // Clear collected results
-        m_conversationCtx.completed_tool_results.clear();
-    }
-
-    // Transition to WAITING_FOR_LLM
-    m_conversationCtx.TransitionTo( AgentConversationState::WAITING_FOR_LLM );
-
-    // Continue the conversation
-    // First, ensure the current HTML is fully rendered with tool results
-    UpdateAgentResponse();
-
-    // Save HTML snapshot for markdown re-rendering during streaming
-    // This captures everything including tool call results
-    m_currentResponse = "";
-    m_htmlBeforeAgentResponse = m_fullHtmlContent;
-    m_toolCallHtml = "";   // Clear since it's now part of m_htmlBeforeAgentResponse
-    m_thinkingHtml = "";   // Clear thinking for new response
-    m_thinkingContent = "";
-    m_thinkingExpanded = false;
-    m_isThinking = false;
-
-    fprintf( stderr, "[HTML-DEBUG] ContinueConversationWithToolResult: Captured m_htmlBeforeAgentResponse, length=%zu, ends with </body></html>: %s\n",
-             (size_t)m_htmlBeforeAgentResponse.length(),
-             m_htmlBeforeAgentResponse.EndsWith( "</body></html>" ) ? "YES" : "NO" );
-    fflush( stderr );
-
-    wxString model = m_modelChoice->GetStringSelection();
-    m_llmClient->SetModel( model.ToStdString() );
-
-    std::string systemPrompt = GetSystemPrompt();
-
-    // Use async LLM streaming (non-blocking)
-    StartAsyncLLMRequest();
-}
-
+// NOTE: HandleLLMEvent and ContinueConversation were removed in Phase 5.3
+// They were dead code - only used in the synchronous path which is no longer called.
+// All LLM streaming now uses the async path: StartAsyncLLMRequest -> OnLLMStream* events
 
 // ============================================================================
 // Async LLM Streaming Event Handlers
@@ -2808,334 +1904,38 @@ void AGENT_FRAME::OnLLMStreamChunk( wxThreadEvent& aEvent )
     if( !chunk )
         return;
 
-    // Process the chunk
-    HandleLLMChunk( *chunk );
+    // Forward to controller for processing
+    // Controller emits EVT_CHAT_* events which are handled by OnChat* methods
+    if( m_chatController )
+    {
+        m_chatController->HandleLLMChunk( *chunk );
+    }
 
     // Clean up
     delete chunk;
 }
 
-
-void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
-{
-    // Ignore events if stop was requested
-    if( m_stopRequested )
-        return;
-
-    switch( aChunk.type )
-    {
-    case LLMChunkType::TEXT:
-    {
-        // Accumulate text and display with markdown formatting
-        m_currentResponse += aChunk.text;
-
-        // Re-render full response with markdown
-        UpdateAgentResponse();
-
-        // Auto-scroll (respects user scroll position)
-        AutoScrollToBottom();
-        break;
-    }
-    case LLMChunkType::THINKING_START:
-    {
-        // Thinking block started - show loading animation
-        m_isThinking = true;
-        m_thinkingContent = "";
-        m_thinkingExpanded = false;
-        // Set index for this thinking block (will be the next slot after existing history)
-        m_currentThinkingIndex = static_cast<int>( m_historicalThinking.size() );
-        RebuildThinkingHtml();
-        UpdateAgentResponse();
-        break;
-    }
-    case LLMChunkType::THINKING:
-    {
-        // Stream thinking text incrementally
-        if( !aChunk.thinking_text.empty() )
-        {
-            m_thinkingContent += wxString::FromUTF8( aChunk.thinking_text );
-            RebuildThinkingHtml();
-            UpdateAgentResponse();
-
-            // Auto-scroll
-            int x, y;
-            m_chatWindow->GetVirtualSize( &x, &y );
-            m_chatWindow->Scroll( 0, y );
-        }
-        break;
-    }
-    case LLMChunkType::THINKING_DONE:
-    {
-        // Thinking complete - stop loading animation, finalize display
-        m_isThinking = false;
-        RebuildThinkingHtml();
-        UpdateAgentResponse();
-        break;
-    }
-    case LLMChunkType::TOOL_USE:
-    {
-        // Parse tool input JSON
-        nlohmann::json toolInput;
-        try
-        {
-            if( !aChunk.tool_input_json.empty() )
-            {
-                toolInput = nlohmann::json::parse( aChunk.tool_input_json );
-            }
-        }
-        catch( const nlohmann::json::exception& e )
-        {
-            wxLogDebug( "AGENT: Failed to parse tool input JSON: %s", e.what() );
-            toolInput = nlohmann::json::object();
-        }
-
-        // Store tool call for execution
-        nlohmann::json toolCall;
-        toolCall["type"] = "tool_use";
-        toolCall["id"] = aChunk.tool_use_id;
-        toolCall["name"] = aChunk.tool_name;
-        toolCall["input"] = toolInput;
-
-        m_pendingToolCalls.push_back( toolCall );
-
-        // Don't display anything yet - we'll show a consolidated view in TOOL_USE_DONE
-        break;
-    }
-    case LLMChunkType::TOOL_USE_DONE:
-    {
-        fprintf( stderr, "AGENT HandleLLMChunk: TOOL_USE_DONE received\n" );
-        fflush( stderr );
-
-        // Stop generating animation since we're switching to tool execution
-        StopGeneratingAnimation();
-
-        // All tool calls received, execute them asynchronously
-        if( m_pendingToolCalls.is_array() && !m_pendingToolCalls.empty() )
-        {
-            fprintf( stderr, "AGENT HandleLLMChunk: %zu pending tool calls\n", m_pendingToolCalls.size() );
-            fflush( stderr );
-
-            // IMPORTANT: Capture the current HTML state BEFORE clearing m_currentResponse
-            // The assistant's text before the tool call needs to be preserved in the HTML
-            UpdateAgentResponse();  // Render current text into HTML
-            m_htmlBeforeAgentResponse = m_fullHtmlContent;  // Capture it
-
-            fprintf( stderr, "[HTML-DEBUG] TOOL_USE_DONE: Captured HTML before tool, length=%zu\n",
-                     (size_t)m_htmlBeforeAgentResponse.length() );
-            fflush( stderr );
-
-            // Transition to TOOL_USE_DETECTED state
-            m_conversationCtx.TransitionTo( AgentConversationState::TOOL_USE_DETECTED );
-
-            // Add assistant message with tool use blocks to history
-            // NOTE: This clears m_currentResponse, but we've already captured it in HTML above
-            AddAssistantToolUseToHistory( m_pendingToolCalls );
-
-            // Queue all tools for async execution
-            for( const auto& toolCall : m_pendingToolCalls )
-            {
-                std::string toolId = toolCall.value( "id", "" );
-                std::string toolName = toolCall.value( "name", "" );
-                nlohmann::json toolInput = toolCall.value( "input", nlohmann::json::object() );
-
-                fprintf( stderr, "AGENT HandleLLMChunk: Queueing tool '%s' id='%s'\n",
-                         toolName.c_str(), toolId.c_str() );
-                fflush( stderr );
-
-                PendingToolCall pending( toolId, toolName, toolInput );
-                m_conversationCtx.AddPendingToolCall( pending );
-            }
-
-            // Clear the JSON array (tools are now in state machine)
-            m_pendingToolCalls = nlohmann::json::array();
-
-            // Start executing the first tool asynchronously
-            PendingToolCall* first = m_conversationCtx.GetNextPendingToolCall();
-            if( first )
-            {
-                fprintf( stderr, "AGENT HandleLLMChunk: Starting first tool '%s'\n", first->tool_name.c_str() );
-                fflush( stderr );
-
-                // Show "Running..." state in tool call HTML
-                wxString desc = AgentTools::GetToolDescription( first->tool_name, first->tool_input );
-                m_toolCallHtml = wxString::Format(
-                    "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
-                    "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
-                    "<font color='#888888'><i>Running...</i></font>"
-                    "</td></tr></table>",
-                    desc );
-
-                fprintf( stderr, "[HTML-DEBUG] TOOL_USE_DONE (async): About to call UpdateAgentResponse\n" );
-                fprintf( stderr, "[HTML-DEBUG]   m_currentResponse length: %zu\n", m_currentResponse.size() );
-                fprintf( stderr, "[HTML-DEBUG]   m_toolCallHtml length: %zu\n", (size_t)m_toolCallHtml.length() );
-                fflush( stderr );
-
-                UpdateAgentResponse();
-
-                // Execute async - returns immediately, result comes via event
-                ExecuteToolAsync( first->tool_name, first->tool_input, first->tool_use_id );
-            }
-        }
-        break;
-    }
-    case LLMChunkType::END_TURN:
-    {
-        // Model finished streaming
-        AppendHtml( "</p>" );
-
-        // Only transition to idle if not executing tools
-        // (when tools are being executed, we stay in EXECUTING_TOOL state)
-        if( m_conversationCtx.GetState() != AgentConversationState::EXECUTING_TOOL &&
-            !m_conversationCtx.HasPendingToolCalls() )
-        {
-            StopGeneratingAnimation();
-            m_actionButton->SetLabel( "Send" );
-            m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-
-            // Add final assistant message to history if there's accumulated text
-            if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
-            {
-                nlohmann::json assistantMsg;
-                assistantMsg["role"] = "assistant";
-
-                // If we have thinking content, save as content array with thinking and text blocks
-                if( !m_thinkingContent.IsEmpty() )
-                {
-                    nlohmann::json content = nlohmann::json::array();
-
-                    // Add thinking block
-                    content.push_back( {
-                        { "type", "thinking" },
-                        { "thinking", m_thinkingContent.ToStdString() }
-                    } );
-
-                    // Add text block if we have response text
-                    if( !m_currentResponse.empty() )
-                    {
-                        content.push_back( {
-                            { "type", "text" },
-                            { "text", m_currentResponse }
-                        } );
-                    }
-
-                    assistantMsg["content"] = content;
-                }
-                else
-                {
-                    // No thinking, just save as string (backwards compatible)
-                    assistantMsg["content"] = m_currentResponse;
-                }
-
-                m_chatHistory.push_back( assistantMsg );
-                m_apiContext.push_back( assistantMsg );
-                m_chatHistoryDb.Save( m_chatHistory );
-
-                // Preserve expanded state before re-rendering
-                if( m_thinkingExpanded && m_currentThinkingIndex >= 0 )
-                    m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
-
-                // Clear streaming state
-                m_currentResponse.clear();
-                m_thinkingContent.Clear();
-                m_thinkingExpanded = false;
-                m_currentThinkingIndex = -1;
-
-                // Re-render from history to show the saved content
-                // (this also rebuilds m_historicalThinking with correct indices)
-                RenderChatHistory();
-            }
-        }
-        // else: tools are being executed, animation and button stay as is
-        break;
-    }
-    case LLMChunkType::ERROR:
-    {
-        wxString errorHtml = wxString::Format( "<p><font color='red'><b>Error:</b> %s</font></p>",
-                                               aChunk.error_message );
-        AppendHtml( errorHtml );
-        StopGeneratingAnimation();
-        m_actionButton->SetLabel( "Send" );
-        m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-        break;
-    }
-    case LLMChunkType::CONTEXT_STATUS:
-    {
-        // Show notification if context was compacted
-        if( aChunk.context_compacted )
-        {
-            AppendHtml( "<p><font color='#FFA500'><i>Context was automatically "
-                        "compacted to continue the conversation.</i></font></p>" );
-        }
-        break;
-    }
-    case LLMChunkType::CONTEXT_COMPACTING:
-    {
-        // Server is compacting context (Scenario B only) - show status
-        AppendHtml( "<p><font color='#FFA500'><i>Compacting context...</i></font></p>" );
-        break;
-    }
-    case LLMChunkType::CONTEXT_EXHAUSTED:
-    case LLMChunkType::CONTEXT_TRUNCATED:
-    {
-        // Context recovery - replace API context with compacted messages
-        if( !aChunk.summarized_messages.empty() && aChunk.summarized_messages.is_array() )
-        {
-            // Replace API context with compacted version (display history unchanged)
-            m_apiContext = aChunk.summarized_messages;
-
-            // Show notification
-            AppendHtml( "<p><font color='#FFA500'><i>Context compacted. Retrying...</i></font></p>" );
-
-            // Retry with compacted context
-            CallAfter( [this]() { RetryLastRequest(); } );
-        }
-        break;
-    }
-    }
-}
+// NOTE: HandleLLMChunk was removed in Phase 5.3c
+// All LLM chunk processing now goes through the controller which emits EVT_CHAT_* events
 
 
 void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
 {
     wxLogDebug( "AGENT: OnLLMStreamComplete called" );
 
-    // Get completion data
+    // Forward to controller - it will emit appropriate EVT_CHAT_* events
+    // UI updates are handled by OnChatTurnComplete, OnChatError, etc.
+    if( m_chatController )
+    {
+        m_chatController->HandleLLMComplete();
+    }
+
+    // Clean up payload
     LLMStreamComplete* complete = aEvent.GetPayload<LLMStreamComplete*>();
     if( complete )
     {
-        if( !complete->success )
-        {
-            wxString errorHtml = wxString::Format( "<p><font color='red'><b>Error:</b> %s</font></p>",
-                                                   complete->error_message );
-            AppendHtml( errorHtml );
-        }
         delete complete;
     }
-
-    // Only stop animation and transition to IDLE if not executing tools
-    // (when tools are running, keep the animation going)
-    // Note: Don't call UpdateAgentResponse() here - END_TURN handler already called
-    // RenderChatHistory() which renders from the saved history.
-    if( m_conversationCtx.GetState() != AgentConversationState::EXECUTING_TOOL &&
-        !m_conversationCtx.HasPendingToolCalls() )
-    {
-        StopGeneratingAnimation();
-
-        // Transition to IDLE if we were waiting for LLM
-        if( m_conversationCtx.GetState() == AgentConversationState::WAITING_FOR_LLM )
-        {
-            m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-        }
-        m_actionButton->SetLabel( "Send" );
-
-        // Generate title after first successful response
-        if( m_needsTitleGeneration && !m_firstUserMessage.empty() )
-        {
-            fprintf( stderr, "[TITLE] Triggering title generation for first message\n" );
-            GenerateChatTitle();
-        }
-    }
-    // else: tools are executing, keep animation running and button showing "Stop"
 }
 
 
@@ -3143,49 +1943,57 @@ void AGENT_FRAME::OnLLMStreamError( wxThreadEvent& aEvent )
 {
     wxLogDebug( "AGENT: OnLLMStreamError called" );
 
-    // Stop generating animation
-    StopGeneratingAnimation();
-
     // Get error data
     LLMStreamComplete* complete = aEvent.GetPayload<LLMStreamComplete*>();
-    if( complete )
+    std::string errorMessage = complete ? complete->error_message : "Unknown error";
+
+    // Forward to controller - it will emit EVT_CHAT_ERROR
+    // UI updates are handled by OnChatError
+    if( m_chatController )
     {
-        wxString errorHtml = wxString::Format( "<p><font color='red'><b>Error:</b> %s</font></p>",
-                                               complete->error_message );
-        AppendHtml( errorHtml );
-        delete complete;
+        m_chatController->HandleLLMError( errorMessage );
     }
 
-    m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-    m_actionButton->SetLabel( "Send" );
+    // Clean up payload
+    if( complete )
+    {
+        delete complete;
+    }
 }
 
 void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
 {
     // Prevent switching chats while generating
-    if( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE )
+    bool isBusy = m_chatController ? m_chatController->IsBusy()
+                                   : ( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE );
+    if( isBusy )
     {
         wxMessageBox( _( "Please wait for the current response to complete before starting a new chat." ),
                       _( "Chat in Progress" ), wxOK | wxICON_INFORMATION );
         return;
     }
 
-    // Clear current chat and start fresh
+    // Delegate chat state reset to controller
+    if( m_chatController )
+        m_chatController->NewChat();
+
+    // Clear current chat and start fresh (legacy - will be removed in Phase 5.4)
     m_chatHistory = nlohmann::json::array();
     m_apiContext = nlohmann::json::array();
 
-    // Add welcome message to chat history (but not API context) so it survives re-renders
+    // Add welcome message as an assistant message
     m_chatHistory.push_back( {
-        { "role", "welcome" },
+        { "role", "assistant" },
         { "content", "Welcome to KiCad Agent." }
     } );
 
+    // UI reset
     m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>";
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
     m_chatNameLabel->SetLabel( "New Chat" );
 
-    // Reset title generation state
+    // Reset title generation state (legacy - controller handles this)
     m_needsTitleGeneration = true;
     m_firstUserMessage = "";
 
@@ -3278,60 +2086,12 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
 {
-    // Hide history panel overlay if visible
-    if( m_historyPanel->IsShown() )
+    // Delegate to controller - it will emit EVT_CHAT_HISTORY_LOADED
+    // which triggers OnChatHistoryLoaded for UI updates
+    if( m_chatController )
     {
-        m_historyPanel->Hide();
+        m_chatController->LoadChat( aConversationId );
     }
-
-    // Load history (this also loads the title into m_chatHistoryDb)
-    m_chatHistory = m_chatHistoryDb.Load( aConversationId );
-
-    // Update chat name label with title from loaded history
-    std::string title = m_chatHistoryDb.GetTitle();
-    if( title.empty() )
-        title = "Untitled Chat";
-    m_chatNameLabel->SetLabel( wxString::FromUTF8( title ) );
-
-    // Mark that title is already generated for this chat
-    m_needsTitleGeneration = false;
-    m_firstUserMessage = "";
-
-    // Start with full history as API context
-    m_apiContext = m_chatHistory;
-
-    // Clear historical thinking toggle state for new history
-    m_historicalThinkingExpanded.clear();
-    m_currentThinkingIndex = -1;
-
-    // Render the loaded chat history
-    RenderChatHistory();
-
-    // Scroll to bottom of loaded conversation (use CallAfter to ensure layout is complete)
-    m_userScrolledUp = false;
-    CallAfter( [this]() {
-        int virtWidth, virtHeight;
-        m_chatWindow->GetVirtualSize( &virtWidth, &virtHeight );
-
-        int clientWidth, clientHeight;
-        m_chatWindow->GetClientSize( &clientWidth, &clientHeight );
-
-        int scrollUnitX, scrollUnitY;
-        m_chatWindow->GetScrollPixelsPerUnit( &scrollUnitX, &scrollUnitY );
-
-        if( scrollUnitY <= 0 )
-            scrollUnitY = 10;
-
-        // Use ceiling division to ensure we scroll completely to the bottom
-        int maxScrollY = ( virtHeight - clientHeight + scrollUnitY - 1 ) / scrollUnitY;
-        if( maxScrollY < 0 )
-            maxScrollY = 0;
-
-        m_chatWindow->Scroll( 0, maxScrollY );
-    });
-
-    // Update DB ID so new messages go to this history
-    m_chatHistoryDb.SetConversationId( aConversationId );
 }
 
 
@@ -3356,12 +2116,7 @@ void AGENT_FRAME::RenderChatHistory()
             std::string content = msg["content"];
             wxString display = content;
 
-            if( role == "welcome" )
-            {
-                // Welcome message - simple paragraph
-                m_fullHtmlContent += wxString::Format( "<p>%s</p>", display );
-            }
-            else if( role == "user" )
+            if( role == "user" )
             {
                 // Right-aligned speech bubble style for user messages
                 display.Replace( "&", "&amp;" );
@@ -3906,9 +2661,9 @@ void AGENT_FRAME::OnApproveOpenEditor()
     m_pendingOpenPcb = false;
     m_pendingOpenToolId.clear();
 
-    // Send tool result back to LLM - this will continue the conversation
-    // ProcessToolResult will display the result in the tool call HTML
-    ProcessToolResult( toolId, result, success );
+    // Send tool result to controller - it will continue the conversation
+    if( m_chatController )
+        m_chatController->HandleToolResult( toolId, result, success );
 }
 
 
@@ -3922,10 +2677,10 @@ void AGENT_FRAME::OnRejectOpenEditor()
     m_pendingOpenPcb = false;
     m_pendingOpenToolId.clear();
 
-    // Send rejection result to LLM
-    // ProcessToolResult will display the result in the tool call HTML
-    ProcessToolResult( toolId,
-        "User declined to open " + editorName.ToStdString() + " editor", false );
+    // Send rejection result to controller
+    if( m_chatController )
+        m_chatController->HandleToolResult( toolId,
+            "User declined to open " + editorName.ToStdString() + " editor", false );
 }
 
 
@@ -3941,4 +2696,453 @@ bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
     player->Raise();
 
     return true;
+}
+
+
+// ============================================================================
+// Controller Event Handlers
+// These handle events emitted by CHAT_CONTROLLER
+// ============================================================================
+
+void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
+{
+    ChatTextDeltaData* data = aEvent.GetPayload<ChatTextDeltaData*>();
+    if( !data )
+        return;
+
+    // Controller owns the response - UpdateAgentResponse reads from controller
+
+    // Re-render full response with markdown
+    UpdateAgentResponse();
+
+    // Auto-scroll (respects user scroll position)
+    AutoScrollToBottom();
+
+    delete data;
+}
+
+
+void AGENT_FRAME::OnChatThinkingStart( wxThreadEvent& aEvent )
+{
+    ChatThinkingStartData* data = aEvent.GetPayload<ChatThinkingStartData*>();
+
+    // Initialize thinking state
+    m_isThinking = true;
+    m_thinkingContent = "";
+    m_thinkingExpanded = false;
+
+    // Set index for this thinking block (based on historical thinking count)
+    m_currentThinkingIndex = static_cast<int>( m_historicalThinking.size() );
+
+    // Rebuild thinking display (shows loading animation)
+    RebuildThinkingHtml();
+    UpdateAgentResponse();
+
+    if( data )
+        delete data;
+}
+
+
+void AGENT_FRAME::OnChatThinkingDelta( wxThreadEvent& aEvent )
+{
+    ChatThinkingDeltaData* data = aEvent.GetPayload<ChatThinkingDeltaData*>();
+    if( !data )
+        return;
+
+    // Update thinking state (m_isThinking should already be true from THINKING_START)
+    m_isThinking = true;
+    m_thinkingContent = data->fullThinking;
+
+    // Rebuild thinking display and re-render
+    RebuildThinkingHtml();
+    UpdateAgentResponse();
+
+    // Auto-scroll to show thinking
+    AutoScrollToBottom();
+
+    delete data;
+}
+
+
+void AGENT_FRAME::OnChatThinkingDone( wxThreadEvent& aEvent )
+{
+    ChatThinkingDoneData* data = aEvent.GetPayload<ChatThinkingDoneData*>();
+
+    // Finalize thinking state
+    m_isThinking = false;
+
+    // Update content from event if available
+    if( data )
+    {
+        m_thinkingContent = data->finalThinking;
+        delete data;
+    }
+
+    // Rebuild thinking display (removes loading animation)
+    RebuildThinkingHtml();
+    UpdateAgentResponse();
+}
+
+
+void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
+{
+    ChatToolStartData* data = aEvent.GetPayload<ChatToolStartData*>();
+    if( !data )
+        return;
+
+    // Stop animation and finalize thinking
+    StopGeneratingAnimation();
+    m_isThinking = false;
+
+    // Render any pending text and capture HTML state.
+    // IMPORTANT: Controller's currentResponse still has the text at this point.
+    // We render it, capture the HTML, then clear the streaming state.
+    UpdateAgentResponse();
+    m_htmlBeforeAgentResponse = m_fullHtmlContent;
+
+    // Now clear streaming state in controller (text is baked into m_htmlBeforeAgentResponse)
+    if( m_chatController )
+        m_chatController->ClearStreamingState();
+
+    // Clear frame's thinking HTML since it's now part of the base HTML (prevents duplication)
+    m_thinkingHtml.Clear();
+    m_thinkingContent.Clear();
+
+    // Store tool description for result display
+    m_lastToolDesc = wxString::FromUTF8( data->description );
+
+    // Handle open_editor specially - requires user approval
+    if( data->toolName == "open_editor" )
+    {
+        std::string editorType = data->input.value( "editor_type", "" );
+
+        // Store the pending request
+        m_pendingOpenSch = ( editorType == "sch" );
+        m_pendingOpenPcb = ( editorType == "pcb" );
+        m_pendingOpenToolId = data->toolId;
+
+        // Show approval dialog
+        wxString editorLabel = m_pendingOpenSch ? "Schematic" : "PCB";
+        ShowOpenEditorApproval( editorLabel );
+
+        delete data;
+        return;
+    }
+
+    // Generate tool call HTML with "Running..." status
+    m_toolCallHtml = wxString::Format(
+        "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+        "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+        "<font color='#888888'><i>Running...</i></font>"
+        "</td></tr></table>",
+        m_lastToolDesc );
+
+    UpdateAgentResponse();
+    AutoScrollToBottom();
+
+    delete data;
+}
+
+
+void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
+{
+    ChatToolCompleteData* data = aEvent.GetPayload<ChatToolCompleteData*>();
+    if( !data )
+        return;
+
+    // Determine status display
+    wxString statusColor;
+    wxString statusText;
+    wxString displayResult;
+
+    if( data->isPythonError )
+    {
+        statusColor = "#f44747";
+        statusText = "Error";
+        displayResult = "<i>Script execution failed. The model will attempt to fix the issue.</i>";
+    }
+    else if( !data->success )
+    {
+        statusColor = "#f44747";
+        statusText = "Failed";
+        wxString htmlResult = wxString::FromUTF8( data->result );
+        htmlResult.Replace( "&", "&amp;" );
+        htmlResult.Replace( "<", "&lt;" );
+        htmlResult.Replace( ">", "&gt;" );
+        if( htmlResult.length() > 200 )
+            htmlResult = htmlResult.Left( 200 ) + "...";
+        displayResult = htmlResult;
+    }
+    else
+    {
+        statusColor = "#4ec9b0";
+        statusText = "Completed";
+        wxString htmlResult = wxString::FromUTF8( data->result );
+        htmlResult.Replace( "&", "&amp;" );
+        htmlResult.Replace( "<", "&lt;" );
+        htmlResult.Replace( ">", "&gt;" );
+        if( htmlResult.length() > 500 )
+            htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
+        displayResult = htmlResult;
+    }
+
+    // Update tool call HTML with result (replace "Running..." with actual result)
+    m_toolCallHtml = wxString::Format(
+        "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
+        "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
+        "<font color='%s'><b>%s</b></font><br>"
+        "<font color='#d4d4d4' size='2'>%s</font>"
+        "</td></tr></table><br>",
+        m_lastToolDesc, statusColor, statusText, displayResult );
+
+    // Check for pending approval
+    CheckForPendingChanges();
+
+    UpdateAgentResponse();
+    AutoScrollToBottom();
+
+    delete data;
+}
+
+
+void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
+{
+    ChatTurnCompleteData* data = aEvent.GetPayload<ChatTurnCompleteData*>();
+    if( !data )
+        return;
+
+    // Stop animation and update button
+    StopGeneratingAnimation();
+    m_actionButton->SetLabel( "Send" );
+
+    // Finalize thinking state
+    m_isThinking = false;
+
+    // Sync history from controller (controller added the assistant message in END_TURN)
+    // This must happen BEFORE RenderChatHistory() which uses frame's m_chatHistory
+    if( m_chatController )
+    {
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_apiContext = m_chatController->GetApiContext();
+        m_chatHistoryDb.Save( m_chatHistory );
+    }
+
+    // Clear streaming UI state
+    m_currentResponse.clear();
+    m_thinkingContent.Clear();
+    m_toolCallHtml.Clear();
+
+    // Preserve thinking expansion state
+    if( m_thinkingExpanded && m_currentThinkingIndex >= 0 )
+        m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
+
+    m_thinkingExpanded = false;
+    m_currentThinkingIndex = -1;
+
+    // Re-render from history to show saved content
+    RenderChatHistory();
+
+    delete data;
+}
+
+
+void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
+{
+    ChatErrorData* data = aEvent.GetPayload<ChatErrorData*>();
+    if( !data )
+        return;
+
+    // Display error message
+    wxString errorHtml = wxString::Format(
+        "<p><font color='red'><b>Error:</b> %s</font></p>",
+        wxString::FromUTF8( data->message ) );
+    AppendHtml( errorHtml );
+
+    // Stop animation and reset button
+    StopGeneratingAnimation();
+    m_actionButton->SetLabel( "Send" );
+
+    // Clear streaming state
+    m_isThinking = false;
+
+    delete data;
+}
+
+
+void AGENT_FRAME::OnChatStateChanged( wxThreadEvent& aEvent )
+{
+    ChatStateChangedData* data = aEvent.GetPayload<ChatStateChangedData*>();
+    if( !data )
+        return;
+
+    // Update button based on new state
+    AgentConversationState newState = static_cast<AgentConversationState>( data->newState );
+
+    switch( newState )
+    {
+    case AgentConversationState::IDLE:
+    case AgentConversationState::ERROR:
+        m_actionButton->SetLabel( "Send" );
+        break;
+
+    case AgentConversationState::WAITING_FOR_LLM:
+        m_actionButton->SetLabel( "Stop" );
+        StartGeneratingAnimation();
+
+        // If continuing after tool completion, capture current state as base
+        // This ensures the tool call result appears BEFORE any new response text
+        if( static_cast<AgentConversationState>( data->oldState ) ==
+            AgentConversationState::PROCESSING_TOOL_RESULT )
+        {
+            // Render current state (includes tool call result)
+            UpdateAgentResponse();
+            m_htmlBeforeAgentResponse = m_fullHtmlContent;
+
+            // Clear tool call HTML since it's now baked into the base
+            m_toolCallHtml.Clear();
+            m_thinkingHtml.Clear();
+        }
+        break;
+
+    case AgentConversationState::TOOL_USE_DETECTED:
+    case AgentConversationState::EXECUTING_TOOL:
+    case AgentConversationState::PROCESSING_TOOL_RESULT:
+        // Keep current button state during tool execution
+        break;
+    }
+
+    delete data;
+}
+
+
+void AGENT_FRAME::OnChatTitleGenerated( wxThreadEvent& aEvent )
+{
+    ChatTitleGeneratedData* data = aEvent.GetPayload<ChatTitleGeneratedData*>();
+    if( !data )
+        return;
+
+    // Update title display
+    m_chatNameLabel->SetLabel( wxString::FromUTF8( data->title ) );
+
+    // Update persistence with the new title
+    m_chatHistoryDb.SetTitle( data->title );
+    if( m_chatController )
+    {
+        m_chatHistoryDb.Save( m_chatController->GetChatHistory() );
+    }
+
+    delete data;
+}
+
+
+void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
+{
+    ChatHistoryLoadedData* data = aEvent.GetPayload<ChatHistoryLoadedData*>();
+    if( !data )
+        return;
+
+    // Hide history panel overlay if visible
+    if( m_historyPanel && m_historyPanel->IsShown() )
+    {
+        m_historyPanel->Hide();
+    }
+
+    // Update chat name label with title
+    std::string title = data->title;
+    if( title.empty() )
+        title = "Untitled Chat";
+    m_chatNameLabel->SetLabel( wxString::FromUTF8( title ) );
+
+    // Sync history from controller
+    if( m_chatController )
+    {
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_apiContext = m_chatController->GetApiContext();
+    }
+
+    // Mark that title is already generated for this loaded chat
+    m_needsTitleGeneration = false;
+    m_firstUserMessage = "";
+
+    // Clear historical thinking toggle state for new history
+    m_historicalThinkingExpanded.clear();
+    m_currentThinkingIndex = -1;
+
+    // Render the loaded chat history
+    RenderChatHistory();
+
+    // Update DB ID so new messages go to this history
+    m_chatHistoryDb.SetConversationId( data->chatId );
+
+    // Scroll to bottom of loaded conversation (use CallAfter to ensure layout is complete)
+    m_userScrolledUp = false;
+    CallAfter( [this]() {
+        int virtWidth, virtHeight;
+        m_chatWindow->GetVirtualSize( &virtWidth, &virtHeight );
+
+        int clientWidth, clientHeight;
+        m_chatWindow->GetClientSize( &clientWidth, &clientHeight );
+
+        int scrollUnitX, scrollUnitY;
+        m_chatWindow->GetScrollPixelsPerUnit( &scrollUnitX, &scrollUnitY );
+
+        if( scrollUnitY <= 0 )
+            scrollUnitY = 10;
+
+        // Use ceiling division to ensure we scroll completely to the bottom
+        int maxScrollY = ( virtHeight - clientHeight + scrollUnitY - 1 ) / scrollUnitY;
+        if( maxScrollY < 0 )
+            maxScrollY = 0;
+
+        m_chatWindow->Scroll( 0, maxScrollY );
+    });
+
+    delete data;
+}
+
+
+void AGENT_FRAME::OnChatContextStatus( wxThreadEvent& aEvent )
+{
+    ChatContextStatusData* data = aEvent.GetPayload<ChatContextStatusData*>();
+
+    if( data && data->wasCompacted )
+    {
+        AppendHtml( "<p><font color='#FFA500'><i>Context was automatically "
+                    "compacted to continue the conversation.</i></font></p>" );
+    }
+
+    if( data )
+        delete data;
+}
+
+
+void AGENT_FRAME::OnChatContextCompacting( wxThreadEvent& aEvent )
+{
+    ChatContextCompactingData* data = aEvent.GetPayload<ChatContextCompactingData*>();
+
+    AppendHtml( "<p><font color='#FFA500'><i>Compacting context...</i></font></p>" );
+
+    if( data )
+        delete data;
+}
+
+
+void AGENT_FRAME::OnChatContextRecovered( wxThreadEvent& aEvent )
+{
+    ChatContextRecoveredData* data = aEvent.GetPayload<ChatContextRecoveredData*>();
+
+    if( data && !data->summarizedMessages.empty() && data->summarizedMessages.is_array() )
+    {
+        // Replace API context with compacted version (display history unchanged)
+        m_apiContext = data->summarizedMessages;
+
+        // Show notification
+        AppendHtml( "<p><font color='#FFA500'><i>Context compacted. Retrying...</i></font></p>" );
+
+        // Retry with compacted context
+        CallAfter( [this]() { RetryLastRequest(); } );
+    }
+
+    if( data )
+        delete data;
 }

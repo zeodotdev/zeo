@@ -37,6 +37,7 @@ set( AGENT_SRCS
 
     # Core logic modules
     core/agent_tools.cpp
+    core/chat_controller.cpp
 
     # Rendering
     rendering/agent_markdown.cpp

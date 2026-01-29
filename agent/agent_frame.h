@@ -24,6 +24,7 @@ class AGENT_THREAD;
 class AGENT_AUTH;
 class PENDING_CHANGES_PANEL;
 class HISTORY_PANEL;
+class CHAT_CONTROLLER;
 class wxStaticText;
 struct CONFLICT_INFO;
 
@@ -83,12 +84,6 @@ public:
     void OnSchematicChangeHandled( bool aAccepted );
     void OnPcbChangeHandled( bool aAccepted );
 
-    // Async tool execution event handlers
-    void OnToolExecutionComplete( wxCommandEvent& aEvent );
-    void OnToolExecutionError( wxCommandEvent& aEvent );
-    void OnToolExecutionTimeout( wxTimerEvent& aEvent );
-    void OnToolExecutionProgress( wxCommandEvent& aEvent );
-
     // Async LLM streaming event handlers
     void OnLLMStreamChunk( wxThreadEvent& aEvent );
     void OnLLMStreamComplete( wxThreadEvent& aEvent );
@@ -97,17 +92,24 @@ public:
     // Title generation event handler
     void OnTitleGeneratedEvent( wxThreadEvent& aEvent );
 
-    // Tool call helper (legacy synchronous - will be deprecated)
+    // Controller event handlers (events from CHAT_CONTROLLER)
+    void OnChatTextDelta( wxThreadEvent& aEvent );
+    void OnChatThinkingStart( wxThreadEvent& aEvent );
+    void OnChatThinkingDelta( wxThreadEvent& aEvent );
+    void OnChatThinkingDone( wxThreadEvent& aEvent );
+    void OnChatToolStart( wxThreadEvent& aEvent );
+    void OnChatToolComplete( wxThreadEvent& aEvent );
+    void OnChatTurnComplete( wxThreadEvent& aEvent );
+    void OnChatError( wxThreadEvent& aEvent );
+    void OnChatStateChanged( wxThreadEvent& aEvent );
+    void OnChatTitleGenerated( wxThreadEvent& aEvent );
+    void OnChatHistoryLoaded( wxThreadEvent& aEvent );
+    void OnChatContextStatus( wxThreadEvent& aEvent );
+    void OnChatContextCompacting( wxThreadEvent& aEvent );
+    void OnChatContextRecovered( wxThreadEvent& aEvent );
+
+    // Tool call helper (synchronous)
     std::string SendRequest( int aDest, const std::string& aPayload );
-
-    // Async tool execution (new non-blocking interface)
-    void ExecuteToolAsync( const std::string& aToolName,
-                           const nlohmann::json& aInput,
-                           const std::string& aToolUseId );
-
-    // State machine helpers
-    AgentConversationState GetConversationState() const;
-    bool                   CanAcceptUserInput() const;
 
     DECLARE_EVENT_TABLE()
 
@@ -208,21 +210,14 @@ private:
     std::unique_ptr<AGENT_LLM_CLIENT>  m_llmClient;          // LLM client instance
     nlohmann::json                     m_pendingToolCalls;   // Tool calls awaiting execution
 
+    // Chat Controller (manages chat state and logic)
+    std::unique_ptr<CHAT_CONTROLLER> m_chatController;
+
     void InitializeTools();                                                    // Setup tool definitions
     std::string ExecuteTool( const std::string& aName, const nlohmann::json& aInput );  // Execute a single tool
-    void HandleLLMEvent( const LLM_EVENT& aEvent );                           // Process LLM events
-    void ContinueConversation();                                               // Continue after tool results
-    void AddToolResultToHistory( const std::string& aToolUseId, const std::string& aResult );
-    void AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBlocks );
-
-    // Async tool execution helpers
-    void ProcessToolResult( const std::string& aToolUseId, const std::string& aResult, bool aSuccess );
-    void ContinueConversationWithToolResult();  // Non-blocking continuation
-    std::string BuildToolPayload( const std::string& aToolName, const nlohmann::json& aInput );
 
     // Async LLM streaming helpers
     void StartAsyncLLMRequest();  // Start an async LLM request
-    void HandleLLMChunk( const LLMStreamChunk& aChunk );  // Process a streaming chunk
     void RetryLastRequest();      // Retry after context recovery
 
     // Agent change approval

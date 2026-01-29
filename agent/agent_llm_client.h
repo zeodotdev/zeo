@@ -225,6 +225,7 @@ private:
         std::string       currentToolInput; // Accumulated tool input JSON
         bool              inToolInput;      // Currently accumulating tool input
         std::string       currentThinking;  // Accumulated thinking text
+        std::string       currentSignature; // Accumulated thinking signature (for API)
         bool              inThinking;       // Currently accumulating thinking block
     };
 

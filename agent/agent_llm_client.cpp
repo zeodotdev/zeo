@@ -1128,13 +1128,20 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
 
                     if( !thinking.empty() )
                     {
+                        ctx->currentThinking += thinking;  // Accumulate for API
+
                         LLMStreamChunk chunk;
                         chunk.type = LLMChunkType::THINKING;
                         chunk.thinking_text = thinking;
                         PostLLMChunk( ctx->handler, chunk );
                     }
                 }
-                // signature_delta is ignored - we don't need to display signatures
+                else if( deltaType == "signature_delta" )
+                {
+                    // Accumulate signature for sending back to API
+                    std::string signature = delta.value( "signature", "" );
+                    ctx->currentSignature += signature;
+                }
             }
             else if( eventType == "content_block_stop" )
             {
@@ -1159,13 +1166,16 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                 }
                 else if( ctx->inThinking )
                 {
-                    // Thinking block complete - post THINKING_DONE
+                    // Thinking block complete - post THINKING_DONE with accumulated content and signature
                     LLMStreamChunk chunk;
                     chunk.type = LLMChunkType::THINKING_DONE;
+                    chunk.thinking_text = ctx->currentThinking;      // Full thinking content
+                    chunk.thinking_signature = ctx->currentSignature; // Signature for API
                     PostLLMChunk( ctx->handler, chunk );
 
                     ctx->inThinking = false;
                     ctx->currentThinking.clear();
+                    ctx->currentSignature.clear();
                 }
             }
             else if( eventType == "message_delta" )

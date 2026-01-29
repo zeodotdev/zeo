@@ -881,6 +881,35 @@ void* LLM_REQUEST_THREAD::Entry()
 
     if( http_code != 200 )
     {
+        // Check for context_exhausted error (HTTP 400 with recovery messages)
+        if( http_code == 400 )
+        {
+            try
+            {
+                json errorJson = json::parse( ctx.buffer );
+                if( errorJson.value( "error", "" ) == "context_exhausted" &&
+                    errorJson.contains( "summarizedMessages" ) )
+                {
+                    // Send context exhausted event with recovery messages
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::CONTEXT_EXHAUSTED;
+                    chunk.summarized_messages = errorJson["summarizedMessages"];
+                    PostLLMChunk( m_handler, chunk );
+
+                    // Send completion (this was handled, not a failure)
+                    LLMStreamComplete complete;
+                    complete.success = true;
+                    PostLLMComplete( m_handler, complete );
+                    curl_easy_cleanup( curl );
+                    return nullptr;
+                }
+            }
+            catch( ... )
+            {
+                // JSON parse error - fall through to normal error handling
+            }
+        }
+
         std::string errorMsg = "LLM API error: HTTP " + std::to_string( http_code );
         // Include the response body which contains error details
         if( !ctx.buffer.empty() )
@@ -972,6 +1001,36 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                 chunk.context_percent_used = j.value( "percent_used", 0 );
                 chunk.context_compacted = j.value( "compacted", false );
                 PostLLMChunk( ctx->handler, chunk );
+            }
+            catch( const json::exception& )
+            {
+                // JSON parse error - skip this event
+            }
+            continue;
+        }
+
+        // Handle context_compacting event (Scenario B: server is compacting)
+        if( sseEventType == "context_compacting" )
+        {
+            LLMStreamChunk chunk;
+            chunk.type = LLMChunkType::CONTEXT_COMPACTING;
+            PostLLMChunk( ctx->handler, chunk );
+            continue;
+        }
+
+        // Handle context_truncated event (Scenario B: mid-response truncation with recovery)
+        if( sseEventType == "context_truncated" )
+        {
+            try
+            {
+                json j = json::parse( data );
+                if( j.contains( "summarizedMessages" ) )
+                {
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::CONTEXT_TRUNCATED;
+                    chunk.summarized_messages = j["summarizedMessages"];
+                    PostLLMChunk( ctx->handler, chunk );
+                }
             }
             catch( const json::exception& )
             {

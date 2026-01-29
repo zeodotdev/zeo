@@ -684,6 +684,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Initialize History
     m_chatHistory = nlohmann::json::array();
+    m_apiContext = nlohmann::json::array();
     m_pendingToolCalls = nlohmann::json::array();
 
     // Initialize chat history persistence with timestamp conversation ID
@@ -1570,8 +1571,10 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     if( !m_pcbJson.empty() )
         systemPrompt += "\n\nCURRENT PCB CONTEXT:\n" + m_pcbJson;
 
-    // Update History
-    m_chatHistory.push_back( { { "role", "user" }, { "content", text.ToStdString() } } );
+    // Update History (both display and API context)
+    nlohmann::json userMsg = { { "role", "user" }, { "content", text.ToStdString() } };
+    m_chatHistory.push_back( userMsg );
+    m_apiContext.push_back( userMsg );
     m_chatHistoryDb.Save( m_chatHistory );
 
     // Capture first user message for title generation
@@ -1725,6 +1728,7 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
         }
 
         m_chatHistory.push_back( assistantMsg );
+        m_apiContext.push_back( assistantMsg );
         m_chatHistoryDb.Save( m_chatHistory );
     }
 
@@ -1815,7 +1819,9 @@ void AGENT_FRAME::OnHtmlLinkClick( wxHtmlLinkEvent& aEvent )
     else if( href == "tool:reject" )
     {
         AppendHtml( "<p><i>Tool call rejected by user.</i></p>" );
-        m_chatHistory.push_back( { { "role", "user" }, { "content", "Tool execution rejected." } } );
+        nlohmann::json rejectMsg = { { "role", "user" }, { "content", "Tool execution rejected." } };
+        m_chatHistory.push_back( rejectMsg );
+        m_apiContext.push_back( rejectMsg );
         // Optionally resume generation or wait for user input?
         // Usually better to let user type why.
     }
@@ -1908,8 +1914,9 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     }
     else
     {
-        m_chatHistory.push_back(
-                { { "role", "user" }, { "content", "Error: Unknown tool command '" + commandName + "'" } } );
+        nlohmann::json errorMsg = { { "role", "user" }, { "content", "Error: Unknown tool command '" + commandName + "'" } };
+        m_chatHistory.push_back( errorMsg );
+        m_apiContext.push_back( errorMsg );
         m_pendingTool = "";
         // RenderChat(); // Assuming RenderChat is a function that updates the UI based on m_chatHistory
         return;
@@ -1928,7 +1935,9 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     // Append Tool Output to History as User message (or System)?
     // "Tool Output: [JSON]"
     std::string toolMsg = "Tool Output (" + toolToRun + "):\n" + toolOutput;
-    m_chatHistory.push_back( { { "role", "user" }, { "content", toolMsg } } );
+    nlohmann::json toolMsgJson = { { "role", "user" }, { "content", toolMsg } };
+    m_chatHistory.push_back( toolMsgJson );
+    m_apiContext.push_back( toolMsgJson );
 
     // Styled Terminal Execution Box (Result)
     wxString htmlOutput = toolOutput;
@@ -2287,6 +2296,7 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
             }
 
             m_chatHistory.push_back( assistantMsg );
+            m_apiContext.push_back( assistantMsg );
             m_chatHistoryDb.Save( m_chatHistory );
 
             // Preserve expanded state before re-rendering
@@ -2365,6 +2375,7 @@ void AGENT_FRAME::AddToolResultToHistory( const std::string& aToolUseId, const s
     });
 
     m_chatHistory.push_back( toolResultMsg );
+    m_apiContext.push_back( toolResultMsg );
     m_chatHistoryDb.Save( m_chatHistory );
 }
 
@@ -2395,6 +2406,7 @@ void AGENT_FRAME::AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBl
 
     assistantMsg["content"] = content;
     m_chatHistory.push_back( assistantMsg );
+    m_apiContext.push_back( assistantMsg );
     m_chatHistoryDb.Save( m_chatHistory );
 
     // Reset accumulated text
@@ -2771,6 +2783,7 @@ void AGENT_FRAME::ContinueConversationWithToolResult()
 
         toolResultMsg["content"] = content;
         m_chatHistory.push_back( toolResultMsg );
+        m_apiContext.push_back( toolResultMsg );
 
         // Clear collected results
         m_conversationCtx.completed_tool_results.clear();
@@ -2822,10 +2835,11 @@ void AGENT_FRAME::StartAsyncLLMRequest()
 
     std::string systemPrompt = GetSystemPrompt();
 
-    // Filter out thinking blocks from chat history before sending to API
+    // Filter out thinking blocks from API context before sending to API
     // (Anthropic requires signatures for thinking blocks, which we don't store)
+    // Note: m_apiContext may be compacted after context recovery
     nlohmann::json filteredHistory = nlohmann::json::array();
-    for( const auto& msg : m_chatHistory )
+    for( const auto& msg : m_apiContext )
     {
         if( msg.contains( "content" ) && msg["content"].is_array() )
         {
@@ -2863,6 +2877,26 @@ void AGENT_FRAME::StartAsyncLLMRequest()
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
         m_actionButton->SetLabel( "Send" );
     }
+}
+
+
+void AGENT_FRAME::RetryLastRequest()
+{
+    // Reset streaming state for retry
+    m_currentResponse.clear();
+    m_thinkingContent.Clear();
+    m_thinkingHtml.Clear();
+    m_toolCallHtml.Clear();
+    m_thinkingExpanded = false;
+    m_isThinking = false;
+    m_pendingToolCalls = nlohmann::json::array();
+
+    // Ensure we're in the right state
+    m_conversationCtx.Reset();
+    m_conversationCtx.TransitionTo( AgentConversationState::WAITING_FOR_LLM );
+
+    // Start the async LLM request (uses m_apiContext which has been compacted)
+    StartAsyncLLMRequest();
 }
 
 
@@ -3086,6 +3120,7 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
             }
 
             m_chatHistory.push_back( assistantMsg );
+            m_apiContext.push_back( assistantMsg );
             m_chatHistoryDb.Save( m_chatHistory );
 
             // Preserve expanded state before re-rendering
@@ -3122,6 +3157,29 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
         {
             AppendHtml( "<p><font color='#FFA500'><i>Context was automatically "
                         "compacted to continue the conversation.</i></font></p>" );
+        }
+        break;
+    }
+    case LLMChunkType::CONTEXT_COMPACTING:
+    {
+        // Server is compacting context (Scenario B only) - show status
+        AppendHtml( "<p><font color='#FFA500'><i>Compacting context...</i></font></p>" );
+        break;
+    }
+    case LLMChunkType::CONTEXT_EXHAUSTED:
+    case LLMChunkType::CONTEXT_TRUNCATED:
+    {
+        // Context recovery - replace API context with compacted messages
+        if( !aChunk.summarized_messages.empty() && aChunk.summarized_messages.is_array() )
+        {
+            // Replace API context with compacted version (display history unchanged)
+            m_apiContext = aChunk.summarized_messages;
+
+            // Show notification
+            AppendHtml( "<p><font color='#FFA500'><i>Context compacted. Retrying...</i></font></p>" );
+
+            // Retry with compacted context
+            CallAfter( [this]() { RetryLastRequest(); } );
         }
         break;
     }
@@ -3203,6 +3261,7 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
 
     // Clear current chat and start fresh
     m_chatHistory = nlohmann::json::array();
+    m_apiContext = nlohmann::json::array();
     m_fullHtmlContent = "<html><body bgcolor='#1E1E1E' text='#FFFFFF'><p>Welcome to KiCad Agent.</p></body></html>";
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
@@ -3262,6 +3321,7 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
 
         // Load history (this also loads the title into m_chatHistoryDb)
         m_chatHistory = m_chatHistoryDb.Load( selectedId );
+        m_apiContext = m_chatHistory;  // Start with full history as API context
 
         // Update chat name label with title from loaded history
         std::string title = m_chatHistoryDb.GetTitle();

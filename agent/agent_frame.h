@@ -131,7 +131,8 @@ private:
     std::string m_pcbSummary;
 
     // Chat State
-    nlohmann::json m_chatHistory;     // Full history
+    nlohmann::json m_chatHistory;     // Full history for display/persistence
+    nlohmann::json m_apiContext;      // Context sent to API (may be compacted)
     std::string    m_currentResponse; // Streaming accumulator
     std::string    m_pendingTool;     // Tool waiting for approval
     bool           m_stopRequested;   // Flag for sync wait loops
@@ -207,6 +208,7 @@ private:
     // Async LLM streaming helpers
     void StartAsyncLLMRequest();  // Start an async LLM request
     void HandleLLMChunk( const LLMStreamChunk& aChunk );  // Process a streaming chunk
+    void RetryLastRequest();      // Retry after context recovery
 
     // Agent change approval
     bool m_hasPendingSchChanges;    // True if schematic has pending agent changes

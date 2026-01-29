@@ -4,6 +4,7 @@
 #include <wx/event.h>
 #include <string>
 #include <memory>
+#include <nlohmann/json.hpp>
 
 // Forward declaration
 class wxEvtHandler;
@@ -98,15 +99,18 @@ void PostToolTimeout( wxEvtHandler* aHandler, const std::string& aToolUseId );
  */
 enum class LLMChunkType
 {
-    TEXT,            // Text content delta
-    THINKING_START,  // Thinking block started (show loading)
-    THINKING,        // Thinking block content delta (streamed incrementally)
-    THINKING_DONE,   // Thinking block complete
-    TOOL_USE,        // Tool call with id, name, input
-    TOOL_USE_DONE,   // All tool calls parsed, ready to execute
-    END_TURN,        // Model finished (no more tool calls)
-    ERROR,           // Error occurred
-    CONTEXT_STATUS   // Context usage status from server
+    TEXT,              // Text content delta
+    THINKING_START,    // Thinking block started (show loading)
+    THINKING,          // Thinking block content delta (streamed incrementally)
+    THINKING_DONE,     // Thinking block complete
+    TOOL_USE,          // Tool call with id, name, input
+    TOOL_USE_DONE,     // All tool calls parsed, ready to execute
+    END_TURN,          // Model finished (no more tool calls)
+    ERROR,             // Error occurred
+    CONTEXT_STATUS,    // Context usage status from server
+    CONTEXT_COMPACTING,// Server is compacting context (show "Compacting...")
+    CONTEXT_EXHAUSTED, // HTTP 400 context exhausted with recovery messages
+    CONTEXT_TRUNCATED  // Mid-response truncation with recovery messages
 };
 
 /**
@@ -126,6 +130,9 @@ struct LLMStreamChunk
     // Context status fields (for CONTEXT_STATUS events)
     int            context_percent_used;  // 0-100
     bool           context_compacted;     // true if context was compacted
+
+    // Context recovery fields (for CONTEXT_EXHAUSTED/CONTEXT_TRUNCATED events)
+    nlohmann::json summarized_messages;   // Compacted messages for retry
 
     LLMStreamChunk() : type( LLMChunkType::TEXT ),
                        context_percent_used( 0 ),

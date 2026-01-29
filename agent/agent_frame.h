@@ -216,6 +216,15 @@ private:
     void CheckForPendingChanges();  // Query editors for pending changes
     void ShowApproveRejectButtons(); // Show pending changes button in control bar
     void ClearApprovalButtons( bool aIsSchematic );  // Clear approval buttons when diff overlay dismissed
+
+    // Pending editor open request
+    bool        m_pendingOpenSch;       // True if schematic editor open is pending approval
+    bool        m_pendingOpenPcb;       // True if PCB editor open is pending approval
+    std::string m_pendingOpenToolId;    // Tool use ID for the pending open request
+    void ShowOpenEditorApproval( const wxString& aEditorType );
+    void OnApproveOpenEditor();
+    void OnRejectOpenEditor();
+    bool DoOpenEditor( FRAME_T aFrameType );
 };
 
 #endif // AGENT_FRAME_H

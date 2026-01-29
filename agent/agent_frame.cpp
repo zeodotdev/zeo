@@ -494,7 +494,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_pendingChangesPanel( nullptr ),
         m_workerThread( nullptr ),
         m_hasPendingSchChanges( false ),
-        m_hasPendingPcbChanges( false )
+        m_hasPendingPcbChanges( false ),
+        m_pendingOpenSch( false ),
+        m_pendingOpenPcb( false )
 {
 
     // --- UI Layout ---
@@ -1531,6 +1533,37 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         return;
     }
 
+    // Auto-reject pending open editor request if user sends a new message
+    // We handle this directly here instead of calling OnRejectOpenEditor/ProcessToolResult
+    // because we don't want to trigger a new LLM request - OnSend will do that
+    if( m_pendingOpenSch || m_pendingOpenPcb )
+    {
+        wxString editorName = m_pendingOpenSch ? "Schematic" : "PCB";
+        std::string toolId = m_pendingOpenToolId;
+
+        // Clear pending state
+        m_pendingOpenSch = false;
+        m_pendingOpenPcb = false;
+        m_pendingOpenToolId.clear();
+
+        // Add tool_result directly to history so API doesn't complain about missing tool_result
+        nlohmann::json toolResultMsg;
+        toolResultMsg["role"] = "user";
+        toolResultMsg["content"] = nlohmann::json::array( {
+            {
+                { "type", "tool_result" },
+                { "tool_use_id", toolId },
+                { "content", "User declined to open " + editorName.ToStdString() + " editor" }
+            }
+        } );
+        m_chatHistory.push_back( toolResultMsg );
+        m_apiContext.push_back( toolResultMsg );
+
+        // Clear tool call UI
+        m_toolCallHtml = "";
+        m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
+    }
+
     wxString text = m_inputCtrl->GetValue();
     if( text.IsEmpty() )
         return;
@@ -1824,6 +1857,14 @@ void AGENT_FRAME::OnHtmlLinkClick( wxHtmlLinkEvent& aEvent )
         m_apiContext.push_back( rejectMsg );
         // Optionally resume generation or wait for user input?
         // Usually better to let user type why.
+    }
+    else if( href == "agent:approve_open" )
+    {
+        OnApproveOpenEditor();
+    }
+    else if( href == "agent:reject_open" )
+    {
+        OnRejectOpenEditor();
     }
     else if( href.StartsWith( "toggle:thinking:" ) )
     {
@@ -2383,11 +2424,20 @@ void AGENT_FRAME::AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBl
 {
     using json = nlohmann::json;
 
-    // Build assistant message with text (if any) and tool_use blocks
+    // Build assistant message with thinking (if any), text (if any), and tool_use blocks
     json assistantMsg;
     assistantMsg["role"] = "assistant";
 
     json content = json::array();
+
+    // Add thinking block first (if present) - must come before text/tool_use
+    if( !m_thinkingContent.IsEmpty() )
+    {
+        content.push_back( {
+            { "type", "thinking" },
+            { "thinking", m_thinkingContent.ToStdString() }
+        });
+    }
 
     // Add accumulated text if present
     if( !m_currentResponse.empty() )
@@ -2409,8 +2459,20 @@ void AGENT_FRAME::AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBl
     m_apiContext.push_back( assistantMsg );
     m_chatHistoryDb.Save( m_chatHistory );
 
-    // Reset accumulated text
+    // Add thinking to historical storage so next thinking gets correct index
+    if( !m_thinkingContent.IsEmpty() )
+    {
+        m_historicalThinking.push_back( m_thinkingContent );
+        if( m_thinkingExpanded )
+            m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
+    }
+
+    // Reset accumulated state
     m_currentResponse = "";
+    m_thinkingContent.Clear();
+    m_thinkingHtml.Clear();  // Clear rendered thinking HTML to avoid duplicate display
+    m_thinkingExpanded = false;
+    m_currentThinkingIndex = -1;
 }
 
 // ============================================================================
@@ -2459,6 +2521,24 @@ void AGENT_FRAME::ExecuteToolAsync( const std::string& aToolName,
     {
         existingTool->start_time = wxGetLocalTimeMillis();
         existingTool->is_executing = true;
+    }
+
+    // Handle open_editor tool specially - requires user approval
+    if( toolName == "open_editor" )
+    {
+        std::string editorType = toolInput.value( "editor_type", "" );
+
+        // Store the pending request
+        m_pendingOpenSch = ( editorType == "sch" );
+        m_pendingOpenPcb = ( editorType == "pcb" );
+        m_pendingOpenToolId = toolUseId;
+
+        // Show approval buttons in chat
+        wxString editorLabel = m_pendingOpenSch ? "Schematic" : "PCB";
+        ShowOpenEditorApproval( editorLabel );
+
+        // Return immediately - tool result will be sent after user responds
+        return;
     }
 
     // Build the payload for the target frame
@@ -3542,6 +3622,12 @@ void AGENT_FRAME::RenderChatHistory()
         }
     }
 
+    // Include any pending tool call UI (e.g., open editor approval)
+    if( !m_toolCallHtml.IsEmpty() )
+    {
+        m_fullHtmlContent += m_toolCallHtml;
+    }
+
     m_fullHtmlContent += "</body></html>";
 
     SetHtml( m_fullHtmlContent );
@@ -3715,4 +3801,84 @@ void AGENT_FRAME::ClearApprovalButtons( bool aIsSchematic )
         Layout();
         AppendHtml( "<p><i>Changes handled via overlay.</i></p>" );
     }
+}
+
+
+void AGENT_FRAME::ShowOpenEditorApproval( const wxString& aEditorType )
+{
+    // Update m_toolCallHtml instead of using AppendHtml() so the approval UI
+    // survives calls to UpdateAgentResponse()
+    m_toolCallHtml = wxString::Format(
+        "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td>"
+        "<font color='#4ec9b0'><b>Open %s Editor?</b></font> "
+        "<a href=\"agent:approve_open\" style=\"color: #00AA00;\">[Open]</a> "
+        "<a href=\"agent:reject_open\" style=\"color: #AA0000;\">[Cancel]</a>"
+        "</td></tr></table>",
+        aEditorType );
+    UpdateAgentResponse();
+}
+
+
+void AGENT_FRAME::OnApproveOpenEditor()
+{
+    bool success = false;
+    wxString editorName;
+
+    if( m_pendingOpenSch )
+    {
+        editorName = "Schematic";
+        success = DoOpenEditor( FRAME_SCH );
+    }
+    else if( m_pendingOpenPcb )
+    {
+        editorName = "PCB";
+        success = DoOpenEditor( FRAME_PCB_EDITOR );
+    }
+
+    // Build tool result message
+    std::string result = success
+        ? editorName.ToStdString() + " editor opened successfully"
+        : "Failed to open " + editorName.ToStdString() + " editor";
+
+    // Clear pending state before processing result (in case of re-entrancy)
+    std::string toolId = m_pendingOpenToolId;
+    m_pendingOpenSch = false;
+    m_pendingOpenPcb = false;
+    m_pendingOpenToolId.clear();
+
+    // Send tool result back to LLM - this will continue the conversation
+    // ProcessToolResult will display the result in the tool call HTML
+    ProcessToolResult( toolId, result, success );
+}
+
+
+void AGENT_FRAME::OnRejectOpenEditor()
+{
+    wxString editorName = m_pendingOpenSch ? "Schematic" : "PCB";
+
+    // Clear pending state before processing result (in case of re-entrancy)
+    std::string toolId = m_pendingOpenToolId;
+    m_pendingOpenSch = false;
+    m_pendingOpenPcb = false;
+    m_pendingOpenToolId.clear();
+
+    // Send rejection result to LLM
+    // ProcessToolResult will display the result in the tool call HTML
+    ProcessToolResult( toolId,
+        "User declined to open " + editorName.ToStdString() + " editor", false );
+}
+
+
+bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
+{
+    KIWAY_PLAYER* player = Kiway().Player( aFrameType, true );
+    if( !player )
+        return false;
+
+    player->Show( true );
+    if( player->IsIconized() )
+        player->Iconize( false );
+    player->Raise();
+
+    return true;
 }

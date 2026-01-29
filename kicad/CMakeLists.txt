@@ -14,6 +14,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/eeschema
     ${CMAKE_SOURCE_DIR}/kicad/pcm
     ${CMAKE_SOURCE_DIR}/agent
+    ${CMAKE_SOURCE_DIR}/agent/auth
     ${INC_AFTER}
     )
 
@@ -51,8 +52,8 @@ set( KICAD_SRCS
     tools/kicad_manager_actions.cpp
     tools/kicad_manager_control.cpp
     session_manager.cpp
-    ${CMAKE_SOURCE_DIR}/agent/agent_auth.cpp
-    ${CMAKE_SOURCE_DIR}/agent/agent_keychain.cpp
+    ${CMAKE_SOURCE_DIR}/agent/auth/agent_auth.cpp
+    ${CMAKE_SOURCE_DIR}/agent/auth/agent_keychain.cpp
     )
 
 set( KICAD_CLI_SRCS

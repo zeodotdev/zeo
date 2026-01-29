@@ -10,27 +10,44 @@ include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
     ${CMAKE_SOURCE_DIR}/common
     ${CMAKE_SOURCE_DIR}/common/dialogs
-    ${CMAKE_SOURCE_DIR}/common
-    ${CMAKE_SOURCE_DIR}/common/dialogs
     ${CMAKE_SOURCE_DIR}/utility
     ${CMAKE_SOURCE_DIR}/thirdparty/nlohmann_json
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/rendering
+    ${CMAKE_CURRENT_SOURCE_DIR}/ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/ipc
+    ${CMAKE_CURRENT_SOURCE_DIR}/auth
     ${INC_AFTER}
     )
 
 
 # Sources for the standalone executable
 set( AGENT_SRCS
+    # Entry point and main frame
     agent.cpp
     agent_frame.cpp
+
+    # Core modules (kept at root level)
     agent_llm_client.cpp
     agent_thread.cpp
     agent_events.cpp
     agent_state.cpp
     agent_chat_history.cpp
-    agent_auth.cpp
-    agent_keychain.cpp
-    pending_changes_popup.cpp
-    history_panel.cpp
+
+    # Core logic modules
+    core/agent_tools.cpp
+
+    # Rendering
+    rendering/agent_markdown.cpp
+
+    # UI components
+    ui/pending_changes_popup.cpp
+    ui/history_panel.cpp
+
+    # Authentication
+    auth/agent_auth.cpp
+    auth/agent_keychain.cpp
 )
 
 
@@ -45,17 +62,7 @@ endif()
 # Create the standalone executable
 # Uses single_top.cpp as the main entry point which loads the KIFACE
 add_executable( agent WIN32 MACOSX_BUNDLE
-    agent.cpp
-    agent_frame.cpp
-    agent_llm_client.cpp
-    agent_thread.cpp
-    agent_events.cpp
-    agent_state.cpp
-    agent_chat_history.cpp
-    agent_auth.cpp
-    agent_keychain.cpp
-    pending_changes_popup.cpp
-    history_panel.cpp
+    ${AGENT_SRCS}
     ${CMAKE_SOURCE_DIR}/common/single_top.cpp
     ${AGENT_RESOURCES}
     )

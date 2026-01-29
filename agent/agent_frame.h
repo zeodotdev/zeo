@@ -184,7 +184,6 @@ private:
     void     SetHtml( const wxString& aHtml );
     void     UpdateAgentResponse();    // Re-render current response with markdown
     void     AutoScrollToBottom();     // Scroll to bottom only if user hasn't scrolled up
-    wxString GetToolDescription( const std::string& aToolName, const nlohmann::json& aInput ); // Human-readable tool description
 
     // Generating animation
     wxTimer  m_generatingTimer;        // Timer for animating dots

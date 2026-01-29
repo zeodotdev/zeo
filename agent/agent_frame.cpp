@@ -1,10 +1,12 @@
 #include "agent_frame.h"
 #include "agent_thread.h"
 #include "agent_chat_history.h"
-#include "agent_auth.h"
-#include "agent_keychain.h"
-#include "pending_changes_popup.h"
-#include "history_panel.h"
+#include "auth/agent_auth.h"
+#include "auth/agent_keychain.h"
+#include "ui/pending_changes_popup.h"
+#include "ui/history_panel.h"
+#include "rendering/agent_markdown.h"
+#include "core/agent_tools.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -32,456 +34,6 @@
 #include <wx/icon.h>
 
 using json = nlohmann::json;
-
-// Helper function to wrap long lines for wxHtmlWindow display
-// Inserts <br> tags to prevent horizontal overflow
-static wxString WrapLongLines( const wxString& aText, int aMaxChars = 60 )
-{
-    wxString result;
-    int lineLen = 0;
-
-    for( size_t i = 0; i < aText.length(); i++ )
-    {
-        wxChar ch = aText[i];
-
-        if( ch == '\n' || ( aText.Mid( i, 4 ) == "<br>" ) )
-        {
-            // Reset line length on explicit breaks
-            lineLen = 0;
-            if( ch == '\n' )
-            {
-                result += "<br>";
-                continue;
-            }
-        }
-
-        result += ch;
-        lineLen++;
-
-        // Insert break at max length, preferring to break after certain characters
-        if( lineLen >= aMaxChars )
-        {
-            // Look for a good break point (space, comma, colon, etc.)
-            bool breakInserted = false;
-            for( int j = result.length() - 1; j >= (int)result.length() - 20 && j >= 0; j-- )
-            {
-                wxChar c = result[j];
-                if( c == ' ' || c == ',' || c == ':' || c == ';' || c == '{' || c == '}' || c == '[' || c == ']' )
-                {
-                    result.insert( j + 1, "<br>" );
-                    breakInserted = true;
-                    break;
-                }
-            }
-            if( !breakInserted )
-            {
-                result += "<br>";
-            }
-            lineLen = 0;
-        }
-    }
-
-    return result;
-}
-
-// Helper function to process inline markdown (bold, italic, code, links)
-static wxString ProcessInlineMarkdown( const wxString& aText )
-{
-    wxString processed = aText;
-
-    // Inline code `code` -> monospace
-    wxString temp;
-    bool inInlineCode = false;
-    wxString codeContent;
-    for( size_t j = 0; j < processed.length(); j++ )
-    {
-        if( processed[j] == '`' )
-        {
-            if( !inInlineCode )
-            {
-                inInlineCode = true;
-                codeContent.clear();
-            }
-            else
-            {
-                temp += "<font face='Courier' color='#ce9178'>" + codeContent + "</font>";
-                inInlineCode = false;
-            }
-        }
-        else if( inInlineCode )
-        {
-            codeContent += processed[j];
-        }
-        else
-        {
-            temp += processed[j];
-        }
-    }
-    if( inInlineCode )
-        temp += "`" + codeContent; // Unclosed backtick
-    processed = temp;
-
-    // Bold **text** - use wxString positions consistently (handles Unicode correctly)
-    int boldIterations = 0;
-    while( boldIterations < 100 )
-    {
-        boldIterations++;
-        int start = processed.Find( "**" );
-        if( start == wxNOT_FOUND ) break;
-
-        // Find closing ** after the opening one
-        wxString afterStart = processed.Mid( start + 2 );
-        int endOffset = afterStart.Find( "**" );
-        if( endOffset == wxNOT_FOUND ) break;
-
-        int end = start + 2 + endOffset;
-        wxString before = processed.Left( start );
-        wxString bold = processed.Mid( start + 2, end - start - 2 );
-        wxString after = processed.Mid( end + 2 );
-        processed = before + "<b>" + bold + "</b>" + after;
-    }
-
-    // Italic *text* (but not **)
-    temp.clear();
-    bool inItalic = false;
-    for( size_t j = 0; j < processed.length(); j++ )
-    {
-        if( processed[j] == '*' && ( j + 1 >= processed.length() || processed[j+1] != '*' ) &&
-            ( j == 0 || processed[j-1] != '*' ) )
-        {
-            if( !inItalic )
-            {
-                temp += "<i>";
-                inItalic = true;
-            }
-            else
-            {
-                temp += "</i>";
-                inItalic = false;
-            }
-        }
-        else
-        {
-            temp += processed[j];
-        }
-    }
-    if( inItalic )
-        temp += "</i>"; // Auto-close
-    processed = temp;
-
-    // Links [text](url) - use wxString positions consistently
-    int linkIterations = 0;
-    while( linkIterations < 100 )
-    {
-        linkIterations++;
-        int bracketStart = processed.Find( "[" );
-        if( bracketStart == wxNOT_FOUND ) break;
-
-        int bracketEnd = processed.Find( "](" );
-        if( bracketEnd == wxNOT_FOUND || bracketEnd < bracketStart ) break;
-
-        // Find closing ) after ](
-        wxString afterBracket = processed.Mid( bracketEnd + 2 );
-        int parenEndOffset = afterBracket.Find( ")" );
-        if( parenEndOffset == wxNOT_FOUND ) break;
-
-        int parenEnd = bracketEnd + 2 + parenEndOffset;
-
-        wxString before = processed.Left( bracketStart );
-        wxString linkText = processed.Mid( bracketStart + 1, bracketEnd - bracketStart - 1 );
-        wxString url = processed.Mid( bracketEnd + 2, parenEnd - bracketEnd - 2 );
-        wxString after = processed.Mid( parenEnd + 1 );
-
-        processed = before + "<a href='" + url + "'>" + linkText + "</a>" + after;
-    }
-
-    return processed;
-}
-
-// Helper function to convert Markdown to HTML for wxHtmlWindow
-static wxString MarkdownToHtml( const wxString& aMarkdown )
-{
-    wxString result;
-    wxArrayString lines;
-
-    // Split into lines
-    wxString current;
-    for( size_t i = 0; i < aMarkdown.length(); i++ )
-    {
-        if( aMarkdown[i] == '\n' )
-        {
-            lines.Add( current );
-            current.clear();
-        }
-        else
-        {
-            current += aMarkdown[i];
-        }
-    }
-    if( !current.empty() )
-        lines.Add( current );
-
-    bool inCodeBlock = false;
-    bool inList = false;
-    bool inTable = false;
-    wxString codeBlockContent;
-
-    for( size_t i = 0; i < lines.GetCount(); i++ )
-    {
-        wxString line = lines[i];
-        wxString trimmed = line;
-        trimmed.Trim( false ).Trim( true );
-
-        // Code blocks (```)
-        if( trimmed.StartsWith( "```" ) )
-        {
-            if( !inCodeBlock )
-            {
-                inCodeBlock = true;
-                codeBlockContent.clear();
-                // Close any open list
-                if( inList )
-                {
-                    result += "</ul>";
-                    inList = false;
-                }
-            }
-            else
-            {
-                // End code block - render with dark background
-                codeBlockContent.Replace( "&", "&amp;" );
-                codeBlockContent.Replace( "<", "&lt;" );
-                codeBlockContent.Replace( ">", "&gt;" );
-                codeBlockContent.Replace( "\n", "<br>" );
-                result += "<table width='100%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>";
-                result += "<font color='#d4d4d4' size='2'>";
-                result += WrapLongLines( codeBlockContent );
-                result += "</font></td></tr></table>";
-                inCodeBlock = false;
-            }
-            continue;
-        }
-
-        if( inCodeBlock )
-        {
-            if( !codeBlockContent.empty() )
-                codeBlockContent += "\n";
-            codeBlockContent += line;
-            continue;
-        }
-
-        // Tables (lines starting with |)
-        if( trimmed.StartsWith( "|" ) && trimmed.EndsWith( "|" ) )
-        {
-            // Check if this is a separator line (|---|---|)
-            bool isSeparator = true;
-            for( size_t j = 0; j < trimmed.length(); j++ )
-            {
-                wxChar c = trimmed[j];
-                if( c != '|' && c != '-' && c != ':' && c != ' ' )
-                {
-                    isSeparator = false;
-                    break;
-                }
-            }
-
-            if( isSeparator )
-            {
-                // Mark that we've seen separator - next rows are data rows
-                // The header row was already added, so just continue
-                continue;
-            }
-
-            if( !inTable )
-            {
-                if( inList ) { result += "</ul>"; inList = false; }
-                result += "<table width='100%' cellspacing='0' cellpadding='6' bgcolor='#2d2d2d'>";
-                inTable = true;
-            }
-
-            // Parse table row - collect cells first
-            wxArrayString cells;
-            wxString cell;
-            bool inCell = false;
-            for( size_t j = 0; j < trimmed.length(); j++ )
-            {
-                if( trimmed[j] == '|' )
-                {
-                    if( inCell )
-                    {
-                        cell.Trim( false ).Trim( true );
-                        cells.Add( cell );
-                        cell.clear();
-                    }
-                    inCell = true;
-                }
-                else if( inCell )
-                {
-                    cell += trimmed[j];
-                }
-            }
-
-            // Check if next line is separator (this is header row)
-            bool isHeader = false;
-            if( i + 1 < lines.GetCount() )
-            {
-                wxString nextLine = lines[i + 1];
-                nextLine.Trim( false ).Trim( true );
-                if( nextLine.StartsWith( "|" ) )
-                {
-                    isHeader = true;
-                    for( size_t k = 0; k < nextLine.length(); k++ )
-                    {
-                        wxChar c = nextLine[k];
-                        if( c != '|' && c != '-' && c != ':' && c != ' ' )
-                        {
-                            isHeader = false;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Render row
-            result += "<tr>";
-            for( size_t c = 0; c < cells.GetCount(); c++ )
-            {
-                wxString cellContent = ProcessInlineMarkdown( cells[c] );
-                if( isHeader )
-                {
-                    result += "<td bgcolor='#3d3d3d'><font color='#ffffff'><b>" + cellContent + "</b></font></td>";
-                }
-                else
-                {
-                    result += "<td><font color='#d4d4d4'>" + cellContent + "</font></td>";
-                }
-            }
-            result += "</tr>";
-            continue;
-        }
-        else if( inTable )
-        {
-            result += "</table><br>";
-            inTable = false;
-        }
-
-        // Close list if we hit a non-list line
-        if( inList && !trimmed.StartsWith( "-" ) && !trimmed.StartsWith( "*" ) &&
-            !trimmed.StartsWith( "1." ) && !trimmed.StartsWith( "2." ) && !trimmed.StartsWith( "3." ) &&
-            !trimmed.IsEmpty() )
-        {
-            result += "</ul>";
-            inList = false;
-        }
-
-        // Empty lines
-        if( trimmed.IsEmpty() )
-        {
-            if( inList )
-            {
-                result += "</ul>";
-                inList = false;
-            }
-            result += "<br>";
-            continue;
-        }
-
-        // Headings (with extra spacing after larger headings)
-        if( trimmed.StartsWith( "######" ) )
-        {
-            result += "<br><b><font size='2'>" + ProcessInlineMarkdown( trimmed.Mid( 6 ).Trim( false ) ) + "</font></b><br>";
-            continue;
-        }
-        if( trimmed.StartsWith( "#####" ) )
-        {
-            result += "<br><b><font size='2'>" + ProcessInlineMarkdown( trimmed.Mid( 5 ).Trim( false ) ) + "</font></b><br>";
-            continue;
-        }
-        if( trimmed.StartsWith( "####" ) )
-        {
-            result += "<br><b><font size='3'>" + ProcessInlineMarkdown( trimmed.Mid( 4 ).Trim( false ) ) + "</font></b><br>";
-            continue;
-        }
-        if( trimmed.StartsWith( "###" ) )
-        {
-            result += "<br><b><font size='3'>" + ProcessInlineMarkdown( trimmed.Mid( 3 ).Trim( false ) ) + "</font></b><br>";
-            continue;
-        }
-        if( trimmed.StartsWith( "##" ) )
-        {
-            result += "<br><b><font size='4'>" + ProcessInlineMarkdown( trimmed.Mid( 2 ).Trim( false ) ) + "</font></b><br>";
-            continue;
-        }
-        if( trimmed.StartsWith( "#" ) )
-        {
-            result += "<br><b><font size='5'>" + ProcessInlineMarkdown( trimmed.Mid( 1 ).Trim( false ) ) + "</font></b><br>";
-            continue;
-        }
-
-        // Blockquotes
-        if( trimmed.StartsWith( ">" ) )
-        {
-            wxString quote = ProcessInlineMarkdown( trimmed.Mid( 1 ).Trim( false ) );
-            result += "<table width='100%' bgcolor='#3d3d3d' cellpadding='5'><tr>";
-            result += "<td width='3' bgcolor='#569cd6'></td>";
-            result += "<td><font color='#d4d4d4'><i>" + quote + "</i></font></td>";
-            result += "</tr></table>";
-            continue;
-        }
-
-        // Unordered lists
-        if( trimmed.StartsWith( "- " ) || trimmed.StartsWith( "* " ) )
-        {
-            if( !inList )
-            {
-                result += "<ul>";
-                inList = true;
-            }
-            result += "<li>" + ProcessInlineMarkdown( trimmed.Mid( 2 ) ) + "</li>";
-            continue;
-        }
-
-        // Ordered lists (simple check for 1. 2. 3. etc)
-        if( trimmed.length() > 2 && trimmed[1] == '.' && trimmed[0] >= '0' && trimmed[0] <= '9' )
-        {
-            if( !inList )
-            {
-                result += "<ul>";
-                inList = true;
-            }
-            result += "<li>" + ProcessInlineMarkdown( trimmed.Mid( 2 ).Trim( false ) ) + "</li>";
-            continue;
-        }
-
-        // Horizontal rule
-        if( trimmed == "---" || trimmed == "***" || trimmed == "___" )
-        {
-            result += "<hr>";
-            continue;
-        }
-
-        // Regular paragraph - process inline formatting
-        result += ProcessInlineMarkdown( trimmed ) + "<br>";
-    }
-
-    // Close any open elements
-    if( inList )
-        result += "</ul>";
-    if( inTable )
-        result += "</table>";
-    if( inCodeBlock )
-    {
-        codeBlockContent.Replace( "&", "&amp;" );
-        codeBlockContent.Replace( "<", "&lt;" );
-        codeBlockContent.Replace( ">", "&gt;" );
-        codeBlockContent.Replace( "\n", "<br>" );
-        result += "<table width='100%' bgcolor='#2d2d2d' cellpadding='8'><tr><td>";
-        result += "<font color='#d4d4d4' size='2'>" + WrapLongLines( codeBlockContent ) + "</font>";
-        result += "</td></tr></table>";
-    }
-
-    return result;
-}
 
 BEGIN_EVENT_TABLE( AGENT_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, AGENT_FRAME::OnExit )
@@ -997,7 +549,7 @@ void AGENT_FRAME::UpdateAgentResponse()
     }
 
     // Append the current response with markdown formatting
-    html += MarkdownToHtml( m_currentResponse );
+    html += AgentMarkdown::ToHtml( m_currentResponse );
 
     // Include any tool call HTML (preserved across re-renders)
     if( !m_toolCallHtml.IsEmpty() )
@@ -1022,78 +574,6 @@ void AGENT_FRAME::UpdateAgentResponse()
 
     SetHtml( html );
     m_fullHtmlContent = html;
-}
-
-wxString AGENT_FRAME::GetToolDescription( const std::string& aToolName, const nlohmann::json& aInput )
-{
-    // Generate human-readable description based on tool name and input
-    if( aToolName == "run_shell" || aToolName == "run_python" )
-    {
-        std::string mode = aInput.value( "mode", "python" );
-        std::string code = aInput.value( "code", "" );
-
-        // Try to extract a description from the code
-        // Look for a comment at the start like "# Description: ..." or just "# ..."
-        std::string desc;
-        size_t firstNewline = code.find( '\n' );
-        std::string firstLine = ( firstNewline != std::string::npos ) ? code.substr( 0, firstNewline ) : code;
-
-        if( firstLine.length() > 2 && firstLine[0] == '#' )
-        {
-            // Extract the comment text
-            desc = firstLine.substr( 1 );
-            // Trim leading whitespace
-            size_t start = desc.find_first_not_of( " \t" );
-            if( start != std::string::npos )
-                desc = desc.substr( start );
-            // Remove "Description:" prefix if present
-            if( desc.find( "Description:" ) == 0 )
-                desc = desc.substr( 12 );
-            // Trim again
-            start = desc.find_first_not_of( " \t" );
-            if( start != std::string::npos )
-                desc = desc.substr( start );
-        }
-
-        // If we found a description, use it
-        if( !desc.empty() && desc.length() < 100 )
-        {
-            return wxString::FromUTF8( desc );
-        }
-
-        // Otherwise, try to infer from the code content
-        if( code.find( "add_symbol" ) != std::string::npos )
-            return "Adding symbol to schematic";
-        else if( code.find( "delete" ) != std::string::npos || code.find( "remove" ) != std::string::npos )
-            return "Removing component";
-        else if( code.find( "move" ) != std::string::npos || code.find( "position" ) != std::string::npos )
-            return "Moving component";
-        else if( code.find( "connect" ) != std::string::npos || code.find( "wire" ) != std::string::npos )
-            return "Adding connections";
-        else if( code.find( "get_symbols" ) != std::string::npos || code.find( "find" ) != std::string::npos )
-            return "Searching schematic";
-        else if( code.find( "property" ) != std::string::npos || code.find( "value" ) != std::string::npos )
-            return "Modifying component properties";
-
-        // Fallback to mode-based description
-        if( mode == "kipy_schematic" )
-            return "Modifying schematic";
-        else if( mode == "kipy_pcb" )
-            return "Modifying PCB layout";
-        else
-            return "Executing Python script";
-    }
-    else if( aToolName == "run_terminal" )
-    {
-        std::string cmd = aInput.value( "command", "" );
-        if( cmd.length() > 50 )
-            cmd = cmd.substr( 0, 47 ) + "...";
-        return wxString::Format( "Running: %s", cmd );
-    }
-    else
-    {
-        return wxString::Format( "Executing %s", aToolName );
-    }
 }
 
 void AGENT_FRAME::OnGeneratingTimer( wxTimerEvent& aEvent )
@@ -2545,94 +2025,16 @@ void AGENT_FRAME::OnPopupClick( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::InitializeTools()
 {
-    using json = nlohmann::json;
-
-    m_tools.clear();
-
-    // Tool 1: run_shell - Execute Python code in KiCad IPC shell
-    LLM_TOOL runShell;
-    runShell.name = "run_shell";
-    runShell.description = "Execute Python code in the KiCad IPC shell. Use mode 'sch' for schematic operations "
-                           "(sch object pre-imported) or 'pcb' for board operations (board object pre-imported). "
-                           "kipy, Vector2 are also pre-imported.";
-    runShell.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "mode", {
-                { "type", "string" },
-                { "enum", json::array( { "sch", "pcb" } ) },
-                { "description", "sch for schematic operations, pcb for board operations" }
-            }},
-            { "code", {
-                { "type", "string" },
-                { "description", "Python code to execute. Variables available: kipy, sch/board (depending on mode), Vector2" }
-            }}
-        }},
-        { "required", json::array( { "mode", "code" } ) }
-    };
-    m_tools.push_back( runShell );
-
-    // Tool 2: run_terminal - Execute bash/shell commands
-    LLM_TOOL runTerminal;
-    runTerminal.name = "run_terminal";
-    runTerminal.description = "Execute bash/shell commands for file operations, git, and other terminal tasks.";
-    runTerminal.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "command", {
-                { "type", "string" },
-                { "description", "Bash command to execute" }
-            }}
-        }},
-        { "required", json::array( { "command" } ) }
-    };
-    m_tools.push_back( runTerminal );
-
-    // Tool 3: open_editor - Open schematic or PCB editor with user approval
-    LLM_TOOL openEditor;
-    openEditor.name = "open_editor";
-    openEditor.description = "Request to open the schematic or PCB editor. "
-                             "This will prompt the user for approval before opening. "
-                             "Use editor_type 'sch' for schematic editor or 'pcb' for PCB editor.";
-    openEditor.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "editor_type", {
-                { "type", "string" },
-                { "enum", json::array( { "sch", "pcb" } ) },
-                { "description", "Editor to open: 'sch' for schematic, 'pcb' for PCB" }
-            }}
-        }},
-        { "required", json::array( { "editor_type" } ) }
-    };
-    m_tools.push_back( openEditor );
+    m_tools = AgentTools::GetToolDefinitions();
 }
 
 std::string AGENT_FRAME::ExecuteTool( const std::string& aName, const nlohmann::json& aInput )
 {
-    if( aName == "run_shell" )
-    {
-        std::string mode = aInput.value( "mode", "" );
-        std::string code = aInput.value( "code", "" );
-
-        if( mode.empty() || code.empty() )
-            return "Error: run_shell requires 'mode' and 'code' parameters";
-
-        // Build the command string for the terminal frame
-        std::string command = "run_shell " + mode + " " + code;
-        return SendRequest( FRAME_TERMINAL, command );
-    }
-    else if( aName == "run_terminal" )
-    {
-        std::string command = aInput.value( "command", "" );
-
-        if( command.empty() )
-            return "Error: run_terminal requires 'command' parameter";
-
-        return SendRequest( FRAME_TERMINAL, "run_terminal " + command );
-    }
-
-    return "Error: Unknown tool '" + aName + "'";
+    // Delegate to AgentTools with a callback to SendRequest
+    return AgentTools::ExecuteToolSync( aName, aInput,
+        [this]( int aDest, const std::string& aPayload ) {
+            return SendRequest( aDest, aPayload );
+        } );
 }
 
 void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
@@ -2726,7 +2128,7 @@ void AGENT_FRAME::HandleLLMEvent( const LLM_EVENT& aEvent )
                 fflush( stderr );
 
                 // Show "Running..." state in tool call HTML
-                wxString desc = GetToolDescription( first->tool_name, first->tool_input );
+                wxString desc = AgentTools::GetToolDescription( first->tool_name, first->tool_input );
                 m_toolCallHtml = wxString::Format(
                     "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
                     "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
@@ -3035,40 +2437,19 @@ std::string AGENT_FRAME::BuildToolPayload( const std::string& aToolName, const n
     fprintf( stderr, "AGENT BuildToolPayload: aInput=%s\n", aInput.dump().c_str() );
     fflush( stderr );
 
-    // Build the command string for the terminal based on tool name
-    if( aToolName == "run_shell" )
+    std::string result = AgentTools::BuildToolPayload( aToolName, aInput );
+
+    if( result.find( "Error:" ) == 0 )
     {
-        fprintf( stderr, "AGENT BuildToolPayload: Matched run_shell\n" );
-        fflush( stderr );
-
-        std::string code = aInput.value( "code", "" );
-        std::string mode = aInput.value( "mode", "sch" );
-
-        fprintf( stderr, "AGENT BuildToolPayload: mode='%s', code_len=%zu\n", mode.c_str(), code.length() );
-        fflush( stderr );
-
-        if( code.empty() )
-            return "Error: run_shell requires 'code' parameter";
-
-        // All modes go through terminal with same format
-        return "run_shell " + mode + " " + code;
+        fprintf( stderr, "AGENT BuildToolPayload: Error - %s\n", result.c_str() );
     }
-    else if( aToolName == "run_terminal" )
+    else
     {
-        fprintf( stderr, "AGENT BuildToolPayload: Matched run_terminal\n" );
-        fflush( stderr );
-
-        std::string command = aInput.value( "command", "" );
-
-        if( command.empty() )
-            return "Error: run_terminal requires 'command' parameter";
-
-        return "run_terminal " + command;
+        fprintf( stderr, "AGENT BuildToolPayload: Built payload for '%s'\n", aToolName.c_str() );
     }
-
-    fprintf( stderr, "AGENT BuildToolPayload: No match! Returning error\n" );
     fflush( stderr );
-    return "Error: Unknown tool '" + aToolName + "'";
+
+    return result;
 }
 
 
@@ -3167,7 +2548,7 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
 
     // Get tool info before removing from pending
     PendingToolCall* tool = m_conversationCtx.FindPendingToolCall( aToolUseId );
-    wxString toolDesc = tool ? GetToolDescription( tool->tool_name, tool->tool_input ) : "Tool execution";
+    wxString toolDesc = tool ? AgentTools::GetToolDescription( tool->tool_name, tool->tool_input ) : "Tool execution";
     std::string toolName = tool ? tool->tool_name : "unknown";
 
     // Check if this is a Python error (contains traceback)
@@ -3256,7 +2637,7 @@ void AGENT_FRAME::ProcessToolResult( const std::string& aToolUseId,
         if( next )
         {
             // Append next tool's "Running..." to the HTML
-            wxString nextDesc = GetToolDescription( next->tool_name, next->tool_input );
+            wxString nextDesc = AgentTools::GetToolDescription( next->tool_name, next->tool_input );
             m_toolCallHtml += wxString::Format(
                 "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
                 "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
@@ -3576,7 +2957,7 @@ void AGENT_FRAME::HandleLLMChunk( const LLMStreamChunk& aChunk )
                 fflush( stderr );
 
                 // Show "Running..." state in tool call HTML
-                wxString desc = GetToolDescription( first->tool_name, first->tool_input );
+                wxString desc = AgentTools::GetToolDescription( first->tool_name, first->tool_input );
                 m_toolCallHtml = wxString::Format(
                     "<br><br><table width='100%%' bgcolor='#2d2d2d' cellpadding='10'><tr><td style='word-wrap:break-word;'>"
                     "<font color='#4ec9b0'><b>Tool Call:</b></font> %s<br>"
@@ -3998,7 +3379,7 @@ void AGENT_FRAME::RenderChatHistory()
             else if( role == "assistant" )
             {
                 // Left-aligned markdown formatted response
-                m_fullHtmlContent += MarkdownToHtml( content );
+                m_fullHtmlContent += AgentMarkdown::ToHtml( content );
                 m_fullHtmlContent += "<br>";
             }
         }
@@ -4021,7 +3402,7 @@ void AGENT_FRAME::RenderChatHistory()
                     if( role == "assistant" )
                     {
                         // Left-aligned markdown formatted response
-                        m_fullHtmlContent += MarkdownToHtml( display );
+                        m_fullHtmlContent += AgentMarkdown::ToHtml( display );
                         m_fullHtmlContent += "<br>";
                     }
                     else if( role == "user" )
@@ -4091,7 +3472,7 @@ void AGENT_FRAME::RenderChatHistory()
                     // Render tool_use block with human-readable description
                     std::string toolName = block.value( "name", "unknown" );
                     nlohmann::json toolInput = block.value( "input", nlohmann::json::object() );
-                    wxString desc = GetToolDescription( toolName, toolInput );
+                    wxString desc = AgentTools::GetToolDescription( toolName, toolInput );
 
                     // Store for pairing with result (next block)
                     m_lastToolDesc = desc;

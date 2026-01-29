@@ -142,6 +142,17 @@ public:
 
     SCH_SCREEN* GetScreen() const override;
 
+    /**
+     * Get the screen for API operations. When an agent transaction is active,
+     * returns the target sheet's screen. Otherwise returns the current screen.
+     */
+    SCH_SCREEN* GetScreenForApi() const;
+
+    /**
+     * Check if an agent transaction is currently active.
+     */
+    bool IsAgentTransactionActive() const { return m_agentTransactionActive; }
+
     SELECTION& GetCurrentSelection() override;
 
     SCHEMATIC& Schematic() const;

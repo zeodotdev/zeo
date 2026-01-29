@@ -369,7 +369,7 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
         return tl::unexpected( e );
     }
 
-    SCH_SCREEN* screen = m_frame->GetScreen();
+    SCH_SCREEN* screen = m_frame->GetScreenForApi();
 
     if( !screen )
     {
@@ -572,7 +572,7 @@ void API_HANDLER_SCH::deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& a
     if( !m_frame )
         return;
 
-    SCH_SCREEN* screen = m_frame->GetScreen();
+    SCH_SCREEN* screen = m_frame->GetScreenForApi();
 
     if( !screen )
         return;
@@ -616,7 +616,7 @@ std::optional<EDA_ITEM*> API_HANDLER_SCH::getItemFromDocument( const DocumentSpe
     if( !validateDocument( aDocument ) )
         return std::nullopt;
 
-    SCH_SCREEN* screen = m_frame->GetScreen();
+    SCH_SCREEN* screen = m_frame->GetScreenForApi();
 
     if( !screen )
         return std::nullopt;
@@ -645,7 +645,7 @@ HANDLER_RESULT<GetItemsResponse> API_HANDLER_SCH::handleGetItems( const HANDLER_
 
     GetItemsResponse response;
 
-    SCH_SCREEN* screen = m_frame->GetScreen();
+    SCH_SCREEN* screen = m_frame->GetScreenForApi();
 
     if( !screen )
     {
@@ -812,7 +812,7 @@ HANDLER_RESULT<GetItemsResponse> API_HANDLER_SCH::handleGetItemsById(
 
     GetItemsResponse response;
 
-    SCH_SCREEN* screen = m_frame->GetScreen();
+    SCH_SCREEN* screen = m_frame->GetScreenForApi();
 
     if( !screen )
     {
@@ -879,7 +879,7 @@ HANDLER_RESULT<GetItemsResponse> API_HANDLER_SCH::handleGetItemsById(
 
 std::optional<SCH_ITEM*> API_HANDLER_SCH::getItemById( const KIID& aId )
 {
-    SCH_SCREEN* screen = m_frame->GetScreen();
+    SCH_SCREEN* screen = m_frame->GetScreenForApi();
 
     if( !screen )
         return std::nullopt;
@@ -1566,7 +1566,7 @@ void API_HANDLER_SCH::buildSheetHierarchyNode( const SCH_SHEET_PATH& aPath,
 SCH_SHEET* API_HANDLER_SCH::findSheetById( const KIID& aId )
 {
     // First, search the current screen directly for sheet items
-    SCH_SCREEN* currentScreen = m_frame->GetScreen();
+    SCH_SCREEN* currentScreen = m_frame->GetScreenForApi();
 
     if( currentScreen )
     {
@@ -1818,7 +1818,7 @@ API_HANDLER_SCH::handleCreateSheet(
         return tl::unexpected( e );
     }
 
-    SCH_SCREEN* screen = m_frame->GetScreen();
+    SCH_SCREEN* screen = m_frame->GetScreenForApi();
 
     if( !screen )
     {
@@ -3313,7 +3313,7 @@ HANDLER_RESULT<types::TitleBlockInfo> API_HANDLER_SCH::handleGetTitleBlockInfo(
     if( !documentValidation )
         return tl::unexpected( documentValidation.error() );
 
-    SCH_SCREEN* screen = m_frame->GetScreen();
+    SCH_SCREEN* screen = m_frame->GetScreenForApi();
     const TITLE_BLOCK& block = screen->GetTitleBlock();
 
     types::TitleBlockInfo response;
@@ -3347,7 +3347,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetTitleBlockInfo(
     if( std::optional<ApiResponseStatus> busy = checkForBusy() )
         return tl::unexpected( *busy );
 
-    SCH_SCREEN* screen = m_frame->GetScreen();
+    SCH_SCREEN* screen = m_frame->GetScreenForApi();
     TITLE_BLOCK block = screen->GetTitleBlock();
 
     const types::TitleBlockInfo& info = aCtx.Request.title_block();
@@ -3448,7 +3448,7 @@ HANDLER_RESULT<types::PageInfo> API_HANDLER_SCH::handleGetPageSettings(
     if( !documentValidation )
         return tl::unexpected( documentValidation.error() );
 
-    SCH_SCREEN* screen = m_frame->GetScreen();
+    SCH_SCREEN* screen = m_frame->GetScreenForApi();
     const PAGE_INFO& pageInfo = screen->GetPageSettings();
 
     types::PageInfo response;
@@ -3473,7 +3473,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetPageSettings(
     if( std::optional<ApiResponseStatus> busy = checkForBusy() )
         return tl::unexpected( *busy );
 
-    SCH_SCREEN* screen = m_frame->GetScreen();
+    SCH_SCREEN* screen = m_frame->GetScreenForApi();
     const types::PageInfo& info = aCtx.Request.page_info();
 
     PAGE_SIZE_TYPE sizeType = fromProtoPageSize( info.size_type() );

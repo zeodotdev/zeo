@@ -1006,6 +1006,45 @@ SCH_SCREEN* SCH_EDIT_FRAME::GetScreen() const
 }
 
 
+SCH_SCREEN* SCH_EDIT_FRAME::GetScreenForApi() const
+{
+    // When an agent transaction is active, operate on the target sheet's screen
+    // instead of the user's current view. This enables concurrent editing.
+    if( m_agentTransactionActive && m_agentTargetSheetUuid != NilUuid() )
+    {
+        SCH_SHEET_LIST sheetList = Schematic().Hierarchy();
+
+        fprintf( stderr, "GetScreenForApi: Agent transaction active, looking for target sheet %s\n",
+                 m_agentTargetSheetUuid.AsString().ToStdString().c_str() );
+        fflush( stderr );
+
+        // Find the path that ends at our target sheet (path.Last() matches target UUID)
+        for( const SCH_SHEET_PATH& path : sheetList )
+        {
+            if( path.size() > 0 && path.Last()->m_Uuid == m_agentTargetSheetUuid )
+            {
+                fprintf( stderr, "GetScreenForApi: Found target sheet, returning its screen\n" );
+                fflush( stderr );
+                return path.LastScreen();
+            }
+        }
+
+        // Target sheet not found - fall back to current screen
+        fprintf( stderr, "GetScreenForApi: Target sheet NOT FOUND, falling back to current screen\n" );
+        fflush( stderr );
+    }
+    else
+    {
+        fprintf( stderr, "GetScreenForApi: No agent transaction (active=%d, uuid=%s), using current screen\n",
+                 m_agentTransactionActive ? 1 : 0,
+                 m_agentTargetSheetUuid.AsString().ToStdString().c_str() );
+        fflush( stderr );
+    }
+
+    return GetCurrentSheet().LastScreen();
+}
+
+
 SCHEMATIC& SCH_EDIT_FRAME::Schematic() const
 {
     return *m_schematic;

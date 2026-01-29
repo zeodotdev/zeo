@@ -47,6 +47,12 @@ private:
     // Track if we have an active async request
     bool m_asyncRequestPending;
 
+    // Track the target sheet UUID for the current agent conversation turn.
+    // This is captured on the FIRST tool call and reused for all subsequent
+    // tool calls until the conversation turn ends.
+    std::string m_agentTargetSheetUuid;
+    bool m_hasAgentTargetSheet;
+
     // Helper to send result back to agent via ExpressMail
     void SendAgentResponse( const std::string& aResult );
 };

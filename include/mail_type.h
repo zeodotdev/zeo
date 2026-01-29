@@ -78,9 +78,11 @@ enum MAIL_T
 
     // Concurrent editing - sheet targeting
     MAIL_AGENT_TARGET_SHEET,        // Agent -> Editor: Set target sheet for operations (JSON: {sheet_uuid})
-    MAIL_AGENT_GET_CURRENT_SHEET    // Agent -> Editor: Query current sheet UUID (response via MAIL_AGENT_RESPONSE)
+    MAIL_AGENT_GET_CURRENT_SHEET,   // Agent -> Editor: Query current sheet UUID (response via MAIL_AGENT_RESPONSE)
+    MAIL_AGENT_RESET_TARGET_SHEET   // Agent -> Editor: Clear target sheet for new conversation turn
 
 };
+
 
 
 #endif // MAIL_TYPE_H_

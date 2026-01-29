@@ -1967,6 +1967,12 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     wxString modelNameProp = m_modelChoice->GetStringSelection();
     m_llmClient->SetModel( modelNameProp.ToStdString() );
 
+    // Reset target sheet for new conversation turn
+    // This clears the captured sheet from the previous turn, allowing the first
+    // tool call in this turn to capture the current sheet as the new target
+    std::string emptyPayload;
+    Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_RESET_TARGET_SHEET, emptyPayload );
+
     // Use async native tool calling (non-blocking)
     StartAsyncLLMRequest();
 }

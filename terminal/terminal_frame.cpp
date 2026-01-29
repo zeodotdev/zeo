@@ -29,7 +29,8 @@ END_EVENT_TABLE()
 TERMINAL_FRAME::TERMINAL_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         KIWAY_PLAYER( aKiway, aParent, FRAME_TERMINAL, "Terminal", wxDefaultPosition, wxDefaultSize,
                       wxDEFAULT_FRAME_STYLE, "terminal_frame_name", schIUScale ),
-        m_asyncRequestPending( false )
+        m_asyncRequestPending( false ),
+        m_hasAgentTargetSheet( false )
 {
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 

@@ -1367,18 +1367,52 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
     case MAIL_AGENT_BEGIN_TRANSACTION:
     {
-        // Agent is starting a new transaction - enable conflict detection
+        // Agent is starting/continuing a transaction - enable conflict detection
         try
         {
             nlohmann::json j = nlohmann::json::parse( payload );
             wxString sheetUuid = j.value( "sheet_uuid", "" );
 
-            wxLogDebug( "MAIL_AGENT_BEGIN_TRANSACTION: target sheet %s", sheetUuid );
-
             // Register this frame as listening for conflicts
-            // The actual conflict detection will be done by SCHEMATIC_LISTENER
             m_agentTransactionActive = true;
-            m_agentTargetSheetUuid = KIID( sheetUuid.ToStdString() );
+
+            // If we already have a valid target sheet from a previous tool call in
+            // this conversation turn, keep using it. This prevents the target from
+            // changing when the user navigates between sheets during agent execution.
+            if( m_agentTargetSheetUuid != NilUuid() )
+            {
+                fprintf( stderr, "MAIL_AGENT_BEGIN_TRANSACTION: Reusing existing target sheet UUID %s\n",
+                         m_agentTargetSheetUuid.AsString().ToStdString().c_str() );
+                fflush( stderr );
+            }
+            else if( !sheetUuid.IsEmpty() )
+            {
+                // Explicit sheet UUID provided
+                m_agentTargetSheetUuid = KIID( sheetUuid.ToStdString() );
+                fprintf( stderr, "MAIL_AGENT_BEGIN_TRANSACTION: Using provided sheet UUID %s\n",
+                         sheetUuid.ToStdString().c_str() );
+                fflush( stderr );
+            }
+            else
+            {
+                // First tool call - capture the current sheet as the target
+                // This allows the agent to work on the sheet the user is currently viewing
+                // while the user can navigate away to other sheets
+                const SCH_SHEET_PATH& currentPath = GetCurrentSheet();
+                if( currentPath.size() > 0 )
+                {
+                    m_agentTargetSheetUuid = currentPath.Last()->m_Uuid;
+                    fprintf( stderr, "MAIL_AGENT_BEGIN_TRANSACTION: Captured current sheet UUID %s\n",
+                             m_agentTargetSheetUuid.AsString().ToStdString().c_str() );
+                    fflush( stderr );
+                }
+                else
+                {
+                    m_agentTargetSheetUuid = NilUuid();
+                    fprintf( stderr, "MAIL_AGENT_BEGIN_TRANSACTION: No current sheet, using nil UUID\n" );
+                    fflush( stderr );
+                }
+            }
         }
         catch( ... )
         {
@@ -1403,6 +1437,16 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         {
             wxLogWarning( "Failed to parse MAIL_AGENT_END_TRANSACTION payload" );
         }
+        break;
+    }
+
+    case MAIL_AGENT_RESET_TARGET_SHEET:
+    {
+        // Reset target sheet for new conversation turn - sent when user sends a new message
+        m_agentTargetSheetUuid = NilUuid();
+        m_agentTransactionActive = false;
+        fprintf( stderr, "MAIL_AGENT_RESET_TARGET_SHEET: Cleared target sheet for new conversation turn\n" );
+        fflush( stderr );
         break;
     }
 

@@ -269,11 +269,14 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
                 if( !screen->CheckIfOnDrawList( schItem ) )  // don't want a loop!
                     screen->Append( schItem );
 
-                if( view )
+                // Only add to view if the item's screen is the currently displayed screen
+                // This prevents items added to other sheets from briefly appearing in the current view
+                if( view && frame && screen == frame->GetScreen() )
                     view->Add( schItem );
             }
 
-            if( frame )
+            // Only update the view if this item's screen is the currently displayed screen
+            if( frame && screen == frame->GetScreen() )
                 frame->UpdateItem( schItem, true, true );
 
             bulkAddedItems.push_back( schItem );
@@ -317,11 +320,13 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
             {
                 screen->Remove( schItem );
 
-                if( view )
+                // Only remove from view if the item's screen is the currently displayed screen
+                if( view && frame && screen == frame->GetScreen() )
                     view->Remove( schItem );
             }
 
-            if( frame )
+            // Only update the view if this item's screen is the currently displayed screen
+            if( frame && screen == frame->GetScreen() )
                 frame->UpdateItem( schItem, true, true );
 
             if( schItem->Type() == SCH_SHEET_T )
@@ -363,7 +368,8 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
                     refreshHierarchy = true;
             }
 
-            if( frame )
+            // Only update the view if this item's screen is the currently displayed screen
+            if( frame && screen == frame->GetScreen() )
                 frame->UpdateItem( schItem, false, true );
 
             itemsChanged.push_back( schItem );

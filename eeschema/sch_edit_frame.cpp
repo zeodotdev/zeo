@@ -1095,6 +1095,47 @@ void SCH_EDIT_FRAME::SetCurrentSheet( const SCH_SHEET_PATH& aSheet )
 
         Schematic().SetCurrentSheet( aSheet );
         GetCanvas()->DisplaySheet( aSheet.LastScreen() );
+
+        // Handle agent pending changes diff overlay visibility when switching sheets
+        if( m_hasAgentPendingChanges && m_agentChangedSheetPath.size() > 0 )
+        {
+            // Check if we're now on the sheet where agent changes were made
+            bool isOnTargetSheet = ( aSheet == m_agentChangedSheetPath );
+
+            if( isOnTargetSheet )
+            {
+                // Show the diff overlay on the target sheet
+                DIFF_CALLBACKS callbacks;
+                callbacks.onApprove = [this]() {
+                    if( m_showingAgentBefore )
+                        ShowAgentChangesAfter();
+                    ClearAgentPendingChanges();
+                    std::string payload = "sch";
+                    Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+                };
+                callbacks.onReject = [this]() {
+                    if( m_showingAgentBefore )
+                        ShowAgentChangesAfter();
+                    RevertAgentChanges();
+                    std::string payload = "sch";
+                    Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+                };
+                callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
+                callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
+                callbacks.onRefresh = [this]() {
+                    if( GetCanvas() )
+                        GetCanvas()->Refresh();
+                };
+
+                DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
+                DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
+            }
+            else
+            {
+                // Clear the diff overlay when not on the target sheet
+                DIFF_MANAGER::GetInstance().ClearDiff();
+            }
+        }
     }
 }
 
@@ -3135,38 +3176,71 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
     m_agentChangedBBox.Merge( newChangedBBox );
     m_hasAgentPendingChanges = true;
 
-    // Store the current sheet path so we can navigate back to it when viewing changes
-    m_agentChangedSheetPath = GetCurrentSheet();
+    // Store the target sheet path if not already set
+    // Use the agent target sheet UUID to find the correct sheet path
+    if( m_agentChangedSheetPath.size() == 0 )
+    {
+        if( m_agentTargetSheetUuid != NilUuid() )
+        {
+            // Find the sheet path that matches the target UUID
+            SCH_SHEET_LIST sheetList = Schematic().Hierarchy();
+            for( const SCH_SHEET_PATH& path : sheetList )
+            {
+                if( path.size() > 0 && path.Last()->m_Uuid == m_agentTargetSheetUuid )
+                {
+                    m_agentChangedSheetPath = path;
+                    break;
+                }
+            }
+        }
 
-    // Set up callbacks for the diff overlay
-    DIFF_CALLBACKS callbacks;
-    callbacks.onApprove = [this]() {
-        // Make sure we're showing "after" state before approving
-        if( m_showingAgentBefore )
-            ShowAgentChangesAfter();
-        ClearAgentPendingChanges();
-        // Notify agent frame that diff was handled via overlay
-        std::string payload = "sch";
-        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
-    };
-    callbacks.onReject = [this]() {
-        // Make sure we're showing "after" state before reverting
-        if( m_showingAgentBefore )
-            ShowAgentChangesAfter();
-        RevertAgentChanges();
-        // Notify agent frame that diff was handled via overlay
-        std::string payload = "sch";
-        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
-    };
-    callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
-    callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
-    callbacks.onRefresh = [this]() {
-        if( GetCanvas() )
-            GetCanvas()->Refresh();
-    };
+        // Fallback to current sheet if target not found
+        if( m_agentChangedSheetPath.size() == 0 )
+        {
+            m_agentChangedSheetPath = GetCurrentSheet();
+        }
+    }
 
-    DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
-    DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
+    // Only show the diff overlay if we're currently on the target sheet
+    bool isOnTargetSheet = ( GetCurrentSheet() == m_agentChangedSheetPath );
+
+    if( isOnTargetSheet )
+    {
+        // Set up callbacks for the diff overlay
+        DIFF_CALLBACKS callbacks;
+        callbacks.onApprove = [this]() {
+            // Make sure we're showing "after" state before approving
+            if( m_showingAgentBefore )
+                ShowAgentChangesAfter();
+            ClearAgentPendingChanges();
+            // Notify agent frame that diff was handled via overlay
+            std::string payload = "sch";
+            Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+        };
+        callbacks.onReject = [this]() {
+            // Make sure we're showing "after" state before reverting
+            if( m_showingAgentBefore )
+                ShowAgentChangesAfter();
+            RevertAgentChanges();
+            // Notify agent frame that diff was handled via overlay
+            std::string payload = "sch";
+            Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+        };
+        callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
+        callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
+        callbacks.onRefresh = [this]() {
+            if( GetCanvas() )
+                GetCanvas()->Refresh();
+        };
+
+        DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
+        DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
+    }
+    else
+    {
+        // Not on target sheet, clear any existing diff overlay
+        DIFF_MANAGER::GetInstance().ClearDiff();
+    }
 
     return hasNewChanges;
 }

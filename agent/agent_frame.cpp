@@ -483,13 +483,7 @@ void AGENT_FRAME::RebuildThinkingHtml()
     wxString expandedClass = m_thinkingExpanded ? " expanded" : "";
     wxString displayStyle = m_thinkingExpanded ? "block" : "none";
 
-    // Show animated dots while thinking is active
-    wxString thinkingText = "Thinking";
-    if( m_isThinking )
-    {
-        // Add animated dots (1-3 dots based on m_generatingDots)
-        thinkingText += wxString( '.', m_generatingDots );
-    }
+    wxString thinkingText = "Thinking ";  // Trailing space ensures underline covers full 'g'
 
     m_thinkingHtml = wxString::Format(
         "<a href=\"toggle:thinking:%d\" class=\"thinking-toggle\" data-thinking-index=\"%d\">%s</a><br>"
@@ -2653,9 +2647,9 @@ void AGENT_FRAME::ShowOpenEditorApproval( const wxString& aEditorType )
     // Use onclick for JavaScript handling with modern CSS classes
     m_toolCallHtml = wxString::Format(
         "<br><br><div class=\"tool-block\">"
-        "<span class=\"tool-status\"><b>Open %s Editor?</b></span> "
-        "<a href=\"agent:approve_open\" class=\"approve-link\">[Open]</a> "
-        "<a href=\"agent:reject_open\" class=\"deny-link\">[Cancel]</a>"
+        "<span style=\"color: white; font-weight: bold;\"><b>Open %s Editor?</b></span> "
+        "<a href=\"agent:approve_open\" class=\"approve-link\">Open</a> "
+        "<a href=\"agent:reject_open\" class=\"deny-link\">Cancel</a>"
         "</div>",
         aEditorType );
     UpdateAgentResponse();

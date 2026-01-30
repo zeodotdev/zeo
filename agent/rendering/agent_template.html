@@ -52,13 +52,15 @@ code {
 .thinking-toggle:hover { text-decoration: underline; }
 .thinking-content { color: #606060; margin-top: 8px; padding-left: 12px; border-left: 2px solid #404040; white-space: pre-wrap; display: none; }
 .thinking-content.expanded { display: block; }
-.tool-block { background: var(--bg-secondary); padding: 12px; border-radius: 6px; margin: 12px 0; }
+.tool-block { background: var(--bg-secondary); padding: 12px; border-radius: 6px; margin: 12px 0; max-width: 100%; overflow-wrap: break-word; word-break: break-word; }
 .tool-status { color: var(--accent-green); font-weight: bold; }
 .tool-status-error { color: var(--accent-red); }
 .tool-prompt { color: var(--accent-green); font-family: Menlo, Monaco, 'Courier New', monospace; }
-.tool-output { color: var(--text-secondary); font-family: Menlo, Monaco, 'Courier New', monospace; font-size: 13px; white-space: pre-wrap; }
-.approve-link { color: #00AA00; font-weight: bold; cursor: pointer; text-decoration: underline; margin: 0 8px; }
-.deny-link { color: #AA0000; font-weight: bold; cursor: pointer; text-decoration: underline; margin: 0 8px; }
+.tool-output { color: var(--text-secondary); font-family: Menlo, Monaco, 'Courier New', monospace; font-size: 13px; white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; }
+.approve-link { color: #00AA00; font-weight: bold; cursor: pointer; text-decoration: none; margin: 0 8px; }
+.approve-link:hover { text-decoration: underline; }
+.deny-link { color: #AA0000; font-weight: bold; cursor: pointer; text-decoration: none; margin: 0 8px; }
+.deny-link:hover { text-decoration: underline; }
 a { color: var(--accent-blue); }
 blockquote {
     border-left: 3px solid var(--accent-blue);

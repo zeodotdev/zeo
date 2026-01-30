@@ -6,6 +6,22 @@
 # Add KiCad Agent specific definitions
 add_definitions( -DAGENT_APP )
 
+# Generate C++ header from HTML template at build time
+set( HTML_TEMPLATE_INPUT "${CMAKE_CURRENT_SOURCE_DIR}/rendering/agent_template.html" )
+set( HTML_TEMPLATE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/agent_template_embedded.h" )
+
+add_custom_command(
+    OUTPUT "${HTML_TEMPLATE_OUTPUT}"
+    COMMAND ${CMAKE_COMMAND}
+        -DINPUT_FILE="${HTML_TEMPLATE_INPUT}"
+        -DOUTPUT_FILE="${HTML_TEMPLATE_OUTPUT}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/rendering/embed_html.cmake"
+    DEPENDS "${HTML_TEMPLATE_INPUT}" "${CMAKE_CURRENT_SOURCE_DIR}/rendering/embed_html.cmake"
+    COMMENT "Embedding agent HTML template"
+)
+
+add_custom_target( agent_html_template DEPENDS "${HTML_TEMPLATE_OUTPUT}" )
+
 include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
     ${CMAKE_SOURCE_DIR}/common
@@ -18,6 +34,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc
     ${CMAKE_CURRENT_SOURCE_DIR}/auth
+    ${CMAKE_CURRENT_BINARY_DIR}  # For generated agent_template_embedded.h
     ${INC_AFTER}
     )
 
@@ -153,6 +170,8 @@ if( APPLE )
     )
 endif()
 
+# Ensure HTML template is generated before compiling
+add_dependencies( agent_kiface agent_html_template )
 add_dependencies( agent agent_kiface )
 
 # Installation rules

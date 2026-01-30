@@ -107,7 +107,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_chatWindow->BindLoadedEvent();
 
     // Set initial page content with HTML5 template and CSS
-    m_fullHtmlContent = GetAgentHtmlTemplate() + wxS( "<p>Welcome to KiCad Agent.</p></div></body></html>" );
+    m_fullHtmlContent = GetAgentHtmlTemplate() + wxS( "</div></body></html>" );
     m_chatWindow->SetPage( m_fullHtmlContent );
     mainSizer->Add( m_chatWindow, 1, wxEXPAND | wxALL, 0 ); // Remove ALL padding for clean edge
 
@@ -251,12 +251,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_chatHistory = nlohmann::json::array();
     m_apiContext = nlohmann::json::array();
     m_pendingToolCalls = nlohmann::json::array();
-
-    // Add welcome message as an assistant message
-    m_chatHistory.push_back( {
-        { "role", "assistant" },
-        { "content", "Welcome to KiCad Agent." }
-    } );
 
     // Initialize chat history persistence with timestamp conversation ID
     wxDateTime now = wxDateTime::Now();
@@ -1873,14 +1867,8 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
     m_chatHistory = nlohmann::json::array();
     m_apiContext = nlohmann::json::array();
 
-    // Add welcome message as an assistant message
-    m_chatHistory.push_back( {
-        { "role", "assistant" },
-        { "content", "Welcome to KiCad Agent." }
-    } );
-
     // UI reset
-    m_fullHtmlContent = GetAgentHtmlTemplate() + wxS( "<p>Welcome to KiCad Agent.</p></div></body></html>" );
+    m_fullHtmlContent = GetAgentHtmlTemplate() + wxS( "</div></body></html>" );
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
     m_chatNameLabel->SetLabel( "New Chat" );

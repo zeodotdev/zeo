@@ -488,8 +488,6 @@ std::string TERMINAL_PANEL::RunLocalPython( const wxString& aCmd )
     // Start timer to poll for completion - this allows API events to be
     // processed through the NORMAL event loop, avoiding nested event
     // processing which causes memory corruption on macOS.
-    fprintf( stderr, "RunLocalPython: Starting timer\n" );
-    fflush( stderr );
     m_pythonPollTimer.Start( 50 ); // Poll every 50ms
 
     // Return empty string - the result will be shown when Python completes
@@ -503,14 +501,9 @@ std::string TERMINAL_PANEL::RunLocalPython( const wxString& aCmd )
 
 void TERMINAL_PANEL::OnPythonPollTimer( wxTimerEvent& aEvent )
 {
-    fprintf( stderr, "TIMER: m_pythonRunning=%d\n", m_pythonRunning.load() );
-    fflush( stderr );
-
     // Check if Python has completed
     if( !m_pythonRunning.load() )
     {
-        fprintf( stderr, "TIMER: Python completed, calling FinishPythonExecution\n" );
-        fflush( stderr );
         FinishPythonExecution();
         return;
     }
@@ -519,8 +512,6 @@ void TERMINAL_PANEL::OnPythonPollTimer( wxTimerEvent& aEvent )
     long timeoutMs = 60000;
     if( wxGetLocalTimeMillis() - m_pythonStartTime > timeoutMs )
     {
-        fprintf( stderr, "TIMER: Timeout!\n" );
-        fflush( stderr );
         m_pythonPollTimer.Stop();
 
         if( m_pythonThread )
@@ -558,8 +549,6 @@ void TERMINAL_PANEL::FinishPythonExecution()
     // Clear IPC shell blocking flag - Python execution is complete
     // Deferred operations were already scheduled via CallAfter by each handler,
     // they will execute now that we're clearing the blocking flag
-    fprintf( stderr, "FinishPythonExecution: Clearing IPC shell blocking\n" );
-    fflush( stderr );
     SetIPCShellBlocking( false );
 
     // Invoke completion callback if set (for async agent requests)
@@ -569,9 +558,6 @@ void TERMINAL_PANEL::FinishPythonExecution()
         std::string result = m_pythonTimedOut
             ? "Error: Python execution timed out"
             : ( m_lastPythonResult.empty() ? "(no output)" : m_lastPythonResult );
-
-        fprintf( stderr, "FinishPythonExecution: Invoking callback, success=%d\n", success );
-        fflush( stderr );
 
         // Call the callback (this will typically send ExpressMail back to agent)
         m_pythonCompletionCallback( result, success );
@@ -601,9 +587,6 @@ void TERMINAL_PANEL::OnPythonOutput( wxThreadEvent& aEvent )
 
 void TERMINAL_PANEL::OnPythonComplete( wxThreadEvent& aEvent )
 {
-    fprintf( stderr, "OnPythonComplete: called\n" );
-    fflush( stderr );
-
     wxString result = aEvent.GetString();
 
     if( !result.IsEmpty() )

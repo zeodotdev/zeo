@@ -42,8 +42,6 @@ static const char* IPC_SHELL_BLOCKING_KEY = "IPC_SHELL_BLOCKING";
 
 void SetIPCShellBlocking( bool aBlocking )
 {
-    fprintf( stderr, "SetIPCShellBlocking: Setting to %d, wxTheApp=%p\n", aBlocking, (void*)wxTheApp );
-    fflush( stderr );
 
     if( wxTheApp )
     {
@@ -55,9 +53,6 @@ void SetIPCShellBlocking( bool aBlocking )
 bool IsIPCShellBlocking()
 {
     bool blocking = wxTheApp && wxTheApp->GetClientData() != nullptr;
-    fprintf( stderr, "IsIPCShellBlocking: wxTheApp=%p, clientData=%p, returning %d\n",
-             (void*)wxTheApp, wxTheApp ? wxTheApp->GetClientData() : nullptr, blocking );
-    fflush( stderr );
     return blocking;
 }
 
@@ -65,8 +60,6 @@ void QueueDeferredOperation( std::function<void()> aOperation )
 {
     std::lock_guard<std::mutex> lock( s_deferredMutex );
     s_deferredOperations.push_back( std::move( aOperation ) );
-    fprintf( stderr, "QueueDeferredOperation: Queued operation, total=%zu\n", s_deferredOperations.size() );
-    fflush( stderr );
 }
 
 void ApplyDeferredOperations()
@@ -79,16 +72,12 @@ void ApplyDeferredOperations()
         s_deferredOperations.clear();
     }
 
-    fprintf( stderr, "ApplyDeferredOperations: Applying %zu operations\n", operations.size() );
-    fflush( stderr );
 
     for( auto& op : operations )
     {
         op();
     }
 
-    fprintf( stderr, "ApplyDeferredOperations: Done\n" );
-    fflush( stderr );
 }
 
 

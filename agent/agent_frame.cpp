@@ -678,7 +678,6 @@ void AGENT_FRAME::GenerateChatTitle()
     std::thread( [this, prompt, modelName, conversationId]() {
         try
         {
-            fprintf( stderr, "[TITLE] Starting title generation with model: %s, convId: %s\n", modelName.c_str(), conversationId.c_str() );
 
             // Create a temporary LLM client for title generation
             AGENT_LLM_CLIENT titleClient( nullptr );
@@ -702,7 +701,6 @@ void AGENT_FRAME::GenerateChatTitle()
                 }
             );
 
-            fprintf( stderr, "[TITLE] Raw title from LLM: '%s'\n", title.c_str() );
 
             // Clean up the title (remove quotes, trim whitespace)
             while( !title.empty() && ( title.front() == '"' || title.front() == '\'' || title.front() == ' ' ) )
@@ -711,26 +709,21 @@ void AGENT_FRAME::GenerateChatTitle()
                                         title.back() == '.' || title.back() == '\n' ) )
                 title.pop_back();
 
-            fprintf( stderr, "[TITLE] Cleaned title: '%s'\n", title.c_str() );
 
             // Post result to main thread using thread-safe event
             if( !title.empty() )
             {
-                fprintf( stderr, "[TITLE] Posting title to main thread for convId: %s\n", conversationId.c_str() );
                 PostTitleGenerated( this, title, conversationId );
             }
             else
             {
-                fprintf( stderr, "[TITLE] Title is empty after cleanup, not posting\n" );
             }
         }
         catch( const std::exception& e )
         {
-            fprintf( stderr, "[TITLE] Exception: %s\n", e.what() );
         }
         catch( ... )
         {
-            fprintf( stderr, "[TITLE] Unknown exception occurred\n" );
         }
     }).detach();
 }
@@ -738,7 +731,6 @@ void AGENT_FRAME::GenerateChatTitle()
 void AGENT_FRAME::OnTitleGenerated( const std::string& aTitle, const std::string& aConversationId )
 {
     wxLogDebug( "AGENT: OnTitleGenerated called with title='%s', convId='%s'", aTitle.c_str(), aConversationId.c_str() );
-    fprintf( stderr, "[TITLE] OnTitleGenerated: '%s' for convId: %s\n", aTitle.c_str(), aConversationId.c_str() );
 
     // Check if we're still on the same conversation
     std::string currentConvId = m_chatHistoryDb.GetConversationId();
@@ -750,12 +742,10 @@ void AGENT_FRAME::OnTitleGenerated( const std::string& aTitle, const std::string
         m_chatHistoryDb.Save( m_chatHistory );
         m_chatNameLabel->SetLabel( wxString::FromUTF8( aTitle ) );
         m_needsTitleGeneration = false;
-        fprintf( stderr, "[TITLE] Title saved and UI updated for current chat\n" );
     }
     else
     {
         // Different conversation - need to load, update, and save that conversation
-        fprintf( stderr, "[TITLE] Title is for different conversation, saving directly to file\n" );
 
         // Create a temporary chat history object to save to the correct file
         AGENT_CHAT_HISTORY tempHistory;
@@ -763,7 +753,6 @@ void AGENT_FRAME::OnTitleGenerated( const std::string& aTitle, const std::string
         tempHistory.SetTitle( aTitle );
         tempHistory.Save( messages );
 
-        fprintf( stderr, "[TITLE] Title saved to conversation file: %s\n", aConversationId.c_str() );
     }
 
     wxLogDebug( "AGENT: Title saved" );
@@ -772,19 +761,16 @@ void AGENT_FRAME::OnTitleGenerated( const std::string& aTitle, const std::string
 void AGENT_FRAME::OnTitleGeneratedEvent( wxThreadEvent& aEvent )
 {
     wxLogDebug( "AGENT: OnTitleGeneratedEvent received" );
-    fprintf( stderr, "[TITLE] OnTitleGeneratedEvent received\n" );
 
     // Extract the title data from the event payload
     TitleGeneratedData* data = aEvent.GetPayload<TitleGeneratedData*>();
     if( data )
     {
-        fprintf( stderr, "[TITLE] Got title from event: '%s' for convId: %s\n", data->title.c_str(), data->conversationId.c_str() );
         OnTitleGenerated( data->title, data->conversationId );
         delete data;
     }
     else
     {
-        fprintf( stderr, "[TITLE] Event payload was null\n" );
     }
 }
 
@@ -820,15 +806,9 @@ void AGENT_FRAME::OnChatScroll( wxScrollWinEvent& aEvent )
 
 void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 {
-    fprintf( stderr, "[MAIL-DEBUG] AGENT KiwayMailIn: Received command=%d\n", aEvent.Command() );
-    fflush( stderr );
-
     if( aEvent.Command() == MAIL_AGENT_RESPONSE )
     {
         std::string payload = aEvent.GetPayload();
-        fprintf( stderr, "[MAIL-DEBUG] AGENT KiwayMailIn: MAIL_AGENT_RESPONSE received, payload_len=%zu, payload='%.100s...'\n",
-                 payload.length(), payload.c_str() );
-        fflush( stderr );
 
         // Check if we're in async tool execution mode (frame's context has an executing tool)
         // NOTE: The controller also executes tools via the synchronous SendRequest path,
@@ -836,19 +816,9 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
         // actually has a tool marked as executing.
         PendingToolCall* executing = m_conversationCtx.GetExecutingToolCall();
 
-        fprintf( stderr, "AGENT KiwayMailIn: executing=%p (state=%d)\n",
-                 (void*)executing, static_cast<int>( m_conversationCtx.GetState() ) );
-        fflush( stderr );
-
         if( executing )
         {
             // Frame has an executing tool - use async path
-            fprintf( stderr, "AGENT KiwayMailIn: In async mode, found executing tool '%s'\n",
-                     executing->tool_name.c_str() );
-            fprintf( stderr, "AGENT KiwayMailIn: PendingToolCallCount=%zu\n",
-                     m_conversationCtx.GetPendingToolCallCount() );
-            fflush( stderr );
-
             // Post tool completion event
             ToolExecutionResult* result = new ToolExecutionResult();
             result->tool_use_id = executing->tool_use_id;
@@ -858,15 +828,11 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
             result->execution_time_ms = ( wxGetLocalTimeMillis() - executing->start_time ).GetValue();
 
             PostToolResult( this, *result );
-            fprintf( stderr, "AGENT KiwayMailIn: PostToolResult called\n" );
-            fflush( stderr );
             delete result;  // PostToolResult copies the data
         }
         else
         {
             // Sync mode (controller path) - store response for SendRequest() to pick up
-            fprintf( stderr, "AGENT KiwayMailIn: Sync mode - setting m_toolResponse\n" );
-            fflush( stderr );
             m_toolResponse = payload;
         }
     }
@@ -1189,11 +1155,6 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // Full page re-render - this naturally scrolls to bottom due to flex-direction: column-reverse
     SetHtml( m_fullHtmlContent );
 
-    fprintf( stderr, "[HTML-DEBUG] OnSend: Captured m_htmlBeforeAgentResponse, length=%zu, ends with </body></html>: %s\n",
-             (size_t)m_htmlBeforeAgentResponse.length(),
-             m_htmlBeforeAgentResponse.EndsWith( "</body></html>" ) ? "YES" : "NO" );
-    fflush( stderr );
-
     // Clear Input and Update UI
     m_inputCtrl->Clear();
     m_actionButton->SetLabel( "Stop" );
@@ -1217,7 +1178,6 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     if( m_needsTitleGeneration && m_firstUserMessage.empty() )
     {
         m_firstUserMessage = text.ToStdString();
-        fprintf( stderr, "[TITLE-DEBUG] Captured first user message: '%s'\n", m_firstUserMessage.c_str() );
     }
 
     // Reset frame streaming state
@@ -1615,17 +1575,12 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
 
             // Pause updates if scrolling OR if user is scrolled up
             m_userScrolledUp = active || !coupled;
-
-            fprintf( stderr, "[SCROLL-DEBUG] Scroll activity: active=%s, coupled=%s, pausing=%s\n",
-                    active ? "true" : "false",
-                    coupled ? "true" : "false",
-                    m_userScrolledUp ? "YES" : "NO" );
-            fflush( stderr );
         }
     }
     catch( const std::exception& e )
     {
-        fprintf( stderr, "AGENT: OnWebViewMessage parse error: %s\n", e.what() );
+        // Log parse errors for debugging
+        wxLogError( "AGENT: OnWebViewMessage parse error: %s", e.what() );
     }
 }
 
@@ -2146,8 +2101,6 @@ void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
 void AGENT_FRAME::RenderChatHistory()
 {
     // Clear historical thinking storage
-    fprintf( stderr, "[THINKING-DEBUG] RenderChatHistory: Clearing m_historicalThinking (was size %zu)\n",
-             m_historicalThinking.size() );
     m_historicalThinking.clear();
 
     // Build HTML from chat history with modern template
@@ -2761,24 +2714,14 @@ void AGENT_FRAME::OnChatThinkingStart( wxThreadEvent& aEvent )
 {
     ChatThinkingStartData* data = aEvent.GetPayload<ChatThinkingStartData*>();
 
-    fprintf( stderr, "[THINKING-DEBUG] OnChatThinkingStart: ENTRY - m_thinkingContent.IsEmpty=%d, m_currentThinkingIndex=%d, m_historicalThinking.size=%zu\n",
-             m_thinkingContent.IsEmpty(), m_currentThinkingIndex, m_historicalThinking.size() );
-
     // If there's existing thinking content from a previous block (e.g., before a tool call),
     // preserve it in history before starting the new block. This handles race conditions
     // where THINKING_START arrives before WAITING_FOR_LLM state change is processed.
     if( !m_thinkingContent.IsEmpty() && m_currentThinkingIndex >= 0 )
     {
-        fprintf( stderr, "[THINKING-DEBUG] OnChatThinkingStart: Pushing old thinking (index %d, content length %zu) to history\n",
-                 m_currentThinkingIndex, (size_t)m_thinkingContent.Length() );
         m_historicalThinking.push_back( m_thinkingContent );
         if( m_thinkingExpanded )
             m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
-    }
-    else
-    {
-        fprintf( stderr, "[THINKING-DEBUG] OnChatThinkingStart: NOT pushing (isEmpty=%d, index=%d)\n",
-                 m_thinkingContent.IsEmpty(), m_currentThinkingIndex );
     }
 
     // Initialize thinking state for new block
@@ -2789,8 +2732,6 @@ void AGENT_FRAME::OnChatThinkingStart( wxThreadEvent& aEvent )
     // Set index for this thinking block using m_historicalThinking.size()
     // After the push above (if any), this gives us the correct next index
     m_currentThinkingIndex = static_cast<int>( m_historicalThinking.size() );
-    fprintf( stderr, "[THINKING-DEBUG] OnChatThinkingStart: Assigned new thinking index %d (m_historicalThinking.size=%zu)\n",
-             m_currentThinkingIndex, m_historicalThinking.size() );
 
     // Rebuild thinking display (shows loading animation)
     RebuildThinkingHtml();
@@ -2874,8 +2815,6 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     // Preserve thinking content to history before clearing (needed for correct index tracking)
     if( !m_thinkingContent.IsEmpty() && m_currentThinkingIndex >= 0 )
     {
-        fprintf( stderr, "[THINKING-DEBUG] OnChatToolStart: Preserving thinking (index %d) before clearing\n",
-                 m_currentThinkingIndex );
         m_historicalThinking.push_back( m_thinkingContent );
         if( m_thinkingExpanded )
             m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
@@ -2995,9 +2934,6 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
     // Finalize thinking state
     m_isThinking = false;
 
-    fprintf( stderr, "[THINKING-DEBUG] OnChatTurnComplete: ENTRY - m_thinkingContent.IsEmpty=%d, m_currentThinkingIndex=%d, m_historicalThinking.size=%zu\n",
-             m_thinkingContent.IsEmpty(), m_currentThinkingIndex, m_historicalThinking.size() );
-
     // Sync history from controller (controller added the assistant message in END_TURN)
     if( m_chatController )
     {
@@ -3009,14 +2945,7 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
     // Preserve thinking content for index tracking (so next message gets index+1)
     if( !m_thinkingContent.IsEmpty() && m_currentThinkingIndex >= 0 )
     {
-        fprintf( stderr, "[THINKING-DEBUG] OnChatTurnComplete: Preserving thinking (index %d) to history\n",
-                 m_currentThinkingIndex );
         m_historicalThinking.push_back( m_thinkingContent );
-    }
-    else
-    {
-        fprintf( stderr, "[THINKING-DEBUG] OnChatTurnComplete: NOT preserving (isEmpty=%d, index=%d)\n",
-                 m_thinkingContent.IsEmpty(), m_currentThinkingIndex );
     }
 
     // Preserve thinking expansion state

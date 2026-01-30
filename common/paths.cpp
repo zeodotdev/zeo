@@ -536,19 +536,8 @@ void PATHS::EnsureUserPathsExist()
 #ifdef __WXMAC__
 wxString PATHS::GetOSXKicadUserDataDir()
 {
-    printf( "DEBUG: PATHS::GetOSXKicadUserDataDir called\n" );
     // According to wxWidgets documentation for GetUserDataDir:
     // Mac: ~/Library/Application Support/appname
-    if( wxTheApp )
-    {
-        printf( "DEBUG: wxTheApp is %p\n", (void*) wxTheApp );
-        printf( "DEBUG: App name: %s\n", (const char*) wxTheApp->GetAppName().utf8_str() );
-    }
-    else
-    {
-        printf( "DEBUG: wxTheApp is NULL in GetOSXKicadUserDataDir\n" );
-    }
-
     wxFileName udir( wxStandardPaths::Get().GetUserDataDir(), wxEmptyString );
 
     // Since appname is different if started via launcher or standalone binary

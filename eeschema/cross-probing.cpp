@@ -1396,17 +1396,12 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
             // changing when the user navigates between sheets during agent execution.
             if( m_agentTargetSheetUuid != NilUuid() )
             {
-                fprintf( stderr, "MAIL_AGENT_BEGIN_TRANSACTION: Reusing existing target sheet UUID %s\n",
-                         m_agentTargetSheetUuid.AsString().ToStdString().c_str() );
-                fflush( stderr );
+                // Reusing existing target sheet
             }
             else if( !sheetUuid.IsEmpty() )
             {
                 // Explicit sheet UUID provided
                 m_agentTargetSheetUuid = KIID( sheetUuid.ToStdString() );
-                fprintf( stderr, "MAIL_AGENT_BEGIN_TRANSACTION: Using provided sheet UUID %s\n",
-                         sheetUuid.ToStdString().c_str() );
-                fflush( stderr );
             }
             else
             {
@@ -1417,15 +1412,10 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                 if( currentPath.size() > 0 )
                 {
                     m_agentTargetSheetUuid = currentPath.Last()->m_Uuid;
-                    fprintf( stderr, "MAIL_AGENT_BEGIN_TRANSACTION: Captured current sheet UUID %s\n",
-                             m_agentTargetSheetUuid.AsString().ToStdString().c_str() );
-                    fflush( stderr );
                 }
                 else
                 {
                     m_agentTargetSheetUuid = NilUuid();
-                    fprintf( stderr, "MAIL_AGENT_BEGIN_TRANSACTION: No current sheet, using nil UUID\n" );
-                    fflush( stderr );
                 }
             }
         }
@@ -1460,8 +1450,6 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         // Reset target sheet for new conversation turn - sent when user sends a new message
         m_agentTargetSheetUuid = NilUuid();
         m_agentTransactionActive = false;
-        fprintf( stderr, "MAIL_AGENT_RESET_TARGET_SHEET: Cleared target sheet for new conversation turn\n" );
-        fflush( stderr );
         break;
     }
 

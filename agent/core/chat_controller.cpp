@@ -498,11 +498,6 @@ void CHAT_CONTROLLER::ExecuteNextTool()
         return;
     }
 
-    // Debug: Log the tool_use_id
-    fprintf( stderr, "CONTROLLER ExecuteNextTool: tool_name='%s' tool_use_id='%s'\n",
-             tool->tool_name.c_str(), tool->tool_use_id.c_str() );
-    fflush( stderr );
-
     // Mark as executing
     tool->is_executing = true;
     tool->start_time = wxGetUTCTimeMillis();
@@ -524,8 +519,6 @@ void CHAT_CONTROLLER::ExecuteNextTool()
     if( tool->tool_name == "open_editor" )
     {
         // Don't execute synchronously - wait for frame to handle via HandleToolResult
-        fprintf( stderr, "CONTROLLER ExecuteNextTool: open_editor requires user approval, waiting...\n" );
-        fflush( stderr );
         return;
     }
 
@@ -719,10 +712,6 @@ void CHAT_CONTROLLER::RepairHistory()
 
         if( removedCount > 0 )
         {
-            fprintf( stderr, "CONTROLLER RepairHistory: Removed %zu orphaned tool_result blocks from message %zu\n",
-                     removedCount, i );
-            fflush( stderr );
-
             if( newContent.empty() )
             {
                 // Message is now empty, mark for removal
@@ -819,10 +808,6 @@ void CHAT_CONTROLLER::RepairHistory()
                 });
             }
             historyModified = true;
-
-            fprintf( stderr, "CONTROLLER RepairHistory: Added %zu missing tool_result blocks to message %zu\n",
-                     missingIds.size(), nextMsgIdx );
-            fflush( stderr );
         }
         else
         {
@@ -843,10 +828,6 @@ void CHAT_CONTROLLER::RepairHistory()
             toolResultMsg["content"] = content;
             m_chatHistory.insert( m_chatHistory.begin() + i + 1, toolResultMsg );
             historyModified = true;
-
-            fprintf( stderr, "CONTROLLER RepairHistory: Inserted %zu tool_result blocks after message %zu\n",
-                     missingIds.size(), i );
-            fflush( stderr );
 
             i++; // Skip the message we just inserted
         }

@@ -16,12 +16,6 @@ public:
 
     bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits, KIWAY* aKiway ) override
     {
-        printf( "AGENT: OnKifaceStart called\n" );
-        if( wxTheApp )
-            printf( "AGENT: wxTheApp is %p\n", (void*) wxTheApp );
-        else
-            printf( "AGENT: wxTheApp is NULL\n" );
-
         return start_common( aCtlBits );
     }
 
@@ -34,7 +28,6 @@ public:
         case FRAME_AGENT:
         {
             AGENT_FRAME* frame = new AGENT_FRAME( aKiway, aParent );
-            printf( "AGENT: CreateKiWindow AGENT_FRAME created: %p\n", frame );
             return frame;
         }
         default: return nullptr;

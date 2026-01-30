@@ -514,14 +514,9 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
 
 void TERMINAL_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 {
-    fprintf( stderr, "TERMINAL KiwayMailIn: Received command=%d\n", aEvent.Command() );
-    fflush( stderr );
-
     if( aEvent.Command() == MAIL_AGENT_REQUEST )
     {
         std::string payload = aEvent.GetPayload();
-        fprintf( stderr, "TERMINAL KiwayMailIn: MAIL_AGENT_REQUEST, payload='%.100s...'\n", payload.c_str() );
-        fflush( stderr );
 
         // Use async execution to avoid blocking the UI thread
         ExecuteCommandForAgentAsync( payload );
@@ -531,10 +526,6 @@ void TERMINAL_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 
 void TERMINAL_FRAME::SendAgentResponse( const std::string& aResult )
 {
-    fprintf( stderr, "TERMINAL_FRAME: Sending response to agent: %.100s...\n",
-             aResult.c_str() );
-    fflush( stderr );
-
     m_asyncRequestPending = false;
 
     // ExpressMail takes a non-const reference, so we need a copy
@@ -545,14 +536,9 @@ void TERMINAL_FRAME::SendAgentResponse( const std::string& aResult )
 
 void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
 {
-    fprintf( stderr, "TERMINAL ExecuteCommandForAgentAsync: called with cmd='%.100s...'\n", aCmd.ToStdString().c_str() );
-    fflush( stderr );
-
     // If already processing a request, return error
     if( m_asyncRequestPending )
     {
-        fprintf( stderr, "TERMINAL ExecuteCommandForAgentAsync: Already processing a request\n" );
-        fflush( stderr );
         SendAgentResponse( "Error: Another request is already in progress" );
         return;
     }
@@ -561,22 +547,12 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
     cmd.Trim( false );  // Trim leading whitespace
     cmd.Trim( true );   // Trim trailing whitespace
 
-    fprintf( stderr, "TERMINAL ExecuteCommandForAgentAsync: After trim, cmd starts with: '%.20s'\n", cmd.ToStdString().c_str() );
-    fflush( stderr );
-
     // Handle new simplified commands (run_shell sch/pcb <code>)
     if( cmd.StartsWith( "run_shell " ) || cmd.StartsWith( wxT("run_shell ") ) )
     {
-        fprintf( stderr, "TERMINAL ExecuteCommandForAgentAsync: Handling run_shell command\n" );
-        fflush( stderr );
-
         wxString rest = cmd.Mid( 10 ).Trim( false );
         wxString mode = rest.BeforeFirst( ' ' );
         wxString code = rest.AfterFirst( ' ' );
-
-        fprintf( stderr, "ExecuteCommandForAgentAsync: mode='%s', code_len=%zu\n",
-                 mode.ToStdString().c_str(), code.length() );
-        fflush( stderr );
 
         // Find or create agent terminal
         TERMINAL_PANEL* active = nullptr;
@@ -650,16 +626,12 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
             beginMsg["sheet_uuid"] = "";  // Empty means current sheet
             std::string beginPayload = beginMsg.dump();
             Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_BEGIN_TRANSACTION, beginPayload );
-            fprintf( stderr, "ExecuteCommandForAgentAsync: Sent MAIL_AGENT_BEGIN_TRANSACTION to SCH editor\n" );
-            fflush( stderr );
 
             // Tell SCH editor to take a snapshot before Python execution
             nlohmann::json snapshotMsg;
             snapshotMsg["type"] = "take_snapshot";
             std::string snapshotPayload = snapshotMsg.dump();
             Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REQUEST, snapshotPayload );
-            fprintf( stderr, "ExecuteCommandForAgentAsync: Sent take_snapshot to SCH editor\n" );
-            fflush( stderr );
         }
         else if( mode == "pcb" )
         {
@@ -674,30 +646,20 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
             beginMsg["sheet_uuid"] = "";  // Not applicable for PCB
             std::string beginPayload = beginMsg.dump();
             Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_BEGIN_TRANSACTION, beginPayload );
-            fprintf( stderr, "ExecuteCommandForAgentAsync: Sent MAIL_AGENT_BEGIN_TRANSACTION to PCB editor\n" );
-            fflush( stderr );
 
             // Tell PCB editor to take a snapshot before Python execution
             nlohmann::json snapshotMsg;
             snapshotMsg["type"] = "take_snapshot";
             std::string snapshotPayload = snapshotMsg.dump();
             Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REQUEST, snapshotPayload );
-            fprintf( stderr, "ExecuteCommandForAgentAsync: Sent take_snapshot to PCB editor\n" );
-            fflush( stderr );
         }
 
         // Set up completion callback BEFORE starting execution
-        fprintf( stderr, "ExecuteCommandForAgentAsync: Setting up callback and starting Python\n" );
-        fflush( stderr );
-
         bool isPcbMode = ( mode == "pcb" );
         bool isSchMode = ( mode == "sch" );
         m_asyncRequestPending = true;
         active->SetPythonCompletionCallback(
             [this, isPcbMode, isSchMode]( const std::string& result, bool success ) {
-                fprintf( stderr, "ExecuteCommandForAgentAsync: Callback invoked, success=%d, isPcbMode=%d, isSchMode=%d\n", success, isPcbMode, isSchMode );
-                fflush( stderr );
-
                 // If this was pcb mode, tell PCB editor to detect changes and end transaction
                 if( isPcbMode )
                 {
@@ -705,16 +667,12 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                     detectMsg["type"] = "detect_changes";
                     std::string detectPayload = detectMsg.dump();
                     Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REQUEST, detectPayload );
-                    fprintf( stderr, "ExecuteCommandForAgentAsync: Sent detect_changes to PCB editor\n" );
-                    fflush( stderr );
 
                     // End agent transaction for concurrent editing support
                     nlohmann::json endMsg;
                     endMsg["commit"] = true;
                     std::string endPayload = endMsg.dump();
                     Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_END_TRANSACTION, endPayload );
-                    fprintf( stderr, "ExecuteCommandForAgentAsync: Sent MAIL_AGENT_END_TRANSACTION to PCB editor\n" );
-                    fflush( stderr );
                 }
 
                 // If this was sch mode, tell SCH editor to detect changes and end transaction
@@ -724,16 +682,12 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                     detectMsg["type"] = "detect_changes";
                     std::string detectPayload = detectMsg.dump();
                     Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REQUEST, detectPayload );
-                    fprintf( stderr, "ExecuteCommandForAgentAsync: Sent detect_changes to SCH editor\n" );
-                    fflush( stderr );
 
                     // End agent transaction for concurrent editing support
                     nlohmann::json endMsg;
                     endMsg["commit"] = true;
                     std::string endPayload = endMsg.dump();
                     Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_END_TRANSACTION, endPayload );
-                    fprintf( stderr, "ExecuteCommandForAgentAsync: Sent MAIL_AGENT_END_TRANSACTION to SCH editor\n" );
-                    fflush( stderr );
                 }
 
                 // This will be called from the main thread when Python completes
@@ -745,27 +699,14 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
 
         // Start Python execution (async, returns immediately)
         std::string fullCode = initCode + code.ToStdString();
-        fprintf( stderr, "ExecuteCommandForAgentAsync: Calling RunLocalPython with code_len=%zu\n", fullCode.size() );
-        fflush( stderr );
-
         std::string immediateResult = active->RunLocalPython( fullCode );
-
-        fprintf( stderr, "ExecuteCommandForAgentAsync: RunLocalPython returned '%s'\n", immediateResult.c_str() );
-        fflush( stderr );
 
         // Check if RunLocalPython returned an immediate error (didn't start async execution)
         if( !immediateResult.empty() && immediateResult.find( "Error:" ) == 0 )
         {
-            fprintf( stderr, "ExecuteCommandForAgentAsync: Immediate error, clearing callback\n" );
-            fflush( stderr );
             // Clear callback and send error response immediately
             active->ClearPythonCompletionCallback();
             SendAgentResponse( immediateResult );
-        }
-        else
-        {
-            fprintf( stderr, "ExecuteCommandForAgentAsync: Async execution started, waiting for callback\n" );
-            fflush( stderr );
         }
         // Otherwise, execution started - callback will be invoked when done
         return;
@@ -809,11 +750,6 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
     // Legacy format and other commands - fall back to sync version for now
     // Note: The sync version still has blocking waits for Python, so we should
     // eventually migrate all Python commands to async
-    fprintf( stderr, "TERMINAL ExecuteCommandForAgentAsync: FALLBACK to sync ExecuteCommandForAgent for cmd='%.50s...'\n",
-             aCmd.ToStdString().c_str() );
-    fflush( stderr );
     std::string result = ExecuteCommandForAgent( aCmd );
-    fprintf( stderr, "TERMINAL ExecuteCommandForAgentAsync: Sync result='%.100s...'\n", result.c_str() );
-    fflush( stderr );
     SendAgentResponse( result );
 }

@@ -56,7 +56,6 @@ bool AGENT_LLM_CLIENT::LoadApiKeys( const std::string& aEnvFilePath )
     wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
     wxString exeDir = exePath.GetPath();
 
-    fprintf( stderr, "[ENV] Executable path: %s\n", exeDir.ToStdString().c_str() );
 
     wxFileName searchPath( exeDir, "" );
     for( int i = 0; i < 8; i++ )  // Search up to 8 levels up
@@ -97,7 +96,6 @@ bool AGENT_LLM_CLIENT::LoadApiKeys( const std::string& aEnvFilePath )
     searchPaths.push_back( std::string( homeDir.mb_str() ) + "/.config/kicad-agent/.env" );
 
     // Try each path
-    fprintf( stderr, "[ENV] Searching for .env file in %zu locations...\n", searchPaths.size() );
 
     for( const auto& path : searchPaths )
     {
@@ -107,11 +105,9 @@ bool AGENT_LLM_CLIENT::LoadApiKeys( const std::string& aEnvFilePath )
             // Only log first few paths to avoid spam
             static int logCount = 0;
             if( logCount++ < 5 )
-                fprintf( stderr, "[ENV]   Not found: %s\n", path.c_str() );
             continue;
         }
 
-        fprintf( stderr, "[ENV]   FOUND: %s\n", path.c_str() );
 
         std::string line;
         while( std::getline( file, line ) )
@@ -154,17 +150,8 @@ bool AGENT_LLM_CLIENT::LoadApiKeys( const std::string& aEnvFilePath )
         // Check if we got at least one key
         if( !s_openaiApiKey.empty() || !s_anthropicApiKey.empty() )
         {
-            fprintf( stderr, "[ENV] API keys loaded successfully!\n" );
-            fprintf( stderr, "[ENV]   Anthropic key: %s\n",
-                     s_anthropicApiKey.empty() ? "(not set)" : "(set)" );
-            fprintf( stderr, "[ENV]   OpenAI key: %s\n",
-                     s_openaiApiKey.empty() ? "(not set)" : "(set)" );
             s_keysLoaded = true;
             return true;
-        }
-        else
-        {
-            fprintf( stderr, "[ENV]   File found but no valid keys parsed!\n" );
         }
     }
 
@@ -179,15 +166,11 @@ bool AGENT_LLM_CLIENT::LoadApiKeys( const std::string& aEnvFilePath )
 
     if( !s_openaiApiKey.empty() || !s_anthropicApiKey.empty() )
     {
-        fprintf( stderr, "[ENV] API keys loaded from environment variables\n" );
         s_keysLoaded = true;
         return true;
     }
 
     // No keys found - will fail when API calls are made
-    fprintf( stderr, "[ENV] ERROR: No API keys found in any location!\n" );
-    fprintf( stderr, "[ENV] Please create a .env file at: code/kicad-agent/agent/.env\n" );
-    fprintf( stderr, "[ENV] Or set KICAD_AGENT_ENV_PATH environment variable\n" );
     return false;
 }
 
@@ -823,11 +806,6 @@ void* LLM_REQUEST_THREAD::Entry()
 
     std::string requestBodyStr = requestBody.dump();
 
-    // Debug: Log request size and first part of messages for debugging
-    fprintf( stderr, "LLM_REQUEST_THREAD: Request size=%zu bytes, messages count=%zu\n",
-             requestBodyStr.size(), m_messages.size() );
-    fflush( stderr );
-
     // Get access token from auth manager
     std::string accessToken;
     if( m_client && m_client->m_auth )
@@ -936,10 +914,6 @@ void* LLM_REQUEST_THREAD::Entry()
         {
             errorMsg += "\nResponse: " + ctx.buffer.substr( 0, 500 ); // Limit to 500 chars
         }
-        // Also log to stderr for debugging
-        fprintf( stderr, "LLM_REQUEST_THREAD: API error %ld\nResponse: %s\n",
-                 http_code, ctx.buffer.c_str() );
-        fflush( stderr );
         if( !wasCancelled )
             PostLLMError( m_handler, errorMsg );
         curl_easy_cleanup( curl );

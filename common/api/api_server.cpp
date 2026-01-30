@@ -217,8 +217,6 @@ void KICAD_API_SERVER::onApiRequest( std::string* aRequest )
 
     // Queue the request for processing during idle time
     // This avoids processing during ProcessPendingEvents() which causes issues on macOS
-    fprintf( stderr, "API_SERVER: Queueing request %lu for idle-time processing\n", requestId );
-    fflush( stderr );
     {
         std::lock_guard<std::mutex> queueLock( m_queueMutex );
         m_pendingRequests[requestId] = PENDING_REQUEST( requestId, *aRequest );
@@ -300,8 +298,6 @@ void KICAD_API_SERVER::onIdle( wxIdleEvent& aEvent )
             m_hasQueuedRequests.store( false );
     }
 
-    fprintf( stderr, "API_SERVER: onIdle processing request %lu\n", requestId );
-    fflush( stderr );
 
     // Process the request and store the reply
     processApiRequest( requestId, requestString );

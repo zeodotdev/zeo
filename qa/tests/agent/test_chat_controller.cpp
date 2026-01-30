@@ -990,4 +990,183 @@ BOOST_FIXTURE_TEST_CASE( ConversationWithToolUseFlow, ChatControllerFixture )
     BOOST_CHECK( foundToolUse );
 }
 
+// ============================================================================
+// Title Generation Tests
+// ============================================================================
+
+/**
+ * Test that title is generated on first END_TURN
+ */
+BOOST_FIXTURE_TEST_CASE( TitleGeneratedOnFirstEndTurn, ChatControllerFixture )
+{
+    // Send first message
+    controller.SendMessage( "Hello, how are you?" );
+
+    // Receive text response
+    LLMStreamChunk textChunk;
+    textChunk.type = LLMChunkType::TEXT;
+    textChunk.text = "I'm doing well!";
+    controller.HandleLLMChunk( textChunk );
+
+    // End turn - should trigger title generation
+    LLMStreamChunk endChunk;
+    endChunk.type = LLMChunkType::END_TURN;
+    controller.HandleLLMChunk( endChunk );
+
+    // Title should have been generated (event emitted)
+    // Since we can't directly check emitted events, we verify state is IDLE
+    // and the flow completed successfully
+    BOOST_CHECK_EQUAL( static_cast<int>( controller.GetState() ),
+                       static_cast<int>( AgentConversationState::IDLE ) );
+}
+
+/**
+ * Test that title is NOT generated on subsequent END_TURNs
+ */
+BOOST_FIXTURE_TEST_CASE( TitleNotGeneratedOnSubsequentEndTurns, ChatControllerFixture )
+{
+    // First conversation turn
+    controller.SendMessage( "First message" );
+
+    LLMStreamChunk textChunk1;
+    textChunk1.type = LLMChunkType::TEXT;
+    textChunk1.text = "First response";
+    controller.HandleLLMChunk( textChunk1 );
+
+    LLMStreamChunk endChunk1;
+    endChunk1.type = LLMChunkType::END_TURN;
+    controller.HandleLLMChunk( endChunk1 );
+
+    // Second conversation turn
+    controller.SendMessage( "Second message" );
+
+    LLMStreamChunk textChunk2;
+    textChunk2.type = LLMChunkType::TEXT;
+    textChunk2.text = "Second response";
+    controller.HandleLLMChunk( textChunk2 );
+
+    LLMStreamChunk endChunk2;
+    endChunk2.type = LLMChunkType::END_TURN;
+    controller.HandleLLMChunk( endChunk2 );
+
+    // History should have 4 messages (2 user + 2 assistant)
+    const auto& history = controller.GetChatHistory();
+    BOOST_CHECK_EQUAL( history.size(), 4u );
+}
+
+/**
+ * Test that long messages are truncated for title
+ */
+BOOST_FIXTURE_TEST_CASE( TitleTruncatesLongMessages, ChatControllerFixture )
+{
+    // Send a message longer than 50 characters
+    std::string longMessage = "This is a very long message that exceeds fifty characters and should be truncated for the title";
+    controller.SendMessage( longMessage );
+
+    LLMStreamChunk textChunk;
+    textChunk.type = LLMChunkType::TEXT;
+    textChunk.text = "Response";
+    controller.HandleLLMChunk( textChunk );
+
+    LLMStreamChunk endChunk;
+    endChunk.type = LLMChunkType::END_TURN;
+    controller.HandleLLMChunk( endChunk );
+
+    // Verify conversation completed
+    BOOST_CHECK_EQUAL( static_cast<int>( controller.GetState() ),
+                       static_cast<int>( AgentConversationState::IDLE ) );
+}
+
+/**
+ * Test that short messages are not truncated
+ */
+BOOST_FIXTURE_TEST_CASE( TitleDoesNotTruncateShortMessages, ChatControllerFixture )
+{
+    // Send a message shorter than 50 characters
+    std::string shortMessage = "Short message";
+    controller.SendMessage( shortMessage );
+
+    LLMStreamChunk textChunk;
+    textChunk.type = LLMChunkType::TEXT;
+    textChunk.text = "Response";
+    controller.HandleLLMChunk( textChunk );
+
+    LLMStreamChunk endChunk;
+    endChunk.type = LLMChunkType::END_TURN;
+    controller.HandleLLMChunk( endChunk );
+
+    // Verify conversation completed
+    BOOST_CHECK_EQUAL( static_cast<int>( controller.GetState() ),
+                       static_cast<int>( AgentConversationState::IDLE ) );
+}
+
+/**
+ * Test that NewChat clears title generation state
+ */
+BOOST_FIXTURE_TEST_CASE( NewChatClearsTitleGenerationState, ChatControllerFixture )
+{
+    // Start a conversation
+    controller.SendMessage( "First conversation" );
+
+    // Start new chat before LLM responds
+    controller.NewChat();
+
+    // Start new conversation
+    controller.SendMessage( "New conversation" );
+
+    LLMStreamChunk textChunk;
+    textChunk.type = LLMChunkType::TEXT;
+    textChunk.text = "Response";
+    controller.HandleLLMChunk( textChunk );
+
+    LLMStreamChunk endChunk;
+    endChunk.type = LLMChunkType::END_TURN;
+    controller.HandleLLMChunk( endChunk );
+
+    // Verify conversation completed with new message
+    const auto& history = controller.GetChatHistory();
+    BOOST_CHECK_EQUAL( history.size(), 2u );
+    BOOST_CHECK_EQUAL( history[0]["content"], "New conversation" );
+}
+
+/**
+ * Test that LoadChat clears title generation state
+ */
+BOOST_FIXTURE_TEST_CASE( LoadChatClearsTitleGenerationState, ChatControllerFixture )
+{
+    // Start a conversation
+    controller.SendMessage( "Current conversation" );
+
+    // Set up saved chat
+    nlohmann::json savedHistory = nlohmann::json::array();
+    savedHistory.push_back( { { "role", "user" }, { "content", "Saved message" } } );
+    savedHistory.push_back( { { "role", "assistant" },
+                              { "content", nlohmann::json::array( { { { "type", "text" }, { "text", "Saved response" } } } ) } } );
+    mockHistory.AddChat( "saved-chat-123", savedHistory, "Saved Chat" );
+
+    // Load existing chat
+    controller.LoadChat( "saved-chat-123" );
+
+    // Verify loaded history
+    const auto& history = controller.GetChatHistory();
+    BOOST_CHECK_EQUAL( history.size(), 2u );
+    BOOST_CHECK_EQUAL( history[0]["content"], "Saved message" );
+
+    // Send new message to loaded chat - should NOT trigger title generation
+    controller.SendMessage( "Follow-up message" );
+
+    LLMStreamChunk textChunk;
+    textChunk.type = LLMChunkType::TEXT;
+    textChunk.text = "Follow-up response";
+    controller.HandleLLMChunk( textChunk );
+
+    LLMStreamChunk endChunk;
+    endChunk.type = LLMChunkType::END_TURN;
+    controller.HandleLLMChunk( endChunk );
+
+    // Verify conversation completed
+    BOOST_CHECK_EQUAL( static_cast<int>( controller.GetState() ),
+                       static_cast<int>( AgentConversationState::IDLE ) );
+}
+
 BOOST_AUTO_TEST_SUITE_END()

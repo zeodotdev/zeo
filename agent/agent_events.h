@@ -20,9 +20,6 @@ wxDECLARE_EVENT( EVT_LLM_STREAM_CHUNK, wxThreadEvent );
 wxDECLARE_EVENT( EVT_LLM_STREAM_COMPLETE, wxThreadEvent );
 wxDECLARE_EVENT( EVT_LLM_STREAM_ERROR, wxThreadEvent );
 
-// Custom event type for title generation
-wxDECLARE_EVENT( EVT_TITLE_GENERATED, wxThreadEvent );
-
 /**
  * Result data from an async tool execution
  */
@@ -178,28 +175,5 @@ void PostLLMComplete( wxEvtHandler* aHandler, const LLMStreamComplete& aComplete
  * @param aErrorMessage Description of the error
  */
 void PostLLMError( wxEvtHandler* aHandler, const std::string& aErrorMessage );
-
-/**
- * Data for title generation event.
- */
-struct TitleGeneratedData
-{
-    std::string title;
-    std::string conversationId;
-
-    TitleGeneratedData() {}
-    TitleGeneratedData( const std::string& aTitle, const std::string& aConversationId )
-        : title( aTitle ), conversationId( aConversationId ) {}
-};
-
-/**
- * Helper function to post a generated title to the main thread.
- * This is thread-safe and should be called from the background thread.
- *
- * @param aHandler The event handler to receive the title (typically AGENT_FRAME)
- * @param aTitle The generated title string
- * @param aConversationId The conversation ID this title belongs to
- */
-void PostTitleGenerated( wxEvtHandler* aHandler, const std::string& aTitle, const std::string& aConversationId );
 
 #endif // AGENT_EVENTS_H

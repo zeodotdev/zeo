@@ -22,11 +22,14 @@
 #include "agent_tools.h"
 #include "agent_llm_client.h"
 #include "agent_chat_history.h"
+#include "auth/agent_auth.h"
 
 #include <algorithm>
 #include <set>
+#include <thread>
 #include <kiway.h>
 #include <wx/log.h>
+#include <kicad_curl/kicad_curl_easy.h>
 
 // ============================================================================
 // Event definitions
@@ -56,6 +59,7 @@ CHAT_CONTROLLER::CHAT_CONTROLLER( wxEvtHandler* aEventSink )
     : m_eventSink( aEventSink ),
       m_llmClient( nullptr ),
       m_chatHistoryDb( nullptr ),
+      m_auth( nullptr ),
       m_stopRequested( false ),
       m_needsTitleGeneration( false )
 {
@@ -86,8 +90,15 @@ void CHAT_CONTROLLER::SendMessage( const std::string& aText )
         return;
     }
 
-    // Store first user message for title generation
-    if( m_chatHistory.empty() )
+    // Store first user message for title generation (count user messages, not all messages)
+    int userMessageCount = 0;
+    for( const auto& msg : m_chatHistory )
+    {
+        if( msg.contains( "role" ) && msg["role"] == "user" )
+            userMessageCount++;
+    }
+
+    if( userMessageCount == 0 )
     {
         m_firstUserMessage = aText;
         m_needsTitleGeneration = true;
@@ -928,13 +939,58 @@ void CHAT_CONTROLLER::ContinueChat()
 
 void CHAT_CONTROLLER::GenerateTitle()
 {
-    // TODO: Implement async title generation
-    // For now, just use the first few words of the user message
-    std::string title = m_firstUserMessage;
-    if( title.length() > 50 )
-        title = title.substr( 0, 47 ) + "...";
+    if( m_firstUserMessage.empty() )
+        return;
 
-    EmitEvent( EVT_CHAT_TITLE_GENERATED, ChatTitleGeneratedData( title ) );
+    if( !m_auth )
+        return;
+
+    // Capture first user message for thread
+    std::string message = m_firstUserMessage;
+
+    // Use background thread to avoid blocking
+    std::thread( [this, message]() {
+        try
+        {
+            // Check authentication
+            std::string accessToken = m_auth->GetAccessToken();
+            if( accessToken.empty() )
+                return;
+
+            // Setup HTTP request to title endpoint
+            KICAD_CURL_EASY curl;
+            curl.SetURL( "https://www.harold.so/api/llm/title" );
+            curl.SetHeader( "Content-Type", "application/json" );
+            curl.SetHeader( "Authorization", "Bearer " + accessToken );
+
+            // Build request body
+            nlohmann::json requestBody;
+            requestBody["message"] = message;
+            std::string jsonStr = requestBody.dump();
+            curl.SetPostFields( jsonStr );
+
+            // Perform request
+            curl.Perform();
+            long httpCode = curl.GetResponseStatusCode();
+
+            if( httpCode == 200 )
+            {
+                // Parse response
+                auto response = nlohmann::json::parse( curl.GetBuffer() );
+                std::string title = response.value( "title", "" );
+
+                // Emit event to main thread
+                if( !title.empty() )
+                {
+                    EmitEvent( EVT_CHAT_TITLE_GENERATED, ChatTitleGeneratedData( title ) );
+                }
+            }
+        }
+        catch( ... )
+        {
+            // Silently ignore title generation errors
+        }
+    }).detach();
 }
 
 

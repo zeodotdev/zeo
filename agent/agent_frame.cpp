@@ -232,6 +232,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_generatingDots = 0;
     m_isGenerating = false;
     m_userScrolledUp = false;
+    m_lastScrollActivityMs = 0;
     m_htmlUpdatePending = false;
     m_htmlUpdateNeeded = false;
     m_generatingTimer.Bind( wxEVT_TIMER, &AGENT_FRAME::OnGeneratingTimer, this );
@@ -425,24 +426,32 @@ void AGENT_FRAME::ShowChangedLanguage()
 
 void AGENT_FRAME::AppendHtml( const wxString& aHtml )
 {
-    // Insert content BEFORE the closing </div></body></html> tags to maintain valid HTML structure
-    // This is critical - content outside <body> may not be rendered properly
+    // Update internal state for consistency
     wxString closingTags = "</div></body></html>";
 
     if( m_fullHtmlContent.EndsWith( closingTags ) )
     {
-        // Remove closing tags, append content, add closing tags back
         m_fullHtmlContent = m_fullHtmlContent.Left( m_fullHtmlContent.length() - closingTags.length() );
         m_fullHtmlContent += aHtml;
         m_fullHtmlContent += closingTags;
     }
     else
     {
-        // No closing tags found, just append (shouldn't normally happen)
         m_fullHtmlContent += aHtml;
     }
 
-    SetHtml( m_fullHtmlContent );
+    // Use RunScriptAsync for incremental DOM update (no SetPage)
+    if( m_chatWindow )
+    {
+        wxString escaped = aHtml;
+        escaped.Replace( "\\", "\\\\" );  // Backslashes first
+        escaped.Replace( "'", "\\'" );    // Single quotes
+        escaped.Replace( "\n", "\\n" );   // Newlines
+        escaped.Replace( "\r", "\\r" );   // Carriage returns
+
+        wxString script = wxString::Format( "appendToChat('%s');", escaped );
+        m_chatWindow->RunScriptAsync( script );
+    }
 }
 
 void AGENT_FRAME::RebuildThinkingHtml()
@@ -512,30 +521,25 @@ void AGENT_FRAME::OnGeneratingTimer( wxTimerEvent& aEvent )
 
 void AGENT_FRAME::OnHtmlUpdateTimer( wxTimerEvent& aEvent )
 {
-    // Throttled HTML update - only update if needed
-    if( m_htmlUpdateNeeded )
+    // Throttled HTML update - only update if needed AND user hasn't scrolled up
+    if( m_htmlUpdateNeeded && !m_userScrolledUp )
     {
         m_htmlUpdateNeeded = false;
 
-        // Perform the actual HTML update
-        wxString html = m_htmlBeforeAgentResponse;
-        const wxString closingTags = wxS( "</div></body></html>" );
-
-        // Strip closing tags from the base HTML
-        if( html.EndsWith( closingTags ) )
-            html = html.Left( html.length() - closingTags.length() );
+        // Build just the streaming content (not the full page)
+        wxString streamingContent;
 
         // Include thinking block HTML if present
         if( !m_thinkingHtml.IsEmpty() )
-            html += m_thinkingHtml;
+            streamingContent += m_thinkingHtml;
 
         // Get current response from controller and append with markdown
         std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
-        html += AgentMarkdown::ToHtml( currentResponse );
+        streamingContent += AgentMarkdown::ToHtml( currentResponse );
 
         // Include any tool call HTML
         if( !m_toolCallHtml.IsEmpty() )
-            html += m_toolCallHtml;
+            streamingContent += m_toolCallHtml;
 
         // Add animated dots if currently generating
         if( m_isGenerating )
@@ -543,16 +547,34 @@ void AGENT_FRAME::OnHtmlUpdateTimer( wxTimerEvent& aEvent )
             wxString dots;
             for( int i = 0; i < m_generatingDots; i++ )
                 dots += ".";
-            html += "<font color='#888888'>" + dots + "</font>";
+            streamingContent += "<font color='#888888'>" + dots + "</font>";
         }
 
-        // Add closing tags back
-        html += closingTags;
+        // Use RunScript() for incremental DOM update instead of SetPage()
+        // This avoids full page reload and the associated scroll/layer conflicts
+        if( m_chatWindow )
+        {
+            // Escape the HTML for JavaScript string
+            wxString escaped = streamingContent;
+            escaped.Replace( "\\", "\\\\" );  // Escape backslashes first
+            escaped.Replace( "'", "\\'" );    // Escape single quotes
+            escaped.Replace( "\n", "\\n" );   // Escape newlines
+            escaped.Replace( "\r", "\\r" );   // Escape carriage returns
 
-        // Update the page
-        SetHtml( html );
-        m_fullHtmlContent = html;
+            wxString script = wxString::Format( "updateStreamingContent('%s');", escaped );
+            m_chatWindow->RunScriptAsync( script );
+        }
+
+        // Also update the full HTML content for when we need to do a full render later
+        wxString fullHtml = m_htmlBeforeAgentResponse;
+        const wxString closingTags = wxS( "</div></body></html>" );
+        if( fullHtml.EndsWith( closingTags ) )
+            fullHtml = fullHtml.Left( fullHtml.length() - closingTags.length() );
+        fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
+        fullHtml += closingTags;
+        m_fullHtmlContent = fullHtml;
     }
+    // If user scrolled up, leave m_htmlUpdateNeeded=true so update happens when they scroll back
 }
 
 void AGENT_FRAME::StartGeneratingAnimation()
@@ -575,25 +597,41 @@ void AGENT_FRAME::StopGeneratingAnimation()
     {
         m_htmlUpdateNeeded = false;
 
-        // Perform the actual HTML update (same logic as OnHtmlUpdateTimer)
+        // Build the streaming content (same logic as OnHtmlUpdateTimer)
+        wxString streamingContent;
+
+        if( !m_thinkingHtml.IsEmpty() )
+            streamingContent += m_thinkingHtml;
+
+        std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
+        streamingContent += AgentMarkdown::ToHtml( currentResponse );
+
+        if( !m_toolCallHtml.IsEmpty() )
+            streamingContent += m_toolCallHtml;
+
+        // Use RunScriptAsync for incremental DOM update (no SetPage)
+        if( m_chatWindow )
+        {
+            wxString escaped = streamingContent;
+            escaped.Replace( "\\", "\\\\" );
+            escaped.Replace( "'", "\\'" );
+            escaped.Replace( "\n", "\\n" );
+            escaped.Replace( "\r", "\\r" );
+
+            wxString script = wxString::Format( "updateStreamingContent('%s');", escaped );
+            m_chatWindow->RunScriptAsync( script );
+        }
+
+        // Update full HTML content for consistency
         wxString html = m_htmlBeforeAgentResponse;
         const wxString closingTags = wxS( "</div></body></html>" );
 
         if( html.EndsWith( closingTags ) )
             html = html.Left( html.length() - closingTags.length() );
 
-        if( !m_thinkingHtml.IsEmpty() )
-            html += m_thinkingHtml;
-
-        std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
-        html += AgentMarkdown::ToHtml( currentResponse );
-
-        if( !m_toolCallHtml.IsEmpty() )
-            html += m_toolCallHtml;
-
+        html += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
         html += closingTags;
 
-        SetHtml( html );
         m_fullHtmlContent = html;
     }
 
@@ -1113,7 +1151,10 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     if( text.IsEmpty() )
         return;
 
-    // Display User Message (right-aligned speech bubble style)
+    // Reset scroll state for new user message - user sending indicates engagement at bottom
+    m_userScrolledUp = false;
+
+    // Build user message HTML
     wxString escapedText = text;
     escapedText.Replace( "&", "&amp;" );
     escapedText.Replace( "<", "&lt;" );
@@ -1122,10 +1163,23 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     wxString msgHtml = wxString::Format(
         "<div class=\"user-msg\"><div class=\"user-bubble\">%s</div></div>",
         escapedText );
-    AppendHtml( msgHtml );
+
+    // Add streaming content container for incremental updates
+    wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
+
+    // Append to internal HTML state
+    const wxString closingTags = wxS( "</div></body></html>" );
+    if( m_fullHtmlContent.EndsWith( closingTags ) )
+    {
+        m_fullHtmlContent = m_fullHtmlContent.Left( m_fullHtmlContent.length() - closingTags.length() );
+        m_fullHtmlContent += msgHtml + streamingDiv + closingTags;
+    }
 
     // Save HTML snapshot for markdown re-rendering during streaming
     m_htmlBeforeAgentResponse = m_fullHtmlContent;
+
+    // Full page re-render - this naturally scrolls to bottom due to flex-direction: column-reverse
+    SetHtml( m_fullHtmlContent );
 
     fprintf( stderr, "[HTML-DEBUG] OnSend: Captured m_htmlBeforeAgentResponse, length=%zu, ends with </body></html>: %s\n",
              (size_t)m_htmlBeforeAgentResponse.length(),
@@ -1249,7 +1303,26 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     // Transition state machine to IDLE
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
 
-    AppendHtml( "</p><p><i>(Stopped)</i></p>" );
+    // Finalize the streaming content div so next response uses a fresh div
+    if( m_chatWindow )
+    {
+        m_chatWindow->RunScriptAsync( "finalizeStreamingContent();" );
+    }
+    m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
+
+    // Preserve thinking for index tracking
+    if( !m_thinkingContent.IsEmpty() && m_currentThinkingIndex >= 0 )
+    {
+        m_historicalThinking.push_back( m_thinkingContent );
+    }
+
+    // Clear streaming state
+    m_thinkingContent.Clear();
+    m_thinkingHtml.Clear();
+    m_toolCallHtml.Clear();
+    m_currentThinkingIndex = -1;
+
+    AppendHtml( "<p><i>(Stopped)</i></p>" );
     m_actionButton->SetLabel( "Send" );
 }
 
@@ -1522,6 +1595,25 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
             }
             // Don't call RenderChatHistory() - state is already updated in DOM via JavaScript
         }
+        else if( action == "scroll_activity" )
+        {
+            // Handle scroll activity from JavaScript
+            // Pause updates if actively scrolling OR if user has scrolled up (not at bottom)
+            bool active = msg.value( "active", false );
+            bool coupled = msg.value( "coupled", true );  // coupled=true means at bottom
+
+            // Record timestamp of scroll activity for time-based debouncing
+            m_lastScrollActivityMs = wxGetLocalTimeMillis().GetValue();
+
+            // Pause updates if scrolling OR if user is scrolled up
+            m_userScrolledUp = active || !coupled;
+
+            fprintf( stderr, "[SCROLL-DEBUG] Scroll activity: active=%s, coupled=%s, pausing=%s\n",
+                    active ? "true" : "false",
+                    coupled ? "true" : "false",
+                    m_userScrolledUp ? "YES" : "NO" );
+            fflush( stderr );
+        }
     }
     catch( const std::exception& e )
     {
@@ -1617,10 +1709,21 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
                                               "</div>",
                                               toolToRun, htmlOutput );
 
-    // REPLACE the running box in m_fullHtmlContent
-    // We look for runningBox string.
+    // Update m_fullHtmlContent for consistency
     m_fullHtmlContent.Replace( runningBox, finalTermBox );
-    SetHtml( m_fullHtmlContent );
+
+    // Use RunScriptAsync to replace the running box in DOM (no SetPage)
+    if( m_chatWindow )
+    {
+        wxString escaped = finalTermBox;
+        escaped.Replace( "\\", "\\\\" );
+        escaped.Replace( "'", "\\'" );
+        escaped.Replace( "\n", "\\n" );
+        escaped.Replace( "\r", "\\r" );
+
+        wxString script = wxString::Format( "replaceByMarker('%s', '%s');", placeholderId, escaped );
+        m_chatWindow->RunScriptAsync( script );
+    }
 
     // Save HTML snapshot for markdown re-rendering during streaming
     m_currentResponse = "";
@@ -2026,6 +2129,8 @@ void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
 void AGENT_FRAME::RenderChatHistory()
 {
     // Clear historical thinking storage
+    fprintf( stderr, "[THINKING-DEBUG] RenderChatHistory: Clearing m_historicalThinking (was size %zu)\n",
+             m_historicalThinking.size() );
     m_historicalThinking.clear();
 
     // Build HTML from chat history with modern template
@@ -2639,13 +2744,36 @@ void AGENT_FRAME::OnChatThinkingStart( wxThreadEvent& aEvent )
 {
     ChatThinkingStartData* data = aEvent.GetPayload<ChatThinkingStartData*>();
 
-    // Initialize thinking state
+    fprintf( stderr, "[THINKING-DEBUG] OnChatThinkingStart: ENTRY - m_thinkingContent.IsEmpty=%d, m_currentThinkingIndex=%d, m_historicalThinking.size=%zu\n",
+             m_thinkingContent.IsEmpty(), m_currentThinkingIndex, m_historicalThinking.size() );
+
+    // If there's existing thinking content from a previous block (e.g., before a tool call),
+    // preserve it in history before starting the new block. This handles race conditions
+    // where THINKING_START arrives before WAITING_FOR_LLM state change is processed.
+    if( !m_thinkingContent.IsEmpty() && m_currentThinkingIndex >= 0 )
+    {
+        fprintf( stderr, "[THINKING-DEBUG] OnChatThinkingStart: Pushing old thinking (index %d, content length %zu) to history\n",
+                 m_currentThinkingIndex, (size_t)m_thinkingContent.Length() );
+        m_historicalThinking.push_back( m_thinkingContent );
+        if( m_thinkingExpanded )
+            m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
+    }
+    else
+    {
+        fprintf( stderr, "[THINKING-DEBUG] OnChatThinkingStart: NOT pushing (isEmpty=%d, index=%d)\n",
+                 m_thinkingContent.IsEmpty(), m_currentThinkingIndex );
+    }
+
+    // Initialize thinking state for new block
     m_isThinking = true;
     m_thinkingContent = "";
     m_thinkingExpanded = false;
 
-    // Set index for this thinking block (based on historical thinking count)
+    // Set index for this thinking block using m_historicalThinking.size()
+    // After the push above (if any), this gives us the correct next index
     m_currentThinkingIndex = static_cast<int>( m_historicalThinking.size() );
+    fprintf( stderr, "[THINKING-DEBUG] OnChatThinkingStart: Assigned new thinking index %d (m_historicalThinking.size=%zu)\n",
+             m_currentThinkingIndex, m_historicalThinking.size() );
 
     // Rebuild thinking display (shows loading animation)
     RebuildThinkingHtml();
@@ -2706,15 +2834,35 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     StopGeneratingAnimation();
     m_isThinking = false;
 
-    // Render any pending text and capture HTML state.
-    // IMPORTANT: Controller's currentResponse still has the text at this point.
-    // We render it, capture the HTML, then clear the streaming state.
-    UpdateAgentResponse();
+    // Finalize the current streaming div so the agent's response text stays in place
+    if( m_chatWindow )
+    {
+        m_chatWindow->RunScriptAsync( "finalizeStreamingContent();" );
+    }
+
+    // Update m_fullHtmlContent to reflect finalized state (no more streaming-content ID)
+    m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
+
+    // Add a new streaming content div for tool UI and subsequent response
+    wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
+    AppendHtml( streamingDiv );
+
+    // Capture HTML state AFTER adding new streaming div
     m_htmlBeforeAgentResponse = m_fullHtmlContent;
 
     // Now clear streaming state in controller (text is baked into m_htmlBeforeAgentResponse)
     if( m_chatController )
         m_chatController->ClearStreamingState();
+
+    // Preserve thinking content to history before clearing (needed for correct index tracking)
+    if( !m_thinkingContent.IsEmpty() && m_currentThinkingIndex >= 0 )
+    {
+        fprintf( stderr, "[THINKING-DEBUG] OnChatToolStart: Preserving thinking (index %d) before clearing\n",
+                 m_currentThinkingIndex );
+        m_historicalThinking.push_back( m_thinkingContent );
+        if( m_thinkingExpanded )
+            m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
+    }
 
     // Clear frame's thinking HTML since it's now part of the base HTML (prevents duplication)
     m_thinkingHtml.Clear();
@@ -2830,8 +2978,10 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
     // Finalize thinking state
     m_isThinking = false;
 
+    fprintf( stderr, "[THINKING-DEBUG] OnChatTurnComplete: ENTRY - m_thinkingContent.IsEmpty=%d, m_currentThinkingIndex=%d, m_historicalThinking.size=%zu\n",
+             m_thinkingContent.IsEmpty(), m_currentThinkingIndex, m_historicalThinking.size() );
+
     // Sync history from controller (controller added the assistant message in END_TURN)
-    // This must happen BEFORE RenderChatHistory() which uses frame's m_chatHistory
     if( m_chatController )
     {
         m_chatHistory = m_chatController->GetChatHistory();
@@ -2839,20 +2989,42 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
         m_chatHistoryDb.Save( m_chatHistory );
     }
 
-    // Clear streaming UI state
-    m_currentResponse.clear();
-    m_thinkingContent.Clear();
-    m_toolCallHtml.Clear();
+    // Preserve thinking content for index tracking (so next message gets index+1)
+    if( !m_thinkingContent.IsEmpty() && m_currentThinkingIndex >= 0 )
+    {
+        fprintf( stderr, "[THINKING-DEBUG] OnChatTurnComplete: Preserving thinking (index %d) to history\n",
+                 m_currentThinkingIndex );
+        m_historicalThinking.push_back( m_thinkingContent );
+    }
+    else
+    {
+        fprintf( stderr, "[THINKING-DEBUG] OnChatTurnComplete: NOT preserving (isEmpty=%d, index=%d)\n",
+                 m_thinkingContent.IsEmpty(), m_currentThinkingIndex );
+    }
 
     // Preserve thinking expansion state
     if( m_thinkingExpanded && m_currentThinkingIndex >= 0 )
         m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
 
+    // Finalize the streaming content div - remove its ID so future streams use a fresh div
+    if( m_chatWindow )
+    {
+        m_chatWindow->RunScriptAsync( "finalizeStreamingContent();" );
+    }
+
+    // Update m_fullHtmlContent to match DOM state (remove the id from streaming div)
+    m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
+
+    // Clear streaming UI state (content is already in DOM via streaming updates)
+    m_currentResponse.clear();
+    m_thinkingContent.Clear();
+    m_toolCallHtml.Clear();
     m_thinkingExpanded = false;
     m_currentThinkingIndex = -1;
 
-    // Re-render from history to show saved content
-    RenderChatHistory();
+    // NOTE: Don't call RenderChatHistory() here - content is already in DOM from streaming.
+    // RenderChatHistory() is only for loading saved conversations from disk.
+    // Calling it here would cause a full SetPage() reload which jerks scroll position.
 
     delete data;
 }
@@ -2899,21 +3071,78 @@ void AGENT_FRAME::OnChatStateChanged( wxThreadEvent& aEvent )
 
     case AgentConversationState::WAITING_FOR_LLM:
         m_actionButton->SetLabel( "Stop" );
-        StartGeneratingAnimation();
 
-        // If continuing after tool completion, capture current state as base
+        // If continuing after tool completion, bake in tool result before starting new stream
         // This ensures the tool call result appears BEFORE any new response text
         if( static_cast<AgentConversationState>( data->oldState ) ==
             AgentConversationState::PROCESSING_TOOL_RESULT )
         {
-            // Render current state (includes tool call result)
-            UpdateAgentResponse();
+            // IMMEDIATE render before clearing (don't wait for timer)
+            // Build the streaming content that should be baked in
+            wxString streamingContent;
+            if( !m_thinkingHtml.IsEmpty() )
+                streamingContent += m_thinkingHtml;
+            std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
+            streamingContent += AgentMarkdown::ToHtml( currentResponse );
+            if( !m_toolCallHtml.IsEmpty() )
+                streamingContent += m_toolCallHtml;
+
+            // Send immediate DOM update via JavaScript
+            if( m_chatWindow && !streamingContent.IsEmpty() )
+            {
+                wxString escaped = streamingContent;
+                escaped.Replace( "\\", "\\\\" );
+                escaped.Replace( "'", "\\'" );
+                escaped.Replace( "\n", "\\n" );
+                escaped.Replace( "\r", "\\r" );
+                m_chatWindow->RunScriptAsync(
+                    wxString::Format( "updateStreamingContent('%s');", escaped ) );
+            }
+
+            // Update m_fullHtmlContent to match the DOM state
+            wxString fullHtml = m_htmlBeforeAgentResponse;
+            const wxString closingTags = wxS( "</div></body></html>" );
+            if( fullHtml.EndsWith( closingTags ) )
+                fullHtml = fullHtml.Left( fullHtml.length() - closingTags.length() );
+            fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
+            fullHtml += closingTags;
+            m_fullHtmlContent = fullHtml;
+
+            // Finalize this streaming div (tool result now "baked in")
+            if( m_chatWindow )
+                m_chatWindow->RunScriptAsync( "finalizeStreamingContent();" );
+            m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
+
+            // Add fresh streaming div for next content
+            wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
+            AppendHtml( streamingDiv );
             m_htmlBeforeAgentResponse = m_fullHtmlContent;
 
-            // Clear tool call HTML since it's now baked into the base
+            // Preserve thinking content in history before clearing
+            // This ensures the next thinking block gets a new index
+            if( !m_thinkingContent.IsEmpty() && m_currentThinkingIndex >= 0 )
+            {
+                m_historicalThinking.push_back( m_thinkingContent );
+                // Preserve expansion state too
+                if( m_thinkingExpanded )
+                    m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
+            }
+
+            // NOW safe to clear - content is baked into DOM
             m_toolCallHtml.Clear();
             m_thinkingHtml.Clear();
+            m_thinkingContent.Clear();
+            m_thinkingExpanded = false;
+            if( m_chatController )
+                m_chatController->ClearStreamingState();
+            m_htmlUpdateNeeded = false;
+
+            // Update thinking index so next thinking block gets a new index
+            // Now m_historicalThinking.size() reflects the pushed content
+            m_currentThinkingIndex = static_cast<int>( m_historicalThinking.size() );
         }
+
+        StartGeneratingAnimation();
         break;
 
     case AgentConversationState::TOOL_USE_DETECTED:

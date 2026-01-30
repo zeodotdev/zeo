@@ -1,7 +1,11 @@
 <!DOCTYPE html>
-<html><head>
+<html style="background:#1E1E1E"><head>
 <meta charset="UTF-8">
 <style>
+/* Immediate background to prevent white flash on load */
+html { background: #1E1E1E !important; }
+body { background: #1E1E1E !important; }
+
 :root {
     --bg-primary: #1E1E1E;
     --bg-secondary: #2d2d2d;
@@ -151,76 +155,11 @@ document.addEventListener('click', function(e) {
     }
 });
 
-// Auto-scroll coupling with flex-direction: column-reverse
-// With column-reverse: scrollTop = 0 is the visual bottom (newest messages)
-let isScrollCoupled = true;
-const SCROLL_THRESHOLD = 50; // Pixels from bottom to be considered "at bottom"
-
-// Check if user is near the bottom (scrollTop near 0)
-function isNearBottom() {
-    return window.scrollY <= SCROLL_THRESHOLD;
-}
-
-// Scroll activity tracking - pause updates during any scroll to prevent crash
-let scrollCooldownTimeout = null;
-const SCROLL_COOLDOWN_MS = 250;
-let isActivelyScrolling = false;
-
-// Track user scrolling to couple/decouple
-window.addEventListener('scroll', function() {
-    // Update local state immediately for JavaScript auto-scroll behavior
-    if (isNearBottom()) {
-        isScrollCoupled = true;
-    } else {
-        isScrollCoupled = false;
-    }
-    // Save state to survive page reloads
-    sessionStorage.setItem('scroll_coupled', isScrollCoupled ? 'true' : 'false');
-
-    // Notify C++ that scrolling is active (pause updates to prevent crash)
-    // Include coupling state so C++ knows if user is scrolled up
-    if (!isActivelyScrolling) {
-        isActivelyScrolling = true;
-        sendMsg('scroll_activity', {active: true, coupled: isScrollCoupled});
-    }
-
-    // Reset cooldown - after 250ms of no scroll events, send final state
-    if (scrollCooldownTimeout) {
-        clearTimeout(scrollCooldownTimeout);
-    }
-    scrollCooldownTimeout = setTimeout(function() {
-        isActivelyScrolling = false;
-        // Send coupled state - if user scrolled up and stopped, keep updates paused
-        sendMsg('scroll_activity', {active: false, coupled: isScrollCoupled});
-    }, SCROLL_COOLDOWN_MS);
-}, { passive: true });
-
-// Auto-scroll to bottom (scrollTop = 0) if coupled
-function autoScrollIfCoupled() {
-    if (isScrollCoupled) {
-        window.scrollTo(0, 0);
-    }
-}
-
-// Scroll to bottom immediately (scrollY=0 with column-reverse)
-function scrollToBottomNow() {
-    window.scrollTo({top: 0, left: 0, behavior: 'instant'});
-}
-
-// Force scroll update after DOM change
-function forceScrollUpdate() {
-    if (isScrollCoupled) {
-        scrollToBottomNow();
-    }
-}
-
-// Incremental DOM update for streaming - avoids full page reload
-// Called from C++ via RunScript() during streaming
+// Incremental DOM update for streaming - called from C++ via RunScript()
 function updateStreamingContent(html) {
     const container = document.getElementById('streaming-content');
     if (container) {
         container.innerHTML = html;
-        forceScrollUpdate();
     }
 }
 
@@ -230,57 +169,15 @@ function finalizeStreamingContent() {
     if (container) {
         container.removeAttribute('id');
     }
-    forceScrollUpdate();
 }
 
-// Force scroll to bottom and re-couple
-function scrollToBottom() {
-    isScrollCoupled = true;
-    sessionStorage.setItem('scroll_coupled', 'true');
-    scrollToBottomNow();
-}
-
-// Append content to the chat incrementally (no page reload)
+// Append content incrementally (used by AppendHtml)
 function appendToChat(html) {
     const wrapper = document.querySelector('.content-wrapper');
     if (wrapper) {
         wrapper.insertAdjacentHTML('beforeend', html);
-        forceScrollUpdate();
     }
 }
-
-// Replace element following a comment marker (for tool results)
-function replaceByMarker(marker, html) {
-    const walker = document.createTreeWalker(
-        document.body, NodeFilter.SHOW_COMMENT, null, false
-    );
-    while (walker.nextNode()) {
-        if (walker.currentNode.nodeValue.trim() === marker) {
-            const comment = walker.currentNode;
-            const nextEl = comment.nextElementSibling;
-            if (nextEl) {
-                nextEl.outerHTML = html;
-            }
-            comment.remove();
-            break;
-        }
-    }
-    forceScrollUpdate();
-}
-
-// On page load, restore scroll coupling state (but don't trigger scroll events)
-window.addEventListener('load', function() {
-    // Restore coupling state from sessionStorage - CSS flex-direction: column-reverse
-    // handles keeping bottom visible naturally, no need to call scrollTo()
-    const wasCoupled = sessionStorage.getItem('scroll_coupled');
-    if (wasCoupled === null || wasCoupled === 'true') {
-        isScrollCoupled = true;
-    } else {
-        isScrollCoupled = false;
-    }
-    // Don't call scrollTo() or notify C++ here - load events fire during SetPage()
-    // which can cause race conditions with WebKit's scroll processing
-});
 </script>
 </head><body>
 <div class="content-wrapper">

@@ -174,6 +174,7 @@ private:
     int      m_currentThinkingIndex;   // Index for current streaming thinking (for toggle:thinking:N links)
     wxString m_lastToolDesc;           // Temp storage for tool description during history replay
     bool     m_userScrolledUp;         // Track if user has scrolled up during generation
+    long     m_lastScrollActivityMs;   // Timestamp of last scroll activity (for debouncing SetPage)
     bool     m_htmlUpdatePending;      // Track if HTML update is already scheduled (prevent duplicate CallAfter)
     bool     m_htmlUpdateNeeded;       // Track if HTML update is needed on next timer tick
     wxTimer  m_htmlUpdateTimer;        // Timer for throttling HTML updates during streaming

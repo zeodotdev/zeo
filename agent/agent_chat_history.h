@@ -33,41 +33,42 @@ class AGENT_CHAT_HISTORY
 {
 public:
     AGENT_CHAT_HISTORY();
+    virtual ~AGENT_CHAT_HISTORY() = default;
 
     /**
      * Set the conversation ID (used as filename).
      * @param aId Unique identifier (UUID format).
      */
-    void SetConversationId( const std::string& aId );
+    virtual void SetConversationId( const std::string& aId );
 
     /**
      * Get the current conversation ID.
      */
-    std::string GetConversationId() const { return m_conversationId; }
+    virtual std::string GetConversationId() const { return m_conversationId; }
 
     /**
      * Set the chat title.
      * @param aTitle Human-readable title for the chat.
      */
-    void SetTitle( const std::string& aTitle );
+    virtual void SetTitle( const std::string& aTitle );
 
     /**
      * Get the current chat title.
      */
-    std::string GetTitle() const { return m_title; }
+    virtual std::string GetTitle() const { return m_title; }
 
     /**
      * Save the current chat history to disk.
      * @param aChatHistory The full conversation history as JSON array.
      */
-    void Save( const nlohmann::json& aChatHistory );
+    virtual void Save( const nlohmann::json& aChatHistory );
 
     /**
      * Load a conversation from disk.
      * @param aConversationId The conversation ID to load.
      * @return The chat history messages, or empty array if not found.
      */
-    nlohmann::json Load( const std::string& aConversationId );
+    virtual nlohmann::json Load( const std::string& aConversationId );
 
     struct HistoryEntry
     {

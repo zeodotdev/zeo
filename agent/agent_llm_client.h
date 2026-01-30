@@ -58,13 +58,13 @@ class AGENT_LLM_CLIENT
 
 public:
     AGENT_LLM_CLIENT( AGENT_FRAME* aParent );
-    ~AGENT_LLM_CLIENT();
+    virtual ~AGENT_LLM_CLIENT();
 
     /**
      * Set the model to use (e.g., "GPT-4o", "Claude 3.5 Sonnet").
      * @param aModelName The model name.
      */
-    void SetModel( const std::string& aModelName );
+    virtual void SetModel( const std::string& aModelName );
 
     /**
      * Send a chat completion request.
@@ -109,20 +109,20 @@ public:
      * @param aHandler The event handler to receive streaming events (typically AGENT_FRAME).
      * @return True if the request was started, false if it couldn't be started.
      */
-    bool AskStreamWithToolsAsync( const nlohmann::json& aMessages,
-                                   const std::vector<LLM_TOOL>& aTools,
-                                   wxEvtHandler* aHandler );
+    virtual bool AskStreamWithToolsAsync( const nlohmann::json& aMessages,
+                                           const std::vector<LLM_TOOL>& aTools,
+                                           wxEvtHandler* aHandler );
 
     /**
      * Check if an async LLM request is currently in progress.
      */
-    bool IsRequestInProgress() const { return m_requestInProgress.load(); }
+    virtual bool IsRequestInProgress() const { return m_requestInProgress.load(); }
 
     /**
      * Cancel any in-progress async request.
      * The request may not stop immediately but will be cancelled as soon as possible.
      */
-    void CancelRequest() { m_cancelRequested.store( true ); }
+    virtual void CancelRequest() { m_cancelRequested.store( true ); }
 
     /**
      * Set the authentication manager for proxy API requests.

@@ -483,7 +483,7 @@ void AGENT_FRAME::RebuildThinkingHtml()
     wxString expandedClass = m_thinkingExpanded ? " expanded" : "";
     wxString displayStyle = m_thinkingExpanded ? "block" : "none";
 
-    wxString thinkingText = "Thinking ";  // Trailing space ensures underline covers full 'g'
+    wxString thinkingText = "Thinking";
 
     m_thinkingHtml = wxString::Format(
         "<a href=\"toggle:thinking:%d\" class=\"thinking-toggle\" data-thinking-index=\"%d\">%s</a><br>"
@@ -560,10 +560,18 @@ void AGENT_FRAME::OnHtmlUpdateTimer( wxTimerEvent& aEvent )
         }
 
         // Also update the full HTML content for when we need to do a full render later
+        // Remove any empty streaming divs to prevent accumulation, then append the filled one
         wxString fullHtml = m_htmlBeforeAgentResponse;
         const wxString closingTags = wxS( "</div></body></html>" );
+
+        // Remove closing tags
         if( fullHtml.EndsWith( closingTags ) )
             fullHtml = fullHtml.Left( fullHtml.length() - closingTags.length() );
+
+        // Remove any empty streaming content divs (prevents accumulation)
+        fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
+
+        // Append the filled streaming div and restore closing tags
         fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
         fullHtml += closingTags;
         m_fullHtmlContent = fullHtml;
@@ -617,12 +625,18 @@ void AGENT_FRAME::StopGeneratingAnimation()
         }
 
         // Update full HTML content for consistency
+        // Remove any empty streaming divs to prevent accumulation, then append the filled one
         wxString html = m_htmlBeforeAgentResponse;
         const wxString closingTags = wxS( "</div></body></html>" );
 
+        // Remove closing tags
         if( html.EndsWith( closingTags ) )
             html = html.Left( html.length() - closingTags.length() );
 
+        // Remove any empty streaming content divs (prevents accumulation)
+        html.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
+
+        // Append the filled streaming div and restore closing tags
         html += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
         html += closingTags;
 
@@ -1278,8 +1292,8 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     // Signal to stop - affects tool execution loops and streaming callbacks (legacy)
     m_stopRequested = true;
 
-    // Re-render without dots
-    UpdateAgentResponse();
+    // Note: StopGeneratingAnimation() already did the final render without dots,
+    // so we don't need to call UpdateAgentResponse() here (would restart timer with cleared state)
 
     // Sync frame's history from controller (controller handles orphaned tool_use blocks)
     if( m_chatController )
@@ -3103,10 +3117,18 @@ void AGENT_FRAME::OnChatStateChanged( wxThreadEvent& aEvent )
             }
 
             // Update m_fullHtmlContent to match the DOM state
+            // Remove any empty streaming divs to prevent accumulation, then append the filled one
             wxString fullHtml = m_htmlBeforeAgentResponse;
             const wxString closingTags = wxS( "</div></body></html>" );
+
+            // Remove closing tags
             if( fullHtml.EndsWith( closingTags ) )
                 fullHtml = fullHtml.Left( fullHtml.length() - closingTags.length() );
+
+            // Remove any empty streaming content divs (prevents accumulation)
+            fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
+
+            // Append the filled streaming div and restore closing tags
             fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
             fullHtml += closingTags;
             m_fullHtmlContent = fullHtml;

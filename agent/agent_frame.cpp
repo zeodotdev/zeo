@@ -475,8 +475,8 @@ void AGENT_FRAME::RebuildThinkingHtml()
     wxString thinkingText = "Thinking";
 
     m_thinkingHtml = wxString::Format(
-        "<a href=\"toggle:thinking:%d\" class=\"thinking-toggle\" data-thinking-index=\"%d\">%s</a><br>"
-        "<div class=\"thinking-content%s\" data-thinking-index=\"%d\" style=\"display:%s;\">%s</div><br>",
+        "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline hover:underline\" data-thinking-index=\"%d\">%s</a><br>"
+        "<div class=\"thinking-content text-[#606060] mt-2 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-thinking-index=\"%d\" style=\"display:%s;\">%s</div><br>",
         m_currentThinkingIndex, m_currentThinkingIndex, thinkingText, expandedClass, m_currentThinkingIndex, displayStyle, escapedContent );
 }
 
@@ -997,7 +997,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     escapedText.Replace( ">", "&gt;" );
     escapedText.Replace( "\n", "<br>" );
     wxString msgHtml = wxString::Format(
-        "<div class=\"user-msg\"><div class=\"user-bubble\">%s</div></div>",
+        "<div class=\"flex justify-end my-1.5\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
         escapedText );
 
     // Add streaming content container for incremental updates
@@ -1309,8 +1309,8 @@ void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
 
             // Show Inline Approve Link with Colors (click handled by event delegation)
             std::string html = "<p><b>Tool Request:</b> " + toolName
-                               + " <a href=\"tool:approve\" class=\"approve-link\">[Approve]</a>"
-                               + " <a href=\"tool:reject\" class=\"deny-link\">[Deny]</a></p>";
+                               + " <a href=\"tool:approve\" class=\"text-[#00AA00] font-bold cursor-pointer no-underline hover:underline mx-2\">[Approve]</a>"
+                               + " <a href=\"tool:reject\" class=\"text-[#AA0000] font-bold cursor-pointer no-underline hover:underline mx-2\">[Deny]</a></p>";
             AppendHtml( html );
 
             // Allow user to click. Execution halted until link clicked.
@@ -1450,9 +1450,9 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
 
     // Show "Running..." terminal box
     wxString placeholderId = wxString::Format( "term_%lu", wxGetLocalTimeMillis().GetValue() );
-    wxString runningBox = wxString::Format( "<div class=\"tool-block\">"
-                                            "<span class=\"tool-prompt\">&gt; %s</span><br>"
-                                            "<span class=\"tool-output\"><i>Running...</i></span>"
+    wxString runningBox = wxString::Format( "<div class=\"bg-bg-secondary p-3 rounded-md my-3 max-w-full break-words\">"
+                                            "<span class=\"text-accent-green font-mono\">&gt; %s</span><br>"
+                                            "<span class=\"text-text-secondary font-mono text-[13px] whitespace-pre-wrap break-words\"><i>Running...</i></span>"
                                             "</div><!--%s-->", // Comment mark for replacement
                                             m_pendingTool, placeholderId );
     AppendHtml( runningBox );
@@ -1522,9 +1522,9 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
     htmlOutput.Replace( "\n", "<br>" );
     htmlOutput.Replace( " ", "&nbsp;" );
 
-    wxString finalTermBox = wxString::Format( "<div class=\"tool-block\">"
-                                              "<span class=\"tool-prompt\">&gt; %s</span><br>"
-                                              "<span class=\"tool-output\">%s</span>"
+    wxString finalTermBox = wxString::Format( "<div class=\"bg-bg-secondary p-3 rounded-md my-3 max-w-full break-words\">"
+                                              "<span class=\"text-accent-green font-mono\">&gt; %s</span><br>"
+                                              "<span class=\"text-text-secondary font-mono text-[13px] whitespace-pre-wrap break-words\">%s</span>"
                                               "</div>",
                                               toolToRun, htmlOutput );
 
@@ -1973,7 +1973,7 @@ void AGENT_FRAME::RenderChatHistory()
                 display.Replace( ">", "&gt;" );
                 display.Replace( "\n", "<br>" );
                 m_fullHtmlContent += wxString::Format(
-                    "<div class=\"user-msg\"><div class=\"user-bubble\">%s</div></div>",
+                    "<div class=\"flex justify-end my-1.5\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
                     display );
             }
             else if( role == "assistant" )
@@ -2013,7 +2013,7 @@ void AGENT_FRAME::RenderChatHistory()
                         display.Replace( ">", "&gt;" );
                         display.Replace( "\n", "<br>" );
                         m_fullHtmlContent += wxString::Format(
-                            "<div class=\"user-msg\"><div class=\"user-bubble\">%s</div></div>",
+                            "<div class=\"flex justify-end my-1.5\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
                             display );
                     }
                 }
@@ -2051,8 +2051,8 @@ void AGENT_FRAME::RenderChatHistory()
                         wxString displayStyle = expanded ? "block" : "none";
 
                         m_fullHtmlContent += wxString::Format(
-                            "<a href=\"toggle:thinking:%d\" class=\"thinking-toggle\" data-thinking-index=\"%d\">Thinking</a><br>"
-                            "<div class=\"thinking-content%s\" data-thinking-index=\"%d\" style=\"display:%s;\">%s</div><br>",
+                            "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline hover:underline\" data-thinking-index=\"%d\">Thinking</a><br>"
+                            "<div class=\"thinking-content text-[#606060] mt-2 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-thinking-index=\"%d\" style=\"display:%s;\">%s</div><br>",
                             thinkingIndex, thinkingIndex, expandedClass, thinkingIndex, displayStyle, escapedText );
                     }
                 }
@@ -2081,13 +2081,13 @@ void AGENT_FRAME::RenderChatHistory()
 
                     if( isPythonError )
                     {
-                        statusClass = "tool-status-error";
+                        statusClass = "text-accent-red";
                         statusText = "Error";
                         displayResult = "<i>Script execution failed.</i>";
                     }
                     else if( isError )
                     {
-                        statusClass = "tool-status-error";
+                        statusClass = "text-accent-red";
                         statusText = "Failed";
                         wxString htmlResult = content;
                         htmlResult.Replace( "&", "&amp;" );
@@ -2099,7 +2099,7 @@ void AGENT_FRAME::RenderChatHistory()
                     }
                     else
                     {
-                        statusClass = "tool-status";
+                        statusClass = "text-accent-green";
                         statusText = "Completed";
                         wxString htmlResult = content;
                         htmlResult.Replace( "&", "&amp;" );
@@ -2114,10 +2114,10 @@ void AGENT_FRAME::RenderChatHistory()
                     wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
 
                     wxString resultBox = wxString::Format(
-                        "<div class=\"tool-block\">"
-                        "<span class=\"tool-status\"><strong>Tool Call:</strong></span> %s<br>"
+                        "<div class=\"bg-bg-secondary p-3 rounded-md my-3 max-w-full break-words\">"
+                        "<span class=\"text-accent-green font-bold\"><strong>Tool Call:</strong></span> %s<br>"
                         "<span class=\"%s\"><strong>%s</strong></span><br>"
-                        "<span class=\"tool-output\">%s</span>"
+                        "<span class=\"text-text-secondary font-mono text-[13px] whitespace-pre-wrap break-words\">%s</span>"
                         "</div>",
                         desc, statusClass, statusText, displayResult );
                     m_fullHtmlContent += resultBox;
@@ -2459,10 +2459,10 @@ void AGENT_FRAME::ShowOpenEditorApproval( const wxString& aEditorType )
     // survives calls to UpdateAgentResponse()
     // Use onclick for JavaScript handling with modern CSS classes
     m_toolCallHtml = wxString::Format(
-        "<br><br><div class=\"tool-block\">"
-        "<span style=\"color: white; font-weight: bold;\"><b>Open %s Editor?</b></span> "
-        "<a href=\"agent:approve_open\" class=\"approve-link\">Open</a> "
-        "<a href=\"agent:reject_open\" class=\"deny-link\">Cancel</a>"
+        "<br><br><div class=\"bg-bg-secondary p-3 rounded-md my-3 max-w-full break-words\">"
+        "<span class=\"text-text-primary font-bold\"><b>Open %s Editor?</b></span> "
+        "<a href=\"agent:approve_open\" class=\"text-[#00AA00] font-bold cursor-pointer no-underline hover:underline mx-2\">Open</a> "
+        "<a href=\"agent:reject_open\" class=\"text-[#AA0000] font-bold cursor-pointer no-underline hover:underline mx-2\">Cancel</a>"
         "</div>",
         aEditorType );
     UpdateAgentResponse();
@@ -2693,9 +2693,9 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
 
     // Generate tool call HTML with "Running..." status
     m_toolCallHtml = wxString::Format(
-        "<div class=\"tool-block\">"
-        "<span class=\"tool-status\"><strong>Tool Call:</strong></span> %s<br>"
-        "<span class=\"tool-output\"><i>Running...</i></span>"
+        "<div class=\"bg-bg-secondary p-3 rounded-md my-3 max-w-full break-words\">"
+        "<span class=\"text-accent-green font-bold\"><strong>Tool Call:</strong></span> %s<br>"
+        "<span class=\"text-text-secondary font-mono text-[13px] whitespace-pre-wrap break-words\"><i>Running...</i></span>"
         "</div>",
         m_lastToolDesc );
 
@@ -2719,13 +2719,13 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
     if( data->isPythonError )
     {
-        statusClass = "tool-status-error";
+        statusClass = "text-accent-red";
         statusText = "Error";
         displayResult = "<i>Script execution failed. The model will attempt to fix the issue.</i>";
     }
     else if( !data->success )
     {
-        statusClass = "tool-status-error";
+        statusClass = "text-accent-red";
         statusText = "Failed";
         wxString htmlResult = wxString::FromUTF8( data->result );
         htmlResult.Replace( "&", "&amp;" );
@@ -2737,7 +2737,7 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
     }
     else
     {
-        statusClass = "tool-status";
+        statusClass = "text-accent-green";
         statusText = "Completed";
         wxString htmlResult = wxString::FromUTF8( data->result );
         htmlResult.Replace( "&", "&amp;" );
@@ -2750,10 +2750,10 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
     // Update tool call HTML with result (replace "Running..." with actual result)
     m_toolCallHtml = wxString::Format(
-        "<div class=\"tool-block\">"
-        "<span class=\"tool-status\"><strong>Tool Call:</strong></span> %s<br>"
+        "<div class=\"bg-bg-secondary p-3 rounded-md my-3 max-w-full break-words\">"
+        "<span class=\"text-accent-green font-bold\"><strong>Tool Call:</strong></span> %s<br>"
         "<span class=\"%s\"><strong>%s</strong></span><br>"
-        "<span class=\"tool-output\">%s</span>"
+        "<span class=\"text-text-secondary font-mono text-[13px] whitespace-pre-wrap break-words\">%s</span>"
         "</div>",
         m_lastToolDesc, statusClass, statusText, displayResult );
 

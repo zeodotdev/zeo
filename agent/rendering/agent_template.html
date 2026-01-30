@@ -1,103 +1,57 @@
 <!DOCTYPE html>
-<html style="background:#1E1E1E"><head>
+<html class="h-full bg-[#1E1E1E] flex flex-col-reverse overflow-y-auto"><head>
 <meta charset="UTF-8">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+    theme: {
+        extend: {
+            colors: {
+                'bg-primary': '#1E1E1E',
+                'bg-secondary': '#2d2d2d',
+                'bg-tertiary': '#3d3d3d',
+                'text-primary': '#FFFFFF',
+                'text-secondary': '#d4d4d4',
+                'text-muted': '#808080',
+                'accent-blue': '#569cd6',
+                'accent-green': '#4ec9b0',
+                'accent-red': '#f44747',
+                'code-orange': '#ce9178',
+                'border-dark': '#404040',
+            },
+            fontFamily: {
+                'sans': ['-apple-system', 'BlinkMacSystemFont', 'Segoe WPC', 'Segoe UI', 'Ubuntu', 'Droid Sans', 'sans-serif'],
+                'mono': ['Menlo', 'Monaco', 'Courier New', 'monospace'],
+            },
+        }
+    }
+}
+</script>
 <style>
 /* Immediate background to prevent white flash on load */
 html { background: #1E1E1E !important; }
 body { background: #1E1E1E !important; }
 
-:root {
-    --bg-primary: #1E1E1E;
-    --bg-secondary: #2d2d2d;
-    --bg-tertiary: #3d3d3d;
-    --text-primary: #FFFFFF;
-    --text-secondary: #d4d4d4;
-    --text-muted: #808080;
-    --accent-blue: #569cd6;
-    --accent-green: #4ec9b0;
-    --accent-red: #f44747;
-    --code-orange: #ce9178;
-}
-* { box-sizing: border-box; }
-html, body {
-    height: 100%;
-    margin: 0;
-    padding: 0;
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', 'Ubuntu', 'Droid Sans', sans-serif;
-    font-size: 13px; line-height: 1.4;
-    display: flex;
-    flex-direction: column-reverse;
-    overflow-y: auto;
-}
-.content-wrapper {
-    padding: 10px;
-}
-.user-msg { display: flex; justify-content: flex-end; margin: 6px 0; }
-.user-bubble { background: var(--bg-tertiary); padding: 8px 14px; border-radius: 8px; max-width: 80%; white-space: pre-wrap; }
-.assistant-msg { margin: 6px 0; }
-pre.code-block {
-    background: var(--bg-secondary); padding: 12px; border-radius: 6px;
-    font-family: Menlo, Monaco, 'Courier New', monospace;
-    font-size: 13px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;
-    color: var(--text-secondary); margin: 12px 0;
-}
-code {
-    background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px;
-    font-family: Menlo, Monaco, 'Courier New', monospace;
-    color: var(--code-orange);
-}
-.thinking-toggle { color: var(--text-muted); cursor: pointer; text-decoration: none; }
-.thinking-toggle:hover { text-decoration: underline; }
-.thinking-content { color: #606060; margin-top: 8px; padding-left: 12px; border-left: 2px solid #404040; white-space: pre-wrap; display: none; }
-.thinking-content.expanded { display: block; }
-.tool-block { background: var(--bg-secondary); padding: 12px; border-radius: 6px; margin: 12px 0; max-width: 100%; overflow-wrap: break-word; word-break: break-word; }
-.tool-status { color: var(--accent-green); font-weight: bold; }
-.tool-status-error { color: var(--accent-red); }
-.tool-prompt { color: var(--accent-green); font-family: Menlo, Monaco, 'Courier New', monospace; }
-.tool-output { color: var(--text-secondary); font-family: Menlo, Monaco, 'Courier New', monospace; font-size: 13px; white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; }
-.approve-link { color: #00AA00; font-weight: bold; cursor: pointer; text-decoration: none; margin: 0 8px; }
-.approve-link:hover { text-decoration: underline; }
-.deny-link { color: #AA0000; font-weight: bold; cursor: pointer; text-decoration: none; margin: 0 8px; }
-.deny-link:hover { text-decoration: underline; }
-a { color: var(--accent-blue); }
-blockquote {
-    border-left: 3px solid var(--accent-blue);
-    background: var(--bg-tertiary);
-    padding: 8px 12px; margin: 12px 0; margin-left: 0;
-    color: var(--text-secondary); font-style: italic;
-}
-table { border-collapse: collapse; width: 100%; margin: 12px 0; background: var(--bg-secondary); }
-th { background: var(--bg-tertiary); color: var(--text-primary); font-weight: bold; }
-th, td { padding: 8px 12px; text-align: left; border: 1px solid #404040; }
-td { color: var(--text-secondary); }
-h1, h2, h3, h4, h5, h6 { margin-top: 20px; margin-bottom: 10px; color: var(--text-primary); }
-h1 { font-size: 1.8em; } h2 { font-size: 1.5em; } h3 { font-size: 1.3em; }
-h4 { font-size: 1.1em; } h5, h6 { font-size: 1em; }
-ul, ol { padding-left: 24px; margin: 8px 0; }
-li { margin: 4px 0; }
-hr { border: none; border-top: 1px solid #404040; margin: 16px 0; }
-.generating-dots { color: var(--text-muted); }
-.error-msg { color: var(--accent-red); }
-.warning-msg { color: #FFA500; }
-p { margin: 8px 0; }
 /* Dark scrollbar styling for WebKit */
 ::-webkit-scrollbar {
     width: 12px;
-    background: var(--bg-primary);
+    background: #1E1E1E;
 }
 ::-webkit-scrollbar-track {
-    background: var(--bg-primary);
+    background: #1E1E1E;
 }
 ::-webkit-scrollbar-thumb {
     background: #555;
     border-radius: 6px;
-    border: 2px solid var(--bg-primary);
+    border: 2px solid #1E1E1E;
 }
 ::-webkit-scrollbar-thumb:hover {
     background: #666;
 }
+
+/* Thinking content toggle state */
+.thinking-content { display: none; }
+.thinking-content.expanded { display: block; }
 </style>
 <script>
 function sendMsg(action, data) {
@@ -181,5 +135,6 @@ function appendToChat(html) {
     }
 }
 </script>
-</head><body>
-<div class="content-wrapper">
+</head>
+<body class="h-full m-0 p-0 bg-bg-primary text-text-primary font-sans text-[13px] leading-relaxed flex flex-col-reverse overflow-y-auto">
+<div class="content-wrapper p-2.5">

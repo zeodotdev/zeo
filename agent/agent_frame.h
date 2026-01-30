@@ -168,6 +168,7 @@ private:
     wxString m_thinkingContent;        // Raw accumulated thinking text
     bool     m_thinkingExpanded;       // Whether thinking is expanded (click to toggle)
     bool     m_isThinking;             // Whether currently in thinking phase (for loading animation)
+    bool     m_isStreamingMarkdown;    // Whether currently streaming markdown text (to hide dots)
     int      m_currentThinkingIndex;   // Index for current streaming thinking (for toggle:thinking:N links)
     wxString m_lastToolDesc;           // Temp storage for tool description during history replay
     bool     m_userScrolledUp;         // Track if user has scrolled up during generation

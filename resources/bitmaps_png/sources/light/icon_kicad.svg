@@ -1,7 +1,7 @@
 <svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="180" height="180" fill="black"/>
-<path d="M60 90L30 37.8L90 37.8L60 90Z" fill="white" fill-opacity="0.9"/>
-<path d="M60 90H120L90 142.2H30L60 90Z" fill="white" fill-opacity="0.8"/>
-<path d="M90 37.8H150L120 90H60L90 37.8Z" fill="white" fill-opacity="0.5"/>
-<path d="M120 90L149.7 142.2H90L120 90Z" fill="white" fill-opacity="0.55"/>
+<rect width="180" height="180" fill="white"/>
+<path d="M60 88.2L30 36L90 36L60 88.2Z" fill="black" fill-opacity="0.9"/>
+<path d="M60 88.2H120L90 140.4H30L60 88.2Z" fill="black" fill-opacity="0.8"/>
+<path d="M90 36H150L120 88.2H60L90 36Z" fill="black" fill-opacity="0.5"/>
+<path d="M120 88.2L149.7 140.4H90L120 88.2Z" fill="black" fill-opacity="0.55"/>
 </svg>

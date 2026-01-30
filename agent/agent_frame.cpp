@@ -812,14 +812,14 @@ void AGENT_FRAME::OnChatScroll( wxScrollWinEvent& aEvent )
 
 void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 {
-    fprintf( stderr, "AGENT KiwayMailIn: Received command=%d\n", aEvent.Command() );
+    fprintf( stderr, "[MAIL-DEBUG] AGENT KiwayMailIn: Received command=%d\n", aEvent.Command() );
     fflush( stderr );
 
     if( aEvent.Command() == MAIL_AGENT_RESPONSE )
     {
         std::string payload = aEvent.GetPayload();
-        fprintf( stderr, "AGENT KiwayMailIn: MAIL_AGENT_RESPONSE received, payload='%.100s...'\n",
-                 payload.c_str() );
+        fprintf( stderr, "[MAIL-DEBUG] AGENT KiwayMailIn: MAIL_AGENT_RESPONSE received, payload_len=%zu, payload='%.100s...'\n",
+                 payload.length(), payload.c_str() );
         fflush( stderr );
 
         // Check if we're in async tool execution mode (frame's context has an executing tool)
@@ -1784,8 +1784,17 @@ void AGENT_FRAME::OnExit( wxCommandEvent& event )
 
 std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayload )
 {
+    // Ensure the target frame exists before sending the message
+    // This is necessary because Kiway silently drops messages to non-existent frames
+    KIWAY_PLAYER* targetPlayer = Kiway().Player( static_cast<FRAME_T>( aDestFrame ), true );
+    if( !targetPlayer )
+    {
+        return "Error: Failed to create target frame for tool execution.";
+    }
+
     m_toolResponse = "";
     std::string payloadCopy = aPayload;
+
     Kiway().ExpressMail( static_cast<FRAME_T>( aDestFrame ), MAIL_AGENT_REQUEST, payloadCopy );
 
     // Wait for response (Sync)

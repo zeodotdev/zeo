@@ -22,11 +22,14 @@
 #include "agent_tools.h"
 #include "agent_llm_client.h"
 #include "agent_chat_history.h"
+#include "auth/agent_auth.h"
 
 #include <algorithm>
 #include <set>
+#include <thread>
 #include <kiway.h>
 #include <wx/log.h>
+#include <kicad_curl/kicad_curl_easy.h>
 
 // ============================================================================
 // Event definitions
@@ -56,6 +59,7 @@ CHAT_CONTROLLER::CHAT_CONTROLLER( wxEvtHandler* aEventSink )
     : m_eventSink( aEventSink ),
       m_llmClient( nullptr ),
       m_chatHistoryDb( nullptr ),
+      m_auth( nullptr ),
       m_stopRequested( false ),
       m_needsTitleGeneration( false )
 {
@@ -80,17 +84,39 @@ CHAT_CONTROLLER::~CHAT_CONTROLLER()
 
 void CHAT_CONTROLLER::SendMessage( const std::string& aText )
 {
+    fprintf( stderr, "\n[TITLE] Controller::SendMessage() called with text='%s'\n", aText.c_str() );
+    fprintf( stderr, "[TITLE] Controller: m_chatHistory.size()=%zu\n", m_chatHistory.size() );
+    fprintf( stderr, "[TITLE] Controller: m_chatHistory.empty()=%d\n", m_chatHistory.empty() ? 1 : 0 );
+    fflush( stderr );
+
     if( !CanAcceptInput() )
     {
         wxLogWarning( "CHAT_CONTROLLER::SendMessage called while busy" );
         return;
     }
 
-    // Store first user message for title generation
-    if( m_chatHistory.empty() )
+    // Store first user message for title generation (count user messages, not all messages)
+    int userMessageCount = 0;
+    for( const auto& msg : m_chatHistory )
     {
+        if( msg.contains( "role" ) && msg["role"] == "user" )
+            userMessageCount++;
+    }
+
+    fprintf( stderr, "[TITLE] Controller: User message count before this message: %d\n", userMessageCount );
+    fflush( stderr );
+
+    if( userMessageCount == 0 )
+    {
+        fprintf( stderr, "[TITLE] Controller: This is the FIRST user message, setting firstUserMessage and needsTitleGeneration\n" );
+        fflush( stderr );
         m_firstUserMessage = aText;
         m_needsTitleGeneration = true;
+    }
+    else
+    {
+        fprintf( stderr, "[TITLE] Controller: This is NOT the first user message (count=%d), NOT setting\n", userMessageCount );
+        fflush( stderr );
     }
 
     // Add user message to history
@@ -416,10 +442,19 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         EmitEvent( EVT_CHAT_TURN_COMPLETE, ChatTurnCompleteData( false ) );
 
         // Generate title if needed
+        fprintf( stderr, "[TITLE] Controller: Checking if title generation needed: m_needsTitleGeneration=%d\n", m_needsTitleGeneration );
+        fflush( stderr );
         if( m_needsTitleGeneration )
         {
+            fprintf( stderr, "[TITLE] Controller: Title generation NEEDED, calling GenerateTitle()\n" );
+            fflush( stderr );
             m_needsTitleGeneration = false;
             GenerateTitle();
+        }
+        else
+        {
+            fprintf( stderr, "[TITLE] Controller: Title generation NOT needed (already generated or not first message)\n" );
+            fflush( stderr );
         }
         break;
     }
@@ -947,13 +982,104 @@ void CHAT_CONTROLLER::ContinueChat()
 
 void CHAT_CONTROLLER::GenerateTitle()
 {
-    // TODO: Implement async title generation
-    // For now, just use the first few words of the user message
-    std::string title = m_firstUserMessage;
-    if( title.length() > 50 )
-        title = title.substr( 0, 47 ) + "...";
+    fprintf( stderr, "\n[TITLE] ========== Controller::GenerateTitle() CALLED ==========\n" );
+    fprintf( stderr, "[TITLE] Controller: m_needsTitleGeneration=%d\n", m_needsTitleGeneration );
+    fprintf( stderr, "[TITLE] Controller: m_firstUserMessage='%s'\n", m_firstUserMessage.c_str() );
+    fflush( stderr );
 
-    EmitEvent( EVT_CHAT_TITLE_GENERATED, ChatTitleGeneratedData( title ) );
+    if( m_firstUserMessage.empty() )
+    {
+        fprintf( stderr, "[TITLE] Controller: firstUserMessage is EMPTY, ABORTING\n" );
+        fflush( stderr );
+        wxLogDebug( "CHAT_CONTROLLER: GenerateTitle - firstUserMessage is empty, returning" );
+        return;
+    }
+
+    fprintf( stderr, "[TITLE] Controller: First user message captured: '%s'\n", m_firstUserMessage.c_str() );
+    fflush( stderr );
+
+    if( !m_auth )
+    {
+        fprintf( stderr, "[TITLE] Controller: NO AUTH OBJECT, ABORTING\n" );
+        fflush( stderr );
+        wxLogDebug( "CHAT_CONTROLLER: GenerateTitle - no auth, returning" );
+        return;
+    }
+
+    fprintf( stderr, "[TITLE] Controller: Auth object present, spawning thread...\n" );
+    fflush( stderr );
+
+    // Capture first user message for thread
+    std::string message = m_firstUserMessage;
+
+    // Use background thread to avoid blocking
+    std::thread( [this, message]() {
+        try
+        {
+            fprintf( stderr, "[TITLE] Controller: Starting title generation via API\n" );
+
+            // Check authentication
+            std::string accessToken = m_auth->GetAccessToken();
+            if( accessToken.empty() )
+            {
+                fprintf( stderr, "[TITLE] Controller: Error - Not authenticated\n" );
+                return;
+            }
+
+            // Setup HTTP request to title endpoint
+            KICAD_CURL_EASY curl;
+            curl.SetURL( "https://www.harold.so/api/llm/title" );
+            curl.SetHeader( "Content-Type", "application/json" );
+            curl.SetHeader( "Authorization", "Bearer " + accessToken );
+
+            // Build request body
+            nlohmann::json requestBody;
+            requestBody["message"] = message;
+            std::string jsonStr = requestBody.dump();
+            curl.SetPostFields( jsonStr );
+
+            fprintf( stderr, "[TITLE] Controller: Sending request to title API\n" );
+
+            // Perform request
+            curl.Perform();
+            long httpCode = curl.GetResponseStatusCode();
+
+            fprintf( stderr, "[TITLE] Controller: Received response: HTTP %ld\n", httpCode );
+
+            if( httpCode == 200 )
+            {
+                // Parse response
+                auto response = nlohmann::json::parse( curl.GetBuffer() );
+                std::string title = response.value( "title", "" );
+
+                fprintf( stderr, "[TITLE] Controller: Generated title: '%s'\n", title.c_str() );
+
+                // Emit event to main thread
+                if( !title.empty() )
+                {
+                    EmitEvent( EVT_CHAT_TITLE_GENERATED, ChatTitleGeneratedData( title ) );
+                }
+                else
+                {
+                    fprintf( stderr, "[TITLE] Controller: Title is empty, not emitting\n" );
+                }
+            }
+            else
+            {
+                // Handle HTTP errors
+                fprintf( stderr, "[TITLE] Controller: Title API error: HTTP %ld, response: %s\n",
+                        httpCode, curl.GetBuffer().c_str() );
+            }
+        }
+        catch( const std::exception& e )
+        {
+            fprintf( stderr, "[TITLE] Controller: Exception: %s\n", e.what() );
+        }
+        catch( ... )
+        {
+            fprintf( stderr, "[TITLE] Controller: Unknown exception occurred\n" );
+        }
+    }).detach();
 }
 
 

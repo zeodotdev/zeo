@@ -89,9 +89,6 @@ public:
     void OnLLMStreamComplete( wxThreadEvent& aEvent );
     void OnLLMStreamError( wxThreadEvent& aEvent );
 
-    // Title generation event handler
-    void OnTitleGeneratedEvent( wxThreadEvent& aEvent );
-
     // Controller event handlers (events from CHAT_CONTROLLER)
     void OnChatTextDelta( wxThreadEvent& aEvent );
     void OnChatThinkingStart( wxThreadEvent& aEvent );
@@ -200,11 +197,6 @@ private:
     void     StopGeneratingAnimation();
 
     // Chat title generation
-    bool        m_needsTitleGeneration;  // Whether to generate title after first response
-    std::string m_firstUserMessage;      // First user message for title generation
-    void        GenerateChatTitle();     // Async call to generate title
-    void        OnTitleGenerated( const std::string& aTitle, const std::string& aConversationId ); // Handle generated title
-
     // Auth helpers
     void UpdateAuthUI();
     bool CheckAuthentication(); // Returns true if authenticated

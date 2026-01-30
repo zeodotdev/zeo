@@ -164,6 +164,7 @@ public:
 
     void SetLLMClient( AGENT_LLM_CLIENT* aClient ) { m_llmClient = aClient; }
     void SetChatHistoryDb( AGENT_CHAT_HISTORY* aDb ) { m_chatHistoryDb = aDb; }
+    void SetAuth( class AGENT_AUTH* aAuth ) { m_auth = aAuth; }
 
     /**
      * Set the function used to send KIWAY requests for tool execution.
@@ -229,6 +230,7 @@ private:
     // -------------------------------------------------------------------------
     AGENT_LLM_CLIENT*  m_llmClient;      ///< LLM API client
     AGENT_CHAT_HISTORY* m_chatHistoryDb;  ///< Persistence layer
+    class AGENT_AUTH*   m_auth;          ///< Authentication manager
     std::function<std::string( int, const std::string& )> m_sendRequestFn;
 
     // -------------------------------------------------------------------------

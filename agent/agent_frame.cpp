@@ -239,6 +239,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Initialize thinking state
     m_thinkingExpanded = false;
     m_isThinking = false;
+    m_isStreamingMarkdown = false;
     m_currentThinkingIndex = -1;
 
     // Bind Model Change Event
@@ -524,8 +525,8 @@ void AGENT_FRAME::OnHtmlUpdateTimer( wxTimerEvent& aEvent )
         if( !m_toolCallHtml.IsEmpty() )
             streamingContent += m_toolCallHtml;
 
-        // Add animated dots if currently generating
-        if( m_isGenerating )
+        // Add animated dots when generating but not streaming markdown
+        if( m_isGenerating && !m_isStreamingMarkdown )
         {
             wxString dots;
             for( int i = 0; i < m_generatingDots; i++ )
@@ -571,6 +572,7 @@ void AGENT_FRAME::OnHtmlUpdateTimer( wxTimerEvent& aEvent )
 void AGENT_FRAME::StartGeneratingAnimation()
 {
     m_isGenerating = true;
+    m_isStreamingMarkdown = false;
     m_generatingDots = 1;
     m_generatingTimer.Start( 400 ); // Update every 400ms
     m_actionButton->SetLabel( "Stop" );
@@ -579,6 +581,7 @@ void AGENT_FRAME::StartGeneratingAnimation()
 void AGENT_FRAME::StopGeneratingAnimation()
 {
     m_isGenerating = false;
+    m_isStreamingMarkdown = false;
     m_generatingTimer.Stop();
     m_htmlUpdateTimer.Stop();
     m_generatingDots = 0;
@@ -2544,6 +2547,9 @@ void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
     ChatTextDeltaData* data = aEvent.GetPayload<ChatTextDeltaData*>();
     if( !data )
         return;
+
+    // Markdown text is now streaming - hide the waiting dots
+    m_isStreamingMarkdown = true;
 
     // Controller owns the response - UpdateAgentResponse reads from controller
 

@@ -626,3 +626,39 @@ void TERMINAL_PANEL::ClearPythonCompletionCallback()
 {
     m_pythonCompletionCallback = nullptr;
 }
+
+
+void TERMINAL_PANEL::DisplayAgentCommand( const wxString& aCmd, const wxString& aMode )
+{
+    // Display the command being executed by the agent
+    // Format: [agent:mode] >>> <command>
+    wxString header;
+    if( aMode == "sch" )
+        header = "[agent:schematic] ";
+    else if( aMode == "pcb" )
+        header = "[agent:pcb] ";
+    else if( aMode == "shell" )
+        header = "[agent:shell] $ ";
+    else
+        header = "[agent] ";
+
+    // Add a newline before if we're not at the start of a line
+    long lastPos = m_outputCtrl->GetLastPosition();
+    if( lastPos > 0 )
+    {
+        wxString lastChar = m_outputCtrl->GetRange( lastPos - 1, lastPos );
+        if( lastChar != "\n" )
+            m_outputCtrl->AppendText( "\n" );
+    }
+
+    m_outputCtrl->AppendText( header );
+
+    // For multi-line commands, indent continuation lines
+    wxString cmd = aCmd;
+    cmd.Replace( "\n", "\n    " );
+    m_outputCtrl->AppendText( cmd );
+    m_outputCtrl->AppendText( "\n" );
+
+    // Scroll to show the command
+    m_outputCtrl->ShowPosition( m_outputCtrl->GetLastPosition() );
+}

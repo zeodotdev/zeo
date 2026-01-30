@@ -740,6 +740,9 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                 SendAgentResponse( result );
             } );
 
+        // Display the command being executed in the Agent Terminal
+        active->DisplayAgentCommand( code, mode );
+
         // Start Python execution (async, returns immediately)
         std::string fullCode = initCode + code.ToStdString();
         fprintf( stderr, "ExecuteCommandForAgentAsync: Calling RunLocalPython with code_len=%zu\n", fullCode.size() );
@@ -793,6 +796,9 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
             SendAgentResponse( "Error: Could not create/find Agent terminal." );
             return;
         }
+
+        // Display the command being executed in the Agent Terminal
+        active->DisplayAgentCommand( bashCmd, "shell" );
 
         // System commands are still synchronous (they're typically fast)
         std::string result = active->ProcessSystemCommand( bashCmd );

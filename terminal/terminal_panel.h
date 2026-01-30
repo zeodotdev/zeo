@@ -46,6 +46,9 @@ public:
     void SetPythonCompletionCallback( PythonCompletionCallback aCallback );
     void ClearPythonCompletionCallback();
 
+    // Display agent command input in terminal (for visibility of what agent is running)
+    void DisplayAgentCommand( const wxString& aCmd, const wxString& aMode );
+
     // Event handlers
     void OnKeyDown( wxKeyEvent& aEvent );
     void OnChar( wxKeyEvent& aEvent );

@@ -238,7 +238,7 @@ wxString ToHtml( const wxString& aMarkdown )
                 codeBlockContent.Replace( "&", "&amp;" );
                 codeBlockContent.Replace( "<", "&lt;" );
                 codeBlockContent.Replace( ">", "&gt;" );
-                result += "<pre class=\"code-block\">" + codeBlockContent + "</pre>";
+                result += "<pre class=\"bg-bg-secondary p-3 rounded-md font-mono text-[13px] overflow-x-auto whitespace-pre-wrap break-words text-text-secondary my-3\">" + codeBlockContent + "</pre>";
                 inCodeBlock = false;
             }
             continue;

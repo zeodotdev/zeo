@@ -4,7 +4,7 @@
 <component type="desktop-application">
     <id>@KICAD_APP_NAME@</id>
 
-    <name>KiCad</name>
+    <name>Zener</name>
 
     <launchable type="desktop-id">@KICAD_APP_NAME@.desktop</launchable>
 

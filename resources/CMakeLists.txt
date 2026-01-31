@@ -14,7 +14,7 @@ elseif( UNIX )
     # app ID to link the two IDs together.
 
     # Default values for regular builds
-    set( KICAD_REVERSE_DOMAIN "org.kicad" )
+    set( KICAD_REVERSE_DOMAIN "org.zener" )
     set( KICAD_APP_NAME "${KICAD_REVERSE_DOMAIN}.kicad" )
     set( KICAD_PROVIDES_APP_ID "${KICAD_REVERSE_DOMAIN}.KiCad" )
     set( KICAD_APP_PREFIX "${KICAD_REVERSE_DOMAIN}" )

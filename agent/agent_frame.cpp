@@ -896,6 +896,7 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 
 void AGENT_FRAME::OnSelectionPillClick( wxCommandEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnSelectionPillClick called\n" );
     wxString label = m_selectionPill->GetLabel();
     if( !label.IsEmpty() )
     {
@@ -993,6 +994,7 @@ void AGENT_FRAME::OnInputKeyDown( wxKeyEvent& aEvent )
 
 void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnSend called\n" );
     // NOTE: This method still uses legacy code because it handles KiCad-specific requirements
     // (authentication, pending editor state, system prompt with schematic/PCB context, KIWAY
     // target sheet reset) that the controller doesn't currently support.
@@ -1127,6 +1129,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnStop called\n" );
     using json = nlohmann::json;
 
     // Delegate cancel logic to controller
@@ -1370,10 +1373,12 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
     {
         nlohmann::json msg = nlohmann::json::parse( aMessage.ToStdString() );
         std::string action = msg.value( "action", "" );
+        printf( "[DEBUG] AGENT_FRAME::OnWebViewMessage - action: %s\n", action.c_str() );
 
         if( action == "link_click" )
         {
             wxString href = wxString::FromUTF8( msg.value( "href", "" ) );
+            printf( "[DEBUG] AGENT_FRAME::OnWebViewMessage - link_click href: %s\n", href.ToStdString().c_str() );
 
             if( href == "tool:approve" )
             {
@@ -1397,6 +1402,7 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
             }
             else if( href.StartsWith( "toggle:thinking:" ) )
             {
+                printf( "[DEBUG] AGENT_FRAME::OnWebViewMessage - toggle thinking block clicked\n" );
                 // Toggle thinking block by index
                 wxString indexStr = href.Mid( 16 );  // "toggle:thinking:" is 16 chars
                 long index;
@@ -1619,6 +1625,7 @@ void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnTextEnter( wxCommandEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnTextEnter called\n" );
     if( wxGetKeyState( WXK_SHIFT ) )
     {
         m_inputCtrl->WriteText( "\n" );
@@ -1631,9 +1638,11 @@ void AGENT_FRAME::OnTextEnter( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnModelSelection( wxCommandEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnModelSelection called\n" );
     // Reload model context when model changes
     // Track the currently selected model
     wxString newModel = m_modelChoice->GetStringSelection();
+    printf( "[DEBUG] AGENT_FRAME::OnModelSelection - selected model: %s\n", newModel.ToStdString().c_str() );
     if( newModel.ToStdString() != m_currentModel )
     {
         m_currentModel = newModel.ToStdString();
@@ -1866,6 +1875,7 @@ void AGENT_FRAME::OnLLMStreamError( wxThreadEvent& aEvent )
 
 void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnNewChat called\n" );
     // Prevent switching chats while generating
     bool isBusy = m_chatController ? m_chatController->IsBusy()
                                    : ( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE );
@@ -1899,6 +1909,7 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnHistoryTool( wxCommandEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnHistoryTool called\n" );
     auto historyList = m_chatHistoryDb.GetHistoryList();
 
     wxMenu menu;
@@ -1939,6 +1950,7 @@ void AGENT_FRAME::OnHistoryTool( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnHistoryShowAll( wxCommandEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnHistoryShowAll called\n" );
     // Prevent switching chats while generating
     bool isBusy = m_chatController ? m_chatController->IsBusy()
                                    : ( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE );
@@ -1962,6 +1974,7 @@ void AGENT_FRAME::OnHistoryShowAll( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnHistoryMenuSelect called\n" );
     // Prevent switching chats while generating
     bool isBusy = m_chatController ? m_chatController->IsBusy()
                                    : ( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE );
@@ -1983,6 +1996,7 @@ void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
 {
+    printf( "[DEBUG] AGENT_FRAME::LoadConversation called with id: %s\n", aConversationId.c_str() );
     // Delegate to controller - it will emit EVT_CHAT_HISTORY_LOADED
     // which triggers OnChatHistoryLoaded for UI updates
     if( m_chatController )
@@ -2223,6 +2237,7 @@ bool AGENT_FRAME::CheckAuthentication()
 
 void AGENT_FRAME::OnSignIn( wxCommandEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnSignIn called\n" );
     if( m_auth )
         m_auth->StartOAuthFlow( "agent" );
 }
@@ -2319,6 +2334,7 @@ void AGENT_FRAME::ShowApproveRejectButtons()
 
 void AGENT_FRAME::OnPendingChangesClick( wxCommandEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnPendingChangesClick called\n" );
     // Toggle panel visibility and update button label
     bool isShown = m_pendingChangesPanel->IsShown();
     m_pendingChangesPanel->Show( !isShown );
@@ -2519,6 +2535,7 @@ void AGENT_FRAME::ShowOpenEditorApproval( const wxString& aEditorType )
 
 void AGENT_FRAME::OnApproveOpenEditor()
 {
+    printf( "[DEBUG] AGENT_FRAME::OnApproveOpenEditor called\n" );
     bool success = false;
     wxString editorName;
 
@@ -2552,6 +2569,7 @@ void AGENT_FRAME::OnApproveOpenEditor()
 
 void AGENT_FRAME::OnRejectOpenEditor()
 {
+    printf( "[DEBUG] AGENT_FRAME::OnRejectOpenEditor called\n" );
     wxString editorName = m_pendingOpenSch ? "Schematic" : "PCB";
 
     // Clear pending state before processing result (in case of re-entrancy)
@@ -2593,6 +2611,7 @@ void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
     if( !data )
         return;
 
+    printf( "[DEBUG] AGENT_FRAME::OnChatTextDelta - received text delta\n" );
     // Markdown text is now streaming - hide the waiting dots
     m_isStreamingMarkdown = true;
 
@@ -2609,6 +2628,7 @@ void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
 
 void AGENT_FRAME::OnChatThinkingStart( wxThreadEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnChatThinkingStart - thinking block started\n" );
     ChatThinkingStartData* data = aEvent.GetPayload<ChatThinkingStartData*>();
 
     // If there's existing thinking content from a previous block (e.g., before a tool call),
@@ -2664,6 +2684,7 @@ void AGENT_FRAME::OnChatThinkingDelta( wxThreadEvent& aEvent )
 
 void AGENT_FRAME::OnChatThinkingDone( wxThreadEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnChatThinkingDone - thinking block completed\n" );
     ChatThinkingDoneData* data = aEvent.GetPayload<ChatThinkingDoneData*>();
 
     // Finalize thinking state
@@ -2688,6 +2709,8 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     if( !data )
         return;
 
+    printf( "[DEBUG] AGENT_FRAME::OnChatToolStart - tool: %s (id=%s)\n",
+            data->toolName.c_str(), data->toolId.c_str() );
     // Stop animation and finalize thinking
     StopGeneratingAnimation();
     m_isThinking = false;
@@ -2766,6 +2789,8 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
     if( !data )
         return;
 
+    printf( "[DEBUG] AGENT_FRAME::OnChatToolComplete - tool: %s, success: %s\n",
+            data->toolName.c_str(), data->success ? "true" : "false" );
     // Determine status display
     wxString statusClass;
     wxString statusText;
@@ -2823,6 +2848,7 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
 void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnChatTurnComplete - turn completed\n" );
     ChatTurnCompleteData* data = aEvent.GetPayload<ChatTurnCompleteData*>();
     if( !data )
         return;
@@ -2878,6 +2904,7 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
 
 void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
 {
+    printf( "[DEBUG] AGENT_FRAME::OnChatError - error received\n" );
     ChatErrorData* data = aEvent.GetPayload<ChatErrorData*>();
     if( !data )
         return;
@@ -2905,6 +2932,8 @@ void AGENT_FRAME::OnChatStateChanged( wxThreadEvent& aEvent )
     if( !data )
         return;
 
+    printf( "[DEBUG] AGENT_FRAME::OnChatStateChanged - state: %d -> %d\n",
+            data->oldState, data->newState );
     // Update button based on new state
     AgentConversationState newState = static_cast<AgentConversationState>( data->newState );
 
@@ -3029,7 +3058,8 @@ void AGENT_FRAME::OnChatTitleGenerated( wxThreadEvent& aEvent )
     if( !data )
         return;
 
-    // Update title display (final)
+    printf( "[DEBUG] AGENT_FRAME::OnChatTitleGenerated - title: %s\n", data->title.c_str() );
+    // Update title display
     m_chatNameLabel->SetLabel( wxString::FromUTF8( data->title ) );
 
     // Update persistence with the new title
@@ -3056,6 +3086,8 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
     if( !data )
         return;
 
+    printf( "[DEBUG] AGENT_FRAME::OnChatHistoryLoaded - chatId: %s, title: %s\n",
+            data->chatId.c_str(), data->title.c_str() );
     // Hide history panel overlay if visible
     if( m_historyPanel && m_historyPanel->IsShown() )
     {

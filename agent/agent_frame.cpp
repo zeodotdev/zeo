@@ -33,6 +33,7 @@
 #include <wx/clipbrd.h>
 #include <wx/menu.h>
 #include <wx/toolbar.h>
+#include <wx/evtloop.h>
 #include <wx/bitmap.h>
 #include <wx/icon.h>
 #include <kicad_curl/kicad_curl_easy.h>
@@ -2607,6 +2608,15 @@ bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
 
 void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
 {
+    // Periodically yield to user input events (mouse clicks, keyboard) to keep UI responsive
+    // during rapid streaming. This prevents click delays when expanding thinking blocks.
+    static int s_textEventCounter = 0;
+    if( ++s_textEventCounter % 5 == 0 )
+    {
+        if( wxEventLoopBase* loop = wxEventLoopBase::GetActive() )
+            loop->YieldFor( wxEVT_CATEGORY_USER_INPUT );
+    }
+
     ChatTextDeltaData* data = aEvent.GetPayload<ChatTextDeltaData*>();
     if( !data )
         return;
@@ -2662,6 +2672,15 @@ void AGENT_FRAME::OnChatThinkingStart( wxThreadEvent& aEvent )
 
 void AGENT_FRAME::OnChatThinkingDelta( wxThreadEvent& aEvent )
 {
+    // Periodically yield to user input events (mouse clicks, keyboard) to keep UI responsive
+    // during rapid streaming. This prevents click delays when expanding thinking blocks.
+    static int s_thinkingEventCounter = 0;
+    if( ++s_thinkingEventCounter % 5 == 0 )
+    {
+        if( wxEventLoopBase* loop = wxEventLoopBase::GetActive() )
+            loop->YieldFor( wxEVT_CATEGORY_USER_INPUT );
+    }
+
     ChatThinkingDeltaData* data = aEvent.GetPayload<ChatThinkingDeltaData*>();
     if( !data )
         return;

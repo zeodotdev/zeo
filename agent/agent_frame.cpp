@@ -160,7 +160,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // 2b. Control Row (Bottom)
     wxBoxSizer* controlsSizer = new wxBoxSizer( wxHORIZONTAL );
 
-    // Model Selection (Claude models only - via harold.so proxy)
+    // Model Selection (Claude models only - via zener.so proxy)
     wxArrayString modelChoices;
     modelChoices.Add( "Claude 4.5 Sonnet" );
     modelChoices.Add( "Claude 4.5 Opus" );

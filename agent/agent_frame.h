@@ -186,6 +186,8 @@ private:
     void     AppendHtml( const wxString& aHtml );
     void     SetHtml( const wxString& aHtml );
     void     UpdateAgentResponse();    // Re-render current response with markdown
+    wxString BuildStreamingContent();  // Build streaming content HTML from current state
+    void     FlushStreamingContentUpdate( bool aForce = false );  // Immediately flush streaming content to DOM
     void     AutoScrollToBottom();     // Scroll to bottom only if user hasn't scrolled up
 
     // Generating animation

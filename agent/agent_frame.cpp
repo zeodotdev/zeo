@@ -468,6 +468,10 @@ void AGENT_FRAME::RebuildThinkingHtml()
         escapedContent = escapedContent.Left( 5000 ) + "... <i>(truncated)</i>";
     }
 
+    // Use placeholder if content is empty (during initial THINKING_START)
+    // This ensures the content div exists immediately for user clicks
+    wxString displayContent = escapedContent.IsEmpty() ? "<i>Thinking...</i>" : escapedContent;
+
     // Always render both toggle link and content (content hidden by CSS if collapsed)
     // JavaScript will toggle visibility without page reload
     wxString expandedClass = m_thinkingExpanded ? " expanded" : "";
@@ -478,7 +482,7 @@ void AGENT_FRAME::RebuildThinkingHtml()
     m_thinkingHtml = wxString::Format(
         "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline hover:underline\" data-thinking-index=\"%d\">%s</a><br>"
         "<div class=\"thinking-content text-[#606060] mt-2 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-thinking-index=\"%d\" style=\"display:%s;\">%s</div><br>",
-        m_currentThinkingIndex, m_currentThinkingIndex, thinkingText, expandedClass, m_currentThinkingIndex, displayStyle, escapedContent );
+        m_currentThinkingIndex, m_currentThinkingIndex, thinkingText, expandedClass, m_currentThinkingIndex, displayStyle, displayContent );
 }
 
 void AGENT_FRAME::UpdateAgentResponse()
@@ -503,6 +507,63 @@ void AGENT_FRAME::OnGeneratingTimer( wxTimerEvent& aEvent )
     // Auto-scroll handled by CSS flex-direction: column-reverse
 }
 
+wxString AGENT_FRAME::BuildStreamingContent()
+{
+    // Build the streaming content HTML from current state
+    wxString streamingContent;
+
+    // Include thinking HTML if available (streamed directly in updateStreamingContent)
+    if( !m_thinkingHtml.IsEmpty() )
+        streamingContent += m_thinkingHtml;
+
+    // Get current response from controller and append with markdown
+    std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
+    streamingContent += AgentMarkdown::ToHtml( currentResponse );
+
+    // Include any tool call HTML
+    if( !m_toolCallHtml.IsEmpty() )
+        streamingContent += m_toolCallHtml;
+
+    // Add animated dots when generating but not streaming markdown
+    if( m_isGenerating && !m_isStreamingMarkdown )
+    {
+        wxString dots;
+        for( int i = 0; i < m_generatingDots; i++ )
+            dots += ".";
+        streamingContent += "<font color='#888888'>" + dots + "</font>";
+    }
+
+    return streamingContent;
+}
+
+void AGENT_FRAME::FlushStreamingContentUpdate( bool aForce )
+{
+    // Immediately flush streaming content to DOM (used to prevent race conditions)
+    // This is called when we need to bypass the timer throttling for critical updates
+    if( !m_chatWindow )
+        return;
+
+    // Skip update if user scrolled up, unless forced (e.g., user-initiated toggle)
+    if( m_userScrolledUp && !aForce )
+        return;
+
+    // Build streaming content
+    wxString streamingContent = BuildStreamingContent();
+
+    // Escape the HTML for JavaScript string
+    wxString escaped = streamingContent;
+    escaped.Replace( "\\", "\\\\" );  // Escape backslashes first
+    escaped.Replace( "'", "\\'" );    // Escape single quotes
+    escaped.Replace( "\n", "\\n" );   // Escape newlines
+    escaped.Replace( "\r", "\\r" );   // Escape carriage returns
+
+    wxString script = wxString::Format( "updateStreamingContent('%s');", escaped );
+    m_chatWindow->RunScriptAsync( script );
+
+    // Clear the pending update flag since we just executed it
+    m_htmlUpdateNeeded = false;
+}
+
 void AGENT_FRAME::OnHtmlUpdateTimer( wxTimerEvent& aEvent )
 {
     // Throttled HTML update - only update if needed AND user hasn't scrolled up
@@ -510,29 +571,8 @@ void AGENT_FRAME::OnHtmlUpdateTimer( wxTimerEvent& aEvent )
     {
         m_htmlUpdateNeeded = false;
 
-        // Build just the streaming content (not the full page)
-        wxString streamingContent;
-
-        // Include thinking block HTML if present
-        if( !m_thinkingHtml.IsEmpty() )
-            streamingContent += m_thinkingHtml;
-
-        // Get current response from controller and append with markdown
-        std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
-        streamingContent += AgentMarkdown::ToHtml( currentResponse );
-
-        // Include any tool call HTML
-        if( !m_toolCallHtml.IsEmpty() )
-            streamingContent += m_toolCallHtml;
-
-        // Add animated dots when generating but not streaming markdown
-        if( m_isGenerating && !m_isStreamingMarkdown )
-        {
-            wxString dots;
-            for( int i = 0; i < m_generatingDots; i++ )
-                dots += ".";
-            streamingContent += "<font color='#888888'>" + dots + "</font>";
-        }
+        // Build streaming content using shared helper
+        wxString streamingContent = BuildStreamingContent();
 
         // Use RunScript() for incremental DOM update instead of SetPage()
         // This avoids full page reload and the associated scroll/layer conflicts
@@ -1363,8 +1403,7 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
                 if( indexStr.ToLong( &index ) && index >= 0 )
                 {
                     // Check if this is the current streaming thinking
-                    if( index == m_currentThinkingIndex && m_currentThinkingIndex >= 0 &&
-                        !m_thinkingContent.IsEmpty() )
+                    if( index == m_currentThinkingIndex && m_currentThinkingIndex >= 0 )
                     {
                         // Toggle current streaming thinking
                         m_thinkingExpanded = !m_thinkingExpanded;
@@ -1406,11 +1445,17 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
             int index = msg.value( "index", -1 );
             bool expanded = msg.value( "expanded", false );
 
-            // Update state without reloading page
+            // Update state and rebuild HTML so subsequent timer updates use correct state
             if( index == m_currentThinkingIndex && m_currentThinkingIndex >= 0 )
             {
-                // Current streaming thinking
+                // Current streaming thinking - update state and rebuild HTML immediately
                 m_thinkingExpanded = expanded;
+                RebuildThinkingHtml();
+
+                // CRITICAL: Immediately flush the update to DOM to prevent race condition
+                // where THINKING_DELTA events rebuild with old state before next timer tick.
+                // Force=true bypasses m_userScrolledUp check since this is user-initiated.
+                FlushStreamingContentUpdate( true );
             }
             else if( index >= 0 && index < (int)m_historicalThinking.size() )
             {
@@ -1420,7 +1465,6 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
                 else
                     m_historicalThinkingExpanded.erase( index );
             }
-            // Don't call RenderChatHistory() - state is already updated in DOM via JavaScript
         }
         else if( action == "scroll_activity" )
         {
@@ -2585,9 +2629,10 @@ void AGENT_FRAME::OnChatThinkingStart( wxThreadEvent& aEvent )
     // After the push above (if any), this gives us the correct next index
     m_currentThinkingIndex = static_cast<int>( m_historicalThinking.size() );
 
-    // Rebuild thinking display (shows loading animation)
+    // Rebuild thinking HTML and immediately flush to DOM
+    // This bypasses the timer to minimize delay before thinking link is clickable
     RebuildThinkingHtml();
-    UpdateAgentResponse();
+    FlushStreamingContentUpdate();  // Immediate flush, don't wait for timer
 
     if( data )
         delete data;
@@ -2604,7 +2649,9 @@ void AGENT_FRAME::OnChatThinkingDelta( wxThreadEvent& aEvent )
     m_isThinking = true;
     m_thinkingContent = data->fullThinking;
 
-    // Rebuild thinking display and re-render
+    // Rebuild thinking HTML and trigger update via timer
+    // The thinking content is included directly in BuildStreamingContent()
+    // and will be updated on the next timer tick (max 50ms delay)
     RebuildThinkingHtml();
     UpdateAgentResponse();
 

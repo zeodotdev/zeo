@@ -91,14 +91,19 @@ document.addEventListener('click', function(e) {
             e.preventDefault();
             const index = target.getAttribute('data-thinking-index');
             const content = document.querySelector('.thinking-content[data-thinking-index="' + index + '"]');
+
             if (content) {
-                if (content.style.display === 'none' || content.style.display === '') {
-                    content.style.display = 'block';
-                    sendMsg('thinking_toggled', {index: parseInt(index), expanded: true});
-                } else {
-                    content.style.display = 'none';
-                    sendMsg('thinking_toggled', {index: parseInt(index), expanded: false});
-                }
+                const oldDisplay = content.style.display;
+                const newDisplay = (oldDisplay === 'none' || oldDisplay === '') ? 'block' : 'none';
+                const expanded = (newDisplay === 'block');
+
+                // Update DOM immediately
+                content.style.display = newDisplay;
+
+                // Send message to C++
+                sendMsg('thinking_toggled', {index: parseInt(index), expanded: expanded});
+            } else {
+                console.error('[AGENT] No thinking content found for index:', index);
             }
             return false;
         }
@@ -116,6 +121,8 @@ function updateStreamingContent(html) {
     const container = document.getElementById('streaming-content');
     if (container) {
         container.innerHTML = html;
+    } else {
+        console.error('[AGENT] streaming-content container not found!');
     }
 }
 

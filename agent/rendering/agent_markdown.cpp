@@ -211,6 +211,7 @@ wxString ToHtml( const wxString& aMarkdown )
     bool inList = false;
     bool inTable = false;
     wxString codeBlockContent;
+    wxString codeBlockLanguage;
 
     for( size_t i = 0; i < lines.GetCount(); i++ )
     {
@@ -225,6 +226,8 @@ wxString ToHtml( const wxString& aMarkdown )
             {
                 inCodeBlock = true;
                 codeBlockContent.clear();
+                // Extract language identifier (e.g., "cpp" from "```cpp")
+                codeBlockLanguage = trimmed.Mid( 3 ).Trim( false ).Trim( true );
                 // Close any open list
                 if( inList )
                 {
@@ -234,12 +237,21 @@ wxString ToHtml( const wxString& aMarkdown )
             }
             else
             {
-                // End code block - render with semantic HTML
+                // End code block - render with semantic HTML for highlight.js
                 codeBlockContent.Replace( "&", "&amp;" );
                 codeBlockContent.Replace( "<", "&lt;" );
                 codeBlockContent.Replace( ">", "&gt;" );
-                result += "<pre class=\"bg-bg-secondary p-3 rounded-md font-mono text-[13px] overflow-x-auto whitespace-pre-wrap break-words text-text-secondary my-3\">" + codeBlockContent + "</pre>";
+
+                // Build language class for highlight.js
+                wxString langClass;
+                if( !codeBlockLanguage.IsEmpty() )
+                {
+                    langClass = " class=\"language-" + codeBlockLanguage + "\"";
+                }
+
+                result += "<pre class=\"code-block\"><code" + langClass + ">" + codeBlockContent + "</code></pre>";
                 inCodeBlock = false;
+                codeBlockLanguage.clear();
             }
             continue;
         }
@@ -453,7 +465,15 @@ wxString ToHtml( const wxString& aMarkdown )
         codeBlockContent.Replace( "&", "&amp;" );
         codeBlockContent.Replace( "<", "&lt;" );
         codeBlockContent.Replace( ">", "&gt;" );
-        result += "<pre class=\"code-block\">" + codeBlockContent + "</pre>";
+
+        // Build language class for highlight.js
+        wxString langClass;
+        if( !codeBlockLanguage.IsEmpty() )
+        {
+            langClass = " class=\"language-" + codeBlockLanguage + "\"";
+        }
+
+        result += "<pre class=\"code-block\"><code" + langClass + ">" + codeBlockContent + "</code></pre>";
     }
 
     return result;

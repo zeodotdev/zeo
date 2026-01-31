@@ -89,7 +89,7 @@ add_executable( agent WIN32 MACOSX_BUNDLE
 if( APPLE )
     set_target_properties( agent     PROPERTIES
         MACOSX_BUNDLE_ICON_FILE agent.icns
-        MACOSX_BUNDLE_GUI_IDENTIFIER org.kicad-pcb.kicad-agent
+        MACOSX_BUNDLE_GUI_IDENTIFIER org.zener.agent
         MACOSX_BUNDLE_NAME Agent
         MACOSX_BUNDLE_INFO_PLIST ${PROJECT_BINARY_DIR}/agent/Info.plist
         )

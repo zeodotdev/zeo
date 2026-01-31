@@ -734,7 +734,7 @@ else()
         CACHE PATH "Location of KiCad binaries." FORCE )
 
     # some paths to single app bundle
-    set( OSX_BUNDLE_MAIN "KiCad.app" )
+    set( OSX_BUNDLE_MAIN "Zener.app" )
     set( OSX_BUNDLE_BIN_DIR "Contents/MacOS" )
     set( OSX_BUNDLE_LIB_DIR "Contents/Frameworks" )
     set( OSX_BUNDLE_KIFACE_DIR "Contents/PlugIns" )

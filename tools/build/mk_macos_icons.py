@@ -9,20 +9,22 @@ import os
 from shutil import copy, rmtree
 from subprocess import call
 
-ICON_SOURCES = "../../resources/bitmaps_png/sources/light/"
+ICON_SOURCES = "../../resources/bitmaps_png/sources/dark/"
 
 # (sourcename, (dest1, dest2, ...), output_dir)
 ICONS = [
-    # ("bitmap2component", ("bitmap2component",), "../../bitmap2component"),
-    # ("cvpcb", ("cvpcb", "cvpcb_doc"), "../../cvpcb"),
-    # ("eeschema", ("eeschema", "eeschema_doc"), "../../eeschema"),
+    ("bitmap2component", ("bitmap2component",), "../../bitmap2component"),
+    ("cvpcb", ("cvpcb", "cvpcb_doc"), "../../cvpcb"),
+    ("eeschema", ("eeschema", "eeschema_doc"), "../../eeschema"),
     ("libedit", ("libedit", "libedit_doc"), "../../eeschema"),
-    # ("gerbview", ("gerbview", "gerbview_doc"), "../../gerbview"),
-    # ("kicad", ("kicad", "kicad_doc"), "../../kicad"),
-    # ("pagelayout_editor", ("pagelayout_editor", "pagelayout_editor_doc"), "../../pagelayout_editor"),
-    # ("pcbcalculator", ("pcb_calculator",), "../../pcb_calculator"),
-    # ("pcbnew", ("pcbnew", "pcbnew_doc"), "../../pcbnew"),
-    ("modedit", ("fpedit", "fpedit_doc"), "../../pcbnew")
+    ("gerbview", ("gerbview", "gerbview_doc"), "../../gerbview"),
+    ("kicad", ("kicad", "kicad_doc"), "../../kicad"),
+    ("kicad", ("agent",), "../../agent"),
+    ("pagelayout_editor", ("pagelayout_editor", "pagelayout_editor_doc"), "../../pagelayout_editor"),
+    ("pcbcalculator", ("pcb_calculator",), "../../pcb_calculator"),
+    ("pcbnew", ("pcbnew", "pcbnew_doc"), "../../pcbnew"),
+    ("modedit", ("fpedit", "fpedit_doc"), "../../pcbnew"),
+    ("kicad", ("terminal",), "../../terminal")
 ]
 
 SIZES = [

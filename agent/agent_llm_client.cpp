@@ -820,8 +820,8 @@ void* LLM_REQUEST_THREAD::Entry()
         return nullptr;
     }
 
-    // Set up curl options - use harold.so proxy
-    curl_easy_setopt( curl, CURLOPT_URL, "https://www.harold.so/api/llm/messages" );
+    // Set up curl options - use zener.so proxy
+    curl_easy_setopt( curl, CURLOPT_URL, "https://www.zener.so/api/llm/messages" );
     curl_easy_setopt( curl, CURLOPT_POST, 1L );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDS, requestBodyStr.c_str() );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDSIZE, requestBodyStr.size() );

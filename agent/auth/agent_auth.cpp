@@ -13,7 +13,7 @@
 using json = nlohmann::json;
 
 AGENT_AUTH::AGENT_AUTH() :
-        m_authWebUrl( "https://www.harold.so/auth" ),
+        m_authWebUrl( "https://www.zener.so/auth" ),
         m_tokenExpiry( 0 )
 {
 }

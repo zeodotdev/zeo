@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <html class="h-full bg-[#1E1E1E] flex flex-col-reverse overflow-y-auto"><head>
 <meta charset="UTF-8">
+<style>
+/* Critical: Must be before any external scripts to prevent white flash during CDN fetch */
+html, body { background: #1E1E1E !important; }
+</style>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
 tailwind.config = {
@@ -28,9 +32,6 @@ tailwind.config = {
 }
 </script>
 <style>
-/* Immediate background to prevent white flash on load */
-html { background: #1E1E1E !important; }
-body { background: #1E1E1E !important; }
 
 /* Dark scrollbar styling for WebKit */
 ::-webkit-scrollbar {

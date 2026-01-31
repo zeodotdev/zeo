@@ -331,6 +331,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( EVT_CHAT_TURN_COMPLETE, &AGENT_FRAME::OnChatTurnComplete, this );
     Bind( EVT_CHAT_ERROR, &AGENT_FRAME::OnChatError, this );
     Bind( EVT_CHAT_STATE_CHANGED, &AGENT_FRAME::OnChatStateChanged, this );
+    Bind( EVT_CHAT_TITLE_DELTA, &AGENT_FRAME::OnChatTitleDelta, this );
     Bind( EVT_CHAT_TITLE_GENERATED, &AGENT_FRAME::OnChatTitleGenerated, this );
     Bind( EVT_CHAT_HISTORY_LOADED, &AGENT_FRAME::OnChatHistoryLoaded, this );
     Bind( EVT_CHAT_CONTEXT_STATUS, &AGENT_FRAME::OnChatContextStatus, this );
@@ -3009,13 +3010,26 @@ void AGENT_FRAME::OnChatStateChanged( wxThreadEvent& aEvent )
 }
 
 
+void AGENT_FRAME::OnChatTitleDelta( wxThreadEvent& aEvent )
+{
+    ChatTitleDeltaData* data = aEvent.GetPayload<ChatTitleDeltaData*>();
+    if( !data )
+        return;
+
+    // Update title display with partial text (streaming animation)
+    m_chatNameLabel->SetLabel( wxString::FromUTF8( data->partialTitle ) );
+
+    delete data;
+}
+
+
 void AGENT_FRAME::OnChatTitleGenerated( wxThreadEvent& aEvent )
 {
     ChatTitleGeneratedData* data = aEvent.GetPayload<ChatTitleGeneratedData*>();
     if( !data )
         return;
 
-    // Update title display
+    // Update title display (final)
     m_chatNameLabel->SetLabel( wxString::FromUTF8( data->title ) );
 
     // Update persistence with the new title

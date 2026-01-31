@@ -25,6 +25,7 @@
 #include "auth/agent_auth.h"
 
 #include <algorithm>
+#include <chrono>
 #include <set>
 #include <thread>
 #include <kiway.h>
@@ -44,6 +45,7 @@ wxDEFINE_EVENT( EVT_CHAT_TOOL_COMPLETE, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_TURN_COMPLETE, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_ERROR, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_STATE_CHANGED, wxThreadEvent );
+wxDEFINE_EVENT( EVT_CHAT_TITLE_DELTA, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_TITLE_GENERATED, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_HISTORY_LOADED, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_CONTEXT_STATUS, wxThreadEvent );
@@ -60,8 +62,7 @@ CHAT_CONTROLLER::CHAT_CONTROLLER( wxEvtHandler* aEventSink )
       m_llmClient( nullptr ),
       m_chatHistoryDb( nullptr ),
       m_auth( nullptr ),
-      m_stopRequested( false ),
-      m_needsTitleGeneration( false )
+      m_stopRequested( false )
 {
     // Initialize tool definitions
     m_tools = AgentTools::GetToolDefinitions();
@@ -101,7 +102,7 @@ void CHAT_CONTROLLER::SendMessage( const std::string& aText )
     if( userMessageCount == 0 )
     {
         m_firstUserMessage = aText;
-        m_needsTitleGeneration = true;
+        GenerateTitle();
     }
 
     // Add user message to history
@@ -233,7 +234,6 @@ void CHAT_CONTROLLER::NewChat()
     m_thinkingContent.clear();
     m_chatId.clear();
     m_firstUserMessage.clear();
-    m_needsTitleGeneration = false;
     m_pendingToolCalls = nlohmann::json::array();
 
     m_ctx.Reset();
@@ -266,8 +266,7 @@ void CHAT_CONTROLLER::LoadChat( const std::string& aChatId )
     // Title is stored in database object after Load() call
     std::string title = m_chatHistoryDb->GetTitle();
 
-    // Mark that title is already generated for this chat
-    m_needsTitleGeneration = false;
+    // Clear first user message to prevent title regeneration
     m_firstUserMessage.clear();
 
     // Emit loaded event
@@ -425,13 +424,6 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
                                                                   static_cast<int>( m_ctx.GetState() ) ) );
         EmitEvent( EVT_CHAT_TURN_COMPLETE, ChatTurnCompleteData( false ) );
-
-        // Generate title if needed
-        if( m_needsTitleGeneration )
-        {
-            m_needsTitleGeneration = false;
-            GenerateTitle();
-        }
         break;
     }
 
@@ -979,9 +971,18 @@ void CHAT_CONTROLLER::GenerateTitle()
                 auto response = nlohmann::json::parse( curl.GetBuffer() );
                 std::string title = response.value( "title", "" );
 
-                // Emit event to main thread
+                // Stream title character by character for animation effect
                 if( !title.empty() )
                 {
+                    std::string partial;
+                    for( size_t i = 0; i < title.size(); i++ )
+                    {
+                        partial += title[i];
+                        EmitEvent( EVT_CHAT_TITLE_DELTA, ChatTitleDeltaData( partial ) );
+                        std::this_thread::sleep_for( std::chrono::milliseconds( 20 ) );
+                    }
+
+                    // Emit final title for persistence
                     EmitEvent( EVT_CHAT_TITLE_GENERATED, ChatTitleGeneratedData( title ) );
                 }
             }
@@ -1018,5 +1019,6 @@ template void CHAT_CONTROLLER::EmitEvent<ChatToolCompleteData>( wxEventType, con
 template void CHAT_CONTROLLER::EmitEvent<ChatTurnCompleteData>( wxEventType, const ChatTurnCompleteData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatErrorData>( wxEventType, const ChatErrorData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatStateChangedData>( wxEventType, const ChatStateChangedData& );
+template void CHAT_CONTROLLER::EmitEvent<ChatTitleDeltaData>( wxEventType, const ChatTitleDeltaData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatTitleGeneratedData>( wxEventType, const ChatTitleGeneratedData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatHistoryLoadedData>( wxEventType, const ChatHistoryLoadedData& );

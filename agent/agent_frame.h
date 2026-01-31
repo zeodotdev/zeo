@@ -99,6 +99,7 @@ public:
     void OnChatTurnComplete( wxThreadEvent& aEvent );
     void OnChatError( wxThreadEvent& aEvent );
     void OnChatStateChanged( wxThreadEvent& aEvent );
+    void OnChatTitleDelta( wxThreadEvent& aEvent );
     void OnChatTitleGenerated( wxThreadEvent& aEvent );
     void OnChatHistoryLoaded( wxThreadEvent& aEvent );
     void OnChatContextStatus( wxThreadEvent& aEvent );

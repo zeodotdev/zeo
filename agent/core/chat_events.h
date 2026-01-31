@@ -39,7 +39,8 @@ wxDECLARE_EVENT( EVT_CHAT_TOOL_COMPLETE, wxThreadEvent );   ///< Tool finished
 wxDECLARE_EVENT( EVT_CHAT_TURN_COMPLETE, wxThreadEvent );   ///< Ready for next input
 wxDECLARE_EVENT( EVT_CHAT_ERROR, wxThreadEvent );           ///< Error occurred
 wxDECLARE_EVENT( EVT_CHAT_STATE_CHANGED, wxThreadEvent );   ///< State machine changed
-wxDECLARE_EVENT( EVT_CHAT_TITLE_GENERATED, wxThreadEvent ); ///< Title ready
+wxDECLARE_EVENT( EVT_CHAT_TITLE_DELTA, wxThreadEvent );     ///< Title chunk arrived (streaming)
+wxDECLARE_EVENT( EVT_CHAT_TITLE_GENERATED, wxThreadEvent ); ///< Title complete
 wxDECLARE_EVENT( EVT_CHAT_HISTORY_LOADED, wxThreadEvent );  ///< Chat loaded from history
 wxDECLARE_EVENT( EVT_CHAT_CONTEXT_STATUS, wxThreadEvent );  ///< Context status notification
 wxDECLARE_EVENT( EVT_CHAT_CONTEXT_COMPACTING, wxThreadEvent ); ///< Context being compacted
@@ -180,8 +181,20 @@ struct ChatStateChangedData
 };
 
 /**
+ * Payload for EVT_CHAT_TITLE_DELTA events.
+ * Contains partial title during streaming animation.
+ */
+struct ChatTitleDeltaData
+{
+    std::string partialTitle;     ///< Title text revealed so far
+
+    ChatTitleDeltaData() = default;
+    explicit ChatTitleDeltaData( const std::string& aPartial ) : partialTitle( aPartial ) {}
+};
+
+/**
  * Payload for EVT_CHAT_TITLE_GENERATED events.
- * Contains the generated title.
+ * Contains the complete generated title.
  */
 struct ChatTitleGeneratedData
 {

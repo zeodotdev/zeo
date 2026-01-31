@@ -241,8 +241,7 @@ private:
     // -------------------------------------------------------------------------
     // Title generation state
     // -------------------------------------------------------------------------
-    bool        m_needsTitleGeneration;  ///< Whether to generate title after first response
-    std::string m_firstUserMessage;      ///< First user message for title generation
+    std::string m_firstUserMessage;  ///< First user message for title generation
 
     // -------------------------------------------------------------------------
     // Internal methods

@@ -64,6 +64,7 @@ KICOMMON_API std::optional<KICAD_T> TypeNameFromAny( const google::protobuf::Any
         { "type.googleapis.com/kiapi.schematic.types.SchematicGraphicShape", SCH_SHAPE_T },
         { "type.googleapis.com/kiapi.schematic.types.TextBox", SCH_TEXTBOX_T },
         { "type.googleapis.com/kiapi.schematic.types.BusEntry", SCH_BUS_WIRE_ENTRY_T },
+        { "type.googleapis.com/kiapi.schematic.types.SchematicGroup", SCH_GROUP_T },
     };
 
     auto it = s_types.find( aMessage.type_url() );
@@ -373,6 +374,50 @@ KICOMMON_API SHAPE_LINE_CHAIN UnpackPolyLineSch( const types::PolyLine& aInput )
     slc.SetClosed( aInput.closed() );
 
     return slc;
+}
+
+
+KICOMMON_API void PackPolySetSch( types::PolySet& aOutput, const SHAPE_POLY_SET& aInput )
+{
+    for( int idx = 0; idx < aInput.OutlineCount(); ++idx )
+    {
+        const SHAPE_POLY_SET::POLYGON& poly = aInput.Polygon( idx );
+
+        if( poly.empty() )
+            continue;
+
+        types::PolygonWithHoles* polyMsg = aOutput.mutable_polygons()->Add();
+        PackPolyLineSch( *polyMsg->mutable_outline(), poly.front() );
+
+        if( poly.size() > 1 )
+        {
+            for( size_t hole = 1; hole < poly.size(); ++hole )
+            {
+                types::PolyLine* pl = polyMsg->mutable_holes()->Add();
+                PackPolyLineSch( *pl, poly[hole] );
+            }
+        }
+    }
+}
+
+
+KICOMMON_API SHAPE_POLY_SET UnpackPolySetSch( const types::PolySet& aInput )
+{
+    SHAPE_POLY_SET sps;
+
+    for( const types::PolygonWithHoles& polygonWithHoles : aInput.polygons() )
+    {
+        SHAPE_POLY_SET::POLYGON polygon;
+
+        polygon.emplace_back( UnpackPolyLineSch( polygonWithHoles.outline() ) );
+
+        for( const types::PolyLine& holeMsg : polygonWithHoles.holes() )
+            polygon.emplace_back( UnpackPolyLineSch( holeMsg ) );
+
+        sps.AddPolygon( polygon );
+    }
+
+    return sps;
 }
 
 } // namespace kiapi::common

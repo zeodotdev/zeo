@@ -544,14 +544,86 @@ void SCH_SHAPE::Serialize( google::protobuf::Any& aContainer ) const
 
     schShape.mutable_id()->set_value( m_Uuid.AsStdString() );
 
-    // Serialize the base EDA_SHAPE properties
-    google::protobuf::Any any;
-    EDA_SHAPE::Serialize( any );
-    any.UnpackTo( schShape.mutable_shape() );
+    // Serialize shape with schematic coordinate conversions
+    types::GraphicShape* shape = schShape.mutable_shape();
+    types::StrokeAttributes* stroke = shape->mutable_attributes()->mutable_stroke();
+    types::GraphicFillAttributes* fill = shape->mutable_attributes()->mutable_fill();
 
-    // Layer mapping - schematic layers are represented differently
-    // For now, we just store the layer as-is since SchematicLayer enum needs expansion
-    // schShape.set_layer( ... );
+    // Width needs schematic conversion: multiply by 100 to convert IU to nm
+    stroke->mutable_width()->set_value_nm( GetWidth() * 100 );
+
+    switch( GetLineStyle() )
+    {
+    case LINE_STYLE::DEFAULT:    stroke->set_style( types::SLS_DEFAULT );    break;
+    case LINE_STYLE::SOLID:      stroke->set_style( types::SLS_SOLID );      break;
+    case LINE_STYLE::DASH:       stroke->set_style( types::SLS_DASH );       break;
+    case LINE_STYLE::DOT:        stroke->set_style( types::SLS_DOT );        break;
+    case LINE_STYLE::DASHDOT:    stroke->set_style( types::SLS_DASHDOT );    break;
+    case LINE_STYLE::DASHDOTDOT: stroke->set_style( types::SLS_DASHDOTDOT ); break;
+    default: break;
+    }
+
+    switch( GetFillMode() )
+    {
+    case FILL_T::FILLED_SHAPE: fill->set_fill_type( types::GFT_FILLED );   break;
+    default:                   fill->set_fill_type( types::GFT_UNFILLED ); break;
+    }
+
+    switch( GetShape() )
+    {
+    case SHAPE_T::SEGMENT:
+    {
+        types::GraphicSegmentAttributes* segment = shape->mutable_segment();
+        PackVector2Sch( *segment->mutable_start(), GetStart() );
+        PackVector2Sch( *segment->mutable_end(), GetEnd() );
+        break;
+    }
+
+    case SHAPE_T::RECTANGLE:
+    {
+        types::GraphicRectangleAttributes* rectangle = shape->mutable_rectangle();
+        PackVector2Sch( *rectangle->mutable_top_left(), GetStart() );
+        PackVector2Sch( *rectangle->mutable_bottom_right(), GetEnd() );
+        rectangle->mutable_corner_radius()->set_value_nm( GetCornerRadius() * 100 );
+        break;
+    }
+
+    case SHAPE_T::ARC:
+    {
+        types::GraphicArcAttributes* arc = shape->mutable_arc();
+        PackVector2Sch( *arc->mutable_start(), GetStart() );
+        PackVector2Sch( *arc->mutable_mid(), GetArcMid() );
+        PackVector2Sch( *arc->mutable_end(), GetEnd() );
+        break;
+    }
+
+    case SHAPE_T::CIRCLE:
+    {
+        types::GraphicCircleAttributes* circle = shape->mutable_circle();
+        PackVector2Sch( *circle->mutable_center(), GetStart() );
+        PackVector2Sch( *circle->mutable_radius_point(), GetEnd() );
+        break;
+    }
+
+    case SHAPE_T::POLY:
+    {
+        PackPolySetSch( *shape->mutable_polygon(), GetPolyShape() );
+        break;
+    }
+
+    case SHAPE_T::BEZIER:
+    {
+        types::GraphicBezierAttributes* bezier = shape->mutable_bezier();
+        PackVector2Sch( *bezier->mutable_start(), GetStart() );
+        PackVector2Sch( *bezier->mutable_control1(), GetBezierC1() );
+        PackVector2Sch( *bezier->mutable_control2(), GetBezierC2() );
+        PackVector2Sch( *bezier->mutable_end(), GetEnd() );
+        break;
+    }
+
+    default:
+        wxASSERT_MSG( false, "Unhandled shape in SCH_SHAPE::Serialize" );
+    }
 
     aContainer.PackFrom( schShape );
 }
@@ -567,10 +639,74 @@ bool SCH_SHAPE::Deserialize( const google::protobuf::Any& aContainer )
 
     const_cast<KIID&>( m_Uuid ) = KIID( schShape.id().value() );
 
-    // Deserialize the base EDA_SHAPE properties
-    google::protobuf::Any any;
-    any.PackFrom( schShape.shape() );
-    EDA_SHAPE::Deserialize( any );
+    const types::GraphicShape& shape = schShape.shape();
+
+    // Initialize state
+    m_start = {};
+    m_end = {};
+    m_arcCenter = {};
+    m_arcMidData = {};
+    m_bezierC1 = {};
+    m_bezierC2 = {};
+    m_editState = 0;
+    m_proxyItem = false;
+    m_endsSwapped = false;
+
+    SetFilled( shape.attributes().fill().fill_type() == types::GFT_FILLED );
+    // Width needs schematic conversion: divide by 100 to convert nm to IU
+    SetWidth( shape.attributes().stroke().width().value_nm() / 100 );
+
+    switch( shape.attributes().stroke().style() )
+    {
+    case types::SLS_DEFAULT:    SetLineStyle( LINE_STYLE::DEFAULT );    break;
+    case types::SLS_SOLID:      SetLineStyle( LINE_STYLE::SOLID );      break;
+    case types::SLS_DASH:       SetLineStyle( LINE_STYLE::DASH );       break;
+    case types::SLS_DOT:        SetLineStyle( LINE_STYLE::DOT );        break;
+    case types::SLS_DASHDOT:    SetLineStyle( LINE_STYLE::DASHDOT );    break;
+    case types::SLS_DASHDOTDOT: SetLineStyle( LINE_STYLE::DASHDOTDOT ); break;
+    default: break;
+    }
+
+    if( shape.has_segment() )
+    {
+        SetShape( SHAPE_T::SEGMENT );
+        SetStart( UnpackVector2Sch( shape.segment().start() ) );
+        SetEnd( UnpackVector2Sch( shape.segment().end() ) );
+    }
+    else if( shape.has_rectangle() )
+    {
+        SetShape( SHAPE_T::RECTANGLE );
+        SetStart( UnpackVector2Sch( shape.rectangle().top_left() ) );
+        SetEnd( UnpackVector2Sch( shape.rectangle().bottom_right() ) );
+        SetCornerRadius( shape.rectangle().corner_radius().value_nm() / 100 );
+    }
+    else if( shape.has_arc() )
+    {
+        SetShape( SHAPE_T::ARC );
+        SetArcGeometry( UnpackVector2Sch( shape.arc().start() ),
+                        UnpackVector2Sch( shape.arc().mid() ),
+                        UnpackVector2Sch( shape.arc().end() ) );
+    }
+    else if( shape.has_circle() )
+    {
+        SetShape( SHAPE_T::CIRCLE );
+        SetStart( UnpackVector2Sch( shape.circle().center() ) );
+        SetEnd( UnpackVector2Sch( shape.circle().radius_point() ) );
+    }
+    else if( shape.has_polygon() )
+    {
+        SetShape( SHAPE_T::POLY );
+        SetPolyShape( UnpackPolySetSch( shape.polygon() ) );
+    }
+    else if( shape.has_bezier() )
+    {
+        SetShape( SHAPE_T::BEZIER );
+        SetStart( UnpackVector2Sch( shape.bezier().start() ) );
+        SetBezierC1( UnpackVector2Sch( shape.bezier().control1() ) );
+        SetBezierC2( UnpackVector2Sch( shape.bezier().control2() ) );
+        SetEnd( UnpackVector2Sch( shape.bezier().end() ) );
+        RebuildBezierToSegmentsPointsList( getMaxError() );
+    }
 
     return true;
 }

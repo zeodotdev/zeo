@@ -92,6 +92,10 @@ KICOMMON_API void PackPolyLineSch( types::PolyLine& aOutput, const SHAPE_LINE_CH
  */
 KICOMMON_API SHAPE_LINE_CHAIN UnpackPolyLineSch( const types::PolyLine& aInput );
 
+KICOMMON_API void PackPolySetSch( types::PolySet& aOutput, const SHAPE_POLY_SET& aInput );
+
+KICOMMON_API SHAPE_POLY_SET UnpackPolySetSch( const types::PolySet& aInput );
+
 KICOMMON_API void PackVector3D( types::Vector3D& aOutput, const VECTOR3D& aInput );
 
 KICOMMON_API VECTOR3D UnpackVector3D( const types::Vector3D& aInput );

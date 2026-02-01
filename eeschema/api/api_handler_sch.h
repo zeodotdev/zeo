@@ -462,6 +462,18 @@ private:
     HANDLER_RESULT<Empty>
     handleRefreshEditor( const HANDLER_CONTEXT<commands::RefreshEditor>& aCtx );
 
+    HANDLER_RESULT<Empty>
+    handleSaveCopyOfDocument( const HANDLER_CONTEXT<commands::SaveCopyOfDocument>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleRevertDocument( const HANDLER_CONTEXT<commands::RevertDocument>& aCtx );
+
+    HANDLER_RESULT<commands::SavedSelectionResponse>
+    handleSaveSelectionToString( const HANDLER_CONTEXT<commands::SaveSelectionToString>& aCtx );
+
+    HANDLER_RESULT<commands::CreateItemsResponse>
+    handleParseAndCreateItemsFromString( const HANDLER_CONTEXT<commands::ParseAndCreateItemsFromString>& aCtx );
+
     // Helper to get item by KIID (searches all items including nested)
     std::optional<SCH_ITEM*> getItemById( const KIID& aId );
 

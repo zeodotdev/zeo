@@ -40,6 +40,7 @@
 #include <sch_shape.h>
 #include <sch_bitmap.h>
 #include <sch_table.h>
+#include <sch_group.h>
 #include <schematic.h>
 #include <wx/filename.h>
 #include <wx/wfstream.h>
@@ -77,6 +78,12 @@
 #include <pin_type.h>
 #include <design_block_library_adapter.h>
 #include <design_block.h>
+#include <sch_io/kicad_sexpr/sch_io_kicad_sexpr.h>
+#include <sch_io/sch_io_mgr.h>
+#include <richio.h>
+#include <io/kicad/kicad_io_utils.h>
+#include <sch_screen.h>
+#include <wildcards_and_files_ext.h>
 
 #include <api/common/types/base_types.pb.h>
 #include <api/schematic/schematic_commands.pb.h>
@@ -161,6 +168,10 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
     registerHandler<SaveDocument, Empty>( &API_HANDLER_SCH::handleSaveDocument );
     registerHandler<SaveDocumentToString, SavedDocumentResponse>( &API_HANDLER_SCH::handleSaveDocumentToString );
     registerHandler<RefreshEditor, Empty>( &API_HANDLER_SCH::handleRefreshEditor );
+    registerHandler<SaveCopyOfDocument, Empty>( &API_HANDLER_SCH::handleSaveCopyOfDocument );
+    registerHandler<RevertDocument, Empty>( &API_HANDLER_SCH::handleRevertDocument );
+    registerHandler<SaveSelectionToString, SavedSelectionResponse>( &API_HANDLER_SCH::handleSaveSelectionToString );
+    registerHandler<ParseAndCreateItemsFromString, CreateItemsResponse>( &API_HANDLER_SCH::handleParseAndCreateItemsFromString );
 
     // Grid settings handlers
     registerHandler<GetGridSettings, GetGridSettingsResponse>( &API_HANDLER_SCH::handleGetGridSettings );
@@ -759,6 +770,7 @@ HANDLER_RESULT<GetItemsResponse> API_HANDLER_SCH::handleGetItems( const HANDLER_
         case SCH_HIER_LABEL_T:
         case SCH_DIRECTIVE_LABEL_T:
         case SCH_SHEET_T:
+        case SCH_GROUP_T:
         {
             handledAnything = true;
 
@@ -1565,9 +1577,13 @@ void API_HANDLER_SCH::buildSheetHierarchyNode( const SCH_SHEET_PATH& aPath,
 
 SCH_SHEET* API_HANDLER_SCH::findSheetById( const KIID& aId )
 {
-    // First, search the current screen directly for sheet items
-    SCH_SCREEN* currentScreen = m_frame->GetScreenForApi();
+    // First check the current screens directly (handles newly created sheets
+    // that may not be fully linked in the hierarchy yet, e.g., when the parent
+    // schematic is unsaved and the backing file path couldn't be resolved)
+    SCH_SCREEN* currentScreen = m_frame->GetScreen();
+    SCH_SCREEN* apiScreen = m_frame->GetScreenForApi();
 
+    // Search current screen
     if( currentScreen )
     {
         for( SCH_ITEM* item : currentScreen->Items().OfType( SCH_SHEET_T ) )
@@ -1577,7 +1593,34 @@ SCH_SHEET* API_HANDLER_SCH::findSheetById( const KIID& aId )
         }
     }
 
-    // Then search through the hierarchy paths
+    // Search API screen if different from current
+    if( apiScreen && apiScreen != currentScreen )
+    {
+        for( SCH_ITEM* item : apiScreen->Items().OfType( SCH_SHEET_T ) )
+        {
+            if( item->m_Uuid == aId )
+                return static_cast<SCH_SHEET*>( item );
+        }
+    }
+
+    // Then search all screens in the schematic for sheet items
+    // This ensures we find sheets regardless of which screen is currently active
+    SCH_SCREENS screens( m_frame->Schematic().Root() );
+
+    for( SCH_SCREEN* screen = screens.GetFirst(); screen; screen = screens.GetNext() )
+    {
+        // Skip screens we already searched
+        if( screen == currentScreen || screen == apiScreen )
+            continue;
+
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_SHEET_T ) )
+        {
+            if( item->m_Uuid == aId )
+                return static_cast<SCH_SHEET*>( item );
+        }
+    }
+
+    // Also search through the hierarchy paths in case the sheet is found there
     SCH_SHEET_LIST sheetList = m_frame->Schematic().BuildUnorderedSheetList();
 
     for( const SCH_SHEET_PATH& path : sheetList )
@@ -1673,13 +1716,11 @@ API_HANDLER_SCH::handleGetCurrentSheet(
     sheetInfo->set_filename( sheet->GetFileName().ToStdString() );
     sheetInfo->set_page_number( currentPath.GetPageNumber().ToStdString() );
 
-    // Position and size
+    // Position and size - convert from schematic IU to nanometers
     VECTOR2I pos = sheet->GetPosition();
     VECTOR2I size = sheet->GetSize();
-    sheetInfo->mutable_position()->set_x_nm( pos.x );
-    sheetInfo->mutable_position()->set_y_nm( pos.y );
-    sheetInfo->mutable_size()->set_x_nm( size.x );
-    sheetInfo->mutable_size()->set_y_nm( size.y );
+    kiapi::common::PackVector2Sch( *sheetInfo->mutable_position(), pos );
+    kiapi::common::PackVector2Sch( *sheetInfo->mutable_size(), size );
 
     // Add pins
     for( SCH_SHEET_PIN* pin : sheet->GetPins() )
@@ -1689,8 +1730,7 @@ API_HANDLER_SCH::handleGetCurrentSheet(
         pinInfo->set_name( pin->GetText().ToStdString() );
 
         VECTOR2I pinPos = pin->GetPosition();
-        pinInfo->mutable_position()->set_x_nm( pinPos.x );
-        pinInfo->mutable_position()->set_y_nm( pinPos.y );
+        kiapi::common::PackVector2Sch( *pinInfo->mutable_position(), pinPos );
 
         // Map sheet pin side
         switch( pin->GetSide() )
@@ -1828,9 +1868,9 @@ API_HANDLER_SCH::handleCreateSheet(
         return tl::unexpected( e );
     }
 
-    // Get position and size from request
-    VECTOR2I pos( aCtx.Request.position().x_nm(), aCtx.Request.position().y_nm() );
-    VECTOR2I size( aCtx.Request.size().x_nm(), aCtx.Request.size().y_nm() );
+    // Get position and size from request - convert from nanometers to schematic IU
+    VECTOR2I pos = kiapi::common::UnpackVector2Sch( aCtx.Request.position() );
+    VECTOR2I size = kiapi::common::UnpackVector2Sch( aCtx.Request.size() );
 
     // Default size if not specified
     if( size.x == 0 || size.y == 0 )
@@ -2018,12 +2058,11 @@ API_HANDLER_SCH::handleGetSheetProperties(
     sheetInfo->set_name( sheet->GetName().ToStdString() );
     sheetInfo->set_filename( sheet->GetFileName().ToStdString() );
 
+    // Convert from schematic IU to nanometers
     VECTOR2I pos = sheet->GetPosition();
     VECTOR2I size = sheet->GetSize();
-    sheetInfo->mutable_position()->set_x_nm( pos.x );
-    sheetInfo->mutable_position()->set_y_nm( pos.y );
-    sheetInfo->mutable_size()->set_x_nm( size.x );
-    sheetInfo->mutable_size()->set_y_nm( size.y );
+    kiapi::common::PackVector2Sch( *sheetInfo->mutable_position(), pos );
+    kiapi::common::PackVector2Sch( *sheetInfo->mutable_size(), size );
 
     // Find page number from hierarchy
     SCH_SHEET_LIST sheetList = m_frame->Schematic().Hierarchy();
@@ -2044,8 +2083,7 @@ API_HANDLER_SCH::handleGetSheetProperties(
         pinInfo->set_name( pin->GetText().ToStdString() );
 
         VECTOR2I pinPos = pin->GetPosition();
-        pinInfo->mutable_position()->set_x_nm( pinPos.x );
-        pinInfo->mutable_position()->set_y_nm( pinPos.y );
+        kiapi::common::PackVector2Sch( *pinInfo->mutable_position(), pinPos );
     }
 
     return response;
@@ -2191,7 +2229,8 @@ API_HANDLER_SCH::handleCreateSheetPin(
     SCH_SHEET_PIN* pin = new SCH_SHEET_PIN( sheet );
     pin->SetText( wxString::FromUTF8( aCtx.Request.name() ) );
 
-    VECTOR2I pos( aCtx.Request.position().x_nm(), aCtx.Request.position().y_nm() );
+    // Convert from nanometers to schematic IU
+    VECTOR2I pos = kiapi::common::UnpackVector2Sch( aCtx.Request.position() );
     pin->SetPosition( pos );
 
     // Map side from protobuf
@@ -2322,8 +2361,7 @@ API_HANDLER_SCH::handleGetSheetPins(
         pinInfo->set_name( pin->GetText().ToStdString() );
 
         VECTOR2I pinPos = pin->GetPosition();
-        pinInfo->mutable_position()->set_x_nm( pinPos.x );
-        pinInfo->mutable_position()->set_y_nm( pinPos.y );
+        kiapi::common::PackVector2Sch( *pinInfo->mutable_position(), pinPos );
 
         // Map side
         switch( pin->GetSide() )
@@ -2752,9 +2790,8 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
                 break;
             }
 
-            // Position
-            violation->mutable_position()->set_x_nm( marker->GetPosition().x );
-            violation->mutable_position()->set_y_nm( marker->GetPosition().y );
+            // Position - convert from schematic IU to nanometers
+            kiapi::common::PackVector2Sch( *violation->mutable_position(), marker->GetPosition() );
 
             // Item IDs
             if( rcItem->GetMainItemID() != niluuid )
@@ -2839,8 +2876,8 @@ API_HANDLER_SCH::handleGetERCViolations(
                 break;
             }
 
-            violation->mutable_position()->set_x_nm( marker->GetPosition().x );
-            violation->mutable_position()->set_y_nm( marker->GetPosition().y );
+            // Convert from schematic IU to nanometers
+            kiapi::common::PackVector2Sch( *violation->mutable_position(), marker->GetPosition() );
 
             if( rcItem->GetMainItemID() != niluuid )
                 violation->add_item_ids()->set_value( rcItem->GetMainItemID().AsStdString() );
@@ -3289,12 +3326,11 @@ API_HANDLER_SCH::handleGetNetItems(
                 {
                     response.add_item_ids()->set_value( item->m_Uuid.AsStdString() );
 
-                    // Add connection points
+                    // Add connection points - convert from schematic IU to nanometers
                     for( const VECTOR2I& pt : item->GetConnectionPoints() )
                     {
                         auto* point = response.add_connection_points();
-                        point->set_x_nm( pt.x );
-                        point->set_y_nm( pt.y );
+                        kiapi::common::PackVector2Sch( *point, pt );
                     }
                 }
             }
@@ -5346,4 +5382,182 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleRefreshEditor(
 
     m_frame->RefreshCanvas();
     return Empty();
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSaveCopyOfDocument(
+        const HANDLER_CONTEXT<SaveCopyOfDocument>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    wxFileName schPath( m_frame->Prj().AbsolutePath( wxString::FromUTF8( aCtx.Request.path() ) ) );
+
+    if( !schPath.IsOk() || !schPath.IsDirWritable() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( fmt::format( "save path '{}' could not be opened",
+                                          schPath.GetFullPath().ToStdString() ) );
+        return tl::unexpected( e );
+    }
+
+    if( schPath.FileExists()
+        && ( !schPath.IsFileWritable() || !aCtx.Request.options().overwrite() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( fmt::format( "save path '{}' exists and cannot be overwritten",
+                                          schPath.GetFullPath().ToStdString() ) );
+        return tl::unexpected( e );
+    }
+
+    if( schPath.GetExt() != FILEEXT::KiCadSchematicFileExtension )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( fmt::format( "save path '{}' must have a kicad_sch extension",
+                                          schPath.GetFullPath().ToStdString() ) );
+        return tl::unexpected( e );
+    }
+
+    SCHEMATIC& schematic = m_frame->Schematic();
+    SCH_SHEET* currentSheet = m_frame->GetCurrentSheet().Last();
+
+    if( currentSheet->GetFileName().Matches( schPath.GetFullPath() ) )
+    {
+        m_frame->SaveProject();
+        return Empty();
+    }
+
+    // Save current sheet to the new path using the public SCH_IO interface
+    SCH_IO_MGR::SCH_FILE_T pluginType = SCH_IO_MGR::GuessPluginTypeFromSchPath(
+            schPath.GetFullPath() );
+
+    if( pluginType == SCH_IO_MGR::SCH_FILE_UNKNOWN )
+        pluginType = SCH_IO_MGR::SCH_KICAD;
+
+    IO_RELEASER<SCH_IO> pi( SCH_IO_MGR::FindPlugin( pluginType ) );
+
+    try
+    {
+        pi->SaveSchematicFile( schPath.GetFullPath(), currentSheet, &schematic );
+    }
+    catch( const IO_ERROR& ioe )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( fmt::format( "Error saving schematic file: {}",
+                                          ioe.What().ToStdString() ) );
+        return tl::unexpected( e );
+    }
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleRevertDocument(
+        const HANDLER_CONTEXT<RevertDocument>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    SCHEMATIC& schematic = m_frame->Schematic();
+    SCH_SHEET& root = schematic.Root();
+
+    // Navigate to root sheet if not already there
+    if( m_frame->GetCurrentSheet().Last() != &root )
+    {
+        SCH_SHEET_PATH rootSheetPath;
+        rootSheetPath.push_back( &root );
+        m_frame->SetCurrentSheet( rootSheetPath );
+    }
+
+    wxFileName fn = m_frame->Prj().AbsolutePath( schematic.GetFileName() );
+
+    // Mark all screens as not modified so we don't get prompted
+    SCH_SCREENS screenList( schematic.Root() );
+
+    for( SCH_SCREEN* screen = screenList.GetFirst(); screen; screen = screenList.GetNext() )
+        screen->SetContentModified( false );
+
+    m_frame->ReleaseFile();
+    m_frame->OpenProjectFiles( std::vector<wxString>( 1, fn.GetFullPath() ), KICTL_REVERT );
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<SavedSelectionResponse> API_HANDLER_SCH::handleSaveSelectionToString(
+        const HANDLER_CONTEXT<SaveSelectionToString>& aCtx )
+{
+    SavedSelectionResponse response;
+
+    TOOL_MANAGER* mgr = m_frame->GetToolManager();
+    SCH_SELECTION_TOOL* selectionTool = mgr->GetTool<SCH_SELECTION_TOOL>();
+    SCH_SELECTION& selection = selectionTool->GetSelection();
+
+    if( selection.Empty() )
+    {
+        // Return empty response if nothing is selected
+        response.set_contents( "" );
+        return response;
+    }
+
+    SCHEMATIC& schematic = m_frame->Schematic();
+    SCH_SHEET_PATH selPath = m_frame->GetCurrentSheet();
+
+    // Set the screen on the selection - required for Format() to work properly
+    selection.SetScreen( m_frame->GetScreen() );
+
+    STRING_FORMATTER formatter;
+    SCH_IO_KICAD_SEXPR plugin;
+
+    try
+    {
+        plugin.Format( &selection, &selPath, schematic, &formatter, true );
+
+        std::string prettyData = formatter.GetString();
+        KICAD_FORMAT::Prettify( prettyData, KICAD_FORMAT::FORMAT_MODE::COMPACT_TEXT_PROPERTIES );
+
+        response.set_contents( prettyData );
+    }
+    catch( const IO_ERROR& ioe )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( fmt::format( "Error formatting selection: {}",
+                                          ioe.What().ToStdString() ) );
+        return tl::unexpected( e );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<CreateItemsResponse> API_HANDLER_SCH::handleParseAndCreateItemsFromString(
+        const HANDLER_CONTEXT<ParseAndCreateItemsFromString>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    // TODO: Implement parsing and creating items from string
+    // This would require implementing the inverse of SaveSelectionToString
+    CreateItemsResponse response;
+    return response;
 }

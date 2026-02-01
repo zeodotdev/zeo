@@ -32,6 +32,9 @@
 #include <confirm.h>
 #include <widgets/msgpanel.h>
 #include <view/view.h>
+#include <google/protobuf/any.pb.h>
+#include <api/schematic/schematic_types.pb.h>
+#include <api/common/types/base_types.pb.h>
 
 #include <wx/debug.h>
 
@@ -416,6 +419,61 @@ double SCH_GROUP::Similarity( const SCH_ITEM& aOther ) const
     }
 
     return similarity / m_items.size();
+}
+
+
+void SCH_GROUP::Serialize( google::protobuf::Any& aContainer ) const
+{
+    kiapi::schematic::types::SchematicGroup group;
+
+    group.mutable_id()->set_value( m_Uuid.AsStdString() );
+    group.set_name( GetName().ToUTF8() );
+
+    for( EDA_ITEM* item : GetItems() )
+    {
+        kiapi::common::types::KIID* itemId = group.add_members();
+        itemId->set_value( item->m_Uuid.AsStdString() );
+    }
+
+    aContainer.PackFrom( group );
+}
+
+
+bool SCH_GROUP::Deserialize( const google::protobuf::Any& aContainer )
+{
+    kiapi::schematic::types::SchematicGroup group;
+
+    if( !aContainer.UnpackTo( &group ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( group.id().value() );
+    SetName( wxString( group.name().c_str(), wxConvUTF8 ) );
+
+    // Get the parent screen to look up members
+    SCH_SCREEN* screen = nullptr;
+
+    if( GetParent() && GetParent()->Type() == SCH_SCREEN_T )
+        screen = static_cast<SCH_SCREEN*>( GetParent() );
+
+    if( screen )
+    {
+        for( const kiapi::common::types::KIID& itemId : group.members() )
+        {
+            KIID id( itemId.value() );
+
+            // Search through screen items
+            for( SCH_ITEM* item : screen->Items() )
+            {
+                if( item->m_Uuid == id )
+                {
+                    AddItem( item );
+                    break;
+                }
+            }
+        }
+    }
+
+    return true;
 }
 
 

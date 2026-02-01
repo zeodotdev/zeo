@@ -158,6 +158,12 @@ public:
 
     /// @copydoc SCH_ITEM::swapData
     void swapData( SCH_ITEM* aImage ) override;
+
+    /// @copydoc EDA_ITEM::Serialize
+    void Serialize( google::protobuf::Any& aContainer ) const override;
+
+    /// @copydoc EDA_ITEM::Deserialize
+    bool Deserialize( const google::protobuf::Any& aContainer ) override;
 };
 
 #endif

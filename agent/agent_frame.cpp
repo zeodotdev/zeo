@@ -1,5 +1,4 @@
 #include "agent_frame.h"
-#include "agent_thread.h"
 #include "agent_chat_history.h"
 #include "auth/agent_auth.h"
 #include "auth/agent_keychain.h"
@@ -52,7 +51,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_pendingChangesBtn( nullptr ),
         m_pendingChangesPanel( nullptr ),
         m_historyPanel( nullptr ),
-        m_workerThread( nullptr ),
         m_hasPendingSchChanges( false ),
         m_hasPendingPcbChanges( false ),
         m_pendingSchSheetPath( wxEmptyString ),
@@ -216,10 +214,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( wxEVT_MENU, &AGENT_FRAME::OnPopupClick, this, ID_CHAT_COPY );
     m_inputCtrl->Bind( wxEVT_KEY_DOWN, &AGENT_FRAME::OnInputKeyDown, this );
     m_inputCtrl->Bind( wxEVT_TEXT, &AGENT_FRAME::OnInputText, this );
-
-    // Bind Thread Events
-    Bind( wxEVT_AGENT_UPDATE, &AGENT_FRAME::OnAgentUpdate, this );
-    Bind( wxEVT_AGENT_COMPLETE, &AGENT_FRAME::OnAgentComplete, this );
 
     // Bind Async LLM Streaming Events
     Bind( EVT_LLM_STREAM_CHUNK, &AGENT_FRAME::OnLLMStreamChunk, this );
@@ -1139,14 +1133,7 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     // Stop generating animation
     StopGeneratingAnimation();
 
-    // Handle old worker thread approach (for backwards compatibility)
-    if( m_workerThread )
-    {
-        m_workerThread->Delete(); // soft delete, checks TestDestroy()
-        m_workerThread = nullptr;
-    }
-
-    // Cancel any in-progress async LLM request (legacy - controller also does this)
+    // Cancel any in-progress async LLM request
     if( m_llmClient && m_llmClient->IsRequestInProgress() )
     {
         m_llmClient->CancelRequest();
@@ -1197,175 +1184,6 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     m_actionButton->SetLabel( "Send" );
 }
 
-void AGENT_FRAME::OnAgentUpdate( wxCommandEvent& aEvent )
-{
-    wxString content = aEvent.GetString();
-
-    // Accumulate RAW text for parsing
-    m_currentResponse += content;
-
-    // Re-render full response with markdown formatting
-    UpdateAgentResponse();
-
-    // Auto-scroll handled by CSS flex-direction: column-reverse
-
-    // Check for TOOL_CALL to force stop
-    size_t toolPos = m_currentResponse.rfind( "TOOL_CALL:" );
-    if( toolPos != std::string::npos )
-    {
-        // Check if we have the full line (newline after TOOL_CALL)
-        size_t lineEnd = m_currentResponse.find( '\n', toolPos );
-        if( lineEnd != std::string::npos )
-        {
-            // NEW: Check for code block starter "```" after tool call
-            // If present, we must wait for the CLOSING "```" before stopping.
-            size_t codeStart = m_currentResponse.find( "```", toolPos );
-            bool   shouldStop = true;
-
-            if( codeStart != std::string::npos )
-            {
-                // We have a code block. Check if it is closed.
-                size_t codeEnd = m_currentResponse.find( "```", codeStart + 3 );
-                if( codeEnd == std::string::npos )
-                {
-                    // Code block is OPEN. Continue generating.
-                    shouldStop = false;
-                }
-                // Else: Code block is CLOSED. We can stop.
-            }
-
-            if( shouldStop )
-            {
-                // Complete TOOL_CALL detected. Stop generation immediately.
-                if( m_workerThread )
-                {
-                    // Request thread to exit. OnAgentComplete will be called naturally.
-                    m_workerThread->Delete();
-                    m_workerThread = nullptr;
-                    AppendHtml( "<p><i>(Tool Call Detected - Stopping Generation)</i></p>" );
-                }
-            }
-        }
-    }
-}
-
-void AGENT_FRAME::OnAgentComplete( wxCommandEvent& aEvent )
-{
-    // Stop generating animation
-    StopGeneratingAnimation();
-
-    // Thread has finished naturally
-    if( m_workerThread )
-    {
-        m_workerThread->Wait(); // Join
-        delete m_workerThread;
-        m_workerThread = nullptr;
-    }
-
-    // Re-render without dots
-    UpdateAgentResponse();
-    m_actionButton->SetLabel( "Send" );
-
-    // Add Assistant response to history
-    if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
-    {
-        nlohmann::json assistantMsg;
-        assistantMsg["role"] = "assistant";
-
-        if( !m_thinkingContent.IsEmpty() )
-        {
-            nlohmann::json content = nlohmann::json::array();
-            content.push_back( { { "type", "thinking" }, { "thinking", m_thinkingContent.ToStdString() } } );
-            if( !m_currentResponse.empty() )
-                content.push_back( { { "type", "text" }, { "text", m_currentResponse } } );
-            assistantMsg["content"] = content;
-        }
-        else
-        {
-            assistantMsg["content"] = m_currentResponse;
-        }
-
-        m_chatHistory.push_back( assistantMsg );
-        m_apiContext.push_back( assistantMsg );
-        m_chatHistoryDb.Save( m_chatHistory );
-    }
-
-    if( aEvent.GetInt() == 0 ) // Failure
-    {
-        AppendHtml( "<p><i>(Error generating response)</i></p>" );
-    }
-    else
-    {
-        // Parse for Tool Calls
-        size_t toolPos = m_currentResponse.rfind( "TOOL_CALL: " );
-        if( toolPos != std::string::npos )
-        {
-            size_t start = toolPos + 11;
-            // Stop at end of string (since we force stopped)
-            size_t end = m_currentResponse.length();
-
-            std::string toolName = m_currentResponse.substr( start, end - start );
-
-            // Clean up Markdown Code Blocks if present
-            // Agent might output: run_terminal_command pcb ``` print(1) ```
-            // We want to verify if it contains a code block and strip the fences.
-
-            size_t fenceStart = toolName.find( "```" );
-            if( fenceStart != std::string::npos )
-            {
-                // Strip opening fence
-                // Also strip language identifier if present (e.g. ```python)
-                size_t contentStart = toolName.find( '\n', fenceStart );
-                if( contentStart == std::string::npos )
-                    contentStart = fenceStart + 3; // Fallback if no newline
-                else
-                    contentStart++; // Skip newline
-
-                // Find closing fence
-                size_t fenceEnd = toolName.rfind( "```" );
-                if( fenceEnd != std::string::npos && fenceEnd > contentStart )
-                {
-                    // Extract inside
-                    std::string pre = toolName.substr( 0, fenceStart );
-                    std::string core = toolName.substr( contentStart, fenceEnd - contentStart );
-
-                    // Combine: "run_terminal_command pcb " + "print(1)"
-                    // We need to ensure spaces.
-                    toolName = pre + " " + core;
-                }
-            }
-
-            // Normal whitespace cleaning
-            // Replace newlines with spaces?
-            // NO. PCB/SCH commands (python) might need newlines.
-            // But 'sys' commands usually don't.
-            // `run_terminal_command` expects [mode] [cmd].
-            // If cmd is python code with newlines, we should preserve them?
-            // Existing logic `ExecuteCommandForAgent` splits by space... wait.
-            // If existing `ExecuteCommandForAgent` splits by space, multi-line python will break.
-            // I need to check `ExecuteCommandForAgent` logic later.
-            // For now, let's just trim outer whitespace.
-
-            toolName.erase( 0, toolName.find_first_not_of( " \t\r\n" ) );
-            toolName.erase( toolName.find_last_not_of( " \t\r\n" ) + 1 );
-            // Clean whitespace and newlines
-            toolName.erase( 0, toolName.find_first_not_of( " \t\r\n" ) );
-            toolName.erase( toolName.find_last_not_of( " \t\r\n" ) + 1 );
-
-            m_pendingTool = toolName;
-
-            // Show Inline Approve Link with Colors (click handled by event delegation)
-            std::string html = "<p><b>Tool Request:</b> " + toolName
-                               + " <a href=\"tool:approve\" class=\"text-[#00AA00] font-bold cursor-pointer no-underline hover:underline mx-2\">[Approve]</a>"
-                               + " <a href=\"tool:reject\" class=\"text-[#AA0000] font-bold cursor-pointer no-underline hover:underline mx-2\">[Deny]</a></p>";
-            AppendHtml( html );
-
-            // Allow user to click. Execution halted until link clicked.
-            Layout();
-        }
-    }
-}
-
 void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
 {
     // Parse JSON message from JavaScript
@@ -1380,19 +1198,7 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
             wxString href = wxString::FromUTF8( msg.value( "href", "" ) );
             printf( "[DEBUG] AGENT_FRAME::OnWebViewMessage - link_click href: %s\n", href.ToStdString().c_str() );
 
-            if( href == "tool:approve" )
-            {
-                wxCommandEvent evt;
-                OnToolClick( evt );
-            }
-            else if( href == "tool:reject" )
-            {
-                AppendHtml( "<p><i>Tool call rejected by user.</i></p>" );
-                nlohmann::json rejectMsg = { { "role", "user" }, { "content", "Tool execution rejected." } };
-                m_chatHistory.push_back( rejectMsg );
-                m_apiContext.push_back( rejectMsg );
-            }
-            else if( href == "agent:approve_open" )
+            if( href == "agent:approve_open" )
             {
                 OnApproveOpenEditor();
             }
@@ -1491,135 +1297,6 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
     {
         // Log parse errors for debugging
         wxLogError( "AGENT: OnWebViewMessage parse error: %s", e.what() );
-    }
-}
-
-void AGENT_FRAME::OnToolClick( wxCommandEvent& aEvent )
-{
-    if( m_pendingTool.empty() )
-        return;
-
-    // m_toolButton->Hide();
-    // m_toolButton->GetParent()->Layout();
-
-    // Show "Running..." terminal box
-    wxString placeholderId = wxString::Format( "term_%lu", wxGetLocalTimeMillis().GetValue() );
-    wxString runningBox = wxString::Format( "<div class=\"bg-bg-secondary p-3 rounded-md my-3 max-w-full break-words\">"
-                                            "<span class=\"text-accent-green font-mono\">&gt; %s</span><br>"
-                                            "<span class=\"text-text-secondary font-mono text-[13px] whitespace-pre-wrap break-words\"><i>Running...</i></span>"
-                                            "</div><!--%s-->", // Comment mark for replacement
-                                            m_pendingTool, placeholderId );
-    AppendHtml( runningBox );
-
-    // Force draw
-    wxYield();
-
-    // Execute
-    std::string result = SendRequest( FRAME_AGENT, m_pendingTool ); // Assuming internal dispatch handles tool names
-    // Actually, SendRequest determines destination based on IDs?
-    // My previous code in implementations dispatch used strings "GET_BOARD_INFO" etc.
-    // I need to map "get_board_info" to proper Kiway Request or just pass string.
-    // Agent -> PCB/SCH dispatch uses SendRequest( int aDest, ... ).
-    // I need to determine Dest!
-    int dest = FRAME_T::FRAME_PCB_EDITOR; // Default to PCB?
-    // Map tool name to command
-    std::string toolToRun = m_pendingTool; // Full command string including args
-
-    // Parse command name (first word) to determine destination
-    std::stringstream ss( toolToRun );
-    std::string       commandName;
-    ss >> commandName;
-
-    if( commandName == "run_terminal_command" )
-    {
-        dest = FRAME_TERMINAL;
-    }
-    else if( commandName == "get_pcb_components" || commandName == "get_component_details"
-             || commandName == "get_pcb_nets" || commandName == "get_net_details" || commandName == "get_board_info" )
-    {
-        dest = FRAME_PCB_EDITOR;
-    }
-    else if( commandName == "get_sch_sheets" || commandName == "get_sch_components"
-             || commandName == "get_sch_symbol_details" || commandName == "get_connection_graph" )
-    {
-        dest = FRAME_SCH;
-    }
-    else
-    {
-        nlohmann::json errorMsg = { { "role", "user" }, { "content", "Error: Unknown tool command '" + commandName + "'" } };
-        m_chatHistory.push_back( errorMsg );
-        m_apiContext.push_back( errorMsg );
-        m_pendingTool = "";
-        // RenderChat(); // Assuming RenderChat is a function that updates the UI based on m_chatHistory
-        return;
-    }
-
-    // UPDATE UI immediately to show processing state (buttons gone)
-    m_pendingTool = "";
-    // RenderChat(); // Assuming RenderChat is a function that updates the UI based on m_chatHistory
-
-    // Force UI refresh
-    wxYield();
-
-    // Pass the FULL string (e.g. "get_component_details R1") as the payload
-    std::string toolOutput = SendRequest( dest, toolToRun );
-
-    // Append Tool Output to History as User message (or System)?
-    // "Tool Output: [JSON]"
-    std::string toolMsg = "Tool Output (" + toolToRun + "):\n" + toolOutput;
-    nlohmann::json toolMsgJson = { { "role", "user" }, { "content", toolMsg } };
-    m_chatHistory.push_back( toolMsgJson );
-    m_apiContext.push_back( toolMsgJson );
-
-    // Styled Terminal Execution Box (Result)
-    wxString htmlOutput = toolOutput;
-    htmlOutput.Replace( "\n", "<br>" );
-    htmlOutput.Replace( " ", "&nbsp;" );
-
-    wxString finalTermBox = wxString::Format( "<div class=\"bg-bg-secondary p-3 rounded-md my-3 max-w-full break-words\">"
-                                              "<span class=\"text-accent-green font-mono\">&gt; %s</span><br>"
-                                              "<span class=\"text-text-secondary font-mono text-[13px] whitespace-pre-wrap break-words\">%s</span>"
-                                              "</div>",
-                                              toolToRun, htmlOutput );
-
-    // Update m_fullHtmlContent for consistency
-    m_fullHtmlContent.Replace( runningBox, finalTermBox );
-
-    // Use RunScriptAsync to replace the running box in DOM (no SetPage)
-    if( m_chatWindow )
-    {
-        wxString escaped = finalTermBox;
-        escaped.Replace( "\\", "\\\\" );
-        escaped.Replace( "'", "\\'" );
-        escaped.Replace( "\n", "\\n" );
-        escaped.Replace( "\r", "\\r" );
-
-        wxString script = wxString::Format( "replaceByMarker('%s', '%s');", placeholderId, escaped );
-        m_chatWindow->RunScriptAsync( script );
-    }
-
-    // Save HTML snapshot for markdown re-rendering during streaming
-    m_currentResponse = "";
-    m_htmlBeforeAgentResponse = m_fullHtmlContent;
-
-    // Start generating animation
-    StartGeneratingAnimation();
-
-    // System prompt now handled server-side
-    std::string payload;
-    if( !m_schJson.empty() )
-        payload += m_schJson + "\n";
-    if( !m_pcbJson.empty() )
-        payload += m_pcbJson + "\n";
-
-    wxString model = m_modelChoice->GetStringSelection();
-    m_actionButton->SetLabel( "Stop" );
-
-    m_workerThread = new AGENT_THREAD( this, m_chatHistory, payload, model.ToStdString() );
-    if( m_workerThread->Run() != wxTHREAD_NO_ERROR )
-    {
-        wxLogMessage( "Error creating thread" );
-        m_actionButton->SetLabel( "Send" );
     }
 }
 

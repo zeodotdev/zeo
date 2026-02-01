@@ -47,7 +47,6 @@ set( AGENT_SRCS
 
     # Core modules (kept at root level)
     agent_llm_client.cpp
-    agent_thread.cpp
     agent_events.cpp
     agent_state.cpp
     agent_chat_history.cpp

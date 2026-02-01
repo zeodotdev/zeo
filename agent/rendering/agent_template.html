@@ -187,6 +187,11 @@ function appendToChat(html) {
         }
     }
 }
+
+// Highlight all code blocks on page load (for SetPage reloads)
+document.addEventListener('DOMContentLoaded', function() {
+    highlightCodeBlocks(document.body);
+});
 </script>
 </head>
 <body class="h-full m-0 p-0 bg-bg-primary text-text-primary font-sans text-[13px] leading-relaxed flex flex-col-reverse overflow-y-auto">

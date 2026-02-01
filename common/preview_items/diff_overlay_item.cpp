@@ -162,7 +162,11 @@ DIFF_OVERLAY_ITEM::BUTTON_ID DIFF_OVERLAY_ITEM::HitTestButtons( const VECTOR2I& 
     if( !aView )
         return BTN_NONE;
 
-    double scale = 1.0 / aView->GetGAL()->GetWorldScale();
+    KIGFX::GAL* gal = aView->GetGAL();
+    if( !gal )
+        return BTN_NONE;
+
+    double scale = 1.0 / gal->GetWorldScale();
 
     for( int i = 0; i < 3; ++i )
     {

@@ -2,6 +2,8 @@
 <html class="h-full bg-[#1E1E1E] flex flex-col-reverse overflow-y-auto"><head>
 <meta charset="UTF-8">
 <script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/vs2015.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script>
 tailwind.config = {
     theme: {
@@ -52,6 +54,30 @@ body { background: #1E1E1E !important; }
 /* Thinking content toggle state */
 .thinking-content { display: none; }
 .thinking-content.expanded { display: block; }
+
+/* Code block styling for highlight.js */
+pre code.hljs {
+    background: #2d2d2d;
+    padding: 12px;
+    border-radius: 6px;
+    font-family: Menlo, Monaco, 'Courier New', monospace;
+    font-size: 13px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+pre.code-block {
+    background: #2d2d2d;
+    padding: 12px;
+    border-radius: 6px;
+    font-family: Menlo, Monaco, 'Courier New', monospace;
+    font-size: 13px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #d4d4d4;
+    margin: 12px 0;
+}
 </style>
 <script>
 function sendMsg(action, data) {
@@ -116,11 +142,23 @@ document.addEventListener('click', function(e) {
     }
 });
 
+// Highlight all code blocks in an element
+function highlightCodeBlocks(element) {
+    if (typeof hljs !== 'undefined') {
+        element.querySelectorAll('pre code').forEach((block) => {
+            if (!block.classList.contains('hljs')) {
+                hljs.highlightElement(block);
+            }
+        });
+    }
+}
+
 // Incremental DOM update for streaming - called from C++ via RunScript()
 function updateStreamingContent(html) {
     const container = document.getElementById('streaming-content');
     if (container) {
         container.innerHTML = html;
+        highlightCodeBlocks(container);
     } else {
         console.error('[AGENT] streaming-content container not found!');
     }
@@ -138,9 +176,22 @@ function finalizeStreamingContent() {
 function appendToChat(html) {
     const wrapper = document.querySelector('.content-wrapper');
     if (wrapper) {
-        wrapper.insertAdjacentHTML('beforeend', html);
+        // Create a temporary container to parse the HTML
+        const temp = document.createElement('div');
+        temp.innerHTML = html;
+        // Highlight code blocks in the new content
+        highlightCodeBlocks(temp);
+        // Append each child to the wrapper
+        while (temp.firstChild) {
+            wrapper.appendChild(temp.firstChild);
+        }
     }
 }
+
+// Highlight all code blocks on page load (for SetPage reloads)
+document.addEventListener('DOMContentLoaded', function() {
+    highlightCodeBlocks(document.body);
+});
 </script>
 </head>
 <body class="h-full m-0 p-0 bg-bg-primary text-text-primary font-sans text-[13px] leading-relaxed flex flex-col-reverse overflow-y-auto">

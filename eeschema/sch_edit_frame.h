@@ -153,6 +153,13 @@ public:
      */
     bool IsAgentTransactionActive() const { return m_agentTransactionActive; }
 
+    /**
+     * Set the target sheet UUID for agent API operations.
+     * This is called when the agent explicitly navigates to a different sheet,
+     * so subsequent API operations affect the navigated-to sheet.
+     */
+    void SetAgentTargetSheet( const KIID& aUuid ) { m_agentTargetSheetUuid = aUuid; }
+
     SELECTION& GetCurrentSelection() override;
 
     SCHEMATIC& Schematic() const;

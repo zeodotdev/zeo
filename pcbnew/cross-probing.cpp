@@ -1135,7 +1135,9 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
     {
         // Agent is ending a transaction
         m_agentTransactionActive = false;
-        m_agentWorkingSet.clear();
+        // Don't clear working set if we have pending changes - it's needed for auto-dismiss
+        if( !m_hasAgentPendingChanges )
+            m_agentWorkingSet.clear();
         break;
     }
 

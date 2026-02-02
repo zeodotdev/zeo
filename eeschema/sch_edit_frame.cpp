@@ -414,6 +414,10 @@ SCH_EDIT_FRAME::SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     KIGFX::SCH_VIEW* view = GetCanvas()->GetView();
     static_cast<KIGFX::SCH_PAINTER*>( view->GetPainter() )->SetSchematic( m_schematic );
 
+    // Register as a listener for schematic item changes to detect user edits
+    // to items that are part of an active agent diff view
+    m_schematic->AddListener( this );
+
     LoadProjectSettings();
     LoadDrawingSheet();
 
@@ -613,6 +617,45 @@ SCH_EDIT_FRAME::~SCH_EDIT_FRAME()
     // We passed ownership of these to wxAuiManager.
     // delete m_hierarchy;
     // delete m_selectionFilterPanel;
+}
+
+
+void SCH_EDIT_FRAME::OnSchItemsRemoved( SCHEMATIC& aSch, std::vector<SCH_ITEM*>& aSchItem )
+{
+    OnSchItemsChanged( aSch, aSchItem );
+}
+
+
+void SCH_EDIT_FRAME::OnSchItemsChanged( SCHEMATIC& aSch, std::vector<SCH_ITEM*>& aSchItem )
+{
+    // If a diff view is active and user modifies items from the agent's working set,
+    // dismiss the diff view since the state is now inconsistent
+    if( !m_hasAgentPendingChanges || m_agentWorkingSet.empty() )
+        return;
+
+    for( SCH_ITEM* item : aSchItem )
+    {
+        if( !item )
+            continue;
+
+        const KIID& itemId = item->m_Uuid;
+
+        if( m_agentWorkingSet.find( itemId ) != m_agentWorkingSet.end() )
+        {
+            wxLogInfo( "SCH: Agent diff dismissed, user modified item %s", itemId.AsString() );
+
+            DIFF_MANAGER::GetInstance().ClearDiff();
+
+            m_hasAgentPendingChanges = false;
+            m_showingAgentBefore = false;
+            m_agentWorkingSet.clear();
+            m_undoCountBeforeAgent = 0;
+
+            std::string payload = "sch";
+            Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+            return;
+        }
+    }
 }
 
 
@@ -3157,6 +3200,7 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
     if( !hasNewChanges && !m_hasAgentPendingChanges )
     {
         // No changes detected and no existing pending changes
+        m_agentWorkingSet.clear();  // Ensure working set is clean
         return false;
     }
 
@@ -3180,6 +3224,9 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
                 SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( item );
                 if( schItem )
                     newChangedBBox.Merge( schItem->GetBoundingBox() );
+
+                // Add to working set for conflict detection (auto-dismiss on user modification)
+                m_agentWorkingSet.insert( item->m_Uuid );
             }
 
             // For CHANGED operations, also get the current item's bounding box
@@ -3199,6 +3246,8 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
     // Merge with accumulated bounding box from previous tool calls
     m_agentChangedBBox.Merge( newChangedBBox );
     m_hasAgentPendingChanges = true;
+
+    wxLogInfo( "SCH: Agent diff tracking %zu items in working set", m_agentWorkingSet.size() );
 
     // Store the target sheet path if not already set
     // Use the agent target sheet UUID to find the correct sheet path

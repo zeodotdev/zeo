@@ -23,6 +23,7 @@
 
 #include "pcb_base_edit_frame.h"
 #include "zones.h"
+#include <board.h>
 #include <mail_type.h>
 #include <settings/app_settings.h>
 #include <variant>
@@ -80,10 +81,19 @@ namespace PCB { struct IFACE; }     // KIFACE is in pcbnew.cpp
  *
  * See also class PCB_BASE_FRAME(): Basic class for Pcbnew and GerbView.
  */
-class PCB_EDIT_FRAME : public PCB_BASE_EDIT_FRAME
+class PCB_EDIT_FRAME : public PCB_BASE_EDIT_FRAME, public BOARD_LISTENER
 {
 public:
     virtual ~PCB_EDIT_FRAME();
+
+    // BOARD_LISTENER interface - detect user edits to agent-modified items
+    void OnBoardItemRemoved( BOARD& aBoard, BOARD_ITEM* aBoardItem ) override;
+    void OnBoardItemsRemoved( BOARD& aBoard, std::vector<BOARD_ITEM*>& aBoardItems ) override;
+    void OnBoardItemChanged( BOARD& aBoard, BOARD_ITEM* aBoardItem ) override;
+    void OnBoardItemsChanged( BOARD& aBoard, std::vector<BOARD_ITEM*>& aBoardItems ) override;
+    void OnBoardCompositeUpdate( BOARD& aBoard, std::vector<BOARD_ITEM*>& aAddedItems,
+                                 std::vector<BOARD_ITEM*>& aRemovedItems,
+                                 std::vector<BOARD_ITEM*>& aChangedItems ) override;
 
     /**
      * Load the footprints for each #SCH_COMPONENT in \a aNetlist from the list of libraries.

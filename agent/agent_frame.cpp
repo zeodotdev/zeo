@@ -38,6 +38,34 @@
 
 using json = nlohmann::json;
 
+// Helper function to extract the error line from a Python traceback.
+// Python tracebacks end with the actual error on the last non-empty line.
+static wxString ExtractPythonErrorLine( const std::string& traceback )
+{
+    // Python tracebacks end with the error line, e.g.:
+    // "AttributeError: 'Board' object has no attribute 'foo'"
+    // Find the last non-empty line
+    size_t pos = traceback.rfind( '\n' );
+    while( pos != std::string::npos && pos > 0 )
+    {
+        size_t prevPos = traceback.rfind( '\n', pos - 1 );
+        size_t lineStart = ( prevPos == std::string::npos ) ? 0 : prevPos + 1;
+        std::string line = traceback.substr( lineStart, pos - lineStart );
+
+        // Skip empty lines
+        if( !line.empty() && line.find_first_not_of( " \t\r" ) != std::string::npos )
+        {
+            wxString result = wxString::FromUTF8( line );
+            result.Replace( "&", "&amp;" );
+            result.Replace( "<", "&lt;" );
+            result.Replace( ">", "&gt;" );
+            return result;
+        }
+        pos = prevPos;
+    }
+    return "Unknown error";
+}
+
 BEGIN_EVENT_TABLE( AGENT_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, AGENT_FRAME::OnExit )
 
@@ -1823,7 +1851,8 @@ void AGENT_FRAME::RenderChatHistory()
                     {
                         statusClass = "text-accent-red";
                         statusText = "Error";
-                        displayResult = "<i>Script execution failed.</i>";
+                        wxString errorLine = ExtractPythonErrorLine( content );
+                        displayResult = wxString::Format( "<i>%s</i>", errorLine );
                     }
                     else if( isError )
                     {
@@ -2493,7 +2522,10 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
     {
         statusClass = "text-accent-red";
         statusText = "Error";
-        displayResult = "<i>Script execution failed. The model will attempt to fix the issue.</i>";
+
+        // Extract just the error line (e.g., "AttributeError: ...")
+        wxString errorLine = ExtractPythonErrorLine( data->result );
+        displayResult = wxString::Format( "<i>%s</i>", errorLine );
     }
     else if( !data->success )
     {

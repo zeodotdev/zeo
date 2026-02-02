@@ -141,6 +141,40 @@ void CHAT_CONTROLLER::Cancel()
     if( m_llmClient )
         m_llmClient->CancelRequest();
 
+    // Save any partial response that was being streamed
+    if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
+    {
+        nlohmann::json content = nlohmann::json::array();
+
+        // Add thinking block if present
+        if( !m_thinkingContent.IsEmpty() && !m_thinkingSignature.empty() )
+        {
+            content.push_back( {
+                { "type", "thinking" },
+                { "thinking", m_thinkingContent.ToStdString() },
+                { "signature", m_thinkingSignature }
+            } );
+        }
+
+        // Add partial text response with (Stopped) indicator
+        if( !m_currentResponse.empty() )
+        {
+            content.push_back( {
+                { "type", "text" },
+                { "text", m_currentResponse + "\n\n*(Stopped)*" }
+            } );
+        }
+
+        nlohmann::json assistantMsg = {
+            { "role", "assistant" },
+            { "content", content }
+        };
+        AddToHistory( assistantMsg );
+
+        // Note: Don't clear m_currentResponse here - the UI needs it to finalize the display.
+        // The frame's OnStop() will clear streaming state after finalizing.
+    }
+
     // If tool_use blocks were already added to history (state >= TOOL_USE_DETECTED),
     // we need to add fake tool_results for any pending tools to satisfy the Anthropic API.
     // The API requires every tool_use to have a corresponding tool_result.

@@ -126,7 +126,6 @@ void* LLM_REQUEST_THREAD::Entry()
     json requestBody;
     requestBody["model"] = apiModel;
     requestBody["messages"] = m_messages;
-    requestBody["max_tokens"] = 2000;  // TODO: restore to 4096 after testing
     requestBody["stream"] = true;
 
     // Add tools

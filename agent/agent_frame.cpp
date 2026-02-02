@@ -2427,18 +2427,36 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     // Store tool description for result display
     m_lastToolDesc = wxString::FromUTF8( data->description );
 
-    // Handle open_editor specially - requires user approval
+    // Handle open_editor specially - requires user approval only if not already open
     if( data->toolName == "open_editor" )
     {
         std::string editorType = data->input.value( "editor_type", "" );
+        FRAME_T frameType = ( editorType == "sch" ) ? FRAME_SCH : FRAME_PCB_EDITOR;
+        wxString editorLabel = ( editorType == "sch" ) ? "Schematic" : "PCB";
 
-        // Store the pending request
+        // Check if editor is already open (false = don't create if not existing)
+        KIWAY_PLAYER* existingPlayer = Kiway().Player( frameType, false );
+        if( existingPlayer && existingPlayer->IsShown() )
+        {
+            // Editor already open - just focus it without prompting
+            if( existingPlayer->IsIconized() )
+                existingPlayer->Iconize( false );
+            existingPlayer->Raise();
+
+            // Send success result immediately
+            if( m_chatController )
+                m_chatController->HandleToolResult( data->toolId,
+                    editorLabel.ToStdString() + " editor is already open", true );
+
+            delete data;
+            return;
+        }
+
+        // Editor not open - store pending request and show approval dialog
         m_pendingOpenSch = ( editorType == "sch" );
         m_pendingOpenPcb = ( editorType == "pcb" );
         m_pendingOpenToolId = data->toolId;
 
-        // Show approval dialog
-        wxString editorLabel = m_pendingOpenSch ? "Schematic" : "PCB";
         ShowOpenEditorApproval( editorLabel );
 
         delete data;

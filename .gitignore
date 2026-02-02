@@ -149,3 +149,4 @@ qa/data/**/*.spice
 
 # External API Keys
 .env
+.claude/settings.local.json

@@ -220,24 +220,25 @@ void* LLM_REQUEST_THREAD::Entry()
 
     if( http_code != 200 )
     {
-        // Check for context_exhausted error (HTTP 400 with recovery messages)
+        // Check for context_exhausted error (HTTP 400)
+        // The server no longer sends summarizedMessages - client must call /api/llm/summarize
         if( http_code == 400 )
         {
             try
             {
                 json errorJson = json::parse( ctx.buffer );
-                if( errorJson.value( "error", "" ) == "context_exhausted" &&
-                    errorJson.contains( "summarizedMessages" ) )
+                if( errorJson.value( "error", "" ) == "context_exhausted" )
                 {
-                    // Send context exhausted event with recovery messages
+                    // Send context exhausted event (no messages - controller will call summarize endpoint)
                     LLMStreamChunk chunk;
                     chunk.type = LLMChunkType::CONTEXT_EXHAUSTED;
-                    chunk.summarized_messages = errorJson["summarizedMessages"];
                     PostLLMChunk( m_handler, chunk );
 
-                    // Send completion (this was handled, not a failure)
+                    // Send completion with failure flag - controller needs to handle recovery
                     LLMStreamComplete complete;
-                    complete.success = true;
+                    complete.success = false;
+                    complete.http_status_code = 400;
+                    complete.error_message = "context_exhausted";
                     PostLLMComplete( m_handler, complete );
                     curl_easy_cleanup( curl );
                     return nullptr;
@@ -363,18 +364,19 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
             continue;
         }
 
-        // Handle context_truncated event (Scenario B: mid-response truncation with recovery)
-        if( sseEventType == "context_truncated" )
+        // Handle error SSE event (including context_exhausted mid-stream)
+        if( sseEventType == "error" )
         {
             try
             {
                 json j = json::parse( data );
-                if( j.contains( "summarizedMessages" ) )
+                if( j.value( "error", "" ) == "context_exhausted" )
                 {
+                    // Context exhausted mid-stream - controller will handle recovery
                     LLMStreamChunk chunk;
-                    chunk.type = LLMChunkType::CONTEXT_TRUNCATED;
-                    chunk.summarized_messages = j["summarizedMessages"];
+                    chunk.type = LLMChunkType::CONTEXT_EXHAUSTED;
                     PostLLMChunk( ctx->handler, chunk );
+                    return 0;  // Abort stream - controller will handle recovery
                 }
             }
             catch( const json::exception& )
@@ -553,4 +555,122 @@ void LLM_REQUEST_THREAD::ParseAndPostEvents( StreamContext& ctx, const std::stri
 {
     // This method is not used - parsing is done inline in StreamWriteCallback
     // Kept for potential future use
+}
+
+
+// ============================================================================
+// Summarize Endpoint Implementation
+// ============================================================================
+
+SummarizeResult AGENT_LLM_CLIENT::CallSummarizeEndpoint( const nlohmann::json& aMessages,
+                                                          int aKeepCount )
+{
+    SummarizeResult result;
+
+    // Get access token
+    std::string accessToken;
+    if( m_auth )
+    {
+        accessToken = m_auth->GetAccessToken();
+    }
+
+    if( accessToken.empty() )
+    {
+        result.error_message = "Not authenticated";
+        return result;
+    }
+
+    // Initialize curl
+    CURL* curl = curl_easy_init();
+    if( !curl )
+    {
+        result.error_message = "Failed to initialize curl";
+        return result;
+    }
+
+    // Build request body
+    json requestBody;
+    requestBody["messages"] = aMessages;
+    requestBody["keep_count"] = aKeepCount;
+    std::string requestBodyStr = requestBody.dump();
+
+    // Set up curl options
+    curl_easy_setopt( curl, CURLOPT_URL, "https://www.zener.so/api/llm/summarize" );
+    curl_easy_setopt( curl, CURLOPT_POST, 1L );
+    curl_easy_setopt( curl, CURLOPT_POSTFIELDS, requestBodyStr.c_str() );
+    curl_easy_setopt( curl, CURLOPT_POSTFIELDSIZE, requestBodyStr.size() );
+
+    // Headers
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append( headers, "Content-Type: application/json" );
+    headers = curl_slist_append( headers, ( "Authorization: Bearer " + accessToken ).c_str() );
+    curl_easy_setopt( curl, CURLOPT_HTTPHEADER, headers );
+
+    // Response buffer
+    std::string responseBuffer;
+    curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION,
+        []( void* contents, size_t size, size_t nmemb, void* userp ) -> size_t {
+            std::string* buffer = static_cast<std::string*>( userp );
+            buffer->append( static_cast<char*>( contents ), size * nmemb );
+            return size * nmemb;
+        });
+    curl_easy_setopt( curl, CURLOPT_WRITEDATA, &responseBuffer );
+
+    // Perform request
+    CURLcode res = curl_easy_perform( curl );
+
+    // Clean up headers
+    curl_slist_free_all( headers );
+
+    if( res != CURLE_OK )
+    {
+        result.error_message = "Curl error: " + std::string( curl_easy_strerror( res ) );
+        curl_easy_cleanup( curl );
+        return result;
+    }
+
+    // Check HTTP status
+    long http_code = 0;
+    curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &http_code );
+    curl_easy_cleanup( curl );
+
+    if( http_code != 200 )
+    {
+        // Try to parse error from response
+        try
+        {
+            json errorJson = json::parse( responseBuffer );
+            result.error_message = errorJson.value( "error", "HTTP " + std::to_string( http_code ) );
+            if( errorJson.contains( "message" ) )
+            {
+                result.error_message += ": " + errorJson["message"].get<std::string>();
+            }
+        }
+        catch( ... )
+        {
+            result.error_message = "HTTP " + std::to_string( http_code );
+        }
+        return result;
+    }
+
+    // Parse successful response
+    try
+    {
+        json responseJson = json::parse( responseBuffer );
+        if( responseJson.contains( "messages" ) && responseJson["messages"].is_array() )
+        {
+            result.success = true;
+            result.messages = responseJson["messages"];
+        }
+        else
+        {
+            result.error_message = "Invalid response: missing messages array";
+        }
+    }
+    catch( const json::exception& e )
+    {
+        result.error_message = "JSON parse error: " + std::string( e.what() );
+    }
+
+    return result;
 }

@@ -129,9 +129,6 @@ struct LLMStreamChunk
     int            context_percent_used;  // 0-100
     bool           context_compacted;     // true if context was compacted
 
-    // Context recovery fields (for CONTEXT_EXHAUSTED/CONTEXT_TRUNCATED events)
-    nlohmann::json summarized_messages;   // Compacted messages for retry
-
     LLMStreamChunk() : type( LLMChunkType::TEXT ),
                        context_percent_used( 0 ),
                        context_compacted( false ) {}

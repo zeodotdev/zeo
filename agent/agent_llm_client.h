@@ -2,9 +2,7 @@
 #define AGENT_LLM_CLIENT_H
 
 #include <string>
-#include <functional>
 #include <vector>
-#include <map>
 #include <atomic>
 #include <nlohmann/json.hpp>
 #include <wx/thread.h>
@@ -49,8 +47,8 @@ struct LLM_EVENT
 };
 
 /**
- * Generic LLM Client for KiCad Agent.
- * Supports OpenAI and Anthropic APIs.
+ * LLM Client for KiCad Agent.
+ * Uses authenticated proxy API for all LLM requests.
  */
 class AGENT_LLM_CLIENT
 {
@@ -61,39 +59,10 @@ public:
     ~AGENT_LLM_CLIENT();
 
     /**
-     * Set the model to use (e.g., "GPT-4o", "Claude 3.5 Sonnet").
+     * Set the model to use (e.g., "Claude 4.5 Sonnet").
      * @param aModelName The model name.
      */
     void SetModel( const std::string& aModelName );
-
-    /**
-     * Send a chat completion request.
-     * @param aPrompt The user prompt.
-     * @param aPayload Additional context payload (e.g. selection data).
-     * @return The response content.
-     */
-    std::string Ask( const std::string& aPrompt, const std::string& aPayload );
-
-    /**
-     * Send a streaming chat completion request.
-     * @param aMessages The full chat history as a JSON array.
-     * @param aPayload Additional context payload (e.g. selection data).
-     * @param aCallback The callback function to invoke with partial content updates.
-     * @return True if successful, false otherwise.
-     */
-    bool AskStream( const nlohmann::json& aMessages, const std::string& aPayload,
-                    std::function<void( const std::string& )> aCallback );
-
-    /**
-     * Send a streaming chat completion request with native tool calling (BLOCKING).
-     * @param aMessages The full chat history as a JSON array.
-     * @param aTools Vector of tool definitions.
-     * @param aCallback The callback function to invoke with LLM_EVENT updates.
-     * @return True if successful, false otherwise.
-     */
-    bool AskStreamWithTools( const nlohmann::json& aMessages,
-                             const std::vector<LLM_TOOL>& aTools,
-                             std::function<void( const LLM_EVENT& )> aCallback );
 
     /**
      * Send a streaming chat completion request with native tool calling (ASYNC/NON-BLOCKING).
@@ -130,24 +99,6 @@ public:
      */
     void SetAuth( AGENT_AUTH* aAuth ) { m_auth = aAuth; }
 
-    /**
-     * Load API keys from environment file.
-     * Searches for .env file in standard locations.
-     * @param aEnvFilePath Optional explicit path to .env file.
-     * @return True if keys were loaded successfully.
-     */
-    static bool LoadApiKeys( const std::string& aEnvFilePath = "" );
-
-    /**
-     * Get the OpenAI API key.
-     */
-    static const std::string& GetOpenAIKey() { return s_openaiApiKey; }
-
-    /**
-     * Get the Anthropic API key.
-     */
-    static const std::string& GetAnthropicKey() { return s_anthropicApiKey; }
-
 private:
     AGENT_FRAME* m_parent;
     AGENT_AUTH*  m_auth = nullptr;
@@ -156,24 +107,6 @@ private:
     // Async request state
     std::atomic<bool> m_requestInProgress;
     std::atomic<bool> m_cancelRequested;
-
-    // API keys loaded from .env file
-    static std::string s_openaiApiKey;
-    static std::string s_anthropicApiKey;
-    static bool        s_keysLoaded;
-
-    // Helper to request via OpenAI API
-    bool AskStreamOpenAI( const nlohmann::json& aMessages, const std::string& aPayload,
-                          std::function<void( const std::string& )> aCallback );
-
-    // Helper to request via Anthropic API
-    bool AskStreamAnthropic( const nlohmann::json& aMessages, const std::string& aPayload,
-                             std::function<void( const std::string& )> aCallback );
-
-    // Helper to request via Anthropic API with native tools (blocking)
-    bool AskStreamAnthropicWithTools( const nlohmann::json& aMessages,
-                                      const std::vector<LLM_TOOL>& aTools,
-                                      std::function<void( const LLM_EVENT& )> aCallback );
 };
 
 

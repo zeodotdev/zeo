@@ -20,7 +20,6 @@
 #include <agent_workspace.h>
 
 // Forward Declarations
-class AGENT_THREAD;
 class AGENT_AUTH;
 class PENDING_CHANGES_PANEL;
 class HISTORY_PANEL;
@@ -55,12 +54,9 @@ public:
     // Event handlers
     void OnSend( wxCommandEvent& aEvent );
     void OnStop( wxCommandEvent& aEvent );
-    void OnAgentUpdate( wxCommandEvent& aEvent );
-    void OnAgentComplete( wxCommandEvent& aEvent );
     void OnTextEnter( wxCommandEvent& aEvent );
     void OnSelectionPillClick( wxCommandEvent& aEvent );
     void OnWebViewMessage( const wxString& aMessage );
-    void OnToolClick( wxCommandEvent& aEvent );
     void OnModelSelection( wxCommandEvent& aEvent );
     void OnExit( wxCommandEvent& event );
     void OnInputKeyDown( wxKeyEvent& aEvent );
@@ -134,7 +130,6 @@ private:
     wxPanel*       m_signInOverlay;
     wxButton*      m_signInButton;
 
-    AGENT_THREAD* m_workerThread;
     AGENT_AUTH*   m_auth;
 
     std::string m_toolResponse;
@@ -147,7 +142,6 @@ private:
     nlohmann::json m_chatHistory;     // Full history for display/persistence
     nlohmann::json m_apiContext;      // Context sent to API (may be compacted)
     std::string    m_currentResponse; // Streaming accumulator
-    std::string    m_pendingTool;     // Tool waiting for approval
     bool           m_stopRequested;   // Flag for sync wait loops
 
     // Chat History Persistence

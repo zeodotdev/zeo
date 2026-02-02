@@ -1181,7 +1181,7 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     m_toolCallHtml.Clear();
     m_currentThinkingIndex = -1;
 
-    AppendHtml( "<p><i>(Stopped)</i></p>" );
+    AppendHtml( "<br><p><i>(Stopped)</i></p>" );
     m_actionButton->SetLabel( "Send" );
 }
 

@@ -126,7 +126,7 @@ void* LLM_REQUEST_THREAD::Entry()
     json requestBody;
     requestBody["model"] = apiModel;
     requestBody["messages"] = m_messages;
-    requestBody["max_tokens"] = 8192;
+    requestBody["max_tokens"] = 2000;  // TODO: restore to 4096 after testing
     requestBody["stream"] = true;
 
     // Add tools
@@ -234,6 +234,12 @@ void* LLM_REQUEST_THREAD::Entry()
                     chunk.type = LLMChunkType::CONTEXT_EXHAUSTED;
                     PostLLMChunk( m_handler, chunk );
 
+                    // Mark request as complete BEFORE posting completion event
+                    if( m_client )
+                    {
+                        m_client->m_requestInProgress.store( false );
+                    }
+
                     // Send completion with failure flag - controller needs to handle recovery
                     LLMStreamComplete complete;
                     complete.success = false;
@@ -260,6 +266,13 @@ void* LLM_REQUEST_THREAD::Entry()
             PostLLMError( m_handler, errorMsg );
         curl_easy_cleanup( curl );
         return nullptr;
+    }
+
+    // Mark request as complete BEFORE posting completion event
+    // This ensures the flag is clear when the handler processes the event
+    if( m_client )
+    {
+        m_client->m_requestInProgress.store( false );
     }
 
     // Post completion event (only if not cancelled)
@@ -523,6 +536,48 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
 
                     LLMStreamChunk chunk;
                     chunk.type = LLMChunkType::END_TURN;
+                    PostLLMChunk( ctx->handler, chunk );
+                }
+                else if( stopReason == "max_tokens" )
+                {
+                    // Response truncated due to max_tokens limit - needs continuation
+                    if( ctx->cancelFlag && ctx->cancelFlag->load() )
+                        return 0;
+
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::MAX_TOKENS;
+                    PostLLMChunk( ctx->handler, chunk );
+                }
+                else if( stopReason == "pause_turn" )
+                {
+                    // Server tool paused - needs retry
+                    if( ctx->cancelFlag && ctx->cancelFlag->load() )
+                        return 0;
+
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::PAUSE_TURN;
+                    PostLLMChunk( ctx->handler, chunk );
+                }
+                else if( stopReason == "refusal" )
+                {
+                    // Model refused the request
+                    if( ctx->cancelFlag && ctx->cancelFlag->load() )
+                        return 0;
+
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::REFUSAL;
+                    PostLLMChunk( ctx->handler, chunk );
+                }
+                else if( stopReason == "model_context_window_exceeded" )
+                {
+                    // Context exhausted mid-stream - handled via error event from server
+                    // This case shouldn't happen as server sends error SSE event,
+                    // but handle defensively
+                    if( ctx->cancelFlag && ctx->cancelFlag->load() )
+                        return 0;
+
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::CONTEXT_EXHAUSTED;
                     PostLLMChunk( ctx->handler, chunk );
                 }
             }

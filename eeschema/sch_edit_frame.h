@@ -44,6 +44,7 @@
 #include <eeschema_settings.h>
 #include <math/box2.h>
 #include <sch_base_frame.h>
+#include <schematic.h>
 #include <template_fieldnames.h>
 
 class SCH_ITEM;
@@ -134,11 +135,15 @@ private:
 /**
  * Schematic editor (Eeschema) main window.
  */
-class SCH_EDIT_FRAME : public SCH_BASE_FRAME
+class SCH_EDIT_FRAME : public SCH_BASE_FRAME, public SCHEMATIC_LISTENER
 {
 public:
     SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent );
     ~SCH_EDIT_FRAME() override;
+
+    // SCHEMATIC_LISTENER interface - detect user edits to agent-modified items
+    void OnSchItemsRemoved( SCHEMATIC& aSch, std::vector<SCH_ITEM*>& aSchItem ) override;
+    void OnSchItemsChanged( SCHEMATIC& aSch, std::vector<SCH_ITEM*>& aSchItem ) override;
 
     SCH_SCREEN* GetScreen() const override;
 

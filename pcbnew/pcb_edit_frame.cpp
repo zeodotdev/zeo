@@ -720,6 +720,96 @@ PCB_EDIT_FRAME::~PCB_EDIT_FRAME()
 }
 
 
+void PCB_EDIT_FRAME::OnBoardItemRemoved( BOARD& aBoard, BOARD_ITEM* aBoardItem )
+{
+    OnBoardItemChanged( aBoard, aBoardItem );
+}
+
+
+void PCB_EDIT_FRAME::OnBoardItemsRemoved( BOARD& aBoard, std::vector<BOARD_ITEM*>& aBoardItems )
+{
+    OnBoardItemsChanged( aBoard, aBoardItems );
+}
+
+
+void PCB_EDIT_FRAME::OnBoardItemChanged( BOARD& aBoard, BOARD_ITEM* aBoardItem )
+{
+    if( !m_hasAgentPendingChanges || m_agentWorkingSet.empty() || !aBoardItem )
+        return;
+
+    if( m_agentWorkingSet.find( aBoardItem->m_Uuid ) != m_agentWorkingSet.end() )
+    {
+        wxLogInfo( "PCB: Agent diff dismissed, user modified item %s", aBoardItem->m_Uuid.AsString() );
+        DIFF_MANAGER::GetInstance().ClearDiff();
+        m_hasAgentPendingChanges = false;
+        m_showingAgentBefore = false;
+        m_agentWorkingSet.clear();
+        m_undoCountBeforeAgent = 0;
+        std::string payload = "pcb";
+        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+    }
+}
+
+
+void PCB_EDIT_FRAME::OnBoardItemsChanged( BOARD& aBoard, std::vector<BOARD_ITEM*>& aBoardItems )
+{
+    if( !m_hasAgentPendingChanges || m_agentWorkingSet.empty() )
+        return;
+
+    for( BOARD_ITEM* item : aBoardItems )
+    {
+        if( item && m_agentWorkingSet.find( item->m_Uuid ) != m_agentWorkingSet.end() )
+        {
+            wxLogInfo( "PCB: Agent diff dismissed, user modified item %s", item->m_Uuid.AsString() );
+            DIFF_MANAGER::GetInstance().ClearDiff();
+            m_hasAgentPendingChanges = false;
+            m_showingAgentBefore = false;
+            m_agentWorkingSet.clear();
+            m_undoCountBeforeAgent = 0;
+            std::string payload = "pcb";
+            Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+            return;
+        }
+    }
+}
+
+
+void PCB_EDIT_FRAME::OnBoardCompositeUpdate( BOARD& aBoard,
+                                              std::vector<BOARD_ITEM*>& aAddedItems,
+                                              std::vector<BOARD_ITEM*>& aRemovedItems,
+                                              std::vector<BOARD_ITEM*>& aChangedItems )
+{
+    if( !m_hasAgentPendingChanges || m_agentWorkingSet.empty() )
+        return;
+
+    // Helper to check if any item in the list is in the agent working set
+    auto checkAndDismiss = [this]( std::vector<BOARD_ITEM*>& items, const char* action ) -> bool
+    {
+        for( BOARD_ITEM* item : items )
+        {
+            if( item && m_agentWorkingSet.find( item->m_Uuid ) != m_agentWorkingSet.end() )
+            {
+                wxLogInfo( "PCB: Agent diff dismissed, user %s item %s", action, item->m_Uuid.AsString() );
+                DIFF_MANAGER::GetInstance().ClearDiff();
+                m_hasAgentPendingChanges = false;
+                m_showingAgentBefore = false;
+                m_agentWorkingSet.clear();
+                m_undoCountBeforeAgent = 0;
+                std::string payload = "pcb";
+                Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+                return true;
+            }
+        }
+        return false;
+    };
+
+    if( checkAndDismiss( aRemovedItems, "removed" ) )
+        return;
+
+    checkAndDismiss( aChangedItems, "modified" );
+}
+
+
 void PCB_EDIT_FRAME::SetBoard( BOARD* aBoard, bool aBuildConnectivity,
                                PROGRESS_REPORTER* aReporter )
 {
@@ -729,6 +819,9 @@ void PCB_EDIT_FRAME::SetBoard( BOARD* aBoard, bool aBuildConnectivity,
     PCB_BASE_EDIT_FRAME::SetBoard( aBoard, aReporter );
 
     aBoard->SetProject( &Prj() );
+
+    // Register as listener for board item changes (for agent diff auto-dismiss)
+    aBoard->AddListener( this );
 
     if( aBuildConnectivity )
         aBoard->BuildConnectivity();
@@ -3289,6 +3382,7 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
     if( !hasNewChanges && !m_hasAgentPendingChanges )
     {
         // No changes detected and no existing pending changes
+        m_agentWorkingSet.clear();  // Ensure working set is clean
         return false;
     }
 
@@ -3312,6 +3406,9 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
                 BOARD_ITEM* boardItem = dynamic_cast<BOARD_ITEM*>( item );
                 if( boardItem )
                     newChangedBBox.Merge( boardItem->GetBoundingBox() );
+
+                // Add to working set for conflict detection (auto-dismiss on user modification)
+                m_agentWorkingSet.insert( item->m_Uuid );
             }
 
             // For CHANGED operations, also get the current item's bounding box
@@ -3331,6 +3428,8 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
     // Merge with accumulated bounding box from previous tool calls
     m_agentChangedBBox.Merge( newChangedBBox );
     m_hasAgentPendingChanges = true;
+
+    wxLogInfo( "PCB: Agent diff tracking %zu items in working set", m_agentWorkingSet.size() );
 
     // Set up callbacks for the diff overlay
     DIFF_CALLBACKS callbacks;

@@ -6,6 +6,7 @@
 #include <curl/curl.h>
 #include <ki_exception.h>
 #include <nlohmann/json.hpp>
+#include <cstdlib>
 
 using json = nlohmann::json;
 
@@ -161,8 +162,10 @@ void* LLM_REQUEST_THREAD::Entry()
         return nullptr;
     }
 
-    // Set up curl options - use zener.so proxy
-    curl_easy_setopt( curl, CURLOPT_URL, "https://www.zener.so/api/llm/messages" );
+    // Set up curl options - use zener.so proxy (or override via ZENER_API_URL)
+    const char* envUrl = std::getenv( "ZENER_API_URL" );
+    std::string apiUrl = envUrl ? envUrl : "https://www.zener.so/api/llm/messages";
+    curl_easy_setopt( curl, CURLOPT_URL, apiUrl.c_str() );
     curl_easy_setopt( curl, CURLOPT_POST, 1L );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDS, requestBodyStr.c_str() );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDSIZE, requestBodyStr.size() );

@@ -102,13 +102,13 @@ bool AgentConversationContext::TransitionTo( AgentConversationState aNewState )
 
     if( !IsValidTransition( m_state, aNewState ) )
     {
-        wxLogDebug( "AGENT STATE: Invalid transition from %s to %s",
+        wxLogInfo( "AGENT STATE: Invalid transition from %s to %s",
                     AgentStateToString( m_state ),
                     AgentStateToString( aNewState ) );
         return false;
     }
 
-    wxLogDebug( "AGENT STATE: Transitioning from %s to %s",
+    wxLogInfo( "AGENT STATE: Transitioning from %s to %s",
                 AgentStateToString( m_state ),
                 AgentStateToString( aNewState ) );
 
@@ -120,7 +120,7 @@ bool AgentConversationContext::TransitionTo( AgentConversationState aNewState )
 void AgentConversationContext::AddPendingToolCall( const PendingToolCall& aToolCall )
 {
     m_pendingTools.push_back( aToolCall );
-    wxLogDebug( "AGENT STATE: Added pending tool call '%s' (total: %zu)",
+    wxLogInfo( "AGENT STATE: Added pending tool call '%s' (total: %zu)",
                 aToolCall.tool_name.c_str(), m_pendingTools.size() );
 }
 
@@ -170,7 +170,7 @@ bool AgentConversationContext::RemovePendingToolCall( const std::string& aToolUs
     {
         if( it->tool_use_id == aToolUseId )
         {
-            wxLogDebug( "AGENT STATE: Removed pending tool call '%s'", it->tool_name.c_str() );
+            wxLogInfo( "AGENT STATE: Removed pending tool call '%s'", it->tool_name.c_str() );
             m_pendingTools.erase( it );
             return true;
         }
@@ -182,5 +182,5 @@ bool AgentConversationContext::RemovePendingToolCall( const std::string& aToolUs
 void AgentConversationContext::ClearPendingToolCalls()
 {
     m_pendingTools.clear();
-    wxLogDebug( "AGENT STATE: Cleared all pending tool calls" );
+    wxLogInfo( "AGENT STATE: Cleared all pending tool calls" );
 }

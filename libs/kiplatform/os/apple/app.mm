@@ -20,14 +20,78 @@
 
 #include <kiplatform/app.h>
 
+#include <wx/datetime.h>
+#include <wx/dir.h>
+#include <wx/ffile.h>
+#include <wx/filename.h>
+#include <wx/log.h>
 #include <wx/string.h>
 #include <wx/sysopt.h>
+#include <wx/utils.h>
+
+// Global log file - must persist for lifetime of app
+static wxFFile* s_logFile = nullptr;
+
+// Custom log target that writes to both file and stderr
+class wxLogDual : public wxLog
+{
+public:
+    wxLogDual( FILE* logFile ) : m_logFile( logFile ) {}
+
+protected:
+    void DoLogText( const wxString& msg ) override
+    {
+        const wxScopedCharBuffer utf8 = msg.utf8_str();
+
+        if( m_logFile )
+        {
+            fprintf( m_logFile, "%s\n", utf8.data() );
+            fflush( m_logFile );
+        }
+
+        fprintf( stderr, "%s\n", utf8.data() );
+    }
+
+private:
+    FILE* m_logFile;
+};
 
 
 bool KIPLATFORM::APP::Init()
 {
     // KiCad relies on showing the file type selector in a few places; force it to be shown
     wxSystemOptions::SetOption( wxS( "osx.openfiledialog.always-show-types" ), 1 );
+
+    // Set up logging
+    wxLog::EnableLogging( true );
+    wxLog::SetLogLevel( wxLOG_Trace );
+
+    // Always log to file
+    wxString logDir = wxFileName::GetHomeDir() + wxS( "/Library/Logs/Zener" );
+
+    if( !wxDir::Exists( logDir ) )
+        wxFileName::Mkdir( logDir, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
+
+    wxString timestamp = wxDateTime::Now().Format( wxS( "%Y-%m-%d-%H%M%S" ) );
+    wxString logPath = logDir + wxS( "/agent-" ) + timestamp + wxS( ".log" );
+
+    s_logFile = new wxFFile( logPath, wxS( "w" ) );
+
+    // Check if WXTRACE is set for stderr output (development mode)
+    wxString traceVars;
+    bool useStderr = wxGetEnv( wxS( "WXTRACE" ), &traceVars ) && !traceVars.empty();
+
+    if( useStderr && s_logFile->IsOpened() )
+    {
+        // Log to both file and stderr
+        wxLog::SetActiveTarget( new wxLogDual( s_logFile->fp() ) );
+    }
+    else if( s_logFile->IsOpened() )
+    {
+        // Log to file only
+        wxLog::SetActiveTarget( new wxLogStderr( s_logFile->fp() ) );
+    }
+
     return true;
 }
 

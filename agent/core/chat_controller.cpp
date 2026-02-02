@@ -85,12 +85,11 @@ CHAT_CONTROLLER::~CHAT_CONTROLLER()
 
 void CHAT_CONTROLLER::SendMessage( const std::string& aText )
 {
-    printf( "[DEBUG] CHAT_CONTROLLER::SendMessage called with text: %.50s%s\n",
-            aText.c_str(), aText.length() > 50 ? "..." : "" );
+    wxLogInfo( "CHAT_CONTROLLER::SendMessage called with text: %s", aText.c_str() );
 
     if( !CanAcceptInput() )
     {
-        printf( "[DEBUG] CHAT_CONTROLLER::SendMessage - rejected, controller is busy\n" );
+        wxLogInfo( "CHAT_CONTROLLER::SendMessage - rejected, controller is busy" );
         wxLogWarning( "CHAT_CONTROLLER::SendMessage called while busy" );
         return;
     }
@@ -135,7 +134,7 @@ void CHAT_CONTROLLER::SendMessage( const std::string& aText )
 
 void CHAT_CONTROLLER::Cancel()
 {
-    printf( "[DEBUG] CHAT_CONTROLLER::Cancel called\n" );
+    wxLogInfo( "CHAT_CONTROLLER::Cancel called" );
     m_stopRequested = true;
 
     if( m_llmClient )
@@ -212,7 +211,7 @@ void CHAT_CONTROLLER::Cancel()
 
 void CHAT_CONTROLLER::Retry()
 {
-    printf( "[DEBUG] CHAT_CONTROLLER::Retry called\n" );
+    wxLogInfo( "CHAT_CONTROLLER::Retry called" );
     if( m_ctx.GetState() != AgentConversationState::ERROR )
         return;
 
@@ -231,7 +230,7 @@ void CHAT_CONTROLLER::Retry()
 
 void CHAT_CONTROLLER::NewChat()
 {
-    printf( "[DEBUG] CHAT_CONTROLLER::NewChat called\n" );
+    wxLogInfo( "CHAT_CONTROLLER::NewChat called" );
     Cancel();
 
     // Clear all chat state
@@ -249,7 +248,7 @@ void CHAT_CONTROLLER::NewChat()
 
 void CHAT_CONTROLLER::LoadChat( const std::string& aChatId )
 {
-    printf( "[DEBUG] CHAT_CONTROLLER::LoadChat called with chatId: %s\n", aChatId.c_str() );
+    wxLogInfo( "CHAT_CONTROLLER::LoadChat called with chatId: %s", aChatId.c_str() );
     if( !m_chatHistoryDb )
     {
         EmitEvent( EVT_CHAT_ERROR, ChatErrorData( "No history database configured", false ) );
@@ -284,7 +283,7 @@ void CHAT_CONTROLLER::LoadChat( const std::string& aChatId )
 
 void CHAT_CONTROLLER::SetModel( const std::string& aModel )
 {
-    printf( "[DEBUG] CHAT_CONTROLLER::SetModel called with model: %s\n", aModel.c_str() );
+    wxLogInfo( "CHAT_CONTROLLER::SetModel called with model: %s", aModel.c_str() );
     m_currentModel = aModel;
 
     if( m_llmClient )
@@ -323,32 +322,27 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
     if( m_stopRequested )
         return;
 
+    // Only log significant state changes, not every text/thinking chunk
     switch( aChunk.type )
     {
-    case LLMChunkType::TEXT:
-        printf( "[DEBUG] CHAT_CONTROLLER::HandleLLMChunk - TEXT delta (len=%zu)\n", aChunk.text.length() );
-        break;
     case LLMChunkType::THINKING_START:
-        printf( "[DEBUG] CHAT_CONTROLLER::HandleLLMChunk - THINKING_START\n" );
-        break;
-    case LLMChunkType::THINKING:
-        printf( "[DEBUG] CHAT_CONTROLLER::HandleLLMChunk - THINKING delta (len=%zu)\n", aChunk.thinking_text.length() );
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - THINKING_START" );
         break;
     case LLMChunkType::THINKING_DONE:
-        printf( "[DEBUG] CHAT_CONTROLLER::HandleLLMChunk - THINKING_DONE\n" );
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - THINKING_DONE" );
         break;
     case LLMChunkType::TOOL_USE:
-        printf( "[DEBUG] CHAT_CONTROLLER::HandleLLMChunk - TOOL_USE: %s (id=%s)\n",
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - TOOL_USE: %s (id=%s)",
                 aChunk.tool_name.c_str(), aChunk.tool_use_id.c_str() );
         break;
     case LLMChunkType::TOOL_USE_DONE:
-        printf( "[DEBUG] CHAT_CONTROLLER::HandleLLMChunk - TOOL_USE_DONE\n" );
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - TOOL_USE_DONE" );
         break;
     case LLMChunkType::END_TURN:
-        printf( "[DEBUG] CHAT_CONTROLLER::HandleLLMChunk - END_TURN\n" );
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - END_TURN, response: %s", m_currentResponse.c_str() );
         break;
     case LLMChunkType::ERROR:
-        printf( "[DEBUG] CHAT_CONTROLLER::HandleLLMChunk - ERROR: %s\n", aChunk.error_message.c_str() );
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - ERROR: %s", aChunk.error_message.c_str() );
         break;
     default:
         break;
@@ -504,7 +498,7 @@ void CHAT_CONTROLLER::HandleLLMComplete()
 
 void CHAT_CONTROLLER::HandleLLMError( const std::string& aError )
 {
-    printf( "[DEBUG] CHAT_CONTROLLER::HandleLLMError: %s\n", aError.c_str() );
+    wxLogInfo( "CHAT_CONTROLLER::HandleLLMError: %s", aError.c_str() );
     AgentConversationState oldState = m_ctx.GetState();
     m_ctx.SetState( AgentConversationState::ERROR );
     m_ctx.error_message = aError;
@@ -534,17 +528,17 @@ void CHAT_CONTROLLER::HandleToolResult( const std::string& aToolId,
 
 void CHAT_CONTROLLER::ExecuteNextTool()
 {
-    printf( "[DEBUG] CHAT_CONTROLLER::ExecuteNextTool called\n" );
+    wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool called" );
     PendingToolCall* tool = m_ctx.GetNextPendingToolCall();
     if( !tool )
     {
-        printf( "[DEBUG] CHAT_CONTROLLER::ExecuteNextTool - no more tools, continuing chat\n" );
+        wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - no more tools, continuing chat" );
         // No more tools, continue chat
         ContinueChat();
         return;
     }
 
-    printf( "[DEBUG] CHAT_CONTROLLER::ExecuteNextTool - executing tool: %s (id=%s)\n",
+    wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - executing tool: %s (id=%s)",
             tool->tool_name.c_str(), tool->tool_use_id.c_str() );
     // Mark as executing
     tool->is_executing = true;
@@ -590,7 +584,7 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
                                           const std::string& aResult,
                                           bool aSuccess )
 {
-    printf( "[DEBUG] CHAT_CONTROLLER::ProcessToolResult - toolId=%s, success=%s, result_len=%zu\n",
+    wxLogInfo( "CHAT_CONTROLLER::ProcessToolResult - toolId=%s, success=%s, result_len=%zu",
             aToolId.c_str(), aSuccess ? "true" : "false", aResult.length() );
     // Find the tool
     PendingToolCall* tool = m_ctx.FindPendingToolCall( aToolId );
@@ -938,7 +932,7 @@ void CHAT_CONTROLLER::AddAssistantToolUseToHistory( const nlohmann::json& aToolU
 
 void CHAT_CONTROLLER::StartLLMRequest()
 {
-    printf( "[DEBUG] CHAT_CONTROLLER::StartLLMRequest called\n" );
+    wxLogInfo( "CHAT_CONTROLLER::StartLLMRequest called" );
     if( !m_llmClient )
     {
         HandleLLMError( "No LLM client configured" );
@@ -959,7 +953,7 @@ void CHAT_CONTROLLER::StartLLMRequest()
 
 void CHAT_CONTROLLER::ContinueChat()
 {
-    printf( "[DEBUG] CHAT_CONTROLLER::ContinueChat called - starting next LLM turn\n" );
+    wxLogInfo( "CHAT_CONTROLLER::ContinueChat called - starting next LLM turn" );
     // Reset for next turn
     m_currentResponse.clear();
     m_thinkingContent.clear();
@@ -980,15 +974,14 @@ void CHAT_CONTROLLER::ContinueChat()
 
 void CHAT_CONTROLLER::GenerateTitle()
 {
-    printf( "[DEBUG] CHAT_CONTROLLER::GenerateTitle called\n" );
+    wxLogInfo( "CHAT_CONTROLLER::GenerateTitle called" );
     if( m_firstUserMessage.empty() )
         return;
 
     if( !m_auth )
         return;
 
-    printf( "[DEBUG] CHAT_CONTROLLER::GenerateTitle - generating title for: %.50s%s\n",
-            m_firstUserMessage.c_str(), m_firstUserMessage.length() > 50 ? "..." : "" );
+    wxLogInfo( "CHAT_CONTROLLER::GenerateTitle - generating title for: %s", m_firstUserMessage.c_str() );
     // Capture first user message for thread
     std::string message = m_firstUserMessage;
 

@@ -30,3 +30,9 @@ common/                 # Shared libraries
 ## Build
 
 CMake 3.22+. Targets: `agent` (standalone), `agent_kiface` (KiCad plugin).
+
+## Debugging
+
+Logs: `~/Library/Logs/Zener/agent-<timestamp>.log` (one per session)
+
+For terminal output: `WXTRACE=1 ./Zener`

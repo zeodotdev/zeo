@@ -22,13 +22,14 @@
 #include <nlohmann/json.hpp>
 #include <kiway.h>
 #include <wx/string.h>
+#include <wx/log.h>
 
 namespace AgentTools
 {
 
 std::vector<LLM_TOOL> GetToolDefinitions()
 {
-    printf( "[DEBUG] AgentTools::GetToolDefinitions called\n" );
+    wxLogInfo( "AgentTools::GetToolDefinitions called" );
     using json = nlohmann::json;
 
     std::vector<LLM_TOOL> tools;
@@ -97,7 +98,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
 
 std::string BuildToolPayload( const std::string& aToolName, const nlohmann::json& aInput )
 {
-    printf( "[DEBUG] AgentTools::BuildToolPayload called for tool: %s\n", aToolName.c_str() );
+    wxLogInfo( "AgentTools::BuildToolPayload called for tool: %s", aToolName.c_str() );
     // Build the command string for the terminal based on tool name
     if( aToolName == "run_shell" )
     {
@@ -127,7 +128,7 @@ std::string BuildToolPayload( const std::string& aToolName, const nlohmann::json
 std::string ExecuteToolSync( const std::string& aToolName, const nlohmann::json& aInput,
                               std::function<std::string( int, const std::string& )> aSendRequestFn )
 {
-    printf( "[DEBUG] AgentTools::ExecuteToolSync called for tool: %s\n", aToolName.c_str() );
+    wxLogInfo( "AgentTools::ExecuteToolSync called for tool: %s", aToolName.c_str() );
     if( aToolName == "run_shell" )
     {
         std::string mode = aInput.value( "mode", "" );
@@ -156,7 +157,7 @@ std::string ExecuteToolSync( const std::string& aToolName, const nlohmann::json&
 
 wxString GetToolDescription( const std::string& aToolName, const nlohmann::json& aInput )
 {
-    printf( "[DEBUG] AgentTools::GetToolDescription called for tool: %s\n", aToolName.c_str() );
+    wxLogInfo( "AgentTools::GetToolDescription called for tool: %s", aToolName.c_str() );
     // Generate human-readable description based on tool name and input
     if( aToolName == "run_shell" || aToolName == "run_python" )
     {

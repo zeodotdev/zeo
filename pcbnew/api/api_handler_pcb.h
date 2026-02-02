@@ -30,6 +30,7 @@
 #include <api/common/commands/project_commands.pb.h>
 #include <kiid.h>
 #include <properties/property_mgr.h>
+#include <reporter.h>
 
 using namespace kiapi;
 using namespace kiapi::common;
@@ -45,6 +46,51 @@ class EDA_ITEM;
 class PCB_EDIT_FRAME;
 class PCB_TRACK;
 class PROPERTY_BASE;
+
+
+/**
+ * Structure to hold a single update change from the netlist updater
+ */
+struct API_UPDATE_CHANGE
+{
+    PCBUpdateChange::ChangeType type;
+    wxString                    reference;
+    wxString                    message;
+    KIID                        itemId;
+};
+
+
+/**
+ * Reporter class that captures update changes for the API response
+ */
+class API_UPDATE_REPORTER : public REPORTER
+{
+public:
+    API_UPDATE_REPORTER() = default;
+
+    REPORTER& Report( const wxString& aText, SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override;
+    bool      HasMessage() const override { return !m_changes.empty(); }
+
+    int GetAddedCount() const { return m_addedCount; }
+    int GetReplacedCount() const { return m_replacedCount; }
+    int GetDeletedCount() const { return m_deletedCount; }
+    int GetUpdatedCount() const { return m_updatedCount; }
+    int GetNetsChangedCount() const { return m_netsChangedCount; }
+    int GetWarningCount() const { return m_warningCount; }
+    int GetErrorCount() const { return m_errorCount; }
+
+    const std::vector<API_UPDATE_CHANGE>& GetChanges() const { return m_changes; }
+
+private:
+    std::vector<API_UPDATE_CHANGE> m_changes;
+    int                            m_addedCount = 0;
+    int                            m_replacedCount = 0;
+    int                            m_deletedCount = 0;
+    int                            m_updatedCount = 0;
+    int                            m_netsChangedCount = 0;
+    int                            m_warningCount = 0;
+    int                            m_errorCount = 0;
+};
 
 
 class API_HANDLER_PCB : public API_HANDLER_EDITOR
@@ -190,6 +236,49 @@ private:
     // Graphics defaults setter
     HANDLER_RESULT<GraphicsDefaultsResponse> handleSetGraphicsDefaults(
             const HANDLER_CONTEXT<SetGraphicsDefaults>& aCtx );
+
+    // Update PCB from Schematic
+    HANDLER_RESULT<UpdatePCBFromSchematicResponse> handleUpdatePCBFromSchematic(
+            const HANDLER_CONTEXT<UpdatePCBFromSchematic>& aCtx );
+
+    // Footprint library browsing
+    HANDLER_RESULT<GetLibraryFootprintsResponse> handleGetLibraryFootprints(
+            const HANDLER_CONTEXT<GetLibraryFootprints>& aCtx );
+
+    HANDLER_RESULT<SearchLibraryFootprintsResponse> handleSearchLibraryFootprints(
+            const HANDLER_CONTEXT<SearchLibraryFootprints>& aCtx );
+
+    HANDLER_RESULT<GetFootprintInfoResponse> handleGetFootprintInfo(
+            const HANDLER_CONTEXT<GetFootprintInfo>& aCtx );
+
+    // Ratsnest query
+    HANDLER_RESULT<GetRatsnestResponse> handleGetRatsnest(
+            const HANDLER_CONTEXT<GetRatsnest>& aCtx );
+
+    HANDLER_RESULT<GetUnroutedNetsResponse> handleGetUnroutedNets(
+            const HANDLER_CONTEXT<GetUnroutedNets>& aCtx );
+
+    HANDLER_RESULT<GetConnectivityStatusResponse> handleGetConnectivityStatus(
+            const HANDLER_CONTEXT<GetConnectivityStatus>& aCtx );
+
+    // Group operations
+    HANDLER_RESULT<GetGroupsResponse> handleGetGroups(
+            const HANDLER_CONTEXT<GetGroups>& aCtx );
+
+    HANDLER_RESULT<CreateGroupResponse> handleCreateGroup(
+            const HANDLER_CONTEXT<CreateGroup>& aCtx );
+
+    HANDLER_RESULT<DeleteGroupResponse> handleDeleteGroup(
+            const HANDLER_CONTEXT<DeleteGroup>& aCtx );
+
+    HANDLER_RESULT<AddToGroupResponse> handleAddToGroup(
+            const HANDLER_CONTEXT<AddToGroup>& aCtx );
+
+    HANDLER_RESULT<RemoveFromGroupResponse> handleRemoveFromGroup(
+            const HANDLER_CONTEXT<RemoveFromGroup>& aCtx );
+
+    HANDLER_RESULT<GetGroupMembersResponse> handleGetGroupMembers(
+            const HANDLER_CONTEXT<GetGroupMembers>& aCtx );
 
     // Document management handlers
     HANDLER_RESULT<commands::CreateDocumentResponse>

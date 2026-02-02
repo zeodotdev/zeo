@@ -22,6 +22,7 @@ syntax = "proto3";
 
 package kiapi.board.commands;
 
+import "google/protobuf/any.proto";
 import "common/types/base_types.proto";
 import "common/types/enums.proto";
 import "common/types/project_settings.proto";
@@ -669,4 +670,325 @@ message SetGraphicsDefaults
 {
   kiapi.common.types.DocumentSpecifier board = 1;
   kiapi.board.GraphicsDefaults defaults = 2;
+}
+
+/*
+ * Update PCB from Schematic
+ */
+
+// Options for updating PCB from schematic
+message UpdatePCBFromSchematicOptions
+{
+  // Footprint matching strategy: true = match by UUID, false = match by reference
+  bool lookup_by_timestamp = 1;
+
+  // Footprint handling
+  bool replace_footprints = 2;        // Replace footprints when library ID doesn't match
+  bool delete_unused_footprints = 3;  // Remove footprints not in schematic
+  bool override_locks = 4;            // Allow changes to locked footprints
+
+  // Field synchronization
+  bool update_fields = 5;             // Sync custom field values from schematic
+  bool remove_extra_fields = 6;       // Remove fields not present in schematic
+
+  // Groups (design blocks)
+  bool transfer_groups = 7;           // Copy group membership from schematic
+}
+
+// Request to update PCB from schematic
+// Returns UpdatePCBFromSchematicResponse
+message UpdatePCBFromSchematic
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // If not specified, uses the schematic associated with the board's project
+  kiapi.common.types.DocumentSpecifier schematic = 2;
+
+  UpdatePCBFromSchematicOptions options = 3;
+
+  // If true, only preview changes without applying
+  bool dry_run = 4;
+}
+
+// Single change item in the update report
+message PCBUpdateChange
+{
+  enum ChangeType
+  {
+    CT_UNKNOWN = 0;
+    CT_FOOTPRINT_ADDED = 1;
+    CT_FOOTPRINT_REPLACED = 2;
+    CT_FOOTPRINT_DELETED = 3;
+    CT_FOOTPRINT_UPDATED = 4;       // Fields/value changed
+    CT_NET_CHANGED = 5;
+    CT_PAD_NET_CHANGED = 6;
+    CT_GROUP_ADDED = 7;
+    CT_WARNING = 8;
+    CT_ERROR = 9;
+  }
+
+  ChangeType type = 1;
+  string reference = 2;              // Component reference (U1, R5, etc.)
+  string message = 3;                // Human-readable description
+  kiapi.common.types.KIID item_id = 4; // Affected item ID (if applicable)
+}
+
+// Response from UpdatePCBFromSchematic
+message UpdatePCBFromSchematicResponse
+{
+  kiapi.common.types.CommandStatus status = 1;
+
+  // Summary counts
+  int32 footprints_added = 2;
+  int32 footprints_replaced = 3;
+  int32 footprints_deleted = 4;
+  int32 footprints_updated = 5;
+  int32 nets_changed = 6;
+  int32 warnings = 7;
+  int32 errors = 8;
+
+  // Detailed change log
+  repeated PCBUpdateChange changes = 9;
+
+  // true if update was applied (false for dry_run)
+  bool changes_applied = 10;
+}
+
+/*
+ * Footprint Library Browsing
+ */
+
+// Basic footprint metadata
+message FootprintInfo
+{
+  string name = 1;              // Footprint name (e.g., "R_0402_1005Metric")
+  string lib_id = 2;            // Full lib_id (e.g., "Resistor_SMD:R_0402_1005Metric")
+  string description = 3;       // Description text
+  string keywords = 4;          // Keywords for searching
+  int32 pad_count = 5;          // Number of pads
+  int32 unique_pad_count = 6;   // Unique pad shapes
+}
+
+// Pad information for detailed footprint view
+message PadInfo
+{
+  string number = 1;                   // Pad number/name
+  string net_name = 2;                 // Net name (empty for library footprint)
+  kiapi.common.types.Vector2 position = 3;  // Relative position
+  kiapi.common.types.Vector2 size = 4;      // Pad size
+  int32 shape = 5;                     // PAD_SHAPE enum
+}
+
+// Get all footprints in a library
+// Returns GetLibraryFootprintsResponse
+message GetLibraryFootprints
+{
+  string library_name = 1;  // Library nickname (e.g., "Resistor_SMD")
+}
+
+message GetLibraryFootprintsResponse
+{
+  repeated FootprintInfo footprints = 1;
+}
+
+// Search footprints across libraries
+// Returns SearchLibraryFootprintsResponse
+message SearchLibraryFootprints
+{
+  string query = 1;                    // Search term
+  repeated string libraries = 2;       // Libraries to search (empty = all)
+  int32 max_results = 3;               // Limit results (0 = unlimited)
+}
+
+message SearchLibraryFootprintsResponse
+{
+  repeated FootprintInfo results = 1;
+}
+
+// Get detailed footprint info
+// Returns GetFootprintInfoResponse
+message GetFootprintInfo
+{
+  string lib_id = 1;  // "Library:Footprint" format
+}
+
+message GetFootprintInfoResponse
+{
+  FootprintInfo info = 1;
+  repeated PadInfo pads = 2;           // Pad details
+  kiapi.common.types.Box2 bounding_box = 3;  // Footprint bounds
+  string doc_link = 4;                 // Documentation URL
+}
+
+/*
+ * Ratsnest Query
+ */
+
+// Individual ratsnest line (unrouted connection)
+message RatsnestLine
+{
+  int32 net_code = 1;
+  string net_name = 2;
+  kiapi.common.types.KIID pad1_id = 3;    // Source pad/via
+  kiapi.common.types.KIID pad2_id = 4;    // Destination pad/via
+  kiapi.common.types.Vector2 start = 5;    // Start position
+  kiapi.common.types.Vector2 end = 6;      // End position
+  int64 length = 7;                        // Manhattan distance (nm)
+}
+
+// Get unrouted connections (ratsnest lines)
+// Returns GetRatsnestResponse
+message GetRatsnest
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  repeated int32 net_codes = 2;        // Filter by nets (empty = all)
+  bool include_zones = 3;              // Include zone connections
+}
+
+message GetRatsnestResponse
+{
+  repeated RatsnestLine lines = 1;
+  int32 total_unrouted = 2;            // Total unrouted count
+}
+
+// Information about unrouted nets
+message UnroutedNetInfo
+{
+  int32 net_code = 1;
+  string net_name = 2;
+  int32 total_pads = 3;                // Total pads on net
+  int32 routed_connections = 4;        // Completed connections
+  int32 unrouted_connections = 5;      // Remaining connections
+  bool is_complete = 6;                // Fully routed?
+}
+
+// Get nets with incomplete routing
+// Returns GetUnroutedNetsResponse
+message GetUnroutedNets
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message GetUnroutedNetsResponse
+{
+  repeated UnroutedNetInfo nets = 1;
+}
+
+// Connectivity status for a single item
+message ItemConnectivity
+{
+  kiapi.common.types.KIID item_id = 1;
+  int32 net_code = 2;
+  string net_name = 3;
+  repeated kiapi.common.types.KIID connected_items = 4;   // Items electrically connected
+  repeated kiapi.common.types.KIID unconnected_items = 5; // Items on same net but not connected
+}
+
+// Get connectivity status for specific items
+// Returns GetConnectivityStatusResponse
+message GetConnectivityStatus
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  repeated kiapi.common.types.KIID item_ids = 2;    // Pads/vias to check
+}
+
+message GetConnectivityStatusResponse
+{
+  repeated ItemConnectivity items = 1;
+}
+
+/*
+ * Group Operations
+ */
+
+// Group information
+message GroupInfo
+{
+  kiapi.common.types.KIID id = 1;
+  string name = 2;
+  repeated kiapi.common.types.KIID member_ids = 3;
+  bool locked = 4;
+}
+
+// Get all groups on board
+// Returns GetGroupsResponse
+message GetGroups
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message GetGroupsResponse
+{
+  repeated GroupInfo groups = 1;
+}
+
+// Create a new group
+// Returns CreateGroupResponse
+message CreateGroup
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  string name = 2;
+  repeated kiapi.common.types.KIID member_ids = 3;  // Items to add to group
+}
+
+message CreateGroupResponse
+{
+  kiapi.common.types.KIID group_id = 1;
+  GroupInfo group = 2;
+}
+
+// Delete a group (does not delete members)
+// Returns DeleteGroupResponse
+message DeleteGroup
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  kiapi.common.types.KIID group_id = 2;
+  bool ungroup_members = 3;           // If true, remove items from group first
+}
+
+message DeleteGroupResponse
+{
+  bool success = 1;
+}
+
+// Add items to existing group
+// Returns AddToGroupResponse
+message AddToGroup
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  kiapi.common.types.KIID group_id = 2;
+  repeated kiapi.common.types.KIID item_ids = 3;
+}
+
+message AddToGroupResponse
+{
+  int32 items_added = 1;
+  repeated kiapi.common.types.KIID failed_ids = 2;  // Items that couldn't be added
+}
+
+// Remove items from group
+// Returns RemoveFromGroupResponse
+message RemoveFromGroup
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  kiapi.common.types.KIID group_id = 2;
+  repeated kiapi.common.types.KIID item_ids = 3;
+}
+
+message RemoveFromGroupResponse
+{
+  int32 items_removed = 1;
+}
+
+// Get members of a specific group
+// Returns GetGroupMembersResponse
+message GetGroupMembers
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  kiapi.common.types.KIID group_id = 2;
+}
+
+message GetGroupMembersResponse
+{
+  repeated google.protobuf.Any items = 1;  // Full item data
 }

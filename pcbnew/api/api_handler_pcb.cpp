@@ -51,6 +51,17 @@
 #include <tools/drc_tool.h>
 #include <drc/drc_engine.h>
 #include <zone.h>
+#include <netlist_reader/netlist.h>
+#include <netlist_reader/board_netlist_updater.h>
+#include <wx/regex.h>
+#include <lib_id.h>
+#include <connectivity/connectivity_data.h>
+#include <ratsnest/ratsnest_data.h>
+#include <connectivity/connectivity_items.h>
+#include <board_connected_item.h>
+#include <project_pcb.h>
+#include <footprint_library_adapter.h>
+#include <footprint_info.h>
 
 #include <api/common/types/base_types.pb.h>
 #include <widgets/appearance_controls.h>
@@ -152,6 +163,35 @@ API_HANDLER_PCB::API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame ) :
     // Graphics defaults setter
     registerHandler<SetGraphicsDefaults, GraphicsDefaultsResponse>(
             &API_HANDLER_PCB::handleSetGraphicsDefaults );
+
+    // Update PCB from Schematic
+    registerHandler<UpdatePCBFromSchematic, UpdatePCBFromSchematicResponse>(
+            &API_HANDLER_PCB::handleUpdatePCBFromSchematic );
+
+    // Footprint library browsing
+    registerHandler<GetLibraryFootprints, GetLibraryFootprintsResponse>(
+            &API_HANDLER_PCB::handleGetLibraryFootprints );
+    registerHandler<SearchLibraryFootprints, SearchLibraryFootprintsResponse>(
+            &API_HANDLER_PCB::handleSearchLibraryFootprints );
+    registerHandler<GetFootprintInfo, GetFootprintInfoResponse>(
+            &API_HANDLER_PCB::handleGetFootprintInfo );
+
+    // Ratsnest query
+    registerHandler<GetRatsnest, GetRatsnestResponse>( &API_HANDLER_PCB::handleGetRatsnest );
+    registerHandler<GetUnroutedNets, GetUnroutedNetsResponse>(
+            &API_HANDLER_PCB::handleGetUnroutedNets );
+    registerHandler<GetConnectivityStatus, GetConnectivityStatusResponse>(
+            &API_HANDLER_PCB::handleGetConnectivityStatus );
+
+    // Group operations
+    registerHandler<GetGroups, GetGroupsResponse>( &API_HANDLER_PCB::handleGetGroups );
+    registerHandler<CreateGroup, CreateGroupResponse>( &API_HANDLER_PCB::handleCreateGroup );
+    registerHandler<DeleteGroup, DeleteGroupResponse>( &API_HANDLER_PCB::handleDeleteGroup );
+    registerHandler<AddToGroup, AddToGroupResponse>( &API_HANDLER_PCB::handleAddToGroup );
+    registerHandler<RemoveFromGroup, RemoveFromGroupResponse>(
+            &API_HANDLER_PCB::handleRemoveFromGroup );
+    registerHandler<GetGroupMembers, GetGroupMembersResponse>(
+            &API_HANDLER_PCB::handleGetGroupMembers );
 
     // Document management handlers
     registerHandler<CreateDocument, CreateDocumentResponse>( &API_HANDLER_PCB::handleCreateDocument );
@@ -2790,4 +2830,1063 @@ HANDLER_RESULT<Empty> API_HANDLER_PCB::handleCloseDocument(
     frame()->Clear_Pcb( false );
 
     return Empty();
+}
+
+
+//
+// API_UPDATE_REPORTER implementation
+//
+
+REPORTER& API_UPDATE_REPORTER::Report( const wxString& aText, SEVERITY aSeverity )
+{
+    API_UPDATE_CHANGE change;
+    change.message = aText;
+
+    // Determine type from message content
+    if( aText.StartsWith( wxT( "Add " ) ) )
+    {
+        change.type = PCBUpdateChange::CT_FOOTPRINT_ADDED;
+        m_addedCount++;
+    }
+    else if( aText.Contains( wxT( "footprint from" ) ) || aText.Contains( wxT( "Changed footprint" ) ) )
+    {
+        change.type = PCBUpdateChange::CT_FOOTPRINT_REPLACED;
+        m_replacedCount++;
+    }
+    else if( aText.StartsWith( wxT( "Remove " ) ) || aText.StartsWith( wxT( "Delete " ) ) )
+    {
+        change.type = PCBUpdateChange::CT_FOOTPRINT_DELETED;
+        m_deletedCount++;
+    }
+    else if( aText.Contains( wxT( "net " ) ) || aText.Contains( wxT( " net to " ) ) )
+    {
+        change.type = PCBUpdateChange::CT_NET_CHANGED;
+        m_netsChangedCount++;
+    }
+    else if( aText.Contains( wxT( "pad " ) ) && aText.Contains( wxT( "net" ) ) )
+    {
+        change.type = PCBUpdateChange::CT_PAD_NET_CHANGED;
+        m_netsChangedCount++;
+    }
+    else if( aSeverity == RPT_SEVERITY_WARNING )
+    {
+        change.type = PCBUpdateChange::CT_WARNING;
+        m_warningCount++;
+    }
+    else if( aSeverity == RPT_SEVERITY_ERROR )
+    {
+        change.type = PCBUpdateChange::CT_ERROR;
+        m_errorCount++;
+    }
+    else
+    {
+        change.type = PCBUpdateChange::CT_FOOTPRINT_UPDATED;
+        m_updatedCount++;
+    }
+
+    // Extract reference from message (e.g., "Add component R1...")
+    // Matches patterns like R1, U1, C10, D2, etc.
+    wxRegEx refRegex( wxT( "\\b([A-Z]+[0-9]+)\\b" ) );
+    if( refRegex.Matches( aText ) )
+        change.reference = refRegex.GetMatch( aText, 1 );
+
+    m_changes.push_back( change );
+    return *this;
+}
+
+
+//
+// Update PCB from Schematic
+//
+
+HANDLER_RESULT<UpdatePCBFromSchematicResponse> API_HANDLER_PCB::handleUpdatePCBFromSchematic(
+        const HANDLER_CONTEXT<UpdatePCBFromSchematic>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    // Fetch netlist from schematic
+    NETLIST netlist;
+
+    if( !frame()->FetchNetlistFromSchematic( netlist, wxEmptyString ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Failed to fetch netlist from schematic. "
+                             "Ensure the schematic is open and fully annotated." );
+        return tl::unexpected( e );
+    }
+
+    // Create reporter to capture changes
+    API_UPDATE_REPORTER reporter;
+
+    // Configure updater
+    BOARD_NETLIST_UPDATER updater( frame(), board );
+    updater.SetReporter( &reporter );
+
+    const auto& opts = aCtx.Request.options();
+    updater.SetIsDryRun( aCtx.Request.dry_run() );
+    updater.SetLookupByTimestamp( opts.lookup_by_timestamp() );
+    updater.SetReplaceFootprints( opts.replace_footprints() );
+    updater.SetDeleteUnusedFootprints( opts.delete_unused_footprints() );
+    updater.SetOverrideLocks( opts.override_locks() );
+    updater.SetUpdateFields( opts.update_fields() );
+    updater.SetRemoveExtraFields( opts.remove_extra_fields() );
+    updater.SetTransferGroups( opts.transfer_groups() );
+
+    // Execute update
+    bool success = updater.UpdateNetlist( netlist );
+
+    // Populate response
+    UpdatePCBFromSchematicResponse response;
+
+    response.set_changes_applied( !aCtx.Request.dry_run() && success );
+    response.set_footprints_added( reporter.GetAddedCount() );
+    response.set_footprints_replaced( reporter.GetReplacedCount() );
+    response.set_footprints_deleted( reporter.GetDeletedCount() );
+    response.set_footprints_updated( reporter.GetUpdatedCount() );
+    response.set_nets_changed( reporter.GetNetsChangedCount() );
+    response.set_warnings( reporter.GetWarningCount() );
+    response.set_errors( reporter.GetErrorCount() );
+
+    // Copy detailed changes
+    for( const auto& change : reporter.GetChanges() )
+    {
+        auto* protoChange = response.add_changes();
+        protoChange->set_type( change.type );
+        protoChange->set_reference( change.reference.ToStdString() );
+        protoChange->set_message( change.message.ToStdString() );
+
+        // Note: itemId is not currently populated by the reporter.
+        // Future enhancement could track item IDs from the updater.
+    }
+
+    // Post-update handling (if not dry run)
+    if( !aCtx.Request.dry_run() && success )
+    {
+        bool dummy = false;
+        frame()->OnNetlistChanged( updater, &dummy );
+        frame()->Refresh();
+    }
+
+    return response;
+}
+
+
+//
+// Footprint Library Browsing
+//
+
+HANDLER_RESULT<GetLibraryFootprintsResponse> API_HANDLER_PCB::handleGetLibraryFootprints(
+        const HANDLER_CONTEXT<GetLibraryFootprints>& aCtx )
+{
+    GetLibraryFootprintsResponse response;
+
+    // Get the footprint library adapter
+    FOOTPRINT_LIBRARY_ADAPTER* fpAdapter = nullptr;
+
+    if( frame() )
+        fpAdapter = PROJECT_PCB::FootprintLibAdapter( &frame()->Prj() );
+
+    if( !fpAdapter )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No footprint library adapter available" );
+        return tl::unexpected( e );
+    }
+
+    wxString libName = wxString::FromUTF8( aCtx.Request.library_name() );
+
+    // Check library exists
+    if( !fpAdapter->HasLibrary( libName ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( fmt::format( "Library '{}' not found", aCtx.Request.library_name() ) );
+        return tl::unexpected( e );
+    }
+
+    try
+    {
+        // Enumerate footprints in library
+        std::vector<wxString> fpNames = fpAdapter->GetFootprintNames( libName, true /* best efforts */ );
+
+        for( const wxString& fpName : fpNames )
+        {
+            FootprintInfo* info = response.add_footprints();
+
+            info->set_name( fpName.ToUTF8().data() );
+            info->set_lib_id( fmt::format( "{}:{}", aCtx.Request.library_name(),
+                                           fpName.ToUTF8().data() ) );
+
+            // Try to get extended info from FOOTPRINT_LIST if available
+            FOOTPRINT_LIST* fpList = FOOTPRINT_LIST::GetInstance( frame()->Kiway() );
+
+            if( fpList )
+            {
+                FOOTPRINT_INFO* fpInfo = fpList->GetFootprintInfo( libName, fpName );
+
+                if( fpInfo )
+                {
+                    info->set_description( fpInfo->GetDesc().ToUTF8().data() );
+                    info->set_keywords( fpInfo->GetKeywords().ToUTF8().data() );
+                    info->set_pad_count( fpInfo->GetPadCount() );
+                    info->set_unique_pad_count( fpInfo->GetUniquePadCount() );
+                }
+            }
+        }
+    }
+    catch( const IO_ERROR& e )
+    {
+        ApiResponseStatus status;
+        status.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        status.set_error_message( e.What().ToUTF8().data() );
+        return tl::unexpected( status );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<SearchLibraryFootprintsResponse> API_HANDLER_PCB::handleSearchLibraryFootprints(
+        const HANDLER_CONTEXT<SearchLibraryFootprints>& aCtx )
+{
+    SearchLibraryFootprintsResponse response;
+
+    wxString query = wxString::FromUTF8( aCtx.Request.query() ).Lower();
+    int maxResults = aCtx.Request.max_results() > 0 ? aCtx.Request.max_results() : INT_MAX;
+
+    // Get footprint list (cached, includes all libraries)
+    FOOTPRINT_LIST* fpList = FOOTPRINT_LIST::GetInstance( frame()->Kiway() );
+
+    if( !fpList )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No footprint list available" );
+        return tl::unexpected( e );
+    }
+
+    // Build set of libraries to search
+    std::set<wxString> targetLibs;
+
+    for( const auto& lib : aCtx.Request.libraries() )
+        targetLibs.insert( wxString::FromUTF8( lib ) );
+
+    bool searchAllLibs = targetLibs.empty();
+    int count = 0;
+
+    // Search through footprint list
+    for( const std::unique_ptr<FOOTPRINT_INFO>& fpInfoPtr : fpList->GetList() )
+    {
+        FOOTPRINT_INFO& fpInfo = *fpInfoPtr;
+
+        if( count >= maxResults )
+            break;
+
+        // Filter by library if specified
+        if( !searchAllLibs &&
+            targetLibs.find( fpInfo.GetLibNickname() ) == targetLibs.end() )
+            continue;
+
+        // Match against name, description, keywords
+        wxString name = fpInfo.GetFootprintName().Lower();
+        wxString desc = fpInfo.GetDesc().Lower();
+        wxString keywords = fpInfo.GetKeywords().Lower();
+
+        if( name.Contains( query ) || desc.Contains( query ) || keywords.Contains( query ) )
+        {
+            FootprintInfo* info = response.add_results();
+
+            info->set_name( fpInfo.GetFootprintName().ToUTF8().data() );
+            info->set_lib_id( fmt::format( "{}:{}",
+                fpInfo.GetLibNickname().ToUTF8().data(),
+                fpInfo.GetFootprintName().ToUTF8().data() ) );
+            info->set_description( fpInfo.GetDesc().ToUTF8().data() );
+            info->set_keywords( fpInfo.GetKeywords().ToUTF8().data() );
+            info->set_pad_count( fpInfo.GetPadCount() );
+            info->set_unique_pad_count( fpInfo.GetUniquePadCount() );
+
+            count++;
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<GetFootprintInfoResponse> API_HANDLER_PCB::handleGetFootprintInfo(
+        const HANDLER_CONTEXT<GetFootprintInfo>& aCtx )
+{
+    GetFootprintInfoResponse response;
+
+    LIB_ID libId;
+
+    if( libId.Parse( aCtx.Request.lib_id() ) != 0 )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Invalid lib_id format. Expected 'Library:Footprint'" );
+        return tl::unexpected( e );
+    }
+
+    // Get the footprint library adapter
+    FOOTPRINT_LIBRARY_ADAPTER* fpAdapter = nullptr;
+
+    if( frame() )
+        fpAdapter = PROJECT_PCB::FootprintLibAdapter( &frame()->Prj() );
+
+    if( !fpAdapter )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No footprint library adapter available" );
+        return tl::unexpected( e );
+    }
+
+    try
+    {
+        // Load the actual footprint to get full details
+        FOOTPRINT* footprint = fpAdapter->LoadFootprint(
+            libId.GetLibNickname(), libId.GetLibItemName(), true /* keep UUID */ );
+
+        if( !footprint )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( fmt::format( "Footprint '{}' not found", aCtx.Request.lib_id() ) );
+            return tl::unexpected( e );
+        }
+
+        // Fill basic info
+        FootprintInfo* info = response.mutable_info();
+        info->set_name( libId.GetLibItemName().c_str() );
+        info->set_lib_id( aCtx.Request.lib_id() );
+        info->set_description( footprint->GetLibDescription().ToUTF8().data() );
+        info->set_keywords( footprint->GetKeywords().ToUTF8().data() );
+        info->set_pad_count( footprint->GetPadCount() );
+
+        // Add pad details
+        for( PAD* pad : footprint->Pads() )
+        {
+            PadInfo* padInfo = response.add_pads();
+            padInfo->set_number( pad->GetNumber().ToUTF8().data() );
+
+            kiapi::common::PackVector2( *padInfo->mutable_position(), pad->GetPosition() );
+
+            VECTOR2I size = pad->GetSize( PADSTACK::ALL_LAYERS );
+            kiapi::common::PackVector2( *padInfo->mutable_size(), size );
+
+            padInfo->set_shape( static_cast<int>( pad->GetShape( PADSTACK::ALL_LAYERS ) ) );
+        }
+
+        // Bounding box
+        BOX2I bbox = footprint->GetBoundingBox( false /* no invisible text */ );
+        kiapi::common::PackBox2( *response.mutable_bounding_box(), bbox );
+    }
+    catch( const IO_ERROR& e )
+    {
+        ApiResponseStatus status;
+        status.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        status.set_error_message( e.What().ToUTF8().data() );
+        return tl::unexpected( status );
+    }
+
+    return response;
+}
+
+
+//
+// Ratsnest Query
+//
+
+HANDLER_RESULT<GetRatsnestResponse> API_HANDLER_PCB::handleGetRatsnest(
+        const HANDLER_CONTEXT<GetRatsnest>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    GetRatsnestResponse response;
+
+    // Get connectivity data (calculates ratsnest)
+    std::shared_ptr<CONNECTIVITY_DATA> connectivity = board->GetConnectivity();
+
+    if( !connectivity )
+    {
+        board->BuildConnectivity();
+        connectivity = board->GetConnectivity();
+    }
+
+    // Build set of net codes to include
+    std::set<int> targetNets;
+
+    for( int netCode : aCtx.Request.net_codes() )
+        targetNets.insert( netCode );
+
+    bool filterByNet = !targetNets.empty();
+    int totalUnrouted = 0;
+
+    // Iterate through all nets
+    for( unsigned int netCode = 1; netCode < board->GetNetCount(); netCode++ )
+    {
+        if( filterByNet && targetNets.find( static_cast<int>( netCode ) ) == targetNets.end() )
+            continue;
+
+        NETINFO_ITEM* netInfo = board->FindNet( static_cast<int>( netCode ) );
+
+        if( !netInfo || netInfo->GetNetname().IsEmpty() )
+            continue;
+
+        // Get ratsnest for this net
+        RN_NET* rnNet = connectivity->GetRatsnestForNet( netCode );
+
+        if( !rnNet )
+            continue;
+
+        // Get unconnected edges (ratsnest lines)
+        const std::vector<CN_EDGE>& edges = rnNet->GetEdges();
+
+        for( const CN_EDGE& edge : edges )
+        {
+            // Skip if this is a routed connection (not visible = connected)
+            if( !edge.IsVisible() )
+                continue;
+
+            std::shared_ptr<const CN_ANCHOR> source = edge.GetSourceNode();
+            std::shared_ptr<const CN_ANCHOR> target = edge.GetTargetNode();
+
+            if( !source || !target )
+                continue;
+
+            // Skip zone-to-zone if not requested
+            if( !aCtx.Request.include_zones() )
+            {
+                if( source->Parent()->Type() == PCB_ZONE_T &&
+                    target->Parent()->Type() == PCB_ZONE_T )
+                    continue;
+            }
+
+            RatsnestLine* line = response.add_lines();
+
+            line->set_net_code( netCode );
+            line->set_net_name( netInfo->GetNetname().ToUTF8().data() );
+
+            // Set item IDs
+            if( source->Parent() )
+            {
+                line->mutable_pad1_id()->set_value( source->Parent()->m_Uuid.AsStdString() );
+            }
+
+            if( target->Parent() )
+            {
+                line->mutable_pad2_id()->set_value( target->Parent()->m_Uuid.AsStdString() );
+            }
+
+            // Set positions
+            VECTOR2I startPos = source->Pos();
+            VECTOR2I endPos = target->Pos();
+
+            kiapi::common::PackVector2( *line->mutable_start(), startPos );
+            kiapi::common::PackVector2( *line->mutable_end(), endPos );
+
+            // Calculate length (Manhattan distance)
+            int64_t length = std::abs( endPos.x - startPos.x ) +
+                             std::abs( endPos.y - startPos.y );
+            line->set_length( length );
+
+            totalUnrouted++;
+        }
+    }
+
+    response.set_total_unrouted( totalUnrouted );
+
+    return response;
+}
+
+
+HANDLER_RESULT<GetUnroutedNetsResponse> API_HANDLER_PCB::handleGetUnroutedNets(
+        const HANDLER_CONTEXT<GetUnroutedNets>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    GetUnroutedNetsResponse response;
+
+    std::shared_ptr<CONNECTIVITY_DATA> connectivity = board->GetConnectivity();
+
+    if( !connectivity )
+    {
+        board->BuildConnectivity();
+        connectivity = board->GetConnectivity();
+    }
+
+    // Iterate through all nets
+    for( unsigned int netCode = 1; netCode < board->GetNetCount(); netCode++ )
+    {
+        NETINFO_ITEM* netInfo = board->FindNet( static_cast<int>( netCode ) );
+
+        if( !netInfo || netInfo->GetNetname().IsEmpty() )
+            continue;
+
+        // Count pads on this net
+        int padCount = 0;
+
+        for( FOOTPRINT* fp : board->Footprints() )
+        {
+            for( PAD* pad : fp->Pads() )
+            {
+                if( pad->GetNetCode() == static_cast<int>( netCode ) )
+                    padCount++;
+            }
+        }
+
+        // Skip single-pad nets (nothing to route)
+        if( padCount < 2 )
+            continue;
+
+        // Get ratsnest to count unrouted connections
+        RN_NET* rnNet = connectivity->GetRatsnestForNet( netCode );
+
+        int unroutedCount = 0;
+
+        if( rnNet )
+        {
+            for( const CN_EDGE& edge : rnNet->GetEdges() )
+            {
+                if( edge.IsVisible() )  // Visible = unrouted
+                    unroutedCount++;
+            }
+        }
+
+        // A fully connected net with N pads needs N-1 connections
+        int totalConnections = padCount - 1;
+        int routedConnections = totalConnections - unroutedCount;
+
+        // Only include nets that have unrouted connections
+        if( unroutedCount > 0 )
+        {
+            UnroutedNetInfo* netProto = response.add_nets();
+
+            netProto->set_net_code( netCode );
+            netProto->set_net_name( netInfo->GetNetname().ToUTF8().data() );
+            netProto->set_total_pads( padCount );
+            netProto->set_routed_connections( routedConnections );
+            netProto->set_unrouted_connections( unroutedCount );
+            netProto->set_is_complete( false );
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<GetConnectivityStatusResponse> API_HANDLER_PCB::handleGetConnectivityStatus(
+        const HANDLER_CONTEXT<GetConnectivityStatus>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    GetConnectivityStatusResponse response;
+
+    std::shared_ptr<CONNECTIVITY_DATA> connectivity = board->GetConnectivity();
+
+    if( !connectivity )
+    {
+        board->BuildConnectivity();
+        connectivity = board->GetConnectivity();
+    }
+
+    const auto& itemCache = board->GetItemByIdCache();
+
+    for( const auto& kiidProto : aCtx.Request.item_ids() )
+    {
+        KIID kiid( kiidProto.value() );
+        auto it = itemCache.find( kiid );
+        BOARD_ITEM* item = ( it != itemCache.end() ) ? it->second : nullptr;
+
+        if( !item )
+            continue;
+
+        // Only process connectable items
+        BOARD_CONNECTED_ITEM* connItem = dynamic_cast<BOARD_CONNECTED_ITEM*>( item );
+
+        if( !connItem )
+            continue;
+
+        ItemConnectivity* itemStatus = response.add_items();
+
+        itemStatus->mutable_item_id()->set_value( kiid.AsStdString() );
+        itemStatus->set_net_code( connItem->GetNetCode() );
+
+        NETINFO_ITEM* netInfo = connItem->GetNet();
+
+        if( netInfo )
+            itemStatus->set_net_name( netInfo->GetNetname().ToUTF8().data() );
+
+        // Get items connected to this one
+        const std::vector<BOARD_CONNECTED_ITEM*> connected =
+            connectivity->GetConnectedItems( connItem );
+
+        for( BOARD_CONNECTED_ITEM* conn : connected )
+        {
+            itemStatus->add_connected_items()->set_value( conn->m_Uuid.AsStdString() );
+        }
+
+        // Find items on same net but not connected (through ratsnest)
+        if( netInfo && connItem->GetNetCode() > 0 )
+        {
+            RN_NET* rnNet = connectivity->GetRatsnestForNet( connItem->GetNetCode() );
+
+            if( rnNet )
+            {
+                // Find edges involving this item
+                for( const CN_EDGE& edge : rnNet->GetEdges() )
+                {
+                    if( !edge.IsVisible() )
+                        continue;
+
+                    std::shared_ptr<const CN_ANCHOR> source = edge.GetSourceNode();
+                    std::shared_ptr<const CN_ANCHOR> target = edge.GetTargetNode();
+
+                    if( source && source->Parent() == connItem && target && target->Parent() )
+                    {
+                        itemStatus->add_unconnected_items()->set_value(
+                            target->Parent()->m_Uuid.AsStdString() );
+                    }
+                    else if( target && target->Parent() == connItem && source && source->Parent() )
+                    {
+                        itemStatus->add_unconnected_items()->set_value(
+                            source->Parent()->m_Uuid.AsStdString() );
+                    }
+                }
+            }
+        }
+    }
+
+    return response;
+}
+
+
+//
+// Group Operations
+//
+
+HANDLER_RESULT<GetGroupsResponse> API_HANDLER_PCB::handleGetGroups(
+        const HANDLER_CONTEXT<GetGroups>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    GetGroupsResponse response;
+
+    for( PCB_GROUP* group : board->Groups() )
+    {
+        GroupInfo* info = response.add_groups();
+
+        info->mutable_id()->set_value( group->m_Uuid.AsStdString() );
+        info->set_name( group->GetName().ToUTF8().data() );
+        info->set_locked( group->IsLocked() );
+
+        // Add member IDs
+        for( EDA_ITEM* member : group->GetItems() )
+        {
+            info->add_member_ids()->set_value( member->m_Uuid.AsStdString() );
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<CreateGroupResponse> API_HANDLER_PCB::handleCreateGroup(
+        const HANDLER_CONTEXT<CreateGroup>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    CreateGroupResponse response;
+
+    // Create the group
+    PCB_GROUP* group = new PCB_GROUP( board );
+    group->SetName( wxString::FromUTF8( aCtx.Request.name() ) );
+
+    // Collect items to add
+    std::vector<BOARD_ITEM*> itemsToAdd;
+    const auto& itemCache = board->GetItemByIdCache();
+
+    for( const auto& kiidProto : aCtx.Request.member_ids() )
+    {
+        KIID kiid( kiidProto.value() );
+        auto it = itemCache.find( kiid );
+        BOARD_ITEM* item = ( it != itemCache.end() ) ? it->second : nullptr;
+
+        if( item && item != board && item->Type() != PCB_GROUP_T )
+        {
+            // Check item isn't already in another group
+            if( item->GetParentGroup() == nullptr )
+            {
+                itemsToAdd.push_back( item );
+            }
+        }
+    }
+
+    // Use a commit for undo support
+    BOARD_COMMIT commit( frame() );
+
+    commit.Add( group );
+
+    // Add items to the group
+    for( BOARD_ITEM* item : itemsToAdd )
+    {
+        commit.Modify( item );
+        group->AddItem( item );
+    }
+
+    commit.Push( wxString::Format( _( "Create group '%s'" ), group->GetName() ) );
+
+    // Build response
+    response.mutable_group_id()->set_value( group->m_Uuid.AsStdString() );
+
+    GroupInfo* info = response.mutable_group();
+    info->mutable_id()->set_value( group->m_Uuid.AsStdString() );
+    info->set_name( group->GetName().ToUTF8().data() );
+    info->set_locked( group->IsLocked() );
+
+    for( EDA_ITEM* member : group->GetItems() )
+    {
+        info->add_member_ids()->set_value( member->m_Uuid.AsStdString() );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<DeleteGroupResponse> API_HANDLER_PCB::handleDeleteGroup(
+        const HANDLER_CONTEXT<DeleteGroup>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    KIID groupId( aCtx.Request.group_id().value() );
+    const auto& itemCache = board->GetItemByIdCache();
+    auto it = itemCache.find( groupId );
+    BOARD_ITEM* item = ( it != itemCache.end() ) ? it->second : nullptr;
+
+    if( !item || item->Type() != PCB_GROUP_T )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Group not found" );
+        return tl::unexpected( e );
+    }
+
+    PCB_GROUP* group = static_cast<PCB_GROUP*>( item );
+
+    BOARD_COMMIT commit( frame() );
+
+    if( aCtx.Request.ungroup_members() )
+    {
+        // Remove all items from group first
+        for( EDA_ITEM* member : group->GetItems() )
+        {
+            commit.Modify( static_cast<BOARD_ITEM*>( member ) );
+        }
+
+        group->RemoveAll();
+    }
+
+    commit.Remove( group );
+    commit.Push( wxString::Format( _( "Delete group '%s'" ), group->GetName() ) );
+
+    DeleteGroupResponse response;
+    response.set_success( true );
+
+    return response;
+}
+
+
+HANDLER_RESULT<AddToGroupResponse> API_HANDLER_PCB::handleAddToGroup(
+        const HANDLER_CONTEXT<AddToGroup>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    KIID groupId( aCtx.Request.group_id().value() );
+    const auto& itemCache = board->GetItemByIdCache();
+    auto groupIt = itemCache.find( groupId );
+    BOARD_ITEM* item = ( groupIt != itemCache.end() ) ? groupIt->second : nullptr;
+
+    if( !item || item->Type() != PCB_GROUP_T )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Group not found" );
+        return tl::unexpected( e );
+    }
+
+    PCB_GROUP* group = static_cast<PCB_GROUP*>( item );
+
+    AddToGroupResponse response;
+
+    BOARD_COMMIT commit( frame() );
+    commit.Modify( group );
+
+    int addedCount = 0;
+
+    for( const auto& kiidProto : aCtx.Request.item_ids() )
+    {
+        KIID kiid( kiidProto.value() );
+        auto it = itemCache.find( kiid );
+        BOARD_ITEM* itemToAdd = ( it != itemCache.end() ) ? it->second : nullptr;
+
+        if( !itemToAdd || itemToAdd == board || itemToAdd->Type() == PCB_GROUP_T )
+        {
+            response.add_failed_ids()->set_value( kiid.AsStdString() );
+            continue;
+        }
+
+        // Can't add if already in a group
+        if( itemToAdd->GetParentGroup() != nullptr )
+        {
+            response.add_failed_ids()->set_value( kiid.AsStdString() );
+            continue;
+        }
+
+        commit.Modify( itemToAdd );
+        group->AddItem( itemToAdd );
+        addedCount++;
+    }
+
+    commit.Push( wxString::Format( _( "Add items to group '%s'" ), group->GetName() ) );
+
+    response.set_items_added( addedCount );
+
+    return response;
+}
+
+
+HANDLER_RESULT<RemoveFromGroupResponse> API_HANDLER_PCB::handleRemoveFromGroup(
+        const HANDLER_CONTEXT<RemoveFromGroup>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    KIID groupId( aCtx.Request.group_id().value() );
+    const auto& itemCache = board->GetItemByIdCache();
+    auto groupIt = itemCache.find( groupId );
+    BOARD_ITEM* item = ( groupIt != itemCache.end() ) ? groupIt->second : nullptr;
+
+    if( !item || item->Type() != PCB_GROUP_T )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Group not found" );
+        return tl::unexpected( e );
+    }
+
+    PCB_GROUP* group = static_cast<PCB_GROUP*>( item );
+
+    RemoveFromGroupResponse response;
+
+    BOARD_COMMIT commit( frame() );
+    commit.Modify( group );
+
+    int removedCount = 0;
+
+    for( const auto& kiidProto : aCtx.Request.item_ids() )
+    {
+        KIID kiid( kiidProto.value() );
+        auto it = itemCache.find( kiid );
+        BOARD_ITEM* itemToRemove = ( it != itemCache.end() ) ? it->second : nullptr;
+
+        if( !itemToRemove )
+            continue;
+
+        // Check item is actually in this group
+        if( itemToRemove->GetParentGroup() != group )
+            continue;
+
+        commit.Modify( itemToRemove );
+        group->RemoveItem( itemToRemove );
+        removedCount++;
+    }
+
+    commit.Push( wxString::Format( _( "Remove items from group '%s'" ), group->GetName() ) );
+
+    response.set_items_removed( removedCount );
+
+    return response;
+}
+
+
+HANDLER_RESULT<GetGroupMembersResponse> API_HANDLER_PCB::handleGetGroupMembers(
+        const HANDLER_CONTEXT<GetGroupMembers>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    KIID groupId( aCtx.Request.group_id().value() );
+    const auto& itemCache = board->GetItemByIdCache();
+    auto it = itemCache.find( groupId );
+    BOARD_ITEM* item = ( it != itemCache.end() ) ? it->second : nullptr;
+
+    if( !item || item->Type() != PCB_GROUP_T )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Group not found" );
+        return tl::unexpected( e );
+    }
+
+    PCB_GROUP* group = static_cast<PCB_GROUP*>( item );
+
+    GetGroupMembersResponse response;
+
+    for( EDA_ITEM* member : group->GetItems() )
+    {
+        BOARD_ITEM* boardMember = static_cast<BOARD_ITEM*>( member );
+
+        // Serialize each item using the BOARD_ITEM::Serialize method
+        google::protobuf::Any itemAny;
+        boardMember->Serialize( itemAny );
+        response.add_items()->CopyFrom( itemAny );
+    }
+
+    return response;
 }

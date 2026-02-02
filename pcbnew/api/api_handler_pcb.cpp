@@ -136,6 +136,23 @@ API_HANDLER_PCB::API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame ) :
             &API_HANDLER_PCB::handleGetDRCViolations );
     registerHandler<ClearDRCMarkers, Empty>( &API_HANDLER_PCB::handleClearDRCMarkers );
 
+    // Design rules handlers
+    registerHandler<GetDesignRules, DesignRulesResponse>( &API_HANDLER_PCB::handleGetDesignRules );
+    registerHandler<SetDesignRules, DesignRulesResponse>( &API_HANDLER_PCB::handleSetDesignRules );
+
+    // DRC settings handlers
+    registerHandler<GetDRCSettings, DRCSettingsResponse>( &API_HANDLER_PCB::handleGetDRCSettings );
+    registerHandler<SetDRCSettings, Empty>( &API_HANDLER_PCB::handleSetDRCSettings );
+
+    // Grid settings handlers
+    registerHandler<GetPCBGridSettings, PCBGridSettingsResponse>(
+            &API_HANDLER_PCB::handleGetPCBGridSettings );
+    registerHandler<SetPCBGridSettings, Empty>( &API_HANDLER_PCB::handleSetPCBGridSettings );
+
+    // Graphics defaults setter
+    registerHandler<SetGraphicsDefaults, GraphicsDefaultsResponse>(
+            &API_HANDLER_PCB::handleSetGraphicsDefaults );
+
     // Document management handlers
     registerHandler<CreateDocument, CreateDocumentResponse>( &API_HANDLER_PCB::handleCreateDocument );
     registerHandler<OpenDocument, OpenDocumentResponse>( &API_HANDLER_PCB::handleOpenDocument );
@@ -1700,7 +1717,7 @@ HANDLER_RESULT<CreateItemsResponse> API_HANDLER_PCB::handleParseAndCreateItemsFr
     auto addItemToResponse = [&response]( BOARD_ITEM* item )
     {
         ItemCreationResult* itemResult = response.add_created_items();
-        itemResult->mutable_status()->set_status( ItemStatusCode::ISC_OK );
+        itemResult->mutable_status()->set_code( ItemStatusCode::ISC_OK );
         item->Serialize( *itemResult->mutable_item() );
     };
 
@@ -2203,6 +2220,395 @@ HANDLER_RESULT<Empty> API_HANDLER_PCB::handleClearDRCMarkers(
     frame()->GetCanvas()->Refresh();
 
     return Empty();
+}
+
+
+HANDLER_RESULT<DesignRulesResponse> API_HANDLER_PCB::handleGetDesignRules(
+        const HANDLER_CONTEXT<GetDesignRules>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+    const BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+
+    DesignRulesResponse response;
+    BoardDesignRules* rules = response.mutable_rules();
+
+    // Copper clearances
+    rules->set_min_clearance( bds.m_MinClearance );
+    rules->set_min_track_width( bds.m_TrackMinWidth );
+    rules->set_min_connection( bds.m_MinConn );
+
+    // Via constraints
+    rules->set_min_via_diameter( bds.m_ViasMinSize );
+    rules->set_min_via_drill( bds.m_MinThroughDrill );
+    rules->set_min_via_annular_width( bds.m_ViasMinAnnularWidth );
+
+    // Microvia constraints
+    rules->set_min_microvia_diameter( bds.m_MicroViasMinSize );
+    rules->set_min_microvia_drill( bds.m_MicroViasMinDrill );
+
+    // Hole constraints
+    rules->set_min_through_hole( bds.m_MinThroughDrill );
+    rules->set_min_hole_to_hole( bds.m_HoleToHoleMin );
+    rules->set_hole_to_copper_clearance( bds.m_HoleClearance );
+
+    // Silkscreen
+    rules->set_min_silk_clearance( bds.m_SilkClearance );
+    rules->set_min_silk_text_height( bds.m_MinSilkTextHeight );
+    rules->set_min_silk_text_thickness( bds.m_MinSilkTextThickness );
+
+    // Board edge
+    rules->set_copper_edge_clearance( bds.m_CopperEdgeClearance );
+
+    // Solder mask
+    rules->set_solder_mask_expansion( bds.m_SolderMaskExpansion );
+    rules->set_solder_mask_min_width( bds.m_SolderMaskMinWidth );
+    rules->set_solder_mask_to_copper_clearance( bds.m_SolderMaskToCopperClearance );
+
+    // Solder paste
+    rules->set_solder_paste_margin( bds.m_SolderPasteMargin );
+    rules->set_solder_paste_margin_ratio( bds.m_SolderPasteMarginRatio );
+
+    // Minimum resolved spokes
+    rules->set_min_resolved_spokes( bds.m_MinResolvedSpokes );
+
+    return response;
+}
+
+
+HANDLER_RESULT<DesignRulesResponse> API_HANDLER_PCB::handleSetDesignRules(
+        const HANDLER_CONTEXT<SetDesignRules>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+    const BoardDesignRules& rules = aCtx.Request.rules();
+
+    // Copper clearances
+    if( rules.min_clearance() > 0 )
+        bds.m_MinClearance = rules.min_clearance();
+    if( rules.min_track_width() > 0 )
+        bds.m_TrackMinWidth = rules.min_track_width();
+    if( rules.min_connection() > 0 )
+        bds.m_MinConn = rules.min_connection();
+
+    // Via constraints
+    if( rules.min_via_diameter() > 0 )
+        bds.m_ViasMinSize = rules.min_via_diameter();
+    if( rules.min_via_drill() > 0 )
+        bds.m_MinThroughDrill = rules.min_via_drill();
+    if( rules.min_via_annular_width() > 0 )
+        bds.m_ViasMinAnnularWidth = rules.min_via_annular_width();
+
+    // Microvia constraints
+    if( rules.min_microvia_diameter() > 0 )
+        bds.m_MicroViasMinSize = rules.min_microvia_diameter();
+    if( rules.min_microvia_drill() > 0 )
+        bds.m_MicroViasMinDrill = rules.min_microvia_drill();
+
+    // Hole constraints
+    if( rules.min_through_hole() > 0 )
+        bds.m_MinThroughDrill = rules.min_through_hole();
+    if( rules.min_hole_to_hole() > 0 )
+        bds.m_HoleToHoleMin = rules.min_hole_to_hole();
+    if( rules.hole_to_copper_clearance() > 0 )
+        bds.m_HoleClearance = rules.hole_to_copper_clearance();
+
+    // Silkscreen
+    if( rules.min_silk_clearance() >= 0 )
+        bds.m_SilkClearance = rules.min_silk_clearance();
+    if( rules.min_silk_text_height() > 0 )
+        bds.m_MinSilkTextHeight = rules.min_silk_text_height();
+    if( rules.min_silk_text_thickness() > 0 )
+        bds.m_MinSilkTextThickness = rules.min_silk_text_thickness();
+
+    // Board edge
+    if( rules.copper_edge_clearance() >= 0 )
+        bds.m_CopperEdgeClearance = rules.copper_edge_clearance();
+
+    // Solder mask
+    bds.m_SolderMaskExpansion = rules.solder_mask_expansion();
+    if( rules.solder_mask_min_width() >= 0 )
+        bds.m_SolderMaskMinWidth = rules.solder_mask_min_width();
+    if( rules.solder_mask_to_copper_clearance() >= 0 )
+        bds.m_SolderMaskToCopperClearance = rules.solder_mask_to_copper_clearance();
+
+    // Solder paste
+    bds.m_SolderPasteMargin = rules.solder_paste_margin();
+    bds.m_SolderPasteMarginRatio = rules.solder_paste_margin_ratio();
+
+    // Minimum resolved spokes
+    if( rules.min_resolved_spokes() > 0 )
+        bds.m_MinResolvedSpokes = rules.min_resolved_spokes();
+
+    board->SetModified();
+    frame()->OnModify();
+
+    // Return the updated rules (inline to avoid context type mismatch)
+    DesignRulesResponse response;
+    BoardDesignRules* updatedRules = response.mutable_rules();
+
+    updatedRules->set_min_clearance( bds.m_MinClearance );
+    updatedRules->set_min_track_width( bds.m_TrackMinWidth );
+    updatedRules->set_min_connection( bds.m_MinConn );
+    updatedRules->set_min_via_diameter( bds.m_ViasMinSize );
+    updatedRules->set_min_via_drill( bds.m_MinThroughDrill );
+    updatedRules->set_min_via_annular_width( bds.m_ViasMinAnnularWidth );
+    updatedRules->set_min_microvia_diameter( bds.m_MicroViasMinSize );
+    updatedRules->set_min_microvia_drill( bds.m_MicroViasMinDrill );
+    updatedRules->set_min_through_hole( bds.m_MinThroughDrill );
+    updatedRules->set_min_hole_to_hole( bds.m_HoleToHoleMin );
+    updatedRules->set_hole_to_copper_clearance( bds.m_HoleClearance );
+    updatedRules->set_min_silk_clearance( bds.m_SilkClearance );
+    updatedRules->set_min_silk_text_height( bds.m_MinSilkTextHeight );
+    updatedRules->set_min_silk_text_thickness( bds.m_MinSilkTextThickness );
+    updatedRules->set_copper_edge_clearance( bds.m_CopperEdgeClearance );
+    updatedRules->set_solder_mask_expansion( bds.m_SolderMaskExpansion );
+    updatedRules->set_solder_mask_min_width( bds.m_SolderMaskMinWidth );
+    updatedRules->set_solder_mask_to_copper_clearance( bds.m_SolderMaskToCopperClearance );
+    updatedRules->set_solder_paste_margin( bds.m_SolderPasteMargin );
+    updatedRules->set_solder_paste_margin_ratio( bds.m_SolderPasteMarginRatio );
+    updatedRules->set_min_resolved_spokes( bds.m_MinResolvedSpokes );
+
+    return response;
+}
+
+
+HANDLER_RESULT<DRCSettingsResponse> API_HANDLER_PCB::handleGetDRCSettings(
+        const HANDLER_CONTEXT<GetDRCSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+    const BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+
+    DRCSettingsResponse response;
+    DRCSettingsData* settings = response.mutable_settings();
+
+    // Export DRC severities
+    for( const auto& [errorCode, severity] : bds.m_DRCSeverities )
+    {
+        DRCCheckSeverity* checkSeverity = settings->add_check_severities();
+        checkSeverity->set_check_name( std::to_string( errorCode ) );
+        checkSeverity->set_severity( ToProtoEnum<SEVERITY, DrcSeverity>( severity ) );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_PCB::handleSetDRCSettings(
+        const HANDLER_CONTEXT<SetDRCSettings>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+
+    const DRCSettingsData& settings = aCtx.Request.settings();
+
+    // Apply DRC severity settings
+    for( const DRCCheckSeverity& checkSeverity : settings.check_severities() )
+    {
+        try
+        {
+            int errorCode = std::stoi( checkSeverity.check_name() );
+            SEVERITY severity = FromProtoEnum<SEVERITY>( checkSeverity.severity() );
+            bds.m_DRCSeverities[errorCode] = severity;
+        }
+        catch( ... )
+        {
+            // Skip invalid check names
+        }
+    }
+
+    board->SetModified();
+    frame()->OnModify();
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<PCBGridSettingsResponse> API_HANDLER_PCB::handleGetPCBGridSettings(
+        const HANDLER_CONTEXT<GetPCBGridSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    const GRID_SETTINGS& gridSettings = frame()->GetWindowSettings( frame()->config() )->grid;
+
+    PCBGridSettingsResponse response;
+    PCBGridSettings* settings = response.mutable_settings();
+
+    // Get current grid size
+    int currentIdx = gridSettings.last_size_idx;
+
+    if( currentIdx >= 0 && currentIdx < static_cast<int>( gridSettings.grids.size() ) )
+    {
+        const GRID& grid = gridSettings.grids[currentIdx];
+        VECTOR2D gridSize = grid.ToDouble( pcbIUScale );
+
+        settings->set_grid_size_x_nm( static_cast<int64_t>( gridSize.x ) );
+        settings->set_grid_size_y_nm( static_cast<int64_t>( gridSize.y ) );
+    }
+
+    settings->set_show_grid( gridSettings.show );
+
+    // Map grid style
+    switch( gridSettings.style )
+    {
+    case 0:  settings->set_style( GridStyle::GS_DOTS ); break;
+    case 1:  settings->set_style( GridStyle::GS_LINES ); break;
+    case 2:  settings->set_style( GridStyle::GS_SMALL_CROSS ); break;
+    default: settings->set_style( GridStyle::GS_UNKNOWN ); break;
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_PCB::handleSetPCBGridSettings(
+        const HANDLER_CONTEXT<SetPCBGridSettings>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    GRID_SETTINGS& gridSettings = frame()->GetWindowSettings( frame()->config() )->grid;
+
+    // Set grid visibility
+    if( aCtx.Request.has_show_grid() )
+        gridSettings.show = aCtx.Request.show_grid();
+
+    // Set grid style
+    if( aCtx.Request.has_style() )
+    {
+        switch( aCtx.Request.style() )
+        {
+        case GridStyle::GS_DOTS:        gridSettings.style = 0; break;
+        case GridStyle::GS_LINES:       gridSettings.style = 1; break;
+        case GridStyle::GS_SMALL_CROSS: gridSettings.style = 2; break;
+        default: break;
+        }
+    }
+
+    // Set custom grid size if specified
+    if( aCtx.Request.has_grid_size_x_nm() || aCtx.Request.has_grid_size_y_nm() )
+    {
+        // Convert nm to appropriate unit string for user grid
+        double gridX = aCtx.Request.has_grid_size_x_nm()
+                           ? aCtx.Request.grid_size_x_nm() / 1e6  // nm to mm
+                           : 1.0;
+        double gridY = aCtx.Request.has_grid_size_y_nm()
+                           ? aCtx.Request.grid_size_y_nm() / 1e6  // nm to mm
+                           : 1.0;
+
+        gridSettings.user_grid_x = wxString::Format( wxT( "%g mm" ), gridX );
+        gridSettings.user_grid_y = wxString::Format( wxT( "%g mm" ), gridY );
+    }
+
+    // Refresh the view
+    frame()->GetCanvas()->Refresh();
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<GraphicsDefaultsResponse> API_HANDLER_PCB::handleSetGraphicsDefaults(
+        const HANDLER_CONTEXT<SetGraphicsDefaults>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+
+    const kiapi::board::GraphicsDefaults& defaults = aCtx.Request.defaults();
+
+    // Helper to map BoardLayerClass to LAYER_CLASS index
+    auto mapLayerClass = []( kiapi::board::BoardLayerClass aClass ) -> int
+    {
+        switch( aClass )
+        {
+        case kiapi::board::BLC_SILKSCREEN:  return LAYER_CLASS_SILK;
+        case kiapi::board::BLC_COPPER:      return LAYER_CLASS_COPPER;
+        case kiapi::board::BLC_EDGES:       return LAYER_CLASS_EDGES;
+        case kiapi::board::BLC_COURTYARD:   return LAYER_CLASS_COURTYARD;
+        case kiapi::board::BLC_FABRICATION: return LAYER_CLASS_FAB;
+        case kiapi::board::BLC_OTHER:       return LAYER_CLASS_OTHERS;
+        default:                            return -1;
+        }
+    };
+
+    // Apply layer defaults from the request
+    for( const auto& layerDefaults : defaults.layers() )
+    {
+        int layerClassIdx = mapLayerClass( layerDefaults.layer() );
+
+        if( layerClassIdx < 0 || layerClassIdx >= LAYER_CLASS_COUNT )
+            continue;
+
+        // Apply line thickness
+        if( layerDefaults.has_line_thickness() )
+            bds.m_LineThickness[layerClassIdx] = layerDefaults.line_thickness().value_nm();
+
+        // Apply text attributes
+        if( layerDefaults.has_text() )
+        {
+            const auto& text = layerDefaults.text();
+
+            if( text.has_size() )
+            {
+                bds.m_TextSize[layerClassIdx].x = text.size().x_nm();
+                bds.m_TextSize[layerClassIdx].y = text.size().y_nm();
+            }
+
+            if( text.has_stroke_width() )
+                bds.m_TextThickness[layerClassIdx] = text.stroke_width().value_nm();
+
+            bds.m_TextItalic[layerClassIdx] = text.italic();
+            bds.m_TextUpright[layerClassIdx] = text.keep_upright();
+        }
+    }
+
+    board->SetModified();
+    frame()->OnModify();
+
+    // Return the updated graphics defaults
+    return handleGetGraphicsDefaults(
+            HANDLER_CONTEXT<GetGraphicsDefaults>{ aCtx.ClientName,
+                                                   GetGraphicsDefaults() } );
 }
 
 

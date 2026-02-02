@@ -168,6 +168,29 @@ private:
 
     HANDLER_RESULT<Empty> handleClearDRCMarkers( const HANDLER_CONTEXT<ClearDRCMarkers>& aCtx );
 
+    // Design rules handlers
+    HANDLER_RESULT<DesignRulesResponse> handleGetDesignRules(
+            const HANDLER_CONTEXT<GetDesignRules>& aCtx );
+
+    HANDLER_RESULT<DesignRulesResponse> handleSetDesignRules(
+            const HANDLER_CONTEXT<SetDesignRules>& aCtx );
+
+    // DRC settings handlers
+    HANDLER_RESULT<DRCSettingsResponse> handleGetDRCSettings(
+            const HANDLER_CONTEXT<GetDRCSettings>& aCtx );
+
+    HANDLER_RESULT<Empty> handleSetDRCSettings( const HANDLER_CONTEXT<SetDRCSettings>& aCtx );
+
+    // Grid settings handlers
+    HANDLER_RESULT<PCBGridSettingsResponse> handleGetPCBGridSettings(
+            const HANDLER_CONTEXT<GetPCBGridSettings>& aCtx );
+
+    HANDLER_RESULT<Empty> handleSetPCBGridSettings( const HANDLER_CONTEXT<SetPCBGridSettings>& aCtx );
+
+    // Graphics defaults setter
+    HANDLER_RESULT<GraphicsDefaultsResponse> handleSetGraphicsDefaults(
+            const HANDLER_CONTEXT<SetGraphicsDefaults>& aCtx );
+
     // Document management handlers
     HANDLER_RESULT<commands::CreateDocumentResponse>
     handleCreateDocument( const HANDLER_CONTEXT<commands::CreateDocument>& aCtx );

@@ -508,3 +508,165 @@ message ClearDRCMarkers
   // If true, clear exclusions (user-marked items to ignore)
   bool clear_exclusions = 3;
 }
+
+/*
+ * Design Rules
+ */
+
+// Board design rules/constraints
+message BoardDesignRules
+{
+  // Copper clearances (in nanometers)
+  int64 min_clearance = 1;
+  int64 min_track_width = 2;
+  int64 min_connection = 3;  // For zone connections
+
+  // Via constraints
+  int64 min_via_diameter = 4;
+  int64 min_via_drill = 5;
+  int64 min_via_annular_width = 6;
+
+  // Microvia constraints
+  int64 min_microvia_diameter = 7;
+  int64 min_microvia_drill = 8;
+
+  // Hole constraints
+  int64 min_through_hole = 9;
+  int64 min_hole_to_hole = 10;
+  int64 hole_to_copper_clearance = 11;
+
+  // Silkscreen
+  int64 min_silk_clearance = 12;
+  int64 min_silk_text_height = 13;
+  int64 min_silk_text_thickness = 14;
+
+  // Board edge
+  int64 copper_edge_clearance = 15;
+
+  // Solder mask
+  int64 solder_mask_expansion = 16;
+  int64 solder_mask_min_width = 17;
+  int64 solder_mask_to_copper_clearance = 18;
+
+  // Solder paste
+  int64 solder_paste_margin = 19;
+  double solder_paste_margin_ratio = 20;
+
+  // Minimum resolved spokes for thermals
+  int32 min_resolved_spokes = 21;
+}
+
+// Get design rules
+// Returns DesignRulesResponse
+message GetDesignRules
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message DesignRulesResponse
+{
+  BoardDesignRules rules = 1;
+}
+
+// Set design rules
+// Returns DesignRulesResponse with the updated rules
+message SetDesignRules
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  BoardDesignRules rules = 2;
+}
+
+/*
+ * DRC Settings
+ */
+
+// DRC check severity setting
+message DRCCheckSeverity
+{
+  string check_name = 1;      // DRC check name (e.g., "clearance", "track_width")
+  DrcSeverity severity = 2;   // Severity level
+}
+
+// DRC settings configuration
+message DRCSettingsData
+{
+  // Severity overrides for individual DRC checks
+  repeated DRCCheckSeverity check_severities = 1;
+}
+
+// Get DRC settings
+// Returns DRCSettingsResponse
+message GetDRCSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message DRCSettingsResponse
+{
+  DRCSettingsData settings = 1;
+}
+
+// Set DRC settings
+// Returns Empty
+message SetDRCSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  DRCSettingsData settings = 2;
+}
+
+/*
+ * Grid Settings
+ */
+
+// Grid style enum
+enum GridStyle
+{
+  GS_UNKNOWN = 0;
+  GS_DOTS = 1;
+  GS_LINES = 2;
+  GS_SMALL_CROSS = 3;
+}
+
+// PCB grid settings
+message PCBGridSettings
+{
+  int64 grid_size_x_nm = 1;   // Grid X spacing in nanometers
+  int64 grid_size_y_nm = 2;   // Grid Y spacing in nanometers
+  bool show_grid = 3;
+  GridStyle style = 4;
+}
+
+// Get PCB grid settings
+// Returns PCBGridSettingsResponse
+message GetPCBGridSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message PCBGridSettingsResponse
+{
+  PCBGridSettings settings = 1;
+}
+
+// Set PCB grid settings
+// Returns Empty
+message SetPCBGridSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  optional int64 grid_size_x_nm = 2;   // Grid X spacing in nanometers
+  optional int64 grid_size_y_nm = 3;   // Grid Y spacing in nanometers
+  optional bool show_grid = 4;
+  optional GridStyle style = 5;
+}
+
+/*
+ * Graphics Defaults (Set)
+ */
+
+// Set default graphics settings per layer class
+// Returns GraphicsDefaultsResponse with the updated defaults
+message SetGraphicsDefaults
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  kiapi.board.GraphicsDefaults defaults = 2;
+}

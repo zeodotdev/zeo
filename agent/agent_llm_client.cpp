@@ -126,7 +126,7 @@ void* LLM_REQUEST_THREAD::Entry()
     json requestBody;
     requestBody["model"] = apiModel;
     requestBody["messages"] = m_messages;
-    requestBody["max_tokens"] = 4096;
+    requestBody["max_tokens"] = 8192;
     requestBody["stream"] = true;
 
     // Request server-side context injection (reduces bandwidth, enables caching)

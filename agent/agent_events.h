@@ -102,7 +102,10 @@ enum class LLMChunkType
     THINKING_DONE,     // Thinking block complete
     TOOL_USE,          // Tool call with id, name, input
     TOOL_USE_DONE,     // All tool calls parsed, ready to execute
-    END_TURN,          // Model finished (no more tool calls)
+    END_TURN,          // Model finished (stop_reason: end_turn)
+    MAX_TOKENS,        // Response truncated (stop_reason: max_tokens) - needs continuation
+    PAUSE_TURN,        // Server tool paused (stop_reason: pause_turn) - needs retry
+    REFUSAL,           // Model refused request (stop_reason: refusal)
     ERROR,             // Error occurred
     CONTEXT_STATUS,    // Context usage status from server
     CONTEXT_COMPACTING,// Server is compacting context (show "Compacting...")

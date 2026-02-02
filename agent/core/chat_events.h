@@ -147,9 +147,11 @@ struct ChatToolCompleteData
 struct ChatTurnCompleteData
 {
     bool hasToolCalls;            ///< Whether this turn included tool calls
+    bool continuing;              ///< Whether continuation is coming (max_tokens hit)
 
-    ChatTurnCompleteData() : hasToolCalls( false ) {}
-    explicit ChatTurnCompleteData( bool aHasToolCalls ) : hasToolCalls( aHasToolCalls ) {}
+    ChatTurnCompleteData() : hasToolCalls( false ), continuing( false ) {}
+    explicit ChatTurnCompleteData( bool aHasToolCalls, bool aContinuing = false )
+        : hasToolCalls( aHasToolCalls ), continuing( aContinuing ) {}
 };
 
 /**

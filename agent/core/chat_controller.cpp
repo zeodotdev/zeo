@@ -62,7 +62,8 @@ CHAT_CONTROLLER::CHAT_CONTROLLER( wxEvtHandler* aEventSink )
       m_llmClient( nullptr ),
       m_chatHistoryDb( nullptr ),
       m_auth( nullptr ),
-      m_stopRequested( false )
+      m_stopRequested( false ),
+      m_continueAfterComplete( false )
 {
     // Initialize tool definitions
     m_tools = AgentTools::GetToolDefinitions();
@@ -341,6 +342,15 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
     case LLMChunkType::END_TURN:
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - END_TURN, response: %s", m_currentResponse.c_str() );
         break;
+    case LLMChunkType::MAX_TOKENS:
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - MAX_TOKENS (will continue)" );
+        break;
+    case LLMChunkType::PAUSE_TURN:
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - PAUSE_TURN (will retry)" );
+        break;
+    case LLMChunkType::REFUSAL:
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - REFUSAL" );
+        break;
     case LLMChunkType::ERROR:
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - ERROR: %s", aChunk.error_message.c_str() );
         break;
@@ -465,6 +475,101 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         HandleLLMError( aChunk.error_message );
         break;
 
+    case LLMChunkType::MAX_TOKENS:
+    {
+        // Response truncated due to max_tokens limit
+        // Save the partial response and continue generation automatically
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - MAX_TOKENS, continuing generation" );
+
+        // Add partial assistant message to context (with thinking if present)
+        if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
+        {
+            nlohmann::json content = nlohmann::json::array();
+
+            if( !m_thinkingContent.IsEmpty() && !m_thinkingSignature.empty() )
+            {
+                content.push_back( {
+                    { "type", "thinking" },
+                    { "thinking", m_thinkingContent.ToStdString() },
+                    { "signature", m_thinkingSignature }
+                } );
+            }
+
+            if( !m_currentResponse.empty() )
+            {
+                content.push_back( {
+                    { "type", "text" },
+                    { "text", m_currentResponse }
+                } );
+            }
+
+            nlohmann::json assistantMsg = {
+                { "role", "assistant" },
+                { "content", content }
+            };
+            AddToHistory( assistantMsg );
+        }
+
+        // Add "Please continue" user message to API context only (not display history)
+        nlohmann::json continueMsg = {
+            { "role", "user" },
+            { "content", "Please continue." }
+        };
+        m_apiContext.push_back( continueMsg );  // API only, not m_chatHistory
+
+        // Emit turn complete with continuing=true so UI finalizes current content
+        EmitEvent( EVT_CHAT_TURN_COMPLETE, ChatTurnCompleteData( false, true ) );
+
+        // Set flag to continue after stream completes (can't start new request while current is active)
+        m_continueAfterComplete = true;
+        break;
+    }
+
+    case LLMChunkType::PAUSE_TURN:
+    {
+        // Server tool paused (e.g., web_search, code_execution)
+        // We don't currently use server-side tools, so just treat as unexpected END_TURN
+        // TODO: Implement retry logic if server-side tools are added in the future
+        wxLogWarning( "CHAT_CONTROLLER::HandleLLMChunk - PAUSE_TURN received but no server tools configured" );
+
+        AgentConversationState oldState = m_ctx.GetState();
+        m_ctx.TransitionTo( AgentConversationState::IDLE );
+        EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
+                                                                  static_cast<int>( m_ctx.GetState() ) ) );
+        EmitEvent( EVT_CHAT_TURN_COMPLETE, ChatTurnCompleteData( false ) );
+        break;
+    }
+
+    case LLMChunkType::REFUSAL:
+    {
+        // Model refused the request - treat as end of turn with the refusal message
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - REFUSAL" );
+
+        // Add assistant message with refusal content
+        if( !m_currentResponse.empty() )
+        {
+            nlohmann::json content = nlohmann::json::array();
+            content.push_back( {
+                { "type", "text" },
+                { "text", m_currentResponse }
+            } );
+
+            nlohmann::json assistantMsg = {
+                { "role", "assistant" },
+                { "content", content }
+            };
+            AddToHistory( assistantMsg );
+        }
+
+        // Transition to IDLE (same as END_TURN)
+        AgentConversationState oldState = m_ctx.GetState();
+        m_ctx.TransitionTo( AgentConversationState::IDLE );
+        EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
+                                                                  static_cast<int>( m_ctx.GetState() ) ) );
+        EmitEvent( EVT_CHAT_TURN_COMPLETE, ChatTurnCompleteData( false ) );
+        break;
+    }
+
     case LLMChunkType::CONTEXT_STATUS:
         if( aChunk.context_compacted )
         {
@@ -514,6 +619,15 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
 
 void CHAT_CONTROLLER::HandleLLMComplete()
 {
+    // Check if we need to continue generation (from max_tokens)
+    if( m_continueAfterComplete )
+    {
+        m_continueAfterComplete = false;
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMComplete - continuing generation after max_tokens" );
+        ContinueChat();
+        return;
+    }
+
     // Streaming completed successfully
     // Most handling is done in HandleLLMChunk for END_TURN
 }

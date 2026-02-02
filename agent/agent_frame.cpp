@@ -2541,24 +2541,32 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
 void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
 {
-    wxLogInfo( "AGENT_FRAME::OnChatTurnComplete - turn completed" );
     ChatTurnCompleteData* data = aEvent.GetPayload<ChatTurnCompleteData*>();
     if( !data )
         return;
 
-    // Stop animation and update button
-    StopGeneratingAnimation();
-    m_actionButton->SetLabel( "Send" );
+    bool continuing = data->continuing;
+    wxLogInfo( "AGENT_FRAME::OnChatTurnComplete - turn completed (continuing=%d)", continuing );
+
+    // If not continuing, stop animation and update button
+    if( !continuing )
+    {
+        StopGeneratingAnimation();
+        m_actionButton->SetLabel( "Send" );
+    }
 
     // Finalize thinking state
     m_isThinking = false;
 
-    // Sync history from controller (controller added the assistant message in END_TURN)
+    // Sync history from controller (controller added the assistant message)
     if( m_chatController )
     {
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
-        m_chatHistoryDb.Save( m_chatHistory );
+        if( !continuing )
+        {
+            m_chatHistoryDb.Save( m_chatHistory );
+        }
     }
 
     // Preserve thinking content for index tracking (so next message gets index+1)
@@ -2579,6 +2587,13 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
 
     // Update m_fullHtmlContent to match DOM state (remove the id from streaming div)
     m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
+
+    // If continuing, add a new streaming div for the next response
+    if( continuing )
+    {
+        wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
+        AppendHtml( streamingDiv );
+    }
 
     // Clear streaming UI state (content is already in DOM via streaming updates)
     m_currentResponse.clear();

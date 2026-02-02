@@ -422,3 +422,89 @@ message ShowDiffOverlay
   // the board's bounding box will be used.
   kiapi.common.types.Box2 bounding_box = 2;
 }
+
+/*
+ * DRC (Design Rule Check) Operations
+ */
+
+// Run design rule checks on the board.
+// This is a blocking operation; returns when DRC is complete.
+// Returns RunDRCResponse with summary of violations found.
+message RunDRC
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // If true, refill all zones before running DRC
+  bool refill_zones = 2;
+
+  // If true, report all track errors (not just the first per track)
+  bool report_all_track_errors = 3;
+
+  // If true, test footprints against library footprints
+  bool test_footprints = 4;
+}
+
+message RunDRCResponse
+{
+  // Number of errors found
+  int32 error_count = 1;
+
+  // Number of warnings found
+  int32 warning_count = 2;
+
+  // Number of exclusions (user-marked items to ignore)
+  int32 exclusion_count = 3;
+}
+
+// Get all current DRC violations/markers from the board
+// Returns DRCViolationsResponse
+message GetDRCViolations
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // Optional: filter by severity (if empty, returns all)
+  repeated DrcSeverity severities = 2;
+}
+
+// Represents a single DRC violation
+message DRCViolation
+{
+  // The marker ID
+  kiapi.common.types.KIID id = 1;
+
+  // Severity of the violation
+  DrcSeverity severity = 2;
+
+  // Error type/code
+  int32 error_code = 3;
+
+  // Human-readable error type name
+  string error_type = 4;
+
+  // Detailed error message
+  string message = 5;
+
+  // Position of the violation marker
+  kiapi.common.types.Vector2 position = 6;
+
+  // IDs of items involved in the violation
+  repeated kiapi.common.types.KIID items = 7;
+}
+
+message DRCViolationsResponse
+{
+  repeated DRCViolation violations = 1;
+}
+
+// Clear DRC markers from the board
+// Returns Empty
+message ClearDRCMarkers
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // If true, clear errors and warnings
+  bool clear_violations = 2;
+
+  // If true, clear exclusions (user-marked items to ignore)
+  bool clear_exclusions = 3;
+}

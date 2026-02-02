@@ -48,6 +48,8 @@
 #include <tool/tool_manager.h>
 #include <tools/pcb_actions.h>
 #include <tools/pcb_selection_tool.h>
+#include <tools/drc_tool.h>
+#include <drc/drc_engine.h>
 #include <zone.h>
 
 #include <api/common/types/base_types.pb.h>
@@ -123,6 +125,16 @@ API_HANDLER_PCB::API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame ) :
             &API_HANDLER_PCB::handleSetBoardEditorAppearanceSettings );
     registerHandler<InjectDrcError, InjectDrcErrorResponse>(
             &API_HANDLER_PCB::handleInjectDrcError );
+
+    // Board stackup update
+    registerHandler<UpdateBoardStackup, BoardStackupResponse>(
+            &API_HANDLER_PCB::handleUpdateBoardStackup );
+
+    // DRC handlers
+    registerHandler<RunDRC, RunDRCResponse>( &API_HANDLER_PCB::handleRunDRC );
+    registerHandler<GetDRCViolations, DRCViolationsResponse>(
+            &API_HANDLER_PCB::handleGetDRCViolations );
+    registerHandler<ClearDRCMarkers, Empty>( &API_HANDLER_PCB::handleClearDRCMarkers );
 
     // Document management handlers
     registerHandler<CreateDocument, CreateDocumentResponse>( &API_HANDLER_PCB::handleCreateDocument );
@@ -1641,7 +1653,148 @@ HANDLER_RESULT<CreateItemsResponse> API_HANDLER_PCB::handleParseAndCreateItemsFr
     if( !documentValidation )
         return tl::unexpected( documentValidation.error() );
 
+    wxString contents = wxString::FromUTF8( aCtx.Request.contents() );
+
+    if( contents.IsEmpty() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Empty contents string provided" );
+        return tl::unexpected( e );
+    }
+
+    // Set up clipboard IO with custom reader
+    CLIPBOARD_IO clipboardIO;
+    clipboardIO.SetReader( [&contents]() { return contents; } );
+    clipboardIO.SetBoard( frame()->GetBoard() );
+
+    BOARD_ITEM* clipItem = nullptr;
+
+    try
+    {
+        clipItem = clipboardIO.Parse();
+    }
+    catch( const IO_ERROR& e )
+    {
+        ApiResponseStatus err;
+        err.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        err.set_error_message( wxString::Format( "Failed to parse contents: %s",
+                                                  e.What() ).ToStdString() );
+        return tl::unexpected( err );
+    }
+
+    if( !clipItem )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Failed to parse contents - invalid format" );
+        return tl::unexpected( e );
+    }
+
+    BOARD* board = frame()->GetBoard();
     CreateItemsResponse response;
+    COMMIT* commit = getCurrentCommit( aCtx.ClientName );
+
+    std::vector<BOARD_ITEM*> addedItems;
+
+    auto addItemToResponse = [&response]( BOARD_ITEM* item )
+    {
+        ItemCreationResult* itemResult = response.add_created_items();
+        itemResult->mutable_status()->set_status( ItemStatusCode::ISC_OK );
+        item->Serialize( *itemResult->mutable_item() );
+    };
+
+    if( clipItem->Type() == PCB_T )
+    {
+        // Parsed a full board - extract its contents
+        BOARD* clipBoard = static_cast<BOARD*>( clipItem );
+
+        // Map nets from clipboard board to current board
+        clipBoard->MapNets( board );
+
+        // Add footprints
+        for( FOOTPRINT* fp : clipBoard->Footprints() )
+        {
+            fp->SetParent( board );
+            commit->Add( fp );
+            addedItems.push_back( fp );
+            addItemToResponse( fp );
+        }
+        clipBoard->RemoveAll( { PCB_FOOTPRINT_T } );
+
+        // Add tracks
+        for( PCB_TRACK* track : clipBoard->Tracks() )
+        {
+            track->SetParent( board );
+            commit->Add( track );
+            addedItems.push_back( track );
+            addItemToResponse( track );
+        }
+        clipBoard->RemoveAll( { PCB_TRACE_T, PCB_ARC_T, PCB_VIA_T } );
+
+        // Add zones
+        for( ZONE* zone : clipBoard->Zones() )
+        {
+            zone->SetParent( board );
+            commit->Add( zone );
+            addedItems.push_back( zone );
+            addItemToResponse( zone );
+        }
+        clipBoard->RemoveAll( { PCB_ZONE_T } );
+
+        // Add drawings
+        for( BOARD_ITEM* drawing : clipBoard->Drawings() )
+        {
+            drawing->SetParent( board );
+            commit->Add( drawing );
+            addedItems.push_back( drawing );
+            addItemToResponse( drawing );
+        }
+        clipBoard->RemoveAll( { PCB_SHAPE_T, PCB_TEXT_T, PCB_TEXTBOX_T, PCB_TABLE_T,
+                                PCB_DIMENSION_T, PCB_DIM_ALIGNED_T, PCB_DIM_LEADER_T,
+                                PCB_DIM_CENTER_T, PCB_DIM_RADIAL_T, PCB_DIM_ORTHOGONAL_T,
+                                PCB_TARGET_T, PCB_REFERENCE_IMAGE_T } );
+
+        // Add groups
+        for( PCB_GROUP* group : clipBoard->Groups() )
+        {
+            group->SetParent( board );
+            commit->Add( group );
+            addedItems.push_back( group );
+            addItemToResponse( group );
+        }
+        clipBoard->RemoveAll( { PCB_GROUP_T } );
+
+        delete clipBoard;
+    }
+    else if( clipItem->Type() == PCB_FOOTPRINT_T )
+    {
+        // Parsed a single footprint
+        FOOTPRINT* fp = static_cast<FOOTPRINT*>( clipItem );
+        fp->SetParent( board );
+        commit->Add( fp );
+        addedItems.push_back( fp );
+        addItemToResponse( fp );
+    }
+    else
+    {
+        // Other single item types
+        clipItem->SetParent( board );
+        commit->Add( clipItem );
+        addedItems.push_back( clipItem );
+        addItemToResponse( clipItem );
+    }
+
+    // Rebuild connectivity for the new items
+    if( !addedItems.empty() )
+    {
+        board->BuildListOfNets();
+        board->BuildConnectivity();
+    }
+
+    pushCurrentCommit( aCtx.ClientName, _( "API: Parse and create items from string" ) );
+
+    response.set_status( ItemRequestStatus::IRS_OK );
     return response;
 }
 
@@ -1844,6 +1997,212 @@ HANDLER_RESULT<InjectDrcErrorResponse> API_HANDLER_PCB::handleInjectDrcError(
     response.mutable_marker()->set_value( marker->GetUUID().AsStdString() );
 
     return response;
+}
+
+
+HANDLER_RESULT<BoardStackupResponse> API_HANDLER_PCB::handleUpdateBoardStackup(
+        const HANDLER_CONTEXT<UpdateBoardStackup>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    // Pack the incoming stackup into an Any for deserialization
+    google::protobuf::Any stackupAny;
+    stackupAny.PackFrom( aCtx.Request.stackup() );
+
+    // Deserialize into the board's stackup
+    BOARD_STACKUP& stackup = board->GetDesignSettings().GetStackupDescriptor();
+
+    if( !stackup.Deserialize( stackupAny ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Failed to deserialize board stackup" );
+        return tl::unexpected( e );
+    }
+
+    // Synchronize with board settings
+    board->GetDesignSettings().m_HasStackup = true;
+
+    // Mark board as modified
+    board->SetModified();
+    frame()->OnModify();
+
+    // Return the updated stackup (re-serialized for normalization)
+    BoardStackupResponse response;
+    google::protobuf::Any any;
+    stackup.Serialize( any );
+    any.UnpackTo( response.mutable_stackup() );
+
+    // Add user-settable layer names
+    for( board::BoardStackupLayer& layer : *response.mutable_stackup()->mutable_layers() )
+    {
+        if( layer.type() == board::BoardStackupLayerType::BSLT_DIELECTRIC )
+            continue;
+
+        PCB_LAYER_ID id = FromProtoEnum<PCB_LAYER_ID>( layer.layer() );
+        wxCHECK2( id != UNDEFINED_LAYER, continue );
+
+        layer.set_user_name( board->GetLayerName( id ) );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<RunDRCResponse> API_HANDLER_PCB::handleRunDRC(
+        const HANDLER_CONTEXT<RunDRC>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    DRC_TOOL* drcTool = frame()->GetToolManager()->GetTool<DRC_TOOL>();
+
+    if( !drcTool )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "DRC tool not available" );
+        return tl::unexpected( e );
+    }
+
+    // Check if DRC is already running
+    if( drcTool->IsDRCRunning() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BUSY );
+        e.set_error_message( "DRC is already running" );
+        return tl::unexpected( e );
+    }
+
+    BOARD* board = frame()->GetBoard();
+
+    // Clear existing markers before running DRC
+    board->DeleteMARKERs( true, false );
+
+    // Run DRC (blocking)
+    drcTool->RunTests( nullptr,  // No progress reporter for API
+                       aCtx.Request.refill_zones(),
+                       aCtx.Request.report_all_track_errors(),
+                       aCtx.Request.test_footprints() );
+
+    // Count results
+    RunDRCResponse response;
+    int errorCount = 0;
+    int warningCount = 0;
+    int exclusionCount = 0;
+
+    for( PCB_MARKER* marker : board->Markers() )
+    {
+        switch( marker->GetSeverity() )
+        {
+        case RPT_SEVERITY_ERROR:     errorCount++;     break;
+        case RPT_SEVERITY_WARNING:   warningCount++;   break;
+        case RPT_SEVERITY_EXCLUSION: exclusionCount++; break;
+        default:                                       break;
+        }
+    }
+
+    response.set_error_count( errorCount );
+    response.set_warning_count( warningCount );
+    response.set_exclusion_count( exclusionCount );
+
+    return response;
+}
+
+
+HANDLER_RESULT<DRCViolationsResponse> API_HANDLER_PCB::handleGetDRCViolations(
+        const HANDLER_CONTEXT<GetDRCViolations>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+    DRCViolationsResponse response;
+
+    // Build set of severity filters (if any specified)
+    std::set<SEVERITY> severityFilter;
+
+    for( int i = 0; i < aCtx.Request.severities_size(); i++ )
+    {
+        severityFilter.insert( FromProtoEnum<SEVERITY>( aCtx.Request.severities( i ) ) );
+    }
+
+    bool filterBySeverity = !severityFilter.empty();
+
+    for( PCB_MARKER* marker : board->Markers() )
+    {
+        SEVERITY severity = marker->GetSeverity();
+
+        // Apply severity filter if specified
+        if( filterBySeverity && severityFilter.find( severity ) == severityFilter.end() )
+            continue;
+
+        DRCViolation* violation = response.add_violations();
+
+        violation->mutable_id()->set_value( marker->GetUUID().AsStdString() );
+        violation->set_severity( ToProtoEnum<SEVERITY, DrcSeverity>( severity ) );
+
+        std::shared_ptr<RC_ITEM> rcItem = marker->GetRCItem();
+
+        if( rcItem )
+        {
+            violation->set_error_code( rcItem->GetErrorCode() );
+            violation->set_error_type( rcItem->GetErrorText( false ).ToStdString() );
+            violation->set_message( rcItem->GetErrorMessage( false ).ToStdString() );
+
+            // Add involved items
+            for( const KIID& id : rcItem->GetIDs() )
+            {
+                if( id != niluuid )
+                    violation->add_items()->set_value( id.AsStdString() );
+            }
+        }
+
+        // Set position
+        VECTOR2I pos = marker->GetPosition();
+        violation->mutable_position()->set_x_nm( pos.x );
+        violation->mutable_position()->set_y_nm( pos.y );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_PCB::handleClearDRCMarkers(
+        const HANDLER_CONTEXT<ClearDRCMarkers>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    // DeleteMARKERs( warnings_and_errors, exclusions )
+    board->DeleteMARKERs( aCtx.Request.clear_violations(), aCtx.Request.clear_exclusions() );
+
+    // Refresh the view
+    frame()->GetCanvas()->Refresh();
+
+    return Empty();
 }
 
 

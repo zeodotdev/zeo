@@ -156,6 +156,18 @@ private:
     HANDLER_RESULT<InjectDrcErrorResponse> handleInjectDrcError(
             const HANDLER_CONTEXT<InjectDrcError>& aCtx );
 
+    // Board stackup update
+    HANDLER_RESULT<BoardStackupResponse> handleUpdateBoardStackup(
+            const HANDLER_CONTEXT<UpdateBoardStackup>& aCtx );
+
+    // DRC handlers
+    HANDLER_RESULT<RunDRCResponse> handleRunDRC( const HANDLER_CONTEXT<RunDRC>& aCtx );
+
+    HANDLER_RESULT<DRCViolationsResponse> handleGetDRCViolations(
+            const HANDLER_CONTEXT<GetDRCViolations>& aCtx );
+
+    HANDLER_RESULT<Empty> handleClearDRCMarkers( const HANDLER_CONTEXT<ClearDRCMarkers>& aCtx );
+
     // Document management handlers
     HANDLER_RESULT<commands::CreateDocumentResponse>
     handleCreateDocument( const HANDLER_CONTEXT<commands::CreateDocument>& aCtx );

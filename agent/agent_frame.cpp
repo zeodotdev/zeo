@@ -1150,6 +1150,7 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     {
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
+        m_chatHistoryDb.Save( m_chatHistory );
     }
 
     // Clear uncommitted tool calls (haven't been added to history yet)

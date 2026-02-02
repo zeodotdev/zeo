@@ -478,13 +478,36 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
 
     case LLMChunkType::CONTEXT_EXHAUSTED:
     case LLMChunkType::CONTEXT_TRUNCATED:
-        // Context recovery - replace API context with compacted messages
-        if( !aChunk.summarized_messages.empty() && aChunk.summarized_messages.is_array() )
+    {
+        // Context exhausted - call summarize endpoint to get compacted messages
+        // Show "compacting" feedback to user
+        EmitEvent( EVT_CHAT_CONTEXT_COMPACTING, ChatContextCompactingData() );
+
+        // Call the summarize endpoint
+        if( m_llmClient )
         {
-            m_apiContext = aChunk.summarized_messages;
-            EmitEvent( EVT_CHAT_CONTEXT_RECOVERED, ChatContextRecoveredData( aChunk.summarized_messages ) );
+            SummarizeResult result = m_llmClient->CallSummarizeEndpoint( m_apiContext );
+
+            if( result.success )
+            {
+                // Update API context with compacted messages
+                m_apiContext = result.messages;
+
+                // Emit recovery event - AGENT_FRAME::OnChatContextRecovered() will handle retry
+                EmitEvent( EVT_CHAT_CONTEXT_RECOVERED, ChatContextRecoveredData( result.messages ) );
+            }
+            else
+            {
+                // Summarization failed - report error
+                HandleLLMError( "Context recovery failed: " + result.error_message );
+            }
+        }
+        else
+        {
+            HandleLLMError( "Context recovery failed: No LLM client configured" );
         }
         break;
+    }
     }
 }
 
@@ -1059,6 +1082,8 @@ void CHAT_CONTROLLER::EmitEvent( wxEventType aType )
 // Explicit template instantiations
 template void CHAT_CONTROLLER::EmitEvent<ChatTextDeltaData>( wxEventType, const ChatTextDeltaData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatThinkingDeltaData>( wxEventType, const ChatThinkingDeltaData& );
+template void CHAT_CONTROLLER::EmitEvent<ChatThinkingStartData>( wxEventType, const ChatThinkingStartData& );
+template void CHAT_CONTROLLER::EmitEvent<ChatThinkingDoneData>( wxEventType, const ChatThinkingDoneData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatToolStartData>( wxEventType, const ChatToolStartData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatToolCompleteData>( wxEventType, const ChatToolCompleteData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatTurnCompleteData>( wxEventType, const ChatTurnCompleteData& );
@@ -1067,3 +1092,6 @@ template void CHAT_CONTROLLER::EmitEvent<ChatStateChangedData>( wxEventType, con
 template void CHAT_CONTROLLER::EmitEvent<ChatTitleDeltaData>( wxEventType, const ChatTitleDeltaData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatTitleGeneratedData>( wxEventType, const ChatTitleGeneratedData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatHistoryLoadedData>( wxEventType, const ChatHistoryLoadedData& );
+template void CHAT_CONTROLLER::EmitEvent<ChatContextStatusData>( wxEventType, const ChatContextStatusData& );
+template void CHAT_CONTROLLER::EmitEvent<ChatContextCompactingData>( wxEventType, const ChatContextCompactingData& );
+template void CHAT_CONTROLLER::EmitEvent<ChatContextRecoveredData>( wxEventType, const ChatContextRecoveredData& );

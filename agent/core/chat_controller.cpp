@@ -774,9 +774,23 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
     wxLogInfo( "CHAT_CONTROLLER::ProcessToolResult - toolId=%s, success=%s, result_len=%zu",
                aToolId.c_str(), aSuccess ? "true" : "false", aResult.length() );
 
-    // Find the tool
+    // Validate toolId is not empty
+    if( aToolId.empty() )
+    {
+        wxLogWarning( "ProcessToolResult: empty toolId - ignoring" );
+        return;
+    }
+
+    // Find the tool - if not found, this is a stale request after cancellation
     PendingToolCall* tool = m_ctx.FindPendingToolCall( aToolId );
-    std::string toolName = tool ? tool->tool_name : "unknown";
+    if( !tool )
+    {
+        wxLogWarning( "ProcessToolResult: tool %s not found - ignoring stale request",
+                      aToolId.c_str() );
+        return;
+    }
+
+    std::string toolName = tool->tool_name;
 
     // Check if result contains Python traceback
     bool isPythonError = aResult.find( "Traceback" ) != std::string::npos;

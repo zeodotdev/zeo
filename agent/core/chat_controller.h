@@ -117,6 +117,14 @@ public:
     bool CanAcceptInput() const;
     bool IsBusy() const;
 
+    /**
+     * Check if a specific tool is still pending.
+     */
+    bool HasPendingTool( const std::string& aToolId ) const
+    {
+        return m_ctx.HasPendingToolCall( aToolId );
+    }
+
     const std::string& GetCurrentResponse() const { return m_currentResponse; }
     const wxString& GetThinkingContent() const { return m_thinkingContent; }
     const nlohmann::json& GetChatHistory() const { return m_chatHistory; }

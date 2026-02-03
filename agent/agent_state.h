@@ -173,6 +173,19 @@ public:
      */
     bool HasPendingToolCalls() const { return !m_pendingTools.empty(); }
 
+    /**
+     * Check if a specific tool call is pending by its ID.
+     */
+    bool HasPendingToolCall( const std::string& aToolUseId ) const
+    {
+        for( const auto& tool : m_pendingTools )
+        {
+            if( tool.tool_use_id == aToolUseId )
+                return true;
+        }
+        return false;
+    }
+
     // Accumulated response from the LLM (for streaming)
     std::string accumulated_response;
 

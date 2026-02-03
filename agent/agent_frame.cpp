@@ -1200,6 +1200,12 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
         m_pendingToolCalls = json::array();
     }
 
+    // Clear pending editor open request state (prevents stale approval button clicks)
+    m_pendingOpenSch = false;
+    m_pendingOpenPcb = false;
+    m_pendingOpenToolId.clear();
+    m_pendingOpenFilePath.Clear();
+
     // Transition state machine to IDLE
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
 
@@ -2260,6 +2266,40 @@ void AGENT_FRAME::ShowOpenEditorApproval( const wxString& aEditorType )
 void AGENT_FRAME::OnApproveOpenEditor()
 {
     wxLogInfo( "AGENT_FRAME::OnApproveOpenEditor called" );
+
+    // Validate that we still have a pending request with a valid tool ID
+    if( m_pendingOpenToolId.empty() )
+    {
+        wxLogWarning( "OnApproveOpenEditor: empty tool ID - ignoring stale click" );
+        m_toolCallHtml.Clear();
+        UpdateAgentResponse();
+        return;
+    }
+
+    if( !m_pendingOpenSch && !m_pendingOpenPcb )
+    {
+        wxLogWarning( "OnApproveOpenEditor: no pending editor type - ignoring stale click" );
+        m_pendingOpenToolId.clear();
+        m_toolCallHtml.Clear();
+        UpdateAgentResponse();
+        return;
+    }
+
+    // Validate that the controller still has this tool pending
+    if( m_chatController && !m_chatController->HasPendingTool( m_pendingOpenToolId ) )
+    {
+        wxLogWarning( "OnApproveOpenEditor: tool %s no longer pending - ignoring stale click",
+                      m_pendingOpenToolId.c_str() );
+        m_pendingOpenSch = false;
+        m_pendingOpenPcb = false;
+        m_pendingOpenToolId.clear();
+        m_pendingOpenFilePath.Clear();
+        m_toolCallHtml.Clear();
+        UpdateAgentResponse();
+        return;
+    }
+
+    // --- Original logic ---
     bool success = false;
     wxString editorName;
 
@@ -2274,18 +2314,15 @@ void AGENT_FRAME::OnApproveOpenEditor()
         success = DoOpenEditor( FRAME_PCB_EDITOR );
     }
 
-    // Build tool result message
     std::string result = success
         ? editorName.ToStdString() + " editor opened successfully"
         : "Failed to open " + editorName.ToStdString() + " editor";
 
-    // Clear pending state before processing result (in case of re-entrancy)
     std::string toolId = m_pendingOpenToolId;
     m_pendingOpenSch = false;
     m_pendingOpenPcb = false;
     m_pendingOpenToolId.clear();
 
-    // Send tool result to controller - it will continue the conversation
     if( m_chatController )
         m_chatController->HandleToolResult( toolId, result, success );
 }
@@ -2294,15 +2331,33 @@ void AGENT_FRAME::OnApproveOpenEditor()
 void AGENT_FRAME::OnRejectOpenEditor()
 {
     wxLogInfo( "AGENT_FRAME::OnRejectOpenEditor called" );
-    wxString editorName = m_pendingOpenSch ? "Schematic" : "PCB";
 
-    // Clear pending state before processing result (in case of re-entrancy)
+    // Validate that we still have a pending request
+    if( m_pendingOpenToolId.empty() )
+    {
+        wxLogWarning( "OnRejectOpenEditor: empty tool ID - ignoring stale click" );
+        m_toolCallHtml.Clear();
+        UpdateAgentResponse();
+        return;
+    }
+
+    wxString editorName = m_pendingOpenSch ? "Schematic" : "PCB";
     std::string toolId = m_pendingOpenToolId;
+
     m_pendingOpenSch = false;
     m_pendingOpenPcb = false;
     m_pendingOpenToolId.clear();
+    m_pendingOpenFilePath.Clear();
 
-    // Send rejection result to controller
+    // Validate controller still has this tool pending
+    if( m_chatController && !m_chatController->HasPendingTool( toolId ) )
+    {
+        wxLogWarning( "OnRejectOpenEditor: tool %s no longer pending", toolId.c_str() );
+        m_toolCallHtml.Clear();
+        UpdateAgentResponse();
+        return;
+    }
+
     if( m_chatController )
         m_chatController->HandleToolResult( toolId,
             "User declined to open " + editorName.ToStdString() + " editor", false );

@@ -79,7 +79,15 @@ enum MAIL_T
     // Concurrent editing - sheet targeting
     MAIL_AGENT_TARGET_SHEET,        // Agent -> Editor: Set target sheet for operations (JSON: {sheet_uuid})
     MAIL_AGENT_GET_CURRENT_SHEET,   // Agent -> Editor: Query current sheet UUID (response via MAIL_AGENT_RESPONSE)
-    MAIL_AGENT_RESET_TARGET_SHEET   // Agent -> Editor: Clear target sheet for new conversation turn
+    MAIL_AGENT_RESET_TARGET_SHEET,  // Agent -> Editor: Clear target sheet for new conversation turn
+
+    // File edit session management (for direct file writes by agent)
+    MAIL_AGENT_FILE_EDIT_BEGIN,     // Agent -> Editor: Start file edit session (JSON: {file_path, sheets: [uuid...]})
+    MAIL_AGENT_FILE_EDIT_COMPLETE,  // Agent -> Editor: File written + lint passed, reload now
+    MAIL_AGENT_FILE_EDIT_ABORT,     // Agent -> Editor: Abort file edit session
+
+    // Diff overlay refresh
+    MAIL_AGENT_REFRESH_DIFF         // Agent -> Editor: Refresh diff overlays (items may have moved)
 
 };
 

@@ -46,6 +46,7 @@
 #include <pgm_base.h>
 #include <libraries/symbol_library_adapter.h>
 #include <widgets/sch_design_block_pane.h>
+#include <agent_change_tracker.h>
 #include <wx/log.h>
 #include <nlohmann/json.hpp>
 #include <sch_text.h>
@@ -1145,7 +1146,9 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
     case MAIL_AGENT_VIEW_CHANGES:
     {
         // Navigate to the sheet with agent changes and zoom to the bounding box
-        if( m_hasAgentPendingChanges && m_agentChangedBBox.GetWidth() > 0 )
+        BOX2I changedBBox = ComputeTrackedItemsBBox();
+
+        if( m_hasAgentPendingChanges && changedBBox.GetWidth() > 0 )
         {
             // First, navigate to the sheet where the changes were made
             if( m_agentChangedSheetPath != GetCurrentSheet() && m_agentChangedSheetPath.size() > 0 )
@@ -1153,8 +1156,11 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                 GetToolManager()->RunAction<SCH_SHEET_PATH*>( SCH_ACTIONS::changeSheet,
                                                               &m_agentChangedSheetPath );
 
+                // Recompute bbox after sheet change
+                changedBBox = ComputeTrackedItemsBBox();
+
                 // After sheet change, re-register the diff overlay on the current view
-                // (the view might have changed or need updating)
+                wxString currentSheetPath = GetCurrentSheet().PathHumanReadable( false );
                 DIFF_CALLBACKS callbacks;
                 callbacks.onApprove = [this]() {
                     if( m_showingAgentBefore )
@@ -1177,12 +1183,20 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                         GetCanvas()->Refresh();
                 };
 
-                DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
-                DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
+                BBOX_COMPUTE_CALLBACK bboxCallback = [this]() -> BOX2I {
+                    return ComputeTrackedItemsBBox();
+                };
+
+                DIFF_MANAGER::GetInstance().RegisterOverlay(
+                    GetCanvas()->GetView(),
+                    m_agentChangeTracker.get(),
+                    currentSheetPath,
+                    callbacks,
+                    bboxCallback );
             }
 
             // Zoom to the changed area with some padding
-            BOX2I zoomBox = m_agentChangedBBox;
+            BOX2I zoomBox = changedBBox;
             zoomBox.Inflate( zoomBox.GetWidth() / 4, zoomBox.GetHeight() / 4 );
             // Convert BOX2I to BOX2D for SetViewport
             BOX2D viewport( VECTOR2D( zoomBox.GetPosition() ), VECTOR2D( zoomBox.GetSize() ) );
@@ -1456,24 +1470,33 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
     case MAIL_AGENT_WORKING_SET:
     {
         // Update the agent's working set of items for conflict detection
+        // Now uses the AGENT_CHANGE_TRACKER instead of a raw set
         try
         {
             nlohmann::json j = nlohmann::json::parse( payload );
 
-            m_agentWorkingSet.clear();
-
-            if( j.contains( "items" ) && j["items"].is_array() )
+            AGENT_CHANGE_TRACKER* tracker = GetAgentChangeTracker();
+            if( tracker )
             {
-                for( const auto& item : j["items"] )
+                tracker->ClearTrackedItems();
+
+                wxString sheetPath = j.value( "sheet_path", "" );
+                if( sheetPath.empty() )
+                    sheetPath = GetCurrentSheet().PathAsString();
+
+                if( j.contains( "items" ) && j["items"].is_array() )
                 {
-                    if( item.is_string() )
+                    for( const auto& item : j["items"] )
                     {
-                        m_agentWorkingSet.insert( KIID( item.get<std::string>() ) );
+                        if( item.is_string() )
+                        {
+                            tracker->TrackItem( KIID( item.get<std::string>() ), sheetPath );
+                        }
                     }
                 }
-            }
 
-            wxLogDebug( "MAIL_AGENT_WORKING_SET: %zu items", m_agentWorkingSet.size() );
+                wxLogDebug( "MAIL_AGENT_WORKING_SET: %zu items", tracker->GetTrackedItemCount() );
+            }
         }
         catch( ... )
         {
@@ -1512,14 +1535,45 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
             wxLogDebug( "MAIL_CONFLICT_RESOLVED: item=%s resolution=%s", itemUuid, resolution );
 
-            // Remove the item from the working set if it was resolved
-            KIID kiid( itemUuid.ToStdString() );
-            m_agentWorkingSet.erase( kiid );
+            // Remove the item from the agent tracker if being tracked
+            if( m_agentChangeTracker && m_agentChangeTracker->IsTracked( KIID( itemUuid.ToStdString() ) ) )
+            {
+                m_agentChangeTracker->UntrackItem( KIID( itemUuid.ToStdString() ) );
+            }
         }
         catch( ... )
         {
             wxLogWarning( "Failed to parse MAIL_CONFLICT_RESOLVED payload" );
         }
+        break;
+    }
+
+    //=========================================================================
+    // File edit session management
+    //=========================================================================
+
+    case MAIL_AGENT_FILE_EDIT_BEGIN:
+    {
+        OnAgentFileEditBegin( payload );
+        break;
+    }
+
+    case MAIL_AGENT_FILE_EDIT_COMPLETE:
+    {
+        OnAgentFileEditComplete( payload );
+        break;
+    }
+
+    case MAIL_AGENT_FILE_EDIT_ABORT:
+    {
+        OnAgentFileEditAbort();
+        break;
+    }
+
+    case MAIL_AGENT_REFRESH_DIFF:
+    {
+        // Refresh the diff overlay - items may have moved
+        DIFF_MANAGER::GetInstance().RefreshOverlay( GetCanvas()->GetView() );
         break;
     }
 

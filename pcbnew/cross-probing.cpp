@@ -63,6 +63,7 @@
 #include <id.h>
 #include <dialogs/dialog_settings_diff.h>
 #include <diff_manager.h>
+#include <agent_change_tracker.h>
 #include <python_scripting.h> // Fixed include path
 // #include <Python.h> // Included by python_scripting.h if KICAD_SCRIPTING is defined
 
@@ -990,10 +991,11 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
     case MAIL_AGENT_VIEW_CHANGES:
     {
         // Zoom to the agent changes bounding box
-        if( m_hasAgentPendingChanges && m_agentChangedBBox.GetWidth() > 0 )
+        BOX2I changedBBox = ComputeTrackedItemsBBox();
+        if( m_hasAgentPendingChanges && changedBBox.GetWidth() > 0 )
         {
             // Zoom to the changed area with some padding
-            BOX2I zoomBox = m_agentChangedBBox;
+            BOX2I zoomBox = changedBBox;
             zoomBox.Inflate( zoomBox.GetWidth() / 4, zoomBox.GetHeight() / 4 );
             // Convert BOX2I to BOX2D for SetViewport
             BOX2D viewport( VECTOR2D( zoomBox.GetPosition() ), VECTOR2D( zoomBox.GetSize() ) );
@@ -1127,7 +1129,8 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
     {
         // Agent is starting a transaction - track that we're in an agent operation
         m_agentTransactionActive = true;
-        m_agentWorkingSet.clear();
+        if( AGENT_CHANGE_TRACKER* tracker = GetAgentChangeTracker() )
+            tracker->ClearTrackedItems();
         break;
     }
 
@@ -1137,7 +1140,10 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         m_agentTransactionActive = false;
         // Don't clear working set if we have pending changes - it's needed for auto-dismiss
         if( !m_hasAgentPendingChanges )
-            m_agentWorkingSet.clear();
+        {
+            if( AGENT_CHANGE_TRACKER* tracker = GetAgentChangeTracker() )
+                tracker->ClearTrackedItems();
+        }
         break;
     }
 
@@ -1145,18 +1151,23 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
     {
         // Agent is updating its working set of items
         // Payload is JSON array of KIID strings
+        // Now uses AGENT_CHANGE_TRACKER instead of a raw set
         try
         {
             nlohmann::json j = nlohmann::json::parse( payload );
-            m_agentWorkingSet.clear();
-            if( j.is_array() )
+            AGENT_CHANGE_TRACKER* tracker = GetAgentChangeTracker();
+            if( tracker )
             {
-                for( const auto& item : j )
+                tracker->ClearTrackedItems();
+                if( j.is_array() )
                 {
-                    if( item.is_string() )
+                    for( const auto& item : j )
                     {
-                        KIID kiid( item.get<std::string>() );
-                        m_agentWorkingSet.insert( kiid );
+                        if( item.is_string() )
+                        {
+                            KIID kiid( item.get<std::string>() );
+                            tracker->TrackItem( kiid );  // PCB has no sheet path
+                        }
                     }
                 }
             }
@@ -1173,6 +1184,38 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         // Agent has resolved a conflict - payload contains resolution info
         // For now just log it; future implementation will apply resolution
         wxLogTrace( "AGENT", "Received conflict resolution for PCB" );
+        break;
+    }
+
+    //=========================================================================
+    // File edit session management
+    //=========================================================================
+
+    case MAIL_AGENT_FILE_EDIT_BEGIN:
+    {
+        // PCB file edit session not yet implemented
+        wxLogInfo( "PCB: Agent file edit begin" );
+        break;
+    }
+
+    case MAIL_AGENT_FILE_EDIT_COMPLETE:
+    {
+        // PCB file edit session not yet implemented
+        wxLogInfo( "PCB: Agent file edit complete" );
+        break;
+    }
+
+    case MAIL_AGENT_FILE_EDIT_ABORT:
+    {
+        // PCB file edit session not yet implemented
+        wxLogInfo( "PCB: Agent file edit aborted" );
+        break;
+    }
+
+    case MAIL_AGENT_REFRESH_DIFF:
+    {
+        // Refresh the diff overlay - items may have moved
+        DIFF_MANAGER::GetInstance().RefreshOverlay( GetCanvas()->GetView() );
         break;
     }
 

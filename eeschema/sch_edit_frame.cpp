@@ -25,6 +25,8 @@
 #include <algorithm>
 #include <api/api_handler_sch.h>
 #include <api/api_server.h>
+#include <agent_change_tracker.h>
+#include <file_edit_session.h>
 #include <base_units.h>
 #include <bitmaps.h>
 #include <confirm.h>
@@ -628,34 +630,9 @@ void SCH_EDIT_FRAME::OnSchItemsRemoved( SCHEMATIC& aSch, std::vector<SCH_ITEM*>&
 
 void SCH_EDIT_FRAME::OnSchItemsChanged( SCHEMATIC& aSch, std::vector<SCH_ITEM*>& aSchItem )
 {
-    // If a diff view is active and user modifies items from the agent's working set,
-    // dismiss the diff view since the state is now inconsistent
-    if( !m_hasAgentPendingChanges || m_agentWorkingSet.empty() )
-        return;
-
-    for( SCH_ITEM* item : aSchItem )
-    {
-        if( !item )
-            continue;
-
-        const KIID& itemId = item->m_Uuid;
-
-        if( m_agentWorkingSet.find( itemId ) != m_agentWorkingSet.end() )
-        {
-            wxLogInfo( "SCH: Agent diff dismissed, user modified item %s", itemId.AsString() );
-
-            DIFF_MANAGER::GetInstance().ClearDiff();
-
-            m_hasAgentPendingChanges = false;
-            m_showingAgentBefore = false;
-            m_agentWorkingSet.clear();
-            m_undoCountBeforeAgent = 0;
-
-            std::string payload = "sch";
-            Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
-            return;
-        }
-    }
+    // Note: The diff overlay now uses a dynamic bbox callback that recomputes
+    // on each draw, so we don't need to explicitly refresh here.
+    // This listener is kept for potential future use (e.g., conflict detection).
 }
 
 
@@ -1125,14 +1102,17 @@ void SCH_EDIT_FRAME::SetCurrentSheet( const SCH_SHEET_PATH& aSheet )
         GetCanvas()->DisplaySheet( aSheet.LastScreen() );
 
         // Handle agent pending changes diff overlay visibility when switching sheets
-        if( m_hasAgentPendingChanges && m_agentChangedSheetPath.size() > 0 )
+        // Show overlay on ANY sheet that has tracked items (multi-sheet support)
+        if( m_hasAgentPendingChanges && m_agentChangeTracker && m_agentChangeTracker->HasChanges() )
         {
-            // Check if we're now on the sheet where agent changes were made
-            bool isOnTargetSheet = ( aSheet == m_agentChangedSheetPath );
+            wxString currentSheetPath = aSheet.PathHumanReadable( false );
 
-            if( isOnTargetSheet )
+            // Check if this sheet has any tracked items
+            std::set<KIID> itemsOnSheet = m_agentChangeTracker->GetTrackedItemsOnSheet( currentSheetPath );
+
+            if( !itemsOnSheet.empty() )
             {
-                // Show the diff overlay on the target sheet
+                // Show the diff overlay on this sheet
                 DIFF_CALLBACKS callbacks;
                 callbacks.onApprove = [this]() {
                     if( m_showingAgentBefore )
@@ -1155,17 +1135,27 @@ void SCH_EDIT_FRAME::SetCurrentSheet( const SCH_SHEET_PATH& aSheet )
                         GetCanvas()->Refresh();
                 };
 
+                // Create bbox callback for dynamic tracking
+                BBOX_COMPUTE_CALLBACK bboxCallback = [this]() -> BOX2I {
+                    return ComputeTrackedItemsBBox();
+                };
 
-                DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
-                DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
+                DIFF_MANAGER::GetInstance().RegisterOverlay(
+                    GetCanvas()->GetView(),
+                    m_agentChangeTracker.get(),
+                    currentSheetPath,
+                    callbacks,
+                    bboxCallback );
 
                 // Force a canvas refresh to ensure the overlay is rendered
                 // This is needed because DisplaySheet() cleared the view before we added the overlay
                 GetCanvas()->ForceRefresh();
-
             }
-            // Note: We don't need to explicitly clear the diff when leaving the target sheet
-            // because DisplaySheet() already cleared all items from the view
+            else
+            {
+                // No tracked items on this sheet - clear any existing overlay
+                DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
+            }
         }
     }
 }
@@ -2415,12 +2405,15 @@ void SCH_EDIT_FRAME::DisplayCurrentSheet()
     m_schematic->OnSchSheetChanged();
 
     // Handle agent pending changes diff overlay visibility when switching sheets
-    // This is called by the navigation tool when the user switches sheets
-    if( m_hasAgentPendingChanges && m_agentChangedSheetPath.size() > 0 )
+    // Show overlay on ANY sheet that has tracked items (multi-sheet support)
+    if( m_hasAgentPendingChanges && m_agentChangeTracker && m_agentChangeTracker->HasChanges() )
     {
-        bool isOnTargetSheet = ( GetCurrentSheet() == m_agentChangedSheetPath );
+        wxString currentSheetPath = GetCurrentSheet().PathHumanReadable( false );
 
-        if( isOnTargetSheet && m_agentChangedBBox.GetWidth() > 0 )
+        // Check if the current sheet has any tracked items
+        std::set<KIID> itemsOnSheet = m_agentChangeTracker->GetTrackedItemsOnSheet( currentSheetPath );
+
+        if( !itemsOnSheet.empty() )
         {
             // Set up callbacks for the diff overlay
             DIFF_CALLBACKS callbacks;
@@ -2445,8 +2438,25 @@ void SCH_EDIT_FRAME::DisplayCurrentSheet()
                     GetCanvas()->Refresh();
             };
 
-            DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
-            DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
+            // Create bbox callback for dynamic tracking
+            BBOX_COMPUTE_CALLBACK bboxCallback = [this]() -> BOX2I {
+                return ComputeTrackedItemsBBox();
+            };
+
+            DIFF_MANAGER::GetInstance().RegisterOverlay(
+                GetCanvas()->GetView(),
+                m_agentChangeTracker.get(),
+                currentSheetPath,
+                callbacks,
+                bboxCallback );
+
+            // Force refresh to ensure the overlay is visible immediately
+            GetCanvas()->ForceRefresh();
+        }
+        else
+        {
+            // No tracked items on this sheet - clear any existing overlay
+            DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
         }
     }
 }
@@ -3174,41 +3184,39 @@ void SCH_EDIT_FRAME::RecordAgentUndoPosition()
         return;
     }
 
+    // Initialize tracker if needed
+    if( !m_agentChangeTracker )
+        m_agentChangeTracker = std::make_unique<AGENT_CHANGE_TRACKER>();
+
     // No existing session - start a new one
     // Record the current undo stack count - kipy API operations will create undo entries
-    m_undoCountBeforeAgent = GetUndoCommandCount();
-    m_agentChangedBBox = BOX2I();  // Reset accumulated bounding box
+    m_agentChangeTracker->SetUndoBaseline( GetUndoCommandCount() );
     m_agentChangedSheetPath.clear();  // Reset sheet path
 }
 
 
 bool SCH_EDIT_FRAME::DetectAgentChanges()
 {
+    // Initialize tracker if needed
+    if( !m_agentChangeTracker )
+        m_agentChangeTracker = std::make_unique<AGENT_CHANGE_TRACKER>();
+
     // Check if any undo entries were created since we took the snapshot
     int currentUndoCount = GetUndoCommandCount();
-    bool hasNewChanges = ( currentUndoCount > m_undoCountBeforeAgent );
-
-    // If there are already pending changes and we're just adding more, we need to
-    // scan from the last known position, not from m_undoCountBeforeAgent
-    int scanFrom = m_undoCountBeforeAgent;
-    if( m_hasAgentPendingChanges )
-    {
-        // Already have pending changes, check for additional ones
-        // The bounding box will be accumulated
-    }
+    int baseline = m_agentChangeTracker->GetUndoBaseline();
+    bool hasNewChanges = ( currentUndoCount > baseline );
 
     if( !hasNewChanges && !m_hasAgentPendingChanges )
     {
         // No changes detected and no existing pending changes
-        m_agentWorkingSet.clear();  // Ensure working set is clean
         return false;
     }
 
-    // Calculate bounding box from the items in the undo entries created by the agent
-    BOX2I newChangedBBox;
+    // Get the hierarchy for looking up sheet paths
+    SCH_SHEET_LIST sheets = Schematic().Hierarchy();
 
-    // Iterate through the new undo entries to get bounding boxes of changed items
-    for( int i = scanFrom; i < currentUndoCount; i++ )
+    // Iterate through the new undo entries to track changed items
+    for( int i = baseline; i < currentUndoCount; i++ )
     {
         PICKED_ITEMS_LIST* undoCommand = m_undoList.m_CommandsList[i];
         if( !undoCommand )
@@ -3217,40 +3225,50 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
         for( unsigned int j = 0; j < undoCommand->GetCount(); j++ )
         {
             EDA_ITEM* item = undoCommand->GetPickedItem( j );
-            UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
 
             if( item )
             {
-                SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( item );
-                if( schItem )
-                    newChangedBBox.Merge( schItem->GetBoundingBox() );
+                // Get the item's actual screen and find its sheet path
+                SCH_SCREEN*    screen = dynamic_cast<SCH_SCREEN*>( undoCommand->GetScreenForItem( j ) );
+                SCH_SHEET_PATH itemSheet = sheets.FindSheetForScreen( screen );
+                wxString       sheetPath = itemSheet.PathHumanReadable( false );
 
-                // Add to working set for conflict detection (auto-dismiss on user modification)
-                m_agentWorkingSet.insert( item->m_Uuid );
+                // Track the item by KIID with its actual sheet path
+                m_agentChangeTracker->TrackItem( item->m_Uuid, sheetPath );
             }
 
-            // For CHANGED operations, also get the current item's bounding box
+            // For CHANGED operations, also track the linked item (current state)
+            UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
             if( status == UNDO_REDO::CHANGED )
             {
                 EDA_ITEM* link = undoCommand->GetPickedItemLink( j );
                 if( link )
                 {
-                    SCH_ITEM* linkedItem = dynamic_cast<SCH_ITEM*>( link );
-                    if( linkedItem )
-                        newChangedBBox.Merge( linkedItem->GetBoundingBox() );
+                    SCH_SCREEN*    screen = dynamic_cast<SCH_SCREEN*>( undoCommand->GetScreenForItem( j ) );
+                    SCH_SHEET_PATH itemSheet = sheets.FindSheetForScreen( screen );
+                    wxString       sheetPath = itemSheet.PathHumanReadable( false );
+
+                    m_agentChangeTracker->TrackItem( link->m_Uuid, sheetPath );
                 }
             }
         }
     }
 
-    // Merge with accumulated bounding box from previous tool calls
-    m_agentChangedBBox.Merge( newChangedBBox );
     m_hasAgentPendingChanges = true;
 
-    wxLogInfo( "SCH: Agent diff tracking %zu items in working set", m_agentWorkingSet.size() );
+    // Log the tracked items and affected sheets
+    std::set<wxString> affectedSheets = m_agentChangeTracker->GetAffectedSheets();
+    wxString sheetsStr;
+    for( const wxString& s : affectedSheets )
+    {
+        if( !sheetsStr.empty() )
+            sheetsStr += ", ";
+        sheetsStr += s;
+    }
+    wxLogInfo( "SCH: Agent diff tracking %zu items on sheets: %s",
+               m_agentChangeTracker->GetTrackedItemCount(), sheetsStr );
 
     // Store the target sheet path if not already set
-    // Use the agent target sheet UUID to find the correct sheet path
     if( m_agentChangedSheetPath.size() == 0 )
     {
         if( m_agentTargetSheetUuid != NilUuid() )
@@ -3306,14 +3324,21 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
                 GetCanvas()->Refresh();
         };
 
-        DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
-        DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
+        // Create a bbox compute callback for dynamic updates
+        BBOX_COMPUTE_CALLBACK bboxCallback = [this]() -> BOX2I {
+            return ComputeTrackedItemsBBox();
+        };
+
+        DIFF_MANAGER::GetInstance().RegisterOverlay(
+            GetCanvas()->GetView(),
+            m_agentChangeTracker.get(),
+            GetCurrentSheet().PathHumanReadable( false ),
+            callbacks,
+            bboxCallback );
 
         // Force refresh to ensure the overlay is rendered
         GetCanvas()->ForceRefresh();
     }
-    // Note: We don't need to explicitly clear the diff when not on target sheet
-    // The commit changes already skip updating the view for non-current screens
 
     return hasNewChanges;
 }
@@ -3323,9 +3348,11 @@ void SCH_EDIT_FRAME::ClearAgentPendingChanges()
 {
     m_hasAgentPendingChanges = false;
     m_showingAgentBefore = false;
-    m_undoCountBeforeAgent = 0;
-    m_agentChangedBBox = BOX2I();  // Reset accumulated bounding box
     m_agentChangedSheetPath.clear();  // Reset sheet path
+
+    // Clear the tracker
+    if( m_agentChangeTracker )
+        m_agentChangeTracker->ClearTrackedItems();
 
     // Clear the diff overlay
     DIFF_MANAGER::GetInstance().ClearDiff();
@@ -3337,7 +3364,7 @@ void SCH_EDIT_FRAME::ClearAgentPendingChanges()
 
 void SCH_EDIT_FRAME::RevertAgentChanges()
 {
-    if( !m_hasAgentPendingChanges )
+    if( !m_hasAgentPendingChanges || !m_agentChangeTracker )
         return;
 
     // If we're currently showing "before" state, we've already undone via the view toggle
@@ -3352,7 +3379,8 @@ void SCH_EDIT_FRAME::RevertAgentChanges()
         // Showing "after" state - need to undo all agent changes
         // Roll back each undo entry created by the agent without creating redo entries
         int currentUndoCount = GetUndoCommandCount();
-        int numToUndo = currentUndoCount - m_undoCountBeforeAgent;
+        int baseline = m_agentChangeTracker->GetUndoBaseline();
+        int numToUndo = currentUndoCount - baseline;
 
         for( int i = 0; i < numToUndo; i++ )
         {
@@ -3363,21 +3391,24 @@ void SCH_EDIT_FRAME::RevertAgentChanges()
     // Clear the diff overlay
     DIFF_MANAGER::GetInstance().ClearDiff();
 
+    // Clear the tracker
+    m_agentChangeTracker->ClearTrackedItems();
+
     m_hasAgentPendingChanges = false;
     m_showingAgentBefore = false;
-    m_undoCountBeforeAgent = 0;
 }
 
 
 void SCH_EDIT_FRAME::ShowAgentChangesBefore()
 {
-    if( !m_hasAgentPendingChanges || m_showingAgentBefore )
+    if( !m_hasAgentPendingChanges || m_showingAgentBefore || !m_agentChangeTracker )
         return;
 
     // Use native undo to show the "before" state
     // Undo all agent changes (they'll go to redo list for later restoration)
     int currentUndoCount = GetUndoCommandCount();
-    int numToUndo = currentUndoCount - m_undoCountBeforeAgent;
+    int baseline = m_agentChangeTracker->GetUndoBaseline();
+    int numToUndo = currentUndoCount - baseline;
 
     for( int i = 0; i < numToUndo; i++ )
     {
@@ -3403,4 +3434,80 @@ void SCH_EDIT_FRAME::ShowAgentChangesAfter()
     }
 
     m_showingAgentBefore = false;
+}
+
+
+BOX2I SCH_EDIT_FRAME::ComputeTrackedItemsBBox() const
+{
+    BOX2I bbox;
+
+    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
+        return bbox;
+
+    SCH_SCREEN* screen = GetCurrentSheet().LastScreen();
+    if( !screen )
+        return bbox;
+
+    wxString currentSheetPath = GetCurrentSheet().PathHumanReadable( false );
+    std::set<KIID> trackedItems = m_agentChangeTracker->GetTrackedItemsOnSheet( currentSheetPath );
+
+    bool first = true;
+    for( const KIID& kiid : trackedItems )
+    {
+        // Find the item by iterating through screen items
+        for( SCH_ITEM* item : screen->Items() )
+        {
+            if( item->m_Uuid == kiid )
+            {
+                if( first )
+                {
+                    bbox = item->GetBoundingBox();
+                    first = false;
+                }
+                else
+                {
+                    bbox.Merge( item->GetBoundingBox() );
+                }
+                break;
+            }
+        }
+    }
+
+    return bbox;
+}
+
+
+void SCH_EDIT_FRAME::OnAgentFileEditBegin( const wxString& aPayload )
+{
+    // Initialize file edit session
+    if( !m_fileEditSession )
+        m_fileEditSession = std::make_unique<FILE_EDIT_SESSION>();
+
+    // Parse JSON payload for file path
+    // TODO: Implement JSON parsing when file edit flow is needed
+    wxLogInfo( "SCH: Agent file edit begin: %s", aPayload );
+}
+
+
+void SCH_EDIT_FRAME::OnAgentFileEditComplete( const wxString& aPayload )
+{
+    if( !m_fileEditSession )
+        return;
+
+    // Mark lint passed and trigger reload/diff
+    m_fileEditSession->SetLintPassed();
+
+    // TODO: Implement reload and diff computation when file edit flow is needed
+    wxLogInfo( "SCH: Agent file edit complete: %s", aPayload );
+}
+
+
+void SCH_EDIT_FRAME::OnAgentFileEditAbort()
+{
+    if( m_fileEditSession )
+    {
+        m_fileEditSession->EndSession( false );
+    }
+
+    wxLogInfo( "SCH: Agent file edit aborted" );
 }

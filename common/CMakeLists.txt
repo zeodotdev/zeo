@@ -750,6 +750,8 @@ set( COMMON_SRCS
     tool/common_control.cpp
     tool/construction_manager.cpp
     diff_manager.cpp
+    agent_change_tracker.cpp
+    file_edit_session.cpp
 
     tool/common_tools.cpp
     tool/conditional_menu.cpp

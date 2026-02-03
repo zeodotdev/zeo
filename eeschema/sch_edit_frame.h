@@ -46,6 +46,10 @@
 #include <sch_base_frame.h>
 #include <schematic.h>
 #include <template_fieldnames.h>
+#include <memory>
+
+class AGENT_CHANGE_TRACKER;
+class FILE_EDIT_SESSION;
 
 class SCH_ITEM;
 class EDA_ITEM;
@@ -925,6 +929,36 @@ public:
 
     bool HasAgentPendingChanges() const { return m_hasAgentPendingChanges; }
 
+    /**
+     * Get the agent change tracker.
+     * @return Pointer to the tracker, or nullptr if not initialized.
+     */
+    AGENT_CHANGE_TRACKER* GetAgentChangeTracker() { return m_agentChangeTracker.get(); }
+
+    /**
+     * Compute the bounding box for tracked items on the current sheet.
+     * Used by DIFF_MANAGER for dynamic bbox updates.
+     * @return The computed bounding box.
+     */
+    BOX2I ComputeTrackedItemsBBox() const;
+
+    /**
+     * Handle file edit session begin message from agent.
+     * @param aPayload JSON payload with file path and sheet info.
+     */
+    void OnAgentFileEditBegin( const wxString& aPayload );
+
+    /**
+     * Handle file edit session complete message from agent.
+     * @param aPayload JSON payload with completion status.
+     */
+    void OnAgentFileEditComplete( const wxString& aPayload );
+
+    /**
+     * Handle file edit session abort message from agent.
+     */
+    void OnAgentFileEditAbort();
+
     DECLARE_EVENT_TABLE()
 
 protected:
@@ -1100,17 +1134,16 @@ private:
     bool              m_show_search;
     bool              m_highlightedConnChanged;
 
-    // Agent pending changes support (for diff view using native undo/redo)
-    int            m_undoCountBeforeAgent = 0;    ///< Undo stack count before agent execution
+    // Agent pending changes support (item-based tracking with dynamic bbox)
+    std::unique_ptr<AGENT_CHANGE_TRACKER> m_agentChangeTracker;  ///< Item-based change tracker
+    std::unique_ptr<FILE_EDIT_SESSION>    m_fileEditSession;     ///< File edit session manager
     bool           m_hasAgentPendingChanges = false;
     bool           m_showingAgentBefore = false;  ///< True if currently showing "before" state
-    BOX2I          m_agentChangedBBox;            ///< Accumulated bounding box of all agent changes
     SCH_SHEET_PATH m_agentChangedSheetPath;       ///< Sheet path where agent changes were made
 
     // Concurrent editing support - agent transaction tracking
     bool           m_agentTransactionActive = false;  ///< True if agent transaction is active
     KIID           m_agentTargetSheetUuid;            ///< Target sheet UUID for agent operations
-    std::set<KIID> m_agentWorkingSet;                 ///< Items being modified by the agent
 
     std::vector<wxEvtHandler*> m_schematicChangeListeners;
 

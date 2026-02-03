@@ -9,6 +9,9 @@
 #include <math/box2.h>
 #include <math/vector2d.h>
 
+// Forward declarations
+class AGENT_CHANGE_TRACKER;
+
 namespace KIGFX
 {
 class VIEW;
@@ -35,6 +38,13 @@ struct DIFF_CALLBACKS
 };
 
 /**
+ * Callback function type for computing dynamic bounding boxes.
+ * This allows the DIFF_MANAGER to request updated bounding boxes from the
+ * frame classes that have access to SCHEMATIC or BOARD objects.
+ */
+using BBOX_COMPUTE_CALLBACK = std::function<BOX2I()>;
+
+/**
  * Per-view diff overlay state
  */
 struct DIFF_VIEW_STATE
@@ -43,6 +53,9 @@ struct DIFF_VIEW_STATE
     BOX2I                              currentBBox;
     KIGFX::PREVIEW::DIFF_OVERLAY_ITEM* item = nullptr;
     DIFF_CALLBACKS                     callbacks;
+    AGENT_CHANGE_TRACKER*              tracker = nullptr;     ///< Item-based tracker (optional)
+    wxString                           sheetPath;             ///< Sheet path for multi-sheet (optional)
+    BBOX_COMPUTE_CALLBACK              bboxCallback;          ///< Dynamic bbox computation callback
 };
 
 class DIFF_MANAGER
@@ -56,6 +69,19 @@ public:
     // Register a view to draw the overlay on, and callbacks for interaction
     // This sets the "current" view for subsequent ShowDiff/ClearDiff calls
     void RegisterOverlay( KIGFX::VIEW* aView, DIFF_CALLBACKS aCallbacks );
+
+    /**
+     * Register an overlay with an AGENT_CHANGE_TRACKER for item-based tracking.
+     * The bounding box will be computed dynamically using the provided callback.
+     * @param aView The view to register.
+     * @param aTracker The change tracker (caller retains ownership).
+     * @param aSheetPath The sheet path for multi-sheet support (empty for PCB).
+     * @param aCallbacks User interaction callbacks.
+     * @param aBBoxCallback Callback to compute dynamic bounding box.
+     */
+    void RegisterOverlay( KIGFX::VIEW* aView, AGENT_CHANGE_TRACKER* aTracker,
+                          const wxString& aSheetPath, DIFF_CALLBACKS aCallbacks,
+                          BBOX_COMPUTE_CALLBACK aBBoxCallback );
 
     // Unregister the current view
     void UnregisterOverlay();
@@ -78,6 +104,37 @@ public:
 
     // Handle click on a specific view
     bool HandleClick( KIGFX::VIEW* aView, const VECTOR2I& aPoint );
+
+    /**
+     * Refresh the diff overlay on the current view.
+     * Recomputes the bounding box from the tracker and updates the overlay.
+     * Call this when tracked items may have moved.
+     */
+    void RefreshOverlay();
+
+    /**
+     * Refresh the diff overlay on a specific view.
+     * @param aView The view to refresh.
+     */
+    void RefreshOverlay( KIGFX::VIEW* aView );
+
+    /**
+     * Refresh all active diff overlays.
+     * Useful when items across multiple sheets may have changed.
+     */
+    void RefreshAllOverlays();
+
+    /**
+     * Get the change tracker for a view.
+     * @return The tracker, or nullptr if not using item-based tracking.
+     */
+    AGENT_CHANGE_TRACKER* GetTracker( KIGFX::VIEW* aView ) const;
+
+    /**
+     * Get the sheet path for a view's overlay.
+     * @return The sheet path string.
+     */
+    wxString GetSheetPath( KIGFX::VIEW* aView ) const;
 
 private:
     DIFF_MANAGER();

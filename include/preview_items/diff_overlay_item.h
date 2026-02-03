@@ -26,11 +26,15 @@
 
 #include <preview_items/simple_overlay_item.h>
 #include <math/box2.h>
+#include <functional>
 
 namespace KIGFX
 {
 namespace PREVIEW
 {
+
+    // Callback to dynamically compute the bounding box
+    using BBOX_CALLBACK = std::function<BOX2I()>;
 
     /**
  * DIFF_OVERLAY_ITEM represents a pending change from the Agent.
@@ -49,7 +53,11 @@ namespace PREVIEW
             BTN_VIEW_AFTER
         };
 
+        // Static bbox constructor (legacy)
         DIFF_OVERLAY_ITEM( const BOX2I& aBBox );
+
+        // Dynamic bbox constructor - computes bbox on each draw
+        DIFF_OVERLAY_ITEM( BBOX_CALLBACK aBBoxCallback );
 
         // Overrides
         void          ViewDraw( int aLayer, KIGFX::VIEW* aView ) const override;
@@ -66,6 +74,26 @@ namespace PREVIEW
         void SetShowingBefore( bool aVal ) { m_showBefore = aVal; }
         bool IsShowingBefore() const { return m_showBefore; }
 
+        /**
+         * Update the bounding box for dynamic tracking.
+         * Call this when tracked items may have moved.
+         * @param aBBox The new bounding box.
+         */
+        void SetBBox( const BOX2I& aBBox ) { m_bbox = aBBox; }
+
+        /**
+         * Get the current bounding box.
+         * If a callback is set, this recomputes the bbox.
+         * @return The bounding box.
+         */
+        BOX2I GetCurrentBBox() const;
+
+        /**
+         * Get the cached bounding box (without recomputing).
+         * @return The bounding box.
+         */
+        const BOX2I& GetBBox() const { return m_bbox; }
+
     private:
         void drawPreviewShape( KIGFX::VIEW* aView ) const override;
 
@@ -75,8 +103,9 @@ namespace PREVIEW
         void  drawButton( KIGFX::GAL* aGal, int aIndex, const wxString& aLabel, const COLOR4D& aColor,
                           double aScale ) const;
 
-        BOX2I m_bbox;
+        mutable BOX2I m_bbox;  // mutable so we can update it in const methods
         bool  m_showBefore;
+        BBOX_CALLBACK m_bboxCallback;  // Optional callback for dynamic bbox
 
         static constexpr double BTN_WIDTH = 60.0;
         static constexpr double BTN_HEIGHT = 20.0;

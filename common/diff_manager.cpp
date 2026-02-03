@@ -135,6 +135,54 @@ void DIFF_MANAGER::RegisterOverlay( KIGFX::VIEW* aView, DIFF_CALLBACKS aCallback
     // Initialize or update state for this view
     DIFF_VIEW_STATE& state = m_viewStates[aView];
     state.callbacks = aCallbacks;
+    state.tracker = nullptr;
+    state.sheetPath.clear();
+    state.bboxCallback = nullptr;
+}
+
+
+void DIFF_MANAGER::RegisterOverlay( KIGFX::VIEW* aView, AGENT_CHANGE_TRACKER* aTracker,
+                                     const wxString& aSheetPath, DIFF_CALLBACKS aCallbacks,
+                                     BBOX_COMPUTE_CALLBACK aBBoxCallback )
+{
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    m_currentView = aView;
+
+    // Initialize or update state for this view with tracker support
+    DIFF_VIEW_STATE& state = m_viewStates[aView];
+    state.callbacks = aCallbacks;
+    state.tracker = aTracker;
+    state.sheetPath = aSheetPath;
+    state.bboxCallback = aBBoxCallback;
+
+    // If we have a bbox callback, create overlay with dynamic bbox
+    if( aBBoxCallback )
+    {
+        BOX2I bbox = aBBoxCallback();
+        if( bbox.GetWidth() > 0 && bbox.GetHeight() > 0 )
+        {
+            // Remove old overlay if it exists
+            if( state.item )
+            {
+                aView->Remove( state.item );
+                delete state.item;
+            }
+
+            // Create overlay with callback - it will recompute bbox on each draw
+            state.item = new KIGFX::PREVIEW::DIFF_OVERLAY_ITEM( aBBoxCallback );
+            state.active = true;
+            state.currentBBox = bbox;
+
+            aView->Add( state.item );
+            aView->SetVisible( state.item, true );
+            aView->Update( state.item );
+            aView->MarkDirty();
+
+            wxLogInfo( "Agent diff: showing dynamic overlay at (%d,%d) size (%d,%d)",
+                       bbox.GetX(), bbox.GetY(), bbox.GetWidth(), bbox.GetHeight() );
+        }
+    }
 }
 
 void DIFF_MANAGER::UnregisterOverlay()
@@ -317,4 +365,95 @@ void DIFF_MANAGER::OnViewAfter( KIGFX::VIEW* aView )
         if( state.callbacks.onRefresh )
             state.callbacks.onRefresh();
     }
+}
+
+
+void DIFF_MANAGER::RefreshOverlay()
+{
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    if( m_currentView )
+        RefreshOverlay( m_currentView );
+}
+
+
+void DIFF_MANAGER::RefreshOverlay( KIGFX::VIEW* aView )
+{
+    // Note: With dynamic bbox overlays, this method is less critical since the
+    // overlay recomputes its bbox on each draw. However, it can still be used
+    // to force an immediate update if needed.
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    auto it = m_viewStates.find( aView );
+    if( it == m_viewStates.end() )
+        return;
+
+    DIFF_VIEW_STATE& state = it->second;
+
+    if( !state.active )
+        return;
+
+    // If we have a bbox callback, recompute and update the overlay
+    if( state.bboxCallback )
+    {
+        BOX2I newBBox = state.bboxCallback();
+
+        // Only update if bbox has changed
+        if( newBBox != state.currentBBox )
+        {
+            state.currentBBox = newBBox;
+
+            // Update the overlay item's bbox
+            if( state.item )
+            {
+                aView->Remove( state.item );
+                delete state.item;
+            }
+
+            state.item = new KIGFX::PREVIEW::DIFF_OVERLAY_ITEM( newBBox );
+            aView->Add( state.item );
+            aView->SetVisible( state.item, true );
+            aView->Update( state.item );
+            aView->MarkDirty();
+
+            if( state.callbacks.onRefresh )
+                state.callbacks.onRefresh();
+        }
+    }
+}
+
+
+void DIFF_MANAGER::RefreshAllOverlays()
+{
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    for( auto& [view, state] : m_viewStates )
+    {
+        if( state.active && view )
+            RefreshOverlay( view );
+    }
+}
+
+
+AGENT_CHANGE_TRACKER* DIFF_MANAGER::GetTracker( KIGFX::VIEW* aView ) const
+{
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    auto it = m_viewStates.find( aView );
+    if( it == m_viewStates.end() )
+        return nullptr;
+
+    return it->second.tracker;
+}
+
+
+wxString DIFF_MANAGER::GetSheetPath( KIGFX::VIEW* aView ) const
+{
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    auto it = m_viewStates.find( aView );
+    if( it == m_viewStates.end() )
+        return wxEmptyString;
+
+    return it->second.sheetPath;
 }

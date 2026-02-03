@@ -29,9 +29,12 @@
 #include <variant>
 #include <map>
 #include <set>
+#include <memory>
 #include <kiid.h>
 
 class ACTION_PLUGIN;
+class AGENT_CHANGE_TRACKER;
+class FILE_EDIT_SESSION;
 class PCB_SCREEN;
 class BOARD;
 class BOARD_COMMIT;
@@ -884,14 +887,13 @@ private:
     std::unique_ptr<API_HANDLER_COMMON> m_apiHandlerCommon;
 #endif
 
-    // Agent pending changes support (for diff view using native undo/redo)
-    int   m_undoCountBeforeAgent = 0;     ///< Undo stack count before agent execution
+    // Agent pending changes support (item-based tracking with dynamic bbox)
+    std::unique_ptr<AGENT_CHANGE_TRACKER> m_agentChangeTracker;  ///< Item-based change tracker
+    std::unique_ptr<FILE_EDIT_SESSION>    m_fileEditSession;     ///< File edit session manager
     bool  m_hasAgentPendingChanges = false;
-    BOX2I m_agentChangedBBox;             ///< Accumulated bounding box of all agent changes
 
     // Concurrent editing support (agent operates while user navigates/edits)
     bool           m_agentTransactionActive = false;  ///< True during agent transaction
-    std::set<KIID> m_agentWorkingSet;                 ///< Items agent is working on
 
 public:
     /**
@@ -928,6 +930,19 @@ public:
     void ShowAgentChangesAfter();
 
     bool HasAgentPendingChanges() const { return m_hasAgentPendingChanges; }
+
+    /**
+     * Get the agent change tracker.
+     * @return Pointer to the tracker, or nullptr if not initialized.
+     */
+    AGENT_CHANGE_TRACKER* GetAgentChangeTracker() { return m_agentChangeTracker.get(); }
+
+    /**
+     * Compute the bounding box for tracked items on the board.
+     * Used by DIFF_MANAGER for dynamic bbox updates.
+     * @return The computed bounding box.
+     */
+    BOX2I ComputeTrackedItemsBBox() const;
 
 private:
     bool m_showingAgentBefore = false;  ///< True if currently showing "before" state

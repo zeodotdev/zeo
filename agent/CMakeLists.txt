@@ -28,12 +28,18 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/common/dialogs
     ${CMAKE_SOURCE_DIR}/utility
     ${CMAKE_SOURCE_DIR}/thirdparty/nlohmann_json
+    ${CMAKE_SOURCE_DIR}/libs/sexpr/include
+    ${CMAKE_SOURCE_DIR}/eeschema
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/rendering
     ${CMAKE_CURRENT_SOURCE_DIR}/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc
     ${CMAKE_CURRENT_SOURCE_DIR}/auth
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/kicad_file
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/schematic
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcb
     ${CMAKE_CURRENT_BINARY_DIR}  # For generated agent_template_embedded.h
     ${INC_AFTER}
     )
@@ -66,6 +72,18 @@ set( AGENT_SRCS
     # Authentication
     auth/agent_auth.cpp
     auth/agent_keychain.cpp
+
+    # Direct file tools (sch_*, pcb_*)
+    tools/tool_registry.cpp
+    tools/kicad_file/sexpr_util.cpp
+    tools/kicad_file/file_writer.cpp
+    tools/kicad_file/uuid_util.cpp
+    tools/schematic/sch_parser.cpp
+    tools/schematic/sch_validator.cpp
+    tools/schematic/sch_tool_handler.cpp
+    tools/pcb/pcb_parser.cpp
+    tools/pcb/pcb_validator.cpp
+    tools/pcb/pcb_tool_handler.cpp
 )
 
 
@@ -146,6 +164,7 @@ target_link_libraries( agent_kiface
     common
     gal
     kicommon
+    sexpr
     ${wxWidgets_LIBRARIES}
 )
 

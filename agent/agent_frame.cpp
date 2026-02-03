@@ -348,6 +348,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( EVT_CHAT_THINKING_START, &AGENT_FRAME::OnChatThinkingStart, this );
     Bind( EVT_CHAT_THINKING_DELTA, &AGENT_FRAME::OnChatThinkingDelta, this );
     Bind( EVT_CHAT_THINKING_DONE, &AGENT_FRAME::OnChatThinkingDone, this );
+    Bind( EVT_CHAT_TOOL_GENERATING, &AGENT_FRAME::OnChatToolGenerating, this );
     Bind( EVT_CHAT_TOOL_START, &AGENT_FRAME::OnChatToolStart, this );
     Bind( EVT_CHAT_TOOL_COMPLETE, &AGENT_FRAME::OnChatToolComplete, this );
     Bind( EVT_CHAT_TURN_COMPLETE, &AGENT_FRAME::OnChatTurnComplete, this );
@@ -553,7 +554,12 @@ wxString AGENT_FRAME::BuildStreamingContent()
         wxString dots;
         for( int i = 0; i < m_generatingDots; i++ )
             dots += ".";
-        streamingContent += "<font color='#888888'>" + dots + "</font>";
+
+        // Show tool name if a tool is being generated
+        if( !m_generatingToolName.IsEmpty() )
+            streamingContent += "<font color='#888888'>" + m_generatingToolName + dots + "</font>";
+        else
+            streamingContent += "<font color='#888888'>" + dots + "</font>";
     }
 
     return streamingContent;
@@ -648,6 +654,7 @@ void AGENT_FRAME::StopGeneratingAnimation()
     m_generatingTimer.Stop();
     m_htmlUpdateTimer.Stop();
     m_generatingDots = 0;
+    m_generatingToolName.Clear();
 
     // Perform one final HTML update if there was a pending update
     if( m_htmlUpdateNeeded )
@@ -2407,6 +2414,27 @@ void AGENT_FRAME::OnChatThinkingDone( wxThreadEvent& aEvent )
 }
 
 
+void AGENT_FRAME::OnChatToolGenerating( wxThreadEvent& aEvent )
+{
+    ChatToolGeneratingData* data = aEvent.GetPayload<ChatToolGeneratingData*>();
+    if( !data )
+        return;
+
+    // Reset streaming markdown flag so tool name shows (not hidden by preceding text)
+    m_isStreamingMarkdown = false;
+
+    // Store tool name for display in generating animation
+    m_generatingToolName = wxString::FromUTF8( data->toolName );
+
+    wxLogInfo( "AGENT_FRAME::OnChatToolGenerating - tool: %s", data->toolName.c_str() );
+
+    // Trigger UI update to show tool name
+    UpdateAgentResponse();
+
+    delete data;
+}
+
+
 void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
 {
     ChatToolStartData* data = aEvent.GetPayload<ChatToolStartData*>();
@@ -2415,6 +2443,10 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
 
     wxLogInfo( "AGENT_FRAME::OnChatToolStart - tool: %s (id=%s)",
             data->toolName.c_str(), data->toolId.c_str() );
+
+    // Clear generating tool name (tool is now executing, not generating)
+    m_generatingToolName.Clear();
+
     // Stop animation and finalize thinking
     StopGeneratingAnimation();
     m_isThinking = false;

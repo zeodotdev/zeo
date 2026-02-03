@@ -19,6 +19,7 @@
 
 #include "agent_tools.h"
 #include "agent_llm_client.h"
+#include "../tools/tool_registry.h"
 #include <nlohmann/json.hpp>
 #include <kiway.h>
 #include <wx/string.h>
@@ -92,6 +93,212 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( openEditor );
 
+    // ===== Direct File Tools (sch_*, pcb_*) =====
+
+    // Tool 4: sch_get_summary - Get high-level overview of schematic
+    LLM_TOOL schGetSummary;
+    schGetSummary.name = "sch_get_summary";
+    schGetSummary.description = "Get a high-level overview of a .kicad_sch schematic file. "
+                                "Returns JSON with symbols, wires, junctions, labels, and counts. "
+                                "Use this to understand the schematic before making modifications.";
+    schGetSummary.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to the .kicad_sch file" }
+            }}
+        }},
+        { "required", json::array( { "file_path" } ) }
+    };
+    tools.push_back( schGetSummary );
+
+    // Tool 5: sch_read_section - Read specific section of schematic
+    LLM_TOOL schReadSection;
+    schReadSection.name = "sch_read_section";
+    schReadSection.description = "Read a specific section of a .kicad_sch file. "
+                                 "Returns raw S-expression text for the requested section. "
+                                 "Sections: header, symbols, wires, junctions, labels, lib_symbols, text, sheets, all";
+    schReadSection.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to the .kicad_sch file" }
+            }},
+            { "section", {
+                { "type", "string" },
+                { "enum", json::array( { "header", "symbols", "wires", "junctions", "labels", "lib_symbols", "text", "sheets", "all" } ) },
+                { "description", "Section to read" }
+            }},
+            { "filter", {
+                { "type", "string" },
+                { "description", "Optional filter by reference (e.g., 'R*' for all resistors) or UUID" }
+            }}
+        }},
+        { "required", json::array( { "file_path", "section" } ) }
+    };
+    tools.push_back( schReadSection );
+
+    // Tool 6: sch_modify - Add, update, or delete elements
+    LLM_TOOL schModify;
+    schModify.name = "sch_modify";
+    schModify.description = "Modify a .kicad_sch file by adding, updating, or deleting elements. "
+                            "Elements must be provided as raw S-expressions matching the KiCad file format. "
+                            "The file is validated after modification to prevent corruption.";
+    schModify.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to the .kicad_sch file" }
+            }},
+            { "operation", {
+                { "type", "string" },
+                { "enum", json::array( { "add", "update", "delete" } ) },
+                { "description", "Operation to perform" }
+            }},
+            { "element_type", {
+                { "type", "string" },
+                { "enum", json::array( { "symbol", "wire", "junction", "label", "text" } ) },
+                { "description", "Type of element to modify" }
+            }},
+            { "data", {
+                { "type", "string" },
+                { "description", "S-expression for the element (required for add/update)" }
+            }},
+            { "target", {
+                { "type", "string" },
+                { "description", "UUID or reference designator to update/delete (required for update/delete)" }
+            }}
+        }},
+        { "required", json::array( { "file_path", "operation", "element_type" } ) }
+    };
+    tools.push_back( schModify );
+
+    // Tool 7: sch_validate - Validate schematic file
+    LLM_TOOL schValidate;
+    schValidate.name = "sch_validate";
+    schValidate.description = "Validate a .kicad_sch file without modifying it. "
+                              "Checks syntax (S-expression parsing), structure (required fields, UUID uniqueness), "
+                              "and returns warnings about potential issues.";
+    schValidate.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to the .kicad_sch file" }
+            }}
+        }},
+        { "required", json::array( { "file_path" } ) }
+    };
+    tools.push_back( schValidate );
+
+    // Tool 8: sch_write - Write complete schematic content
+    LLM_TOOL schWrite;
+    schWrite.name = "sch_write";
+    schWrite.description = "Write complete schematic content to a .kicad_sch file. "
+                           "Use for creating new schematics or major rewrites. "
+                           "Content must be valid KiCad S-expression format. "
+                           "Creates a .bak backup if file exists (unless backup=false).";
+    schWrite.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to write the .kicad_sch file" }
+            }},
+            { "content", {
+                { "type", "string" },
+                { "description", "Complete schematic content as S-expression" }
+            }},
+            { "backup", {
+                { "type", "boolean" },
+                { "description", "Create .bak backup if file exists (default: true)" }
+            }}
+        }},
+        { "required", json::array( { "file_path", "content" } ) }
+    };
+    tools.push_back( schWrite );
+
+    // PCB tools (stubs - not yet implemented)
+    // Tool 9: pcb_get_summary
+    LLM_TOOL pcbGetSummary;
+    pcbGetSummary.name = "pcb_get_summary";
+    pcbGetSummary.description = "[NOT YET IMPLEMENTED] Get overview of a .kicad_pcb file. "
+                                "Use run_shell with mode 'pcb' for PCB operations until implemented.";
+    pcbGetSummary.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to the .kicad_pcb file" }
+            }}
+        }},
+        { "required", json::array( { "file_path" } ) }
+    };
+    tools.push_back( pcbGetSummary );
+
+    // Tool 10: pcb_read_section
+    LLM_TOOL pcbReadSection;
+    pcbReadSection.name = "pcb_read_section";
+    pcbReadSection.description = "[NOT YET IMPLEMENTED] Read section of a .kicad_pcb file. "
+                                  "Use run_shell with mode 'pcb' for PCB operations until implemented.";
+    pcbReadSection.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", { { "type", "string" } }},
+            { "section", { { "type", "string" } }}
+        }},
+        { "required", json::array( { "file_path", "section" } ) }
+    };
+    tools.push_back( pcbReadSection );
+
+    // Tool 11: pcb_modify
+    LLM_TOOL pcbModify;
+    pcbModify.name = "pcb_modify";
+    pcbModify.description = "[NOT YET IMPLEMENTED] Modify a .kicad_pcb file. "
+                            "Use run_shell with mode 'pcb' for PCB operations until implemented.";
+    pcbModify.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", { { "type", "string" } }},
+            { "operation", { { "type", "string" } }},
+            { "element_type", { { "type", "string" } }}
+        }},
+        { "required", json::array( { "file_path", "operation", "element_type" } ) }
+    };
+    tools.push_back( pcbModify );
+
+    // Tool 12: pcb_validate
+    LLM_TOOL pcbValidate;
+    pcbValidate.name = "pcb_validate";
+    pcbValidate.description = "[NOT YET IMPLEMENTED] Validate a .kicad_pcb file. "
+                              "Use run_shell with mode 'pcb' for PCB operations until implemented.";
+    pcbValidate.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", { { "type", "string" } }}
+        }},
+        { "required", json::array( { "file_path" } ) }
+    };
+    tools.push_back( pcbValidate );
+
+    // Tool 13: pcb_write
+    LLM_TOOL pcbWrite;
+    pcbWrite.name = "pcb_write";
+    pcbWrite.description = "[NOT YET IMPLEMENTED] Write complete PCB content to a .kicad_pcb file. "
+                           "Use run_shell with mode 'pcb' for PCB operations until implemented.";
+    pcbWrite.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", { { "type", "string" } }},
+            { "content", { { "type", "string" } }}
+        }},
+        { "required", json::array( { "file_path", "content" } ) }
+    };
+    tools.push_back( pcbWrite );
+
     return tools;
 }
 
@@ -129,6 +336,14 @@ std::string ExecuteToolSync( const std::string& aToolName, const nlohmann::json&
                               std::function<std::string( int, const std::string& )> aSendRequestFn )
 {
     wxLogInfo( "AgentTools::ExecuteToolSync called for tool: %s", aToolName.c_str() );
+
+    // Check if this is a direct file tool (sch_*, pcb_*)
+    if( TOOL_REGISTRY::Instance().HasHandler( aToolName ) )
+    {
+        // Execute directly without going through terminal frame
+        return TOOL_REGISTRY::Instance().Execute( aToolName, aInput );
+    }
+
     if( aToolName == "run_shell" )
     {
         std::string mode = aInput.value( "mode", "" );
@@ -158,6 +373,13 @@ std::string ExecuteToolSync( const std::string& aToolName, const nlohmann::json&
 wxString GetToolDescription( const std::string& aToolName, const nlohmann::json& aInput )
 {
     wxLogInfo( "AgentTools::GetToolDescription called for tool: %s", aToolName.c_str() );
+
+    // Check if this is a direct file tool (sch_*, pcb_*)
+    if( TOOL_REGISTRY::Instance().HasHandler( aToolName ) )
+    {
+        return wxString::FromUTF8( TOOL_REGISTRY::Instance().GetDescription( aToolName, aInput ) );
+    }
+
     // Generate human-readable description based on tool name and input
     if( aToolName == "run_shell" || aToolName == "run_python" )
     {

@@ -759,11 +759,18 @@ void CHAT_CONTROLLER::ExecuteNextTool()
         TOOL_REGISTRY::Instance().SetProjectPath( m_getProjectPathFn() );
     }
 
+    // Log project path being used for debugging
+    if( m_getProjectPathFn )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - project path: %s", m_getProjectPathFn().c_str() );
+    }
+
     // Execute tool - route through TOOL_REGISTRY for file tools, KIWAY for terminal tools
     std::string result = AgentTools::ExecuteToolSync( tool->tool_name, tool->tool_input, m_sendRequestFn );
 
-    // Process the result
-    ProcessToolResult( tool->tool_use_id, result, !result.empty() && result.find( "Error:" ) != 0 );
+    // Process the result (logging happens in ProcessToolResult)
+    bool success = !result.empty() && result.find( "Error:" ) != 0;
+    ProcessToolResult( tool->tool_use_id, result, success );
 }
 
 
@@ -771,8 +778,17 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
                                           const std::string& aResult,
                                           bool aSuccess )
 {
-    wxLogInfo( "CHAT_CONTROLLER::ProcessToolResult - toolId=%s, success=%s, result_len=%zu",
-               aToolId.c_str(), aSuccess ? "true" : "false", aResult.length() );
+    // Log full result for ALL tool calls
+    if( aSuccess )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::ProcessToolResult - toolId=%s SUCCESS, result_len=%zu",
+                   aToolId.c_str(), aResult.length() );
+    }
+    else
+    {
+        wxLogError( "CHAT_CONTROLLER::ProcessToolResult - toolId=%s FAILED: %s",
+                    aToolId.c_str(), aResult.c_str() );
+    }
 
     // Validate toolId is not empty
     if( aToolId.empty() )

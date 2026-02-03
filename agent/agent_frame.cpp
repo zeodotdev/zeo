@@ -84,6 +84,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_pendingOpenSch( false ),
         m_pendingOpenPcb( false )
 {
+    // Set frame background color to match the theme
+    SetBackgroundColour( wxColour( "#1E1E1E" ) );
 
     // --- UI Layout ---
 
@@ -136,8 +138,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     mainSizer->Add( m_chatWindow, 1, wxEXPAND | wxALL, 0 ); // Remove ALL padding for clean edge
 
     // Pending Changes Panel (between chat and input, hidden by default)
+    // Tab-like appearance with margins from the sides
     m_pendingChangesPanel = new PENDING_CHANGES_PANEL( this, this );
-    mainSizer->Add( m_pendingChangesPanel, 0, wxEXPAND );
+    mainSizer->Add( m_pendingChangesPanel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 12 );
 
     // 2. Input Container (Unified Look)
     // Create m_inputPanel for dark styling
@@ -1995,10 +1998,12 @@ void AGENT_FRAME::RefreshPendingChangesPanel()
     m_pendingChangesPanel->Refresh();
 
     // Show/hide the toggle button based on whether the panel has content
+    // When there are no changes, hide the button entirely
     bool hasChanges = m_pendingChangesPanel->IsShown();
     m_pendingChangesBtn->Show( hasChanges );
 
-    if( hasChanges && !m_pendingChangesBtn->IsShown() )
+    // Set correct label based on panel visibility
+    if( hasChanges )
     {
         m_pendingChangesBtn->SetLabel( "Hide Changes" );
     }

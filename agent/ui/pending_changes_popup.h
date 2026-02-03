@@ -36,11 +36,15 @@ class AGENT_FRAME;
 /**
  * Panel for displaying pending agent changes.
  *
- * Shows a list of sheets/files with pending changes. Each row has:
- * - Sheet/file name
- * - View button to navigate to that sheet and see the diff overlay
+ * Shows a tab-like panel with rounded top corners, containing a list of
+ * sheets/files with pending changes. Each row is clickable and navigates
+ * to that sheet/PCB to view the diff overlay.
  *
- * Accept/Reject is handled by the floating diff overlay buttons, not this panel.
+ * Visual style:
+ * - Rounded top corners (16px radius)
+ * - Lighter grey background (#3D3D3D)
+ * - Margins from the sides of the agent window
+ * - Clickable rows with hover effect
  */
 class PENDING_CHANGES_PANEL : public wxPanel
 {
@@ -55,8 +59,14 @@ public:
     void Refresh();
 
 private:
+    // Paint event handlers for custom rounded corners
+    void OnPaint( wxPaintEvent& aEvent );
+    void OnEraseBackground( wxEraseEvent& aEvent );
+
     void createUI();
     void rebuildSheetList();
+    void createClickableRow( const wxString& aLabel, bool aIsPcb );
+    void onRowClick( wxMouseEvent& aEvent );
     void onViewSheet( const wxString& aSheetPath );
     void onViewPcb();
     void onAcceptAll();

@@ -40,6 +40,7 @@ wxDEFINE_EVENT( EVT_CHAT_TEXT_DELTA, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_THINKING_START, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_THINKING_DELTA, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_THINKING_DONE, wxThreadEvent );
+wxDEFINE_EVENT( EVT_CHAT_TOOL_GENERATING, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_TOOL_START, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_TOOL_COMPLETE, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_TURN_COMPLETE, wxThreadEvent );
@@ -366,6 +367,9 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
     case LLMChunkType::THINKING_DONE:
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - THINKING_DONE" );
         break;
+    case LLMChunkType::TOOL_USE_START:
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - TOOL_USE_START: %s", aChunk.tool_name.c_str() );
+        break;
     case LLMChunkType::TOOL_USE:
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - TOOL_USE: %s (id=%s)",
                 aChunk.tool_name.c_str(), aChunk.tool_use_id.c_str() );
@@ -414,6 +418,12 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         // Store the signature for including in API context
         m_thinkingSignature = aChunk.thinking_signature;
         EmitEvent( EVT_CHAT_THINKING_DONE, ChatThinkingDoneData( m_thinkingContent ) );
+        break;
+
+    case LLMChunkType::TOOL_USE_START:
+        // Notify UI that a tool is being generated (show tool name while streaming)
+        EmitEvent( EVT_CHAT_TOOL_GENERATING,
+                   ChatToolGeneratingData( aChunk.tool_use_id, aChunk.tool_name ) );
         break;
 
     case LLMChunkType::TOOL_USE:
@@ -735,19 +745,11 @@ void CHAT_CONTROLLER::ExecuteNextTool()
         return;
     }
 
-    // Execute tool via KIWAY
-    if( m_sendRequestFn )
-    {
-        std::string payload = AgentTools::BuildToolPayload( tool->tool_name, tool->tool_input );
-        std::string result = m_sendRequestFn( FRAME_TERMINAL, payload );
+    // Execute tool - route through TOOL_REGISTRY for file tools, KIWAY for terminal tools
+    std::string result = AgentTools::ExecuteToolSync( tool->tool_name, tool->tool_input, m_sendRequestFn );
 
-        // Process the result
-        ProcessToolResult( tool->tool_use_id, result, !result.empty() && result.find( "Error:" ) != 0 );
-    }
-    else
-    {
-        ProcessToolResult( tool->tool_use_id, "Error: No KIWAY request function configured", false );
-    }
+    // Process the result
+    ProcessToolResult( tool->tool_use_id, result, !result.empty() && result.find( "Error:" ) != 0 );
 }
 
 

@@ -100,6 +100,7 @@ enum class LLMChunkType
     THINKING_START,    // Thinking block started (show loading)
     THINKING,          // Thinking block content delta (streamed incrementally)
     THINKING_DONE,     // Thinking block complete
+    TOOL_USE_START,    // Tool use block started (show tool name while generating)
     TOOL_USE,          // Tool call with id, name, input
     TOOL_USE_DONE,     // All tool calls parsed, ready to execute
     END_TURN,          // Model finished (stop_reason: end_turn)

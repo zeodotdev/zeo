@@ -90,6 +90,7 @@ public:
     void OnChatThinkingStart( wxThreadEvent& aEvent );
     void OnChatThinkingDelta( wxThreadEvent& aEvent );
     void OnChatThinkingDone( wxThreadEvent& aEvent );
+    void OnChatToolGenerating( wxThreadEvent& aEvent );
     void OnChatToolStart( wxThreadEvent& aEvent );
     void OnChatToolComplete( wxThreadEvent& aEvent );
     void OnChatTurnComplete( wxThreadEvent& aEvent );
@@ -189,6 +190,7 @@ private:
     wxTimer  m_generatingTimer;        // Timer for animating dots
     int      m_generatingDots;         // Current dot count (0-3)
     bool     m_isGenerating;           // Whether we're currently streaming
+    wxString m_generatingToolName;     // Tool name being generated (if any)
     void     OnGeneratingTimer( wxTimerEvent& aEvent );
     void     OnHtmlUpdateTimer( wxTimerEvent& aEvent );
     void     StartGeneratingAnimation();

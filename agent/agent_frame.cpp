@@ -6,7 +6,7 @@
 #include "ui/history_panel.h"
 #include "rendering/agent_markdown.h"
 #include "rendering/agent_html_template.h"
-#include "core/agent_tools.h"
+#include "tools/agent_tools.h"
 #include "core/chat_controller.h"
 #include "core/chat_events.h"
 #include "tools/tool_registry.h"

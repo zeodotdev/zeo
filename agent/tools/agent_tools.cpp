@@ -18,8 +18,8 @@
  */
 
 #include "agent_tools.h"
-#include "agent_llm_client.h"
-#include "../tools/tool_registry.h"
+#include "../agent_llm_client.h"
+#include "tool_registry.h"
 #include <nlohmann/json.hpp>
 #include <kiway.h>
 #include <wx/string.h>
@@ -369,9 +369,16 @@ std::string ExecuteToolSync( const std::string& aToolName, const nlohmann::json&
 {
     wxLogInfo( "AgentTools::ExecuteToolSync called for tool: %s", aToolName.c_str() );
 
-    // Check if this is a direct file tool (sch_*, pcb_*)
+    // Check if this is a registered tool (sch_*, pcb_*)
     if( TOOL_REGISTRY::Instance().HasHandler( aToolName ) )
     {
+        // Check if this tool requires IPC execution (e.g., ERC needs live KiCad state)
+        if( TOOL_REGISTRY::Instance().RequiresIPC( aToolName ) )
+        {
+            std::string command = TOOL_REGISTRY::Instance().GetIPCCommand( aToolName, aInput );
+            return aSendRequestFn( FRAME_TERMINAL, command );
+        }
+
         // Execute directly without going through terminal frame
         return TOOL_REGISTRY::Instance().Execute( aToolName, aInput );
     }
@@ -396,43 +403,6 @@ std::string ExecuteToolSync( const std::string& aToolName, const nlohmann::json&
             return "Error: run_terminal requires 'command' parameter";
 
         return aSendRequestFn( FRAME_TERMINAL, "run_terminal " + command );
-    }
-    else if( aToolName == "sch_run_erc" )
-    {
-        std::string format = aInput.value( "output_format", "summary" );
-        bool includeWarnings = aInput.value( "include_warnings", true );
-
-        std::string code;
-
-        if( format == "summary" )
-        {
-            code = "# Run ERC and print summary\n"
-                   "result = sch.erc.analyze()\n"
-                   "print(result['summary'])\n";
-        }
-        else if( format == "detailed" )
-        {
-            code = "import json\n"
-                   "result = sch.erc.analyze()\n";
-            if( !includeWarnings )
-                code += "result['violations'] = [v for v in result['violations'] if v['severity'] == 'error']\n";
-            code += "output = {'error_count': result['error_count'], "
-                    "'warning_count': result['warning_count'], "
-                    "'violations': result['violations']}\n"
-                    "print(json.dumps(output, indent=2))\n";
-        }
-        else if( format == "by_type" )
-        {
-            code = "import json\n"
-                   "result = sch.erc.analyze()\n"
-                   "output = {'error_count': result['error_count'], "
-                   "'warning_count': result['warning_count'], "
-                   "'by_type': {code: len(items) for code, items in result['by_type'].items()}}\n"
-                   "print(json.dumps(output, indent=2))\n";
-        }
-
-        std::string command = "run_shell sch " + code;
-        return aSendRequestFn( FRAME_TERMINAL, command );
     }
 
     return "Error: Unknown tool '" + aToolName + "'";
@@ -512,16 +482,6 @@ wxString GetToolDescription( const std::string& aToolName, const nlohmann::json&
         if( cmd.length() > 50 )
             cmd = cmd.substr( 0, 47 ) + "...";
         return wxString::Format( "Running: %s", cmd );
-    }
-    else if( aToolName == "sch_run_erc" )
-    {
-        std::string format = aInput.value( "output_format", "summary" );
-        if( format == "detailed" )
-            return "Running detailed ERC analysis";
-        else if( format == "by_type" )
-            return "Running ERC (grouped by type)";
-        else
-            return "Running ERC check";
     }
     else
     {

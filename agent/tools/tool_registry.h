@@ -68,6 +68,21 @@ public:
      */
     void SetProjectPath( const std::string& aPath );
 
+    /**
+     * Check if a tool requires IPC (run_shell) execution.
+     * @param aToolName The name of the tool to check.
+     * @return true if the tool requires IPC execution.
+     */
+    bool RequiresIPC( const std::string& aToolName ) const;
+
+    /**
+     * Get the IPC command string for a tool.
+     * @param aToolName The name of the tool.
+     * @param aInput The tool input parameters as JSON.
+     * @return The command string to execute via run_shell.
+     */
+    std::string GetIPCCommand( const std::string& aToolName, const nlohmann::json& aInput ) const;
+
 private:
     TOOL_REGISTRY();
     ~TOOL_REGISTRY() = default;

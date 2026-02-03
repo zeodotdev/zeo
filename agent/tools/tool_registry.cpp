@@ -20,6 +20,7 @@
 #include "tool_registry.h"
 #include "tool_handler.h"
 #include "schematic/sch_tool_handler.h"
+#include "schematic/sch_erc_handler.h"
 #include "pcb/pcb_tool_handler.h"
 
 
@@ -32,8 +33,9 @@ TOOL_REGISTRY& TOOL_REGISTRY::Instance()
 
 TOOL_REGISTRY::TOOL_REGISTRY()
 {
-    // Register schematic tool handler
+    // Register schematic tool handlers
     m_handlers.push_back( std::make_unique<SCH_TOOL_HANDLER>() );
+    m_handlers.push_back( std::make_unique<SCH_ERC_HANDLER>() );
 
     // Register PCB tool handler (stubs for now)
     m_handlers.push_back( std::make_unique<PCB_TOOL_HANDLER>() );
@@ -80,4 +82,27 @@ void TOOL_REGISTRY::SetProjectPath( const std::string& aPath )
     {
         handler->SetProjectPath( aPath );
     }
+}
+
+
+bool TOOL_REGISTRY::RequiresIPC( const std::string& aToolName ) const
+{
+    for( const auto& handler : m_handlers )
+    {
+        if( handler->CanHandle( aToolName ) )
+            return handler->RequiresIPC( aToolName );
+    }
+    return false;
+}
+
+
+std::string TOOL_REGISTRY::GetIPCCommand( const std::string& aToolName,
+                                           const nlohmann::json& aInput ) const
+{
+    for( const auto& handler : m_handlers )
+    {
+        if( handler->CanHandle( aToolName ) )
+            return handler->GetIPCCommand( aToolName, aInput );
+    }
+    return "";
 }

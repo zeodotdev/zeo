@@ -62,6 +62,24 @@ public:
      * @param aPath The absolute path to the project directory.
      */
     virtual void SetProjectPath( const std::string& aPath ) { /* Default no-op */ }
+
+    /**
+     * Check if this tool requires IPC (run_shell) execution rather than direct execution.
+     * Tools that need KiCad's live document state (e.g., ERC) return true.
+     * @param aToolName The name of the tool to check.
+     * @return true if the tool requires IPC execution.
+     */
+    virtual bool RequiresIPC( const std::string& aToolName ) const { return false; }
+
+    /**
+     * Get the IPC command string for tools that require IPC execution.
+     * Only called if RequiresIPC() returns true.
+     * @param aToolName The name of the tool.
+     * @param aInput The tool input parameters as JSON.
+     * @return The command string to execute via run_shell (e.g., "run_shell sch <code>").
+     */
+    virtual std::string GetIPCCommand( const std::string& aToolName,
+                                        const nlohmann::json& aInput ) const { return ""; }
 };
 
 #endif // TOOL_HANDLER_H

@@ -31,6 +31,8 @@
 #include <tools/board_inspection_tool.h>
 #include <router/router_tool.h>
 #include <pgm_base.h>
+#include <kiway.h>
+#include <mail_type.h>
 #include <tools/pcb_actions.h>
 #include <tools/pcb_picker_tool.h>
 #include <tools/pcb_selection_tool.h>
@@ -2107,7 +2109,14 @@ int PCB_CONTROL::Undo( const TOOL_EVENT& aEvent )
     wxCommandEvent       dummy;
 
     if( editFrame )
+    {
         editFrame->RestoreCopyFromUndoList( dummy );
+
+        // Notify agent that items may have been restored/deleted by undo
+        // This clears stale selection references in the agent
+        std::string payload;
+        editFrame->Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_CHECK_CHANGES, payload );
+    }
 
     return 0;
 }
@@ -2119,7 +2128,14 @@ int PCB_CONTROL::Redo( const TOOL_EVENT& aEvent )
     wxCommandEvent       dummy;
 
     if( editFrame )
+    {
         editFrame->RestoreCopyFromRedoList( dummy );
+
+        // Notify agent that items may have been restored/deleted by redo
+        // This clears stale selection references in the agent
+        std::string payload;
+        editFrame->Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_CHECK_CHANGES, payload );
+    }
 
     return 0;
 }

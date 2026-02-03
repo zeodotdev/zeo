@@ -1271,6 +1271,11 @@ int SCH_EDITOR_CONTROL::Undo( const TOOL_EVENT& aEvent )
     m_frame->GetCanvas()->Refresh();
     m_frame->OnModify();
 
+    // Notify agent that items may have been restored/deleted by undo
+    // This clears stale selection references in the agent
+    std::string payload;
+    m_frame->Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_CHECK_CHANGES, payload );
+
     return 0;
 }
 
@@ -1301,6 +1306,11 @@ int SCH_EDITOR_CONTROL::Redo( const TOOL_EVENT& aEvent )
 
     m_frame->GetCanvas()->Refresh();
     m_frame->OnModify();
+
+    // Notify agent that items may have been restored/deleted by redo
+    // This clears stale selection references in the agent
+    std::string payload;
+    m_frame->Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_CHECK_CHANGES, payload );
 
     return 0;
 }

@@ -921,6 +921,10 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
         // Diff overlay was dismissed or items changed - refresh the panel
         wxLogInfo( "AGENT_FRAME: Received diff/check changes notification, refreshing panel" );
         RefreshPendingChangesPanel();
+
+        // Clear the selection pill - selected items may have been deleted by rejection or undo
+        // The editors will send a new MAIL_SELECTION if items are still selected
+        m_selectionPill->Show( false );
     }
     Layout();
 }

@@ -1,0 +1,556 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include "sch_parser.h"
+#include "../kicad_file/sexpr_util.h"
+#include "../kicad_file/file_writer.h"
+#include <regex>
+#include <sstream>
+#include <algorithm>
+
+namespace SchParser
+{
+
+// Helper to match wildcard patterns like "R*" or "C?"
+static bool MatchesPattern( const std::string& aValue, const std::string& aPattern )
+{
+    if( aPattern.empty() )
+        return true;
+
+    // Convert simple wildcards to regex
+    std::string regexStr;
+    for( char c : aPattern )
+    {
+        switch( c )
+        {
+        case '*': regexStr += ".*"; break;
+        case '?': regexStr += "."; break;
+        case '.': case '^': case '$': case '+': case '(': case ')':
+        case '[': case ']': case '{': case '}': case '|': case '\\':
+            regexStr += "\\";
+            regexStr += c;
+            break;
+        default:
+            regexStr += c;
+        }
+    }
+
+    try
+    {
+        std::regex pattern( "^" + regexStr + "$", std::regex::icase );
+        return std::regex_match( aValue, pattern );
+    }
+    catch( ... )
+    {
+        return aValue == aPattern;  // Fallback to exact match on regex error
+    }
+}
+
+
+// Helper to extract reference designator from a symbol S-expression
+static std::string ExtractReference( const SEXPR::SEXPR* aSymbol )
+{
+    auto props = SexprUtil::FindChildren( aSymbol, "property" );
+    for( const auto& prop : props )
+    {
+        auto children = prop->GetChildren();
+        if( children && children->size() >= 3 )
+        {
+            const SEXPR::SEXPR* nameExpr = children->at( 1 );
+            if( nameExpr->IsString() && nameExpr->GetString() == "Reference" )
+            {
+                const SEXPR::SEXPR* valueExpr = children->at( 2 );
+                if( valueExpr->IsString() )
+                    return valueExpr->GetString();
+            }
+        }
+    }
+    return "";
+}
+
+
+// Helper to extract value from a symbol S-expression
+static std::string ExtractValue( const SEXPR::SEXPR* aSymbol )
+{
+    auto props = SexprUtil::FindChildren( aSymbol, "property" );
+    for( const auto& prop : props )
+    {
+        auto children = prop->GetChildren();
+        if( children && children->size() >= 3 )
+        {
+            const SEXPR::SEXPR* nameExpr = children->at( 1 );
+            if( nameExpr->IsString() && nameExpr->GetString() == "Value" )
+            {
+                const SEXPR::SEXPR* valueExpr = children->at( 2 );
+                if( valueExpr->IsString() )
+                    return valueExpr->GetString();
+            }
+        }
+    }
+    return "";
+}
+
+
+nlohmann::json SymbolInfo::ToJson() const
+{
+    return {
+        { "uuid", uuid },
+        { "ref", reference },
+        { "value", value },
+        { "lib", libId },
+        { "pos", { x, y } },
+        { "angle", angle },
+        { "unit", unit }
+    };
+}
+
+
+nlohmann::json SchematicSummary::ToJson() const
+{
+    nlohmann::json symbolsJson = nlohmann::json::array();
+    for( const auto& sym : symbols )
+    {
+        symbolsJson.push_back( sym.ToJson() );
+    }
+
+    return {
+        { "file", file },
+        { "version", version },
+        { "uuid", uuid },
+        { "paper", paper },
+        { "title", title },
+        { "symbols", symbolsJson },
+        { "wires", wireCount },
+        { "junctions", junctionCount },
+        { "labels", labels },
+        { "sheets", sheetCount }
+    };
+}
+
+
+SchematicSummary GetSummary( const std::string& aFilePath )
+{
+    SchematicSummary summary;
+    summary.file = FileWriter::GetFilename( aFilePath );
+    summary.version = 0;
+    summary.wireCount = 0;
+    summary.junctionCount = 0;
+    summary.sheetCount = 0;
+
+    auto root = SexprUtil::ParseFile( aFilePath );
+    if( !root || !root->IsList() )
+        return summary;
+
+    // Verify it's a kicad_sch file
+    if( SexprUtil::GetListType( root.get() ) != "kicad_sch" )
+        return summary;
+
+    // Extract version
+    auto versionExpr = SexprUtil::FindFirstChild( root.get(), "version" );
+    if( versionExpr )
+        summary.version = SexprUtil::GetIntValue( versionExpr );
+
+    // Extract UUID
+    auto uuidExpr = SexprUtil::FindFirstChild( root.get(), "uuid" );
+    if( uuidExpr )
+        summary.uuid = SexprUtil::GetStringValue( uuidExpr );
+
+    // Extract paper size
+    auto paperExpr = SexprUtil::FindFirstChild( root.get(), "paper" );
+    if( paperExpr )
+        summary.paper = SexprUtil::GetStringValue( paperExpr );
+
+    // Extract title from title_block
+    auto titleBlock = SexprUtil::FindFirstChild( root.get(), "title_block" );
+    if( titleBlock )
+    {
+        auto titleExpr = SexprUtil::FindFirstChild( titleBlock, "title" );
+        if( titleExpr )
+            summary.title = SexprUtil::GetStringValue( titleExpr );
+    }
+
+    // Extract symbols
+    auto symbols = SexprUtil::FindChildren( root.get(), "symbol" );
+    for( const auto& sym : symbols )
+    {
+        SymbolInfo info;
+
+        // Get UUID
+        auto uuidChild = SexprUtil::FindFirstChild( sym, "uuid" );
+        if( uuidChild )
+            info.uuid = SexprUtil::GetStringValue( uuidChild );
+
+        // Get lib_id
+        auto libIdChild = SexprUtil::FindFirstChild( sym, "lib_id" );
+        if( libIdChild )
+            info.libId = SexprUtil::GetStringValue( libIdChild );
+
+        // Get position
+        auto atChild = SexprUtil::FindFirstChild( sym, "at" );
+        if( atChild )
+            SexprUtil::GetCoordinates( atChild, info.x, info.y, info.angle );
+
+        // Get unit
+        auto unitChild = SexprUtil::FindFirstChild( sym, "unit" );
+        if( unitChild )
+            info.unit = SexprUtil::GetIntValue( unitChild );
+
+        // Get reference and value from properties
+        info.reference = ExtractReference( sym );
+        info.value = ExtractValue( sym );
+
+        summary.symbols.push_back( info );
+    }
+
+    // Count wires
+    summary.wireCount = static_cast<int>( SexprUtil::FindChildren( root.get(), "wire" ).size() );
+
+    // Count junctions
+    summary.junctionCount = static_cast<int>( SexprUtil::FindChildren( root.get(), "junction" ).size() );
+
+    // Extract label names
+    auto labels = SexprUtil::FindChildren( root.get(), "label" );
+    for( const auto& lbl : labels )
+    {
+        auto children = lbl->GetChildren();
+        if( children && children->size() >= 2 )
+        {
+            const SEXPR::SEXPR* nameExpr = children->at( 1 );
+            if( nameExpr->IsString() )
+                summary.labels.push_back( nameExpr->GetString() );
+        }
+    }
+
+    // Count sheets
+    summary.sheetCount = static_cast<int>( SexprUtil::FindChildren( root.get(), "sheet" ).size() );
+
+    return summary;
+}
+
+
+SectionType SectionFromString( const std::string& aName )
+{
+    if( aName == "header" )       return SectionType::HEADER;
+    if( aName == "lib_symbols" )  return SectionType::LIB_SYMBOLS;
+    if( aName == "symbols" )      return SectionType::SYMBOLS;
+    if( aName == "wires" )        return SectionType::WIRES;
+    if( aName == "junctions" )    return SectionType::JUNCTIONS;
+    if( aName == "labels" )       return SectionType::LABELS;
+    if( aName == "text" )         return SectionType::TEXT;
+    if( aName == "sheets" )       return SectionType::SHEETS;
+    if( aName == "sheet_instances" ) return SectionType::SHEET_INSTANCES;
+    return SectionType::ALL;
+}
+
+
+std::string ReadSection( const std::string& aFilePath, SectionType aSection,
+                         const std::string& aFilter )
+{
+    std::string content;
+    if( !FileWriter::ReadFile( aFilePath, content ) )
+        return "Error: Could not read file: " + aFilePath;
+
+    if( aSection == SectionType::ALL )
+        return content;
+
+    auto root = SexprUtil::Parse( content );
+    if( !root || !root->IsList() )
+        return "Error: Failed to parse schematic file";
+
+    std::stringstream result;
+
+    auto appendElements = [&]( const std::string& elementType )
+    {
+        auto elements = SexprUtil::FindChildren( root.get(), elementType );
+        for( const auto& elem : elements )
+        {
+            // Apply filter if specified
+            if( !aFilter.empty() )
+            {
+                // Check for UUID match
+                auto uuidChild = SexprUtil::FindFirstChild( elem, "uuid" );
+                if( uuidChild )
+                {
+                    std::string uuid = SexprUtil::GetStringValue( uuidChild );
+                    if( uuid == aFilter )
+                    {
+                        result << SexprUtil::ToString( elem ) << "\n";
+                        continue;
+                    }
+                }
+
+                // Check for reference match (symbols only)
+                if( elementType == "symbol" )
+                {
+                    std::string ref = ExtractReference( elem );
+                    if( !MatchesPattern( ref, aFilter ) )
+                        continue;
+                }
+            }
+            result << SexprUtil::ToString( elem ) << "\n";
+        }
+    };
+
+    switch( aSection )
+    {
+    case SectionType::HEADER:
+        // Return version, uuid, paper, title_block
+        {
+            auto ver = SexprUtil::FindFirstChild( root.get(), "version" );
+            auto gen = SexprUtil::FindFirstChild( root.get(), "generator" );
+            auto genVer = SexprUtil::FindFirstChild( root.get(), "generator_version" );
+            auto uuid = SexprUtil::FindFirstChild( root.get(), "uuid" );
+            auto paper = SexprUtil::FindFirstChild( root.get(), "paper" );
+            auto title = SexprUtil::FindFirstChild( root.get(), "title_block" );
+
+            if( ver ) result << SexprUtil::ToString( ver ) << "\n";
+            if( gen ) result << SexprUtil::ToString( gen ) << "\n";
+            if( genVer ) result << SexprUtil::ToString( genVer ) << "\n";
+            if( uuid ) result << SexprUtil::ToString( uuid ) << "\n";
+            if( paper ) result << SexprUtil::ToString( paper ) << "\n";
+            if( title ) result << SexprUtil::ToString( title ) << "\n";
+        }
+        break;
+
+    case SectionType::LIB_SYMBOLS:
+        {
+            auto libSymbols = SexprUtil::FindFirstChild( root.get(), "lib_symbols" );
+            if( libSymbols )
+                result << SexprUtil::ToString( libSymbols );
+        }
+        break;
+
+    case SectionType::SYMBOLS:
+        appendElements( "symbol" );
+        break;
+
+    case SectionType::WIRES:
+        appendElements( "wire" );
+        break;
+
+    case SectionType::JUNCTIONS:
+        appendElements( "junction" );
+        break;
+
+    case SectionType::LABELS:
+        appendElements( "label" );
+        break;
+
+    case SectionType::TEXT:
+        appendElements( "text" );
+        break;
+
+    case SectionType::SHEETS:
+        appendElements( "sheet" );
+        break;
+
+    case SectionType::SHEET_INSTANCES:
+        {
+            auto sheetInst = SexprUtil::FindFirstChild( root.get(), "sheet_instances" );
+            if( sheetInst )
+                result << SexprUtil::ToString( sheetInst );
+        }
+        break;
+
+    default:
+        return content;
+    }
+
+    return result.str();
+}
+
+
+std::string FindByUuid( const std::string& aContent, const std::string& aUuid )
+{
+    // Use regex to find the element containing this UUID
+    // Pattern matches any element that contains (uuid "target-uuid")
+    std::string pattern = R"(\([a-z_]+\s[^)]*\(uuid\s+\"?)" + aUuid + R"(\"?\)[^)]*\))";
+
+    // This is a simplification - real implementation would need proper S-expr balancing
+    // For now, let's parse and search
+    auto root = SexprUtil::Parse( aContent );
+    if( !root || !root->IsList() )
+        return "";
+
+    auto children = root->GetChildren();
+    if( !children )
+        return "";
+
+    for( const auto& child : *children )
+    {
+        if( !child->IsList() )
+            continue;
+
+        auto uuidExpr = SexprUtil::FindFirstChild( child, "uuid" );
+        if( uuidExpr && SexprUtil::GetStringValue( uuidExpr ) == aUuid )
+            return SexprUtil::ToString( child );
+    }
+
+    return "";
+}
+
+
+std::vector<std::string> FindSymbolsByReference( const std::string& aContent,
+                                                  const std::string& aPattern )
+{
+    std::vector<std::string> results;
+
+    auto root = SexprUtil::Parse( aContent );
+    if( !root || !root->IsList() )
+        return results;
+
+    auto symbols = SexprUtil::FindChildren( root.get(), "symbol" );
+    for( const auto& sym : symbols )
+    {
+        std::string ref = ExtractReference( sym );
+        if( MatchesPattern( ref, aPattern ) )
+            results.push_back( SexprUtil::ToString( sym ) );
+    }
+
+    return results;
+}
+
+
+std::string DeleteByUuid( const std::string& aContent, const std::string& aUuid )
+{
+    // Find and remove the element with matching UUID
+    // We need to find the start and end of the element
+
+    // Pattern to find uuid in content
+    std::string uuidPattern = "(uuid \"" + aUuid + "\")";
+    size_t uuidPos = aContent.find( uuidPattern );
+    if( uuidPos == std::string::npos )
+    {
+        // Try without quotes
+        uuidPattern = "(uuid " + aUuid + ")";
+        uuidPos = aContent.find( uuidPattern );
+        if( uuidPos == std::string::npos )
+            return aContent;  // Not found
+    }
+
+    // Find the start of the containing element (go backwards to find opening paren)
+    int parenDepth = 0;
+    size_t elementStart = uuidPos;
+
+    // First, count how deep we are
+    while( elementStart > 0 )
+    {
+        elementStart--;
+        if( aContent[elementStart] == ')' )
+            parenDepth++;
+        else if( aContent[elementStart] == '(' )
+        {
+            if( parenDepth == 0 )
+            {
+                // Found the start of our element
+                break;
+            }
+            parenDepth--;
+        }
+    }
+
+    // Now find the end of the element
+    size_t elementEnd = uuidPos;
+    parenDepth = 1;  // We're inside the element
+
+    // Find where element starts and count from there
+    elementEnd = elementStart + 1;
+    parenDepth = 1;
+
+    while( elementEnd < aContent.length() && parenDepth > 0 )
+    {
+        if( aContent[elementEnd] == '(' )
+            parenDepth++;
+        else if( aContent[elementEnd] == ')' )
+            parenDepth--;
+        elementEnd++;
+    }
+
+    // Remove the element and any trailing whitespace/newline
+    while( elementEnd < aContent.length() &&
+           ( aContent[elementEnd] == '\n' || aContent[elementEnd] == '\t' ||
+             aContent[elementEnd] == ' ' ) )
+    {
+        elementEnd++;
+    }
+
+    std::string result = aContent.substr( 0, elementStart );
+    result += aContent.substr( elementEnd );
+
+    return result;
+}
+
+
+std::string AddElement( const std::string& aContent, const std::string& aElementType,
+                        const std::string& aElement )
+{
+    // Find the appropriate place to insert the element
+    // Elements should be added before sheet_instances and embedded_fonts
+    // The order is typically: symbols, wires, junctions, labels, text, sheets, sheet_instances
+
+    std::string result = aContent;
+
+    // Find the position to insert (before closing paren of root, or before sheet_instances)
+    size_t insertPos = result.rfind( "\n)" );
+    if( insertPos == std::string::npos )
+        insertPos = result.rfind( ")" );
+
+    // Try to find a better position based on element type
+    static const std::vector<std::string> insertOrder = {
+        "sheet_instances", "embedded_fonts"
+    };
+
+    for( const auto& marker : insertOrder )
+    {
+        std::string searchStr = "\t(" + marker;
+        size_t markerPos = result.find( searchStr );
+        if( markerPos != std::string::npos )
+        {
+            insertPos = markerPos;
+            break;
+        }
+    }
+
+    // Insert the element
+    std::string toInsert = "\t" + aElement + "\n";
+    result.insert( insertPos, toInsert );
+
+    return result;
+}
+
+
+std::string UpdateElement( const std::string& aContent, const std::string& aUuid,
+                           const std::string& aNewElement )
+{
+    // Delete old element and add new one
+    std::string result = DeleteByUuid( aContent, aUuid );
+    if( result == aContent )
+        return aContent;  // Element not found
+
+    // Determine element type from the new element
+    auto parsed = SexprUtil::Parse( aNewElement );
+    if( !parsed )
+        return aContent;
+
+    std::string elementType = SexprUtil::GetListType( parsed.get() );
+
+    return AddElement( result, elementType, aNewElement );
+}
+
+} // namespace SchParser

@@ -81,10 +81,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_pendingChangesBtn( nullptr ),
         m_pendingChangesPanel( nullptr ),
         m_historyPanel( nullptr ),
-        m_hasPendingSchChanges( false ),
-        m_hasPendingPcbChanges( false ),
-        m_pendingSchSheetPath( wxEmptyString ),
-        m_pendingPcbFilename( wxEmptyString ),
         m_pendingOpenSch( false ),
         m_pendingOpenPcb( false )
 {
@@ -919,12 +915,12 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
             RequestUserAttention();
         }
     }
-    else if( aEvent.Command() == MAIL_AGENT_DIFF_CLEARED )
+    else if( aEvent.Command() == MAIL_AGENT_DIFF_CLEARED ||
+             aEvent.Command() == MAIL_AGENT_CHECK_CHANGES )
     {
-        // Diff overlay was dismissed in editor - clear the corresponding approval buttons
-        std::string payload = aEvent.GetPayload();
-        bool isSchematic = ( payload == "sch" );
-        ClearApprovalButtons( isSchematic );
+        // Diff overlay was dismissed or items changed - refresh the panel
+        wxLogInfo( "AGENT_FRAME: Received diff/check changes notification, refreshing panel" );
+        RefreshPendingChangesPanel();
     }
     Layout();
 }
@@ -1987,65 +1983,20 @@ void AGENT_FRAME::OnSize( wxSizeEvent& aEvent )
 // Agent Change Approval Methods
 // ============================================================================
 
-void AGENT_FRAME::CheckForPendingChanges()
+void AGENT_FRAME::RefreshPendingChangesPanel()
 {
-    m_hasPendingSchChanges = false;
-    m_hasPendingPcbChanges = false;
+    wxLogInfo( "AGENT_FRAME::RefreshPendingChangesPanel" );
 
-    // Query schematic editor for pending changes via ExpressMail
-    KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );
-    if( schPlayer )
-    {
-        std::string response;
-        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_HAS_CHANGES, response );
+    // The panel queries the editors directly and shows/hides itself
+    m_pendingChangesPanel->Refresh();
 
-        // Response is JSON with has_changes and sheet_path
-        try
-        {
-            nlohmann::json j = nlohmann::json::parse( response );
-            m_hasPendingSchChanges = j.value( "has_changes", false );
-            m_pendingSchSheetPath = wxString::FromUTF8( j.value( "sheet_path", "" ) );
-        }
-        catch( ... )
-        {
-            // Fallback for legacy format (plain "true"/"false")
-            m_hasPendingSchChanges = ( response == "true" );
-            m_pendingSchSheetPath = wxEmptyString;
-        }
-    }
+    // Show/hide the toggle button based on whether the panel has content
+    bool hasChanges = m_pendingChangesPanel->IsShown();
+    m_pendingChangesBtn->Show( hasChanges );
 
-    // Query PCB editor for pending changes via ExpressMail
-    KIWAY_PLAYER* pcbPlayer = Kiway().Player( FRAME_PCB_EDITOR, false );
-    if( pcbPlayer )
-    {
-        std::string response;
-        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_HAS_CHANGES, response );
-        m_hasPendingPcbChanges = ( response == "true" );
-    }
-
-    if( m_hasPendingSchChanges || m_hasPendingPcbChanges )
-        ShowApproveRejectButtons();
-}
-
-
-void AGENT_FRAME::ShowApproveRejectButtons()
-{
-    // Check if the button was already visible (user may have manually collapsed the panel)
-    bool wasAlreadyShowing = m_pendingChangesBtn->IsShown();
-
-    // Always show the indicator button
-    m_pendingChangesBtn->Show();
-
-    // Always update the panel content with sheet path information
-    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges,
-                                           m_pendingSchSheetPath, m_pendingPcbFilename );
-
-    // Only auto-show the panel if this is the first time showing changes
-    // (respect user's choice if they manually collapsed it)
-    if( !wasAlreadyShowing )
+    if( hasChanges && !m_pendingChangesBtn->IsShown() )
     {
         m_pendingChangesBtn->SetLabel( "Hide Changes" );
-        m_pendingChangesPanel->Show();
     }
 
     Layout();
@@ -2065,74 +2016,17 @@ void AGENT_FRAME::OnPendingChangesClick( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::OnSchematicChangeHandled( bool aAccepted )
 {
-    m_hasPendingSchChanges = false;
-    m_pendingSchSheetPath = wxEmptyString;
-
-    // Update panel
-    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges,
-                                           m_pendingSchSheetPath, m_pendingPcbFilename );
-
-    if( !m_hasPendingSchChanges && !m_hasPendingPcbChanges )
-    {
-        // No more pending changes - hide panel and button
-        m_pendingChangesPanel->Hide();
-        m_pendingChangesBtn->Hide();
-        Layout();
-    }
-
     AppendHtml( aAccepted ? "<p><i>Schematic changes accepted.</i></p>"
                           : "<p><i>Schematic changes rejected.</i></p>" );
+    RefreshPendingChangesPanel();
 }
 
 
 void AGENT_FRAME::OnPcbChangeHandled( bool aAccepted )
 {
-    m_hasPendingPcbChanges = false;
-    m_pendingPcbFilename = wxEmptyString;
-
-    // Update panel
-    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges,
-                                           m_pendingSchSheetPath, m_pendingPcbFilename );
-
-    if( !m_hasPendingSchChanges && !m_hasPendingPcbChanges )
-    {
-        // No more pending changes - hide panel and button
-        m_pendingChangesPanel->Hide();
-        m_pendingChangesBtn->Hide();
-        Layout();
-    }
-
     AppendHtml( aAccepted ? "<p><i>PCB changes accepted.</i></p>"
                           : "<p><i>PCB changes rejected.</i></p>" );
-}
-
-
-void AGENT_FRAME::ClearApprovalButtons( bool aIsSchematic )
-{
-    // Clear the pending changes flag and path for this editor
-    if( aIsSchematic )
-    {
-        m_hasPendingSchChanges = false;
-        m_pendingSchSheetPath = wxEmptyString;
-    }
-    else
-    {
-        m_hasPendingPcbChanges = false;
-        m_pendingPcbFilename = wxEmptyString;
-    }
-
-    // Update panel
-    m_pendingChangesPanel->UpdateChanges( m_hasPendingSchChanges, m_hasPendingPcbChanges,
-                                           m_pendingSchSheetPath, m_pendingPcbFilename );
-
-    if( !m_hasPendingSchChanges && !m_hasPendingPcbChanges )
-    {
-        // No more pending changes - hide panel and button
-        m_pendingChangesPanel->Hide();
-        m_pendingChangesBtn->Hide();
-        Layout();
-        AppendHtml( "<p><i>Changes handled via overlay.</i></p>" );
-    }
+    RefreshPendingChangesPanel();
 }
 
 
@@ -2143,11 +2037,6 @@ void AGENT_FRAME::ClearApprovalButtons( bool aIsSchematic )
 void AGENT_FRAME::SetAgentTargetSheet( const KIID& aSheetId, const wxString& aSheetName )
 {
     m_agentWorkspace.SetTargetSheet( aSheetId );
-
-    // Update the pending changes panel to show target sheet indicator
-    // The current sheet name would need to be queried from the schematic editor
-    // For now, we'll pass an empty string and let the panel handle it
-    m_pendingChangesPanel->SetTargetSheet( aSheetName, wxEmptyString );
 }
 
 
@@ -2222,14 +2111,8 @@ void AGENT_FRAME::OnConflictResolved( const KIID& aItemId, CONFLICT_RESOLUTION a
 
 void AGENT_FRAME::UpdateConflictDisplay()
 {
-    auto conflicts = m_agentWorkspace.GetConflicts();
-    m_pendingChangesPanel->UpdateConflicts( conflicts );
-
-    // If all conflicts are resolved, re-enable accept buttons
-    if( conflicts.empty() && m_pendingChangesPanel->IsShown() )
-    {
-        m_pendingChangesPanel->ClearConflicts();
-    }
+    // Conflicts are now handled via the diff overlay in each editor
+    // The pending changes panel just lists sheets with changes
 }
 
 
@@ -2694,7 +2577,7 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
         m_lastToolDesc, statusClass, statusText, displayResult );
 
     // Check for pending approval
-    CheckForPendingChanges();
+    RefreshPendingChangesPanel();
 
     UpdateAgentResponse();
     // Auto-scroll handled by CSS flex-direction: column-reverse

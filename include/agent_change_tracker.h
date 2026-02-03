@@ -94,6 +94,15 @@ public:
     std::set<KIID> GetTrackedItemsOnSheet( const wxString& aSheetPath ) const;
 
     /**
+     * Untrack all items on a sheet and any nested subsheets.
+     * When a sheet symbol is deleted, this untracks items on that sheet
+     * and recursively on any sheets that start with the given path.
+     * @param aSheetPath The sheet path prefix to untrack.
+     * @return Number of items untracked.
+     */
+    size_t UntrackItemsOnSheetAndNested( const wxString& aSheetPath );
+
+    /**
      * Get all tracked items regardless of sheet.
      * @return Set of all tracked KIIDs.
      */

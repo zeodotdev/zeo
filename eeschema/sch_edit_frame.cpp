@@ -26,6 +26,7 @@
 #include <api/api_handler_sch.h>
 #include <api/api_server.h>
 #include <agent_change_tracker.h>
+#include <nlohmann/json.hpp>
 #include <file_edit_session.h>
 #include <base_units.h>
 #include <bitmaps.h>
@@ -65,6 +66,7 @@
 #include <symbol_chooser_frame.h>
 #include <sch_painter.h>
 #include <sch_marker.h>
+#include <sch_sheet.h>
 #include <sch_sheet_pin.h>
 #include <sch_commit.h>
 #include <sch_rule_area.h>
@@ -624,7 +626,74 @@ SCH_EDIT_FRAME::~SCH_EDIT_FRAME()
 
 void SCH_EDIT_FRAME::OnSchItemsRemoved( SCHEMATIC& aSch, std::vector<SCH_ITEM*>& aSchItem )
 {
-    OnSchItemsChanged( aSch, aSchItem );
+    // When items are removed, untrack them from the agent change tracker
+    // This handles cases like user deleting a subsheet or individual components
+    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
+        return;
+
+    bool anyTrackedRemoved = false;
+
+    for( SCH_ITEM* item : aSchItem )
+    {
+        if( !item )
+            continue;
+
+        // Check if the item itself is tracked
+        if( m_agentChangeTracker->IsTracked( item->m_Uuid ) )
+        {
+            wxLogInfo( "SCH: Tracked item %s was deleted by user, untracking",
+                       item->m_Uuid.AsString() );
+            m_agentChangeTracker->UntrackItem( item->m_Uuid );
+            anyTrackedRemoved = true;
+        }
+
+        // Special handling for SCH_SHEET deletion - also untrack all items on that sheet
+        // and any nested subsheets (items on them aren't reported individually)
+        if( item->Type() == SCH_SHEET_T )
+        {
+            SCH_SHEET* sheet = static_cast<SCH_SHEET*>( item );
+
+            // Build the sheet path that's being deleted
+            SCH_SHEET_PATH deletedPath = GetCurrentSheet();
+            deletedPath.push_back( sheet );
+            wxString deletedSheetPathStr = deletedPath.PathHumanReadable( false );
+
+            wxLogInfo( "SCH: Sheet %s deleted, untracking items on that sheet and nested sheets",
+                       deletedSheetPathStr );
+
+            // Untrack all items on this sheet and any nested subsheets
+            size_t untracked = m_agentChangeTracker->UntrackItemsOnSheetAndNested( deletedSheetPathStr );
+            if( untracked > 0 )
+            {
+                wxLogInfo( "SCH: Untracked %zu items from deleted sheet hierarchy %s",
+                           untracked, deletedSheetPathStr );
+                anyTrackedRemoved = true;
+            }
+        }
+    }
+
+    if( anyTrackedRemoved )
+    {
+        // Check if we still have any tracked items
+        if( !m_agentChangeTracker->HasChanges() )
+        {
+            // All tracked items were deleted - clear pending changes state
+            wxLogInfo( "SCH: All tracked items deleted, clearing agent pending changes" );
+            m_hasAgentPendingChanges = false;
+            m_showingAgentBefore = false;
+            m_agentChangedSheetPath.clear();
+            DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
+        }
+        else
+        {
+            // Some items remain - refresh the diff overlay
+            DIFF_MANAGER::GetInstance().RefreshOverlay( GetCanvas()->GetView() );
+        }
+
+        // Notify agent frame to refresh its pending changes UI
+        std::string payload;
+        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_CHECK_CHANGES, payload );
+    }
 }
 
 
@@ -1113,19 +1182,31 @@ void SCH_EDIT_FRAME::SetCurrentSheet( const SCH_SHEET_PATH& aSheet )
             if( !itemsOnSheet.empty() )
             {
                 // Show the diff overlay on this sheet
+                // Capture sheet path for per-sheet approve/reject via overlay buttons
+                wxString capturedSheetPath = currentSheetPath;
                 DIFF_CALLBACKS callbacks;
-                callbacks.onApprove = [this]() {
+                callbacks.onApprove = [this, capturedSheetPath]() {
                     if( m_showingAgentBefore )
                         ShowAgentChangesAfter();
-                    ClearAgentPendingChanges();
-                    std::string payload = "sch";
+                    // Only approve changes on this sheet, not all sheets
+                    ApproveAgentChangesOnSheet( capturedSheetPath );
+                    // Notify agent frame with sheet path so it can update its UI
+                    nlohmann::json j;
+                    j["editor"] = "sch";
+                    j["sheet_path"] = capturedSheetPath.ToStdString();
+                    std::string payload = j.dump();
                     Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
                 };
-                callbacks.onReject = [this]() {
+                callbacks.onReject = [this, capturedSheetPath]() {
                     if( m_showingAgentBefore )
                         ShowAgentChangesAfter();
-                    RevertAgentChanges();
-                    std::string payload = "sch";
+                    // Only reject changes on this sheet, not all sheets
+                    RejectAgentChangesOnSheet( capturedSheetPath );
+                    // Notify agent frame with sheet path so it can update its UI
+                    nlohmann::json j;
+                    j["editor"] = "sch";
+                    j["sheet_path"] = capturedSheetPath.ToStdString();
+                    std::string payload = j.dump();
                     Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
                 };
                 callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
@@ -2416,19 +2497,31 @@ void SCH_EDIT_FRAME::DisplayCurrentSheet()
         if( !itemsOnSheet.empty() )
         {
             // Set up callbacks for the diff overlay
+            // Capture sheet path for per-sheet approve/reject via overlay buttons
+            wxString capturedSheetPath = currentSheetPath;
             DIFF_CALLBACKS callbacks;
-            callbacks.onApprove = [this]() {
+            callbacks.onApprove = [this, capturedSheetPath]() {
                 if( m_showingAgentBefore )
                     ShowAgentChangesAfter();
-                ClearAgentPendingChanges();
-                std::string payload = "sch";
+                // Only approve changes on this sheet, not all sheets
+                ApproveAgentChangesOnSheet( capturedSheetPath );
+                // Notify agent frame with sheet path so it can update its UI
+                nlohmann::json j;
+                j["editor"] = "sch";
+                j["sheet_path"] = capturedSheetPath.ToStdString();
+                std::string payload = j.dump();
                 Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
             };
-            callbacks.onReject = [this]() {
+            callbacks.onReject = [this, capturedSheetPath]() {
                 if( m_showingAgentBefore )
                     ShowAgentChangesAfter();
-                RevertAgentChanges();
-                std::string payload = "sch";
+                // Only reject changes on this sheet, not all sheets
+                RejectAgentChangesOnSheet( capturedSheetPath );
+                // Notify agent frame with sheet path so it can update its UI
+                nlohmann::json j;
+                j["editor"] = "sch";
+                j["sheet_path"] = capturedSheetPath.ToStdString();
+                std::string payload = j.dump();
                 Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
             };
             callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
@@ -3323,23 +3416,33 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
     if( isOnTargetSheet )
     {
         // Set up callbacks for the diff overlay
+        // Capture sheet path for per-sheet approve/reject via overlay buttons
+        wxString capturedSheetPath = GetCurrentSheet().PathHumanReadable( false );
         DIFF_CALLBACKS callbacks;
-        callbacks.onApprove = [this]() {
+        callbacks.onApprove = [this, capturedSheetPath]() {
             // Make sure we're showing "after" state before approving
             if( m_showingAgentBefore )
                 ShowAgentChangesAfter();
-            ClearAgentPendingChanges();
-            // Notify agent frame that diff was handled via overlay
-            std::string payload = "sch";
+            // Only approve changes on this sheet, not all sheets
+            ApproveAgentChangesOnSheet( capturedSheetPath );
+            // Notify agent frame with sheet path so it can update its UI
+            nlohmann::json j;
+            j["editor"] = "sch";
+            j["sheet_path"] = capturedSheetPath.ToStdString();
+            std::string payload = j.dump();
             Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
         };
-        callbacks.onReject = [this]() {
+        callbacks.onReject = [this, capturedSheetPath]() {
             // Make sure we're showing "after" state before reverting
             if( m_showingAgentBefore )
                 ShowAgentChangesAfter();
-            RevertAgentChanges();
-            // Notify agent frame that diff was handled via overlay
-            std::string payload = "sch";
+            // Only reject changes on this sheet, not all sheets
+            RejectAgentChangesOnSheet( capturedSheetPath );
+            // Notify agent frame with sheet path so it can update its UI
+            nlohmann::json j;
+            j["editor"] = "sch";
+            j["sheet_path"] = capturedSheetPath.ToStdString();
+            std::string payload = j.dump();
             Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
         };
         callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
@@ -3369,6 +3472,14 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
 }
 
 
+bool SCH_EDIT_FRAME::HasAgentPendingChanges() const
+{
+    // Return the tracker's actual state, not the cached flag
+    // This ensures the panel always reflects reality
+    return m_agentChangeTracker && m_agentChangeTracker->HasChanges();
+}
+
+
 void SCH_EDIT_FRAME::ClearAgentPendingChanges()
 {
     m_hasAgentPendingChanges = false;
@@ -3384,6 +3495,143 @@ void SCH_EDIT_FRAME::ClearAgentPendingChanges()
 
     // Clear redo list to prevent accidental redo after approve
     ClearUndoORRedoList( REDO_LIST );
+}
+
+
+void SCH_EDIT_FRAME::ApproveAgentChangesOnSheet( const wxString& aSheetPath )
+{
+    if( !m_hasAgentPendingChanges || !m_agentChangeTracker )
+        return;
+
+    wxLogInfo( "SCH: Approving agent changes on sheet '%s'", aSheetPath );
+
+    // Untrack all items on this sheet
+    std::set<KIID> itemsOnSheet = m_agentChangeTracker->GetTrackedItemsOnSheet( aSheetPath );
+    for( const KIID& kiid : itemsOnSheet )
+    {
+        m_agentChangeTracker->UntrackItem( kiid );
+    }
+
+    // Clear the diff overlay for the current view if it's this sheet
+    wxString currentSheetPath = GetCurrentSheet().PathHumanReadable( false );
+    if( currentSheetPath == aSheetPath )
+    {
+        DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
+    }
+
+    // If no more tracked items, clear everything
+    if( !m_agentChangeTracker->HasChanges() )
+    {
+        m_hasAgentPendingChanges = false;
+        m_showingAgentBefore = false;
+        m_agentChangedSheetPath.clear();
+        ClearUndoORRedoList( REDO_LIST );
+    }
+}
+
+
+void SCH_EDIT_FRAME::RejectAgentChangesOnSheet( const wxString& aSheetPath )
+{
+    if( !m_hasAgentPendingChanges || !m_agentChangeTracker )
+        return;
+
+    wxLogInfo( "SCH: Rejecting agent changes on sheet '%s'", aSheetPath );
+
+    // Get items on this sheet before untracking
+    std::set<KIID> itemsOnSheet = m_agentChangeTracker->GetTrackedItemsOnSheet( aSheetPath );
+
+    if( itemsOnSheet.empty() )
+        return;
+
+    // Find the screen for this sheet path
+    SCH_SHEET_LIST sheets = Schematic().Hierarchy();
+    SCH_SCREEN* targetScreen = nullptr;
+
+    for( const SCH_SHEET_PATH& path : sheets )
+    {
+        if( path.PathHumanReadable( false ) == aSheetPath )
+        {
+            targetScreen = path.LastScreen();
+            break;
+        }
+    }
+
+    if( !targetScreen )
+    {
+        wxLogWarning( "SCH: Could not find screen for sheet '%s'", aSheetPath );
+        return;
+    }
+
+    // Delete the tracked items on this sheet using a commit
+    // Also track any sheet symbols being deleted so we can untrack nested items
+    SCH_COMMIT commit( m_toolManager );
+    std::vector<wxString> nestedSheetPaths;
+
+    for( const KIID& kiid : itemsOnSheet )
+    {
+        // Find the item on the screen
+        for( SCH_ITEM* item : targetScreen->Items() )
+        {
+            if( item->m_Uuid == kiid )
+            {
+                // Check if this is a sheet symbol - need to untrack nested items too
+                if( item->Type() == SCH_SHEET_T )
+                {
+                    SCH_SHEET* sheet = static_cast<SCH_SHEET*>( item );
+                    SCH_SHEET_PATH nestedPath;
+                    // Build path by finding the path to target screen first
+                    SCH_SHEET_LIST allSheets = Schematic().Hierarchy();
+                    for( const SCH_SHEET_PATH& path : allSheets )
+                    {
+                        if( path.PathHumanReadable( false ) == aSheetPath )
+                        {
+                            nestedPath = path;
+                            nestedPath.push_back( sheet );
+                            nestedSheetPaths.push_back( nestedPath.PathHumanReadable( false ) );
+                            break;
+                        }
+                    }
+                }
+
+                commit.Remove( item, targetScreen );
+                break;
+            }
+        }
+
+        // Untrack the item
+        m_agentChangeTracker->UntrackItem( kiid );
+    }
+
+    // Untrack items on any nested sheets that are being deleted with their parent sheet symbols
+    for( const wxString& nestedPath : nestedSheetPaths )
+    {
+        size_t untracked = m_agentChangeTracker->UntrackItemsOnSheetAndNested( nestedPath );
+        if( untracked > 0 )
+        {
+            wxLogInfo( "SCH: Untracked %zu items from deleted nested sheet %s",
+                       untracked, nestedPath );
+        }
+    }
+
+    commit.Push( wxString::Format( "Reject agent changes on %s", aSheetPath ) );
+
+    // Clear the diff overlay for the current view if it's this sheet
+    wxString currentSheetPath = GetCurrentSheet().PathHumanReadable( false );
+    if( currentSheetPath == aSheetPath )
+    {
+        DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
+    }
+
+    // Refresh the canvas
+    GetCanvas()->Refresh();
+
+    // If no more tracked items, clear everything
+    if( !m_agentChangeTracker->HasChanges() )
+    {
+        m_hasAgentPendingChanges = false;
+        m_showingAgentBefore = false;
+        m_agentChangedSheetPath.clear();
+    }
 }
 
 

@@ -66,6 +66,7 @@ enum MAIL_T
     MAIL_AGENT_REJECT,        // Agent -> Editor: Reject pending changes
     MAIL_AGENT_DIFF_CLEARED,  // Editor -> Agent: Diff overlay was dismissed (payload: "sch" or "pcb")
     MAIL_AGENT_VIEW_CHANGES,  // Agent -> Editor: Bring editor to front and zoom to changes
+    MAIL_AGENT_CHECK_CHANGES, // Editor -> Agent: Tracked items changed, re-check pending changes
 
     // Concurrent editing - transaction management
     MAIL_AGENT_BEGIN_TRANSACTION,   // Agent -> Editor: Begin a new agent transaction (JSON: {sheet_uuid})

@@ -93,6 +93,29 @@ std::set<KIID> AGENT_CHANGE_TRACKER::GetTrackedItemsOnSheet( const wxString& aSh
 }
 
 
+size_t AGENT_CHANGE_TRACKER::UntrackItemsOnSheetAndNested( const wxString& aSheetPath )
+{
+    std::vector<KIID> toRemove;
+
+    for( const auto& [kiid, sheetPath] : m_trackedItems )
+    {
+        // Match exact path or any path that starts with this path
+        // e.g., aSheetPath="/root/sub" matches "/root/sub", "/root/sub/nested", etc.
+        if( sheetPath == aSheetPath || sheetPath.StartsWith( aSheetPath + "/" ) )
+        {
+            toRemove.push_back( kiid );
+        }
+    }
+
+    for( const KIID& kiid : toRemove )
+    {
+        m_trackedItems.erase( kiid );
+    }
+
+    return toRemove.size();
+}
+
+
 std::set<KIID> AGENT_CHANGE_TRACKER::GetAllTrackedItems() const
 {
     std::set<KIID> items;

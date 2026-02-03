@@ -911,9 +911,23 @@ public:
     void ClearAgentPendingChanges();
 
     /**
+     * Approve agent changes on a specific sheet only.
+     * Untracks items on that sheet and clears its diff overlay.
+     * @param aSheetPath The human-readable sheet path to approve.
+     */
+    void ApproveAgentChangesOnSheet( const wxString& aSheetPath );
+
+    /**
      * Revert pending agent changes (called on deny).
      */
     void RevertAgentChanges();
+
+    /**
+     * Reject agent changes on a specific sheet only.
+     * Reverts and untracks items on that sheet.
+     * @param aSheetPath The human-readable sheet path to reject.
+     */
+    void RejectAgentChangesOnSheet( const wxString& aSheetPath );
 
     /**
      * Temporarily show the "before" state (for View Before button).
@@ -927,7 +941,7 @@ public:
      */
     void ShowAgentChangesAfter();
 
-    bool HasAgentPendingChanges() const { return m_hasAgentPendingChanges; }
+    bool HasAgentPendingChanges() const;
 
     /**
      * Get the agent change tracker.

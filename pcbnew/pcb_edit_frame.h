@@ -929,7 +929,7 @@ public:
      */
     void ShowAgentChangesAfter();
 
-    bool HasAgentPendingChanges() const { return m_hasAgentPendingChanges; }
+    bool HasAgentPendingChanges() const;
 
     /**
      * Get the agent change tracker.

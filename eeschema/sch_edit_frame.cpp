@@ -3222,9 +3222,25 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
         if( !undoCommand )
             continue;
 
+        wxLogInfo( "SCH: Processing undo command %d with %u items", i, undoCommand->GetCount() );
+
         for( unsigned int j = 0; j < undoCommand->GetCount(); j++ )
         {
             EDA_ITEM* item = undoCommand->GetPickedItem( j );
+            UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
+
+            // Log the undo operation type
+            wxString statusStr;
+            switch( status )
+            {
+            case UNDO_REDO::CHANGED: statusStr = "CHANGED"; break;
+            case UNDO_REDO::NEWITEM: statusStr = "NEWITEM"; break;
+            case UNDO_REDO::DELETED: statusStr = "DELETED"; break;
+            case UNDO_REDO::LIBEDIT: statusStr = "LIBEDIT"; break;
+            case UNDO_REDO::LIB_RENAME: statusStr = "LIB_RENAME"; break;
+            case UNDO_REDO::PAGESETTINGS: statusStr = "PAGESETTINGS"; break;
+            default: statusStr = wxString::Format( "OTHER(%d)", static_cast<int>( status ) ); break;
+            }
 
             if( item )
             {
@@ -3233,12 +3249,14 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
                 SCH_SHEET_PATH itemSheet = sheets.FindSheetForScreen( screen );
                 wxString       sheetPath = itemSheet.PathHumanReadable( false );
 
+                wxLogInfo( "SCH: Tracking item %s (type=%s, status=%s) on sheet '%s'",
+                           item->m_Uuid.AsString(), item->GetClass(), statusStr, sheetPath );
+
                 // Track the item by KIID with its actual sheet path
                 m_agentChangeTracker->TrackItem( item->m_Uuid, sheetPath );
             }
 
             // For CHANGED operations, also track the linked item (current state)
-            UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
             if( status == UNDO_REDO::CHANGED )
             {
                 EDA_ITEM* link = undoCommand->GetPickedItemLink( j );
@@ -3248,7 +3266,14 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
                     SCH_SHEET_PATH itemSheet = sheets.FindSheetForScreen( screen );
                     wxString       sheetPath = itemSheet.PathHumanReadable( false );
 
+                    wxLogInfo( "SCH: Tracking CHANGED link %s (type=%s) on sheet '%s'",
+                               link->m_Uuid.AsString(), link->GetClass(), sheetPath );
+
                     m_agentChangeTracker->TrackItem( link->m_Uuid, sheetPath );
+                }
+                else
+                {
+                    wxLogInfo( "SCH: CHANGED item has no link!" );
                 }
             }
         }

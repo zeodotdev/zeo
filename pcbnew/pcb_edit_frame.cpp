@@ -724,13 +724,68 @@ PCB_EDIT_FRAME::~PCB_EDIT_FRAME()
 
 void PCB_EDIT_FRAME::OnBoardItemRemoved( BOARD& aBoard, BOARD_ITEM* aBoardItem )
 {
-    OnBoardItemChanged( aBoard, aBoardItem );
+    if( !m_hasAgentPendingChanges || !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() || !aBoardItem )
+        return;
+
+    // If a tracked item was removed, untrack it
+    if( m_agentChangeTracker->IsTracked( aBoardItem->m_Uuid ) )
+    {
+        wxLogInfo( "PCB: Tracked item %s removed, untracking", aBoardItem->m_Uuid.AsString() );
+        m_agentChangeTracker->UntrackItem( aBoardItem->m_Uuid );
+
+        // If all tracked items are gone, dismiss the diff view
+        if( !m_agentChangeTracker->HasChanges() )
+        {
+            wxLogInfo( "PCB: All tracked items removed, dismissing diff view" );
+            DIFF_MANAGER::GetInstance().ClearDiff();
+            m_hasAgentPendingChanges = false;
+            m_showingAgentBefore = false;
+            std::string payload = "pcb";
+            Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+        }
+        else
+        {
+            // Still have tracked items, refresh the overlay
+            DIFF_MANAGER::GetInstance().RefreshOverlay( GetCanvas()->GetView() );
+        }
+    }
 }
 
 
 void PCB_EDIT_FRAME::OnBoardItemsRemoved( BOARD& aBoard, std::vector<BOARD_ITEM*>& aBoardItems )
 {
-    OnBoardItemsChanged( aBoard, aBoardItems );
+    if( !m_hasAgentPendingChanges || !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
+        return;
+
+    bool anyRemoved = false;
+    for( BOARD_ITEM* item : aBoardItems )
+    {
+        if( item && m_agentChangeTracker->IsTracked( item->m_Uuid ) )
+        {
+            wxLogInfo( "PCB: Tracked item %s removed, untracking", item->m_Uuid.AsString() );
+            m_agentChangeTracker->UntrackItem( item->m_Uuid );
+            anyRemoved = true;
+        }
+    }
+
+    if( anyRemoved )
+    {
+        // If all tracked items are gone, dismiss the diff view
+        if( !m_agentChangeTracker->HasChanges() )
+        {
+            wxLogInfo( "PCB: All tracked items removed, dismissing diff view" );
+            DIFF_MANAGER::GetInstance().ClearDiff();
+            m_hasAgentPendingChanges = false;
+            m_showingAgentBefore = false;
+            std::string payload = "pcb";
+            Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+        }
+        else
+        {
+            // Still have tracked items, refresh the overlay
+            DIFF_MANAGER::GetInstance().RefreshOverlay( GetCanvas()->GetView() );
+        }
+    }
 }
 
 
@@ -739,15 +794,11 @@ void PCB_EDIT_FRAME::OnBoardItemChanged( BOARD& aBoard, BOARD_ITEM* aBoardItem )
     if( !m_hasAgentPendingChanges || !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() || !aBoardItem )
         return;
 
+    // If a tracked item was modified, just refresh the overlay - the bbox will auto-update
     if( m_agentChangeTracker->IsTracked( aBoardItem->m_Uuid ) )
     {
-        wxLogInfo( "PCB: Agent diff dismissed, user modified item %s", aBoardItem->m_Uuid.AsString() );
-        DIFF_MANAGER::GetInstance().ClearDiff();
-        m_hasAgentPendingChanges = false;
-        m_showingAgentBefore = false;
-        m_agentChangeTracker->ClearTrackedItems();
-        std::string payload = "pcb";
-        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+        wxLogInfo( "PCB: Tracked item %s modified, refreshing diff overlay", aBoardItem->m_Uuid.AsString() );
+        DIFF_MANAGER::GetInstance().RefreshOverlay( GetCanvas()->GetView() );
     }
 }
 
@@ -757,20 +808,19 @@ void PCB_EDIT_FRAME::OnBoardItemsChanged( BOARD& aBoard, std::vector<BOARD_ITEM*
     if( !m_hasAgentPendingChanges || !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
         return;
 
+    // Check if any tracked items were modified - if so, refresh the overlay
+    bool needsRefresh = false;
     for( BOARD_ITEM* item : aBoardItems )
     {
         if( item && m_agentChangeTracker->IsTracked( item->m_Uuid ) )
         {
-            wxLogInfo( "PCB: Agent diff dismissed, user modified item %s", item->m_Uuid.AsString() );
-            DIFF_MANAGER::GetInstance().ClearDiff();
-            m_hasAgentPendingChanges = false;
-            m_showingAgentBefore = false;
-            m_agentChangeTracker->ClearTrackedItems();
-            std::string payload = "pcb";
-            Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
-            return;
+            wxLogInfo( "PCB: Tracked item %s modified, will refresh diff overlay", item->m_Uuid.AsString() );
+            needsRefresh = true;
         }
     }
+
+    if( needsRefresh )
+        DIFF_MANAGER::GetInstance().RefreshOverlay( GetCanvas()->GetView() );
 }
 
 
@@ -782,30 +832,43 @@ void PCB_EDIT_FRAME::OnBoardCompositeUpdate( BOARD& aBoard,
     if( !m_hasAgentPendingChanges || !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
         return;
 
-    // Helper to check if any item in the list is in the agent working set
-    auto checkAndDismiss = [this]( std::vector<BOARD_ITEM*>& items, const char* action ) -> bool
+    bool needsRefresh = false;
+
+    // For removed items: untrack them and dismiss only if all tracked items are gone
+    for( BOARD_ITEM* item : aRemovedItems )
     {
-        for( BOARD_ITEM* item : items )
+        if( item && m_agentChangeTracker->IsTracked( item->m_Uuid ) )
         {
-            if( item && m_agentChangeTracker->IsTracked( item->m_Uuid ) )
-            {
-                wxLogInfo( "PCB: Agent diff dismissed, user %s item %s", action, item->m_Uuid.AsString() );
-                DIFF_MANAGER::GetInstance().ClearDiff();
-                m_hasAgentPendingChanges = false;
-                m_showingAgentBefore = false;
-                m_agentChangeTracker->ClearTrackedItems();
-                std::string payload = "pcb";
-                Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
-                return true;
-            }
+            wxLogInfo( "PCB: Tracked item %s removed, untracking", item->m_Uuid.AsString() );
+            m_agentChangeTracker->UntrackItem( item->m_Uuid );
+            needsRefresh = true;
         }
-        return false;
-    };
+    }
 
-    if( checkAndDismiss( aRemovedItems, "removed" ) )
+    // If all tracked items are gone, dismiss the diff view
+    if( !m_agentChangeTracker->HasChanges() )
+    {
+        wxLogInfo( "PCB: All tracked items removed, dismissing diff view" );
+        DIFF_MANAGER::GetInstance().ClearDiff();
+        m_hasAgentPendingChanges = false;
+        m_showingAgentBefore = false;
+        std::string payload = "pcb";
+        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
         return;
+    }
 
-    checkAndDismiss( aChangedItems, "modified" );
+    // For changed items: just refresh the overlay (bbox will auto-update)
+    for( BOARD_ITEM* item : aChangedItems )
+    {
+        if( item && m_agentChangeTracker->IsTracked( item->m_Uuid ) )
+        {
+            wxLogInfo( "PCB: Tracked item %s changed, will refresh diff overlay", item->m_Uuid.AsString() );
+            needsRefresh = true;
+        }
+    }
+
+    if( needsRefresh )
+        DIFF_MANAGER::GetInstance().RefreshOverlay( GetCanvas()->GetView() );
 }
 
 
@@ -3390,23 +3453,49 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
         if( !undoCommand )
             continue;
 
+        wxLogInfo( "PCB: Processing undo command %d with %u items", i, undoCommand->GetCount() );
+
         for( unsigned int j = 0; j < undoCommand->GetCount(); j++ )
         {
             EDA_ITEM* item = undoCommand->GetPickedItem( j );
+            UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
+
+            // Log the undo operation type
+            wxString statusStr;
+            switch( status )
+            {
+            case UNDO_REDO::CHANGED: statusStr = "CHANGED"; break;
+            case UNDO_REDO::NEWITEM: statusStr = "NEWITEM"; break;
+            case UNDO_REDO::DELETED: statusStr = "DELETED"; break;
+            case UNDO_REDO::DRILLORIGIN: statusStr = "DRILLORIGIN"; break;
+            case UNDO_REDO::GRIDORIGIN: statusStr = "GRIDORIGIN"; break;
+            case UNDO_REDO::PAGESETTINGS: statusStr = "PAGESETTINGS"; break;
+            default: statusStr = wxString::Format( "OTHER(%d)", static_cast<int>( status ) ); break;
+            }
 
             if( item )
             {
+                wxLogInfo( "PCB: Tracking item %s (type=%s, status=%s)",
+                           item->m_Uuid.AsString(), item->GetClass(), statusStr );
+
                 // Track the item by KIID (PCB has no sheet path)
                 m_agentChangeTracker->TrackItem( item->m_Uuid );
             }
 
             // For CHANGED operations, also track the linked item (current state)
-            UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
             if( status == UNDO_REDO::CHANGED )
             {
                 EDA_ITEM* link = undoCommand->GetPickedItemLink( j );
                 if( link )
+                {
+                    wxLogInfo( "PCB: Tracking CHANGED link %s (type=%s)",
+                               link->m_Uuid.AsString(), link->GetClass() );
                     m_agentChangeTracker->TrackItem( link->m_Uuid );
+                }
+                else
+                {
+                    wxLogInfo( "PCB: CHANGED item has no link!" );
+                }
             }
         }
     }

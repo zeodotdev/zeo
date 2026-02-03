@@ -1443,18 +1443,8 @@ void AGENT_FRAME::InitializeTools()
     m_tools = AgentTools::GetToolDefinitions();
 }
 
-std::string AGENT_FRAME::ExecuteTool( const std::string& aName, const nlohmann::json& aInput )
-{
-    // Set project path on tool registry for path validation
-    wxString projectPath = Kiway().Prj().GetProjectPath();
-    TOOL_REGISTRY::Instance().SetProjectPath( projectPath.ToStdString() );
-
-    // Delegate to AgentTools with a callback to SendRequest
-    return AgentTools::ExecuteToolSync( aName, aInput,
-        [this]( int aDest, const std::string& aPayload ) {
-            return SendRequest( aDest, aPayload );
-        } );
-}
+// NOTE: ExecuteTool was removed - tools are now executed via CHAT_CONTROLLER::ExecuteNextTool()
+// which sets the project path via the m_getProjectPathFn callback.
 
 // NOTE: HandleLLMEvent and ContinueConversation were removed in Phase 5.3
 // They were dead code - only used in the synchronous path which is no longer called.

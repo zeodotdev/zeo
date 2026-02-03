@@ -210,7 +210,6 @@ private:
     std::unique_ptr<CHAT_CONTROLLER> m_chatController;
 
     void InitializeTools();                                                    // Setup tool definitions
-    std::string ExecuteTool( const std::string& aName, const nlohmann::json& aInput );  // Execute a single tool
 
     // Async LLM streaming helpers
     void StartAsyncLLMRequest();  // Start an async LLM request

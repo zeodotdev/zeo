@@ -455,7 +455,7 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
 
     case LLMChunkType::TOOL_USE_DONE:
     {
-        // All tools parsed, transition to tool execution
+        // All tools parsed, transition to tool-detected state
         AgentConversationState oldState = m_ctx.GetState();
         m_ctx.TransitionTo( AgentConversationState::TOOL_USE_DETECTED );
         EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
@@ -468,8 +468,8 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         // to render the text one final time before capturing m_htmlBeforeAgentResponse.
         // The frame will call ClearStreamingState() after capturing the HTML.
 
-        // Start executing tools (controller drives tool execution, frame just does UI)
-        ExecuteNextTool();
+        // NOTE: Don't start tool execution here - wait for HandleLLMComplete to ensure
+        // the curl stream is fully closed before we might need to start a new request.
         break;
     }
 
@@ -667,13 +667,20 @@ void CHAT_CONTROLLER::HandleLLMComplete()
     if( m_continueAfterComplete )
     {
         m_continueAfterComplete = false;
-        wxLogInfo( "CHAT_CONTROLLER::HandleLLMComplete - continuing generation after max_tokens" );
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMComplete - continuing after max_tokens" );
         ContinueChat();
         return;
     }
 
-    // Streaming completed successfully
-    // Most handling is done in HandleLLMChunk for END_TURN
+    // If tools were detected, now start executing them (stream is safely closed)
+    if( m_ctx.GetState() == AgentConversationState::TOOL_USE_DETECTED )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMComplete - stream complete, starting tool execution" );
+        ExecuteNextTool();
+        return;
+    }
+
+    // Streaming completed successfully - most handling is done in HandleLLMChunk for END_TURN
 }
 
 
@@ -714,13 +721,13 @@ void CHAT_CONTROLLER::ExecuteNextTool()
     if( !tool )
     {
         wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - no more tools, continuing chat" );
-        // No more tools, continue chat
         ContinueChat();
         return;
     }
 
     wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - executing tool: %s (id=%s)",
-            tool->tool_name.c_str(), tool->tool_use_id.c_str() );
+               tool->tool_name.c_str(), tool->tool_use_id.c_str() );
+
     // Mark as executing
     tool->is_executing = true;
     tool->start_time = wxGetUTCTimeMillis();
@@ -758,7 +765,8 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
                                           bool aSuccess )
 {
     wxLogInfo( "CHAT_CONTROLLER::ProcessToolResult - toolId=%s, success=%s, result_len=%zu",
-            aToolId.c_str(), aSuccess ? "true" : "false", aResult.length() );
+               aToolId.c_str(), aSuccess ? "true" : "false", aResult.length() );
+
     // Find the tool
     PendingToolCall* tool = m_ctx.FindPendingToolCall( aToolId );
     std::string toolName = tool ? tool->tool_name : "unknown";

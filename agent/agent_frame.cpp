@@ -9,6 +9,8 @@
 #include "core/agent_tools.h"
 #include "core/chat_controller.h"
 #include "core/chat_events.h"
+#include "tools/tool_registry.h"
+#include "tools/kicad_file/file_writer.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -1433,6 +1435,10 @@ void AGENT_FRAME::InitializeTools()
 
 std::string AGENT_FRAME::ExecuteTool( const std::string& aName, const nlohmann::json& aInput )
 {
+    // Set project path on tool registry for path validation
+    wxString projectPath = Kiway().Prj().GetProjectPath();
+    TOOL_REGISTRY::Instance().SetProjectPath( projectPath.ToStdString() );
+
     // Delegate to AgentTools with a callback to SendRequest
     return AgentTools::ExecuteToolSync( aName, aInput,
         [this]( int aDest, const std::string& aPayload ) {
@@ -2305,6 +2311,15 @@ bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
     if( !player )
         return false;
 
+    // Open specific file if path was provided
+    if( !m_pendingOpenFilePath.IsEmpty() )
+    {
+        std::vector<wxString> files;
+        files.push_back( m_pendingOpenFilePath );
+        player->OpenProjectFiles( files );
+        m_pendingOpenFilePath.Clear();
+    }
+
     player->Show( true );
     if( player->IsIconized() )
         player->Iconize( false );
@@ -2493,19 +2508,55 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         FRAME_T frameType = ( editorType == "sch" ) ? FRAME_SCH : FRAME_PCB_EDITOR;
         wxString editorLabel = ( editorType == "sch" ) ? "Schematic" : "PCB";
 
+        // Capture optional file path
+        std::string filePath = data->input.value( "file_path", "" );
+        m_pendingOpenFilePath.Clear();
+
+        // Validate file path if provided
+        if( !filePath.empty() )
+        {
+            wxString projectPath = Kiway().Prj().GetProjectPath();
+            auto pathResult = FileWriter::ValidatePathInProject( filePath, projectPath.ToStdString() );
+            if( !pathResult.valid )
+            {
+                // Path validation failed - reject tool call
+                if( m_chatController )
+                    m_chatController->HandleToolResult( data->toolId,
+                        "Error: " + pathResult.error, false );
+                delete data;
+                return;
+            }
+            m_pendingOpenFilePath = wxString::FromUTF8( pathResult.resolvedPath );
+        }
+
         // Check if editor is already open (false = don't create if not existing)
         KIWAY_PLAYER* existingPlayer = Kiway().Player( frameType, false );
         if( existingPlayer && existingPlayer->IsShown() )
         {
-            // Editor already open - just focus it without prompting
+            // Editor already open - just focus it and optionally open file
             if( existingPlayer->IsIconized() )
                 existingPlayer->Iconize( false );
             existingPlayer->Raise();
 
-            // Send success result immediately
-            if( m_chatController )
-                m_chatController->HandleToolResult( data->toolId,
-                    editorLabel.ToStdString() + " editor is already open", true );
+            // If file path provided, open it in the existing editor
+            if( !m_pendingOpenFilePath.IsEmpty() )
+            {
+                std::vector<wxString> files;
+                files.push_back( m_pendingOpenFilePath );
+                existingPlayer->OpenProjectFiles( files );
+                m_pendingOpenFilePath.Clear();
+
+                if( m_chatController )
+                    m_chatController->HandleToolResult( data->toolId,
+                        editorLabel.ToStdString() + " editor opened file: " + filePath, true );
+            }
+            else
+            {
+                // Send success result immediately
+                if( m_chatController )
+                    m_chatController->HandleToolResult( data->toolId,
+                        editorLabel.ToStdString() + " editor is already open", true );
+            }
 
             delete data;
             return;

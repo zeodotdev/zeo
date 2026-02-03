@@ -55,6 +55,13 @@ public:
      */
     virtual std::string GetDescription( const std::string& aToolName,
                                         const nlohmann::json& aInput ) const = 0;
+
+    /**
+     * Set the project path for path validation.
+     * Handlers should validate that file operations stay within this directory.
+     * @param aPath The absolute path to the project directory.
+     */
+    virtual void SetProjectPath( const std::string& aPath ) { /* Default no-op */ }
 };
 
 #endif // TOOL_HANDLER_H

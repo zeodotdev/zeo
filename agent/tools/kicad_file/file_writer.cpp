@@ -22,6 +22,7 @@
 #include <sstream>
 #include <cstdio>
 #include <sys/stat.h>
+#include <filesystem>
 
 #ifdef __APPLE__
 #include <unistd.h>
@@ -131,6 +132,53 @@ std::string GetExtension( const std::string& aFilePath )
     if( pos == std::string::npos )
         return "";
     return filename.substr( pos );
+}
+
+
+PathValidationResult ValidatePathInProject( const std::string& aFilePath,
+                                            const std::string& aProjectPath )
+{
+    if( aProjectPath.empty() )
+    {
+        // No project path set - allow any path
+        return PathValidationResult::Success( aFilePath );
+    }
+
+    try
+    {
+        std::filesystem::path fsPath( aFilePath );
+        std::filesystem::path projectPath( aProjectPath );
+
+        // Resolve relative paths against project directory
+        if( fsPath.is_relative() )
+            fsPath = projectPath / fsPath;
+
+        // Get canonical paths to resolve .. and symlinks
+        // Use weakly_canonical for the file path since it may not exist yet
+        auto canonicalProject = std::filesystem::canonical( projectPath );
+        auto canonicalFile = std::filesystem::weakly_canonical( fsPath );
+
+        // Check if file path starts with project path
+        auto projectStr = canonicalProject.string();
+        auto fileStr = canonicalFile.string();
+
+        // Ensure project path ends with separator for proper prefix matching
+        if( !projectStr.empty() && projectStr.back() != '/' )
+            projectStr += '/';
+
+        // Check if file is within project directory (or is the project dir itself)
+        if( fileStr.find( projectStr ) != 0 && fileStr != canonicalProject.string() )
+        {
+            return PathValidationResult( "File path must be within project directory: " +
+                                         aProjectPath + " (resolved path: " + fileStr + ")" );
+        }
+
+        return PathValidationResult::Success( canonicalFile.string() );
+    }
+    catch( const std::filesystem::filesystem_error& e )
+    {
+        return PathValidationResult( "Invalid file path: " + std::string( e.what() ) );
+    }
 }
 
 } // namespace FileWriter

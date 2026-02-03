@@ -72,3 +72,12 @@ std::string TOOL_REGISTRY::GetDescription( const std::string& aToolName,
     }
     return "Unknown tool: " + aToolName;
 }
+
+
+void TOOL_REGISTRY::SetProjectPath( const std::string& aPath )
+{
+    for( auto& handler : m_handlers )
+    {
+        handler->SetProjectPath( aPath );
+    }
+}

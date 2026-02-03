@@ -62,6 +62,12 @@ public:
      */
     std::string GetDescription( const std::string& aToolName, const nlohmann::json& aInput ) const;
 
+    /**
+     * Set the project path for path validation in all handlers.
+     * @param aPath The absolute path to the project directory.
+     */
+    void SetProjectPath( const std::string& aPath );
+
 private:
     TOOL_REGISTRY();
     ~TOOL_REGISTRY() = default;

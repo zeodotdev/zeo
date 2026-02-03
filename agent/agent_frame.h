@@ -269,6 +269,7 @@ private:
     bool        m_pendingOpenSch;       // True if schematic editor open is pending approval
     bool        m_pendingOpenPcb;       // True if PCB editor open is pending approval
     std::string m_pendingOpenToolId;    // Tool use ID for the pending open request
+    wxString    m_pendingOpenFilePath;  // Optional file path to open in editor
     void ShowOpenEditorApproval( const wxString& aEditorType );
     void OnApproveOpenEditor();
     void OnRejectOpenEditor();

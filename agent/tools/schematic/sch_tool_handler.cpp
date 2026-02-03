@@ -353,6 +353,17 @@ std::string SCH_TOOL_HANDLER::ExecuteWrite( const nlohmann::json& aInput )
 
     bool createBackup = aInput.value( "backup", true );
 
+    // Validate path is within project directory
+    if( !m_projectPath.empty() )
+    {
+        auto pathResult = FileWriter::ValidatePathInProject( filePath, m_projectPath );
+        if( !pathResult.valid )
+            return "Error: " + pathResult.error;
+
+        // Use the resolved absolute path
+        filePath = pathResult.resolvedPath;
+    }
+
     // Inject the correct schematic file version to ensure compatibility
     content = InjectSchematicVersion( content );
 

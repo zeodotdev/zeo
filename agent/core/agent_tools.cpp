@@ -79,7 +79,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     openEditor.name = "open_editor";
     openEditor.description = "Request to open the schematic or PCB editor. "
                              "This will prompt the user for approval before opening. "
-                             "Use editor_type 'sch' for schematic editor or 'pcb' for PCB editor.";
+                             "Use editor_type 'sch' for schematic editor or 'pcb' for PCB editor. "
+                             "Optionally specify file_path to open a specific file.";
     openEditor.input_schema = {
         { "type", "object" },
         { "properties", {
@@ -87,6 +88,10 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                 { "type", "string" },
                 { "enum", json::array( { "sch", "pcb" } ) },
                 { "description", "Editor to open: 'sch' for schematic, 'pcb' for PCB" }
+            }},
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Optional: path to file to open (must be within project directory)" }
             }}
         }},
         { "required", json::array( { "editor_type" } ) }

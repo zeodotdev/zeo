@@ -92,6 +92,38 @@ std::string GetFilename( const std::string& aFilePath );
  */
 std::string GetExtension( const std::string& aFilePath );
 
+/**
+ * Result of path validation.
+ */
+struct PathValidationResult
+{
+    bool        valid;
+    std::string error;
+    std::string resolvedPath;  // Canonical absolute path
+
+    PathValidationResult() : valid( true ) {}
+    PathValidationResult( const std::string& aError ) : valid( false ), error( aError ) {}
+
+    static PathValidationResult Success( const std::string& aResolvedPath )
+    {
+        PathValidationResult r;
+        r.resolvedPath = aResolvedPath;
+        return r;
+    }
+};
+
+/**
+ * Validate that a file path is within a project directory.
+ * Resolves relative paths against the project directory.
+ * Normalizes paths to handle .. and symlinks.
+ *
+ * @param aFilePath The file path to validate (absolute or relative).
+ * @param aProjectPath The project directory path.
+ * @return PathValidationResult with resolved path or error message.
+ */
+PathValidationResult ValidatePathInProject( const std::string& aFilePath,
+                                            const std::string& aProjectPath );
+
 } // namespace FileWriter
 
 #endif // FILE_WRITER_H

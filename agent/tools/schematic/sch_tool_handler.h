@@ -38,7 +38,14 @@ public:
     std::string GetDescription( const std::string& aToolName,
                                 const nlohmann::json& aInput ) const override;
 
+    /**
+     * Set the project path for path validation.
+     * File write operations will be restricted to this directory.
+     */
+    void SetProjectPath( const std::string& aPath ) override { m_projectPath = aPath; }
+
 private:
+    std::string m_projectPath;  ///< Project directory for path validation
     /**
      * Execute sch_get_summary tool.
      * Returns a JSON summary of the schematic file.

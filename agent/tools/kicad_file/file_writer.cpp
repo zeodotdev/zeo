@@ -23,6 +23,8 @@
 #include <cstdio>
 #include <sys/stat.h>
 #include <filesystem>
+#include <regex>
+#include <nlohmann/json.hpp>
 
 #ifdef __APPLE__
 #include <unistd.h>
@@ -179,6 +181,82 @@ PathValidationResult ValidatePathInProject( const std::string& aFilePath,
     {
         return PathValidationResult( "Invalid file path: " + std::string( e.what() ) );
     }
+}
+
+
+std::string ExtractSchematicRootUuid( const std::string& aContent )
+{
+    // Look for the first (uuid "...") or (uuid ...) after (kicad_sch
+    // The root UUID is typically the first UUID in the file, right after the header
+    std::regex uuidRegex( R"(\(uuid\s+\"?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\"?\))" );
+    std::smatch match;
+
+    if( std::regex_search( aContent, match, uuidRegex ) && match.size() > 1 )
+    {
+        return match[1].str();
+    }
+
+    return "";
+}
+
+
+WriteResult AddSchematicToProject( const std::string& aProjectPath,
+                                   const std::string& aSchematicUuid,
+                                   const std::string& aSheetName )
+{
+    // Find the .kicad_pro file in the project directory
+    std::string projectFile;
+    for( const auto& entry : std::filesystem::directory_iterator( aProjectPath ) )
+    {
+        if( entry.path().extension() == ".kicad_pro" )
+        {
+            projectFile = entry.path().string();
+            break;
+        }
+    }
+
+    if( projectFile.empty() )
+        return WriteResult( "No .kicad_pro file found in project directory" );
+
+    // Read the project file
+    std::string content;
+    if( !ReadFile( projectFile, content ) )
+        return WriteResult( "Failed to read project file: " + projectFile );
+
+    // Parse as JSON
+    nlohmann::json projectJson;
+    try
+    {
+        projectJson = nlohmann::json::parse( content );
+    }
+    catch( const nlohmann::json::parse_error& e )
+    {
+        return WriteResult( "Failed to parse project file as JSON: " + std::string( e.what() ) );
+    }
+
+    // Get or create the sheets array
+    if( !projectJson.contains( "sheets" ) )
+    {
+        projectJson["sheets"] = nlohmann::json::array();
+    }
+
+    // Check if the sheet already exists (by UUID)
+    auto& sheets = projectJson["sheets"];
+    for( const auto& sheet : sheets )
+    {
+        if( sheet.is_array() && sheet.size() >= 1 && sheet[0] == aSchematicUuid )
+        {
+            // Sheet already exists, no need to add
+            return WriteResult::Success();
+        }
+    }
+
+    // Add the new sheet
+    sheets.push_back( nlohmann::json::array( { aSchematicUuid, aSheetName } ) );
+
+    // Write back the project file
+    std::string newContent = projectJson.dump( 2 );
+    return WriteFileSafe( projectFile, newContent, true );
 }
 
 } // namespace FileWriter

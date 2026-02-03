@@ -353,16 +353,22 @@ std::string SCH_TOOL_HANDLER::ExecuteWrite( const nlohmann::json& aInput )
 
     bool createBackup = aInput.value( "backup", true );
 
-    // Validate path is within project directory
-    if( !m_projectPath.empty() )
-    {
-        auto pathResult = FileWriter::ValidatePathInProject( filePath, m_projectPath );
-        if( !pathResult.valid )
-            return "Error: " + pathResult.error;
+    // Validate file extension is .kicad_sch
+    std::string extension = FileWriter::GetExtension( filePath );
+    if( extension != ".kicad_sch" )
+        return "Error: sch_write can only write schematic files (.kicad_sch), got: " + extension;
 
-        // Use the resolved absolute path
-        filePath = pathResult.resolvedPath;
-    }
+    // Require a project to be open
+    if( m_projectPath.empty() )
+        return "Error: No project is open. Please open a project before writing schematic files.";
+
+    // Validate path is within project directory
+    auto pathResult = FileWriter::ValidatePathInProject( filePath, m_projectPath );
+    if( !pathResult.valid )
+        return "Error: " + pathResult.error;
+
+    // Use the resolved absolute path
+    filePath = pathResult.resolvedPath;
 
     // Inject the correct schematic file version to ensure compatibility
     content = InjectSchematicVersion( content );
@@ -379,15 +385,34 @@ std::string SCH_TOOL_HANDLER::ExecuteWrite( const nlohmann::json& aInput )
         return errorJson.dump( 2 );
     }
 
+    // Extract the schematic's root UUID for project registration
+    std::string schematicUuid = FileWriter::ExtractSchematicRootUuid( content );
+    if( schematicUuid.empty() )
+        return "Error: Schematic content does not contain a valid UUID";
+
     // Write the file
     auto writeResult = FileWriter::WriteFileSafe( filePath, content, createBackup );
     if( !writeResult.success )
         return "Error: Failed to write file: " + writeResult.error;
 
+    // Add the schematic to the project file
+    std::string sheetName = FileWriter::GetFilename( filePath );
+    // Remove extension for sheet name
+    size_t extPos = sheetName.rfind( ".kicad_sch" );
+    if( extPos != std::string::npos )
+        sheetName = sheetName.substr( 0, extPos );
+
+    auto projectResult = FileWriter::AddSchematicToProject( m_projectPath, schematicUuid, sheetName );
+    // Note: We don't fail if project update fails - the schematic is still written
+
     nlohmann::json result = {
         { "success", true },
-        { "file", filePath }
+        { "file", filePath },
+        { "added_to_project", projectResult.success }
     };
+
+    if( !projectResult.success )
+        result["project_warning"] = projectResult.error;
 
     if( !writeResult.backupPath.empty() )
         result["backup"] = writeResult.backupPath;

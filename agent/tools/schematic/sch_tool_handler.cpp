@@ -23,6 +23,41 @@
 #include "../kicad_file/file_writer.h"
 #include "../kicad_file/uuid_util.h"
 #include "../kicad_file/sexpr_util.h"
+#include <sch_file_versions.h>
+#include <build_version.h>
+#include <wx/string.h>
+#include <regex>
+
+namespace
+{
+
+/**
+ * Inject the correct schematic file version into content.
+ * Replaces any existing (version XXXXX) with the current SEXPR_SCHEMATIC_FILE_VERSION.
+ * Also updates (generator_version "X.X") to match the current KiCad version.
+ *
+ * @param aContent The schematic content to modify.
+ * @return The content with corrected version numbers.
+ */
+std::string InjectSchematicVersion( const std::string& aContent )
+{
+    std::string result = aContent;
+
+    // Replace (version XXXXX) with the correct version
+    std::regex versionRegex( R"(\(version\s+\d+\))" );
+    result = std::regex_replace( result, versionRegex,
+                                 "(version " + std::to_string( SEXPR_SCHEMATIC_FILE_VERSION ) + ")" );
+
+    // Replace (generator_version "X.X") with the current version
+    std::regex generatorVersionRegex( R"(\(generator_version\s+"[^"]*"\))" );
+    result = std::regex_replace( result, generatorVersionRegex,
+                                 "(generator_version \"" + GetMajorMinorVersion().ToStdString() + "\")" );
+
+    return result;
+}
+
+} // anonymous namespace
+
 
 // Static list of tool names this handler supports
 static const char* SCH_TOOL_NAMES[] = {
@@ -317,6 +352,9 @@ std::string SCH_TOOL_HANDLER::ExecuteWrite( const nlohmann::json& aInput )
         return "Error: 'content' parameter is required";
 
     bool createBackup = aInput.value( "backup", true );
+
+    // Inject the correct schematic file version to ensure compatibility
+    content = InjectSchematicVersion( content );
 
     // Validate the content before writing
     auto validation = SchValidator::ValidateContent( content );

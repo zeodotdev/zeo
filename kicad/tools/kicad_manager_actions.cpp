@@ -259,7 +259,7 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::showAiAssistant( TOOL_ACTION_ARGS()
                                                             .DefaultHotkey( MD_CTRL + 'K' )
                                                             .LegacyHotkeyName( "Show Agent" )
                                                             .FriendlyName( _( "Agent" ) )
-                                                            .Tooltip( _( "Open Agent (Cmd+K)" ) )
+                                                            .Tooltip( _( "Open Agent" ) )
                                                             .Icon( BITMAPS::icon_kicad )
                                                             .Parameter( FRAME_AGENT ) );
 

@@ -20,6 +20,7 @@
 #include "chat_controller.h"
 #include "chat_events.h"
 #include "../tools/agent_tools.h"
+#include "../tools/tool_registry.h"
 #include "agent_llm_client.h"
 #include "agent_chat_history.h"
 #include "auth/agent_auth.h"
@@ -750,6 +751,12 @@ void CHAT_CONTROLLER::ExecuteNextTool()
     {
         // Don't execute synchronously - wait for frame to handle via HandleToolResult
         return;
+    }
+
+    // Set project path on tool registry for path validation
+    if( m_getProjectPathFn )
+    {
+        TOOL_REGISTRY::Instance().SetProjectPath( m_getProjectPathFn() );
     }
 
     // Execute tool - route through TOOL_REGISTRY for file tools, KIWAY for terminal tools

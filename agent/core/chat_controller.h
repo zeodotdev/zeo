@@ -175,6 +175,15 @@ public:
         m_sendRequestFn = aFn;
     }
 
+    /**
+     * Set the function used to get the current project path.
+     * @param aFn Function returning the project path string
+     */
+    void SetProjectPathFn( std::function<std::string()> aFn )
+    {
+        m_getProjectPathFn = aFn;
+    }
+
     // =========================================================================
     // Event handlers - Called by frame's event table, forwarded to controller
     // =========================================================================
@@ -233,6 +242,7 @@ private:
     AGENT_CHAT_HISTORY* m_chatHistoryDb;  ///< Persistence layer
     class AGENT_AUTH*   m_auth;          ///< Authentication manager
     std::function<std::string( int, const std::string& )> m_sendRequestFn;
+    std::function<std::string()> m_getProjectPathFn;  ///< Get project path for tool validation
 
     // -------------------------------------------------------------------------
     // Tool definitions

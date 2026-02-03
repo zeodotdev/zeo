@@ -341,6 +341,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         [this]( int aFrameType, const std::string& aPayload ) -> std::string {
             return SendRequest( aFrameType, aPayload );
         } );
+    m_chatController->SetProjectPathFn(
+        [this]() -> std::string {
+            return Kiway().Prj().GetProjectPath().ToStdString();
+        } );
 
     // Set model on controller
     m_chatController->SetModel( "Claude 4.5 Sonnet" );

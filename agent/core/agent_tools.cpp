@@ -221,6 +221,33 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schWrite );
 
+    // Tool: sch_run_erc - Run ERC on open schematic
+    LLM_TOOL schRunErc;
+    schRunErc.name = "sch_run_erc";
+    schRunErc.description =
+        "Run Electrical Rules Check (ERC) on the currently open schematic. "
+        "Detects wiring errors, unconnected pins, duplicate references, and other issues. "
+        "Returns error/warning counts and violation details. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schRunErc.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "output_format", {
+                { "type", "string" },
+                { "enum", json::array( { "summary", "detailed", "by_type" } ) },
+                { "description", "Output format: 'summary' (counts + text), "
+                                "'detailed' (full violation list), "
+                                "'by_type' (grouped by error code). Default: summary" }
+            }},
+            { "include_warnings", {
+                { "type", "boolean" },
+                { "description", "Include warnings (default: true). Set false for errors only." }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    tools.push_back( schRunErc );
+
     // PCB tools (stubs - not yet implemented)
     // Tool 9: pcb_get_summary
     LLM_TOOL pcbGetSummary;
@@ -365,6 +392,43 @@ std::string ExecuteToolSync( const std::string& aToolName, const nlohmann::json&
 
         return aSendRequestFn( FRAME_TERMINAL, "run_terminal " + command );
     }
+    else if( aToolName == "sch_run_erc" )
+    {
+        std::string format = aInput.value( "output_format", "summary" );
+        bool includeWarnings = aInput.value( "include_warnings", true );
+
+        std::string code;
+
+        if( format == "summary" )
+        {
+            code = "# Run ERC and print summary\n"
+                   "result = sch.erc.analyze()\n"
+                   "print(result['summary'])\n";
+        }
+        else if( format == "detailed" )
+        {
+            code = "import json\n"
+                   "result = sch.erc.analyze()\n";
+            if( !includeWarnings )
+                code += "result['violations'] = [v for v in result['violations'] if v['severity'] == 'error']\n";
+            code += "output = {'error_count': result['error_count'], "
+                    "'warning_count': result['warning_count'], "
+                    "'violations': result['violations']}\n"
+                    "print(json.dumps(output, indent=2))\n";
+        }
+        else if( format == "by_type" )
+        {
+            code = "import json\n"
+                   "result = sch.erc.analyze()\n"
+                   "output = {'error_count': result['error_count'], "
+                   "'warning_count': result['warning_count'], "
+                   "'by_type': {code: len(items) for code, items in result['by_type'].items()}}\n"
+                   "print(json.dumps(output, indent=2))\n";
+        }
+
+        std::string command = "run_shell sch " + code;
+        return aSendRequestFn( FRAME_TERMINAL, command );
+    }
 
     return "Error: Unknown tool '" + aToolName + "'";
 }
@@ -443,6 +507,16 @@ wxString GetToolDescription( const std::string& aToolName, const nlohmann::json&
         if( cmd.length() > 50 )
             cmd = cmd.substr( 0, 47 ) + "...";
         return wxString::Format( "Running: %s", cmd );
+    }
+    else if( aToolName == "sch_run_erc" )
+    {
+        std::string format = aInput.value( "output_format", "summary" );
+        if( format == "detailed" )
+            return "Running detailed ERC analysis";
+        else if( format == "by_type" )
+            return "Running ERC (grouped by type)";
+        else
+            return "Running ERC check";
     }
     else
     {

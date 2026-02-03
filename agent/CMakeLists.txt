@@ -29,6 +29,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/utility
     ${CMAKE_SOURCE_DIR}/thirdparty/nlohmann_json
     ${CMAKE_SOURCE_DIR}/libs/sexpr/include
+    ${CMAKE_SOURCE_DIR}/eeschema
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/rendering

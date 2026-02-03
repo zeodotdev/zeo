@@ -118,6 +118,8 @@
 #include <widgets/wx_aui_utils.h>
 #include <kiplatform/app.h>
 #include <diff_manager.h>
+#include <agent_change_tracker.h>
+#include <file_edit_session.h>
 #include <kiplatform/ui.h>
 #include <core/profile.h>
 #include <math/box2_minmax.h>
@@ -734,17 +736,16 @@ void PCB_EDIT_FRAME::OnBoardItemsRemoved( BOARD& aBoard, std::vector<BOARD_ITEM*
 
 void PCB_EDIT_FRAME::OnBoardItemChanged( BOARD& aBoard, BOARD_ITEM* aBoardItem )
 {
-    if( !m_hasAgentPendingChanges || m_agentWorkingSet.empty() || !aBoardItem )
+    if( !m_hasAgentPendingChanges || !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() || !aBoardItem )
         return;
 
-    if( m_agentWorkingSet.find( aBoardItem->m_Uuid ) != m_agentWorkingSet.end() )
+    if( m_agentChangeTracker->IsTracked( aBoardItem->m_Uuid ) )
     {
         wxLogInfo( "PCB: Agent diff dismissed, user modified item %s", aBoardItem->m_Uuid.AsString() );
         DIFF_MANAGER::GetInstance().ClearDiff();
         m_hasAgentPendingChanges = false;
         m_showingAgentBefore = false;
-        m_agentWorkingSet.clear();
-        m_undoCountBeforeAgent = 0;
+        m_agentChangeTracker->ClearTrackedItems();
         std::string payload = "pcb";
         Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
     }
@@ -753,19 +754,18 @@ void PCB_EDIT_FRAME::OnBoardItemChanged( BOARD& aBoard, BOARD_ITEM* aBoardItem )
 
 void PCB_EDIT_FRAME::OnBoardItemsChanged( BOARD& aBoard, std::vector<BOARD_ITEM*>& aBoardItems )
 {
-    if( !m_hasAgentPendingChanges || m_agentWorkingSet.empty() )
+    if( !m_hasAgentPendingChanges || !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
         return;
 
     for( BOARD_ITEM* item : aBoardItems )
     {
-        if( item && m_agentWorkingSet.find( item->m_Uuid ) != m_agentWorkingSet.end() )
+        if( item && m_agentChangeTracker->IsTracked( item->m_Uuid ) )
         {
             wxLogInfo( "PCB: Agent diff dismissed, user modified item %s", item->m_Uuid.AsString() );
             DIFF_MANAGER::GetInstance().ClearDiff();
             m_hasAgentPendingChanges = false;
             m_showingAgentBefore = false;
-            m_agentWorkingSet.clear();
-            m_undoCountBeforeAgent = 0;
+            m_agentChangeTracker->ClearTrackedItems();
             std::string payload = "pcb";
             Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
             return;
@@ -779,7 +779,7 @@ void PCB_EDIT_FRAME::OnBoardCompositeUpdate( BOARD& aBoard,
                                               std::vector<BOARD_ITEM*>& aRemovedItems,
                                               std::vector<BOARD_ITEM*>& aChangedItems )
 {
-    if( !m_hasAgentPendingChanges || m_agentWorkingSet.empty() )
+    if( !m_hasAgentPendingChanges || !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
         return;
 
     // Helper to check if any item in the list is in the agent working set
@@ -787,14 +787,13 @@ void PCB_EDIT_FRAME::OnBoardCompositeUpdate( BOARD& aBoard,
     {
         for( BOARD_ITEM* item : items )
         {
-            if( item && m_agentWorkingSet.find( item->m_Uuid ) != m_agentWorkingSet.end() )
+            if( item && m_agentChangeTracker->IsTracked( item->m_Uuid ) )
             {
                 wxLogInfo( "PCB: Agent diff dismissed, user %s item %s", action, item->m_Uuid.AsString() );
                 DIFF_MANAGER::GetInstance().ClearDiff();
                 m_hasAgentPendingChanges = false;
                 m_showingAgentBefore = false;
-                m_agentWorkingSet.clear();
-                m_undoCountBeforeAgent = 0;
+                m_agentChangeTracker->ClearTrackedItems();
                 std::string payload = "pcb";
                 Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
                 return true;
@@ -3353,10 +3352,13 @@ void PCB_EDIT_FRAME::RecordAgentUndoPosition()
         return;
     }
 
+    // Initialize tracker if needed
+    if( !m_agentChangeTracker )
+        m_agentChangeTracker = std::make_unique<AGENT_CHANGE_TRACKER>();
+
     // No existing session - start a new one
     // Record the current undo stack count - kipy API operations will create undo entries
-    m_undoCountBeforeAgent = GetUndoCommandCount();
-    m_agentChangedBBox = BOX2I();  // Reset accumulated bounding box
+    m_agentChangeTracker->SetUndoBaseline( GetUndoCommandCount() );
 }
 
 
@@ -3366,31 +3368,23 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
     if( !board )
         return false;
 
+    // Initialize tracker if needed
+    if( !m_agentChangeTracker )
+        m_agentChangeTracker = std::make_unique<AGENT_CHANGE_TRACKER>();
+
     // Check if any undo entries were created since we took the snapshot
     int currentUndoCount = GetUndoCommandCount();
-    bool hasNewChanges = ( currentUndoCount > m_undoCountBeforeAgent );
-
-    // If there are already pending changes and we're just adding more, we need to
-    // scan from the last known position, not from m_undoCountBeforeAgent
-    int scanFrom = m_undoCountBeforeAgent;
-    if( m_hasAgentPendingChanges )
-    {
-        // Already have pending changes, check for additional ones
-        // The bounding box will be accumulated
-    }
+    int baseline = m_agentChangeTracker->GetUndoBaseline();
+    bool hasNewChanges = ( currentUndoCount > baseline );
 
     if( !hasNewChanges && !m_hasAgentPendingChanges )
     {
         // No changes detected and no existing pending changes
-        m_agentWorkingSet.clear();  // Ensure working set is clean
         return false;
     }
 
-    // Calculate bounding box from the items in the undo entries created by the agent
-    BOX2I newChangedBBox;
-
-    // Iterate through the new undo entries to get bounding boxes of changed items
-    for( int i = scanFrom; i < currentUndoCount; i++ )
+    // Iterate through the new undo entries to track changed items
+    for( int i = baseline; i < currentUndoCount; i++ )
     {
         PICKED_ITEMS_LIST* undoCommand = m_undoList.m_CommandsList[i];
         if( !undoCommand )
@@ -3399,37 +3393,27 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
         for( unsigned int j = 0; j < undoCommand->GetCount(); j++ )
         {
             EDA_ITEM* item = undoCommand->GetPickedItem( j );
-            UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
 
             if( item )
             {
-                BOARD_ITEM* boardItem = dynamic_cast<BOARD_ITEM*>( item );
-                if( boardItem )
-                    newChangedBBox.Merge( boardItem->GetBoundingBox() );
-
-                // Add to working set for conflict detection (auto-dismiss on user modification)
-                m_agentWorkingSet.insert( item->m_Uuid );
+                // Track the item by KIID (PCB has no sheet path)
+                m_agentChangeTracker->TrackItem( item->m_Uuid );
             }
 
-            // For CHANGED operations, also get the current item's bounding box
+            // For CHANGED operations, also track the linked item (current state)
+            UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
             if( status == UNDO_REDO::CHANGED )
             {
                 EDA_ITEM* link = undoCommand->GetPickedItemLink( j );
                 if( link )
-                {
-                    BOARD_ITEM* linkedItem = dynamic_cast<BOARD_ITEM*>( link );
-                    if( linkedItem )
-                        newChangedBBox.Merge( linkedItem->GetBoundingBox() );
-                }
+                    m_agentChangeTracker->TrackItem( link->m_Uuid );
             }
         }
     }
 
-    // Merge with accumulated bounding box from previous tool calls
-    m_agentChangedBBox.Merge( newChangedBBox );
     m_hasAgentPendingChanges = true;
 
-    wxLogInfo( "PCB: Agent diff tracking %zu items in working set", m_agentWorkingSet.size() );
+    wxLogInfo( "PCB: Agent diff tracking %zu items", m_agentChangeTracker->GetTrackedItemCount() );
 
     // Set up callbacks for the diff overlay
     DIFF_CALLBACKS callbacks;
@@ -3458,8 +3442,26 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
             GetCanvas()->Refresh();
     };
 
-    DIFF_MANAGER::GetInstance().RegisterOverlay( GetCanvas()->GetView(), callbacks );
-    DIFF_MANAGER::GetInstance().ShowDiff( m_agentChangedBBox );
+    // Create a bbox compute callback for dynamic updates
+    BBOX_COMPUTE_CALLBACK bboxCallback = [this]() -> BOX2I {
+        return ComputeTrackedItemsBBox();
+    };
+
+    // Compute initial bbox for logging
+    BOX2I initialBBox = bboxCallback();
+    wxLogInfo( "PCB: Registering diff overlay with bbox (%d,%d) size (%d,%d)",
+               initialBBox.GetX(), initialBBox.GetY(),
+               initialBBox.GetWidth(), initialBBox.GetHeight() );
+
+    DIFF_MANAGER::GetInstance().RegisterOverlay(
+        GetCanvas()->GetView(),
+        m_agentChangeTracker.get(),
+        wxEmptyString,  // No sheet path for PCB
+        callbacks,
+        bboxCallback );
+
+    // Force refresh to ensure the overlay is rendered
+    GetCanvas()->ForceRefresh();
 
     return hasNewChanges;
 }
@@ -3469,8 +3471,10 @@ void PCB_EDIT_FRAME::ClearAgentPendingChanges()
 {
     m_hasAgentPendingChanges = false;
     m_showingAgentBefore = false;
-    m_undoCountBeforeAgent = 0;
-    m_agentChangedBBox = BOX2I();  // Reset accumulated bounding box
+
+    // Clear the tracker
+    if( m_agentChangeTracker )
+        m_agentChangeTracker->ClearTrackedItems();
 
     // Clear the diff overlay
     DIFF_MANAGER::GetInstance().ClearDiff();
@@ -3482,7 +3486,7 @@ void PCB_EDIT_FRAME::ClearAgentPendingChanges()
 
 void PCB_EDIT_FRAME::RevertAgentChanges()
 {
-    if( !m_hasAgentPendingChanges )
+    if( !m_hasAgentPendingChanges || !m_agentChangeTracker )
         return;
 
     // If we're currently showing "before" state, we've already undone via the view toggle
@@ -3497,7 +3501,8 @@ void PCB_EDIT_FRAME::RevertAgentChanges()
         // Showing "after" state - need to undo all agent changes
         // Roll back each undo entry created by the agent without creating redo entries
         int currentUndoCount = GetUndoCommandCount();
-        int numToUndo = currentUndoCount - m_undoCountBeforeAgent;
+        int baseline = m_agentChangeTracker->GetUndoBaseline();
+        int numToUndo = currentUndoCount - baseline;
 
         for( int i = 0; i < numToUndo; i++ )
         {
@@ -3508,21 +3513,24 @@ void PCB_EDIT_FRAME::RevertAgentChanges()
     // Clear the diff overlay
     DIFF_MANAGER::GetInstance().ClearDiff();
 
+    // Clear the tracker
+    m_agentChangeTracker->ClearTrackedItems();
+
     m_hasAgentPendingChanges = false;
     m_showingAgentBefore = false;
-    m_undoCountBeforeAgent = 0;
 }
 
 
 void PCB_EDIT_FRAME::ShowAgentChangesBefore()
 {
-    if( !m_hasAgentPendingChanges || m_showingAgentBefore )
+    if( !m_hasAgentPendingChanges || m_showingAgentBefore || !m_agentChangeTracker )
         return;
 
     // Use native undo to show the "before" state
     // Undo all agent changes (they'll go to redo list for later restoration)
     int currentUndoCount = GetUndoCommandCount();
-    int numToUndo = currentUndoCount - m_undoCountBeforeAgent;
+    int baseline = m_agentChangeTracker->GetUndoBaseline();
+    int numToUndo = currentUndoCount - baseline;
 
     for( int i = 0; i < numToUndo; i++ )
     {
@@ -3550,4 +3558,132 @@ void PCB_EDIT_FRAME::ShowAgentChangesAfter()
     }
 
     m_showingAgentBefore = false;
+}
+
+
+BOX2I PCB_EDIT_FRAME::ComputeTrackedItemsBBox() const
+{
+    BOX2I bbox;
+
+    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
+    {
+        return bbox;
+    }
+
+    BOARD* board = GetBoard();
+    if( !board )
+    {
+        return bbox;
+    }
+
+    std::set<KIID> trackedItems = m_agentChangeTracker->GetAllTrackedItems();
+
+    wxLogInfo( "PCB: ComputeTrackedItemsBBox - tracking %zu items", trackedItems.size() );
+
+    // First try the cache for efficiency
+    const auto& itemCache = board->GetItemByIdCache();
+    int foundCount = 0;
+    bool first = true;
+
+    for( const KIID& kiid : trackedItems )
+    {
+        auto it = itemCache.find( kiid );
+        if( it != itemCache.end() && it->second )
+        {
+            foundCount++;
+            BOARD_ITEM* item = it->second;
+            if( first )
+            {
+                bbox = item->GetBoundingBox();
+                first = false;
+            }
+            else
+            {
+                bbox.Merge( item->GetBoundingBox() );
+            }
+        }
+    }
+
+    // If cache lookup found nothing, try iterating through board items directly
+    if( foundCount == 0 )
+    {
+        wxLogInfo( "PCB: ComputeTrackedItemsBBox - cache lookup failed, trying direct iteration" );
+
+        // Check footprints
+        for( FOOTPRINT* fp : board->Footprints() )
+        {
+            if( trackedItems.count( fp->m_Uuid ) )
+            {
+                foundCount++;
+                if( first )
+                {
+                    bbox = fp->GetBoundingBox();
+                    first = false;
+                }
+                else
+                {
+                    bbox.Merge( fp->GetBoundingBox() );
+                }
+            }
+        }
+
+        // Check tracks
+        for( PCB_TRACK* track : board->Tracks() )
+        {
+            if( trackedItems.count( track->m_Uuid ) )
+            {
+                foundCount++;
+                if( first )
+                {
+                    bbox = track->GetBoundingBox();
+                    first = false;
+                }
+                else
+                {
+                    bbox.Merge( track->GetBoundingBox() );
+                }
+            }
+        }
+
+        // Check drawings
+        for( BOARD_ITEM* item : board->Drawings() )
+        {
+            if( trackedItems.count( item->m_Uuid ) )
+            {
+                foundCount++;
+                if( first )
+                {
+                    bbox = item->GetBoundingBox();
+                    first = false;
+                }
+                else
+                {
+                    bbox.Merge( item->GetBoundingBox() );
+                }
+            }
+        }
+
+        // Check zones
+        for( ZONE* zone : board->Zones() )
+        {
+            if( trackedItems.count( zone->m_Uuid ) )
+            {
+                foundCount++;
+                if( first )
+                {
+                    bbox = zone->GetBoundingBox();
+                    first = false;
+                }
+                else
+                {
+                    bbox.Merge( zone->GetBoundingBox() );
+                }
+            }
+        }
+    }
+
+    wxLogInfo( "PCB: ComputeTrackedItemsBBox - found %d items, bbox (%d,%d) size (%d,%d)",
+               foundCount, bbox.GetX(), bbox.GetY(), bbox.GetWidth(), bbox.GetHeight() );
+
+    return bbox;
 }

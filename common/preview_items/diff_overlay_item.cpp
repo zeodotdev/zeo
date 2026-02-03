@@ -33,7 +33,8 @@ using namespace KIGFX::PREVIEW;
 
 DIFF_OVERLAY_ITEM::DIFF_OVERLAY_ITEM( const BOX2I& aBBox ) :
         m_bbox( aBBox ),
-        m_showBefore( false )
+        m_showBefore( false ),
+        m_bboxCallback( nullptr )
 {
     // Default style
     SetStrokeColor( COLOR4D( 0.0, 0.8, 0.0, 1.0 ) ); // Green stroke
@@ -41,8 +42,33 @@ DIFF_OVERLAY_ITEM::DIFF_OVERLAY_ITEM( const BOX2I& aBBox ) :
     SetLineWidth( 2.0 );
 }
 
+DIFF_OVERLAY_ITEM::DIFF_OVERLAY_ITEM( BBOX_CALLBACK aBBoxCallback ) :
+        m_showBefore( false ),
+        m_bboxCallback( aBBoxCallback )
+{
+    // Compute initial bbox
+    if( m_bboxCallback )
+        m_bbox = m_bboxCallback();
+
+    // Default style
+    SetStrokeColor( COLOR4D( 0.0, 0.8, 0.0, 1.0 ) ); // Green stroke
+    SetFillColor( COLOR4D( 0.0, 0.8, 0.0, 0.1 ) );   // Faint green fill
+    SetLineWidth( 2.0 );
+}
+
+BOX2I DIFF_OVERLAY_ITEM::GetCurrentBBox() const
+{
+    if( m_bboxCallback )
+        m_bbox = m_bboxCallback();
+    return m_bbox;
+}
+
 void DIFF_OVERLAY_ITEM::ViewDraw( int aLayer, KIGFX::VIEW* aView ) const
 {
+    // Recompute bbox before drawing if we have a callback
+    if( m_bboxCallback )
+        m_bbox = m_bboxCallback();
+
     // We delegate to SIMPLE_OVERLAY_ITEM for setup, then drawPreviewShape
     SIMPLE_OVERLAY_ITEM::ViewDraw( aLayer, aView );
 }

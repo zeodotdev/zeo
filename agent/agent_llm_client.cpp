@@ -414,6 +414,13 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     ctx->currentToolName = contentBlock.value( "name", "" );
                     ctx->currentToolInput = "";
                     ctx->inToolInput = true;
+
+                    // Post TOOL_USE_START to show tool name while generating input
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::TOOL_USE_START;
+                    chunk.tool_use_id = ctx->currentToolId;
+                    chunk.tool_name = ctx->currentToolName;
+                    PostLLMChunk( ctx->handler, chunk );
                 }
                 else if( blockType == "thinking" )
                 {

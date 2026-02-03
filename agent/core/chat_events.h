@@ -34,6 +34,7 @@ wxDECLARE_EVENT( EVT_CHAT_TEXT_DELTA, wxThreadEvent );      ///< Text chunk arri
 wxDECLARE_EVENT( EVT_CHAT_THINKING_START, wxThreadEvent );  ///< Thinking block started
 wxDECLARE_EVENT( EVT_CHAT_THINKING_DELTA, wxThreadEvent );  ///< Thinking chunk arrived
 wxDECLARE_EVENT( EVT_CHAT_THINKING_DONE, wxThreadEvent );   ///< Thinking block ended
+wxDECLARE_EVENT( EVT_CHAT_TOOL_GENERATING, wxThreadEvent ); ///< Tool call being generated (streaming)
 wxDECLARE_EVENT( EVT_CHAT_TOOL_START, wxThreadEvent );      ///< Tool execution starting
 wxDECLARE_EVENT( EVT_CHAT_TOOL_COMPLETE, wxThreadEvent );   ///< Tool finished
 wxDECLARE_EVENT( EVT_CHAT_TURN_COMPLETE, wxThreadEvent );   ///< Ready for next input
@@ -102,6 +103,20 @@ struct ChatThinkingDoneData
 
     ChatThinkingDoneData() = default;
     explicit ChatThinkingDoneData( const wxString& aThinking ) : finalThinking( aThinking ) {}
+};
+
+/**
+ * Payload for EVT_CHAT_TOOL_GENERATING events.
+ * Signals that the LLM is generating a tool call (before execution).
+ */
+struct ChatToolGeneratingData
+{
+    std::string toolId;           ///< Unique tool use ID
+    std::string toolName;         ///< Tool name (e.g., "sch_write")
+
+    ChatToolGeneratingData() = default;
+    ChatToolGeneratingData( const std::string& aId, const std::string& aName )
+        : toolId( aId ), toolName( aName ) {}
 };
 
 /**

@@ -45,6 +45,19 @@ enum class SectionType
 };
 
 /**
+ * Information about a pin on a placed symbol.
+ */
+struct PinInfo
+{
+    std::string number;
+    std::string name;
+    double      x;      // Absolute X position
+    double      y;      // Absolute Y position
+
+    nlohmann::json ToJson() const;
+};
+
+/**
  * Information about a placed symbol in the schematic.
  */
 struct SymbolInfo
@@ -57,6 +70,9 @@ struct SymbolInfo
     double      y;
     double      angle;
     int         unit;
+    bool        mirrorX;
+    bool        mirrorY;
+    std::vector<PinInfo> pins;
 
     nlohmann::json ToJson() const;
 };

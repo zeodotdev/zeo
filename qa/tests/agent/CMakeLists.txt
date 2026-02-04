@@ -32,8 +32,16 @@ set( QA_AGENT_SRCS
     # Version injection tests
     test_sch_version_injection.cpp
 
+    # Parser tests
+    test_sch_parser.cpp
+
+    # Library symbol handler tests
+    test_sch_lib_symbol_handler.cpp
+
     # Agent source files needed for tests
     ${CMAKE_SOURCE_DIR}/agent/tools/schematic/sch_validator.cpp
+    ${CMAKE_SOURCE_DIR}/agent/tools/schematic/sch_parser.cpp
+    ${CMAKE_SOURCE_DIR}/agent/tools/schematic/sch_lib_symbol_handler.cpp
     ${CMAKE_SOURCE_DIR}/agent/tools/kicad_file/sexpr_util.cpp
     ${CMAKE_SOURCE_DIR}/agent/tools/kicad_file/file_writer.cpp
     ${CMAKE_SOURCE_DIR}/agent/tools/kicad_file/uuid_util.cpp

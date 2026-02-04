@@ -23,6 +23,8 @@
 #include <regex>
 #include <sstream>
 #include <algorithm>
+#include <cmath>
+#include <tuple>
 
 namespace SchParser
 {
@@ -107,8 +109,22 @@ static std::string ExtractValue( const SEXPR::SEXPR* aSymbol )
 }
 
 
+nlohmann::json PinInfo::ToJson() const
+{
+    return {
+        { "number", number },
+        { "name", name },
+        { "pos", { x, y } }
+    };
+}
+
+
 nlohmann::json SymbolInfo::ToJson() const
 {
+    nlohmann::json pinsJson = nlohmann::json::array();
+    for( const auto& pin : pins )
+        pinsJson.push_back( pin.ToJson() );
+
     return {
         { "uuid", uuid },
         { "ref", reference },
@@ -116,7 +132,8 @@ nlohmann::json SymbolInfo::ToJson() const
         { "lib", libId },
         { "pos", { x, y } },
         { "angle", angle },
-        { "unit", unit }
+        { "unit", unit },
+        { "pins", pinsJson }
     };
 }
 
@@ -141,6 +158,103 @@ nlohmann::json SchematicSummary::ToJson() const
         { "labels", labels },
         { "sheets", sheetCount }
     };
+}
+
+
+/**
+ * Extract pins from a lib_symbol definition for a specific unit.
+ * Returns vector of (number, name, rel_x, rel_y, pin_angle).
+ */
+static std::vector<std::tuple<std::string, std::string, double, double, double>>
+ExtractLibSymbolPins( const SEXPR::SEXPR* aLibSymbol, int aUnit )
+{
+    std::vector<std::tuple<std::string, std::string, double, double, double>> pins;
+
+    auto children = aLibSymbol->GetChildren();
+    if( !children )
+        return pins;
+
+    // Find symbol_N_M blocks (unit N, convert M)
+    // Unit 0 applies to all units; otherwise match specific unit
+    for( const auto& child : *children )
+    {
+        if( !child->IsList() || SexprUtil::GetListType( child ) != "symbol" )
+            continue;
+
+        // Parse symbol name to get unit number: "LibName_N_M"
+        auto symbolChildren = child->GetChildren();
+        if( !symbolChildren || symbolChildren->size() < 2 )
+            continue;
+
+        const SEXPR::SEXPR* nameExpr = symbolChildren->at( 1 );
+        if( !nameExpr->IsString() )
+            continue;
+
+        std::string symbolName = nameExpr->GetString();
+        // Extract unit from name pattern "LibName_N_M"
+        size_t lastUnderscore = symbolName.rfind( '_' );
+        size_t secondLastUnderscore = symbolName.rfind( '_', lastUnderscore - 1 );
+        if( lastUnderscore == std::string::npos || secondLastUnderscore == std::string::npos )
+            continue;
+
+        int unitNum = std::stoi( symbolName.substr( secondLastUnderscore + 1,
+                                                     lastUnderscore - secondLastUnderscore - 1 ) );
+
+        // Unit 0 applies to all, otherwise must match
+        if( unitNum != 0 && unitNum != aUnit )
+            continue;
+
+        // Find pins in this symbol block
+        auto pinExprs = SexprUtil::FindChildren( child, "pin" );
+        for( const auto& pinExpr : pinExprs )
+        {
+            // Extract pin position: (at x y angle)
+            auto atExpr = SexprUtil::FindFirstChild( pinExpr, "at" );
+            double px = 0, py = 0, pangle = 0;
+            if( atExpr )
+                SexprUtil::GetCoordinates( atExpr, px, py, pangle );
+
+            // Extract pin name
+            auto nameChild = SexprUtil::FindFirstChild( pinExpr, "name" );
+            std::string pinName;
+            if( nameChild )
+                pinName = SexprUtil::GetStringValue( nameChild );
+
+            // Extract pin number
+            auto numberChild = SexprUtil::FindFirstChild( pinExpr, "number" );
+            std::string pinNumber;
+            if( numberChild )
+                pinNumber = SexprUtil::GetStringValue( numberChild );
+
+            pins.emplace_back( pinNumber, pinName, px, py, pangle );
+        }
+    }
+
+    return pins;
+}
+
+
+/**
+ * Transform relative pin position to absolute position.
+ * Applies symbol rotation and mirroring.
+ */
+static void TransformPinPosition( double symX, double symY, double symAngle,
+                                   bool mirrorX, bool mirrorY,
+                                   double pinRelX, double pinRelY,
+                                   double& pinAbsX, double& pinAbsY )
+{
+    // Apply mirroring first (in symbol's local space)
+    double x = mirrorY ? -pinRelX : pinRelX;
+    double y = mirrorX ? -pinRelY : pinRelY;
+
+    // Convert angle to radians
+    double rad = symAngle * M_PI / 180.0;
+    double cosA = std::cos( rad );
+    double sinA = std::sin( rad );
+
+    // Rotate and translate
+    pinAbsX = symX + x * cosA - y * sinA;
+    pinAbsY = symY + x * sinA + y * cosA;
 }
 
 
@@ -215,7 +329,56 @@ SchematicSummary GetSummary( const std::string& aFilePath )
         info.reference = ExtractReference( sym );
         info.value = ExtractValue( sym );
 
+        // Extract mirror flags
+        info.mirrorX = false;
+        info.mirrorY = false;
+        auto mirrorExpr = SexprUtil::FindFirstChild( sym, "mirror" );
+        if( mirrorExpr )
+        {
+            std::string mirrorVal = SexprUtil::GetStringValue( mirrorExpr );
+            info.mirrorX = ( mirrorVal == "x" || mirrorVal == "xy" );
+            info.mirrorY = ( mirrorVal == "y" || mirrorVal == "xy" );
+        }
+
         summary.symbols.push_back( info );
+    }
+
+    // Look up lib_symbols to extract pins for each symbol
+    auto libSymbols = SexprUtil::FindFirstChild( root.get(), "lib_symbols" );
+    if( libSymbols )
+    {
+        auto libSymChildren = SexprUtil::FindChildren( libSymbols, "symbol" );
+
+        for( auto& symInfo : summary.symbols )
+        {
+            // Find matching lib_symbol by lib_id
+            for( const auto& libSym : libSymChildren )
+            {
+                auto libSymChildren2 = libSym->GetChildren();
+                if( libSymChildren2 && libSymChildren2->size() >= 2 )
+                {
+                    const SEXPR::SEXPR* libNameExpr = libSymChildren2->at( 1 );
+                    if( libNameExpr->IsString() && libNameExpr->GetString() == symInfo.libId )
+                    {
+                        // Extract pins for this unit
+                        auto pinDefs = ExtractLibSymbolPins( libSym, symInfo.unit );
+                        for( const auto& pinDef : pinDefs )
+                        {
+                            PinInfo pin;
+                            pin.number = std::get<0>( pinDef );
+                            pin.name = std::get<1>( pinDef );
+                            double relX = std::get<2>( pinDef );
+                            double relY = std::get<3>( pinDef );
+                            TransformPinPosition( symInfo.x, symInfo.y, symInfo.angle,
+                                                  symInfo.mirrorX, symInfo.mirrorY,
+                                                  relX, relY, pin.x, pin.y );
+                            symInfo.pins.push_back( pin );
+                        }
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     // Count wires

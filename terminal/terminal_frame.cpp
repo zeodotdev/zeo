@@ -1,15 +1,19 @@
 #include "terminal_frame.h"
 #include "terminal_panel_agent.h"
+#include "terminal_command_validator.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/sizer.h>
 #include <wx/settings.h>
 #include <id.h>
 #include <kiway.h>
+#include <project.h>
 #include <wx/log.h>
 #include <wx/menu.h>   // For menu IDs
 #include <wx/button.h> // For wxButton
 #include <nlohmann/json.hpp>
+#include <pgm_base.h>
+#include <api/api_server.h>
 
 // Define IDs for new commands
 enum
@@ -315,6 +319,16 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
     {
         wxString bashCmd = cmd.Mid( 13 ).Trim( false );
 
+        // Get project path for security validation
+        std::string projectPath = Kiway().Prj().GetProjectPath().ToStdString();
+
+        // Validate the command against project path restrictions
+        TerminalValidationResult validation =
+            TerminalCommandValidator::ValidateCommand( bashCmd.ToStdString(), projectPath );
+
+        if( !validation.valid )
+            return validation.error;
+
         // Find or create agent terminal
         TERMINAL_PANEL* active = nullptr;
         for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
@@ -518,6 +532,12 @@ void TERMINAL_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
     {
         std::string payload = aEvent.GetPayload();
 
+        // Log received request (truncate if too long)
+        wxString payloadPreview = wxString::FromUTF8( payload.substr( 0, 200 ) );
+        if( payload.length() > 200 )
+            payloadPreview += "...";
+        wxLogInfo( "TERMINAL: Received MAIL_AGENT_REQUEST, payload: %s", payloadPreview );
+
         // Use async execution to avoid blocking the UI thread
         ExecuteCommandForAgentAsync( payload );
     }
@@ -527,6 +547,12 @@ void TERMINAL_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 void TERMINAL_FRAME::SendAgentResponse( const std::string& aResult )
 {
     m_asyncRequestPending = false;
+
+    // Log response being sent (truncate if too long)
+    wxString resultPreview = wxString::FromUTF8( aResult.substr( 0, 200 ) );
+    if( aResult.length() > 200 )
+        resultPreview += "...";
+    wxLogInfo( "TERMINAL: SendAgentResponse, result: %s", resultPreview );
 
     // ExpressMail takes a non-const reference, so we need a copy
     std::string result = aResult;
@@ -613,12 +639,19 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
             "    except ImportError:\n"
             "        pass\n";
 
+        // Get the API server socket path so kipy connects to the correct instance
+        std::string socketPath;
+#ifdef KICAD_IPC_API
+        socketPath = Pgm().GetApiServer().SocketPath();
+        wxLogInfo( "TERMINAL: Using API socket path: %s", socketPath.c_str() );
+#endif
+
         if( mode == "sch" )
         {
             initCode = commonInit +
                 "import kipy\n"
                 "from kipy.geometry import Vector2\n"
-                "kicad = kipy.KiCad()\n"
+                "kicad = kipy.KiCad(socket_path='" + socketPath + "', timeout_ms=5000)\n"
                 "sch = kicad.get_schematic()\n";
 
             // Begin agent transaction for concurrent editing support
@@ -638,7 +671,7 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
             initCode = commonInit +
                 "import kipy\n"
                 "from kipy.geometry import Vector2\n"
-                "kicad = kipy.KiCad()\n"
+                "kicad = kipy.KiCad(socket_path='" + socketPath + "', timeout_ms=5000)\n"
                 "board = kicad.get_board()\n";
 
             // Begin agent transaction for concurrent editing support
@@ -658,8 +691,12 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
         bool isPcbMode = ( mode == "pcb" );
         bool isSchMode = ( mode == "sch" );
         m_asyncRequestPending = true;
+        wxLogInfo( "TERMINAL: Setting up Python completion callback, mode=%s",
+                   isPcbMode ? "pcb" : ( isSchMode ? "sch" : "unknown" ) );
         active->SetPythonCompletionCallback(
             [this, isPcbMode, isSchMode]( const std::string& result, bool success ) {
+                wxLogInfo( "TERMINAL: Python completion callback invoked, success=%d, result_len=%zu",
+                           success, result.length() );
                 // If this was pcb mode, tell PCB editor to detect changes and end transaction
                 if( isPcbMode )
                 {
@@ -699,14 +736,20 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
 
         // Start Python execution (async, returns immediately)
         std::string fullCode = initCode + code.ToStdString();
+        wxLogInfo( "TERMINAL: Starting Python execution, code_len=%zu", fullCode.length() );
         std::string immediateResult = active->RunLocalPython( fullCode );
 
         // Check if RunLocalPython returned an immediate error (didn't start async execution)
         if( !immediateResult.empty() && immediateResult.find( "Error:" ) == 0 )
         {
+            wxLogError( "TERMINAL: RunLocalPython immediate error: %s", immediateResult );
             // Clear callback and send error response immediately
             active->ClearPythonCompletionCallback();
             SendAgentResponse( immediateResult );
+        }
+        else
+        {
+            wxLogInfo( "TERMINAL: Python execution started async, waiting for callback" );
         }
         // Otherwise, execution started - callback will be invoked when done
         return;
@@ -716,6 +759,19 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
     if( cmd.StartsWith( "run_terminal " ) )
     {
         wxString bashCmd = cmd.Mid( 13 ).Trim( false );
+
+        // Get project path for security validation
+        std::string projectPath = Kiway().Prj().GetProjectPath().ToStdString();
+
+        // Validate the command against project path restrictions
+        TerminalValidationResult validation =
+            TerminalCommandValidator::ValidateCommand( bashCmd.ToStdString(), projectPath );
+
+        if( !validation.valid )
+        {
+            SendAgentResponse( validation.error );
+            return;
+        }
 
         TERMINAL_PANEL* active = nullptr;
         for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )

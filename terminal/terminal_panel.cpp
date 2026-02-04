@@ -508,8 +508,8 @@ void TERMINAL_PANEL::OnPythonPollTimer( wxTimerEvent& aEvent )
         return;
     }
 
-    // Check for timeout (60 seconds)
-    long timeoutMs = 60000;
+    // Check for timeout (10 seconds - matches agent SendRequest timeout)
+    long timeoutMs = 10000;
     if( wxGetLocalTimeMillis() - m_pythonStartTime > timeoutMs )
     {
         m_pythonPollTimer.Stop();
@@ -536,6 +536,9 @@ void TERMINAL_PANEL::OnPythonPollTimer( wxTimerEvent& aEvent )
 
 void TERMINAL_PANEL::FinishPythonExecution()
 {
+    wxLogInfo( "TERMINAL_PANEL: FinishPythonExecution called, timedOut=%d, hasCallback=%d",
+               m_pythonTimedOut, m_pythonCompletionCallback != nullptr );
+
     m_pythonPollTimer.Stop();
 
     // Clean up thread
@@ -559,11 +562,17 @@ void TERMINAL_PANEL::FinishPythonExecution()
             ? "Error: Python execution timed out"
             : ( m_lastPythonResult.empty() ? "(no output)" : m_lastPythonResult );
 
+        wxLogInfo( "TERMINAL_PANEL: Invoking callback, success=%d, result_len=%zu", success, result.length() );
+
         // Call the callback (this will typically send ExpressMail back to agent)
         m_pythonCompletionCallback( result, success );
 
         // Clear callback after invoking (single-shot)
         m_pythonCompletionCallback = nullptr;
+    }
+    else
+    {
+        wxLogInfo( "TERMINAL_PANEL: No callback set, result won't be sent to agent" );
     }
 
     // Reset timeout flag

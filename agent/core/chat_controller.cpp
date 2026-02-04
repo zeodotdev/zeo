@@ -689,17 +689,42 @@ void CHAT_CONTROLLER::HandleLLMError( const std::string& aError )
 {
     wxLogInfo( "CHAT_CONTROLLER::HandleLLMError: %s", aError.c_str() );
     AgentConversationState oldState = m_ctx.GetState();
-    m_ctx.SetState( AgentConversationState::ERROR );
-    m_ctx.error_message = aError;
 
-    EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
-                                                              static_cast<int>( m_ctx.GetState() ) ) );
+    // Remove orphaned user message if no assistant response was generated yet.
+    // This prevents consecutive user messages which violate the Anthropic API format.
+    if( m_currentResponse.empty() && m_thinkingContent.IsEmpty() && !m_chatHistory.empty() )
+    {
+        auto& lastMsg = m_chatHistory.back();
+        if( lastMsg.contains( "role" ) && lastMsg["role"] == "user" )
+        {
+            wxLogInfo( "CHAT_CONTROLLER::HandleLLMError - removing orphaned user message" );
+            m_chatHistory.erase( m_chatHistory.end() - 1 );
+
+            // Also remove from API context
+            if( !m_apiContext.empty() )
+            {
+                auto& lastApiMsg = m_apiContext.back();
+                if( lastApiMsg.contains( "role" ) && lastApiMsg["role"] == "user" )
+                {
+                    m_apiContext.erase( m_apiContext.end() - 1 );
+                }
+            }
+        }
+    }
+
+    m_ctx.error_message = aError;
 
     bool canRetry = true;  // Most errors can be retried
     bool isContextError = aError.find( "context" ) != std::string::npos ||
                           aError.find( "token" ) != std::string::npos;
 
     EmitEvent( EVT_CHAT_ERROR, ChatErrorData( aError, canRetry, isContextError ) );
+
+    // Auto-recover to IDLE state so user can retry immediately.
+    // This prevents the chat from becoming stuck in ERROR state.
+    m_ctx.SetState( AgentConversationState::IDLE );
+    EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
+                                                              static_cast<int>( m_ctx.GetState() ) ) );
 }
 
 
@@ -765,11 +790,30 @@ void CHAT_CONTROLLER::ExecuteNextTool()
         wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - project path: %s", m_getProjectPathFn().c_str() );
     }
 
-    // Execute tool - route through TOOL_REGISTRY for file tools, KIWAY for terminal tools
-    std::string result = AgentTools::ExecuteToolSync( tool->tool_name, tool->tool_input, m_sendRequestFn );
+    // Execute tool with exception handling to prevent stuck state
+    std::string result;
+    bool success = false;
+
+    try
+    {
+        // Execute tool - route through TOOL_REGISTRY for file tools, KIWAY for terminal tools
+        result = AgentTools::ExecuteToolSync( tool->tool_name, tool->tool_input, m_sendRequestFn );
+        success = !result.empty() && result.find( "Error:" ) != 0;
+    }
+    catch( const std::exception& e )
+    {
+        wxLogError( "CHAT_CONTROLLER::ExecuteNextTool - exception during tool execution: %s", e.what() );
+        result = std::string( "Error: Tool execution failed with exception: " ) + e.what();
+        success = false;
+    }
+    catch( ... )
+    {
+        wxLogError( "CHAT_CONTROLLER::ExecuteNextTool - unknown exception during tool execution" );
+        result = "Error: Tool execution failed with unknown exception";
+        success = false;
+    }
 
     // Process the result (logging happens in ProcessToolResult)
-    bool success = !result.empty() && result.find( "Error:" ) != 0;
     ProcessToolResult( tool->tool_use_id, result, success );
 }
 
@@ -793,7 +837,16 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
     // Validate toolId is not empty
     if( aToolId.empty() )
     {
-        wxLogWarning( "ProcessToolResult: empty toolId - ignoring" );
+        wxLogWarning( "ProcessToolResult: empty toolId - recovering to IDLE state" );
+        // Recover from stuck state
+        if( m_ctx.GetState() == AgentConversationState::EXECUTING_TOOL )
+        {
+            m_ctx.SetState( AgentConversationState::IDLE );
+            EmitEvent( EVT_CHAT_STATE_CHANGED,
+                       ChatStateChangedData( static_cast<int>( AgentConversationState::EXECUTING_TOOL ),
+                                             static_cast<int>( AgentConversationState::IDLE ) ) );
+            EmitEvent( EVT_CHAT_ERROR, ChatErrorData( "Tool execution failed: invalid tool ID", true ) );
+        }
         return;
     }
 
@@ -803,6 +856,16 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
     {
         wxLogWarning( "ProcessToolResult: tool %s not found - ignoring stale request",
                       aToolId.c_str() );
+        // If we're stuck in EXECUTING_TOOL state with no pending tools, recover
+        if( m_ctx.GetState() == AgentConversationState::EXECUTING_TOOL &&
+            !m_ctx.HasPendingToolCalls() )
+        {
+            wxLogWarning( "ProcessToolResult: recovering from stuck EXECUTING_TOOL state" );
+            m_ctx.SetState( AgentConversationState::IDLE );
+            EmitEvent( EVT_CHAT_STATE_CHANGED,
+                       ChatStateChangedData( static_cast<int>( AgentConversationState::EXECUTING_TOOL ),
+                                             static_cast<int>( AgentConversationState::IDLE ) ) );
+        }
         return;
     }
 
@@ -1148,6 +1211,56 @@ void CHAT_CONTROLLER::AddAssistantToolUseToHistory( const nlohmann::json& aToolU
 }
 
 
+void CHAT_CONTROLLER::SanitizeApiContext()
+{
+    // Sanitize API context to ensure valid message format for the Anthropic API.
+    // This fixes issues like consecutive user messages that can occur after errors.
+    if( m_apiContext.empty() )
+        return;
+
+    nlohmann::json sanitized = nlohmann::json::array();
+    std::string lastRole;
+
+    for( const auto& msg : m_apiContext )
+    {
+        if( !msg.contains( "role" ) )
+            continue;
+
+        std::string role = msg["role"].get<std::string>();
+
+        // Skip consecutive messages with the same role (merge by keeping the later one)
+        if( role == lastRole )
+        {
+            if( role == "user" )
+            {
+                // For consecutive user messages, replace the previous one
+                wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - removing duplicate user message" );
+                if( !sanitized.empty() )
+                    sanitized.erase( sanitized.end() - 1 );
+            }
+            else if( role == "assistant" )
+            {
+                // For consecutive assistant messages, keep both (could be continuation)
+                // but this shouldn't normally happen
+                wxLogWarning( "CHAT_CONTROLLER::SanitizeApiContext - consecutive assistant messages" );
+            }
+        }
+
+        sanitized.push_back( msg );
+        lastRole = role;
+    }
+
+    // Ensure conversation doesn't end with orphaned assistant tool_use without tool_result
+    // (This is handled by RepairHistory, but double-check here)
+
+    if( sanitized != m_apiContext )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - context was sanitized" );
+        m_apiContext = sanitized;
+    }
+}
+
+
 void CHAT_CONTROLLER::StartLLMRequest()
 {
     wxLogInfo( "CHAT_CONTROLLER::StartLLMRequest called" );
@@ -1158,6 +1271,9 @@ void CHAT_CONTROLLER::StartLLMRequest()
     }
 
     m_stopRequested = false;
+
+    // Sanitize context before sending to ensure valid message format
+    SanitizeApiContext();
 
     // System prompt now handled server-side
     // Start async request - events will be forwarded to HandleLLMChunk

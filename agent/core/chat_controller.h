@@ -298,6 +298,12 @@ private:
     void AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBlocks );
 
     /**
+     * Sanitize API context before sending to ensure valid message format.
+     * Fixes issues like consecutive user messages that can occur after errors.
+     */
+    void SanitizeApiContext();
+
+    /**
      * Start an async LLM request with current context.
      */
     void StartLLMRequest();

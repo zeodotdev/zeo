@@ -2693,6 +2693,16 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     // Clear streaming state
     m_isThinking = false;
 
+    // Sync history from controller - it may have removed orphaned user messages
+    if( m_chatController )
+    {
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_apiContext = m_chatController->GetApiContext();
+    }
+
+    // Sync frame's state machine with controller (now IDLE after error recovery)
+    m_conversationCtx.SetState( AgentConversationState::IDLE );
+
     delete data;
 }
 

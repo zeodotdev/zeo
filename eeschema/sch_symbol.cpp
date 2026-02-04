@@ -110,7 +110,9 @@ bool SCH_SYMBOL::Deserialize( const google::protobuf::Any& aContainer )
     if( !aContainer.UnpackTo( &symbol ) )
         return false;
 
-    // ID is typically used for lookup, not modification of identity, but we can check it.
+    // Set UUID from protobuf - required for UpdateItems to find the existing item
+    if( symbol.has_id() && !symbol.id().value().empty() )
+        const_cast<KIID&>( m_Uuid ) = KIID( symbol.id().value() );
 
     if( symbol.has_position() )
         SetPosition( kiapi::common::UnpackVector2Sch( symbol.position() ) );
@@ -123,10 +125,26 @@ bool SCH_SYMBOL::Deserialize( const google::protobuf::Any& aContainer )
 
     if( symbol.has_angle() )
     {
-        // TODO: Map degrees back to Orientation Prop
+        // Map degrees back to Orientation Prop
+        // Angles come in as 0, 90, 180, or 270 degrees
+        int degrees = static_cast<int>( symbol.angle().value_degrees() + 0.5 );  // Round to int
+        degrees = ( ( degrees % 360 ) + 360 ) % 360;  // Normalize to 0-359
+
+        SYMBOL_ORIENTATION_PROP orient = SYMBOL_ORIENTATION_PROP::SYMBOL_ANGLE_0;
+
+        if( degrees >= 45 && degrees < 135 )
+            orient = SYMBOL_ORIENTATION_PROP::SYMBOL_ANGLE_90;
+        else if( degrees >= 135 && degrees < 225 )
+            orient = SYMBOL_ORIENTATION_PROP::SYMBOL_ANGLE_180;
+        else if( degrees >= 225 && degrees < 315 )
+            orient = SYMBOL_ORIENTATION_PROP::SYMBOL_ANGLE_270;
+
+        SetOrientationProp( orient );
     }
 
-    // Mirror X/Y
+    // Mirror X/Y - bool fields don't have has_ methods in proto3, just use the values directly
+    SetMirrorX( symbol.mirror_x() );
+    SetMirrorY( symbol.mirror_y() );
 
     // Flags - use Prop setters only if we have a valid Schematic reference
     // (newly created symbols via API won't have one until added to the screen)

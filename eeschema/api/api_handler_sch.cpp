@@ -549,6 +549,27 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
             if( SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( edaItem ) )
             {
                 schItem->SwapItemData( static_cast<SCH_ITEM*>( item.get() ) );
+
+                // For SCH_SYMBOL updates, we need to re-resolve the library symbol
+                // because SwapItemData swaps m_part, and the temporary item has no library symbol
+                if( schItem->Type() == SCH_SYMBOL_T )
+                {
+                    SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( schItem );
+                    LIB_ID libId = symbol->GetLibId();
+
+                    if( libId.IsValid() )
+                    {
+                        LIB_SYMBOL* libSymbol = m_frame->GetLibSymbol( libId );
+
+                        if( libSymbol )
+                        {
+                            std::unique_ptr<LIB_SYMBOL> flattenedSymbol = libSymbol->Flatten();
+                            flattenedSymbol->SetParent();
+                            symbol->SetLibSymbol( flattenedSymbol.release() );
+                        }
+                    }
+                }
+
                 schItem->Serialize( newItem );
                 commit->Modify( schItem, screen );
             }

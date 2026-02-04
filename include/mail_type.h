@@ -88,8 +88,11 @@ enum MAIL_T
     MAIL_AGENT_FILE_EDIT_ABORT,     // Agent -> Editor: Abort file edit session
 
     // Diff overlay refresh
-    MAIL_AGENT_REFRESH_DIFF         // Agent -> Editor: Refresh diff overlays (items may have moved)
+    MAIL_AGENT_REFRESH_DIFF,        // Agent -> Editor: Refresh diff overlays (items may have moved)
 
+    // Agent tracking mode
+    MAIL_AGENT_TRACKING_MODE,       // Agent -> Editor: Enable/disable tracking (JSON: {tracking: bool})
+    MAIL_AGENT_TRACKING_BROKEN      // Editor -> Agent: User broke tracking
 };
 
 

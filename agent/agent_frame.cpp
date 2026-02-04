@@ -80,6 +80,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_signInButton( nullptr ),
         m_pendingChangesBtn( nullptr ),
         m_pendingChangesPanel( nullptr ),
+        m_trackAgentBtn( nullptr ),
+        m_isTrackingAgent( false ),
         m_historyPanel( nullptr ),
         m_pendingOpenSch( false ),
         m_pendingOpenPcb( false )
@@ -196,6 +198,12 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_modelChoice->SetSelection( 0 ); // Default to Claude 4.5 Sonnet
     controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
+    // Track Agent Button
+    m_trackAgentBtn = new wxButton( m_inputPanel, wxID_ANY, "Track",
+                                    wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
+    m_trackAgentBtn->SetToolTip( "Follow agent changes automatically" );
+    controlsSizer->Add( m_trackAgentBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+
     // Spacer
     controlsSizer->AddStretchSpacer();
 
@@ -236,6 +244,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_inputCtrl->Bind( wxEVT_TEXT_ENTER, &AGENT_FRAME::OnTextEnter, this );
     m_selectionPill->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSelectionPillClick, this );
     m_pendingChangesBtn->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnPendingChangesClick, this );
+    m_trackAgentBtn->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnTrackAgentClick, this );
 
     // m_toolButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnToolClick, this );
     // Note: Link clicks and right-click are now handled via JavaScript message passing
@@ -928,6 +937,12 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
         // Clear the selection pill - selected items may have been deleted by rejection or undo
         // The editors will send a new MAIL_SELECTION if items are still selected
         m_selectionPill->Show( false );
+    }
+    else if( aEvent.Command() == MAIL_AGENT_TRACKING_BROKEN )
+    {
+        // User broke tracking by interacting with the editor
+        m_isTrackingAgent = false;
+        m_trackAgentBtn->SetLabel( "Track" );
     }
     Layout();
 }
@@ -2030,6 +2045,28 @@ void AGENT_FRAME::OnPendingChangesClick( wxCommandEvent& aEvent )
 }
 
 
+void AGENT_FRAME::OnTrackAgentClick( wxCommandEvent& aEvent )
+{
+    m_isTrackingAgent = !m_isTrackingAgent;
+
+    nlohmann::json payload;
+    payload["tracking"] = m_isTrackingAgent;
+    std::string payloadStr = payload.dump();
+
+    if( m_isTrackingAgent )
+    {
+        m_trackAgentBtn->SetLabel( "Tracking" );
+    }
+    else
+    {
+        m_trackAgentBtn->SetLabel( "Track" );
+    }
+
+    Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_TRACKING_MODE, payloadStr );
+    Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_TRACKING_MODE, payloadStr );
+}
+
+
 void AGENT_FRAME::OnSchematicChangeHandled( bool aAccepted )
 {
     AppendHtml( aAccepted ? "<p><i>Schematic changes accepted.</i></p>"
@@ -2594,6 +2631,15 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
     // Check for pending approval
     RefreshPendingChangesPanel();
+
+    // Auto-follow on tool complete if tracking is active
+    if( m_isTrackingAgent && data->success )
+    {
+        // Send to both editors - each will check if it has changes to show
+        std::string emptyPayload;
+        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_VIEW_CHANGES, emptyPayload );
+        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_VIEW_CHANGES, emptyPayload );
+    }
 
     UpdateAgentResponse();
     // Auto-scroll handled by CSS flex-direction: column-reverse

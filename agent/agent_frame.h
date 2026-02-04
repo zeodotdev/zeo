@@ -75,6 +75,7 @@ public:
     void OnSignIn( wxCommandEvent& aEvent );
     void OnSize( wxSizeEvent& aEvent ) override;
     void OnPendingChangesClick( wxCommandEvent& aEvent );
+    void OnTrackAgentClick( wxCommandEvent& aEvent );
 
     // Agent change approval (public for panel callbacks)
     void OnSchematicChangeHandled( bool aAccepted );
@@ -124,6 +125,10 @@ private:
     // Pending changes UI
     wxButton*               m_pendingChangesBtn;    // Shows when changes pending
     PENDING_CHANGES_PANEL*  m_pendingChangesPanel;  // Panel for managing changes
+
+    // Track Agent UI
+    wxButton*               m_trackAgentBtn;        // Toggle tracking mode button
+    bool                    m_isTrackingAgent;      // Whether tracking mode is active
 
     // History panel UI
     HISTORY_PANEL*          m_historyPanel;         // Full history list panel

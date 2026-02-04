@@ -1225,8 +1225,15 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
         BOX2I changedBBox = ComputeTrackedItemsBBox();
 
+        wxLogInfo( "MAIL_AGENT_VIEW_CHANGES: hasChanges=%d, bbox=(%d,%d,%d,%d)",
+                   m_hasAgentPendingChanges,
+                   changedBBox.GetX(), changedBBox.GetY(),
+                   changedBBox.GetWidth(), changedBBox.GetHeight() );
+
         if( m_hasAgentPendingChanges && changedBBox.GetWidth() > 0 )
         {
+            // Bring editor to front
+            Raise();
             // Find the target sheet to navigate to
             SCH_SHEET_PATH targetSheet;
             bool needSheetChange = false;
@@ -1687,6 +1694,35 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
     {
         // Refresh the diff overlay - items may have moved
         DIFF_MANAGER::GetInstance().RefreshOverlay( GetCanvas()->GetView() );
+        break;
+    }
+
+    case MAIL_AGENT_TRACKING_MODE:
+    {
+        try
+        {
+            nlohmann::json j = nlohmann::json::parse( payload );
+            bool enabled = j.value( "tracking", false );
+
+            if( GetCanvas() && GetCanvas()->GetView() )
+            {
+                DIFF_MANAGER::GetInstance().SetTrackingMode( GetCanvas()->GetView(), enabled );
+
+                if( enabled )
+                {
+                    DIFF_MANAGER::GetInstance().SetTrackingBrokenCallback( [this]() {
+                        std::string emptyPayload;
+                        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_TRACKING_BROKEN, emptyPayload );
+                    } );
+                }
+
+                GetCanvas()->Refresh();
+            }
+        }
+        catch( const std::exception& e )
+        {
+            wxLogWarning( "Failed to parse MAIL_AGENT_TRACKING_MODE payload: %s", e.what() );
+        }
         break;
     }
 

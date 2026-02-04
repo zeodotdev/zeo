@@ -111,10 +111,22 @@ void CHAT_CONTROLLER::SendMessage( const std::string& aText )
         GenerateTitle();
     }
 
+    // Inject project context into first user message
+    std::string messageText = aText;
+    if( userMessageCount == 0 && m_getProjectPathFn )
+    {
+        std::string projectPath = m_getProjectPathFn();
+        if( !projectPath.empty() )
+        {
+            messageText = "<project_context>\nProject directory: " + projectPath +
+                          "\n</project_context>\n\n" + aText;
+        }
+    }
+
     // Add user message to history
     nlohmann::json userMsg = {
         { "role", "user" },
-        { "content", aText }
+        { "content", messageText }
     };
     AddToHistory( userMsg );
 

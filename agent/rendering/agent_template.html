@@ -78,6 +78,36 @@ pre.code-block {
     color: #d4d4d4;
     margin: 12px 0;
 }
+
+/* Table styling */
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #404040;
+}
+th {
+    background: #3d3d3d;
+    color: #ffffff;
+    font-weight: 600;
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 2px solid #569cd6;
+}
+td {
+    background: #2d2d2d;
+    color: #d4d4d4;
+    padding: 8px 12px;
+    border-bottom: 1px solid #404040;
+}
+tr:last-child td {
+    border-bottom: none;
+}
+tr:hover td {
+    background: #363636;
+}
 </style>
 <script>
 function sendMsg(action, data) {

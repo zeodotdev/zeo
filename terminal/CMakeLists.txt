@@ -24,6 +24,7 @@ set( TERMINAL_SRCS
     terminal_panel.cpp
     terminal_panel_agent.cpp
     python_exec_thread.cpp
+    terminal_command_validator.cpp
 )
 
 # Resources for the macOS bundle

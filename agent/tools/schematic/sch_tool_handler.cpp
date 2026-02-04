@@ -32,6 +32,52 @@ namespace
 {
 
 /**
+ * Generate a minimal valid schematic template with the given UUID.
+ * Uses the current application version constants for compatibility.
+ *
+ * @param aUuid The UUID for the schematic root.
+ * @return The schematic template content as a string.
+ */
+std::string GenerateSchematicTemplate( const std::string& aUuid )
+{
+    return "(kicad_sch (version " + std::to_string( SEXPR_SCHEMATIC_FILE_VERSION ) + ") "
+           "(generator \"eeschema\") (generator_version \"" + GetMajorMinorVersion().ToStdString() + "\")\n"
+           "  (uuid \"" + aUuid + "\")\n"
+           "  (paper \"A4\")\n"
+           "  (lib_symbols)\n"
+           "  (symbol_instances)\n"
+           ")\n";
+}
+
+
+/**
+ * Inject or replace the root UUID in schematic content.
+ * Finds the first (uuid "...") after (kicad_sch and replaces it with the provided UUID.
+ *
+ * @param aContent The schematic content to modify.
+ * @param aUuid The UUID to inject.
+ * @return The content with the injected UUID.
+ */
+std::string InjectSchematicUuid( const std::string& aContent, const std::string& aUuid )
+{
+    // Match the first (uuid "...") in the content - this is the root UUID
+    std::regex uuidRegex( R"(\(uuid\s+"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"\))" );
+
+    // Replace only the first occurrence
+    std::string result = aContent;
+    std::smatch match;
+    if( std::regex_search( result, match, uuidRegex ) )
+    {
+        result = result.substr( 0, match.position() ) +
+                 "(uuid \"" + aUuid + "\")" +
+                 result.substr( match.position() + match.length() );
+    }
+
+    return result;
+}
+
+
+/**
  * Inject the correct schematic file version into content.
  * Replaces any existing (version XXXXX) with the current SEXPR_SCHEMATIC_FILE_VERSION.
  * Also updates (generator_version "X.X") to match the current KiCad version.
@@ -54,6 +100,113 @@ std::string InjectSchematicVersion( const std::string& aContent )
                                  "(generator_version \"" + GetMajorMinorVersion().ToStdString() + "\")" );
 
     return result;
+}
+
+/**
+ * Check if a UUID is missing, empty, or a placeholder.
+ * Placeholders include all-zeros UUID and empty strings.
+ *
+ * @param aUuid The UUID to check.
+ * @return true if the UUID needs to be replaced.
+ */
+bool NeedsUuidReplacement( const std::string& aUuid )
+{
+    if( aUuid.empty() )
+        return true;
+
+    // Check for all-zeros placeholder
+    if( aUuid == "00000000-0000-0000-0000-000000000000" )
+        return true;
+
+    // Check if it's a valid UUID format
+    if( !UuidUtil::IsValidUuid( aUuid ) )
+        return true;
+
+    return false;
+}
+
+
+/**
+ * Insert or replace a UUID in an element's S-expression.
+ * If the element has an existing (uuid ...) expression, it's replaced.
+ * If not, a new (uuid "...") is appended before the closing parenthesis.
+ *
+ * @param aElement The element S-expression string.
+ * @param aNewUuid The UUID to insert.
+ * @return The modified element with the new UUID.
+ */
+std::string InsertOrReplaceUuid( const std::string& aElement, const std::string& aNewUuid )
+{
+    // Try to match and replace existing UUID (quoted or unquoted)
+    std::regex existingUuid(
+        R"(\(uuid\s+\"?[0-9a-fA-F-]*\"?\))"
+    );
+
+    std::string replacement = "(uuid \"" + aNewUuid + "\")";
+
+    if( std::regex_search( aElement, existingUuid ) )
+    {
+        return std::regex_replace( aElement, existingUuid, replacement );
+    }
+
+    // No existing UUID - insert before the final closing parenthesis
+    // Find the last ')' that closes the main element
+    size_t lastParen = aElement.rfind( ')' );
+    if( lastParen == std::string::npos )
+        return aElement;  // Malformed, let validation catch it
+
+    // Insert the UUID before the closing paren, with proper formatting
+    std::string result = aElement.substr( 0, lastParen );
+
+    // Check if we need to add whitespace/newline
+    if( !result.empty() && result.back() != '\n' && result.back() != ' ' && result.back() != '\t' )
+        result += "\n    ";
+
+    result += replacement;
+    result += "\n";
+    result += aElement.substr( lastParen );
+
+    return result;
+}
+
+
+/**
+ * Ensure an element has a valid, unique UUID.
+ * If the element is missing a UUID, has an empty UUID, or has a placeholder/duplicate UUID,
+ * a new unique UUID is generated and inserted.
+ *
+ * @param aElement The element S-expression string.
+ * @param aExistingUuids Set of UUIDs already in use in the schematic.
+ * @return The element with a valid unique UUID.
+ */
+std::string EnsureElementHasUuid( const std::string& aElement,
+                                   const std::set<std::string>& aExistingUuids )
+{
+    // Parse the element to check for existing UUID
+    auto parsed = SexprUtil::Parse( aElement );
+    if( !parsed )
+        return aElement;  // Let validation catch syntax errors
+
+    // Look for existing UUID
+    auto uuidExpr = SexprUtil::FindFirstChild( parsed.get(), "uuid" );
+
+    if( uuidExpr )
+    {
+        std::string uuid = SexprUtil::GetStringValue( uuidExpr );
+
+        // If UUID is valid and unique, keep it unchanged
+        if( !NeedsUuidReplacement( uuid ) &&
+            UuidUtil::IsUuidUnique( uuid, aExistingUuids ) )
+        {
+            return aElement;
+        }
+    }
+
+    // Generate a new unique UUID
+    std::string newUuid = UuidUtil::GenerateUniqueUuid( aExistingUuids );
+
+    // Insert or replace the UUID in the element
+    return InsertOrReplaceUuid( aElement, newUuid );
 }
 
 } // anonymous namespace
@@ -185,6 +338,10 @@ std::string SCH_TOOL_HANDLER::ExecuteModify( const nlohmann::json& aInput )
         std::string data = aInput.value( "data", "" );
         if( data.empty() )
             return "Error: 'data' parameter is required for add operation";
+
+        // Auto-generate UUID if missing, empty, or invalid
+        std::set<std::string> existingUuids = UuidUtil::ExtractUuids( content );
+        data = EnsureElementHasUuid( data, existingUuids );
 
         // Validate the element before adding
         auto validation = SchValidator::ValidateElement( elementType, data );
@@ -351,8 +508,6 @@ std::string SCH_TOOL_HANDLER::ExecuteWrite( const nlohmann::json& aInput )
     if( content.empty() )
         return "Error: 'content' parameter is required";
 
-    bool createBackup = aInput.value( "backup", true );
-
     // Validate file extension is .kicad_sch
     std::string extension = FileWriter::GetExtension( filePath );
     if( extension != ".kicad_sch" )
@@ -370,6 +525,49 @@ std::string SCH_TOOL_HANDLER::ExecuteWrite( const nlohmann::json& aInput )
     // Use the resolved absolute path
     filePath = pathResult.resolvedPath;
 
+    // Check if file exists to determine new vs existing file handling
+    bool fileExists = FileWriter::FileExists( filePath );
+    std::string schematicUuid;
+
+    // Extract sheet name for project registration
+    std::string sheetName = FileWriter::GetFilename( filePath );
+    size_t extPos = sheetName.rfind( ".kicad_sch" );
+    if( extPos != std::string::npos )
+        sheetName = sheetName.substr( 0, extPos );
+
+    if( fileExists )
+    {
+        // EXISTING FILE: Extract and preserve the existing UUID
+        std::string existingContent;
+        if( !FileWriter::ReadFile( filePath, existingContent ) )
+            return "Error: Failed to read existing file: " + filePath;
+
+        schematicUuid = FileWriter::ExtractSchematicRootUuid( existingContent );
+        if( schematicUuid.empty() )
+            return "Error: Existing file has no valid UUID: " + filePath;
+
+        // Inject the existing UUID into the provided content to preserve it
+        content = InjectSchematicUuid( content, schematicUuid );
+    }
+    else
+    {
+        // NEW FILE: Generate UUID, write template, register with project early (fail fast)
+        schematicUuid = UuidUtil::GenerateUuid();
+
+        // Write minimal template first
+        std::string templateContent = GenerateSchematicTemplate( schematicUuid );
+        auto templateResult = FileWriter::WriteFileSafe( filePath, templateContent, false );
+        if( !templateResult.success )
+            return "Error: Failed to write template: " + templateResult.error;
+
+        // Note: Project registration is handled by AGENT_FRAME::OnToolComplete()
+        // which updates the in-memory PROJECT_FILE state after successful sch_write.
+        // This ensures the sheet persists when KiCad saves the project.
+
+        // Inject the generated UUID into the provided content
+        content = InjectSchematicUuid( content, schematicUuid );
+    }
+
     // Inject the correct schematic file version to ensure compatibility
     content = InjectSchematicVersion( content );
 
@@ -382,37 +580,22 @@ std::string SCH_TOOL_HANDLER::ExecuteWrite( const nlohmann::json& aInput )
             { "error", "Content validation failed" },
             { "validation", validation.ToJson() }
         };
+        // Note: For new files, template is already written and registered with project.
+        // This is acceptable - the template is valid and can be overwritten later.
         return errorJson.dump( 2 );
     }
 
-    // Extract the schematic's root UUID for project registration
-    std::string schematicUuid = FileWriter::ExtractSchematicRootUuid( content );
-    if( schematicUuid.empty() )
-        return "Error: Schematic content does not contain a valid UUID";
-
-    // Write the file
-    auto writeResult = FileWriter::WriteFileSafe( filePath, content, createBackup );
+    // Write the actual content (with backup only for existing files)
+    auto writeResult = FileWriter::WriteFileSafe( filePath, content, fileExists );
     if( !writeResult.success )
         return "Error: Failed to write file: " + writeResult.error;
-
-    // Add the schematic to the project file
-    std::string sheetName = FileWriter::GetFilename( filePath );
-    // Remove extension for sheet name
-    size_t extPos = sheetName.rfind( ".kicad_sch" );
-    if( extPos != std::string::npos )
-        sheetName = sheetName.substr( 0, extPos );
-
-    auto projectResult = FileWriter::AddSchematicToProject( m_projectPath, schematicUuid, sheetName );
-    // Note: We don't fail if project update fails - the schematic is still written
 
     nlohmann::json result = {
         { "success", true },
         { "file", filePath },
-        { "added_to_project", projectResult.success }
+        { "uuid", schematicUuid },
+        { "is_new_file", !fileExists }
     };
-
-    if( !projectResult.success )
-        result["project_warning"] = projectResult.error;
 
     if( !writeResult.backupPath.empty() )
         result["backup"] = writeResult.backupPath;

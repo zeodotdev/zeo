@@ -133,19 +133,6 @@ PathValidationResult ValidatePathInProject( const std::string& aFilePath,
  */
 std::string ExtractSchematicRootUuid( const std::string& aContent );
 
-/**
- * Add a schematic sheet to the project file.
- * Updates the "sheets" array in the .kicad_pro file.
- *
- * @param aProjectPath The path to the project directory.
- * @param aSchematicUuid The UUID of the schematic (from the schematic file).
- * @param aSheetName The name for the sheet (typically the filename without extension).
- * @return WriteResult indicating success or failure.
- */
-WriteResult AddSchematicToProject( const std::string& aProjectPath,
-                                   const std::string& aSchematicUuid,
-                                   const std::string& aSheetName );
-
 } // namespace FileWriter
 
 #endif // FILE_WRITER_H

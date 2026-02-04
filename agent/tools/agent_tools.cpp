@@ -253,6 +253,44 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schRunErc );
 
+    // Tool: sch_get_lib_symbol - Query symbol library for pin positions
+    LLM_TOOL schGetLibSymbol;
+    schGetLibSymbol.name = "sch_get_lib_symbol";
+    schGetLibSymbol.description =
+        "Query symbol library for symbol definitions including pin positions. "
+        "Supports exact match (e.g., 'Device:R'), wildcards ('Connector:Conn_01x*'), "
+        "and regex patterns ('Device:R_[0-9]{4}'). "
+        "Returns pin positions in nanometers relative to symbol origin. "
+        "Use this before wiring to get accurate pin locations. "
+        "REQUIRES: Schematic editor must be open.";
+    schGetLibSymbol.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "lib_id", {
+                { "type", "string" },
+                { "description", "Library:Symbol identifier. Supports patterns: "
+                                "exact ('Device:R'), wildcard ('Device:R*'), "
+                                "or regex ('Device:R_[0-9]+')." }
+            }},
+            { "include_pins", {
+                { "type", "boolean" },
+                { "description", "Include full pin details with positions (default: true)" }
+            }},
+            { "max_suggestions", {
+                { "type", "integer" },
+                { "description", "Max suggestions if symbol not found (default: 10)" }
+            }},
+            { "pattern_type", {
+                { "type", "string" },
+                { "enum", json::array( { "exact", "wildcard", "regex" } ) },
+                { "description", "Pattern type: 'exact', 'wildcard', or 'regex'. "
+                                "Auto-detected if not specified." }
+            }}
+        }},
+        { "required", json::array( { "lib_id" } ) }
+    };
+    tools.push_back( schGetLibSymbol );
+
     // PCB tools (stubs - not yet implemented)
     // Tool 9: pcb_get_summary
     LLM_TOOL pcbGetSummary;

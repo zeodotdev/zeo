@@ -21,6 +21,7 @@
 #include "tool_handler.h"
 #include "schematic/sch_tool_handler.h"
 #include "schematic/sch_erc_handler.h"
+#include "schematic/sch_lib_symbol_handler.h"
 #include "pcb/pcb_tool_handler.h"
 
 
@@ -36,6 +37,7 @@ TOOL_REGISTRY::TOOL_REGISTRY()
     // Register schematic tool handlers
     m_handlers.push_back( std::make_unique<SCH_TOOL_HANDLER>() );
     m_handlers.push_back( std::make_unique<SCH_ERC_HANDLER>() );
+    m_handlers.push_back( std::make_unique<SCH_LIB_SYMBOL_HANDLER>() );
 
     // Register PCB tool handler (stubs for now)
     m_handlers.push_back( std::make_unique<PCB_TOOL_HANDLER>() );

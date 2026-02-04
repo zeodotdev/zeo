@@ -55,6 +55,7 @@
 #include <trace_helpers.h>
 #include <id.h>
 #include <diff_manager.h>
+#include <sch_io/kicad_sexpr/sch_io_kicad_sexpr_parser.h>
 
 
 SCH_ITEM* SCH_EDITOR_CONTROL::FindSymbolAndItem( const wxString* aPath, const wxString* aReference,
@@ -1444,10 +1445,63 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
     case MAIL_SCH_REFRESH:
     {
+        // If a file path is provided, reload that specific screen from disk
+        if( !payload.empty() )
+        {
+            wxString filePath = wxString::FromUTF8( payload );
+
+            // Find the screen matching this file path
+            SCH_SCREENS screens( Schematic().Root() );
+
+            for( SCH_SCREEN* screen = screens.GetFirst(); screen; screen = screens.GetNext() )
+            {
+                if( screen->GetFileName() == filePath )
+                {
+                    // Found the screen - reload its content from disk
+                    try
+                    {
+                        FILE_LINE_READER reader( filePath );
+                        SCH_IO_KICAD_SEXPR_PARSER parser( &reader );
+
+                        // Clear existing items from the screen
+                        screen->Clear( true );
+
+                        // Find the sheet that owns this screen to pass to parser
+                        SCH_SHEET* owningSheet = nullptr;
+                        SCH_SHEET_LIST sheets = Schematic().Hierarchy();
+
+                        for( const SCH_SHEET_PATH& sheetPath : sheets )
+                        {
+                            if( sheetPath.LastScreen() == screen )
+                            {
+                                owningSheet = sheetPath.Last();
+                                break;
+                            }
+                        }
+
+                        if( owningSheet )
+                        {
+                            parser.ParseSchematic( owningSheet );
+                        }
+
+                        wxLogInfo( "MAIL_SCH_REFRESH: Reloaded screen from %s", filePath );
+                    }
+                    catch( const IO_ERROR& e )
+                    {
+                        wxLogError( "MAIL_SCH_REFRESH: Failed to reload %s: %s",
+                                    filePath, e.What() );
+                    }
+                    break;
+                }
+            }
+        }
+
         TestDanglingEnds();
 
-        GetCanvas()->GetView()->UpdateAllItems( KIGFX::ALL );
-        GetCanvas()->Refresh();
+        // Use HardRedraw() to properly refresh the canvas after reloading from disk.
+        // HardRedraw() clears item caches and calls DisplaySheet() + ForceRefresh().
+        // This does NOT reset zoom/pan - that's handled separately in DisplayCurrentSheet().
+        HardRedraw();
         break;
     }
 

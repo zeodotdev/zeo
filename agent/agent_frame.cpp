@@ -1408,10 +1408,19 @@ std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayloa
     KIWAY_PLAYER* targetPlayer = Kiway().Player( static_cast<FRAME_T>( aDestFrame ), true );
     if( !targetPlayer )
     {
+        wxLogError( "AGENT: SendRequest failed - could not create target frame %d", aDestFrame );
         return "Error: Failed to create target frame for tool execution.";
     }
 
-    m_toolResponse = "";
+    // Log the request (truncate payload if too long)
+    wxString payloadPreview = wxString::FromUTF8( aPayload.substr( 0, 200 ) );
+    if( aPayload.length() > 200 )
+        payloadPreview += "...";
+    wxLogInfo( "AGENT: SendRequest to frame %d, payload: %s", aDestFrame, payloadPreview );
+
+    // Use a sentinel value to distinguish "no response yet" from "empty response received"
+    static const std::string NO_RESPONSE_SENTINEL = "\x01__NO_RESPONSE__\x01";
+    m_toolResponse = NO_RESPONSE_SENTINEL;
     std::string payloadCopy = aPayload;
 
     Kiway().ExpressMail( static_cast<FRAME_T>( aDestFrame ), MAIL_AGENT_REQUEST, payloadCopy );
@@ -1419,21 +1428,47 @@ std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayloa
     // Wait for response (Sync)
     // We expect the target frame to reply via MAIL_AGENT_RESPONSE which sets m_toolResponse
     wxLongLong start = wxGetLocalTimeMillis();
-    m_stopRequested = false;                                                      // Reset stop flag
-    while( m_toolResponse.empty() && ( wxGetLocalTimeMillis() - start < 10000 ) ) // 10s timeout
+    constexpr long TIMEOUT_MS = 10000;
+    m_stopRequested = false;  // Reset stop flag
+    while( m_toolResponse == NO_RESPONSE_SENTINEL && ( wxGetLocalTimeMillis() - start < TIMEOUT_MS ) )
     {
         wxYield(); // Process events (including the MailIn event and Stop button)
         if( m_stopRequested )
         {
+            wxLogInfo( "AGENT: SendRequest cancelled by user after %lld ms",
+                       ( wxGetLocalTimeMillis() - start ).GetValue() );
             return "Error: Tool execution cancelled by user.";
         }
         wxMilliSleep( 10 );
     }
 
-    if( m_toolResponse.empty() )
+    long elapsed = ( wxGetLocalTimeMillis() - start ).GetValue();
+    bool timedOut = ( m_toolResponse == NO_RESPONSE_SENTINEL );
+    bool emptyResponse = ( m_toolResponse.empty() );
+
+    if( timedOut )
     {
-        return "Error: Tool execution timed out or returned empty response.";
+        wxLogError( "AGENT: SendRequest TIMEOUT after %ld ms waiting for frame %d (no response received)",
+                    elapsed, aDestFrame );
+        return wxString::Format(
+            "Error: Tool execution timed out after %ld ms (no response received).",
+            elapsed ).ToStdString();
     }
+
+    if( emptyResponse )
+    {
+        wxLogWarning( "AGENT: SendRequest got EMPTY response after %ld ms from frame %d",
+                      elapsed, aDestFrame );
+        return wxString::Format(
+            "Error: Tool returned empty response after %ld ms.",
+            elapsed ).ToStdString();
+    }
+
+    // Log successful response (truncate if too long)
+    wxString responsePreview = wxString::FromUTF8( m_toolResponse.substr( 0, 200 ) );
+    if( m_toolResponse.length() > 200 )
+        responsePreview += "...";
+    wxLogInfo( "AGENT: SendRequest got response after %ld ms: %s", elapsed, responsePreview );
 
     return m_toolResponse;
 }
@@ -2628,6 +2663,28 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
         "<span class=\"text-text-secondary font-mono text-[13px] whitespace-pre-wrap break-words\">%s</span>"
         "</div>",
         m_lastToolDesc, statusClass, statusText, displayResult );
+
+    // After schematic tools complete successfully, trigger editor refresh for live UI feedback
+    if( data->success && ( data->toolName == "sch_modify" || data->toolName == "sch_write" ) )
+    {
+        try
+        {
+            nlohmann::json resultJson = nlohmann::json::parse( data->result );
+            if( resultJson.value( "success", false ) )
+            {
+                std::string filePath = resultJson.value( "file", "" );
+                if( !filePath.empty() )
+                {
+                    // Tell schematic editor to reload this file and refresh display
+                    Kiway().ExpressMail( FRAME_SCH, MAIL_SCH_REFRESH, filePath );
+                }
+            }
+        }
+        catch( ... )
+        {
+            // JSON parse failed - tool result may not be in expected format, skip refresh
+        }
+    }
 
     // Check for pending approval
     RefreshPendingChangesPanel();

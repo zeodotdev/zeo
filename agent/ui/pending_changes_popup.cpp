@@ -402,7 +402,9 @@ void PENDING_CHANGES_PANEL::onAcceptAll()
 
     Layout();
     wxPanel::Refresh();
-    GetParent()->Layout();
+
+    // Update the button visibility in the agent frame
+    m_agentFrame->UpdatePendingChangesButtonVisibility();
 }
 
 
@@ -444,5 +446,7 @@ void PENDING_CHANGES_PANEL::onRejectAll()
 
     Layout();
     wxPanel::Refresh();
-    GetParent()->Layout();
+
+    // Update the button visibility in the agent frame
+    m_agentFrame->UpdatePendingChangesButtonVisibility();
 }

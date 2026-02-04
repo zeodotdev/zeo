@@ -79,6 +79,7 @@ public:
     // Agent change approval (public for panel callbacks)
     void OnSchematicChangeHandled( bool aAccepted );
     void OnPcbChangeHandled( bool aAccepted );
+    void UpdatePendingChangesButtonVisibility();  // Sync button with panel visibility
 
     // Async LLM streaming event handlers
     void OnLLMStreamChunk( wxThreadEvent& aEvent );

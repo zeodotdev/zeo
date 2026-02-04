@@ -145,7 +145,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // 2. Input Container (Unified Look)
     // Create m_inputPanel for dark styling
     m_inputPanel = new wxPanel( this, wxID_ANY );
-    m_inputPanel->SetBackgroundColour( wxColour( "#1E1E1E" ) ); // 1E1E1E
+    m_inputPanel->SetBackgroundColour( wxColour( "#1C1C1C" ) );
 
     // Use a vertical BoxSizer for the panel
     wxBoxSizer* outerInputSizer = new wxBoxSizer( wxVERTICAL );
@@ -174,7 +174,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // 2a. Text Input (Top)
     m_inputCtrl = new wxTextCtrl( m_inputPanel, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 60 ),
                                   wxTE_MULTILINE | wxTE_PROCESS_ENTER | wxBORDER_NONE );
-    m_inputCtrl->SetBackgroundColour( wxColour( "#1E1E1E" ) );
+    m_inputCtrl->SetBackgroundColour( wxColour( "#1C1C1C" ) );
     m_inputCtrl->SetForegroundColour( wxColour( "#FFFFFF" ) );
 
     // Use system default font (matches chat name label)
@@ -1997,6 +1997,13 @@ void AGENT_FRAME::RefreshPendingChangesPanel()
     // The panel queries the editors directly and shows/hides itself
     m_pendingChangesPanel->Refresh();
 
+    // Update button visibility to match panel state
+    UpdatePendingChangesButtonVisibility();
+}
+
+
+void AGENT_FRAME::UpdatePendingChangesButtonVisibility()
+{
     // Show/hide the toggle button based on whether the panel has content
     // When there are no changes, hide the button entirely
     bool hasChanges = m_pendingChangesPanel->IsShown();

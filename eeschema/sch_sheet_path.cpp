@@ -1104,7 +1104,13 @@ SCH_ITEM* SCH_SHEET_LIST::ResolveItem( const KIID& aID, SCH_SHEET_PATH* aPathOut
 
 SCH_ITEM* SCH_SHEET_PATH::ResolveItem( const KIID& aID ) const
 {
-    for( SCH_ITEM* aItem : LastScreen()->Items() )
+    SCH_SCREEN* screen = LastScreen();
+
+    // Defensive check - screen might not be loaded if schematic file is missing
+    if( !screen )
+        return nullptr;
+
+    for( SCH_ITEM* aItem : screen->Items() )
     {
         if( aItem->m_Uuid == aID )
             return aItem;

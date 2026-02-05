@@ -111,15 +111,18 @@ void CHAT_CONTROLLER::SendMessage( const std::string& aText )
         GenerateTitle();
     }
 
-    // Inject project context into first user message
+    // Inject project context (including hierarchy) into first user message
     std::string messageText = aText;
     if( userMessageCount == 0 && m_getProjectPathFn )
     {
-        std::string projectPath = m_getProjectPathFn();
-        if( !projectPath.empty() )
+        std::string projectContext = m_getProjectPathFn();
+        if( !projectContext.empty() )
         {
-            messageText = "<project_context>\nProject directory: " + projectPath +
-                          "\n</project_context>\n\n" + aText;
+            messageText = "<project_context>\n" + projectContext +
+                         "\n</project_context>\n\n" + aText;
+
+            // Log the full first message with injected context
+            wxLogInfo( "CHAT: First message with context:\n%s", messageText.c_str() );
         }
     }
 

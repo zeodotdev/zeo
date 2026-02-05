@@ -69,12 +69,6 @@ private:
      * Validates a schematic file and returns results as JSON.
      */
     std::string ExecuteValidate( const nlohmann::json& aInput );
-
-    /**
-     * Execute sch_write tool.
-     * Writes complete schematic content to a file.
-     */
-    std::string ExecuteWrite( const nlohmann::json& aInput );
 };
 
 #endif // SCH_TOOL_HANDLER_H

@@ -199,33 +199,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schValidate );
 
-    // Tool 8: sch_write - Write complete schematic content
-    LLM_TOOL schWrite;
-    schWrite.name = "sch_write";
-    schWrite.description = "Write complete schematic content to a .kicad_sch file. "
-                           "Use for creating new schematics or major rewrites. "
-                           "Content must be valid KiCad S-expression format. "
-                           "Creates a .bak backup if file exists (unless backup=false).";
-    schWrite.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Absolute path to write the .kicad_sch file" }
-            }},
-            { "content", {
-                { "type", "string" },
-                { "description", "Complete schematic content as S-expression" }
-            }},
-            { "backup", {
-                { "type", "boolean" },
-                { "description", "Create .bak backup if file exists (default: true)" }
-            }}
-        }},
-        { "required", json::array( { "file_path", "content" } ) }
-    };
-    tools.push_back( schWrite );
-
     // Tool: sch_run_erc - Run ERC on open schematic
     LLM_TOOL schRunErc;
     schRunErc.name = "sch_run_erc";

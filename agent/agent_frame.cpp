@@ -11,6 +11,7 @@
 #include "core/chat_events.h"
 #include "tools/tool_registry.h"
 #include "tools/kicad_file/file_writer.h"
+#include "tools/schematic/sch_parser.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -26,6 +27,7 @@
 #include <wx/utils.h>
 #include <wx/stdpaths.h>
 #include <wx/filename.h>
+#include <wx/dir.h>
 #include <wx/stattext.h>
 #include <bitmaps.h>
 #include <id.h>
@@ -351,7 +353,148 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         } );
     m_chatController->SetProjectPathFn(
         [this]() -> std::string {
-            return Kiway().Prj().GetProjectPath().ToStdString();
+            wxString projectPath = Kiway().Prj().GetProjectPath();
+            if( projectPath.IsEmpty() )
+                return "";
+
+            // Build JSON with project path, PCB file, and schematic hierarchy
+            nlohmann::json projectContext;
+            projectContext["path"] = projectPath.ToStdString();
+
+            // Get project name for conventional file detection
+            wxFileName projDir( projectPath, "" );
+            wxString projName = projDir.GetDirs().IsEmpty() ? wxString() : projDir.GetDirs().Last();
+
+            // Find PCB file - try projectName.kicad_pcb first, then scan directory
+            wxDir dir( projectPath );
+            if( !projName.IsEmpty() )
+            {
+                wxString expectedPcb = projectPath + projName + ".kicad_pcb";
+                if( wxFileExists( expectedPcb ) )
+                {
+                    projectContext["pcb_file"] = ( projName + ".kicad_pcb" ).ToStdString();
+                }
+            }
+
+            // Fallback: scan for all PCB files if expected one not found
+            if( !projectContext.contains( "pcb_file" ) && dir.IsOpened() )
+            {
+                nlohmann::json pcbFiles = nlohmann::json::array();
+                wxString filename;
+                bool cont = dir.GetFirst( &filename, "*.kicad_pcb", wxDIR_FILES );
+                while( cont )
+                {
+                    pcbFiles.push_back( filename.ToStdString() );
+                    cont = dir.GetNext( &filename );
+                }
+                if( !pcbFiles.empty() )
+                    projectContext["pcb_files"] = pcbFiles;
+            }
+
+            // Build schematic hierarchy from root sheet(s)
+            // Define recursive hierarchy builder
+            std::function<nlohmann::json( const std::string&, std::set<std::string>& )> buildHierarchy;
+            buildHierarchy = [&]( const std::string& schPath,
+                                  std::set<std::string>& visited ) -> nlohmann::json {
+                nlohmann::json node;
+
+                // Avoid infinite loops from circular references
+                if( visited.count( schPath ) )
+                    return node;
+                visited.insert( schPath );
+
+                auto summary = SchParser::GetSummary( schPath );
+                node["file"] = summary.file;
+                node["uuid"] = summary.uuid;
+
+                // Recursively process child sheets
+                if( !summary.sheets.empty() )
+                {
+                    nlohmann::json children = nlohmann::json::array();
+                    for( const auto& sheet : summary.sheets )
+                    {
+                        // Resolve child sheet path relative to parent
+                        wxFileName childPath( schPath );
+                        childPath.SetFullName( sheet.filename );
+                        std::string childFullPath = childPath.GetFullPath().ToStdString();
+
+                        nlohmann::json childNode = buildHierarchy( childFullPath, visited );
+                        if( !childNode.empty() )
+                        {
+                            childNode["name"] = sheet.name;  // Display name from parent
+                            children.push_back( childNode );
+                        }
+                    }
+                    if( !children.empty() )
+                        node["children"] = children;
+                }
+
+                return node;
+            };
+
+            // Find root schematic(s) - check .kicad_pro for top_level_sheets
+            std::vector<std::string> rootSchFiles;
+
+            // Try to read top-level sheets from project file
+            if( !projName.IsEmpty() )
+            {
+                wxString proFile = projectPath + projName + ".kicad_pro";
+                if( wxFileExists( proFile ) )
+                {
+                    std::ifstream ifs( proFile.ToStdString() );
+                    if( ifs.good() )
+                    {
+                        try
+                        {
+                            nlohmann::json projJson = nlohmann::json::parse( ifs );
+                            if( projJson.contains( "schematic" ) &&
+                                projJson["schematic"].contains( "top_level_sheets" ) )
+                            {
+                                for( const auto& sheet : projJson["schematic"]["top_level_sheets"] )
+                                {
+                                    if( sheet.contains( "filename" ) )
+                                    {
+                                        wxString schFile = projectPath +
+                                            wxString::FromUTF8( sheet["filename"].get<std::string>() );
+                                        if( wxFileExists( schFile ) )
+                                            rootSchFiles.push_back( schFile.ToStdString() );
+                                    }
+                                }
+                            }
+                        }
+                        catch( ... )
+                        {
+                            // JSON parse error - fall back to heuristics
+                        }
+                    }
+                }
+            }
+
+            // Fall back to project-name.kicad_sch if no top-level sheets defined
+            if( rootSchFiles.empty() && !projName.IsEmpty() )
+            {
+                wxString rootCandidate = projectPath + projName + ".kicad_sch";
+                if( wxFileExists( rootCandidate ) )
+                    rootSchFiles.push_back( rootCandidate.ToStdString() );
+            }
+
+            // Build hierarchy for each root
+            if( !rootSchFiles.empty() )
+            {
+                nlohmann::json hierarchyArray = nlohmann::json::array();
+                std::set<std::string> visited;
+
+                for( const auto& rootFile : rootSchFiles )
+                {
+                    nlohmann::json rootNode = buildHierarchy( rootFile, visited );
+                    if( !rootNode.empty() )
+                        hierarchyArray.push_back( rootNode );
+                }
+
+                projectContext["hierarchy"] = hierarchyArray;
+            }
+
+            return projectContext.dump( 2 );
         } );
 
     // Set model on controller

@@ -26,8 +26,10 @@
 #include <cmath>
 #include <cstdio>
 #include <tuple>
+#include <sys/wait.h>
 #include <wx/stdpaths.h>
 #include <wx/filename.h>
+#include <wx/log.h>
 
 namespace SchParser
 {
@@ -288,12 +290,17 @@ static void TransformPinPosition( double symX, double symY, double symAngle,
  */
 static std::string GetKicadCliPath()
 {
-    wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+    wxString exePathStr = wxStandardPaths::Get().GetExecutablePath();
+    wxFileName exePath( exePathStr );
     wxFileName cliPath( exePath.GetPath(), "kicad-cli" );
+
+    wxLogInfo( "SPICE: Executable path: %s", exePathStr );
+    wxLogInfo( "SPICE: Looking for kicad-cli at: %s", cliPath.GetFullPath() );
 
     if( cliPath.FileExists() )
         return cliPath.GetFullPath().ToStdString();
 
+    wxLogWarning( "SPICE: kicad-cli not found at %s", cliPath.GetFullPath() );
     return std::string();
 }
 
@@ -301,18 +308,34 @@ static std::string GetKicadCliPath()
 std::string GenerateSpiceNetlist( const std::string& aSchematicPath )
 {
     if( aSchematicPath.empty() )
+    {
+        wxLogWarning( "SPICE: Empty schematic path" );
         return std::string();
+    }
 
     std::string cliPath = GetKicadCliPath();
     if( cliPath.empty() )
         return std::string();
 
-    std::string cmd = "\"" + cliPath + "\" sch export netlist --format spice -o /dev/stdout \""
+    // kicad-cli needs DYLD_LIBRARY_PATH to find dylibs in the Frameworks directory
+    wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+    wxFileName frameworksDir( exePath.GetPath(), "" );
+    frameworksDir.RemoveLastDir();
+    frameworksDir.AppendDir( "Frameworks" );
+
+    std::string cmd = "DYLD_LIBRARY_PATH=\"" + frameworksDir.GetPath().ToStdString()
+                      + "\" \"" + cliPath
+                      + "\" sch export netlist --format spice -o /dev/stdout \""
                       + aSchematicPath + "\" 2>/dev/null";
+
+    wxLogInfo( "SPICE: Running command: %s", cmd.c_str() );
 
     FILE* pipe = popen( cmd.c_str(), "r" );
     if( !pipe )
+    {
+        wxLogWarning( "SPICE: popen() failed" );
         return std::string();
+    }
 
     std::string result;
     char        buffer[4096];
@@ -322,8 +345,15 @@ std::string GenerateSpiceNetlist( const std::string& aSchematicPath )
 
     int status = pclose( pipe );
     if( status != 0 )
+    {
+        int exitCode = WIFEXITED( status ) ? WEXITSTATUS( status ) : -1;
+        int signal   = WIFSIGNALED( status ) ? WTERMSIG( status ) : 0;
+        wxLogWarning( "SPICE: kicad-cli failed (exit=%d, signal=%d)",
+                      exitCode, signal );
         return std::string();
+    }
 
+    wxLogInfo( "SPICE: Generated netlist (%zu bytes)", result.size() );
     return result;
 }
 
@@ -502,9 +532,6 @@ SchematicSummary GetSummary( const std::string& aFilePath )
 
         summary.sheets.push_back( sheetInfo );
     }
-
-    // Generate SPICE netlist via kicad-cli
-    summary.spiceNetlist = GenerateSpiceNetlist( aFilePath );
 
     return summary;
 }

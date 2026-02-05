@@ -19,6 +19,7 @@
  */
 
 #include <magic_enum.hpp>
+#include <memory>
 
 #include <api/api_handler_pcb.h>
 #include <api/api_pcb_utils.h>
@@ -51,8 +52,13 @@
 #include <tools/drc_tool.h>
 #include <drc/drc_engine.h>
 #include <zone.h>
-#include <netlist_reader/netlist.h>
+#include <netlist_reader/pcb_netlist.h>
+#include <netlist_reader/netlist_reader.h>
 #include <netlist_reader/board_netlist_updater.h>
+#include <kiface_base.h>
+#include <mail_type.h>
+#include <richio.h>
+#include <ki_exception.h>
 #include <wx/regex.h>
 #include <lib_id.h>
 #include <connectivity/connectivity_data.h>
@@ -2920,10 +2926,49 @@ HANDLER_RESULT<UpdatePCBFromSchematicResponse> API_HANDLER_PCB::handleUpdatePCBF
         return tl::unexpected( e );
     }
 
-    // Fetch netlist from schematic
-    NETLIST netlist;
+    // Fetch netlist from schematic - API version (no modal dialogs)
+    // Use heap allocation to avoid stack corruption issues when called via nested event processing
+    // (e.g., when invoked from agent via wxYield). Stack-allocated NETLIST was getting corrupted.
+    std::unique_ptr<NETLIST> netlist = std::make_unique<NETLIST>();
 
-    if( !frame()->FetchNetlistFromSchematic( netlist, wxEmptyString ) )
+    wxLogInfo( "API: handleUpdatePCBFromSchematic - starting" );
+
+    // Check for standalone mode (PCB editor opened without project manager)
+    if( Kiface().IsSingle() )
+    {
+        wxLogInfo( "API: handleUpdatePCBFromSchematic - standalone mode, returning error" );
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Cannot update PCB from schematic in standalone mode. "
+                             "Open the project from KiCad project manager." );
+        return tl::unexpected( e );
+    }
+
+    wxLogInfo( "API: handleUpdatePCBFromSchematic - not standalone, checking schematic frame" );
+
+    // Check if schematic editor frame exists (don't create it, just check)
+    KIWAY_PLAYER* schFrame = frame()->Kiway().Player( FRAME_SCH, false );
+    if( !schFrame )
+    {
+        wxLogInfo( "API: handleUpdatePCBFromSchematic - no schematic frame, returning error" );
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Schematic editor is not open. "
+                             "Please open the schematic before updating PCB." );
+        return tl::unexpected( e );
+    }
+
+    wxLogInfo( "API: handleUpdatePCBFromSchematic - schematic frame exists, sending ExpressMail" );
+
+    // Request netlist from schematic via ExpressMail (non-interactive)
+    // Using empty string as payload - schematic will fill it with netlist data
+    std::string netlistPayload;
+    frame()->Kiway().ExpressMail( FRAME_SCH, MAIL_SCH_GET_NETLIST, netlistPayload, frame() );
+
+    wxLogInfo( "API: handleUpdatePCBFromSchematic - ExpressMail returned, payload size: %zu", netlistPayload.size() );
+
+    // Check if we received a netlist (payload should be modified by schematic editor)
+    if( netlistPayload.empty() )
     {
         ApiResponseStatus e;
         e.set_status( ApiStatusCode::AS_BAD_REQUEST );
@@ -2932,10 +2977,61 @@ HANDLER_RESULT<UpdatePCBFromSchematicResponse> API_HANDLER_PCB::handleUpdatePCBF
         return tl::unexpected( e );
     }
 
+    // Log first line of netlist to verify format
+    {
+        size_t firstNewline = netlistPayload.find( '\n' );
+        std::string firstLine = ( firstNewline != std::string::npos )
+                                    ? netlistPayload.substr( 0, firstNewline )
+                                    : netlistPayload.substr( 0, std::min( size_t( 100 ), netlistPayload.size() ) );
+        wxLogInfo( "API: handleUpdatePCBFromSchematic - netlist first line: %s", firstLine.c_str() );
+    }
+
+    // Parse the netlist
+    wxLogInfo( "API: handleUpdatePCBFromSchematic - parsing netlist" );
+    try
+    {
+        wxLogInfo( "API: handleUpdatePCBFromSchematic - creating STRING_LINE_READER" );
+        auto lineReader = new STRING_LINE_READER( netlistPayload, _( "Eeschema netlist" ) );
+
+        wxLogInfo( "API: handleUpdatePCBFromSchematic - creating KICAD_NETLIST_READER" );
+        KICAD_NETLIST_READER netlistReader( lineReader, netlist.get() );
+
+        wxLogInfo( "API: handleUpdatePCBFromSchematic - calling LoadNetlist()" );
+        netlistReader.LoadNetlist();
+    }
+    catch( const IO_ERROR& e )
+    {
+        wxLogError( "API: handleUpdatePCBFromSchematic - IO_ERROR during netlist parse: %s", e.What() );
+        ApiResponseStatus err;
+        err.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        err.set_error_message( fmt::format( "Error parsing netlist from schematic: {}",
+                                            e.What().ToStdString() ) );
+        return tl::unexpected( err );
+    }
+    catch( const std::out_of_range& e )
+    {
+        wxLogError( "API: handleUpdatePCBFromSchematic - std::out_of_range during netlist parse: %s", e.what() );
+        ApiResponseStatus err;
+        err.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        err.set_error_message( fmt::format( "Error parsing netlist (out_of_range): {}", e.what() ) );
+        return tl::unexpected( err );
+    }
+    catch( const std::exception& e )
+    {
+        wxLogError( "API: handleUpdatePCBFromSchematic - std::exception during netlist parse: %s", e.what() );
+        ApiResponseStatus err;
+        err.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        err.set_error_message( fmt::format( "Error parsing netlist: {}", e.what() ) );
+        return tl::unexpected( err );
+    }
+
+    wxLogInfo( "API: handleUpdatePCBFromSchematic - netlist parsed, component count: %zu", netlist->GetCount() );
+
     // Create reporter to capture changes
     API_UPDATE_REPORTER reporter;
 
     // Configure updater
+    wxLogInfo( "API: handleUpdatePCBFromSchematic - configuring updater" );
     BOARD_NETLIST_UPDATER updater( frame(), board );
     updater.SetReporter( &reporter );
 
@@ -2950,7 +3046,21 @@ HANDLER_RESULT<UpdatePCBFromSchematicResponse> API_HANDLER_PCB::handleUpdatePCBF
     updater.SetTransferGroups( opts.transfer_groups() );
 
     // Execute update
-    bool success = updater.UpdateNetlist( netlist );
+    wxLogInfo( "API: handleUpdatePCBFromSchematic - executing UpdateNetlist" );
+    bool success = false;
+    try
+    {
+        success = updater.UpdateNetlist( *netlist );
+    }
+    catch( const std::exception& e )
+    {
+        wxLogError( "API: handleUpdatePCBFromSchematic - exception in UpdateNetlist: %s", e.what() );
+        ApiResponseStatus err;
+        err.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        err.set_error_message( fmt::format( "Error updating PCB from netlist: {}", e.what() ) );
+        return tl::unexpected( err );
+    }
+    wxLogInfo( "API: handleUpdatePCBFromSchematic - UpdateNetlist completed, success: %d", success );
 
     // Populate response
     UpdatePCBFromSchematicResponse response;

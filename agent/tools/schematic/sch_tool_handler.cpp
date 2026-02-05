@@ -210,6 +210,7 @@ std::string SCH_TOOL_HANDLER::ExecuteGetSummary( const nlohmann::json& aInput )
         return "Error: File not found: " + filePath;
 
     SchParser::SchematicSummary summary = SchParser::GetSummary( filePath );
+    summary.spiceNetlist = SchParser::GenerateSpiceNetlist( filePath );
     return summary.ToJson().dump( 2 );
 }
 

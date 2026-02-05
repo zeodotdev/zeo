@@ -156,8 +156,15 @@ void CHAT_CONTROLLER::Cancel()
     if( m_llmClient )
         m_llmClient->CancelRequest();
 
-    // Save any partial response that was being streamed
-    if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
+    // Save any partial response that was being streamed.
+    // Skip this if we're in a tool execution state — the assistant message (with tool_use blocks)
+    // was already committed to history by AddAssistantToolUseToHistory(). The stale
+    // m_currentResponse/m_thinkingContent from that turn would create a duplicate assistant message.
+    bool toolStateActive = m_ctx.GetState() == AgentConversationState::TOOL_USE_DETECTED ||
+                           m_ctx.GetState() == AgentConversationState::EXECUTING_TOOL ||
+                           m_ctx.GetState() == AgentConversationState::PROCESSING_TOOL_RESULT;
+
+    if( !toolStateActive && ( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() ) )
     {
         nlohmann::json content = nlohmann::json::array();
 
@@ -177,6 +184,16 @@ void CHAT_CONTROLLER::Cancel()
             content.push_back( {
                 { "type", "text" },
                 { "text", m_currentResponse + "\n\n*(Stopped)*" }
+            } );
+        }
+
+        // If content is empty (e.g. cancelled during thinking before signature arrived),
+        // add a minimal text block to avoid sending an empty assistant message to the API.
+        if( content.empty() )
+        {
+            content.push_back( {
+                { "type", "text" },
+                { "text", "*(Stopped)*" }
             } );
         }
 

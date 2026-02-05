@@ -191,13 +191,12 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // 2b. Control Row (Bottom)
     wxBoxSizer* controlsSizer = new wxBoxSizer( wxHORIZONTAL );
 
-    // Model Selection (Claude models only - via zener.so proxy)
+    // Model Selection (Opus only - via zener.so proxy)
     wxArrayString modelChoices;
-    modelChoices.Add( "Claude 4.5 Sonnet" );
     modelChoices.Add( "Claude 4.6 Opus" );
 
     m_modelChoice = new wxChoice( m_inputPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, modelChoices );
-    m_modelChoice->SetSelection( 0 ); // Default to Claude 4.5 Sonnet
+    m_modelChoice->SetSelection( 0 ); // Default to Claude 4.6 Opus
     controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     // Track Agent Button

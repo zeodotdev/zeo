@@ -4036,13 +4036,27 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
         libNames = libAdapter->GetLibraryNames();
     }
 
-    int count = 0;
+    // Match ranking: lower is better
+    enum MatchRank
+    {
+        EXACT_MATCH = 0,     // name == query (highest priority)
+        PREFIX_MATCH = 1,    // name starts with query
+        SUBSTRING_MATCH = 2  // name contains query (lowest priority)
+    };
+
+    // Structure to hold match info for sorting
+    struct MatchInfo
+    {
+        wxString    libName;
+        wxString    symbolName;
+        MatchRank   rank;
+        LIB_SYMBOL* symbol;
+    };
+
+    std::vector<MatchInfo> matches;
 
     for( const wxString& libName : libNames )
     {
-        if( count >= maxResults )
-            break;
-
         if( !libAdapter->HasLibrary( libName ) )
             continue;
 
@@ -4052,24 +4066,32 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
 
             for( const wxString& name : names )
             {
-                if( count >= maxResults )
-                    break;
+                wxString nameLower = name.Lower();
+                MatchRank rank;
 
-                // Simple search: check if query appears in name
-                if( name.Lower().Contains( query ) )
+                // Determine match rank
+                if( nameLower == query )
                 {
-                    LIB_SYMBOL* symbol = libAdapter->LoadSymbol( libName, name );
-                    if( symbol )
-                    {
-                        schematic::commands::SymbolInfo* info = response.add_symbols();
-                        info->set_lib_id( fmt::format( "{}:{}", libName.ToStdString(), name.ToStdString() ) );
-                        info->set_name( name.ToStdString() );
-                        info->set_description( symbol->GetDescription().ToStdString() );
-                        info->set_keywords( symbol->GetKeyWords().ToStdString() );
-                        info->set_unit_count( symbol->GetUnitCount() );
-                        info->set_is_power( symbol->IsPower() );
-                        count++;
-                    }
+                    rank = EXACT_MATCH;
+                }
+                else if( nameLower.StartsWith( query ) )
+                {
+                    rank = PREFIX_MATCH;
+                }
+                else if( nameLower.Contains( query ) )
+                {
+                    rank = SUBSTRING_MATCH;
+                }
+                else
+                {
+                    continue; // No match
+                }
+
+                // Load symbol and add to matches
+                LIB_SYMBOL* symbol = libAdapter->LoadSymbol( libName, name );
+                if( symbol )
+                {
+                    matches.push_back( { libName, name, rank, symbol } );
                 }
             }
         }
@@ -4078,6 +4100,33 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
             // Skip libraries that can't be read
             continue;
         }
+    }
+
+    // Sort by rank (lower is better), then alphabetically by name for stability
+    std::sort( matches.begin(), matches.end(),
+        []( const MatchInfo& a, const MatchInfo& b )
+        {
+            if( a.rank != b.rank )
+                return a.rank < b.rank;
+            return a.symbolName.CmpNoCase( b.symbolName ) < 0;
+        });
+
+    // Build response with top maxResults
+    int count = 0;
+    for( const MatchInfo& match : matches )
+    {
+        if( count >= maxResults )
+            break;
+
+        schematic::commands::SymbolInfo* info = response.add_symbols();
+        info->set_lib_id( fmt::format( "{}:{}", match.libName.ToStdString(),
+                                                 match.symbolName.ToStdString() ) );
+        info->set_name( match.symbolName.ToStdString() );
+        info->set_description( match.symbol->GetDescription().ToStdString() );
+        info->set_keywords( match.symbol->GetKeyWords().ToStdString() );
+        info->set_unit_count( match.symbol->GetUnitCount() );
+        info->set_is_power( match.symbol->IsPower() );
+        count++;
     }
 
     return response;

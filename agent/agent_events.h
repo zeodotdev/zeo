@@ -108,10 +108,8 @@ enum class LLMChunkType
     PAUSE_TURN,        // Server tool paused (stop_reason: pause_turn) - needs retry
     REFUSAL,           // Model refused request (stop_reason: refusal)
     ERROR,             // Error occurred
-    CONTEXT_STATUS,    // Context usage status from server
-    CONTEXT_COMPACTING,// Server is compacting context (show "Compacting...")
-    CONTEXT_EXHAUSTED, // HTTP 400 context exhausted with recovery messages
-    CONTEXT_TRUNCATED  // Mid-response truncation with recovery messages
+    CONTEXT_EXHAUSTED, // Context exhausted - client must compact and retry
+    CONTEXT_TRUNCATED  // Mid-response truncation - client must compact and retry
 };
 
 /**
@@ -129,13 +127,7 @@ struct LLMStreamChunk
     std::string    tool_input_json; // For TOOL_USE events (serialized JSON)
     std::string    error_message;  // For ERROR events
 
-    // Context status fields (for CONTEXT_STATUS events)
-    int            context_percent_used;  // 0-100
-    bool           context_compacted;     // true if context was compacted
-
-    LLMStreamChunk() : type( LLMChunkType::TEXT ),
-                       context_percent_used( 0 ),
-                       context_compacted( false ) {}
+    LLMStreamChunk() : type( LLMChunkType::TEXT ) {}
 };
 
 /**

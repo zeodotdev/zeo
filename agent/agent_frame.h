@@ -101,7 +101,6 @@ public:
     void OnChatTitleDelta( wxThreadEvent& aEvent );
     void OnChatTitleGenerated( wxThreadEvent& aEvent );
     void OnChatHistoryLoaded( wxThreadEvent& aEvent );
-    void OnChatContextStatus( wxThreadEvent& aEvent );
     void OnChatContextCompacting( wxThreadEvent& aEvent );
     void OnChatContextRecovered( wxThreadEvent& aEvent );
 
@@ -196,6 +195,7 @@ private:
     wxTimer  m_generatingTimer;        // Timer for animating dots
     int      m_generatingDots;         // Current dot count (0-3)
     bool     m_isGenerating;           // Whether we're currently streaming
+    bool     m_isCompacting;           // Whether context is being compacted
     wxString m_generatingToolName;     // Tool name being generated (if any)
     void     OnGeneratingTimer( wxTimerEvent& aEvent );
     void     OnHtmlUpdateTimer( wxTimerEvent& aEvent );

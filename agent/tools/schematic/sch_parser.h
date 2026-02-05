@@ -103,6 +103,7 @@ struct SchematicSummary
     int                      wireCount;
     int                      junctionCount;
     std::vector<std::string> labels;
+    std::vector<std::string> spice_directives;  // SPICE commands found in text items
     std::vector<SheetInfo>   sheets;  // Child sheets referenced in this schematic
     std::string              spiceNetlist;
 

@@ -177,6 +177,7 @@ nlohmann::json SchematicSummary::ToJson() const
         { "wires", wireCount },
         { "junctions", junctionCount },
         { "labels", labels },
+        { "spice_directives", spice_directives },
         { "sheets", sheetsJson }
     };
 
@@ -497,6 +498,55 @@ SchematicSummary GetSummary( const std::string& aFilePath )
             if( nameExpr->IsString() )
                 summary.labels.push_back( nameExpr->GetString() );
         }
+    }
+
+    // Extract SPICE directives from text items
+    auto textItems = SexprUtil::FindChildren( root.get(), "text" );
+    for( const auto& textExpr : textItems )
+    {
+        auto textChildren = textExpr->GetChildren();
+        if( !textChildren || textChildren->size() < 2 )
+            continue;
+
+        const SEXPR::SEXPR* contentExpr = textChildren->at( 1 );
+        if( !contentExpr->IsString() )
+            continue;
+
+        std::string content = contentExpr->GetString();
+
+        // Check each line for SPICE directive prefixes
+        std::istringstream stream( content );
+        std::string line;
+        bool hasDirective = false;
+
+        while( std::getline( stream, line ) )
+        {
+            // Trim leading whitespace
+            size_t start = line.find_first_not_of( " \t" );
+            if( start == std::string::npos )
+                continue;
+
+            std::string trimmed = line.substr( start );
+
+            // Convert to lowercase for matching
+            std::string lower = trimmed;
+            std::transform( lower.begin(), lower.end(), lower.begin(), ::tolower );
+
+            // Match ngspice directive prefixes
+            if( lower.substr( 0, 3 ) == ".ac" || lower.substr( 0, 5 ) == ".tran" ||
+                lower.substr( 0, 3 ) == ".dc" || lower.substr( 0, 3 ) == ".op" ||
+                lower.substr( 0, 6 ) == ".noise" || lower.substr( 0, 3 ) == ".pz" ||
+                lower.substr( 0, 3 ) == ".sp" || lower.substr( 0, 5 ) == ".sens" ||
+                lower.substr( 0, 3 ) == ".tf" || lower.substr( 0, 6 ) == ".disto" ||
+                lower.substr( 0, 5 ) == ".meas" || lower.substr( 0, 4 ) == ".fft" )
+            {
+                hasDirective = true;
+                break;
+            }
+        }
+
+        if( hasDirective )
+            summary.spice_directives.push_back( content );
     }
 
     // Extract sheet (child) references

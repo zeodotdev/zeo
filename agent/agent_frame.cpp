@@ -515,8 +515,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( EVT_CHAT_TITLE_DELTA, &AGENT_FRAME::OnChatTitleDelta, this );
     Bind( EVT_CHAT_TITLE_GENERATED, &AGENT_FRAME::OnChatTitleGenerated, this );
     Bind( EVT_CHAT_HISTORY_LOADED, &AGENT_FRAME::OnChatHistoryLoaded, this );
-    Bind( EVT_CHAT_CONTEXT_COMPACTING, &AGENT_FRAME::OnChatContextCompacting, this );
-    Bind( EVT_CHAT_CONTEXT_RECOVERED, &AGENT_FRAME::OnChatContextRecovered, this );
 
     // Create menu bar
     wxMenuBar* menuBar = new wxMenuBar();
@@ -3155,82 +3153,4 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
     m_userScrolledUp = false;
 
     delete data;
-}
-
-
-void AGENT_FRAME::OnChatContextCompacting( wxThreadEvent& aEvent )
-{
-    ChatContextCompactingData* data = aEvent.GetPayload<ChatContextCompactingData*>();
-
-    // Clear any partial streaming content from the failed request
-    m_thinkingContent.Clear();
-    m_thinkingHtml.Clear();
-    m_toolCallHtml.Clear();
-    if( m_chatController )
-        m_chatController->ClearStreamingState();
-
-    // Start animated "Compacting" display
-    m_isCompacting = true;
-    m_generatingDots = 1;
-    m_generatingTimer.Start( 400 );  // Update dots every 400ms
-    UpdateAgentResponse();
-
-    if( data )
-        delete data;
-}
-
-
-void AGENT_FRAME::OnChatContextRecovered( wxThreadEvent& aEvent )
-{
-    // Stop compacting animation
-    m_isCompacting = false;
-    m_generatingTimer.Stop();
-
-    ChatContextRecoveredData* data = aEvent.GetPayload<ChatContextRecoveredData*>();
-
-    if( data && !data->summarizedMessages.empty() && data->summarizedMessages.is_array() )
-    {
-        // Replace API context with compacted version (display history unchanged)
-        m_apiContext = data->summarizedMessages;
-
-        // Re-add the user's last message to the API context so the model responds to it
-        for( auto it = m_chatHistory.rbegin(); it != m_chatHistory.rend(); ++it )
-        {
-            if( it->contains( "role" ) && (*it)["role"] == "user" )
-            {
-                m_apiContext.push_back( *it );
-                break;
-            }
-        }
-
-        // Add assistant message noting the compaction
-        nlohmann::json compactMsg = {
-            { "role", "assistant" },
-            { "content", "*Context compacted*" }
-        };
-        m_chatHistory.push_back( compactMsg );
-
-        // Finalize any streaming content, add compaction message, and prepare for retry
-        if( m_chatWindow )
-            m_chatWindow->RunScriptAsync( "finalizeStreamingContent();" );
-        m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
-
-        // Add the compaction notice as permanent content
-        wxString compactHtml = AgentMarkdown::ToHtml( "*Context compacted*" );
-        wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
-        AppendHtml( compactHtml + streamingDiv );
-
-        // Retry with compacted context
-        RetryLastRequest();
-    }
-    else
-    {
-        // No summarized messages - error case, reset UI
-        StopGeneratingAnimation();
-        m_actionButton->SetLabel( "Send" );
-        AppendHtml( "<p><font color='red'>Context recovery failed: No summarized messages received</font></p>" );
-    }
-
-    if( data )
-        delete data;
 }

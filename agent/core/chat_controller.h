@@ -150,6 +150,7 @@ public:
         m_currentResponse.clear();
         m_thinkingContent.clear();
         m_thinkingSignature.clear();
+        m_compactionContent.clear();
     }
 
     /**
@@ -232,6 +233,7 @@ private:
     std::string    m_currentResponse;  ///< Accumulated streaming text
     wxString       m_thinkingContent;  ///< Accumulated thinking block text
     std::string    m_thinkingSignature; ///< Thinking block signature for API
+    std::string    m_compactionContent; ///< Compaction block content (replaces old context)
     std::string    m_currentModel;     ///< Selected model name
     std::string    m_chatId;           ///< Current chat ID
 

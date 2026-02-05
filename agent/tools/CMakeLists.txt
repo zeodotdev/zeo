@@ -14,10 +14,14 @@ set( TOOLS_SRCS
     schematic/sch_parser.cpp
     schematic/sch_validator.cpp
     schematic/sch_tool_handler.cpp
+    schematic/sch_erc_handler.cpp
+    schematic/sch_lib_symbol_handler.cpp
+    schematic/sch_crud_handler.cpp
 
-    # PCB tools (stubs for future)
+    # PCB tools
     pcb/pcb_parser.cpp
     pcb/pcb_validator.cpp
     pcb/pcb_tool_handler.cpp
+    pcb/pcb_crud_handler.cpp
     PARENT_SCOPE
 )

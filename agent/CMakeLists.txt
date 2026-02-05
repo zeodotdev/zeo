@@ -85,9 +85,11 @@ set( AGENT_SRCS
     tools/schematic/sch_tool_handler.cpp
     tools/schematic/sch_erc_handler.cpp
     tools/schematic/sch_lib_symbol_handler.cpp
+    tools/schematic/sch_crud_handler.cpp
     tools/pcb/pcb_parser.cpp
     tools/pcb/pcb_validator.cpp
     tools/pcb/pcb_tool_handler.cpp
+    tools/pcb/pcb_crud_handler.cpp
 )
 
 

@@ -291,13 +291,255 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schGetLibSymbol );
 
-    // PCB tools (stubs - not yet implemented)
-    // Tool 9: pcb_get_summary
+    // ===== IPC-based CRUD Tools (sch_add, sch_update, sch_delete, sch_batch_delete) =====
+    // These work on the LIVE schematic via kipy API
+
+    // Tool: sch_add - Universal add for any element type
+    LLM_TOOL schAdd;
+    schAdd.name = "sch_add";
+    schAdd.description =
+        "Add elements to the open schematic via kipy API. Supports symbols, wires, "
+        "junctions, labels, power symbols, no-connect markers, and hierarchical sheets. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schAdd.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "element_type", {
+                { "type", "string" },
+                { "enum", json::array( { "symbol", "wire", "junction", "label", "power", "no_connect", "sheet", "bus_entry" } ) },
+                { "description", "Type of element to add" }
+            }},
+            // Symbol properties
+            { "lib_id", {
+                { "type", "string" },
+                { "description", "For symbol/power: Library:Symbol identifier (e.g., 'Device:R', 'power:GND')" }
+            }},
+            { "reference", {
+                { "type", "string" },
+                { "description", "For symbol: Reference designator (e.g., 'R1', 'U1'). Auto-assigned if omitted." }
+            }},
+            { "unit", {
+                { "type", "integer" },
+                { "description", "For multi-unit symbols: unit number (default: 1)" }
+            }},
+            // Position/geometry
+            { "position", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "Position as [x, y] in mm (e.g., [100, 50])" }
+            }},
+            { "angle", {
+                { "type", "number" },
+                { "description", "Rotation angle in degrees (0, 90, 180, 270)" }
+            }},
+            { "mirror", {
+                { "type", "string" },
+                { "enum", json::array( { "none", "x", "y" } ) },
+                { "description", "Mirror axis: 'none', 'x', or 'y'" }
+            }},
+            // Wire properties
+            { "points", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "array" },
+                    { "items", { { "type", "number" } } }
+                }},
+                { "description", "For wire: Array of [x, y] points in mm (e.g., [[100, 50], [150, 50]])" }
+            }},
+            { "from_pin", {
+                { "type", "object" },
+                { "properties", {
+                    { "ref", { { "type", "string" } } },
+                    { "pin", { { "type", "string" } } }
+                }},
+                { "description", "For wire: Start from symbol pin (e.g., {\"ref\": \"R1\", \"pin\": \"1\"})" }
+            }},
+            { "to_pin", {
+                { "type", "object" },
+                { "properties", {
+                    { "ref", { { "type", "string" } } },
+                    { "pin", { { "type", "string" } } }
+                }},
+                { "description", "For wire: End at symbol pin (e.g., {\"ref\": \"C1\", \"pin\": \"2\"})" }
+            }},
+            // Label properties
+            { "text", {
+                { "type", "string" },
+                { "description", "For label: Label text (e.g., 'VCC', 'DATA_BUS')" }
+            }},
+            { "label_type", {
+                { "type", "string" },
+                { "enum", json::array( { "local", "global", "hierarchical", "directive" } ) },
+                { "description", "For label: Type of label (default: local)" }
+            }},
+            { "shape", {
+                { "type", "string" },
+                { "enum", json::array( { "input", "output", "bidi", "tristate", "unspecified" } ) },
+                { "description", "For global/hierarchical label: Connection shape" }
+            }},
+            // Sheet properties
+            { "sheet_name", {
+                { "type", "string" },
+                { "description", "For sheet: Hierarchical sheet name" }
+            }},
+            { "sheet_file", {
+                { "type", "string" },
+                { "description", "For sheet: Filename for the sheet (e.g., 'power.kicad_sch')" }
+            }},
+            { "size", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "For sheet: Size as [width, height] in mm" }
+            }},
+            // Symbol properties
+            { "properties", {
+                { "type", "object" },
+                { "description", "For symbol: Field values like {\"Value\": \"10k\", \"Footprint\": \"...\"}" }
+            }}
+        }},
+        { "required", json::array( { "element_type" } ) }
+    };
+    tools.push_back( schAdd );
+
+    // Tool: sch_update - Universal update for any element
+    LLM_TOOL schUpdate;
+    schUpdate.name = "sch_update";
+    schUpdate.description =
+        "Update elements in the open schematic via kipy API. Can modify position, "
+        "rotation, mirror, and properties. Target by reference designator or UUID. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schUpdate.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "target", {
+                { "type", "string" },
+                { "description", "Reference designator (e.g., 'R1') or UUID of element to update" }
+            }},
+            { "position", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "New position as [x, y] in mm" }
+            }},
+            { "angle", {
+                { "type", "number" },
+                { "description", "New rotation angle in degrees (0, 90, 180, 270)" }
+            }},
+            { "mirror", {
+                { "type", "string" },
+                { "enum", json::array( { "none", "x", "y" } ) },
+                { "description", "Mirror axis: 'none', 'x', or 'y'" }
+            }},
+            { "properties", {
+                { "type", "object" },
+                { "description", "Field values to update: {\"Value\": \"4.7k\", \"Footprint\": \"...\"}" }
+            }},
+            { "unit", {
+                { "type", "integer" },
+                { "description", "For multi-unit symbols: change to this unit number" }
+            }},
+            { "dnp", {
+                { "type", "boolean" },
+                { "description", "Set Do Not Populate flag" }
+            }},
+            { "exclude_from_bom", {
+                { "type", "boolean" },
+                { "description", "Exclude from Bill of Materials" }
+            }},
+            { "exclude_from_board", {
+                { "type", "boolean" },
+                { "description", "Exclude from PCB board" }
+            }}
+        }},
+        { "required", json::array( { "target" } ) }
+    };
+    tools.push_back( schUpdate );
+
+    // Tool: sch_delete - Universal delete for any element
+    LLM_TOOL schDelete;
+    schDelete.name = "sch_delete";
+    schDelete.description =
+        "Delete an element from the open schematic via kipy API. "
+        "Target by reference designator or UUID. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schDelete.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "target", {
+                { "type", "string" },
+                { "description", "Reference designator (e.g., 'R1') or UUID of element to delete" }
+            }}
+        }},
+        { "required", json::array( { "target" } ) }
+    };
+    tools.push_back( schDelete );
+
+    // Tool: sch_batch_delete - Delete multiple elements
+    LLM_TOOL schBatchDelete;
+    schBatchDelete.name = "sch_batch_delete";
+    schBatchDelete.description =
+        "Delete multiple elements from the open schematic via kipy API. "
+        "Target by reference designators or UUIDs. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schBatchDelete.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "targets", {
+                { "type", "array" },
+                { "items", { { "type", "string" } } },
+                { "description", "Array of reference designators or UUIDs to delete (e.g., [\"R1\", \"R2\", \"C1\"])" }
+            }}
+        }},
+        { "required", json::array( { "targets" } ) }
+    };
+    tools.push_back( schBatchDelete );
+
+    // ===== PCB Tools =====
+
+    // Tool: pcb_get_summary - Get high-level overview of PCB
     LLM_TOOL pcbGetSummary;
     pcbGetSummary.name = "pcb_get_summary";
-    pcbGetSummary.description = "[NOT YET IMPLEMENTED] Get overview of a .kicad_pcb file. "
-                                "Use run_shell with mode 'pcb' for PCB operations until implemented.";
+    pcbGetSummary.description =
+        "Get a high-level overview of the open PCB. Returns JSON with footprints, tracks, "
+        "vias, zones, board outline, layer count, and net information. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
     pcbGetSummary.input_schema = {
+        { "type", "object" },
+        { "properties", {} },
+        { "required", json::array() }
+    };
+    tools.push_back( pcbGetSummary );
+
+    // Tool: pcb_read_section - Read specific section of PCB
+    LLM_TOOL pcbReadSection;
+    pcbReadSection.name = "pcb_read_section";
+    pcbReadSection.description =
+        "Read a specific section of the open PCB in detail. "
+        "Sections: footprints, tracks, vias, zones, drawings, nets, layers, stackup. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbReadSection.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "section", {
+                { "type", "string" },
+                { "enum", json::array( { "footprints", "tracks", "vias", "zones", "drawings", "nets", "layers", "stackup" } ) },
+                { "description", "Section to read" }
+            }},
+            { "filter", {
+                { "type", "string" },
+                { "description", "Optional filter by reference (e.g., 'U*'), net name, or layer" }
+            }}
+        }},
+        { "required", json::array( { "section" } ) }
+    };
+    tools.push_back( pcbReadSection );
+
+    // Tool: pcb_validate - Validate PCB file
+    LLM_TOOL pcbValidate;
+    pcbValidate.name = "pcb_validate";
+    pcbValidate.description =
+        "Validate a .kicad_pcb file without modifying it. "
+        "Checks syntax, structure, and returns warnings about potential issues.";
+    pcbValidate.input_schema = {
         { "type", "object" },
         { "properties", {
             { "file_path", {
@@ -307,67 +549,426 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array( { "file_path" } ) }
     };
-    tools.push_back( pcbGetSummary );
-
-    // Tool 10: pcb_read_section
-    LLM_TOOL pcbReadSection;
-    pcbReadSection.name = "pcb_read_section";
-    pcbReadSection.description = "[NOT YET IMPLEMENTED] Read section of a .kicad_pcb file. "
-                                  "Use run_shell with mode 'pcb' for PCB operations until implemented.";
-    pcbReadSection.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", { { "type", "string" } }},
-            { "section", { { "type", "string" } }}
-        }},
-        { "required", json::array( { "file_path", "section" } ) }
-    };
-    tools.push_back( pcbReadSection );
-
-    // Tool 11: pcb_modify
-    LLM_TOOL pcbModify;
-    pcbModify.name = "pcb_modify";
-    pcbModify.description = "[NOT YET IMPLEMENTED] Modify a .kicad_pcb file. "
-                            "Use run_shell with mode 'pcb' for PCB operations until implemented.";
-    pcbModify.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", { { "type", "string" } }},
-            { "operation", { { "type", "string" } }},
-            { "element_type", { { "type", "string" } }}
-        }},
-        { "required", json::array( { "file_path", "operation", "element_type" } ) }
-    };
-    tools.push_back( pcbModify );
-
-    // Tool 12: pcb_validate
-    LLM_TOOL pcbValidate;
-    pcbValidate.name = "pcb_validate";
-    pcbValidate.description = "[NOT YET IMPLEMENTED] Validate a .kicad_pcb file. "
-                              "Use run_shell with mode 'pcb' for PCB operations until implemented.";
-    pcbValidate.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", { { "type", "string" } }}
-        }},
-        { "required", json::array( { "file_path" } ) }
-    };
     tools.push_back( pcbValidate );
 
-    // Tool 13: pcb_write
-    LLM_TOOL pcbWrite;
-    pcbWrite.name = "pcb_write";
-    pcbWrite.description = "[NOT YET IMPLEMENTED] Write complete PCB content to a .kicad_pcb file. "
-                           "Use run_shell with mode 'pcb' for PCB operations until implemented.";
-    pcbWrite.input_schema = {
+    // Tool: pcb_run_drc - Run design rule check
+    LLM_TOOL pcbRunDrc;
+    pcbRunDrc.name = "pcb_run_drc";
+    pcbRunDrc.description =
+        "Run Design Rule Check (DRC) on the open PCB. "
+        "Detects clearance violations, unconnected items, track/via issues, and other errors. "
+        "Returns error/warning counts and violation details. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbRunDrc.input_schema = {
         { "type", "object" },
         { "properties", {
-            { "file_path", { { "type", "string" } }},
-            { "content", { { "type", "string" } }}
+            { "refill_zones", {
+                { "type", "boolean" },
+                { "description", "Refill all zones before running DRC (default: true)" }
+            }},
+            { "output_format", {
+                { "type", "string" },
+                { "enum", json::array( { "summary", "detailed", "by_type" } ) },
+                { "description", "Output format: 'summary', 'detailed', or 'by_type' (default: summary)" }
+            }}
         }},
-        { "required", json::array( { "file_path", "content" } ) }
+        { "required", json::array() }
     };
-    tools.push_back( pcbWrite );
+    tools.push_back( pcbRunDrc );
+
+    // Tool: pcb_set_outline - Set board outline/shape
+    LLM_TOOL pcbSetOutline;
+    pcbSetOutline.name = "pcb_set_outline";
+    pcbSetOutline.description =
+        "Set or replace the board outline (Edge.Cuts layer). "
+        "Supports rectangle, polygon, or rounded rectangle shapes. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbSetOutline.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "shape", {
+                { "type", "string" },
+                { "enum", json::array( { "rectangle", "polygon", "rounded_rectangle" } ) },
+                { "description", "Board shape type" }
+            }},
+            { "width", {
+                { "type", "number" },
+                { "description", "Board width in mm (for rectangle/rounded_rectangle)" }
+            }},
+            { "height", {
+                { "type", "number" },
+                { "description", "Board height in mm (for rectangle/rounded_rectangle)" }
+            }},
+            { "corner_radius", {
+                { "type", "number" },
+                { "description", "Corner radius in mm (for rounded_rectangle)" }
+            }},
+            { "origin", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "Origin position as [x, y] in mm (default: [0, 0])" }
+            }},
+            { "points", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "array" },
+                    { "items", { { "type", "number" } } }
+                }},
+                { "description", "For polygon: Array of [x, y] vertices in mm" }
+            }},
+            { "clear_existing", {
+                { "type", "boolean" },
+                { "description", "Remove existing board outline first (default: true)" }
+            }}
+        }},
+        { "required", json::array( { "shape" } ) }
+    };
+    tools.push_back( pcbSetOutline );
+
+    // Tool: pcb_sync_schematic - Import/update footprints from schematic
+    LLM_TOOL pcbSyncSchematic;
+    pcbSyncSchematic.name = "pcb_sync_schematic";
+    pcbSyncSchematic.description =
+        "Update PCB from schematic - imports new footprints, updates nets, removes deleted components. "
+        "This is the standard 'Update PCB from Schematic' operation. "
+        "REQUIRES: Both schematic and PCB editors must be open.";
+    pcbSyncSchematic.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "delete_unused", {
+                { "type", "boolean" },
+                { "description", "Delete footprints not in schematic (default: false)" }
+            }},
+            { "replace_footprints", {
+                { "type", "boolean" },
+                { "description", "Replace footprints when library ID doesn't match (default: false)" }
+            }},
+            { "update_fields", {
+                { "type", "boolean" },
+                { "description", "Update field values from schematic (default: true)" }
+            }},
+            { "dry_run", {
+                { "type", "boolean" },
+                { "description", "Preview changes without applying (default: false)" }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    tools.push_back( pcbSyncSchematic );
+
+    // Tool: pcb_place - Batch footprint placement
+    LLM_TOOL pcbPlace;
+    pcbPlace.name = "pcb_place";
+    pcbPlace.description =
+        "Position multiple footprints in a single operation. Supports move, rotate, and flip. "
+        "This is the most common PCB operation for layout. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbPlace.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "placements", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "object" },
+                    { "properties", {
+                        { "ref", {
+                            { "type", "string" },
+                            { "description", "Reference designator (e.g., 'U1', 'R5')" }
+                        }},
+                        { "position", {
+                            { "type", "array" },
+                            { "items", { { "type", "number" } } },
+                            { "description", "Position as [x, y] in mm" }
+                        }},
+                        { "angle", {
+                            { "type", "number" },
+                            { "description", "Rotation angle in degrees (0, 90, 180, 270)" }
+                        }},
+                        { "layer", {
+                            { "type", "string" },
+                            { "enum", json::array( { "F.Cu", "B.Cu" } ) },
+                            { "description", "Layer: 'F.Cu' (top) or 'B.Cu' (bottom/flipped)" }
+                        }}
+                    }},
+                    { "required", json::array( { "ref" } ) }
+                }},
+                { "description", "Array of placement operations" }
+            }}
+        }},
+        { "required", json::array( { "placements" } ) }
+    };
+    tools.push_back( pcbPlace );
+
+    // Tool: pcb_add - Universal add for PCB elements
+    LLM_TOOL pcbAdd;
+    pcbAdd.name = "pcb_add";
+    pcbAdd.description =
+        "Add elements to the open PCB via kipy API. Supports tracks, vias, zones, keepouts, "
+        "and graphics (line, rectangle, circle, arc, text). "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbAdd.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "element_type", {
+                { "type", "string" },
+                { "enum", json::array( { "track", "via", "zone", "keepout", "line", "rectangle", "circle", "arc", "text" } ) },
+                { "description", "Type of element to add" }
+            }},
+            // Track properties
+            { "layer", {
+                { "type", "string" },
+                { "description", "Layer name (e.g., 'F.Cu', 'B.Cu', 'F.SilkS')" }
+            }},
+            { "width", {
+                { "type", "number" },
+                { "description", "Track/line width in mm" }
+            }},
+            { "points", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "array" },
+                    { "items", { { "type", "number" } } }
+                }},
+                { "description", "Array of [x, y] points in mm" }
+            }},
+            { "net", {
+                { "type", "string" },
+                { "description", "Net name for track/via/zone" }
+            }},
+            // Via properties
+            { "position", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "Position as [x, y] in mm" }
+            }},
+            { "size", {
+                { "type", "number" },
+                { "description", "Via/pad size in mm" }
+            }},
+            { "drill", {
+                { "type", "number" },
+                { "description", "Via drill diameter in mm" }
+            }},
+            // Zone/keepout properties
+            { "outline", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "array" },
+                    { "items", { { "type", "number" } } }
+                }},
+                { "description", "Zone/keepout outline as array of [x, y] vertices" }
+            }},
+            { "layers", {
+                { "type", "array" },
+                { "items", { { "type", "string" } } },
+                { "description", "For keepout: layers to apply to (e.g., ['F.Cu', 'B.Cu'])" }
+            }},
+            { "no_tracks", {
+                { "type", "boolean" },
+                { "description", "For keepout: prohibit tracks" }
+            }},
+            { "no_vias", {
+                { "type", "boolean" },
+                { "description", "For keepout: prohibit vias" }
+            }},
+            { "no_pour", {
+                { "type", "boolean" },
+                { "description", "For keepout: prohibit copper pour" }
+            }},
+            { "priority", {
+                { "type", "integer" },
+                { "description", "Zone fill priority (higher = fills first)" }
+            }},
+            // Rectangle properties
+            { "top_left", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "Rectangle top-left corner [x, y] in mm" }
+            }},
+            { "bottom_right", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "Rectangle bottom-right corner [x, y] in mm" }
+            }},
+            // Circle/arc properties
+            { "center", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "Circle/arc center [x, y] in mm" }
+            }},
+            { "radius", {
+                { "type", "number" },
+                { "description", "Circle/arc radius in mm" }
+            }},
+            { "start_angle", {
+                { "type", "number" },
+                { "description", "Arc start angle in degrees" }
+            }},
+            { "end_angle", {
+                { "type", "number" },
+                { "description", "Arc end angle in degrees" }
+            }},
+            // Text properties
+            { "text", {
+                { "type", "string" },
+                { "description", "Text content" }
+            }},
+            { "text_size", {
+                { "type", "number" },
+                { "description", "Text height in mm" }
+            }},
+            { "thickness", {
+                { "type", "number" },
+                { "description", "Text stroke thickness in mm" }
+            }},
+            { "filled", {
+                { "type", "boolean" },
+                { "description", "Fill shape (for rectangle, circle)" }
+            }}
+        }},
+        { "required", json::array( { "element_type" } ) }
+    };
+    tools.push_back( pcbAdd );
+
+    // Tool: pcb_update - Universal update for PCB elements
+    LLM_TOOL pcbUpdate;
+    pcbUpdate.name = "pcb_update";
+    pcbUpdate.description =
+        "Update elements in the open PCB via kipy API. Target by UUID. "
+        "Can modify position, properties, zone outline, text content, etc. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbUpdate.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "target", {
+                { "type", "string" },
+                { "description", "UUID of element to update" }
+            }},
+            { "position", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "New position as [x, y] in mm" }
+            }},
+            { "outline", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "array" },
+                    { "items", { { "type", "number" } } }
+                }},
+                { "description", "New zone/keepout outline" }
+            }},
+            { "net", {
+                { "type", "string" },
+                { "description", "New net name" }
+            }},
+            { "text", {
+                { "type", "string" },
+                { "description", "New text content" }
+            }},
+            { "layer", {
+                { "type", "string" },
+                { "description", "Move to different layer" }
+            }},
+            { "width", {
+                { "type", "number" },
+                { "description", "New line/track width in mm" }
+            }},
+            { "locked", {
+                { "type", "boolean" },
+                { "description", "Lock/unlock element" }
+            }}
+        }},
+        { "required", json::array( { "target" } ) }
+    };
+    tools.push_back( pcbUpdate );
+
+    // Tool: pcb_delete - Delete PCB element
+    LLM_TOOL pcbDelete;
+    pcbDelete.name = "pcb_delete";
+    pcbDelete.description =
+        "Delete an element from the open PCB via kipy API. Target by UUID. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbDelete.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "target", {
+                { "type", "string" },
+                { "description", "UUID of element to delete" }
+            }}
+        }},
+        { "required", json::array( { "target" } ) }
+    };
+    tools.push_back( pcbDelete );
+
+    // Tool: pcb_batch_delete - Delete multiple PCB elements
+    LLM_TOOL pcbBatchDelete;
+    pcbBatchDelete.name = "pcb_batch_delete";
+    pcbBatchDelete.description =
+        "Delete multiple elements from the open PCB via kipy API. "
+        "Target by UUIDs or by query (layer + type). "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbBatchDelete.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "targets", {
+                { "type", "array" },
+                { "items", { { "type", "string" } } },
+                { "description", "Array of UUIDs to delete" }
+            }},
+            { "query", {
+                { "type", "object" },
+                { "properties", {
+                    { "layer", { { "type", "string" } } },
+                    { "type", { { "type", "string" } } },
+                    { "net", { { "type", "string" } } }
+                }},
+                { "description", "Query to select elements: {\"layer\": \"F.SilkS\", \"type\": \"text\"}" }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    tools.push_back( pcbBatchDelete );
+
+    // Tool: pcb_export - Generate output files
+    LLM_TOOL pcbExport;
+    pcbExport.name = "pcb_export";
+    pcbExport.description =
+        "Export PCB to various output formats: Gerber, drill files, PDF, SVG, STEP, etc. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbExport.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "format", {
+                { "type", "string" },
+                { "enum", json::array( { "gerber", "drill", "pdf", "svg", "step", "dxf", "pos" } ) },
+                { "description", "Export format" }
+            }},
+            { "output_dir", {
+                { "type", "string" },
+                { "description", "Output directory path" }
+            }},
+            { "layers", {
+                { "type", "array" },
+                { "items", { { "type", "string" } } },
+                { "description", "Layers to export (for gerber/pdf/svg). Empty = all copper layers" }
+            }},
+            { "include_edge_cuts", {
+                { "type", "boolean" },
+                { "description", "Include board outline in export (default: true)" }
+            }},
+            { "drill_format", {
+                { "type", "string" },
+                { "enum", json::array( { "excellon", "gerber_x2" } ) },
+                { "description", "Drill file format (default: excellon)" }
+            }},
+            { "separate_npth", {
+                { "type", "boolean" },
+                { "description", "Separate NPTH (non-plated) drill file (default: true)" }
+            }}
+        }},
+        { "required", json::array( { "format", "output_dir" } ) }
+    };
+    tools.push_back( pcbExport );
 
     return tools;
 }

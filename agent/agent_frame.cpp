@@ -263,6 +263,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Initialize generating animation
     m_generatingDots = 0;
     m_isGenerating = false;
+    m_isCompacting = false;
     m_userScrolledUp = false;
     m_lastScrollActivityMs = 0;
     m_htmlUpdatePending = false;
@@ -514,7 +515,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( EVT_CHAT_TITLE_DELTA, &AGENT_FRAME::OnChatTitleDelta, this );
     Bind( EVT_CHAT_TITLE_GENERATED, &AGENT_FRAME::OnChatTitleGenerated, this );
     Bind( EVT_CHAT_HISTORY_LOADED, &AGENT_FRAME::OnChatHistoryLoaded, this );
-    Bind( EVT_CHAT_CONTEXT_STATUS, &AGENT_FRAME::OnChatContextStatus, this );
     Bind( EVT_CHAT_CONTEXT_COMPACTING, &AGENT_FRAME::OnChatContextCompacting, this );
     Bind( EVT_CHAT_CONTEXT_RECOVERED, &AGENT_FRAME::OnChatContextRecovered, this );
 
@@ -705,8 +705,15 @@ wxString AGENT_FRAME::BuildStreamingContent()
     if( !m_toolCallHtml.IsEmpty() )
         streamingContent += m_toolCallHtml;
 
-    // Add animated dots when generating but not streaming markdown
-    if( m_isGenerating && !m_isStreamingMarkdown )
+    // Add animated dots when compacting or generating
+    if( m_isCompacting )
+    {
+        wxString dots;
+        for( int i = 0; i < m_generatingDots; i++ )
+            dots += ".";
+        streamingContent += "<font color='#FFA500'>Compacting" + dots + "</font>";
+    }
+    else if( m_isGenerating && !m_isStreamingMarkdown )
     {
         wxString dots;
         for( int i = 0; i < m_generatingDots; i++ )
@@ -1332,8 +1339,9 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     if( m_chatController )
         m_chatController->Cancel();
 
-    // Stop generating animation
+    // Stop generating animation and compacting state
     StopGeneratingAnimation();
+    m_isCompacting = false;
 
     // Cancel any in-progress async LLM request
     if( m_llmClient && m_llmClient->IsRequestInProgress() )
@@ -2808,7 +2816,7 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
         m_lastToolDesc, statusClass, statusText, displayResult );
 
     // After schematic tools complete successfully, trigger editor refresh for live UI feedback
-    if( data->success && ( data->toolName == "sch_modify" || data->toolName == "sch_write" ) )
+    if( data->success && data->toolName == "sch_modify" )
     {
         try
         {
@@ -2932,8 +2940,9 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
         wxString::FromUTF8( data->message ) );
     AppendHtml( errorHtml );
 
-    // Stop animation and reset button
+    // Stop all animations and reset button
     StopGeneratingAnimation();
+    m_isCompacting = false;
     m_actionButton->SetLabel( "Send" );
 
     // Clear streaming state
@@ -3149,26 +3158,22 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
 }
 
 
-void AGENT_FRAME::OnChatContextStatus( wxThreadEvent& aEvent )
-{
-    ChatContextStatusData* data = aEvent.GetPayload<ChatContextStatusData*>();
-
-    if( data && data->wasCompacted )
-    {
-        AppendHtml( "<p><font color='#FFA500'><i>Context was automatically "
-                    "compacted to continue the conversation.</i></font></p>" );
-    }
-
-    if( data )
-        delete data;
-}
-
-
 void AGENT_FRAME::OnChatContextCompacting( wxThreadEvent& aEvent )
 {
     ChatContextCompactingData* data = aEvent.GetPayload<ChatContextCompactingData*>();
 
-    AppendHtml( "<p><font color='#FFA500'><i>Compacting context...</i></font></p>" );
+    // Clear any partial streaming content from the failed request
+    m_thinkingContent.Clear();
+    m_thinkingHtml.Clear();
+    m_toolCallHtml.Clear();
+    if( m_chatController )
+        m_chatController->ClearStreamingState();
+
+    // Start animated "Compacting" display
+    m_isCompacting = true;
+    m_generatingDots = 1;
+    m_generatingTimer.Start( 400 );  // Update dots every 400ms
+    UpdateAgentResponse();
 
     if( data )
         delete data;
@@ -3177,6 +3182,10 @@ void AGENT_FRAME::OnChatContextCompacting( wxThreadEvent& aEvent )
 
 void AGENT_FRAME::OnChatContextRecovered( wxThreadEvent& aEvent )
 {
+    // Stop compacting animation
+    m_isCompacting = false;
+    m_generatingTimer.Stop();
+
     ChatContextRecoveredData* data = aEvent.GetPayload<ChatContextRecoveredData*>();
 
     if( data && !data->summarizedMessages.empty() && data->summarizedMessages.is_array() )
@@ -3184,11 +3193,42 @@ void AGENT_FRAME::OnChatContextRecovered( wxThreadEvent& aEvent )
         // Replace API context with compacted version (display history unchanged)
         m_apiContext = data->summarizedMessages;
 
-        // Show notification
-        AppendHtml( "<p><font color='#FFA500'><i>Context compacted. Retrying...</i></font></p>" );
+        // Re-add the user's last message to the API context so the model responds to it
+        for( auto it = m_chatHistory.rbegin(); it != m_chatHistory.rend(); ++it )
+        {
+            if( it->contains( "role" ) && (*it)["role"] == "user" )
+            {
+                m_apiContext.push_back( *it );
+                break;
+            }
+        }
+
+        // Add assistant message noting the compaction
+        nlohmann::json compactMsg = {
+            { "role", "assistant" },
+            { "content", "*Context compacted*" }
+        };
+        m_chatHistory.push_back( compactMsg );
+
+        // Finalize any streaming content, add compaction message, and prepare for retry
+        if( m_chatWindow )
+            m_chatWindow->RunScriptAsync( "finalizeStreamingContent();" );
+        m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
+
+        // Add the compaction notice as permanent content
+        wxString compactHtml = AgentMarkdown::ToHtml( "*Context compacted*" );
+        wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
+        AppendHtml( compactHtml + streamingDiv );
 
         // Retry with compacted context
-        CallAfter( [this]() { RetryLastRequest(); } );
+        RetryLastRequest();
+    }
+    else
+    {
+        // No summarized messages - error case, reset UI
+        StopGeneratingAnimation();
+        m_actionButton->SetLabel( "Send" );
+        AppendHtml( "<p><font color='red'>Context recovery failed: No summarized messages received</font></p>" );
     }
 
     if( data )

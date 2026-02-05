@@ -29,9 +29,6 @@ set( QA_AGENT_SRCS
     # Validator tests
     test_sch_validator.cpp
 
-    # Version injection tests
-    test_sch_version_injection.cpp
-
     # Parser tests
     test_sch_parser.cpp
 

@@ -194,7 +194,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Model Selection (Claude models only - via zener.so proxy)
     wxArrayString modelChoices;
     modelChoices.Add( "Claude 4.5 Sonnet" );
-    modelChoices.Add( "Claude 4.5 Opus" );
+    modelChoices.Add( "Claude 4.6 Opus" );
 
     m_modelChoice = new wxChoice( m_inputPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, modelChoices );
     m_modelChoice->SetSelection( 0 ); // Default to Claude 4.5 Sonnet

@@ -35,7 +35,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
 
     std::vector<LLM_TOOL> tools;
 
-    //run_terminal - Execute bash/shell commands
+    // run_terminal - Execute bash/shell commands
     LLM_TOOL runTerminal;
     runTerminal.name = "run_terminal";
     runTerminal.description = "Execute bash/shell commands for file operations, git, and other terminal tasks.";
@@ -51,7 +51,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( runTerminal );
 
-    //open_editor - Open schematic or PCB editor with user approval
+    // open_editor - Open schematic or PCB editor with user approval
     LLM_TOOL openEditor;
     openEditor.name = "open_editor";
     openEditor.description = "Request to open the schematic or PCB editor. "
@@ -77,7 +77,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
 
     // ===== Direct File Tools (sch_*, pcb_*) =====
 
-    //sch_get_summary - Get high-level overview of schematic
+    // sch_get_summary - Get high-level overview of schematic
     LLM_TOOL schGetSummary;
     schGetSummary.name = "sch_get_summary";
     schGetSummary.description = "Get a high-level overview of a .kicad_sch schematic file. "
@@ -95,7 +95,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schGetSummary );
 
-    //sch_read_section - Read specific section of schematic
+    // sch_read_section - Read specific section of schematic
     LLM_TOOL schReadSection;
     schReadSection.name = "sch_read_section";
     schReadSection.description = "Read a specific section of a .kicad_sch file. "
@@ -122,7 +122,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schReadSection );
 
-    //sch_modify - Add, update, or delete elements
+    // sch_modify - Add, update, or delete elements
     LLM_TOOL schModify;
     schModify.name = "sch_modify";
     schModify.description = "Modify a .kicad_sch file by adding, updating, or deleting elements. "
@@ -158,7 +158,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schModify );
 
-    //sch_validate - Validate schematic file
+    // sch_validate - Validate schematic file
     LLM_TOOL schValidate;
     schValidate.name = "sch_validate";
     schValidate.description = "Validate a .kicad_sch file without modifying it. "
@@ -176,7 +176,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schValidate );
 
-    //sch_run_erc - Run ERC on open schematic
+    // sch_run_erc - Run ERC on open schematic
     LLM_TOOL schRunErc;
     schRunErc.name = "sch_run_erc";
     schRunErc.description =
@@ -203,7 +203,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schRunErc );
 
-    //sch_get_lib_symbol - Query symbol library for pin positions
+    // sch_get_lib_symbol - Query symbol library for pin positions
     LLM_TOOL schGetLibSymbol;
     schGetLibSymbol.name = "sch_get_lib_symbol";
     schGetLibSymbol.description =
@@ -244,7 +244,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     // ===== IPC-based CRUD Tools (sch_add, sch_update, sch_delete, sch_batch_delete) =====
     // These work on the LIVE schematic via kipy API
 
-    //sch_add - Universal add for any element type
+    // sch_add - Universal add for any element type
     LLM_TOOL schAdd;
     schAdd.name = "sch_add";
     schAdd.description =
@@ -351,7 +351,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schAdd );
 
-    //sch_update - Universal update for any element
+    // sch_update - Universal update for any element
     LLM_TOOL schUpdate;
     schUpdate.name = "sch_update";
     schUpdate.description =
@@ -404,7 +404,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schUpdate );
 
-    //sch_delete - Universal delete for any element
+    // sch_delete - Universal delete for any element
     LLM_TOOL schDelete;
     schDelete.name = "sch_delete";
     schDelete.description =
@@ -423,7 +423,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schDelete );
 
-    //sch_batch_delete - Delete multiple elements
+    // sch_batch_delete - Delete multiple elements
     LLM_TOOL schBatchDelete;
     schBatchDelete.name = "sch_batch_delete";
     schBatchDelete.description =
@@ -445,7 +445,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
 
     // ===== PCB Tools =====
 
-    //pcb_get_summary - Get high-level overview of PCB
+    // pcb_get_summary - Get high-level overview of PCB
     LLM_TOOL pcbGetSummary;
     pcbGetSummary.name = "pcb_get_summary";
     pcbGetSummary.description =
@@ -459,7 +459,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbGetSummary );
 
-    //pcb_read_section - Read specific section of PCB
+    // pcb_read_section - Read specific section of PCB
     LLM_TOOL pcbReadSection;
     pcbReadSection.name = "pcb_read_section";
     pcbReadSection.description =
@@ -483,7 +483,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbReadSection );
 
-    //pcb_validate - Validate PCB file
+    // pcb_validate - Validate PCB file
     LLM_TOOL pcbValidate;
     pcbValidate.name = "pcb_validate";
     pcbValidate.description =
@@ -501,7 +501,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbValidate );
 
-    //pcb_run_drc - Run design rule check
+    // pcb_run_drc - Run design rule check
     LLM_TOOL pcbRunDrc;
     pcbRunDrc.name = "pcb_run_drc";
     pcbRunDrc.description =
@@ -526,7 +526,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbRunDrc );
 
-    //pcb_set_outline - Set board outline/shape
+    // pcb_set_outline - Set board outline/shape
     LLM_TOOL pcbSetOutline;
     pcbSetOutline.name = "pcb_set_outline";
     pcbSetOutline.description =
@@ -575,7 +575,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbSetOutline );
 
-    //pcb_sync_schematic - Import/update footprints from schematic
+    // pcb_sync_schematic - Import/update footprints from schematic
     LLM_TOOL pcbSyncSchematic;
     pcbSyncSchematic.name = "pcb_sync_schematic";
     pcbSyncSchematic.description =
@@ -606,7 +606,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbSyncSchematic );
 
-    //pcb_place - Batch footprint placement
+    // pcb_place - Batch footprint placement
     LLM_TOOL pcbPlace;
     pcbPlace.name = "pcb_place";
     pcbPlace.description =
@@ -649,7 +649,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbPlace );
 
-    //pcb_add - Universal add for PCB elements
+    // pcb_add - Universal add for PCB elements
     LLM_TOOL pcbAdd;
     pcbAdd.name = "pcb_add";
     pcbAdd.description =
@@ -780,7 +780,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbAdd );
 
-    //pcb_update - Universal update for PCB elements
+    // pcb_update - Universal update for PCB elements
     LLM_TOOL pcbUpdate;
     pcbUpdate.name = "pcb_update";
     pcbUpdate.description =
@@ -832,7 +832,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbUpdate );
 
-    //pcb_delete - Delete PCB element
+    // pcb_delete - Delete PCB element
     LLM_TOOL pcbDelete;
     pcbDelete.name = "pcb_delete";
     pcbDelete.description =
@@ -850,7 +850,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbDelete );
 
-    //pcb_batch_delete - Delete multiple PCB elements
+    // pcb_batch_delete - Delete multiple PCB elements
     LLM_TOOL pcbBatchDelete;
     pcbBatchDelete.name = "pcb_batch_delete";
     pcbBatchDelete.description =
@@ -879,7 +879,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbBatchDelete );
 
-    //pcb_export - Generate output files
+    // pcb_export - Generate output files
     LLM_TOOL pcbExport;
     pcbExport.name = "pcb_export";
     pcbExport.description =

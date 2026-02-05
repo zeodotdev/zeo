@@ -138,12 +138,28 @@ nlohmann::json SymbolInfo::ToJson() const
 }
 
 
+nlohmann::json SheetInfo::ToJson() const
+{
+    return {
+        { "name", name },
+        { "file", filename },
+        { "uuid", uuid }
+    };
+}
+
+
 nlohmann::json SchematicSummary::ToJson() const
 {
     nlohmann::json symbolsJson = nlohmann::json::array();
     for( const auto& sym : symbols )
     {
         symbolsJson.push_back( sym.ToJson() );
+    }
+
+    nlohmann::json sheetsJson = nlohmann::json::array();
+    for( const auto& sheet : sheets )
+    {
+        sheetsJson.push_back( sheet.ToJson() );
     }
 
     return {
@@ -156,7 +172,7 @@ nlohmann::json SchematicSummary::ToJson() const
         { "wires", wireCount },
         { "junctions", junctionCount },
         { "labels", labels },
-        { "sheets", sheetCount }
+        { "sheets", sheetsJson }
     };
 }
 
@@ -265,7 +281,6 @@ SchematicSummary GetSummary( const std::string& aFilePath )
     summary.version = 0;
     summary.wireCount = 0;
     summary.junctionCount = 0;
-    summary.sheetCount = 0;
 
     auto root = SexprUtil::ParseFile( aFilePath );
     if( !root || !root->IsList() )
@@ -400,8 +415,39 @@ SchematicSummary GetSummary( const std::string& aFilePath )
         }
     }
 
-    // Count sheets
-    summary.sheetCount = static_cast<int>( SexprUtil::FindChildren( root.get(), "sheet" ).size() );
+    // Extract sheet (child) references
+    auto sheetExprs = SexprUtil::FindChildren( root.get(), "sheet" );
+    for( const auto& sheetExpr : sheetExprs )
+    {
+        SheetInfo sheetInfo;
+
+        // Get UUID
+        auto uuidChild = SexprUtil::FindFirstChild( sheetExpr, "uuid" );
+        if( uuidChild )
+            sheetInfo.uuid = SexprUtil::GetStringValue( uuidChild );
+
+        // Get Sheetname and Sheetfile from properties
+        auto props = SexprUtil::FindChildren( sheetExpr, "property" );
+        for( const auto& prop : props )
+        {
+            auto children = prop->GetChildren();
+            if( children && children->size() >= 3 )
+            {
+                const SEXPR::SEXPR* nameExpr = children->at( 1 );
+                const SEXPR::SEXPR* valueExpr = children->at( 2 );
+                if( nameExpr->IsString() && valueExpr->IsString() )
+                {
+                    std::string propName = nameExpr->GetString();
+                    if( propName == "Sheetname" )
+                        sheetInfo.name = valueExpr->GetString();
+                    else if( propName == "Sheetfile" )
+                        sheetInfo.filename = valueExpr->GetString();
+                }
+            }
+        }
+
+        summary.sheets.push_back( sheetInfo );
+    }
 
     return summary;
 }

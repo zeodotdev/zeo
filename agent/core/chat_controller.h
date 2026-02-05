@@ -250,7 +250,7 @@ private:
     AGENT_CHAT_HISTORY* m_chatHistoryDb;  ///< Persistence layer
     class AGENT_AUTH*   m_auth;          ///< Authentication manager
     std::function<std::string( int, const std::string& )> m_sendRequestFn;
-    std::function<std::string()> m_getProjectPathFn;  ///< Get project path for tool validation
+    std::function<std::string()> m_getProjectPathFn;  ///< Get project path for context injection
 
     // -------------------------------------------------------------------------
     // Tool definitions

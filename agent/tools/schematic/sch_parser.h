@@ -78,6 +78,18 @@ struct SymbolInfo
 };
 
 /**
+ * Information about a hierarchical sheet reference.
+ */
+struct SheetInfo
+{
+    std::string name;
+    std::string filename;
+    std::string uuid;
+
+    nlohmann::json ToJson() const;
+};
+
+/**
  * Summary of a schematic file.
  */
 struct SchematicSummary
@@ -91,7 +103,7 @@ struct SchematicSummary
     int                      wireCount;
     int                      junctionCount;
     std::vector<std::string> labels;
-    int                      sheetCount;
+    std::vector<SheetInfo>   sheets;  // Child sheets referenced in this schematic
 
     nlohmann::json ToJson() const;
 };

@@ -423,4 +423,77 @@ BOOST_AUTO_TEST_CASE( SymbolInfoToJsonIncludesPins )
 }
 
 
+/**
+ * Test that GetSummary ToJson includes spice_netlist key when netlist is present
+ */
+BOOST_AUTO_TEST_CASE( GetSummaryIncludesSpiceNetlist )
+{
+    SchParser::SchematicSummary summary;
+    summary.file = "test.kicad_sch";
+    summary.version = 20251028;
+    summary.uuid = "test-uuid";
+    summary.paper = "A4";
+    summary.wireCount = 0;
+    summary.junctionCount = 0;
+    summary.spiceNetlist = ".title KiCad schematic\nR1 Net1 GND 10k\n.end\n";
+
+    auto json = summary.ToJson();
+
+    BOOST_CHECK( json.contains( "spice_netlist" ) );
+    BOOST_CHECK_EQUAL( json["spice_netlist"], ".title KiCad schematic\nR1 Net1 GND 10k\n.end\n" );
+}
+
+
+/**
+ * Test that GenerateSpiceNetlist returns empty string for invalid path
+ */
+BOOST_AUTO_TEST_CASE( GenerateSpiceNetlistInvalidPath )
+{
+    std::string result = SchParser::GenerateSpiceNetlist( "" );
+    BOOST_CHECK( result.empty() );
+}
+
+
+/**
+ * Test that when kicad-cli is unavailable, spiceNetlist is empty and rest of summary is unaffected
+ */
+BOOST_AUTO_TEST_CASE( GetSummarySpiceNetlistGraceful )
+{
+    std::string content = R"(
+(kicad_sch
+  (version 20251028)
+  (generator "test")
+  (generator_version "9.0")
+  (uuid "12345678-1234-1234-1234-123456789abc")
+  (paper "A4")
+  (lib_symbols)
+  (symbol
+    (lib_id "Device:R")
+    (at 100 50 0)
+    (unit 1)
+    (uuid "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    (property "Reference" "R1" (at 100 48 0) (effects (font (size 1.27 1.27))))
+    (property "Value" "10k" (at 100 52 0) (effects (font (size 1.27 1.27))))
+  )
+)
+)";
+
+    std::string path = CreateTempSchematic( content );
+    auto summary = SchParser::GetSummary( path );
+    RemoveTempFile( path );
+
+    // spiceNetlist should be empty (kicad-cli won't be found in test environment)
+    // but the rest of the summary should be populated correctly
+    BOOST_CHECK( summary.spiceNetlist.empty() );
+    BOOST_CHECK_EQUAL( summary.symbols.size(), 1 );
+    BOOST_CHECK_EQUAL( summary.symbols[0].reference, "R1" );
+    BOOST_CHECK_EQUAL( summary.symbols[0].value, "10k" );
+    BOOST_CHECK_EQUAL( summary.version, 20251028 );
+
+    // ToJson should not include the key when empty
+    auto json = summary.ToJson();
+    BOOST_CHECK( !json.contains( "spice_netlist" ) );
+}
+
+
 BOOST_AUTO_TEST_SUITE_END()

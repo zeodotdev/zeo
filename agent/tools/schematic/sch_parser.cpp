@@ -24,7 +24,10 @@
 #include <sstream>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <tuple>
+#include <wx/stdpaths.h>
+#include <wx/filename.h>
 
 namespace SchParser
 {
@@ -162,7 +165,7 @@ nlohmann::json SchematicSummary::ToJson() const
         sheetsJson.push_back( sheet.ToJson() );
     }
 
-    return {
+    nlohmann::json j = {
         { "file", file },
         { "version", version },
         { "uuid", uuid },
@@ -174,6 +177,11 @@ nlohmann::json SchematicSummary::ToJson() const
         { "labels", labels },
         { "sheets", sheetsJson }
     };
+
+    if( !spiceNetlist.empty() )
+        j["spice_netlist"] = spiceNetlist;
+
+    return j;
 }
 
 
@@ -271,6 +279,52 @@ static void TransformPinPosition( double symX, double symY, double symAngle,
     // Rotate and translate
     pinAbsX = symX + x * cosA - y * sinA;
     pinAbsY = symY + x * sinA + y * cosA;
+}
+
+
+/**
+ * Locate the kicad-cli binary next to the running executable.
+ * On macOS this is in the same MacOS directory inside the app bundle.
+ */
+static std::string GetKicadCliPath()
+{
+    wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+    wxFileName cliPath( exePath.GetPath(), "kicad-cli" );
+
+    if( cliPath.FileExists() )
+        return cliPath.GetFullPath().ToStdString();
+
+    return std::string();
+}
+
+
+std::string GenerateSpiceNetlist( const std::string& aSchematicPath )
+{
+    if( aSchematicPath.empty() )
+        return std::string();
+
+    std::string cliPath = GetKicadCliPath();
+    if( cliPath.empty() )
+        return std::string();
+
+    std::string cmd = "\"" + cliPath + "\" sch export netlist --format spice -o /dev/stdout \""
+                      + aSchematicPath + "\" 2>/dev/null";
+
+    FILE* pipe = popen( cmd.c_str(), "r" );
+    if( !pipe )
+        return std::string();
+
+    std::string result;
+    char        buffer[4096];
+
+    while( fgets( buffer, sizeof( buffer ), pipe ) )
+        result += buffer;
+
+    int status = pclose( pipe );
+    if( status != 0 )
+        return std::string();
+
+    return result;
 }
 
 
@@ -448,6 +502,9 @@ SchematicSummary GetSummary( const std::string& aFilePath )
 
         summary.sheets.push_back( sheetInfo );
     }
+
+    // Generate SPICE netlist via kicad-cli
+    summary.spiceNetlist = GenerateSpiceNetlist( aFilePath );
 
     return summary;
 }

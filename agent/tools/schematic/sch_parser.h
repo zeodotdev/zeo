@@ -104,6 +104,7 @@ struct SchematicSummary
     int                      junctionCount;
     std::vector<std::string> labels;
     std::vector<SheetInfo>   sheets;  // Child sheets referenced in this schematic
+    std::string              spiceNetlist;
 
     nlohmann::json ToJson() const;
 };
@@ -114,6 +115,13 @@ struct SchematicSummary
  * @return Summary of the schematic, or empty summary on error.
  */
 SchematicSummary GetSummary( const std::string& aFilePath );
+
+/**
+ * Generate a SPICE netlist from a schematic file using kicad-cli.
+ * @param aSchematicPath Path to the .kicad_sch file.
+ * @return SPICE netlist text, or empty string on failure.
+ */
+std::string GenerateSpiceNetlist( const std::string& aSchematicPath );
 
 /**
  * Read a specific section from the schematic file.

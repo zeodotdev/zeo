@@ -11,6 +11,7 @@
 #include "core/chat_events.h"
 #include "tools/tool_registry.h"
 #include "tools/kicad_file/file_writer.h"
+#include "tools/schematic/sch_parser.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -26,6 +27,7 @@
 #include <wx/utils.h>
 #include <wx/stdpaths.h>
 #include <wx/filename.h>
+#include <wx/dir.h>
 #include <wx/stattext.h>
 #include <bitmaps.h>
 #include <id.h>
@@ -261,6 +263,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Initialize generating animation
     m_generatingDots = 0;
     m_isGenerating = false;
+    m_isCompacting = false;
     m_userScrolledUp = false;
     m_lastScrollActivityMs = 0;
     m_htmlUpdatePending = false;
@@ -351,7 +354,148 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         } );
     m_chatController->SetProjectPathFn(
         [this]() -> std::string {
-            return Kiway().Prj().GetProjectPath().ToStdString();
+            wxString projectPath = Kiway().Prj().GetProjectPath();
+            if( projectPath.IsEmpty() )
+                return "";
+
+            // Build JSON with project path, PCB file, and schematic hierarchy
+            nlohmann::json projectContext;
+            projectContext["path"] = projectPath.ToStdString();
+
+            // Get project name for conventional file detection
+            wxFileName projDir( projectPath, "" );
+            wxString projName = projDir.GetDirs().IsEmpty() ? wxString() : projDir.GetDirs().Last();
+
+            // Find PCB file - try projectName.kicad_pcb first, then scan directory
+            wxDir dir( projectPath );
+            if( !projName.IsEmpty() )
+            {
+                wxString expectedPcb = projectPath + projName + ".kicad_pcb";
+                if( wxFileExists( expectedPcb ) )
+                {
+                    projectContext["pcb_file"] = ( projName + ".kicad_pcb" ).ToStdString();
+                }
+            }
+
+            // Fallback: scan for all PCB files if expected one not found
+            if( !projectContext.contains( "pcb_file" ) && dir.IsOpened() )
+            {
+                nlohmann::json pcbFiles = nlohmann::json::array();
+                wxString filename;
+                bool cont = dir.GetFirst( &filename, "*.kicad_pcb", wxDIR_FILES );
+                while( cont )
+                {
+                    pcbFiles.push_back( filename.ToStdString() );
+                    cont = dir.GetNext( &filename );
+                }
+                if( !pcbFiles.empty() )
+                    projectContext["pcb_files"] = pcbFiles;
+            }
+
+            // Build schematic hierarchy from root sheet(s)
+            // Define recursive hierarchy builder
+            std::function<nlohmann::json( const std::string&, std::set<std::string>& )> buildHierarchy;
+            buildHierarchy = [&]( const std::string& schPath,
+                                  std::set<std::string>& visited ) -> nlohmann::json {
+                nlohmann::json node;
+
+                // Avoid infinite loops from circular references
+                if( visited.count( schPath ) )
+                    return node;
+                visited.insert( schPath );
+
+                auto summary = SchParser::GetSummary( schPath );
+                node["file"] = summary.file;
+                node["uuid"] = summary.uuid;
+
+                // Recursively process child sheets
+                if( !summary.sheets.empty() )
+                {
+                    nlohmann::json children = nlohmann::json::array();
+                    for( const auto& sheet : summary.sheets )
+                    {
+                        // Resolve child sheet path relative to parent
+                        wxFileName childPath( schPath );
+                        childPath.SetFullName( sheet.filename );
+                        std::string childFullPath = childPath.GetFullPath().ToStdString();
+
+                        nlohmann::json childNode = buildHierarchy( childFullPath, visited );
+                        if( !childNode.empty() )
+                        {
+                            childNode["name"] = sheet.name;  // Display name from parent
+                            children.push_back( childNode );
+                        }
+                    }
+                    if( !children.empty() )
+                        node["children"] = children;
+                }
+
+                return node;
+            };
+
+            // Find root schematic(s) - check .kicad_pro for top_level_sheets
+            std::vector<std::string> rootSchFiles;
+
+            // Try to read top-level sheets from project file
+            if( !projName.IsEmpty() )
+            {
+                wxString proFile = projectPath + projName + ".kicad_pro";
+                if( wxFileExists( proFile ) )
+                {
+                    std::ifstream ifs( proFile.ToStdString() );
+                    if( ifs.good() )
+                    {
+                        try
+                        {
+                            nlohmann::json projJson = nlohmann::json::parse( ifs );
+                            if( projJson.contains( "schematic" ) &&
+                                projJson["schematic"].contains( "top_level_sheets" ) )
+                            {
+                                for( const auto& sheet : projJson["schematic"]["top_level_sheets"] )
+                                {
+                                    if( sheet.contains( "filename" ) )
+                                    {
+                                        wxString schFile = projectPath +
+                                            wxString::FromUTF8( sheet["filename"].get<std::string>() );
+                                        if( wxFileExists( schFile ) )
+                                            rootSchFiles.push_back( schFile.ToStdString() );
+                                    }
+                                }
+                            }
+                        }
+                        catch( ... )
+                        {
+                            // JSON parse error - fall back to heuristics
+                        }
+                    }
+                }
+            }
+
+            // Fall back to project-name.kicad_sch if no top-level sheets defined
+            if( rootSchFiles.empty() && !projName.IsEmpty() )
+            {
+                wxString rootCandidate = projectPath + projName + ".kicad_sch";
+                if( wxFileExists( rootCandidate ) )
+                    rootSchFiles.push_back( rootCandidate.ToStdString() );
+            }
+
+            // Build hierarchy for each root
+            if( !rootSchFiles.empty() )
+            {
+                nlohmann::json hierarchyArray = nlohmann::json::array();
+                std::set<std::string> visited;
+
+                for( const auto& rootFile : rootSchFiles )
+                {
+                    nlohmann::json rootNode = buildHierarchy( rootFile, visited );
+                    if( !rootNode.empty() )
+                        hierarchyArray.push_back( rootNode );
+                }
+
+                projectContext["hierarchy"] = hierarchyArray;
+            }
+
+            return projectContext.dump( 2 );
         } );
 
     // Set model on controller
@@ -371,7 +515,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( EVT_CHAT_TITLE_DELTA, &AGENT_FRAME::OnChatTitleDelta, this );
     Bind( EVT_CHAT_TITLE_GENERATED, &AGENT_FRAME::OnChatTitleGenerated, this );
     Bind( EVT_CHAT_HISTORY_LOADED, &AGENT_FRAME::OnChatHistoryLoaded, this );
-    Bind( EVT_CHAT_CONTEXT_STATUS, &AGENT_FRAME::OnChatContextStatus, this );
     Bind( EVT_CHAT_CONTEXT_COMPACTING, &AGENT_FRAME::OnChatContextCompacting, this );
     Bind( EVT_CHAT_CONTEXT_RECOVERED, &AGENT_FRAME::OnChatContextRecovered, this );
 
@@ -562,8 +705,15 @@ wxString AGENT_FRAME::BuildStreamingContent()
     if( !m_toolCallHtml.IsEmpty() )
         streamingContent += m_toolCallHtml;
 
-    // Add animated dots when generating but not streaming markdown
-    if( m_isGenerating && !m_isStreamingMarkdown )
+    // Add animated dots when compacting or generating
+    if( m_isCompacting )
+    {
+        wxString dots;
+        for( int i = 0; i < m_generatingDots; i++ )
+            dots += ".";
+        streamingContent += "<font color='#FFA500'>Compacting" + dots + "</font>";
+    }
+    else if( m_isGenerating && !m_isStreamingMarkdown )
     {
         wxString dots;
         for( int i = 0; i < m_generatingDots; i++ )
@@ -1189,8 +1339,9 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     if( m_chatController )
         m_chatController->Cancel();
 
-    // Stop generating animation
+    // Stop generating animation and compacting state
     StopGeneratingAnimation();
+    m_isCompacting = false;
 
     // Cancel any in-progress async LLM request
     if( m_llmClient && m_llmClient->IsRequestInProgress() )
@@ -2665,7 +2816,7 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
         m_lastToolDesc, statusClass, statusText, displayResult );
 
     // After schematic tools complete successfully, trigger editor refresh for live UI feedback
-    if( data->success && ( data->toolName == "sch_modify" || data->toolName == "sch_write" ) )
+    if( data->success && data->toolName == "sch_modify" )
     {
         try
         {
@@ -2789,8 +2940,9 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
         wxString::FromUTF8( data->message ) );
     AppendHtml( errorHtml );
 
-    // Stop animation and reset button
+    // Stop all animations and reset button
     StopGeneratingAnimation();
+    m_isCompacting = false;
     m_actionButton->SetLabel( "Send" );
 
     // Clear streaming state
@@ -3006,26 +3158,22 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
 }
 
 
-void AGENT_FRAME::OnChatContextStatus( wxThreadEvent& aEvent )
-{
-    ChatContextStatusData* data = aEvent.GetPayload<ChatContextStatusData*>();
-
-    if( data && data->wasCompacted )
-    {
-        AppendHtml( "<p><font color='#FFA500'><i>Context was automatically "
-                    "compacted to continue the conversation.</i></font></p>" );
-    }
-
-    if( data )
-        delete data;
-}
-
-
 void AGENT_FRAME::OnChatContextCompacting( wxThreadEvent& aEvent )
 {
     ChatContextCompactingData* data = aEvent.GetPayload<ChatContextCompactingData*>();
 
-    AppendHtml( "<p><font color='#FFA500'><i>Compacting context...</i></font></p>" );
+    // Clear any partial streaming content from the failed request
+    m_thinkingContent.Clear();
+    m_thinkingHtml.Clear();
+    m_toolCallHtml.Clear();
+    if( m_chatController )
+        m_chatController->ClearStreamingState();
+
+    // Start animated "Compacting" display
+    m_isCompacting = true;
+    m_generatingDots = 1;
+    m_generatingTimer.Start( 400 );  // Update dots every 400ms
+    UpdateAgentResponse();
 
     if( data )
         delete data;
@@ -3034,6 +3182,10 @@ void AGENT_FRAME::OnChatContextCompacting( wxThreadEvent& aEvent )
 
 void AGENT_FRAME::OnChatContextRecovered( wxThreadEvent& aEvent )
 {
+    // Stop compacting animation
+    m_isCompacting = false;
+    m_generatingTimer.Stop();
+
     ChatContextRecoveredData* data = aEvent.GetPayload<ChatContextRecoveredData*>();
 
     if( data && !data->summarizedMessages.empty() && data->summarizedMessages.is_array() )
@@ -3041,11 +3193,42 @@ void AGENT_FRAME::OnChatContextRecovered( wxThreadEvent& aEvent )
         // Replace API context with compacted version (display history unchanged)
         m_apiContext = data->summarizedMessages;
 
-        // Show notification
-        AppendHtml( "<p><font color='#FFA500'><i>Context compacted. Retrying...</i></font></p>" );
+        // Re-add the user's last message to the API context so the model responds to it
+        for( auto it = m_chatHistory.rbegin(); it != m_chatHistory.rend(); ++it )
+        {
+            if( it->contains( "role" ) && (*it)["role"] == "user" )
+            {
+                m_apiContext.push_back( *it );
+                break;
+            }
+        }
+
+        // Add assistant message noting the compaction
+        nlohmann::json compactMsg = {
+            { "role", "assistant" },
+            { "content", "*Context compacted*" }
+        };
+        m_chatHistory.push_back( compactMsg );
+
+        // Finalize any streaming content, add compaction message, and prepare for retry
+        if( m_chatWindow )
+            m_chatWindow->RunScriptAsync( "finalizeStreamingContent();" );
+        m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
+
+        // Add the compaction notice as permanent content
+        wxString compactHtml = AgentMarkdown::ToHtml( "*Context compacted*" );
+        wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
+        AppendHtml( compactHtml + streamingDiv );
 
         // Retry with compacted context
-        CallAfter( [this]() { RetryLastRequest(); } );
+        RetryLastRequest();
+    }
+    else
+    {
+        // No summarized messages - error case, reset UI
+        StopGeneratingAnimation();
+        m_actionButton->SetLabel( "Send" );
+        AppendHtml( "<p><font color='red'>Context recovery failed: No summarized messages received</font></p>" );
     }
 
     if( data )

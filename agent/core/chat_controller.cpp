@@ -50,7 +50,6 @@ wxDEFINE_EVENT( EVT_CHAT_STATE_CHANGED, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_TITLE_DELTA, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_TITLE_GENERATED, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_HISTORY_LOADED, wxThreadEvent );
-wxDEFINE_EVENT( EVT_CHAT_CONTEXT_STATUS, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_CONTEXT_COMPACTING, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_CONTEXT_RECOVERED, wxThreadEvent );
 
@@ -111,15 +110,18 @@ void CHAT_CONTROLLER::SendMessage( const std::string& aText )
         GenerateTitle();
     }
 
-    // Inject project context into first user message
+    // Inject project context (including hierarchy) into first user message
     std::string messageText = aText;
     if( userMessageCount == 0 && m_getProjectPathFn )
     {
-        std::string projectPath = m_getProjectPathFn();
-        if( !projectPath.empty() )
+        std::string projectContext = m_getProjectPathFn();
+        if( !projectContext.empty() )
         {
-            messageText = "<project_context>\nProject directory: " + projectPath +
-                          "\n</project_context>\n\n" + aText;
+            messageText = "<project_context>\n" + projectContext +
+                         "\n</project_context>\n\n" + aText;
+
+            // Log the full first message with injected context
+            wxLogInfo( "CHAT: First message with context:\n%s", messageText.c_str() );
         }
     }
 
@@ -151,6 +153,7 @@ void CHAT_CONTROLLER::Cancel()
 {
     wxLogInfo( "CHAT_CONTROLLER::Cancel called" );
     m_stopRequested = true;
+        m_continueAfterComplete = false;
 
     if( m_llmClient )
         m_llmClient->CancelRequest();
@@ -290,7 +293,7 @@ void CHAT_CONTROLLER::NewChat()
     m_chatId.clear();
     m_firstUserMessage.clear();
     m_pendingToolCalls = nlohmann::json::array();
-
+    
     m_ctx.Reset();
 }
 
@@ -627,47 +630,14 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         break;
     }
 
-    case LLMChunkType::CONTEXT_STATUS:
-        if( aChunk.context_compacted )
-        {
-            EmitEvent( EVT_CHAT_CONTEXT_STATUS, ChatContextStatusData( true ) );
-        }
-        break;
-
-    case LLMChunkType::CONTEXT_COMPACTING:
-        EmitEvent( EVT_CHAT_CONTEXT_COMPACTING, ChatContextCompactingData() );
-        break;
-
     case LLMChunkType::CONTEXT_EXHAUSTED:
     case LLMChunkType::CONTEXT_TRUNCATED:
     {
-        // Context exhausted - call summarize endpoint to get compacted messages
-        // Show "compacting" feedback to user
-        EmitEvent( EVT_CHAT_CONTEXT_COMPACTING, ChatContextCompactingData() );
-
-        // Call the summarize endpoint
-        if( m_llmClient )
-        {
-            SummarizeResult result = m_llmClient->CallSummarizeEndpoint( m_apiContext );
-
-            if( result.success )
-            {
-                // Update API context with compacted messages
-                m_apiContext = result.messages;
-
-                // Emit recovery event - AGENT_FRAME::OnChatContextRecovered() will handle retry
-                EmitEvent( EVT_CHAT_CONTEXT_RECOVERED, ChatContextRecoveredData( result.messages ) );
-            }
-            else
-            {
-                // Summarization failed - report error
-                HandleLLMError( "Context recovery failed: " + result.error_message );
-            }
-        }
-        else
-        {
-            HandleLLMError( "Context recovery failed: No LLM client configured" );
-        }
+        // Context exhausted is now handled inline by LLM_REQUEST_THREAD for the HTTP 400 case.
+        // It posts CONTEXT_COMPACTING and CONTEXT_RECOVERED events directly.
+        // This case only triggers for mid-stream model_context_window_exceeded stop reason,
+        // which is rare since we check pre-request. Log for debugging.
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - CONTEXT_EXHAUSTED/TRUNCATED chunk received" );
         break;
     }
     }
@@ -676,6 +646,10 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
 
 void CHAT_CONTROLLER::HandleLLMComplete()
 {
+    // Note: Context exhausted handling has moved to LLM_REQUEST_THREAD for the HTTP 400 case.
+    // The thread detects context_exhausted, calls summarize inline, and posts events directly.
+    // This avoids the HTTP/2 connection corruption that occurred with separate threads.
+
     // Check if we need to continue generation (from max_tokens)
     if( m_continueAfterComplete )
     {
@@ -1415,6 +1389,5 @@ template void CHAT_CONTROLLER::EmitEvent<ChatStateChangedData>( wxEventType, con
 template void CHAT_CONTROLLER::EmitEvent<ChatTitleDeltaData>( wxEventType, const ChatTitleDeltaData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatTitleGeneratedData>( wxEventType, const ChatTitleGeneratedData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatHistoryLoadedData>( wxEventType, const ChatHistoryLoadedData& );
-template void CHAT_CONTROLLER::EmitEvent<ChatContextStatusData>( wxEventType, const ChatContextStatusData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatContextCompactingData>( wxEventType, const ChatContextCompactingData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatContextRecoveredData>( wxEventType, const ChatContextRecoveredData& );

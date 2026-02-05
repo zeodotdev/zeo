@@ -43,7 +43,6 @@ wxDECLARE_EVENT( EVT_CHAT_STATE_CHANGED, wxThreadEvent );   ///< State machine c
 wxDECLARE_EVENT( EVT_CHAT_TITLE_DELTA, wxThreadEvent );     ///< Title chunk arrived (streaming)
 wxDECLARE_EVENT( EVT_CHAT_TITLE_GENERATED, wxThreadEvent ); ///< Title complete
 wxDECLARE_EVENT( EVT_CHAT_HISTORY_LOADED, wxThreadEvent );  ///< Chat loaded from history
-wxDECLARE_EVENT( EVT_CHAT_CONTEXT_STATUS, wxThreadEvent );  ///< Context status notification
 wxDECLARE_EVENT( EVT_CHAT_CONTEXT_COMPACTING, wxThreadEvent ); ///< Context being compacted
 wxDECLARE_EVENT( EVT_CHAT_CONTEXT_RECOVERED, wxThreadEvent ); ///< Context recovered, retry needed
 
@@ -112,7 +111,7 @@ struct ChatThinkingDoneData
 struct ChatToolGeneratingData
 {
     std::string toolId;           ///< Unique tool use ID
-    std::string toolName;         ///< Tool name (e.g., "sch_write")
+    std::string toolName;         ///< Tool name (e.g., "sch_modify")
 
     ChatToolGeneratingData() = default;
     ChatToolGeneratingData( const std::string& aId, const std::string& aName )
@@ -233,18 +232,6 @@ struct ChatHistoryLoadedData
     ChatHistoryLoadedData() = default;
     ChatHistoryLoadedData( const std::string& aId, const std::string& aTitle )
         : chatId( aId ), title( aTitle ) {}
-};
-
-/**
- * Payload for EVT_CHAT_CONTEXT_STATUS events.
- * Notifies about context compaction that already occurred.
- */
-struct ChatContextStatusData
-{
-    bool wasCompacted;            ///< Whether context was compacted
-
-    ChatContextStatusData() : wasCompacted( false ) {}
-    explicit ChatContextStatusData( bool aCompacted ) : wasCompacted( aCompacted ) {}
 };
 
 /**

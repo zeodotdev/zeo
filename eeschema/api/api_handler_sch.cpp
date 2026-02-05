@@ -70,6 +70,9 @@
 #include <schematic_settings.h>
 #include <settings/common_settings.h>
 #include <sim/spice_settings.h>
+#include <sim/simulator_frame.h>
+#include <sim/spice_simulator.h>
+#include <sim/spice_circuit_model.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <view/view.h>
 #include <undo_redo_container.h>
@@ -4277,12 +4280,167 @@ API_HANDLER_SCH::handleRunSimulation(
 
     schematic::commands::RunSimulationResponse response;
 
-    // Simulation requires the simulator frame to be open
-    // This is a placeholder - full implementation would need NGSPICE integration
-    response.set_success( false );
-    response.set_error_message( "Simulation via API requires the simulator frame to be open. "
-                                "Use Tools > Simulator to run simulations interactively." );
+    // Get or create the simulator frame
+    SIMULATOR_FRAME* simFrame = nullptr;
 
+    try
+    {
+        simFrame = static_cast<SIMULATOR_FRAME*>(
+                m_frame->Kiway().Player( FRAME_SIMULATOR, true ) );
+    }
+    catch( const std::exception& e )
+    {
+        response.set_success( false );
+        response.set_error_message(
+                fmt::format( "Failed to open simulator: {}", e.what() ) );
+        return response;
+    }
+
+    if( !simFrame )
+    {
+        response.set_success( false );
+        response.set_error_message( "Failed to open simulator frame" );
+        return response;
+    }
+
+    simFrame->Show( true );
+    simFrame->Raise();
+
+    // Determine the simulation command
+    wxString simCommand;
+
+    if( aCtx.Request.has_command_override() && !aCtx.Request.command_override().empty() )
+    {
+        simCommand = wxString::FromUTF8( aCtx.Request.command_override() );
+    }
+    else
+    {
+        simCommand = simFrame->GetCurrentSimCommand();
+    }
+
+    if( simCommand.IsEmpty() )
+    {
+        response.set_success( false );
+        response.set_error_message( "No simulation command specified and no default command set. "
+                                    "Provide a command_override (e.g. '.tran 1u 10m')." );
+        return response;
+    }
+
+    // Detect simulation type
+    SIM_TYPE simType = SPICE_CIRCUIT_MODEL::CommandToSimType( simCommand );
+
+    if( simType == ST_UNKNOWN )
+    {
+        response.set_success( false );
+        response.set_error_message(
+                fmt::format( "Unknown simulation command: '{}'",
+                             simCommand.ToStdString() ) );
+        return response;
+    }
+
+    // Load the netlist and prepare the simulator
+    if( !simFrame->LoadSimulator( simCommand, 0 ) )
+    {
+        response.set_success( false );
+        response.set_error_message( "Failed to load simulator. Check that the schematic is "
+                                    "fully annotated and has valid SPICE models." );
+        return response;
+    }
+
+    auto simulator = simFrame->GetSimulator();
+
+    if( !simulator )
+    {
+        response.set_success( false );
+        response.set_error_message( "Simulator engine not available" );
+        return response;
+    }
+
+    // Acquire mutex - fail if another simulation is running
+    std::unique_lock<std::mutex> lock( simulator->GetMutex(), std::try_to_lock );
+
+    if( !lock.owns_lock() )
+    {
+        response.set_success( false );
+        response.set_error_message( "Another simulation is currently running" );
+        return response;
+    }
+
+    // Run the simulation
+    if( !simulator->Run() )
+    {
+        response.set_success( false );
+        response.set_error_message( "Failed to start simulation" );
+        return response;
+    }
+
+    // Poll for completion with 30s timeout
+    constexpr int POLL_MS = 50;
+    constexpr int MAX_POLLS = 600;  // 30 seconds
+
+    for( int i = 0; i < MAX_POLLS; ++i )
+    {
+        if( !simulator->IsRunning() )
+            break;
+
+        wxMilliSleep( POLL_MS );
+
+        if( i == MAX_POLLS - 1 )
+        {
+            simulator->Stop();
+            response.set_success( false );
+            response.set_error_message( "Simulation timed out after 30 seconds" );
+            return response;
+        }
+    }
+
+    // Collect results
+    auto vectors = simulator->AllVectors();
+
+    if( vectors.empty() )
+    {
+        response.set_success( false );
+        response.set_error_message( "Simulation completed but produced no output vectors" );
+        return response;
+    }
+
+    wxString xAxisName = simulator->GetXAxis( simType );
+    bool isComplex = ( simType == ST_AC || simType == ST_SP || simType == ST_NOISE );
+
+    // Get X-axis data
+    std::vector<double> xData;
+
+    if( !xAxisName.IsEmpty() )
+    {
+        xData = simulator->GetRealVector( xAxisName.ToStdString() );
+    }
+
+    for( const auto& vecName : vectors )
+    {
+        // Skip X-axis vector itself
+        if( vecName == xAxisName.ToStdString() )
+            continue;
+
+        auto* trace = response.add_traces();
+        trace->set_name( vecName );
+
+        // Set X-axis values
+        for( double val : xData )
+            trace->add_time_values( val );
+
+        // Get Y-axis data based on simulation type
+        std::vector<double> yData;
+
+        if( isComplex )
+            yData = simulator->GetGainVector( vecName );
+        else
+            yData = simulator->GetRealVector( vecName );
+
+        for( double val : yData )
+            trace->add_data_values( val );
+    }
+
+    response.set_success( true );
     return response;
 }
 
@@ -4298,9 +4456,67 @@ API_HANDLER_SCH::handleGetSimulationResults(
 
     schematic::commands::GetSimulationResultsResponse response;
 
-    // Simulation results require access to the simulator frame
-    // This is a placeholder - full implementation would need NGSPICE integration
-    response.set_has_results( false );
+    // Get existing simulator frame - don't create one
+    SIMULATOR_FRAME* simFrame = static_cast<SIMULATOR_FRAME*>(
+            m_frame->Kiway().Player( FRAME_SIMULATOR, false ) );
+
+    if( !simFrame )
+    {
+        response.set_has_results( false );
+        return response;
+    }
+
+    auto simulator = simFrame->GetSimulator();
+
+    if( !simulator )
+    {
+        response.set_has_results( false );
+        return response;
+    }
+
+    auto vectors = simulator->AllVectors();
+
+    if( vectors.empty() )
+    {
+        response.set_has_results( false );
+        return response;
+    }
+
+    response.set_has_results( true );
+
+    SIM_TYPE simType = simFrame->GetCurrentSimType();
+    wxString xAxisName = simulator->GetXAxis( simType );
+    bool isComplex = ( simType == ST_AC || simType == ST_SP || simType == ST_NOISE );
+
+    // Get X-axis data
+    std::vector<double> xData;
+
+    if( !xAxisName.IsEmpty() )
+    {
+        xData = simulator->GetRealVector( xAxisName.ToStdString() );
+    }
+
+    for( const auto& vecName : vectors )
+    {
+        if( vecName == xAxisName.ToStdString() )
+            continue;
+
+        auto* trace = response.add_traces();
+        trace->set_name( vecName );
+
+        for( double val : xData )
+            trace->add_time_values( val );
+
+        std::vector<double> yData;
+
+        if( isComplex )
+            yData = simulator->GetGainVector( vecName );
+        else
+            yData = simulator->GetRealVector( vecName );
+
+        for( double val : yData )
+            trace->add_data_values( val );
+    }
 
     return response;
 }

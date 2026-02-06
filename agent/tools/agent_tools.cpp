@@ -203,6 +203,27 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schRunErc );
 
+    // sch_export_spice_netlist - Export SPICE netlist from schematic
+    LLM_TOOL schExportSpice;
+    schExportSpice.name = "sch_export_spice_netlist";
+    schExportSpice.description =
+        "Export a SPICE netlist from a .kicad_sch schematic file using kicad-cli. "
+        "Returns the raw SPICE netlist text. "
+        "IMPORTANT: The schematic must be fully annotated (symbols have reference designators "
+        "like R1, C1, U1) before exporting, otherwise the netlist will be invalid. "
+        "Use this after the schematic design is complete, not during editing.";
+    schExportSpice.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to the .kicad_sch file" }
+            }}
+        }},
+        { "required", json::array( { "file_path" } ) }
+    };
+    tools.push_back( schExportSpice );
+
     // sch_run_simulation - Run SPICE simulation on open schematic
     LLM_TOOL schRunSim;
     schRunSim.name = "sch_run_simulation";

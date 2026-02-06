@@ -19,7 +19,7 @@ html, body {
 ::-webkit-scrollbar { width: 0; height: 0; background: transparent; }
 
 .editor-container {
-    position: relative;
+    display: grid;
     width: 100%;
     min-height: 45px;
     box-sizing: border-box;
@@ -33,24 +33,25 @@ html, body {
     border-color: #569cd6;
 }
 
-.highlight-layer {
-    position: absolute;
-    top: 8px;
-    left: 12px;
-    right: 12px;
-    bottom: 8px;
+/* Grid-stack both layers in the same cell for pixel-perfect alignment */
+.highlight-layer,
+.input-textarea {
+    grid-area: 1 / 1;
     white-space: pre-wrap;
     word-wrap: break-word;
-    pointer-events: none;
+    overflow-wrap: break-word;
     padding: 0;
     margin: 0;
     font: inherit;
+}
+
+.highlight-layer {
+    pointer-events: none;
     overflow: hidden;
     color: #FFFFFF;
 }
 
 .input-textarea {
-    position: relative;
     width: 100%;
     min-height: 45px;
     resize: none;
@@ -59,9 +60,6 @@ html, body {
     caret-color: #FFFFFF;
     border: none;
     outline: none;
-    padding: 0;
-    margin: 0;
-    font: inherit;
     overflow: hidden;
     -webkit-text-fill-color: transparent;
     -webkit-user-select: text;
@@ -84,7 +82,7 @@ html, body {
 </head>
 <body>
 <div class="editor-container" id="editor-container">
-    <pre class="highlight-layer" id="highlight-layer"></pre>
+    <div class="highlight-layer" id="highlight-layer"></div>
     <textarea class="input-textarea" id="input-textarea"
               placeholder="Message the agent..."
               rows="1"></textarea>

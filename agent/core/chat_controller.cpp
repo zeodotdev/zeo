@@ -21,6 +21,7 @@
 #include "chat_events.h"
 #include "../tools/agent_tools.h"
 #include "../tools/tool_registry.h"
+#include "../ui/file_attach.h"
 #include "agent_llm_client.h"
 #include "agent_chat_history.h"
 #include "auth/agent_auth.h"
@@ -87,11 +88,44 @@ CHAT_CONTROLLER::~CHAT_CONTROLLER()
 void CHAT_CONTROLLER::SendMessage( const std::string& aText )
 {
     wxLogInfo( "CHAT_CONTROLLER::SendMessage called with text: %s", aText.c_str() );
+    DoSendMessage( aText, nlohmann::json() );
+}
 
+
+void CHAT_CONTROLLER::SendMessageWithAttachments(
+        const std::string& aText,
+        const std::vector<UserAttachment>& aAttachments )
+{
+    wxLogInfo( "CHAT_CONTROLLER::SendMessageWithAttachments called with %zu attachments",
+               aAttachments.size() );
+
+    // Build multi-content array (Anthropic format): attachments first, then text
+    nlohmann::json content = nlohmann::json::array();
+
+    for( const auto& att : aAttachments )
+    {
+        // Images use "image" type, everything else (e.g. PDF) uses "document" type
+        std::string blockType = FileAttach::IsImageMediaType( att.media_type ) ? "image" : "document";
+
+        content.push_back( {
+            { "type", blockType },
+            { "source", {
+                { "type", "base64" },
+                { "media_type", att.media_type },
+                { "data", att.base64_data }
+            } }
+        } );
+    }
+
+    DoSendMessage( aText, content );
+}
+
+
+void CHAT_CONTROLLER::DoSendMessage( const std::string& aText, const nlohmann::json& aContent )
+{
     if( !CanAcceptInput() )
     {
-        wxLogInfo( "CHAT_CONTROLLER::SendMessage - rejected, controller is busy" );
-        wxLogWarning( "CHAT_CONTROLLER::SendMessage called while busy" );
+        wxLogWarning( "CHAT_CONTROLLER::DoSendMessage called while busy" );
         return;
     }
 
@@ -105,7 +139,7 @@ void CHAT_CONTROLLER::SendMessage( const std::string& aText )
 
     if( userMessageCount == 0 )
     {
-        m_firstUserMessage = aText;
+        m_firstUserMessage = aText.empty() ? "(File attachment)" : aText;
         GenerateTitle();
     }
 
@@ -119,16 +153,34 @@ void CHAT_CONTROLLER::SendMessage( const std::string& aText )
             messageText = "<project_context>\n" + projectContext +
                          "\n</project_context>\n\n" + aText;
 
-            // Log the full first message with injected context
             wxLogInfo( "CHAT: First message with context:\n%s", messageText.c_str() );
         }
     }
 
-    // Add user message to history
-    nlohmann::json userMsg = {
-        { "role", "user" },
-        { "content", messageText }
-    };
+    // Build the user message for history
+    nlohmann::json userMsg;
+
+    if( aContent.is_array() && !aContent.empty() )
+    {
+        // Multi-content message (images + text)
+        nlohmann::json content = aContent;
+
+        if( !messageText.empty() )
+        {
+            content.push_back( {
+                { "type", "text" },
+                { "text", messageText }
+            } );
+        }
+
+        userMsg = { { "role", "user" }, { "content", content } };
+    }
+    else
+    {
+        // Plain text message
+        userMsg = { { "role", "user" }, { "content", messageText } };
+    }
+
     AddToHistory( userMsg );
 
     // Reset streaming state
@@ -955,11 +1007,68 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
     tr.result = aResult;
     tr.success = aSuccess;
     tr.is_python_error = isPythonError;
+
+    // Check if the result contains image content (from screenshot tool)
+    bool hasImage = false;
+    std::string imageBase64;
+    std::string imageMediaType;
+
+    // Only attempt JSON parse if the result looks like a JSON object
+    if( !aResult.empty() && aResult.front() == '{' )
+    {
+        try
+        {
+            auto resultJson = nlohmann::json::parse( aResult );
+
+            if( resultJson.value( "__has_image", false ) )
+            {
+                wxLogInfo( "CHAT_CONTROLLER: Detected image content in tool result for %s",
+                           aToolId.c_str() );
+
+                // Build rich content blocks
+                AgentConversationContext::ToolResultContentBlock textBlock;
+                textBlock.type = AgentConversationContext::ToolResultContentBlock::Type::TEXT;
+                textBlock.text = resultJson.value( "text", "" );
+                tr.content_blocks.push_back( textBlock );
+
+                if( resultJson.contains( "image" ) )
+                {
+                    AgentConversationContext::ToolResultContentBlock imgBlock;
+                    imgBlock.type = AgentConversationContext::ToolResultContentBlock::Type::IMAGE;
+                    imgBlock.media_type = resultJson["image"].value( "media_type", "image/png" );
+                    imgBlock.base64_data = resultJson["image"].value( "base64", "" );
+                    tr.content_blocks.push_back( imgBlock );
+                    tr.has_image_content = true;
+
+                    hasImage = true;
+                    imageBase64 = imgBlock.base64_data;
+                    imageMediaType = imgBlock.media_type;
+
+                    wxLogInfo( "CHAT_CONTROLLER: Image content block added - media_type=%s, "
+                               "base64_len=%zu, content_blocks=%zu",
+                               imgBlock.media_type.c_str(), imgBlock.base64_data.length(),
+                               tr.content_blocks.size() );
+                }
+
+                // Override plain text result for display purposes
+                tr.result = resultJson.value( "text", aResult );
+            }
+        }
+        catch( const nlohmann::json::exception& e )
+        {
+            // Not JSON or no image -- use as-is (backward compatible)
+            wxLogInfo( "CHAT_CONTROLLER: Tool result is not image JSON (normal): %s", e.what() );
+        }
+    }
+
     m_ctx.completed_tool_results.push_back( tr );
 
-    // Emit tool complete event
-    EmitEvent( EVT_CHAT_TOOL_COMPLETE, ChatToolCompleteData( aToolId, toolName, aResult,
-                                                              aSuccess, isPythonError ) );
+    // Emit tool complete event (with image data if present)
+    ChatToolCompleteData completeData( aToolId, toolName, tr.result, aSuccess, isPythonError );
+    completeData.hasImage = hasImage;
+    completeData.imageBase64 = imageBase64;
+    completeData.imageMediaType = imageMediaType;
+    EmitEvent( EVT_CHAT_TOOL_COMPLETE, completeData );
 
     // Remove from pending
     m_ctx.RemovePendingToolCall( aToolId );
@@ -1029,17 +1138,62 @@ void CHAT_CONTROLLER::AddAllToolResultsToHistory()
 
     for( const auto& result : m_ctx.completed_tool_results )
     {
-        content.push_back( {
-            { "type", "tool_result" },
-            { "tool_use_id", result.tool_use_id },
-            { "content", result.result }
-        } );
+        if( result.HasImageContent() )
+        {
+            // Build array content with text + image blocks for the Anthropic API
+            nlohmann::json contentBlocks = nlohmann::json::array();
+
+            for( const auto& block : result.content_blocks )
+            {
+                if( block.type == AgentConversationContext::ToolResultContentBlock::Type::TEXT )
+                {
+                    contentBlocks.push_back( {
+                        { "type", "text" },
+                        { "text", block.text }
+                    } );
+                }
+                else if( block.type == AgentConversationContext::ToolResultContentBlock::Type::IMAGE )
+                {
+                    contentBlocks.push_back( {
+                        { "type", "image" },
+                        { "source", {
+                            { "type", "base64" },
+                            { "media_type", block.media_type },
+                            { "data", block.base64_data }
+                        } }
+                    } );
+                }
+            }
+
+            content.push_back( {
+                { "type", "tool_result" },
+                { "tool_use_id", result.tool_use_id },
+                { "content", contentBlocks }
+            } );
+
+            wxLogInfo( "CHAT_CONTROLLER: Added image tool result to history - "
+                       "tool_use_id=%s, content_blocks=%zu",
+                       result.tool_use_id.c_str(), contentBlocks.size() );
+        }
+        else
+        {
+            // Backward compatible: plain string content
+            content.push_back( {
+                { "type", "tool_result" },
+                { "tool_use_id", result.tool_use_id },
+                { "content", result.result }
+            } );
+        }
     }
 
     nlohmann::json toolResultMsg = {
         { "role", "user" },
         { "content", content }
     };
+
+    wxLogInfo( "CHAT_CONTROLLER: AddAllToolResultsToHistory - %zu results, "
+               "serialized message size: %zu",
+               m_ctx.completed_tool_results.size(), toolResultMsg.dump().length() );
 
     AddToHistory( toolResultMsg );
 }
@@ -1353,7 +1507,39 @@ void CHAT_CONTROLLER::SanitizeApiContext()
             }
         }
 
-        sanitized.push_back( msg );
+        // Strip __stripped__ attachment blocks from user messages (loaded from history)
+        nlohmann::json cleanedMsg = msg;
+
+        if( role == "user" && cleanedMsg.contains( "content" )
+            && cleanedMsg["content"].is_array() )
+        {
+            nlohmann::json cleanedContent = nlohmann::json::array();
+
+            for( const auto& block : cleanedMsg["content"] )
+            {
+                std::string blockType = block.value( "type", "" );
+
+                if( ( blockType == "image" || blockType == "document" )
+                    && block.contains( "source" )
+                    && block["source"].value( "data", "" ) == "__stripped__" )
+                {
+                    continue;  // Drop stripped attachment blocks from API context
+                }
+
+                cleanedContent.push_back( block );
+            }
+
+            if( cleanedContent.empty() )
+                continue;  // Skip entirely empty user messages
+
+            cleanedMsg["content"] = cleanedContent;
+
+            // If only a single text block remains, simplify to string content
+            if( cleanedContent.size() == 1 && cleanedContent[0].value( "type", "" ) == "text" )
+                cleanedMsg["content"] = cleanedContent[0].value( "text", "" );
+        }
+
+        sanitized.push_back( cleanedMsg );
         lastRole = role;
     }
 

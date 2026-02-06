@@ -5,6 +5,7 @@
 #include "ui/history_panel.h"
 #include "rendering/agent_markdown.h"
 #include "rendering/agent_html_template.h"
+#include "rendering/input_html_template.h"
 #include "tools/agent_tools.h"
 #include "core/chat_controller.h"
 #include "core/chat_events.h"
@@ -21,24 +22,32 @@
 #include <set>
 #include <algorithm>
 #include <wx/sizer.h>
-#include <wx/textctrl.h>
 #include <wx/msgdlg.h>
 #include <wx/utils.h>
 #include <wx/stdpaths.h>
 #include <wx/filename.h>
+#include <wx/filedlg.h>
 #include <wx/dir.h>
 #include <wx/stattext.h>
 #include <bitmaps.h>
 #include <id.h>
 #include <nlohmann/json.hpp>
 #include <wx/settings.h>
+#include <wx/base64.h>
 #include <wx/clipbrd.h>
+#include <wx/image.h>
 #include <wx/menu.h>
+#include <wx/mstream.h>
 #include <wx/toolbar.h>
 #include <wx/bitmap.h>
+#include <wx/statbmp.h>
 #include <wx/icon.h>
 #include <kicad_curl/kicad_curl_easy.h>
 #include <kiid.h>
+
+#ifdef __APPLE__
+#include "macos_key_monitor.h"
+#endif
 
 using json = nlohmann::json;
 
@@ -155,38 +164,55 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     wxBoxSizer* outerInputSizer = new wxBoxSizer( wxVERTICAL );
 
     // Use an inner sizer for content padding
-    wxBoxSizer* inputContainerSizer = new wxBoxSizer( wxVERTICAL );
+    m_inputContainerSizer = new wxBoxSizer( wxVERTICAL );
 
     // Top row: Selection Pill (left) + Pending Changes Button (right)
-    wxBoxSizer* topRowSizer = new wxBoxSizer( wxHORIZONTAL );
+    m_topRowSizer = new wxBoxSizer( wxHORIZONTAL );
 
     // Status Pill (Selection Info / Add Context)
     m_selectionPill = new wxButton( m_inputPanel, wxID_ANY, "No Selection", wxDefaultPosition, wxDefaultSize );
-    // Removed custom colors to keep native round look
-    m_selectionPill->Hide(); // Hide on load
-    topRowSizer->Add( m_selectionPill, 0, wxALIGN_CENTER_VERTICAL );
+    m_selectionPill->SetCursor( wxCursor( wxCURSOR_HAND ) );
+    m_selectionPill->Hide();
+    m_topRowSizer->Add( m_selectionPill, 0, wxALIGN_CENTER_VERTICAL );
 
-    topRowSizer->AddStretchSpacer();
+    m_topRowSizer->AddStretchSpacer();
 
     // Pending Changes Button (hidden by default)
     m_pendingChangesBtn = new wxButton( m_inputPanel, wxID_ANY, "1 change" );
+    m_pendingChangesBtn->SetCursor( wxCursor( wxCURSOR_HAND ) );
     m_pendingChangesBtn->Hide();
-    topRowSizer->Add( m_pendingChangesBtn, 0, wxALIGN_CENTER_VERTICAL );
+    m_topRowSizer->Add( m_pendingChangesBtn, 0, wxALIGN_CENTER_VERTICAL );
 
-    inputContainerSizer->Add( topRowSizer, 0, wxEXPAND | wxBOTTOM, 5 );
+    m_inputContainerSizer->Add( m_topRowSizer, 0, wxEXPAND | wxBOTTOM, 5 );
 
-    // 2a. Text Input (Top)
-    m_inputCtrl = new wxTextCtrl( m_inputPanel, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 60 ),
-                                  wxTE_MULTILINE | wxTE_PROCESS_ENTER | wxBORDER_NONE );
-    m_inputCtrl->SetBackgroundColour( wxColour( "#1C1C1C" ) );
-    m_inputCtrl->SetForegroundColour( wxColour( "#FFFFFF" ) );
+    // 2a. Input WebView (markdown syntax highlighting)
+    m_inputWebView = new WEBVIEW_PANEL( m_inputPanel, wxID_ANY,
+                                         wxDefaultPosition, wxSize( -1, 60 ), 0 );
+    m_inputWebView->AddMessageHandler( wxS( "input" ),
+        [this]( const wxString& msg ) { OnInputWebViewMessage( msg ); } );
+    m_inputWebView->BindLoadedEvent();
+    m_inputWebView->SetPage( GetInputHtmlTemplate() );
 
-    // Use system default font (matches chat name label)
-    wxFont font = wxSystemSettings::GetFont( wxSYS_DEFAULT_GUI_FONT );
-    font.SetPointSize( 12 );
-    m_inputCtrl->SetFont( font );
+#ifdef __APPLE__
+    // WKWebView handles Cmd+A through the Cocoa responder chain, bypassing wxWidgets.
+    // Install an NSEvent monitor to intercept Cmd+A when the input webview has focus.
+    // NOTE: The callback captures `this`; RemoveSelectAllMonitor() in the destructor
+    // must run before the frame is torn down to avoid a dangling pointer.
+    void* nativeHandle = (void*) m_inputWebView->GetWebView()->GetHandle();
 
-    inputContainerSizer->Add( m_inputCtrl, 1, wxEXPAND | wxBOTTOM, 5 );
+    if( nativeHandle )
+    {
+        InstallSelectAllMonitor(
+                nativeHandle,
+                [this]()
+                {
+                    m_inputWebView->RunScriptAsync(
+                            wxS( "textarea.focus(); textarea.select();" ) );
+                } );
+    }
+#endif
+
+    m_inputContainerSizer->Add( m_inputWebView, 1, wxEXPAND | wxBOTTOM, 10 );
 
     // 2b. Control Row (Bottom)
     wxBoxSizer* controlsSizer = new wxBoxSizer( wxHORIZONTAL );
@@ -213,12 +239,12 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_actionButton = new wxButton( m_inputPanel, wxID_ANY, "Send" );
     controlsSizer->Add( m_actionButton, 0, wxALIGN_CENTER_VERTICAL );
 
-    inputContainerSizer->Add( controlsSizer, 0, wxEXPAND );
+    m_inputContainerSizer->Add( controlsSizer, 0, wxEXPAND );
 
 
 
     // Add inner sizer to outer sizer with padding matching top bar (10px on all sides)
-    outerInputSizer->Add( inputContainerSizer, 1, wxEXPAND | wxALL, 10 );
+    outerInputSizer->Add( m_inputContainerSizer, 1, wxEXPAND | wxALL, 10 );
 
     m_inputPanel->SetSizer( outerInputSizer );
 
@@ -240,20 +266,32 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_historyPanel->Hide();
 
     // Bind Events
-    m_actionButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSend, this );
+    m_actionButton->Bind( wxEVT_BUTTON, [this]( wxCommandEvent& aEvent )
+    {
+        if( m_actionButton->GetLabel() == "Stop" )
+        {
+            OnStop( aEvent );
+        }
+        else
+        {
+            // Route through JS to get the current input text + attachments, then submit back to C++
+            if( m_inputWebView )
+                m_inputWebView->RunScriptAsync( wxS(
+                    "sendMsg('submit', { text: getText(), attachments: attachments.map(function(a) {"
+                    " return { base64: a.base64, media_type: a.media_type, filename: a.filename };"
+                    " }) });" ) );
+        }
+    } );
     m_newChatButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnNewChat, this );
     m_historyButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnHistoryTool, this );
-    m_inputCtrl->Bind( wxEVT_TEXT_ENTER, &AGENT_FRAME::OnTextEnter, this );
     m_selectionPill->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSelectionPillClick, this );
     m_pendingChangesBtn->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnPendingChangesClick, this );
     m_trackAgentBtn->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnTrackAgentClick, this );
 
-    // m_toolButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnToolClick, this );
     // Note: Link clicks and right-click are now handled via JavaScript message passing
     // through OnWebViewMessage() - see AddMessageHandler in constructor
+    // Input events (Enter, @{tag} deletion, highlighting) are handled in input_template.html JS
     Bind( wxEVT_MENU, &AGENT_FRAME::OnPopupClick, this, ID_CHAT_COPY );
-    m_inputCtrl->Bind( wxEVT_KEY_DOWN, &AGENT_FRAME::OnInputKeyDown, this );
-    m_inputCtrl->Bind( wxEVT_TEXT, &AGENT_FRAME::OnInputText, this );
 
     // Bind Async LLM Streaming Events
     Bind( EVT_LLM_STREAM_CHUNK, &AGENT_FRAME::OnLLMStreamChunk, this );
@@ -552,6 +590,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
 AGENT_FRAME::~AGENT_FRAME()
 {
+#ifdef __APPLE__
+    RemoveSelectAllMonitor();
+#endif
+
     // Stop the generating animation timer to prevent timer events
     m_generatingTimer.Stop();
 
@@ -993,20 +1035,12 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 
                     m_selectionPill->SetLabel( label );
                     m_selectionPill->Show( true );
+
                 }
                 else
                 {
-                    // If selection empty, hide pill?
-                    // Or keep it if we want to add "Context"?
-                    // For now, hide if no selection
-                    // But wait, the user might want to add *project context* even if nothing selected?
-                    // Usually "Add: Selection" implies specific selection.
-                    // If empty, maybe hide.
-                    // If "CLEARED" message was sent, we might receive empty selection array?
-                    // The tools send JSON even if empty?
-                    // m_schJson handles global context.
-                    // Let's hide pill if no items selected.
                     m_selectionPill->Show( false );
+
                 }
             }
             catch( ... )
@@ -1042,10 +1076,12 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
                 // That would be cleaner.
                 // But for now, I'll just hide the pill.
                 m_selectionPill->Show( false );
+
             }
             else if( payload.find( "PCB" ) != std::string::npos )
             {
                 m_selectionPill->Show( false );
+
             }
         }
     }
@@ -1101,91 +1137,26 @@ void AGENT_FRAME::OnSelectionPillClick( wxCommandEvent& aEvent )
 
         // Hide pill on click
         m_selectionPill->Hide();
-        Layout(); // specific layout for input panel/frame?
-        // Layout(); // Calling global Layout() might be heavy, but safest.
 
-        // Append @{Label} to input
-        wxString currentText = m_inputCtrl->GetValue();
-        if( !currentText.IsEmpty() && !currentText.EndsWith( " " ) )
-            m_inputCtrl->AppendText( " " );
+        // Append @{Label} to input via JavaScript
+        wxString escaped = label;
+        escaped.Replace( "\\", "\\\\" );
+        escaped.Replace( "'", "\\'" );
 
-        // Insert text (formatted by OnInputText)
-        m_inputCtrl->AppendText( "@{" + label + "} " );
-        m_inputCtrl->SetFocus();
+        wxString script = wxString::Format(
+            "var ta = document.getElementById('input-textarea');"
+            "var text = ta.value;"
+            "if (text.length > 0 && !text.endsWith(' ')) text += ' ';"
+            "text += '@{%s} ';"
+            "setText(text);"
+            "ta.selectionStart = ta.selectionEnd = ta.value.length;"
+            "focusInput();",
+            escaped );
+
+        m_inputWebView->RunScriptAsync( script );
     }
 }
 
-void AGENT_FRAME::OnInputText( wxCommandEvent& aEvent )
-{
-    // Dynamic Highlighting: Bold valid @{...} tags
-    long     currentPos = m_inputCtrl->GetInsertionPoint();
-    wxString text = m_inputCtrl->GetValue();
-
-    // Get the control's font to preserve it when setting styles
-    wxFont baseFont = m_inputCtrl->GetFont();
-
-    // 1. Reset all to normal (must include full font to preserve size)
-    wxTextAttr normalStyle;
-    wxFont normalFont = baseFont;
-    normalFont.SetWeight( wxFONTWEIGHT_NORMAL );
-    normalStyle.SetFont( normalFont );
-    m_inputCtrl->SetStyle( 0, text.Length(), normalStyle );
-
-    // 2. Scan for @{...} pairs
-    size_t start = 0;
-    while( ( start = text.find( "@{", start ) ) != wxString::npos )
-    {
-        size_t end = text.find( "}", start );
-        if( end != wxString::npos )
-        {
-            // Apply Bold to @{...} (must include full font to preserve size)
-            wxTextAttr boldStyle;
-            wxFont boldFont = baseFont;
-            boldFont.SetWeight( wxFONTWEIGHT_BOLD );
-            boldStyle.SetFont( boldFont );
-            m_inputCtrl->SetStyle( start, end + 1, boldStyle );
-            start = end + 1;
-        }
-        else
-        {
-            break; // No more closed tags
-        }
-    }
-}
-
-void AGENT_FRAME::OnInputKeyDown( wxKeyEvent& aEvent )
-{
-    int key = aEvent.GetKeyCode();
-
-    if( key == WXK_BACK || key == WXK_DELETE )
-    {
-        long     pos = m_inputCtrl->GetInsertionPoint();
-        wxString text = m_inputCtrl->GetValue();
-
-        if( pos > 0 )
-        {
-            // Atomic deletion for @{...}
-            // Check if we are deleting a '}'
-            if( pos <= text.Length() && text[pos - 1] == '}' )
-            {
-                // Verify matching @{
-                long openBrace = text.rfind( "@{", pos - 1 );
-                if( openBrace != wxString::npos )
-                {
-                    // Ensure no other '}' in between (simple nesting check)
-                    wxString content = text.SubString( openBrace, pos - 1 );
-                    // content is like @{tag}
-                    if( content.find( '}' ) == content.Length() - 1 ) // Last char is the only closing brace
-                    {
-                        m_inputCtrl->Remove( openBrace, pos );
-                        return;
-                    }
-                }
-            }
-        }
-    }
-    aEvent.Skip(); // Default processing
-}
 
 void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 {
@@ -1224,8 +1195,9 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         m_toolCallHtml = "";
     }
 
-    wxString text = m_inputCtrl->GetValue();
-    if( text.IsEmpty() )
+    wxString text = m_pendingInputText;
+    m_pendingInputText.Clear();
+    if( text.IsEmpty() && m_pendingAttachments.empty() )
         return;
 
     // Reset scroll state for new user message - user sending indicates engagement at bottom
@@ -1237,9 +1209,12 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     escapedText.Replace( "<", "&lt;" );
     escapedText.Replace( ">", "&gt;" );
     escapedText.Replace( "\n", "<br>" );
+
+    wxString bubbleContent = FileAttach::BuildAttachmentBubbleHtml( m_pendingAttachments )
+                             + escapedText;
     wxString msgHtml = wxString::Format(
         "<div class=\"flex justify-end my-1.5\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
-        escapedText );
+        bubbleContent );
 
     // Add streaming content container for incremental updates
     wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
@@ -1259,7 +1234,8 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     SetHtml( m_fullHtmlContent );
 
     // Clear Input and Update UI
-    m_inputCtrl->Clear();
+    if( m_inputWebView )
+        m_inputWebView->RunScriptAsync( wxS( "clearInput();" ) );
     m_actionButton->SetLabel( "Stop" );
 
     // Configure controller for this request (system prompt now handled server-side)
@@ -1304,7 +1280,18 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // Send message via controller (handles history, starts LLM request)
     if( m_chatController )
     {
-        m_chatController->SendMessage( text.ToStdString() );
+        if( !m_pendingAttachments.empty() )
+        {
+            std::vector<CHAT_CONTROLLER::UserAttachment> attachments;
+            for( const auto& att : m_pendingAttachments )
+                attachments.push_back( { att.base64_data, att.media_type } );
+
+            m_chatController->SendMessageWithAttachments( text.ToStdString(), attachments );
+        }
+        else
+        {
+            m_chatController->SendMessage( text.ToStdString() );
+        }
 
         // Sync controller's history back to frame for rendering and persistence
         m_chatHistory = m_chatController->GetChatHistory();
@@ -1320,6 +1307,8 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         m_chatHistoryDb.Save( m_chatHistory );
         StartAsyncLLMRequest();
     }
+
+    m_pendingAttachments.clear();
 }
 
 void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
@@ -1451,6 +1440,62 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
                 wxLaunchDefaultBrowser( href );
             }
         }
+        else if( action == "preview_image" )
+        {
+            wxString src = wxString::FromUTF8( msg.value( "src", "" ) );
+            int commaPos = src.Find( ',' );
+
+            if( commaPos != wxNOT_FOUND )
+                FileAttach::ShowPreviewDialog( this, src.Mid( commaPos + 1 ) );
+        }
+        else if( action == "preview_file" )
+        {
+            std::string b64 = msg.value( "base64", "" );
+            std::string filename = msg.value( "filename", "document.pdf" );
+
+            if( !b64.empty() )
+                FileAttach::OpenFilePreview( wxString::FromUTF8( b64 ),
+                                             wxString::FromUTF8( filename ) );
+        }
+        else if( action == "copy_image" )
+        {
+            // Decode the data URI into a wxImage and show a native context menu
+            wxString src = wxString::FromUTF8( msg.value( "src", "" ) );
+            int commaPos = src.Find( ',' );
+
+            if( commaPos != wxNOT_FOUND )
+            {
+                wxString b64 = src.Mid( commaPos + 1 );
+                wxMemoryBuffer buf = wxBase64Decode( b64 );
+
+                if( buf.GetDataLen() > 0 )
+                {
+                    wxMemoryInputStream stream( buf.GetData(), buf.GetDataLen() );
+                    m_pendingCopyImage = wxImage( stream, wxBITMAP_TYPE_PNG );
+                }
+            }
+
+            if( m_pendingCopyImage.IsOk() )
+            {
+                wxMenu menu;
+                menu.Append( ID_COPY_IMAGE, "Copy Image" );
+
+                menu.Bind( wxEVT_MENU, [this]( wxCommandEvent& )
+                {
+                    if( m_pendingCopyImage.IsOk() && wxTheClipboard->Open() )
+                    {
+                        wxTheClipboard->SetData(
+                                new wxBitmapDataObject( wxBitmap( m_pendingCopyImage ) ) );
+                        wxTheClipboard->Flush();
+                        wxTheClipboard->Close();
+                    }
+
+                    m_pendingCopyImage = wxImage();  // Release image memory
+                }, ID_COPY_IMAGE );
+
+                PopupMenu( &menu, ScreenToClient( wxGetMousePosition() ) );
+            }
+        }
         else if( action == "copy" )
         {
             // Handle copy request from context menu
@@ -1509,17 +1554,114 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
     }
 }
 
-void AGENT_FRAME::OnTextEnter( wxCommandEvent& aEvent )
+void AGENT_FRAME::OnInputWebViewMessage( const wxString& aMessage )
 {
-    wxLogInfo( "AGENT_FRAME::OnTextEnter called" );
-    if( wxGetKeyState( WXK_SHIFT ) )
+    try
     {
-        m_inputCtrl->WriteText( "\n" );
+        nlohmann::json msg = nlohmann::json::parse( aMessage.ToStdString() );
+        std::string action = msg.value( "action", "" );
+
+        if( action == "submit" )
+        {
+            wxString text = wxString::FromUTF8( msg.value( "text", "" ) );
+            m_pendingAttachments = FileAttach::ParseAttachmentsFromJson( msg );
+
+            if( !text.IsEmpty() || !m_pendingAttachments.empty() )
+            {
+                m_pendingInputText = text;
+                wxCommandEvent evt;
+                OnSend( evt );
+            }
+        }
+        else if( action == "attach_click" )
+        {
+            wxFileDialog dlg( this, "Attach File", "", "",
+                              "Supported files (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.pdf)"
+                              "|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.pdf"
+                              "|Image files (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp)"
+                              "|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp"
+                              "|PDF files (*.pdf)|*.pdf",
+                              wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE );
+
+            if( dlg.ShowModal() == wxID_OK )
+            {
+                wxArrayString paths;
+                dlg.GetPaths( paths );
+
+                for( const auto& path : paths )
+                {
+                    FILE_ATTACHMENT att;
+                    bool loaded = false;
+
+                    wxFileName fn( path );
+                    wxString ext = fn.GetExt().Lower();
+
+                    if( ext == "pdf" )
+                        loaded = FileAttach::LoadFileFromDisk( path, att );
+                    else
+                        loaded = FileAttach::LoadImageFromFile( path, att );
+
+                    if( !loaded )
+                        continue;
+
+                    // Inject into JS attachment preview - escape for JS single-quoted string
+                    wxString safeName = wxString::FromUTF8( att.filename );
+                    safeName.Replace( "\\", "\\\\" );
+                    safeName.Replace( "'", "\\'" );
+                    safeName.Replace( "\n", "\\n" );
+                    safeName.Replace( "\r", "\\r" );
+
+                    wxString script = wxString::Format(
+                        "addAttachment('%s', '%s', '%s');",
+                        wxString::FromUTF8( att.base64_data ),
+                        wxString::FromUTF8( att.media_type ),
+                        safeName );
+                    m_inputWebView->RunScriptAsync( script );
+                }
+            }
+        }
+        else if( action == "preview_image" )
+        {
+            std::string b64 = msg.value( "base64", "" );
+
+            if( !b64.empty() )
+                FileAttach::ShowPreviewDialog( this, wxString::FromUTF8( b64 ) );
+        }
+        else if( action == "preview_file" )
+        {
+            std::string b64 = msg.value( "base64", "" );
+            std::string filename = msg.value( "filename", "document.pdf" );
+
+            if( !b64.empty() )
+                FileAttach::OpenFilePreview( wxString::FromUTF8( b64 ),
+                                             wxString::FromUTF8( filename ) );
+        }
+        else if( action == "resize" )
+        {
+            int height = msg.value( "height", 60 );
+            ResizeInputWebView( height );
+        }
+        else if( action == "debug" )
+        {
+            std::string debugMsg = msg.value( "message", "" );
+            wxLogTrace( "KICAD_AGENT", "INPUT_DEBUG: %s", debugMsg );
+        }
     }
-    else
+    catch( const std::exception& e )
     {
-        OnSend( aEvent );
+        wxLogError( "AGENT: OnInputWebViewMessage parse error: %s", e.what() );
     }
+}
+
+void AGENT_FRAME::ResizeInputWebView( int aContentHeight )
+{
+    // aContentHeight is the container's offsetHeight (includes padding + border)
+    // Clamp to match JS MIN_HEIGHT (45) + container padding/border overhead (~40px)
+    int totalHeight = std::max( 45, std::min( aContentHeight, 240 ) );
+
+    m_inputWebView->SetMinSize( wxSize( -1, totalHeight ) );
+    m_inputPanel->Layout();
+    Layout();
 }
 
 void AGENT_FRAME::OnModelSelection( wxCommandEvent& aEvent )
@@ -1962,6 +2104,31 @@ void AGENT_FRAME::RenderChatHistory()
         }
         else if( msg["content"].is_array() )
         {
+            // Check for user messages with file attachments - render as one combined bubble
+            if( role == "user" )
+            {
+                bool hasAttachments = false;
+                for( const auto& block : msg["content"] )
+                {
+                    std::string blockType = block.value( "type", "" );
+                    if( blockType == "image" || blockType == "document" )
+                    {
+                        hasAttachments = true;
+                        break;
+                    }
+                }
+
+                if( hasAttachments )
+                {
+                    wxString bubble = FileAttach::BuildHistoryBubbleHtml(
+                            msg["content"] );
+                    if( !bubble.IsEmpty() )
+                        m_fullHtmlContent += bubble;
+
+                    continue;  // Skip block-level iteration for this message
+                }
+            }
+
             // Iterate through content blocks and render each one
             for( const auto& block : msg["content"] )
             {
@@ -2040,46 +2207,94 @@ void AGENT_FRAME::RenderChatHistory()
                 else if( blockType == "tool_result" )
                 {
                     // Render combined tool call + result block
-                    std::string content = block.value( "content", "" );
+                    // Content can be either a string (text-only) or an array
+                    // (rich content with text + images from screenshot tool)
                     bool isError = block.value( "is_error", false );
-
-                    // Check if this is a Python traceback
-                    bool isPythonError = ( content.find( "Traceback" ) != std::string::npos );
 
                     wxString displayResult;
                     wxString statusClass;
                     wxString statusText;
 
+                    // Extract text content - handle both string and array formats
+                    std::string textContent;
+                    bool hasImageInHistory = false;
+
+                    if( block.contains( "content" ) && block["content"].is_array() )
+                    {
+                        // Rich content array (may contain text + images)
+                        for( const auto& inner : block["content"] )
+                        {
+                            std::string innerType = inner.value( "type", "" );
+
+                            if( innerType == "text" )
+                            {
+                                textContent += inner.value( "text", "" );
+                            }
+                            else if( innerType == "image" && inner.contains( "source" ) )
+                            {
+                                std::string data = inner["source"].value( "data", "" );
+                                std::string mediaType = inner["source"].value(
+                                        "media_type", "image/png" );
+
+                                if( data != "__stripped__" && !data.empty() )
+                                {
+                                    hasImageInHistory = true;
+                                    displayResult += "<br><img src=\"data:"
+                                        + wxString::FromUTF8( mediaType )
+                                        + ";base64,"
+                                        + wxString::FromUTF8( data )
+                                        + "\" style=\"max-width:100%; border-radius:6px; "
+                                          "margin:8px 0;\" />";
+                                }
+                                else
+                                {
+                                    displayResult += "<br><i>(Screenshot from previous "
+                                                     "session)</i>";
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Plain string content (backward compatible)
+                        textContent = block.value( "content", "" );
+                    }
+
+                    // Check if this is a Python traceback
+                    bool isPythonError = ( textContent.find( "Traceback" )
+                                           != std::string::npos );
+
                     if( isPythonError )
                     {
                         statusClass = "text-accent-red";
                         statusText = "Error";
-                        wxString errorLine = ExtractPythonErrorLine( content );
-                        displayResult = wxString::Format( "<i>%s</i>", errorLine );
+                        wxString errorLine = ExtractPythonErrorLine( textContent );
+                        displayResult = wxString::Format( "<i>%s</i>", errorLine )
+                                        + displayResult;
                     }
                     else if( isError )
                     {
                         statusClass = "text-accent-red";
                         statusText = "Failed";
-                        wxString htmlResult = content;
+                        wxString htmlResult = textContent;
                         htmlResult.Replace( "&", "&amp;" );
                         htmlResult.Replace( "<", "&lt;" );
                         htmlResult.Replace( ">", "&gt;" );
                         if( htmlResult.length() > 200 )
                             htmlResult = htmlResult.Left( 200 ) + "...";
-                        displayResult = htmlResult;
+                        displayResult = htmlResult + displayResult;
                     }
                     else
                     {
                         statusClass = "text-accent-green";
                         statusText = "Completed";
-                        wxString htmlResult = content;
+                        wxString htmlResult = textContent;
                         htmlResult.Replace( "&", "&amp;" );
                         htmlResult.Replace( "<", "&lt;" );
                         htmlResult.Replace( ">", "&gt;" );
-                        if( htmlResult.length() > 500 )
+                        if( !hasImageInHistory && htmlResult.length() > 500 )
                             htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
-                        displayResult = htmlResult;
+                        displayResult = htmlResult + displayResult;
                     }
 
                     // Use the stored tool description from the preceding tool_use block
@@ -2201,8 +2416,6 @@ void AGENT_FRAME::UpdatePendingChangesButtonVisibility()
     {
         m_pendingChangesBtn->SetLabel( "Hide Changes" );
     }
-
-    Layout();
 }
 
 
@@ -3145,6 +3358,16 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
         if( htmlResult.length() > 500 )
             htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
         displayResult = htmlResult;
+    }
+
+    // Append inline image if the tool result contains one
+    if( data->hasImage && !data->imageBase64.empty() )
+    {
+        displayResult += "<br><img src=\"data:"
+            + wxString::FromUTF8( data->imageMediaType )
+            + ";base64,"
+            + wxString::FromUTF8( data->imageBase64 )
+            + "\" style=\"max-width:100%; border-radius:6px; margin:8px 0;\" />";
     }
 
     // Update tool call HTML with result (replace "Running..." with actual result)

@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html class="h-full bg-[#1C1C1C]">
+<head>
+<meta charset="UTF-8">
+<style>
+html, body {
+    background: #1C1C1C !important;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', Ubuntu, 'Droid Sans', sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+::-webkit-scrollbar { width: 0; height: 0; background: transparent; }
+
+.editor-container {
+    position: relative;
+    width: 100%;
+    min-height: 45px;
+    box-sizing: border-box;
+    background: #2a2a2a;
+    border: 1px solid #404040;
+    border-radius: 10px;
+    padding: 8px 12px;
+}
+
+.editor-container:focus-within {
+    border-color: #569cd6;
+}
+
+.textarea-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.highlight-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    pointer-events: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    overflow: hidden;
+    color: #FFFFFF;
+}
+
+.input-textarea {
+    position: relative;
+    width: 100%;
+    min-height: 45px;
+    resize: none;
+    background: transparent;
+    color: #FFFFFF;
+    caret-color: #FFFFFF;
+    border: none;
+    outline: none;
+    padding: 0;
+    padding-right: 28px;
+    margin: 0;
+    font: inherit;
+    overflow: hidden;
+    -webkit-text-fill-color: transparent;
+    -webkit-user-select: text;
+    user-select: text;
+    box-sizing: border-box;
+}
+
+.input-textarea::selection {
+    background: rgba(56, 156, 214, 0.4);
+    -webkit-text-fill-color: #FFFFFF;
+}
+
+.input-textarea::placeholder {
+    -webkit-text-fill-color: #808080;
+}
+
+/* @{tag} highlighting */
+.hl-tag { color: #569cd6; font-weight: bold; }
+
+/* Attachment preview bar */
+.attachment-bar {
+    display: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 0 4px 0;
+}
+.attachment-bar.visible { display: flex; }
+
+.attachment-thumb {
+    position: relative;
+    display: inline-block;
+}
+.attachment-thumb img {
+    height: 48px;
+    max-width: 80px;
+    border-radius: 4px;
+    object-fit: cover;
+    display: block;
+    cursor: pointer;
+}
+.attachment-thumb .remove-btn {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #555;
+    color: #fff;
+    font-size: 11px;
+    line-height: 16px;
+    text-align: center;
+    cursor: pointer;
+    border: none;
+    padding: 0;
+    -webkit-user-select: none;
+    user-select: none;
+}
+.attachment-thumb .remove-btn:hover { background: #f44747; }
+
+/* Attach button */
+.attach-btn {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    width: 24px;
+    height: 24px;
+    cursor: pointer;
+    color: #808080;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    -webkit-user-select: none;
+    user-select: none;
+}
+.attach-btn:hover { color: #FFFFFF; background: rgba(255,255,255,0.08); }
+.attach-btn svg { width: 16px; height: 16px; }
+
+/* Drag-and-drop overlay */
+.editor-container.drag-over {
+    border-color: #569cd6;
+    background: rgba(86, 156, 214, 0.08);
+}
+
+</style>
+</head>
+<body>
+<div class="editor-container" id="editor-container">
+    <div class="attachment-bar" id="attachment-bar"></div>
+    <div class="textarea-wrapper">
+        <pre class="highlight-layer" id="highlight-layer"></pre>
+        <textarea class="input-textarea" id="input-textarea"
+                  placeholder="Message the agent..."
+                  rows="1"></textarea>
+    </div>
+    <div class="attach-btn" id="attach-btn" title="Attach file">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+        </svg>
+    </div>
+</div>
+
+<script>
+// JS-to-C++ bridge (same pattern as chat webview, handler name "input")
+function sendMsg(action, data) {
+    var msg = JSON.stringify(Object.assign({action: action}, data || {}));
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.input) {
+        window.webkit.messageHandlers.input.postMessage(msg);
+    } else if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(msg);
+    }
+}
+
+var textarea = document.getElementById('input-textarea');
+var highlightLayer = document.getElementById('highlight-layer');
+
+// Highlight @{tag} tokens in the input text
+function highlightText(text) {
+    var html = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    // @{tag} tokens
+    html = html.replace(/@\{([^}]*)\}/g, '<span class="hl-tag">@{$1}</span>');
+
+    // Trailing newline for proper height calculation
+    if (html.endsWith('\n') || html === '') {
+        html += '\n';
+    }
+
+    return html;
+}
+
+function syncHighlight() {
+    highlightLayer.innerHTML = highlightText(textarea.value);
+    syncScroll();
+    autoResize();
+}
+
+function syncScroll() {
+    highlightLayer.scrollTop = textarea.scrollTop;
+    highlightLayer.scrollLeft = textarea.scrollLeft;
+}
+
+// Auto-resize
+var MIN_HEIGHT = 45;
+var MAX_HEIGHT = 200;
+
+function autoResize() {
+    textarea.style.height = 'auto';
+    var scrollHeight = textarea.scrollHeight;
+    var newHeight = Math.min(Math.max(scrollHeight, MIN_HEIGHT), MAX_HEIGHT);
+    textarea.style.height = newHeight + 'px';
+
+    // Enable scrolling if content exceeds max
+    textarea.style.overflowY = (scrollHeight > MAX_HEIGHT) ? 'auto' : 'hidden';
+
+    // Report total container height (textarea + padding + border)
+    var container = document.getElementById('editor-container');
+    var totalHeight = container.offsetHeight;
+    sendMsg('resize', { height: totalHeight });
+}
+
+// @{tag} atomic deletion
+function handleAtomicDeletion(e) {
+    if (e.key !== 'Backspace' && e.key !== 'Delete') return;
+
+    var pos = textarea.selectionStart;
+    var end = textarea.selectionEnd;
+    var text = textarea.value;
+
+    // Only handle when no selection
+    if (pos !== end) return;
+
+    if (e.key === 'Backspace' && pos > 0) {
+        if (text[pos - 1] === '}') {
+            var before = text.substring(0, pos);
+            var openIdx = before.lastIndexOf('@{');
+            if (openIdx !== -1) {
+                var segment = before.substring(openIdx, pos);
+                if (segment.indexOf('}') === segment.length - 1) {
+                    e.preventDefault();
+                    textarea.value = text.substring(0, openIdx) + text.substring(pos);
+                    textarea.selectionStart = textarea.selectionEnd = openIdx;
+                    syncHighlight();
+                    sendMsg('text_changed', { text: textarea.value });
+                    return;
+                }
+            }
+        }
+    }
+
+    if (e.key === 'Delete' && pos < text.length) {
+        if (text[pos] === '@' && pos + 1 < text.length && text[pos + 1] === '{') {
+            var closeIdx = text.indexOf('}', pos + 2);
+            if (closeIdx !== -1) {
+                var seg = text.substring(pos, closeIdx + 1);
+                if (seg.indexOf('}') === seg.length - 1) {
+                    e.preventDefault();
+                    textarea.value = text.substring(0, pos) + text.substring(closeIdx + 1);
+                    textarea.selectionStart = textarea.selectionEnd = pos;
+                    syncHighlight();
+                    sendMsg('text_changed', { text: textarea.value });
+                    return;
+                }
+            }
+        }
+    }
+}
+
+// Enter/Shift+Enter handling
+function handleEnter(e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        sendMsg('submit', {
+            text: textarea.value,
+            attachments: attachments.map(function(a) {
+                return { base64: a.base64, media_type: a.media_type, filename: a.filename };
+            })
+        });
+    }
+}
+
+// Event listeners
+textarea.addEventListener('input', function() {
+    syncHighlight();
+    sendMsg('text_changed', { text: textarea.value });
+});
+
+textarea.addEventListener('keydown', function(e) {
+    handleAtomicDeletion(e);
+    handleEnter(e);
+});
+
+textarea.addEventListener('scroll', syncScroll);
+
+// Functions callable from C++ via RunScriptAsync
+
+function setText(text) {
+    textarea.value = text;
+    syncHighlight();
+}
+
+function clearInput() {
+    textarea.value = '';
+    clearAttachments();
+    syncHighlight();
+}
+
+function getText() {
+    return textarea.value;
+}
+
+function focusInput() {
+    textarea.focus();
+}
+
+// =========================================================================
+// Attachment handling
+// =========================================================================
+var attachments = [];
+var attachmentBar = document.getElementById('attachment-bar');
+var attachIdCounter = 0;
+
+function addAttachment(base64, mediaType, filename) {
+    var id = 'att_' + (++attachIdCounter);
+    attachments.push({ id: id, base64: base64, media_type: mediaType, filename: filename || 'image' });
+    renderAttachments();
+    autoResize();
+}
+
+function removeAttachment(id) {
+    attachments = attachments.filter(function(a) { return a.id !== id; });
+    renderAttachments();
+    autoResize();
+}
+
+function clearAttachments() {
+    attachments = [];
+    renderAttachments();
+}
+
+function previewAttachment(id) {
+    var att = attachments.find(function(a) { return a.id === id; });
+    if (!att) return;
+    if (isSupportedImageType(att.media_type)) {
+        sendMsg('preview_image', { base64: att.base64, media_type: att.media_type });
+    } else {
+        sendMsg('preview_file', { base64: att.base64, media_type: att.media_type, filename: att.filename });
+    }
+}
+
+function escapeHtmlAttr(s) {
+    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderAttachments() {
+    if (attachments.length === 0) {
+        attachmentBar.className = 'attachment-bar';
+        attachmentBar.innerHTML = '';
+        return;
+    }
+    attachmentBar.className = 'attachment-bar visible';
+    var html = '';
+    for (var i = 0; i < attachments.length; i++) {
+        var a = attachments[i];
+        if (isSupportedImageType(a.media_type)) {
+            html += '<div class="attachment-thumb">'
+                + '<img src="data:' + a.media_type + ';base64,' + a.base64 + '" title="' + escapeHtmlAttr(a.filename)
+                + '" onclick="previewAttachment(\'' + a.id + '\')" />'
+                + '<div class="remove-btn" onclick="removeAttachment(\'' + a.id + '\')">\u00d7</div>'
+                + '</div>';
+        } else {
+            html += '<div class="attachment-thumb">'
+                + '<div style="height:48px;padding:0 10px;display:flex;align-items:center;gap:6px;'
+                + 'background:#333;border-radius:4px;color:#ccc;font-size:11px;cursor:pointer;" '
+                + 'title="' + escapeHtmlAttr(a.filename) + '" onclick="previewAttachment(\'' + a.id + '\')">'
+                + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                + '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
+                + '<polyline points="14 2 14 8 20 8"/></svg>'
+                + '<span>' + escapeHtmlAttr(a.filename) + '</span></div>'
+                + '<div class="remove-btn" onclick="removeAttachment(\'' + a.id + '\')">\u00d7</div>'
+                + '</div>';
+        }
+    }
+    attachmentBar.innerHTML = html;
+}
+
+// Supported media types for the Anthropic API
+var SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+var SUPPORTED_DOC_TYPES = ['application/pdf'];
+
+function isSupportedImageType(mediaType) {
+    return SUPPORTED_IMAGE_TYPES.indexOf(mediaType) !== -1;
+}
+
+function isSupportedFileType(mediaType) {
+    return isSupportedImageType(mediaType)
+        || SUPPORTED_DOC_TYPES.indexOf(mediaType) !== -1;
+}
+
+// Paste handler - intercept image paste
+textarea.addEventListener('paste', function(e) {
+    var items = (e.clipboardData || e.originalEvent.clipboardData).items;
+    for (var i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+            var mimeType = items[i].type;
+            if (!isSupportedImageType(mimeType)) break;
+            e.preventDefault();
+            var blob = items[i].getAsFile();
+            var reader = new FileReader();
+            reader.onload = function(ev) {
+                var dataUrl = ev.target.result;
+                var commaIdx = dataUrl.indexOf(',');
+                var meta = dataUrl.substring(0, commaIdx);
+                var b64 = dataUrl.substring(commaIdx + 1);
+                var mediaType = meta.split(':')[1].split(';')[0];
+                addAttachment(b64, mediaType, 'pasted_image.png');
+            };
+            reader.readAsDataURL(blob);
+            break;
+        }
+    }
+});
+
+// Drag-and-drop handlers
+var editorContainer = document.getElementById('editor-container');
+var dragCounter = 0;
+
+editorContainer.addEventListener('dragenter', function(e) {
+    e.preventDefault();
+    dragCounter++;
+    editorContainer.classList.add('drag-over');
+});
+
+editorContainer.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+});
+
+editorContainer.addEventListener('dragleave', function(e) {
+    e.preventDefault();
+    dragCounter--;
+    if (dragCounter === 0) {
+        editorContainer.classList.remove('drag-over');
+    }
+});
+
+editorContainer.addEventListener('drop', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter = 0;
+    editorContainer.classList.remove('drag-over');
+    var files = e.dataTransfer.files;
+    for (var i = 0; i < files.length; i++) {
+        if (isSupportedFileType(files[i].type)) {
+            (function(file) {
+                var reader = new FileReader();
+                reader.onload = function(ev) {
+                    var dataUrl = ev.target.result;
+                    var commaIdx = dataUrl.indexOf(',');
+                    var meta = dataUrl.substring(0, commaIdx);
+                    var b64 = dataUrl.substring(commaIdx + 1);
+                    var mediaType = meta.split(':')[1].split(';')[0];
+                    addAttachment(b64, mediaType, file.name);
+                };
+                reader.readAsDataURL(file);
+            })(files[i]);
+        }
+    }
+});
+
+// Attach button click
+document.getElementById('attach-btn').addEventListener('click', function() {
+    sendMsg('attach_click');
+});
+
+// Initial setup
+syncHighlight();
+textarea.focus();
+</script>
+</body>
+</html>

@@ -1181,6 +1181,26 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbExport );
 
+    // screenshot - Export a visual render of a schematic or PCB
+    LLM_TOOL screenshot;
+    screenshot.name = "screenshot";
+    screenshot.description =
+        "Export a visual screenshot (PNG render) of a schematic or PCB file. "
+        "Returns the image for visual inspection. Use this to verify layout, "
+        "check component placement, review wiring, or confirm design changes. "
+        "The file must be a .kicad_sch (schematic) or .kicad_pcb (PCB layout) file.";
+    screenshot.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to the .kicad_sch or .kicad_pcb file to screenshot" }
+            }}
+        }},
+        { "required", json::array( { "file_path" } ) }
+    };
+    tools.push_back( screenshot );
+
     return tools;
 }
 

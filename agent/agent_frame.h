@@ -4,7 +4,6 @@
 #include <kiway_player.h>
 #include <widgets/webview_panel.h>
 #include <wx/choice.h>
-#include <wx/textctrl.h>
 #include <wx/button.h>
 #include <wx/timer.h>
 #include <string>
@@ -17,6 +16,7 @@
 #include "agent_state.h"
 #include "agent_events.h"
 #include "agent_chat_history.h"
+#include "ui/file_attach.h"
 #include <agent_workspace.h>
 
 // Forward Declarations
@@ -30,6 +30,7 @@ struct CONFLICT_INFO;
 enum
 {
     ID_CHAT_COPY = wxID_HIGHEST + 1001,
+    ID_COPY_IMAGE,
     ID_CHAT_HISTORY_TOOL,
     ID_NEW_CHAT,
     ID_LOGIN,
@@ -54,13 +55,11 @@ public:
     // Event handlers
     void OnSend( wxCommandEvent& aEvent );
     void OnStop( wxCommandEvent& aEvent );
-    void OnTextEnter( wxCommandEvent& aEvent );
     void OnSelectionPillClick( wxCommandEvent& aEvent );
     void OnWebViewMessage( const wxString& aMessage );
+    void OnInputWebViewMessage( const wxString& aMessage );
     void OnModelSelection( wxCommandEvent& aEvent );
     void OnExit( wxCommandEvent& event );
-    void OnInputKeyDown( wxKeyEvent& aEvent );
-    void OnInputText( wxCommandEvent& aEvent );
     void OnChatRightClick( wxMouseEvent& aEvent );
     void OnChatScroll( wxScrollWinEvent& aEvent );
     void OnPopupClick( wxCommandEvent& aEvent );
@@ -109,7 +108,9 @@ public:
 
 private:
     WEBVIEW_PANEL* m_chatWindow;
-    wxTextCtrl*    m_inputCtrl;
+    WEBVIEW_PANEL* m_inputWebView;
+    wxString       m_pendingInputText;   // Text from JS submit message, read by OnSend
+    std::vector<FILE_ATTACHMENT> m_pendingAttachments;  // File attachments from JS submit
     wxStaticText*  m_chatNameLabel;
     wxButton*      m_actionButton;
     wxButton*      m_selectionPill;
@@ -118,6 +119,8 @@ private:
     wxButton*      m_historyButton;
     wxChoice*      m_modelChoice;
     wxPanel*       m_inputPanel;
+    wxBoxSizer*    m_inputContainerSizer;
+    wxBoxSizer*    m_topRowSizer;
 
     // Pending changes UI
     wxButton*               m_pendingChangesBtn;    // Shows when changes pending
@@ -135,6 +138,8 @@ private:
     wxButton*      m_signInButton;
 
     AGENT_AUTH*   m_auth;
+
+    wxImage     m_pendingCopyImage;  // Image waiting for context menu "Copy Image" action
 
     std::string m_toolResponse;
     std::string m_schJson;
@@ -184,6 +189,7 @@ private:
 
     void     AppendHtml( const wxString& aHtml );
     void     SetHtml( const wxString& aHtml );
+    void     ResizeInputWebView( int aContentHeight );
     void     UpdateAgentResponse();    // Re-render current response with markdown
     wxString BuildStreamingContent();  // Build streaming content HTML from current state
     void     FlushStreamingContentUpdate( bool aForce = false );  // Immediately flush streaming content to DOM

@@ -20,6 +20,7 @@
 #include "sch_parser.h"
 #include "../kicad_file/sexpr_util.h"
 #include "../kicad_file/file_writer.h"
+#include "../kicad_cli_util.h"
 #include <regex>
 #include <sstream>
 #include <algorithm>
@@ -347,27 +348,6 @@ static void TransformPinPosition( double symX, double symY, double symAngle,
 }
 
 
-/**
- * Locate the kicad-cli binary next to the running executable.
- * On macOS this is in the same MacOS directory inside the app bundle.
- */
-static std::string GetKicadCliPath()
-{
-    wxString exePathStr = wxStandardPaths::Get().GetExecutablePath();
-    wxFileName exePath( exePathStr );
-    wxFileName cliPath( exePath.GetPath(), "kicad-cli" );
-
-    wxLogInfo( "SPICE: Executable path: %s", exePathStr );
-    wxLogInfo( "SPICE: Looking for kicad-cli at: %s", cliPath.GetFullPath() );
-
-    if( cliPath.FileExists() )
-        return cliPath.GetFullPath().ToStdString();
-
-    wxLogWarning( "SPICE: kicad-cli not found at %s", cliPath.GetFullPath() );
-    return std::string();
-}
-
-
 std::string GenerateSpiceNetlist( const std::string& aSchematicPath )
 {
     if( aSchematicPath.empty() )
@@ -376,19 +356,12 @@ std::string GenerateSpiceNetlist( const std::string& aSchematicPath )
         return std::string();
     }
 
-    std::string cliPath = GetKicadCliPath();
-    if( cliPath.empty() )
+    std::string cmdPrefix = KiCadCliUtil::GetKicadCliCommandPrefix();
+    if( cmdPrefix.empty() )
         return std::string();
 
-    // kicad-cli needs DYLD_LIBRARY_PATH to find dylibs in the Frameworks directory
-    wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
-    wxFileName frameworksDir( exePath.GetPath(), "" );
-    frameworksDir.RemoveLastDir();
-    frameworksDir.AppendDir( "Frameworks" );
-
-    std::string cmd = "DYLD_LIBRARY_PATH=\"" + frameworksDir.GetPath().ToStdString()
-                      + "\" \"" + cliPath
-                      + "\" sch export netlist --format spice -o /dev/stdout \""
+    std::string cmd = cmdPrefix
+                      + " sch export netlist --format spice -o /dev/stdout \""
                       + aSchematicPath + "\" 2>/dev/null";
 
     wxLogInfo( "SPICE: Running command: %s", cmd.c_str() );

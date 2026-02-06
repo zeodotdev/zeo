@@ -108,6 +108,9 @@ tr:last-child td {
 tr:hover td {
     background: #363636;
 }
+img[src^="data:"] {
+    cursor: pointer;
+}
 </style>
 <script>
 function sendMsg(action, data) {
@@ -125,6 +128,12 @@ function clickLink(href) {
     return false;
 }
 document.addEventListener('contextmenu', function(e) {
+    // Right-click on an image: copy image to clipboard via C++
+    if (e.target.tagName === 'IMG' && e.target.src.startsWith('data:')) {
+        e.preventDefault();
+        sendMsg('copy_image', {src: e.target.src});
+        return;
+    }
     const sel = window.getSelection().toString();
     if (sel) {
         sendMsg('copy', {text: sel});
@@ -133,6 +142,24 @@ document.addEventListener('contextmenu', function(e) {
 
 // Handle all link clicks with event delegation
 document.addEventListener('click', function(e) {
+    // Click on a data: image: open native preview
+    if (e.target.tagName === 'IMG' && e.target.src.startsWith('data:')) {
+        e.preventDefault();
+        sendMsg('preview_image', {src: e.target.src});
+        return;
+    }
+
+    // Click on a document preview: open in system viewer
+    let docEl = e.target.closest('.doc-preview[data-file-base64]');
+    if (docEl) {
+        e.preventDefault();
+        sendMsg('preview_file', {
+            base64: docEl.getAttribute('data-file-base64'),
+            filename: docEl.getAttribute('data-file-name') || 'document.pdf'
+        });
+        return;
+    }
+
     // Check if clicked element is a link or inside a link
     let target = e.target;
     while (target && target.tagName !== 'A') {

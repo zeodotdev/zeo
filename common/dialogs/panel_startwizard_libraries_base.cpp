@@ -17,7 +17,7 @@ PANEL_STARTWIZARD_LIBRARIES_BASE::PANEL_STARTWIZARD_LIBRARIES_BASE( wxWindow* pa
 	wxBoxSizer* bSizer8;
 	bSizer8 = new wxBoxSizer( wxVERTICAL );
 
-	m_stIntro = new wxStaticText( this, wxID_ANY, _("KiCad comes with a large set of symbol and footprint libraries maintained by the KiCad librarian team.  You may also create your own libraries, and install third-party ones from the Plugin and Content Manager or other sources.\n\nLibrary tables are the configuration files which list the libraries to be loaded. Global libraries are available in every project, and you may also add project-specific libraries if desired."), wxDefaultPosition, wxDefaultSize, 0 );
+	m_stIntro = new wxStaticText( this, wxID_ANY, _("Zener comes with a large set of symbol and footprint libraries maintained by the KiCad librarian team.  You may also create your own libraries, and install third-party ones from the Plugin and Content Manager or other sources.\n\nLibrary tables are the configuration files which list the libraries to be loaded. Global libraries are available in every project, and you may also add project-specific libraries if desired."), wxDefaultPosition, wxDefaultSize, 0 );
 	m_stIntro->Wrap( 540 );
 	bSizer8->Add( m_stIntro, 0, wxALL|wxEXPAND, 5 );
 
@@ -34,7 +34,7 @@ PANEL_STARTWIZARD_LIBRARIES_BASE::PANEL_STARTWIZARD_LIBRARIES_BASE( wxWindow* pa
 
 	bSizer8->Add( 0, 10, 0, wxEXPAND, 5 );
 
-	m_stQuery = new wxStaticText( this, wxID_ANY, _("How would you like KiCad to create them?"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_stQuery = new wxStaticText( this, wxID_ANY, _("How would you like Zener to create them?"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_stQuery->Wrap( 400 );
 	bSizer8->Add( m_stQuery, 0, wxALL, 5 );
 
@@ -60,7 +60,7 @@ PANEL_STARTWIZARD_LIBRARIES_BASE::PANEL_STARTWIZARD_LIBRARIES_BASE( wxWindow* pa
 
 	m_sizerWarning->Add( m_bmpWarning, 0, wxALL, 4 );
 
-	m_stWarning = new wxStaticText( this, wxID_ANY, _("The built-in library tables could not be found in the expected location. This usually means that you have installed the KiCad software without also installing the libraries. You can proceed with setup, but you will need to install the libraries separately in order for them to be available."), wxDefaultPosition, wxDefaultSize, 0 );
+	m_stWarning = new wxStaticText( this, wxID_ANY, _("The built-in library tables could not be found in the expected location. This usually means that you have installed the Zener software without also installing the libraries. You can proceed with setup, but you will need to install the libraries separately in order for them to be available."), wxDefaultPosition, wxDefaultSize, 0 );
 	m_stWarning->Wrap( 540 );
 	m_sizerWarning->Add( m_stWarning, 0, wxALL, 5 );
 

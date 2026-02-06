@@ -95,6 +95,53 @@ wxString AGENT_CHAT_HISTORY::GetFilePath()
 }
 
 
+/**
+ * Strip large base64 data from chat history before persisting to disk.
+ * Replaces base64 data with "__stripped__" placeholder to prevent multi-MB history files.
+ * Attachments are only needed in-memory for the current session's API context.
+ */
+static nlohmann::json StripBase64FromHistory( const nlohmann::json& aHistory )
+{
+    nlohmann::json stripped = aHistory;
+
+    for( auto& msg : stripped )
+    {
+        if( !msg.contains( "content" ) || !msg["content"].is_array() )
+            continue;
+
+        for( auto& block : msg["content"] )
+        {
+            std::string blockType = block.value( "type", "" );
+
+            // Handle top-level image/document blocks (user-attached files)
+            if( ( blockType == "image" || blockType == "document" )
+                && block.contains( "source" ) && block["source"].contains( "data" ) )
+            {
+                block["source"]["data"] = "__stripped__";
+            }
+
+            // Handle tool_result blocks that may contain image/document content arrays
+            if( blockType == "tool_result"
+                && block.contains( "content" ) && block["content"].is_array() )
+            {
+                for( auto& inner : block["content"] )
+                {
+                    std::string innerType = inner.value( "type", "" );
+
+                    if( ( innerType == "image" || innerType == "document" )
+                        && inner.contains( "source" ) && inner["source"].contains( "data" ) )
+                    {
+                        inner["source"]["data"] = "__stripped__";
+                    }
+                }
+            }
+        }
+    }
+
+    return stripped;
+}
+
+
 void AGENT_CHAT_HISTORY::Save( const nlohmann::json& aChatHistory )
 {
     if( m_conversationId.empty() )
@@ -109,13 +156,16 @@ void AGENT_CHAT_HISTORY::Save( const nlohmann::json& aChatHistory )
     // Update last_updated timestamp
     m_lastUpdated = GetCurrentTimestamp();
 
+    // Strip base64 image data before saving to avoid huge history files
+    nlohmann::json persistHistory = StripBase64FromHistory( aChatHistory );
+
     // Create metadata wrapper
     nlohmann::json wrapper;
     wrapper["id"] = m_conversationId;
     wrapper["title"] = m_title;
     wrapper["created_at"] = m_createdAt;
     wrapper["last_updated"] = m_lastUpdated;
-    wrapper["messages"] = aChatHistory;
+    wrapper["messages"] = persistHistory;
 
     wxString path = GetFilePath();
     std::ofstream file( path.ToStdString() );

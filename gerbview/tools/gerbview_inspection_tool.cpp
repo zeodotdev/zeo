@@ -180,7 +180,7 @@ int GERBVIEW_INSPECTION_TOOL::ShowSource( const TOOL_EVENT& aEvent )
         }
         else
         {
-            wxMessageBox( _( "No text editor selected in KiCad.  Please choose one." ) );
+            wxMessageBox( _( "No text editor selected in Zener.  Please choose one." ) );
         }
     }
     else

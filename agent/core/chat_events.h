@@ -141,15 +141,18 @@ struct ChatToolCompleteData
 {
     std::string toolId;           ///< Unique tool use ID
     std::string toolName;         ///< Tool name
-    std::string result;           ///< Tool execution result
+    std::string result;           ///< Tool execution result (text)
     bool        success;          ///< Whether tool succeeded
     bool        isPythonError;    ///< Whether result is a Python traceback
+    bool        hasImage;         ///< Whether result contains an image
+    std::string imageBase64;      ///< Base64-encoded image data (if hasImage)
+    std::string imageMediaType;   ///< Image MIME type e.g. "image/png" (if hasImage)
 
-    ChatToolCompleteData() : success( false ), isPythonError( false ) {}
+    ChatToolCompleteData() : success( false ), isPythonError( false ), hasImage( false ) {}
     ChatToolCompleteData( const std::string& aId, const std::string& aName,
                           const std::string& aResult, bool aSuccess, bool aIsPythonError = false )
         : toolId( aId ), toolName( aName ), result( aResult ),
-          success( aSuccess ), isPythonError( aIsPythonError ) {}
+          success( aSuccess ), isPythonError( aIsPythonError ), hasImage( false ) {}
 };
 
 /**

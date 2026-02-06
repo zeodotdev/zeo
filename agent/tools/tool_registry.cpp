@@ -27,6 +27,7 @@
 #include "schematic/sch_sim_handler.h"
 #include "pcb/pcb_tool_handler.h"
 #include "pcb/pcb_crud_handler.h"
+#include "screenshot/screenshot_handler.h"
 
 
 TOOL_REGISTRY& TOOL_REGISTRY::Instance()
@@ -49,6 +50,9 @@ TOOL_REGISTRY::TOOL_REGISTRY()
     // Register PCB tool handlers
     m_handlers.push_back( std::make_unique<PCB_TOOL_HANDLER>() );
     m_handlers.push_back( std::make_unique<PCB_CRUD_HANDLER>() );
+
+    // Register screenshot handler
+    m_handlers.push_back( std::make_unique<SCREENSHOT_HANDLER>() );
 }
 
 

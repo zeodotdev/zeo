@@ -68,6 +68,24 @@ public:
     void SendMessage( const std::string& aText );
 
     /**
+     * User-attached image for sending with a message.
+     */
+    struct UserAttachment
+    {
+        std::string base64_data;
+        std::string media_type;
+    };
+
+    /**
+     * Send a user message with image attachments.
+     * Builds multi-content array format for the Anthropic API.
+     * @param aText The user's message text (may be empty for image-only messages)
+     * @param aAttachments Vector of base64-encoded images
+     */
+    void SendMessageWithAttachments( const std::string& aText,
+                                     const std::vector<UserAttachment>& aAttachments );
+
+    /**
      * Cancel the current operation (streaming or tool execution).
      */
     void Cancel();
@@ -299,6 +317,16 @@ private:
      * Add assistant message with tool use blocks to history.
      */
     void AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBlocks );
+
+    /**
+     * Common implementation for sending a user message.
+     * Handles title generation, project context injection, history push,
+     * streaming state reset, state transition, and LLM request start.
+     *
+     * @param aText The user's message text
+     * @param aContent Pre-built content JSON (array for multi-content, null to use plain text)
+     */
+    void DoSendMessage( const std::string& aText, const nlohmann::json& aContent );
 
     /**
      * Sanitize API context before sending to ensure valid message format.

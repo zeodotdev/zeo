@@ -52,17 +52,17 @@ DIALOG_ABOUT_BASE::DIALOG_ABOUT_BASE( wxWindow* parent, wxWindowID id, const wxS
 	bSizer5->Add( 0, 0, 1, wxEXPAND, 5 );
 
 	m_btCopyVersionInfo = new wxButton( this, wxID_COPY, _("&Copy Version Info"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_btCopyVersionInfo->SetToolTip( _("Copy KiCad version info to the clipboard") );
+	m_btCopyVersionInfo->SetToolTip( _("Copy Zener version info to the clipboard") );
 
 	bSizer5->Add( m_btCopyVersionInfo, 0, wxALL|wxEXPAND, 5 );
 
 	m_btReportBug = new wxButton( this, wxID_COPY, _("&Report Bug"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_btReportBug->SetToolTip( _("Report a problem with KiCad") );
+	m_btReportBug->SetToolTip( _("Report a problem with Zener") );
 
 	bSizer5->Add( m_btReportBug, 0, wxALL|wxEXPAND, 5 );
 
 	m_btDonate = new wxButton( this, wxID_COPY, _("Donate"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_btDonate->SetToolTip( _("Donate to KiCad") );
+	m_btDonate->SetToolTip( _("Donate to Zener") );
 
 	bSizer5->Add( m_btDonate, 0, wxALL|wxEXPAND, 5 );
 

@@ -34,7 +34,7 @@ PRODUCE_PCB_BASE::PRODUCE_PCB_BASE( wxWindow* parent, wxWindowID id, const wxStr
 	m_label3->Wrap( -1 );
 	bSizerContent->Add( m_label3, 0, wxALL, 5 );
 
-	m_label31 = new wxStaticText( this, wxID_ANY, _("Sends production files to manufacturer from KiCad"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_label31 = new wxStaticText( this, wxID_ANY, _("Sends production files to manufacturer from Zener"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_label31->Wrap( -1 );
 	bSizerContent->Add( m_label31, 0, wxALL, 5 );
 

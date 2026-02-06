@@ -145,7 +145,7 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     fileMenu->Add( KICAD_MANAGER_ACTIONS::unarchiveProject );
 
     fileMenu->AppendSeparator();
-    fileMenu->AddQuitOrClose( nullptr, wxS( "KiCad" ) );
+    fileMenu->AddQuitOrClose( nullptr, wxS( "Zener" ) );
 
     //-- Edit menu -----------------------------------------------------------
     //

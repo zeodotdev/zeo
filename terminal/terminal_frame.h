@@ -47,6 +47,9 @@ private:
     // Track if we have an active async request
     bool m_asyncRequestPending;
 
+    // Gather all directories the agent is allowed to modify files in
+    std::vector<std::string> GetAllowedPaths();
+
     // Track the target sheet UUID for the current agent conversation turn.
     // This is captured on the FIRST tool call and reused for all subsequent
     // tool calls until the conversation turn ends.

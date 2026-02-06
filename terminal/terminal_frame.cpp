@@ -8,11 +8,22 @@
 #include <id.h>
 #include <kiway.h>
 #include <project.h>
+#include <paths.h>
+#include <kiplatform/environment.h>
+#include <frame_type.h>
+#include <eda_base_frame.h>
+#include <wx/filename.h>
 #include <wx/log.h>
 #include <wx/menu.h>   // For menu IDs
 #include <wx/button.h> // For wxButton
 #include <nlohmann/json.hpp>
 #include <pgm_base.h>
+#include <set>
+
+#ifdef __APPLE__
+#include <libproc.h>
+#include <unistd.h>
+#endif
 #include <api/api_server.h>
 
 // Define IDs for new commands
@@ -322,15 +333,16 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
     {
         wxString bashCmd = cmd.Mid( 13 ).Trim( false );
 
-        // Get project path for security validation
-        std::string projectPath = Kiway().Prj().GetProjectPath().ToStdString();
-
-        // Validate the command against project path restrictions
+        // Validate the command against allowed directory restrictions
+        auto allowedPaths = GetAllowedPaths();
         TerminalValidationResult validation =
-            TerminalCommandValidator::ValidateCommand( bashCmd.ToStdString(), projectPath );
+            TerminalCommandValidator::ValidateCommand( bashCmd.ToStdString(), allowedPaths );
 
         if( !validation.valid )
+        {
+            wxLogInfo( "TERMINAL: Command blocked (sync): %s", validation.error );
             return validation.error;
+        }
 
         // Find or create agent terminal
         TERMINAL_PANEL* active = nullptr;
@@ -772,15 +784,14 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
     {
         wxString bashCmd = cmd.Mid( 13 ).Trim( false );
 
-        // Get project path for security validation
-        std::string projectPath = Kiway().Prj().GetProjectPath().ToStdString();
-
-        // Validate the command against project path restrictions
+        // Validate the command against allowed directory restrictions
+        auto allowedPaths = GetAllowedPaths();
         TerminalValidationResult validation =
-            TerminalCommandValidator::ValidateCommand( bashCmd.ToStdString(), projectPath );
+            TerminalCommandValidator::ValidateCommand( bashCmd.ToStdString(), allowedPaths );
 
         if( !validation.valid )
         {
+            wxLogInfo( "TERMINAL: Command blocked (async): %s", validation.error );
             SendAgentResponse( validation.error );
             return;
         }
@@ -820,4 +831,122 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
     // eventually migrate all Python commands to async
     std::string result = ExecuteCommandForAgent( aCmd );
     SendAgentResponse( result );
+}
+
+
+#ifdef __APPLE__
+static std::vector<std::string> GetExternalEditorFileDirs()
+{
+    std::vector<std::string> dirs;
+    std::set<std::string> seen;
+    pid_t myPid = getpid();
+
+    int bufSize = proc_listpids( PROC_ALL_PIDS, 0, NULL, 0 );
+
+    if( bufSize <= 0 )
+        return dirs;
+
+    int maxPids = bufSize / sizeof( pid_t );
+    std::vector<pid_t> pids( maxPids );
+    bufSize = proc_listpids( PROC_ALL_PIDS, 0, pids.data(), bufSize );
+    int nPids = bufSize / sizeof( pid_t );
+
+    for( int i = 0; i < nPids; i++ )
+    {
+        if( pids[i] == 0 || pids[i] == myPid )
+            continue;
+
+        char pathbuf[PROC_PIDPATHINFO_MAXSIZE];
+
+        if( proc_pidpath( pids[i], pathbuf, sizeof( pathbuf ) ) <= 0 )
+            continue;
+
+        std::string procPath( pathbuf );
+
+        if( procPath.find( "eeschema" ) == std::string::npos &&
+            procPath.find( "pcbnew" ) == std::string::npos )
+            continue;
+
+        wxLogInfo( "TERMINAL: Found external editor process: PID %d (%s)", pids[i], procPath );
+
+        // Get the process's cwd — eeschema/pcbnew set cwd to the file's directory
+        struct proc_vnodepathinfo vnodePathInfo;
+        int sz = proc_pidinfo( pids[i], PROC_PIDVNODEPATHINFO, 0,
+                               &vnodePathInfo, sizeof( vnodePathInfo ) );
+
+        if( sz <= 0 )
+            continue;
+
+        std::string cwd( vnodePathInfo.pvi_cdir.vip_path );
+
+        if( !cwd.empty() && seen.insert( cwd ).second )
+        {
+            wxLogInfo( "TERMINAL: External editor cwd: %s", cwd );
+            dirs.push_back( cwd );
+        }
+    }
+
+    return dirs;
+}
+#endif
+
+
+std::vector<std::string> TERMINAL_FRAME::GetAllowedPaths()
+{
+    std::vector<std::string> paths;
+
+    // KiCad documents root: ~/Documents/KiCad (all versions)
+    wxString docsPath;
+
+    if( wxGetEnv( wxT( "KICAD_DOCUMENTS_HOME" ), &docsPath ) )
+    {
+        paths.push_back( docsPath.ToStdString() );
+    }
+    else
+    {
+        wxFileName kicadDocs;
+        kicadDocs.AssignDir( KIPLATFORM::ENV::GetDocumentsPath() );
+        kicadDocs.AppendDir( KICAD_PATH_STR );
+        paths.push_back( kicadDocs.GetPath().ToStdString() );
+    }
+
+    // Active project directory
+    wxString projPath = Kiway().Prj().GetProjectPath();
+
+    if( !projPath.IsEmpty() )
+        paths.push_back( projPath.ToStdString() );
+
+    // Directories of files open in editors (same process)
+    for( FRAME_T ft : { FRAME_SCH, FRAME_PCB_EDITOR } )
+    {
+        KIWAY_PLAYER* player = Kiway().Player( ft, false );
+
+        if( player && player->IsShown() )
+        {
+            wxString f = player->GetCurrentFileName();
+
+            if( !f.IsEmpty() )
+            {
+                wxFileName fn( f );
+                paths.push_back( fn.GetPath().ToStdString() );
+            }
+        }
+    }
+
+    // Directories of files open in standalone editor processes
+#ifdef __APPLE__
+    for( const auto& dir : GetExternalEditorFileDirs() )
+        paths.push_back( dir );
+#endif
+
+    wxString pathList;
+    for( const auto& p : paths )
+    {
+        if( !pathList.IsEmpty() )
+            pathList += ", ";
+        pathList += p;
+    }
+    wxLogInfo( "TERMINAL: GetAllowedPaths: [%s]", pathList );
+
+    return paths;
 }

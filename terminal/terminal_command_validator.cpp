@@ -381,9 +381,34 @@ TerminalValidationResult TerminalCommandValidator::ValidateCommand( const std::s
 {
     if( aProjectPath.empty() )
     {
-        // No project path set - block all potentially dangerous commands
         return TerminalValidationResult(
             "Error: No project directory set. Terminal commands are disabled for safety." );
+    }
+
+    return ValidateCommand( aCommand, std::vector<std::string>{ aProjectPath } );
+}
+
+
+bool TerminalCommandValidator::IsPathInAllowedDirs( const std::string& aPath,
+                                                     const std::vector<std::string>& aAllowedPaths )
+{
+    for( const auto& allowed : aAllowedPaths )
+    {
+        if( IsPathInProject( aPath, allowed ) )
+            return true;
+    }
+
+    return false;
+}
+
+
+TerminalValidationResult TerminalCommandValidator::ValidateCommand(
+        const std::string& aCommand, const std::vector<std::string>& aAllowedPaths )
+{
+    if( aAllowedPaths.empty() )
+    {
+        return TerminalValidationResult(
+            "Error: No allowed directories set. Terminal commands are disabled for safety." );
     }
 
     // Parse the command to check for blocked commands
@@ -403,7 +428,6 @@ TerminalValidationResult TerminalCommandValidator::ValidateCommand( const std::s
     }
 
     // Check for command chaining with && or ; that might include blocked commands
-    // Split by && and ; (respecting quotes) and check each command
     std::string current;
     bool inSingleQuote = false;
     bool inDoubleQuote = false;
@@ -444,7 +468,6 @@ TerminalValidationResult TerminalCommandValidator::ValidateCommand( const std::s
 
         if( !inSingleQuote && !inDoubleQuote )
         {
-            // Check for && or ;
             if( c == ';' || ( c == '&' && i + 1 < aCommand.length() && aCommand[i + 1] == '&' ) )
             {
                 if( !current.empty() )
@@ -453,7 +476,7 @@ TerminalValidationResult TerminalCommandValidator::ValidateCommand( const std::s
                     current.clear();
                 }
                 if( c == '&' )
-                    i++; // Skip the second &
+                    i++;
                 continue;
             }
         }
@@ -486,19 +509,26 @@ TerminalValidationResult TerminalCommandValidator::ValidateCommand( const std::s
     // Extract all target paths from the command
     std::vector<std::string> targetPaths = ExtractTargetPaths( aCommand );
 
-    // Validate each target path
+    // Validate each target path against all allowed directories
     for( const auto& path : targetPaths )
     {
-        // Skip validation for safe system redirect targets
         if( SAFE_REDIRECT_TARGETS.count( path ) > 0 )
             continue;
 
-        if( !IsPathInProject( path, aProjectPath ) )
+        if( !IsPathInAllowedDirs( path, aAllowedPaths ) )
         {
+            std::string allowedList;
+            for( const auto& p : aAllowedPaths )
+            {
+                if( !allowedList.empty() )
+                    allowedList += ", ";
+                allowedList += p;
+            }
+
             return TerminalValidationResult(
-                "Error: Cannot modify files outside the project directory. "
+                "Error: Cannot modify files outside allowed directories. "
                 "Blocked path: " + path + "\n"
-                "Project directory: " + aProjectPath );
+                "Allowed directories: " + allowedList );
         }
     }
 

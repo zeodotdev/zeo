@@ -16,6 +16,9 @@
 #include <mail_type.h>
 #include <wx/log.h>
 #include <kiway.h>
+#include <paths.h>
+#include <kiplatform/environment.h>
+#include <frame_type.h>
 #include <sstream>
 #include <fstream>
 #include <thread>
@@ -47,6 +50,8 @@
 
 #ifdef __APPLE__
 #include "macos_key_monitor.h"
+#include <libproc.h>
+#include <unistd.h>
 #endif
 
 using json = nlohmann::json;
@@ -683,6 +688,18 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                 }
 
                 projectContext["hierarchy"] = hierarchyArray;
+            }
+
+            // Add files currently open in editors
+            auto openFiles = GetOpenEditorFiles();
+            if( !openFiles.empty() )
+            {
+                nlohmann::json arr = nlohmann::json::array();
+                for( const auto& f : openFiles )
+                    arr.push_back( f.ToStdString() );
+                projectContext["open_editor_files"] = arr;
+                wxLogInfo( "AGENT: Injecting %zu open editor file(s) into project context",
+                           openFiles.size() );
             }
 
             return projectContext.dump( 2 );
@@ -3127,10 +3144,33 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
 
         if( !filePath.empty() )
         {
-            auto pathResult = FileWriter::ValidatePathInProject( filePath, projectPath.ToStdString() );
-            if( !pathResult.valid )
+            auto allowedPaths = GetAllowedPaths();
+            bool pathValid = false;
+            FileWriter::PathValidationResult pathResult;
+
+            if( allowedPaths.empty() )
             {
-                // Path validation failed - reject tool call
+                wxLogWarning( "open_editor: No allowed paths available" );
+                if( m_chatController )
+                    m_chatController->HandleToolResult( data->toolId,
+                        "Error: no project or editor is open", false );
+                delete data;
+                return;
+            }
+
+            for( const auto& allowed : allowedPaths )
+            {
+                pathResult = FileWriter::ValidatePathInProject( filePath,
+                                                                 allowed.ToStdString() );
+                if( pathResult.valid )
+                {
+                    pathValid = true;
+                    break;
+                }
+            }
+
+            if( !pathValid )
+            {
                 wxLogWarning( "open_editor: Path validation failed: %s", pathResult.error );
                 if( m_chatController )
                     m_chatController->HandleToolResult( data->toolId,
@@ -3138,6 +3178,7 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
                 delete data;
                 return;
             }
+
             m_pendingOpenFilePath = wxString::FromUTF8( pathResult.resolvedPath );
             wxLogInfo( "open_editor: Validated file_path -> '%s'", m_pendingOpenFilePath );
         }
@@ -3307,6 +3348,16 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
             wxString prjName = Kiway().Prj().GetProjectName();
             status["schematic_file"] = ( prjPath + prjName + ".kicad_sch" ).ToStdString();
             status["pcb_file"] = ( prjPath + prjName + ".kicad_pcb" ).ToStdString();
+        }
+
+        // Add files currently open in editors
+        auto openFiles = GetOpenEditorFiles();
+        if( !openFiles.empty() )
+        {
+            nlohmann::json arr = nlohmann::json::array();
+            for( const auto& f : openFiles )
+                arr.push_back( f.ToStdString() );
+            status["open_editor_files"] = arr;
         }
 
         // Get current sheet if schematic is open (via IPC would be more accurate, but this is fast)
@@ -3962,4 +4013,163 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
     m_userScrolledUp = false;
 
     delete data;
+}
+
+
+#ifdef __APPLE__
+static std::vector<wxString> GetExternalEditorFiles()
+{
+    std::vector<wxString> files;
+    std::set<std::string> seen;
+    pid_t myPid = getpid();
+
+    int bufSize = proc_listpids( PROC_ALL_PIDS, 0, NULL, 0 );
+
+    if( bufSize <= 0 )
+        return files;
+
+    int maxPids = bufSize / sizeof( pid_t );
+    std::vector<pid_t> pids( maxPids );
+    bufSize = proc_listpids( PROC_ALL_PIDS, 0, pids.data(), bufSize );
+    int nPids = bufSize / sizeof( pid_t );
+
+    for( int i = 0; i < nPids; i++ )
+    {
+        if( pids[i] == 0 || pids[i] == myPid )
+            continue;
+
+        char pathbuf[PROC_PIDPATHINFO_MAXSIZE];
+
+        if( proc_pidpath( pids[i], pathbuf, sizeof( pathbuf ) ) <= 0 )
+            continue;
+
+        std::string procPath( pathbuf );
+
+        bool isSch = ( procPath.find( "eeschema" ) != std::string::npos );
+        bool isPcb = ( procPath.find( "pcbnew" ) != std::string::npos );
+
+        if( !isSch && !isPcb )
+            continue;
+
+        wxLogInfo( "AGENT: Found external editor process: PID %d (%s)", pids[i], procPath );
+
+        // Get the process's current working directory — eeschema/pcbnew set cwd
+        // to the directory of the file being edited
+        struct proc_vnodepathinfo vnodePathInfo;
+        int sz = proc_pidinfo( pids[i], PROC_PIDVNODEPATHINFO, 0,
+                               &vnodePathInfo, sizeof( vnodePathInfo ) );
+
+        if( sz <= 0 )
+            continue;
+
+        wxString cwd = wxString::FromUTF8( vnodePathInfo.pvi_cdir.vip_path );
+
+        if( cwd.IsEmpty() )
+            continue;
+
+        wxLogInfo( "AGENT: External editor cwd: %s", cwd );
+
+        // Scan the cwd for KiCad files matching this editor type
+        wxString ext = isSch ? "*.kicad_sch" : "*.kicad_pcb";
+        wxDir dir( cwd );
+
+        if( dir.IsOpened() )
+        {
+            wxString filename;
+            bool cont = dir.GetFirst( &filename, ext, wxDIR_FILES );
+
+            while( cont )
+            {
+                wxString fullPath = cwd + wxFileName::GetPathSeparator() + filename;
+                std::string fp = fullPath.ToStdString();
+
+                if( seen.insert( fp ).second )
+                {
+                    wxLogInfo( "AGENT: External editor file: %s", fp );
+                    files.push_back( fullPath );
+                }
+
+                cont = dir.GetNext( &filename );
+            }
+        }
+    }
+
+    return files;
+}
+#endif
+
+
+std::vector<wxString> AGENT_FRAME::GetOpenEditorFiles()
+{
+    std::vector<wxString> files;
+
+    // Editors within our KIWAY (same process)
+    for( FRAME_T ft : { FRAME_SCH, FRAME_PCB_EDITOR } )
+    {
+        KIWAY_PLAYER* player = Kiway().Player( ft, false );
+
+        if( player && player->IsShown() )
+        {
+            wxString f = player->GetCurrentFileName();
+
+            if( !f.IsEmpty() )
+                files.push_back( f );
+        }
+    }
+
+    // Standalone editor processes (eeschema/pcbnew launched outside this KIWAY)
+#ifdef __APPLE__
+    for( const auto& f : GetExternalEditorFiles() )
+        files.push_back( f );
+#endif
+
+    for( const auto& f : files )
+        wxLogInfo( "AGENT: Open editor file: %s", f );
+
+    return files;
+}
+
+
+std::vector<wxString> AGENT_FRAME::GetAllowedPaths()
+{
+    std::vector<wxString> paths;
+
+    // KiCad documents root
+    wxString docsPath;
+
+    if( wxGetEnv( wxT( "KICAD_DOCUMENTS_HOME" ), &docsPath ) )
+    {
+        paths.push_back( docsPath );
+    }
+    else
+    {
+        wxFileName kicadDocs;
+        kicadDocs.AssignDir( KIPLATFORM::ENV::GetDocumentsPath() );
+        kicadDocs.AppendDir( KICAD_PATH_STR );
+        paths.push_back( kicadDocs.GetPath() );
+    }
+
+    // Active project directory
+    wxString projPath = Kiway().Prj().GetProjectPath();
+
+    if( !projPath.IsEmpty() )
+        paths.push_back( projPath );
+
+    // Directories of files open in editors
+    for( const auto& f : GetOpenEditorFiles() )
+    {
+        wxFileName fn( f );
+        paths.push_back( fn.GetPath() );
+    }
+
+    wxString pathList;
+    for( const auto& p : paths )
+    {
+        if( !pathList.IsEmpty() )
+            pathList += ", ";
+        pathList += p;
+    }
+    wxLogInfo( "AGENT: GetAllowedPaths: [%s]", pathList );
+
+    return paths;
 }

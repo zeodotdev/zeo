@@ -111,6 +111,13 @@ static nlohmann::json StripBase64FromHistory( const nlohmann::json& aHistory )
 
         for( auto& block : msg["content"] )
         {
+            // Handle top-level image blocks (user-attached images)
+            if( block.contains( "type" ) && block["type"] == "image"
+                && block.contains( "source" ) && block["source"].contains( "data" ) )
+            {
+                block["source"]["data"] = "__stripped__";
+            }
+
             // Handle tool_result blocks that may contain image content arrays
             if( block.contains( "type" ) && block["type"] == "tool_result"
                 && block.contains( "content" ) && block["content"].is_array() )

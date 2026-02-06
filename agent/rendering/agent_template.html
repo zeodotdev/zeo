@@ -108,6 +108,9 @@ tr:last-child td {
 tr:hover td {
     background: #363636;
 }
+img[src^="data:"] {
+    cursor: pointer;
+}
 </style>
 <script>
 function sendMsg(action, data) {
@@ -139,6 +142,13 @@ document.addEventListener('contextmenu', function(e) {
 
 // Handle all link clicks with event delegation
 document.addEventListener('click', function(e) {
+    // Click on a data: image: open native preview
+    if (e.target.tagName === 'IMG' && e.target.src.startsWith('data:')) {
+        e.preventDefault();
+        sendMsg('preview_image', {src: e.target.src});
+        return;
+    }
+
     // Check if clicked element is a link or inside a link
     let target = e.target;
     while (target && target.tagName !== 'A') {

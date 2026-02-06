@@ -1247,10 +1247,37 @@ void CHAT_CONTROLLER::SanitizeApiContext()
         {
             if( role == "user" )
             {
-                // For consecutive user messages, replace the previous one
-                wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - removing duplicate user message" );
+                // Check if the previous user message contains tool_result blocks.
+                // tool_result messages MUST stay — they're structurally required to follow
+                // the assistant's tool_use blocks. Removing them orphans the tool_use.
+                bool prevHasToolResult = false;
                 if( !sanitized.empty() )
-                    sanitized.erase( sanitized.end() - 1 );
+                {
+                    const auto& prevMsg = sanitized.back();
+                    if( prevMsg.contains( "content" ) && prevMsg["content"].is_array() )
+                    {
+                        for( const auto& block : prevMsg["content"] )
+                        {
+                            if( block.contains( "type" ) && block["type"] == "tool_result" )
+                            {
+                                prevHasToolResult = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if( prevHasToolResult )
+                {
+                    wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - keeping tool_result user message" );
+                }
+                else
+                {
+                    // For consecutive user messages, replace the previous one
+                    wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - removing duplicate user message" );
+                    if( !sanitized.empty() )
+                        sanitized.erase( sanitized.end() - 1 );
+                }
             }
             else if( role == "assistant" )
             {

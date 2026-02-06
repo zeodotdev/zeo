@@ -360,48 +360,22 @@ std::string PCB_CRUD_HANDLER::GenerateRunDrcCode( const nlohmann::json& aInput )
 {
     std::ostringstream code;
 
-    bool refillZones = aInput.value( "refill_zones", true );
-    std::string format = aInput.value( "output_format", "summary" );
+    // NOTE: pcb_run_drc is currently disabled due to a crash bug in KiCad's IPC API.
+    // The internal DRC_TOOL::RunTests() expects a non-null progress reporter but the
+    // API handler passes nullptr, causing a segfault at drc_tool.cpp:205.
+    // This needs to be fixed in KiCad's api_handler_pcb.cpp before we can enable this.
 
     code << "import json\n";
     code << "\n";
-    code << "# Run DRC\n";
-    code << "try:\n";
-    code << "    result = board.run_drc(refill_zones=" << ( refillZones ? "True" : "False" ) << ")\n";
-    code << "    \n";
-
-    if( format == "summary" )
-    {
-        code << "    output = f'DRC Results:\\n'\n";
-        code << "    output += f'  Errors: {result.error_count}\\n'\n";
-        code << "    output += f'  Warnings: {result.warning_count}\\n'\n";
-        code << "    output += f'  Exclusions: {result.exclusion_count}\\n'\n";
-        code << "    print(output)\n";
-    }
-    else if( format == "detailed" )
-    {
-        code << "    violations = board.get_drc_violations()\n";
-        code << "    output = {\n";
-        code << "        'error_count': result.error_count,\n";
-        code << "        'warning_count': result.warning_count,\n";
-        code << "        'violations': []\n";
-        code << "    }\n";
-        code << "    for v in violations[:50]:  # Limit to 50\n";
-        code << "        output['violations'].append({\n";
-        code << "            'type': v.error_type,\n";
-        code << "            'message': v.message,\n";
-        code << "            'severity': v.severity.name if hasattr(v.severity, 'name') else str(v.severity),\n";
-        code << "            'position': [v.position.x / 1000000, v.position.y / 1000000] if hasattr(v, 'position') else None\n";
-        code << "        })\n";
-        code << "    print(json.dumps(output, indent=2))\n";
-    }
-    else
-    {
-        code << "    print(json.dumps({'error_count': result.error_count, 'warning_count': result.warning_count}))\n";
-    }
-
-    code << "except Exception as e:\n";
-    code << "    print(f'DRC Error: {e}')\n";
+    code << "# DRC via IPC is temporarily disabled due to a KiCad API bug\n";
+    code << "# The internal API crashes when called without a progress reporter\n";
+    code << "result = {\n";
+    code << "    'status': 'error',\n";
+    code << "    'message': 'pcb_run_drc is temporarily disabled due to a crash bug in KiCad IPC API. '\n";
+    code << "               'Run DRC manually from the PCB editor: Inspect > Design Rules Checker.',\n";
+    code << "    'workaround': 'Use the PCB editor UI to run DRC: Inspect menu > Design Rules Checker'\n";
+    code << "}\n";
+    code << "print(json.dumps(result, indent=2))\n";
 
     return code.str();
 }

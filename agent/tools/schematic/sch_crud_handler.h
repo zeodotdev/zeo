@@ -23,11 +23,11 @@
 #include "../tool_handler.h"
 
 /**
- * Handler for schematic CRUD operations via kipy IPC.
- * Handles: sch_add, sch_update, sch_delete, sch_batch_delete
+ * Handler for schematic CRUD and navigation operations via kipy IPC.
+ * Handles: sch_add, sch_update, sch_delete, sch_batch_delete, sch_open_sheet
  *
  * These tools work on the LIVE schematic through the kipy Python API,
- * allowing real-time creation, modification, and deletion of schematic elements.
+ * allowing real-time creation, modification, deletion, and navigation.
  */
 class SCH_CRUD_HANDLER : public TOOL_HANDLER
 {
@@ -64,6 +64,17 @@ private:
      * Generate Python code for sch_batch_delete operation.
      */
     std::string GenerateBatchDeleteCode( const nlohmann::json& aInput ) const;
+
+    /**
+     * Generate Python code for sch_open_sheet operation.
+     */
+    std::string GenerateOpenSheetCode( const nlohmann::json& aInput ) const;
+
+    /**
+     * Generate common Python code header for file fallback operations.
+     * Includes imports, file loading, and save function.
+     */
+    std::string GenerateFileFallbackHeader() const;
 
     /**
      * Helper to escape strings for Python code generation.

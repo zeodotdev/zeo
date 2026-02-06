@@ -123,6 +123,14 @@ void* LLM_REQUEST_THREAD::Entry()
     requestBody["messages"] = m_messages;
     requestBody["stream"] = true;
 
+    // Set max_tokens based on model limits
+    // claude-opus-4-6 has a max output of 128000 tokens
+    // claude-sonnet-4-5 has a max output of 131072 tokens
+    if( apiModel == "claude-opus-4-6" )
+        requestBody["max_tokens"] = 128000;
+    else
+        requestBody["max_tokens"] = 131072;
+
     // Add tools
     if( !m_tools.empty() )
     {

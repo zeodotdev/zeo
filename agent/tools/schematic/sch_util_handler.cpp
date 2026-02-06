@@ -1,0 +1,296 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include "sch_util_handler.h"
+#include <sstream>
+
+
+bool SCH_UTIL_HANDLER::CanHandle( const std::string& aToolName ) const
+{
+    return aToolName == "sch_annotate" ||
+           aToolName == "sch_save" ||
+           aToolName == "sch_get_nets";
+}
+
+
+std::string SCH_UTIL_HANDLER::Execute( const std::string& aToolName, const nlohmann::json& aInput )
+{
+    // All utility tools require IPC execution - should not be called directly
+    return "Error: " + aToolName + " requires IPC execution. Use GetIPCCommand() instead.";
+}
+
+
+std::string SCH_UTIL_HANDLER::GetDescription( const std::string& aToolName,
+                                               const nlohmann::json& aInput ) const
+{
+    if( aToolName == "sch_annotate" )
+    {
+        std::string scope = aInput.value( "scope", "unannotated_only" );
+        if( scope == "all" )
+            return "Annotating all symbols";
+        return "Annotating unannotated symbols";
+    }
+    else if( aToolName == "sch_save" )
+    {
+        return "Saving schematic";
+    }
+    else if( aToolName == "sch_get_nets" )
+    {
+        return "Getting net list";
+    }
+
+    return "Executing " + aToolName;
+}
+
+
+bool SCH_UTIL_HANDLER::RequiresIPC( const std::string& aToolName ) const
+{
+    return aToolName == "sch_annotate" ||
+           aToolName == "sch_save" ||
+           aToolName == "sch_get_nets";
+}
+
+
+std::string SCH_UTIL_HANDLER::GetIPCCommand( const std::string& aToolName,
+                                              const nlohmann::json& aInput ) const
+{
+    std::string code;
+
+    if( aToolName == "sch_annotate" )
+        code = GenerateAnnotateCode( aInput );
+    else if( aToolName == "sch_save" )
+        code = GenerateSaveCode( aInput );
+    else if( aToolName == "sch_get_nets" )
+        code = GenerateGetNetsCode( aInput );
+
+    return "run_shell sch " + code;
+}
+
+
+std::string SCH_UTIL_HANDLER::GenerateAnnotateCode( const nlohmann::json& aInput ) const
+{
+    std::ostringstream code;
+
+    std::string scope = aInput.value( "scope", "unannotated_only" );
+    std::string sortBy = aInput.value( "sort_by", "x_position" );
+
+    code << "import json\n";
+    code << "\n";
+    code << "try:\n";
+    code << "    # Get symbols before annotation for comparison\n";
+    code << "    symbols_before = {}\n";
+    code << "    for sym in sch.symbols.get_all():\n";
+    code << "        ref = getattr(sym, 'reference', '?')\n";
+    code << "        symbols_before[str(sym.id.value) if hasattr(sym, 'id') and hasattr(sym.id, 'value') else str(getattr(sym, 'id', ''))] = ref\n";
+    code << "\n";
+    code << "    # Determine annotation options\n";
+    code << "    annotate_all = " << ( scope == "all" ? "True" : "False" ) << "\n";
+    code << "    sort_by = '" << sortBy << "'\n";
+    code << "\n";
+    code << "    # Map sort_by to kipy's sort order constants if available\n";
+    code << "    sort_order = None\n";
+    code << "    if hasattr(sch.symbols, 'SORT_BY_X'):\n";
+    code << "        if sort_by == 'x_position':\n";
+    code << "            sort_order = sch.symbols.SORT_BY_X\n";
+    code << "        elif sort_by == 'y_position':\n";
+    code << "            sort_order = sch.symbols.SORT_BY_Y\n";
+    code << "        elif sort_by == 'reference':\n";
+    code << "            sort_order = sch.symbols.SORT_BY_REFERENCE\n";
+    code << "\n";
+    code << "    # Call the annotation API\n";
+    code << "    if hasattr(sch.symbols, 'annotate'):\n";
+    code << "        if sort_order is not None:\n";
+    code << "            sch.symbols.annotate(reset_existing=annotate_all, sort_order=sort_order)\n";
+    code << "        else:\n";
+    code << "            sch.symbols.annotate(reset_existing=annotate_all)\n";
+    code << "    elif hasattr(sch, 'annotate'):\n";
+    code << "        if sort_order is not None:\n";
+    code << "            sch.annotate(reset_existing=annotate_all, sort_order=sort_order)\n";
+    code << "        else:\n";
+    code << "            sch.annotate(reset_existing=annotate_all)\n";
+    code << "    else:\n";
+    code << "        raise AttributeError('No annotate method found in kipy API')\n";
+    code << "\n";
+    code << "    # Get symbols after annotation to show changes\n";
+    code << "    annotated = []\n";
+    code << "    for sym in sch.symbols.get_all():\n";
+    code << "        sym_id = str(sym.id.value) if hasattr(sym, 'id') and hasattr(sym.id, 'value') else str(getattr(sym, 'id', ''))\n";
+    code << "        new_ref = getattr(sym, 'reference', '?')\n";
+    code << "        old_ref = symbols_before.get(sym_id, '?')\n";
+    code << "        if old_ref != new_ref:\n";
+    code << "            annotated.append({'uuid': sym_id, 'old_ref': old_ref, 'new_ref': new_ref})\n";
+    code << "\n";
+    code << "    result = {\n";
+    code << "        'status': 'success',\n";
+    code << "        'scope': '" << scope << "',\n";
+    code << "        'sort_by': sort_by,\n";
+    code << "        'symbols_annotated': len(annotated),\n";
+    code << "        'changes': annotated[:50]  # Limit to first 50 changes\n";
+    code << "    }\n";
+    code << "    if len(annotated) > 50:\n";
+    code << "        result['note'] = f'Showing first 50 of {len(annotated)} changes'\n";
+    code << "    print(json.dumps(result, indent=2))\n";
+    code << "\n";
+    code << "except Exception as e:\n";
+    code << "    print(json.dumps({'status': 'error', 'message': str(e)}))\n";
+
+    return code.str();
+}
+
+
+std::string SCH_UTIL_HANDLER::GenerateSaveCode( const nlohmann::json& aInput ) const
+{
+    std::ostringstream code;
+
+    code << "import json\n";
+    code << "\n";
+    code << "try:\n";
+    code << "    # Try to save the schematic via kipy API\n";
+    code << "    if hasattr(sch, 'save'):\n";
+    code << "        sch.save()\n";
+    code << "    elif hasattr(sch, 'document') and hasattr(sch.document, 'save'):\n";
+    code << "        sch.document.save()\n";
+    code << "    elif hasattr(sch, 'file') and hasattr(sch.file, 'save'):\n";
+    code << "        sch.file.save()\n";
+    code << "    else:\n";
+    code << "        raise AttributeError('No save method found in kipy API')\n";
+    code << "\n";
+    code << "    # Get file path if available for confirmation\n";
+    code << "    file_path = ''\n";
+    code << "    if hasattr(sch, 'file_path'):\n";
+    code << "        file_path = str(sch.file_path)\n";
+    code << "    elif hasattr(sch, 'document') and hasattr(sch.document, 'path'):\n";
+    code << "        file_path = str(sch.document.path)\n";
+    code << "\n";
+    code << "    result = {\n";
+    code << "        'status': 'success',\n";
+    code << "        'message': 'Schematic saved successfully'\n";
+    code << "    }\n";
+    code << "    if file_path:\n";
+    code << "        result['file_path'] = file_path\n";
+    code << "    print(json.dumps(result, indent=2))\n";
+    code << "\n";
+    code << "except Exception as e:\n";
+    code << "    print(json.dumps({'status': 'error', 'message': str(e)}))\n";
+
+    return code.str();
+}
+
+
+std::string SCH_UTIL_HANDLER::GenerateGetNetsCode( const nlohmann::json& aInput ) const
+{
+    std::ostringstream code;
+
+    // Optional filter parameter
+    std::string filter = aInput.value( "filter", "" );
+    bool includeUnconnected = aInput.value( "include_unconnected", false );
+
+    code << "import json\n";
+    code << "\n";
+    code << "try:\n";
+    code << "    nets_data = []\n";
+    code << "    filter_pattern = '" << filter << "'\n";
+    code << "    include_unconnected = " << ( includeUnconnected ? "True" : "False" ) << "\n";
+    code << "\n";
+    code << "    # Try to get nets from the kipy API\n";
+    code << "    nets = None\n";
+    code << "    if hasattr(sch, 'nets'):\n";
+    code << "        if hasattr(sch.nets, 'get_all'):\n";
+    code << "            nets = sch.nets.get_all()\n";
+    code << "        elif hasattr(sch.nets, 'items'):\n";
+    code << "            nets = list(sch.nets.items())\n";
+    code << "        elif callable(sch.nets):\n";
+    code << "            nets = sch.nets()\n";
+    code << "    elif hasattr(sch, 'get_nets'):\n";
+    code << "        nets = sch.get_nets()\n";
+    code << "\n";
+    code << "    if nets is None:\n";
+    code << "        # Fallback: Build net list from symbols and their connections\n";
+    code << "        nets_dict = {}\n";
+    code << "        for sym in sch.symbols.get_all():\n";
+    code << "            ref = getattr(sym, 'reference', '?')\n";
+    code << "            if hasattr(sym, 'pins'):\n";
+    code << "                for pin in sym.pins:\n";
+    code << "                    pin_name = getattr(pin, 'name', getattr(pin, 'number', '?'))\n";
+    code << "                    pin_num = getattr(pin, 'number', pin_name)\n";
+    code << "                    net_name = getattr(pin, 'net', getattr(pin, 'net_name', ''))\n";
+    code << "                    if net_name:\n";
+    code << "                        if net_name not in nets_dict:\n";
+    code << "                            nets_dict[net_name] = []\n";
+    code << "                        nets_dict[net_name].append({'ref': ref, 'pin': str(pin_num), 'pin_name': str(pin_name)})\n";
+    code << "        \n";
+    code << "        for net_name, pins in nets_dict.items():\n";
+    code << "            if filter_pattern and filter_pattern not in net_name:\n";
+    code << "                continue\n";
+    code << "            nets_data.append({\n";
+    code << "                'name': net_name,\n";
+    code << "                'pins': pins,\n";
+    code << "                'pin_count': len(pins)\n";
+    code << "            })\n";
+    code << "    else:\n";
+    code << "        # Process nets from API\n";
+    code << "        for net in nets:\n";
+    code << "            # Handle both object and tuple formats\n";
+    code << "            if isinstance(net, tuple):\n";
+    code << "                net_name, net_obj = net\n";
+    code << "            else:\n";
+    code << "                net_name = getattr(net, 'name', str(net))\n";
+    code << "                net_obj = net\n";
+    code << "            \n";
+    code << "            if filter_pattern and filter_pattern not in net_name:\n";
+    code << "                continue\n";
+    code << "            \n";
+    code << "            # Get connected pins\n";
+    code << "            pins = []\n";
+    code << "            if hasattr(net_obj, 'pins'):\n";
+    code << "                for pin in net_obj.pins:\n";
+    code << "                    pin_ref = getattr(pin, 'reference', getattr(pin, 'ref', '?'))\n";
+    code << "                    pin_num = getattr(pin, 'number', getattr(pin, 'pin', '?'))\n";
+    code << "                    pin_name = getattr(pin, 'name', '')\n";
+    code << "                    pins.append({'ref': str(pin_ref), 'pin': str(pin_num), 'pin_name': str(pin_name)})\n";
+    code << "            elif hasattr(net_obj, 'connections'):\n";
+    code << "                for conn in net_obj.connections:\n";
+    code << "                    pins.append({'ref': str(getattr(conn, 'ref', '?')), 'pin': str(getattr(conn, 'pin', '?'))})\n";
+    code << "            \n";
+    code << "            # Skip unconnected nets if not requested\n";
+    code << "            if not include_unconnected and len(pins) < 2:\n";
+    code << "                continue\n";
+    code << "            \n";
+    code << "            nets_data.append({\n";
+    code << "                'name': net_name,\n";
+    code << "                'pins': pins,\n";
+    code << "                'pin_count': len(pins)\n";
+    code << "            })\n";
+    code << "\n";
+    code << "    # Sort by net name\n";
+    code << "    nets_data.sort(key=lambda x: x['name'])\n";
+    code << "\n";
+    code << "    result = {\n";
+    code << "        'status': 'success',\n";
+    code << "        'net_count': len(nets_data),\n";
+    code << "        'nets': nets_data\n";
+    code << "    }\n";
+    code << "    print(json.dumps(result, indent=2))\n";
+    code << "\n";
+    code << "except Exception as e:\n";
+    code << "    import traceback\n";
+    code << "    print(json.dumps({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}))\n";
+
+    return code.str();
+}

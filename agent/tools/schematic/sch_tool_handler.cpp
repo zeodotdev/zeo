@@ -25,6 +25,7 @@
 #include "../kicad_file/sexpr_util.h"
 #include <wx/string.h>
 #include <regex>
+#include <sstream>
 
 namespace
 {
@@ -142,8 +143,10 @@ std::string EnsureElementHasUuid( const std::string& aElement,
 // Static list of tool names this handler supports
 static const char* SCH_TOOL_NAMES[] = {
     "sch_get_summary",
+    "sch_file_summary",
+    "sch_live_summary",
     "sch_read_section",
-    "sch_modify",
+    // "sch_modify",  // DISABLED: Use sch_add/sch_update/sch_delete instead
     "sch_validate",
     "sch_export_spice_netlist"
 };
@@ -162,12 +165,16 @@ bool SCH_TOOL_HANDLER::CanHandle( const std::string& aToolName ) const
 
 std::string SCH_TOOL_HANDLER::Execute( const std::string& aToolName, const nlohmann::json& aInput )
 {
-    if( aToolName == "sch_get_summary" )
+    if( aToolName == "sch_get_summary" || aToolName == "sch_file_summary" )
         return ExecuteGetSummary( aInput );
+    else if( aToolName == "sch_live_summary" )
+        // sch_live_summary requires IPC - if Execute is called, IPC failed
+        return "Error: sch_live_summary requires IPC execution. Schematic editor must be open.";
     else if( aToolName == "sch_read_section" )
         return ExecuteReadSection( aInput );
-    else if( aToolName == "sch_modify" )
-        return ExecuteModify( aInput );
+    // DISABLED: Use sch_add/sch_update/sch_delete instead
+    // else if( aToolName == "sch_modify" )
+    //     return ExecuteModify( aInput );
     else if( aToolName == "sch_validate" )
         return ExecuteValidate( aInput );
     else if( aToolName == "sch_export_spice_netlist" )
@@ -185,17 +192,22 @@ std::string SCH_TOOL_HANDLER::GetDescription( const std::string& aToolName,
 
     if( aToolName == "sch_get_summary" )
         return "Getting summary of " + fileName;
+    else if( aToolName == "sch_file_summary" )
+        return "Reading file summary of " + fileName;
+    else if( aToolName == "sch_live_summary" )
+        return "Getting live summary from editor";
     else if( aToolName == "sch_read_section" )
     {
         std::string section = aInput.value( "section", "all" );
         return "Reading " + section + " from " + fileName;
     }
-    else if( aToolName == "sch_modify" )
-    {
-        std::string operation = aInput.value( "operation", "modify" );
-        std::string elementType = aInput.value( "element_type", "element" );
-        return operation + " " + elementType + " in " + fileName;
-    }
+    // DISABLED: Use sch_add/sch_update/sch_delete instead
+    // else if( aToolName == "sch_modify" )
+    // {
+    //     std::string operation = aInput.value( "operation", "modify" );
+    //     std::string elementType = aInput.value( "element_type", "element" );
+    //     return operation + " " + elementType + " in " + fileName;
+    // }
     else if( aToolName == "sch_validate" )
         return "Validating " + fileName;
     else if( aToolName == "sch_export_spice_netlist" )
@@ -440,4 +452,248 @@ std::string SCH_TOOL_HANDLER::ExecuteExportSpiceNetlist( const nlohmann::json& a
                "and kicad-cli is available.";
 
     return netlist;
+}
+
+
+bool SCH_TOOL_HANDLER::RequiresIPC( const std::string& aToolName ) const
+{
+    // sch_get_summary: prefers IPC, falls back to file
+    // sch_live_summary: requires IPC (no fallback)
+    // sch_file_summary: never uses IPC (file only)
+    return aToolName == "sch_get_summary" || aToolName == "sch_live_summary";
+}
+
+
+std::string SCH_TOOL_HANDLER::GetIPCCommand( const std::string& aToolName,
+                                              const nlohmann::json& aInput ) const
+{
+    if( aToolName != "sch_get_summary" && aToolName != "sch_live_summary" )
+        return "";
+
+    std::string filePath = aInput.value( "file_path", "" );
+    bool isLiveSummary = ( aToolName == "sch_live_summary" );
+
+    std::ostringstream code;
+
+    code << "import json, sys, os\n"
+         << "\n"
+         << "file_path = " << nlohmann::json( filePath ).dump() << "\n"
+         << "\n"
+         << "try:\n"
+         << "    # Query live state via IPC\n"
+         << "    symbols = sch.symbols.get_all()\n"
+         << "    wires = sch.crud.get_wires()\n"
+         << "    junctions = sch.crud.get_junctions()\n"
+         << "    labels = sch.labels.get_all()\n"
+         << "    no_connects = sch.crud.get_no_connects()\n"
+         << "    sheets = sch.crud.get_sheets()\n"
+         << "    # Get bus entries if available\n"
+         << "    bus_entries = []\n"
+         << "    try:\n"
+         << "        if hasattr(sch, 'buses') and hasattr(sch.buses, 'get_bus_entries'):\n"
+         << "            bus_entries = sch.buses.get_bus_entries()\n"
+         << "        elif hasattr(sch.crud, 'get_bus_entries'):\n"
+         << "            bus_entries = sch.crud.get_bus_entries()\n"
+         << "    except:\n"
+         << "        pass\n"
+         << "\n"
+         << "    # Get document info if available\n"
+         << "    doc_info = {}\n"
+         << "    try:\n"
+         << "        doc = sch.document\n"
+         << "        if hasattr(doc, 'version'):\n"
+         << "            doc_info['version'] = doc.version\n"
+         << "        if hasattr(doc, 'uuid'):\n"
+         << "            doc_info['uuid'] = str(doc.uuid)\n"
+         << "        if hasattr(doc, 'paper'):\n"
+         << "            doc_info['paper'] = doc.paper\n"
+         << "        if hasattr(doc, 'title'):\n"
+         << "            doc_info['title'] = doc.title\n"
+         << "    except:\n"
+         << "        pass\n"
+         << "\n"
+         << "    # Helper to extract position from various formats (Vector2, dict, tuple)\n"
+         << "    def get_pos(obj, scale=1000000):\n"
+         << "        if obj is None:\n"
+         << "            return [0, 0]\n"
+         << "        if hasattr(obj, 'x') and hasattr(obj, 'y'):\n"
+         << "            return [obj.x / scale, obj.y / scale]\n"
+         << "        if isinstance(obj, dict):\n"
+         << "            return [obj.get('x', 0) / scale, obj.get('y', 0) / scale]\n"
+         << "        if isinstance(obj, (list, tuple)) and len(obj) >= 2:\n"
+         << "            return [obj[0] / scale, obj[1] / scale]\n"
+         << "        return [0, 0]\n"
+         << "\n"
+         << "    # Helper to rotate a point around origin by angle (degrees)\n"
+         << "    import math\n"
+         << "    def rotate_point(x, y, angle_deg):\n"
+         << "        if angle_deg == 0:\n"
+         << "            return x, y\n"
+         << "        angle_rad = math.radians(angle_deg)\n"
+         << "        cos_a = math.cos(angle_rad)\n"
+         << "        sin_a = math.sin(angle_rad)\n"
+         << "        return x * cos_a - y * sin_a, x * sin_a + y * cos_a\n"
+         << "\n"
+         << "    # Format symbols with pin positions\n"
+         << "    symbol_data = []\n"
+         << "    for sym in symbols:\n"
+         << "        # Convert lib_id to string (it may be a LibraryIdentifier object)\n"
+         << "        lib_id_str = ''\n"
+         << "        if hasattr(sym, 'lib_id'):\n"
+         << "            lib_id = sym.lib_id\n"
+         << "            if hasattr(lib_id, 'to_string'):\n"
+         << "                lib_id_str = lib_id.to_string()\n"
+         << "            elif hasattr(lib_id, '__str__'):\n"
+         << "                lib_id_str = str(lib_id)\n"
+         << "            else:\n"
+         << "                lib_id_str = repr(lib_id)\n"
+         << "        \n"
+         << "        # Get symbol position and angle for pin transformation\n"
+         << "        sym_pos = get_pos(getattr(sym, 'position', None))\n"
+         << "        sym_angle = sym.angle if hasattr(sym, 'angle') else 0\n"
+         << "        mirror_x = getattr(sym, 'mirror_x', False)\n"
+         << "        mirror_y = getattr(sym, 'mirror_y', False)\n"
+         << "        \n"
+         << "        sym_info = {\n"
+         << "            'uuid': str(sym.id.value) if hasattr(sym, 'id') else '',\n"
+         << "            'lib_id': lib_id_str,\n"
+         << "            'ref': sym.reference if hasattr(sym, 'reference') else '',\n"
+         << "            'value': sym.value if hasattr(sym, 'value') else '',\n"
+         << "            'pos': sym_pos,\n"
+         << "            'angle': sym_angle,\n"
+         << "            'unit': sym.unit if hasattr(sym, 'unit') else 1,\n"
+         << "            'pins': []\n"
+         << "        }\n"
+         << "        # Get pin positions - for placed symbols, pin.position is already absolute\n"
+         << "        if hasattr(sym, 'pins'):\n"
+         << "            for pin in sym.pins:\n"
+         << "                try:\n"
+         << "                    abs_pos = None\n"
+         << "                    \n"
+         << "                    # First try the IPC method for transformed position\n"
+         << "                    if hasattr(sch.symbols, 'get_transformed_pin_position'):\n"
+         << "                        try:\n"
+         << "                            pin_pos = sch.symbols.get_transformed_pin_position(sym, pin.number)\n"
+         << "                            if pin_pos:\n"
+         << "                                abs_pos = get_pos(pin_pos)\n"
+         << "                        except:\n"
+         << "                            pass\n"
+         << "                    \n"
+         << "                    # Fallback: pin.position on placed symbols is already absolute (transformed)\n"
+         << "                    # Do NOT add sym_pos - it's already included in the position\n"
+         << "                    if not abs_pos or (abs_pos[0] == 0 and abs_pos[1] == 0):\n"
+         << "                        pin_pos = get_pos(getattr(pin, 'position', None))\n"
+         << "                        if pin_pos and (pin_pos[0] != 0 or pin_pos[1] != 0):\n"
+         << "                            abs_pos = pin_pos  # Already absolute, no transformation needed\n"
+         << "                    \n"
+         << "                    if abs_pos:\n"
+         << "                        sym_info['pins'].append({\n"
+         << "                            'number': pin.number,\n"
+         << "                            'name': getattr(pin, 'name', ''),\n"
+         << "                            'pos': abs_pos\n"
+         << "                        })\n"
+         << "                except:\n"
+         << "                    pass\n"
+         << "        symbol_data.append(sym_info)\n"
+         << "\n"
+         << "    # Format wires\n"
+         << "    wire_data = []\n"
+         << "    for wire in wires:\n"
+         << "        wire_data.append({\n"
+         << "            'uuid': str(wire.id.value) if hasattr(wire, 'id') else '',\n"
+         << "            'start': get_pos(getattr(wire, 'start', None)),\n"
+         << "            'end': get_pos(getattr(wire, 'end', None))\n"
+         << "        })\n"
+         << "\n"
+         << "    # Format junctions\n"
+         << "    junction_data = []\n"
+         << "    for junc in junctions:\n"
+         << "        junction_data.append({\n"
+         << "            'uuid': str(junc.id.value) if hasattr(junc, 'id') else '',\n"
+         << "            'pos': get_pos(getattr(junc, 'position', None))\n"
+         << "        })\n"
+         << "\n"
+         << "    # Format labels\n"
+         << "    label_data = []\n"
+         << "    for lbl in labels:\n"
+         << "        label_data.append({\n"
+         << "            'uuid': str(lbl.id.value) if hasattr(lbl, 'id') else '',\n"
+         << "            'text': lbl.text if hasattr(lbl, 'text') else '',\n"
+         << "            'pos': get_pos(getattr(lbl, 'position', None)),\n"
+         << "            'type': type(lbl).__name__\n"
+         << "        })\n"
+         << "\n"
+         << "    # Format no_connects\n"
+         << "    nc_data = []\n"
+         << "    for nc in no_connects:\n"
+         << "        nc_data.append({\n"
+         << "            'uuid': str(nc.id.value) if hasattr(nc, 'id') else '',\n"
+         << "            'pos': get_pos(getattr(nc, 'position', None))\n"
+         << "        })\n"
+         << "\n"
+         << "    # Format sheets with full details\n"
+         << "    sheet_data = []\n"
+         << "    for sheet in sheets:\n"
+         << "        sheet_data.append({\n"
+         << "            'uuid': str(sheet.id.value) if hasattr(sheet, 'id') else '',\n"
+         << "            'name': sheet.name if hasattr(sheet, 'name') else '',\n"
+         << "            'file': sheet.filename if hasattr(sheet, 'filename') else ''\n"
+         << "        })\n"
+         << "\n"
+         << "    # Format bus entries\n"
+         << "    bus_entry_data = []\n"
+         << "    for entry in bus_entries:\n"
+         << "        entry_info = {\n"
+         << "            'uuid': str(entry.id.value) if hasattr(entry, 'id') else '',\n"
+         << "            'pos': get_pos(getattr(entry, 'position', None)),\n"
+         << "        }\n"
+         << "        # Get size/end point if available\n"
+         << "        if hasattr(entry, 'size'):\n"
+         << "            entry_info['size'] = get_pos(entry.size)\n"
+         << "        if hasattr(entry, 'end'):\n"
+         << "            entry_info['end'] = get_pos(entry.end)\n"
+         << "        bus_entry_data.append(entry_info)\n"
+         << "\n"
+         << "    summary = {\n"
+         << "        'source': 'ipc',\n"
+         << "        'file': os.path.basename(file_path) if file_path else '',\n"
+         << "        'version': doc_info.get('version', 0),\n"
+         << "        'uuid': doc_info.get('uuid', ''),\n"
+         << "        'paper': doc_info.get('paper', ''),\n"
+         << "        'title': doc_info.get('title', ''),\n"
+         << "        'symbols': symbol_data,\n"
+         << "        'wires': wire_data,\n"
+         << "        'junctions': junction_data,\n"
+         << "        'labels': label_data,\n"
+         << "        'no_connects': nc_data,\n"
+         << "        'sheets': sheet_data,\n"
+         << "        'bus_entries': bus_entry_data,\n"
+         << "        'counts': {\n"
+         << "            'symbols': len(symbols),\n"
+         << "            'wires': len(wires),\n"
+         << "            'junctions': len(junctions),\n"
+         << "            'labels': len(labels),\n"
+         << "            'no_connects': len(no_connects),\n"
+         << "            'sheets': len(sheets),\n"
+         << "            'bus_entries': len(bus_entries)\n"
+         << "        }\n"
+         << "    }\n"
+         << "    print(json.dumps(summary, indent=2))\n"
+         << "\n"
+         << "except Exception as e:\n";
+
+    if( isLiveSummary )
+    {
+        // sch_live_summary: fail hard if IPC fails (no file fallback)
+        code << "    print(json.dumps({'status': 'error', 'message': f'IPC failed: {e}. Schematic editor must be open.'}))\n";
+    }
+    else
+    {
+        // sch_get_summary: signal for file-based fallback
+        code << "    # IPC failed - signal for file-based fallback\n"
+             << "    print(f'IPC_FALLBACK_REQUIRED: {e}', file=sys.stderr)\n"
+             << "    print(json.dumps({'status': 'ipc_fallback', 'error': str(e)}))\n";
+    }
+
+    return "run_shell sch " + code.str();
 }

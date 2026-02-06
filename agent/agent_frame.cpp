@@ -92,7 +92,7 @@ static wxString FormatToolResult( const std::string& aRawResult )
         result.Replace( "&", "&amp;" );
         result.Replace( "<", "&lt;" );
         result.Replace( ">", "&gt;" );
-        return result;
+        return "<code class=\"language-json\">" + result + "</code>";
     }
     catch( ... )
     {
@@ -160,36 +160,66 @@ static wxString GetToolResultPreview( const std::string& aRawResult, int aMaxLen
 }
 
 
-// Helper: Build the collapsible HTML for a tool result block.
+// Helper: Escape a string for embedding in a JS single-quoted string literal.
+static wxString EscapeForJs( const wxString& s )
+{
+    wxString escaped = s;
+    escaped.Replace( "\\", "\\\\" );
+    escaped.Replace( "'", "\\'" );
+    escaped.Replace( "\n", "\\n" );
+    escaped.Replace( "\r", "\\r" );
+    return escaped;
+}
+
+
+// Helper: Build the full tool result component HTML in "Running..." state.
+// Includes the collapsible body (initially empty/hidden) so the JS callback
+// can populate it on completion without replacing the element.
+static wxString BuildRunningToolHtml( int aIndex, const wxString& aDesc )
+{
+    return wxString::Format(
+        "<div id=\"tool-result-%d\" class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
+        "<a href=\"toggle:toolresult:%d\" "
+        "class=\"tool-result-header p-3 px-3 no-underline flex items-center gap-2\">"
+        "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+        "<span class=\"tool-status text-text-muted text-[12px] ml-auto\"><i>Running...</i></span>"
+        "</a>"
+        "<div class=\"tool-result-body p-3 pt-0 border-t border-border-dark\" "
+        "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
+        "</div>"
+        "</div>",
+        aIndex, aIndex, aDesc, aIndex );
+}
+
+
+// Helper: Build the collapsible HTML for a completed tool result block.
+// Has a stable id="tool-result-N" matching the running box it replaces.
 static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
                                      const wxString& aStatusClass, const wxString& aStatusText,
                                      const wxString& aFullFormatted,
                                      const wxString& aImageHtml, bool aExpanded )
 {
-    wxString expandedClass = aExpanded ? " expanded" : "";
     wxString displayStyle = aExpanded ? "block" : "none";
-    wxString chevronClass = aExpanded ? " expanded" : "";
 
     wxString html = wxString::Format(
-        "<div class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
-        // Collapsed header: tool name left, status right
+        "<div id=\"tool-result-%d\" class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
+        // Clickable header: same layout as the Running box
         "<a href=\"toggle:toolresult:%d\" "
         "class=\"tool-result-header p-3 px-3 no-underline flex items-center gap-2\">"
-        "<span class=\"toggle-chevron%s\">&#9654;</span>"
         "<span class=\"text-text-secondary text-[12px]\">%s</span>"
         "<span class=\"%s text-[12px] ml-auto\"><strong>%s</strong></span>"
         "</a>"
         // Expanded content (hidden by default)
-        "<div class=\"p-3 pt-0 border-t border-border-dark%s\" "
+        "<div class=\"p-3 pt-0 border-t border-border-dark\" "
         "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:%s;\">"
         "<pre class=\"text-text-secondary font-mono text-[12px] whitespace-pre-wrap break-words m-0 mt-2\">%s</pre>"
         "%s"
         "</div>"
         "</div>",
         aIndex,
-        chevronClass,
+        aIndex,
         aDesc, aStatusClass, aStatusText,
-        expandedClass, aIndex, displayStyle,
+        aIndex, displayStyle,
         aFullFormatted,
         aImageHtml );
 
@@ -434,6 +464,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Initialize tool result toggle state
     m_toolResultCounter = 0;
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
 
     // Bind Model Change Event
     m_modelChoice->Bind( wxEVT_CHOICE, &AGENT_FRAME::OnModelSelection, this );
@@ -873,9 +905,17 @@ wxString AGENT_FRAME::BuildStreamingContent()
         for( int i = 0; i < m_generatingDots; i++ )
             dots += ".";
 
-        // Show tool name if a tool is being generated
+        // Show tool call box with "Running..." when a tool name is known
         if( !m_generatingToolName.IsEmpty() )
-            streamingContent += "<font color='#888888'>" + m_generatingToolName + dots + "</font>";
+        {
+            streamingContent += wxString::Format(
+                "<div class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
+                "<div class=\"p-3 px-3 flex items-center gap-2\">"
+                "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+                "<span class=\"text-text-muted text-[12px] ml-auto\"><i>Running%s</i></span>"
+                "</div></div>",
+                m_generatingToolName, dots );
+        }
         else
             streamingContent += "<font color='#888888'>" + dots + "</font>";
     }
@@ -1382,6 +1422,8 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_isThinking = false;
     m_pendingToolCalls = nlohmann::json::array();
     m_toolResultCounter = 0;
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
     m_historicalToolResultExpanded.clear();
     m_stopRequested = false;
     m_userScrolledUp = false;
@@ -1500,6 +1542,8 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     m_toolCallHtml.Clear();
     m_currentThinkingIndex = -1;
     m_toolResultCounter = 0;
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
 
     AppendHtml( "<br><p><i>(Stopped)</i></p>" );
     m_actionButton->SetLabel( "Send" );
@@ -2077,6 +2121,8 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
     m_historicalToolResultExpanded.clear();
     m_currentThinkingIndex = -1;
     m_toolResultCounter = 0;
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
 }
 
 
@@ -2931,6 +2977,10 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     StopGeneratingAnimation();
     m_isThinking = false;
 
+    // Flush streaming content to remove the generating box from the DOM
+    // before finalization bakes the current content permanently
+    FlushStreamingContentUpdate( true );
+
     // Finalize the current streaming div so the agent's response text stays in place
     if( m_chatWindow )
     {
@@ -2940,14 +2990,7 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     // Update m_fullHtmlContent to reflect finalized state (no more streaming-content ID)
     m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
 
-    // Add a new streaming content div for tool UI and subsequent response
-    wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
-    AppendHtml( streamingDiv );
-
-    // Capture HTML state AFTER adding new streaming div
-    m_htmlBeforeAgentResponse = m_fullHtmlContent;
-
-    // Now clear streaming state in controller (text is baked into m_htmlBeforeAgentResponse)
+    // Now clear streaming state in controller (text is baked above)
     if( m_chatController )
         m_chatController->ClearStreamingState();
 
@@ -2965,6 +3008,23 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
 
     // Store tool description for result display
     m_lastToolDesc = wxString::FromUTF8( data->description );
+
+    // Place the tool result component in the permanent DOM for ALL tools.
+    // OnChatToolComplete will update the status and populate the body via JS callback.
+    {
+        int idx = m_toolResultCounter++;
+        wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
+        m_activeRunningHtml = BuildRunningToolHtml( idx, desc );
+        m_activeToolResultIdx = idx;
+
+        // Append running box to permanent DOM
+        AppendHtml( m_activeRunningHtml );
+
+        // Create new streaming div after the running box
+        wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
+        AppendHtml( streamingDiv );
+        m_htmlBeforeAgentResponse = m_fullHtmlContent;
+    }
 
     // Handle open_editor specially - requires user approval only if not already open
     if( data->toolName == "open_editor" )
@@ -3251,17 +3311,8 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         return;
     }
 
-    // Generate tool call HTML with "Running..." status - same box style as completed
-    m_toolCallHtml = wxString::Format(
-        "<div class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
-        "<div class=\"p-3 px-3 flex items-center gap-2\">"
-        "<span class=\"text-text-secondary text-[12px]\">%s</span>"
-        "<span class=\"text-text-muted text-[12px] ml-auto\"><i>Running...</i></span>"
-        "</div></div>",
-        m_lastToolDesc );
-
-    UpdateAgentResponse();
-    // Auto-scroll handled by CSS flex-direction: column-reverse
+    // Tool result lives outside streaming div - keep m_toolCallHtml clear
+    m_toolCallHtml.Clear();
 
     delete data;
 }
@@ -3311,12 +3362,61 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
             + "\" style=\"max-width:100%; border-radius:6px; margin:8px 0;\" />";
     }
 
-    // Build collapsible tool result HTML (collapsed by default)
-    wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
-    int idx = m_toolResultCounter++;
+    // Update the existing tool result component via JS callback
+    wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
+    int idx = m_activeToolResultIdx;
 
-    m_toolCallHtml = BuildToolResultHtml( idx, desc, statusClass, statusText,
-                                          fullFormatted, imageHtml, false );
+    // Build the text-only body content (no image - image is appended separately to avoid
+    // passing megabytes of base64 data in a single JS string literal)
+    wxString textBody = wxString::Format(
+        "<pre class=\"text-text-secondary font-mono text-[12px] whitespace-pre-wrap "
+        "break-words m-0 mt-2\">%s</pre>",
+        fullFormatted );
+
+    // Update status and text body in the existing DOM element
+    if( m_chatWindow )
+    {
+        m_chatWindow->RunScriptAsync( wxString::Format(
+            "updateToolResult(%d, '%s', '%s', '%s');",
+            idx,
+            EscapeForJs( statusClass ),
+            EscapeForJs( statusText ),
+            EscapeForJs( textBody ) ) );
+
+        // Append image via chunked data URI (avoids multi-MB JS string literals)
+        if( data->hasImage && !data->imageBase64.empty() )
+        {
+            wxString prefix = "data:" + wxString::FromUTF8( data->imageMediaType )
+                + ";base64,";
+            m_chatWindow->RunScriptAsync( wxString::Format(
+                "toolImgBegin(%d, '%s');", idx, EscapeForJs( prefix ) ) );
+
+            // Send base64 data in ~100KB chunks
+            const wxString b64 = wxString::FromUTF8( data->imageBase64 );
+            const size_t chunkSize = 100000;
+
+            for( size_t i = 0; i < b64.length(); i += chunkSize )
+            {
+                wxString chunk = b64.Mid( i, chunkSize );
+                m_chatWindow->RunScriptAsync( wxString::Format(
+                    "toolImgChunk('%s');", EscapeForJs( chunk ) ) );
+            }
+
+            m_chatWindow->RunScriptAsync( wxString::Format(
+                "toolImgEnd(%d);", idx ) );
+        }
+    }
+
+    // Update internal HTML tracking (replace running HTML with full completed HTML)
+    wxString completedHtml = BuildToolResultHtml( idx, desc, statusClass, statusText,
+                                                  fullFormatted, imageHtml, false );
+
+    if( !m_activeRunningHtml.IsEmpty() )
+    {
+        m_fullHtmlContent.Replace( m_activeRunningHtml, completedHtml );
+        m_htmlBeforeAgentResponse.Replace( m_activeRunningHtml, completedHtml );
+    }
+    m_activeRunningHtml.Clear();
 
     // After schematic tools complete successfully, trigger editor refresh for live UI feedback
     if( data->success && data->toolName == "sch_modify" )
@@ -3422,6 +3522,8 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
     m_thinkingExpanded = false;
     m_currentThinkingIndex = -1;
     m_toolResultCounter = 0;
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
 
     // NOTE: Don't call RenderChatHistory() here - content is already in DOM from streaming.
     // RenderChatHistory() is only for loading saved conversations from disk.
@@ -3653,6 +3755,8 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
     m_historicalToolResultExpanded.clear();
     m_currentThinkingIndex = -1;
     m_toolResultCounter = 0;
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
 
     // Render the loaded chat history
     RenderChatHistory();

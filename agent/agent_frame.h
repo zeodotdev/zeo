@@ -190,6 +190,10 @@ private:
     std::set<int>          m_historicalToolResultExpanded; // Which historical tool results are expanded
     int                    m_toolResultCounter;            // Running counter for tool result indices
 
+    // Active tool result - lives in permanent DOM, not streaming div
+    wxString               m_activeRunningHtml;            // Running box HTML for replacement on completion
+    int                    m_activeToolResultIdx;           // Index of tool-result-N element
+
     void                   RenderChatHistory();           // Re-render chat history with current toggle states
 
     void     AppendHtml( const wxString& aHtml );

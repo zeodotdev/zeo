@@ -756,9 +756,13 @@ void CHAT_CONTROLLER::ExecuteNextTool()
     EmitEvent( EVT_CHAT_TOOL_START, ChatToolStartData( tool->tool_use_id, tool->tool_name,
                                                         desc.ToStdString(), tool->tool_input ) );
 
-    // Handle open_editor specially - requires user approval in the UI
-    // The frame will show an approval dialog and call HandleToolResult() when done
-    if( tool->tool_name == "open_editor" )
+    // Handle frame-managed tools specially - they are processed by AGENT_FRAME in OnChatToolStart
+    // and call HandleToolResult() when done
+    if( tool->tool_name == "open_editor" ||
+        tool->tool_name == "close_editor" ||
+        tool->tool_name == "check_status" ||
+        tool->tool_name == "save" ||
+        tool->tool_name == "create_project" )
     {
         // Don't execute synchronously - wait for frame to handle via HandleToolResult
         return;

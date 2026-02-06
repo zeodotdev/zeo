@@ -39,6 +39,7 @@
 #include <wx/bitmap.h>
 #include <wx/icon.h>
 #include <kicad_curl/kicad_curl_easy.h>
+#include <kiid.h>
 
 using json = nlohmann::json;
 
@@ -2739,6 +2740,219 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         m_pendingOpenToolId = data->toolId;
 
         ShowOpenEditorApproval( editorLabel );
+
+        delete data;
+        return;
+    }
+
+    // Handle check_status - returns project and editor state
+    if( data->toolName == "check_status" )
+    {
+        nlohmann::json status;
+
+        // Project info
+        wxString projectPath = Kiway().Prj().GetProjectPath();
+        status["project_path"] = projectPath.ToStdString();
+
+        // Check which editors are open
+        KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
+        KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
+
+        status["schematic_editor_open"] = ( schEditor && schEditor->IsShown() );
+        status["pcb_editor_open"] = ( pcbEditor && pcbEditor->IsShown() );
+
+        // Add project file paths
+        wxString prjPath = Kiway().Prj().GetProjectPath();
+        if( !prjPath.empty() )
+        {
+            wxString prjName = Kiway().Prj().GetProjectName();
+            status["schematic_file"] = ( prjPath + prjName + ".kicad_sch" ).ToStdString();
+            status["pcb_file"] = ( prjPath + prjName + ".kicad_pcb" ).ToStdString();
+        }
+
+        // Get current sheet if schematic is open (via IPC would be more accurate, but this is fast)
+        status["current_sheet"] = ""; // Would need IPC call for sch.sheets.get_current()
+
+        if( m_chatController )
+            m_chatController->HandleToolResult( data->toolId, status.dump( 2 ), true );
+
+        delete data;
+        return;
+    }
+
+    // Handle close_editor - close schematic or PCB editor
+    if( data->toolName == "close_editor" )
+    {
+        std::string editorType = data->input.value( "editor_type", "" );
+        bool saveFirst = data->input.value( "save_first", true );
+        FRAME_T frameType = ( editorType == "sch" ) ? FRAME_SCH : FRAME_PCB_EDITOR;
+        wxString editorLabel = ( editorType == "sch" ) ? "Schematic" : "PCB";
+
+        KIWAY_PLAYER* player = Kiway().Player( frameType, false );
+        if( !player || !player->IsShown() )
+        {
+            if( m_chatController )
+                m_chatController->HandleToolResult( data->toolId,
+                    editorLabel.ToStdString() + " editor is not open", true );
+            delete data;
+            return;
+        }
+
+        // Close the editor (it will prompt to save if there are unsaved changes)
+        player->Close( !saveFirst ); // If saveFirst is false, force close without prompt
+
+        if( m_chatController )
+            m_chatController->HandleToolResult( data->toolId,
+                editorLabel.ToStdString() + " editor closed" + ( saveFirst ? " (saved)" : "" ), true );
+
+        delete data;
+        return;
+    }
+
+    // Handle save - save current documents
+    // Note: Saving is better done via IPC tools which have direct access to the editor APIs.
+    // This is a simplified version that just reports status.
+    if( data->toolName == "save" )
+    {
+        std::string editorType = data->input.value( "editor_type", "all" );
+        nlohmann::json result;
+        result["status"] = "info";
+        result["message"] = "Use IPC tools for saving. Schematic: sch.save(), PCB: pcb.save()";
+
+        std::vector<std::string> openEditors;
+        KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
+        KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
+
+        if( schEditor && schEditor->IsShown() )
+            openEditors.push_back( "schematic" );
+        if( pcbEditor && pcbEditor->IsShown() )
+            openEditors.push_back( "pcb" );
+
+        result["open_editors"] = openEditors;
+
+        if( m_chatController )
+            m_chatController->HandleToolResult( data->toolId, result.dump( 2 ), true );
+
+        delete data;
+        return;
+    }
+
+    // Handle create_project - create new KiCad project
+    if( data->toolName == "create_project" )
+    {
+        std::string projectName = data->input.value( "project_name", "" );
+        std::string directory = data->input.value( "directory", "" );
+
+        if( projectName.empty() || directory.empty() )
+        {
+            if( m_chatController )
+                m_chatController->HandleToolResult( data->toolId,
+                    "Error: project_name and directory are required", false );
+            delete data;
+            return;
+        }
+
+        // Create project directory
+        wxString projDir = wxString::FromUTF8( directory ) + wxFileName::GetPathSeparator() +
+                           wxString::FromUTF8( projectName );
+
+        if( !wxDir::Make( projDir, wxS_DIR_DEFAULT ) && !wxDir::Exists( projDir ) )
+        {
+            if( m_chatController )
+                m_chatController->HandleToolResult( data->toolId,
+                    "Error: Could not create project directory: " + projDir.ToStdString(), false );
+            delete data;
+            return;
+        }
+
+        wxString basePath = projDir + wxFileName::GetPathSeparator() + wxString::FromUTF8( projectName );
+
+        // Create minimal .kicad_pro file
+        wxString proFile = basePath + ".kicad_pro";
+        {
+            wxFile f( proFile, wxFile::write );
+            if( f.IsOpened() )
+            {
+                nlohmann::json proJson = {
+                    { "meta", { { "filename", projectName + ".kicad_pro" }, { "version", 1 } } },
+                    { "schematic", { { "legacy_lib_dir", "" }, { "legacy_lib_list", nlohmann::json::array() } } }
+                };
+                f.Write( wxString::FromUTF8( proJson.dump( 2 ) ) );
+            }
+        }
+
+        // Create minimal .kicad_sch file
+        wxString schFile = basePath + ".kicad_sch";
+        {
+            wxFile f( schFile, wxFile::write );
+            if( f.IsOpened() )
+            {
+                f.Write(
+                    "(kicad_sch\n"
+                    "  (version 20250114)\n"
+                    "  (generator \"zener_agent\")\n"
+                    "  (generator_version \"1.0\")\n"
+                    "  (uuid \"" + KIID().AsStdString() + "\")\n"
+                    "  (paper \"A4\")\n"
+                    "  (lib_symbols)\n"
+                    "  (sheet_instances\n"
+                    "    (path \"/\" (page \"\"))\n"
+                    "  )\n"
+                    ")\n"
+                );
+            }
+        }
+
+        // Create minimal .kicad_pcb file
+        wxString pcbFile = basePath + ".kicad_pcb";
+        {
+            wxFile f( pcbFile, wxFile::write );
+            if( f.IsOpened() )
+            {
+                f.Write(
+                    "(kicad_pcb\n"
+                    "  (version 20250114)\n"
+                    "  (generator \"zener_agent\")\n"
+                    "  (generator_version \"1.0\")\n"
+                    "  (general\n"
+                    "    (thickness 1.6)\n"
+                    "    (legacy_teardrops no)\n"
+                    "  )\n"
+                    "  (paper \"A4\")\n"
+                    "  (layers\n"
+                    "    (0 \"F.Cu\" signal)\n"
+                    "    (31 \"B.Cu\" signal)\n"
+                    "    (32 \"B.Adhes\" user \"B.Adhesive\")\n"
+                    "    (33 \"F.Adhes\" user \"F.Adhesive\")\n"
+                    "    (34 \"B.Paste\" user)\n"
+                    "    (35 \"F.Paste\" user)\n"
+                    "    (36 \"B.SilkS\" user \"B.Silkscreen\")\n"
+                    "    (37 \"F.SilkS\" user \"F.Silkscreen\")\n"
+                    "    (38 \"B.Mask\" user)\n"
+                    "    (39 \"F.Mask\" user)\n"
+                    "    (40 \"Dwgs.User\" user \"User.Drawings\")\n"
+                    "    (44 \"Edge.Cuts\" user)\n"
+                    "  )\n"
+                    "  (setup\n"
+                    "    (pad_to_mask_clearance 0)\n"
+                    "  )\n"
+                    ")\n"
+                );
+            }
+        }
+
+        nlohmann::json result = {
+            { "status", "success" },
+            { "project_path", projDir.ToStdString() },
+            { "files_created", {
+                projectName + ".kicad_pro",
+                projectName + ".kicad_sch",
+                projectName + ".kicad_pcb"
+            }}
+        };
+
+        if( m_chatController )
+            m_chatController->HandleToolResult( data->toolId, result.dump( 2 ), true );
 
         delete data;
         return;

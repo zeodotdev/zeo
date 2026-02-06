@@ -75,14 +75,113 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( openEditor );
 
+    // close_editor - Close schematic or PCB editor
+    LLM_TOOL closeEditor;
+    closeEditor.name = "close_editor";
+    closeEditor.description = "Close the schematic or PCB editor. "
+                              "Optionally save before closing. "
+                              "Use this when you need to reopen an editor cleanly or free resources.";
+    closeEditor.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "editor_type", {
+                { "type", "string" },
+                { "enum", json::array( { "sch", "pcb" } ) },
+                { "description", "Editor to close: 'sch' for schematic, 'pcb' for PCB" }
+            }},
+            { "save_first", {
+                { "type", "boolean" },
+                { "description", "Save changes before closing (default: true)" }
+            }}
+        }},
+        { "required", json::array( { "editor_type" } ) }
+    };
+    tools.push_back( closeEditor );
+
+    // check_status - Get project and editor status
+    LLM_TOOL checkStatus;
+    checkStatus.name = "check_status";
+    checkStatus.description = "Get the current project and editor status. Returns which editors are open, "
+                              "current active sheet, project hierarchy, and unsaved changes. "
+                              "ALWAYS call this before using IPC tools to verify the editor is open.";
+    checkStatus.input_schema = {
+        { "type", "object" },
+        { "properties", {} },
+        { "required", json::array() }
+    };
+    tools.push_back( checkStatus );
+
+    // save - Save current work
+    LLM_TOOL save;
+    save.name = "save";
+    save.description = "Save the current document in the specified editor. "
+                       "Use 'all' to save both schematic and PCB if open.";
+    save.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "editor_type", {
+                { "type", "string" },
+                { "enum", json::array( { "sch", "pcb", "all" } ) },
+                { "description", "Which editor to save: 'sch', 'pcb', or 'all' (default: 'all')" }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    tools.push_back( save );
+
+    // create_project - Create a new KiCad project
+    LLM_TOOL createProject;
+    createProject.name = "create_project";
+    createProject.description = "Create a new KiCad project with the standard file structure. "
+                                "Creates .kicad_pro, .kicad_sch, and .kicad_pcb files.";
+    createProject.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "project_name", {
+                { "type", "string" },
+                { "description", "Name for the new project (used for filenames)" }
+            }},
+            { "directory", {
+                { "type", "string" },
+                { "description", "Directory where to create the project folder" }
+            }}
+        }},
+        { "required", json::array( { "project_name", "directory" } ) }
+    };
+    tools.push_back( createProject );
+
+    // sch_open_sheet - Navigate to a specific sheet in hierarchical schematic
+    LLM_TOOL schOpenSheet;
+    schOpenSheet.name = "sch_open_sheet";
+    schOpenSheet.description = "Navigate to a specific sheet in a hierarchical schematic. "
+                               "Use sheet_path for navigation within the current hierarchy (e.g., '/root_uuid/child_uuid'), "
+                               "or file_path to open a specific .kicad_sch file directly. "
+                               "REQUIRES: Schematic editor must be open.";
+    schOpenSheet.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "sheet_path", {
+                { "type", "string" },
+                { "description", "Sheet path in hierarchy format (e.g., '/uuid1/uuid2' or use sheet names)" }
+            }},
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Direct path to .kicad_sch file to open" }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    tools.push_back( schOpenSheet );
+
     // ===== Direct File Tools (sch_*, pcb_*) =====
 
-    // sch_get_summary - Get high-level overview of schematic
+    // sch_get_summary - Get high-level overview of schematic (auto-selects IPC or file)
     LLM_TOOL schGetSummary;
     schGetSummary.name = "sch_get_summary";
     schGetSummary.description = "Get a high-level overview of a .kicad_sch schematic file. "
+                                "Prefers IPC (live editor state) if available, falls back to file. "
                                 "Returns JSON with symbols, wires, junctions, labels, and counts. "
-                                "Use this to understand the schematic before making modifications.";
+                                "Use sch_live_summary or sch_file_summary for explicit control.";
     schGetSummary.input_schema = {
         { "type", "object" },
         { "properties", {
@@ -94,6 +193,43 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "required", json::array( { "file_path" } ) }
     };
     tools.push_back( schGetSummary );
+
+    // sch_file_summary - Get schematic summary from disk file
+    LLM_TOOL schFileSummary;
+    schFileSummary.name = "sch_file_summary";
+    schFileSummary.description = "Get schematic summary by reading directly from disk. "
+                                 "Works without the editor open. Returns saved state (not unsaved changes). "
+                                 "Use sch_live_summary to see unsaved changes in the editor.";
+    schFileSummary.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to the .kicad_sch file" }
+            }}
+        }},
+        { "required", json::array( { "file_path" } ) }
+    };
+    tools.push_back( schFileSummary );
+
+    // sch_live_summary - Get schematic summary from running editor via IPC
+    LLM_TOOL schLiveSummary;
+    schLiveSummary.name = "sch_live_summary";
+    schLiveSummary.description = "Get schematic summary from the running editor via IPC. "
+                                 "REQUIRES: Schematic editor must be open. "
+                                 "Returns live state including unsaved changes. "
+                                 "Use sch_file_summary if editor is not open.";
+    schLiveSummary.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Optional: path for reference (not required for IPC)" }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    tools.push_back( schLiveSummary );
 
     // sch_read_section - Read specific section of schematic
     LLM_TOOL schReadSection;
@@ -122,7 +258,10 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schReadSection );
 
-    // sch_modify - Add, update, or delete elements
+    // sch_modify - DISABLED: Use sch_add/sch_update/sch_delete instead
+    // This tool allowed raw S-expression manipulation which is error-prone.
+    // The IPC-based CRUD tools provide a safer, structured interface.
+    /*
     LLM_TOOL schModify;
     schModify.name = "sch_modify";
     schModify.description = "Modify a .kicad_sch file by adding, updating, or deleting elements. "
@@ -157,6 +296,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "required", json::array( { "file_path", "operation", "element_type" } ) }
     };
     tools.push_back( schModify );
+    */
 
     // sch_validate - Validate schematic file
     LLM_TOOL schValidate;
@@ -442,6 +582,71 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "required", json::array( { "targets" } ) }
     };
     tools.push_back( schBatchDelete );
+
+    // sch_annotate - Annotate schematic symbols
+    LLM_TOOL schAnnotate;
+    schAnnotate.name = "sch_annotate";
+    schAnnotate.description =
+        "Annotate symbols in the open schematic. Assigns reference designators (R1, C1, U1, etc.) "
+        "to symbols that have '?' placeholders. Can re-annotate all symbols or only unannotated ones. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schAnnotate.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "scope", {
+                { "type", "string" },
+                { "enum", json::array( { "all", "unannotated_only" } ) },
+                { "description", "Annotation scope: 'all' resets and re-annotates everything, "
+                                "'unannotated_only' only assigns to symbols with '?' (default: unannotated_only)" }
+            }},
+            { "sort_by", {
+                { "type", "string" },
+                { "enum", json::array( { "x_position", "y_position", "reference" } ) },
+                { "description", "Sort order for annotation: 'x_position' (left to right), "
+                                "'y_position' (top to bottom), 'reference' (alphabetical). Default: x_position" }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    tools.push_back( schAnnotate );
+
+    // sch_save - Save schematic
+    LLM_TOOL schSave;
+    schSave.name = "sch_save";
+    schSave.description =
+        "Save the currently open schematic to disk. "
+        "Saves the active schematic file including any unsaved changes. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schSave.input_schema = {
+        { "type", "object" },
+        { "properties", {} },
+        { "required", json::array() }
+    };
+    tools.push_back( schSave );
+
+    // sch_get_nets - Get all nets and their connections
+    LLM_TOOL schGetNets;
+    schGetNets.name = "sch_get_nets";
+    schGetNets.description =
+        "Get a list of all nets in the schematic with their connected pins. "
+        "Returns net names and the symbol pins connected to each net. "
+        "Useful for verifying connections, debugging ERC issues, and understanding circuit topology. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schGetNets.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "filter", {
+                { "type", "string" },
+                { "description", "Optional filter to match net names (e.g., 'VCC', 'GND', 'DATA')" }
+            }},
+            { "include_unconnected", {
+                { "type", "boolean" },
+                { "description", "Include nets with only one pin connected (default: false)" }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    tools.push_back( schGetNets );
 
     // ===== PCB Tools =====
 

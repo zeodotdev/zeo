@@ -129,11 +129,50 @@ nlohmann::json SymbolInfo::ToJson() const
         { "uuid", uuid },
         { "ref", reference },
         { "value", value },
-        { "lib", libId },
+        { "lib_id", libId },
         { "pos", { x, y } },
         { "angle", angle },
         { "unit", unit },
         { "pins", pinsJson }
+    };
+}
+
+
+nlohmann::json WireInfo::ToJson() const
+{
+    return {
+        { "uuid", uuid },
+        { "start", { startX, startY } },
+        { "end", { endX, endY } }
+    };
+}
+
+
+nlohmann::json JunctionInfo::ToJson() const
+{
+    return {
+        { "uuid", uuid },
+        { "pos", { x, y } }
+    };
+}
+
+
+nlohmann::json LabelInfo::ToJson() const
+{
+    return {
+        { "uuid", uuid },
+        { "text", text },
+        { "type", type },
+        { "pos", { x, y } }
+    };
+}
+
+
+nlohmann::json NoConnectInfo::ToJson() const
+{
+    return {
+        { "uuid", uuid },
+        { "pos", { x, y } }
     };
 }
 
@@ -148,31 +187,59 @@ nlohmann::json SheetInfo::ToJson() const
 }
 
 
+nlohmann::json SummaryCounts::ToJson() const
+{
+    return {
+        { "symbols", symbols },
+        { "wires", wires },
+        { "junctions", junctions },
+        { "labels", labels },
+        { "no_connects", noConnects },
+        { "sheets", sheets }
+    };
+}
+
+
 nlohmann::json SchematicSummary::ToJson() const
 {
     nlohmann::json symbolsJson = nlohmann::json::array();
     for( const auto& sym : symbols )
-    {
         symbolsJson.push_back( sym.ToJson() );
-    }
+
+    nlohmann::json wiresJson = nlohmann::json::array();
+    for( const auto& wire : wires )
+        wiresJson.push_back( wire.ToJson() );
+
+    nlohmann::json junctionsJson = nlohmann::json::array();
+    for( const auto& junc : junctions )
+        junctionsJson.push_back( junc.ToJson() );
+
+    nlohmann::json labelsJson = nlohmann::json::array();
+    for( const auto& lbl : labels )
+        labelsJson.push_back( lbl.ToJson() );
+
+    nlohmann::json noConnectsJson = nlohmann::json::array();
+    for( const auto& nc : noConnects )
+        noConnectsJson.push_back( nc.ToJson() );
 
     nlohmann::json sheetsJson = nlohmann::json::array();
     for( const auto& sheet : sheets )
-    {
         sheetsJson.push_back( sheet.ToJson() );
-    }
 
     return {
+        { "source", source },
         { "file", file },
         { "version", version },
         { "uuid", uuid },
         { "paper", paper },
         { "title", title },
         { "symbols", symbolsJson },
-        { "wires", wireCount },
-        { "junctions", junctionCount },
-        { "labels", labels },
-        { "sheets", sheetsJson }
+        { "wires", wiresJson },
+        { "junctions", junctionsJson },
+        { "labels", labelsJson },
+        { "no_connects", noConnectsJson },
+        { "sheets", sheetsJson },
+        { "counts", counts.ToJson() }
     };
 }
 
@@ -277,10 +344,10 @@ static void TransformPinPosition( double symX, double symY, double symAngle,
 SchematicSummary GetSummary( const std::string& aFilePath )
 {
     SchematicSummary summary;
+    summary.source = "file";
     summary.file = FileWriter::GetFilename( aFilePath );
     summary.version = 0;
-    summary.wireCount = 0;
-    summary.junctionCount = 0;
+    summary.counts = { 0, 0, 0, 0, 0, 0 };
 
     auto root = SexprUtil::ParseFile( aFilePath );
     if( !root || !root->IsList() )
@@ -396,23 +463,166 @@ SchematicSummary GetSummary( const std::string& aFilePath )
         }
     }
 
-    // Count wires
-    summary.wireCount = static_cast<int>( SexprUtil::FindChildren( root.get(), "wire" ).size() );
-
-    // Count junctions
-    summary.junctionCount = static_cast<int>( SexprUtil::FindChildren( root.get(), "junction" ).size() );
-
-    // Extract label names
-    auto labels = SexprUtil::FindChildren( root.get(), "label" );
-    for( const auto& lbl : labels )
+    // Extract wires with full details
+    auto wireExprs = SexprUtil::FindChildren( root.get(), "wire" );
+    for( const auto& wireExpr : wireExprs )
     {
-        auto children = lbl->GetChildren();
-        if( children && children->size() >= 2 )
+        WireInfo wireInfo;
+
+        // Get UUID
+        auto uuidChild = SexprUtil::FindFirstChild( wireExpr, "uuid" );
+        if( uuidChild )
+            wireInfo.uuid = SexprUtil::GetStringValue( uuidChild );
+
+        // Get points: (pts (xy x1 y1) (xy x2 y2))
+        auto ptsChild = SexprUtil::FindFirstChild( wireExpr, "pts" );
+        if( ptsChild )
         {
-            const SEXPR::SEXPR* nameExpr = children->at( 1 );
-            if( nameExpr->IsString() )
-                summary.labels.push_back( nameExpr->GetString() );
+            auto xyChildren = SexprUtil::FindChildren( ptsChild, "xy" );
+            if( xyChildren.size() >= 2 )
+            {
+                auto xy1 = xyChildren[0]->GetChildren();
+                auto xy2 = xyChildren[1]->GetChildren();
+                if( xy1 && xy1->size() >= 3 )
+                {
+                    wireInfo.startX = xy1->at( 1 )->IsDouble() ? xy1->at( 1 )->GetDouble() :
+                                      xy1->at( 1 )->IsInteger() ? xy1->at( 1 )->GetInteger() : 0;
+                    wireInfo.startY = xy1->at( 2 )->IsDouble() ? xy1->at( 2 )->GetDouble() :
+                                      xy1->at( 2 )->IsInteger() ? xy1->at( 2 )->GetInteger() : 0;
+                }
+                if( xy2 && xy2->size() >= 3 )
+                {
+                    wireInfo.endX = xy2->at( 1 )->IsDouble() ? xy2->at( 1 )->GetDouble() :
+                                    xy2->at( 1 )->IsInteger() ? xy2->at( 1 )->GetInteger() : 0;
+                    wireInfo.endY = xy2->at( 2 )->IsDouble() ? xy2->at( 2 )->GetDouble() :
+                                    xy2->at( 2 )->IsInteger() ? xy2->at( 2 )->GetInteger() : 0;
+                }
+            }
         }
+
+        summary.wires.push_back( wireInfo );
+    }
+
+    // Extract junctions with full details
+    auto junctionExprs = SexprUtil::FindChildren( root.get(), "junction" );
+    for( const auto& juncExpr : junctionExprs )
+    {
+        JunctionInfo juncInfo;
+
+        // Get UUID
+        auto uuidChild = SexprUtil::FindFirstChild( juncExpr, "uuid" );
+        if( uuidChild )
+            juncInfo.uuid = SexprUtil::GetStringValue( uuidChild );
+
+        // Get position
+        auto atChild = SexprUtil::FindFirstChild( juncExpr, "at" );
+        if( atChild )
+        {
+            double dummy;
+            SexprUtil::GetCoordinates( atChild, juncInfo.x, juncInfo.y, dummy );
+        }
+
+        summary.junctions.push_back( juncInfo );
+    }
+
+    // Extract labels with full details (local labels)
+    auto labelExprs = SexprUtil::FindChildren( root.get(), "label" );
+    for( const auto& lblExpr : labelExprs )
+    {
+        LabelInfo lblInfo;
+        lblInfo.type = "label";
+
+        // Get UUID
+        auto uuidChild = SexprUtil::FindFirstChild( lblExpr, "uuid" );
+        if( uuidChild )
+            lblInfo.uuid = SexprUtil::GetStringValue( uuidChild );
+
+        // Get text (second element)
+        auto children = lblExpr->GetChildren();
+        if( children && children->size() >= 2 && children->at( 1 )->IsString() )
+            lblInfo.text = children->at( 1 )->GetString();
+
+        // Get position
+        auto atChild = SexprUtil::FindFirstChild( lblExpr, "at" );
+        if( atChild )
+        {
+            double dummy;
+            SexprUtil::GetCoordinates( atChild, lblInfo.x, lblInfo.y, dummy );
+        }
+
+        summary.labels.push_back( lblInfo );
+    }
+
+    // Extract global labels
+    auto globalLabelExprs = SexprUtil::FindChildren( root.get(), "global_label" );
+    for( const auto& lblExpr : globalLabelExprs )
+    {
+        LabelInfo lblInfo;
+        lblInfo.type = "global_label";
+
+        auto uuidChild = SexprUtil::FindFirstChild( lblExpr, "uuid" );
+        if( uuidChild )
+            lblInfo.uuid = SexprUtil::GetStringValue( uuidChild );
+
+        auto children = lblExpr->GetChildren();
+        if( children && children->size() >= 2 && children->at( 1 )->IsString() )
+            lblInfo.text = children->at( 1 )->GetString();
+
+        auto atChild = SexprUtil::FindFirstChild( lblExpr, "at" );
+        if( atChild )
+        {
+            double dummy;
+            SexprUtil::GetCoordinates( atChild, lblInfo.x, lblInfo.y, dummy );
+        }
+
+        summary.labels.push_back( lblInfo );
+    }
+
+    // Extract hierarchical labels
+    auto hierLabelExprs = SexprUtil::FindChildren( root.get(), "hierarchical_label" );
+    for( const auto& lblExpr : hierLabelExprs )
+    {
+        LabelInfo lblInfo;
+        lblInfo.type = "hierarchical_label";
+
+        auto uuidChild = SexprUtil::FindFirstChild( lblExpr, "uuid" );
+        if( uuidChild )
+            lblInfo.uuid = SexprUtil::GetStringValue( uuidChild );
+
+        auto children = lblExpr->GetChildren();
+        if( children && children->size() >= 2 && children->at( 1 )->IsString() )
+            lblInfo.text = children->at( 1 )->GetString();
+
+        auto atChild = SexprUtil::FindFirstChild( lblExpr, "at" );
+        if( atChild )
+        {
+            double dummy;
+            SexprUtil::GetCoordinates( atChild, lblInfo.x, lblInfo.y, dummy );
+        }
+
+        summary.labels.push_back( lblInfo );
+    }
+
+    // Extract no_connects
+    auto ncExprs = SexprUtil::FindChildren( root.get(), "no_connect" );
+    for( const auto& ncExpr : ncExprs )
+    {
+        NoConnectInfo ncInfo;
+
+        // Get UUID
+        auto uuidChild = SexprUtil::FindFirstChild( ncExpr, "uuid" );
+        if( uuidChild )
+            ncInfo.uuid = SexprUtil::GetStringValue( uuidChild );
+
+        // Get position
+        auto atChild = SexprUtil::FindFirstChild( ncExpr, "at" );
+        if( atChild )
+        {
+            double dummy;
+            SexprUtil::GetCoordinates( atChild, ncInfo.x, ncInfo.y, dummy );
+        }
+
+        summary.noConnects.push_back( ncInfo );
     }
 
     // Extract sheet (child) references
@@ -448,6 +658,14 @@ SchematicSummary GetSummary( const std::string& aFilePath )
 
         summary.sheets.push_back( sheetInfo );
     }
+
+    // Update counts
+    summary.counts.symbols = static_cast<int>( summary.symbols.size() );
+    summary.counts.wires = static_cast<int>( summary.wires.size() );
+    summary.counts.junctions = static_cast<int>( summary.junctions.size() );
+    summary.counts.labels = static_cast<int>( summary.labels.size() );
+    summary.counts.noConnects = static_cast<int>( summary.noConnects.size() );
+    summary.counts.sheets = static_cast<int>( summary.sheets.size() );
 
     return summary;
 }

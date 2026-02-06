@@ -78,6 +78,58 @@ struct SymbolInfo
 };
 
 /**
+ * Information about a wire segment.
+ */
+struct WireInfo
+{
+    std::string uuid;
+    double      startX;
+    double      startY;
+    double      endX;
+    double      endY;
+
+    nlohmann::json ToJson() const;
+};
+
+/**
+ * Information about a junction point.
+ */
+struct JunctionInfo
+{
+    std::string uuid;
+    double      x;
+    double      y;
+
+    nlohmann::json ToJson() const;
+};
+
+/**
+ * Information about a label.
+ */
+struct LabelInfo
+{
+    std::string uuid;
+    std::string text;
+    std::string type;   // "label", "global_label", "hierarchical_label"
+    double      x;
+    double      y;
+
+    nlohmann::json ToJson() const;
+};
+
+/**
+ * Information about a no-connect marker.
+ */
+struct NoConnectInfo
+{
+    std::string uuid;
+    double      x;
+    double      y;
+
+    nlohmann::json ToJson() const;
+};
+
+/**
  * Information about a hierarchical sheet reference.
  */
 struct SheetInfo
@@ -90,20 +142,38 @@ struct SheetInfo
 };
 
 /**
+ * Summary counts for quick reference.
+ */
+struct SummaryCounts
+{
+    int symbols;
+    int wires;
+    int junctions;
+    int labels;
+    int noConnects;
+    int sheets;
+
+    nlohmann::json ToJson() const;
+};
+
+/**
  * Summary of a schematic file.
  */
 struct SchematicSummary
 {
-    std::string              file;
-    int                      version;
-    std::string              uuid;
-    std::string              paper;
-    std::string              title;
-    std::vector<SymbolInfo>  symbols;
-    int                      wireCount;
-    int                      junctionCount;
-    std::vector<std::string> labels;
-    std::vector<SheetInfo>   sheets;  // Child sheets referenced in this schematic
+    std::string                 source;     // "file" or "ipc"
+    std::string                 file;
+    int                         version;
+    std::string                 uuid;
+    std::string                 paper;
+    std::string                 title;
+    std::vector<SymbolInfo>     symbols;
+    std::vector<WireInfo>       wires;
+    std::vector<JunctionInfo>   junctions;
+    std::vector<LabelInfo>      labels;
+    std::vector<NoConnectInfo>  noConnects;
+    std::vector<SheetInfo>      sheets;
+    SummaryCounts               counts;
 
     nlohmann::json ToJson() const;
 };

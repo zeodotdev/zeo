@@ -39,6 +39,19 @@ public:
                                 const nlohmann::json& aInput ) const override;
 
     /**
+     * sch_get_summary supports IPC for live state queries.
+     * Returns true for sch_get_summary to try IPC first.
+     */
+    bool RequiresIPC( const std::string& aToolName ) const override;
+
+    /**
+     * Generate IPC command for sch_get_summary.
+     * Queries live schematic state via kipy API.
+     */
+    std::string GetIPCCommand( const std::string& aToolName,
+                               const nlohmann::json& aInput ) const override;
+
+    /**
      * Set the project path for path validation.
      * File write operations will be restricted to this directory.
      */

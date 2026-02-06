@@ -1,7 +1,6 @@
 #include "agent_frame.h"
 #include "agent_chat_history.h"
 #include "auth/agent_auth.h"
-#include "auth/agent_keychain.h"
 #include "ui/pending_changes_popup.h"
 #include "ui/history_panel.h"
 #include "rendering/agent_markdown.h"
@@ -197,7 +196,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     modelChoices.Add( "Claude 4.6 Opus" );
 
     m_modelChoice = new wxChoice( m_inputPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, modelChoices );
-    m_modelChoice->SetMinSize( wxSize( m_modelChoice->GetBestSize().x + 20, -1 ) );
+    m_modelChoice->SetMinSize( wxSize( m_modelChoice->GetBestSize().x + 10, -1 ) );
     m_modelChoice->SetSelection( 0 ); // Default to Claude 4.6 Opus
     controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
@@ -500,7 +499,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         } );
 
     // Set model on controller
-    m_chatController->SetModel( "Claude 4.5 Sonnet" );
+    m_chatController->SetModel( "Claude 4.6 Opus" );
 
     // Bind Controller Events
     Bind( EVT_CHAT_TEXT_DELTA, &AGENT_FRAME::OnChatTextDelta, this );
@@ -641,12 +640,6 @@ void AGENT_FRAME::RebuildThinkingHtml()
     escapedContent.Replace( "<", "&lt;" );
     escapedContent.Replace( ">", "&gt;" );
     escapedContent.Replace( "\n", "<br>" );
-
-    // Truncate if very long
-    if( escapedContent.length() > 5000 )
-    {
-        escapedContent = escapedContent.Left( 5000 ) + "... <i>(truncated)</i>";
-    }
 
     // Use placeholder if content is empty (during initial THINKING_START)
     // This ensures the content div exists immediately for user clicks
@@ -2022,12 +2015,6 @@ void AGENT_FRAME::RenderChatHistory()
                         escapedText.Replace( "<", "&lt;" );
                         escapedText.Replace( ">", "&gt;" );
                         escapedText.Replace( "\n", "<br>" );
-
-                        // Truncate if very long
-                        if( escapedText.length() > 5000 )
-                        {
-                            escapedText = escapedText.Left( 5000 ) + "... <i>(truncated)</i>";
-                        }
 
                         // Always render both toggle link and content (content hidden by CSS)
                         // JavaScript will toggle visibility without page reload

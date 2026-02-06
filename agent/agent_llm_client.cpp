@@ -180,6 +180,7 @@ void* LLM_REQUEST_THREAD::Entry()
     ctx.inToolInput = false;
     ctx.inThinking = false;
     ctx.inCompaction = false;
+    ctx.inServerTool = false;
 
     curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, StreamWriteCallback );
     curl_easy_setopt( curl, CURLOPT_WRITEDATA, &ctx );
@@ -356,6 +357,30 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     ctx->currentCompaction = "";
                     ctx->inCompaction = true;
                 }
+                else if( blockType == "server_tool_use" )
+                {
+                    // Server-side tool invoked (e.g., web_search)
+                    // Input is streamed via input_json_delta, so track state
+                    // and assemble the complete block at content_block_stop
+                    ctx->serverToolId = contentBlock.value( "id", "" );
+                    ctx->serverToolName = contentBlock.value( "name", "" );
+                    ctx->serverToolInput = "";
+                    ctx->inServerTool = true;
+
+                    // Post event immediately for logging/UI
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::SERVER_TOOL_USE;
+                    chunk.tool_name = ctx->serverToolName;
+                    PostLLMChunk( ctx->handler, chunk );
+                }
+                else if( blockType == "web_search_tool_result" )
+                {
+                    // Web search results returned from server
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::SERVER_TOOL_RESULT;
+                    chunk.content_block_json = contentBlock.dump();
+                    PostLLMChunk( ctx->handler, chunk );
+                }
             }
             else if( eventType == "content_block_delta" )
             {
@@ -381,7 +406,11 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                 else if( deltaType == "input_json_delta" )
                 {
                     std::string partial = delta.value( "partial_json", "" );
-                    ctx->currentToolInput += partial;
+
+                    if( ctx->inServerTool )
+                        ctx->serverToolInput += partial;
+                    else
+                        ctx->currentToolInput += partial;
                 }
                 else if( deltaType == "thinking_delta" )
                 {
@@ -431,6 +460,39 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     ctx->currentToolId.clear();
                     ctx->currentToolName.clear();
                     ctx->currentToolInput.clear();
+                }
+                else if( ctx->inServerTool )
+                {
+                    // Server tool block complete - assemble full block with accumulated input
+                    nlohmann::json serverToolBlock = {
+                        { "type", "server_tool_use" },
+                        { "id", ctx->serverToolId },
+                        { "name", ctx->serverToolName }
+                    };
+
+                    if( !ctx->serverToolInput.empty() )
+                    {
+                        try
+                        {
+                            serverToolBlock["input"] = json::parse( ctx->serverToolInput );
+                        }
+                        catch( ... )
+                        {
+                            serverToolBlock["input"] = json::object();
+                        }
+                    }
+
+                    // Re-post SERVER_TOOL_USE with complete content block JSON
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::SERVER_TOOL_USE;
+                    chunk.tool_name = ctx->serverToolName;
+                    chunk.content_block_json = serverToolBlock.dump();
+                    PostLLMChunk( ctx->handler, chunk );
+
+                    ctx->inServerTool = false;
+                    ctx->serverToolId.clear();
+                    ctx->serverToolName.clear();
+                    ctx->serverToolInput.clear();
                 }
                 else if( ctx->inThinking )
                 {
@@ -495,7 +557,7 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                 }
                 else if( stopReason == "pause_turn" )
                 {
-                    // Server tool paused - needs retry
+                    // Server tool executing - stream continues
                     if( ctx->cancelFlag && ctx->cancelFlag->load() )
                         return 0;
 

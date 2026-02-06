@@ -242,6 +242,7 @@ private:
     // -------------------------------------------------------------------------
     AgentConversationContext m_ctx;           ///< Chat state machine
     nlohmann::json           m_pendingToolCalls;  ///< Tools awaiting execution
+    nlohmann::json           m_serverToolBlocks;  ///< Server tool blocks for API context
     bool                     m_stopRequested;     ///< Cancel flag
     bool                     m_continueAfterComplete; ///< Continue generation after stream completes (for max_tokens)
 

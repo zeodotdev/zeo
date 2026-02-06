@@ -4,12 +4,15 @@
 #include <string>
 #include <functional>
 #include <map>
-#include "agent_keychain.h"
 
 /**
  * Supabase authentication manager.
  * Handles token storage and session management.
  * Authentication flow is handled by the external auth web page.
+ *
+ * Session data is stored in ~/Library/Application Support/kicad/agent_session.json
+ * with 0600 permissions (owner read/write only). Security model matches
+ * git-credential-store: file permissions are the boundary.
  */
 class AGENT_AUTH
 {
@@ -66,7 +69,7 @@ public:
     bool RefreshToken();
 
     /**
-     * Reload session from keychain.
+     * Reload session from secure storage.
      * Call this when notified that auth state changed externally.
      */
     void LoadSession();
@@ -89,20 +92,21 @@ private:
     std::string m_avatarUrl;
     long long   m_tokenExpiry; // Unix timestamp
 
-    AGENT_KEYCHAIN m_keychain;
-
-    // Save tokens to keychain
+    // Session persistence
     void SaveSession();
-
-    // Clear tokens from keychain
     void ClearSession();
+
+    // Secure file I/O (0600 permissions, atomic write)
+    std::string GetSessionFilePath();
+    bool        WriteSessionFile( const std::string& aData );
+    bool        ReadSessionFile( std::string& aData );
 
     // Check if access token is expired
     bool IsTokenExpired();
 
     // Parse query parameters from URL
     std::map<std::string, std::string> ParseQueryParams( const std::string& url );
-    
+
     // URL decode a string
     std::string UrlDecode( const std::string& value );
 };

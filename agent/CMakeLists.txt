@@ -73,7 +73,6 @@ set( AGENT_SRCS
 
     # Authentication
     auth/agent_auth.cpp
-    auth/agent_keychain.cpp
 
     # Direct file tools (sch_*, pcb_*)
     tools/tool_registry.cpp
@@ -183,18 +182,6 @@ target_link_libraries( agent
     kicommon
     # ${wxWidgets_LIBRARIES} # common/single_top.cpp doesn't need much, but let's be safe if needed
 )
-
-# Link Security framework on macOS for Keychain access
-if( APPLE )
-    target_link_libraries( agent
-        PRIVATE
-        "-framework Security"
-    )
-    target_link_libraries( agent_kiface
-        PRIVATE
-        "-framework Security"
-    )
-endif()
 
 # Ensure HTML template is generated before compiling
 add_dependencies( agent_kiface agent_html_template )

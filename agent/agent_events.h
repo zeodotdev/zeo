@@ -106,7 +106,9 @@ enum class LLMChunkType
     COMPACTION,        // Compaction block (context was compacted by API)
     END_TURN,          // Model finished (stop_reason: end_turn)
     MAX_TOKENS,        // Response truncated (stop_reason: max_tokens) - needs continuation
-    PAUSE_TURN,        // Server tool paused (stop_reason: pause_turn) - needs retry
+    PAUSE_TURN,        // Server tool paused (stop_reason: pause_turn) - stream continues
+    SERVER_TOOL_USE,   // Server-side tool invoked (e.g., web_search)
+    SERVER_TOOL_RESULT,// Server-side tool completed (e.g., web_search_tool_result)
     REFUSAL,           // Model refused request (stop_reason: refusal)
     ERROR              // Error occurred
 };
@@ -126,6 +128,7 @@ struct LLMStreamChunk
     std::string    tool_input_json; // For TOOL_USE events (serialized JSON)
     std::string    compaction_content; // For COMPACTION events (full compaction block JSON)
     std::string    error_message;  // For ERROR events
+    std::string    content_block_json; // For SERVER_TOOL_USE/SERVER_TOOL_RESULT (raw JSON)
 
     LLMStreamChunk() : type( LLMChunkType::TEXT ) {}
 };

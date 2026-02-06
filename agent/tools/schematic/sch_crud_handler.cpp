@@ -195,6 +195,16 @@ std::string SCH_CRUD_HANDLER::MmToNm( double aMm ) const
 }
 
 
+std::string SCH_CRUD_HANDLER::GenerateRefreshPreamble() const
+{
+    return
+        "# Refresh document to handle close/reopen cycles\n"
+        "if hasattr(sch, 'refresh_document'):\n"
+        "    if not sch.refresh_document():\n"
+        "        raise RuntimeError('Schematic editor not open or document not available')\n";
+}
+
+
 std::string SCH_CRUD_HANDLER::GenerateFileFallbackHeader() const
 {
     // Python code for file-based fallback operations
@@ -286,6 +296,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
 
     code << "import json, sys\n";
     code << "from kipy.geometry import Vector2\n";
+    code << "\n";
+    code << GenerateRefreshPreamble();
     code << "\n";
     code << "# Helper to safely extract ID from various object types\n";
     code << "def get_id(obj):\n";
@@ -710,6 +722,8 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput )
     code << "import json, re, sys\n";
     code << "from kipy.geometry import Vector2\n";
     code << "\n";
+    code << GenerateRefreshPreamble();
+    code << "\n";
     code << "target = '" << EscapePythonString( target ) << "'\n";
     code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
     code << "use_ipc = True\n";
@@ -814,6 +828,8 @@ std::string SCH_CRUD_HANDLER::GenerateDeleteCode( const nlohmann::json& aInput )
 
     code << "import json, re, sys\n";
     code << "\n";
+    code << GenerateRefreshPreamble();
+    code << "\n";
     code << "target = '" << EscapePythonString( target ) << "'\n";
     code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
     code << "use_ipc = True\n";
@@ -883,6 +899,8 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     std::string filePath = aInput.value( "file_path", "" );
 
     code << "import json, re, sys\n";
+    code << "\n";
+    code << GenerateRefreshPreamble();
     code << "\n";
     code << "targets = [";
     for( size_t i = 0; i < targets.size(); ++i )
@@ -964,31 +982,80 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
 
     code << "import json, sys\n";
     code << "\n";
+    code << GenerateRefreshPreamble();
+    code << "\n";
     code << "sheet_path = " << nlohmann::json( sheetPath ).dump() << "\n";
     code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
     code << "result = None\n";
     code << "\n";
     code << "try:\n";
-    code << "    # Get all sheets in the design\n";
-    code << "    sheets = sch.crud.get_sheets()\n";
+    code << "    # First try get_hierarchy which provides proper paths for navigation\n";
+    code << "    hierarchy_tree = None\n";
+    code << "    hierarchy_nodes = []  # Flattened list of (node, path_str) tuples\n";
     code << "    \n";
-    code << "    # Build hierarchy info with UUIDs\n";
+    code << "    def flatten_hierarchy(node, parent_path=''):\n";
+    code << "        \"\"\"Recursively flatten hierarchy tree into list of nodes with path strings.\"\"\"\n";
+    code << "        nodes = []\n";
+    code << "        name = getattr(node, 'name', '') or ''\n";
+    code << "        uuid = ''\n";
+    code << "        if hasattr(node, 'path') and node.path:\n";
+    code << "            sp = node.path\n";
+    code << "            if hasattr(sp, 'path') and sp.path:\n";
+    code << "                uuid = sp.path[-1].value if sp.path else ''\n";
+    code << "        \n";
+    code << "        current_path = parent_path + '/' + uuid if uuid else parent_path\n";
+    code << "        if not current_path:\n";
+    code << "            current_path = '/'\n";
+    code << "        \n";
+    code << "        nodes.append((node, name, uuid, current_path))\n";
+    code << "        \n";
+    code << "        if hasattr(node, 'children'):\n";
+    code << "            for child in node.children:\n";
+    code << "                nodes.extend(flatten_hierarchy(child, current_path))\n";
+    code << "        return nodes\n";
+    code << "    \n";
+    code << "    if hasattr(sch.sheets, 'get_hierarchy'):\n";
+    code << "        try:\n";
+    code << "            hierarchy_tree = sch.sheets.get_hierarchy()\n";
+    code << "            hierarchy_nodes = flatten_hierarchy(hierarchy_tree)\n";
+    code << "            print(f'[sch_open_sheet] Hierarchy tree has {len(hierarchy_nodes)} nodes', file=sys.stderr)\n";
+    code << "        except Exception as he:\n";
+    code << "            print(f'[sch_open_sheet] get_hierarchy failed: {he}', file=sys.stderr)\n";
+    code << "    \n";
+    code << "    # Also get sheet items for fallback\n";
+    code << "    sheets = sch.crud.get_sheets()\n";
+    code << "    print(f'[sch_open_sheet] Found {len(sheets)} sheet items', file=sys.stderr)\n";
+    code << "    \n";
+    code << "    # Build lookup dictionaries\n";
     code << "    hierarchy = []\n";
     code << "    sheet_by_name = {}\n";
     code << "    sheet_by_file = {}\n";
     code << "    sheet_by_uuid = {}\n";
     code << "    \n";
+    code << "    # Prefer hierarchy nodes (they have proper paths for navigation)\n";
+    code << "    for node, name, uuid, path_str in hierarchy_nodes:\n";
+    code << "        filename = getattr(node, 'filename', '') or ''\n";
+    code << "        info = {'name': name, 'file': filename, 'uuid': uuid, 'path': path_str}\n";
+    code << "        hierarchy.append(info)\n";
+    code << "        if name:\n";
+    code << "            sheet_by_name[name] = (node, info)\n";
+    code << "        if filename:\n";
+    code << "            sheet_by_file[filename] = (node, info)\n";
+    code << "        if uuid:\n";
+    code << "            sheet_by_uuid[uuid] = (node, info)\n";
+    code << "    \n";
+    code << "    # Add any sheet items not in hierarchy (fallback)\n";
     code << "    for sheet in sheets:\n";
     code << "        name = getattr(sheet, 'name', '')\n";
     code << "        filename = getattr(sheet, 'filename', '')\n";
     code << "        uuid = str(sheet.id.value) if hasattr(sheet, 'id') and hasattr(sheet.id, 'value') else str(getattr(sheet, 'id', getattr(sheet, 'uuid', '')))\n";
-    code << "        info = {'name': name, 'file': filename, 'uuid': uuid}\n";
-    code << "        hierarchy.append(info)\n";
-    code << "        if name:\n";
-    code << "            sheet_by_name[name] = (sheet, info)\n";
-    code << "        if filename:\n";
-    code << "            sheet_by_file[filename] = (sheet, info)\n";
-    code << "        if uuid:\n";
+    code << "        if uuid and uuid not in sheet_by_uuid:\n";
+    code << "            info = {'name': name, 'file': filename, 'uuid': uuid}\n";
+    code << "            hierarchy.append(info)\n";
+    code << "            if name:\n";
+    code << "                sheet_by_name[name] = (sheet, info)\n";
+    code << "            if filename:\n";
+    code << "                sheet_by_file[filename] = (sheet, info)\n";
     code << "            sheet_by_uuid[uuid] = (sheet, info)\n";
     code << "    \n";
     code << "    target_sheet = None\n";
@@ -1012,12 +1079,22 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
     code << "                navigated = True\n";
     code << "            target_info = {'name': 'Root', 'file': '', 'uuid': '', 'path': '/'}\n";
     code << "        elif sheet_path.startswith('/'):\n";
-    code << "            # Path format like '/uuid1/uuid2' - navigate to last UUID\n";
+    code << "            # Path format - could be '/uuid1/uuid2' or '/name' or '/name/'\n";
     code << "            parts = [p for p in sheet_path.split('/') if p]\n";
     code << "            if parts:\n";
-    code << "                last_uuid = parts[-1]\n";
-    code << "                if last_uuid in sheet_by_uuid:\n";
-    code << "                    target_sheet, target_info = sheet_by_uuid[last_uuid]\n";
+    code << "                last_part = parts[-1]\n";
+    code << "                # Try as UUID first (full path format)\n";
+    code << "                if last_part in sheet_by_uuid:\n";
+    code << "                    target_sheet, target_info = sheet_by_uuid[last_part]\n";
+    code << "                # Try as sheet name (e.g., '/Power/')\n";
+    code << "                elif last_part in sheet_by_name:\n";
+    code << "                    target_sheet, target_info = sheet_by_name[last_part]\n";
+    code << "                # Try as filename (e.g., '/Power.kicad_sch/')\n";
+    code << "                elif last_part in sheet_by_file:\n";
+    code << "                    target_sheet, target_info = sheet_by_file[last_part]\n";
+    code << "                # Try adding .kicad_sch extension\n";
+    code << "                elif last_part + '.kicad_sch' in sheet_by_file:\n";
+    code << "                    target_sheet, target_info = sheet_by_file[last_part + '.kicad_sch']\n";
     code << "        else:\n";
     code << "            # Try as sheet name first\n";
     code << "            if sheet_path in sheet_by_name:\n";
@@ -1028,6 +1105,9 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
     code << "            # Try as filename\n";
     code << "            elif sheet_path in sheet_by_file:\n";
     code << "                target_sheet, target_info = sheet_by_file[sheet_path]\n";
+    code << "            # Try adding .kicad_sch extension\n";
+    code << "            elif sheet_path + '.kicad_sch' in sheet_by_file:\n";
+    code << "                target_sheet, target_info = sheet_by_file[sheet_path + '.kicad_sch']\n";
     code << "    \n";
     code << "    # Handle file_path - open a specific .kicad_sch file\n";
     code << "    if not target_sheet and not navigated and file_path:\n";
@@ -1040,17 +1120,32 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
     code << "    \n";
     code << "    # Navigate to target sheet if found\n";
     code << "    if target_sheet and not navigated:\n";
-    code << "        # First try navigate_to with the SheetPath (most reliable)\n";
-    code << "        if hasattr(sch.sheets, 'navigate_to') and hasattr(target_sheet, 'path'):\n";
-    code << "            sch.sheets.navigate_to(target_sheet.path)\n";
-    code << "            navigated = True\n";
-    code << "        elif hasattr(sch.sheets, 'enter'):\n";
-    code << "            # enter might work with the node directly\n";
-    code << "            sch.sheets.enter(target_sheet)\n";
-    code << "            navigated = True\n";
-    code << "        elif hasattr(sch.sheets, 'open'):\n";
-    code << "            sch.sheets.open(target_sheet)\n";
-    code << "            navigated = True\n";
+    code << "        print(f'[sch_open_sheet] Attempting to navigate to sheet', file=sys.stderr)\n";
+    code << "        # First try navigate_to with the SheetPath (most reliable for hierarchy nodes)\n";
+    code << "        if hasattr(sch.sheets, 'navigate_to') and hasattr(target_sheet, 'path') and target_sheet.path:\n";
+    code << "            try:\n";
+    code << "                print(f'[sch_open_sheet] Using navigate_to with path', file=sys.stderr)\n";
+    code << "                sch.sheets.navigate_to(target_sheet.path)\n";
+    code << "                navigated = True\n";
+    code << "            except Exception as nav_err:\n";
+    code << "                print(f'[sch_open_sheet] navigate_to failed: {nav_err}', file=sys.stderr)\n";
+    code << "        \n";
+    code << "        if not navigated and hasattr(sch.sheets, 'enter'):\n";
+    code << "            try:\n";
+    code << "                # enter might work with the node directly\n";
+    code << "                print(f'[sch_open_sheet] Trying enter method', file=sys.stderr)\n";
+    code << "                sch.sheets.enter(target_sheet)\n";
+    code << "                navigated = True\n";
+    code << "            except Exception as enter_err:\n";
+    code << "                print(f'[sch_open_sheet] enter failed: {enter_err}', file=sys.stderr)\n";
+    code << "        \n";
+    code << "        if not navigated and hasattr(sch.sheets, 'open'):\n";
+    code << "            try:\n";
+    code << "                print(f'[sch_open_sheet] Trying open method', file=sys.stderr)\n";
+    code << "                sch.sheets.open(target_sheet)\n";
+    code << "                navigated = True\n";
+    code << "            except Exception as open_err:\n";
+    code << "                print(f'[sch_open_sheet] open failed: {open_err}', file=sys.stderr)\n";
     code << "    \n";
     code << "    # Build result\n";
     code << "    if navigated:\n";

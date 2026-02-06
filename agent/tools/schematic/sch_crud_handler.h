@@ -85,6 +85,12 @@ private:
      * Convert mm to nanometers (KiCad internal units).
      */
     std::string MmToNm( double aMm ) const;
+
+    /**
+     * Generate Python code preamble to refresh document specifier.
+     * This handles close/reopen cycles where the document UUID changes.
+     */
+    std::string GenerateRefreshPreamble() const;
 };
 
 #endif // SCH_CRUD_HANDLER_H

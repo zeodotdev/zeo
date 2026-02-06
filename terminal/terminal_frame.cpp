@@ -281,7 +281,10 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
                 "import kipy\n"
                 "from kipy.geometry import Vector2\n"
                 "kicad = kipy.KiCad()\n"
-                "sch = kicad.get_schematic()\n";
+                "sch = kicad.get_schematic()\n"
+                "# Refresh document specifier to handle close/reopen cycles\n"
+                "if hasattr(sch, 'refresh_document'):\n"
+                "    sch.refresh_document()\n";
         }
         else if( mode == "pcb" )
         {
@@ -448,7 +451,10 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
                 "import kipy\n"
                 "from kipy.geometry import Vector2\n"
                 "kicad = kipy.KiCad()\n"
-                "sch = kicad.get_schematic()\n";
+                "sch = kicad.get_schematic()\n"
+                "# Refresh document specifier to handle close/reopen cycles\n"
+                "if hasattr(sch, 'refresh_document'):\n"
+                "    sch.refresh_document()\n";
             return panel->RunLocalPython( initCode + actualCmd.ToStdString() );
         }
         if( modeArg == "pcb" )
@@ -504,7 +510,10 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
             "import kipy\n"
             "from kipy.geometry import Vector2\n"
             "kicad = kipy.KiCad()\n"
-            "sch = kicad.get_schematic()\n";
+            "sch = kicad.get_schematic()\n"
+            "# Refresh document specifier to handle close/reopen cycles\n"
+            "if hasattr(sch, 'refresh_document'):\n"
+            "    sch.refresh_document()\n";
         return active->RunLocalPython( initCode + rest.ToStdString() );
     }
     if( firstArg == "pcb" )
@@ -652,7 +661,10 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                 "import kipy\n"
                 "from kipy.geometry import Vector2\n"
                 "kicad = kipy.KiCad(socket_path='" + socketPath + "', timeout_ms=5000)\n"
-                "sch = kicad.get_schematic()\n";
+                "sch = kicad.get_schematic()\n"
+                "# Refresh document specifier to handle close/reopen cycles\n"
+                "if hasattr(sch, 'refresh_document'):\n"
+                "    sch.refresh_document()\n";
 
             // Begin agent transaction for concurrent editing support
             nlohmann::json beginMsg;

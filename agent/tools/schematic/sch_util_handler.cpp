@@ -112,6 +112,11 @@ std::string SCH_UTIL_HANDLER::GenerateAnnotateCode( const nlohmann::json& aInput
 
     code << "import json\n";
     code << "\n";
+    code << "# Refresh document to handle close/reopen cycles\n";
+    code << "if hasattr(sch, 'refresh_document'):\n";
+    code << "    if not sch.refresh_document():\n";
+    code << "        raise RuntimeError('Schematic editor not open or document not available')\n";
+    code << "\n";
     code << "try:\n";
     code << "    # Get symbols before annotation for comparison\n";
     code << "    symbols_before = {}\n";
@@ -169,6 +174,11 @@ std::string SCH_UTIL_HANDLER::GenerateSaveCode( const nlohmann::json& aInput ) c
 
     code << "import json\n";
     code << "\n";
+    code << "# Refresh document to handle close/reopen cycles\n";
+    code << "if hasattr(sch, 'refresh_document'):\n";
+    code << "    if not sch.refresh_document():\n";
+    code << "        raise RuntimeError('Schematic editor not open or document not available')\n";
+    code << "\n";
     code << "try:\n";
     code << "    # Try to save the schematic via kipy API\n";
     code << "    if hasattr(sch, 'save'):\n";
@@ -211,6 +221,11 @@ std::string SCH_UTIL_HANDLER::GenerateGetNetsCode( const nlohmann::json& aInput 
     bool includeUnconnected = aInput.value( "include_unconnected", false );
 
     code << "import json\n";
+    code << "\n";
+    code << "# Refresh document to handle close/reopen cycles\n";
+    code << "if hasattr(sch, 'refresh_document'):\n";
+    code << "    if not sch.refresh_document():\n";
+    code << "        raise RuntimeError('Schematic editor not open or document not available')\n";
     code << "\n";
     code << "try:\n";
     code << "    nets_data = []\n";

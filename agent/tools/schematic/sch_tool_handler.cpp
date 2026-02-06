@@ -477,6 +477,11 @@ std::string SCH_TOOL_HANDLER::GetIPCCommand( const std::string& aToolName,
 
     code << "import json, sys, os\n"
          << "\n"
+         << "# Refresh document to handle close/reopen cycles\n"
+         << "if hasattr(sch, 'refresh_document'):\n"
+         << "    if not sch.refresh_document():\n"
+         << "        raise RuntimeError('Schematic editor not open or document not available')\n"
+         << "\n"
          << "file_path = " << nlohmann::json( filePath ).dump() << "\n"
          << "\n"
          << "try:\n"

@@ -2682,10 +2682,10 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         std::string filePath = data->input.value( "file_path", "" );
         m_pendingOpenFilePath.Clear();
 
-        // Validate file path if provided
+        // Validate file path if provided, or auto-detect from project
+        wxString projectPath = Kiway().Prj().GetProjectPath();
         if( !filePath.empty() )
         {
-            wxString projectPath = Kiway().Prj().GetProjectPath();
             auto pathResult = FileWriter::ValidatePathInProject( filePath, projectPath.ToStdString() );
             if( !pathResult.valid )
             {
@@ -2698,38 +2698,131 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
             }
             m_pendingOpenFilePath = wxString::FromUTF8( pathResult.resolvedPath );
         }
+        else
+        {
+            // No file path provided - auto-detect project's default file
+            wxString projectName = Kiway().Prj().GetProjectName();
+            if( !projectName.IsEmpty() && !projectPath.IsEmpty() )
+            {
+                wxString defaultFile;
+                if( editorType == "sch" )
+                    defaultFile = projectPath + projectName + ".kicad_sch";
+                else
+                    defaultFile = projectPath + projectName + ".kicad_pcb";
+
+                if( wxFileExists( defaultFile ) )
+                {
+                    m_pendingOpenFilePath = defaultFile;
+                    wxLogInfo( "open_editor: Auto-detected project file: %s", defaultFile );
+                }
+            }
+        }
 
         // Check if editor is already open (false = don't create if not existing)
         KIWAY_PLAYER* existingPlayer = Kiway().Player( frameType, false );
         if( existingPlayer && existingPlayer->IsShown() )
         {
-            // Editor already open - just focus it and optionally open file
-            if( existingPlayer->IsIconized() )
-                existingPlayer->Iconize( false );
-            existingPlayer->Raise();
-
-            // If file path provided, open it in the existing editor
+            // Check if we need to load a different file
             if( !m_pendingOpenFilePath.IsEmpty() )
             {
-                std::vector<wxString> files;
-                files.push_back( m_pendingOpenFilePath );
-                existingPlayer->OpenProjectFiles( files );
-                m_pendingOpenFilePath.Clear();
+                // Get current file from the editor
+                wxString currentFile = existingPlayer->GetCurrentFileName();
+                wxFileName currentFn( currentFile );
+                wxFileName requestedFn( m_pendingOpenFilePath );
 
-                if( m_chatController )
-                    m_chatController->HandleToolResult( data->toolId,
-                        editorLabel.ToStdString() + " editor opened file: " + filePath, true );
+                // Normalize paths for comparison
+                currentFn.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_LONG );
+                requestedFn.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_LONG );
+
+                wxLogInfo( "open_editor: Current file='%s', Requested file='%s'",
+                           currentFn.GetFullPath(), requestedFn.GetFullPath() );
+
+                // Check if editor has a different file open
+                if( !currentFile.IsEmpty() && currentFn.GetFullPath() != requestedFn.GetFullPath() )
+                {
+                    wxLogInfo( "open_editor: Different file '%s' vs '%s' - closing editor to reload",
+                               currentFn.GetFullPath(), requestedFn.GetFullPath() );
+
+                    // Close the editor to force a fresh load
+                    // Note: This will discard any unsaved changes in the old file
+                    // TODO: Consider adding a save-before-close mechanism
+                    existingPlayer->Close( true );
+
+                    // Now reopen the editor with the correct file
+                    // Don't show approval dialog since user already approved opening the editor
+                    KIWAY_PLAYER* newPlayer = Kiway().Player( frameType, true );
+                    if( newPlayer )
+                    {
+                        std::vector<wxString> files;
+                        files.push_back( m_pendingOpenFilePath );
+                        newPlayer->OpenProjectFiles( files );
+                        newPlayer->Show( true );
+                        newPlayer->Raise();
+
+                        wxString openedFile = m_pendingOpenFilePath;
+                        m_pendingOpenFilePath.Clear();
+
+                        if( m_chatController )
+                            m_chatController->HandleToolResult( data->toolId,
+                                editorLabel.ToStdString() + " editor reloaded with file: " + openedFile.ToStdString(), true );
+                    }
+                    else
+                    {
+                        m_pendingOpenFilePath.Clear();
+                        if( m_chatController )
+                            m_chatController->HandleToolResult( data->toolId,
+                                "Error: Failed to reopen " + editorLabel.ToStdString() + " editor", false );
+                    }
+
+                    delete data;
+                    return;
+                }
+                else
+                {
+                    // Same file or no current file - just focus and reload
+                    if( existingPlayer->IsIconized() )
+                        existingPlayer->Iconize( false );
+                    existingPlayer->Raise();
+
+                    // Try to reload the file
+                    std::vector<wxString> files;
+                    files.push_back( m_pendingOpenFilePath );
+                    bool loadResult = existingPlayer->OpenProjectFiles( files );
+                    wxString openedFile = m_pendingOpenFilePath;
+                    m_pendingOpenFilePath.Clear();
+
+                    if( loadResult )
+                    {
+                        if( m_chatController )
+                            m_chatController->HandleToolResult( data->toolId,
+                                editorLabel.ToStdString() + " editor opened file: " + openedFile.ToStdString(), true );
+                    }
+                    else
+                    {
+                        wxLogWarning( "open_editor: OpenProjectFiles returned false for '%s'", openedFile );
+                        if( m_chatController )
+                            m_chatController->HandleToolResult( data->toolId,
+                                editorLabel.ToStdString() + " editor: file load may have been blocked by unsaved changes", true );
+                    }
+
+                    delete data;
+                    return;
+                }
             }
             else
             {
-                // Send success result immediately
+                // No file path - just focus existing editor
+                if( existingPlayer->IsIconized() )
+                    existingPlayer->Iconize( false );
+                existingPlayer->Raise();
+
                 if( m_chatController )
                     m_chatController->HandleToolResult( data->toolId,
                         editorLabel.ToStdString() + " editor is already open", true );
-            }
 
-            delete data;
-            return;
+                delete data;
+                return;
+            }
         }
 
         // Editor not open - store pending request and show approval dialog

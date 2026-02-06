@@ -319,6 +319,16 @@ private:
     void AddAssistantToolUseToHistory( const nlohmann::json& aToolUseBlocks );
 
     /**
+     * Common implementation for sending a user message.
+     * Handles title generation, project context injection, history push,
+     * streaming state reset, state transition, and LLM request start.
+     *
+     * @param aText The user's message text
+     * @param aContent Pre-built content JSON (array for multi-content, null to use plain text)
+     */
+    void DoSendMessage( const std::string& aText, const nlohmann::json& aContent );
+
+    /**
      * Sanitize API context before sending to ensure valid message format.
      * Fixes issues like consecutive user messages that can occur after errors.
      */

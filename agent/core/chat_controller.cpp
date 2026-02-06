@@ -87,11 +87,41 @@ CHAT_CONTROLLER::~CHAT_CONTROLLER()
 void CHAT_CONTROLLER::SendMessage( const std::string& aText )
 {
     wxLogInfo( "CHAT_CONTROLLER::SendMessage called with text: %s", aText.c_str() );
+    DoSendMessage( aText, nlohmann::json() );
+}
 
+
+void CHAT_CONTROLLER::SendMessageWithAttachments(
+        const std::string& aText,
+        const std::vector<UserAttachment>& aAttachments )
+{
+    wxLogInfo( "CHAT_CONTROLLER::SendMessageWithAttachments called with %zu attachments",
+               aAttachments.size() );
+
+    // Build multi-content array (Anthropic format): images first, then text
+    nlohmann::json content = nlohmann::json::array();
+
+    for( const auto& att : aAttachments )
+    {
+        content.push_back( {
+            { "type", "image" },
+            { "source", {
+                { "type", "base64" },
+                { "media_type", att.media_type },
+                { "data", att.base64_data }
+            } }
+        } );
+    }
+
+    DoSendMessage( aText, content );
+}
+
+
+void CHAT_CONTROLLER::DoSendMessage( const std::string& aText, const nlohmann::json& aContent )
+{
     if( !CanAcceptInput() )
     {
-        wxLogInfo( "CHAT_CONTROLLER::SendMessage - rejected, controller is busy" );
-        wxLogWarning( "CHAT_CONTROLLER::SendMessage called while busy" );
+        wxLogWarning( "CHAT_CONTROLLER::DoSendMessage called while busy" );
         return;
     }
 
@@ -105,7 +135,7 @@ void CHAT_CONTROLLER::SendMessage( const std::string& aText )
 
     if( userMessageCount == 0 )
     {
-        m_firstUserMessage = aText;
+        m_firstUserMessage = aText.empty() ? "(Image attachment)" : aText;
         GenerateTitle();
     }
 
@@ -119,104 +149,34 @@ void CHAT_CONTROLLER::SendMessage( const std::string& aText )
             messageText = "<project_context>\n" + projectContext +
                          "\n</project_context>\n\n" + aText;
 
-            // Log the full first message with injected context
             wxLogInfo( "CHAT: First message with context:\n%s", messageText.c_str() );
         }
     }
 
-    // Add user message to history
-    nlohmann::json userMsg = {
-        { "role", "user" },
-        { "content", messageText }
-    };
-    AddToHistory( userMsg );
+    // Build the user message for history
+    nlohmann::json userMsg;
 
-    // Reset streaming state
-    m_currentResponse.clear();
-    m_thinkingContent.clear();
-    m_thinkingSignature.clear();
-    m_pendingToolCalls = nlohmann::json::array();
-    m_serverToolBlocks = nlohmann::json::array();
-
-    // Transition to waiting for LLM
-    AgentConversationState oldState = m_ctx.GetState();
-    m_ctx.TransitionTo( AgentConversationState::WAITING_FOR_LLM );
-    EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
-                                                             static_cast<int>( m_ctx.GetState() ) ) );
-
-    // Start the LLM request
-    StartLLMRequest();
-}
-
-
-void CHAT_CONTROLLER::SendMessageWithAttachments(
-        const std::string& aText,
-        const std::vector<UserAttachment>& aAttachments )
-{
-    wxLogInfo( "CHAT_CONTROLLER::SendMessageWithAttachments called with %zu attachments",
-               aAttachments.size() );
-
-    if( !CanAcceptInput() )
+    if( aContent.is_array() && !aContent.empty() )
     {
-        wxLogWarning( "CHAT_CONTROLLER::SendMessageWithAttachments called while busy" );
-        return;
-    }
+        // Multi-content message (images + text)
+        nlohmann::json content = aContent;
 
-    // Title generation (same as SendMessage)
-    int userMessageCount = 0;
-    for( const auto& msg : m_chatHistory )
-    {
-        if( msg.contains( "role" ) && msg["role"] == "user" )
-            userMessageCount++;
-    }
-
-    if( userMessageCount == 0 )
-    {
-        m_firstUserMessage = aText;
-        GenerateTitle();
-    }
-
-    // Build multi-content user message (Anthropic format)
-    nlohmann::json content = nlohmann::json::array();
-
-    // Add image blocks first (Anthropic recommends images before text)
-    for( const auto& att : aAttachments )
-    {
-        content.push_back( {
-            { "type", "image" },
-            { "source", {
-                { "type", "base64" },
-                { "media_type", att.media_type },
-                { "data", att.base64_data }
-            } }
-        } );
-    }
-
-    // Inject project context into first user message (same as SendMessage)
-    std::string messageText = aText;
-    if( userMessageCount == 0 && m_getProjectPathFn )
-    {
-        std::string projectContext = m_getProjectPathFn();
-        if( !projectContext.empty() )
+        if( !messageText.empty() )
         {
-            messageText = "<project_context>\n" + projectContext +
-                         "\n</project_context>\n\n" + aText;
+            content.push_back( {
+                { "type", "text" },
+                { "text", messageText }
+            } );
         }
-    }
 
-    // Add text block (even if empty, to ensure valid content array)
-    if( !messageText.empty() )
+        userMsg = { { "role", "user" }, { "content", content } };
+    }
+    else
     {
-        content.push_back( {
-            { "type", "text" },
-            { "text", messageText }
-        } );
+        // Plain text message
+        userMsg = { { "role", "user" }, { "content", messageText } };
     }
 
-    nlohmann::json userMsg = {
-        { "role", "user" },
-        { "content", content }
-    };
     AddToHistory( userMsg );
 
     // Reset streaming state

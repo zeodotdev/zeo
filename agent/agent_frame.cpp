@@ -1582,9 +1582,12 @@ void AGENT_FRAME::OnInputWebViewMessage( const wxString& aMessage )
                     if( !ImageAttach::LoadImageFromFile( path, att ) )
                         continue;
 
-                    // Inject into JS attachment preview
+                    // Inject into JS attachment preview - escape for JS single-quoted string
                     wxString safeName = wxString::FromUTF8( att.filename );
+                    safeName.Replace( "\\", "\\\\" );
                     safeName.Replace( "'", "\\'" );
+                    safeName.Replace( "\n", "\\n" );
+                    safeName.Replace( "\r", "\\r" );
 
                     wxString script = wxString::Format(
                         "addAttachment('%s', '%s', '%s');",

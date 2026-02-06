@@ -359,6 +359,10 @@ function previewAttachment(id) {
     }
 }
 
+function escapeHtmlAttr(s) {
+    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function renderAttachments() {
     if (attachments.length === 0) {
         attachmentBar.className = 'attachment-bar';
@@ -370,7 +374,7 @@ function renderAttachments() {
     for (var i = 0; i < attachments.length; i++) {
         var a = attachments[i];
         html += '<div class="attachment-thumb">'
-            + '<img src="data:' + a.media_type + ';base64,' + a.base64 + '" title="' + a.filename
+            + '<img src="data:' + a.media_type + ';base64,' + a.base64 + '" title="' + escapeHtmlAttr(a.filename)
             + '" onclick="previewAttachment(\'' + a.id + '\')" />'
             + '<div class="remove-btn" onclick="removeAttachment(\'' + a.id + '\')">\u00d7</div>'
             + '</div>';
@@ -378,11 +382,20 @@ function renderAttachments() {
     attachmentBar.innerHTML = html;
 }
 
+// Supported media types for the Anthropic API
+var SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+
+function isSupportedImageType(mediaType) {
+    return SUPPORTED_IMAGE_TYPES.indexOf(mediaType) !== -1;
+}
+
 // Paste handler - intercept image paste
 textarea.addEventListener('paste', function(e) {
     var items = (e.clipboardData || e.originalEvent.clipboardData).items;
     for (var i = 0; i < items.length; i++) {
         if (items[i].type.indexOf('image') !== -1) {
+            var mimeType = items[i].type;
+            if (!isSupportedImageType(mimeType)) break;
             e.preventDefault();
             var blob = items[i].getAsFile();
             var reader = new FileReader();
@@ -402,25 +415,36 @@ textarea.addEventListener('paste', function(e) {
 
 // Drag-and-drop handlers
 var editorContainer = document.getElementById('editor-container');
+var dragCounter = 0;
+
+editorContainer.addEventListener('dragenter', function(e) {
+    e.preventDefault();
+    dragCounter++;
+    editorContainer.classList.add('drag-over');
+});
 
 editorContainer.addEventListener('dragover', function(e) {
     e.preventDefault();
     e.stopPropagation();
-    editorContainer.classList.add('drag-over');
+    e.dataTransfer.dropEffect = 'copy';
 });
 
 editorContainer.addEventListener('dragleave', function(e) {
     e.preventDefault();
-    editorContainer.classList.remove('drag-over');
+    dragCounter--;
+    if (dragCounter === 0) {
+        editorContainer.classList.remove('drag-over');
+    }
 });
 
 editorContainer.addEventListener('drop', function(e) {
     e.preventDefault();
     e.stopPropagation();
+    dragCounter = 0;
     editorContainer.classList.remove('drag-over');
     var files = e.dataTransfer.files;
     for (var i = 0; i < files.length; i++) {
-        if (files[i].type.indexOf('image') !== -1) {
+        if (isSupportedImageType(files[i].type)) {
             (function(file) {
                 var reader = new FileReader();
                 reader.onload = function(ev) {

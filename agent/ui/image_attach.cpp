@@ -138,7 +138,12 @@ wxString ImageAttach::BuildHistoryImageBubbleHtml( const nlohmann::json& aConten
         }
         else if( bt == "text" )
         {
-            textContent = wxString::FromUTF8( block.value( "text", "" ) );
+            wxString blockText = wxString::FromUTF8( block.value( "text", "" ) );
+
+            if( !textContent.IsEmpty() && !blockText.IsEmpty() )
+                textContent += "\n";
+
+            textContent += blockText;
         }
     }
 

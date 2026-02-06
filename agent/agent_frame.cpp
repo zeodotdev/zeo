@@ -847,7 +847,7 @@ void AGENT_FRAME::RebuildThinkingHtml()
     wxString thinkingText = "Thinking";
 
     m_thinkingHtml = wxString::Format(
-        "<div class=\"mb-0\">"
+        "<div class=\"mb-1\">"
         "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline hover:underline\">%s</a>"
         "<div class=\"thinking-content text-[#606060] mt-1 mb-0 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
         "</div>",
@@ -1687,6 +1687,16 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
                     m_historicalThinkingExpanded.insert( index );
                 else
                     m_historicalThinkingExpanded.erase( index );
+
+                // Sync m_fullHtmlContent so SetHtml() preserves toggle state
+                wxString from = wxString::Format(
+                    "data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\"",
+                    index, expanded ? "none" : "block" );
+                wxString to = wxString::Format(
+                    "data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\"",
+                    index, expanded ? "block" : "none" );
+                m_fullHtmlContent.Replace( from, to );
+                m_htmlBeforeAgentResponse.Replace( from, to );
             }
         }
         else if( action == "toolresult_toggled" )
@@ -1701,6 +1711,16 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
                     m_historicalToolResultExpanded.insert( index );
                 else
                     m_historicalToolResultExpanded.erase( index );
+
+                // Sync m_fullHtmlContent so SetHtml() preserves toggle state
+                wxString from = wxString::Format(
+                    "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:%s;\"",
+                    index, expanded ? "none" : "block" );
+                wxString to = wxString::Format(
+                    "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:%s;\"",
+                    index, expanded ? "block" : "none" );
+                m_fullHtmlContent.Replace( from, to );
+                m_htmlBeforeAgentResponse.Replace( from, to );
             }
         }
         else if( action == "scroll_activity" )
@@ -2366,7 +2386,7 @@ void AGENT_FRAME::RenderChatHistory()
                         wxString displayStyle = expanded ? "block" : "none";
 
                         m_fullHtmlContent += wxString::Format(
-                            "<div class=\"mb-0\">"
+                            "<div class=\"mb-1\">"
                             "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline hover:underline\">Thinking</a>"
                             "<div class=\"thinking-content text-[#606060] mt-1 mb-0 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
                             "</div>",
@@ -2994,6 +3014,23 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     // Flush streaming content to remove the generating box from the DOM
     // before finalization bakes the current content permanently
     FlushStreamingContentUpdate( true );
+
+    // Sync m_fullHtmlContent with clean streaming state.
+    // The timer may have baked the generating tool box into m_fullHtmlContent just before
+    // m_generatingToolName was cleared. Rebuild to ensure m_fullHtmlContent matches the DOM.
+    {
+        wxString streamingContent = BuildStreamingContent();
+        wxString fullHtml = m_htmlBeforeAgentResponse;
+        const wxString closingTags = wxS( "</div></body></html>" );
+
+        if( fullHtml.EndsWith( closingTags ) )
+            fullHtml = fullHtml.Left( fullHtml.length() - closingTags.length() );
+
+        fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
+        fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
+        fullHtml += closingTags;
+        m_fullHtmlContent = fullHtml;
+    }
 
     // Finalize the current streaming div so the agent's response text stays in place
     if( m_chatWindow )

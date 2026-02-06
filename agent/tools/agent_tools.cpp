@@ -645,15 +645,21 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "properties", {
             { "scope", {
                 { "type", "string" },
-                { "enum", json::array( { "all", "unannotated_only" } ) },
-                { "description", "Annotation scope: 'all' resets and re-annotates everything, "
-                                "'unannotated_only' only assigns to symbols with '?' (default: unannotated_only)" }
+                { "enum", json::array( { "all", "unannotated_only", "current_sheet", "selection" } ) },
+                { "description", "Annotation scope: 'all' annotates entire schematic, "
+                                "'unannotated_only' only assigns to symbols with '?' (default), "
+                                "'current_sheet' annotates current sheet only, "
+                                "'selection' annotates selected symbols only" }
             }},
             { "sort_by", {
                 { "type", "string" },
-                { "enum", json::array( { "x_position", "y_position", "reference" } ) },
+                { "enum", json::array( { "x_position", "y_position" } ) },
                 { "description", "Sort order for annotation: 'x_position' (left to right), "
-                                "'y_position' (top to bottom), 'reference' (alphabetical). Default: x_position" }
+                                "'y_position' (top to bottom). Default: x_position" }
+            }},
+            { "reset_existing", {
+                { "type", "boolean" },
+                { "description", "If true, clear existing annotations before re-annotating. Default: false" }
             }}
         }},
         { "required", json::array() }

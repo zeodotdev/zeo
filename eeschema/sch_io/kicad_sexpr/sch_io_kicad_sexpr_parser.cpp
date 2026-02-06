@@ -2778,6 +2778,12 @@ void SCH_IO_KICAD_SEXPR_PARSER::ParseSchematic( SCH_SHEET* aSheet, bool aIsCopya
             NeedSYMBOL();
             screen->m_uuid = parseKIID();
 
+            wxLogTrace( "SCHEMATIC", "ParseSchematic: Read UUID from file: %s",
+                        screen->m_uuid.AsString() );
+            wxLogTrace( "SCHEMATIC", "ParseSchematic: aSheet=%p, m_rootSheet=%p, isRootSheet=%d",
+                        static_cast<void*>( aSheet ), static_cast<void*>( m_rootSheet ),
+                        aSheet == m_rootSheet ? 1 : 0 );
+
             // Set the root sheet UUID with the schematic file UUID.  Root sheets are virtual
             // and always get a new UUID so this prevents file churn now that the root UUID
             // is saved in the symbol instance path.
@@ -2786,6 +2792,9 @@ void SCH_IO_KICAD_SEXPR_PARSER::ParseSchematic( SCH_SHEET* aSheet, bool aIsCopya
                 const_cast<KIID&>( aSheet->m_Uuid ) = screen->GetUuid();
                 m_rootUuid = screen->GetUuid();
                 fileHasUuid = true;
+
+                wxLogTrace( "SCHEMATIC", "ParseSchematic: Set root sheet UUID to: %s",
+                            aSheet->m_Uuid.AsString() );
             }
 
             NeedRIGHT();

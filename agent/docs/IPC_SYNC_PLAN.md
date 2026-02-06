@@ -153,6 +153,52 @@ print(f"[DEBUG] document: {sch.document}", file=sys.stderr)
 4. **Medium**: Add sheet-aware operations
 5. **Low**: Document change notifications
 
+## Fixes Applied
+
+### 1. Added IPC Diagnostics (sch_tool_handler.cpp)
+- Added debug output to `sch_live_summary` Python code
+- Logs document specifier, sheet path, and symbol count to stderr
+- Helps identify where data retrieval fails
+
+### 2. Fixed sch_open_sheet Navigation (sch_crud_handler.cpp)
+- **Issue**: `TypeError: CopyFrom() expected SheetPath got Sheet`
+- **Cause**: `navigate_to()` expects a `SheetPath` proto, not a `SheetHierarchyNode`
+- **Fix**: Use `target_sheet.path` when calling `navigate_to()`
+
+### 3. Fixed Reference Parameter in sch_add (sch_crud_handler.cpp)
+- **Issue**: Top-level `reference` parameter was ignored
+- **Cause**: Only checked `properties.Reference`, not the top-level `reference` param
+- **Fix**: Added handling for top-level `reference` parameter before checking `properties`
+
+### 4. Added UUID Tracing for Close/Reopen Investigation
+
+Added comprehensive logging to trace UUID flow during schematic loading. Run with `WXTRACE=SCHEMATIC` to see traces.
+
+**Files modified:**
+
+1. **sch_io_kicad_sexpr_parser.cpp** (lines ~2777-2795):
+   - Logs when UUID is read from file
+   - Logs whether current sheet is the root sheet
+   - Logs the final root sheet UUID after it's set
+
+2. **api_handler_sch.cpp** (handleGetOpenDocuments):
+   - Logs the current sheet size and UUID being returned
+   - Logs the current file name
+
+3. **schematic.cpp** (SetRoot):
+   - Logs root sheet UUID and screen UUID when SetRoot completes
+
+4. **files-io.cpp** (OpenProjectFiles):
+   - Logs UUID after SetSchematic is called
+   - For multi-root path: Logs project file UUID, whether it's niluuid, and whether UUID override happens
+
+**To trace the issue:**
+```bash
+WXTRACE=SCHEMATIC ./Zener
+```
+
+Then perform close/reopen cycle and examine logs to see where UUID mismatch occurs.
+
 ## Conclusion
 
 The IPC layer is fundamentally sound. The API handler correctly accesses the live document. Investigation should focus on:

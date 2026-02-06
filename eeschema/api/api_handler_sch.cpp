@@ -310,6 +310,14 @@ API_HANDLER_SCH::handleGetOpenDocuments( const HANDLER_CONTEXT<GetOpenDocuments>
 
     // Add a placeholder KIID for the root sheet path
     // This ensures the sheet_path oneof field is properly serialized
+    SCH_SHEET* lastSheet = m_frame->GetCurrentSheet().Last();
+    wxString lastSheetUuid = lastSheet ? lastSheet->m_Uuid.AsString() : wxString( "null" );
+
+    wxLogTrace( "SCHEMATIC", "GetOpenDocuments: CurrentSheet size=%zu, Last UUID=%s, file=%s",
+                m_frame->GetCurrentSheet().size(),
+                lastSheetUuid,
+                m_frame->GetCurrentFileName() );
+
     sheetPath->add_path()->set_value( m_frame->GetCurrentSheet().Last()->m_Uuid.AsStdString() );
 
     *response.mutable_documents()->Add() = doc;

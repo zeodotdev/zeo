@@ -339,6 +339,9 @@ void SCHEMATIC::SetRoot( SCH_SHEET* aRootSheet )
         m_currentSheet->push_back( aRootSheet );
         wxLogTrace( traceSchCurrentSheet, "SetRoot: Set current sheet to root sheet '%s', path='%s', size=%zu",
                     aRootSheet->GetName(), m_currentSheet->Path().AsString(), m_currentSheet->size() );
+        wxLogTrace( "SCHEMATIC", "SetRoot: Root sheet UUID=%s, screen UUID=%s",
+                    aRootSheet->m_Uuid.AsString(),
+                    aRootSheet->GetScreen() ? aRootSheet->GetScreen()->GetUuid().AsString() : wxString( "no screen" ) );
     }
 
     if( m_project )

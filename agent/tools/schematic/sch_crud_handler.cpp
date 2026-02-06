@@ -334,6 +334,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         bool mirrorX = ( mirror == "x" );
         bool mirrorY = ( mirror == "y" );
         int unit = aInput.value( "unit", 1 );
+        std::string reference = aInput.value( "reference", "" );
 
         code << "    pos = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
         code << "    symbol = sch.symbols.add(\n";
@@ -345,6 +346,17 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         code << "        mirror_y=" << ( mirrorY ? "True" : "False" ) << "\n";
         code << "    )\n";
 
+        // Handle top-level reference parameter
+        if( !reference.empty() )
+        {
+            code << "    # Set reference from top-level parameter\n";
+            code << "    if hasattr(sch.symbols, 'set_reference'):\n";
+            code << "        sch.symbols.set_reference(symbol, '" << EscapePythonString( reference ) << "')\n";
+            code << "    elif hasattr(symbol, 'reference'):\n";
+            code << "        symbol.reference = '" << EscapePythonString( reference ) << "'\n";
+        }
+
+        // Handle properties object (for Value, Footprint, etc.)
         if( aInput.contains( "properties" ) && aInput["properties"].is_object() )
         {
             code << "    props = " << aInput["properties"].dump() << "\n";
@@ -1028,11 +1040,13 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
     code << "    \n";
     code << "    # Navigate to target sheet if found\n";
     code << "    if target_sheet and not navigated:\n";
-    code << "        if hasattr(sch.sheets, 'enter'):\n";
-    code << "            sch.sheets.enter(target_sheet)\n";
+    code << "        # First try navigate_to with the SheetPath (most reliable)\n";
+    code << "        if hasattr(sch.sheets, 'navigate_to') and hasattr(target_sheet, 'path'):\n";
+    code << "            sch.sheets.navigate_to(target_sheet.path)\n";
     code << "            navigated = True\n";
-    code << "        elif hasattr(sch.sheets, 'navigate_to'):\n";
-    code << "            sch.sheets.navigate_to(target_sheet)\n";
+    code << "        elif hasattr(sch.sheets, 'enter'):\n";
+    code << "            # enter might work with the node directly\n";
+    code << "            sch.sheets.enter(target_sheet)\n";
     code << "            navigated = True\n";
     code << "        elif hasattr(sch.sheets, 'open'):\n";
     code << "            sch.sheets.open(target_sheet)\n";

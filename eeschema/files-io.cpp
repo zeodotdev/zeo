@@ -292,14 +292,22 @@ bool SCH_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
                             continue;
                         }
 
+                        wxLogTrace( "SCHEMATIC", "Multi-root: Loading sheet from '%s', project UUID=%s (niluuid=%d)",
+                                    sheetPath, sheetInfo.uuid.AsString(),
+                                    sheetInfo.uuid == niluuid ? 1 : 0 );
+
                         SCH_SHEET* sheet = pi->LoadSchematicFile( sheetPath, newSchematic.get() );
 
                         if( sheet )
                         {
+                            wxLogTrace( "SCHEMATIC", "Multi-root: After LoadSchematicFile, sheet UUID=%s",
+                                        sheet->m_Uuid.AsString() );
+
                             // Preserve the UUID from the project file, unless it's niluuid which is
                             // just a placeholder meaning "use the UUID from the file"
                             if( sheetInfo.uuid != niluuid )
                             {
+                                wxLogTrace( "SCHEMATIC", "Multi-root: OVERRIDING sheet UUID from project file" );
                                 const_cast<KIID&>( sheet->m_Uuid ) = sheetInfo.uuid;
                             }
 
@@ -308,6 +316,7 @@ bool SCH_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
                             // Regular top-level sheet, add it normally
                             newSchematic->AddTopLevelSheet( sheet );
 
+                            wxLogTrace( "SCHEMATIC", "Multi-root: Final sheet UUID=%s", sheet->m_Uuid.AsString() );
                             wxLogTrace( tracePathsAndFiles,
                                        wxS( "Loaded top-level sheet '%s' (UUID %s) from %s" ),
                                        sheet->GetName(),
@@ -391,6 +400,11 @@ bool SCH_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
         }
 
         SetSchematic( newSchematic.release() );
+
+        // Log the current sheet UUID after schematic is set
+        wxLogTrace( "SCHEMATIC", "OpenProjectFiles: After SetSchematic, CurrentSheet size=%zu, Last UUID=%s",
+                    GetCurrentSheet().size(),
+                    GetCurrentSheet().Last() ? GetCurrentSheet().Last()->m_Uuid.AsString() : wxString( "null" ) );
 
         // This fixes a focus issue after the progress reporter is done on GTK.  It shouldn't
         // cause any issues on macOS and Windows.  If it does, it will have to be conditionally

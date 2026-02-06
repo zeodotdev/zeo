@@ -1,7 +1,6 @@
 #include "agent_frame.h"
 #include "agent_chat_history.h"
 #include "auth/agent_auth.h"
-#include "auth/agent_keychain.h"
 #include "ui/pending_changes_popup.h"
 #include "ui/history_panel.h"
 #include "rendering/agent_markdown.h"

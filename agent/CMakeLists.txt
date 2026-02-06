@@ -40,6 +40,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/kicad_file
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/schematic
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcb
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/screenshot
     ${CMAKE_CURRENT_BINARY_DIR}  # For generated agent_template_embedded.h
     ${INC_AFTER}
     )
@@ -91,6 +92,7 @@ set( AGENT_SRCS
     tools/pcb/pcb_validator.cpp
     tools/pcb/pcb_tool_handler.cpp
     tools/pcb/pcb_crud_handler.cpp
+    tools/screenshot/screenshot_handler.cpp
 )
 
 

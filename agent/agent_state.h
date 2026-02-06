@@ -196,6 +196,17 @@ public:
     std::string last_tool_result;
     std::string last_tool_use_id;
 
+    // Rich content block for tool results (text or image)
+    struct ToolResultContentBlock
+    {
+        enum class Type { TEXT, IMAGE };
+
+        Type        type = Type::TEXT;
+        std::string text;           // For TEXT type
+        std::string media_type;     // For IMAGE type (e.g., "image/png")
+        std::string base64_data;    // For IMAGE type (raw base64 string)
+    };
+
     // Collected tool results (for batch adding to history and UI display)
     struct ToolResult
     {
@@ -206,7 +217,14 @@ public:
         bool        success;
         bool        is_python_error;   // Whether the result contains a Python traceback
 
-        ToolResult() : success( true ), is_python_error( false ) {}
+        // Rich content blocks (text + images). When non-empty, takes precedence
+        // over `result` for API serialization.
+        std::vector<ToolResultContentBlock> content_blocks;
+        bool has_image_content = false;   // Cached flag, set when IMAGE blocks are added
+
+        bool HasImageContent() const { return has_image_content; }
+
+        ToolResult() : success( true ), is_python_error( false ), has_image_content( false ) {}
     };
     std::vector<ToolResult> completed_tool_results;
 

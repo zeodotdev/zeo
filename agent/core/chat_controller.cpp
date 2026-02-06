@@ -955,11 +955,68 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
     tr.result = aResult;
     tr.success = aSuccess;
     tr.is_python_error = isPythonError;
+
+    // Check if the result contains image content (from screenshot tool)
+    bool hasImage = false;
+    std::string imageBase64;
+    std::string imageMediaType;
+
+    // Only attempt JSON parse if the result looks like a JSON object
+    if( !aResult.empty() && aResult.front() == '{' )
+    {
+        try
+        {
+            auto resultJson = nlohmann::json::parse( aResult );
+
+            if( resultJson.value( "__has_image", false ) )
+            {
+                wxLogInfo( "CHAT_CONTROLLER: Detected image content in tool result for %s",
+                           aToolId.c_str() );
+
+                // Build rich content blocks
+                AgentConversationContext::ToolResultContentBlock textBlock;
+                textBlock.type = AgentConversationContext::ToolResultContentBlock::Type::TEXT;
+                textBlock.text = resultJson.value( "text", "" );
+                tr.content_blocks.push_back( textBlock );
+
+                if( resultJson.contains( "image" ) )
+                {
+                    AgentConversationContext::ToolResultContentBlock imgBlock;
+                    imgBlock.type = AgentConversationContext::ToolResultContentBlock::Type::IMAGE;
+                    imgBlock.media_type = resultJson["image"].value( "media_type", "image/png" );
+                    imgBlock.base64_data = resultJson["image"].value( "base64", "" );
+                    tr.content_blocks.push_back( imgBlock );
+                    tr.has_image_content = true;
+
+                    hasImage = true;
+                    imageBase64 = imgBlock.base64_data;
+                    imageMediaType = imgBlock.media_type;
+
+                    wxLogInfo( "CHAT_CONTROLLER: Image content block added - media_type=%s, "
+                               "base64_len=%zu, content_blocks=%zu",
+                               imgBlock.media_type.c_str(), imgBlock.base64_data.length(),
+                               tr.content_blocks.size() );
+                }
+
+                // Override plain text result for display purposes
+                tr.result = resultJson.value( "text", aResult );
+            }
+        }
+        catch( const nlohmann::json::exception& e )
+        {
+            // Not JSON or no image -- use as-is (backward compatible)
+            wxLogInfo( "CHAT_CONTROLLER: Tool result is not image JSON (normal): %s", e.what() );
+        }
+    }
+
     m_ctx.completed_tool_results.push_back( tr );
 
-    // Emit tool complete event
-    EmitEvent( EVT_CHAT_TOOL_COMPLETE, ChatToolCompleteData( aToolId, toolName, aResult,
-                                                              aSuccess, isPythonError ) );
+    // Emit tool complete event (with image data if present)
+    ChatToolCompleteData completeData( aToolId, toolName, tr.result, aSuccess, isPythonError );
+    completeData.hasImage = hasImage;
+    completeData.imageBase64 = imageBase64;
+    completeData.imageMediaType = imageMediaType;
+    EmitEvent( EVT_CHAT_TOOL_COMPLETE, completeData );
 
     // Remove from pending
     m_ctx.RemovePendingToolCall( aToolId );
@@ -1029,17 +1086,62 @@ void CHAT_CONTROLLER::AddAllToolResultsToHistory()
 
     for( const auto& result : m_ctx.completed_tool_results )
     {
-        content.push_back( {
-            { "type", "tool_result" },
-            { "tool_use_id", result.tool_use_id },
-            { "content", result.result }
-        } );
+        if( result.HasImageContent() )
+        {
+            // Build array content with text + image blocks for the Anthropic API
+            nlohmann::json contentBlocks = nlohmann::json::array();
+
+            for( const auto& block : result.content_blocks )
+            {
+                if( block.type == AgentConversationContext::ToolResultContentBlock::Type::TEXT )
+                {
+                    contentBlocks.push_back( {
+                        { "type", "text" },
+                        { "text", block.text }
+                    } );
+                }
+                else if( block.type == AgentConversationContext::ToolResultContentBlock::Type::IMAGE )
+                {
+                    contentBlocks.push_back( {
+                        { "type", "image" },
+                        { "source", {
+                            { "type", "base64" },
+                            { "media_type", block.media_type },
+                            { "data", block.base64_data }
+                        } }
+                    } );
+                }
+            }
+
+            content.push_back( {
+                { "type", "tool_result" },
+                { "tool_use_id", result.tool_use_id },
+                { "content", contentBlocks }
+            } );
+
+            wxLogInfo( "CHAT_CONTROLLER: Added image tool result to history - "
+                       "tool_use_id=%s, content_blocks=%zu",
+                       result.tool_use_id.c_str(), contentBlocks.size() );
+        }
+        else
+        {
+            // Backward compatible: plain string content
+            content.push_back( {
+                { "type", "tool_result" },
+                { "tool_use_id", result.tool_use_id },
+                { "content", result.result }
+            } );
+        }
     }
 
     nlohmann::json toolResultMsg = {
         { "role", "user" },
         { "content", content }
     };
+
+    wxLogInfo( "CHAT_CONTROLLER: AddAllToolResultsToHistory - %zu results, "
+               "serialized message size: %zu",
+               m_ctx.completed_tool_results.size(), toolResultMsg.dump().length() );
 
     AddToHistory( toolResultMsg );
 }

@@ -125,6 +125,12 @@ function clickLink(href) {
     return false;
 }
 document.addEventListener('contextmenu', function(e) {
+    // Right-click on an image: copy image to clipboard via C++
+    if (e.target.tagName === 'IMG' && e.target.src.startsWith('data:')) {
+        e.preventDefault();
+        sendMsg('copy_image', {src: e.target.src});
+        return;
+    }
     const sel = window.getSelection().toString();
     if (sel) {
         sendMsg('copy', {text: sel});

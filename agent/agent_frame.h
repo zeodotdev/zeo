@@ -30,6 +30,7 @@ struct CONFLICT_INFO;
 enum
 {
     ID_CHAT_COPY = wxID_HIGHEST + 1001,
+    ID_COPY_IMAGE,
     ID_CHAT_HISTORY_TOOL,
     ID_NEW_CHAT,
     ID_LOGIN,
@@ -135,6 +136,8 @@ private:
     wxButton*      m_signInButton;
 
     AGENT_AUTH*   m_auth;
+
+    wxImage     m_pendingCopyImage;  // Image waiting for context menu "Copy Image" action
 
     std::string m_toolResponse;
     std::string m_schJson;

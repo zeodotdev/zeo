@@ -73,6 +73,7 @@
 #include <sim/simulator_frame.h>
 #include <sim/spice_simulator.h>
 #include <sim/spice_circuit_model.h>
+#include <advanced_config.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <view/view.h>
 #include <undo_redo_container.h>
@@ -4273,6 +4274,8 @@ HANDLER_RESULT<schematic::commands::RunSimulationResponse>
 API_HANDLER_SCH::handleRunSimulation(
         const HANDLER_CONTEXT<schematic::commands::RunSimulation>& aCtx )
 {
+    wxLogInfo( "SIM API: handleRunSimulation called" );
+
     HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
 
     if( !documentValidation )
@@ -4280,16 +4283,51 @@ API_HANDLER_SCH::handleRunSimulation(
 
     schematic::commands::RunSimulationResponse response;
 
+    // Ensure schematic is annotated — auto-annotate if needed (no modal dialog)
+    m_frame->Schematic().Hierarchy().AnnotatePowerSymbols();
+
+    if( m_frame->CheckAnnotate(
+            []( ERCE_T, const wxString&, SCH_REFERENCE*, SCH_REFERENCE* ) {} ) )
+    {
+        wxLogInfo( "SIM API: Schematic not annotated, auto-annotating" );
+
+        NULL_REPORTER reporter;
+        SCH_COMMIT    commit( m_frame );
+
+        m_frame->AnnotateSymbols( &commit, ANNOTATE_ALL, SORT_BY_X_POSITION,
+                                  INCREMENTAL_BY_REF, true, 1, false, false, reporter );
+        commit.Push( _( "API: Auto-annotate for simulation" ) );
+
+        // Verify annotation succeeded
+        if( m_frame->CheckAnnotate(
+                []( ERCE_T, const wxString&, SCH_REFERENCE*, SCH_REFERENCE* ) {} ) )
+        {
+            wxLogWarning( "SIM API: Auto-annotation failed" );
+            response.set_success( false );
+            response.set_error_message( "Schematic could not be auto-annotated. "
+                                        "Please annotate manually before running simulation." );
+            return response;
+        }
+
+        wxLogInfo( "SIM API: Auto-annotation succeeded" );
+    }
+    else
+    {
+        wxLogInfo( "SIM API: Annotation check passed" );
+    }
+
     // Get or create the simulator frame
     SIMULATOR_FRAME* simFrame = nullptr;
 
     try
     {
+        wxLogInfo( "SIM API: Getting simulator frame" );
         simFrame = static_cast<SIMULATOR_FRAME*>(
                 m_frame->Kiway().Player( FRAME_SIMULATOR, true ) );
     }
     catch( const std::exception& e )
     {
+        wxLogWarning( "SIM API: Failed to open simulator: %s", e.what() );
         response.set_success( false );
         response.set_error_message(
                 fmt::format( "Failed to open simulator: {}", e.what() ) );
@@ -4298,6 +4336,7 @@ API_HANDLER_SCH::handleRunSimulation(
 
     if( !simFrame )
     {
+        wxLogWarning( "SIM API: simFrame is null" );
         response.set_success( false );
         response.set_error_message( "Failed to open simulator frame" );
         return response;
@@ -4305,6 +4344,25 @@ API_HANDLER_SCH::handleRunSimulation(
 
     simFrame->Show( true );
     simFrame->Raise();
+
+    auto simulator = simFrame->GetSimulator();
+    auto circuitModel = simFrame->GetCircuitModel();
+
+    if( !simulator )
+    {
+        wxLogWarning( "SIM API: Simulator engine is null" );
+        response.set_success( false );
+        response.set_error_message( "Simulator engine not available" );
+        return response;
+    }
+
+    if( !circuitModel )
+    {
+        wxLogWarning( "SIM API: Circuit model is null" );
+        response.set_success( false );
+        response.set_error_message( "Circuit model not available" );
+        return response;
+    }
 
     // Determine the simulation command
     wxString simCommand;
@@ -4317,6 +4375,8 @@ API_HANDLER_SCH::handleRunSimulation(
     {
         simCommand = simFrame->GetCurrentSimCommand();
     }
+
+    wxLogInfo( "SIM API: Command = '%s'", simCommand );
 
     if( simCommand.IsEmpty() )
     {
@@ -4338,37 +4398,51 @@ API_HANDLER_SCH::handleRunSimulation(
         return response;
     }
 
-    // Load the netlist and prepare the simulator
-    if( !simFrame->LoadSimulator( simCommand, 0 ) )
+    wxLogInfo( "SIM API: SimType = %d, recalculating connections", (int) simType );
+
+    // Recalculate connectivity (what LoadSimulator does after ReadyToNetlist)
+    if( ADVANCED_CFG::GetCfg().m_IncrementalConnectivity )
+        m_frame->RecalculateConnections( nullptr, GLOBAL_CLEANUP );
+
+    // Attach the circuit model to the simulator (generates netlist, loads into ngspice)
+    // This bypasses LoadSimulator's ReadyToNetlist() which shows modal dialogs
+    WX_STRING_REPORTER reporter;
+
+    wxLogInfo( "SIM API: Calling simulator->Attach()" );
+
+    bool attached = simulator->Attach( circuitModel, simCommand, 0,
+                                       m_frame->Prj().GetProjectPath(), reporter );
+
+    if( !attached )
     {
+        wxString reportText = reporter.GetMessages();
+        wxLogWarning( "SIM API: Attach failed: %s", reportText );
         response.set_success( false );
-        response.set_error_message( "Failed to load simulator. Check that the schematic is "
-                                    "fully annotated and has valid SPICE models." );
+        response.set_error_message(
+                fmt::format( "Failed to load simulator netlist. {}",
+                             reportText.ToStdString() ) );
         return response;
     }
 
-    auto simulator = simFrame->GetSimulator();
-
-    if( !simulator )
-    {
-        response.set_success( false );
-        response.set_error_message( "Simulator engine not available" );
-        return response;
-    }
+    wxLogInfo( "SIM API: Attach succeeded, acquiring mutex" );
 
     // Acquire mutex - fail if another simulation is running
     std::unique_lock<std::mutex> lock( simulator->GetMutex(), std::try_to_lock );
 
     if( !lock.owns_lock() )
     {
+        wxLogWarning( "SIM API: Could not acquire mutex - another sim running" );
         response.set_success( false );
         response.set_error_message( "Another simulation is currently running" );
         return response;
     }
 
     // Run the simulation
+    wxLogInfo( "SIM API: Calling simulator->Run()" );
+
     if( !simulator->Run() )
     {
+        wxLogWarning( "SIM API: Run() returned false" );
         response.set_success( false );
         response.set_error_message( "Failed to start simulation" );
         return response;
@@ -4378,15 +4452,21 @@ API_HANDLER_SCH::handleRunSimulation(
     constexpr int POLL_MS = 50;
     constexpr int MAX_POLLS = 600;  // 30 seconds
 
+    wxLogInfo( "SIM API: Polling for completion" );
+
     for( int i = 0; i < MAX_POLLS; ++i )
     {
         if( !simulator->IsRunning() )
+        {
+            wxLogInfo( "SIM API: Simulation finished after %d ms", i * POLL_MS );
             break;
+        }
 
         wxMilliSleep( POLL_MS );
 
         if( i == MAX_POLLS - 1 )
         {
+            wxLogWarning( "SIM API: Simulation timed out" );
             simulator->Stop();
             response.set_success( false );
             response.set_error_message( "Simulation timed out after 30 seconds" );
@@ -4396,6 +4476,8 @@ API_HANDLER_SCH::handleRunSimulation(
 
     // Collect results
     auto vectors = simulator->AllVectors();
+
+    wxLogInfo( "SIM API: Got %zu vectors", vectors.size() );
 
     if( vectors.empty() )
     {
@@ -4407,12 +4489,15 @@ API_HANDLER_SCH::handleRunSimulation(
     wxString xAxisName = simulator->GetXAxis( simType );
     bool isComplex = ( simType == ST_AC || simType == ST_SP || simType == ST_NOISE );
 
+    wxLogInfo( "SIM API: X-axis='%s', isComplex=%d", xAxisName, isComplex );
+
     // Get X-axis data
     std::vector<double> xData;
 
     if( !xAxisName.IsEmpty() )
     {
         xData = simulator->GetRealVector( xAxisName.ToStdString() );
+        wxLogInfo( "SIM API: X-axis has %zu points", xData.size() );
     }
 
     for( const auto& vecName : vectors )
@@ -4440,6 +4525,7 @@ API_HANDLER_SCH::handleRunSimulation(
             trace->add_data_values( val );
     }
 
+    wxLogInfo( "SIM API: Returning %d traces", response.traces_size() );
     response.set_success( true );
     return response;
 }
@@ -4449,6 +4535,8 @@ HANDLER_RESULT<schematic::commands::GetSimulationResultsResponse>
 API_HANDLER_SCH::handleGetSimulationResults(
         const HANDLER_CONTEXT<schematic::commands::GetSimulationResults>& aCtx )
 {
+    wxLogInfo( "SIM API: handleGetSimulationResults called" );
+
     HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
 
     if( !documentValidation )

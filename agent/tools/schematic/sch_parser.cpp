@@ -354,6 +354,36 @@ std::string GenerateSpiceNetlist( const std::string& aSchematicPath )
         return std::string();
     }
 
+    // kicad-cli may print warnings to stdout before the actual netlist content.
+    // Strip any lines before the first valid SPICE line (starting with . or *)
+    size_t validStart = 0;
+    size_t pos = 0;
+
+    while( pos < result.size() )
+    {
+        size_t lineEnd = result.find( '\n', pos );
+        if( lineEnd == std::string::npos )
+            lineEnd = result.size();
+
+        if( pos < lineEnd )
+        {
+            char firstChar = result[pos];
+            if( firstChar == '.' || firstChar == '*' )
+            {
+                validStart = pos;
+                break;
+            }
+        }
+
+        pos = lineEnd + 1;
+    }
+
+    if( validStart > 0 )
+    {
+        wxLogInfo( "SPICE: Stripped %zu bytes of warnings from output", validStart );
+        result = result.substr( validStart );
+    }
+
     wxLogInfo( "SPICE: Generated netlist (%zu bytes)", result.size() );
     return result;
 }

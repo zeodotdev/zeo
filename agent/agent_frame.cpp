@@ -642,12 +642,6 @@ void AGENT_FRAME::RebuildThinkingHtml()
     escapedContent.Replace( ">", "&gt;" );
     escapedContent.Replace( "\n", "<br>" );
 
-    // Truncate if very long
-    if( escapedContent.length() > 5000 )
-    {
-        escapedContent = escapedContent.Left( 5000 ) + "... <i>(truncated)</i>";
-    }
-
     // Use placeholder if content is empty (during initial THINKING_START)
     // This ensures the content div exists immediately for user clicks
     wxString displayContent = escapedContent.IsEmpty() ? "<i>Thinking...</i>" : escapedContent;
@@ -2022,12 +2016,6 @@ void AGENT_FRAME::RenderChatHistory()
                         escapedText.Replace( "<", "&lt;" );
                         escapedText.Replace( ">", "&gt;" );
                         escapedText.Replace( "\n", "<br>" );
-
-                        // Truncate if very long
-                        if( escapedText.length() > 5000 )
-                        {
-                            escapedText = escapedText.Left( 5000 ) + "... <i>(truncated)</i>";
-                        }
 
                         // Always render both toggle link and content (content hidden by CSS)
                         // JavaScript will toggle visibility without page reload

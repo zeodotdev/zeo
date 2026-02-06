@@ -401,11 +401,20 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
 
         // Hide the Description field to prevent clutter on the schematic sheet
         code << "    # Hide description field\n";
+        code << "    _desc_hidden = False\n";
+        code << "    _field_names = [f.name for f in symbol._proto.fields]\n";
+        code << "    print(f'[sch_add] Symbol fields: {_field_names}', file=sys.stderr)\n";
         code << "    for f in symbol._proto.fields:\n";
         code << "        if f.name == 'Description':\n";
+        code << "            print(f'[sch_add] Description field found, visible={f.attributes.visible}', file=sys.stderr)\n";
         code << "            f.attributes.visible = False\n";
+        code << "            _desc_hidden = True\n";
+        code << "            print(f'[sch_add] Set visible=False, now visible={f.attributes.visible}', file=sys.stderr)\n";
         code << "            break\n";
-        code << "    sch.crud.update_items(symbol)\n";
+        code << "    if not _desc_hidden:\n";
+        code << "        print('[sch_add] WARNING: Description field not found in symbol fields', file=sys.stderr)\n";
+        code << "    _update_result = sch.crud.update_items(symbol)\n";
+        code << "    print(f'[sch_add] update_items returned: {_update_result}', file=sys.stderr)\n";
 
         code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(symbol), 'reference': getattr(symbol, 'reference', '')}\n";
     }

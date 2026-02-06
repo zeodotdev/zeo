@@ -230,6 +230,10 @@ private:
 
     void InitializeTools();                                                    // Setup tool definitions
 
+    // Multi-project access helpers
+    std::vector<wxString> GetOpenEditorFiles();  // Files currently open in sch/pcb editors
+    std::vector<wxString> GetAllowedPaths();     // Union of docs root + project dir + open editor dirs
+
     // Async LLM streaming helpers
     void StartAsyncLLMRequest();  // Start an async LLM request
     void RetryLastRequest();      // Retry after context recovery

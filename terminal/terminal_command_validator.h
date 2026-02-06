@@ -56,7 +56,22 @@ public:
     static TerminalValidationResult ValidateCommand( const std::string& aCommand,
                                                      const std::string& aProjectPath );
 
+    /**
+     * Validate a bash command against multiple allowed directory paths.
+     *
+     * @param aCommand The bash command to validate
+     * @param aAllowedPaths List of allowed directory paths (must be canonical/absolute)
+     * @return TerminalValidationResult with valid=true if command is safe, or error message if blocked
+     */
+    static TerminalValidationResult ValidateCommand( const std::string& aCommand,
+                                                     const std::vector<std::string>& aAllowedPaths );
+
 private:
+    /**
+     * Check if a path is within any of the allowed directories.
+     */
+    static bool IsPathInAllowedDirs( const std::string& aPath,
+                                     const std::vector<std::string>& aAllowedPaths );
     /**
      * Check if a path is within the project directory.
      * Handles relative paths by resolving against project path.

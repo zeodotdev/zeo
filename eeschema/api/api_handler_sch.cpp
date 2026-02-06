@@ -4342,9 +4342,6 @@ API_HANDLER_SCH::handleRunSimulation(
         return response;
     }
 
-    simFrame->Show( true );
-    simFrame->Raise();
-
     auto simulator = simFrame->GetSimulator();
     auto circuitModel = simFrame->GetCircuitModel();
 

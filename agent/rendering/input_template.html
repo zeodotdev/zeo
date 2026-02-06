@@ -33,12 +33,17 @@ html, body {
     border-color: #569cd6;
 }
 
+.textarea-wrapper {
+    position: relative;
+    width: 100%;
+}
+
 .highlight-layer {
     position: absolute;
-    top: 8px;
-    left: 12px;
-    right: 12px;
-    bottom: 8px;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     white-space: pre-wrap;
     word-wrap: break-word;
     pointer-events: none;
@@ -60,6 +65,7 @@ html, body {
     border: none;
     outline: none;
     padding: 0;
+    padding-right: 28px;
     margin: 0;
     font: inherit;
     overflow: hidden;
@@ -80,14 +86,89 @@ html, body {
 
 /* @{tag} highlighting */
 .hl-tag { color: #569cd6; font-weight: bold; }
+
+/* Attachment preview bar */
+.attachment-bar {
+    display: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 0 4px 0;
+}
+.attachment-bar.visible { display: flex; }
+
+.attachment-thumb {
+    position: relative;
+    display: inline-block;
+}
+.attachment-thumb img {
+    height: 48px;
+    max-width: 80px;
+    border-radius: 4px;
+    object-fit: cover;
+    display: block;
+    cursor: pointer;
+}
+.attachment-thumb .remove-btn {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #555;
+    color: #fff;
+    font-size: 11px;
+    line-height: 16px;
+    text-align: center;
+    cursor: pointer;
+    border: none;
+    padding: 0;
+    -webkit-user-select: none;
+    user-select: none;
+}
+.attachment-thumb .remove-btn:hover { background: #f44747; }
+
+/* Attach button */
+.attach-btn {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    width: 24px;
+    height: 24px;
+    cursor: pointer;
+    color: #808080;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    -webkit-user-select: none;
+    user-select: none;
+}
+.attach-btn:hover { color: #FFFFFF; background: rgba(255,255,255,0.08); }
+.attach-btn svg { width: 16px; height: 16px; }
+
+/* Drag-and-drop overlay */
+.editor-container.drag-over {
+    border-color: #569cd6;
+    background: rgba(86, 156, 214, 0.08);
+}
+
 </style>
 </head>
 <body>
 <div class="editor-container" id="editor-container">
-    <pre class="highlight-layer" id="highlight-layer"></pre>
-    <textarea class="input-textarea" id="input-textarea"
-              placeholder="Message the agent..."
-              rows="1"></textarea>
+    <div class="attachment-bar" id="attachment-bar"></div>
+    <div class="textarea-wrapper">
+        <pre class="highlight-layer" id="highlight-layer"></pre>
+        <textarea class="input-textarea" id="input-textarea"
+                  placeholder="Message the agent..."
+                  rows="1"></textarea>
+    </div>
+    <div class="attach-btn" id="attach-btn" title="Attach image">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+        </svg>
+    </div>
 </div>
 
 <script>
@@ -142,7 +223,6 @@ function autoResize() {
     var scrollHeight = textarea.scrollHeight;
     var newHeight = Math.min(Math.max(scrollHeight, MIN_HEIGHT), MAX_HEIGHT);
     textarea.style.height = newHeight + 'px';
-    highlightLayer.style.height = newHeight + 'px';
 
     // Enable scrolling if content exceeds max
     textarea.style.overflowY = (scrollHeight > MAX_HEIGHT) ? 'auto' : 'hidden';
@@ -204,7 +284,12 @@ function handleAtomicDeletion(e) {
 function handleEnter(e) {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
-        sendMsg('submit', { text: textarea.value });
+        sendMsg('submit', {
+            text: textarea.value,
+            attachments: attachments.map(function(a) {
+                return { base64: a.base64, media_type: a.media_type, filename: a.filename };
+            })
+        });
     }
 }
 
@@ -230,6 +315,7 @@ function setText(text) {
 
 function clearInput() {
     textarea.value = '';
+    clearAttachments();
     syncHighlight();
 }
 
@@ -240,6 +326,121 @@ function getText() {
 function focusInput() {
     textarea.focus();
 }
+
+// =========================================================================
+// Attachment handling
+// =========================================================================
+var attachments = [];
+var attachmentBar = document.getElementById('attachment-bar');
+var attachIdCounter = 0;
+
+function addAttachment(base64, mediaType, filename) {
+    var id = 'att_' + (++attachIdCounter);
+    attachments.push({ id: id, base64: base64, media_type: mediaType, filename: filename || 'image' });
+    renderAttachments();
+    autoResize();
+}
+
+function removeAttachment(id) {
+    attachments = attachments.filter(function(a) { return a.id !== id; });
+    renderAttachments();
+    autoResize();
+}
+
+function clearAttachments() {
+    attachments = [];
+    renderAttachments();
+}
+
+function previewAttachment(id) {
+    var att = attachments.find(function(a) { return a.id === id; });
+    if (att) {
+        sendMsg('preview_image', { base64: att.base64, media_type: att.media_type });
+    }
+}
+
+function renderAttachments() {
+    if (attachments.length === 0) {
+        attachmentBar.className = 'attachment-bar';
+        attachmentBar.innerHTML = '';
+        return;
+    }
+    attachmentBar.className = 'attachment-bar visible';
+    var html = '';
+    for (var i = 0; i < attachments.length; i++) {
+        var a = attachments[i];
+        html += '<div class="attachment-thumb">'
+            + '<img src="data:' + a.media_type + ';base64,' + a.base64 + '" title="' + a.filename
+            + '" onclick="previewAttachment(\'' + a.id + '\')" />'
+            + '<div class="remove-btn" onclick="removeAttachment(\'' + a.id + '\')">\u00d7</div>'
+            + '</div>';
+    }
+    attachmentBar.innerHTML = html;
+}
+
+// Paste handler - intercept image paste
+textarea.addEventListener('paste', function(e) {
+    var items = (e.clipboardData || e.originalEvent.clipboardData).items;
+    for (var i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+            e.preventDefault();
+            var blob = items[i].getAsFile();
+            var reader = new FileReader();
+            reader.onload = function(ev) {
+                var dataUrl = ev.target.result;
+                var commaIdx = dataUrl.indexOf(',');
+                var meta = dataUrl.substring(0, commaIdx);
+                var b64 = dataUrl.substring(commaIdx + 1);
+                var mediaType = meta.split(':')[1].split(';')[0];
+                addAttachment(b64, mediaType, 'pasted_image.png');
+            };
+            reader.readAsDataURL(blob);
+            break;
+        }
+    }
+});
+
+// Drag-and-drop handlers
+var editorContainer = document.getElementById('editor-container');
+
+editorContainer.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    editorContainer.classList.add('drag-over');
+});
+
+editorContainer.addEventListener('dragleave', function(e) {
+    e.preventDefault();
+    editorContainer.classList.remove('drag-over');
+});
+
+editorContainer.addEventListener('drop', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    editorContainer.classList.remove('drag-over');
+    var files = e.dataTransfer.files;
+    for (var i = 0; i < files.length; i++) {
+        if (files[i].type.indexOf('image') !== -1) {
+            (function(file) {
+                var reader = new FileReader();
+                reader.onload = function(ev) {
+                    var dataUrl = ev.target.result;
+                    var commaIdx = dataUrl.indexOf(',');
+                    var meta = dataUrl.substring(0, commaIdx);
+                    var b64 = dataUrl.substring(commaIdx + 1);
+                    var mediaType = meta.split(':')[1].split(';')[0];
+                    addAttachment(b64, mediaType, file.name);
+                };
+                reader.readAsDataURL(file);
+            })(files[i]);
+        }
+    }
+});
+
+// Attach button click
+document.getElementById('attach-btn').addEventListener('click', function() {
+    sendMsg('attach_click');
+});
 
 // Initial setup
 syncHighlight();

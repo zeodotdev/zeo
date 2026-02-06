@@ -26,6 +26,7 @@
 #include <wx/utils.h>
 #include <wx/stdpaths.h>
 #include <wx/filename.h>
+#include <wx/filedlg.h>
 #include <wx/dir.h>
 #include <wx/stattext.h>
 #include <bitmaps.h>
@@ -39,6 +40,7 @@
 #include <wx/mstream.h>
 #include <wx/toolbar.h>
 #include <wx/bitmap.h>
+#include <wx/statbmp.h>
 #include <wx/icon.h>
 #include <kicad_curl/kicad_curl_easy.h>
 #include <kiid.h>
@@ -272,9 +274,12 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         }
         else
         {
-            // Route through JS to get the current input text, then submit back to C++
+            // Route through JS to get the current input text + attachments, then submit back to C++
             if( m_inputWebView )
-                m_inputWebView->RunScriptAsync( wxS( "sendMsg('submit', { text: getText() });" ) );
+                m_inputWebView->RunScriptAsync( wxS(
+                    "sendMsg('submit', { text: getText(), attachments: attachments.map(function(a) {"
+                    " return { base64: a.base64, media_type: a.media_type, filename: a.filename };"
+                    " }) });" ) );
         }
     } );
     m_newChatButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnNewChat, this );
@@ -1192,7 +1197,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 
     wxString text = m_pendingInputText;
     m_pendingInputText.Clear();
-    if( text.IsEmpty() )
+    if( text.IsEmpty() && m_pendingAttachments.empty() )
         return;
 
     // Reset scroll state for new user message - user sending indicates engagement at bottom
@@ -1204,9 +1209,12 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     escapedText.Replace( "<", "&lt;" );
     escapedText.Replace( ">", "&gt;" );
     escapedText.Replace( "\n", "<br>" );
+
+    wxString bubbleContent = ImageAttach::BuildAttachmentBubbleHtml( m_pendingAttachments )
+                             + escapedText;
     wxString msgHtml = wxString::Format(
         "<div class=\"flex justify-end my-1.5\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
-        escapedText );
+        bubbleContent );
 
     // Add streaming content container for incremental updates
     wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
@@ -1272,7 +1280,18 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // Send message via controller (handles history, starts LLM request)
     if( m_chatController )
     {
-        m_chatController->SendMessage( text.ToStdString() );
+        if( !m_pendingAttachments.empty() )
+        {
+            std::vector<CHAT_CONTROLLER::UserAttachment> attachments;
+            for( const auto& att : m_pendingAttachments )
+                attachments.push_back( { att.base64_data, att.media_type } );
+
+            m_chatController->SendMessageWithAttachments( text.ToStdString(), attachments );
+        }
+        else
+        {
+            m_chatController->SendMessage( text.ToStdString() );
+        }
 
         // Sync controller's history back to frame for rendering and persistence
         m_chatHistory = m_chatController->GetChatHistory();
@@ -1288,6 +1307,8 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         m_chatHistoryDb.Save( m_chatHistory );
         StartAsyncLLMRequest();
     }
+
+    m_pendingAttachments.clear();
 }
 
 void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
@@ -1419,6 +1440,14 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
                 wxLaunchDefaultBrowser( href );
             }
         }
+        else if( action == "preview_image" )
+        {
+            wxString src = wxString::FromUTF8( msg.value( "src", "" ) );
+            int commaPos = src.Find( ',' );
+
+            if( commaPos != wxNOT_FOUND )
+                ImageAttach::ShowPreviewDialog( this, src.Mid( commaPos + 1 ) );
+        }
         else if( action == "copy_image" )
         {
             // Decode the data URI into a wxImage and show a native context menu
@@ -1526,12 +1555,52 @@ void AGENT_FRAME::OnInputWebViewMessage( const wxString& aMessage )
         if( action == "submit" )
         {
             wxString text = wxString::FromUTF8( msg.value( "text", "" ) );
-            if( !text.IsEmpty() )
+            m_pendingAttachments = ImageAttach::ParseAttachmentsFromJson( msg );
+
+            if( !text.IsEmpty() || !m_pendingAttachments.empty() )
             {
                 m_pendingInputText = text;
                 wxCommandEvent evt;
                 OnSend( evt );
             }
+        }
+        else if( action == "attach_click" )
+        {
+            wxFileDialog dlg( this, "Attach Image", "", "",
+                              "Image files (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp)"
+                              "|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp",
+                              wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE );
+
+            if( dlg.ShowModal() == wxID_OK )
+            {
+                wxArrayString paths;
+                dlg.GetPaths( paths );
+
+                for( const auto& path : paths )
+                {
+                    IMAGE_ATTACHMENT att;
+                    if( !ImageAttach::LoadImageFromFile( path, att ) )
+                        continue;
+
+                    // Inject into JS attachment preview
+                    wxString safeName = wxString::FromUTF8( att.filename );
+                    safeName.Replace( "'", "\\'" );
+
+                    wxString script = wxString::Format(
+                        "addAttachment('%s', '%s', '%s');",
+                        wxString::FromUTF8( att.base64_data ),
+                        wxString::FromUTF8( att.media_type ),
+                        safeName );
+                    m_inputWebView->RunScriptAsync( script );
+                }
+            }
+        }
+        else if( action == "preview_image" )
+        {
+            std::string b64 = msg.value( "base64", "" );
+
+            if( !b64.empty() )
+                ImageAttach::ShowPreviewDialog( this, wxString::FromUTF8( b64 ) );
         }
         else if( action == "resize" )
         {
@@ -2001,6 +2070,30 @@ void AGENT_FRAME::RenderChatHistory()
         }
         else if( msg["content"].is_array() )
         {
+            // Check for user messages with image attachments - render as one combined bubble
+            if( role == "user" )
+            {
+                bool hasImages = false;
+                for( const auto& block : msg["content"] )
+                {
+                    if( block.value( "type", "" ) == "image" )
+                    {
+                        hasImages = true;
+                        break;
+                    }
+                }
+
+                if( hasImages )
+                {
+                    wxString bubble = ImageAttach::BuildHistoryImageBubbleHtml(
+                            msg["content"] );
+                    if( !bubble.IsEmpty() )
+                        m_fullHtmlContent += bubble;
+
+                    continue;  // Skip block-level iteration for this message
+                }
+            }
+
             // Iterate through content blocks and render each one
             for( const auto& block : msg["content"] )
             {

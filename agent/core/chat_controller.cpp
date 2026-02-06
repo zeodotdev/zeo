@@ -149,6 +149,94 @@ void CHAT_CONTROLLER::SendMessage( const std::string& aText )
 }
 
 
+void CHAT_CONTROLLER::SendMessageWithAttachments(
+        const std::string& aText,
+        const std::vector<UserAttachment>& aAttachments )
+{
+    wxLogInfo( "CHAT_CONTROLLER::SendMessageWithAttachments called with %zu attachments",
+               aAttachments.size() );
+
+    if( !CanAcceptInput() )
+    {
+        wxLogWarning( "CHAT_CONTROLLER::SendMessageWithAttachments called while busy" );
+        return;
+    }
+
+    // Title generation (same as SendMessage)
+    int userMessageCount = 0;
+    for( const auto& msg : m_chatHistory )
+    {
+        if( msg.contains( "role" ) && msg["role"] == "user" )
+            userMessageCount++;
+    }
+
+    if( userMessageCount == 0 )
+    {
+        m_firstUserMessage = aText;
+        GenerateTitle();
+    }
+
+    // Build multi-content user message (Anthropic format)
+    nlohmann::json content = nlohmann::json::array();
+
+    // Add image blocks first (Anthropic recommends images before text)
+    for( const auto& att : aAttachments )
+    {
+        content.push_back( {
+            { "type", "image" },
+            { "source", {
+                { "type", "base64" },
+                { "media_type", att.media_type },
+                { "data", att.base64_data }
+            } }
+        } );
+    }
+
+    // Inject project context into first user message (same as SendMessage)
+    std::string messageText = aText;
+    if( userMessageCount == 0 && m_getProjectPathFn )
+    {
+        std::string projectContext = m_getProjectPathFn();
+        if( !projectContext.empty() )
+        {
+            messageText = "<project_context>\n" + projectContext +
+                         "\n</project_context>\n\n" + aText;
+        }
+    }
+
+    // Add text block (even if empty, to ensure valid content array)
+    if( !messageText.empty() )
+    {
+        content.push_back( {
+            { "type", "text" },
+            { "text", messageText }
+        } );
+    }
+
+    nlohmann::json userMsg = {
+        { "role", "user" },
+        { "content", content }
+    };
+    AddToHistory( userMsg );
+
+    // Reset streaming state
+    m_currentResponse.clear();
+    m_thinkingContent.clear();
+    m_thinkingSignature.clear();
+    m_pendingToolCalls = nlohmann::json::array();
+    m_serverToolBlocks = nlohmann::json::array();
+
+    // Transition to waiting for LLM
+    AgentConversationState oldState = m_ctx.GetState();
+    m_ctx.TransitionTo( AgentConversationState::WAITING_FOR_LLM );
+    EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
+                                                             static_cast<int>( m_ctx.GetState() ) ) );
+
+    // Start the LLM request
+    StartLLMRequest();
+}
+
+
 void CHAT_CONTROLLER::Cancel()
 {
     wxLogInfo( "CHAT_CONTROLLER::Cancel called" );
@@ -1455,7 +1543,37 @@ void CHAT_CONTROLLER::SanitizeApiContext()
             }
         }
 
-        sanitized.push_back( msg );
+        // Strip __stripped__ image blocks from user messages (loaded from history)
+        nlohmann::json cleanedMsg = msg;
+
+        if( role == "user" && cleanedMsg.contains( "content" )
+            && cleanedMsg["content"].is_array() )
+        {
+            nlohmann::json cleanedContent = nlohmann::json::array();
+
+            for( const auto& block : cleanedMsg["content"] )
+            {
+                if( block.contains( "type" ) && block["type"] == "image"
+                    && block.contains( "source" )
+                    && block["source"].value( "data", "" ) == "__stripped__" )
+                {
+                    continue;  // Drop stripped image blocks from API context
+                }
+
+                cleanedContent.push_back( block );
+            }
+
+            if( cleanedContent.empty() )
+                continue;  // Skip entirely empty user messages
+
+            cleanedMsg["content"] = cleanedContent;
+
+            // If only a single text block remains, simplify to string content
+            if( cleanedContent.size() == 1 && cleanedContent[0].value( "type", "" ) == "text" )
+                cleanedMsg["content"] = cleanedContent[0].value( "text", "" );
+        }
+
+        sanitized.push_back( cleanedMsg );
         lastRole = role;
     }
 

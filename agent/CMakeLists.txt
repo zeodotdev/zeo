@@ -90,6 +90,7 @@ set( AGENT_SRCS
     # UI components
     ui/pending_changes_popup.cpp
     ui/history_panel.cpp
+    ui/image_attach.cpp
 
     # Authentication
     auth/agent_auth.cpp

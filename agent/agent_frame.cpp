@@ -847,8 +847,10 @@ void AGENT_FRAME::RebuildThinkingHtml()
     wxString thinkingText = "Thinking";
 
     m_thinkingHtml = wxString::Format(
+        "<div class=\"mb-0\">"
         "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline hover:underline\">%s</a>"
-        "<div class=\"thinking-content text-[#606060] mt-1 mb-1 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>",
+        "<div class=\"thinking-content text-[#606060] mt-1 mb-0 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
+        "</div>",
         m_currentThinkingIndex, thinkingText, expandedClass, m_currentThinkingIndex, displayStyle, displayContent );
 }
 
@@ -885,6 +887,15 @@ wxString AGENT_FRAME::BuildStreamingContent()
 
     // Get current response from controller and append with markdown
     std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
+
+    // Strip leading newlines to avoid blank line gap after thinking block
+    size_t start = currentResponse.find_first_not_of( "\n\r" );
+
+    if( start != std::string::npos && start > 0 )
+        currentResponse = currentResponse.substr( start );
+    else if( start == std::string::npos )
+        currentResponse.clear();
+
     streamingContent += AgentMarkdown::ToHtml( currentResponse );
 
     // Include any tool call HTML
@@ -1421,10 +1432,11 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_thinkingExpanded = false;
     m_isThinking = false;
     m_pendingToolCalls = nlohmann::json::array();
-    m_toolResultCounter = 0;
+    // NOTE: Don't reset m_toolResultCounter here - old tool-result-N IDs persist in
+    // m_fullHtmlContent after SetHtml(). Counter must be monotonically increasing to
+    // avoid duplicate DOM IDs. Only reset in OnNewChat/OnChatHistoryLoaded (full re-render).
     m_activeRunningHtml.Clear();
     m_activeToolResultIdx = -1;
-    m_historicalToolResultExpanded.clear();
     m_stopRequested = false;
     m_userScrolledUp = false;
     m_htmlUpdatePending = false;
@@ -2354,8 +2366,10 @@ void AGENT_FRAME::RenderChatHistory()
                         wxString displayStyle = expanded ? "block" : "none";
 
                         m_fullHtmlContent += wxString::Format(
+                            "<div class=\"mb-0\">"
                             "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline hover:underline\">Thinking</a>"
-                            "<div class=\"thinking-content text-[#606060] mt-1 mb-1 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>",
+                            "<div class=\"thinking-content text-[#606060] mt-1 mb-0 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
+                            "</div>",
                             thinkingIndex, expandedClass, thinkingIndex, displayStyle, escapedText );
                     }
                 }
@@ -3521,7 +3535,8 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
     m_toolCallHtml.Clear();
     m_thinkingExpanded = false;
     m_currentThinkingIndex = -1;
-    m_toolResultCounter = 0;
+    // NOTE: Don't reset m_toolResultCounter here - old tool-result-N IDs persist in the
+    // DOM (no re-render). Counter must be monotonically increasing to avoid duplicate IDs.
     m_activeRunningHtml.Clear();
     m_activeToolResultIdx = -1;
 

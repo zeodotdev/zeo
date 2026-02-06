@@ -25,10 +25,12 @@
 bool SCH_CRUD_HANDLER::CanHandle( const std::string& aToolName ) const
 {
     return aToolName == "sch_add" ||
+           aToolName == "sch_add_batch" ||
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
            aToolName == "sch_batch_delete" ||
-           aToolName == "sch_open_sheet";
+           aToolName == "sch_open_sheet" ||
+           aToolName == "sch_connect_to_power";
 }
 
 
@@ -130,6 +132,22 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
             return "Opening sheet: " + filePath;
         return "Getting current sheet";
     }
+    else if( aToolName == "sch_connect_to_power" )
+    {
+        std::string ref = aInput.value( "ref", "" );
+        std::string pin = aInput.value( "pin", "" );
+        std::string power = aInput.value( "power", "" );
+        return "Connecting " + ref + ":" + pin + " to " + power;
+    }
+    else if( aToolName == "sch_add_batch" )
+    {
+        if( aInput.contains( "elements" ) && aInput["elements"].is_array() )
+        {
+            size_t count = aInput["elements"].size();
+            return "Adding " + std::to_string( count ) + " elements in batch";
+        }
+        return "Batch adding elements";
+    }
 
     return "Executing " + aToolName;
 }
@@ -138,10 +156,12 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
 bool SCH_CRUD_HANDLER::RequiresIPC( const std::string& aToolName ) const
 {
     return aToolName == "sch_add" ||
+           aToolName == "sch_add_batch" ||
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
            aToolName == "sch_batch_delete" ||
-           aToolName == "sch_open_sheet";
+           aToolName == "sch_open_sheet" ||
+           aToolName == "sch_connect_to_power";
 }
 
 
@@ -152,6 +172,8 @@ std::string SCH_CRUD_HANDLER::GetIPCCommand( const std::string& aToolName,
 
     if( aToolName == "sch_add" )
         code = GenerateAddCode( aInput );
+    else if( aToolName == "sch_add_batch" )
+        code = GenerateAddBatchCode( aInput );
     else if( aToolName == "sch_update" )
         code = GenerateUpdateCode( aInput );
     else if( aToolName == "sch_delete" )
@@ -160,6 +182,8 @@ std::string SCH_CRUD_HANDLER::GetIPCCommand( const std::string& aToolName,
         code = GenerateBatchDeleteCode( aInput );
     else if( aToolName == "sch_open_sheet" )
         code = GenerateOpenSheetCode( aInput );
+    else if( aToolName == "sch_connect_to_power" )
+        code = GenerateConnectToPowerCode( aInput );
 
     return "run_shell sch " + code;
 }
@@ -399,7 +423,26 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
             code << "        sch.symbols.set_footprint(symbol, props['Footprint'])\n";
         }
 
-        code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(symbol), 'reference': getattr(symbol, 'reference', '')}\n";
+        // Extract pin positions for the response (eliminates need for follow-up sch_get_pins call)
+        code << "    pins = []\n";
+        code << "    if hasattr(symbol, 'pins'):\n";
+        code << "        for pin in symbol.pins:\n";
+        code << "            pin_info = {'number': pin.number, 'name': getattr(pin, 'name', '')}\n";
+        code << "            # Get exact transformed position via IPC\n";
+        code << "            if hasattr(sch.symbols, 'get_transformed_pin_position'):\n";
+        code << "                try:\n";
+        code << "                    result = sch.symbols.get_transformed_pin_position(symbol, pin.number)\n";
+        code << "                    if result:\n";
+        code << "                        p = result['position']\n";
+        code << "                        pin_info['position'] = [p.x / 1_000_000, p.y / 1_000_000]\n";
+        code << "                        pin_info['orientation'] = result.get('orientation', 0)\n";
+        code << "                except:\n";
+        code << "                    if hasattr(pin, 'position'):\n";
+        code << "                        pin_info['position'] = [pin.position.x / 1_000_000, pin.position.y / 1_000_000]\n";
+        code << "            elif hasattr(pin, 'position'):\n";
+        code << "                pin_info['position'] = [pin.position.x / 1_000_000, pin.position.y / 1_000_000]\n";
+        code << "            pins.append(pin_info)\n";
+        code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(symbol), 'reference': getattr(symbol, 'reference', ''), 'pins': pins}\n";
     }
     else if( elementType == "power" )
     {
@@ -421,10 +464,12 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
 
         code << "    pos = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
         code << "    symbol = sch.labels.add_power('" << EscapePythonString( powerName ) << "', pos, angle=" << angle << ")\n";
-        code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(symbol)}\n";
+        // Power symbol pin is at the symbol position itself (no offset)
+        code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(symbol), 'name': '" << EscapePythonString( powerName ) << "', 'pin_position': [" << posX << ", " << posY << "]}\n";
     }
     else if( elementType == "wire" )
     {
+        // Mode 1: from_pin + to_pin (with optional waypoints) - pin-to-pin routing
         if( aInput.contains( "from_pin" ) && aInput.contains( "to_pin" ) )
         {
             auto fromPin = aInput["from_pin"];
@@ -440,9 +485,66 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
             code << "        raise ValueError('Symbol not found: " << EscapePythonString( fromRef ) << "')\n";
             code << "    if not sym2:\n";
             code << "        raise ValueError('Symbol not found: " << EscapePythonString( toRef ) << "')\n";
-            code << "    wire = sch.wiring.wire_pins(sym1, '" << EscapePythonString( fromPinNum ) << "', sym2, '" << EscapePythonString( toPinNum ) << "')\n";
-            code << "    result = {'status': 'success', 'source': 'ipc'}\n";
+
+            // Check for waypoints - if present, use wire_path for custom routing
+            if( aInput.contains( "waypoints" ) && aInput["waypoints"].is_array() && aInput["waypoints"].size() > 0 )
+            {
+                auto waypoints = aInput["waypoints"];
+                code << "    waypoints = [\n";
+                for( size_t i = 0; i < waypoints.size(); ++i )
+                {
+                    if( waypoints[i].is_array() && waypoints[i].size() >= 2 )
+                    {
+                        double x = waypoints[i][0].get<double>();
+                        double y = waypoints[i][1].get<double>();
+                        code << "        (" << x << ", " << y << "),\n";
+                    }
+                }
+                code << "    ]\n";
+                code << "    wires = sch.wiring.wire_path((sym1, '" << EscapePythonString( fromPinNum ) << "'), waypoints, (sym2, '" << EscapePythonString( toPinNum ) << "'))\n";
+                code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires)}\n";
+            }
+            else
+            {
+                // No waypoints - use auto L-routing
+                std::string routeStyle = aInput.value( "route_style", "auto" );
+                code << "    wires = sch.wiring.wire_pins(sym1, '" << EscapePythonString( fromPinNum ) << "', sym2, '" << EscapePythonString( toPinNum ) << "', style='" << EscapePythonString( routeStyle ) << "')\n";
+                code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires)}\n";
+            }
         }
+        // Mode 2: from_pin + points (no to_pin) - start from pin, extend through points
+        else if( aInput.contains( "from_pin" ) && aInput.contains( "points" ) && aInput["points"].is_array() )
+        {
+            auto fromPin = aInput["from_pin"];
+            std::string fromRef = fromPin.value( "ref", "" );
+            std::string fromPinNum = fromPin.value( "pin", "" );
+            auto points = aInput["points"];
+
+            code << "    sym = sch.symbols.get_by_ref('" << EscapePythonString( fromRef ) << "')\n";
+            code << "    if not sym:\n";
+            code << "        raise ValueError('Symbol not found: " << EscapePythonString( fromRef ) << "')\n";
+            code << "    # Get exact pin position via IPC\n";
+            code << "    pin_pos = sch.symbols.get_pin_position(sym, '" << EscapePythonString( fromPinNum ) << "')\n";
+            code << "    if not pin_pos:\n";
+            code << "        raise ValueError('Pin not found: " << EscapePythonString( fromPinNum ) << "')\n";
+            code << "    # Build points list starting from pin position\n";
+            code << "    all_points = [pin_pos]\n";
+
+            // Add remaining points
+            for( size_t i = 0; i < points.size(); ++i )
+            {
+                if( points[i].is_array() && points[i].size() >= 2 )
+                {
+                    double x = points[i][0].get<double>();
+                    double y = points[i][1].get<double>();
+                    code << "    all_points.append(Vector2.from_xy_mm(" << x << ", " << y << "))\n";
+                }
+            }
+
+            code << "    wires = sch.wiring.add_wires(all_points)\n";
+            code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires)}\n";
+        }
+        // Mode 3: points only - explicit coordinate-based wiring
         else if( aInput.contains( "points" ) && aInput["points"].is_array() )
         {
             auto points = aInput["points"];
@@ -801,7 +903,8 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput )
     if( aInput.contains( "angle" ) )
     {
         double angle = aInput.value( "angle", 0.0 );
-        code << "    target_item = sch.symbols.rotate(target_item, " << angle << ")\n";
+        // Use set_angle() for absolute angle (not additive rotate())
+        code << "    target_item = sch.symbols.set_angle(target_item, " << angle << ")\n";
         code << "    updated = True\n";
     }
 
@@ -816,7 +919,26 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput )
         code << "        updated = True\n";
     }
 
-    code << "    result = {'status': 'success', 'source': 'ipc', 'target': target, 'updated': updated}\n";
+    // Return post-update state for verification
+    code << "    # Build state info from updated item\n";
+    code << "    state = {}\n";
+    code << "    if hasattr(target_item, 'position'):\n";
+    code << "        pos = target_item.position\n";
+    code << "        state['position'] = [pos.x / 1_000_000, pos.y / 1_000_000]  # Convert nm to mm\n";
+    code << "    if hasattr(target_item, 'angle'):\n";
+    code << "        state['angle'] = target_item.angle\n";
+    code << "    if hasattr(target_item, 'mirror_x'):\n";
+    code << "        if target_item.mirror_x:\n";
+    code << "            state['mirror'] = 'x'\n";
+    code << "        elif hasattr(target_item, 'mirror_y') and target_item.mirror_y:\n";
+    code << "            state['mirror'] = 'y'\n";
+    code << "        else:\n";
+    code << "            state['mirror'] = 'none'\n";
+    code << "    if hasattr(target_item, 'reference'):\n";
+    code << "        state['reference'] = target_item.reference\n";
+    code << "    if hasattr(target_item, 'value'):\n";
+    code << "        state['value'] = target_item.value\n";
+    code << "    result = {'status': 'success', 'source': 'ipc', 'target': target, 'updated': updated, 'state': state}\n";
     code << "\n";
     code << "except Exception as ipc_error:\n";
     code << "    use_ipc = False\n";
@@ -1225,6 +1347,373 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
     code << "except Exception as e:\n";
     code << "    import traceback\n";
     code << "    result = {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}\n";
+    code << "\n";
+    code << "print(json.dumps(result, indent=2))\n";
+
+    return code.str();
+}
+
+
+std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& aInput ) const
+{
+    std::ostringstream code;
+
+    std::string ref = aInput.value( "ref", "" );
+    std::string pin = aInput.value( "pin", "" );
+    std::string power = aInput.value( "power", "" );
+
+    // Get offset - default [0, 0] means place directly at pin (no wire)
+    double offsetX = 0, offsetY = 0;
+    if( aInput.contains( "offset" ) && aInput["offset"].is_array() && aInput["offset"].size() >= 2 )
+    {
+        offsetX = aInput["offset"][0].get<double>();
+        offsetY = aInput["offset"][1].get<double>();
+    }
+
+    // Get power angle - if not specified, auto-detect based on power type
+    bool hasAngle = aInput.contains( "power_angle" );
+    double powerAngle = aInput.value( "power_angle", 0.0 );
+
+    code << "import json, sys\n";
+    code << "from kipy.geometry import Vector2\n";
+    code << "\n";
+    code << GenerateRefreshPreamble();
+    code << "\n";
+    code << "ref = '" << EscapePythonString( ref ) << "'\n";
+    code << "pin_id = '" << EscapePythonString( pin ) << "'\n";
+    code << "power_name = '" << EscapePythonString( power ) << "'\n";
+    code << "offset_x = " << offsetX << "\n";
+    code << "offset_y = " << offsetY << "\n";
+    code << "\n";
+    code << "try:\n";
+    code << "    # Get the symbol and pin position\n";
+    code << "    sym = sch.symbols.get_by_ref(ref)\n";
+    code << "    if not sym:\n";
+    code << "        raise ValueError(f'Symbol not found: {ref}')\n";
+    code << "\n";
+    code << "    # Get exact pin position via IPC\n";
+    code << "    pin_result = sch.symbols.get_transformed_pin_position(sym, pin_id)\n";
+    code << "    if not pin_result:\n";
+    code << "        # Fallback to cached position\n";
+    code << "        pin_pos = sch.symbols.get_pin_position(sym, pin_id)\n";
+    code << "        if not pin_pos:\n";
+    code << "            raise ValueError(f'Pin not found: {pin_id} on {ref}')\n";
+    code << "        pin_x = pin_pos.x / 1_000_000\n";
+    code << "        pin_y = pin_pos.y / 1_000_000\n";
+    code << "    else:\n";
+    code << "        pin_x = pin_result['position'].x / 1_000_000\n";
+    code << "        pin_y = pin_result['position'].y / 1_000_000\n";
+    code << "\n";
+    code << "    # Calculate power symbol position\n";
+    code << "    power_x = pin_x + offset_x\n";
+    code << "    power_y = pin_y + offset_y\n";
+    code << "\n";
+    code << "    # Auto-detect angle based on power type if not specified\n";
+
+    if( hasAngle )
+    {
+        code << "    power_angle = " << powerAngle << "\n";
+    }
+    else
+    {
+        code << "    # GND typically points down (180°), VCC/power typically points up (0°)\n";
+        code << "    power_lower = power_name.lower()\n";
+        code << "    if 'gnd' in power_lower or 'vss' in power_lower or 'gnd' in power_lower:\n";
+        code << "        # GND pointing down - if offset_y > 0, symbol is below pin\n";
+        code << "        power_angle = 180 if offset_y >= 0 else 0\n";
+        code << "    else:\n";
+        code << "        # VCC/power pointing up - if offset_y < 0, symbol is above pin\n";
+        code << "        power_angle = 0 if offset_y <= 0 else 180\n";
+    }
+
+    code << "\n";
+    code << "    # Place the power symbol\n";
+    code << "    power_pos = Vector2.from_xy_mm(power_x, power_y)\n";
+    code << "    power_sym = sch.labels.add_power(power_name, power_pos, angle=power_angle)\n";
+    code << "\n";
+    code << "    wire_count = 0\n";
+    code << "    # If there's an offset, draw a wire from pin to power symbol\n";
+    code << "    if abs(offset_x) > 0.01 or abs(offset_y) > 0.01:\n";
+    code << "        pin_vec = Vector2.from_xy_mm(pin_x, pin_y)\n";
+    code << "        # For L-shaped routes when both offsets are non-zero\n";
+    code << "        if abs(offset_x) > 0.01 and abs(offset_y) > 0.01:\n";
+    code << "            # Create corner point - horizontal first\n";
+    code << "            corner = Vector2.from_xy_mm(power_x, pin_y)\n";
+    code << "            sch.wiring.add_wire(pin_vec, corner)\n";
+    code << "            sch.wiring.add_wire(corner, power_pos)\n";
+    code << "            wire_count = 2\n";
+    code << "        else:\n";
+    code << "            # Direct wire\n";
+    code << "            sch.wiring.add_wire(pin_vec, power_pos)\n";
+    code << "            wire_count = 1\n";
+    code << "\n";
+    code << "    result = {\n";
+    code << "        'status': 'success',\n";
+    code << "        'source': 'ipc',\n";
+    code << "        'ref': ref,\n";
+    code << "        'pin': pin_id,\n";
+    code << "        'power': power_name,\n";
+    code << "        'power_position': [power_x, power_y],\n";
+    code << "        'pin_position': [pin_x, pin_y],\n";
+    code << "        'wire_count': wire_count\n";
+    code << "    }\n";
+    code << "\n";
+    code << "except Exception as e:\n";
+    code << "    result = {'status': 'error', 'message': str(e)}\n";
+    code << "\n";
+    code << "print(json.dumps(result, indent=2))\n";
+
+    return code.str();
+}
+
+
+std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput ) const
+{
+    std::ostringstream code;
+
+    if( !aInput.contains( "elements" ) || !aInput["elements"].is_array() )
+    {
+        code << "import json\n";
+        code << "print(json.dumps({'status': 'error', 'message': 'elements array is required'}))\n";
+        return code.str();
+    }
+
+    auto elements = aInput["elements"];
+    std::string filePath = aInput.value( "file_path", "" );
+
+    code << "import json, sys\n";
+    code << "from kipy.geometry import Vector2\n";
+    code << "\n";
+    code << GenerateRefreshPreamble();
+    code << "\n";
+    code << "# Helper to safely extract ID from various object types\n";
+    code << "def get_id(obj):\n";
+    code << "    if obj is None:\n";
+    code << "        return ''\n";
+    code << "    if hasattr(obj, 'id'):\n";
+    code << "        id_obj = obj.id\n";
+    code << "        if hasattr(id_obj, 'value'):\n";
+    code << "            return str(id_obj.value)\n";
+    code << "        return str(id_obj)\n";
+    code << "    if hasattr(obj, 'uuid'):\n";
+    code << "        return str(obj.uuid)\n";
+    code << "    if isinstance(obj, str):\n";
+    code << "        return obj\n";
+    code << "    return str(obj)\n";
+    code << "\n";
+    code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
+    code << "results = []\n";
+    code << "errors = []\n";
+    code << "\n";
+    code << "try:\n";
+
+    // Process each element in the batch
+    for( size_t i = 0; i < elements.size(); ++i )
+    {
+        auto elem = elements[i];
+        std::string elementType = elem.value( "element_type", "" );
+
+        code << "    # Element " << i << ": " << elementType << "\n";
+        code << "    try:\n";
+
+        if( elementType == "symbol" )
+        {
+            std::string libId = elem.value( "lib_id", "" );
+            double posX = 0, posY = 0;
+            if( elem.contains( "position" ) && elem["position"].is_array() &&
+                elem["position"].size() >= 2 )
+            {
+                posX = elem["position"][0].get<double>();
+                posY = elem["position"][1].get<double>();
+            }
+            double angle = elem.value( "angle", 0.0 );
+            std::string mirror = elem.value( "mirror", "none" );
+            bool mirrorX = ( mirror == "x" );
+            bool mirrorY = ( mirror == "y" );
+            int unit = elem.value( "unit", 1 );
+            std::string reference = elem.value( "reference", "" );
+
+            code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
+            code << "        sym_" << i << " = sch.symbols.add(\n";
+            code << "            lib_id='" << EscapePythonString( libId ) << "',\n";
+            code << "            position=pos_" << i << ",\n";
+            code << "            unit=" << unit << ",\n";
+            code << "            angle=" << angle << ",\n";
+            code << "            mirror_x=" << ( mirrorX ? "True" : "False" ) << ",\n";
+            code << "            mirror_y=" << ( mirrorY ? "True" : "False" ) << "\n";
+            code << "        )\n";
+
+            if( !reference.empty() )
+            {
+                code << "        if hasattr(sch.symbols, 'set_reference'):\n";
+                code << "            sch.symbols.set_reference(sym_" << i << ", '" << EscapePythonString( reference ) << "')\n";
+            }
+
+            // Handle properties
+            if( elem.contains( "properties" ) && elem["properties"].is_object() )
+            {
+                code << "        props_" << i << " = " << elem["properties"].dump() << "\n";
+                code << "        if 'Value' in props_" << i << ":\n";
+                code << "            sch.symbols.set_value(sym_" << i << ", props_" << i << "['Value'])\n";
+                code << "        if 'Footprint' in props_" << i << ":\n";
+                code << "            sch.symbols.set_footprint(sym_" << i << ", props_" << i << "['Footprint'])\n";
+            }
+
+            // Get pin positions for response
+            code << "        pins_" << i << " = []\n";
+            code << "        if hasattr(sym_" << i << ", 'pins'):\n";
+            code << "            for pin in sym_" << i << ".pins:\n";
+            code << "                pin_info = {'number': pin.number, 'name': getattr(pin, 'name', '')}\n";
+            code << "                if hasattr(sch.symbols, 'get_transformed_pin_position'):\n";
+            code << "                    try:\n";
+            code << "                        result = sch.symbols.get_transformed_pin_position(sym_" << i << ", pin.number)\n";
+            code << "                        if result:\n";
+            code << "                            p = result['position']\n";
+            code << "                            pin_info['position'] = [p.x / 1_000_000, p.y / 1_000_000]\n";
+            code << "                    except:\n";
+            code << "                        pass\n";
+            code << "                pins_" << i << ".append(pin_info)\n";
+            code << "        results.append({'index': " << i << ", 'type': 'symbol', 'id': get_id(sym_" << i << "), 'reference': getattr(sym_" << i << ", 'reference', ''), 'pins': pins_" << i << "})\n";
+        }
+        else if( elementType == "power" )
+        {
+            std::string libId = elem.value( "lib_id", "" );
+            std::string powerName = libId;
+            size_t colonPos = libId.find( ':' );
+            if( colonPos != std::string::npos )
+                powerName = libId.substr( colonPos + 1 );
+
+            double posX = 0, posY = 0;
+            if( elem.contains( "position" ) && elem["position"].is_array() &&
+                elem["position"].size() >= 2 )
+            {
+                posX = elem["position"][0].get<double>();
+                posY = elem["position"][1].get<double>();
+            }
+            double angle = elem.value( "angle", 0.0 );
+
+            code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
+            code << "        pwr_" << i << " = sch.labels.add_power('" << EscapePythonString( powerName ) << "', pos_" << i << ", angle=" << angle << ")\n";
+            code << "        results.append({'index': " << i << ", 'type': 'power', 'id': get_id(pwr_" << i << "), 'name': '" << EscapePythonString( powerName ) << "', 'pin_position': [" << posX << ", " << posY << "]})\n";
+        }
+        else if( elementType == "wire" )
+        {
+            // Handle wire with from_pin/to_pin
+            if( elem.contains( "from_pin" ) && elem.contains( "to_pin" ) )
+            {
+                auto fromPin = elem["from_pin"];
+                auto toPin = elem["to_pin"];
+                std::string fromRef = fromPin.value( "ref", "" );
+                std::string fromPinNum = fromPin.value( "pin", "" );
+                std::string toRef = toPin.value( "ref", "" );
+                std::string toPinNum = toPin.value( "pin", "" );
+                std::string routeStyle = elem.value( "route_style", "auto" );
+
+                code << "        sym1_" << i << " = sch.symbols.get_by_ref('" << EscapePythonString( fromRef ) << "')\n";
+                code << "        sym2_" << i << " = sch.symbols.get_by_ref('" << EscapePythonString( toRef ) << "')\n";
+                code << "        if sym1_" << i << " and sym2_" << i << ":\n";
+                code << "            wires_" << i << " = sch.wiring.wire_pins(sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "', sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "', style='" << EscapePythonString( routeStyle ) << "')\n";
+                code << "            results.append({'index': " << i << ", 'type': 'wire', 'wire_count': len(wires_" << i << ")})\n";
+                code << "        else:\n";
+                code << "            errors.append({'index': " << i << ", 'error': 'Symbol not found'})\n";
+            }
+            // Handle wire with points
+            else if( elem.contains( "points" ) && elem["points"].is_array() )
+            {
+                auto points = elem["points"];
+                if( points.size() >= 2 )
+                {
+                    code << "        wc_" << i << " = 0\n";
+                    for( size_t j = 0; j < points.size() - 1; ++j )
+                    {
+                        if( points[j].is_array() && points[j].size() >= 2 &&
+                            points[j + 1].is_array() && points[j + 1].size() >= 2 )
+                        {
+                            double x1 = points[j][0].get<double>();
+                            double y1 = points[j][1].get<double>();
+                            double x2 = points[j + 1][0].get<double>();
+                            double y2 = points[j + 1][1].get<double>();
+                            code << "        sch.wiring.add_wire(Vector2.from_xy_mm(" << x1 << ", " << y1 << "), Vector2.from_xy_mm(" << x2 << ", " << y2 << "))\n";
+                            code << "        wc_" << i << " += 1\n";
+                        }
+                    }
+                    code << "        results.append({'index': " << i << ", 'type': 'wire', 'wire_count': wc_" << i << "})\n";
+                }
+            }
+        }
+        else if( elementType == "junction" )
+        {
+            double posX = 0, posY = 0;
+            if( elem.contains( "position" ) && elem["position"].is_array() &&
+                elem["position"].size() >= 2 )
+            {
+                posX = elem["position"][0].get<double>();
+                posY = elem["position"][1].get<double>();
+            }
+
+            code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
+            code << "        junc_" << i << " = sch.wiring.add_junction(pos_" << i << ")\n";
+            code << "        results.append({'index': " << i << ", 'type': 'junction', 'id': get_id(junc_" << i << ")})\n";
+        }
+        else if( elementType == "label" )
+        {
+            std::string text = elem.value( "text", "" );
+            std::string labelType = elem.value( "label_type", "local" );
+            double posX = 0, posY = 0;
+            if( elem.contains( "position" ) && elem["position"].is_array() &&
+                elem["position"].size() >= 2 )
+            {
+                posX = elem["position"][0].get<double>();
+                posY = elem["position"][1].get<double>();
+            }
+
+            code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
+            if( labelType == "global" )
+                code << "        lbl_" << i << " = sch.labels.add_global('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
+            else if( labelType == "hierarchical" )
+                code << "        lbl_" << i << " = sch.labels.add_hierarchical('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
+            else
+                code << "        lbl_" << i << " = sch.labels.add_local('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
+            code << "        results.append({'index': " << i << ", 'type': 'label', 'id': get_id(lbl_" << i << "), 'text': '" << EscapePythonString( text ) << "'})\n";
+        }
+        else if( elementType == "no_connect" )
+        {
+            double posX = 0, posY = 0;
+            if( elem.contains( "position" ) && elem["position"].is_array() &&
+                elem["position"].size() >= 2 )
+            {
+                posX = elem["position"][0].get<double>();
+                posY = elem["position"][1].get<double>();
+            }
+
+            code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
+            code << "        nc_" << i << " = sch.wiring.add_no_connect(pos_" << i << ")\n";
+            code << "        results.append({'index': " << i << ", 'type': 'no_connect', 'id': get_id(nc_" << i << ")})\n";
+        }
+        else
+        {
+            code << "        errors.append({'index': " << i << ", 'error': 'Unknown element_type: " << EscapePythonString( elementType ) << "'})\n";
+        }
+
+        code << "    except Exception as e_" << i << ":\n";
+        code << "        errors.append({'index': " << i << ", 'error': str(e_" << i << ")})\n";
+        code << "\n";
+    }
+
+    code << "\n";
+    code << "    result = {\n";
+    code << "        'status': 'success' if len(errors) == 0 else 'partial',\n";
+    code << "        'source': 'ipc',\n";
+    code << "        'total': " << elements.size() << ",\n";
+    code << "        'succeeded': len(results),\n";
+    code << "        'failed': len(errors),\n";
+    code << "        'results': results\n";
+    code << "    }\n";
+    code << "    if errors:\n";
+    code << "        result['errors'] = errors\n";
+    code << "\n";
+    code << "except Exception as batch_error:\n";
+    code << "    result = {'status': 'error', 'message': str(batch_error), 'partial_results': results, 'errors': errors}\n";
     code << "\n";
     code << "print(json.dumps(result, indent=2))\n";
 

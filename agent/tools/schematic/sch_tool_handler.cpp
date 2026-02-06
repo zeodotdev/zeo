@@ -148,7 +148,8 @@ static const char* SCH_TOOL_NAMES[] = {
     "sch_read_section",
     // "sch_modify",  // DISABLED: Use sch_add/sch_update/sch_delete instead
     "sch_validate",
-    "sch_export_spice_netlist"
+    "sch_export_spice_netlist",
+    "sch_get_pins"  // Lightweight pin lookup for a single symbol
 };
 
 
@@ -170,6 +171,9 @@ std::string SCH_TOOL_HANDLER::Execute( const std::string& aToolName, const nlohm
     else if( aToolName == "sch_live_summary" )
         // sch_live_summary requires IPC - if Execute is called, IPC failed
         return "Error: sch_live_summary requires IPC execution. Schematic editor must be open.";
+    else if( aToolName == "sch_get_pins" )
+        // sch_get_pins requires IPC - if Execute is called, IPC failed
+        return "Error: sch_get_pins requires IPC execution. Schematic editor must be open.";
     else if( aToolName == "sch_read_section" )
         return ExecuteReadSection( aInput );
     // DISABLED: Use sch_add/sch_update/sch_delete instead
@@ -196,6 +200,11 @@ std::string SCH_TOOL_HANDLER::GetDescription( const std::string& aToolName,
         return "Reading file summary of " + fileName;
     else if( aToolName == "sch_live_summary" )
         return "Getting live summary from editor";
+    else if( aToolName == "sch_get_pins" )
+    {
+        std::string ref = aInput.value( "ref", "" );
+        return "Getting pins for " + ( ref.empty() ? "symbol" : ref );
+    }
     else if( aToolName == "sch_read_section" )
     {
         std::string section = aInput.value( "section", "all" );
@@ -473,14 +482,100 @@ bool SCH_TOOL_HANDLER::RequiresIPC( const std::string& aToolName ) const
 {
     // sch_get_summary: prefers IPC, falls back to file
     // sch_live_summary: requires IPC (no fallback)
+    // sch_get_pins: requires IPC (no fallback)
     // sch_file_summary: never uses IPC (file only)
-    return aToolName == "sch_get_summary" || aToolName == "sch_live_summary";
+    return aToolName == "sch_get_summary" || aToolName == "sch_live_summary" || aToolName == "sch_get_pins";
 }
 
 
 std::string SCH_TOOL_HANDLER::GetIPCCommand( const std::string& aToolName,
                                               const nlohmann::json& aInput ) const
 {
+    // Handle sch_get_pins - lightweight single-symbol pin lookup
+    if( aToolName == "sch_get_pins" )
+    {
+        std::string ref = aInput.value( "ref", "" );
+        if( ref.empty() )
+            return "";  // Will be handled as error in Execute
+
+        std::ostringstream code;
+        code << "import json, sys\n"
+             << "\n"
+             << "# Refresh document to handle close/reopen cycles\n"
+             << "if hasattr(sch, 'refresh_document'):\n"
+             << "    if not sch.refresh_document():\n"
+             << "        raise RuntimeError('Schematic editor not open or document not available')\n"
+             << "\n"
+             << "ref = '" << ref << "'\n"
+             << "\n"
+             << "try:\n"
+             << "    sym = sch.symbols.get_by_ref(ref)\n"
+             << "    if not sym:\n"
+             << "        # List available symbols\n"
+             << "        all_syms = sch.symbols.get_all()\n"
+             << "        available = [s.reference for s in all_syms[:20] if hasattr(s, 'reference')]\n"
+             << "        print(json.dumps({\n"
+             << "            'status': 'error',\n"
+             << "            'message': f'Symbol not found: {ref}',\n"
+             << "            'available': available\n"
+             << "        }))\n"
+             << "        sys.exit(0)\n"
+             << "\n"
+             << "    # Helper to get position in mm\n"
+             << "    def get_pos(obj, scale=1000000):\n"
+             << "        if obj is None:\n"
+             << "            return [0, 0]\n"
+             << "        if hasattr(obj, 'x') and hasattr(obj, 'y'):\n"
+             << "            return [obj.x / scale, obj.y / scale]\n"
+             << "        return [0, 0]\n"
+             << "\n"
+             << "    # Build pin list using IPC for exact transformed positions\n"
+             << "    pins = []\n"
+             << "    if hasattr(sym, 'pins'):\n"
+             << "        for pin in sym.pins:\n"
+             << "            pin_info = {\n"
+             << "                'number': pin.number,\n"
+             << "                'name': getattr(pin, 'name', '')\n"
+             << "            }\n"
+             << "            # Get exact transformed position via IPC\n"
+             << "            if hasattr(sch.symbols, 'get_transformed_pin_position'):\n"
+             << "                try:\n"
+             << "                    result = sch.symbols.get_transformed_pin_position(sym, pin.number)\n"
+             << "                    if result:\n"
+             << "                        pin_info['position'] = get_pos(result['position'])\n"
+             << "                        pin_info['orientation'] = result.get('orientation', 0)\n"
+             << "                except:\n"
+             << "                    pin_info['position'] = get_pos(getattr(pin, 'position', None))\n"
+             << "            else:\n"
+             << "                pin_info['position'] = get_pos(getattr(pin, 'position', None))\n"
+             << "            pins.append(pin_info)\n"
+             << "\n"
+             << "    # Get lib_id as string\n"
+             << "    lib_id_str = ''\n"
+             << "    if hasattr(sym, 'lib_id'):\n"
+             << "        lib_id = sym.lib_id\n"
+             << "        if hasattr(lib_id, 'to_string'):\n"
+             << "            lib_id_str = lib_id.to_string()\n"
+             << "        else:\n"
+             << "            lib_id_str = str(lib_id)\n"
+             << "\n"
+             << "    result = {\n"
+             << "        'status': 'success',\n"
+             << "        'ref': ref,\n"
+             << "        'lib_id': lib_id_str,\n"
+             << "        'position': get_pos(getattr(sym, 'position', None)),\n"
+             << "        'angle': getattr(sym, 'angle', 0),\n"
+             << "        'value': getattr(sym, 'value', ''),\n"
+             << "        'pins': pins\n"
+             << "    }\n"
+             << "    print(json.dumps(result, indent=2))\n"
+             << "\n"
+             << "except Exception as e:\n"
+             << "    print(json.dumps({'status': 'error', 'message': str(e)}))\n";
+
+        return "run_shell sch " + code.str();
+    }
+
     if( aToolName != "sch_get_summary" && aToolName != "sch_live_summary" )
         return "";
 

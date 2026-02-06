@@ -431,6 +431,26 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schGetLibSymbol );
 
+    // sch_get_pins - Lightweight pin lookup for a single placed symbol
+    LLM_TOOL schGetPins;
+    schGetPins.name = "sch_get_pins";
+    schGetPins.description =
+        "Get pin positions for a single placed symbol. MUCH faster than sch_get_summary "
+        "when you only need pin positions for wiring a specific component. "
+        "Returns exact transformed positions (after rotation/mirror) in mm. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schGetPins.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "ref", {
+                { "type", "string" },
+                { "description", "Reference designator of the placed symbol (e.g., 'R1', 'U3', 'C5')" }
+            }}
+        }},
+        { "required", json::array( { "ref" } ) }
+    };
+    tools.push_back( schGetPins );
+
     // ===== IPC-based CRUD Tools (sch_add, sch_update, sch_delete, sch_batch_delete) =====
     // These work on the LIVE schematic via kipy API
 
@@ -484,7 +504,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                     { "type", "array" },
                     { "items", { { "type", "number" } } }
                 }},
-                { "description", "For wire: Array of [x, y] points in mm (e.g., [[100, 50], [150, 50]])" }
+                { "description", "For wire: Array of [x, y] points in mm. "
+                                "Use alone for explicit coordinates, or with from_pin to start from a pin and extend through points." }
             }},
             { "from_pin", {
                 { "type", "object" },
@@ -501,6 +522,23 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                     { "pin", { { "type", "string" } } }
                 }},
                 { "description", "For wire: End at symbol pin (e.g., {\"ref\": \"C1\", \"pin\": \"2\"})" }
+            }},
+            { "route_style", {
+                { "type", "string" },
+                { "enum", json::array( { "auto", "direct", "L_horizontal_first", "L_vertical_first" } ) },
+                { "description", "For wire with from_pin/to_pin: Routing style. "
+                                "'auto' detects best L-route from pin orientations (RECOMMENDED), "
+                                "'direct' for straight line, "
+                                "'L_horizontal_first' or 'L_vertical_first' for explicit L-route direction" }
+            }},
+            { "waypoints", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "array" },
+                    { "items", { { "type", "number" } } }
+                }},
+                { "description", "For wire with from_pin/to_pin: Intermediate waypoints as [[x1, y1], [x2, y2], ...]. "
+                                "Wire routes from from_pin through all waypoints to to_pin." }
             }},
             // Label properties
             { "text", {
@@ -632,6 +670,157 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "required", json::array( { "targets" } ) }
     };
     tools.push_back( schBatchDelete );
+
+    // sch_connect_to_power - Connect a pin to power in one call
+    LLM_TOOL schConnectToPower;
+    schConnectToPower.name = "sch_connect_to_power";
+    schConnectToPower.description =
+        "Connect a symbol pin to a power rail (GND, VCC, +3V3, etc.) in a single call. "
+        "Places the power symbol and optionally draws a wire. "
+        "This is a convenience tool that replaces 3 separate calls (place power, get pin position, draw wire). "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schConnectToPower.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "ref", {
+                { "type", "string" },
+                { "description", "Reference designator of the symbol to connect (e.g., 'U1', 'R3')" }
+            }},
+            { "pin", {
+                { "type", "string" },
+                { "description", "Pin name or number to connect (e.g., 'VCC', 'GND', '1', '14')" }
+            }},
+            { "power", {
+                { "type", "string" },
+                { "description", "Power symbol name: 'GND', 'VCC', '+3V3', '+5V', '+3.3V', 'VBUS', 'VBAT', etc." }
+            }},
+            { "offset", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "Offset from pin position for power symbol as [dx, dy] in mm. "
+                                "Default [0, 0] places power symbol directly at pin (no wire needed). "
+                                "Use [0, 5] to place GND 5mm below pin with connecting wire." }
+            }},
+            { "power_angle", {
+                { "type", "number" },
+                { "description", "Rotation angle for power symbol in degrees (0, 90, 180, 270). "
+                                "Default: auto-detect based on typical orientations (GND down, VCC up)." }
+            }}
+        }},
+        { "required", json::array( { "ref", "pin", "power" } ) }
+    };
+    tools.push_back( schConnectToPower );
+
+    // sch_add_batch - Add multiple elements in one call
+    LLM_TOOL schAddBatch;
+    schAddBatch.name = "sch_add_batch";
+    schAddBatch.description =
+        "Add multiple elements to the schematic in a single call. "
+        "Much more efficient than calling sch_add repeatedly - use this for placing multiple components. "
+        "Returns pin positions for all symbols, enabling immediate wiring without follow-up queries. "
+        "REQUIRES: Schematic editor must be open with a document loaded.\n\n"
+        "SUPPORTED ELEMENT TYPES:\n"
+        "- symbol: {element_type, lib_id, position, angle?, mirror?, reference?, properties?}\n"
+        "- power: {element_type, lib_id, position, angle?} - e.g. lib_id='power:GND' or 'power:VCC'\n"
+        "- wire: {element_type, from_pin:{ref,pin}, to_pin:{ref,pin}, route_style?} or {element_type, points:[[x,y],...]}\n"
+        "- junction: {element_type, position}\n"
+        "- label: {element_type, text, position, label_type?} - label_type: 'local'|'global'|'hierarchical'\n"
+        "- no_connect: {element_type, position}\n\n"
+        "EXAMPLE - Complete RC filter with power connections:\n"
+        "elements: [\n"
+        "  {element_type:'symbol', lib_id:'Device:R', position:[50,50], properties:{Value:'10k'}},\n"
+        "  {element_type:'symbol', lib_id:'Device:C', position:[50,70], properties:{Value:'100nF'}},\n"
+        "  {element_type:'wire', from_pin:{ref:'R1',pin:'2'}, to_pin:{ref:'C1',pin:'1'}},\n"
+        "  {element_type:'power', lib_id:'power:VCC', position:[50,40], angle:0},\n"
+        "  {element_type:'wire', from_pin:{ref:'R1',pin:'1'}, to_pin:{ref:'VCC',pin:'1'}},\n"
+        "  {element_type:'power', lib_id:'power:GND', position:[50,90], angle:180},\n"
+        "  {element_type:'wire', from_pin:{ref:'C1',pin:'2'}, to_pin:{ref:'GND',pin:'1'}},\n"
+        "  {element_type:'label', text:'FILTER_OUT', position:[60,60], label_type:'local'}\n"
+        "]";
+    schAddBatch.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "elements", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "object" },
+                    { "properties", {
+                        { "element_type", {
+                            { "type", "string" },
+                            { "enum", json::array( { "symbol", "power", "wire", "junction", "label", "no_connect" } ) },
+                            { "description", "Type of element to add" }
+                        }},
+                        { "lib_id", {
+                            { "type", "string" },
+                            { "description", "Library ID for symbol/power (e.g. 'Device:R', 'power:GND')" }
+                        }},
+                        { "position", {
+                            { "type", "array" },
+                            { "items", { { "type", "number" } } },
+                            { "description", "Position in mm [x, y]" }
+                        }},
+                        { "angle", {
+                            { "type", "number" },
+                            { "description", "Rotation angle in degrees (0, 90, 180, 270)" }
+                        }},
+                        { "mirror", {
+                            { "type", "string" },
+                            { "enum", json::array( { "none", "x", "y" } ) },
+                            { "description", "Mirror axis" }
+                        }},
+                        { "reference", {
+                            { "type", "string" },
+                            { "description", "Reference designator for symbol (e.g. 'R1', 'C1')" }
+                        }},
+                        { "properties", {
+                            { "type", "object" },
+                            { "description", "Symbol properties: {Value, Footprint, ...}" }
+                        }},
+                        { "from_pin", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "ref", { { "type", "string" } } },
+                                { "pin", { { "type", "string" } } }
+                            }},
+                            { "description", "Start pin for wire: {ref: 'R1', pin: '1'}" }
+                        }},
+                        { "to_pin", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "ref", { { "type", "string" } } },
+                                { "pin", { { "type", "string" } } }
+                            }},
+                            { "description", "End pin for wire: {ref: 'C1', pin: '2'}" }
+                        }},
+                        { "points", {
+                            { "type", "array" },
+                            { "items", { { "type", "array" } } },
+                            { "description", "Wire points as [[x1,y1], [x2,y2], ...]" }
+                        }},
+                        { "route_style", {
+                            { "type", "string" },
+                            { "enum", json::array( { "auto", "direct", "L_horizontal_first", "L_vertical_first" } ) },
+                            { "description", "Wire routing style (default: auto)" }
+                        }},
+                        { "text", {
+                            { "type", "string" },
+                            { "description", "Label text" }
+                        }},
+                        { "label_type", {
+                            { "type", "string" },
+                            { "enum", json::array( { "local", "global", "hierarchical" } ) },
+                            { "description", "Label type (default: local)" }
+                        }}
+                    }},
+                    { "required", json::array( { "element_type" } ) }
+                }},
+                { "description", "Array of elements to add. Elements are processed in order, "
+                                "so place symbols before wires that connect them." }
+            }}
+        }},
+        { "required", json::array( { "elements" } ) }
+    };
+    tools.push_back( schAddBatch );
 
     // sch_annotate - Annotate schematic symbols
     LLM_TOOL schAnnotate;

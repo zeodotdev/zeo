@@ -24,7 +24,8 @@
 
 /**
  * Handler for schematic CRUD and navigation operations via kipy IPC.
- * Handles: sch_add, sch_update, sch_delete, sch_batch_delete, sch_open_sheet
+ * Handles: sch_add, sch_add_batch, sch_update, sch_delete, sch_batch_delete,
+ *          sch_open_sheet, sch_connect_to_power
  *
  * These tools work on the LIVE schematic through the kipy Python API,
  * allowing real-time creation, modification, deletion, and navigation.
@@ -69,6 +70,18 @@ private:
      * Generate Python code for sch_open_sheet operation.
      */
     std::string GenerateOpenSheetCode( const nlohmann::json& aInput ) const;
+
+    /**
+     * Generate Python code for sch_connect_to_power operation.
+     * Connects a symbol pin to a power rail in one call.
+     */
+    std::string GenerateConnectToPowerCode( const nlohmann::json& aInput ) const;
+
+    /**
+     * Generate Python code for sch_add_batch operation.
+     * Adds multiple elements in a single batch call for efficiency.
+     */
+    std::string GenerateAddBatchCode( const nlohmann::json& aInput ) const;
 
     /**
      * Generate common Python code header for file fallback operations.

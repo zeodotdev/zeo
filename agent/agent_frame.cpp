@@ -196,6 +196,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     modelChoices.Add( "Claude 4.6 Opus" );
 
     m_modelChoice = new wxChoice( m_inputPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, modelChoices );
+    m_modelChoice->SetMinSize( wxSize( m_modelChoice->GetBestSize().x + 20, -1 ) );
     m_modelChoice->SetSelection( 0 ); // Default to Claude 4.6 Opus
     controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 

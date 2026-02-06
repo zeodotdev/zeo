@@ -250,6 +250,20 @@ std::string SCH_TOOL_HANDLER::ExecuteReadSection( const nlohmann::json& aInput )
 
 std::string SCH_TOOL_HANDLER::ExecuteModify( const nlohmann::json& aInput )
 {
+    // Block file-based modifications when schematic editor is open
+    // This prevents data conflicts between IPC (in-memory) and direct file operations
+    if( IsSchematicEditorOpen() )
+    {
+        nlohmann::json errorJson = {
+            { "success", false },
+            { "error", "File modification blocked: Schematic editor is open" },
+            { "message", "Direct file modifications are blocked while the schematic editor is open. "
+                         "Use IPC-based tools (sch_add, sch_update, sch_delete) instead, or close "
+                         "the editor first with close_editor." }
+        };
+        return errorJson.dump( 2 );
+    }
+
     std::string filePath = aInput.value( "file_path", "" );
     if( filePath.empty() )
         return "Error: 'file_path' parameter is required";

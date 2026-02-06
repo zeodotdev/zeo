@@ -205,6 +205,22 @@ std::string SCH_CRUD_HANDLER::GenerateRefreshPreamble() const
 }
 
 
+std::string SCH_CRUD_HANDLER::GenerateEditorOpenCheck() const
+{
+    // Python code to check if editor is still open when IPC fails
+    // Returns True if editor is open (blocking file operations), False if closed
+    return
+        "# Check if editor is still open - don't mix IPC and file operations\n"
+        "editor_still_open = False\n"
+        "try:\n"
+        "    if hasattr(sch, 'refresh_document'):\n"
+        "        editor_still_open = sch.refresh_document()\n"
+        "except:\n"
+        "    pass  # Editor likely closed\n"
+        "\n";
+}
+
+
 std::string SCH_CRUD_HANDLER::GenerateFileFallbackHeader() const
 {
     // Python code for file-based fallback operations
@@ -568,9 +584,16 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
     code << "    print(f'IPC failed: {ipc_error_msg}', file=sys.stderr)\n";
     code << "\n";
 
-    // File fallback
-    code << "# File-based fallback if IPC failed\n";
-    code << "if not use_ipc and file_path:\n";
+    // Check if editor is still open before attempting file fallback
+    code << GenerateEditorOpenCheck();
+    code << "\n";
+
+    // File fallback - only if editor is closed
+    code << "# File-based fallback if IPC failed AND editor is closed\n";
+    code << "if not use_ipc and editor_still_open:\n";
+    code << "    # Editor is open - don't mix IPC and file operations\n";
+    code << "    result = {'status': 'error', 'message': f'IPC failed but schematic editor is still open. Close the editor to use file-based operations, or investigate the IPC error: {ipc_error_msg}'}\n";
+    code << "elif not use_ipc and file_path:\n";
     code << "    try:\n";
     code << GenerateFileFallbackHeader();
 
@@ -801,10 +824,17 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput )
     code << "    print(f'IPC failed: {ipc_error_msg}', file=sys.stderr)\n";
     code << "\n";
 
-    // File fallback for update is complex - skip for now
-    code << "# File-based update fallback not yet implemented\n";
+    // Check if editor is still open
+    code << GenerateEditorOpenCheck();
+    code << "\n";
+
+    // File fallback for update is not supported - always requires IPC
+    code << "# Update requires IPC - file fallback not supported\n";
     code << "if not use_ipc:\n";
-    code << "    result = {'status': 'error', 'message': f'IPC failed and file fallback not available for update: {ipc_error_msg}'}\n";
+    code << "    if editor_still_open:\n";
+    code << "        result = {'status': 'error', 'message': f'IPC failed but schematic editor is still open. Updates require IPC. Investigate the error: {ipc_error_msg}'}\n";
+    code << "    else:\n";
+    code << "        result = {'status': 'error', 'message': f'IPC failed and editor is closed. Open the schematic editor to use IPC for updates: {ipc_error_msg}'}\n";
     code << "\n";
     code << "print(json.dumps(result, indent=2))\n";
 
@@ -864,9 +894,16 @@ std::string SCH_CRUD_HANDLER::GenerateDeleteCode( const nlohmann::json& aInput )
     code << "    print(f'IPC failed: {ipc_error_msg}', file=sys.stderr)\n";
     code << "\n";
 
-    // File fallback
-    code << "# File-based fallback if IPC failed\n";
-    code << "if not use_ipc and file_path and target_uuid:\n";
+    // Check if editor is still open before attempting file fallback
+    code << GenerateEditorOpenCheck();
+    code << "\n";
+
+    // File fallback - only if editor is closed
+    code << "# File-based fallback if IPC failed AND editor is closed\n";
+    code << "if not use_ipc and editor_still_open:\n";
+    code << "    # Editor is open - don't mix IPC and file operations\n";
+    code << "    result = {'status': 'error', 'message': f'IPC failed but schematic editor is still open. Close the editor to use file-based operations, or investigate the IPC error: {ipc_error_msg}'}\n";
+    code << "elif not use_ipc and file_path and target_uuid:\n";
     code << "    try:\n";
     code << GenerateFileFallbackHeader();
     code << "        if delete_element_from_file(file_path, target_uuid):\n";
@@ -874,7 +911,7 @@ std::string SCH_CRUD_HANDLER::GenerateDeleteCode( const nlohmann::json& aInput )
     code << "        else:\n";
     code << "            result = {'status': 'error', 'message': f'Element not found in file: {target}'}\n";
     code << "    except Exception as file_error:\n";
-    code << "        result = {'status': 'error', 'message': f'Both IPC and file fallback failed. IPC: {ipc_error_msg}, File: {str(file_error)}'}\n";
+    code << "        result = {'status': 'error', 'message': f'File fallback failed (editor closed). File error: {str(file_error)}'}\n";
     code << "elif not use_ipc:\n";
     code << "    result = {'status': 'error', 'message': f'IPC failed and cannot determine UUID for file fallback: {ipc_error_msg}'}\n";
     code << "\n";
@@ -951,9 +988,16 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "    print(f'IPC failed: {ipc_error_msg}', file=sys.stderr)\n";
     code << "\n";
 
-    // File fallback
-    code << "# File-based fallback if IPC failed\n";
-    code << "if not use_ipc and file_path and target_uuids:\n";
+    // Check if editor is still open before attempting file fallback
+    code << GenerateEditorOpenCheck();
+    code << "\n";
+
+    // File fallback - only if editor is closed
+    code << "# File-based fallback if IPC failed AND editor is closed\n";
+    code << "if not use_ipc and editor_still_open:\n";
+    code << "    # Editor is open - don't mix IPC and file operations\n";
+    code << "    result = {'status': 'error', 'message': f'IPC failed but schematic editor is still open. Close the editor to use file-based operations, or investigate the IPC error: {ipc_error_msg}'}\n";
+    code << "elif not use_ipc and file_path and target_uuids:\n";
     code << "    try:\n";
     code << GenerateFileFallbackHeader();
     code << "        deleted_count = 0\n";
@@ -962,7 +1006,7 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "                deleted_count += 1\n";
     code << "        result = {'status': 'success', 'source': 'file', 'deleted': deleted_count}\n";
     code << "    except Exception as file_error:\n";
-    code << "        result = {'status': 'error', 'message': f'Both IPC and file fallback failed. IPC: {ipc_error_msg}, File: {str(file_error)}'}\n";
+    code << "        result = {'status': 'error', 'message': f'File fallback failed (editor closed). File error: {str(file_error)}'}\n";
     code << "elif not use_ipc:\n";
     code << "    result = {'status': 'error', 'message': f'IPC failed: {ipc_error_msg}'}\n";
     code << "\n";

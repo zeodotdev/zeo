@@ -116,3 +116,21 @@ std::string TOOL_REGISTRY::GetIPCCommand( const std::string& aToolName,
     }
     return "";
 }
+
+
+void TOOL_REGISTRY::SetSchematicEditorOpen( bool aOpen )
+{
+    for( auto& handler : m_handlers )
+    {
+        handler->SetSchematicEditorOpen( aOpen );
+    }
+}
+
+
+void TOOL_REGISTRY::SetPcbEditorOpen( bool aOpen )
+{
+    for( auto& handler : m_handlers )
+    {
+        handler->SetPcbEditorOpen( aOpen );
+    }
+}

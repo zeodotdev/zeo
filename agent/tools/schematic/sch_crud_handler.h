@@ -91,6 +91,12 @@ private:
      * This handles close/reopen cycles where the document UUID changes.
      */
     std::string GenerateRefreshPreamble() const;
+
+    /**
+     * Generate Python code to check if editor is still open when IPC fails.
+     * Used to prevent file fallback when editor is open (would cause data conflicts).
+     */
+    std::string GenerateEditorOpenCheck() const;
 };
 
 #endif // SCH_CRUD_HANDLER_H

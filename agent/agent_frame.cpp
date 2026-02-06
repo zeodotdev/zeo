@@ -2464,23 +2464,55 @@ void AGENT_FRAME::OnRejectOpenEditor()
 
 bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
 {
+    wxString editorName = ( aFrameType == FRAME_SCH ) ? "Schematic" : "PCB";
+
+    wxLogInfo( "DoOpenEditor: Opening %s editor, pendingFilePath='%s'",
+               editorName, m_pendingOpenFilePath );
+
     KIWAY_PLAYER* player = Kiway().Player( aFrameType, true );
     if( !player )
+    {
+        wxLogError( "DoOpenEditor: Failed to create %s player", editorName );
         return false;
+    }
 
     // Open specific file if path was provided
     if( !m_pendingOpenFilePath.IsEmpty() )
     {
+        wxLogInfo( "DoOpenEditor: Loading file '%s'", m_pendingOpenFilePath );
+
         std::vector<wxString> files;
         files.push_back( m_pendingOpenFilePath );
-        player->OpenProjectFiles( files );
+        bool loadResult = player->OpenProjectFiles( files );
+
+        if( !loadResult )
+        {
+            wxLogWarning( "DoOpenEditor: OpenProjectFiles returned false for '%s'",
+                          m_pendingOpenFilePath );
+        }
+        else
+        {
+            wxLogInfo( "DoOpenEditor: Successfully loaded '%s'", m_pendingOpenFilePath );
+        }
+
         m_pendingOpenFilePath.Clear();
+    }
+    else
+    {
+        wxLogWarning( "DoOpenEditor: No file path specified - editor will open with blank/default document" );
     }
 
     player->Show( true );
     if( player->IsIconized() )
         player->Iconize( false );
     player->Raise();
+
+    // Notify tool registry that editor is now open
+    // This blocks direct file modifications to prevent IPC/file conflicts
+    if( aFrameType == FRAME_SCH )
+        TOOL_REGISTRY::Instance().SetSchematicEditorOpen( true );
+    else if( aFrameType == FRAME_PCB_EDITOR )
+        TOOL_REGISTRY::Instance().SetPcbEditorOpen( true );
 
     return true;
 }
@@ -2671,12 +2703,16 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
 
         // Validate file path if provided, or auto-detect from project
         wxString projectPath = Kiway().Prj().GetProjectPath();
+        wxLogInfo( "open_editor: editor_type='%s', file_path='%s', projectPath='%s'",
+                   wxString::FromUTF8( editorType ), wxString::FromUTF8( filePath ), projectPath );
+
         if( !filePath.empty() )
         {
             auto pathResult = FileWriter::ValidatePathInProject( filePath, projectPath.ToStdString() );
             if( !pathResult.valid )
             {
                 // Path validation failed - reject tool call
+                wxLogWarning( "open_editor: Path validation failed: %s", pathResult.error );
                 if( m_chatController )
                     m_chatController->HandleToolResult( data->toolId,
                         "Error: " + pathResult.error, false );
@@ -2684,11 +2720,15 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
                 return;
             }
             m_pendingOpenFilePath = wxString::FromUTF8( pathResult.resolvedPath );
+            wxLogInfo( "open_editor: Validated file_path -> '%s'", m_pendingOpenFilePath );
         }
         else
         {
             // No file path provided - auto-detect project's default file
             wxString projectName = Kiway().Prj().GetProjectName();
+            wxLogInfo( "open_editor: Auto-detect - projectPath='%s', projectName='%s'",
+                       projectPath, projectName );
+
             if( !projectName.IsEmpty() && !projectPath.IsEmpty() )
             {
                 wxString defaultFile;
@@ -2697,11 +2737,21 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
                 else
                     defaultFile = projectPath + projectName + ".kicad_pcb";
 
+                wxLogInfo( "open_editor: Checking for default file: %s", defaultFile );
+
                 if( wxFileExists( defaultFile ) )
                 {
                     m_pendingOpenFilePath = defaultFile;
                     wxLogInfo( "open_editor: Auto-detected project file: %s", defaultFile );
                 }
+                else
+                {
+                    wxLogWarning( "open_editor: Default file does not exist: %s", defaultFile );
+                }
+            }
+            else
+            {
+                wxLogWarning( "open_editor: Cannot auto-detect - project info not available" );
             }
         }
 
@@ -2724,11 +2774,14 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
                 wxLogInfo( "open_editor: Current file='%s', Requested file='%s'",
                            currentFn.GetFullPath(), requestedFn.GetFullPath() );
 
-                // Check if editor has a different file open
-                if( !currentFile.IsEmpty() && currentFn.GetFullPath() != requestedFn.GetFullPath() )
+                // Force close and reload when:
+                // 1. Editor has untitled document (currentFile.IsEmpty()) - need to load the requested file
+                // 2. Editor has different file open (paths don't match)
+                if( currentFile.IsEmpty() || currentFn.GetFullPath() != requestedFn.GetFullPath() )
                 {
-                    wxLogInfo( "open_editor: Different file '%s' vs '%s' - closing editor to reload",
-                               currentFn.GetFullPath(), requestedFn.GetFullPath() );
+                    wxLogInfo( "open_editor: %s - closing editor to load '%s'",
+                               currentFile.IsEmpty() ? "Editor has untitled document" : "Different file open",
+                               requestedFn.GetFullPath() );
 
                     // Close the editor to force a fresh load
                     // Note: This will discard any unsaved changes in the old file
@@ -2766,31 +2819,20 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
                 }
                 else
                 {
-                    // Same file or no current file - just focus and reload
+                    // Same file already open - just focus the editor
+                    wxLogInfo( "open_editor: File '%s' already open, focusing editor",
+                               currentFn.GetFullPath() );
+
                     if( existingPlayer->IsIconized() )
                         existingPlayer->Iconize( false );
                     existingPlayer->Raise();
 
-                    // Try to reload the file
-                    std::vector<wxString> files;
-                    files.push_back( m_pendingOpenFilePath );
-                    bool loadResult = existingPlayer->OpenProjectFiles( files );
                     wxString openedFile = m_pendingOpenFilePath;
                     m_pendingOpenFilePath.Clear();
 
-                    if( loadResult )
-                    {
-                        if( m_chatController )
-                            m_chatController->HandleToolResult( data->toolId,
-                                editorLabel.ToStdString() + " editor opened file: " + openedFile.ToStdString(), true );
-                    }
-                    else
-                    {
-                        wxLogWarning( "open_editor: OpenProjectFiles returned false for '%s'", openedFile );
-                        if( m_chatController )
-                            m_chatController->HandleToolResult( data->toolId,
-                                editorLabel.ToStdString() + " editor: file load may have been blocked by unsaved changes", true );
-                    }
+                    if( m_chatController )
+                        m_chatController->HandleToolResult( data->toolId,
+                            editorLabel.ToStdString() + " editor already has file open: " + openedFile.ToStdString(), true );
 
                     delete data;
                     return;
@@ -2878,6 +2920,13 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
 
         // Close the editor (it will prompt to save if there are unsaved changes)
         player->Close( !saveFirst ); // If saveFirst is false, force close without prompt
+
+        // Notify tool registry that editor is now closed
+        // This allows direct file modifications again
+        if( frameType == FRAME_SCH )
+            TOOL_REGISTRY::Instance().SetSchematicEditorOpen( false );
+        else if( frameType == FRAME_PCB_EDITOR )
+            TOOL_REGISTRY::Instance().SetPcbEditorOpen( false );
 
         if( m_chatController )
             m_chatController->HandleToolResult( data->toolId,

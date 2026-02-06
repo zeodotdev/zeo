@@ -80,6 +80,38 @@ public:
      */
     virtual std::string GetIPCCommand( const std::string& aToolName,
                                         const nlohmann::json& aInput ) const { return ""; }
+
+    /**
+     * Set whether the schematic editor is currently open.
+     * When the editor is open, file-based write operations should be blocked
+     * to prevent data conflicts between IPC and direct file access.
+     * @param aOpen true if the schematic editor is open.
+     */
+    virtual void SetSchematicEditorOpen( bool aOpen ) { m_schematicEditorOpen = aOpen; }
+
+    /**
+     * Check if the schematic editor is currently open.
+     * @return true if the schematic editor is open.
+     */
+    virtual bool IsSchematicEditorOpen() const { return m_schematicEditorOpen; }
+
+    /**
+     * Set whether the PCB editor is currently open.
+     * When the editor is open, file-based write operations should be blocked
+     * to prevent data conflicts between IPC and direct file access.
+     * @param aOpen true if the PCB editor is open.
+     */
+    virtual void SetPcbEditorOpen( bool aOpen ) { m_pcbEditorOpen = aOpen; }
+
+    /**
+     * Check if the PCB editor is currently open.
+     * @return true if the PCB editor is open.
+     */
+    virtual bool IsPcbEditorOpen() const { return m_pcbEditorOpen; }
+
+protected:
+    bool m_schematicEditorOpen = false;
+    bool m_pcbEditorOpen = false;
 };
 
 #endif // TOOL_HANDLER_H

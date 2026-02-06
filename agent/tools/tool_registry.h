@@ -83,6 +83,20 @@ public:
      */
     std::string GetIPCCommand( const std::string& aToolName, const nlohmann::json& aInput ) const;
 
+    /**
+     * Set whether the schematic editor is currently open.
+     * When open, file-based write operations are blocked to prevent data conflicts.
+     * @param aOpen true if the schematic editor is open.
+     */
+    void SetSchematicEditorOpen( bool aOpen );
+
+    /**
+     * Set whether the PCB editor is currently open.
+     * When open, file-based write operations are blocked to prevent data conflicts.
+     * @param aOpen true if the PCB editor is open.
+     */
+    void SetPcbEditorOpen( bool aOpen );
+
 private:
     TOOL_REGISTRY();
     ~TOOL_REGISTRY() = default;

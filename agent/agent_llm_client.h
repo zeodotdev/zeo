@@ -156,6 +156,10 @@ private:
         bool              inThinking;       // Currently accumulating thinking block
         std::string       currentCompaction; // Accumulated compaction content
         bool              inCompaction;     // Currently accumulating compaction block
+        bool              inServerTool;     // Currently accumulating server tool input
+        std::string       serverToolId;     // Current server_tool_use block ID
+        std::string       serverToolName;   // Current server_tool_use name
+        std::string       serverToolInput;  // Accumulated server tool input JSON
     };
 
     // Parse SSE events and post to main thread

@@ -70,6 +70,7 @@ CHAT_CONTROLLER::CHAT_CONTROLLER( wxEvtHandler* aEventSink )
     // Initialize chat history as empty array
     m_chatHistory = nlohmann::json::array();
     m_apiContext = nlohmann::json::array();
+    m_serverToolBlocks = nlohmann::json::array();
 }
 
 
@@ -135,6 +136,7 @@ void CHAT_CONTROLLER::SendMessage( const std::string& aText )
     m_thinkingContent.clear();
     m_thinkingSignature.clear();
     m_pendingToolCalls = nlohmann::json::array();
+    m_serverToolBlocks = nlohmann::json::array();
 
     // Transition to waiting for LLM
     AgentConversationState oldState = m_ctx.GetState();
@@ -267,6 +269,7 @@ void CHAT_CONTROLLER::Cancel()
     // Clear pending tools
     m_ctx.ClearPendingToolCalls();
     m_pendingToolCalls = nlohmann::json::array();
+    m_serverToolBlocks = nlohmann::json::array();
 
     // Transition back to idle
     AgentConversationState oldState = m_ctx.GetState();
@@ -309,6 +312,7 @@ void CHAT_CONTROLLER::NewChat()
     m_chatId.clear();
     m_firstUserMessage.clear();
     m_pendingToolCalls = nlohmann::json::array();
+    m_serverToolBlocks = nlohmann::json::array();
 
     m_ctx.Reset();
 }
@@ -416,7 +420,13 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - MAX_TOKENS (will continue)" );
         break;
     case LLMChunkType::PAUSE_TURN:
-        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - PAUSE_TURN (will retry)" );
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - PAUSE_TURN (server tool executing)" );
+        break;
+    case LLMChunkType::SERVER_TOOL_USE:
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - SERVER_TOOL_USE: %s", aChunk.tool_name.c_str() );
+        break;
+    case LLMChunkType::SERVER_TOOL_RESULT:
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - SERVER_TOOL_RESULT" );
         break;
     case LLMChunkType::COMPACTION:
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - COMPACTION (context compacted)" );
@@ -511,8 +521,9 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
     case LLMChunkType::END_TURN:
     {
         // LLM finished without tool calls - add assistant message with response
-        // Include thinking blocks with signatures if present
-        if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
+        // Include thinking, server tool blocks, and text as needed
+        if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty()
+            || !m_serverToolBlocks.empty() )
         {
             nlohmann::json content = nlohmann::json::array();
 
@@ -524,6 +535,12 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
                     { "thinking", m_thinkingContent.ToStdString() },
                     { "signature", m_thinkingSignature }
                 } );
+            }
+
+            // Add server tool blocks (server_tool_use, web_search_tool_result, etc.)
+            for( const auto& block : m_serverToolBlocks )
+            {
+                content.push_back( block );
             }
 
             // Add text content (if present)
@@ -560,8 +577,9 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         // Save the partial response and continue generation automatically
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - MAX_TOKENS, continuing generation" );
 
-        // Add partial assistant message to context (with thinking if present)
-        if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
+        // Add partial assistant message to context (with thinking, server tool blocks, text)
+        if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty()
+            || !m_serverToolBlocks.empty() )
         {
             nlohmann::json content = nlohmann::json::array();
 
@@ -572,6 +590,12 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
                     { "thinking", m_thinkingContent.ToStdString() },
                     { "signature", m_thinkingSignature }
                 } );
+            }
+
+            // Add server tool blocks (server_tool_use, web_search_tool_result, etc.)
+            for( const auto& block : m_serverToolBlocks )
+            {
+                content.push_back( block );
             }
 
             if( !m_currentResponse.empty() )
@@ -607,15 +631,47 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
     case LLMChunkType::PAUSE_TURN:
     {
         // Server tool paused (e.g., web_search, code_execution)
-        // We don't currently use server-side tools, so just treat as unexpected END_TURN
-        // TODO: Implement retry logic if server-side tools are added in the future
-        wxLogWarning( "CHAT_CONTROLLER::HandleLLMChunk - PAUSE_TURN received but no server tools configured" );
+        // Stream continues automatically after Anthropic executes the server tool
+        // Do NOT transition to IDLE - stay in current state
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - PAUSE_TURN (server tool executing, stream will continue)" );
+        break;
+    }
 
-        AgentConversationState oldState = m_ctx.GetState();
-        m_ctx.TransitionTo( AgentConversationState::IDLE );
-        EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
-                                                                  static_cast<int>( m_ctx.GetState() ) ) );
-        EmitEvent( EVT_CHAT_TURN_COMPLETE, ChatTurnCompleteData( false ) );
+    case LLMChunkType::SERVER_TOOL_USE:
+    {
+        // Server-side tool invoked (e.g., web_search) - accumulate for API context
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - SERVER_TOOL_USE: %s", aChunk.tool_name.c_str() );
+
+        if( !aChunk.content_block_json.empty() )
+        {
+            try
+            {
+                m_serverToolBlocks.push_back( nlohmann::json::parse( aChunk.content_block_json ) );
+            }
+            catch( ... )
+            {
+                wxLogWarning( "CHAT_CONTROLLER - Failed to parse SERVER_TOOL_USE content block" );
+            }
+        }
+        break;
+    }
+
+    case LLMChunkType::SERVER_TOOL_RESULT:
+    {
+        // Server-side tool completed - accumulate for API context
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - SERVER_TOOL_RESULT" );
+
+        if( !aChunk.content_block_json.empty() )
+        {
+            try
+            {
+                m_serverToolBlocks.push_back( nlohmann::json::parse( aChunk.content_block_json ) );
+            }
+            catch( ... )
+            {
+                wxLogWarning( "CHAT_CONTROLLER - Failed to parse SERVER_TOOL_RESULT content block" );
+            }
+        }
         break;
     }
 
@@ -1205,6 +1261,12 @@ void CHAT_CONTROLLER::AddAssistantToolUseToHistory( const nlohmann::json& aToolU
         } );
     }
 
+    // Add server tool blocks (server_tool_use, web_search_tool_result, etc.)
+    for( const auto& block : m_serverToolBlocks )
+    {
+        content.push_back( block );
+    }
+
     // Add text block if we have accumulated response
     if( !m_currentResponse.empty() )
     {
@@ -1338,6 +1400,7 @@ void CHAT_CONTROLLER::ContinueChat()
     m_thinkingContent.clear();
     m_thinkingSignature.clear();
     m_pendingToolCalls = nlohmann::json::array();
+    m_serverToolBlocks = nlohmann::json::array();
     m_ctx.completed_tool_results.clear();
 
     // Transition to waiting for LLM

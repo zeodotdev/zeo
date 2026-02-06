@@ -1210,7 +1210,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     escapedText.Replace( ">", "&gt;" );
     escapedText.Replace( "\n", "<br>" );
 
-    wxString bubbleContent = ImageAttach::BuildAttachmentBubbleHtml( m_pendingAttachments )
+    wxString bubbleContent = FileAttach::BuildAttachmentBubbleHtml( m_pendingAttachments )
                              + escapedText;
     wxString msgHtml = wxString::Format(
         "<div class=\"flex justify-end my-1.5\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
@@ -1446,7 +1446,16 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
             int commaPos = src.Find( ',' );
 
             if( commaPos != wxNOT_FOUND )
-                ImageAttach::ShowPreviewDialog( this, src.Mid( commaPos + 1 ) );
+                FileAttach::ShowPreviewDialog( this, src.Mid( commaPos + 1 ) );
+        }
+        else if( action == "preview_file" )
+        {
+            std::string b64 = msg.value( "base64", "" );
+            std::string filename = msg.value( "filename", "document.pdf" );
+
+            if( !b64.empty() )
+                FileAttach::OpenFilePreview( wxString::FromUTF8( b64 ),
+                                             wxString::FromUTF8( filename ) );
         }
         else if( action == "copy_image" )
         {
@@ -1555,7 +1564,7 @@ void AGENT_FRAME::OnInputWebViewMessage( const wxString& aMessage )
         if( action == "submit" )
         {
             wxString text = wxString::FromUTF8( msg.value( "text", "" ) );
-            m_pendingAttachments = ImageAttach::ParseAttachmentsFromJson( msg );
+            m_pendingAttachments = FileAttach::ParseAttachmentsFromJson( msg );
 
             if( !text.IsEmpty() || !m_pendingAttachments.empty() )
             {
@@ -1566,9 +1575,12 @@ void AGENT_FRAME::OnInputWebViewMessage( const wxString& aMessage )
         }
         else if( action == "attach_click" )
         {
-            wxFileDialog dlg( this, "Attach Image", "", "",
-                              "Image files (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp)"
-                              "|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp",
+            wxFileDialog dlg( this, "Attach File", "", "",
+                              "Supported files (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.pdf)"
+                              "|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.pdf"
+                              "|Image files (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp)"
+                              "|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp"
+                              "|PDF files (*.pdf)|*.pdf",
                               wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE );
 
             if( dlg.ShowModal() == wxID_OK )
@@ -1578,8 +1590,18 @@ void AGENT_FRAME::OnInputWebViewMessage( const wxString& aMessage )
 
                 for( const auto& path : paths )
                 {
-                    IMAGE_ATTACHMENT att;
-                    if( !ImageAttach::LoadImageFromFile( path, att ) )
+                    FILE_ATTACHMENT att;
+                    bool loaded = false;
+
+                    wxFileName fn( path );
+                    wxString ext = fn.GetExt().Lower();
+
+                    if( ext == "pdf" )
+                        loaded = FileAttach::LoadFileFromDisk( path, att );
+                    else
+                        loaded = FileAttach::LoadImageFromFile( path, att );
+
+                    if( !loaded )
                         continue;
 
                     // Inject into JS attachment preview - escape for JS single-quoted string
@@ -1603,7 +1625,16 @@ void AGENT_FRAME::OnInputWebViewMessage( const wxString& aMessage )
             std::string b64 = msg.value( "base64", "" );
 
             if( !b64.empty() )
-                ImageAttach::ShowPreviewDialog( this, wxString::FromUTF8( b64 ) );
+                FileAttach::ShowPreviewDialog( this, wxString::FromUTF8( b64 ) );
+        }
+        else if( action == "preview_file" )
+        {
+            std::string b64 = msg.value( "base64", "" );
+            std::string filename = msg.value( "filename", "document.pdf" );
+
+            if( !b64.empty() )
+                FileAttach::OpenFilePreview( wxString::FromUTF8( b64 ),
+                                             wxString::FromUTF8( filename ) );
         }
         else if( action == "resize" )
         {
@@ -2073,22 +2104,23 @@ void AGENT_FRAME::RenderChatHistory()
         }
         else if( msg["content"].is_array() )
         {
-            // Check for user messages with image attachments - render as one combined bubble
+            // Check for user messages with file attachments - render as one combined bubble
             if( role == "user" )
             {
-                bool hasImages = false;
+                bool hasAttachments = false;
                 for( const auto& block : msg["content"] )
                 {
-                    if( block.value( "type", "" ) == "image" )
+                    std::string blockType = block.value( "type", "" );
+                    if( blockType == "image" || blockType == "document" )
                     {
-                        hasImages = true;
+                        hasAttachments = true;
                         break;
                     }
                 }
 
-                if( hasImages )
+                if( hasAttachments )
                 {
-                    wxString bubble = ImageAttach::BuildHistoryImageBubbleHtml(
+                    wxString bubble = FileAttach::BuildHistoryBubbleHtml(
                             msg["content"] );
                     if( !bubble.IsEmpty() )
                         m_fullHtmlContent += bubble;

@@ -149,6 +149,17 @@ document.addEventListener('click', function(e) {
         return;
     }
 
+    // Click on a document preview: open in system viewer
+    let docEl = e.target.closest('.doc-preview[data-file-base64]');
+    if (docEl) {
+        e.preventDefault();
+        sendMsg('preview_file', {
+            base64: docEl.getAttribute('data-file-base64'),
+            filename: docEl.getAttribute('data-file-name') || 'document.pdf'
+        });
+        return;
+    }
+
     // Check if clicked element is a link or inside a link
     let target = e.target;
     while (target && target.tagName !== 'A') {

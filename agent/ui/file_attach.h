@@ -17,8 +17,8 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef IMAGE_ATTACH_H
-#define IMAGE_ATTACH_H
+#ifndef FILE_ATTACH_H
+#define FILE_ATTACH_H
 
 #include <string>
 #include <vector>
@@ -27,9 +27,9 @@
 #include <nlohmann/json.hpp>
 
 /**
- * A user-attached image ready for display and API submission.
+ * A user-attached file (image or document) ready for display and API submission.
  */
-struct IMAGE_ATTACHMENT
+struct FILE_ATTACHMENT
 {
     std::string base64_data;
     std::string media_type;
@@ -37,7 +37,7 @@ struct IMAGE_ATTACHMENT
 };
 
 
-namespace ImageAttach
+namespace FileAttach
 {
 
 /**
@@ -47,39 +47,61 @@ namespace ImageAttach
 static const int MAX_IMAGE_DIMENSION = 1568;
 
 /**
+ * Maximum raw file size for non-image attachments (32 MB).
+ * Matches the Anthropic API request size limit for PDF documents.
+ */
+static const size_t MAX_FILE_SIZE = 32UL * 1024 * 1024;
+
+/**
+ * Check if a media type is an image type supported by the API.
+ */
+bool IsImageMediaType( const std::string& aMediaType );
+
+/**
  * Load an image file from disk, resize to fit API limits, and encode as PNG base64.
  *
  * @param aPath Absolute path to the image file
  * @param aResult Output attachment (populated on success)
  * @return true if the image was loaded and encoded successfully
  */
-bool LoadImageFromFile( const wxString& aPath, IMAGE_ATTACHMENT& aResult );
+bool LoadImageFromFile( const wxString& aPath, FILE_ATTACHMENT& aResult );
 
 /**
- * Parse image attachments from a JS submit message JSON payload.
+ * Load a non-image file from disk and encode as base64.
+ * Sets media_type based on file extension (e.g. .pdf -> application/pdf).
+ * Enforces MAX_FILE_SIZE limit.
+ *
+ * @param aPath Absolute path to the file
+ * @param aResult Output attachment (populated on success)
+ * @return true if the file was loaded and encoded successfully
+ */
+bool LoadFileFromDisk( const wxString& aPath, FILE_ATTACHMENT& aResult );
+
+/**
+ * Parse attachments from a JS submit message JSON payload.
  * Expects an "attachments" array with objects containing "base64", "media_type", "filename".
  *
  * @param aMsg The parsed JSON message from the input webview
  * @return Vector of parsed attachments (empty if none)
  */
-std::vector<IMAGE_ATTACHMENT> ParseAttachmentsFromJson( const nlohmann::json& aMsg );
+std::vector<FILE_ATTACHMENT> ParseAttachmentsFromJson( const nlohmann::json& aMsg );
 
 /**
- * Build inline HTML for attachment thumbnail images inside a user chat bubble.
+ * Build inline HTML for attachment thumbnails inside a user chat bubble.
  *
  * @param aAttachments The attachments to render
- * @return HTML string with <img> tags (empty if no attachments)
+ * @return HTML string (empty if no attachments)
  */
-wxString BuildAttachmentBubbleHtml( const std::vector<IMAGE_ATTACHMENT>& aAttachments );
+wxString BuildAttachmentBubbleHtml( const std::vector<FILE_ATTACHMENT>& aAttachments );
 
 /**
- * Build a combined user chat bubble from a history message with image content blocks.
- * Handles both live base64 data and "__stripped__" placeholders.
+ * Build a combined user chat bubble from a history message with attachment content blocks.
+ * Handles both live base64 data and "__stripped__" placeholders for images and documents.
  *
  * @param aContentArray The "content" JSON array from a user message
  * @return HTML string for the complete user bubble (empty if no renderable content)
  */
-wxString BuildHistoryImageBubbleHtml( const nlohmann::json& aContentArray );
+wxString BuildHistoryBubbleHtml( const nlohmann::json& aContentArray );
 
 /**
  * Show a modal image preview dialog from base64-encoded image data.
@@ -89,6 +111,15 @@ wxString BuildHistoryImageBubbleHtml( const nlohmann::json& aContentArray );
  */
 void ShowPreviewDialog( wxWindow* aParent, const wxString& aBase64 );
 
-} // namespace ImageAttach
+/**
+ * Open a non-image file in the system default application.
+ * Writes base64-decoded data to a temp file, then launches the default viewer.
+ *
+ * @param aBase64 Raw base64-encoded file data
+ * @param aFilename Original filename (used for temp file extension)
+ */
+void OpenFilePreview( const wxString& aBase64, const wxString& aFilename );
 
-#endif // IMAGE_ATTACH_H
+} // namespace FileAttach
+
+#endif // FILE_ATTACH_H

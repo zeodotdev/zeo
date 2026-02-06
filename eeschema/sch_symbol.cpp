@@ -87,6 +87,7 @@ void SCH_SYMBOL::Serialize( google::protobuf::Any& aContainer ) const
         protoField->set_text( field.GetText().ToStdString() );
         protoField->set_name( field.GetName().ToStdString() );
         protoField->set_id_int( static_cast<int>( field.GetId() ) );
+        protoField->mutable_attributes()->set_visible( field.IsVisible() );
     }
 
     // Pins
@@ -170,6 +171,9 @@ bool SCH_SYMBOL::Deserialize( const google::protobuf::Any& aContainer )
         {
             field->SetText( protoField.text() );
             field->SetPosition( kiapi::common::UnpackVector2Sch( protoField.position() ) );
+
+            if( protoField.has_attributes() )
+                field->SetVisible( protoField.attributes().visible() );
         }
     }
 

@@ -59,7 +59,7 @@ public:
     ~AGENT_LLM_CLIENT();
 
     /**
-     * Set the model to use (e.g., "Claude 4.5 Sonnet").
+     * Set the model to use (e.g., "Claude 4.6 Opus").
      * @param aModelName The model name.
      */
     void SetModel( const std::string& aModelName );

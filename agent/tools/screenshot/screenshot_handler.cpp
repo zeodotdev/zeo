@@ -26,6 +26,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 
@@ -49,6 +50,11 @@ static const int MAX_IMAGE_DIMENSION = 1568;
 
 // Shell metacharacters that are unsafe in quoted command arguments
 static const char* UNSAFE_PATH_CHARS = "`$\\\"!#&|;(){}[]<>?*~\n\r";
+
+// Background colors from _builtin_default theme (builtin_color_themes.h).
+// Used for compositing since SVG export doesn't include the canvas background.
+static const unsigned char SCH_BG_R = 245, SCH_BG_G = 244, SCH_BG_B = 239; // LAYER_SCHEMATIC_BACKGROUND
+static const unsigned char PCB_BG_R = 0,   PCB_BG_G = 16,  PCB_BG_B = 35;  // LAYER_PCB_BACKGROUND
 
 
 /**
@@ -207,8 +213,12 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
     if( !ConvertSvgToPng( svgPath, pngPath ) )
         return "Error: Failed to convert SVG to PNG. Is 'sips' available?";
 
-    // Crop whitespace and resize to fit API limits (non-fatal on failure)
-    if( !CropAndResize( pngPath ) )
+    // Crop background and resize to fit API limits (non-fatal on failure).
+    // Pass the theme's canvas background since SVG export doesn't include it.
+    bool cropOk = isSchematic ? CropAndResize( pngPath, SCH_BG_R, SCH_BG_G, SCH_BG_B )
+                              : CropAndResize( pngPath, PCB_BG_R, PCB_BG_G, PCB_BG_B );
+
+    if( !cropOk )
         wxLogWarning( "SCREENSHOT: Crop and resize failed, using original image" );
 
     // Base64 encode the PNG
@@ -246,11 +256,10 @@ std::string SCREENSHOT_HANDLER::ExportSchematicSvg( const std::string& aFilePath
     std::string outputDir = aTempDir + "/svg_out";
     wxFileName::Mkdir( wxString::FromUTF8( outputDir ), wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
 
-    // Transparent background lets CropAndResize detect content vs whitespace.
-    // CropAndResize composites onto white before saving.
     std::string cmd = cmdPrefix
-                      + " sch export svg --exclude-drawing-sheet --no-background-color -o \""
-                      + outputDir + "\" \"" + aFilePath + "\"";
+                      + " sch export svg --exclude-drawing-sheet"
+                      + " --theme _builtin_default"
+                      + " -o \"" + outputDir + "\" \"" + aFilePath + "\"";
 
     std::string stdoutStr, stderrStr;
     int exitCode = RunCommand( cmd, stdoutStr, stderrStr );
@@ -295,6 +304,7 @@ std::string SCREENSHOT_HANDLER::ExportPcbSvg( const std::string& aFilePath,
     std::string cmd = cmdPrefix
                       + " pcb export svg"
                       + " --exclude-drawing-sheet --fit-page-to-board"
+                      + " --theme _builtin_default"
                       + " --layers F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,Edge.Cuts"
                       + " -o \"" + outputPath + "\" \"" + aFilePath + "\"";
 
@@ -344,7 +354,9 @@ bool SCREENSHOT_HANDLER::ConvertSvgToPng( const std::string& aSvgPath,
 }
 
 
-bool SCREENSHOT_HANDLER::CropAndResize( const std::string& aPngPath )
+bool SCREENSHOT_HANDLER::CropAndResize( const std::string& aPngPath,
+                                        unsigned char aBgR, unsigned char aBgG,
+                                        unsigned char aBgB )
 {
     wxImage image;
 
@@ -357,9 +369,10 @@ bool SCREENSHOT_HANDLER::CropAndResize( const std::string& aPngPath )
     int width = image.GetWidth();
     int height = image.GetHeight();
 
-    // Composite transparent pixels onto white background.
-    // This ensures the final image has a solid white background and lets
-    // the whitespace scanner correctly identify empty vs content areas.
+    wxLogInfo( "SCREENSHOT: Using background color RGB(%d, %d, %d)", aBgR, aBgG, aBgB );
+
+    // Composite transparent pixels onto the specified background color.
+    // SVG export doesn't include the canvas background, so we apply it here.
     if( image.HasAlpha() )
     {
         unsigned char* data = image.GetData();
@@ -368,17 +381,17 @@ bool SCREENSHOT_HANDLER::CropAndResize( const std::string& aPngPath )
         for( int i = 0; i < width * height; ++i )
         {
             float a = alpha[i] / 255.0f;
-            data[i * 3]     = static_cast<unsigned char>( data[i * 3]     * a + 255 * ( 1 - a ) );
-            data[i * 3 + 1] = static_cast<unsigned char>( data[i * 3 + 1] * a + 255 * ( 1 - a ) );
-            data[i * 3 + 2] = static_cast<unsigned char>( data[i * 3 + 2] * a + 255 * ( 1 - a ) );
+            data[i * 3]     = static_cast<unsigned char>( data[i * 3]     * a + aBgR * ( 1 - a ) );
+            data[i * 3 + 1] = static_cast<unsigned char>( data[i * 3 + 1] * a + aBgG * ( 1 - a ) );
+            data[i * 3 + 2] = static_cast<unsigned char>( data[i * 3 + 2] * a + aBgB * ( 1 - a ) );
         }
 
         image.ClearAlpha();
     }
 
-    // Find bounding box of non-white pixels.
-    // Threshold at 250 (not 255) to catch antialiasing artifacts at content edges.
-    static const unsigned char WHITE_THRESHOLD = 250;
+    // Find bounding box of content pixels (those that differ from the background).
+    // Threshold of 5 catches antialiasing artifacts at content edges.
+    static const int BG_THRESHOLD = 5;
 
     int minX = width;
     int minY = height;
@@ -393,8 +406,9 @@ bool SCREENSHOT_HANDLER::CropAndResize( const std::string& aPngPath )
         {
             int idx = ( y * width + x ) * 3;
 
-            if( data[idx] < WHITE_THRESHOLD || data[idx + 1] < WHITE_THRESHOLD
-                || data[idx + 2] < WHITE_THRESHOLD )
+            if( std::abs( data[idx]     - aBgR ) > BG_THRESHOLD
+                || std::abs( data[idx + 1] - aBgG ) > BG_THRESHOLD
+                || std::abs( data[idx + 2] - aBgB ) > BG_THRESHOLD )
             {
                 if( x < minX ) minX = x;
                 if( y < minY ) minY = y;
@@ -404,7 +418,7 @@ bool SCREENSHOT_HANDLER::CropAndResize( const std::string& aPngPath )
         }
     }
 
-    // All-white image: just resize if needed
+    // All-background image: just resize if needed
     if( maxX < 0 || maxY < 0 )
     {
         if( width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION )

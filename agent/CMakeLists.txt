@@ -22,6 +22,23 @@ add_custom_command(
 
 add_custom_target( agent_html_template DEPENDS "${HTML_TEMPLATE_OUTPUT}" )
 
+# Generate C++ header from input HTML template at build time
+set( INPUT_TEMPLATE_INPUT "${CMAKE_CURRENT_SOURCE_DIR}/rendering/input_template.html" )
+set( INPUT_TEMPLATE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/input_template_embedded.h" )
+
+add_custom_command(
+    OUTPUT "${INPUT_TEMPLATE_OUTPUT}"
+    COMMAND ${CMAKE_COMMAND}
+        -DINPUT_FILE="${INPUT_TEMPLATE_INPUT}"
+        -DOUTPUT_FILE="${INPUT_TEMPLATE_OUTPUT}"
+        -DVAR_NAME=INPUT_HTML_TEMPLATE_RAW
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/rendering/embed_html.cmake"
+    DEPENDS "${INPUT_TEMPLATE_INPUT}" "${CMAKE_CURRENT_SOURCE_DIR}/rendering/embed_html.cmake"
+    COMMENT "Embedding input HTML template"
+)
+
+add_custom_target( input_html_template DEPENDS "${INPUT_TEMPLATE_OUTPUT}" )
+
 include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
     ${CMAKE_SOURCE_DIR}/common
@@ -41,6 +58,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/schematic
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcb
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/screenshot
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform
     ${CMAKE_CURRENT_BINARY_DIR}  # For generated agent_template_embedded.h
     ${INC_AFTER}
     )
@@ -67,6 +85,7 @@ set( AGENT_SRCS
     # Rendering
     rendering/agent_markdown.cpp
     rendering/agent_html_template.cpp
+    rendering/input_html_template.cpp
 
     # UI components
     ui/pending_changes_popup.cpp
@@ -94,6 +113,11 @@ set( AGENT_SRCS
     tools/pcb/pcb_crud_handler.cpp
     tools/screenshot/screenshot_handler.cpp
 )
+
+# Platform-specific sources
+if( APPLE )
+    list( APPEND AGENT_SRCS platform/macos_key_monitor.mm )
+endif()
 
 
 # Resources for the macOS bundle
@@ -186,7 +210,7 @@ target_link_libraries( agent
 )
 
 # Ensure HTML template is generated before compiling
-add_dependencies( agent_kiface agent_html_template )
+add_dependencies( agent_kiface agent_html_template input_html_template )
 add_dependencies( agent agent_kiface )
 
 # Installation rules

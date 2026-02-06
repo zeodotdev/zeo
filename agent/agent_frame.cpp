@@ -5,6 +5,7 @@
 #include "ui/history_panel.h"
 #include "rendering/agent_markdown.h"
 #include "rendering/agent_html_template.h"
+#include "rendering/input_html_template.h"
 #include "tools/agent_tools.h"
 #include "core/chat_controller.h"
 #include "core/chat_events.h"
@@ -21,7 +22,6 @@
 #include <set>
 #include <algorithm>
 #include <wx/sizer.h>
-#include <wx/textctrl.h>
 #include <wx/msgdlg.h>
 #include <wx/utils.h>
 #include <wx/stdpaths.h>
@@ -42,6 +42,10 @@
 #include <wx/icon.h>
 #include <kicad_curl/kicad_curl_easy.h>
 #include <kiid.h>
+
+#ifdef __APPLE__
+#include "macos_key_monitor.h"
+#endif
 
 using json = nlohmann::json;
 
@@ -158,38 +162,55 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     wxBoxSizer* outerInputSizer = new wxBoxSizer( wxVERTICAL );
 
     // Use an inner sizer for content padding
-    wxBoxSizer* inputContainerSizer = new wxBoxSizer( wxVERTICAL );
+    m_inputContainerSizer = new wxBoxSizer( wxVERTICAL );
 
     // Top row: Selection Pill (left) + Pending Changes Button (right)
-    wxBoxSizer* topRowSizer = new wxBoxSizer( wxHORIZONTAL );
+    m_topRowSizer = new wxBoxSizer( wxHORIZONTAL );
 
     // Status Pill (Selection Info / Add Context)
     m_selectionPill = new wxButton( m_inputPanel, wxID_ANY, "No Selection", wxDefaultPosition, wxDefaultSize );
-    // Removed custom colors to keep native round look
-    m_selectionPill->Hide(); // Hide on load
-    topRowSizer->Add( m_selectionPill, 0, wxALIGN_CENTER_VERTICAL );
+    m_selectionPill->SetCursor( wxCursor( wxCURSOR_HAND ) );
+    m_selectionPill->Hide();
+    m_topRowSizer->Add( m_selectionPill, 0, wxALIGN_CENTER_VERTICAL );
 
-    topRowSizer->AddStretchSpacer();
+    m_topRowSizer->AddStretchSpacer();
 
     // Pending Changes Button (hidden by default)
     m_pendingChangesBtn = new wxButton( m_inputPanel, wxID_ANY, "1 change" );
+    m_pendingChangesBtn->SetCursor( wxCursor( wxCURSOR_HAND ) );
     m_pendingChangesBtn->Hide();
-    topRowSizer->Add( m_pendingChangesBtn, 0, wxALIGN_CENTER_VERTICAL );
+    m_topRowSizer->Add( m_pendingChangesBtn, 0, wxALIGN_CENTER_VERTICAL );
 
-    inputContainerSizer->Add( topRowSizer, 0, wxEXPAND | wxBOTTOM, 5 );
+    m_inputContainerSizer->Add( m_topRowSizer, 0, wxEXPAND | wxBOTTOM, 5 );
 
-    // 2a. Text Input (Top)
-    m_inputCtrl = new wxTextCtrl( m_inputPanel, wxID_ANY, "", wxDefaultPosition, wxSize( -1, 60 ),
-                                  wxTE_MULTILINE | wxTE_PROCESS_ENTER | wxBORDER_NONE );
-    m_inputCtrl->SetBackgroundColour( wxColour( "#1C1C1C" ) );
-    m_inputCtrl->SetForegroundColour( wxColour( "#FFFFFF" ) );
+    // 2a. Input WebView (markdown syntax highlighting)
+    m_inputWebView = new WEBVIEW_PANEL( m_inputPanel, wxID_ANY,
+                                         wxDefaultPosition, wxSize( -1, 60 ), 0 );
+    m_inputWebView->AddMessageHandler( wxS( "input" ),
+        [this]( const wxString& msg ) { OnInputWebViewMessage( msg ); } );
+    m_inputWebView->BindLoadedEvent();
+    m_inputWebView->SetPage( GetInputHtmlTemplate() );
 
-    // Use system default font (matches chat name label)
-    wxFont font = wxSystemSettings::GetFont( wxSYS_DEFAULT_GUI_FONT );
-    font.SetPointSize( 12 );
-    m_inputCtrl->SetFont( font );
+#ifdef __APPLE__
+    // WKWebView handles Cmd+A through the Cocoa responder chain, bypassing wxWidgets.
+    // Install an NSEvent monitor to intercept Cmd+A when the input webview has focus.
+    // NOTE: The callback captures `this`; RemoveSelectAllMonitor() in the destructor
+    // must run before the frame is torn down to avoid a dangling pointer.
+    void* nativeHandle = (void*) m_inputWebView->GetWebView()->GetHandle();
 
-    inputContainerSizer->Add( m_inputCtrl, 1, wxEXPAND | wxBOTTOM, 5 );
+    if( nativeHandle )
+    {
+        InstallSelectAllMonitor(
+                nativeHandle,
+                [this]()
+                {
+                    m_inputWebView->RunScriptAsync(
+                            wxS( "textarea.focus(); textarea.select();" ) );
+                } );
+    }
+#endif
+
+    m_inputContainerSizer->Add( m_inputWebView, 1, wxEXPAND | wxBOTTOM, 10 );
 
     // 2b. Control Row (Bottom)
     wxBoxSizer* controlsSizer = new wxBoxSizer( wxHORIZONTAL );
@@ -216,12 +237,12 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_actionButton = new wxButton( m_inputPanel, wxID_ANY, "Send" );
     controlsSizer->Add( m_actionButton, 0, wxALIGN_CENTER_VERTICAL );
 
-    inputContainerSizer->Add( controlsSizer, 0, wxEXPAND );
+    m_inputContainerSizer->Add( controlsSizer, 0, wxEXPAND );
 
 
 
     // Add inner sizer to outer sizer with padding matching top bar (10px on all sides)
-    outerInputSizer->Add( inputContainerSizer, 1, wxEXPAND | wxALL, 10 );
+    outerInputSizer->Add( m_inputContainerSizer, 1, wxEXPAND | wxALL, 10 );
 
     m_inputPanel->SetSizer( outerInputSizer );
 
@@ -243,20 +264,29 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_historyPanel->Hide();
 
     // Bind Events
-    m_actionButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSend, this );
+    m_actionButton->Bind( wxEVT_BUTTON, [this]( wxCommandEvent& aEvent )
+    {
+        if( m_actionButton->GetLabel() == "Stop" )
+        {
+            OnStop( aEvent );
+        }
+        else
+        {
+            // Route through JS to get the current input text, then submit back to C++
+            if( m_inputWebView )
+                m_inputWebView->RunScriptAsync( wxS( "sendMsg('submit', { text: getText() });" ) );
+        }
+    } );
     m_newChatButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnNewChat, this );
     m_historyButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnHistoryTool, this );
-    m_inputCtrl->Bind( wxEVT_TEXT_ENTER, &AGENT_FRAME::OnTextEnter, this );
     m_selectionPill->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSelectionPillClick, this );
     m_pendingChangesBtn->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnPendingChangesClick, this );
     m_trackAgentBtn->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnTrackAgentClick, this );
 
-    // m_toolButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnToolClick, this );
     // Note: Link clicks and right-click are now handled via JavaScript message passing
     // through OnWebViewMessage() - see AddMessageHandler in constructor
+    // Input events (Enter, @{tag} deletion, highlighting) are handled in input_template.html JS
     Bind( wxEVT_MENU, &AGENT_FRAME::OnPopupClick, this, ID_CHAT_COPY );
-    m_inputCtrl->Bind( wxEVT_KEY_DOWN, &AGENT_FRAME::OnInputKeyDown, this );
-    m_inputCtrl->Bind( wxEVT_TEXT, &AGENT_FRAME::OnInputText, this );
 
     // Bind Async LLM Streaming Events
     Bind( EVT_LLM_STREAM_CHUNK, &AGENT_FRAME::OnLLMStreamChunk, this );
@@ -555,6 +585,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
 AGENT_FRAME::~AGENT_FRAME()
 {
+#ifdef __APPLE__
+    RemoveSelectAllMonitor();
+#endif
+
     // Stop the generating animation timer to prevent timer events
     m_generatingTimer.Stop();
 
@@ -996,20 +1030,12 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 
                     m_selectionPill->SetLabel( label );
                     m_selectionPill->Show( true );
+
                 }
                 else
                 {
-                    // If selection empty, hide pill?
-                    // Or keep it if we want to add "Context"?
-                    // For now, hide if no selection
-                    // But wait, the user might want to add *project context* even if nothing selected?
-                    // Usually "Add: Selection" implies specific selection.
-                    // If empty, maybe hide.
-                    // If "CLEARED" message was sent, we might receive empty selection array?
-                    // The tools send JSON even if empty?
-                    // m_schJson handles global context.
-                    // Let's hide pill if no items selected.
                     m_selectionPill->Show( false );
+
                 }
             }
             catch( ... )
@@ -1045,10 +1071,12 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
                 // That would be cleaner.
                 // But for now, I'll just hide the pill.
                 m_selectionPill->Show( false );
+
             }
             else if( payload.find( "PCB" ) != std::string::npos )
             {
                 m_selectionPill->Show( false );
+
             }
         }
     }
@@ -1104,91 +1132,26 @@ void AGENT_FRAME::OnSelectionPillClick( wxCommandEvent& aEvent )
 
         // Hide pill on click
         m_selectionPill->Hide();
-        Layout(); // specific layout for input panel/frame?
-        // Layout(); // Calling global Layout() might be heavy, but safest.
 
-        // Append @{Label} to input
-        wxString currentText = m_inputCtrl->GetValue();
-        if( !currentText.IsEmpty() && !currentText.EndsWith( " " ) )
-            m_inputCtrl->AppendText( " " );
+        // Append @{Label} to input via JavaScript
+        wxString escaped = label;
+        escaped.Replace( "\\", "\\\\" );
+        escaped.Replace( "'", "\\'" );
 
-        // Insert text (formatted by OnInputText)
-        m_inputCtrl->AppendText( "@{" + label + "} " );
-        m_inputCtrl->SetFocus();
+        wxString script = wxString::Format(
+            "var ta = document.getElementById('input-textarea');"
+            "var text = ta.value;"
+            "if (text.length > 0 && !text.endsWith(' ')) text += ' ';"
+            "text += '@{%s} ';"
+            "setText(text);"
+            "ta.selectionStart = ta.selectionEnd = ta.value.length;"
+            "focusInput();",
+            escaped );
+
+        m_inputWebView->RunScriptAsync( script );
     }
 }
 
-void AGENT_FRAME::OnInputText( wxCommandEvent& aEvent )
-{
-    // Dynamic Highlighting: Bold valid @{...} tags
-    long     currentPos = m_inputCtrl->GetInsertionPoint();
-    wxString text = m_inputCtrl->GetValue();
-
-    // Get the control's font to preserve it when setting styles
-    wxFont baseFont = m_inputCtrl->GetFont();
-
-    // 1. Reset all to normal (must include full font to preserve size)
-    wxTextAttr normalStyle;
-    wxFont normalFont = baseFont;
-    normalFont.SetWeight( wxFONTWEIGHT_NORMAL );
-    normalStyle.SetFont( normalFont );
-    m_inputCtrl->SetStyle( 0, text.Length(), normalStyle );
-
-    // 2. Scan for @{...} pairs
-    size_t start = 0;
-    while( ( start = text.find( "@{", start ) ) != wxString::npos )
-    {
-        size_t end = text.find( "}", start );
-        if( end != wxString::npos )
-        {
-            // Apply Bold to @{...} (must include full font to preserve size)
-            wxTextAttr boldStyle;
-            wxFont boldFont = baseFont;
-            boldFont.SetWeight( wxFONTWEIGHT_BOLD );
-            boldStyle.SetFont( boldFont );
-            m_inputCtrl->SetStyle( start, end + 1, boldStyle );
-            start = end + 1;
-        }
-        else
-        {
-            break; // No more closed tags
-        }
-    }
-}
-
-void AGENT_FRAME::OnInputKeyDown( wxKeyEvent& aEvent )
-{
-    int key = aEvent.GetKeyCode();
-
-    if( key == WXK_BACK || key == WXK_DELETE )
-    {
-        long     pos = m_inputCtrl->GetInsertionPoint();
-        wxString text = m_inputCtrl->GetValue();
-
-        if( pos > 0 )
-        {
-            // Atomic deletion for @{...}
-            // Check if we are deleting a '}'
-            if( pos <= text.Length() && text[pos - 1] == '}' )
-            {
-                // Verify matching @{
-                long openBrace = text.rfind( "@{", pos - 1 );
-                if( openBrace != wxString::npos )
-                {
-                    // Ensure no other '}' in between (simple nesting check)
-                    wxString content = text.SubString( openBrace, pos - 1 );
-                    // content is like @{tag}
-                    if( content.find( '}' ) == content.Length() - 1 ) // Last char is the only closing brace
-                    {
-                        m_inputCtrl->Remove( openBrace, pos );
-                        return;
-                    }
-                }
-            }
-        }
-    }
-    aEvent.Skip(); // Default processing
-}
 
 void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 {
@@ -1227,7 +1190,8 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         m_toolCallHtml = "";
     }
 
-    wxString text = m_inputCtrl->GetValue();
+    wxString text = m_pendingInputText;
+    m_pendingInputText.Clear();
     if( text.IsEmpty() )
         return;
 
@@ -1262,7 +1226,8 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     SetHtml( m_fullHtmlContent );
 
     // Clear Input and Update UI
-    m_inputCtrl->Clear();
+    if( m_inputWebView )
+        m_inputWebView->RunScriptAsync( wxS( "clearInput();" ) );
     m_actionButton->SetLabel( "Stop" );
 
     // Configure controller for this request (system prompt now handled server-side)
@@ -1551,17 +1516,49 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
     }
 }
 
-void AGENT_FRAME::OnTextEnter( wxCommandEvent& aEvent )
+void AGENT_FRAME::OnInputWebViewMessage( const wxString& aMessage )
 {
-    wxLogInfo( "AGENT_FRAME::OnTextEnter called" );
-    if( wxGetKeyState( WXK_SHIFT ) )
+    try
     {
-        m_inputCtrl->WriteText( "\n" );
+        nlohmann::json msg = nlohmann::json::parse( aMessage.ToStdString() );
+        std::string action = msg.value( "action", "" );
+
+        if( action == "submit" )
+        {
+            wxString text = wxString::FromUTF8( msg.value( "text", "" ) );
+            if( !text.IsEmpty() )
+            {
+                m_pendingInputText = text;
+                wxCommandEvent evt;
+                OnSend( evt );
+            }
+        }
+        else if( action == "resize" )
+        {
+            int height = msg.value( "height", 60 );
+            ResizeInputWebView( height );
+        }
+        else if( action == "debug" )
+        {
+            std::string debugMsg = msg.value( "message", "" );
+            wxLogTrace( "KICAD_AGENT", "INPUT_DEBUG: %s", debugMsg );
+        }
     }
-    else
+    catch( const std::exception& e )
     {
-        OnSend( aEvent );
+        wxLogError( "AGENT: OnInputWebViewMessage parse error: %s", e.what() );
     }
+}
+
+void AGENT_FRAME::ResizeInputWebView( int aContentHeight )
+{
+    // aContentHeight is the container's offsetHeight (includes padding + border)
+    // Clamp to match JS MIN_HEIGHT (45) + container padding/border overhead (~40px)
+    int totalHeight = std::max( 45, std::min( aContentHeight, 240 ) );
+
+    m_inputWebView->SetMinSize( wxSize( -1, totalHeight ) );
+    m_inputPanel->Layout();
+    Layout();
 }
 
 void AGENT_FRAME::OnModelSelection( wxCommandEvent& aEvent )
@@ -2291,8 +2288,6 @@ void AGENT_FRAME::UpdatePendingChangesButtonVisibility()
     {
         m_pendingChangesBtn->SetLabel( "Hide Changes" );
     }
-
-    Layout();
 }
 
 

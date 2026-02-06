@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html class="h-full bg-[#1C1C1C]">
+<head>
+<meta charset="UTF-8">
+<style>
+html, body {
+    background: #1C1C1C !important;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', Ubuntu, 'Droid Sans', sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+::-webkit-scrollbar { width: 0; height: 0; background: transparent; }
+
+.editor-container {
+    position: relative;
+    width: 100%;
+    min-height: 45px;
+    box-sizing: border-box;
+    background: #2a2a2a;
+    border: 1px solid #404040;
+    border-radius: 10px;
+    padding: 8px 12px;
+}
+
+.editor-container:focus-within {
+    border-color: #569cd6;
+}
+
+.highlight-layer {
+    position: absolute;
+    top: 8px;
+    left: 12px;
+    right: 12px;
+    bottom: 8px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    pointer-events: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    overflow: hidden;
+    color: #FFFFFF;
+}
+
+.input-textarea {
+    position: relative;
+    width: 100%;
+    min-height: 45px;
+    resize: none;
+    background: transparent;
+    color: #FFFFFF;
+    caret-color: #FFFFFF;
+    border: none;
+    outline: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    overflow: hidden;
+    -webkit-text-fill-color: transparent;
+    -webkit-user-select: text;
+    user-select: text;
+    box-sizing: border-box;
+}
+
+.input-textarea::selection {
+    background: rgba(56, 156, 214, 0.4);
+    -webkit-text-fill-color: #FFFFFF;
+}
+
+.input-textarea::placeholder {
+    -webkit-text-fill-color: #808080;
+}
+
+/* @{tag} highlighting */
+.hl-tag { color: #569cd6; font-weight: bold; }
+</style>
+</head>
+<body>
+<div class="editor-container" id="editor-container">
+    <pre class="highlight-layer" id="highlight-layer"></pre>
+    <textarea class="input-textarea" id="input-textarea"
+              placeholder="Message the agent..."
+              rows="1"></textarea>
+</div>
+
+<script>
+// JS-to-C++ bridge (same pattern as chat webview, handler name "input")
+function sendMsg(action, data) {
+    var msg = JSON.stringify(Object.assign({action: action}, data || {}));
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.input) {
+        window.webkit.messageHandlers.input.postMessage(msg);
+    } else if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(msg);
+    }
+}
+
+var textarea = document.getElementById('input-textarea');
+var highlightLayer = document.getElementById('highlight-layer');
+
+// Highlight @{tag} tokens in the input text
+function highlightText(text) {
+    var html = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    // @{tag} tokens
+    html = html.replace(/@\{([^}]*)\}/g, '<span class="hl-tag">@{$1}</span>');
+
+    // Trailing newline for proper height calculation
+    if (html.endsWith('\n') || html === '') {
+        html += '\n';
+    }
+
+    return html;
+}
+
+function syncHighlight() {
+    highlightLayer.innerHTML = highlightText(textarea.value);
+    syncScroll();
+    autoResize();
+}
+
+function syncScroll() {
+    highlightLayer.scrollTop = textarea.scrollTop;
+    highlightLayer.scrollLeft = textarea.scrollLeft;
+}
+
+// Auto-resize
+var MIN_HEIGHT = 45;
+var MAX_HEIGHT = 200;
+
+function autoResize() {
+    textarea.style.height = 'auto';
+    var scrollHeight = textarea.scrollHeight;
+    var newHeight = Math.min(Math.max(scrollHeight, MIN_HEIGHT), MAX_HEIGHT);
+    textarea.style.height = newHeight + 'px';
+    highlightLayer.style.height = newHeight + 'px';
+
+    // Enable scrolling if content exceeds max
+    textarea.style.overflowY = (scrollHeight > MAX_HEIGHT) ? 'auto' : 'hidden';
+
+    // Report total container height (textarea + padding + border)
+    var container = document.getElementById('editor-container');
+    var totalHeight = container.offsetHeight;
+    sendMsg('resize', { height: totalHeight });
+}
+
+// @{tag} atomic deletion
+function handleAtomicDeletion(e) {
+    if (e.key !== 'Backspace' && e.key !== 'Delete') return;
+
+    var pos = textarea.selectionStart;
+    var end = textarea.selectionEnd;
+    var text = textarea.value;
+
+    // Only handle when no selection
+    if (pos !== end) return;
+
+    if (e.key === 'Backspace' && pos > 0) {
+        if (text[pos - 1] === '}') {
+            var before = text.substring(0, pos);
+            var openIdx = before.lastIndexOf('@{');
+            if (openIdx !== -1) {
+                var segment = before.substring(openIdx, pos);
+                if (segment.indexOf('}') === segment.length - 1) {
+                    e.preventDefault();
+                    textarea.value = text.substring(0, openIdx) + text.substring(pos);
+                    textarea.selectionStart = textarea.selectionEnd = openIdx;
+                    syncHighlight();
+                    sendMsg('text_changed', { text: textarea.value });
+                    return;
+                }
+            }
+        }
+    }
+
+    if (e.key === 'Delete' && pos < text.length) {
+        if (text[pos] === '@' && pos + 1 < text.length && text[pos + 1] === '{') {
+            var closeIdx = text.indexOf('}', pos + 2);
+            if (closeIdx !== -1) {
+                var seg = text.substring(pos, closeIdx + 1);
+                if (seg.indexOf('}') === seg.length - 1) {
+                    e.preventDefault();
+                    textarea.value = text.substring(0, pos) + text.substring(closeIdx + 1);
+                    textarea.selectionStart = textarea.selectionEnd = pos;
+                    syncHighlight();
+                    sendMsg('text_changed', { text: textarea.value });
+                    return;
+                }
+            }
+        }
+    }
+}
+
+// Enter/Shift+Enter handling
+function handleEnter(e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        sendMsg('submit', { text: textarea.value });
+    }
+}
+
+// Event listeners
+textarea.addEventListener('input', function() {
+    syncHighlight();
+    sendMsg('text_changed', { text: textarea.value });
+});
+
+textarea.addEventListener('keydown', function(e) {
+    handleAtomicDeletion(e);
+    handleEnter(e);
+});
+
+textarea.addEventListener('scroll', syncScroll);
+
+// Functions callable from C++ via RunScriptAsync
+
+function setText(text) {
+    textarea.value = text;
+    syncHighlight();
+}
+
+function clearInput() {
+    textarea.value = '';
+    syncHighlight();
+}
+
+function getText() {
+    return textarea.value;
+}
+
+function focusInput() {
+    textarea.focus();
+}
+
+// Initial setup
+syncHighlight();
+textarea.focus();
+</script>
+</body>
+</html>

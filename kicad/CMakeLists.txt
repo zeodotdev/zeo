@@ -53,7 +53,6 @@ set( KICAD_SRCS
     tools/kicad_manager_control.cpp
     session_manager.cpp
     ${CMAKE_SOURCE_DIR}/agent/auth/agent_auth.cpp
-    ${CMAKE_SOURCE_DIR}/agent/auth/agent_keychain.cpp
     )
 
 set( KICAD_CLI_SRCS

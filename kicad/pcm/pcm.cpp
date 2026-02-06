@@ -776,9 +776,9 @@ void PLUGIN_CONTENT_MANAGER::MarkInstalled( const PCM_PACKAGE& aPackage, const w
              == PCM_PACKAGE_RUNTIME::PPR_IPC )
         && !Pgm().GetCommonSettings()->m_Api.enable_server )
     {
-        if( wxMessageBox( _( "This plugin requires the KiCad API, which is currently "
+        if( wxMessageBox( _( "This plugin requires the Zener API, which is currently "
                              "disabled in preferences. Would you like to enable it?" ),
-                         _( "Enable KiCad API" ), wxICON_QUESTION | wxYES_NO, m_dialog )
+                         _( "Enable Zener API" ), wxICON_QUESTION | wxYES_NO, m_dialog )
                    == wxYES )
         {
             Pgm().GetCommonSettings()->m_Api.enable_server = true;

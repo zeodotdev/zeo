@@ -91,7 +91,7 @@ void DIALOG_CONFIG_EQUFILES::OnEditEquFile( wxCommandEvent& event )
 
     if( editorname.IsEmpty() )
     {
-        wxMessageBox( _( "No text editor selected in KiCad.  Please choose one." ) );
+        wxMessageBox( _( "No text editor selected in Zener.  Please choose one." ) );
         return;
     }
 

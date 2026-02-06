@@ -114,7 +114,7 @@
                     <property name="gripper">0</property>
                     <property name="hidden">0</property>
                     <property name="id">wxID_ANY</property>
-                    <property name="label">Allow connections to the Internet to check for updated versions of KiCad and packages installed through the Plugin and Content Manager?</property>
+                    <property name="label">Allow connections to the Internet to check for updated versions of Zener and packages installed through the Plugin and Content Manager?</property>
                     <property name="markup">0</property>
                     <property name="max_size"></property>
                     <property name="maximize_button">0</property>
@@ -177,7 +177,7 @@
                     <property name="gripper">0</property>
                     <property name="hidden">0</property>
                     <property name="id">wxID_ANY</property>
-                    <property name="label">Check for KiCad updates on startup</property>
+                    <property name="label">Check for Zener updates on startup</property>
                     <property name="max_size"></property>
                     <property name="maximize_button">0</property>
                     <property name="maximum_size"></property>
@@ -320,7 +320,7 @@
                     <property name="gripper">0</property>
                     <property name="hidden">0</property>
                     <property name="id">wxID_ANY</property>
-                    <property name="label">KiCad can anonymously report crashes and other event data to the development team in order to help identify and fix bugs and improve performance.&#x0A;&#x0A;When data collection is enabled, KiCad will automatically send reports when crashes or other notable events occur. These reports contain technical details about the state of the KiCad software at the time of the report. No personally identifiable information (PII) is collected, and your design files such as schematics, PCBs, and libraries are never shared as part of this process.</property>
+                    <property name="label">Zener can anonymously report crashes and other event data to the development team in order to help identify and fix bugs and improve performance.&#x0A;&#x0A;When data collection is enabled, Zener will automatically send reports when crashes or other notable events occur. These reports contain technical details about the state of the Zener software at the time of the report. No personally identifiable information (PII) is collected, and your design files such as schematics, PCBs, and libraries are never shared as part of this process.</property>
                     <property name="markup">0</property>
                     <property name="max_size"></property>
                     <property name="maximize_button">0</property>

@@ -173,6 +173,7 @@ struct SchematicSummary
     std::vector<LabelInfo>      labels;
     std::vector<NoConnectInfo>  noConnects;
     std::vector<SheetInfo>      sheets;
+    std::vector<std::string>    spice_directives;  // SPICE commands found in text items
     SummaryCounts               counts;
 
     nlohmann::json ToJson() const;
@@ -184,6 +185,13 @@ struct SchematicSummary
  * @return Summary of the schematic, or empty summary on error.
  */
 SchematicSummary GetSummary( const std::string& aFilePath );
+
+/**
+ * Generate a SPICE netlist from a schematic file using kicad-cli.
+ * @param aSchematicPath Path to the .kicad_sch file.
+ * @return SPICE netlist text, or empty string on failure.
+ */
+std::string GenerateSpiceNetlist( const std::string& aSchematicPath );
 
 /**
  * Read a specific section from the schematic file.

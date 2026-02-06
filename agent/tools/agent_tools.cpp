@@ -343,6 +343,56 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schRunErc );
 
+    // sch_export_spice_netlist - Export SPICE netlist from schematic
+    LLM_TOOL schExportSpice;
+    schExportSpice.name = "sch_export_spice_netlist";
+    schExportSpice.description =
+        "Export a SPICE netlist from a .kicad_sch schematic file using kicad-cli. "
+        "Returns the raw SPICE netlist text. "
+        "IMPORTANT: The schematic must be fully annotated (symbols have reference designators "
+        "like R1, C1, U1) before exporting, otherwise the netlist will be invalid. "
+        "Use this after the schematic design is complete, not during editing.";
+    schExportSpice.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to the .kicad_sch file" }
+            }}
+        }},
+        { "required", json::array( { "file_path" } ) }
+    };
+    tools.push_back( schExportSpice );
+
+    // sch_run_simulation - Run SPICE simulation on open schematic
+    LLM_TOOL schRunSim;
+    schRunSim.name = "sch_run_simulation";
+    schRunSim.description =
+        "Run a SPICE simulation on the currently open schematic. "
+        "Returns trace summaries with signal names, point counts, and min/max/final values. "
+        "Supported commands:\n"
+        "  .op - Operating point analysis\n"
+        "  .tran <step> <stop> [start] [maxstep] - Transient analysis (e.g. '.tran 1u 10m')\n"
+        "  .ac <dec|oct|lin> <points> <fstart> <fstop> - AC analysis (e.g. '.ac dec 10 1 1meg')\n"
+        "  .dc <source> <start> <stop> <incr> - DC sweep (e.g. '.dc V1 0 5 0.1')\n"
+        "  .noise v(<out>[,<ref>]) <source> <scale> <pts> <fstart> <fstop> - Noise analysis\n"
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schRunSim.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "command", {
+                { "type", "string" },
+                { "description", "SPICE simulation command (e.g. '.tran 1u 10m', '.ac dec 10 1 1meg', '.op')" }
+            }},
+            { "save_to_schematic", {
+                { "type", "boolean" },
+                { "description", "Persist this command as the schematic's default simulation command (default: false)" }
+            }}
+        }},
+        { "required", json::array( { "command" } ) }
+    };
+    tools.push_back( schRunSim );
+
     // sch_get_lib_symbol - Query symbol library for pin positions
     LLM_TOOL schGetLibSymbol;
     schGetLibSymbol.name = "sch_get_lib_symbol";

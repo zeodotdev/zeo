@@ -24,6 +24,7 @@
 #include "schematic/sch_lib_symbol_handler.h"
 #include "schematic/sch_crud_handler.h"
 #include "schematic/sch_util_handler.h"
+#include "schematic/sch_sim_handler.h"
 #include "pcb/pcb_tool_handler.h"
 #include "pcb/pcb_crud_handler.h"
 
@@ -43,6 +44,7 @@ TOOL_REGISTRY::TOOL_REGISTRY()
     m_handlers.push_back( std::make_unique<SCH_LIB_SYMBOL_HANDLER>() );
     m_handlers.push_back( std::make_unique<SCH_CRUD_HANDLER>() );
     m_handlers.push_back( std::make_unique<SCH_UTIL_HANDLER>() );
+    m_handlers.push_back( std::make_unique<SCH_SIM_HANDLER>() );
 
     // Register PCB tool handlers
     m_handlers.push_back( std::make_unique<PCB_TOOL_HANDLER>() );

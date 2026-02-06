@@ -348,6 +348,11 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "properties" ) && aInput["properties"].is_object() )
         {
             code << "    props = " << aInput["properties"].dump() << "\n";
+            code << "    if 'Reference' in props:\n";
+            code << "        if hasattr(sch.symbols, 'set_reference'):\n";
+            code << "            sch.symbols.set_reference(symbol, props['Reference'])\n";
+            code << "        elif hasattr(symbol, 'reference'):\n";
+            code << "            symbol.reference = props['Reference']\n";
             code << "    if 'Value' in props:\n";
             code << "        sch.symbols.set_value(symbol, props['Value'])\n";
             code << "    if 'Footprint' in props:\n";

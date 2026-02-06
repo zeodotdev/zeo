@@ -50,8 +50,6 @@ wxDEFINE_EVENT( EVT_CHAT_STATE_CHANGED, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_TITLE_DELTA, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_TITLE_GENERATED, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_HISTORY_LOADED, wxThreadEvent );
-wxDEFINE_EVENT( EVT_CHAT_CONTEXT_COMPACTING, wxThreadEvent );
-wxDEFINE_EVENT( EVT_CHAT_CONTEXT_RECOVERED, wxThreadEvent );
 
 
 // ============================================================================
@@ -158,8 +156,15 @@ void CHAT_CONTROLLER::Cancel()
     if( m_llmClient )
         m_llmClient->CancelRequest();
 
-    // Save any partial response that was being streamed
-    if( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() )
+    // Save any partial response that was being streamed.
+    // Skip this if we're in a tool execution state — the assistant message (with tool_use blocks)
+    // was already committed to history by AddAssistantToolUseToHistory(). The stale
+    // m_currentResponse/m_thinkingContent from that turn would create a duplicate assistant message.
+    bool toolStateActive = m_ctx.GetState() == AgentConversationState::TOOL_USE_DETECTED ||
+                           m_ctx.GetState() == AgentConversationState::EXECUTING_TOOL ||
+                           m_ctx.GetState() == AgentConversationState::PROCESSING_TOOL_RESULT;
+
+    if( !toolStateActive && ( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() ) )
     {
         nlohmann::json content = nlohmann::json::array();
 
@@ -179,6 +184,16 @@ void CHAT_CONTROLLER::Cancel()
             content.push_back( {
                 { "type", "text" },
                 { "text", m_currentResponse + "\n\n*(Stopped)*" }
+            } );
+        }
+
+        // If content is empty (e.g. cancelled during thinking before signature arrived),
+        // add a minimal text block to avoid sending an empty assistant message to the API.
+        if( content.empty() )
+        {
+            content.push_back( {
+                { "type", "text" },
+                { "text", "*(Stopped)*" }
             } );
         }
 
@@ -290,10 +305,11 @@ void CHAT_CONTROLLER::NewChat()
     m_apiContext = nlohmann::json::array();
     m_currentResponse.clear();
     m_thinkingContent.clear();
+    m_compactionContent.clear();
     m_chatId.clear();
     m_firstUserMessage.clear();
     m_pendingToolCalls = nlohmann::json::array();
-    
+
     m_ctx.Reset();
 }
 
@@ -401,6 +417,9 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         break;
     case LLMChunkType::PAUSE_TURN:
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - PAUSE_TURN (will retry)" );
+        break;
+    case LLMChunkType::COMPACTION:
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - COMPACTION (context compacted)" );
         break;
     case LLMChunkType::REFUSAL:
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - REFUSAL" );
@@ -600,6 +619,29 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         break;
     }
 
+    case LLMChunkType::COMPACTION:
+    {
+        // Context was compacted by the API - store the compaction content
+        // and replace old messages in API context
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - COMPACTION received" );
+
+        m_compactionContent = aChunk.compaction_content;
+
+        // Clear all previous messages from API context and replace with compaction
+        // The compaction block summarizes the earlier conversation
+        m_apiContext = nlohmann::json::array();
+        m_apiContext.push_back( {
+            { "role", "user" },
+            { "content", {
+                {
+                    { "type", "compaction" },
+                    { "content", m_compactionContent }
+                }
+            } }
+        } );
+        break;
+    }
+
     case LLMChunkType::REFUSAL:
     {
         // Model refused the request - treat as end of turn with the refusal message
@@ -630,26 +672,12 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         break;
     }
 
-    case LLMChunkType::CONTEXT_EXHAUSTED:
-    case LLMChunkType::CONTEXT_TRUNCATED:
-    {
-        // Context exhausted is now handled inline by LLM_REQUEST_THREAD for the HTTP 400 case.
-        // It posts CONTEXT_COMPACTING and CONTEXT_RECOVERED events directly.
-        // This case only triggers for mid-stream model_context_window_exceeded stop reason,
-        // which is rare since we check pre-request. Log for debugging.
-        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - CONTEXT_EXHAUSTED/TRUNCATED chunk received" );
-        break;
-    }
     }
 }
 
 
 void CHAT_CONTROLLER::HandleLLMComplete()
 {
-    // Note: Context exhausted handling has moved to LLM_REQUEST_THREAD for the HTTP 400 case.
-    // The thread detects context_exhausted, calls summarize inline, and posts events directly.
-    // This avoids the HTTP/2 connection corruption that occurred with separate threads.
-
     // Check if we need to continue generation (from max_tokens)
     if( m_continueAfterComplete )
     {
@@ -1223,10 +1251,37 @@ void CHAT_CONTROLLER::SanitizeApiContext()
         {
             if( role == "user" )
             {
-                // For consecutive user messages, replace the previous one
-                wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - removing duplicate user message" );
+                // Check if the previous user message contains tool_result blocks.
+                // tool_result messages MUST stay — they're structurally required to follow
+                // the assistant's tool_use blocks. Removing them orphans the tool_use.
+                bool prevHasToolResult = false;
                 if( !sanitized.empty() )
-                    sanitized.erase( sanitized.end() - 1 );
+                {
+                    const auto& prevMsg = sanitized.back();
+                    if( prevMsg.contains( "content" ) && prevMsg["content"].is_array() )
+                    {
+                        for( const auto& block : prevMsg["content"] )
+                        {
+                            if( block.contains( "type" ) && block["type"] == "tool_result" )
+                            {
+                                prevHasToolResult = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if( prevHasToolResult )
+                {
+                    wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - keeping tool_result user message" );
+                }
+                else
+                {
+                    // For consecutive user messages, replace the previous one
+                    wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - removing duplicate user message" );
+                    if( !sanitized.empty() )
+                        sanitized.erase( sanitized.end() - 1 );
+                }
             }
             else if( role == "assistant" )
             {
@@ -1393,5 +1448,3 @@ template void CHAT_CONTROLLER::EmitEvent<ChatStateChangedData>( wxEventType, con
 template void CHAT_CONTROLLER::EmitEvent<ChatTitleDeltaData>( wxEventType, const ChatTitleDeltaData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatTitleGeneratedData>( wxEventType, const ChatTitleGeneratedData& );
 template void CHAT_CONTROLLER::EmitEvent<ChatHistoryLoadedData>( wxEventType, const ChatHistoryLoadedData& );
-template void CHAT_CONTROLLER::EmitEvent<ChatContextCompactingData>( wxEventType, const ChatContextCompactingData& );
-template void CHAT_CONTROLLER::EmitEvent<ChatContextRecoveredData>( wxEventType, const ChatContextRecoveredData& );

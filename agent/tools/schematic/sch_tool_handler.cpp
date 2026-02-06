@@ -147,7 +147,8 @@ static const char* SCH_TOOL_NAMES[] = {
     "sch_live_summary",
     "sch_read_section",
     // "sch_modify",  // DISABLED: Use sch_add/sch_update/sch_delete instead
-    "sch_validate"
+    "sch_validate",
+    "sch_export_spice_netlist"
 };
 
 
@@ -176,6 +177,8 @@ std::string SCH_TOOL_HANDLER::Execute( const std::string& aToolName, const nlohm
     //     return ExecuteModify( aInput );
     else if( aToolName == "sch_validate" )
         return ExecuteValidate( aInput );
+    else if( aToolName == "sch_export_spice_netlist" )
+        return ExecuteExportSpiceNetlist( aInput );
 
     return "Error: Unknown schematic tool: " + aToolName;
 }
@@ -207,6 +210,8 @@ std::string SCH_TOOL_HANDLER::GetDescription( const std::string& aToolName,
     // }
     else if( aToolName == "sch_validate" )
         return "Validating " + fileName;
+    else if( aToolName == "sch_export_spice_netlist" )
+        return "Exporting SPICE netlist from " + fileName;
 
     return "Executing " + aToolName;
 }
@@ -432,6 +437,24 @@ std::string SCH_TOOL_HANDLER::ExecuteValidate( const nlohmann::json& aInput )
 }
 
 
+std::string SCH_TOOL_HANDLER::ExecuteExportSpiceNetlist( const nlohmann::json& aInput )
+{
+    std::string filePath = aInput.value( "file_path", "" );
+    if( filePath.empty() )
+        return "Error: 'file_path' parameter is required";
+
+    if( !FileWriter::FileExists( filePath ) )
+        return "Error: File not found: " + filePath;
+
+    std::string netlist = SchParser::GenerateSpiceNetlist( filePath );
+    if( netlist.empty() )
+        return "Error: Failed to generate SPICE netlist. Ensure the schematic is annotated "
+               "and kicad-cli is available.";
+
+    return netlist;
+}
+
+
 bool SCH_TOOL_HANDLER::RequiresIPC( const std::string& aToolName ) const
 {
     // sch_get_summary: prefers IPC, falls back to file
@@ -541,29 +564,27 @@ std::string SCH_TOOL_HANDLER::GetIPCCommand( const std::string& aToolName,
          << "            'unit': sym.unit if hasattr(sym, 'unit') else 1,\n"
          << "            'pins': []\n"
          << "        }\n"
-         << "        # Get pin positions - calculate absolute position from lib_symbol pin offset\n"
+         << "        # Get pin positions - for placed symbols, pin.position is already absolute\n"
          << "        if hasattr(sym, 'pins'):\n"
          << "            for pin in sym.pins:\n"
          << "                try:\n"
-         << "                    # First try the IPC method\n"
-         << "                    pin_pos = sch.symbols.get_transformed_pin_position(sym, pin.number)\n"
-         << "                    abs_pos = get_pos(pin_pos) if pin_pos else None\n"
+         << "                    abs_pos = None\n"
          << "                    \n"
-         << "                    # If IPC returns [0,0] or fails, calculate manually from lib pin offset\n"
+         << "                    # First try the IPC method for transformed position\n"
+         << "                    if hasattr(sch.symbols, 'get_transformed_pin_position'):\n"
+         << "                        try:\n"
+         << "                            pin_pos = sch.symbols.get_transformed_pin_position(sym, pin.number)\n"
+         << "                            if pin_pos:\n"
+         << "                                abs_pos = get_pos(pin_pos)\n"
+         << "                        except:\n"
+         << "                            pass\n"
+         << "                    \n"
+         << "                    # Fallback: pin.position on placed symbols is already absolute (transformed)\n"
+         << "                    # Do NOT add sym_pos - it's already included in the position\n"
          << "                    if not abs_pos or (abs_pos[0] == 0 and abs_pos[1] == 0):\n"
-         << "                        # Get pin position from the pin object (library-relative)\n"
-         << "                        lib_pin_pos = get_pos(getattr(pin, 'position', None))\n"
-         << "                        if lib_pin_pos and (lib_pin_pos[0] != 0 or lib_pin_pos[1] != 0):\n"
-         << "                            # Apply mirroring first\n"
-         << "                            px, py = lib_pin_pos[0], lib_pin_pos[1]\n"
-         << "                            if mirror_x:\n"
-         << "                                px = -px\n"
-         << "                            if mirror_y:\n"
-         << "                                py = -py\n"
-         << "                            # Rotate by symbol angle\n"
-         << "                            rx, ry = rotate_point(px, py, sym_angle)\n"
-         << "                            # Add symbol position for absolute coordinates\n"
-         << "                            abs_pos = [sym_pos[0] + rx, sym_pos[1] + ry]\n"
+         << "                        pin_pos = get_pos(getattr(pin, 'position', None))\n"
+         << "                        if pin_pos and (pin_pos[0] != 0 or pin_pos[1] != 0):\n"
+         << "                            abs_pos = pin_pos  # Already absolute, no transformation needed\n"
          << "                    \n"
          << "                    if abs_pos:\n"
          << "                        sym_info['pins'].append({\n"

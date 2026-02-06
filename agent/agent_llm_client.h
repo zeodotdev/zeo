@@ -22,18 +22,6 @@ struct LLM_TOOL
 };
 
 /**
- * Result from calling the summarize endpoint.
- */
-struct SummarizeResult
-{
-    bool           success;
-    std::string    error_message;
-    nlohmann::json messages;  // Compacted messages if successful
-
-    SummarizeResult() : success( false ) {}
-};
-
-/**
  * Event types for streaming with tools.
  */
 enum class LLM_EVENT_TYPE
@@ -106,16 +94,6 @@ public:
     void CancelRequest() { m_cancelRequested.store( true ); }
 
     /**
-     * Call the /api/llm/summarize endpoint to compact messages.
-     * This is a synchronous (blocking) call.
-     *
-     * @param aMessages The messages to summarize
-     * @param aKeepCount Number of recent messages to keep unmodified (default: 10)
-     * @return SummarizeResult with success flag and compacted messages or error
-     */
-    SummarizeResult CallSummarizeEndpoint( const nlohmann::json& aMessages, int aKeepCount = 10 );
-
-    /**
      * Set the authentication manager for proxy API requests.
      * @param aAuth Pointer to the authentication manager (owned by caller)
      */
@@ -176,6 +154,8 @@ private:
         std::string       currentThinking;  // Accumulated thinking text
         std::string       currentSignature; // Accumulated thinking signature (for API)
         bool              inThinking;       // Currently accumulating thinking block
+        std::string       currentCompaction; // Accumulated compaction content
+        bool              inCompaction;     // Currently accumulating compaction block
     };
 
     // Parse SSE events and post to main thread

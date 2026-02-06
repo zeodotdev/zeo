@@ -24,7 +24,12 @@
 #include <sstream>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <tuple>
+#include <sys/wait.h>
+#include <wx/stdpaths.h>
+#include <wx/filename.h>
+#include <wx/log.h>
 
 namespace SchParser
 {
@@ -239,6 +244,7 @@ nlohmann::json SchematicSummary::ToJson() const
         { "labels", labelsJson },
         { "no_connects", noConnectsJson },
         { "sheets", sheetsJson },
+        { "spice_directives", spice_directives },
         { "counts", counts.ToJson() }
     };
 }
@@ -338,6 +344,110 @@ static void TransformPinPosition( double symX, double symY, double symAngle,
     // Rotate and translate
     pinAbsX = symX + x * cosA - y * sinA;
     pinAbsY = symY + x * sinA + y * cosA;
+}
+
+
+/**
+ * Locate the kicad-cli binary next to the running executable.
+ * On macOS this is in the same MacOS directory inside the app bundle.
+ */
+static std::string GetKicadCliPath()
+{
+    wxString exePathStr = wxStandardPaths::Get().GetExecutablePath();
+    wxFileName exePath( exePathStr );
+    wxFileName cliPath( exePath.GetPath(), "kicad-cli" );
+
+    wxLogInfo( "SPICE: Executable path: %s", exePathStr );
+    wxLogInfo( "SPICE: Looking for kicad-cli at: %s", cliPath.GetFullPath() );
+
+    if( cliPath.FileExists() )
+        return cliPath.GetFullPath().ToStdString();
+
+    wxLogWarning( "SPICE: kicad-cli not found at %s", cliPath.GetFullPath() );
+    return std::string();
+}
+
+
+std::string GenerateSpiceNetlist( const std::string& aSchematicPath )
+{
+    if( aSchematicPath.empty() )
+    {
+        wxLogWarning( "SPICE: Empty schematic path" );
+        return std::string();
+    }
+
+    std::string cliPath = GetKicadCliPath();
+    if( cliPath.empty() )
+        return std::string();
+
+    // kicad-cli needs DYLD_LIBRARY_PATH to find dylibs in the Frameworks directory
+    wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+    wxFileName frameworksDir( exePath.GetPath(), "" );
+    frameworksDir.RemoveLastDir();
+    frameworksDir.AppendDir( "Frameworks" );
+
+    std::string cmd = "DYLD_LIBRARY_PATH=\"" + frameworksDir.GetPath().ToStdString()
+                      + "\" \"" + cliPath
+                      + "\" sch export netlist --format spice -o /dev/stdout \""
+                      + aSchematicPath + "\" 2>/dev/null";
+
+    wxLogInfo( "SPICE: Running command: %s", cmd.c_str() );
+
+    FILE* pipe = popen( cmd.c_str(), "r" );
+    if( !pipe )
+    {
+        wxLogWarning( "SPICE: popen() failed" );
+        return std::string();
+    }
+
+    std::string result;
+    char        buffer[4096];
+
+    while( fgets( buffer, sizeof( buffer ), pipe ) )
+        result += buffer;
+
+    int status = pclose( pipe );
+    if( status != 0 )
+    {
+        int exitCode = WIFEXITED( status ) ? WEXITSTATUS( status ) : -1;
+        int signal   = WIFSIGNALED( status ) ? WTERMSIG( status ) : 0;
+        wxLogWarning( "SPICE: kicad-cli failed (exit=%d, signal=%d)",
+                      exitCode, signal );
+        return std::string();
+    }
+
+    // kicad-cli may print warnings to stdout before the actual netlist content.
+    // Strip any lines before the first valid SPICE line (starting with . or *)
+    size_t validStart = 0;
+    size_t pos = 0;
+
+    while( pos < result.size() )
+    {
+        size_t lineEnd = result.find( '\n', pos );
+        if( lineEnd == std::string::npos )
+            lineEnd = result.size();
+
+        if( pos < lineEnd )
+        {
+            char firstChar = result[pos];
+            if( firstChar == '.' || firstChar == '*' )
+            {
+                validStart = pos;
+                break;
+            }
+        }
+
+        pos = lineEnd + 1;
+    }
+
+    if( validStart > 0 )
+    {
+        wxLogInfo( "SPICE: Stripped %zu bytes of warnings from output", validStart );
+        result = result.substr( validStart );
+    }
+
+    wxLogInfo( "SPICE: Generated netlist (%zu bytes)", result.size() );
+    return result;
 }
 
 
@@ -623,6 +733,55 @@ SchematicSummary GetSummary( const std::string& aFilePath )
         }
 
         summary.noConnects.push_back( ncInfo );
+    }
+
+    // Extract SPICE directives from text items
+    auto textItems = SexprUtil::FindChildren( root.get(), "text" );
+    for( const auto& textExpr : textItems )
+    {
+        auto textChildren = textExpr->GetChildren();
+        if( !textChildren || textChildren->size() < 2 )
+            continue;
+
+        const SEXPR::SEXPR* contentExpr = textChildren->at( 1 );
+        if( !contentExpr->IsString() )
+            continue;
+
+        std::string content = contentExpr->GetString();
+
+        // Check each line for SPICE directive prefixes
+        std::istringstream stream( content );
+        std::string line;
+        bool hasDirective = false;
+
+        while( std::getline( stream, line ) )
+        {
+            // Trim leading whitespace
+            size_t start = line.find_first_not_of( " \t" );
+            if( start == std::string::npos )
+                continue;
+
+            std::string trimmed = line.substr( start );
+
+            // Convert to lowercase for matching
+            std::string lower = trimmed;
+            std::transform( lower.begin(), lower.end(), lower.begin(), ::tolower );
+
+            // Match ngspice directive prefixes
+            if( lower.substr( 0, 3 ) == ".ac" || lower.substr( 0, 5 ) == ".tran" ||
+                lower.substr( 0, 3 ) == ".dc" || lower.substr( 0, 3 ) == ".op" ||
+                lower.substr( 0, 6 ) == ".noise" || lower.substr( 0, 3 ) == ".pz" ||
+                lower.substr( 0, 3 ) == ".sp" || lower.substr( 0, 5 ) == ".sens" ||
+                lower.substr( 0, 3 ) == ".tf" || lower.substr( 0, 6 ) == ".disto" ||
+                lower.substr( 0, 5 ) == ".meas" || lower.substr( 0, 4 ) == ".fft" )
+            {
+                hasDirective = true;
+                break;
+            }
+        }
+
+        if( hasDirective )
+            summary.spice_directives.push_back( content );
     }
 
     // Extract sheet (child) references

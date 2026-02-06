@@ -101,8 +101,6 @@ public:
     void OnChatTitleDelta( wxThreadEvent& aEvent );
     void OnChatTitleGenerated( wxThreadEvent& aEvent );
     void OnChatHistoryLoaded( wxThreadEvent& aEvent );
-    void OnChatContextCompacting( wxThreadEvent& aEvent );
-    void OnChatContextRecovered( wxThreadEvent& aEvent );
 
     // Tool call helper (synchronous)
     std::string SendRequest( int aDest, const std::string& aPayload );

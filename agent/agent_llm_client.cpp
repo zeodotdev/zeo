@@ -2,17 +2,13 @@
 #include "auth/agent_auth.h"
 #include "agent_frame.h"
 #include "agent_events.h"
-#include "core/chat_events.h"
 #include <id.h>
 #include <curl/curl.h>
-#include <kicad_curl/kicad_curl_easy.h>
-#include <ki_exception.h>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 
 static const std::string ZENER_API_URL = "https://www.zener.so/api/llm/messages";
-static const std::string ZENER_SUMMARIZE_URL = "https://www.zener.so/api/llm/summarize";
 
 AGENT_LLM_CLIENT::AGENT_LLM_CLIENT( AGENT_FRAME* aParent ) :
         m_parent( aParent ),
@@ -106,16 +102,6 @@ LLM_REQUEST_THREAD::~LLM_REQUEST_THREAD()
 }
 
 
-// Static callback for summarize curl response - simple buffer append
-static size_t SummarizeWriteCallback( void* contents, size_t size, size_t nmemb, void* userp )
-{
-    size_t totalSize = size * nmemb;
-    std::string* buffer = static_cast<std::string*>( userp );
-    buffer->append( static_cast<char*>( contents ), totalSize );
-    return totalSize;
-}
-
-
 void* LLM_REQUEST_THREAD::Entry()
 {
     // Get the cancel flag from the client
@@ -129,12 +115,8 @@ void* LLM_REQUEST_THREAD::Entry()
         return nullptr;
     }
 
-    // Build the request
-    std::string apiModel = "claude-sonnet-4-5-20250929";
-    if( m_model == "Claude 4.6 Opus" )
-        apiModel = "claude-opus-4-6";
-    else if( m_model == "Claude 4.5 Sonnet" )
-        apiModel = "claude-sonnet-4-5-20250929";
+    // Build the request (Opus only)
+    std::string apiModel = "claude-opus-4-6";
 
     json requestBody;
     requestBody["model"] = apiModel;
@@ -197,6 +179,7 @@ void* LLM_REQUEST_THREAD::Entry()
     ctx.cancelFlag = m_cancelFlag;
     ctx.inToolInput = false;
     ctx.inThinking = false;
+    ctx.inCompaction = false;
 
     curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, StreamWriteCallback );
     curl_easy_setopt( curl, CURLOPT_WRITEDATA, &ctx );
@@ -238,166 +221,6 @@ void* LLM_REQUEST_THREAD::Entry()
 
     if( http_code != 200 )
     {
-        // Check for context_exhausted error (HTTP 400)
-        // Server returns: {"error": "context_exhausted", "message": "..."}
-        // Client must call /api/llm/summarize to compact, then retry
-        if( http_code == 400 )
-        {
-            try
-            {
-                json errorJson = json::parse( ctx.buffer );
-                std::string errorType = errorJson.value( "error", "" );
-                wxLogInfo( "LLM_REQUEST_THREAD: HTTP 400 error type: %s, buffer: %s",
-                           errorType.c_str(), ctx.buffer.c_str() );
-
-                if( errorType == "context_exhausted" )
-                {
-                    wxLogInfo( "LLM_REQUEST_THREAD: Context exhausted, starting inline summarization" );
-
-                    // Clean up streaming curl handle (headers already freed at line 212)
-                    curl_easy_cleanup( curl );
-                    curl = nullptr;
-
-                    // Notify UI to show "Compacting..." animation
-                    {
-                        wxThreadEvent* event = new wxThreadEvent( EVT_CHAT_CONTEXT_COMPACTING );
-                        ChatContextCompactingData* data = new ChatContextCompactingData();
-                        event->SetPayload( data );
-                        wxQueueEvent( m_handler, event );
-                    }
-
-                    // Build summarize request - send all messages for holistic summarization
-                    json summarizeBody;
-                    summarizeBody["messages"] = m_messages;
-                    std::string summarizeBodyStr = summarizeBody.dump();
-
-                    wxLogInfo( "LLM_REQUEST_THREAD: Calling summarize with %zu messages", m_messages.size() );
-
-                    // Create new curl handle for summarize request
-                    CURL* summarizeCurl = curl_easy_init();
-                    if( !summarizeCurl )
-                    {
-                        wxThreadEvent* event = new wxThreadEvent( EVT_CHAT_ERROR );
-                        ChatErrorData* data = new ChatErrorData( "Failed to initialize curl for summarize" );
-                        event->SetPayload( data );
-                        wxQueueEvent( m_handler, event );
-                        if( m_client )
-                            m_client->m_requestInProgress.store( false );
-                        return nullptr;
-                    }
-
-                    // Set up summarize request
-                    curl_easy_setopt( summarizeCurl, CURLOPT_URL, ZENER_SUMMARIZE_URL.c_str() );
-                    curl_easy_setopt( summarizeCurl, CURLOPT_POST, 1L );
-                    curl_easy_setopt( summarizeCurl, CURLOPT_POSTFIELDS, summarizeBodyStr.c_str() );
-                    curl_easy_setopt( summarizeCurl, CURLOPT_POSTFIELDSIZE, summarizeBodyStr.size() );
-
-                    struct curl_slist* summarizeHeaders = nullptr;
-                    summarizeHeaders = curl_slist_append( summarizeHeaders, "Content-Type: application/json" );
-                    summarizeHeaders = curl_slist_append( summarizeHeaders, ( "Authorization: Bearer " + accessToken ).c_str() );
-                    curl_easy_setopt( summarizeCurl, CURLOPT_HTTPHEADER, summarizeHeaders );
-
-                    std::string summarizeResponse;
-                    curl_easy_setopt( summarizeCurl, CURLOPT_WRITEFUNCTION, SummarizeWriteCallback );
-                    curl_easy_setopt( summarizeCurl, CURLOPT_WRITEDATA, &summarizeResponse );
-
-                    // Perform summarize request
-                    CURLcode summarizeRes = curl_easy_perform( summarizeCurl );
-
-                    long summarizeHttpCode = 0;
-                    curl_easy_getinfo( summarizeCurl, CURLINFO_RESPONSE_CODE, &summarizeHttpCode );
-
-                    curl_slist_free_all( summarizeHeaders );
-                    curl_easy_cleanup( summarizeCurl );
-
-                    if( m_client )
-                        m_client->m_requestInProgress.store( false );
-
-                    // Check if cancelled during summarization
-                    if( m_cancelFlag && m_cancelFlag->load() )
-                    {
-                        wxLogInfo( "LLM_REQUEST_THREAD: Cancelled during summarization" );
-                        return nullptr;
-                    }
-
-                    if( summarizeRes != CURLE_OK )
-                    {
-                        wxLogInfo( "LLM_REQUEST_THREAD: Summarize curl error: %s", curl_easy_strerror( summarizeRes ) );
-                        wxThreadEvent* event = new wxThreadEvent( EVT_CHAT_ERROR );
-                        ChatErrorData* data = new ChatErrorData(
-                            "Summarize failed: " + std::string( curl_easy_strerror( summarizeRes ) ) );
-                        event->SetPayload( data );
-                        wxQueueEvent( m_handler, event );
-                        return nullptr;
-                    }
-
-                    if( summarizeHttpCode != 200 )
-                    {
-                        wxLogInfo( "LLM_REQUEST_THREAD: Summarize HTTP error: %ld", summarizeHttpCode );
-                        std::string errorMsg = "Summarize failed: HTTP " + std::to_string( summarizeHttpCode );
-                        try
-                        {
-                            json errJson = json::parse( summarizeResponse );
-                            if( errJson.contains( "error" ) )
-                                errorMsg = "Summarize failed: " + errJson["error"].get<std::string>();
-                        }
-                        catch( ... ) {}
-
-                        wxThreadEvent* event = new wxThreadEvent( EVT_CHAT_ERROR );
-                        ChatErrorData* data = new ChatErrorData( errorMsg );
-                        event->SetPayload( data );
-                        wxQueueEvent( m_handler, event );
-                        return nullptr;
-                    }
-
-                    // Parse successful summarize response
-                    try
-                    {
-                        json respJson = json::parse( summarizeResponse );
-                        if( respJson.contains( "messages" ) && respJson["messages"].is_array() )
-                        {
-                            wxLogInfo( "LLM_REQUEST_THREAD: Summarize success - %zu messages -> %zu",
-                                       m_messages.size(), respJson["messages"].size() );
-
-                            // Log the summary content (first message)
-                            if( !respJson["messages"].empty() )
-                            {
-                                auto& firstMsg = respJson["messages"][0];
-                                std::string content = firstMsg.value( "content", "" );
-                                wxLogInfo( "LLM_REQUEST_THREAD: Summary content:\n%s", content.c_str() );
-                            }
-
-                            wxThreadEvent* event = new wxThreadEvent( EVT_CHAT_CONTEXT_RECOVERED );
-                            ChatContextRecoveredData* data = new ChatContextRecoveredData( respJson["messages"] );
-                            event->SetPayload( data );
-                            wxQueueEvent( m_handler, event );
-                        }
-                        else
-                        {
-                            wxThreadEvent* event = new wxThreadEvent( EVT_CHAT_ERROR );
-                            ChatErrorData* data = new ChatErrorData( "Summarize failed: Invalid response format" );
-                            event->SetPayload( data );
-                            wxQueueEvent( m_handler, event );
-                        }
-                    }
-                    catch( const json::exception& e )
-                    {
-                        wxThreadEvent* event = new wxThreadEvent( EVT_CHAT_ERROR );
-                        ChatErrorData* data = new ChatErrorData(
-                            "Summarize failed: JSON parse error - " + std::string( e.what() ) );
-                        event->SetPayload( data );
-                        wxQueueEvent( m_handler, event );
-                    }
-
-                    return nullptr;
-                }
-            }
-            catch( ... )
-            {
-                // JSON parse error - fall through to normal error handling
-            }
-        }
-
         std::string errorMsg = "LLM API error: HTTP " + std::to_string( http_code );
         // Include the response body which contains error details
         if( !ctx.buffer.empty() )
@@ -406,7 +229,6 @@ void* LLM_REQUEST_THREAD::Entry()
         }
         if( !wasCancelled )
             PostLLMError( m_handler, errorMsg );
-        // Note: headers already freed at line 212 after curl_easy_perform()
         curl_easy_cleanup( curl );
         return nullptr;
     }
@@ -492,28 +314,6 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
         if( data == "[DONE]" )
             continue;
 
-        // Handle error SSE event (including context_exhausted mid-stream)
-        if( sseEventType == "error" )
-        {
-            try
-            {
-                json j = json::parse( data );
-                if( j.value( "error", "" ) == "context_exhausted" )
-                {
-                    // Context exhausted - controller will compact and retry
-                    LLMStreamChunk chunk;
-                    chunk.type = LLMChunkType::CONTEXT_EXHAUSTED;
-                    PostLLMChunk( ctx->handler, chunk );
-                    return 0;  // Abort stream - controller will handle recovery
-                }
-            }
-            catch( const json::exception& )
-            {
-                // JSON parse error - skip this event
-            }
-            continue;
-        }
-
         try
         {
             json j = json::parse( data );
@@ -549,6 +349,12 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     LLMStreamChunk chunk;
                     chunk.type = LLMChunkType::THINKING_START;
                     PostLLMChunk( ctx->handler, chunk );
+                }
+                else if( blockType == "compaction" )
+                {
+                    // Start accumulating compaction content
+                    ctx->currentCompaction = "";
+                    ctx->inCompaction = true;
                 }
             }
             else if( eventType == "content_block_delta" )
@@ -598,6 +404,12 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     std::string signature = delta.value( "signature", "" );
                     ctx->currentSignature += signature;
                 }
+                else if( deltaType == "compaction_delta" )
+                {
+                    // Accumulate compaction content
+                    std::string compaction = delta.value( "compaction", "" );
+                    ctx->currentCompaction += compaction;
+                }
             }
             else if( eventType == "content_block_stop" )
             {
@@ -632,6 +444,17 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     ctx->inThinking = false;
                     ctx->currentThinking.clear();
                     ctx->currentSignature.clear();
+                }
+                else if( ctx->inCompaction )
+                {
+                    // Compaction block complete - post with full content
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::COMPACTION;
+                    chunk.compaction_content = ctx->currentCompaction;
+                    PostLLMChunk( ctx->handler, chunk );
+
+                    ctx->inCompaction = false;
+                    ctx->currentCompaction.clear();
                 }
             }
             else if( eventType == "message_delta" )
@@ -690,18 +513,6 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     chunk.type = LLMChunkType::REFUSAL;
                     PostLLMChunk( ctx->handler, chunk );
                 }
-                else if( stopReason == "model_context_window_exceeded" )
-                {
-                    // Context exhausted mid-stream - handled via error event from server
-                    // This case shouldn't happen as server sends error SSE event,
-                    // but handle defensively
-                    if( ctx->cancelFlag && ctx->cancelFlag->load() )
-                        return 0;
-
-                    LLMStreamChunk chunk;
-                    chunk.type = LLMChunkType::CONTEXT_EXHAUSTED;
-                    PostLLMChunk( ctx->handler, chunk );
-                }
             }
             else if( eventType == "error" )
             {
@@ -732,97 +543,4 @@ void LLM_REQUEST_THREAD::ParseAndPostEvents( StreamContext& ctx, const std::stri
 {
     // This method is not used - parsing is done inline in StreamWriteCallback
     // Kept for potential future use
-}
-
-
-// ============================================================================
-// Summarize Endpoint Implementation
-// ============================================================================
-
-SummarizeResult AGENT_LLM_CLIENT::CallSummarizeEndpoint( const nlohmann::json& aMessages,
-                                                          int aKeepCount )
-{
-    SummarizeResult result;
-
-    // Get access token
-    std::string accessToken;
-    if( m_auth )
-    {
-        accessToken = m_auth->GetAccessToken();
-    }
-
-    if( accessToken.empty() )
-    {
-        result.error_message = "Not authenticated";
-        return result;
-    }
-
-    // Build request body
-    json requestBody;
-    requestBody["messages"] = aMessages;
-    requestBody["keep_count"] = aKeepCount;
-    std::string requestBodyStr = requestBody.dump();
-
-    // Use KICAD_CURL_EASY wrapper for thread-safe curl operations
-    // This holds a shared lock on the curl mutex for the lifetime of the object
-    try
-    {
-        KICAD_CURL_EASY curl;
-        curl.SetURL( "https://www.zener.so/api/llm/summarize" );
-        curl.SetHeader( "Content-Type", "application/json" );
-        curl.SetHeader( "Authorization", "Bearer " + accessToken );
-        curl.SetPostFields( requestBodyStr );
-
-        int curlResult = curl.Perform();
-
-        if( curlResult != CURLE_OK )
-        {
-            result.error_message = "Curl error: " + curl.GetErrorText( curlResult );
-            return result;
-        }
-
-        int http_code = curl.GetResponseStatusCode();
-        const std::string& responseBuffer = curl.GetBuffer();
-
-        if( http_code != 200 )
-        {
-            // Try to parse error from response
-            try
-            {
-                json errorJson = json::parse( responseBuffer );
-                result.error_message = errorJson.value( "error", "HTTP " + std::to_string( http_code ) );
-                if( errorJson.contains( "message" ) )
-                {
-                    result.error_message += ": " + errorJson["message"].get<std::string>();
-                }
-            }
-            catch( ... )
-            {
-                result.error_message = "HTTP " + std::to_string( http_code );
-            }
-            return result;
-        }
-
-        // Parse successful response
-        json responseJson = json::parse( responseBuffer );
-        if( responseJson.contains( "messages" ) && responseJson["messages"].is_array() )
-        {
-            result.success = true;
-            result.messages = responseJson["messages"];
-        }
-        else
-        {
-            result.error_message = "Invalid response: missing messages array";
-        }
-    }
-    catch( const IO_ERROR& e )
-    {
-        result.error_message = "CURL initialization failed: " + std::string( e.What().ToUTF8() );
-    }
-    catch( const json::exception& e )
-    {
-        result.error_message = "JSON parse error: " + std::string( e.what() );
-    }
-
-    return result;
 }

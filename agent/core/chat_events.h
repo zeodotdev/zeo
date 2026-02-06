@@ -43,8 +43,6 @@ wxDECLARE_EVENT( EVT_CHAT_STATE_CHANGED, wxThreadEvent );   ///< State machine c
 wxDECLARE_EVENT( EVT_CHAT_TITLE_DELTA, wxThreadEvent );     ///< Title chunk arrived (streaming)
 wxDECLARE_EVENT( EVT_CHAT_TITLE_GENERATED, wxThreadEvent ); ///< Title complete
 wxDECLARE_EVENT( EVT_CHAT_HISTORY_LOADED, wxThreadEvent );  ///< Chat loaded from history
-wxDECLARE_EVENT( EVT_CHAT_CONTEXT_COMPACTING, wxThreadEvent ); ///< Context being compacted
-wxDECLARE_EVENT( EVT_CHAT_CONTEXT_RECOVERED, wxThreadEvent ); ///< Context recovered, retry needed
 
 // ============================================================================
 // Event payload structures
@@ -232,29 +230,6 @@ struct ChatHistoryLoadedData
     ChatHistoryLoadedData() = default;
     ChatHistoryLoadedData( const std::string& aId, const std::string& aTitle )
         : chatId( aId ), title( aTitle ) {}
-};
-
-/**
- * Payload for EVT_CHAT_CONTEXT_COMPACTING events.
- * Notifies that context compaction is in progress.
- */
-struct ChatContextCompactingData
-{
-    // No additional data needed
-    ChatContextCompactingData() = default;
-};
-
-/**
- * Payload for EVT_CHAT_CONTEXT_RECOVERED events.
- * Notifies that context was recovered and request should be retried.
- */
-struct ChatContextRecoveredData
-{
-    nlohmann::json summarizedMessages;  ///< Compacted messages to use for retry
-
-    ChatContextRecoveredData() = default;
-    explicit ChatContextRecoveredData( const nlohmann::json& aMessages )
-        : summarizedMessages( aMessages ) {}
 };
 
 // ============================================================================

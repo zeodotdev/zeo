@@ -423,4 +423,52 @@ BOOST_AUTO_TEST_CASE( SymbolInfoToJsonIncludesPins )
 }
 
 
+/**
+ * Test that GenerateSpiceNetlist returns empty string for invalid path
+ */
+BOOST_AUTO_TEST_CASE( GenerateSpiceNetlistInvalidPath )
+{
+    std::string result = SchParser::GenerateSpiceNetlist( "" );
+    BOOST_CHECK( result.empty() );
+}
+
+
+/**
+ * Test that GetSummary does not include spice_netlist (moved to separate tool)
+ */
+BOOST_AUTO_TEST_CASE( GetSummaryNoSpiceNetlist )
+{
+    std::string content = R"(
+(kicad_sch
+  (version 20251028)
+  (generator "test")
+  (generator_version "9.0")
+  (uuid "12345678-1234-1234-1234-123456789abc")
+  (paper "A4")
+  (lib_symbols)
+  (symbol
+    (lib_id "Device:R")
+    (at 100 50 0)
+    (unit 1)
+    (uuid "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    (property "Reference" "R1" (at 100 48 0) (effects (font (size 1.27 1.27))))
+    (property "Value" "10k" (at 100 52 0) (effects (font (size 1.27 1.27))))
+  )
+)
+)";
+
+    std::string path = CreateTempSchematic( content );
+    auto summary = SchParser::GetSummary( path );
+    RemoveTempFile( path );
+
+    BOOST_CHECK_EQUAL( summary.symbols.size(), 1 );
+    BOOST_CHECK_EQUAL( summary.symbols[0].reference, "R1" );
+    BOOST_CHECK_EQUAL( summary.version, 20251028 );
+
+    // spice_netlist should not be in the JSON output
+    auto json = summary.ToJson();
+    BOOST_CHECK( !json.contains( "spice_netlist" ) );
+}
+
+
 BOOST_AUTO_TEST_SUITE_END()

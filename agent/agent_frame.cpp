@@ -32,8 +32,11 @@
 #include <id.h>
 #include <nlohmann/json.hpp>
 #include <wx/settings.h>
+#include <wx/base64.h>
 #include <wx/clipbrd.h>
+#include <wx/image.h>
 #include <wx/menu.h>
+#include <wx/mstream.h>
 #include <wx/toolbar.h>
 #include <wx/bitmap.h>
 #include <wx/icon.h>
@@ -1451,6 +1454,45 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
                 wxLaunchDefaultBrowser( href );
             }
         }
+        else if( action == "copy_image" )
+        {
+            // Decode the data URI into a wxImage and show a native context menu
+            wxString src = wxString::FromUTF8( msg.value( "src", "" ) );
+            int commaPos = src.Find( ',' );
+
+            if( commaPos != wxNOT_FOUND )
+            {
+                wxString b64 = src.Mid( commaPos + 1 );
+                wxMemoryBuffer buf = wxBase64Decode( b64 );
+
+                if( buf.GetDataLen() > 0 )
+                {
+                    wxMemoryInputStream stream( buf.GetData(), buf.GetDataLen() );
+                    m_pendingCopyImage = wxImage( stream, wxBITMAP_TYPE_PNG );
+                }
+            }
+
+            if( m_pendingCopyImage.IsOk() )
+            {
+                wxMenu menu;
+                menu.Append( ID_COPY_IMAGE, "Copy Image" );
+
+                menu.Bind( wxEVT_MENU, [this]( wxCommandEvent& )
+                {
+                    if( m_pendingCopyImage.IsOk() && wxTheClipboard->Open() )
+                    {
+                        wxTheClipboard->SetData(
+                                new wxBitmapDataObject( wxBitmap( m_pendingCopyImage ) ) );
+                        wxTheClipboard->Flush();
+                        wxTheClipboard->Close();
+                    }
+
+                    m_pendingCopyImage = wxImage();  // Release image memory
+                }, ID_COPY_IMAGE );
+
+                PopupMenu( &menu, ScreenToClient( wxGetMousePosition() ) );
+            }
+        }
         else if( action == "copy" )
         {
             // Handle copy request from context menu
@@ -2040,46 +2082,94 @@ void AGENT_FRAME::RenderChatHistory()
                 else if( blockType == "tool_result" )
                 {
                     // Render combined tool call + result block
-                    std::string content = block.value( "content", "" );
+                    // Content can be either a string (text-only) or an array
+                    // (rich content with text + images from screenshot tool)
                     bool isError = block.value( "is_error", false );
-
-                    // Check if this is a Python traceback
-                    bool isPythonError = ( content.find( "Traceback" ) != std::string::npos );
 
                     wxString displayResult;
                     wxString statusClass;
                     wxString statusText;
 
+                    // Extract text content - handle both string and array formats
+                    std::string textContent;
+                    bool hasImageInHistory = false;
+
+                    if( block.contains( "content" ) && block["content"].is_array() )
+                    {
+                        // Rich content array (may contain text + images)
+                        for( const auto& inner : block["content"] )
+                        {
+                            std::string innerType = inner.value( "type", "" );
+
+                            if( innerType == "text" )
+                            {
+                                textContent += inner.value( "text", "" );
+                            }
+                            else if( innerType == "image" && inner.contains( "source" ) )
+                            {
+                                std::string data = inner["source"].value( "data", "" );
+                                std::string mediaType = inner["source"].value(
+                                        "media_type", "image/png" );
+
+                                if( data != "__stripped__" && !data.empty() )
+                                {
+                                    hasImageInHistory = true;
+                                    displayResult += "<br><img src=\"data:"
+                                        + wxString::FromUTF8( mediaType )
+                                        + ";base64,"
+                                        + wxString::FromUTF8( data )
+                                        + "\" style=\"max-width:100%; border-radius:6px; "
+                                          "margin:8px 0;\" />";
+                                }
+                                else
+                                {
+                                    displayResult += "<br><i>(Screenshot from previous "
+                                                     "session)</i>";
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Plain string content (backward compatible)
+                        textContent = block.value( "content", "" );
+                    }
+
+                    // Check if this is a Python traceback
+                    bool isPythonError = ( textContent.find( "Traceback" )
+                                           != std::string::npos );
+
                     if( isPythonError )
                     {
                         statusClass = "text-accent-red";
                         statusText = "Error";
-                        wxString errorLine = ExtractPythonErrorLine( content );
-                        displayResult = wxString::Format( "<i>%s</i>", errorLine );
+                        wxString errorLine = ExtractPythonErrorLine( textContent );
+                        displayResult = wxString::Format( "<i>%s</i>", errorLine )
+                                        + displayResult;
                     }
                     else if( isError )
                     {
                         statusClass = "text-accent-red";
                         statusText = "Failed";
-                        wxString htmlResult = content;
+                        wxString htmlResult = textContent;
                         htmlResult.Replace( "&", "&amp;" );
                         htmlResult.Replace( "<", "&lt;" );
                         htmlResult.Replace( ">", "&gt;" );
                         if( htmlResult.length() > 200 )
                             htmlResult = htmlResult.Left( 200 ) + "...";
-                        displayResult = htmlResult;
+                        displayResult = htmlResult + displayResult;
                     }
                     else
                     {
                         statusClass = "text-accent-green";
                         statusText = "Completed";
-                        wxString htmlResult = content;
+                        wxString htmlResult = textContent;
                         htmlResult.Replace( "&", "&amp;" );
                         htmlResult.Replace( "<", "&lt;" );
                         htmlResult.Replace( ">", "&gt;" );
-                        if( htmlResult.length() > 500 )
+                        if( !hasImageInHistory && htmlResult.length() > 500 )
                             htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
-                        displayResult = htmlResult;
+                        displayResult = htmlResult + displayResult;
                     }
 
                     // Use the stored tool description from the preceding tool_use block
@@ -3003,6 +3093,16 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
         if( htmlResult.length() > 500 )
             htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
         displayResult = htmlResult;
+    }
+
+    // Append inline image if the tool result contains one
+    if( data->hasImage && !data->imageBase64.empty() )
+    {
+        displayResult += "<br><img src=\"data:"
+            + wxString::FromUTF8( data->imageMediaType )
+            + ";base64,"
+            + wxString::FromUTF8( data->imageBase64 )
+            + "\" style=\"max-width:100%; border-radius:6px; margin:8px 0;\" />";
     }
 
     // Update tool call HTML with result (replace "Running..." with actual result)

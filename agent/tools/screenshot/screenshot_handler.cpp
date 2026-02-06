@@ -1,0 +1,612 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#ifndef __APPLE__
+#error "screenshot_handler.cpp requires macOS (sips for image conversion, POSIX APIs)"
+#endif
+
+#include "screenshot_handler.h"
+#include "../kicad_cli_util.h"
+
+#include <chrono>
+#include <cstdio>
+#include <fstream>
+#include <functional>
+
+#include <errno.h>
+#include <poll.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include <nlohmann/json.hpp>
+#include <wx/base64.h>
+#include <wx/dir.h>
+#include <wx/filename.h>
+#include <wx/image.h>
+#include <wx/log.h>
+#include <wx/utils.h>
+
+
+// Max image dimension in pixels per Claude API limits
+static const int MAX_IMAGE_DIMENSION = 1568;
+
+// Shell metacharacters that are unsafe in quoted command arguments
+static const char* UNSAFE_PATH_CHARS = "`$\\\"!#&|;(){}[]<>?*~\n\r";
+
+
+/**
+ * Simple scope guard that runs a cleanup function on destruction.
+ * Ensures temp files are always cleaned up, even on early returns.
+ */
+class ScopeGuard
+{
+public:
+    explicit ScopeGuard( std::function<void()> aCleanup ) : m_cleanup( std::move( aCleanup ) ) {}
+    ~ScopeGuard() { if( m_cleanup ) m_cleanup(); }
+
+    ScopeGuard( const ScopeGuard& ) = delete;
+    ScopeGuard& operator=( const ScopeGuard& ) = delete;
+
+private:
+    std::function<void()> m_cleanup;
+};
+
+
+bool SCREENSHOT_HANDLER::IsPathSafeForShell( const std::string& aPath )
+{
+    return aPath.find_first_of( UNSAFE_PATH_CHARS ) == std::string::npos;
+}
+
+
+bool SCREENSHOT_HANDLER::CanHandle( const std::string& aToolName ) const
+{
+    return aToolName == "screenshot";
+}
+
+
+std::string SCREENSHOT_HANDLER::Execute( const std::string& aToolName,
+                                          const nlohmann::json& aInput )
+{
+    if( aToolName == "screenshot" )
+        return ExecuteScreenshot( aInput );
+
+    return "Error: Unknown tool: " + aToolName;
+}
+
+
+std::string SCREENSHOT_HANDLER::GetDescription( const std::string& aToolName,
+                                                 const nlohmann::json& aInput ) const
+{
+    std::string filePath = aInput.value( "file_path", "" );
+
+    if( !filePath.empty() )
+    {
+        wxFileName fn( wxString::FromUTF8( filePath ) );
+        return "Taking screenshot of " + fn.GetFullName().ToStdString();
+    }
+
+    return "Taking screenshot";
+}
+
+
+std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput )
+{
+    // Extract and validate file_path parameter
+    std::string filePath = aInput.value( "file_path", "" );
+
+    if( filePath.empty() )
+        return "Error: 'file_path' parameter is required";
+
+    wxLogInfo( "SCREENSHOT: Processing %s", filePath.c_str() );
+
+    // Validate path is safe for shell commands
+    if( !IsPathSafeForShell( filePath ) )
+        return "Error: file_path contains characters that are not allowed";
+
+    // Check file exists
+    if( !wxFileName::FileExists( wxString::FromUTF8( filePath ) ) )
+        return "Error: File not found: " + filePath;
+
+    // Determine file type from extension
+    wxFileName fn( wxString::FromUTF8( filePath ) );
+    wxString ext = fn.GetExt().Lower();
+
+    bool isSchematic = ( ext == "kicad_sch" );
+    bool isPcb = ( ext == "kicad_pcb" );
+
+    if( !isSchematic && !isPcb )
+    {
+        return "Error: Unsupported file type '" + ext.ToStdString()
+               + "'. Expected .kicad_sch or .kicad_pcb";
+    }
+
+    // Create a unique temp directory atomically via mkdtemp to avoid TOCTOU races
+    std::string tempTemplate = ( wxFileName::GetTempDir() + wxFileName::GetPathSeparator()
+                                 + "zener_screenshot_XXXXXX" ).ToStdString();
+    std::vector<char> tempBuf( tempTemplate.begin(), tempTemplate.end() );
+    tempBuf.push_back( '\0' );
+
+    if( !mkdtemp( tempBuf.data() ) )
+        return "Error: Failed to create temporary directory";
+
+    wxString tempDir = wxString::FromUTF8( tempBuf.data() );
+
+    std::string tempDirStr = tempDir.ToStdString();
+
+    // Scope guard ensures temp directory is cleaned up on any exit path
+    ScopeGuard cleanupGuard( [tempDir]()
+    {
+        // Remove files in subdirectories first (e.g. svg_out/), then top-level files
+        wxDir dir( tempDir );
+        if( dir.IsOpened() )
+        {
+            wxString entry;
+
+            // Remove subdirectories and their contents
+            bool cont = dir.GetFirst( &entry, wxEmptyString, wxDIR_DIRS );
+            while( cont )
+            {
+                wxString subDir = tempDir + wxFileName::GetPathSeparator() + entry;
+                wxDir sub( subDir );
+                if( sub.IsOpened() )
+                {
+                    wxString subFile;
+                    bool sc = sub.GetFirst( &subFile );
+                    while( sc )
+                    {
+                        wxRemoveFile( subDir + wxFileName::GetPathSeparator() + subFile );
+                        sc = sub.GetNext( &subFile );
+                    }
+                }
+                wxFileName::Rmdir( subDir );
+                cont = dir.GetNext( &entry );
+            }
+
+            // Remove top-level files
+            cont = dir.GetFirst( &entry, wxEmptyString, wxDIR_FILES );
+            while( cont )
+            {
+                wxRemoveFile( tempDir + wxFileName::GetPathSeparator() + entry );
+                cont = dir.GetNext( &entry );
+            }
+        }
+        wxFileName::Rmdir( tempDir );
+    } );
+
+    // Export to SVG
+    std::string svgPath;
+
+    if( isSchematic )
+        svgPath = ExportSchematicSvg( filePath, tempDirStr );
+    else
+        svgPath = ExportPcbSvg( filePath, tempDirStr );
+
+    if( svgPath.empty() )
+        return "Error: Failed to export SVG from " + filePath;
+
+    // Convert SVG to PNG (NOTE: uses macOS sips, will fail on other platforms)
+    std::string pngPath = tempDirStr + "/screenshot.png";
+
+    if( !ConvertSvgToPng( svgPath, pngPath ) )
+        return "Error: Failed to convert SVG to PNG. Is 'sips' available?";
+
+    // Crop whitespace and resize to fit API limits (non-fatal on failure)
+    if( !CropAndResize( pngPath ) )
+        wxLogWarning( "SCREENSHOT: Crop and resize failed, using original image" );
+
+    // Base64 encode the PNG
+    std::string base64Data = ReadFileAsBase64( pngPath );
+
+    if( base64Data.empty() )
+        return "Error: Failed to read and encode PNG file";
+
+    wxLogInfo( "SCREENSHOT: Success, base64 length=%zu", base64Data.length() );
+
+    // Build result JSON envelope
+    nlohmann::json result;
+    result["__has_image"] = true;
+    result["text"] = "Screenshot of " + fn.GetFullName().ToStdString();
+    result["image"] = {
+        { "media_type", "image/png" },
+        { "base64", base64Data }
+    };
+
+    return result.dump();
+}
+
+
+std::string SCREENSHOT_HANDLER::ExportSchematicSvg( const std::string& aFilePath,
+                                                     const std::string& aTempDir )
+{
+    std::string cmdPrefix = KiCadCliUtil::GetKicadCliCommandPrefix();
+    if( cmdPrefix.empty() )
+    {
+        wxLogError( "SCREENSHOT: kicad-cli not found" );
+        return std::string();
+    }
+
+    // SVG export outputs to a directory (one SVG per sheet)
+    std::string outputDir = aTempDir + "/svg_out";
+    wxFileName::Mkdir( wxString::FromUTF8( outputDir ), wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
+
+    // Transparent background lets CropAndResize detect content vs whitespace.
+    // CropAndResize composites onto white before saving.
+    std::string cmd = cmdPrefix
+                      + " sch export svg --exclude-drawing-sheet --no-background-color -o \""
+                      + outputDir + "\" \"" + aFilePath + "\"";
+
+    std::string stdoutStr, stderrStr;
+    int exitCode = RunCommand( cmd, stdoutStr, stderrStr );
+
+    if( !stderrStr.empty() )
+        wxLogWarning( "SCREENSHOT: kicad-cli stderr: %s", stderrStr.c_str() );
+
+    if( exitCode != 0 )
+    {
+        wxLogError( "SCREENSHOT: kicad-cli sch export failed (exit %d)", exitCode );
+        return std::string();
+    }
+
+    // Find the first SVG file in the output directory
+    wxDir dir( wxString::FromUTF8( outputDir ) );
+    if( !dir.IsOpened() )
+        return std::string();
+
+    wxString svgFilename;
+    if( !dir.GetFirst( &svgFilename, "*.svg", wxDIR_FILES ) )
+    {
+        wxLogError( "SCREENSHOT: No SVG files found in output directory" );
+        return std::string();
+    }
+
+    return outputDir + "/" + svgFilename.ToStdString();
+}
+
+
+std::string SCREENSHOT_HANDLER::ExportPcbSvg( const std::string& aFilePath,
+                                               const std::string& aTempDir )
+{
+    std::string cmdPrefix = KiCadCliUtil::GetKicadCliCommandPrefix();
+    if( cmdPrefix.empty() )
+    {
+        wxLogError( "SCREENSHOT: kicad-cli not found" );
+        return std::string();
+    }
+
+    std::string outputPath = aTempDir + "/pcb.svg";
+
+    std::string cmd = cmdPrefix
+                      + " pcb export svg"
+                      + " --exclude-drawing-sheet --fit-page-to-board"
+                      + " --layers F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,Edge.Cuts"
+                      + " -o \"" + outputPath + "\" \"" + aFilePath + "\"";
+
+    std::string stdoutStr, stderrStr;
+    int exitCode = RunCommand( cmd, stdoutStr, stderrStr );
+
+    if( !stderrStr.empty() )
+        wxLogWarning( "SCREENSHOT: kicad-cli stderr: %s", stderrStr.c_str() );
+
+    if( exitCode != 0 )
+    {
+        wxLogError( "SCREENSHOT: kicad-cli pcb export failed (exit %d)", exitCode );
+        return std::string();
+    }
+
+    if( !wxFileName::FileExists( wxString::FromUTF8( outputPath ) ) )
+    {
+        wxLogError( "SCREENSHOT: PCB SVG not found at: %s", outputPath.c_str() );
+        return std::string();
+    }
+
+    return outputPath;
+}
+
+
+bool SCREENSHOT_HANDLER::ConvertSvgToPng( const std::string& aSvgPath,
+                                           const std::string& aPngPath )
+{
+    // Rasterize at 4096px so CropAndResize has plenty of pixels to crop from
+    // before downscaling to the API limit (1568px).
+    std::string cmd = "sips -s format png -Z 4096"
+                      " \"" + aSvgPath + "\" --out \"" + aPngPath + "\"";
+
+    std::string stdoutStr, stderrStr;
+    int exitCode = RunCommand( cmd, stdoutStr, stderrStr );
+
+    if( !stderrStr.empty() )
+        wxLogWarning( "SCREENSHOT: sips stderr: %s", stderrStr.c_str() );
+
+    if( exitCode != 0 )
+    {
+        wxLogError( "SCREENSHOT: sips failed (exit %d)", exitCode );
+        return false;
+    }
+
+    return wxFileName::FileExists( wxString::FromUTF8( aPngPath ) );
+}
+
+
+bool SCREENSHOT_HANDLER::CropAndResize( const std::string& aPngPath )
+{
+    wxImage image;
+
+    if( !image.LoadFile( wxString::FromUTF8( aPngPath ), wxBITMAP_TYPE_PNG ) )
+    {
+        wxLogError( "SCREENSHOT: Failed to load PNG for cropping" );
+        return false;
+    }
+
+    int width = image.GetWidth();
+    int height = image.GetHeight();
+
+    // Composite transparent pixels onto white background.
+    // This ensures the final image has a solid white background and lets
+    // the whitespace scanner correctly identify empty vs content areas.
+    if( image.HasAlpha() )
+    {
+        unsigned char* data = image.GetData();
+        unsigned char* alpha = image.GetAlpha();
+
+        for( int i = 0; i < width * height; ++i )
+        {
+            float a = alpha[i] / 255.0f;
+            data[i * 3]     = static_cast<unsigned char>( data[i * 3]     * a + 255 * ( 1 - a ) );
+            data[i * 3 + 1] = static_cast<unsigned char>( data[i * 3 + 1] * a + 255 * ( 1 - a ) );
+            data[i * 3 + 2] = static_cast<unsigned char>( data[i * 3 + 2] * a + 255 * ( 1 - a ) );
+        }
+
+        image.ClearAlpha();
+    }
+
+    // Find bounding box of non-white pixels.
+    // Threshold at 250 (not 255) to catch antialiasing artifacts at content edges.
+    static const unsigned char WHITE_THRESHOLD = 250;
+
+    int minX = width;
+    int minY = height;
+    int maxX = -1;
+    int maxY = -1;
+
+    unsigned char* data = image.GetData();
+
+    for( int y = 0; y < height; ++y )
+    {
+        for( int x = 0; x < width; ++x )
+        {
+            int idx = ( y * width + x ) * 3;
+
+            if( data[idx] < WHITE_THRESHOLD || data[idx + 1] < WHITE_THRESHOLD
+                || data[idx + 2] < WHITE_THRESHOLD )
+            {
+                if( x < minX ) minX = x;
+                if( y < minY ) minY = y;
+                if( x > maxX ) maxX = x;
+                if( y > maxY ) maxY = y;
+            }
+        }
+    }
+
+    // All-white image: just resize if needed
+    if( maxX < 0 || maxY < 0 )
+    {
+        if( width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION )
+        {
+            double scale = std::min( static_cast<double>( MAX_IMAGE_DIMENSION ) / width,
+                                     static_cast<double>( MAX_IMAGE_DIMENSION ) / height );
+            image.Rescale( static_cast<int>( width * scale ),
+                           static_cast<int>( height * scale ), wxIMAGE_QUALITY_HIGH );
+        }
+
+        return image.SaveFile( wxString::FromUTF8( aPngPath ), wxBITMAP_TYPE_PNG );
+    }
+
+    // Add padding: 5% of content dimension, minimum 10px
+    int contentW = maxX - minX + 1;
+    int contentH = maxY - minY + 1;
+    int padX = std::max( 10, contentW / 20 );
+    int padY = std::max( 10, contentH / 20 );
+
+    int cropX = std::max( 0, minX - padX );
+    int cropY = std::max( 0, minY - padY );
+    int cropW = std::min( width - cropX, contentW + 2 * padX );
+    int cropH = std::min( height - cropY, contentH + 2 * padY );
+
+    if( cropX != 0 || cropY != 0 || cropW != width || cropH != height )
+    {
+        image = image.GetSubImage( wxRect( cropX, cropY, cropW, cropH ) );
+        width = image.GetWidth();
+        height = image.GetHeight();
+    }
+
+    // Resize so longest side <= MAX_IMAGE_DIMENSION
+    if( width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION )
+    {
+        double scale = std::min( static_cast<double>( MAX_IMAGE_DIMENSION ) / width,
+                                 static_cast<double>( MAX_IMAGE_DIMENSION ) / height );
+        image.Rescale( static_cast<int>( width * scale ),
+                       static_cast<int>( height * scale ), wxIMAGE_QUALITY_HIGH );
+    }
+
+    wxLogInfo( "SCREENSHOT: Cropped %dx%d -> %dx%d",
+               width, height, image.GetWidth(), image.GetHeight() );
+
+    return image.SaveFile( wxString::FromUTF8( aPngPath ), wxBITMAP_TYPE_PNG );
+}
+
+
+std::string SCREENSHOT_HANDLER::ReadFileAsBase64( const std::string& aFilePath )
+{
+    std::ifstream file( aFilePath, std::ios::binary | std::ios::ate );
+    if( !file.is_open() )
+        return std::string();
+
+    std::streamsize size = file.tellg();
+    file.seekg( 0, std::ios::beg );
+
+    if( size <= 0 )
+        return std::string();
+
+    std::vector<char> buffer( size );
+    if( !file.read( buffer.data(), size ) )
+        return std::string();
+
+    file.close();
+
+    return wxBase64Encode( buffer.data(), buffer.size() ).ToStdString();
+}
+
+
+int SCREENSHOT_HANDLER::RunCommand( const std::string& aCommand, std::string& aStdout,
+                                     std::string& aStderr, int aTimeoutSec )
+{
+    aStdout.clear();
+    aStderr.clear();
+
+    // Create pipes for capturing stdout and stderr directly (no temp files)
+    int stdoutPipe[2];
+    int stderrPipe[2];
+
+    if( pipe( stdoutPipe ) != 0 )
+        return -1;
+
+    if( pipe( stderrPipe ) != 0 )
+    {
+        close( stdoutPipe[0] );
+        close( stdoutPipe[1] );
+        return -1;
+    }
+
+    pid_t pid = fork();
+
+    if( pid < 0 )
+    {
+        close( stdoutPipe[0] );
+        close( stdoutPipe[1] );
+        close( stderrPipe[0] );
+        close( stderrPipe[1] );
+        return -1;
+    }
+
+    if( pid == 0 )
+    {
+        // Child process: redirect stdout/stderr to pipes and exec command
+        close( stdoutPipe[0] );
+        close( stderrPipe[0] );
+        dup2( stdoutPipe[1], STDOUT_FILENO );
+        dup2( stderrPipe[1], STDERR_FILENO );
+        close( stdoutPipe[1] );
+        close( stderrPipe[1] );
+
+        execl( "/bin/sh", "sh", "-c", aCommand.c_str(), nullptr );
+        _exit( 127 );
+    }
+
+    // Parent process: read from pipes with timeout via poll()
+    close( stdoutPipe[1] );
+    close( stderrPipe[1] );
+
+    struct pollfd fds[2] = {
+        { stdoutPipe[0], POLLIN, 0 },
+        { stderrPipe[0], POLLIN, 0 }
+    };
+
+    auto deadline = std::chrono::steady_clock::now()
+                    + std::chrono::seconds( aTimeoutSec );
+    bool timedOut = false;
+    int activeFds = 2;
+    char buf[4096];
+
+    while( activeFds > 0 )
+    {
+        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now() );
+
+        if( remaining.count() <= 0 )
+        {
+            timedOut = true;
+            break;
+        }
+
+        int ret = poll( fds, 2, static_cast<int>( remaining.count() ) );
+
+        if( ret < 0 )
+        {
+            if( errno == EINTR )
+                continue;
+            break;
+        }
+
+        for( int i = 0; i < 2; ++i )
+        {
+            if( fds[i].fd < 0 )
+                continue;
+
+            if( fds[i].revents & ( POLLIN | POLLHUP ) )
+            {
+                ssize_t n = read( fds[i].fd, buf, sizeof( buf ) - 1 );
+
+                if( n > 0 )
+                {
+                    buf[n] = '\0';
+                    ( i == 0 ? aStdout : aStderr ) += buf;
+                }
+                else
+                {
+                    close( fds[i].fd );
+                    fds[i].fd = -1;
+                    --activeFds;
+                }
+            }
+            else if( fds[i].revents & ( POLLERR | POLLNVAL ) )
+            {
+                close( fds[i].fd );
+                fds[i].fd = -1;
+                --activeFds;
+            }
+        }
+    }
+
+    // Clean up any still-open fds
+    for( int i = 0; i < 2; ++i )
+    {
+        if( fds[i].fd >= 0 )
+            close( fds[i].fd );
+    }
+
+    if( timedOut )
+    {
+        kill( pid, SIGKILL );
+        waitpid( pid, nullptr, 0 );
+        wxLogError( "SCREENSHOT: Command timed out after %d seconds", aTimeoutSec );
+        return -1;
+    }
+
+    int status;
+    waitpid( pid, &status, 0 );
+    int exitCode = -1;
+
+    if( WIFEXITED( status ) )
+        exitCode = WEXITSTATUS( status );
+    else if( WIFSIGNALED( status ) )
+        wxLogError( "SCREENSHOT: Process killed by signal %d", WTERMSIG( status ) );
+
+    return exitCode;
+}

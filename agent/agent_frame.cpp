@@ -194,13 +194,20 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 #ifdef __APPLE__
     // WKWebView handles Cmd+A through the Cocoa responder chain, bypassing wxWidgets.
     // Install an NSEvent monitor to intercept Cmd+A when the input webview has focus.
-    InstallSelectAllMonitor(
-            (void*) m_inputWebView->GetWebView()->GetHandle(),
-            [this]()
-            {
-                m_inputWebView->RunScriptAsync(
-                        wxS( "textarea.focus(); textarea.select();" ) );
-            } );
+    // NOTE: The callback captures `this`; RemoveSelectAllMonitor() in the destructor
+    // must run before the frame is torn down to avoid a dangling pointer.
+    void* nativeHandle = (void*) m_inputWebView->GetWebView()->GetHandle();
+
+    if( nativeHandle )
+    {
+        InstallSelectAllMonitor(
+                nativeHandle,
+                [this]()
+                {
+                    m_inputWebView->RunScriptAsync(
+                            wxS( "textarea.focus(); textarea.select();" ) );
+                } );
+    }
 #endif
 
     m_inputContainerSizer->Add( m_inputWebView, 1, wxEXPAND | wxBOTTOM, 10 );
@@ -1546,7 +1553,8 @@ void AGENT_FRAME::OnInputWebViewMessage( const wxString& aMessage )
 void AGENT_FRAME::ResizeInputWebView( int aContentHeight )
 {
     // aContentHeight is the container's offsetHeight (includes padding + border)
-    int totalHeight = std::max( 44, std::min( aContentHeight, 240 ) );
+    // Clamp to match JS MIN_HEIGHT (45) + container padding/border overhead (~40px)
+    int totalHeight = std::max( 45, std::min( aContentHeight, 240 ) );
 
     m_inputWebView->SetMinSize( wxSize( -1, totalHeight ) );
     m_inputPanel->Layout();

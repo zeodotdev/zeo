@@ -21,6 +21,7 @@
 #include "chat_events.h"
 #include "../tools/agent_tools.h"
 #include "../tools/tool_registry.h"
+#include "../ui/file_attach.h"
 #include "agent_llm_client.h"
 #include "agent_chat_history.h"
 #include "auth/agent_auth.h"
@@ -98,13 +99,16 @@ void CHAT_CONTROLLER::SendMessageWithAttachments(
     wxLogInfo( "CHAT_CONTROLLER::SendMessageWithAttachments called with %zu attachments",
                aAttachments.size() );
 
-    // Build multi-content array (Anthropic format): images first, then text
+    // Build multi-content array (Anthropic format): attachments first, then text
     nlohmann::json content = nlohmann::json::array();
 
     for( const auto& att : aAttachments )
     {
+        // Images use "image" type, everything else (e.g. PDF) uses "document" type
+        std::string blockType = FileAttach::IsImageMediaType( att.media_type ) ? "image" : "document";
+
         content.push_back( {
-            { "type", "image" },
+            { "type", blockType },
             { "source", {
                 { "type", "base64" },
                 { "media_type", att.media_type },
@@ -135,7 +139,7 @@ void CHAT_CONTROLLER::DoSendMessage( const std::string& aText, const nlohmann::j
 
     if( userMessageCount == 0 )
     {
-        m_firstUserMessage = aText.empty() ? "(Image attachment)" : aText;
+        m_firstUserMessage = aText.empty() ? "(File attachment)" : aText;
         GenerateTitle();
     }
 
@@ -1503,7 +1507,7 @@ void CHAT_CONTROLLER::SanitizeApiContext()
             }
         }
 
-        // Strip __stripped__ image blocks from user messages (loaded from history)
+        // Strip __stripped__ attachment blocks from user messages (loaded from history)
         nlohmann::json cleanedMsg = msg;
 
         if( role == "user" && cleanedMsg.contains( "content" )
@@ -1513,11 +1517,13 @@ void CHAT_CONTROLLER::SanitizeApiContext()
 
             for( const auto& block : cleanedMsg["content"] )
             {
-                if( block.contains( "type" ) && block["type"] == "image"
+                std::string blockType = block.value( "type", "" );
+
+                if( ( blockType == "image" || blockType == "document" )
                     && block.contains( "source" )
                     && block["source"].value( "data", "" ) == "__stripped__" )
                 {
-                    continue;  // Drop stripped image blocks from API context
+                    continue;  // Drop stripped attachment blocks from API context
                 }
 
                 cleanedContent.push_back( block );

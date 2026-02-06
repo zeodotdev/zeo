@@ -96,9 +96,9 @@ wxString AGENT_CHAT_HISTORY::GetFilePath()
 
 
 /**
- * Strip large base64 image data from chat history before persisting to disk.
+ * Strip large base64 data from chat history before persisting to disk.
  * Replaces base64 data with "__stripped__" placeholder to prevent multi-MB history files.
- * Images are only needed in-memory for the current session's API context.
+ * Attachments are only needed in-memory for the current session's API context.
  */
 static nlohmann::json StripBase64FromHistory( const nlohmann::json& aHistory )
 {
@@ -111,20 +111,24 @@ static nlohmann::json StripBase64FromHistory( const nlohmann::json& aHistory )
 
         for( auto& block : msg["content"] )
         {
-            // Handle top-level image blocks (user-attached images)
-            if( block.contains( "type" ) && block["type"] == "image"
+            std::string blockType = block.value( "type", "" );
+
+            // Handle top-level image/document blocks (user-attached files)
+            if( ( blockType == "image" || blockType == "document" )
                 && block.contains( "source" ) && block["source"].contains( "data" ) )
             {
                 block["source"]["data"] = "__stripped__";
             }
 
-            // Handle tool_result blocks that may contain image content arrays
-            if( block.contains( "type" ) && block["type"] == "tool_result"
+            // Handle tool_result blocks that may contain image/document content arrays
+            if( blockType == "tool_result"
                 && block.contains( "content" ) && block["content"].is_array() )
             {
                 for( auto& inner : block["content"] )
                 {
-                    if( inner.contains( "type" ) && inner["type"] == "image"
+                    std::string innerType = inner.value( "type", "" );
+
+                    if( ( innerType == "image" || innerType == "document" )
                         && inner.contains( "source" ) && inner["source"].contains( "data" ) )
                     {
                         inner["source"]["data"] = "__stripped__";

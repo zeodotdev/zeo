@@ -164,7 +164,7 @@ html, body {
                   placeholder="Message the agent..."
                   rows="1"></textarea>
     </div>
-    <div class="attach-btn" id="attach-btn" title="Attach image">
+    <div class="attach-btn" id="attach-btn" title="Attach file">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
         </svg>
@@ -354,8 +354,11 @@ function clearAttachments() {
 
 function previewAttachment(id) {
     var att = attachments.find(function(a) { return a.id === id; });
-    if (att) {
+    if (!att) return;
+    if (isSupportedImageType(att.media_type)) {
         sendMsg('preview_image', { base64: att.base64, media_type: att.media_type });
+    } else {
+        sendMsg('preview_file', { base64: att.base64, media_type: att.media_type, filename: att.filename });
     }
 }
 
@@ -373,20 +376,40 @@ function renderAttachments() {
     var html = '';
     for (var i = 0; i < attachments.length; i++) {
         var a = attachments[i];
-        html += '<div class="attachment-thumb">'
-            + '<img src="data:' + a.media_type + ';base64,' + a.base64 + '" title="' + escapeHtmlAttr(a.filename)
-            + '" onclick="previewAttachment(\'' + a.id + '\')" />'
-            + '<div class="remove-btn" onclick="removeAttachment(\'' + a.id + '\')">\u00d7</div>'
-            + '</div>';
+        if (isSupportedImageType(a.media_type)) {
+            html += '<div class="attachment-thumb">'
+                + '<img src="data:' + a.media_type + ';base64,' + a.base64 + '" title="' + escapeHtmlAttr(a.filename)
+                + '" onclick="previewAttachment(\'' + a.id + '\')" />'
+                + '<div class="remove-btn" onclick="removeAttachment(\'' + a.id + '\')">\u00d7</div>'
+                + '</div>';
+        } else {
+            html += '<div class="attachment-thumb">'
+                + '<div style="height:48px;padding:0 10px;display:flex;align-items:center;gap:6px;'
+                + 'background:#333;border-radius:4px;color:#ccc;font-size:11px;cursor:pointer;" '
+                + 'title="' + escapeHtmlAttr(a.filename) + '" onclick="previewAttachment(\'' + a.id + '\')">'
+                + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                + '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
+                + '<polyline points="14 2 14 8 20 8"/></svg>'
+                + '<span>' + escapeHtmlAttr(a.filename) + '</span></div>'
+                + '<div class="remove-btn" onclick="removeAttachment(\'' + a.id + '\')">\u00d7</div>'
+                + '</div>';
+        }
     }
     attachmentBar.innerHTML = html;
 }
 
 // Supported media types for the Anthropic API
 var SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+var SUPPORTED_DOC_TYPES = ['application/pdf'];
 
 function isSupportedImageType(mediaType) {
     return SUPPORTED_IMAGE_TYPES.indexOf(mediaType) !== -1;
+}
+
+function isSupportedFileType(mediaType) {
+    return isSupportedImageType(mediaType)
+        || SUPPORTED_DOC_TYPES.indexOf(mediaType) !== -1;
 }
 
 // Paste handler - intercept image paste
@@ -444,7 +467,7 @@ editorContainer.addEventListener('drop', function(e) {
     editorContainer.classList.remove('drag-over');
     var files = e.dataTransfer.files;
     for (var i = 0; i < files.length; i++) {
-        if (isSupportedImageType(files[i].type)) {
+        if (isSupportedFileType(files[i].type)) {
             (function(file) {
                 var reader = new FileReader();
                 reader.onload = function(ev) {

@@ -16,7 +16,7 @@
 #include "agent_state.h"
 #include "agent_events.h"
 #include "agent_chat_history.h"
-#include "ui/image_attach.h"
+#include "ui/file_attach.h"
 #include <agent_workspace.h>
 
 // Forward Declarations
@@ -110,7 +110,7 @@ private:
     WEBVIEW_PANEL* m_chatWindow;
     WEBVIEW_PANEL* m_inputWebView;
     wxString       m_pendingInputText;   // Text from JS submit message, read by OnSend
-    std::vector<IMAGE_ATTACHMENT> m_pendingAttachments;  // Image attachments from JS submit
+    std::vector<FILE_ATTACHMENT> m_pendingAttachments;  // File attachments from JS submit
     wxStaticText*  m_chatNameLabel;
     wxButton*      m_actionButton;
     wxButton*      m_selectionPill;

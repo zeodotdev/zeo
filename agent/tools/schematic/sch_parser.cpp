@@ -181,9 +181,6 @@ nlohmann::json SchematicSummary::ToJson() const
         { "sheets", sheetsJson }
     };
 
-    if( !spiceNetlist.empty() )
-        j["spice_netlist"] = spiceNetlist;
-
     return j;
 }
 

@@ -144,7 +144,8 @@ static const char* SCH_TOOL_NAMES[] = {
     "sch_get_summary",
     "sch_read_section",
     "sch_modify",
-    "sch_validate"
+    "sch_validate",
+    "sch_export_spice_netlist"
 };
 
 
@@ -169,6 +170,8 @@ std::string SCH_TOOL_HANDLER::Execute( const std::string& aToolName, const nlohm
         return ExecuteModify( aInput );
     else if( aToolName == "sch_validate" )
         return ExecuteValidate( aInput );
+    else if( aToolName == "sch_export_spice_netlist" )
+        return ExecuteExportSpiceNetlist( aInput );
 
     return "Error: Unknown schematic tool: " + aToolName;
 }
@@ -195,6 +198,8 @@ std::string SCH_TOOL_HANDLER::GetDescription( const std::string& aToolName,
     }
     else if( aToolName == "sch_validate" )
         return "Validating " + fileName;
+    else if( aToolName == "sch_export_spice_netlist" )
+        return "Exporting SPICE netlist from " + fileName;
 
     return "Executing " + aToolName;
 }
@@ -210,7 +215,6 @@ std::string SCH_TOOL_HANDLER::ExecuteGetSummary( const nlohmann::json& aInput )
         return "Error: File not found: " + filePath;
 
     SchParser::SchematicSummary summary = SchParser::GetSummary( filePath );
-    summary.spiceNetlist = SchParser::GenerateSpiceNetlist( filePath );
     return summary.ToJson().dump( 2 );
 }
 
@@ -418,4 +422,22 @@ std::string SCH_TOOL_HANDLER::ExecuteValidate( const nlohmann::json& aInput )
 
     auto result = SchValidator::ValidateFile( filePath );
     return result.ToJson().dump( 2 );
+}
+
+
+std::string SCH_TOOL_HANDLER::ExecuteExportSpiceNetlist( const nlohmann::json& aInput )
+{
+    std::string filePath = aInput.value( "file_path", "" );
+    if( filePath.empty() )
+        return "Error: 'file_path' parameter is required";
+
+    if( !FileWriter::FileExists( filePath ) )
+        return "Error: File not found: " + filePath;
+
+    std::string netlist = SchParser::GenerateSpiceNetlist( filePath );
+    if( netlist.empty() )
+        return "Error: Failed to generate SPICE netlist. Ensure the schematic is annotated "
+               "and kicad-cli is available.";
+
+    return netlist;
 }

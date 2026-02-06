@@ -31,6 +31,17 @@ common/                 # Shared libraries
 
 CMake 3.22+. Targets: `agent` (standalone), `agent_kiface` (KiCad plugin).
 
+### Validating Changes
+
+After making code changes, run the fast build script to compile and launch:
+
+```bash
+cd /Users/jared/Documents/kicadpp/dev
+./mac_build_fast.sh --launch
+```
+
+This builds the agent target in seconds and launches the in-tree Zener.app. Use `--debug` instead of `--launch` to enable agent debug tracing (WXTRACE=KICAD_AGENT).
+
 ## Debugging
 
 Logs: `~/Library/Logs/Zener/agent-<timestamp>.log` (one per session)

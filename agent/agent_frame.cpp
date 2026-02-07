@@ -16,6 +16,9 @@
 #include <mail_type.h>
 #include <wx/log.h>
 #include <kiway.h>
+#include <paths.h>
+#include <kiplatform/environment.h>
+#include <frame_type.h>
 #include <sstream>
 #include <fstream>
 #include <thread>
@@ -47,6 +50,8 @@
 
 #ifdef __APPLE__
 #include "macos_key_monitor.h"
+#include <libproc.h>
+#include <unistd.h>
 #endif
 
 using json = nlohmann::json;
@@ -77,6 +82,153 @@ static wxString ExtractPythonErrorLine( const std::string& traceback )
         pos = prevPos;
     }
     return "Unknown error";
+}
+
+
+// Helper: Try to parse raw tool result as JSON and pretty-print it.
+// Falls back to HTML-escaped raw string if not valid JSON.
+static wxString FormatToolResult( const std::string& aRawResult )
+{
+    try
+    {
+        nlohmann::json parsed = nlohmann::json::parse( aRawResult );
+        std::string pretty = parsed.dump( 2 );
+        wxString result = wxString::FromUTF8( pretty );
+        result.Replace( "&", "&amp;" );
+        result.Replace( "<", "&lt;" );
+        result.Replace( ">", "&gt;" );
+        return "<code class=\"language-json\">" + result + "</code>";
+    }
+    catch( ... )
+    {
+        // Not valid JSON - HTML-escape and return as-is
+        wxString result = wxString::FromUTF8( aRawResult );
+        result.Replace( "&", "&amp;" );
+        result.Replace( "<", "&lt;" );
+        result.Replace( ">", "&gt;" );
+        return result;
+    }
+}
+
+
+// Helper: Generate a short preview string for a tool result (for collapsed view).
+static wxString GetToolResultPreview( const std::string& aRawResult, int aMaxLen = 80 )
+{
+    try
+    {
+        nlohmann::json parsed = nlohmann::json::parse( aRawResult );
+
+        if( parsed.is_object() )
+        {
+            std::string keys;
+            int count = 0;
+
+            for( auto it = parsed.begin(); it != parsed.end() && count < 3; ++it, ++count )
+            {
+                if( !keys.empty() )
+                    keys += ", ";
+                keys += it.key();
+            }
+
+            int total = static_cast<int>( parsed.size() );
+
+            if( total > 3 )
+                return wxString::Format( "{%s, ...} (%d keys)", keys, total );
+            else
+                return wxString::Format( "{%s}", keys );
+        }
+        else if( parsed.is_array() )
+        {
+            return wxString::Format( "[%d items]", static_cast<int>( parsed.size() ) );
+        }
+        else
+        {
+            wxString val = wxString::FromUTF8( parsed.dump() );
+
+            if( static_cast<int>( val.length() ) > aMaxLen )
+                val = val.Left( aMaxLen ) + "...";
+
+            return val;
+        }
+    }
+    catch( ... )
+    {
+        // Not JSON - take first line
+        wxString raw = wxString::FromUTF8( aRawResult );
+        wxString firstLine = raw.BeforeFirst( '\n' );
+
+        if( static_cast<int>( firstLine.length() ) > aMaxLen )
+            firstLine = firstLine.Left( aMaxLen ) + "...";
+
+        return firstLine;
+    }
+}
+
+
+// Helper: Escape a string for embedding in a JS single-quoted string literal.
+static wxString EscapeForJs( const wxString& s )
+{
+    wxString escaped = s;
+    escaped.Replace( "\\", "\\\\" );
+    escaped.Replace( "'", "\\'" );
+    escaped.Replace( "\n", "\\n" );
+    escaped.Replace( "\r", "\\r" );
+    return escaped;
+}
+
+
+// Helper: Build the full tool result component HTML in "Running..." state.
+// Includes the collapsible body (initially empty/hidden) so the JS callback
+// can populate it on completion without replacing the element.
+static wxString BuildRunningToolHtml( int aIndex, const wxString& aDesc )
+{
+    return wxString::Format(
+        "<div id=\"tool-result-%d\" class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
+        "<a href=\"toggle:toolresult:%d\" "
+        "class=\"tool-result-header p-3 px-3 no-underline flex items-center gap-2\">"
+        "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+        "<span class=\"tool-status text-text-muted text-[12px] ml-auto\"><i>Running...</i></span>"
+        "</a>"
+        "<div class=\"tool-result-body p-3 pt-0 border-t border-border-dark\" "
+        "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
+        "</div>"
+        "</div>",
+        aIndex, aIndex, aDesc, aIndex );
+}
+
+
+// Helper: Build the collapsible HTML for a completed tool result block.
+// Has a stable id="tool-result-N" matching the running box it replaces.
+static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
+                                     const wxString& aStatusClass, const wxString& aStatusText,
+                                     const wxString& aFullFormatted,
+                                     const wxString& aImageHtml, bool aExpanded )
+{
+    wxString displayStyle = aExpanded ? "block" : "none";
+
+    wxString html = wxString::Format(
+        "<div id=\"tool-result-%d\" class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
+        // Clickable header: same layout as the Running box
+        "<a href=\"toggle:toolresult:%d\" "
+        "class=\"tool-result-header p-3 px-3 no-underline flex items-center gap-2\">"
+        "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+        "<span class=\"%s text-[12px] ml-auto\"><strong>%s</strong></span>"
+        "</a>"
+        // Expanded content (hidden by default)
+        "<div class=\"p-3 pt-0 border-t border-border-dark\" "
+        "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:%s;\">"
+        "<pre class=\"text-text-secondary font-mono text-[12px] whitespace-pre-wrap break-words m-0 mt-2\">%s</pre>"
+        "%s"
+        "</div>"
+        "</div>",
+        aIndex,
+        aIndex,
+        aDesc, aStatusClass, aStatusText,
+        aIndex, displayStyle,
+        aFullFormatted,
+        aImageHtml );
+
+    return html;
 }
 
 BEGIN_EVENT_TABLE( AGENT_FRAME, KIWAY_PLAYER )
@@ -315,6 +467,11 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_isStreamingMarkdown = false;
     m_currentThinkingIndex = -1;
 
+    // Initialize tool result toggle state
+    m_toolResultCounter = 0;
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
+
     // Bind Model Change Event
     m_modelChoice->Bind( wxEVT_CHOICE, &AGENT_FRAME::OnModelSelection, this );
 
@@ -533,6 +690,18 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                 projectContext["hierarchy"] = hierarchyArray;
             }
 
+            // Add files currently open in editors
+            auto openFiles = GetOpenEditorFiles();
+            if( !openFiles.empty() )
+            {
+                nlohmann::json arr = nlohmann::json::array();
+                for( const auto& f : openFiles )
+                    arr.push_back( f.ToStdString() );
+                projectContext["open_editor_files"] = arr;
+                wxLogInfo( "AGENT: Injecting %zu open editor file(s) into project context",
+                           openFiles.size() );
+            }
+
             return projectContext.dump( 2 );
         } );
 
@@ -695,9 +864,11 @@ void AGENT_FRAME::RebuildThinkingHtml()
     wxString thinkingText = "Thinking";
 
     m_thinkingHtml = wxString::Format(
-        "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline hover:underline\" data-thinking-index=\"%d\">%s</a><br>"
-        "<div class=\"thinking-content text-[#606060] mt-2 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-thinking-index=\"%d\" style=\"display:%s;\">%s</div><br>",
-        m_currentThinkingIndex, m_currentThinkingIndex, thinkingText, expandedClass, m_currentThinkingIndex, displayStyle, displayContent );
+        "<div class=\"mb-1\">"
+        "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline hover:underline\">%s</a>"
+        "<div class=\"thinking-content text-[#606060] mt-1 mb-0 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
+        "</div>",
+        m_currentThinkingIndex, thinkingText, expandedClass, m_currentThinkingIndex, displayStyle, displayContent );
 }
 
 void AGENT_FRAME::UpdateAgentResponse()
@@ -733,6 +904,15 @@ wxString AGENT_FRAME::BuildStreamingContent()
 
     // Get current response from controller and append with markdown
     std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
+
+    // Strip leading newlines to avoid blank line gap after thinking block
+    size_t start = currentResponse.find_first_not_of( "\n\r" );
+
+    if( start != std::string::npos && start > 0 )
+        currentResponse = currentResponse.substr( start );
+    else if( start == std::string::npos )
+        currentResponse.clear();
+
     streamingContent += AgentMarkdown::ToHtml( currentResponse );
 
     // Include any tool call HTML
@@ -753,9 +933,17 @@ wxString AGENT_FRAME::BuildStreamingContent()
         for( int i = 0; i < m_generatingDots; i++ )
             dots += ".";
 
-        // Show tool name if a tool is being generated
+        // Show tool call box with "Running..." when a tool name is known
         if( !m_generatingToolName.IsEmpty() )
-            streamingContent += "<font color='#888888'>" + m_generatingToolName + dots + "</font>";
+        {
+            streamingContent += wxString::Format(
+                "<div class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
+                "<div class=\"p-3 px-3 flex items-center gap-2\">"
+                "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+                "<span class=\"text-text-muted text-[12px] ml-auto\"><i>Running%s</i></span>"
+                "</div></div>",
+                m_generatingToolName, dots );
+        }
         else
             streamingContent += "<font color='#888888'>" + dots + "</font>";
     }
@@ -1261,6 +1449,11 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_thinkingExpanded = false;
     m_isThinking = false;
     m_pendingToolCalls = nlohmann::json::array();
+    // NOTE: Don't reset m_toolResultCounter here - old tool-result-N IDs persist in
+    // m_fullHtmlContent after SetHtml(). Counter must be monotonically increasing to
+    // avoid duplicate DOM IDs. Only reset in OnNewChat/OnChatHistoryLoaded (full re-render).
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
     m_stopRequested = false;
     m_userScrolledUp = false;
     m_htmlUpdatePending = false;
@@ -1377,6 +1570,9 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     m_thinkingHtml.Clear();
     m_toolCallHtml.Clear();
     m_currentThinkingIndex = -1;
+    m_toolResultCounter = 0;
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
 
     AppendHtml( "<br><p><i>(Stopped)</i></p>" );
     m_actionButton->SetLabel( "Send" );
@@ -1404,35 +1600,12 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
             {
                 OnRejectOpenEditor();
             }
-            else if( href.StartsWith( "toggle:thinking:" ) )
+            else if( href.StartsWith( "toggle:" ) )
             {
-                wxLogInfo( "AGENT_FRAME::OnWebViewMessage - toggle thinking block clicked" );
-                // Toggle thinking block by index
-                wxString indexStr = href.Mid( 16 );  // "toggle:thinking:" is 16 chars
-                long index;
-
-                if( indexStr.ToLong( &index ) && index >= 0 )
-                {
-                    // Check if this is the current streaming thinking
-                    if( index == m_currentThinkingIndex && m_currentThinkingIndex >= 0 )
-                    {
-                        // Toggle current streaming thinking
-                        m_thinkingExpanded = !m_thinkingExpanded;
-                        RebuildThinkingHtml();
-                        UpdateAgentResponse();
-                    }
-                    else if( index < (int)m_historicalThinking.size() )
-                    {
-                        // Toggle historical thinking
-                        if( m_historicalThinkingExpanded.count( index ) )
-                            m_historicalThinkingExpanded.erase( index );
-                        else
-                            m_historicalThinkingExpanded.insert( index );
-
-                        // Re-render the chat history with new toggle state
-                        RenderChatHistory();
-                    }
-                }
+                // Generic toggle handler (fallback if JS doesn't intercept)
+                // Normally handled by JavaScript in agent_template.html
+                wxLogInfo( "AGENT_FRAME::OnWebViewMessage - toggle link fallback: %s",
+                           href.ToStdString().c_str() );
             }
             else if( href.StartsWith( "http://" ) || href.StartsWith( "https://" ) )
             {
@@ -1531,6 +1704,40 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
                     m_historicalThinkingExpanded.insert( index );
                 else
                     m_historicalThinkingExpanded.erase( index );
+
+                // Sync m_fullHtmlContent so SetHtml() preserves toggle state
+                wxString from = wxString::Format(
+                    "data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\"",
+                    index, expanded ? "none" : "block" );
+                wxString to = wxString::Format(
+                    "data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\"",
+                    index, expanded ? "block" : "none" );
+                m_fullHtmlContent.Replace( from, to );
+                m_htmlBeforeAgentResponse.Replace( from, to );
+            }
+        }
+        else if( action == "toolresult_toggled" )
+        {
+            // Handle tool result toggle from JavaScript
+            int index = msg.value( "index", -1 );
+            bool expanded = msg.value( "expanded", false );
+
+            if( index >= 0 )
+            {
+                if( expanded )
+                    m_historicalToolResultExpanded.insert( index );
+                else
+                    m_historicalToolResultExpanded.erase( index );
+
+                // Sync m_fullHtmlContent so SetHtml() preserves toggle state
+                wxString from = wxString::Format(
+                    "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:%s;\"",
+                    index, expanded ? "none" : "block" );
+                wxString to = wxString::Format(
+                    "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:%s;\"",
+                    index, expanded ? "block" : "none" );
+                m_fullHtmlContent.Replace( from, to );
+                m_htmlBeforeAgentResponse.Replace( from, to );
             }
         }
         else if( action == "scroll_activity" )
@@ -1960,7 +2167,11 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
     // Clear historical thinking state
     m_historicalThinking.clear();
     m_historicalThinkingExpanded.clear();
+    m_historicalToolResultExpanded.clear();
     m_currentThinkingIndex = -1;
+    m_toolResultCounter = 0;
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
 }
 
 
@@ -2067,6 +2278,9 @@ void AGENT_FRAME::RenderChatHistory()
 {
     // Clear historical thinking storage
     m_historicalThinking.clear();
+
+    // Counter for tool result toggle indices
+    int toolResultIndex = 0;
 
     // Build HTML from chat history with modern template
     m_fullHtmlContent = GetAgentHtmlTemplate();
@@ -2189,9 +2403,11 @@ void AGENT_FRAME::RenderChatHistory()
                         wxString displayStyle = expanded ? "block" : "none";
 
                         m_fullHtmlContent += wxString::Format(
-                            "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline hover:underline\" data-thinking-index=\"%d\">Thinking</a><br>"
-                            "<div class=\"thinking-content text-[#606060] mt-2 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-thinking-index=\"%d\" style=\"display:%s;\">%s</div><br>",
-                            thinkingIndex, thinkingIndex, expandedClass, thinkingIndex, displayStyle, escapedText );
+                            "<div class=\"mb-1\">"
+                            "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline hover:underline\">Thinking</a>"
+                            "<div class=\"thinking-content text-[#606060] mt-1 mb-0 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
+                            "</div>",
+                            thinkingIndex, expandedClass, thinkingIndex, displayStyle, escapedText );
                     }
                 }
                 else if( blockType == "tool_use" )
@@ -2206,22 +2422,18 @@ void AGENT_FRAME::RenderChatHistory()
                 }
                 else if( blockType == "tool_result" )
                 {
-                    // Render combined tool call + result block
-                    // Content can be either a string (text-only) or an array
-                    // (rich content with text + images from screenshot tool)
+                    // Render collapsible tool call + result block
                     bool isError = block.value( "is_error", false );
 
-                    wxString displayResult;
                     wxString statusClass;
                     wxString statusText;
 
                     // Extract text content - handle both string and array formats
                     std::string textContent;
-                    bool hasImageInHistory = false;
+                    wxString imageHtml;
 
                     if( block.contains( "content" ) && block["content"].is_array() )
                     {
-                        // Rich content array (may contain text + images)
                         for( const auto& inner : block["content"] )
                         {
                             std::string innerType = inner.value( "type", "" );
@@ -2232,35 +2444,33 @@ void AGENT_FRAME::RenderChatHistory()
                             }
                             else if( innerType == "image" && inner.contains( "source" ) )
                             {
-                                std::string data = inner["source"].value( "data", "" );
+                                std::string imgData = inner["source"].value( "data", "" );
                                 std::string mediaType = inner["source"].value(
                                         "media_type", "image/png" );
 
-                                if( data != "__stripped__" && !data.empty() )
+                                if( imgData != "__stripped__" && !imgData.empty() )
                                 {
-                                    hasImageInHistory = true;
-                                    displayResult += "<br><img src=\"data:"
+                                    imageHtml += "<br><img src=\"data:"
                                         + wxString::FromUTF8( mediaType )
                                         + ";base64,"
-                                        + wxString::FromUTF8( data )
+                                        + wxString::FromUTF8( imgData )
                                         + "\" style=\"max-width:100%; border-radius:6px; "
                                           "margin:8px 0;\" />";
                                 }
                                 else
                                 {
-                                    displayResult += "<br><i>(Screenshot from previous "
-                                                     "session)</i>";
+                                    imageHtml += "<br><i>(Screenshot from previous "
+                                                 "session)</i>";
                                 }
                             }
                         }
                     }
                     else
                     {
-                        // Plain string content (backward compatible)
                         textContent = block.value( "content", "" );
                     }
 
-                    // Check if this is a Python traceback
+                    // Determine status and preview
                     bool isPythonError = ( textContent.find( "Traceback" )
                                            != std::string::npos );
 
@@ -2268,48 +2478,30 @@ void AGENT_FRAME::RenderChatHistory()
                     {
                         statusClass = "text-accent-red";
                         statusText = "Error";
-                        wxString errorLine = ExtractPythonErrorLine( textContent );
-                        displayResult = wxString::Format( "<i>%s</i>", errorLine )
-                                        + displayResult;
                     }
                     else if( isError )
                     {
                         statusClass = "text-accent-red";
                         statusText = "Failed";
-                        wxString htmlResult = textContent;
-                        htmlResult.Replace( "&", "&amp;" );
-                        htmlResult.Replace( "<", "&lt;" );
-                        htmlResult.Replace( ">", "&gt;" );
-                        if( htmlResult.length() > 200 )
-                            htmlResult = htmlResult.Left( 200 ) + "...";
-                        displayResult = htmlResult + displayResult;
                     }
                     else
                     {
                         statusClass = "text-accent-green";
                         statusText = "Completed";
-                        wxString htmlResult = textContent;
-                        htmlResult.Replace( "&", "&amp;" );
-                        htmlResult.Replace( "<", "&lt;" );
-                        htmlResult.Replace( ">", "&gt;" );
-                        if( !hasImageInHistory && htmlResult.length() > 500 )
-                            htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
-                        displayResult = htmlResult + displayResult;
                     }
 
-                    // Use the stored tool description from the preceding tool_use block
+                    // Format full result for expanded view
+                    wxString fullFormatted = FormatToolResult( textContent );
+
                     wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
+                    bool expanded = m_historicalToolResultExpanded.count( toolResultIndex ) > 0;
 
-                    wxString resultBox = wxString::Format(
-                        "<div class=\"bg-bg-secondary p-3 rounded-md my-3 max-w-full break-words\">"
-                        "<span class=\"text-accent-green font-bold\"><strong>Tool Call:</strong></span> %s<br>"
-                        "<span class=\"%s\"><strong>%s</strong></span><br>"
-                        "<span class=\"text-text-secondary font-mono text-[13px] whitespace-pre-wrap break-words\">%s</span>"
-                        "</div>",
-                        desc, statusClass, statusText, displayResult );
-                    m_fullHtmlContent += resultBox;
-
-                    m_lastToolDesc = "";  // Reset for next tool
+                    m_fullHtmlContent += BuildToolResultHtml( toolResultIndex, desc,
+                                                             statusClass, statusText,
+                                                             fullFormatted,
+                                                             imageHtml, expanded );
+                    toolResultIndex++;
+                    m_lastToolDesc = "";
                 }
             }
         }
@@ -2868,6 +3060,27 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     StopGeneratingAnimation();
     m_isThinking = false;
 
+    // Flush streaming content to remove the generating box from the DOM
+    // before finalization bakes the current content permanently
+    FlushStreamingContentUpdate( true );
+
+    // Sync m_fullHtmlContent with clean streaming state.
+    // The timer may have baked the generating tool box into m_fullHtmlContent just before
+    // m_generatingToolName was cleared. Rebuild to ensure m_fullHtmlContent matches the DOM.
+    {
+        wxString streamingContent = BuildStreamingContent();
+        wxString fullHtml = m_htmlBeforeAgentResponse;
+        const wxString closingTags = wxS( "</div></body></html>" );
+
+        if( fullHtml.EndsWith( closingTags ) )
+            fullHtml = fullHtml.Left( fullHtml.length() - closingTags.length() );
+
+        fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
+        fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
+        fullHtml += closingTags;
+        m_fullHtmlContent = fullHtml;
+    }
+
     // Finalize the current streaming div so the agent's response text stays in place
     if( m_chatWindow )
     {
@@ -2877,14 +3090,7 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     // Update m_fullHtmlContent to reflect finalized state (no more streaming-content ID)
     m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
 
-    // Add a new streaming content div for tool UI and subsequent response
-    wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
-    AppendHtml( streamingDiv );
-
-    // Capture HTML state AFTER adding new streaming div
-    m_htmlBeforeAgentResponse = m_fullHtmlContent;
-
-    // Now clear streaming state in controller (text is baked into m_htmlBeforeAgentResponse)
+    // Now clear streaming state in controller (text is baked above)
     if( m_chatController )
         m_chatController->ClearStreamingState();
 
@@ -2902,6 +3108,23 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
 
     // Store tool description for result display
     m_lastToolDesc = wxString::FromUTF8( data->description );
+
+    // Place the tool result component in the permanent DOM for ALL tools.
+    // OnChatToolComplete will update the status and populate the body via JS callback.
+    {
+        int idx = m_toolResultCounter++;
+        wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
+        m_activeRunningHtml = BuildRunningToolHtml( idx, desc );
+        m_activeToolResultIdx = idx;
+
+        // Append running box to permanent DOM
+        AppendHtml( m_activeRunningHtml );
+
+        // Create new streaming div after the running box
+        wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
+        AppendHtml( streamingDiv );
+        m_htmlBeforeAgentResponse = m_fullHtmlContent;
+    }
 
     // Handle open_editor specially - requires user approval only if not already open
     if( data->toolName == "open_editor" )
@@ -2921,10 +3144,33 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
 
         if( !filePath.empty() )
         {
-            auto pathResult = FileWriter::ValidatePathInProject( filePath, projectPath.ToStdString() );
-            if( !pathResult.valid )
+            auto allowedPaths = GetAllowedPaths();
+            bool pathValid = false;
+            FileWriter::PathValidationResult pathResult;
+
+            if( allowedPaths.empty() )
             {
-                // Path validation failed - reject tool call
+                wxLogWarning( "open_editor: No allowed paths available" );
+                if( m_chatController )
+                    m_chatController->HandleToolResult( data->toolId,
+                        "Error: no project or editor is open", false );
+                delete data;
+                return;
+            }
+
+            for( const auto& allowed : allowedPaths )
+            {
+                pathResult = FileWriter::ValidatePathInProject( filePath,
+                                                                 allowed.ToStdString() );
+                if( pathResult.valid )
+                {
+                    pathValid = true;
+                    break;
+                }
+            }
+
+            if( !pathValid )
+            {
                 wxLogWarning( "open_editor: Path validation failed: %s", pathResult.error );
                 if( m_chatController )
                     m_chatController->HandleToolResult( data->toolId,
@@ -2932,6 +3178,7 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
                 delete data;
                 return;
             }
+
             m_pendingOpenFilePath = wxString::FromUTF8( pathResult.resolvedPath );
             wxLogInfo( "open_editor: Validated file_path -> '%s'", m_pendingOpenFilePath );
         }
@@ -3101,6 +3348,16 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
             wxString prjName = Kiway().Prj().GetProjectName();
             status["schematic_file"] = ( prjPath + prjName + ".kicad_sch" ).ToStdString();
             status["pcb_file"] = ( prjPath + prjName + ".kicad_pcb" ).ToStdString();
+        }
+
+        // Add files currently open in editors
+        auto openFiles = GetOpenEditorFiles();
+        if( !openFiles.empty() )
+        {
+            nlohmann::json arr = nlohmann::json::array();
+            for( const auto& f : openFiles )
+                arr.push_back( f.ToStdString() );
+            status["open_editor_files"] = arr;
         }
 
         // Get current sheet if schematic is open (via IPC would be more accurate, but this is fast)
@@ -3298,16 +3555,8 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         return;
     }
 
-    // Generate tool call HTML with "Running..." status
-    m_toolCallHtml = wxString::Format(
-        "<div class=\"bg-bg-secondary p-3 rounded-md my-3 max-w-full break-words\">"
-        "<span class=\"text-accent-green font-bold\"><strong>Tool Call:</strong></span> %s<br>"
-        "<span class=\"text-text-secondary font-mono text-[13px] whitespace-pre-wrap break-words\"><i>Running...</i></span>"
-        "</div>",
-        m_lastToolDesc );
-
-    UpdateAgentResponse();
-    // Auto-scroll handled by CSS flex-direction: column-reverse
+    // Tool result lives outside streaming div - keep m_toolCallHtml clear
+    m_toolCallHtml.Clear();
 
     delete data;
 }
@@ -3321,63 +3570,97 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
     wxLogInfo( "AGENT_FRAME::OnChatToolComplete - tool: %s, success: %s",
             data->toolName.c_str(), data->success ? "true" : "false" );
+
     // Determine status display
     wxString statusClass;
     wxString statusText;
-    wxString displayResult;
 
     if( data->isPythonError )
     {
         statusClass = "text-accent-red";
         statusText = "Error";
-
-        // Extract just the error line (e.g., "AttributeError: ...")
-        wxString errorLine = ExtractPythonErrorLine( data->result );
-        displayResult = wxString::Format( "<i>%s</i>", errorLine );
     }
     else if( !data->success )
     {
         statusClass = "text-accent-red";
         statusText = "Failed";
-        wxString htmlResult = wxString::FromUTF8( data->result );
-        htmlResult.Replace( "&", "&amp;" );
-        htmlResult.Replace( "<", "&lt;" );
-        htmlResult.Replace( ">", "&gt;" );
-        if( htmlResult.length() > 200 )
-            htmlResult = htmlResult.Left( 200 ) + "...";
-        displayResult = htmlResult;
     }
     else
     {
         statusClass = "text-accent-green";
         statusText = "Completed";
-        wxString htmlResult = wxString::FromUTF8( data->result );
-        htmlResult.Replace( "&", "&amp;" );
-        htmlResult.Replace( "<", "&lt;" );
-        htmlResult.Replace( ">", "&gt;" );
-        if( htmlResult.length() > 500 )
-            htmlResult = htmlResult.Left( 500 ) + "... (truncated)";
-        displayResult = htmlResult;
     }
 
-    // Append inline image if the tool result contains one
+    // Format full result for expanded view
+    wxString fullFormatted = FormatToolResult( data->result );
+
+    // Build image HTML if present
+    wxString imageHtml;
+
     if( data->hasImage && !data->imageBase64.empty() )
     {
-        displayResult += "<br><img src=\"data:"
+        imageHtml = "<br><img src=\"data:"
             + wxString::FromUTF8( data->imageMediaType )
             + ";base64,"
             + wxString::FromUTF8( data->imageBase64 )
             + "\" style=\"max-width:100%; border-radius:6px; margin:8px 0;\" />";
     }
 
-    // Update tool call HTML with result (replace "Running..." with actual result)
-    m_toolCallHtml = wxString::Format(
-        "<div class=\"bg-bg-secondary p-3 rounded-md my-3 max-w-full break-words\">"
-        "<span class=\"text-accent-green font-bold\"><strong>Tool Call:</strong></span> %s<br>"
-        "<span class=\"%s\"><strong>%s</strong></span><br>"
-        "<span class=\"text-text-secondary font-mono text-[13px] whitespace-pre-wrap break-words\">%s</span>"
-        "</div>",
-        m_lastToolDesc, statusClass, statusText, displayResult );
+    // Update the existing tool result component via JS callback
+    wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
+    int idx = m_activeToolResultIdx;
+
+    // Build the text-only body content (no image - image is appended separately to avoid
+    // passing megabytes of base64 data in a single JS string literal)
+    wxString textBody = wxString::Format(
+        "<pre class=\"text-text-secondary font-mono text-[12px] whitespace-pre-wrap "
+        "break-words m-0 mt-2\">%s</pre>",
+        fullFormatted );
+
+    // Update status and text body in the existing DOM element
+    if( m_chatWindow )
+    {
+        m_chatWindow->RunScriptAsync( wxString::Format(
+            "updateToolResult(%d, '%s', '%s', '%s');",
+            idx,
+            EscapeForJs( statusClass ),
+            EscapeForJs( statusText ),
+            EscapeForJs( textBody ) ) );
+
+        // Append image via chunked data URI (avoids multi-MB JS string literals)
+        if( data->hasImage && !data->imageBase64.empty() )
+        {
+            wxString prefix = "data:" + wxString::FromUTF8( data->imageMediaType )
+                + ";base64,";
+            m_chatWindow->RunScriptAsync( wxString::Format(
+                "toolImgBegin(%d, '%s');", idx, EscapeForJs( prefix ) ) );
+
+            // Send base64 data in ~100KB chunks
+            const wxString b64 = wxString::FromUTF8( data->imageBase64 );
+            const size_t chunkSize = 100000;
+
+            for( size_t i = 0; i < b64.length(); i += chunkSize )
+            {
+                wxString chunk = b64.Mid( i, chunkSize );
+                m_chatWindow->RunScriptAsync( wxString::Format(
+                    "toolImgChunk('%s');", EscapeForJs( chunk ) ) );
+            }
+
+            m_chatWindow->RunScriptAsync( wxString::Format(
+                "toolImgEnd(%d);", idx ) );
+        }
+    }
+
+    // Update internal HTML tracking (replace running HTML with full completed HTML)
+    wxString completedHtml = BuildToolResultHtml( idx, desc, statusClass, statusText,
+                                                  fullFormatted, imageHtml, false );
+
+    if( !m_activeRunningHtml.IsEmpty() )
+    {
+        m_fullHtmlContent.Replace( m_activeRunningHtml, completedHtml );
+        m_htmlBeforeAgentResponse.Replace( m_activeRunningHtml, completedHtml );
+    }
+    m_activeRunningHtml.Clear();
 
     // After schematic tools complete successfully, trigger editor refresh for live UI feedback
     if( data->success && data->toolName == "sch_modify" )
@@ -3482,6 +3765,10 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
     m_toolCallHtml.Clear();
     m_thinkingExpanded = false;
     m_currentThinkingIndex = -1;
+    // NOTE: Don't reset m_toolResultCounter here - old tool-result-N IDs persist in the
+    // DOM (no re-render). Counter must be monotonically increasing to avoid duplicate IDs.
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
 
     // NOTE: Don't call RenderChatHistory() here - content is already in DOM from streaming.
     // RenderChatHistory() is only for loading saved conversations from disk.
@@ -3621,6 +3908,9 @@ void AGENT_FRAME::OnChatStateChanged( wxThreadEvent& aEvent )
             // Update thinking index so next thinking block gets a new index
             // Now m_historicalThinking.size() reflects the pushed content
             m_currentThinkingIndex = static_cast<int>( m_historicalThinking.size() );
+
+            // Tool result counter continues across turns within a conversation
+            // (indices are baked into the DOM, counter just needs to be monotonically increasing)
         }
 
         StartGeneratingAnimation();
@@ -3707,7 +3997,11 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
 
     // Clear historical thinking toggle state for new history
     m_historicalThinkingExpanded.clear();
+    m_historicalToolResultExpanded.clear();
     m_currentThinkingIndex = -1;
+    m_toolResultCounter = 0;
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
 
     // Render the loaded chat history
     RenderChatHistory();
@@ -3719,4 +4013,163 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
     m_userScrolledUp = false;
 
     delete data;
+}
+
+
+#ifdef __APPLE__
+static std::vector<wxString> GetExternalEditorFiles()
+{
+    std::vector<wxString> files;
+    std::set<std::string> seen;
+    pid_t myPid = getpid();
+
+    int bufSize = proc_listpids( PROC_ALL_PIDS, 0, NULL, 0 );
+
+    if( bufSize <= 0 )
+        return files;
+
+    int maxPids = bufSize / sizeof( pid_t );
+    std::vector<pid_t> pids( maxPids );
+    bufSize = proc_listpids( PROC_ALL_PIDS, 0, pids.data(), bufSize );
+    int nPids = bufSize / sizeof( pid_t );
+
+    for( int i = 0; i < nPids; i++ )
+    {
+        if( pids[i] == 0 || pids[i] == myPid )
+            continue;
+
+        char pathbuf[PROC_PIDPATHINFO_MAXSIZE];
+
+        if( proc_pidpath( pids[i], pathbuf, sizeof( pathbuf ) ) <= 0 )
+            continue;
+
+        std::string procPath( pathbuf );
+
+        bool isSch = ( procPath.find( "eeschema" ) != std::string::npos );
+        bool isPcb = ( procPath.find( "pcbnew" ) != std::string::npos );
+
+        if( !isSch && !isPcb )
+            continue;
+
+        wxLogInfo( "AGENT: Found external editor process: PID %d (%s)", pids[i], procPath );
+
+        // Get the process's current working directory — eeschema/pcbnew set cwd
+        // to the directory of the file being edited
+        struct proc_vnodepathinfo vnodePathInfo;
+        int sz = proc_pidinfo( pids[i], PROC_PIDVNODEPATHINFO, 0,
+                               &vnodePathInfo, sizeof( vnodePathInfo ) );
+
+        if( sz <= 0 )
+            continue;
+
+        wxString cwd = wxString::FromUTF8( vnodePathInfo.pvi_cdir.vip_path );
+
+        if( cwd.IsEmpty() )
+            continue;
+
+        wxLogInfo( "AGENT: External editor cwd: %s", cwd );
+
+        // Scan the cwd for KiCad files matching this editor type
+        wxString ext = isSch ? "*.kicad_sch" : "*.kicad_pcb";
+        wxDir dir( cwd );
+
+        if( dir.IsOpened() )
+        {
+            wxString filename;
+            bool cont = dir.GetFirst( &filename, ext, wxDIR_FILES );
+
+            while( cont )
+            {
+                wxString fullPath = cwd + wxFileName::GetPathSeparator() + filename;
+                std::string fp = fullPath.ToStdString();
+
+                if( seen.insert( fp ).second )
+                {
+                    wxLogInfo( "AGENT: External editor file: %s", fp );
+                    files.push_back( fullPath );
+                }
+
+                cont = dir.GetNext( &filename );
+            }
+        }
+    }
+
+    return files;
+}
+#endif
+
+
+std::vector<wxString> AGENT_FRAME::GetOpenEditorFiles()
+{
+    std::vector<wxString> files;
+
+    // Editors within our KIWAY (same process)
+    for( FRAME_T ft : { FRAME_SCH, FRAME_PCB_EDITOR } )
+    {
+        KIWAY_PLAYER* player = Kiway().Player( ft, false );
+
+        if( player && player->IsShown() )
+        {
+            wxString f = player->GetCurrentFileName();
+
+            if( !f.IsEmpty() )
+                files.push_back( f );
+        }
+    }
+
+    // Standalone editor processes (eeschema/pcbnew launched outside this KIWAY)
+#ifdef __APPLE__
+    for( const auto& f : GetExternalEditorFiles() )
+        files.push_back( f );
+#endif
+
+    for( const auto& f : files )
+        wxLogInfo( "AGENT: Open editor file: %s", f );
+
+    return files;
+}
+
+
+std::vector<wxString> AGENT_FRAME::GetAllowedPaths()
+{
+    std::vector<wxString> paths;
+
+    // KiCad documents root
+    wxString docsPath;
+
+    if( wxGetEnv( wxT( "KICAD_DOCUMENTS_HOME" ), &docsPath ) )
+    {
+        paths.push_back( docsPath );
+    }
+    else
+    {
+        wxFileName kicadDocs;
+        kicadDocs.AssignDir( KIPLATFORM::ENV::GetDocumentsPath() );
+        kicadDocs.AppendDir( KICAD_PATH_STR );
+        paths.push_back( kicadDocs.GetPath() );
+    }
+
+    // Active project directory
+    wxString projPath = Kiway().Prj().GetProjectPath();
+
+    if( !projPath.IsEmpty() )
+        paths.push_back( projPath );
+
+    // Directories of files open in editors
+    for( const auto& f : GetOpenEditorFiles() )
+    {
+        wxFileName fn( f );
+        paths.push_back( fn.GetPath() );
+    }
+
+    wxString pathList;
+    for( const auto& p : paths )
+    {
+        if( !pathList.IsEmpty() )
+            pathList += ", ";
+        pathList += p;
+    }
+    wxLogInfo( "AGENT: GetAllowedPaths: [%s]", pathList );
+
+    return paths;
 }

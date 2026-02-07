@@ -86,13 +86,18 @@ private:
                           const std::string& aPngPath );
 
     /**
-     * Crop whitespace from a PNG and resize to fit API limits.
-     * Composites any alpha channel onto white, scans for non-white content,
-     * crops with padding, and resizes so longest side <= 1568px.
+     * Crop background from a PNG and resize to fit API limits.
+     * Composites any alpha channel onto the given background color, scans for
+     * content pixels that differ from the background, crops with padding, and
+     * resizes so longest side <= 1568px.
      * @param aPngPath Path to the PNG (modified in-place)
+     * @param aBgR Background red component
+     * @param aBgG Background green component
+     * @param aBgB Background blue component
      * @return true on success
      */
-    bool CropAndResize( const std::string& aPngPath );
+    bool CropAndResize( const std::string& aPngPath,
+                        unsigned char aBgR, unsigned char aBgG, unsigned char aBgB );
 
     /**
      * Read a file and return its contents as a base64-encoded string.

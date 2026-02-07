@@ -55,6 +55,19 @@ body { background: #1E1E1E !important; }
 .thinking-content { display: none; }
 .thinking-content.expanded { display: block; }
 
+/* Generic collapsible toggle */
+.toggle-chevron {
+    display: inline-block;
+    transition: transform 0.15s ease;
+    font-size: 10px;
+    color: #808080;
+}
+.toggle-chevron.expanded { transform: rotate(90deg); }
+
+/* Tool result collapsible styles */
+.tool-result-header { cursor: pointer; user-select: none; }
+.tool-result-header:hover { opacity: 0.8; }
+
 /* Code block styling for highlight.js */
 pre code.hljs {
     background: #2d2d2d;
@@ -169,24 +182,22 @@ document.addEventListener('click', function(e) {
     if (target && target.tagName === 'A') {
         const href = target.getAttribute('href');
 
-        // Handle thinking toggles in JavaScript (no page reload)
-        if (href && href.startsWith('toggle:thinking:')) {
+        // Handle all toggle links: toggle:thinking:0, toggle:toolresult:0, etc.
+        if (href && href.startsWith('toggle:')) {
             e.preventDefault();
-            const index = target.getAttribute('data-thinking-index');
-            const content = document.querySelector('.thinking-content[data-thinking-index="' + index + '"]');
+            const parts = href.split(':');
+            if (parts.length === 3) {
+                const type = parts[1];
+                const index = parts[2];
+                const content = document.querySelector('[data-toggle-type="' + type + '"][data-toggle-index="' + index + '"]');
+                const chevron = target.querySelector('.toggle-chevron');
 
-            if (content) {
-                const oldDisplay = content.style.display;
-                const newDisplay = (oldDisplay === 'none' || oldDisplay === '') ? 'block' : 'none';
-                const expanded = (newDisplay === 'block');
-
-                // Update DOM immediately
-                content.style.display = newDisplay;
-
-                // Send message to C++
-                sendMsg('thinking_toggled', {index: parseInt(index), expanded: expanded});
-            } else {
-                console.error('[AGENT] No thinking content found for index:', index);
+                if (content) {
+                    const expanded = content.style.display === 'none' || content.style.display === '';
+                    content.style.display = expanded ? 'block' : 'none';
+                    if (chevron) chevron.classList.toggle('expanded', expanded);
+                    sendMsg(type + '_toggled', {index: parseInt(index), expanded: expanded});
+                }
             }
             return false;
         }
@@ -243,6 +254,41 @@ function appendToChat(html) {
             wrapper.appendChild(temp.firstChild);
         }
     }
+}
+
+// Update a tool result component after completion (called from C++)
+function updateToolResult(index, statusClass, statusText, bodyHtml) {
+    var el = document.getElementById('tool-result-' + index);
+    if (!el) return;
+    var status = el.querySelector('.tool-status');
+    if (status) {
+        status.className = statusClass + ' text-[12px] ml-auto';
+        status.innerHTML = '<strong>' + statusText + '</strong>';
+    }
+    var body = el.querySelector('.tool-result-body');
+    if (body) {
+        body.innerHTML = bodyHtml;
+        highlightCodeBlocks(body);
+    }
+}
+
+// Append an image to a tool result body using chunked data URI.
+// C++ sends: toolImgBegin(idx, prefix), toolImgChunk(data), ..., toolImgEnd(idx)
+var _toolImgBuf = '';
+function toolImgBegin(index, prefix) { _toolImgBuf = prefix; }
+function toolImgChunk(data) { _toolImgBuf += data; }
+function toolImgEnd(index) {
+    var el = document.getElementById('tool-result-' + index);
+    if (el) {
+        var body = el.querySelector('.tool-result-body');
+        if (body) {
+            var img = document.createElement('img');
+            img.src = _toolImgBuf;
+            img.style.cssText = 'max-width:100%; border-radius:6px; margin:8px 0;';
+            body.appendChild(img);
+        }
+    }
+    _toolImgBuf = '';
 }
 
 // Highlight all code blocks on page load (for SetPage reloads)

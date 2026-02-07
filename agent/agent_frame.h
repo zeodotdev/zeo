@@ -185,6 +185,15 @@ private:
     // Historical thinking toggle state
     std::vector<wxString>  m_historicalThinking;          // Thinking content from loaded history
     std::set<int>          m_historicalThinkingExpanded;  // Which historical thinking blocks are expanded
+
+    // Historical tool result toggle state
+    std::set<int>          m_historicalToolResultExpanded; // Which historical tool results are expanded
+    int                    m_toolResultCounter;            // Running counter for tool result indices
+
+    // Active tool result - lives in permanent DOM, not streaming div
+    wxString               m_activeRunningHtml;            // Running box HTML for replacement on completion
+    int                    m_activeToolResultIdx;           // Index of tool-result-N element
+
     void                   RenderChatHistory();           // Re-render chat history with current toggle states
 
     void     AppendHtml( const wxString& aHtml );
@@ -220,6 +229,10 @@ private:
     std::unique_ptr<CHAT_CONTROLLER> m_chatController;
 
     void InitializeTools();                                                    // Setup tool definitions
+
+    // Multi-project access helpers
+    std::vector<wxString> GetOpenEditorFiles();  // Files currently open in sch/pcb editors
+    std::vector<wxString> GetAllowedPaths();     // Union of docs root + project dir + open editor dirs
 
     // Async LLM streaming helpers
     void StartAsyncLLMRequest();  // Start an async LLM request

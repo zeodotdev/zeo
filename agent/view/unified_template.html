@@ -45,6 +45,8 @@ body.visible { opacity: 1; }
 /* Thinking content toggle state */
 .thinking-content { display: none; }
 .thinking-content.expanded { display: block; }
+.thinking-link { border-radius: 3px; padding: 1px 4px 1px 12px; margin: -1px -4px -1px -12px; transition: background-color 0.15s ease; }
+.thinking-link:hover { background-color: rgba(255, 255, 255, 0.08); }
 
 /* Generic collapsible toggle */
 .toggle-chevron { display: inline-block; transition: transform 0.15s ease; font-size: 10px; color: #808080; }
@@ -489,6 +491,11 @@ App.TopBar = (function() {
 // App.Chat — chat message display, streaming, tool results
 // =====================================================================
 App.Chat = (function() {
+    // Cache toggle states so they survive innerHTML replacements during streaming.
+    // Without this, the C++ streaming timer rebuilds HTML with stale toggle state,
+    // overwriting the user's click before the JS->C++ roundtrip completes.
+    var _expandedToggles = {};
+
     function highlightCodeBlocks(element) {
         if (typeof hljs !== 'undefined') {
             element.querySelectorAll('pre code').forEach(function(block) {
@@ -502,6 +509,15 @@ App.Chat = (function() {
     function updateStreamingContent(html) {
         var container = document.getElementById('streaming-content');
         if (container) {
+            // Pre-apply cached toggle states to the HTML string before setting innerHTML.
+            // This avoids any flicker from creating DOM nodes with stale state.
+            for (var key in _expandedToggles) {
+                if (!_expandedToggles[key]) continue;
+                var parts = key.split(':');
+                var from = 'data-toggle-type="' + parts[0] + '" data-toggle-index="' + parts[1] + '" style="display:none;"';
+                var to = 'data-toggle-type="' + parts[0] + '" data-toggle-index="' + parts[1] + '" style="display:block;"';
+                html = html.replace(from, to);
+            }
             container.innerHTML = html;
             highlightCodeBlocks(container);
         }
@@ -512,6 +528,10 @@ App.Chat = (function() {
         if (container) {
             container.removeAttribute('id');
         }
+    }
+
+    function clearToggleCache() {
+        _expandedToggles = {};
     }
 
     function appendMessage(html) {
@@ -573,8 +593,41 @@ App.Chat = (function() {
         _toolImgBuf = '';
     }
 
-    // Click delegation for links, toggles, images
+    // Event delegation for links, toggles, images
     var chatArea = document.getElementById('chat-area');
+
+    // Toggle links use mousedown instead of click. During streaming, innerHTML is
+    // replaced at 20Hz which destroys/recreates DOM nodes. If this happens between
+    // mousedown and mouseup, the click event never fires (different DOM nodes).
+    // mousedown fires immediately on press, before any replacement can race.
+    chatArea.addEventListener('mousedown', function(e) {
+        if (e.button !== 0) return; // left button only
+        var target = e.target;
+        while (target && target.tagName !== 'A') {
+            target = target.parentElement;
+        }
+        if (target && target.tagName === 'A') {
+            var href = target.getAttribute('href');
+            if (href && href.startsWith('toggle:')) {
+                e.preventDefault();
+                var parts = href.split(':');
+                if (parts.length === 3) {
+                    var type = parts[1];
+                    var index = parts[2];
+                    var content = document.querySelector('[data-toggle-type="' + type + '"][data-toggle-index="' + index + '"]');
+                    var chevron = target.querySelector('.toggle-chevron');
+                    if (content) {
+                        var expanded = content.style.display === 'none' || content.style.display === '';
+                        content.style.display = expanded ? 'block' : 'none';
+                        if (chevron) chevron.classList.toggle('expanded', expanded);
+                        _expandedToggles[type + ':' + index] = expanded;
+                        App.Bridge.sendMsg(type + '_toggled', { index: parseInt(index), expanded: expanded });
+                    }
+                }
+            }
+        }
+    });
+
     chatArea.addEventListener('click', function(e) {
         // Click on data: image -> preview
         if (e.target.tagName === 'IMG' && e.target.src.startsWith('data:')) {
@@ -602,22 +655,9 @@ App.Chat = (function() {
         if (target && target.tagName === 'A') {
             var href = target.getAttribute('href');
 
-            // Toggle links: toggle:thinking:0, toggle:toolresult:0
+            // Toggle links already handled by mousedown
             if (href && href.startsWith('toggle:')) {
                 e.preventDefault();
-                var parts = href.split(':');
-                if (parts.length === 3) {
-                    var type = parts[1];
-                    var index = parts[2];
-                    var content = document.querySelector('[data-toggle-type="' + type + '"][data-toggle-index="' + index + '"]');
-                    var chevron = target.querySelector('.toggle-chevron');
-                    if (content) {
-                        var expanded = content.style.display === 'none' || content.style.display === '';
-                        content.style.display = expanded ? 'block' : 'none';
-                        if (chevron) chevron.classList.toggle('expanded', expanded);
-                        App.Bridge.sendMsg(type + '_toggled', { index: parseInt(index), expanded: expanded });
-                    }
-                }
                 return;
             }
 
@@ -654,6 +694,7 @@ App.Chat = (function() {
     return {
         updateStreamingContent: updateStreamingContent,
         finalizeStreaming: finalizeStreaming,
+        clearToggleCache: clearToggleCache,
         appendMessage: appendMessage,
         setFullContent: setFullContent,
         updateToolResult: updateToolResult,

@@ -718,7 +718,7 @@ void AGENT_FRAME::RebuildThinkingHtml()
 
     m_thinkingHtml = wxString::Format(
         "<div class=\"mb-1\">"
-        "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline hover:underline\">%s</a>"
+        "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline thinking-link\">%s</a>"
         "<div class=\"thinking-content text-[#606060] mt-1 mb-0 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
         "</div>",
         m_currentThinkingIndex, thinkingText, expandedClass, m_currentThinkingIndex, displayStyle, displayContent );
@@ -2409,7 +2409,7 @@ void AGENT_FRAME::RenderChatHistory()
 
                         m_fullHtmlContent += wxString::Format(
                             "<div class=\"mb-1\">"
-                            "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline hover:underline\">Thinking</a>"
+                            "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline thinking-link\">Thinking</a>"
                             "<div class=\"thinking-content text-[#606060] mt-1 mb-0 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
                             "</div>",
                             thinkingIndex, expandedClass, thinkingIndex, displayStyle, escapedText );

@@ -39,6 +39,8 @@ namespace BridgeAction
     constexpr const char* SEND_CLICK         = "send_click";
     constexpr const char* STOP_CLICK         = "stop_click";
     constexpr const char* SELECTION_PILL_CLICK = "selection_pill_click";
+    constexpr const char* PLAN_TOGGLE          = "plan_toggle";
+    constexpr const char* PLAN_APPROVE         = "plan_approve";
 
     // Pending changes actions
     constexpr const char* PENDING_CHANGES_TOGGLE     = "pending_changes_toggle";

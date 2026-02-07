@@ -80,6 +80,8 @@ public:
     void DoNewChat();
     void DoModelChange( const std::string& aModel );
     void DoTrackToggle();
+    void DoPlanToggle();
+    void DoPlanApprove();
     void DoSendClick();
     void DoStopClick();
     void DoSelectionPillClick();
@@ -140,6 +142,9 @@ private:
 
     // Track Agent state
     bool        m_isTrackingAgent;
+
+    // Plan mode state
+    AgentMode   m_agentMode = AgentMode::EXECUTE;
 
     // Pending changes state (business logic moved from PENDING_CHANGES_PANEL)
     std::set<wxString> m_pendingSchSheets;  // Sheets with schematic changes

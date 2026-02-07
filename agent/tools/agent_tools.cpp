@@ -109,6 +109,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "properties", {} },
         { "required", json::array() }
     };
+    checkStatus.read_only = true;
     tools.push_back( checkStatus );
 
     // save - Save current work
@@ -192,6 +193,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array( { "file_path" } ) }
     };
+    schGetSummary.read_only = true;
     tools.push_back( schGetSummary );
 
     // sch_file_summary - Get schematic summary from disk file
@@ -210,6 +212,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array( { "file_path" } ) }
     };
+    schFileSummary.read_only = true;
     tools.push_back( schFileSummary );
 
     // sch_live_summary - Get schematic summary from running editor via IPC
@@ -229,6 +232,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array() }
     };
+    schLiveSummary.read_only = true;
     tools.push_back( schLiveSummary );
 
     // sch_read_section - Read specific section of schematic
@@ -256,6 +260,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array( { "file_path", "section" } ) }
     };
+    schReadSection.read_only = true;
     tools.push_back( schReadSection );
 
     // sch_modify - DISABLED: Use sch_add/sch_update/sch_delete instead
@@ -297,6 +302,25 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schModify );
     */
+
+    // sch_validate - Validate schematic file
+    LLM_TOOL schValidate;
+    schValidate.name = "sch_validate";
+    schValidate.description = "Validate a .kicad_sch file without modifying it. "
+                              "Checks syntax (S-expression parsing), structure (required fields, UUID uniqueness), "
+                              "and returns warnings about potential issues.";
+    schValidate.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to the .kicad_sch file" }
+            }}
+        }},
+        { "required", json::array( { "file_path" } ) }
+    };
+    schValidate.read_only = true;
+    tools.push_back( schValidate );
 
     // sch_run_erc - Run ERC on open schematic
     LLM_TOOL schRunErc;
@@ -344,6 +368,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array( { "file_path" } ) }
     };
+    schExportSpice.read_only = true;
     tools.push_back( schExportSpice );
 
     // sch_run_simulation - Run SPICE simulation on open schematic
@@ -411,6 +436,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array( { "lib_id" } ) }
     };
+    schGetLibSymbol.read_only = true;
     tools.push_back( schGetLibSymbol );
 
     // sch_get_pins - Lightweight pin lookup for a single placed symbol
@@ -431,6 +457,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array( { "ref" } ) }
     };
+    schGetPins.read_only = true;
     tools.push_back( schGetPins );
 
     // ===== IPC-based CRUD Tools (sch_add, sch_update, sch_delete, sch_batch_delete) =====
@@ -873,6 +900,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array() }
     };
+    schGetNets.read_only = true;
     tools.push_back( schGetNets );
 
     // ===== PCB Tools =====
@@ -889,6 +917,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "properties", {} },
         { "required", json::array() }
     };
+    pcbGetSummary.read_only = true;
     tools.push_back( pcbGetSummary );
 
     // pcb_read_section - Read specific section of PCB
@@ -913,6 +942,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array( { "section" } ) }
     };
+    pcbReadSection.read_only = true;
     tools.push_back( pcbReadSection );
 
     // pcb_validate - Validate PCB file
@@ -931,6 +961,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array( { "file_path" } ) }
     };
+    pcbValidate.read_only = true;
     tools.push_back( pcbValidate );
 
     // pcb_run_drc - Run design rule check
@@ -1370,6 +1401,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array( { "file_path" } ) }
     };
+    screenshot.read_only = true;
     tools.push_back( screenshot );
 
     return tools;

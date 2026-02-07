@@ -81,6 +81,7 @@ img[src^="data:"] { cursor: pointer; }
 .editor-container {
     position: relative; width: 100%; min-height: 45px; box-sizing: border-box;
     background: #2a2a2a; border: 1px solid #404040; border-radius: 10px; padding: 8px 12px;
+    box-shadow: 0 -4px 12px rgba(0,0,0,0.25);
 }
 .editor-container:focus-within { border-color: #569cd6; }
 .textarea-wrapper { position: relative; width: 100%; }
@@ -275,16 +276,16 @@ img[src^="data:"] { cursor: pointer; }
      CHAT AREA (scrollable, flex-col-reverse for auto-scroll)
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="chat-area" class="flex-1 overflow-y-auto flex flex-col-reverse" style="min-height:0;">
-    <div class="content-wrapper p-2.5">
+    <div class="content-wrapper p-2.5" style="padding-bottom:24px;padding-left:16px;padding-right:16px;">
     </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
      INPUT AREA
      ═══════════════════════════════════════════════════════════════════ -->
-<div id="input-area" class="flex-shrink-0 px-2 pb-2 pt-1">
-    <!-- Top row: selection pill -->
-    <div class="flex items-center gap-2 mb-1 px-1 min-h-[20px]">
+<div id="input-area" class="flex-shrink-0 pb-2 pt-0" style="position:relative;z-index:1;margin-top:-20px;padding-left:16px;padding-right:16px;">
+    <!-- Top row: selection pill (hidden when empty) -->
+    <div class="flex items-center gap-2 px-1" id="selection-pill-row" style="display:none;">
         <span class="selection-pill" id="selection-pill"></span>
     </div>
 
@@ -315,12 +316,13 @@ img[src^="data:"] { cursor: pointer; }
     </div>
 
     <!-- Controls row: model selector, track + send/stop -->
-    <div class="flex items-center gap-2 mt-1.5 px-1" style="position:relative;">
+    <div class="flex items-center gap-2" style="position:relative;margin:10px 0 4px;">
         <div class="model-trigger" id="model-trigger">
             <span id="model-label"></span>
         </div>
         <div class="model-menu" id="model-menu"></div>
         <span class="flex-1"></span>
+        <button class="ctrl-btn" id="plan-btn">Plan</button>
         <button class="ctrl-btn" id="track-btn" style="display:none;">Track</button>
         <button class="ctrl-btn primary" id="action-btn">Send</button>
     </div>
@@ -691,6 +693,23 @@ App.Chat = (function() {
         App.Bridge.sendMsg('scroll_activity', { active: true, coupled: coupled });
     });
 
+    function showPlanApproval() {
+        var el = document.getElementById('plan-approval');
+        if (el) el.remove();
+        var btn = document.createElement('button');
+        btn.id = 'plan-approval';
+        btn.className = 'ctrl-btn';
+        btn.style.cssText = 'position:fixed;bottom:120px;right:12px;z-index:100;padding:6px 20px;background:rgba(74,222,128,0.25);color:#fff;border:1px solid rgba(74,222,128,0.4);box-shadow:0 4px 12px rgba(0,0,0,0.4);backdrop-filter:blur(8px);';
+        btn.textContent = 'Approve Plan';
+        btn.onclick = function() { App.Bridge.sendMsg('plan_approve'); };
+        document.body.appendChild(btn);
+    }
+
+    function removePlanApproval() {
+        var el = document.getElementById('plan-approval');
+        if (el) el.remove();
+    }
+
     return {
         updateStreamingContent: updateStreamingContent,
         finalizeStreaming: finalizeStreaming,
@@ -700,7 +719,9 @@ App.Chat = (function() {
         updateToolResult: updateToolResult,
         toolImgBegin: toolImgBegin,
         toolImgChunk: toolImgChunk,
-        toolImgEnd: toolImgEnd
+        toolImgEnd: toolImgEnd,
+        showPlanApproval: showPlanApproval,
+        removePlanApproval: removePlanApproval
     };
 })();
 
@@ -1005,6 +1026,7 @@ App.Input = (function() {
 App.Controls = (function() {
     var actionBtn = document.getElementById('action-btn');
     var trackBtn = document.getElementById('track-btn');
+    var planBtn = document.getElementById('plan-btn');
     var modelTrigger = document.getElementById('model-trigger');
     var modelLabel = document.getElementById('model-label');
     var modelMenu = document.getElementById('model-menu');
@@ -1060,9 +1082,16 @@ App.Controls = (function() {
         trackBtn.style.display = visible ? '' : 'none';
     }
 
+    function setPlanMode(active) {
+        planBtn.textContent = active ? 'Planning' : 'Plan';
+        planBtn.style.color = active ? '#4ec9b0' : '';
+    }
+
     function setSelectionPill(label, visible) {
         selectionPill.textContent = label;
         selectionPill.className = 'selection-pill' + (visible ? ' visible' : '');
+        var row = document.getElementById('selection-pill-row');
+        if (row) row.style.display = visible ? 'flex' : 'none';
     }
 
     // Events
@@ -1077,6 +1106,10 @@ App.Controls = (function() {
 
     trackBtn.addEventListener('click', function() {
         App.Bridge.sendMsg('track_toggle');
+    });
+
+    planBtn.addEventListener('click', function() {
+        App.Bridge.sendMsg('plan_toggle');
     });
 
     modelTrigger.addEventListener('click', function(e) {
@@ -1110,6 +1143,7 @@ App.Controls = (function() {
         setModelList: setModelList,
         setTrackingState: setTrackingState,
         setTrackButtonVisible: setTrackButtonVisible,
+        setPlanMode: setPlanMode,
         setSelectionPill: setSelectionPill
     };
 })();

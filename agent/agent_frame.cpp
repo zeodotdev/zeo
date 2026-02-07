@@ -619,6 +619,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
         // Push tracking state
         m_bridge->PushTrackingState( m_isTrackingAgent );
+
+        // Push plan mode state
+        m_bridge->PushPlanMode( m_agentMode == AgentMode::PLAN );
     } );
 }
 
@@ -1098,6 +1101,9 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // (authentication, pending editor state, system prompt with schematic/PCB context, KIWAY
     // target sheet reset) that the controller doesn't currently support.
     // System prompt is now handled server-side.
+
+    // Hide plan approval button when user sends a new message
+    m_bridge->PushRemovePlanApproval();
 
     // If already generating: queue, cancel+send, or stop depending on context
     if( m_isGenerating )
@@ -1831,6 +1837,40 @@ void AGENT_FRAME::DoTrackToggle()
     {
         DIFF_MANAGER::GetInstance().SetTrackingBrokenCallback( nullptr );
     }
+}
+
+void AGENT_FRAME::DoPlanToggle()
+{
+    m_agentMode = ( m_agentMode == AgentMode::EXECUTE )
+                  ? AgentMode::PLAN
+                  : AgentMode::EXECUTE;
+
+    if( m_chatController )
+        m_chatController->SetAgentMode( m_agentMode );
+
+    if( m_llmClient )
+        m_llmClient->SetAgentMode( m_agentMode );
+
+    m_bridge->PushPlanMode( m_agentMode == AgentMode::PLAN );
+}
+
+void AGENT_FRAME::DoPlanApprove()
+{
+    // Remove approval button from UI
+    m_bridge->PushRemovePlanApproval();
+
+    // Switch to execute mode
+    m_agentMode = AgentMode::EXECUTE;
+    if( m_chatController )
+        m_chatController->SetAgentMode( AgentMode::EXECUTE );
+    if( m_llmClient )
+        m_llmClient->SetAgentMode( AgentMode::EXECUTE );
+    m_bridge->PushPlanMode( false );
+
+    // Send approval message to kick off execution
+    m_pendingInputText = "Proceed with the plan above.";
+    wxCommandEvent evt;
+    OnSend( evt );
 }
 
 void AGENT_FRAME::DoPendingChangesToggle()
@@ -3747,6 +3787,12 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
         {
             m_chatHistoryDb.Save( m_chatHistory );
         }
+    }
+
+    // Show plan approval button when plan mode turn completes
+    if( !continuing && m_agentMode == AgentMode::PLAN )
+    {
+        m_bridge->PushPlanApproval();
     }
 
     // Preserve thinking content for index tracking (so next message gets index+1)

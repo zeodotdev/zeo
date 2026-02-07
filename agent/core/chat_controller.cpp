@@ -63,7 +63,8 @@ CHAT_CONTROLLER::CHAT_CONTROLLER( wxEvtHandler* aEventSink )
       m_chatHistoryDb( nullptr ),
       m_auth( nullptr ),
       m_stopRequested( false ),
-      m_continueAfterComplete( false )
+      m_continueAfterComplete( false ),
+      m_agentMode( AgentMode::EXECUTE )
 {
     // Initialize tool definitions
     m_tools = AgentTools::GetToolDefinitions();
@@ -1580,6 +1581,19 @@ void CHAT_CONTROLLER::SanitizeApiContext()
 }
 
 
+std::vector<LLM_TOOL> CHAT_CONTROLLER::GetFilteredTools() const
+{
+    if( m_agentMode == AgentMode::EXECUTE )
+        return m_tools;
+
+    // Plan mode: return only read-only tools
+    std::vector<LLM_TOOL> filtered;
+    std::copy_if( m_tools.begin(), m_tools.end(), std::back_inserter( filtered ),
+                  []( const LLM_TOOL& t ) { return t.read_only; } );
+    return filtered;
+}
+
+
 void CHAT_CONTROLLER::StartLLMRequest()
 {
     wxLogInfo( "CHAT_CONTROLLER::StartLLMRequest called" );
@@ -1596,7 +1610,8 @@ void CHAT_CONTROLLER::StartLLMRequest()
 
     // System prompt now handled server-side
     // Start async request - events will be forwarded to HandleLLMChunk
-    bool started = m_llmClient->AskStreamWithToolsAsync( m_apiContext, m_tools, m_eventSink );
+    // In plan mode, only read-only tools are sent to the LLM
+    bool started = m_llmClient->AskStreamWithToolsAsync( m_apiContext, GetFilteredTools(), m_eventSink );
     if( !started )
     {
         HandleLLMError( "Failed to start LLM request" );

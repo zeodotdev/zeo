@@ -326,6 +326,11 @@ void WEBVIEW_BRIDGE::PushInputSetText( const wxString& aText )
     RunScript( wxString::Format( "App.Input.setText('%s');", EscapeJs( aText ) ) );
 }
 
+void WEBVIEW_BRIDGE::PushInputAppendText( const wxString& aText )
+{
+    RunScript( wxString::Format( "App.Input.appendText('%s');", EscapeJs( aText ) ) );
+}
+
 void WEBVIEW_BRIDGE::PushAddAttachment( const wxString& aBase64, const wxString& aMediaType,
                                         const wxString& aFilename )
 {
@@ -333,6 +338,12 @@ void WEBVIEW_BRIDGE::PushAddAttachment( const wxString& aBase64, const wxString&
     RunScript( wxString::Format( "App.Input.addAttachment('%s', '%s', '%s');",
                                  EscapeJs( aBase64 ), EscapeJs( aMediaType ),
                                  EscapeJs( aFilename ) ) );
+}
+
+void WEBVIEW_BRIDGE::PushShowToast( const wxString& aMessage )
+{
+    LogBridge( "C++->JS", wxString::Format( "showToast(%s)", aMessage ) );
+    RunScript( wxString::Format( "App.showToast('%s');", EscapeJs( aMessage ) ) );
 }
 
 void WEBVIEW_BRIDGE::PushActionButtonState( const wxString& aLabel, bool aEnabled )

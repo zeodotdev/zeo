@@ -213,10 +213,34 @@ img[src^="data:"] { cursor: pointer; }
     flex-direction: column; gap: 16px;
 }
 #sign-in-overlay.visible { display: flex; }
+
+/* ── Toast notification ───────────────────────────────────────────── */
+#toast-container {
+    position: fixed; top: 48px; right: 12px;
+    z-index: 300; display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+    pointer-events: none;
+}
+.toast {
+    background: #3d3d3d; color: #d4d4d4; border: 1px solid #555;
+    border-radius: 8px; padding: 8px 16px; font-size: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5); pointer-events: auto;
+    opacity: 0; transform: translateX(20px);
+    animation: toast-in 0.2s ease forwards;
+    max-width: 300px; display: flex; align-items: center; gap: 8px;
+}
+.toast span:last-child {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.toast.slide-out { animation: toast-out 0.3s ease forwards; }
+@keyframes toast-in { to { opacity: 1; transform: translateX(0); } }
+@keyframes toast-out { to { opacity: 0; transform: translateX(100%); } }
 </style>
 </head>
 
 <body class="h-full m-0 p-0 bg-bg-primary text-text-primary font-sans text-[13px] leading-relaxed flex flex-col overflow-hidden relative">
+
+<!-- Toast container (positioned fixed, above input area) -->
+<div id="toast-container"></div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
      TOP BAR
@@ -328,6 +352,24 @@ App.Bridge = (function() {
     }
     return { sendMsg: sendMsg };
 })();
+
+App.showToast = function(message, durationMs) {
+    var container = document.getElementById('toast-container');
+    var el = document.createElement('div');
+    el.className = 'toast';
+    var icon = document.createElement('span');
+    icon.textContent = '\u26A0';
+    icon.style.cssText = 'font-size:14px; flex-shrink:0; color:#f0c674;';
+    var text = document.createElement('span');
+    text.textContent = message;
+    el.appendChild(icon);
+    el.appendChild(text);
+    container.appendChild(el);
+    setTimeout(function() {
+        el.classList.add('slide-out');
+        el.addEventListener('animationend', function() { el.remove(); });
+    }, durationMs || 2500);
+};
 
 // =====================================================================
 // App.TopBar — title, history dropdown
@@ -749,27 +791,40 @@ App.Input = (function() {
     // Drag-and-drop
     var dragCounter = 0;
     var SUPPORTED_FILE_TYPES = ['image/jpeg','image/png','image/gif','image/webp','application/pdf'];
+    var MAX_DROP_FILE_SIZE = 32 * 1024 * 1024; // 32 MB
     editorContainer.addEventListener('dragenter', function(e) { e.preventDefault(); dragCounter++; editorContainer.classList.add('drag-over'); });
     editorContainer.addEventListener('dragover', function(e) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; });
     editorContainer.addEventListener('dragleave', function(e) { e.preventDefault(); dragCounter--; if (dragCounter === 0) editorContainer.classList.remove('drag-over'); });
     editorContainer.addEventListener('drop', function(e) {
         e.preventDefault(); e.stopPropagation(); dragCounter = 0; editorContainer.classList.remove('drag-over');
         var files = e.dataTransfer.files;
+        var skippedSize = [];
         for (var i = 0; i < files.length; i++) {
-            if (SUPPORTED_FILE_TYPES.indexOf(files[i].type) !== -1) {
-                (function(file) {
-                    var reader = new FileReader();
-                    reader.onload = function(ev) {
-                        var dataUrl = ev.target.result;
-                        var commaIdx = dataUrl.indexOf(',');
-                        var meta = dataUrl.substring(0, commaIdx);
-                        var b64 = dataUrl.substring(commaIdx + 1);
-                        var mediaType = meta.split(':')[1].split(';')[0];
-                        addAttachment(b64, mediaType, file.name);
-                    };
-                    reader.readAsDataURL(file);
-                })(files[i]);
+            if (SUPPORTED_FILE_TYPES.indexOf(files[i].type) === -1) {
+                // Unsupported type — insert file path/name into chat for the LLM
+                var path = files[i].path || files[i].name;
+                appendText(path);
+                continue;
             }
+            if (files[i].size > MAX_DROP_FILE_SIZE) {
+                skippedSize.push(files[i].name);
+                continue;
+            }
+            (function(file) {
+                var reader = new FileReader();
+                reader.onload = function(ev) {
+                    var dataUrl = ev.target.result;
+                    var commaIdx = dataUrl.indexOf(',');
+                    var meta = dataUrl.substring(0, commaIdx);
+                    var b64 = dataUrl.substring(commaIdx + 1);
+                    var mediaType = meta.split(':')[1].split(';')[0];
+                    addAttachment(b64, mediaType, file.name);
+                };
+                reader.readAsDataURL(file);
+            })(files[i]);
+        }
+        if (skippedSize.length > 0) {
+            App.showToast('File too large (max 32 MB): ' + skippedSize.join(', '));
         }
     });
 
@@ -863,6 +918,12 @@ App.Input = (function() {
         syncHighlight();
     }
 
+    function appendText(text) {
+        if (textarea.value) textarea.value += ' ';
+        textarea.value += text;
+        syncHighlight();
+    }
+
     function submit() {
         App.Bridge.sendMsg('submit', {
             text: textarea.value,
@@ -879,6 +940,7 @@ App.Input = (function() {
         clear: clear,
         focus: focus,
         setText: setText,
+        appendText: appendText,
         submit: submit,
         addAttachment: addAttachment,
         // Exposed for onclick handlers in rendered HTML

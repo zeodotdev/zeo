@@ -619,6 +619,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
         // Push tracking state
         m_bridge->PushTrackingState( m_isTrackingAgent );
+
+        // Push plan mode state
+        m_bridge->PushPlanMode( m_agentMode == AgentMode::PLAN );
     } );
 }
 
@@ -1099,6 +1102,9 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // target sheet reset) that the controller doesn't currently support.
     // System prompt is now handled server-side.
 
+    // Hide plan approval button when user sends a new message
+    m_bridge->PushRemovePlanApproval();
+
     // If already generating: queue, cancel+send, or stop depending on context
     if( m_isGenerating )
     {
@@ -1155,7 +1161,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     wxString bubbleContent = FileAttach::BuildAttachmentBubbleHtml( m_pendingAttachments )
                              + escapedText;
     wxString msgHtml = wxString::Format(
-        "<div class=\"flex justify-end my-1.5\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
+        "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
         bubbleContent );
 
     // Add streaming content container for incremental updates
@@ -1380,7 +1386,7 @@ void AGENT_FRAME::QueueMessage()
     wxString bubbleContent = FileAttach::BuildAttachmentBubbleHtml( m_queuedAttachments )
                              + escapedText;
     wxString newHtml = wxString::Format(
-        "<div id=\"queued-msg\" class=\"flex justify-end my-1.5\" style=\"opacity:0.5;\">"
+        "<div id=\"queued-msg\" class=\"flex justify-end my-3\" style=\"opacity:0.5;\">"
         "<div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">"
         "%s</div></div>",
         bubbleContent );
@@ -1831,6 +1837,40 @@ void AGENT_FRAME::DoTrackToggle()
     {
         DIFF_MANAGER::GetInstance().SetTrackingBrokenCallback( nullptr );
     }
+}
+
+void AGENT_FRAME::DoPlanToggle()
+{
+    m_agentMode = ( m_agentMode == AgentMode::EXECUTE )
+                  ? AgentMode::PLAN
+                  : AgentMode::EXECUTE;
+
+    if( m_chatController )
+        m_chatController->SetAgentMode( m_agentMode );
+
+    if( m_llmClient )
+        m_llmClient->SetAgentMode( m_agentMode );
+
+    m_bridge->PushPlanMode( m_agentMode == AgentMode::PLAN );
+}
+
+void AGENT_FRAME::DoPlanApprove()
+{
+    // Remove approval button from UI
+    m_bridge->PushRemovePlanApproval();
+
+    // Switch to execute mode
+    m_agentMode = AgentMode::EXECUTE;
+    if( m_chatController )
+        m_chatController->SetAgentMode( AgentMode::EXECUTE );
+    if( m_llmClient )
+        m_llmClient->SetAgentMode( AgentMode::EXECUTE );
+    m_bridge->PushPlanMode( false );
+
+    // Send approval message to kick off execution
+    m_pendingInputText = "Proceed with the plan above.";
+    wxCommandEvent evt;
+    OnSend( evt );
 }
 
 void AGENT_FRAME::DoPendingChangesToggle()
@@ -2297,6 +2337,11 @@ void AGENT_FRAME::RenderChatHistory()
             if( role == "user" )
                 content = StripProjectContext( content );
 
+            // Strip leading newlines to match live streaming behavior
+            size_t start = content.find_first_not_of( "\n\r" );
+            if( start != std::string::npos && start > 0 )
+                content = content.substr( start );
+
             wxString display = content;
 
             if( role == "user" )
@@ -2307,14 +2352,13 @@ void AGENT_FRAME::RenderChatHistory()
                 display.Replace( ">", "&gt;" );
                 display.Replace( "\n", "<br>" );
                 m_fullHtmlContent += wxString::Format(
-                    "<div class=\"flex justify-end my-1.5\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
+                    "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
                     display );
             }
             else if( role == "assistant" )
             {
                 // Left-aligned markdown formatted response
                 m_fullHtmlContent += AgentMarkdown::ToHtml( content );
-                m_fullHtmlContent += "<br>";
             }
         }
         else if( msg["content"].is_array() )
@@ -2360,13 +2404,17 @@ void AGENT_FRAME::RenderChatHistory()
                     if( role == "user" )
                         text = StripProjectContext( text );
 
+                    // Strip leading newlines to match live streaming behavior
+                    size_t start = text.find_first_not_of( "\n\r" );
+                    if( start != std::string::npos && start > 0 )
+                        text = text.substr( start );
+
                     wxString display = text;
 
                     if( role == "assistant" )
                     {
                         // Left-aligned markdown formatted response
                         m_fullHtmlContent += AgentMarkdown::ToHtml( display );
-                        m_fullHtmlContent += "<br>";
                     }
                     else if( role == "user" )
                     {
@@ -2376,7 +2424,7 @@ void AGENT_FRAME::RenderChatHistory()
                         display.Replace( ">", "&gt;" );
                         display.Replace( "\n", "<br>" );
                         m_fullHtmlContent += wxString::Format(
-                            "<div class=\"flex justify-end my-1.5\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
+                            "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
                             display );
                     }
                 }
@@ -3747,6 +3795,12 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
         {
             m_chatHistoryDb.Save( m_chatHistory );
         }
+    }
+
+    // Show plan approval button when plan mode turn completes
+    if( !continuing && m_agentMode == AgentMode::PLAN )
+    {
+        m_bridge->PushPlanApproval();
     }
 
     // Preserve thinking content for index tracking (so next message gets index+1)

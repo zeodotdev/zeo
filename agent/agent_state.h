@@ -28,6 +28,17 @@ enum class AgentConversationState
 };
 
 /**
+ * Agent operational mode.
+ * EXECUTE: Normal mode with all tools available.
+ * PLAN: Read-only tools only; agent generates a plan for user approval.
+ */
+enum class AgentMode
+{
+    EXECUTE,
+    PLAN
+};
+
+/**
  * Convert state enum to string for debugging/logging
  */
 inline const char* AgentStateToString( AgentConversationState aState )

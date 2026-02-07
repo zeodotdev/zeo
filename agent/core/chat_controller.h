@@ -113,6 +113,13 @@ public:
     void SetModel( const std::string& aModel );
 
     /**
+     * Set the agent mode (EXECUTE or PLAN).
+     * In PLAN mode, only read-only tools are sent to the LLM.
+     */
+    void SetAgentMode( AgentMode aMode ) { m_agentMode = aMode; }
+    AgentMode GetAgentMode() const { return m_agentMode; }
+
+    /**
      * Repair history to fix orphaned tool_use/tool_result blocks.
      *
      * The Anthropic API requires:
@@ -276,7 +283,8 @@ private:
     // -------------------------------------------------------------------------
     // Tool definitions
     // -------------------------------------------------------------------------
-    std::vector<LLM_TOOL> m_tools;  ///< Available tool definitions
+    std::vector<LLM_TOOL> m_tools;      ///< Available tool definitions
+    AgentMode             m_agentMode;  ///< Current agent mode (EXECUTE or PLAN)
 
     // -------------------------------------------------------------------------
     // Title generation state
@@ -286,6 +294,12 @@ private:
     // -------------------------------------------------------------------------
     // Internal methods
     // -------------------------------------------------------------------------
+
+    /**
+     * Get tools filtered by current agent mode.
+     * In PLAN mode, returns only read-only tools.
+     */
+    std::vector<LLM_TOOL> GetFilteredTools() const;
 
     /**
      * Execute the next pending tool in the queue.

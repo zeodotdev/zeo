@@ -1103,8 +1103,6 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     if( m_isGenerating )
     {
         bool hasContent = !m_pendingInputText.IsEmpty() || !m_pendingAttachments.empty();
-        bool hasApproval = m_pendingOpenSch || m_pendingOpenPcb
-                           || m_pendingCloseSch || m_pendingClosePcb;
 
         if( !hasContent )
         {
@@ -1114,19 +1112,22 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
             return;
         }
 
-        if( hasApproval )
-        {
-            // Tool approval pending: cancel everything and send immediately.
-            ClearQueuedMessage();
-            DoCancelOperation( false );
-            // m_pendingInputText still has the user's text — fall through to normal send.
-        }
-        else
-        {
-            // Streaming / tool execution (no approval): queue the message.
-            QueueMessage();
-            return;
-        }
+        // Streaming / tool execution: queue the message.
+        QueueMessage();
+        return;
+    }
+
+    // Auto-reject pending open/close editor request if user sends a new message.
+    // This runs outside m_isGenerating because OnChatToolStart calls
+    // StopGeneratingAnimation() which sets m_isGenerating = false.
+    bool hasApproval = m_pendingOpenSch || m_pendingOpenPcb
+                       || m_pendingCloseSch || m_pendingClosePcb;
+
+    if( hasApproval )
+    {
+        ClearQueuedMessage();
+        DoCancelOperation( false );
+        // m_pendingInputText still has the user's text — fall through to normal send.
     }
 
     // Check authentication first
@@ -1422,6 +1423,7 @@ void AGENT_FRAME::SendQueuedMessage()
     {
         wxString permanentHtml = m_queuedMsgHtml;
         permanentHtml.Replace( " id=\"queued-msg\"", "" );
+        permanentHtml.Replace( " style=\"opacity:0.5;\"", "" );
         m_fullHtmlContent.Replace( m_queuedMsgHtml, permanentHtml );
         m_bridge->PushRemoveQueuedMessage();
         m_queuedMsgHtml.Clear();

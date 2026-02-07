@@ -323,7 +323,7 @@ void WEBVIEW_BRIDGE::PushRemoveQueuedMessage()
 {
     LogBridge( "C++->JS", "removeQueuedMessage" );
     RunScript( "var el=document.getElementById('queued-msg');"
-               "if(el) el.removeAttribute('id');" );
+               "if(el){el.removeAttribute('id');el.style.opacity='';}" );
 }
 
 void WEBVIEW_BRIDGE::PushInputClear()

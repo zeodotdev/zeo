@@ -3,8 +3,6 @@
 
 #include <kiway_player.h>
 #include <widgets/webview_panel.h>
-#include <wx/choice.h>
-#include <wx/button.h>
 #include <wx/timer.h>
 #include <string>
 #include <vector>
@@ -16,27 +14,19 @@
 #include "agent_state.h"
 #include "agent_events.h"
 #include "agent_chat_history.h"
-#include "ui/file_attach.h"
+#include "view/file_attach.h"
 #include <agent_workspace.h>
 
 // Forward Declarations
 class AGENT_AUTH;
-class PENDING_CHANGES_PANEL;
-class HISTORY_PANEL;
 class CHAT_CONTROLLER;
-class wxStaticText;
+class WEBVIEW_BRIDGE;
 struct CONFLICT_INFO;
 
 enum
 {
     ID_CHAT_COPY = wxID_HIGHEST + 1001,
     ID_COPY_IMAGE,
-    ID_CHAT_HISTORY_TOOL,
-    ID_NEW_CHAT,
-    ID_LOGIN,
-    ID_LOGOUT,
-    ID_CHAT_HISTORY_SHOW_ALL = 1999,
-    ID_CHAT_HISTORY_MENU_BASE = 2000
 };
 
 class AGENT_FRAME : public KIWAY_PLAYER
@@ -52,34 +42,56 @@ public:
 
     wxWindow* GetToolCanvas() const override { return (wxWindow*) this; }
 
-    // Event handlers
+    // Core event handlers
     void OnSend( wxCommandEvent& aEvent );
     void OnStop( wxCommandEvent& aEvent );
-    void OnSelectionPillClick( wxCommandEvent& aEvent );
-    void OnWebViewMessage( const wxString& aMessage );
-    void OnInputWebViewMessage( const wxString& aMessage );
-    void OnModelSelection( wxCommandEvent& aEvent );
     void OnExit( wxCommandEvent& event );
     void OnChatRightClick( wxMouseEvent& aEvent );
     void OnChatScroll( wxScrollWinEvent& aEvent );
     void OnPopupClick( wxCommandEvent& aEvent );
-    void OnHistoryTool( wxCommandEvent& aEvent );
-    void OnHistoryMenuSelect( wxCommandEvent& aEvent );
-    void OnHistoryShowAll( wxCommandEvent& aEvent );
-    void OnNewChat( wxCommandEvent& aEvent );
+    void OnSize( wxSizeEvent& aEvent ) override;
 
-    // History panel access (public for HISTORY_PANEL callbacks)
+    // History access (public for bridge callbacks)
     AGENT_CHAT_HISTORY& GetChatHistoryDb() { return m_chatHistoryDb; }
     void LoadConversation( const std::string& aConversationId );
-    void OnSignIn( wxCommandEvent& aEvent );
-    void OnSize( wxSizeEvent& aEvent ) override;
-    void OnPendingChangesClick( wxCommandEvent& aEvent );
-    void OnTrackAgentClick( wxCommandEvent& aEvent );
 
-    // Agent change approval (public for panel callbacks)
+    // ── Bridge callback methods (called by WEBVIEW_BRIDGE) ───────────────
+
+    // Chat input
+    void OnBridgeSubmit( const nlohmann::json& aMsg );
+    void OnBridgeAttachClick();
+
+    // Chat display
+    void OnBridgeLinkClick( const nlohmann::json& aMsg );
+    void OnBridgeCopy( const nlohmann::json& aMsg );
+    void OnBridgeCopyImage( const nlohmann::json& aMsg );
+    void OnBridgePreviewImage( const nlohmann::json& aMsg );
+    void OnBridgePreviewFile( const nlohmann::json& aMsg );
+    void OnBridgeThinkingToggled( const nlohmann::json& aMsg );
+    void OnBridgeToolResultToggled( const nlohmann::json& aMsg );
+    void OnBridgeScrollActivity( const nlohmann::json& aMsg );
+
+    // Top bar
+    void OnBridgeHistoryOpen();
+    void OnBridgeHistorySearch( const wxString& aQuery );
+
+    // ── Bridge-triggered actions (called by WEBVIEW_BRIDGE) ──────────────
+
+    void DoNewChat();
+    void DoModelChange( const std::string& aModel );
+    void DoTrackToggle();
+    void DoSendClick();
+    void DoStopClick();
+    void DoSelectionPillClick();
+    void DoPendingChangesToggle();
+    void DoPendingChangesAcceptAll();
+    void DoPendingChangesRejectAll();
+    void DoPendingChangesView( const wxString& aPath, bool aIsPcb );
+    void DoSignIn();
+
+    // Agent change approval
     void OnSchematicChangeHandled( bool aAccepted );
     void OnPcbChangeHandled( bool aAccepted );
-    void UpdatePendingChangesButtonVisibility();  // Sync button with panel visibility
 
     // Async LLM streaming event handlers
     void OnLLMStreamChunk( wxThreadEvent& aEvent );
@@ -107,39 +119,35 @@ public:
     DECLARE_EVENT_TABLE()
 
 private:
-    WEBVIEW_PANEL* m_chatWindow;
-    WEBVIEW_PANEL* m_inputWebView;
+    // ── UI ────────────────────────────────────────────────────────────────
+
+    WEBVIEW_PANEL*                  m_webView;   // Single unified webview (entire UI)
+    std::unique_ptr<WEBVIEW_BRIDGE> m_bridge;    // JS↔C++ message router
+
     wxString       m_pendingInputText;   // Text from JS submit message, read by OnSend
     std::vector<FILE_ATTACHMENT> m_pendingAttachments;  // File attachments from JS submit
-    wxStaticText*  m_chatNameLabel;
-    wxButton*      m_actionButton;
-    wxButton*      m_selectionPill;
-    wxButton*      m_toolButton;
-    wxButton*      m_newChatButton;
-    wxButton*      m_historyButton;
-    wxChoice*      m_modelChoice;
-    wxPanel*       m_inputPanel;
-    wxBoxSizer*    m_inputContainerSizer;
-    wxBoxSizer*    m_topRowSizer;
-
-    // Pending changes UI
-    wxButton*               m_pendingChangesBtn;    // Shows when changes pending
-    PENDING_CHANGES_PANEL*  m_pendingChangesPanel;  // Panel for managing changes
-
-    // Track Agent UI
-    wxButton*               m_trackAgentBtn;        // Toggle tracking mode button
-    bool                    m_isTrackingAgent;      // Whether tracking mode is active
-
-    // History panel UI
-    HISTORY_PANEL*          m_historyPanel;         // Full history list panel
-
-    // Sign-in overlay (shown when not authenticated)
-    wxPanel*       m_signInOverlay;
-    wxButton*      m_signInButton;
-
-    AGENT_AUTH*   m_auth;
 
     wxImage     m_pendingCopyImage;  // Image waiting for context menu "Copy Image" action
+
+    // Selection pill state (label stored here since the button is now in JS)
+    wxString    m_currentSelectionLabel;
+
+    // Track Agent state
+    bool        m_isTrackingAgent;
+
+    // Pending changes state (business logic moved from PENDING_CHANGES_PANEL)
+    std::set<wxString> m_pendingSchSheets;  // Sheets with schematic changes
+    bool               m_hasPcbChanges;
+    wxString           m_pcbFilename;
+    void QueryPendingChanges();  // Query editors and push results to JS
+
+    // ── Auth ──────────────────────────────────────────────────────────────
+
+    AGENT_AUTH*   m_auth;
+    void UpdateAuthUI();
+    bool CheckAuthentication();
+
+    // ── Chat State ────────────────────────────────────────────────────────
 
     std::string m_toolResponse;
     std::string m_schJson;
@@ -147,154 +155,117 @@ private:
     std::string m_schSummary;
     std::string m_pcbSummary;
 
-    // Chat State
     nlohmann::json m_chatHistory;     // Full history for display/persistence
     nlohmann::json m_apiContext;      // Context sent to API (may be compacted)
     std::string    m_currentResponse; // Streaming accumulator
     bool           m_stopRequested;   // Flag for sync wait loops
 
-    // Chat History Persistence
     AGENT_CHAT_HISTORY m_chatHistoryDb;
 
     // Async Tool Execution State
-    AgentConversationContext m_conversationCtx;  // State machine context
-    wxTimer                  m_toolTimeoutTimer; // Timer for tool execution timeout
-    static const int         TOOL_TIMEOUT_MS = 30000; // 30 second timeout
+    AgentConversationContext m_conversationCtx;
+    wxTimer                  m_toolTimeoutTimer;
+    static const int         TOOL_TIMEOUT_MS = 30000;
 
     // Model Context (context prompt is now injected server-side via context_type)
     std::string    m_currentModel;    // Currently selected model name
 
-    // HTML Rendering
-    wxString m_fullHtmlContent;        // Complete HTML buffer
-    wxString m_htmlBeforeAgentResponse; // HTML snapshot before streaming starts (for markdown re-render)
-    wxString m_toolCallHtml;           // Accumulated tool call/result HTML (preserved during re-render)
-    wxString m_thinkingHtml;           // Thinking block HTML (preserved during re-render)
+    // ── HTML Rendering ────────────────────────────────────────────────────
+
+    // m_fullHtmlContent tracks the chat area inner HTML (messages, tool results, streaming divs).
+    // It does NOT include the page template (which is loaded once and never replaced).
+    wxString m_fullHtmlContent;
+    wxString m_htmlBeforeAgentResponse; // Snapshot before streaming starts (for markdown re-render)
+    wxString m_toolCallHtml;           // Accumulated tool call/result HTML
+    wxString m_thinkingHtml;           // Thinking block HTML
     wxString m_thinkingContent;        // Raw accumulated thinking text
-    bool     m_thinkingExpanded;       // Whether thinking is expanded (click to toggle)
-    bool     m_isThinking;             // Whether currently in thinking phase (for loading animation)
-    bool     m_isStreamingMarkdown;    // Whether currently streaming markdown text (to hide dots)
-    int      m_currentThinkingIndex;   // Index for current streaming thinking (for toggle:thinking:N links)
-    wxString m_lastToolDesc;           // Temp storage for tool description during history replay
-    bool     m_userScrolledUp;         // Track if user has scrolled up during generation
-    long     m_lastScrollActivityMs;   // Timestamp of last scroll activity (for debouncing SetPage)
-    bool     m_htmlUpdatePending;      // Track if HTML update is already scheduled (prevent duplicate CallAfter)
-    bool     m_htmlUpdateNeeded;       // Track if HTML update is needed on next timer tick
-    wxTimer  m_htmlUpdateTimer;        // Timer for throttling HTML updates during streaming
-    void     RebuildThinkingHtml();    // Rebuild thinking HTML from m_thinkingContent
+    bool     m_thinkingExpanded;
+    bool     m_isThinking;
+    bool     m_isStreamingMarkdown;
+    int      m_currentThinkingIndex;
+    wxString m_lastToolDesc;
+    bool     m_userScrolledUp;
+    long     m_lastScrollActivityMs;
+    bool     m_htmlUpdatePending;
+    bool     m_htmlUpdateNeeded;
+    wxTimer  m_htmlUpdateTimer;
+    void     RebuildThinkingHtml();
 
     // Historical thinking toggle state
-    std::vector<wxString>  m_historicalThinking;          // Thinking content from loaded history
-    std::set<int>          m_historicalThinkingExpanded;  // Which historical thinking blocks are expanded
+    std::vector<wxString>  m_historicalThinking;
+    std::set<int>          m_historicalThinkingExpanded;
 
     // Historical tool result toggle state
-    std::set<int>          m_historicalToolResultExpanded; // Which historical tool results are expanded
-    int                    m_toolResultCounter;            // Running counter for tool result indices
+    std::set<int>          m_historicalToolResultExpanded;
+    int                    m_toolResultCounter;
 
     // Active tool result - lives in permanent DOM, not streaming div
-    wxString               m_activeRunningHtml;            // Running box HTML for replacement on completion
-    int                    m_activeToolResultIdx;           // Index of tool-result-N element
+    wxString               m_activeRunningHtml;
+    int                    m_activeToolResultIdx;
 
-    void                   RenderChatHistory();           // Re-render chat history with current toggle states
+    void                   RenderChatHistory();
 
     void     AppendHtml( const wxString& aHtml );
     void     SetHtml( const wxString& aHtml );
-    void     ResizeInputWebView( int aContentHeight );
-    void     UpdateAgentResponse();    // Re-render current response with markdown
-    wxString BuildStreamingContent();  // Build streaming content HTML from current state
-    void     FlushStreamingContentUpdate( bool aForce = false );  // Immediately flush streaming content to DOM
-    void     AutoScrollToBottom();     // Scroll to bottom only if user hasn't scrolled up
+    void     UpdateAgentResponse();
+    wxString BuildStreamingContent();
+    void     FlushStreamingContentUpdate( bool aForce = false );
+    void     AutoScrollToBottom();
 
     // Generating animation
-    wxTimer  m_generatingTimer;        // Timer for animating dots
-    int      m_generatingDots;         // Current dot count (0-3)
-    bool     m_isGenerating;           // Whether we're currently streaming
-    bool     m_isCompacting;           // Whether context is being compacted
-    wxString m_generatingToolName;     // Tool name being generated (if any)
+    wxTimer  m_generatingTimer;
+    int      m_generatingDots;
+    bool     m_isGenerating;
+    bool     m_isCompacting;
+    wxString m_generatingToolName;
     void     OnGeneratingTimer( wxTimerEvent& aEvent );
     void     OnHtmlUpdateTimer( wxTimerEvent& aEvent );
     void     StartGeneratingAnimation();
     void     StopGeneratingAnimation();
 
-    // Chat title generation
-    // Auth helpers
-    void UpdateAuthUI();
-    bool CheckAuthentication(); // Returns true if authenticated
+    // ── Tools & LLM ──────────────────────────────────────────────────────
 
-    // Native Tool Calling
-    std::vector<LLM_TOOL>              m_tools;              // Available tools
-    std::unique_ptr<AGENT_LLM_CLIENT>  m_llmClient;          // LLM client instance
-    nlohmann::json                     m_pendingToolCalls;   // Tool calls awaiting execution
+    std::vector<LLM_TOOL>              m_tools;
+    std::unique_ptr<AGENT_LLM_CLIENT>  m_llmClient;
+    nlohmann::json                     m_pendingToolCalls;
 
-    // Chat Controller (manages chat state and logic)
     std::unique_ptr<CHAT_CONTROLLER> m_chatController;
 
-    void InitializeTools();                                                    // Setup tool definitions
+    void InitializeTools();
 
     // Multi-project access helpers
-    std::vector<wxString> GetOpenEditorFiles();  // Files currently open in sch/pcb editors
-    std::vector<wxString> GetAllowedPaths();     // Union of docs root + project dir + open editor dirs
+    std::vector<wxString> GetOpenEditorFiles();
+    std::vector<wxString> GetAllowedPaths();
 
     // Async LLM streaming helpers
-    void StartAsyncLLMRequest();  // Start an async LLM request
-    void RetryLastRequest();      // Retry after context recovery
+    void StartAsyncLLMRequest();
+    void RetryLastRequest();
 
-    // Agent change approval - panel queries editors directly via Refresh()
-    void RefreshPendingChangesPanel();  // Refresh the pending changes panel
+    // ── Concurrent Editing ────────────────────────────────────────────────
 
-    // Concurrent editing support
-    AGENT_WORKSPACE m_agentWorkspace;   // Manages agent's editing context
-
-    /**
-     * Set the target sheet for agent operations.
-     * Allows agent to work on a specific sheet while user views another.
-     */
+    AGENT_WORKSPACE m_agentWorkspace;
     void SetAgentTargetSheet( const KIID& aSheetId, const wxString& aSheetName );
-
-    /**
-     * Get the agent workspace for direct access.
-     */
     AGENT_WORKSPACE& GetAgentWorkspace() { return m_agentWorkspace; }
-
-    /**
-     * Begin a new agent transaction for concurrent editing.
-     */
     void BeginAgentTransaction();
-
-    /**
-     * End the current agent transaction.
-     * @param aCommit If true, prepare changes for approval; if false, discard
-     */
     void EndAgentTransaction( bool aCommit );
-
-    /**
-     * Handle conflict detection notification from editors.
-     */
     void OnConflictDetected( const KIID& aItemId, const CONFLICT_INFO& aInfo );
-
-    /**
-     * Handle conflict resolution from UI.
-     */
     void OnConflictResolved( const KIID& aItemId, CONFLICT_RESOLUTION aResolution );
-
-    /**
-     * Update the conflict display in the pending changes panel.
-     */
     void UpdateConflictDisplay();
 
     // Pending editor open request
-    bool        m_pendingOpenSch;       // True if schematic editor open is pending approval
-    bool        m_pendingOpenPcb;       // True if PCB editor open is pending approval
-    std::string m_pendingOpenToolId;    // Tool use ID for the pending open request
-    wxString    m_pendingOpenFilePath;  // Optional file path to open in editor
+    bool        m_pendingOpenSch;
+    bool        m_pendingOpenPcb;
+    std::string m_pendingOpenToolId;
+    wxString    m_pendingOpenFilePath;
     void ShowOpenEditorApproval( const wxString& aEditorType );
     void OnApproveOpenEditor();
     void OnRejectOpenEditor();
 
     // Pending editor close request
-    bool        m_pendingCloseSch;       // True if schematic editor close is pending approval
-    bool        m_pendingClosePcb;       // True if PCB editor close is pending approval
-    std::string m_pendingCloseToolId;    // Tool use ID for the pending close request
-    bool        m_pendingCloseSaveFirst; // Whether to save before closing
+    bool        m_pendingCloseSch;
+    bool        m_pendingClosePcb;
+    std::string m_pendingCloseToolId;
+    bool        m_pendingCloseSaveFirst;
     void ShowCloseEditorApproval( const wxString& aEditorType );
     void OnApproveCloseEditor();
 

@@ -1,11 +1,9 @@
 #include "agent_frame.h"
 #include "agent_chat_history.h"
 #include "auth/agent_auth.h"
-#include "ui/pending_changes_popup.h"
-#include "ui/history_panel.h"
-#include "rendering/agent_markdown.h"
-#include "rendering/agent_html_template.h"
-#include "rendering/input_html_template.h"
+#include "bridge/webview_bridge.h"
+#include "view/agent_markdown.h"
+#include "view/unified_html_template.h"
 #include "tools/agent_tools.h"
 #include "core/chat_controller.h"
 #include "core/chat_events.h"
@@ -165,18 +163,6 @@ static wxString GetToolResultPreview( const std::string& aRawResult, int aMaxLen
 }
 
 
-// Helper: Escape a string for embedding in a JS single-quoted string literal.
-static wxString EscapeForJs( const wxString& s )
-{
-    wxString escaped = s;
-    escaped.Replace( "\\", "\\\\" );
-    escaped.Replace( "'", "\\'" );
-    escaped.Replace( "\n", "\\n" );
-    escaped.Replace( "\r", "\\r" );
-    return escaped;
-}
-
-
 // Helper: Build the full tool result component HTML in "Running..." state.
 // Includes the collapsible body (initially empty/hidden) so the JS callback
 // can populate it on completion without replacing the element.
@@ -267,121 +253,41 @@ END_EVENT_TABLE()
 AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         KIWAY_PLAYER( aKiway, aParent, FRAME_AGENT, "Agent", wxDefaultPosition, wxDefaultSize, wxDEFAULT_FRAME_STYLE,
                       "agent_frame_name", schIUScale ),
-        m_signInOverlay( nullptr ),
-        m_signInButton( nullptr ),
-        m_pendingChangesBtn( nullptr ),
-        m_pendingChangesPanel( nullptr ),
-        m_trackAgentBtn( nullptr ),
         m_isTrackingAgent( false ),
-        m_historyPanel( nullptr ),
+        m_hasPcbChanges( false ),
         m_pendingOpenSch( false ),
         m_pendingOpenPcb( false ),
         m_pendingCloseSch( false ),
         m_pendingClosePcb( false ),
         m_pendingCloseSaveFirst( true )
 {
-    // Set frame background color to match the theme
     SetBackgroundColour( wxColour( "#1E1E1E" ) );
 
-    // --- UI Layout ---
-
-    // Top Bar: Chat name (left) + History button (right)
-    // Middle: Chat History (Expandable)
-    // Bottom: Input Container (Unified)
+    // --- Single Unified WebView ---
+    // The entire UI (top bar, chat area, input, controls, pending changes, auth overlay)
+    // is rendered in a single HTML/CSS/JS webview.
 
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
-    // Top Bar Panel (solid background to prevent transparency)
-    wxPanel* topBarPanel = new wxPanel( this, wxID_ANY );
-    topBarPanel->SetBackgroundColour( wxColour( "#1E1E1E" ) );
+    m_webView = new WEBVIEW_PANEL( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0 );
+    m_webView->BindLoadedEvent();
 
-    wxBoxSizer* topBarSizer = new wxBoxSizer( wxHORIZONTAL );
+    // Create bridge BEFORE registering the message handler
+    m_bridge = std::make_unique<WEBVIEW_BRIDGE>( this, m_webView );
 
-    // Chat name label on the left
-    m_chatNameLabel = new wxStaticText( topBarPanel, wxID_ANY, "New Chat" );
-    m_chatNameLabel->SetForegroundColour( wxColour( "#FFFFFF" ) );
-    topBarSizer->Add( m_chatNameLabel, 0, wxALIGN_CENTER_VERTICAL );
+    // All JS→C++ messages route through the bridge
+    m_webView->AddMessageHandler( wxS( "agent" ),
+        [this]( const wxString& msg ) { m_bridge->OnMessage( msg ); } );
 
-    topBarSizer->AddStretchSpacer();
-
-    // New Chat button
-    m_newChatButton = new wxButton( topBarPanel, wxID_ANY, "New Chat", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
-    topBarSizer->Add( m_newChatButton, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
-
-    // History button on the right
-    m_historyButton = new wxButton( topBarPanel, wxID_ANY, "History", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
-    topBarSizer->Add( m_historyButton, 0, wxALIGN_CENTER_VERTICAL );
-
-    // Set sizer on the panel with internal padding
-    wxBoxSizer* topBarOuterSizer = new wxBoxSizer( wxVERTICAL );
-    topBarOuterSizer->Add( topBarSizer, 1, wxEXPAND | wxALL, 10 );
-    topBarPanel->SetSizer( topBarOuterSizer );
-
-    // Add top bar panel to main sizer
-    mainSizer->Add( topBarPanel, 0, wxEXPAND );
-
-    // 1. Chat History Area (using wxWebView for full HTML/CSS support)
-    m_chatWindow = new WEBVIEW_PANEL( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0 );
-    m_chatWindow->AddMessageHandler( wxS( "agent" ),
-        [this]( const wxString& msg ) { OnWebViewMessage( msg ); } );
-
-    // Bind the loaded event so message handlers get registered when page loads
-    m_chatWindow->BindLoadedEvent();
-
-    // Set initial page content with HTML5 template and CSS
-    m_fullHtmlContent = GetAgentHtmlTemplate() + wxS( "</div></body></html>" );
-    m_chatWindow->SetPage( m_fullHtmlContent );
-    mainSizer->Add( m_chatWindow, 1, wxEXPAND | wxALL, 0 ); // Remove ALL padding for clean edge
-
-    // Pending Changes Panel (between chat and input, hidden by default)
-    // Tab-like appearance with margins from the sides
-    m_pendingChangesPanel = new PENDING_CHANGES_PANEL( this, this );
-    mainSizer->Add( m_pendingChangesPanel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 12 );
-
-    // 2. Input Container (Unified Look)
-    // Create m_inputPanel for dark styling
-    m_inputPanel = new wxPanel( this, wxID_ANY );
-    m_inputPanel->SetBackgroundColour( wxColour( "#1C1C1C" ) );
-
-    // Use a vertical BoxSizer for the panel
-    wxBoxSizer* outerInputSizer = new wxBoxSizer( wxVERTICAL );
-
-    // Use an inner sizer for content padding
-    m_inputContainerSizer = new wxBoxSizer( wxVERTICAL );
-
-    // Top row: Selection Pill (left) + Pending Changes Button (right)
-    m_topRowSizer = new wxBoxSizer( wxHORIZONTAL );
-
-    // Status Pill (Selection Info / Add Context)
-    m_selectionPill = new wxButton( m_inputPanel, wxID_ANY, "No Selection", wxDefaultPosition, wxDefaultSize );
-    m_selectionPill->SetCursor( wxCursor( wxCURSOR_HAND ) );
-    m_selectionPill->Hide();
-    m_topRowSizer->Add( m_selectionPill, 0, wxALIGN_CENTER_VERTICAL );
-
-    m_topRowSizer->AddStretchSpacer();
-
-    // Pending Changes Button (hidden by default)
-    m_pendingChangesBtn = new wxButton( m_inputPanel, wxID_ANY, "1 change" );
-    m_pendingChangesBtn->SetCursor( wxCursor( wxCURSOR_HAND ) );
-    m_pendingChangesBtn->Hide();
-    m_topRowSizer->Add( m_pendingChangesBtn, 0, wxALIGN_CENTER_VERTICAL );
-
-    m_inputContainerSizer->Add( m_topRowSizer, 0, wxEXPAND | wxBOTTOM, 5 );
-
-    // 2a. Input WebView (markdown syntax highlighting)
-    m_inputWebView = new WEBVIEW_PANEL( m_inputPanel, wxID_ANY,
-                                         wxDefaultPosition, wxSize( -1, 60 ), 0 );
-    m_inputWebView->AddMessageHandler( wxS( "input" ),
-        [this]( const wxString& msg ) { OnInputWebViewMessage( msg ); } );
-    m_inputWebView->BindLoadedEvent();
-    m_inputWebView->SetPage( GetInputHtmlTemplate() );
+    // Load the unified HTML template (contains top bar, chat, input, controls, overlays)
+    m_fullHtmlContent = "";
+    m_webView->SetPage( GetUnifiedHtmlTemplate() );
+    mainSizer->Add( m_webView, 1, wxEXPAND );
 
 #ifdef __APPLE__
     // WKWebView handles Cmd+A through the Cocoa responder chain, bypassing wxWidgets.
-    // Install an NSEvent monitor to intercept Cmd+A when the input webview has focus.
-    // NOTE: The callback captures `this`; RemoveSelectAllMonitor() in the destructor
-    // must run before the frame is torn down to avoid a dangling pointer.
-    void* nativeHandle = (void*) m_inputWebView->GetWebView()->GetHandle();
+    // Install an NSEvent monitor to intercept Cmd+A when the webview has focus.
+    void* nativeHandle = (void*) m_webView->GetWebView()->GetHandle();
 
     if( nativeHandle )
     {
@@ -389,47 +295,12 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                 nativeHandle,
                 [this]()
                 {
-                    m_inputWebView->RunScriptAsync(
-                            wxS( "textarea.focus(); textarea.select();" ) );
+                    m_webView->RunScriptAsync(
+                            wxS( "var ta = document.getElementById('input-textarea');"
+                                 "if(ta) { ta.focus(); ta.select(); }" ) );
                 } );
     }
 #endif
-
-    m_inputContainerSizer->Add( m_inputWebView, 1, wxEXPAND | wxBOTTOM, 10 );
-
-    // 2b. Control Row (Bottom)
-    wxBoxSizer* controlsSizer = new wxBoxSizer( wxHORIZONTAL );
-
-    // Model Selection (Opus only - via zener.so proxy)
-    wxArrayString modelChoices;
-    modelChoices.Add( "Claude 4.6 Opus" );
-
-    m_modelChoice = new wxChoice( m_inputPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, modelChoices );
-    m_modelChoice->SetMinSize( wxSize( m_modelChoice->GetBestSize().x + 10, -1 ) );
-    m_modelChoice->SetSelection( 0 ); // Default to Claude 4.6 Opus
-    controlsSizer->Add( m_modelChoice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
-
-    // Track Agent Button
-    m_trackAgentBtn = new wxButton( m_inputPanel, wxID_ANY, "Track",
-                                    wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
-    m_trackAgentBtn->SetToolTip( "Follow agent changes automatically" );
-    controlsSizer->Add( m_trackAgentBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
-
-    // Spacer
-    controlsSizer->AddStretchSpacer();
-
-    // Send Button
-    m_actionButton = new wxButton( m_inputPanel, wxID_ANY, "Send" );
-    controlsSizer->Add( m_actionButton, 0, wxALIGN_CENTER_VERTICAL );
-
-    m_inputContainerSizer->Add( controlsSizer, 0, wxEXPAND );
-
-
-
-    // Add inner sizer to outer sizer with padding matching top bar (10px on all sides)
-    outerInputSizer->Add( m_inputContainerSizer, 1, wxEXPAND | wxALL, 10 );
-
-    m_inputPanel->SetSizer( outerInputSizer );
 
     // ACCELERATOR TABLE for Cmd+C
     wxAcceleratorEntry entries[1];
@@ -437,43 +308,11 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     wxAcceleratorTable accel( 1, entries );
     SetAcceleratorTable( accel );
 
-    // Add Input Container to Main Sizer
-    mainSizer->Add( m_inputPanel, 0, wxEXPAND );
-
     SetSizer( mainSizer );
     Layout();
-    SetSize( 500, 600 ); // Slightly taller for chat
+    SetSize( 500, 600 );
 
-    // History Panel (full overlay, not in sizer - positioned absolutely)
-    m_historyPanel = new HISTORY_PANEL( this, this );
-    m_historyPanel->Hide();
-
-    // Bind Events
-    m_actionButton->Bind( wxEVT_BUTTON, [this]( wxCommandEvent& aEvent )
-    {
-        if( m_actionButton->GetLabel() == "Stop" )
-        {
-            OnStop( aEvent );
-        }
-        else
-        {
-            // Route through JS to get the current input text + attachments, then submit back to C++
-            if( m_inputWebView )
-                m_inputWebView->RunScriptAsync( wxS(
-                    "sendMsg('submit', { text: getText(), attachments: attachments.map(function(a) {"
-                    " return { base64: a.base64, media_type: a.media_type, filename: a.filename };"
-                    " }) });" ) );
-        }
-    } );
-    m_newChatButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnNewChat, this );
-    m_historyButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnHistoryTool, this );
-    m_selectionPill->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSelectionPillClick, this );
-    m_pendingChangesBtn->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnPendingChangesClick, this );
-    m_trackAgentBtn->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnTrackAgentClick, this );
-
-    // Note: Link clicks and right-click are now handled via JavaScript message passing
-    // through OnWebViewMessage() - see AddMessageHandler in constructor
-    // Input events (Enter, @{tag} deletion, highlighting) are handled in input_template.html JS
+    // Bind menu & accelerator events
     Bind( wxEVT_MENU, &AGENT_FRAME::OnPopupClick, this, ID_CHAT_COPY );
 
     // Bind Async LLM Streaming Events
@@ -503,10 +342,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_activeRunningHtml.Clear();
     m_activeToolResultIdx = -1;
 
-    // Bind Model Change Event
-    m_modelChoice->Bind( wxEVT_CHOICE, &AGENT_FRAME::OnModelSelection, this );
-
-    // Bind Size Event (to reposition overlay)
+    // Bind Size Event
     Bind( wxEVT_SIZE, &AGENT_FRAME::OnSize, this );
 
     // Initialize History
@@ -525,18 +361,18 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Initialize authentication
     m_auth = new AGENT_AUTH();
-    
+
     // Load Supabase configuration from JSON file
     std::string supabaseUrl, supabaseKey;
-    
+
     // Try loading from supabase_config.json in source directory
     wxFileName configPath( __FILE__ );
     configPath.SetFullName( "supabase_config.json" );
-    
+
     if( wxFileExists( configPath.GetFullPath() ) )
     {
         std::ifstream configFile( configPath.GetFullPath().ToStdString() );
-        
+
         if( configFile.is_open() )
         {
             try
@@ -544,7 +380,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                 json config = json::parse( configFile );
                 supabaseUrl = config.value( "project_url", "" );
                 supabaseKey = config.value( "publishable_key", "" );
-                
+
                 wxLogTrace( "Agent", "Loaded Supabase config from %s", configPath.GetFullPath() );
             }
             catch( const std::exception& e )
@@ -554,7 +390,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             configFile.close();
         }
     }
-    
+
     if( !supabaseUrl.empty() && !supabaseKey.empty() )
     {
         m_auth->Configure( supabaseUrl, supabaseKey );
@@ -737,7 +573,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         } );
 
     // Set model on controller
-    m_chatController->SetModel( "Claude 4.6 Opus" );
+    m_currentModel = "Claude 4.6 Opus";
+    m_chatController->SetModel( m_currentModel );
 
     // Bind Controller Events
     Bind( EVT_CHAT_TEXT_DELTA, &AGENT_FRAME::OnChatTextDelta, this );
@@ -762,30 +599,22 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     menuBar->Append( fileMenu, "&File" );
     SetMenuBar( menuBar );
 
-    // Create sign-in overlay (covers entire frame when not authenticated)
-    m_signInOverlay = new wxPanel( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL );
-    m_signInOverlay->SetBackgroundColour( wxColour( 30, 30, 30, 230 ) ); // Dark semi-transparent
+    // Push initial UI state to webview after it loads
+    // (Auth state, model list, chat title will be pushed once the page finishes loading)
+    CallAfter( [this]()
+    {
+        UpdateAuthUI();
 
-    wxBoxSizer* overlaySizer = new wxBoxSizer( wxVERTICAL );
-    overlaySizer->AddStretchSpacer();
+        // Push model list
+        std::vector<std::string> models = { "Claude 4.6 Opus" };
+        m_bridge->PushModelList( models, m_currentModel );
 
-    wxStaticText* overlayLabel = new wxStaticText( m_signInOverlay, wxID_ANY, "Sign in to use the agent" );
-    overlayLabel->SetForegroundColour( wxColour( 255, 255, 255 ) );
-    wxFont labelFont = overlayLabel->GetFont();
-    labelFont.SetPointSize( 16 );
-    overlayLabel->SetFont( labelFont );
-    overlaySizer->Add( overlayLabel, 0, wxALIGN_CENTER );
+        // Push initial title
+        m_bridge->PushChatTitle( "New Chat" );
 
-    m_signInButton = new wxButton( m_signInOverlay, wxID_ANY, "Sign In" );
-    m_signInButton->Bind( wxEVT_BUTTON, &AGENT_FRAME::OnSignIn, this );
-    overlaySizer->Add( m_signInButton, 0, wxALIGN_CENTER | wxTOP, 15 );
-
-    overlaySizer->AddStretchSpacer();
-    m_signInOverlay->SetSizer( overlaySizer );
-    m_signInOverlay->Hide(); // Start hidden, UpdateAuthUI will show if needed
-
-    // Update auth UI state
-    UpdateAuthUI();
+        // Push tracking state
+        m_bridge->PushTrackingState( m_isTrackingAgent );
+    } );
 }
 
 AGENT_FRAME::~AGENT_FRAME()
@@ -837,32 +666,8 @@ void AGENT_FRAME::ShowChangedLanguage()
 
 void AGENT_FRAME::AppendHtml( const wxString& aHtml )
 {
-    // Update internal state for consistency
-    wxString closingTags = "</div></body></html>";
-
-    if( m_fullHtmlContent.EndsWith( closingTags ) )
-    {
-        m_fullHtmlContent = m_fullHtmlContent.Left( m_fullHtmlContent.length() - closingTags.length() );
-        m_fullHtmlContent += aHtml;
-        m_fullHtmlContent += closingTags;
-    }
-    else
-    {
-        m_fullHtmlContent += aHtml;
-    }
-
-    // Use RunScriptAsync for incremental DOM update (no SetPage)
-    if( m_chatWindow )
-    {
-        wxString escaped = aHtml;
-        escaped.Replace( "\\", "\\\\" );  // Backslashes first
-        escaped.Replace( "'", "\\'" );    // Single quotes
-        escaped.Replace( "\n", "\\n" );   // Newlines
-        escaped.Replace( "\r", "\\r" );   // Carriage returns
-
-        wxString script = wxString::Format( "appendToChat('%s');", escaped );
-        m_chatWindow->RunScriptAsync( script );
-    }
+    m_fullHtmlContent += aHtml;
+    m_bridge->PushAppendChat( aHtml );
 }
 
 void AGENT_FRAME::RebuildThinkingHtml()
@@ -984,27 +789,12 @@ wxString AGENT_FRAME::BuildStreamingContent()
 
 void AGENT_FRAME::FlushStreamingContentUpdate( bool aForce )
 {
-    // Immediately flush streaming content to DOM (used to prevent race conditions)
-    // This is called when we need to bypass the timer throttling for critical updates
-    if( !m_chatWindow )
-        return;
-
     // Skip update if user scrolled up, unless forced (e.g., user-initiated toggle)
     if( m_userScrolledUp && !aForce )
         return;
 
-    // Build streaming content
     wxString streamingContent = BuildStreamingContent();
-
-    // Escape the HTML for JavaScript string
-    wxString escaped = streamingContent;
-    escaped.Replace( "\\", "\\\\" );  // Escape backslashes first
-    escaped.Replace( "'", "\\'" );    // Escape single quotes
-    escaped.Replace( "\n", "\\n" );   // Escape newlines
-    escaped.Replace( "\r", "\\r" );   // Escape carriage returns
-
-    wxString script = wxString::Format( "updateStreamingContent('%s');", escaped );
-    m_chatWindow->RunScriptAsync( script );
+    m_bridge->PushStreamingContent( streamingContent );
 
     // Clear the pending update flag since we just executed it
     m_htmlUpdateNeeded = false;
@@ -1017,39 +807,13 @@ void AGENT_FRAME::OnHtmlUpdateTimer( wxTimerEvent& aEvent )
     {
         m_htmlUpdateNeeded = false;
 
-        // Build streaming content using shared helper
         wxString streamingContent = BuildStreamingContent();
+        m_bridge->PushStreamingContent( streamingContent );
 
-        // Use RunScript() for incremental DOM update instead of SetPage()
-        // This avoids full page reload and the associated scroll/layer conflicts
-        if( m_chatWindow )
-        {
-            // Escape the HTML for JavaScript string
-            wxString escaped = streamingContent;
-            escaped.Replace( "\\", "\\\\" );  // Escape backslashes first
-            escaped.Replace( "'", "\\'" );    // Escape single quotes
-            escaped.Replace( "\n", "\\n" );   // Escape newlines
-            escaped.Replace( "\r", "\\r" );   // Escape carriage returns
-
-            wxString script = wxString::Format( "updateStreamingContent('%s');", escaped );
-            m_chatWindow->RunScriptAsync( script );
-        }
-
-        // Also update the full HTML content for when we need to do a full render later
-        // Remove any empty streaming divs to prevent accumulation, then append the filled one
+        // Update full HTML content for when we need to do a full render later
         wxString fullHtml = m_htmlBeforeAgentResponse;
-        const wxString closingTags = wxS( "</div></body></html>" );
-
-        // Remove closing tags
-        if( fullHtml.EndsWith( closingTags ) )
-            fullHtml = fullHtml.Left( fullHtml.length() - closingTags.length() );
-
-        // Remove any empty streaming content divs (prevents accumulation)
         fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
-
-        // Append the filled streaming div and restore closing tags
         fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
-        fullHtml += closingTags;
         m_fullHtmlContent = fullHtml;
     }
     // If user scrolled up, leave m_htmlUpdateNeeded=true so update happens when they scroll back
@@ -1061,7 +825,7 @@ void AGENT_FRAME::StartGeneratingAnimation()
     m_isStreamingMarkdown = false;
     m_generatingDots = 1;
     m_generatingTimer.Start( 400 ); // Update every 400ms
-    m_actionButton->SetLabel( "Stop" );
+    m_bridge->PushActionButtonState( "Stop" );
 }
 
 void AGENT_FRAME::StopGeneratingAnimation()
@@ -1078,47 +842,13 @@ void AGENT_FRAME::StopGeneratingAnimation()
     {
         m_htmlUpdateNeeded = false;
 
-        // Build the streaming content (same logic as OnHtmlUpdateTimer)
-        wxString streamingContent;
-
-        if( !m_thinkingHtml.IsEmpty() )
-            streamingContent += m_thinkingHtml;
-
-        std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
-        streamingContent += AgentMarkdown::ToHtml( currentResponse );
-
-        if( !m_toolCallHtml.IsEmpty() )
-            streamingContent += m_toolCallHtml;
-
-        // Use RunScriptAsync for incremental DOM update (no SetPage)
-        if( m_chatWindow )
-        {
-            wxString escaped = streamingContent;
-            escaped.Replace( "\\", "\\\\" );
-            escaped.Replace( "'", "\\'" );
-            escaped.Replace( "\n", "\\n" );
-            escaped.Replace( "\r", "\\r" );
-
-            wxString script = wxString::Format( "updateStreamingContent('%s');", escaped );
-            m_chatWindow->RunScriptAsync( script );
-        }
+        wxString streamingContent = BuildStreamingContent();
+        m_bridge->PushStreamingContent( streamingContent );
 
         // Update full HTML content for consistency
-        // Remove any empty streaming divs to prevent accumulation, then append the filled one
         wxString html = m_htmlBeforeAgentResponse;
-        const wxString closingTags = wxS( "</div></body></html>" );
-
-        // Remove closing tags
-        if( html.EndsWith( closingTags ) )
-            html = html.Left( html.length() - closingTags.length() );
-
-        // Remove any empty streaming content divs (prevents accumulation)
         html.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
-
-        // Append the filled streaming div and restore closing tags
         html += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
-        html += closingTags;
-
         m_fullHtmlContent = html;
     }
 
@@ -1128,19 +858,8 @@ void AGENT_FRAME::StopGeneratingAnimation()
 
 void AGENT_FRAME::SetHtml( const wxString& aHtml )
 {
-    m_fullHtmlContent = aHtml; // Ensure sync
-
-    // Throttle SetPage() calls using CallAfter to prevent crashes during scroll events
-    // WebKit's layer enumeration can conflict with DOM modifications
-    if( !m_htmlUpdatePending )
-    {
-        m_htmlUpdatePending = true;
-        CallAfter( [this]()
-        {
-            m_chatWindow->SetPage( m_fullHtmlContent );
-            m_htmlUpdatePending = false;
-        } );
-    }
+    m_fullHtmlContent = aHtml;
+    m_bridge->PushFullChatContent( aHtml );
 }
 
 void AGENT_FRAME::AutoScrollToBottom()
@@ -1252,14 +971,13 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
                     if( count > 1 )
                         label += " +" + std::to_string( count - 1 );
 
-                    m_selectionPill->SetLabel( label );
-                    m_selectionPill->Show( true );
-
+                    m_currentSelectionLabel = label;
+                    m_bridge->PushSelectionPill( label, true );
                 }
                 else
                 {
-                    m_selectionPill->Show( false );
-
+                    m_currentSelectionLabel.Clear();
+                    m_bridge->PushSelectionPill( wxEmptyString, false );
                 }
             }
             catch( ... )
@@ -1275,32 +993,11 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
             // Wait, I updated tools: "if( m_selection.Empty() ) { ... SELECTION\nSCH\nCLEARED ... }"
             // So I still need to handle legacy clear messages?
             // Yes.
-            if( payload.find( "SCH" ) != std::string::npos )
+            if( payload.find( "SCH" ) != std::string::npos
+                || payload.find( "PCB" ) != std::string::npos )
             {
-                // Clear SCH JSON? Or just update it to empty selection?
-                // If I clear m_schJson, I lose the project components list!
-                // I should parsing logic update selection to empty.
-                // But the tool doesn't send JSON if empty.
-                // So "CLEARED" means "Empty Selection".
-                // Use legacy clear to hide pill.
-                // And ideally, I should keep the LAST known project components?
-                // m_schJson remains valid for components, but selection is invalid.
-                // Implementation detail: I might need to update m_schJson to set "selection": []?
-                // Too complex to parse/edit JSON string.
-                // I'll leave m_schJson as is (it contains last Valid selection).
-                // But the prompt will include it.
-                // This is a specialized behavior: "If CLEARED, don't use selection from JSON".
-                // Maybe I need `m_schJsonSelectionValid` flag.
-                // Or, I should update the tools to SEND JSON even on Clear (with empty selection).
-                // That would be cleaner.
-                // But for now, I'll just hide the pill.
-                m_selectionPill->Show( false );
-
-            }
-            else if( payload.find( "PCB" ) != std::string::npos )
-            {
-                m_selectionPill->Show( false );
-
+                m_currentSelectionLabel.Clear();
+                m_bridge->PushSelectionPill( wxEmptyString, false );
             }
         }
     }
@@ -1327,52 +1024,38 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
     else if( aEvent.Command() == MAIL_AGENT_DIFF_CLEARED ||
              aEvent.Command() == MAIL_AGENT_CHECK_CHANGES )
     {
-        // Diff overlay was dismissed or items changed - refresh the panel
         wxLogInfo( "AGENT_FRAME: Received diff/check changes notification, refreshing panel" );
-        RefreshPendingChangesPanel();
+        QueryPendingChanges();
 
-        // Clear the selection pill - selected items may have been deleted by rejection or undo
-        // The editors will send a new MAIL_SELECTION if items are still selected
-        m_selectionPill->Show( false );
+        m_currentSelectionLabel.Clear();
+        m_bridge->PushSelectionPill( wxEmptyString, false );
     }
     else if( aEvent.Command() == MAIL_AGENT_TRACKING_BROKEN )
     {
-        // User broke tracking by interacting with the editor
         m_isTrackingAgent = false;
-        m_trackAgentBtn->SetLabel( "Track" );
+        m_bridge->PushTrackingState( false );
     }
-    Layout();
 }
 
-void AGENT_FRAME::OnSelectionPillClick( wxCommandEvent& aEvent )
+void AGENT_FRAME::DoSelectionPillClick()
 {
-    wxLogInfo( "AGENT_FRAME::OnSelectionPillClick called" );
-    wxString label = m_selectionPill->GetLabel();
-    if( !label.IsEmpty() )
+    wxLogInfo( "AGENT_FRAME::DoSelectionPillClick called" );
+
+    if( !m_currentSelectionLabel.IsEmpty() )
     {
+        wxString label = m_currentSelectionLabel;
+
         // Strip "Add: " prefix if present for the tag
         if( label.StartsWith( "Add: " ) )
             label = label.Mid( 5 );
 
-        // Hide pill on click
-        m_selectionPill->Hide();
+        // Hide pill
+        m_currentSelectionLabel.Clear();
+        m_bridge->PushSelectionPill( wxEmptyString, false );
 
-        // Append @{Label} to input via JavaScript
-        wxString escaped = label;
-        escaped.Replace( "\\", "\\\\" );
-        escaped.Replace( "'", "\\'" );
-
-        wxString script = wxString::Format(
-            "var ta = document.getElementById('input-textarea');"
-            "var text = ta.value;"
-            "if (text.length > 0 && !text.endsWith(' ')) text += ' ';"
-            "text += '@{%s} ';"
-            "setText(text);"
-            "ta.selectionStart = ta.selectionEnd = ta.value.length;"
-            "focusInput();",
-            escaped );
-
-        m_inputWebView->RunScriptAsync( script );
+        // Append @{Label} to input via bridge
+        // Build the text to append and let JS handle cursor placement
+        m_bridge->PushInputSetText( "@{" + label + "} " );
     }
 }
 
@@ -1386,7 +1069,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // System prompt is now handled server-side.
 
     // If already processing, this button acts as Stop
-    if( m_actionButton->GetLabel() == "Stop" )
+    if( m_isGenerating )
     {
         OnStop( aEvent );
         return;
@@ -1452,23 +1135,17 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
 
     // Append to internal HTML state
-    const wxString closingTags = wxS( "</div></body></html>" );
-    if( m_fullHtmlContent.EndsWith( closingTags ) )
-    {
-        m_fullHtmlContent = m_fullHtmlContent.Left( m_fullHtmlContent.length() - closingTags.length() );
-        m_fullHtmlContent += msgHtml + streamingDiv + closingTags;
-    }
+    m_fullHtmlContent += msgHtml + streamingDiv;
 
     // Save HTML snapshot for markdown re-rendering during streaming
     m_htmlBeforeAgentResponse = m_fullHtmlContent;
 
-    // Full page re-render - this naturally scrolls to bottom due to flex-direction: column-reverse
+    // Full page re-render
     SetHtml( m_fullHtmlContent );
 
     // Clear Input and Update UI
-    if( m_inputWebView )
-        m_inputWebView->RunScriptAsync( wxS( "clearInput();" ) );
-    m_actionButton->SetLabel( "Stop" );
+    m_bridge->PushInputClear();
+    m_bridge->PushActionButtonState( "Stop" );
 
     // Configure controller for this request (system prompt now handled server-side)
     if( m_chatController )
@@ -1495,7 +1172,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_pendingToolCalls = nlohmann::json::array();
     // NOTE: Don't reset m_toolResultCounter here - old tool-result-N IDs persist in
     // m_fullHtmlContent after SetHtml(). Counter must be monotonically increasing to
-    // avoid duplicate DOM IDs. Only reset in OnNewChat/OnChatHistoryLoaded (full re-render).
+    // avoid duplicate DOM IDs. Only reset in DoNewChat/OnChatHistoryLoaded (full re-render).
     m_activeRunningHtml.Clear();
     m_activeToolResultIdx = -1;
     m_stopRequested = false;
@@ -1507,8 +1184,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_conversationCtx.TransitionTo( AgentConversationState::WAITING_FOR_LLM );
 
     // Configure LLM client with selected model
-    wxString modelNameProp = m_modelChoice->GetStringSelection();
-    m_llmClient->SetModel( modelNameProp.ToStdString() );
+    m_llmClient->SetModel( m_currentModel );
 
     // Reset target sheet for new conversation turn
     std::string emptyPayload;
@@ -1597,15 +1273,10 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
         m_fullHtmlContent.Replace( m_activeRunningHtml, cancelledHtml );
         m_activeRunningHtml.Clear();
 
-        // Also update the DOM element directly (AppendHtml below is incremental, not a re-render)
-        if( m_chatWindow )
-        {
-            m_chatWindow->RunScriptAsync( wxString::Format(
-                "updateToolResult(%d, 'text-text-muted', 'Cancelled', "
-                "'<pre class=\"text-text-secondary font-mono text-[12px] whitespace-pre-wrap "
-                "break-words m-0 mt-2\">User cancelled</pre>');",
-                m_activeToolResultIdx ) );
-        }
+        // Also update the DOM element directly
+        m_bridge->PushToolResultUpdate( m_activeToolResultIdx, "text-text-muted", "Cancelled",
+            "<pre class=\"text-text-secondary font-mono text-[12px] whitespace-pre-wrap "
+            "break-words m-0 mt-2\">User cancelled</pre>" );
     }
 
     // Clear pending editor open/close request state (prevents stale approval button clicks)
@@ -1621,10 +1292,7 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
 
     // Finalize the streaming content div so next response uses a fresh div
-    if( m_chatWindow )
-    {
-        m_chatWindow->RunScriptAsync( "finalizeStreamingContent();" );
-    }
+    m_bridge->PushFinalizeStreaming();
     m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
 
     // Preserve thinking for index tracking
@@ -1643,321 +1311,387 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     m_activeToolResultIdx = -1;
 
     AppendHtml( "<br><p><i>(Stopped)</i></p>" );
-    m_actionButton->SetLabel( "Send" );
+    m_bridge->PushActionButtonState( "Send" );
 }
 
-void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
+// ── Bridge callback methods (called by WEBVIEW_BRIDGE) ──────────────────
+
+void AGENT_FRAME::OnBridgeSubmit( const nlohmann::json& aMsg )
 {
-    // Parse JSON message from JavaScript
-    try
+    wxString text = wxString::FromUTF8( aMsg.value( "text", "" ) );
+    m_pendingAttachments = FileAttach::ParseAttachmentsFromJson( aMsg );
+
+    if( !text.IsEmpty() || !m_pendingAttachments.empty() )
     {
-        nlohmann::json msg = nlohmann::json::parse( aMessage.ToStdString() );
-        std::string action = msg.value( "action", "" );
-        wxLogInfo( "AGENT_FRAME::OnWebViewMessage - action: %s", action.c_str() );
+        m_pendingInputText = text;
+        wxCommandEvent evt;
+        OnSend( evt );
+    }
+}
 
-        if( action == "link_click" )
+void AGENT_FRAME::OnBridgeAttachClick()
+{
+    wxFileDialog dlg( this, "Attach File", "", "",
+                      "Supported files (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.pdf)"
+                      "|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.pdf"
+                      "|Image files (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp)"
+                      "|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp"
+                      "|PDF files (*.pdf)|*.pdf",
+                      wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE );
+
+    if( dlg.ShowModal() == wxID_OK )
+    {
+        wxArrayString paths;
+        dlg.GetPaths( paths );
+
+        for( const auto& path : paths )
         {
-            wxString href = wxString::FromUTF8( msg.value( "href", "" ) );
-            wxLogInfo( "AGENT_FRAME::OnWebViewMessage - link_click href: %s", href.ToStdString().c_str() );
+            FILE_ATTACHMENT att;
+            bool loaded = false;
 
-            if( href == "agent:approve_open" )
-            {
-                OnApproveOpenEditor();
-            }
-            else if( href == "agent:reject_open" )
-            {
-                OnRejectOpenEditor();
-            }
-            else if( href == "agent:approve_close" )
-            {
-                OnApproveCloseEditor();
-            }
-            else if( href.StartsWith( "toggle:" ) )
-            {
-                // Generic toggle handler (fallback if JS doesn't intercept)
-                // Normally handled by JavaScript in agent_template.html
-                wxLogInfo( "AGENT_FRAME::OnWebViewMessage - toggle link fallback: %s",
-                           href.ToStdString().c_str() );
-            }
-            else if( href.StartsWith( "http://" ) || href.StartsWith( "https://" ) )
-            {
-                // Open standard links in browser
-                wxLaunchDefaultBrowser( href );
-            }
+            wxFileName fn( path );
+            wxString ext = fn.GetExt().Lower();
+
+            if( ext == "pdf" )
+                loaded = FileAttach::LoadFileFromDisk( path, att );
+            else
+                loaded = FileAttach::LoadImageFromFile( path, att );
+
+            if( !loaded )
+                continue;
+
+            m_bridge->PushAddAttachment( wxString::FromUTF8( att.base64_data ),
+                                         wxString::FromUTF8( att.media_type ),
+                                         wxString::FromUTF8( att.filename ) );
         }
-        else if( action == "preview_image" )
-        {
-            wxString src = wxString::FromUTF8( msg.value( "src", "" ) );
-            int commaPos = src.Find( ',' );
+    }
+}
 
-            if( commaPos != wxNOT_FOUND )
-                FileAttach::ShowPreviewDialog( this, src.Mid( commaPos + 1 ) );
+void AGENT_FRAME::OnBridgeLinkClick( const nlohmann::json& aMsg )
+{
+    wxString href = wxString::FromUTF8( aMsg.value( "href", "" ) );
+    wxLogInfo( "AGENT_FRAME::OnBridgeLinkClick - href: %s", href.ToStdString().c_str() );
+
+    if( href == "agent:approve_open" )
+        OnApproveOpenEditor();
+    else if( href == "agent:reject_open" )
+        OnRejectOpenEditor();
+    else if( href == "agent:approve_close" )
+        OnApproveCloseEditor();
+    else if( href.StartsWith( "http://" ) || href.StartsWith( "https://" ) )
+        wxLaunchDefaultBrowser( href );
+}
+
+void AGENT_FRAME::OnBridgeCopy( const nlohmann::json& aMsg )
+{
+    wxString text = wxString::FromUTF8( aMsg.value( "text", "" ) );
+
+    if( !text.IsEmpty() && wxTheClipboard->Open() )
+    {
+        wxTheClipboard->SetData( new wxTextDataObject( text ) );
+        wxTheClipboard->Close();
+    }
+}
+
+void AGENT_FRAME::OnBridgeCopyImage( const nlohmann::json& aMsg )
+{
+    wxString src = wxString::FromUTF8( aMsg.value( "src", "" ) );
+    int commaPos = src.Find( ',' );
+
+    if( commaPos != wxNOT_FOUND )
+    {
+        wxString b64 = src.Mid( commaPos + 1 );
+        wxMemoryBuffer buf = wxBase64Decode( b64 );
+
+        if( buf.GetDataLen() > 0 )
+        {
+            wxMemoryInputStream stream( buf.GetData(), buf.GetDataLen() );
+            m_pendingCopyImage = wxImage( stream, wxBITMAP_TYPE_PNG );
         }
-        else if( action == "preview_file" )
+    }
+
+    if( m_pendingCopyImage.IsOk() )
+    {
+        wxMenu menu;
+        menu.Append( ID_COPY_IMAGE, "Copy Image" );
+
+        menu.Bind( wxEVT_MENU, [this]( wxCommandEvent& )
         {
-            std::string b64 = msg.value( "base64", "" );
-            std::string filename = msg.value( "filename", "document.pdf" );
-
-            if( !b64.empty() )
-                FileAttach::OpenFilePreview( wxString::FromUTF8( b64 ),
-                                             wxString::FromUTF8( filename ) );
-        }
-        else if( action == "copy_image" )
-        {
-            // Decode the data URI into a wxImage and show a native context menu
-            wxString src = wxString::FromUTF8( msg.value( "src", "" ) );
-            int commaPos = src.Find( ',' );
-
-            if( commaPos != wxNOT_FOUND )
+            if( m_pendingCopyImage.IsOk() && wxTheClipboard->Open() )
             {
-                wxString b64 = src.Mid( commaPos + 1 );
-                wxMemoryBuffer buf = wxBase64Decode( b64 );
-
-                if( buf.GetDataLen() > 0 )
-                {
-                    wxMemoryInputStream stream( buf.GetData(), buf.GetDataLen() );
-                    m_pendingCopyImage = wxImage( stream, wxBITMAP_TYPE_PNG );
-                }
-            }
-
-            if( m_pendingCopyImage.IsOk() )
-            {
-                wxMenu menu;
-                menu.Append( ID_COPY_IMAGE, "Copy Image" );
-
-                menu.Bind( wxEVT_MENU, [this]( wxCommandEvent& )
-                {
-                    if( m_pendingCopyImage.IsOk() && wxTheClipboard->Open() )
-                    {
-                        wxTheClipboard->SetData(
-                                new wxBitmapDataObject( wxBitmap( m_pendingCopyImage ) ) );
-                        wxTheClipboard->Flush();
-                        wxTheClipboard->Close();
-                    }
-
-                    m_pendingCopyImage = wxImage();  // Release image memory
-                }, ID_COPY_IMAGE );
-
-                PopupMenu( &menu, ScreenToClient( wxGetMousePosition() ) );
-            }
-        }
-        else if( action == "copy" )
-        {
-            // Handle copy request from context menu
-            wxString text = wxString::FromUTF8( msg.value( "text", "" ) );
-            if( !text.IsEmpty() && wxTheClipboard->Open() )
-            {
-                wxTheClipboard->SetData( new wxTextDataObject( text ) );
+                wxTheClipboard->SetData(
+                        new wxBitmapDataObject( wxBitmap( m_pendingCopyImage ) ) );
+                wxTheClipboard->Flush();
                 wxTheClipboard->Close();
             }
-        }
-        else if( action == "thinking_toggled" )
-        {
-            // Handle thinking toggle from JavaScript (no page reload needed)
-            int index = msg.value( "index", -1 );
-            bool expanded = msg.value( "expanded", false );
+            m_pendingCopyImage = wxImage();
+        }, ID_COPY_IMAGE );
 
-            // Update state and rebuild HTML so subsequent timer updates use correct state
-            if( index == m_currentThinkingIndex && m_currentThinkingIndex >= 0 )
-            {
-                // Current streaming thinking - update state and rebuild HTML immediately
-                m_thinkingExpanded = expanded;
-                RebuildThinkingHtml();
-
-                // CRITICAL: Immediately flush the update to DOM to prevent race condition
-                // where THINKING_DELTA events rebuild with old state before next timer tick.
-                // Force=true bypasses m_userScrolledUp check since this is user-initiated.
-                FlushStreamingContentUpdate( true );
-            }
-            else if( index >= 0 && index < (int)m_historicalThinking.size() )
-            {
-                // Historical thinking
-                if( expanded )
-                    m_historicalThinkingExpanded.insert( index );
-                else
-                    m_historicalThinkingExpanded.erase( index );
-
-                // Sync m_fullHtmlContent so SetHtml() preserves toggle state
-                wxString from = wxString::Format(
-                    "data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\"",
-                    index, expanded ? "none" : "block" );
-                wxString to = wxString::Format(
-                    "data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\"",
-                    index, expanded ? "block" : "none" );
-                m_fullHtmlContent.Replace( from, to );
-                m_htmlBeforeAgentResponse.Replace( from, to );
-            }
-        }
-        else if( action == "toolresult_toggled" )
-        {
-            // Handle tool result toggle from JavaScript
-            int index = msg.value( "index", -1 );
-            bool expanded = msg.value( "expanded", false );
-
-            if( index >= 0 )
-            {
-                if( expanded )
-                    m_historicalToolResultExpanded.insert( index );
-                else
-                    m_historicalToolResultExpanded.erase( index );
-
-                // Sync m_fullHtmlContent so SetHtml() preserves toggle state
-                wxString from = wxString::Format(
-                    "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:%s;\"",
-                    index, expanded ? "none" : "block" );
-                wxString to = wxString::Format(
-                    "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:%s;\"",
-                    index, expanded ? "block" : "none" );
-                m_fullHtmlContent.Replace( from, to );
-                m_htmlBeforeAgentResponse.Replace( from, to );
-            }
-        }
-        else if( action == "scroll_activity" )
-        {
-            // Handle scroll activity from JavaScript
-            // Pause updates if actively scrolling OR if user has scrolled up (not at bottom)
-            bool active = msg.value( "active", false );
-            bool coupled = msg.value( "coupled", true );  // coupled=true means at bottom
-
-            // Record timestamp of scroll activity for time-based debouncing
-            m_lastScrollActivityMs = wxGetLocalTimeMillis().GetValue();
-
-            // Pause updates if scrolling OR if user is scrolled up
-            m_userScrolledUp = active || !coupled;
-        }
-    }
-    catch( const std::exception& e )
-    {
-        // Log parse errors for debugging
-        wxLogError( "AGENT: OnWebViewMessage parse error: %s", e.what() );
+        PopupMenu( &menu, ScreenToClient( wxGetMousePosition() ) );
     }
 }
 
-void AGENT_FRAME::OnInputWebViewMessage( const wxString& aMessage )
+void AGENT_FRAME::OnBridgePreviewImage( const nlohmann::json& aMsg )
 {
-    try
+    wxString src = wxString::FromUTF8( aMsg.value( "src", "" ) );
+    int commaPos = src.Find( ',' );
+
+    if( commaPos != wxNOT_FOUND )
+        FileAttach::ShowPreviewDialog( this, src.Mid( commaPos + 1 ) );
+}
+
+void AGENT_FRAME::OnBridgePreviewFile( const nlohmann::json& aMsg )
+{
+    std::string b64 = aMsg.value( "base64", "" );
+    std::string filename = aMsg.value( "filename", "document.pdf" );
+
+    if( !b64.empty() )
+        FileAttach::OpenFilePreview( wxString::FromUTF8( b64 ),
+                                     wxString::FromUTF8( filename ) );
+}
+
+void AGENT_FRAME::OnBridgeThinkingToggled( const nlohmann::json& aMsg )
+{
+    int index = aMsg.value( "index", -1 );
+    bool expanded = aMsg.value( "expanded", false );
+
+    if( index == m_currentThinkingIndex && m_currentThinkingIndex >= 0 )
     {
-        nlohmann::json msg = nlohmann::json::parse( aMessage.ToStdString() );
-        std::string action = msg.value( "action", "" );
-
-        if( action == "submit" )
-        {
-            wxString text = wxString::FromUTF8( msg.value( "text", "" ) );
-            m_pendingAttachments = FileAttach::ParseAttachmentsFromJson( msg );
-
-            if( !text.IsEmpty() || !m_pendingAttachments.empty() )
-            {
-                m_pendingInputText = text;
-                wxCommandEvent evt;
-                OnSend( evt );
-            }
-        }
-        else if( action == "attach_click" )
-        {
-            wxFileDialog dlg( this, "Attach File", "", "",
-                              "Supported files (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.pdf)"
-                              "|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.pdf"
-                              "|Image files (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp)"
-                              "|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp"
-                              "|PDF files (*.pdf)|*.pdf",
-                              wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE );
-
-            if( dlg.ShowModal() == wxID_OK )
-            {
-                wxArrayString paths;
-                dlg.GetPaths( paths );
-
-                for( const auto& path : paths )
-                {
-                    FILE_ATTACHMENT att;
-                    bool loaded = false;
-
-                    wxFileName fn( path );
-                    wxString ext = fn.GetExt().Lower();
-
-                    if( ext == "pdf" )
-                        loaded = FileAttach::LoadFileFromDisk( path, att );
-                    else
-                        loaded = FileAttach::LoadImageFromFile( path, att );
-
-                    if( !loaded )
-                        continue;
-
-                    // Inject into JS attachment preview - escape for JS single-quoted string
-                    wxString safeName = wxString::FromUTF8( att.filename );
-                    safeName.Replace( "\\", "\\\\" );
-                    safeName.Replace( "'", "\\'" );
-                    safeName.Replace( "\n", "\\n" );
-                    safeName.Replace( "\r", "\\r" );
-
-                    wxString script = wxString::Format(
-                        "addAttachment('%s', '%s', '%s');",
-                        wxString::FromUTF8( att.base64_data ),
-                        wxString::FromUTF8( att.media_type ),
-                        safeName );
-                    m_inputWebView->RunScriptAsync( script );
-                }
-            }
-        }
-        else if( action == "preview_image" )
-        {
-            std::string b64 = msg.value( "base64", "" );
-
-            if( !b64.empty() )
-                FileAttach::ShowPreviewDialog( this, wxString::FromUTF8( b64 ) );
-        }
-        else if( action == "preview_file" )
-        {
-            std::string b64 = msg.value( "base64", "" );
-            std::string filename = msg.value( "filename", "document.pdf" );
-
-            if( !b64.empty() )
-                FileAttach::OpenFilePreview( wxString::FromUTF8( b64 ),
-                                             wxString::FromUTF8( filename ) );
-        }
-        else if( action == "resize" )
-        {
-            int height = msg.value( "height", 60 );
-            ResizeInputWebView( height );
-        }
-        else if( action == "debug" )
-        {
-            std::string debugMsg = msg.value( "message", "" );
-            wxLogTrace( "KICAD_AGENT", "INPUT_DEBUG: %s", debugMsg );
-        }
+        m_thinkingExpanded = expanded;
+        RebuildThinkingHtml();
+        FlushStreamingContentUpdate( true );
     }
-    catch( const std::exception& e )
+    else if( index >= 0 && index < (int)m_historicalThinking.size() )
     {
-        wxLogError( "AGENT: OnInputWebViewMessage parse error: %s", e.what() );
+        if( expanded )
+            m_historicalThinkingExpanded.insert( index );
+        else
+            m_historicalThinkingExpanded.erase( index );
+
+        wxString from = wxString::Format(
+            "data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\"",
+            index, expanded ? "none" : "block" );
+        wxString to = wxString::Format(
+            "data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\"",
+            index, expanded ? "block" : "none" );
+        m_fullHtmlContent.Replace( from, to );
+        m_htmlBeforeAgentResponse.Replace( from, to );
     }
 }
 
-void AGENT_FRAME::ResizeInputWebView( int aContentHeight )
+void AGENT_FRAME::OnBridgeToolResultToggled( const nlohmann::json& aMsg )
 {
-    // aContentHeight is the container's offsetHeight (includes padding + border)
-    // Clamp to match JS MIN_HEIGHT (45) + container padding/border overhead (~40px)
-    int totalHeight = std::max( 45, std::min( aContentHeight, 240 ) );
+    int index = aMsg.value( "index", -1 );
+    bool expanded = aMsg.value( "expanded", false );
 
-    m_inputWebView->SetMinSize( wxSize( -1, totalHeight ) );
-    m_inputPanel->Layout();
-    Layout();
+    if( index >= 0 )
+    {
+        if( expanded )
+            m_historicalToolResultExpanded.insert( index );
+        else
+            m_historicalToolResultExpanded.erase( index );
+
+        wxString from = wxString::Format(
+            "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:%s;\"",
+            index, expanded ? "none" : "block" );
+        wxString to = wxString::Format(
+            "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:%s;\"",
+            index, expanded ? "block" : "none" );
+        m_fullHtmlContent.Replace( from, to );
+        m_htmlBeforeAgentResponse.Replace( from, to );
+    }
 }
 
-void AGENT_FRAME::OnModelSelection( wxCommandEvent& aEvent )
+void AGENT_FRAME::OnBridgeScrollActivity( const nlohmann::json& aMsg )
 {
-    wxLogInfo( "AGENT_FRAME::OnModelSelection called" );
-    // Reload model context when model changes
-    // Track the currently selected model
-    wxString newModel = m_modelChoice->GetStringSelection();
-    wxLogInfo( "AGENT_FRAME::OnModelSelection - selected model: %s", newModel.ToStdString().c_str() );
-    if( newModel.ToStdString() != m_currentModel )
-    {
-        m_currentModel = newModel.ToStdString();
+    bool active = aMsg.value( "active", false );
+    bool coupled = aMsg.value( "coupled", true );
 
-        // Delegate to controller
+    m_lastScrollActivityMs = wxGetLocalTimeMillis().GetValue();
+    m_userScrolledUp = active || !coupled;
+}
+
+void AGENT_FRAME::OnBridgeHistoryOpen()
+{
+    auto historyList = m_chatHistoryDb.GetHistoryList();
+
+    nlohmann::json entries = nlohmann::json::array();
+    for( const auto& entry : historyList )
+    {
+        nlohmann::json e;
+        e["id"] = entry.id;
+        e["title"] = entry.title.empty() ? "Untitled Chat" : entry.title;
+        e["timestamp"] = entry.lastUpdated;
+        entries.push_back( e );
+    }
+
+    m_bridge->PushHistoryList( entries );
+    m_bridge->PushHistoryShow( true );
+}
+
+void AGENT_FRAME::OnBridgeHistorySearch( const wxString& aQuery )
+{
+    auto historyList = m_chatHistoryDb.GetHistoryList();
+
+    nlohmann::json entries = nlohmann::json::array();
+    wxString lowerQuery = aQuery.Lower();
+
+    for( const auto& entry : historyList )
+    {
+        wxString title = wxString::FromUTF8( entry.title );
+        if( aQuery.IsEmpty() || title.Lower().Contains( lowerQuery ) )
+        {
+            nlohmann::json e;
+            e["id"] = entry.id;
+            e["title"] = entry.title.empty() ? "Untitled Chat" : entry.title;
+            e["timestamp"] = entry.lastUpdated;
+            entries.push_back( e );
+        }
+    }
+
+    m_bridge->PushHistoryList( entries );
+}
+
+// ── Bridge-triggered actions ────────────────────────────────────────────
+
+void AGENT_FRAME::DoModelChange( const std::string& aModel )
+{
+    wxLogInfo( "AGENT_FRAME::DoModelChange - model: %s", aModel.c_str() );
+
+    if( aModel != m_currentModel )
+    {
+        m_currentModel = aModel;
+
         if( m_chatController )
             m_chatController->SetModel( m_currentModel );
     }
+}
+
+void AGENT_FRAME::DoSendClick()
+{
+    wxCommandEvent evt;
+    OnSend( evt );
+}
+
+void AGENT_FRAME::DoStopClick()
+{
+    wxCommandEvent evt;
+    OnStop( evt );
+}
+
+void AGENT_FRAME::DoTrackToggle()
+{
+    m_isTrackingAgent = !m_isTrackingAgent;
+
+    nlohmann::json payload;
+    payload["tracking"] = m_isTrackingAgent;
+    std::string payloadStr = payload.dump();
+
+    m_bridge->PushTrackingState( m_isTrackingAgent );
+
+    Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_TRACKING_MODE, payloadStr );
+    Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_TRACKING_MODE, payloadStr );
+}
+
+void AGENT_FRAME::DoPendingChangesToggle()
+{
+    // Re-query and push updated pending changes (update auto-shows/hides)
+    QueryPendingChanges();
+}
+
+void AGENT_FRAME::DoPendingChangesAcceptAll()
+{
+    wxLogInfo( "AGENT_FRAME::DoPendingChangesAcceptAll" );
+
+    // Accept schematic changes
+    if( !m_pendingSchSheets.empty() )
+    {
+        KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );
+        if( schPlayer )
+        {
+            std::string payload;
+            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_APPROVE, payload );
+        }
+    }
+
+    // Accept PCB changes
+    if( m_hasPcbChanges )
+    {
+        KIWAY_PLAYER* pcbPlayer = Kiway().Player( FRAME_PCB_EDITOR, false );
+        if( pcbPlayer )
+        {
+            std::string payload;
+            Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_APPROVE, payload );
+        }
+    }
+
+    // Clear state and update UI
+    m_pendingSchSheets.clear();
+    m_hasPcbChanges = false;
+    m_pcbFilename.Clear();
+
+    QueryPendingChanges();
+}
+
+void AGENT_FRAME::DoPendingChangesRejectAll()
+{
+    wxLogInfo( "AGENT_FRAME::DoPendingChangesRejectAll" );
+
+    // Reject schematic changes
+    if( !m_pendingSchSheets.empty() )
+    {
+        KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );
+        if( schPlayer )
+        {
+            std::string payload;
+            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REJECT, payload );
+        }
+    }
+
+    // Reject PCB changes
+    if( m_hasPcbChanges )
+    {
+        KIWAY_PLAYER* pcbPlayer = Kiway().Player( FRAME_PCB_EDITOR, false );
+        if( pcbPlayer )
+        {
+            std::string payload;
+            Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REJECT, payload );
+        }
+    }
+
+    // Clear state and update UI
+    m_pendingSchSheets.clear();
+    m_hasPcbChanges = false;
+    m_pcbFilename.Clear();
+
+    QueryPendingChanges();
+}
+
+void AGENT_FRAME::DoPendingChangesView( const wxString& aPath, bool aIsPcb )
+{
+    wxLogInfo( "AGENT_FRAME::DoPendingChangesView: %s (isPcb=%d)", aPath, aIsPcb );
+
+    if( aIsPcb )
+    {
+        Kiway().Player( FRAME_PCB_EDITOR, true );
+        std::string payload;
+        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_VIEW_CHANGES, payload );
+    }
+    else
+    {
+        Kiway().Player( FRAME_SCH, true );
+        nlohmann::json j;
+        j["sheet_path"] = aPath.ToStdString();
+        std::string payload = j.dump();
+        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_VIEW_CHANGES, payload );
+    }
+}
+
+void AGENT_FRAME::DoSignIn()
+{
+    wxLogInfo( "AGENT_FRAME::DoSignIn called" );
+    if( m_auth )
+        m_auth->StartOAuthFlow( "agent" );
 }
 
 void AGENT_FRAME::OnExit( wxCommandEvent& event )
@@ -2047,7 +1781,7 @@ void AGENT_FRAME::OnChatRightClick( wxMouseEvent& aEvent )
 void AGENT_FRAME::OnPopupClick( wxCommandEvent& aEvent )
 {
     // Copy now handled by JavaScript message passing
-    // See OnWebViewMessage() for "copy" action handling
+    // See OnBridgeCopy() for "copy" action handling
     aEvent.Skip();
 }
 
@@ -2076,8 +1810,7 @@ void AGENT_FRAME::StartAsyncLLMRequest()
     // Start the generating animation
     StartGeneratingAnimation();
 
-    wxString model = m_modelChoice->GetStringSelection();
-    m_llmClient->SetModel( model.ToStdString() );
+    m_llmClient->SetModel( m_currentModel );
 
     // Filter out thinking blocks from API context before sending to API
     // (System prompt now handled server-side)
@@ -2120,7 +1853,7 @@ void AGENT_FRAME::StartAsyncLLMRequest()
         StopGeneratingAnimation();
         AppendHtml( "<p><font color='red'>Error: Failed to start LLM request</font></p>" );
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
-        m_actionButton->SetLabel( "Send" );
+        m_bridge->PushActionButtonState( "Send" );
     }
 }
 
@@ -2212,10 +1945,10 @@ void AGENT_FRAME::OnLLMStreamError( wxThreadEvent& aEvent )
     }
 }
 
-void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
+void AGENT_FRAME::DoNewChat()
 {
-    wxLogInfo( "AGENT_FRAME::OnNewChat called" );
-    // Prevent switching chats while generating
+    wxLogInfo( "AGENT_FRAME::DoNewChat called" );
+
     bool isBusy = m_chatController ? m_chatController->IsBusy()
                                    : ( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE );
     if( isBusy )
@@ -2225,19 +1958,17 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
         return;
     }
 
-    // Delegate chat state reset to controller
     if( m_chatController )
         m_chatController->NewChat();
 
-    // Clear current chat and start fresh (legacy - will be removed in Phase 5.4)
     m_chatHistory = nlohmann::json::array();
     m_apiContext = nlohmann::json::array();
 
-    // UI reset
-    m_fullHtmlContent = GetAgentHtmlTemplate() + wxS( "</div></body></html>" );
+    // UI reset - m_fullHtmlContent is now just chat area inner HTML (no template wrapper)
+    m_fullHtmlContent = "";
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
-    m_chatNameLabel->SetLabel( "New Chat" );
+    m_bridge->PushChatTitle( "New Chat" );
 
     // Clear historical thinking state
     m_historicalThinking.clear();
@@ -2247,94 +1978,6 @@ void AGENT_FRAME::OnNewChat( wxCommandEvent& aEvent )
     m_toolResultCounter = 0;
     m_activeRunningHtml.Clear();
     m_activeToolResultIdx = -1;
-}
-
-
-void AGENT_FRAME::OnHistoryTool( wxCommandEvent& aEvent )
-{
-    wxLogInfo( "AGENT_FRAME::OnHistoryTool called" );
-    auto historyList = m_chatHistoryDb.GetHistoryList();
-
-    wxMenu menu;
-
-    if( !historyList.empty() )
-    {
-        int id = ID_CHAT_HISTORY_MENU_BASE;
-
-        // Show only last 5 entries in the dropdown
-        size_t count = 0;
-        for( const auto& entry : historyList )
-        {
-            if( count++ >= 5 ) break;
-            wxString title = wxString::FromUTF8( entry.title );
-            if( title.IsEmpty() )
-                title = "Untitled Chat";
-            menu.Append( id++, title );
-        }
-
-        Bind( wxEVT_MENU, &AGENT_FRAME::OnHistoryMenuSelect, this, ID_CHAT_HISTORY_MENU_BASE, id - 1 );
-
-        // Add separator and "Show All" if there are more than 5 entries
-        if( historyList.size() > 5 )
-        {
-            menu.AppendSeparator();
-            menu.Append( ID_CHAT_HISTORY_SHOW_ALL, "Show All..." );
-            Bind( wxEVT_MENU, &AGENT_FRAME::OnHistoryShowAll, this, ID_CHAT_HISTORY_SHOW_ALL );
-        }
-    }
-    else
-    {
-        menu.Append( wxID_ANY, "(No history)" )->Enable( false );
-    }
-
-    PopupMenu( &menu );
-}
-
-
-void AGENT_FRAME::OnHistoryShowAll( wxCommandEvent& aEvent )
-{
-    wxLogInfo( "AGENT_FRAME::OnHistoryShowAll called" );
-    // Prevent switching chats while generating
-    bool isBusy = m_chatController ? m_chatController->IsBusy()
-                                   : ( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE );
-    if( isBusy )
-    {
-        wxMessageBox( _( "Please wait for the current response to complete before viewing history." ),
-                      _( "Chat in Progress" ), wxOK | wxICON_INFORMATION );
-        return;
-    }
-
-    // Position history panel as full overlay covering entire client area
-    wxSize clientSize = GetClientSize();
-    m_historyPanel->SetSize( clientSize );
-    m_historyPanel->SetPosition( wxPoint( 0, 0 ) );
-
-    // Refresh and show the history panel
-    m_historyPanel->RefreshHistory();
-    m_historyPanel->Show();
-    m_historyPanel->Raise();  // Bring to front
-}
-
-void AGENT_FRAME::OnHistoryMenuSelect( wxCommandEvent& aEvent )
-{
-    wxLogInfo( "AGENT_FRAME::OnHistoryMenuSelect called" );
-    // Prevent switching chats while generating
-    bool isBusy = m_chatController ? m_chatController->IsBusy()
-                                   : ( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE );
-    if( isBusy )
-    {
-        wxMessageBox( _( "Please wait for the current response to complete before switching chats." ),
-                      _( "Chat in Progress" ), wxOK | wxICON_INFORMATION );
-        return;
-    }
-
-    int index = aEvent.GetId() - ID_CHAT_HISTORY_MENU_BASE;
-    auto historyList = m_chatHistoryDb.GetHistoryList();
-
-    if( index >= 0 && index < (int)historyList.size() )
-    {
-        LoadConversation( historyList[index].id );
-    }
 }
 
 void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
@@ -2357,8 +2000,8 @@ void AGENT_FRAME::RenderChatHistory()
     // Counter for tool result toggle indices
     int toolResultIndex = 0;
 
-    // Build HTML from chat history with modern template
-    m_fullHtmlContent = GetAgentHtmlTemplate();
+    // Build HTML from chat history (inner content only, no template wrapper)
+    m_fullHtmlContent = "";
 
     for( const auto& msg : m_chatHistory )
     {
@@ -2588,8 +2231,6 @@ void AGENT_FRAME::RenderChatHistory()
         m_fullHtmlContent += m_toolCallHtml;
     }
 
-    m_fullHtmlContent += "</div></body></html>";
-
     SetHtml( m_fullHtmlContent );
 }
 
@@ -2600,22 +2241,7 @@ void AGENT_FRAME::RenderChatHistory()
 void AGENT_FRAME::UpdateAuthUI()
 {
     bool authenticated = m_auth && m_auth->IsAuthenticated();
-
-    if( m_signInOverlay )
-    {
-        m_signInOverlay->Show( !authenticated );
-
-        if( !authenticated )
-        {
-            // Position overlay to cover the entire client area
-            wxSize clientSize = GetClientSize();
-            m_signInOverlay->SetSize( clientSize );
-            m_signInOverlay->SetPosition( wxPoint( 0, 0 ) );
-            m_signInOverlay->Raise(); // Bring to front
-        }
-
-        Layout();
-    }
+    m_bridge->PushAuthState( authenticated );
 }
 
 bool AGENT_FRAME::CheckAuthentication()
@@ -2627,31 +2253,9 @@ bool AGENT_FRAME::CheckAuthentication()
     return true; // No auth configured, allow access
 }
 
-void AGENT_FRAME::OnSignIn( wxCommandEvent& aEvent )
-{
-    wxLogInfo( "AGENT_FRAME::OnSignIn called" );
-    if( m_auth )
-        m_auth->StartOAuthFlow( "agent" );
-}
-
 void AGENT_FRAME::OnSize( wxSizeEvent& aEvent )
 {
-    wxSize clientSize = GetClientSize();
-
-    // Reposition overlays to cover entire client area when resized
-    if( m_signInOverlay && m_signInOverlay->IsShown() )
-    {
-        m_signInOverlay->SetSize( clientSize );
-        m_signInOverlay->SetPosition( wxPoint( 0, 0 ) );
-    }
-
-    if( m_historyPanel && m_historyPanel->IsShown() )
-    {
-        m_historyPanel->SetSize( clientSize );
-        m_historyPanel->SetPosition( wxPoint( 0, 0 ) );
-    }
-
-    aEvent.Skip(); // Let default handling continue
+    aEvent.Skip();
 }
 
 
@@ -2659,63 +2263,68 @@ void AGENT_FRAME::OnSize( wxSizeEvent& aEvent )
 // Agent Change Approval Methods
 // ============================================================================
 
-void AGENT_FRAME::RefreshPendingChangesPanel()
+void AGENT_FRAME::QueryPendingChanges()
 {
-    wxLogInfo( "AGENT_FRAME::RefreshPendingChangesPanel" );
+    wxLogInfo( "AGENT_FRAME::QueryPendingChanges" );
 
-    // The panel queries the editors directly and shows/hides itself
-    m_pendingChangesPanel->Refresh();
+    m_pendingSchSheets.clear();
+    m_hasPcbChanges = false;
+    m_pcbFilename.Clear();
 
-    // Update button visibility to match panel state
-    UpdatePendingChangesButtonVisibility();
-}
-
-
-void AGENT_FRAME::UpdatePendingChangesButtonVisibility()
-{
-    // Show/hide the toggle button based on whether the panel has content
-    // When there are no changes, hide the button entirely
-    bool hasChanges = m_pendingChangesPanel->IsShown();
-    m_pendingChangesBtn->Show( hasChanges );
-
-    // Set correct label based on panel visibility
-    if( hasChanges )
+    // Query schematic editor for pending changes
+    KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );
+    if( schPlayer )
     {
-        m_pendingChangesBtn->SetLabel( "Hide Changes" );
-    }
-}
+        std::string response;
+        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_HAS_CHANGES, response );
 
+        try
+        {
+            nlohmann::json j = nlohmann::json::parse( response );
+            bool hasChanges = j.value( "has_changes", false );
 
-void AGENT_FRAME::OnPendingChangesClick( wxCommandEvent& aEvent )
-{
-    wxLogInfo( "AGENT_FRAME::OnPendingChangesClick called" );
-    // Toggle panel visibility and update button label
-    bool isShown = m_pendingChangesPanel->IsShown();
-    m_pendingChangesPanel->Show( !isShown );
-    m_pendingChangesBtn->SetLabel( isShown ? "Show Changes" : "Hide Changes" );
-    Layout();
-}
-
-
-void AGENT_FRAME::OnTrackAgentClick( wxCommandEvent& aEvent )
-{
-    m_isTrackingAgent = !m_isTrackingAgent;
-
-    nlohmann::json payload;
-    payload["tracking"] = m_isTrackingAgent;
-    std::string payloadStr = payload.dump();
-
-    if( m_isTrackingAgent )
-    {
-        m_trackAgentBtn->SetLabel( "Tracking" );
-    }
-    else
-    {
-        m_trackAgentBtn->SetLabel( "Track" );
+            if( hasChanges && j.contains( "affected_sheets" ) && j["affected_sheets"].is_array() )
+            {
+                for( const auto& sheet : j["affected_sheets"] )
+                {
+                    if( sheet.is_string() )
+                    {
+                        wxString sheetPath = wxString::FromUTF8( sheet.get<std::string>() );
+                        if( !sheetPath.IsEmpty() )
+                            m_pendingSchSheets.insert( sheetPath );
+                    }
+                }
+            }
+        }
+        catch( const std::exception& e )
+        {
+            wxLogInfo( "AGENT_FRAME: Failed to parse schematic response: %s", e.what() );
+        }
     }
 
-    Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_TRACKING_MODE, payloadStr );
-    Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_TRACKING_MODE, payloadStr );
+    // Query PCB editor for pending changes
+    KIWAY_PLAYER* pcbPlayer = Kiway().Player( FRAME_PCB_EDITOR, false );
+    if( pcbPlayer )
+    {
+        std::string response;
+        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_HAS_CHANGES, response );
+        m_hasPcbChanges = ( response == "true" );
+
+        if( m_hasPcbChanges )
+            m_pcbFilename = "PCB";
+    }
+
+    // Build JSON data for the webview pending changes panel
+    bool hasAnyChanges = !m_pendingSchSheets.empty() || m_hasPcbChanges;
+
+    nlohmann::json data;
+    nlohmann::json sheets = nlohmann::json::array();
+    for( const auto& sheet : m_pendingSchSheets )
+        sheets.push_back( sheet.ToStdString() );
+    data["sheets"] = sheets;
+    data["has_pcb"] = m_hasPcbChanges;
+
+    m_bridge->PushPendingChanges( data );
 }
 
 
@@ -2723,7 +2332,7 @@ void AGENT_FRAME::OnSchematicChangeHandled( bool aAccepted )
 {
     AppendHtml( aAccepted ? "<p><i>Schematic changes accepted.</i></p>"
                           : "<p><i>Schematic changes rejected.</i></p>" );
-    RefreshPendingChangesPanel();
+    QueryPendingChanges();
 }
 
 
@@ -2731,7 +2340,7 @@ void AGENT_FRAME::OnPcbChangeHandled( bool aAccepted )
 {
     AppendHtml( aAccepted ? "<p><i>PCB changes accepted.</i></p>"
                           : "<p><i>PCB changes rejected.</i></p>" );
-    RefreshPendingChangesPanel();
+    QueryPendingChanges();
 }
 
 
@@ -3208,27 +2817,16 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     FlushStreamingContentUpdate( true );
 
     // Sync m_fullHtmlContent with clean streaming state.
-    // The timer may have baked the generating tool box into m_fullHtmlContent just before
-    // m_generatingToolName was cleared. Rebuild to ensure m_fullHtmlContent matches the DOM.
     {
         wxString streamingContent = BuildStreamingContent();
         wxString fullHtml = m_htmlBeforeAgentResponse;
-        const wxString closingTags = wxS( "</div></body></html>" );
-
-        if( fullHtml.EndsWith( closingTags ) )
-            fullHtml = fullHtml.Left( fullHtml.length() - closingTags.length() );
-
         fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
         fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
-        fullHtml += closingTags;
         m_fullHtmlContent = fullHtml;
     }
 
     // Finalize the current streaming div so the agent's response text stays in place
-    if( m_chatWindow )
-    {
-        m_chatWindow->RunScriptAsync( "finalizeStreamingContent();" );
-    }
+    m_bridge->PushFinalizeStreaming();
 
     // Update m_fullHtmlContent to reflect finalized state (no more streaming-content ID)
     m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
@@ -3755,38 +3353,27 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
         "break-words m-0 mt-2\">%s</pre>",
         fullFormatted );
 
-    // Update status and text body in the existing DOM element
-    if( m_chatWindow )
+    // Update status and text body in the existing DOM element via bridge
+    m_bridge->PushToolResultUpdate( idx, statusClass, statusText, textBody );
+
+    // Append image via chunked data URI (avoids multi-MB JS string literals)
+    if( data->hasImage && !data->imageBase64.empty() )
     {
-        m_chatWindow->RunScriptAsync( wxString::Format(
-            "updateToolResult(%d, '%s', '%s', '%s');",
-            idx,
-            EscapeForJs( statusClass ),
-            EscapeForJs( statusText ),
-            EscapeForJs( textBody ) ) );
+        wxString prefix = "data:" + wxString::FromUTF8( data->imageMediaType )
+            + ";base64,";
+        m_bridge->PushToolResultImageBegin( idx, prefix );
 
-        // Append image via chunked data URI (avoids multi-MB JS string literals)
-        if( data->hasImage && !data->imageBase64.empty() )
+        // Send base64 data in ~100KB chunks
+        const wxString b64 = wxString::FromUTF8( data->imageBase64 );
+        const size_t chunkSize = 100000;
+
+        for( size_t i = 0; i < b64.length(); i += chunkSize )
         {
-            wxString prefix = "data:" + wxString::FromUTF8( data->imageMediaType )
-                + ";base64,";
-            m_chatWindow->RunScriptAsync( wxString::Format(
-                "toolImgBegin(%d, '%s');", idx, EscapeForJs( prefix ) ) );
-
-            // Send base64 data in ~100KB chunks
-            const wxString b64 = wxString::FromUTF8( data->imageBase64 );
-            const size_t chunkSize = 100000;
-
-            for( size_t i = 0; i < b64.length(); i += chunkSize )
-            {
-                wxString chunk = b64.Mid( i, chunkSize );
-                m_chatWindow->RunScriptAsync( wxString::Format(
-                    "toolImgChunk('%s');", EscapeForJs( chunk ) ) );
-            }
-
-            m_chatWindow->RunScriptAsync( wxString::Format(
-                "toolImgEnd(%d);", idx ) );
+            wxString chunk = b64.Mid( i, chunkSize );
+            m_bridge->PushToolResultImageChunk( chunk );
         }
+
+        m_bridge->PushToolResultImageEnd( idx );
     }
 
     // Update internal HTML tracking (replace running HTML with full completed HTML)
@@ -3823,7 +3410,7 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
     }
 
     // Check for pending approval
-    RefreshPendingChangesPanel();
+    QueryPendingChanges();
 
     // Auto-follow on tool complete if tracking is active
     if( m_isTrackingAgent && data->success )
@@ -3854,7 +3441,7 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
     if( !continuing )
     {
         StopGeneratingAnimation();
-        m_actionButton->SetLabel( "Send" );
+        m_bridge->PushActionButtonState( "Send" );
     }
 
     // Finalize thinking state
@@ -3882,12 +3469,7 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
         m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
 
     // Finalize the streaming content div - remove its ID so future streams use a fresh div
-    if( m_chatWindow )
-    {
-        m_chatWindow->RunScriptAsync( "finalizeStreamingContent();" );
-    }
-
-    // Update m_fullHtmlContent to match DOM state (remove the id from streaming div)
+    m_bridge->PushFinalizeStreaming();
     m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
 
     // If continuing, add a new streaming div for the next response
@@ -3932,7 +3514,7 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     // Stop all animations and reset button
     StopGeneratingAnimation();
     m_isCompacting = false;
-    m_actionButton->SetLabel( "Send" );
+    m_bridge->PushActionButtonState( "Send" );
 
     // Clear streaming state
     m_isThinking = false;
@@ -3964,11 +3546,11 @@ void AGENT_FRAME::OnChatStateChanged( wxThreadEvent& aEvent )
     {
     case AgentConversationState::IDLE:
     case AgentConversationState::ERROR:
-        m_actionButton->SetLabel( "Send" );
+        m_bridge->PushActionButtonState( "Send" );
         break;
 
     case AgentConversationState::WAITING_FOR_LLM:
-        m_actionButton->SetLabel( "Stop" );
+        m_bridge->PushActionButtonState( "Stop" );
 
         // If continuing after tool completion, bake in tool result before starting new stream
         // This ensures the tool call result appears BEFORE any new response text
@@ -3985,38 +3567,18 @@ void AGENT_FRAME::OnChatStateChanged( wxThreadEvent& aEvent )
             if( !m_toolCallHtml.IsEmpty() )
                 streamingContent += m_toolCallHtml;
 
-            // Send immediate DOM update via JavaScript
-            if( m_chatWindow && !streamingContent.IsEmpty() )
-            {
-                wxString escaped = streamingContent;
-                escaped.Replace( "\\", "\\\\" );
-                escaped.Replace( "'", "\\'" );
-                escaped.Replace( "\n", "\\n" );
-                escaped.Replace( "\r", "\\r" );
-                m_chatWindow->RunScriptAsync(
-                    wxString::Format( "updateStreamingContent('%s');", escaped ) );
-            }
+            // Send immediate DOM update
+            if( !streamingContent.IsEmpty() )
+                m_bridge->PushStreamingContent( streamingContent );
 
             // Update m_fullHtmlContent to match the DOM state
-            // Remove any empty streaming divs to prevent accumulation, then append the filled one
             wxString fullHtml = m_htmlBeforeAgentResponse;
-            const wxString closingTags = wxS( "</div></body></html>" );
-
-            // Remove closing tags
-            if( fullHtml.EndsWith( closingTags ) )
-                fullHtml = fullHtml.Left( fullHtml.length() - closingTags.length() );
-
-            // Remove any empty streaming content divs (prevents accumulation)
             fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
-
-            // Append the filled streaming div and restore closing tags
             fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
-            fullHtml += closingTags;
             m_fullHtmlContent = fullHtml;
 
             // Finalize this streaming div (tool result now "baked in")
-            if( m_chatWindow )
-                m_chatWindow->RunScriptAsync( "finalizeStreamingContent();" );
+            m_bridge->PushFinalizeStreaming();
             m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
 
             // Add fresh streaming div for next content
@@ -4072,7 +3634,7 @@ void AGENT_FRAME::OnChatTitleDelta( wxThreadEvent& aEvent )
         return;
 
     // Update title display with partial text (streaming animation)
-    m_chatNameLabel->SetLabel( wxString::FromUTF8( data->partialTitle ) );
+    m_bridge->PushChatTitle( wxString::FromUTF8( data->partialTitle ) );
 
     delete data;
 }
@@ -4085,8 +3647,7 @@ void AGENT_FRAME::OnChatTitleGenerated( wxThreadEvent& aEvent )
         return;
 
     wxLogInfo( "AGENT_FRAME::OnChatTitleGenerated - title: %s", data->title.c_str() );
-    // Update title display
-    m_chatNameLabel->SetLabel( wxString::FromUTF8( data->title ) );
+    m_bridge->PushChatTitle( wxString::FromUTF8( data->title ) );
 
     // Update persistence with the new title
     m_chatHistoryDb.SetTitle( data->title );
@@ -4094,12 +3655,6 @@ void AGENT_FRAME::OnChatTitleGenerated( wxThreadEvent& aEvent )
     if( m_chatController )
     {
         m_chatHistoryDb.Save( m_chatController->GetChatHistory() );
-    }
-
-    // Refresh history panel if it's open
-    if( m_historyPanel && m_historyPanel->IsShown() )
-    {
-        m_historyPanel->RefreshHistory();
     }
 
     delete data;
@@ -4114,17 +3669,15 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
 
     wxLogInfo( "AGENT_FRAME::OnChatHistoryLoaded - chatId: %s, title: %s",
             data->chatId.c_str(), data->title.c_str() );
-    // Hide history panel overlay if visible
-    if( m_historyPanel && m_historyPanel->IsShown() )
-    {
-        m_historyPanel->Hide();
-    }
 
-    // Update chat name label with title
+    // Hide history dropdown
+    m_bridge->PushHistoryShow( false );
+
+    // Update chat title
     std::string title = data->title;
     if( title.empty() )
         title = "Untitled Chat";
-    m_chatNameLabel->SetLabel( wxString::FromUTF8( title ) );
+    m_bridge->PushChatTitle( wxString::FromUTF8( title ) );
 
     // Sync history from controller
     if( m_chatController )

@@ -21,7 +21,7 @@
 #include "chat_events.h"
 #include "../tools/agent_tools.h"
 #include "../tools/tool_registry.h"
-#include "../ui/file_attach.h"
+#include "view/file_attach.h"
 #include "agent_llm_client.h"
 #include "agent_chat_history.h"
 #include "auth/agent_auth.h"

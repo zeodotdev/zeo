@@ -372,6 +372,14 @@ void WEBVIEW_BRIDGE::PushTrackingState( bool aTracking )
                                  aTracking ? "true" : "false" ) );
 }
 
+void WEBVIEW_BRIDGE::PushTrackButtonVisible( bool aVisible )
+{
+    LogBridge( "C++->JS", wxString::Format( "setTrackButtonVisible(%s)",
+                                            aVisible ? "true" : "false" ) );
+    RunScript( wxString::Format( "App.Controls.setTrackButtonVisible(%s);",
+                                 aVisible ? "true" : "false" ) );
+}
+
 void WEBVIEW_BRIDGE::PushSelectionPill( const wxString& aLabel, bool aVisible )
 {
     RunScript( wxString::Format( "App.Controls.setSelectionPill('%s', %s);",

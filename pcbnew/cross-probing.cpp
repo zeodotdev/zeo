@@ -1238,15 +1238,6 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
             if( GetCanvas() && GetCanvas()->GetView() )
             {
                 DIFF_MANAGER::GetInstance().SetTrackingMode( GetCanvas()->GetView(), enabled );
-
-                if( enabled )
-                {
-                    DIFF_MANAGER::GetInstance().SetTrackingBrokenCallback( [this]() {
-                        std::string emptyPayload;
-                        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_TRACKING_BROKEN, emptyPayload );
-                    } );
-                }
-
                 GetCanvas()->Refresh();
             }
         }

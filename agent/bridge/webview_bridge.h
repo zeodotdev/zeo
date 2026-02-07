@@ -61,6 +61,7 @@ public:
     void PushModelList( const std::vector<std::string>& aModels,
                         const std::string& aSelected );
     void PushTrackingState( bool aTracking );
+    void PushTrackButtonVisible( bool aVisible );
     void PushSelectionPill( const wxString& aLabel, bool aVisible );
     // Pending changes panel
     void PushPendingChanges( const nlohmann::json& aData );

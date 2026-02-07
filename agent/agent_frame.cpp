@@ -231,6 +231,34 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
     return html;
 }
 
+// Helper: Build the HTML for a tool approval prompt (e.g. "Open" / "Close" editor).
+// Uses a non-clickable <div> header (no toggle) since the body is empty during approval.
+// Preserves .tool-status and .tool-result-body so updateToolResult() can populate them
+// on completion. After the next full re-render the element becomes expandable via
+// m_fullHtmlContent which is updated to BuildToolResultHtml by OnChatToolComplete.
+static wxString BuildToolApprovalHtml( int aIndex, const wxString& aDesc,
+                                       const wxString& aButtonText,
+                                       const wxString& aActionHref,
+                                       const wxString& aBgColor,
+                                       const wxString& aTextColor )
+{
+    return wxString::Format(
+        "<div id=\"tool-result-%d\" class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
+        "<div class=\"p-3 px-3 flex items-center gap-2\">"
+        "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+        "<span class=\"tool-status text-[12px] ml-auto\">"
+        "<a href=\"%s\" style=\"background:%s; color:%s; padding:3px 14px; "
+        "border-radius:6px; font-size:12px; font-weight:600; text-decoration:none; "
+        "cursor:pointer;\">%s</a>"
+        "</span>"
+        "</div>"
+        "<div class=\"tool-result-body p-3 pt-0 border-t border-border-dark\" "
+        "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
+        "</div>"
+        "</div>",
+        aIndex, aDesc, aActionHref, aBgColor, aTextColor, aButtonText, aIndex );
+}
+
 BEGIN_EVENT_TABLE( AGENT_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, AGENT_FRAME::OnExit )
 
@@ -247,7 +275,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_isTrackingAgent( false ),
         m_historyPanel( nullptr ),
         m_pendingOpenSch( false ),
-        m_pendingOpenPcb( false )
+        m_pendingOpenPcb( false ),
+        m_pendingCloseSch( false ),
+        m_pendingClosePcb( false ),
+        m_pendingCloseSaveFirst( true )
 {
     // Set frame background color to match the theme
     SetBackgroundColour( wxColour( "#1E1E1E" ) );
@@ -1368,18 +1399,31 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         return;
     }
 
-    // Auto-reject pending open editor request if user sends a new message.
+    // Auto-reject pending open/close editor request if user sends a new message.
     // Use Cancel() which handles orphaned tools and transitions to IDLE.
     // Don't use HandleToolResult() as it would call ContinueChat() and start an LLM request,
     // but OnSend will also start a request → we'd get duplicate requests.
-    if( m_pendingOpenSch || m_pendingOpenPcb )
+    if( m_pendingOpenSch || m_pendingOpenPcb || m_pendingCloseSch || m_pendingClosePcb )
     {
         if( m_chatController )
             m_chatController->Cancel();
 
+        // Replace approval box with "Cancelled" in the permanent DOM
+        if( !m_activeRunningHtml.IsEmpty() && m_activeToolResultIdx >= 0 )
+        {
+            wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
+            wxString cancelledHtml = BuildToolResultHtml( m_activeToolResultIdx, desc,
+                "text-text-muted", "Cancelled", "User cancelled", "", false );
+            m_fullHtmlContent.Replace( m_activeRunningHtml, cancelledHtml );
+            m_activeRunningHtml.Clear();
+        }
+
         m_pendingOpenSch = false;
         m_pendingOpenPcb = false;
         m_pendingOpenToolId.clear();
+        m_pendingCloseSch = false;
+        m_pendingClosePcb = false;
+        m_pendingCloseToolId.clear();
         m_toolCallHtml = "";
     }
 
@@ -1543,11 +1587,35 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
         m_pendingToolCalls = json::array();
     }
 
-    // Clear pending editor open request state (prevents stale approval button clicks)
+    // Replace approval box with "Cancelled" if an editor approval was pending
+    if( ( m_pendingOpenSch || m_pendingOpenPcb || m_pendingCloseSch || m_pendingClosePcb )
+        && !m_activeRunningHtml.IsEmpty() && m_activeToolResultIdx >= 0 )
+    {
+        wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
+        wxString cancelledHtml = BuildToolResultHtml( m_activeToolResultIdx, desc,
+            "text-text-muted", "Cancelled", "User cancelled", "", false );
+        m_fullHtmlContent.Replace( m_activeRunningHtml, cancelledHtml );
+        m_activeRunningHtml.Clear();
+
+        // Also update the DOM element directly (AppendHtml below is incremental, not a re-render)
+        if( m_chatWindow )
+        {
+            m_chatWindow->RunScriptAsync( wxString::Format(
+                "updateToolResult(%d, 'text-text-muted', 'Cancelled', "
+                "'<pre class=\"text-text-secondary font-mono text-[12px] whitespace-pre-wrap "
+                "break-words m-0 mt-2\">User cancelled</pre>');",
+                m_activeToolResultIdx ) );
+        }
+    }
+
+    // Clear pending editor open/close request state (prevents stale approval button clicks)
     m_pendingOpenSch = false;
     m_pendingOpenPcb = false;
     m_pendingOpenToolId.clear();
     m_pendingOpenFilePath.Clear();
+    m_pendingCloseSch = false;
+    m_pendingClosePcb = false;
+    m_pendingCloseToolId.clear();
 
     // Transition state machine to IDLE
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
@@ -1599,6 +1667,10 @@ void AGENT_FRAME::OnWebViewMessage( const wxString& aMessage )
             else if( href == "agent:reject_open" )
             {
                 OnRejectOpenEditor();
+            }
+            else if( href == "agent:approve_close" )
+            {
+                OnApproveCloseEditor();
             }
             else if( href.StartsWith( "toggle:" ) )
             {
@@ -2063,6 +2135,9 @@ void AGENT_FRAME::RetryLastRequest()
     m_thinkingExpanded = false;
     m_isThinking = false;
     m_pendingToolCalls = nlohmann::json::array();
+    m_pendingCloseSch = false;
+    m_pendingClosePcb = false;
+    m_pendingCloseToolId.clear();
 
     // Ensure we're in the right state
     m_conversationCtx.Reset();
@@ -2752,17 +2827,40 @@ void AGENT_FRAME::UpdateConflictDisplay()
 
 void AGENT_FRAME::ShowOpenEditorApproval( const wxString& aEditorType )
 {
-    // Update m_toolCallHtml instead of using AppendHtml() so the approval UI
-    // survives calls to UpdateAgentResponse()
-    // Use onclick for JavaScript handling with modern CSS classes
-    m_toolCallHtml = wxString::Format(
-        "<br><br><div class=\"bg-bg-secondary p-3 rounded-md my-3 max-w-full break-words\">"
-        "<span class=\"text-text-primary font-bold\"><b>Open %s Editor?</b></span> "
-        "<a href=\"agent:approve_open\" class=\"text-[#00AA00] font-bold cursor-pointer no-underline hover:underline mx-2\">Open</a> "
-        "<a href=\"agent:reject_open\" class=\"text-[#AA0000] font-bold cursor-pointer no-underline hover:underline mx-2\">Cancel</a>"
-        "</div>",
-        aEditorType );
-    UpdateAgentResponse();
+    int idx = m_activeToolResultIdx;
+    if( idx < 0 )
+        return;
+
+    wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Open editor" ) : m_lastToolDesc;
+    wxString approvalHtml = BuildToolApprovalHtml( idx, desc,
+                                                    "Open", "agent:approve_open",
+                                                    "#1a3d1a", "#4ade80" );
+
+    // Replace the running tool box with the approval box in internal HTML
+    m_fullHtmlContent.Replace( m_activeRunningHtml, approvalHtml );
+    m_htmlBeforeAgentResponse.Replace( m_activeRunningHtml, approvalHtml );
+    m_activeRunningHtml = approvalHtml;
+
+    SetHtml( m_fullHtmlContent );
+}
+
+
+void AGENT_FRAME::ShowCloseEditorApproval( const wxString& aEditorType )
+{
+    int idx = m_activeToolResultIdx;
+    if( idx < 0 )
+        return;
+
+    wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Close editor" ) : m_lastToolDesc;
+    wxString approvalHtml = BuildToolApprovalHtml( idx, desc,
+                                                    "Close", "agent:approve_close",
+                                                    "#3d1a1a", "#f87171" );
+
+    m_fullHtmlContent.Replace( m_activeRunningHtml, approvalHtml );
+    m_htmlBeforeAgentResponse.Replace( m_activeRunningHtml, approvalHtml );
+    m_activeRunningHtml = approvalHtml;
+
+    SetHtml( m_fullHtmlContent );
 }
 
 
@@ -2774,8 +2872,6 @@ void AGENT_FRAME::OnApproveOpenEditor()
     if( m_pendingOpenToolId.empty() )
     {
         wxLogWarning( "OnApproveOpenEditor: empty tool ID - ignoring stale click" );
-        m_toolCallHtml.Clear();
-        UpdateAgentResponse();
         return;
     }
 
@@ -2783,8 +2879,6 @@ void AGENT_FRAME::OnApproveOpenEditor()
     {
         wxLogWarning( "OnApproveOpenEditor: no pending editor type - ignoring stale click" );
         m_pendingOpenToolId.clear();
-        m_toolCallHtml.Clear();
-        UpdateAgentResponse();
         return;
     }
 
@@ -2797,8 +2891,6 @@ void AGENT_FRAME::OnApproveOpenEditor()
         m_pendingOpenPcb = false;
         m_pendingOpenToolId.clear();
         m_pendingOpenFilePath.Clear();
-        m_toolCallHtml.Clear();
-        UpdateAgentResponse();
         return;
     }
 
@@ -2839,8 +2931,6 @@ void AGENT_FRAME::OnRejectOpenEditor()
     if( m_pendingOpenToolId.empty() )
     {
         wxLogWarning( "OnRejectOpenEditor: empty tool ID - ignoring stale click" );
-        m_toolCallHtml.Clear();
-        UpdateAgentResponse();
         return;
     }
 
@@ -2856,14 +2946,67 @@ void AGENT_FRAME::OnRejectOpenEditor()
     if( m_chatController && !m_chatController->HasPendingTool( toolId ) )
     {
         wxLogWarning( "OnRejectOpenEditor: tool %s no longer pending", toolId.c_str() );
-        m_toolCallHtml.Clear();
-        UpdateAgentResponse();
         return;
     }
 
     if( m_chatController )
         m_chatController->HandleToolResult( toolId,
             "User declined to open " + editorName.ToStdString() + " editor", false );
+}
+
+
+void AGENT_FRAME::OnApproveCloseEditor()
+{
+    wxLogInfo( "AGENT_FRAME::OnApproveCloseEditor called" );
+
+    if( m_pendingCloseToolId.empty() )
+    {
+        wxLogWarning( "OnApproveCloseEditor: empty tool ID - ignoring stale click" );
+        return;
+    }
+
+    if( !m_pendingCloseSch && !m_pendingClosePcb )
+    {
+        wxLogWarning( "OnApproveCloseEditor: no pending editor type" );
+        m_pendingCloseToolId.clear();
+        return;
+    }
+
+    if( m_chatController && !m_chatController->HasPendingTool( m_pendingCloseToolId ) )
+    {
+        wxLogWarning( "OnApproveCloseEditor: tool %s no longer pending",
+                      m_pendingCloseToolId.c_str() );
+        m_pendingCloseSch = false;
+        m_pendingClosePcb = false;
+        m_pendingCloseToolId.clear();
+        return;
+    }
+
+    FRAME_T frameType = m_pendingCloseSch ? FRAME_SCH : FRAME_PCB_EDITOR;
+    wxString editorLabel = m_pendingCloseSch ? "Schematic" : "PCB";
+    bool saveFirst = m_pendingCloseSaveFirst;
+
+    KIWAY_PLAYER* player = Kiway().Player( frameType, false );
+    if( player && player->IsShown() )
+    {
+        player->Close( !saveFirst );
+
+        if( frameType == FRAME_SCH )
+            TOOL_REGISTRY::Instance().SetSchematicEditorOpen( false );
+        else if( frameType == FRAME_PCB_EDITOR )
+            TOOL_REGISTRY::Instance().SetPcbEditorOpen( false );
+    }
+
+    std::string result = editorLabel.ToStdString() + " editor closed"
+                         + ( saveFirst ? " (saved)" : "" );
+    std::string toolId = m_pendingCloseToolId;
+
+    m_pendingCloseSch = false;
+    m_pendingClosePcb = false;
+    m_pendingCloseToolId.clear();
+
+    if( m_chatController )
+        m_chatController->HandleToolResult( toolId, result, true );
 }
 
 
@@ -3370,7 +3513,7 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         return;
     }
 
-    // Handle close_editor - close schematic or PCB editor
+    // Handle close_editor - requires user approval before closing
     if( data->toolName == "close_editor" )
     {
         std::string editorType = data->input.value( "editor_type", "" );
@@ -3381,6 +3524,7 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         KIWAY_PLAYER* player = Kiway().Player( frameType, false );
         if( !player || !player->IsShown() )
         {
+            // Editor not open - return success immediately (no popup needed)
             if( m_chatController )
                 m_chatController->HandleToolResult( data->toolId,
                     editorLabel.ToStdString() + " editor is not open", true );
@@ -3388,19 +3532,13 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
             return;
         }
 
-        // Close the editor (it will prompt to save if there are unsaved changes)
-        player->Close( !saveFirst ); // If saveFirst is false, force close without prompt
+        // Store pending request and show approval dialog
+        m_pendingCloseSch = ( editorType == "sch" );
+        m_pendingClosePcb = ( editorType == "pcb" );
+        m_pendingCloseToolId = data->toolId;
+        m_pendingCloseSaveFirst = saveFirst;
 
-        // Notify tool registry that editor is now closed
-        // This allows direct file modifications again
-        if( frameType == FRAME_SCH )
-            TOOL_REGISTRY::Instance().SetSchematicEditorOpen( false );
-        else if( frameType == FRAME_PCB_EDITOR )
-            TOOL_REGISTRY::Instance().SetPcbEditorOpen( false );
-
-        if( m_chatController )
-            m_chatController->HandleToolResult( data->toolId,
-                editorLabel.ToStdString() + " editor closed" + ( saveFirst ? " (saved)" : "" ), true );
+        ShowCloseEditorApproval( editorLabel );
 
         delete data;
         return;

@@ -863,6 +863,15 @@ App.Input = (function() {
         syncHighlight();
     }
 
+    function submit() {
+        App.Bridge.sendMsg('submit', {
+            text: textarea.value,
+            attachments: attachments.map(function(a) {
+                return { base64: a.base64, media_type: a.media_type, filename: a.filename };
+            })
+        });
+    }
+
     // Init
     syncHighlight();
 
@@ -870,6 +879,7 @@ App.Input = (function() {
         clear: clear,
         focus: focus,
         setText: setText,
+        submit: submit,
         addAttachment: addAttachment,
         // Exposed for onclick handlers in rendered HTML
         _removeAtt: removeAttachment,
@@ -945,7 +955,7 @@ App.Controls = (function() {
         if (label === 'Stop') {
             App.Bridge.sendMsg('stop_click');
         } else {
-            App.Bridge.sendMsg('send_click');
+            App.Input.submit();
         }
     });
 

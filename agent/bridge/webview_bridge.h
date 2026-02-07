@@ -41,7 +41,7 @@ public:
     void PushToolResultUpdate( int aIndex, const wxString& aStatusClass,
                                const wxString& aStatusText, const wxString& aBodyHtml );
     void PushToolResultImageBegin( int aIndex, const wxString& aPrefix );
-    void PushToolResultImageChunk( const wxString& aChunk );
+    void PushToolResultImageChunk( int aIndex, const wxString& aChunk );
     void PushToolResultImageEnd( int aIndex );
     void PushFullChatContent( const wxString& aHtml );
 

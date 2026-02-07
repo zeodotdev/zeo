@@ -3370,7 +3370,7 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
         for( size_t i = 0; i < b64.length(); i += chunkSize )
         {
             wxString chunk = b64.Mid( i, chunkSize );
-            m_bridge->PushToolResultImageChunk( chunk );
+            m_bridge->PushToolResultImageChunk( idx, chunk );
         }
 
         m_bridge->PushToolResultImageEnd( idx );

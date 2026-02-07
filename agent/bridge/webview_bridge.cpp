@@ -293,10 +293,10 @@ void WEBVIEW_BRIDGE::PushToolResultImageBegin( int aIndex, const wxString& aPref
                                  aIndex, EscapeJs( aPrefix ) ) );
 }
 
-void WEBVIEW_BRIDGE::PushToolResultImageChunk( const wxString& aChunk )
+void WEBVIEW_BRIDGE::PushToolResultImageChunk( int aIndex, const wxString& aChunk )
 {
-    RunScript( wxString::Format( "App.Chat.toolImgChunk('%s');",
-                                 EscapeJs( aChunk ) ) );
+    RunScript( wxString::Format( "App.Chat.toolImgChunk(%d, '%s');",
+                                 aIndex, EscapeJs( aChunk ) ) );
 }
 
 void WEBVIEW_BRIDGE::PushToolResultImageEnd( int aIndex )

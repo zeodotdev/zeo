@@ -310,6 +310,22 @@ void WEBVIEW_BRIDGE::PushFullChatContent( const wxString& aHtml )
     RunScript( wxString::Format( "App.Chat.setFullContent('%s');", EscapeJs( aHtml ) ) );
 }
 
+void WEBVIEW_BRIDGE::PushReplaceQueuedMessage( const wxString& aHtml )
+{
+    LogBridge( "C++->JS", "replaceQueuedMessage" );
+    RunScript( wxString::Format(
+        "var el=document.getElementById('queued-msg');"
+        "if(el) el.outerHTML='%s';",
+        EscapeJs( aHtml ) ) );
+}
+
+void WEBVIEW_BRIDGE::PushRemoveQueuedMessage()
+{
+    LogBridge( "C++->JS", "removeQueuedMessage" );
+    RunScript( "var el=document.getElementById('queued-msg');"
+               "if(el) el.removeAttribute('id');" );
+}
+
 void WEBVIEW_BRIDGE::PushInputClear()
 {
     LogBridge( "C++->JS", "clearInput" );

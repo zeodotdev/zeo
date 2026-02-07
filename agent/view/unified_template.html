@@ -520,8 +520,14 @@ App.Chat = (function() {
             var temp = document.createElement('div');
             temp.innerHTML = html;
             highlightCodeBlocks(temp);
+            // Insert before #queued-msg so queued message stays at the bottom
+            var queuedMsg = document.getElementById('queued-msg');
             while (temp.firstChild) {
-                wrapper.appendChild(temp.firstChild);
+                if (queuedMsg) {
+                    wrapper.insertBefore(temp.firstChild, queuedMsg);
+                } else {
+                    wrapper.appendChild(temp.firstChild);
+                }
             }
         }
     }

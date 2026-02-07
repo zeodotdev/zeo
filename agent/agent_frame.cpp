@@ -671,6 +671,18 @@ void AGENT_FRAME::ShowChangedLanguage()
 
 void AGENT_FRAME::AppendHtml( const wxString& aHtml )
 {
+    // Insert before queued message so it stays at the bottom
+    if( !m_queuedMsgHtml.IsEmpty() )
+    {
+        size_t pos = m_fullHtmlContent.Find( m_queuedMsgHtml );
+        if( pos != wxString::npos )
+        {
+            m_fullHtmlContent.insert( pos, aHtml );
+            m_bridge->PushAppendChat( aHtml );
+            return;
+        }
+    }
+
     m_fullHtmlContent += aHtml;
     m_bridge->PushAppendChat( aHtml );
 }
@@ -819,6 +831,9 @@ void AGENT_FRAME::OnHtmlUpdateTimer( wxTimerEvent& aEvent )
         wxString fullHtml = m_htmlBeforeAgentResponse;
         fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
         fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
+        // Preserve queued message at the end
+        if( !m_queuedMsgHtml.IsEmpty() )
+            fullHtml += m_queuedMsgHtml;
         m_fullHtmlContent = fullHtml;
     }
     // If user scrolled up, leave m_htmlUpdateNeeded=true so update happens when they scroll back
@@ -1084,11 +1099,34 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // target sheet reset) that the controller doesn't currently support.
     // System prompt is now handled server-side.
 
-    // If already processing, this button acts as Stop
+    // If already generating: queue, cancel+send, or stop depending on context
     if( m_isGenerating )
     {
-        OnStop( aEvent );
-        return;
+        bool hasContent = !m_pendingInputText.IsEmpty() || !m_pendingAttachments.empty();
+        bool hasApproval = m_pendingOpenSch || m_pendingOpenPcb
+                           || m_pendingCloseSch || m_pendingClosePcb;
+
+        if( !hasContent )
+        {
+            // Empty input → stop (also clears queue)
+            ClearQueuedMessage();
+            OnStop( aEvent );
+            return;
+        }
+
+        if( hasApproval )
+        {
+            // Tool approval pending: cancel everything and send immediately.
+            ClearQueuedMessage();
+            DoCancelOperation( false );
+            // m_pendingInputText still has the user's text — fall through to normal send.
+        }
+        else
+        {
+            // Streaming / tool execution (no approval): queue the message.
+            QueueMessage();
+            return;
+        }
     }
 
     // Check authentication first
@@ -1096,34 +1134,6 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     {
         AppendHtml( "<p><i>Please sign in to continue.</i></p>" );
         return;
-    }
-
-    // Auto-reject pending open/close editor request if user sends a new message.
-    // Use Cancel() which handles orphaned tools and transitions to IDLE.
-    // Don't use HandleToolResult() as it would call ContinueChat() and start an LLM request,
-    // but OnSend will also start a request → we'd get duplicate requests.
-    if( m_pendingOpenSch || m_pendingOpenPcb || m_pendingCloseSch || m_pendingClosePcb )
-    {
-        if( m_chatController )
-            m_chatController->Cancel();
-
-        // Replace approval box with "Cancelled" in the permanent DOM
-        if( !m_activeRunningHtml.IsEmpty() && m_activeToolResultIdx >= 0 )
-        {
-            wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
-            wxString cancelledHtml = BuildToolResultHtml( m_activeToolResultIdx, desc,
-                "text-text-muted", "Cancelled", "User cancelled", "", false );
-            m_fullHtmlContent.Replace( m_activeRunningHtml, cancelledHtml );
-            m_activeRunningHtml.Clear();
-        }
-
-        m_pendingOpenSch = false;
-        m_pendingOpenPcb = false;
-        m_pendingOpenToolId.clear();
-        m_pendingCloseSch = false;
-        m_pendingClosePcb = false;
-        m_pendingCloseToolId.clear();
-        m_toolCallHtml = "";
     }
 
     wxString text = m_pendingInputText;
@@ -1243,6 +1253,13 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
 {
     wxLogInfo( "AGENT_FRAME::OnStop called" );
+    ClearQueuedMessage();
+    DoCancelOperation( true );
+}
+
+
+void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
+{
     using json = nlohmann::json;
 
     // Delegate cancel logic to controller
@@ -1323,13 +1340,171 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
     m_thinkingHtml.Clear();
     m_toolCallHtml.Clear();
     m_currentThinkingIndex = -1;
-    m_toolResultCounter = 0;
     m_activeRunningHtml.Clear();
     m_activeToolResultIdx = -1;
 
-    AppendHtml( "<br><p><i>(Stopped)</i></p>" );
-    m_bridge->PushActionButtonState( "Send" );
+    if( aShowStopped )
+    {
+        m_toolResultCounter = 0;
+        AppendHtml( "<div class=\"text-text-muted mb-1\">Stopped</div>" );
+        m_bridge->PushActionButtonState( "Send" );
+    }
 }
+
+// ── Message Queueing ─────────────────────────────────────────────────────
+
+bool AGENT_FRAME::HasQueuedMessage() const
+{
+    return !m_queuedInputText.IsEmpty() || !m_queuedAttachments.empty();
+}
+
+
+void AGENT_FRAME::QueueMessage()
+{
+    wxLogInfo( "AGENT_FRAME::QueueMessage - queueing message during generation" );
+
+    // Move pending → queue
+    m_queuedInputText = m_pendingInputText;
+    m_queuedAttachments = std::move( m_pendingAttachments );
+    m_pendingInputText.Clear();
+    m_pendingAttachments.clear();
+
+    // Build user message bubble HTML with queued-msg ID
+    wxString escapedText = m_queuedInputText;
+    escapedText.Replace( "&", "&amp;" );
+    escapedText.Replace( "<", "&lt;" );
+    escapedText.Replace( ">", "&gt;" );
+    escapedText.Replace( "\n", "<br>" );
+
+    wxString bubbleContent = FileAttach::BuildAttachmentBubbleHtml( m_queuedAttachments )
+                             + escapedText;
+    wxString newHtml = wxString::Format(
+        "<div id=\"queued-msg\" class=\"flex justify-end my-1.5\" style=\"opacity:0.5;\">"
+        "<div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">"
+        "%s</div></div>",
+        bubbleContent );
+
+    if( !m_queuedMsgHtml.IsEmpty() )
+    {
+        // Replace existing queued message in HTML and DOM
+        m_fullHtmlContent.Replace( m_queuedMsgHtml, newHtml );
+        m_bridge->PushReplaceQueuedMessage( newHtml );
+    }
+    else
+    {
+        // First queue: append to HTML and DOM
+        m_fullHtmlContent += newHtml;
+        m_bridge->PushAppendChat( newHtml );
+    }
+    m_queuedMsgHtml = newHtml;
+
+    // Clear input (button stays "Stop" during generation)
+    m_bridge->PushInputClear();
+}
+
+
+void AGENT_FRAME::SendQueuedMessage()
+{
+    if( !HasQueuedMessage() )
+        return;
+
+    wxLogInfo( "AGENT_FRAME::SendQueuedMessage - auto-sending queued message" );
+
+    m_turnCompleteForQueue = false;
+
+    wxString text = m_queuedInputText;
+    std::vector<FILE_ATTACHMENT> attachments = std::move( m_queuedAttachments );
+    m_queuedInputText.Clear();
+    m_queuedAttachments.clear();
+
+    // Finalize queued message: remove the id so it becomes a permanent user bubble
+    if( !m_queuedMsgHtml.IsEmpty() )
+    {
+        wxString permanentHtml = m_queuedMsgHtml;
+        permanentHtml.Replace( " id=\"queued-msg\"", "" );
+        m_fullHtmlContent.Replace( m_queuedMsgHtml, permanentHtml );
+        m_bridge->PushRemoveQueuedMessage();
+        m_queuedMsgHtml.Clear();
+    }
+
+    // Add streaming div
+    wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
+    m_fullHtmlContent += streamingDiv;
+    m_htmlBeforeAgentResponse = m_fullHtmlContent;
+    m_bridge->PushAppendChat( streamingDiv );
+
+    // Update UI
+    m_bridge->PushActionButtonState( "Stop" );
+    m_userScrolledUp = false;
+
+    // Sync/repair controller
+    if( m_chatController )
+    {
+        m_chatController->SetHistory( m_chatHistory );
+        m_chatController->RepairHistory();
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_apiContext = m_chatController->GetApiContext();
+    }
+
+    // Reset streaming state
+    m_currentResponse = "";
+    m_toolCallHtml = "";
+    m_thinkingHtml = "";
+    m_thinkingContent = "";
+    m_thinkingExpanded = false;
+    m_isThinking = false;
+    m_pendingToolCalls = nlohmann::json::array();
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
+    m_stopRequested = false;
+    m_userScrolledUp = false;
+    m_htmlUpdatePending = false;
+
+    // State machine
+    m_conversationCtx.Reset();
+    m_conversationCtx.TransitionTo( AgentConversationState::WAITING_FOR_LLM );
+
+    m_llmClient->SetModel( m_currentModel );
+
+    // Reset target sheet
+    std::string emptyPayload;
+    Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_RESET_TARGET_SHEET, emptyPayload );
+
+    // Send via controller
+    if( m_chatController )
+    {
+        if( !attachments.empty() )
+        {
+            std::vector<CHAT_CONTROLLER::UserAttachment> atts;
+            for( const auto& att : attachments )
+                atts.push_back( { att.base64_data, att.media_type } );
+            m_chatController->SendMessageWithAttachments( text.ToStdString(), atts );
+        }
+        else
+        {
+            m_chatController->SendMessage( text.ToStdString() );
+        }
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_apiContext = m_chatController->GetApiContext();
+        m_chatHistoryDb.Save( m_chatHistory );
+    }
+}
+
+
+void AGENT_FRAME::ClearQueuedMessage()
+{
+    if( !m_queuedMsgHtml.IsEmpty() )
+    {
+        m_fullHtmlContent.Replace( m_queuedMsgHtml, "" );
+        // Remove the #queued-msg element from DOM entirely
+        m_bridge->PushReplaceQueuedMessage( "" );
+    }
+    m_queuedInputText.Clear();
+    m_queuedAttachments.clear();
+    m_queuedMsgHtml.Clear();
+    m_turnCompleteForQueue = false;
+}
+
 
 // ── Bridge callback methods (called by WEBVIEW_BRIDGE) ──────────────────
 
@@ -1982,6 +2157,16 @@ void AGENT_FRAME::OnLLMStreamComplete( wxThreadEvent& aEvent )
     if( complete )
     {
         delete complete;
+    }
+
+    // Auto-send queued message once BOTH conditions are met:
+    //  1. OnChatTurnComplete(continuing=false) ran (cleanup done, m_turnCompleteForQueue set)
+    //  2. OnLLMStreamComplete ran (background thread released m_requestInProgress)
+    // Either event can fire first, so both check. Whichever fires second triggers the send.
+    if( m_turnCompleteForQueue && HasQueuedMessage() )
+    {
+        m_turnCompleteForQueue = false;
+        SendQueuedMessage();
     }
 }
 
@@ -2922,6 +3107,9 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         wxString fullHtml = m_htmlBeforeAgentResponse;
         fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
         fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
+        // Preserve queued message at the end
+        if( !m_queuedMsgHtml.IsEmpty() )
+            fullHtml += m_queuedMsgHtml;
         m_fullHtmlContent = fullHtml;
     }
 
@@ -3596,6 +3784,23 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
     // Calling it here would cause a full SetPage() reload which jerks scroll position.
 
     delete data;
+
+    // Auto-send queued message.  Both OnChatTurnComplete and OnLLMStreamComplete must
+    // have fired: TurnComplete ensures cleanup is done, StreamComplete ensures the
+    // background thread released m_requestInProgress.  Either can fire first.
+    if( !continuing && HasQueuedMessage() )
+    {
+        if( !m_llmClient->IsRequestInProgress() )
+        {
+            // StreamComplete already fired — safe to send now.
+            SendQueuedMessage();
+        }
+        else
+        {
+            // StreamComplete hasn't fired yet — flag so it sends when it does.
+            m_turnCompleteForQueue = true;
+        }
+    }
 }
 
 
@@ -3616,6 +3821,7 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     StopGeneratingAnimation();
     m_bridge->PushTrackButtonVisible( false );
     m_isCompacting = false;
+    ClearQueuedMessage();
     m_bridge->PushActionButtonState( "Send" );
 
     // Clear streaming state

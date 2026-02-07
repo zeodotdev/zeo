@@ -127,6 +127,12 @@ private:
     wxString       m_pendingInputText;   // Text from JS submit message, read by OnSend
     std::vector<FILE_ATTACHMENT> m_pendingAttachments;  // File attachments from JS submit
 
+    // Message queue (queued during generation, auto-sent when turn completes)
+    wxString                     m_queuedInputText;
+    std::vector<FILE_ATTACHMENT> m_queuedAttachments;
+    wxString                     m_queuedMsgHtml;  // Tracks queued message HTML in DOM
+    bool                         m_turnCompleteForQueue = false;  // Set when turn ends (continuing=false)
+
     wxImage     m_pendingCopyImage;  // Image waiting for context menu "Copy Image" action
 
     // Selection pill state (label stored here since the button is now in JS)
@@ -222,6 +228,13 @@ private:
     void     OnHtmlUpdateTimer( wxTimerEvent& aEvent );
     void     StartGeneratingAnimation();
     void     StopGeneratingAnimation();
+
+    // Message queueing (queue during generation, auto-send when turn completes)
+    bool     HasQueuedMessage() const;
+    void     QueueMessage();
+    void     SendQueuedMessage();
+    void     ClearQueuedMessage();
+    void     DoCancelOperation( bool aShowStopped );
 
     // ── Tools & LLM ──────────────────────────────────────────────────────
 

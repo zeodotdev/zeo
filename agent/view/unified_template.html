@@ -42,6 +42,9 @@ body.visible { opacity: 1; }
 ::-webkit-scrollbar-thumb { background: #555; border-radius: 6px; border: 2px solid #1E1E1E; }
 ::-webkit-scrollbar-thumb:hover { background: #666; }
 
+/* Buffer between last message and input box — pseudo-element survives innerHTML updates */
+.content-wrapper::after { content: ''; display: block; height: 24px; }
+
 /* Thinking content toggle state */
 .thinking-content { display: none; }
 .thinking-content.expanded { display: block; }
@@ -276,14 +279,14 @@ img[src^="data:"] { cursor: pointer; }
      CHAT AREA (scrollable, flex-col-reverse for auto-scroll)
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="chat-area" class="flex-1 overflow-y-auto flex flex-col-reverse" style="min-height:0;">
-    <div class="content-wrapper p-2.5" style="padding-bottom:24px;padding-left:16px;padding-right:16px;">
+    <div class="content-wrapper p-2.5" style="padding-left:24px;padding-right:12px;">
     </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
      INPUT AREA
      ═══════════════════════════════════════════════════════════════════ -->
-<div id="input-area" class="flex-shrink-0 pb-2 pt-0" style="position:relative;z-index:1;margin-top:-20px;padding-left:16px;padding-right:16px;">
+<div id="input-area" class="flex-shrink-0 pb-2 pt-0" style="padding-left:16px;padding-right:16px;">
     <!-- Top row: selection pill (hidden when empty) -->
     <div class="flex items-center gap-2 px-1" id="selection-pill-row" style="display:none;">
         <span class="selection-pill" id="selection-pill"></span>

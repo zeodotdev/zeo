@@ -25,10 +25,8 @@
 bool SCH_CRUD_HANDLER::CanHandle( const std::string& aToolName ) const
 {
     return aToolName == "sch_add" ||
-           aToolName == "sch_add_batch" ||
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
-           aToolName == "sch_batch_delete" ||
            aToolName == "sch_open_sheet" ||
            aToolName == "sch_connect_to_power";
 }
@@ -46,81 +44,53 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
 {
     if( aToolName == "sch_add" )
     {
-        std::string elementType = aInput.value( "element_type", "element" );
-        std::string libId = aInput.value( "lib_id", "" );
-
-        if( elementType == "symbol" && !libId.empty() )
+        if( aInput.contains( "elements" ) && aInput["elements"].is_array() )
         {
-            size_t colonPos = libId.find( ':' );
-            std::string symbolName = ( colonPos != std::string::npos )
-                                         ? libId.substr( colonPos + 1 )
-                                         : libId;
-            return "Adding " + symbolName;
-        }
-        else if( elementType == "wire" )
-        {
-            return "Adding wire connection";
-        }
-        else if( elementType == "label" )
-        {
-            std::string text = aInput.value( "text", "" );
-            if( !text.empty() )
-                return "Adding label: " + text;
-            return "Adding label";
-        }
-        else if( elementType == "power" )
-        {
-            std::string libId2 = aInput.value( "lib_id", "" );
-            if( !libId2.empty() )
+            size_t count = aInput["elements"].size();
+            if( count == 1 )
             {
-                size_t colonPos = libId2.find( ':' );
-                std::string name = ( colonPos != std::string::npos )
-                                       ? libId2.substr( colonPos + 1 )
-                                       : libId2;
-                return "Adding power: " + name;
+                auto elem = aInput["elements"][0];
+                std::string elementType = elem.value( "element_type", "element" );
+                std::string libId = elem.value( "lib_id", "" );
+                if( elementType == "symbol" && !libId.empty() )
+                {
+                    size_t colonPos = libId.find( ':' );
+                    std::string symbolName = ( colonPos != std::string::npos )
+                                                 ? libId.substr( colonPos + 1 )
+                                                 : libId;
+                    return "Adding " + symbolName;
+                }
+                return "Adding " + elementType;
             }
-            return "Adding power symbol";
+            return "Adding " + std::to_string( count ) + " elements";
         }
-        else if( elementType == "junction" )
-        {
-            return "Adding junction";
-        }
-        else if( elementType == "no_connect" )
-        {
-            return "Adding no-connect marker";
-        }
-        else if( elementType == "sheet" )
-        {
-            std::string sheetName = aInput.value( "sheet_name", "" );
-            if( !sheetName.empty() )
-                return "Adding sheet: " + sheetName;
-            return "Adding hierarchical sheet";
-        }
-
-        return "Adding " + elementType;
+        return "Adding elements";
     }
     else if( aToolName == "sch_update" )
     {
-        std::string target = aInput.value( "target", "" );
-        if( !target.empty() )
-            return "Updating " + target;
-        return "Updating element";
+        if( aInput.contains( "updates" ) && aInput["updates"].is_array() )
+        {
+            size_t count = aInput["updates"].size();
+            if( count == 1 )
+            {
+                std::string target = aInput["updates"][0].value( "target", "" );
+                if( !target.empty() )
+                    return "Updating " + target;
+            }
+            return "Updating " + std::to_string( count ) + " elements";
+        }
+        return "Updating elements";
     }
     else if( aToolName == "sch_delete" )
-    {
-        std::string target = aInput.value( "target", "" );
-        if( !target.empty() )
-            return "Deleting " + target;
-        return "Deleting element";
-    }
-    else if( aToolName == "sch_batch_delete" )
     {
         if( aInput.contains( "targets" ) && aInput["targets"].is_array() )
         {
             size_t count = aInput["targets"].size();
+            if( count == 1 )
+                return "Deleting " + aInput["targets"][0].get<std::string>();
             return "Deleting " + std::to_string( count ) + " elements";
         }
-        return "Batch deleting elements";
+        return "Deleting elements";
     }
     else if( aToolName == "sch_open_sheet" )
     {
@@ -139,15 +109,6 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
         std::string power = aInput.value( "power", "" );
         return "Connecting " + ref + ":" + pin + " to " + power;
     }
-    else if( aToolName == "sch_add_batch" )
-    {
-        if( aInput.contains( "elements" ) && aInput["elements"].is_array() )
-        {
-            size_t count = aInput["elements"].size();
-            return "Adding " + std::to_string( count ) + " elements in batch";
-        }
-        return "Batch adding elements";
-    }
 
     return "Executing " + aToolName;
 }
@@ -156,10 +117,8 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
 bool SCH_CRUD_HANDLER::RequiresIPC( const std::string& aToolName ) const
 {
     return aToolName == "sch_add" ||
-           aToolName == "sch_add_batch" ||
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
-           aToolName == "sch_batch_delete" ||
            aToolName == "sch_open_sheet" ||
            aToolName == "sch_connect_to_power";
 }
@@ -171,15 +130,11 @@ std::string SCH_CRUD_HANDLER::GetIPCCommand( const std::string& aToolName,
     std::string code;
 
     if( aToolName == "sch_add" )
-        code = GenerateAddCode( aInput );
-    else if( aToolName == "sch_add_batch" )
-        code = GenerateAddBatchCode( aInput );
+        code = GenerateAddBatchCode( aInput );  // Now uses elements array
     else if( aToolName == "sch_update" )
-        code = GenerateUpdateCode( aInput );
+        code = GenerateUpdateBatchCode( aInput );  // Now uses updates array
     else if( aToolName == "sch_delete" )
-        code = GenerateDeleteCode( aInput );
-    else if( aToolName == "sch_batch_delete" )
-        code = GenerateBatchDeleteCode( aInput );
+        code = GenerateBatchDeleteCode( aInput );  // Now uses targets array
     else if( aToolName == "sch_open_sheet" )
         code = GenerateOpenSheetCode( aInput );
     else if( aToolName == "sch_connect_to_power" )
@@ -517,9 +472,9 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
             }
             else
             {
-                // No waypoints - use auto L-routing
-                std::string routeStyle = aInput.value( "route_style", "auto" );
-                code << "    wires = sch.wiring.wire_pins(sym1, '" << EscapePythonString( fromPinNum ) << "', sym2, '" << EscapePythonString( toPinNum ) << "', style='" << EscapePythonString( routeStyle ) << "')\n";
+                // No waypoints - draw direct wire between pins
+                // Agent should use waypoints for orthogonal routing
+                code << "    wires = sch.wiring.wire_pins(sym1, '" << EscapePythonString( fromPinNum ) << "', sym2, '" << EscapePythonString( toPinNum ) << "')\n";
                 code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires)}\n";
             }
         }
@@ -968,6 +923,122 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput )
     code << "        result = {'status': 'error', 'message': f'IPC failed but schematic editor is still open. Updates require IPC. Investigate the error: {ipc_error_msg}'}\n";
     code << "    else:\n";
     code << "        result = {'status': 'error', 'message': f'IPC failed and editor is closed. Open the schematic editor to use IPC for updates: {ipc_error_msg}'}\n";
+    code << "\n";
+    code << "print(json.dumps(result, indent=2))\n";
+
+    return code.str();
+}
+
+
+std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aInput ) const
+{
+    std::ostringstream code;
+
+    if( !aInput.contains( "updates" ) || !aInput["updates"].is_array() )
+    {
+        code << "import json\n";
+        code << "print(json.dumps({'status': 'error', 'message': 'updates array is required'}))\n";
+        return code.str();
+    }
+
+    auto updates = aInput["updates"];
+    std::string filePath = aInput.value( "file_path", "" );
+
+    code << "import json, re, sys\n";
+    code << "from kipy.geometry import Vector2\n";
+    code << "\n";
+    code << GenerateRefreshPreamble();
+    code << "\n";
+    code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
+    code << "results = []\n";
+    code << "errors = []\n";
+    code << "\n";
+    code << "try:\n";
+
+    // Process each update in the array
+    for( size_t i = 0; i < updates.size(); ++i )
+    {
+        auto update = updates[i];
+        std::string target = update.value( "target", "" );
+
+        if( target.empty() )
+        {
+            code << "    errors.append({'index': " << i << ", 'error': 'target is required'})\n";
+            continue;
+        }
+
+        code << "    # Update " << i << ": " << target << "\n";
+        code << "    try:\n";
+        code << "        target_" << i << " = '" << EscapePythonString( target ) << "'\n";
+        code << "        is_uuid_" << i << " = bool(re.match(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', target_" << i << "))\n";
+        code << "        item_" << i << " = None\n";
+        code << "        if is_uuid_" << i << ":\n";
+        code << "            items = sch.crud.get_by_id([target_" << i << "])\n";
+        code << "            if items:\n";
+        code << "                item_" << i << " = items[0]\n";
+        code << "        else:\n";
+        code << "            item_" << i << " = sch.symbols.get_by_ref(target_" << i << ")\n";
+        code << "        if not item_" << i << ":\n";
+        code << "            raise ValueError(f'Element not found: {target_" << i << "}')\n";
+        code << "        updated_" << i << " = False\n";
+
+        if( update.contains( "position" ) && update["position"].is_array() &&
+            update["position"].size() >= 2 )
+        {
+            double posX = update["position"][0].get<double>();
+            double posY = update["position"][1].get<double>();
+            code << "        new_pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
+            code << "        item_" << i << " = sch.symbols.move(item_" << i << ", new_pos_" << i << ")\n";
+            code << "        updated_" << i << " = True\n";
+        }
+
+        if( update.contains( "angle" ) )
+        {
+            double angle = update.value( "angle", 0.0 );
+            code << "        item_" << i << " = sch.symbols.set_angle(item_" << i << ", " << angle << ")\n";
+            code << "        updated_" << i << " = True\n";
+        }
+
+        if( update.contains( "properties" ) && update["properties"].is_object() )
+        {
+            code << "        props_" << i << " = " << update["properties"].dump() << "\n";
+            code << "        if 'Value' in props_" << i << ":\n";
+            code << "            sch.symbols.set_value(item_" << i << ", props_" << i << "['Value'])\n";
+            code << "            updated_" << i << " = True\n";
+            code << "        if 'Footprint' in props_" << i << ":\n";
+            code << "            sch.symbols.set_footprint(item_" << i << ", props_" << i << "['Footprint'])\n";
+            code << "            updated_" << i << " = True\n";
+        }
+
+        // Build state info
+        code << "        state_" << i << " = {}\n";
+        code << "        if hasattr(item_" << i << ", 'position'):\n";
+        code << "            pos = item_" << i << ".position\n";
+        code << "            state_" << i << "['position'] = [pos.x / 1_000_000, pos.y / 1_000_000]\n";
+        code << "        if hasattr(item_" << i << ", 'angle'):\n";
+        code << "            state_" << i << "['angle'] = item_" << i << ".angle\n";
+        code << "        if hasattr(item_" << i << ", 'reference'):\n";
+        code << "            state_" << i << "['reference'] = item_" << i << ".reference\n";
+        code << "        results.append({'index': " << i << ", 'target': target_" << i << ", 'updated': updated_" << i << ", 'state': state_" << i << "})\n";
+        code << "    except Exception as e_" << i << ":\n";
+        code << "        errors.append({'index': " << i << ", 'target': '" << EscapePythonString( target ) << "', 'error': str(e_" << i << ")})\n";
+        code << "\n";
+    }
+
+    code << "\n";
+    code << "    result = {\n";
+    code << "        'status': 'success' if len(errors) == 0 else 'partial',\n";
+    code << "        'source': 'ipc',\n";
+    code << "        'total': " << updates.size() << ",\n";
+    code << "        'succeeded': len(results),\n";
+    code << "        'failed': len(errors),\n";
+    code << "        'results': results\n";
+    code << "    }\n";
+    code << "    if errors:\n";
+    code << "        result['errors'] = errors\n";
+    code << "\n";
+    code << "except Exception as batch_error:\n";
+    code << "    result = {'status': 'error', 'message': str(batch_error), 'partial_results': results, 'errors': errors}\n";
     code << "\n";
     code << "print(json.dumps(result, indent=2))\n";
 
@@ -1618,12 +1689,33 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 std::string fromPinNum = fromPin.value( "pin", "" );
                 std::string toRef = toPin.value( "ref", "" );
                 std::string toPinNum = toPin.value( "pin", "" );
-                std::string routeStyle = elem.value( "route_style", "auto" );
 
                 code << "        sym1_" << i << " = sch.symbols.get_by_ref('" << EscapePythonString( fromRef ) << "')\n";
                 code << "        sym2_" << i << " = sch.symbols.get_by_ref('" << EscapePythonString( toRef ) << "')\n";
                 code << "        if sym1_" << i << " and sym2_" << i << ":\n";
-                code << "            wires_" << i << " = sch.wiring.wire_pins(sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "', sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "', style='" << EscapePythonString( routeStyle ) << "')\n";
+
+                // Check for waypoints - if present, use wire_path for custom routing
+                if( elem.contains( "waypoints" ) && elem["waypoints"].is_array() && elem["waypoints"].size() > 0 )
+                {
+                    auto waypoints = elem["waypoints"];
+                    code << "            waypoints_" << i << " = [\n";
+                    for( size_t j = 0; j < waypoints.size(); ++j )
+                    {
+                        if( waypoints[j].is_array() && waypoints[j].size() >= 2 )
+                        {
+                            double x = waypoints[j][0].get<double>();
+                            double y = waypoints[j][1].get<double>();
+                            code << "                (" << x << ", " << y << "),\n";
+                        }
+                    }
+                    code << "            ]\n";
+                    code << "            wires_" << i << " = sch.wiring.wire_path((sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "'), waypoints_" << i << ", (sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "'))\n";
+                }
+                else
+                {
+                    // No waypoints - draw direct wire between pins
+                    code << "            wires_" << i << " = sch.wiring.wire_pins(sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "', sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "')\n";
+                }
                 code << "            results.append({'index': " << i << ", 'type': 'wire', 'wire_count': len(wires_" << i << ")})\n";
                 code << "        else:\n";
                 code << "            errors.append({'index': " << i << ", 'error': 'Symbol not found'})\n";

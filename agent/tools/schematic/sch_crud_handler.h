@@ -24,8 +24,10 @@
 
 /**
  * Handler for schematic CRUD and navigation operations via kipy IPC.
- * Handles: sch_add, sch_add_batch, sch_update, sch_delete, sch_batch_delete,
- *          sch_open_sheet, sch_connect_to_power
+ * Handles: sch_add, sch_update, sch_delete, sch_open_sheet, sch_connect_to_power
+ *
+ * All CRUD operations accept arrays (elements, updates, targets) for batch processing.
+ * Single-item operations are just arrays with one element.
  *
  * These tools work on the LIVE schematic through the kipy Python API,
  * allowing real-time creation, modification, deletion, and navigation.
@@ -52,9 +54,14 @@ private:
     std::string GenerateAddCode( const nlohmann::json& aInput ) const;
 
     /**
-     * Generate Python code for sch_update operation.
+     * Generate Python code for sch_update operation (single item - legacy).
      */
     std::string GenerateUpdateCode( const nlohmann::json& aInput ) const;
+
+    /**
+     * Generate Python code for sch_update operation (batch - processes updates array).
+     */
+    std::string GenerateUpdateBatchCode( const nlohmann::json& aInput ) const;
 
     /**
      * Generate Python code for sch_delete operation.

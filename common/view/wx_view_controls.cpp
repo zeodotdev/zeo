@@ -302,11 +302,11 @@ void WX_VIEW_CONTROLS::onMotion( wxMouseEvent& aEvent )
 
     if( !isAutoPanning && aEvent.Dragging() )
     {
-        // Break tracking when user drags
-        if( DIFF_MANAGER::GetInstance().IsTrackingActive( m_view ) )
-        {
-            DIFF_MANAGER::GetInstance().BreakTracking( m_view );
-        }
+        // Break tracking when user drags - DISABLED: Users view changes via Changes tab
+        // if( DIFF_MANAGER::GetInstance().IsTrackingActive( m_view ) )
+        // {
+        //     DIFF_MANAGER::GetInstance().BreakTracking( m_view );
+        // }
 
         if( m_state == DRAG_PANNING )
         {
@@ -419,11 +419,11 @@ void WX_VIEW_CONTROLS::onMotion( wxMouseEvent& aEvent )
 
 void WX_VIEW_CONTROLS::onWheel( wxMouseEvent& aEvent )
 {
-    // Break tracking when user scrolls/zooms
-    if( DIFF_MANAGER::GetInstance().IsTrackingActive( m_view ) )
-    {
-        DIFF_MANAGER::GetInstance().BreakTracking( m_view );
-    }
+    // Break tracking when user scrolls/zooms - DISABLED: Users view changes via Changes tab
+    // if( DIFF_MANAGER::GetInstance().IsTrackingActive( m_view ) )
+    // {
+    //     DIFF_MANAGER::GetInstance().BreakTracking( m_view );
+    // }
 
     const double wheelPanSpeed = 0.001;
     const int    axis = aEvent.GetWheelAxis();
@@ -539,13 +539,11 @@ void WX_VIEW_CONTROLS::setState( STATE aNewState )
 
 void WX_VIEW_CONTROLS::onButton( wxMouseEvent& aEvent )
 {
-    // Break tracking when user clicks (but not for diff overlay interactions)
-    // The diff overlay click handler will prevent this from being reached if
-    // the click was on the overlay buttons
-    if( aEvent.LeftDown() && DIFF_MANAGER::GetInstance().IsTrackingActive( m_view ) )
-    {
-        DIFF_MANAGER::GetInstance().BreakTracking( m_view );
-    }
+    // Break tracking when user clicks - DISABLED: Users view changes via Changes tab
+    // if( aEvent.LeftDown() && DIFF_MANAGER::GetInstance().IsTrackingActive( m_view ) )
+    // {
+    //     DIFF_MANAGER::GetInstance().BreakTracking( m_view );
+    // }
 
     switch( m_state )
     {
@@ -750,11 +748,11 @@ void WX_VIEW_CONTROLS::onPanGesture( wxPanGestureEvent& aEvent )
 
 void WX_VIEW_CONTROLS::onScroll( wxScrollWinEvent& aEvent )
 {
-    // Break tracking when user scrolls via scrollbars
-    if( DIFF_MANAGER::GetInstance().IsTrackingActive( m_view ) )
-    {
-        DIFF_MANAGER::GetInstance().BreakTracking( m_view );
-    }
+    // Break tracking when user scrolls via scrollbars - DISABLED: Users view changes via Changes tab
+    // if( DIFF_MANAGER::GetInstance().IsTrackingActive( m_view ) )
+    // {
+    //     DIFF_MANAGER::GetInstance().BreakTracking( m_view );
+    // }
 
     const double linePanDelta = 0.05;
     const double pagePanDelta = 0.5;

@@ -150,28 +150,29 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( createProject );
 
-    // sch_open_sheet - Navigate to a specific sheet in hierarchical schematic
-    LLM_TOOL schOpenSheet;
-    schOpenSheet.name = "sch_open_sheet";
-    schOpenSheet.description = "Navigate to a specific sheet in a hierarchical schematic. "
-                               "Use sheet_path for navigation within the current hierarchy (e.g., '/root_uuid/child_uuid'), "
-                               "or file_path to open a specific .kicad_sch file directly. "
-                               "REQUIRES: Schematic editor must be open.";
-    schOpenSheet.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "sheet_path", {
-                { "type", "string" },
-                { "description", "Sheet path in hierarchy format (e.g., '/uuid1/uuid2' or use sheet names)" }
-            }},
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Direct path to .kicad_sch file to open" }
-            }}
-        }},
-        { "required", json::array() }
-    };
-    tools.push_back( schOpenSheet );
+    // sch_open_sheet - DISABLED: Navigation changes user's view
+    // Agent should work on sheets via file paths without navigating user's view
+    // LLM_TOOL schOpenSheet;
+    // schOpenSheet.name = "sch_open_sheet";
+    // schOpenSheet.description = "Navigate to a specific sheet in a hierarchical schematic. "
+    //                            "Use sheet_path for navigation within the current hierarchy (e.g., '/root_uuid/child_uuid'), "
+    //                            "or file_path to open a specific .kicad_sch file directly. "
+    //                            "REQUIRES: Schematic editor must be open.";
+    // schOpenSheet.input_schema = {
+    //     { "type", "object" },
+    //     { "properties", {
+    //         { "sheet_path", {
+    //             { "type", "string" },
+    //             { "description", "Sheet path in hierarchy format (e.g., '/uuid1/uuid2' or use sheet names)" }
+    //         }},
+    //         { "file_path", {
+    //             { "type", "string" },
+    //             { "description", "Direct path to .kicad_sch file to open" }
+    //         }}
+    //     }},
+    //     { "required", json::array() }
+    // };
+    // tools.push_back( schOpenSheet );
 
     // ===== Direct File Tools (sch_*, pcb_*) =====
 
@@ -454,222 +455,195 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     // ===== IPC-based CRUD Tools (sch_add, sch_update, sch_delete, sch_batch_delete) =====
     // These work on the LIVE schematic via kipy API
 
-    // sch_add - Universal add for any element type
+    // sch_add - Add one or more elements to schematic
     LLM_TOOL schAdd;
     schAdd.name = "sch_add";
     schAdd.description =
-        "Add elements to the open schematic via kipy API. Supports symbols, wires, "
-        "junctions, labels, power symbols, no-connect markers, and hierarchical sheets. "
-        "REQUIRES: Schematic editor must be open with a document loaded.";
+        "Add elements to the schematic. Accepts an array of elements - use for single or batch operations. "
+        "Returns pin positions for all symbols, enabling immediate wiring. "
+        "REQUIRES: Schematic editor must be open with a document loaded.\n\n"
+        "ROTATION (counter-clockwise from default orientation):\n"
+        "- 0°: Default orientation (resistors/caps horizontal, pins left/right)\n"
+        "- 90°: Rotated CCW 90° (vertical, pin 1 typically at top)\n"
+        "- 180°: Flipped (horizontal, pins swapped left/right)\n"
+        "- 270°: Rotated CCW 270° (vertical, pin 1 typically at bottom)\n"
+        "- Power symbols: GND at 0° points UP, at 180° points DOWN; VCC at 0° points UP\n\n"
+        "WIRING RULES:\n"
+        "- Wires without waypoints are DIRECT (diagonal) - only use when pins align\n"
+        "- For orthogonal routing, YOU must calculate waypoint coordinates\n"
+        "- AVOID OVERLAPPING WIRES: Wires at same coordinates create shorts!\n\n"
+        "ERC TIPS:\n"
+        "- Add 'power:PWR_FLAG' on nets powered by connectors to fix 'Power pin not driven'\n"
+        "- Use no_connect on unused pins to fix 'Unconnected pin' warnings\n\n"
+        "ELEMENT TYPES:\n"
+        "- symbol: {element_type, lib_id, position, angle?, mirror?, reference?, properties?}\n"
+        "- power: {element_type, lib_id, position, angle?} - GND: use 180 for arrow down, VCC: use 0 for arrow up\n"
+        "- wire: {element_type, from_pin:{ref,pin}, to_pin:{ref,pin}, waypoints?} or {points:[[x,y],...]}\n"
+        "- junction, label, no_connect, sheet\n\n"
+        "EXAMPLE (vertical resistor with GND pointing down):\n"
+        "elements: [\n"
+        "  {element_type:'symbol', lib_id:'Device:R', position:[50,50], angle:90},\n"
+        "  {element_type:'power', lib_id:'power:GND', position:[50,65], angle:180}\n"
+        "]";
     schAdd.input_schema = {
         { "type", "object" },
         { "properties", {
-            { "element_type", {
-                { "type", "string" },
-                { "enum", json::array( { "symbol", "wire", "junction", "label", "power", "no_connect", "sheet", "bus_entry" } ) },
-                { "description", "Type of element to add" }
-            }},
-            // Symbol properties
-            { "lib_id", {
-                { "type", "string" },
-                { "description", "For symbol/power: Library:Symbol identifier (e.g., 'Device:R', 'power:GND')" }
-            }},
-            { "reference", {
-                { "type", "string" },
-                { "description", "For symbol: Reference designator (e.g., 'R1', 'U1'). Auto-assigned if omitted." }
-            }},
-            { "unit", {
-                { "type", "integer" },
-                { "description", "For multi-unit symbols: unit number (default: 1)" }
-            }},
-            // Position/geometry
-            { "position", {
-                { "type", "array" },
-                { "items", { { "type", "number" } } },
-                { "description", "Position as [x, y] in mm (e.g., [100, 50])" }
-            }},
-            { "angle", {
-                { "type", "number" },
-                { "description", "Rotation angle in degrees (0, 90, 180, 270)" }
-            }},
-            { "mirror", {
-                { "type", "string" },
-                { "enum", json::array( { "none", "x", "y" } ) },
-                { "description", "Mirror axis: 'none', 'x', or 'y'" }
-            }},
-            // Wire properties
-            { "points", {
+            { "elements", {
                 { "type", "array" },
                 { "items", {
-                    { "type", "array" },
-                    { "items", { { "type", "number" } } }
+                    { "type", "object" },
+                    { "properties", {
+                        { "element_type", {
+                            { "type", "string" },
+                            { "enum", json::array( { "symbol", "power", "wire", "junction", "label", "no_connect", "sheet", "bus_entry" } ) },
+                            { "description", "Type of element to add" }
+                        }},
+                        { "lib_id", {
+                            { "type", "string" },
+                            { "description", "Library ID: 'Device:R', 'power:GND', 'power:PWR_FLAG'" }
+                        }},
+                        { "position", {
+                            { "type", "array" },
+                            { "items", { { "type", "number" } } },
+                            { "description", "Position in mm [x, y]" }
+                        }},
+                        { "angle", {
+                            { "type", "number" },
+                            { "description", "CCW rotation: 0=default(horizontal), 90=vertical, 180=flipped, 270=vertical-flipped. "
+                                            "Power: GND use 180 (arrow down), VCC use 0 (arrow up)." }
+                        }},
+                        { "mirror", {
+                            { "type", "string" },
+                            { "enum", json::array( { "none", "x", "y" } ) }
+                        }},
+                        { "reference", {
+                            { "type", "string" },
+                            { "description", "Reference designator (e.g. 'R1')" }
+                        }},
+                        { "properties", {
+                            { "type", "object" },
+                            { "description", "{Value, Footprint, ...}" }
+                        }},
+                        { "from_pin", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "ref", { { "type", "string" } } },
+                                { "pin", { { "type", "string" } } }
+                            }},
+                            { "description", "Wire start: {ref:'R1', pin:'1'}" }
+                        }},
+                        { "to_pin", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "ref", { { "type", "string" } } },
+                                { "pin", { { "type", "string" } } }
+                            }},
+                            { "description", "Wire end: {ref:'C1', pin:'2'}" }
+                        }},
+                        { "points", {
+                            { "type", "array" },
+                            { "items", { { "type", "array" } } },
+                            { "description", "Wire coordinates: [[x1,y1], [x2,y2], ...]" }
+                        }},
+                        { "waypoints", {
+                            { "type", "array" },
+                            { "items", { { "type", "array" } } },
+                            { "description", "L-route waypoints - YOU must calculate coordinates" }
+                        }},
+                        { "text", {
+                            { "type", "string" },
+                            { "description", "Label text" }
+                        }},
+                        { "label_type", {
+                            { "type", "string" },
+                            { "enum", json::array( { "local", "global", "hierarchical" } ) }
+                        }},
+                        { "sheet_name", { { "type", "string" } } },
+                        { "sheet_file", { { "type", "string" } } },
+                        { "size", {
+                            { "type", "array" },
+                            { "items", { { "type", "number" } } },
+                            { "description", "Sheet size [w, h] in mm" }
+                        }}
+                    }},
+                    { "required", json::array( { "element_type" } ) }
                 }},
-                { "description", "For wire: Array of [x, y] points in mm. "
-                                "Use alone for explicit coordinates, or with from_pin to start from a pin and extend through points." }
-            }},
-            { "from_pin", {
-                { "type", "object" },
-                { "properties", {
-                    { "ref", { { "type", "string" } } },
-                    { "pin", { { "type", "string" } } }
-                }},
-                { "description", "For wire: Start from symbol pin (e.g., {\"ref\": \"R1\", \"pin\": \"1\"})" }
-            }},
-            { "to_pin", {
-                { "type", "object" },
-                { "properties", {
-                    { "ref", { { "type", "string" } } },
-                    { "pin", { { "type", "string" } } }
-                }},
-                { "description", "For wire: End at symbol pin (e.g., {\"ref\": \"C1\", \"pin\": \"2\"})" }
-            }},
-            { "route_style", {
-                { "type", "string" },
-                { "enum", json::array( { "auto", "direct", "L_horizontal_first", "L_vertical_first" } ) },
-                { "description", "For wire with from_pin/to_pin: Routing style. "
-                                "'auto' detects best L-route from pin orientations (RECOMMENDED), "
-                                "'direct' for straight line, "
-                                "'L_horizontal_first' or 'L_vertical_first' for explicit L-route direction" }
-            }},
-            { "waypoints", {
-                { "type", "array" },
-                { "items", {
-                    { "type", "array" },
-                    { "items", { { "type", "number" } } }
-                }},
-                { "description", "For wire with from_pin/to_pin: Intermediate waypoints as [[x1, y1], [x2, y2], ...]. "
-                                "Wire routes from from_pin through all waypoints to to_pin." }
-            }},
-            // Label properties
-            { "text", {
-                { "type", "string" },
-                { "description", "For label: Label text (e.g., 'VCC', 'DATA_BUS')" }
-            }},
-            { "label_type", {
-                { "type", "string" },
-                { "enum", json::array( { "local", "global", "hierarchical", "directive" } ) },
-                { "description", "For label: Type of label (default: local)" }
-            }},
-            { "shape", {
-                { "type", "string" },
-                { "enum", json::array( { "input", "output", "bidi", "tristate", "unspecified" } ) },
-                { "description", "For global/hierarchical label: Connection shape" }
-            }},
-            // Sheet properties
-            { "sheet_name", {
-                { "type", "string" },
-                { "description", "For sheet: Hierarchical sheet name" }
-            }},
-            { "sheet_file", {
-                { "type", "string" },
-                { "description", "For sheet: Filename for the sheet (e.g., 'power.kicad_sch')" }
-            }},
-            { "size", {
-                { "type", "array" },
-                { "items", { { "type", "number" } } },
-                { "description", "For sheet: Size as [width, height] in mm" }
-            }},
-            // Symbol properties
-            { "properties", {
-                { "type", "object" },
-                { "description", "For symbol: Field values like {\"Value\": \"10k\", \"Footprint\": \"...\"}" }
+                { "description", "Array of elements. Process in order: symbols before wires." }
             }}
         }},
-        { "required", json::array( { "element_type" } ) }
+        { "required", json::array( { "elements" } ) }
     };
     tools.push_back( schAdd );
 
-    // sch_update - Universal update for any element
+    // sch_update - Update one or more elements
     LLM_TOOL schUpdate;
     schUpdate.name = "sch_update";
     schUpdate.description =
-        "Update elements in the open schematic via kipy API. Can modify position, "
-        "rotation, mirror, and properties. Target by reference designator or UUID. "
+        "Update elements in the schematic. Accepts an array of updates - use for single or batch operations. "
+        "Can modify position, rotation, mirror, and properties. Target by reference or UUID. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schUpdate.input_schema = {
         { "type", "object" },
         { "properties", {
-            { "target", {
-                { "type", "string" },
-                { "description", "Reference designator (e.g., 'R1') or UUID of element to update" }
-            }},
-            { "position", {
+            { "updates", {
                 { "type", "array" },
-                { "items", { { "type", "number" } } },
-                { "description", "New position as [x, y] in mm" }
-            }},
-            { "angle", {
-                { "type", "number" },
-                { "description", "New rotation angle in degrees (0, 90, 180, 270)" }
-            }},
-            { "mirror", {
-                { "type", "string" },
-                { "enum", json::array( { "none", "x", "y" } ) },
-                { "description", "Mirror axis: 'none', 'x', or 'y'" }
-            }},
-            { "properties", {
-                { "type", "object" },
-                { "description", "Field values to update: {\"Value\": \"4.7k\", \"Footprint\": \"...\"}" }
-            }},
-            { "unit", {
-                { "type", "integer" },
-                { "description", "For multi-unit symbols: change to this unit number" }
-            }},
-            { "dnp", {
-                { "type", "boolean" },
-                { "description", "Set Do Not Populate flag" }
-            }},
-            { "exclude_from_bom", {
-                { "type", "boolean" },
-                { "description", "Exclude from Bill of Materials" }
-            }},
-            { "exclude_from_board", {
-                { "type", "boolean" },
-                { "description", "Exclude from PCB board" }
+                { "items", {
+                    { "type", "object" },
+                    { "properties", {
+                        { "target", {
+                            { "type", "string" },
+                            { "description", "Reference (e.g. 'R1') or UUID" }
+                        }},
+                        { "position", {
+                            { "type", "array" },
+                            { "items", { { "type", "number" } } },
+                            { "description", "New position [x, y] in mm" }
+                        }},
+                        { "angle", {
+                            { "type", "number" },
+                            { "description", "CCW rotation: 0=default, 90=vertical, 180=flipped, 270=vertical-flipped" }
+                        }},
+                        { "mirror", {
+                            { "type", "string" },
+                            { "enum", json::array( { "none", "x", "y" } ) }
+                        }},
+                        { "properties", {
+                            { "type", "object" },
+                            { "description", "{Value, Footprint, ...}" }
+                        }},
+                        { "dnp", {
+                            { "type", "boolean" },
+                            { "description", "Do Not Populate flag" }
+                        }}
+                    }},
+                    { "required", json::array( { "target" } ) }
+                }},
+                { "description", "Array of updates. Each must have 'target' plus properties to change." }
             }}
         }},
-        { "required", json::array( { "target" } ) }
+        { "required", json::array( { "updates" } ) }
     };
     tools.push_back( schUpdate );
 
-    // sch_delete - Universal delete for any element
+    // sch_delete - Delete one or more elements
     LLM_TOOL schDelete;
     schDelete.name = "sch_delete";
     schDelete.description =
-        "Delete an element from the open schematic via kipy API. "
+        "Delete elements from the schematic. Accepts an array of targets - use for single or batch operations. "
         "Target by reference designator or UUID. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schDelete.input_schema = {
         { "type", "object" },
         { "properties", {
-            { "target", {
-                { "type", "string" },
-                { "description", "Reference designator (e.g., 'R1') or UUID of element to delete" }
-            }}
-        }},
-        { "required", json::array( { "target" } ) }
-    };
-    tools.push_back( schDelete );
-
-    // sch_batch_delete - Delete multiple elements
-    LLM_TOOL schBatchDelete;
-    schBatchDelete.name = "sch_batch_delete";
-    schBatchDelete.description =
-        "Delete multiple elements from the open schematic via kipy API. "
-        "Target by reference designators or UUIDs. "
-        "REQUIRES: Schematic editor must be open with a document loaded.";
-    schBatchDelete.input_schema = {
-        { "type", "object" },
-        { "properties", {
             { "targets", {
                 { "type", "array" },
                 { "items", { { "type", "string" } } },
-                { "description", "Array of reference designators or UUIDs to delete (e.g., [\"R1\", \"R2\", \"C1\"])" }
+                { "description", "Array of references or UUIDs to delete (e.g. ['R1', 'R2', 'C1'])" }
             }}
         }},
         { "required", json::array( { "targets" } ) }
     };
-    tools.push_back( schBatchDelete );
+    tools.push_back( schDelete );
 
     // sch_connect_to_power - Connect a pin to power in one call
     LLM_TOOL schConnectToPower;
@@ -703,124 +677,13 @@ std::vector<LLM_TOOL> GetToolDefinitions()
             }},
             { "power_angle", {
                 { "type", "number" },
-                { "description", "Rotation angle for power symbol in degrees (0, 90, 180, 270). "
-                                "Default: auto-detect based on typical orientations (GND down, VCC up)." }
+                { "description", "CCW rotation for power symbol. GND: 180=arrow down, 0=arrow up. "
+                                "VCC: 0=arrow up, 180=arrow down. Default: auto-detect." }
             }}
         }},
         { "required", json::array( { "ref", "pin", "power" } ) }
     };
     tools.push_back( schConnectToPower );
-
-    // sch_add_batch - Add multiple elements in one call
-    LLM_TOOL schAddBatch;
-    schAddBatch.name = "sch_add_batch";
-    schAddBatch.description =
-        "Add multiple elements to the schematic in a single call. "
-        "Much more efficient than calling sch_add repeatedly - use this for placing multiple components. "
-        "Returns pin positions for all symbols, enabling immediate wiring without follow-up queries. "
-        "REQUIRES: Schematic editor must be open with a document loaded.\n\n"
-        "SUPPORTED ELEMENT TYPES:\n"
-        "- symbol: {element_type, lib_id, position, angle?, mirror?, reference?, properties?}\n"
-        "- power: {element_type, lib_id, position, angle?} - e.g. lib_id='power:GND' or 'power:VCC'\n"
-        "- wire: {element_type, from_pin:{ref,pin}, to_pin:{ref,pin}, route_style?} or {element_type, points:[[x,y],...]}\n"
-        "- junction: {element_type, position}\n"
-        "- label: {element_type, text, position, label_type?} - label_type: 'local'|'global'|'hierarchical'\n"
-        "- no_connect: {element_type, position}\n\n"
-        "EXAMPLE - Complete RC filter with power connections:\n"
-        "elements: [\n"
-        "  {element_type:'symbol', lib_id:'Device:R', position:[50,50], properties:{Value:'10k'}},\n"
-        "  {element_type:'symbol', lib_id:'Device:C', position:[50,70], properties:{Value:'100nF'}},\n"
-        "  {element_type:'wire', from_pin:{ref:'R1',pin:'2'}, to_pin:{ref:'C1',pin:'1'}},\n"
-        "  {element_type:'power', lib_id:'power:VCC', position:[50,40], angle:0},\n"
-        "  {element_type:'wire', from_pin:{ref:'R1',pin:'1'}, to_pin:{ref:'VCC',pin:'1'}},\n"
-        "  {element_type:'power', lib_id:'power:GND', position:[50,90], angle:180},\n"
-        "  {element_type:'wire', from_pin:{ref:'C1',pin:'2'}, to_pin:{ref:'GND',pin:'1'}},\n"
-        "  {element_type:'label', text:'FILTER_OUT', position:[60,60], label_type:'local'}\n"
-        "]";
-    schAddBatch.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "elements", {
-                { "type", "array" },
-                { "items", {
-                    { "type", "object" },
-                    { "properties", {
-                        { "element_type", {
-                            { "type", "string" },
-                            { "enum", json::array( { "symbol", "power", "wire", "junction", "label", "no_connect" } ) },
-                            { "description", "Type of element to add" }
-                        }},
-                        { "lib_id", {
-                            { "type", "string" },
-                            { "description", "Library ID for symbol/power (e.g. 'Device:R', 'power:GND')" }
-                        }},
-                        { "position", {
-                            { "type", "array" },
-                            { "items", { { "type", "number" } } },
-                            { "description", "Position in mm [x, y]" }
-                        }},
-                        { "angle", {
-                            { "type", "number" },
-                            { "description", "Rotation angle in degrees (0, 90, 180, 270)" }
-                        }},
-                        { "mirror", {
-                            { "type", "string" },
-                            { "enum", json::array( { "none", "x", "y" } ) },
-                            { "description", "Mirror axis" }
-                        }},
-                        { "reference", {
-                            { "type", "string" },
-                            { "description", "Reference designator for symbol (e.g. 'R1', 'C1')" }
-                        }},
-                        { "properties", {
-                            { "type", "object" },
-                            { "description", "Symbol properties: {Value, Footprint, ...}" }
-                        }},
-                        { "from_pin", {
-                            { "type", "object" },
-                            { "properties", {
-                                { "ref", { { "type", "string" } } },
-                                { "pin", { { "type", "string" } } }
-                            }},
-                            { "description", "Start pin for wire: {ref: 'R1', pin: '1'}" }
-                        }},
-                        { "to_pin", {
-                            { "type", "object" },
-                            { "properties", {
-                                { "ref", { { "type", "string" } } },
-                                { "pin", { { "type", "string" } } }
-                            }},
-                            { "description", "End pin for wire: {ref: 'C1', pin: '2'}" }
-                        }},
-                        { "points", {
-                            { "type", "array" },
-                            { "items", { { "type", "array" } } },
-                            { "description", "Wire points as [[x1,y1], [x2,y2], ...]" }
-                        }},
-                        { "route_style", {
-                            { "type", "string" },
-                            { "enum", json::array( { "auto", "direct", "L_horizontal_first", "L_vertical_first" } ) },
-                            { "description", "Wire routing style (default: auto)" }
-                        }},
-                        { "text", {
-                            { "type", "string" },
-                            { "description", "Label text" }
-                        }},
-                        { "label_type", {
-                            { "type", "string" },
-                            { "enum", json::array( { "local", "global", "hierarchical" } ) },
-                            { "description", "Label type (default: local)" }
-                        }}
-                    }},
-                    { "required", json::array( { "element_type" } ) }
-                }},
-                { "description", "Array of elements to add. Elements are processed in order, "
-                                "so place symbols before wires that connect them." }
-            }}
-        }},
-        { "required", json::array( { "elements" } ) }
-    };
-    tools.push_back( schAddBatch );
 
     // sch_annotate - Annotate schematic symbols
     LLM_TOOL schAnnotate;

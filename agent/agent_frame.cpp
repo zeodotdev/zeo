@@ -827,8 +827,17 @@ void AGENT_FRAME::StartGeneratingAnimation()
     m_generatingDots = 1;
     m_generatingTimer.Start( 400 ); // Update every 400ms
     m_bridge->PushActionButtonState( "Stop" );
-    m_bridge->PushTrackButtonVisible( true );
-    m_bridge->PushTrackingState( m_isTrackingAgent );
+
+    KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
+    KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
+    bool editorOpen = ( schEditor && schEditor->IsShown() )
+                   || ( pcbEditor && pcbEditor->IsShown() );
+
+    if( editorOpen )
+    {
+        m_bridge->PushTrackButtonVisible( true );
+        m_bridge->PushTrackingState( m_isTrackingAgent );
+    }
 }
 
 void AGENT_FRAME::StopGeneratingAnimation()

@@ -92,6 +92,46 @@ bool KIPLATFORM::APP::Init()
         wxLog::SetActiveTarget( new wxLogStderr( s_logFile->fp() ) );
     }
 
+    // Enable the "Agent" trace mask so wxLogTrace("Agent", ...) calls produce output
+    wxLog::AddTraceMask( wxS( "Agent" ) );
+
+    wxLogInfo( wxS( "Zener session started, logging to %s" ), logPath );
+
+    // Clean up old log files: remove empty files and cap at 20
+    wxDir logDirObj( logDir );
+
+    if( logDirObj.IsOpened() )
+    {
+        wxString      filename;
+        wxArrayString logFiles;
+        bool          cont = logDirObj.GetFirst( &filename, wxS( "agent-*.log" ) );
+
+        while( cont )
+        {
+            wxString fullPath = logDir + wxS( "/" ) + filename;
+
+            if( fullPath != logPath )
+            {
+                wxFileName fn( fullPath );
+
+                if( fn.GetSize() == 0 )
+                    wxRemoveFile( fullPath );
+                else
+                    logFiles.Add( fullPath );
+            }
+
+            cont = logDirObj.GetNext( &filename );
+        }
+
+        logFiles.Sort();
+
+        while( logFiles.GetCount() > 20 )
+        {
+            wxRemoveFile( logFiles[0] );
+            logFiles.RemoveAt( 0 );
+        }
+    }
+
     return true;
 }
 

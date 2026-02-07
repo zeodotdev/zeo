@@ -6,38 +6,22 @@
 # Add KiCad Agent specific definitions
 add_definitions( -DAGENT_APP )
 
-# Generate C++ header from HTML template at build time
-set( HTML_TEMPLATE_INPUT "${CMAKE_CURRENT_SOURCE_DIR}/rendering/agent_template.html" )
-set( HTML_TEMPLATE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/agent_template_embedded.h" )
+# Generate C++ header from unified HTML template at build time
+set( UNIFIED_TEMPLATE_INPUT "${CMAKE_CURRENT_SOURCE_DIR}/view/unified_template.html" )
+set( UNIFIED_TEMPLATE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/unified_template_embedded.h" )
 
 add_custom_command(
-    OUTPUT "${HTML_TEMPLATE_OUTPUT}"
+    OUTPUT "${UNIFIED_TEMPLATE_OUTPUT}"
     COMMAND ${CMAKE_COMMAND}
-        -DINPUT_FILE="${HTML_TEMPLATE_INPUT}"
-        -DOUTPUT_FILE="${HTML_TEMPLATE_OUTPUT}"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/rendering/embed_html.cmake"
-    DEPENDS "${HTML_TEMPLATE_INPUT}" "${CMAKE_CURRENT_SOURCE_DIR}/rendering/embed_html.cmake"
-    COMMENT "Embedding agent HTML template"
+        -DINPUT_FILE="${UNIFIED_TEMPLATE_INPUT}"
+        -DOUTPUT_FILE="${UNIFIED_TEMPLATE_OUTPUT}"
+        -DVAR_NAME=UNIFIED_HTML_TEMPLATE_RAW
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/view/embed_html.cmake"
+    DEPENDS "${UNIFIED_TEMPLATE_INPUT}" "${CMAKE_CURRENT_SOURCE_DIR}/view/embed_html.cmake"
+    COMMENT "Embedding unified HTML template"
 )
 
-add_custom_target( agent_html_template DEPENDS "${HTML_TEMPLATE_OUTPUT}" )
-
-# Generate C++ header from input HTML template at build time
-set( INPUT_TEMPLATE_INPUT "${CMAKE_CURRENT_SOURCE_DIR}/rendering/input_template.html" )
-set( INPUT_TEMPLATE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/input_template_embedded.h" )
-
-add_custom_command(
-    OUTPUT "${INPUT_TEMPLATE_OUTPUT}"
-    COMMAND ${CMAKE_COMMAND}
-        -DINPUT_FILE="${INPUT_TEMPLATE_INPUT}"
-        -DOUTPUT_FILE="${INPUT_TEMPLATE_OUTPUT}"
-        -DVAR_NAME=INPUT_HTML_TEMPLATE_RAW
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/rendering/embed_html.cmake"
-    DEPENDS "${INPUT_TEMPLATE_INPUT}" "${CMAKE_CURRENT_SOURCE_DIR}/rendering/embed_html.cmake"
-    COMMENT "Embedding input HTML template"
-)
-
-add_custom_target( input_html_template DEPENDS "${INPUT_TEMPLATE_OUTPUT}" )
+add_custom_target( unified_html_template DEPENDS "${UNIFIED_TEMPLATE_OUTPUT}" )
 
 include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
@@ -49,8 +33,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/eeschema
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/rendering
-    ${CMAKE_CURRENT_SOURCE_DIR}/ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/view
+    ${CMAKE_CURRENT_SOURCE_DIR}/bridge
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc
     ${CMAKE_CURRENT_SOURCE_DIR}/auth
     ${CMAKE_CURRENT_SOURCE_DIR}/tools
@@ -59,7 +43,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcb
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/screenshot
     ${CMAKE_CURRENT_SOURCE_DIR}/platform
-    ${CMAKE_CURRENT_BINARY_DIR}  # For generated agent_template_embedded.h
+    ${CMAKE_CURRENT_BINARY_DIR}  # For generated unified_template_embedded.h
     ${INC_AFTER}
     )
 
@@ -82,15 +66,13 @@ set( AGENT_SRCS
     # Tool definitions and routing
     tools/agent_tools.cpp
 
-    # Rendering
-    rendering/agent_markdown.cpp
-    rendering/agent_html_template.cpp
-    rendering/input_html_template.cpp
+    # Bridge (JS↔C++ message routing)
+    bridge/webview_bridge.cpp
 
-    # UI components
-    ui/pending_changes_popup.cpp
-    ui/history_panel.cpp
-    ui/file_attach.cpp
+    # View (templates, markdown, file attachments)
+    view/agent_markdown.cpp
+    view/unified_html_template.cpp
+    view/file_attach.cpp
 
     # Authentication
     auth/agent_auth.cpp
@@ -117,7 +99,7 @@ set( AGENT_SRCS
 
 # Platform-specific sources
 if( APPLE )
-    list( APPEND AGENT_SRCS platform/macos_key_monitor.mm )
+    list( APPEND AGENT_SRCS platform/macos_key_monitor.mm platform/macos_webview_bg.mm )
 endif()
 
 
@@ -211,7 +193,7 @@ target_link_libraries( agent
 )
 
 # Ensure HTML template is generated before compiling
-add_dependencies( agent_kiface agent_html_template input_html_template )
+add_dependencies( agent_kiface unified_html_template )
 add_dependencies( agent agent_kiface )
 
 # Installation rules

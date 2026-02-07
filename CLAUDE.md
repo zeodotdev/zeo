@@ -18,8 +18,8 @@ agent/                  # AI Agent UI and LLM integration
 │   ├── chat_controller.cpp  # Chat state machine
 │   └── agent_tools.cpp      # Tool definitions & execution
 ├── auth/               # Supabase auth + keychain storage
-├── ui/                 # History panel, change approval dialogs
-└── rendering/          # Markdown→HTML, templates
+├── bridge/             # JS↔C++ webview message router
+└── view/               # Markdown→HTML, templates, file attachments
 
 pcbnew/                 # PCB editor
 eeschema/               # Schematic editor

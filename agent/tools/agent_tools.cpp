@@ -299,24 +299,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     tools.push_back( schModify );
     */
 
-    // sch_validate - Validate schematic file
-    LLM_TOOL schValidate;
-    schValidate.name = "sch_validate";
-    schValidate.description = "Validate a .kicad_sch file without modifying it. "
-                              "Checks syntax (S-expression parsing), structure (required fields, UUID uniqueness), "
-                              "and returns warnings about potential issues.";
-    schValidate.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Absolute path to the .kicad_sch file" }
-            }}
-        }},
-        { "required", json::array( { "file_path" } ) }
-    };
-    tools.push_back( schValidate );
-
     // sch_run_erc - Run ERC on open schematic
     LLM_TOOL schRunErc;
     schRunErc.name = "sch_run_erc";
@@ -1325,6 +1307,30 @@ wxString GetToolDescription( const std::string& aToolName, const nlohmann::json&
         if( cmd.length() > 50 )
             cmd = cmd.substr( 0, 47 ) + "...";
         return wxString::Format( "Running: %s", cmd );
+    }
+    else if( aToolName == "open_editor" )
+    {
+        std::string editorType = aInput.value( "editor_type", "" );
+        wxString label = ( editorType == "sch" ) ? "Schematic" : "PCB";
+        return wxString::Format( "Open %s Editor", label );
+    }
+    else if( aToolName == "close_editor" )
+    {
+        std::string editorType = aInput.value( "editor_type", "" );
+        wxString label = ( editorType == "sch" ) ? "Schematic" : "PCB";
+        return wxString::Format( "Close %s Editor", label );
+    }
+    else if( aToolName == "check_status" )
+    {
+        return "Check Project Status";
+    }
+    else if( aToolName == "save" )
+    {
+        return "Save";
+    }
+    else if( aToolName == "create_project" )
+    {
+        return "Create Project";
     }
     else
     {

@@ -62,9 +62,11 @@ bool IsImageMediaType( const std::string& aMediaType );
  *
  * @param aPath Absolute path to the image file
  * @param aResult Output attachment (populated on success)
+ * @param aError If non-null and load fails, receives a user-facing error description
  * @return true if the image was loaded and encoded successfully
  */
-bool LoadImageFromFile( const wxString& aPath, FILE_ATTACHMENT& aResult );
+bool LoadImageFromFile( const wxString& aPath, FILE_ATTACHMENT& aResult,
+                        wxString* aError = nullptr );
 
 /**
  * Load a non-image file from disk and encode as base64.
@@ -73,9 +75,11 @@ bool LoadImageFromFile( const wxString& aPath, FILE_ATTACHMENT& aResult );
  *
  * @param aPath Absolute path to the file
  * @param aResult Output attachment (populated on success)
+ * @param aError If non-null and load fails, receives a user-facing error description
  * @return true if the file was loaded and encoded successfully
  */
-bool LoadFileFromDisk( const wxString& aPath, FILE_ATTACHMENT& aResult );
+bool LoadFileFromDisk( const wxString& aPath, FILE_ATTACHMENT& aResult,
+                       wxString* aError = nullptr );
 
 /**
  * Parse attachments from a JS submit message JSON payload.

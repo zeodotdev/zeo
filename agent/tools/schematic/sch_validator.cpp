@@ -19,7 +19,6 @@
 
 #include "sch_validator.h"
 #include "../kicad_file/sexpr_util.h"
-#include "../kicad_file/file_writer.h"
 #include "../kicad_file/uuid_util.h"
 #include <set>
 #include <regex>
@@ -249,19 +248,6 @@ nlohmann::json ValidationResult::ToJson() const
     };
 }
 
-
-ValidationResult ValidateFile( const std::string& aFilePath )
-{
-    std::string content;
-    if( !FileWriter::ReadFile( aFilePath, content ) )
-    {
-        ValidationResult result;
-        result.AddError( "Could not read file: " + aFilePath );
-        return result;
-    }
-
-    return ValidateContent( content );
-}
 
 
 ValidationResult ValidateContent( const std::string& aContent )

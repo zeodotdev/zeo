@@ -21,7 +21,7 @@
 #include "chat_events.h"
 #include "../tools/agent_tools.h"
 #include "../tools/tool_registry.h"
-#include "../ui/file_attach.h"
+#include "view/file_attach.h"
 #include "agent_llm_client.h"
 #include "agent_chat_history.h"
 #include "auth/agent_auth.h"
@@ -1524,6 +1524,32 @@ void CHAT_CONTROLLER::SanitizeApiContext()
                     && block["source"].value( "data", "" ) == "__stripped__" )
                 {
                     continue;  // Drop stripped attachment blocks from API context
+                }
+
+                // Handle tool_result blocks with nested stripped images (e.g. screenshots)
+                if( blockType == "tool_result"
+                    && block.contains( "content" ) && block["content"].is_array() )
+                {
+                    nlohmann::json cleanedInner = nlohmann::json::array();
+
+                    for( const auto& inner : block["content"] )
+                    {
+                        std::string innerType = inner.value( "type", "" );
+
+                        if( ( innerType == "image" || innerType == "document" )
+                            && inner.contains( "source" )
+                            && inner["source"].value( "data", "" ) == "__stripped__" )
+                        {
+                            continue;  // Drop stripped image blocks from tool results
+                        }
+
+                        cleanedInner.push_back( inner );
+                    }
+
+                    nlohmann::json cleanedBlock = block;
+                    cleanedBlock["content"] = cleanedInner;
+                    cleanedContent.push_back( cleanedBlock );
+                    continue;
                 }
 
                 cleanedContent.push_back( block );

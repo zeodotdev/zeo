@@ -273,7 +273,7 @@ void WEBVIEW_BRIDGE::PushAppendChat( const wxString& aHtml )
 void WEBVIEW_BRIDGE::PushFinalizeStreaming()
 {
     LogBridge( "C++->JS", "finalizeStreaming" );
-    RunScript( "App.Chat.finalizeStreaming();" );
+    RunScript( "App.Chat.clearToggleCache(); App.Chat.finalizeStreaming();" );
 }
 
 void WEBVIEW_BRIDGE::PushToolResultUpdate( int aIndex, const wxString& aStatusClass,

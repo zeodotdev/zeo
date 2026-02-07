@@ -423,17 +423,6 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
             code << "        sch.symbols.set_footprint(symbol, props['Footprint'])\n";
         }
 
-        // Hide the Description field to prevent clutter on the schematic sheet
-        code << "    # Hide description field\n";
-        code << "    _desc_hidden = False\n";
-        code << "    for f in symbol._proto.fields:\n";
-        code << "        if f.name == 'Description':\n";
-        code << "            f.attributes.visible = False\n";
-        code << "            _desc_hidden = True\n";
-        code << "            break\n";
-        code << "    if _desc_hidden:\n";
-        code << "        sch.crud.update_items(symbol)\n";
-
         // Extract pin positions for the response (eliminates need for follow-up sch_get_pins call)
         code << "    pins = []\n";
         code << "    if hasattr(symbol, 'pins'):\n";

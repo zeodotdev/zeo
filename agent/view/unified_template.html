@@ -33,7 +33,8 @@ tailwind.config = {
 <style>
 /* Immediate background to prevent white flash on load */
 html { background: #1E1E1E !important; }
-body { background: #1E1E1E !important; }
+body { background: #1E1E1E !important; opacity: 0; transition: opacity 0.15s ease-in; }
+body.visible { opacity: 1; }
 
 /* Dark scrollbar styling for WebKit */
 ::-webkit-scrollbar { width: 12px; background: #1E1E1E; }
@@ -1166,6 +1167,19 @@ document.addEventListener('DOMContentLoaded', function() {
     App.Input.focus();
     // Signal C++ bridge that the page is ready to receive push messages
     App.Bridge.sendMsg('page_ready');
+
+    // Fade in when the window becomes visible (handles preloaded-but-hidden case)
+    function showBody() { document.body.classList.add('visible'); }
+    if (document.visibilityState === 'visible') {
+        showBody();
+    } else {
+        document.addEventListener('visibilitychange', function onVisible() {
+            if (document.visibilityState === 'visible') {
+                showBody();
+                document.removeEventListener('visibilitychange', onVisible);
+            }
+        });
+    }
 });
 </script>
 </body>

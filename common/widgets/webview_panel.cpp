@@ -40,6 +40,8 @@ WEBVIEW_PANEL::WEBVIEW_PANEL( wxWindow* aParent, wxWindowID aId, const wxPoint& 
         m_toolManager( aToolManager ),
         m_tool( aTool )
 {
+    SetBackgroundColour( wxColour( 30, 30, 30 ) );
+
     wxBoxSizer* sizer = new wxBoxSizer( wxVERTICAL );
 
     if( !wxGetEnv( wxT( "WEBKIT_DISABLE_COMPOSITING_MODE" ), nullptr ) )

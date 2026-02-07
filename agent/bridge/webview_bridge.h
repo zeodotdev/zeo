@@ -44,6 +44,8 @@ public:
     void PushToolResultImageChunk( int aIndex, const wxString& aChunk );
     void PushToolResultImageEnd( int aIndex );
     void PushFullChatContent( const wxString& aHtml );
+    void PushReplaceQueuedMessage( const wxString& aHtml );
+    void PushRemoveQueuedMessage();
 
     // Input area
     void PushInputClear();

@@ -115,6 +115,16 @@ std::string AGENT_AUTH::GetAccessToken()
 
 bool AGENT_AUTH::RefreshToken()
 {
+    // Reload from disk first - another instance (e.g., launcher) may have already
+    // refreshed the token. Supabase rotates refresh tokens, so using a stale one fails.
+    TryReloadSession();
+
+    if( !IsTokenExpired() )
+    {
+        wxLogTrace( "Agent", "Token already refreshed by another instance" );
+        return true;
+    }
+
     if( m_refreshToken.empty() )
         return false;
 
@@ -150,7 +160,18 @@ bool AGENT_AUTH::RefreshToken()
         }
         else
         {
-            wxLogTrace( "Agent", "Token refresh failed with code %ld", httpCode );
+            wxLogTrace( "Agent", "Token refresh failed with code %ld, checking disk", httpCode );
+
+            // Another instance may have refreshed while our request was in flight
+            TryReloadSession();
+
+            if( !IsTokenExpired() )
+            {
+                wxLogTrace( "Agent", "Token recovered from disk after failed refresh" );
+                return true;
+            }
+
+            wxLogTrace( "Agent", "Token refresh failed definitively, clearing session" );
             ClearSession();
             return false;
         }
@@ -158,6 +179,13 @@ bool AGENT_AUTH::RefreshToken()
     catch( const std::exception& e )
     {
         wxLogTrace( "Agent", "Token refresh exception: %s", e.what() );
+
+        // Network error - check if another instance refreshed successfully
+        TryReloadSession();
+
+        if( !IsTokenExpired() )
+            return true;
+
         return false;
     }
 }
@@ -219,6 +247,36 @@ void AGENT_AUTH::ClearSession()
     std::string path = GetSessionFilePath();
     std::remove( path.c_str() );
     wxLogTrace( "Agent", "Cleared session from secure storage" );
+}
+
+bool AGENT_AUTH::TryReloadSession()
+{
+    std::string sessionData;
+
+    if( !ReadSessionFile( sessionData ) )
+        return false;
+
+    try
+    {
+        auto session = nlohmann::json::parse( sessionData );
+        std::string newAccess = session.value( "access_token", "" );
+        std::string newRefresh = session.value( "refresh_token", "" );
+
+        if( newAccess.empty() || newRefresh.empty() )
+            return false;
+
+        m_accessToken = newAccess;
+        m_refreshToken = newRefresh;
+        m_tokenExpiry = session.value( "token_expiry", 0LL );
+        m_userEmail = session.value( "user_email", "" );
+        m_firstName = session.value( "first_name", "" );
+        m_avatarUrl = session.value( "avatar_url", "" );
+        return true;
+    }
+    catch( ... )
+    {
+        return false;
+    }
 }
 
 bool AGENT_AUTH::IsTokenExpired()

@@ -96,6 +96,9 @@ private:
     void SaveSession();
     void ClearSession();
 
+    // Non-destructive reload: only updates in-memory state if disk has valid tokens
+    bool TryReloadSession();
+
     // Secure file I/O (0600 permissions, atomic write)
     std::string GetSessionFilePath();
     bool        WriteSessionFile( const std::string& aData );

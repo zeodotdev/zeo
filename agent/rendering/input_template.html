@@ -220,6 +220,7 @@ var MAX_HEIGHT = 200;
 
 function autoResize() {
     textarea.style.height = 'auto';
+    highlightLayer.style.height = 'auto';
     var scrollHeight = textarea.scrollHeight;
     var newHeight = Math.min(Math.max(scrollHeight, MIN_HEIGHT), MAX_HEIGHT);
     textarea.style.height = newHeight + 'px';

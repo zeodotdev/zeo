@@ -1526,6 +1526,32 @@ void CHAT_CONTROLLER::SanitizeApiContext()
                     continue;  // Drop stripped attachment blocks from API context
                 }
 
+                // Handle tool_result blocks with nested stripped images (e.g. screenshots)
+                if( blockType == "tool_result"
+                    && block.contains( "content" ) && block["content"].is_array() )
+                {
+                    nlohmann::json cleanedInner = nlohmann::json::array();
+
+                    for( const auto& inner : block["content"] )
+                    {
+                        std::string innerType = inner.value( "type", "" );
+
+                        if( ( innerType == "image" || innerType == "document" )
+                            && inner.contains( "source" )
+                            && inner["source"].value( "data", "" ) == "__stripped__" )
+                        {
+                            continue;  // Drop stripped image blocks from tool results
+                        }
+
+                        cleanedInner.push_back( inner );
+                    }
+
+                    nlohmann::json cleanedBlock = block;
+                    cleanedBlock["content"] = cleanedInner;
+                    cleanedContent.push_back( cleanedBlock );
+                    continue;
+                }
+
                 cleanedContent.push_back( block );
             }
 

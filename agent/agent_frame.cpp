@@ -1992,6 +1992,22 @@ void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
 }
 
 
+static std::string StripProjectContext( const std::string& aText )
+{
+    static const std::string PREFIX = "<project_context>\n";
+    static const std::string SUFFIX = "\n</project_context>\n\n";
+
+    if( aText.compare( 0, PREFIX.size(), PREFIX ) == 0 )
+    {
+        size_t endPos = aText.find( SUFFIX );
+        if( endPos != std::string::npos )
+            return aText.substr( endPos + SUFFIX.size() );
+    }
+
+    return aText;
+}
+
+
 void AGENT_FRAME::RenderChatHistory()
 {
     // Clear historical thinking storage
@@ -2014,6 +2030,10 @@ void AGENT_FRAME::RenderChatHistory()
         if( msg["content"].is_string() )
         {
             std::string content = msg["content"];
+
+            if( role == "user" )
+                content = StripProjectContext( content );
+
             wxString display = content;
 
             if( role == "user" )
@@ -2073,6 +2093,10 @@ void AGENT_FRAME::RenderChatHistory()
                 {
                     // Render text block
                     std::string text = block.value( "text", "" );
+
+                    if( role == "user" )
+                        text = StripProjectContext( text );
+
                     wxString display = text;
 
                     if( role == "assistant" )

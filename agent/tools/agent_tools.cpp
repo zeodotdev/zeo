@@ -1463,6 +1463,30 @@ wxString GetToolDescription( const std::string& aToolName, const nlohmann::json&
             cmd = cmd.substr( 0, 47 ) + "...";
         return wxString::Format( "Running: %s", cmd );
     }
+    else if( aToolName == "open_editor" )
+    {
+        std::string editorType = aInput.value( "editor_type", "" );
+        wxString label = ( editorType == "sch" ) ? "Schematic" : "PCB";
+        return wxString::Format( "Open %s Editor", label );
+    }
+    else if( aToolName == "close_editor" )
+    {
+        std::string editorType = aInput.value( "editor_type", "" );
+        wxString label = ( editorType == "sch" ) ? "Schematic" : "PCB";
+        return wxString::Format( "Close %s Editor", label );
+    }
+    else if( aToolName == "check_status" )
+    {
+        return "Check Project Status";
+    }
+    else if( aToolName == "save" )
+    {
+        return "Save";
+    }
+    else if( aToolName == "create_project" )
+    {
+        return "Create Project";
+    }
     else
     {
         return wxString::Format( "Executing %s", aToolName );

@@ -289,6 +289,15 @@ private:
     void ShowOpenEditorApproval( const wxString& aEditorType );
     void OnApproveOpenEditor();
     void OnRejectOpenEditor();
+
+    // Pending editor close request
+    bool        m_pendingCloseSch;       // True if schematic editor close is pending approval
+    bool        m_pendingClosePcb;       // True if PCB editor close is pending approval
+    std::string m_pendingCloseToolId;    // Tool use ID for the pending close request
+    bool        m_pendingCloseSaveFirst; // Whether to save before closing
+    void ShowCloseEditorApproval( const wxString& aEditorType );
+    void OnApproveCloseEditor();
+
     bool DoOpenEditor( FRAME_T aFrameType );
 };
 

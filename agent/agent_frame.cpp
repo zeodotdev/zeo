@@ -48,6 +48,7 @@
 
 #ifdef __APPLE__
 #include "macos_key_monitor.h"
+#include "macos_webview_bg.h"
 #include <libproc.h>
 #include <unistd.h>
 #endif
@@ -291,6 +292,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     if( nativeHandle )
     {
+        // Disable WKWebView's default white background so parent dark panel shows through
+        SetWebViewDarkBackground( nativeHandle );
+
         InstallSelectAllMonitor(
                 nativeHandle,
                 [this]()

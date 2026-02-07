@@ -1315,6 +1315,17 @@ void KICAD_MANAGER_FRAME::OnIdle( wxIdleEvent& aEvent )
     }
 #endif
 
+    // Pre-create the agent frame so its webview loads in the background.
+    // This eliminates the white flash and slow render when the user first opens it.
+    try
+    {
+        Kiway().Player( FRAME_AGENT, true );
+    }
+    catch( ... )
+    {
+        // Non-critical; agent will be created on demand if preload fails
+    }
+
     // This little diddy is needed to get the window put into the Mac dock icon's context menu.
     Raise();
 }

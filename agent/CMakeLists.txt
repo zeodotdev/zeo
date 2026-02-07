@@ -99,7 +99,7 @@ set( AGENT_SRCS
 
 # Platform-specific sources
 if( APPLE )
-    list( APPEND AGENT_SRCS platform/macos_key_monitor.mm )
+    list( APPEND AGENT_SRCS platform/macos_key_monitor.mm platform/macos_webview_bg.mm )
 endif()
 
 

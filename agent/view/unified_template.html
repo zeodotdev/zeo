@@ -294,7 +294,7 @@ img[src^="data:"] { cursor: pointer; }
         </div>
         <div class="model-menu" id="model-menu"></div>
         <span class="flex-1"></span>
-        <button class="ctrl-btn" id="track-btn">Track</button>
+        <button class="ctrl-btn" id="track-btn" style="display:none;">Track</button>
         <button class="ctrl-btn primary" id="action-btn">Send</button>
     </div>
 </div>
@@ -944,6 +944,10 @@ App.Controls = (function() {
         trackBtn.style.color = tracking ? '#4ec9b0' : '';
     }
 
+    function setTrackButtonVisible(visible) {
+        trackBtn.style.display = visible ? '' : 'none';
+    }
+
     function setSelectionPill(label, visible) {
         selectionPill.textContent = label;
         selectionPill.className = 'selection-pill' + (visible ? ' visible' : '');
@@ -993,6 +997,7 @@ App.Controls = (function() {
         setActionButton: setActionButton,
         setModelList: setModelList,
         setTrackingState: setTrackingState,
+        setTrackButtonVisible: setTrackButtonVisible,
         setSelectionPill: setSelectionPill
     };
 })();

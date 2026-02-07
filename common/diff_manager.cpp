@@ -220,6 +220,17 @@ void DIFF_MANAGER::UnregisterOverlay( KIGFX::VIEW* aView )
         state.item = nullptr;
     }
 
+    if( aView && state.trackingBorder )
+    {
+        aView->Remove( state.trackingBorder );
+    }
+
+    if( state.trackingBorder )
+    {
+        delete state.trackingBorder;
+        state.trackingBorder = nullptr;
+    }
+
     // Clear callbacks to prevent dangling references
     state.callbacks = {};
 
@@ -505,6 +516,19 @@ void DIFF_MANAGER::SetTrackingMode( KIGFX::VIEW* aView, bool aEnabled )
 
         aView->MarkDirty();
         wxLogInfo( "Agent tracking: disabled on view" );
+
+        // Clear callback if no views are tracking
+        bool anyTracking = false;
+        for( const auto& [v, s] : m_viewStates )
+        {
+            if( s.trackingActive )
+            {
+                anyTracking = true;
+                break;
+            }
+        }
+        if( !anyTracking )
+            m_trackingBrokenCallback = nullptr;
     }
 }
 

@@ -798,12 +798,11 @@ App.Input = (function() {
     editorContainer.addEventListener('drop', function(e) {
         e.preventDefault(); e.stopPropagation(); dragCounter = 0; editorContainer.classList.remove('drag-over');
         var files = e.dataTransfer.files;
+        var skippedTypes = [];
         var skippedSize = [];
         for (var i = 0; i < files.length; i++) {
             if (SUPPORTED_FILE_TYPES.indexOf(files[i].type) === -1) {
-                // Unsupported type — insert file path/name into chat for the LLM
-                var path = files[i].path || files[i].name;
-                appendText(path);
+                skippedTypes.push(files[i].name);
                 continue;
             }
             if (files[i].size > MAX_DROP_FILE_SIZE) {
@@ -822,6 +821,9 @@ App.Input = (function() {
                 };
                 reader.readAsDataURL(file);
             })(files[i]);
+        }
+        if (skippedTypes.length > 0) {
+            App.showToast('Unsupported file type: ' + skippedTypes.join(', '));
         }
         if (skippedSize.length > 0) {
             App.showToast('File too large (max 32 MB): ' + skippedSize.join(', '));
@@ -920,7 +922,7 @@ App.Input = (function() {
 
     function appendText(text) {
         if (textarea.value) textarea.value += ' ';
-        textarea.value += text;
+        textarea.value += text + ' ';
         syncHighlight();
     }
 

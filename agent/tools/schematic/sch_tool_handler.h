@@ -78,12 +78,6 @@ private:
     std::string ExecuteModify( const nlohmann::json& aInput );
 
     /**
-     * Execute sch_validate tool.
-     * Validates a schematic file and returns results as JSON.
-     */
-    std::string ExecuteValidate( const nlohmann::json& aInput );
-
-    /**
      * Execute sch_export_spice_netlist tool.
      * Generates a SPICE netlist from the schematic using kicad-cli.
      */

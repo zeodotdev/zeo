@@ -147,7 +147,6 @@ static const char* SCH_TOOL_NAMES[] = {
     "sch_live_summary",
     "sch_read_section",
     // "sch_modify",  // DISABLED: Use sch_add/sch_update/sch_delete instead
-    "sch_validate",
     "sch_export_spice_netlist",
     "sch_get_pins"  // Lightweight pin lookup for a single symbol
 };
@@ -179,8 +178,6 @@ std::string SCH_TOOL_HANDLER::Execute( const std::string& aToolName, const nlohm
     // DISABLED: Use sch_add/sch_update/sch_delete instead
     // else if( aToolName == "sch_modify" )
     //     return ExecuteModify( aInput );
-    else if( aToolName == "sch_validate" )
-        return ExecuteValidate( aInput );
     else if( aToolName == "sch_export_spice_netlist" )
         return ExecuteExportSpiceNetlist( aInput );
 
@@ -217,8 +214,6 @@ std::string SCH_TOOL_HANDLER::GetDescription( const std::string& aToolName,
     //     std::string elementType = aInput.value( "element_type", "element" );
     //     return operation + " " + elementType + " in " + fileName;
     // }
-    else if( aToolName == "sch_validate" )
-        return "Validating " + fileName;
     else if( aToolName == "sch_export_spice_netlist" )
         return "Exporting SPICE netlist from " + fileName;
 
@@ -443,20 +438,6 @@ std::string SCH_TOOL_HANDLER::ExecuteModify( const nlohmann::json& aInput )
         result["warnings"] = validation.warnings;
 
     return result.dump( 2 );
-}
-
-
-std::string SCH_TOOL_HANDLER::ExecuteValidate( const nlohmann::json& aInput )
-{
-    std::string filePath = aInput.value( "file_path", "" );
-    if( filePath.empty() )
-        return "Error: 'file_path' parameter is required";
-
-    if( !FileWriter::FileExists( filePath ) )
-        return "Error: File not found: " + filePath;
-
-    auto result = SchValidator::ValidateFile( filePath );
-    return result.ToJson().dump( 2 );
 }
 
 

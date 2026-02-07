@@ -55,15 +55,6 @@ struct ValidationResult
 };
 
 /**
- * Validate a schematic file.
- * Performs syntax validation (S-expression parsing) and structural validation
- * (required fields, UUID uniqueness, valid references).
- * @param aFilePath Path to the .kicad_sch file.
- * @return ValidationResult with errors and warnings.
- */
-ValidationResult ValidateFile( const std::string& aFilePath );
-
-/**
  * Validate schematic content string.
  * @param aContent The schematic content to validate.
  * @return ValidationResult with errors and warnings.

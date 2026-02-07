@@ -298,24 +298,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     tools.push_back( schModify );
     */
 
-    // sch_validate - Validate schematic file
-    LLM_TOOL schValidate;
-    schValidate.name = "sch_validate";
-    schValidate.description = "Validate a .kicad_sch file without modifying it. "
-                              "Checks syntax (S-expression parsing), structure (required fields, UUID uniqueness), "
-                              "and returns warnings about potential issues.";
-    schValidate.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Absolute path to the .kicad_sch file" }
-            }}
-        }},
-        { "required", json::array( { "file_path" } ) }
-    };
-    tools.push_back( schValidate );
-
     // sch_run_erc - Run ERC on open schematic
     LLM_TOOL schRunErc;
     schRunErc.name = "sch_run_erc";

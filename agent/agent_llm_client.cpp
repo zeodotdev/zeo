@@ -48,7 +48,7 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
 
     // Create and start the background thread
     LLM_REQUEST_THREAD* thread = new LLM_REQUEST_THREAD(
-        this, aHandler, m_modelName, aMessages, aTools );
+        this, aHandler, m_modelName, aMessages, aTools, m_agentMode );
 
     // wxThread requires Create() before Run()
     if( thread->Create() != wxTHREAD_NO_ERROR )
@@ -80,13 +80,15 @@ LLM_REQUEST_THREAD::LLM_REQUEST_THREAD( AGENT_LLM_CLIENT* aClient,
                                          wxEvtHandler* aHandler,
                                          const std::string& aModel,
                                          const nlohmann::json& aMessages,
-                                         const std::vector<LLM_TOOL>& aTools ) :
+                                         const std::vector<LLM_TOOL>& aTools,
+                                         AgentMode aAgentMode ) :
         wxThread( wxTHREAD_DETACHED ),
         m_client( aClient ),
         m_handler( aHandler ),
         m_model( aModel ),
         m_messages( aMessages ),
         m_tools( aTools ),
+        m_agentMode( aAgentMode ),
         m_cancelFlag( nullptr )
 {
 }
@@ -131,6 +133,11 @@ void* LLM_REQUEST_THREAD::Entry()
     else
         requestBody["max_tokens"] = 131072;
 
+    // Signal agent mode to server for system prompt selection (proxy strips before forwarding)
+    requestBody["metadata"] = {
+        { "agent_mode", ( m_agentMode == AgentMode::PLAN ) ? "plan" : "execute" }
+    };
+
     // Add tools
     if( !m_tools.empty() )
     {
@@ -171,6 +178,9 @@ void* LLM_REQUEST_THREAD::Entry()
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append( headers, "Content-Type: application/json" );
     headers = curl_slist_append( headers, ( "Authorization: Bearer " + accessToken ).c_str() );
+    headers = curl_slist_append( headers,
+        ( std::string( "X-Agent-Mode: " )
+          + ( ( m_agentMode == AgentMode::PLAN ) ? "plan" : "execute" ) ).c_str() );
     curl_easy_setopt( curl, CURLOPT_HTTPHEADER, headers );
 
     // Set up streaming callback

@@ -60,6 +60,8 @@ void WEBVIEW_BRIDGE::OnMessage( const wxString& aMessage )
         else if( action == BridgeAction::SEND_CLICK )           HandleSendClick( msg );
         else if( action == BridgeAction::STOP_CLICK )           HandleStopClick( msg );
         else if( action == BridgeAction::SELECTION_PILL_CLICK ) HandleSelectionPillClick( msg );
+        else if( action == BridgeAction::PLAN_TOGGLE )           HandlePlanToggle( msg );
+        else if( action == BridgeAction::PLAN_APPROVE )          HandlePlanApprove( msg );
 
         // Pending changes actions
         else if( action == BridgeAction::PENDING_CHANGES_TOGGLE )     HandlePendingChangesToggle( msg );
@@ -184,6 +186,16 @@ void WEBVIEW_BRIDGE::HandleModelChange( const nlohmann::json& aMsg )
 void WEBVIEW_BRIDGE::HandleTrackToggle( const nlohmann::json& aMsg )
 {
     m_frame->DoTrackToggle();
+}
+
+void WEBVIEW_BRIDGE::HandlePlanToggle( const nlohmann::json& aMsg )
+{
+    m_frame->DoPlanToggle();
+}
+
+void WEBVIEW_BRIDGE::HandlePlanApprove( const nlohmann::json& aMsg )
+{
+    m_frame->DoPlanApprove();
 }
 
 void WEBVIEW_BRIDGE::HandleSendClick( const nlohmann::json& aMsg )
@@ -394,6 +406,26 @@ void WEBVIEW_BRIDGE::PushTrackButtonVisible( bool aVisible )
                                             aVisible ? "true" : "false" ) );
     RunScript( wxString::Format( "App.Controls.setTrackButtonVisible(%s);",
                                  aVisible ? "true" : "false" ) );
+}
+
+void WEBVIEW_BRIDGE::PushPlanMode( bool aPlanMode )
+{
+    LogBridge( "C++->JS", wxString::Format( "setPlanMode(%s)",
+                                            aPlanMode ? "true" : "false" ) );
+    RunScript( wxString::Format( "App.Controls.setPlanMode(%s);",
+                                 aPlanMode ? "true" : "false" ) );
+}
+
+void WEBVIEW_BRIDGE::PushPlanApproval()
+{
+    LogBridge( "C++->JS", "showPlanApproval" );
+    RunScript( "App.Chat.showPlanApproval();" );
+}
+
+void WEBVIEW_BRIDGE::PushRemovePlanApproval()
+{
+    LogBridge( "C++->JS", "removePlanApproval" );
+    RunScript( "App.Chat.removePlanApproval();" );
 }
 
 void WEBVIEW_BRIDGE::PushSelectionPill( const wxString& aLabel, bool aVisible )

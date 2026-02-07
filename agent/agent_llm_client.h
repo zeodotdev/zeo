@@ -7,6 +7,8 @@
 #include <nlohmann/json.hpp>
 #include <wx/thread.h>
 
+#include "agent_state.h"
+
 class AGENT_AUTH;
 class AGENT_FRAME;
 class wxEvtHandler;
@@ -19,6 +21,7 @@ struct LLM_TOOL
     std::string    name;
     std::string    description;
     nlohmann::json input_schema;
+    bool           read_only = false;  ///< true = safe for plan mode (no modifications)
 };
 
 /**
@@ -99,10 +102,16 @@ public:
      */
     void SetAuth( AGENT_AUTH* aAuth ) { m_auth = aAuth; }
 
+    /**
+     * Set the agent mode (EXECUTE or PLAN) for the next request.
+     */
+    void SetAgentMode( AgentMode aMode ) { m_agentMode = aMode; }
+
 private:
     AGENT_FRAME* m_parent;
     AGENT_AUTH*  m_auth = nullptr;
     std::string  m_modelName;
+    AgentMode    m_agentMode = AgentMode::EXECUTE;
 
     // Async request state
     std::atomic<bool> m_requestInProgress;
@@ -121,7 +130,8 @@ public:
                         wxEvtHandler* aHandler,
                         const std::string& aModel,
                         const nlohmann::json& aMessages,
-                        const std::vector<LLM_TOOL>& aTools );
+                        const std::vector<LLM_TOOL>& aTools,
+                        AgentMode aAgentMode );
 
     virtual ~LLM_REQUEST_THREAD();
 
@@ -134,6 +144,7 @@ private:
     std::string           m_model;
     nlohmann::json        m_messages;
     std::vector<LLM_TOOL> m_tools;
+    AgentMode             m_agentMode;
 
     // Flag to check if cancellation was requested
     std::atomic<bool>* m_cancelFlag;

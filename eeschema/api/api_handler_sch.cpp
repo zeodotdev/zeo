@@ -527,6 +527,14 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
                                   false,  // updateOtherFields
                                   true,   // resetRef
                                   true ); // resetOtherFields
+
+            // Hide non-essential fields to reduce visual clutter on the schematic sheet.
+            // Only Reference and Value are shown; Description, Footprint, Datasheet, etc. are hidden.
+            for( SCH_FIELD& field : symbol->GetFields() )
+            {
+                if( field.GetId() != FIELD_T::REFERENCE && field.GetId() != FIELD_T::VALUE )
+                    field.SetVisible( false );
+            }
         }
 
         if( aCreate && itemUuidMap.count( item->m_Uuid ) )

@@ -49,8 +49,12 @@ public:
     void PushInputClear();
     void PushInputFocus();
     void PushInputSetText( const wxString& aText );
+    void PushInputAppendText( const wxString& aText );
     void PushAddAttachment( const wxString& aBase64, const wxString& aMediaType,
                             const wxString& aFilename );
+
+    // Notifications
+    void PushShowToast( const wxString& aMessage );
 
     // Controls
     void PushActionButtonState( const wxString& aLabel, bool aEnabled = true );

@@ -1331,12 +1331,17 @@ void AGENT_FRAME::OnBridgeSubmit( const nlohmann::json& aMsg )
 
 void AGENT_FRAME::OnBridgeAttachClick()
 {
+    static const wxString IMAGE_EXTS[] = {
+        "png", "jpg", "jpeg", "gif", "webp", "bmp"
+    };
+
     wxFileDialog dlg( this, "Attach File", "", "",
                       "Supported files (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.pdf)"
                       "|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.pdf"
                       "|Image files (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp)"
                       "|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp"
-                      "|PDF files (*.pdf)|*.pdf",
+                      "|PDF files (*.pdf)|*.pdf"
+                      "|All files (*.*)|*.*",
                       wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE );
 
     if( dlg.ShowModal() == wxID_OK )
@@ -1348,21 +1353,41 @@ void AGENT_FRAME::OnBridgeAttachClick()
         {
             FILE_ATTACHMENT att;
             bool loaded = false;
+            wxString error;
 
             wxFileName fn( path );
             wxString ext = fn.GetExt().Lower();
 
+            bool isImage = false;
+            for( const auto& imgExt : IMAGE_EXTS )
+            {
+                if( ext == imgExt )
+                {
+                    isImage = true;
+                    break;
+                }
+            }
+
             if( ext == "pdf" )
-                loaded = FileAttach::LoadFileFromDisk( path, att );
+                loaded = FileAttach::LoadFileFromDisk( path, att, &error );
+            else if( isImage )
+                loaded = FileAttach::LoadImageFromFile( path, att, &error );
+
+            if( loaded )
+            {
+                m_bridge->PushAddAttachment( wxString::FromUTF8( att.base64_data ),
+                                             wxString::FromUTF8( att.media_type ),
+                                             wxString::FromUTF8( att.filename ) );
+            }
+            else if( !error.empty() )
+            {
+                m_bridge->PushShowToast( error );
+            }
             else
-                loaded = FileAttach::LoadImageFromFile( path, att );
-
-            if( !loaded )
-                continue;
-
-            m_bridge->PushAddAttachment( wxString::FromUTF8( att.base64_data ),
-                                         wxString::FromUTF8( att.media_type ),
-                                         wxString::FromUTF8( att.filename ) );
+            {
+                // Incompatible file — insert path into chat so the LLM can read it
+                m_bridge->PushInputAppendText( path );
+            }
         }
     }
 }
@@ -1433,6 +1458,15 @@ void AGENT_FRAME::OnBridgeCopyImage( const nlohmann::json& aMsg )
 
 void AGENT_FRAME::OnBridgePreviewImage( const nlohmann::json& aMsg )
 {
+    // Input attachment previews send raw base64; chat bubble clicks send a data URI in "src"
+    std::string b64 = aMsg.value( "base64", "" );
+
+    if( !b64.empty() )
+    {
+        FileAttach::ShowPreviewDialog( this, wxString::FromUTF8( b64 ) );
+        return;
+    }
+
     wxString src = wxString::FromUTF8( aMsg.value( "src", "" ) );
     int commaPos = src.Find( ',' );
 

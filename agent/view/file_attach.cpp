@@ -42,11 +42,19 @@ bool FileAttach::IsImageMediaType( const std::string& aMediaType )
 }
 
 
-bool FileAttach::LoadImageFromFile( const wxString& aPath, FILE_ATTACHMENT& aResult )
+bool FileAttach::LoadImageFromFile( const wxString& aPath, FILE_ATTACHMENT& aResult,
+                                    wxString* aError )
 {
     wxImage image;
     if( !image.LoadFile( aPath ) )
+    {
+        if( aError )
+        {
+            wxFileName fn( aPath );
+            *aError = wxString::Format( "Could not load image: %s", fn.GetFullName() );
+        }
         return false;
+    }
 
     // Resize to fit API limits
     int w = image.GetWidth();
@@ -78,18 +86,33 @@ bool FileAttach::LoadImageFromFile( const wxString& aPath, FILE_ATTACHMENT& aRes
 }
 
 
-bool FileAttach::LoadFileFromDisk( const wxString& aPath, FILE_ATTACHMENT& aResult )
+bool FileAttach::LoadFileFromDisk( const wxString& aPath, FILE_ATTACHMENT& aResult,
+                                   wxString* aError )
 {
+    wxFileName fn( aPath );
+
     wxFile file( aPath, wxFile::read );
     if( !file.IsOpened() )
+    {
+        if( aError )
+            *aError = wxString::Format( "Could not open file: %s", fn.GetFullName() );
         return false;
+    }
 
     wxFileOffset fileSize = file.Length();
     if( fileSize <= 0 )
+    {
+        if( aError )
+            *aError = wxString::Format( "File is empty: %s", fn.GetFullName() );
         return false;
+    }
 
     if( (size_t) fileSize > MAX_FILE_SIZE )
     {
+        if( aError )
+        {
+            *aError = wxString::Format( "File too large (max 32 MB): %s", fn.GetFullName() );
+        }
         wxLogWarning( "File too large to attach (%zu bytes, max %zu): %s",
                       (size_t) fileSize, MAX_FILE_SIZE, aPath );
         return false;
@@ -97,13 +120,15 @@ bool FileAttach::LoadFileFromDisk( const wxString& aPath, FILE_ATTACHMENT& aResu
 
     wxMemoryBuffer buf( (size_t) fileSize );
     if( file.Read( buf.GetData(), (size_t) fileSize ) != fileSize )
+    {
+        if( aError )
+            *aError = wxString::Format( "Failed to read file: %s", fn.GetFullName() );
         return false;
+    }
 
     buf.SetDataLen( (size_t) fileSize );
 
     aResult.base64_data = wxBase64Encode( buf ).ToStdString();
-
-    wxFileName fn( aPath );
     aResult.filename = fn.GetFullName().ToStdString();
 
     wxString ext = fn.GetExt().Lower();

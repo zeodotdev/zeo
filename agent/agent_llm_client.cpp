@@ -8,7 +8,7 @@
 
 using json = nlohmann::json;
 
-static const std::string ZENER_API_URL = "https://www.zener.so/api/llm/messages";
+static const std::string ZENER_API_URL = ZENER_BASE_URL + "/api/llm/messages";
 
 AGENT_LLM_CLIENT::AGENT_LLM_CLIENT( AGENT_FRAME* aParent ) :
         m_parent( aParent ),

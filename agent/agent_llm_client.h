@@ -9,6 +9,8 @@
 
 #include "agent_state.h"
 
+static const std::string ZENER_BASE_URL = "https://zener-staging.vercel.app";
+
 class AGENT_AUTH;
 class AGENT_FRAME;
 class wxEvtHandler;

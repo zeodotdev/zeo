@@ -1665,7 +1665,7 @@ void CHAT_CONTROLLER::GenerateTitle()
 
             // Setup HTTP request to title endpoint
             KICAD_CURL_EASY curl;
-            curl.SetURL( "https://www.zener.so/api/llm/title" );
+            curl.SetURL( ZENER_BASE_URL + "/api/llm/title" );
             curl.SetHeader( "Content-Type", "application/json" );
             curl.SetHeader( "Authorization", "Bearer " + accessToken );
 

@@ -1,4 +1,5 @@
 #include "agent_auth.h"
+#include "../agent_llm_client.h"
 #include <kicad_curl/kicad_curl_easy.h>
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -19,7 +20,7 @@ using json = nlohmann::json;
 static const size_t MAX_SESSION_FILE_SIZE = 1024 * 1024;  // 1MB safety limit
 
 AGENT_AUTH::AGENT_AUTH() :
-        m_authWebUrl( "https://www.zener.so/auth" ),
+        m_authWebUrl( ZENER_BASE_URL + "/auth" ),
         m_tokenExpiry( 0 )
 {
 }

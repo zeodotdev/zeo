@@ -24,6 +24,7 @@
 static const char* PCB_CRUD_TOOLS[] = {
     "pcb_get_summary",
     "pcb_read_section",
+    "pcb_validate",
     "pcb_run_drc",
     "pcb_set_outline",
     "pcb_sync_schematic",
@@ -31,7 +32,10 @@ static const char* PCB_CRUD_TOOLS[] = {
     "pcb_add",
     "pcb_update",
     "pcb_delete",
-    "pcb_batch_delete",
+    "pcb_get_pads",
+    "pcb_get_footprint",
+    "pcb_route",
+    "pcb_get_nets",
     "pcb_export"
 };
 
@@ -63,6 +67,8 @@ std::string PCB_CRUD_HANDLER::GetDescription( const std::string& aToolName,
         std::string section = aInput.value( "section", "all" );
         return "Reading PCB " + section;
     }
+    else if( aToolName == "pcb_validate" )
+        return "Validating PCB file";
     else if( aToolName == "pcb_run_drc" )
         return "Running DRC check";
     else if( aToolName == "pcb_set_outline" )
@@ -83,27 +89,66 @@ std::string PCB_CRUD_HANDLER::GetDescription( const std::string& aToolName,
     }
     else if( aToolName == "pcb_add" )
     {
-        std::string elementType = aInput.value( "element_type", "element" );
-        return "Adding " + elementType;
+        if( aInput.contains( "elements" ) && aInput["elements"].is_array() )
+        {
+            size_t count = aInput["elements"].size();
+            if( count == 1 )
+            {
+                std::string elemType = aInput["elements"][0].value( "element_type", "element" );
+                return "Adding " + elemType;
+            }
+            return "Adding " + std::to_string( count ) + " elements";
+        }
+        return "Adding elements";
     }
     else if( aToolName == "pcb_update" )
     {
-        std::string target = aInput.value( "target", "" );
-        if( !target.empty() && target.length() > 8 )
-            target = target.substr( 0, 8 ) + "...";
-        return "Updating " + ( target.empty() ? "element" : target );
+        if( aInput.contains( "updates" ) && aInput["updates"].is_array() )
+        {
+            size_t count = aInput["updates"].size();
+            if( count == 1 )
+            {
+                std::string target = aInput["updates"][0].value( "target", "" );
+                return "Updating " + ( target.empty() ? "element" : target );
+            }
+            return "Updating " + std::to_string( count ) + " elements";
+        }
+        return "Updating elements";
     }
     else if( aToolName == "pcb_delete" )
-        return "Deleting element";
-    else if( aToolName == "pcb_batch_delete" )
     {
         if( aInput.contains( "targets" ) && aInput["targets"].is_array() )
         {
             size_t count = aInput["targets"].size();
-            return "Deleting " + std::to_string( count ) + " element(s)";
+            if( count == 1 )
+                return "Deleting " + aInput["targets"][0].get<std::string>();
+            return "Deleting " + std::to_string( count ) + " elements";
         }
-        return "Batch deleting elements";
+        return "Deleting elements";
     }
+    else if( aToolName == "pcb_get_pads" )
+    {
+        std::string ref = aInput.value( "ref", "" );
+        return "Getting pads for " + ( ref.empty() ? "footprint" : ref );
+    }
+    else if( aToolName == "pcb_get_footprint" )
+    {
+        std::string ref = aInput.value( "ref", "" );
+        return "Getting footprint " + ( ref.empty() ? "info" : ref );
+    }
+    else if( aToolName == "pcb_route" )
+    {
+        std::string fromRef, toRef;
+        if( aInput.contains( "from" ) )
+            fromRef = aInput["from"].value( "ref", "" );
+        if( aInput.contains( "to" ) )
+            toRef = aInput["to"].value( "ref", "" );
+        if( !fromRef.empty() && !toRef.empty() )
+            return "Routing " + fromRef + " to " + toRef;
+        return "Routing pads";
+    }
+    else if( aToolName == "pcb_get_nets" )
+        return "Getting net list";
     else if( aToolName == "pcb_export" )
     {
         std::string format = aInput.value( "format", "gerber" );
@@ -130,6 +175,8 @@ std::string PCB_CRUD_HANDLER::GetIPCCommand( const std::string& aToolName,
         code = GenerateGetSummaryCode( aInput );
     else if( aToolName == "pcb_read_section" )
         code = GenerateReadSectionCode( aInput );
+    else if( aToolName == "pcb_validate" )
+        code = GenerateValidateCode( aInput );
     else if( aToolName == "pcb_run_drc" )
         code = GenerateRunDrcCode( aInput );
     else if( aToolName == "pcb_set_outline" )
@@ -139,13 +186,19 @@ std::string PCB_CRUD_HANDLER::GetIPCCommand( const std::string& aToolName,
     else if( aToolName == "pcb_place" )
         code = GeneratePlaceCode( aInput );
     else if( aToolName == "pcb_add" )
-        code = GenerateAddCode( aInput );
+        code = GenerateAddBatchCode( aInput );
     else if( aToolName == "pcb_update" )
-        code = GenerateUpdateCode( aInput );
+        code = GenerateUpdateBatchCode( aInput );
     else if( aToolName == "pcb_delete" )
-        code = GenerateDeleteCode( aInput );
-    else if( aToolName == "pcb_batch_delete" )
-        code = GenerateBatchDeleteCode( aInput );
+        code = GenerateDeleteBatchCode( aInput );
+    else if( aToolName == "pcb_get_pads" )
+        code = GenerateGetPadsCode( aInput );
+    else if( aToolName == "pcb_get_footprint" )
+        code = GenerateGetFootprintCode( aInput );
+    else if( aToolName == "pcb_route" )
+        code = GenerateRouteCode( aInput );
+    else if( aToolName == "pcb_get_nets" )
+        code = GenerateGetNetsCode( aInput );
     else if( aToolName == "pcb_export" )
         code = GenerateExportCode( aInput );
 
@@ -188,6 +241,7 @@ std::string PCB_CRUD_HANDLER::GenerateGetSummaryCode( const nlohmann::json& aInp
     std::ostringstream code;
 
     code << "import json\n";
+    code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
     code << "\n";
     code << "# Get PCB summary\n";
     code << "summary = {\n";
@@ -200,8 +254,8 @@ std::string PCB_CRUD_HANDLER::GenerateGetSummaryCode( const nlohmann::json& aInp
     code << "    'board_outline': None\n";
     code << "}\n";
     code << "\n";
-    code << "# Get footprints\n";
-    code << "footprints = board.get_items(types=['footprint'])\n";
+    code << "# Get footprints using correct API\n";
+    code << "footprints = board.get_footprints()\n";
     code << "for fp in footprints:\n";
     code << "    ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else '?'\n";
     code << "    pos = fp.position\n";
@@ -209,30 +263,30 @@ std::string PCB_CRUD_HANDLER::GenerateGetSummaryCode( const nlohmann::json& aInp
     code << "        'ref': ref,\n";
     code << "        'lib_id': f'{fp.definition.id.library}:{fp.definition.id.name}' if hasattr(fp, 'definition') else '',\n";
     code << "        'position': [pos.x / 1000000, pos.y / 1000000],\n";
-    code << "        'layer': 'F.Cu' if not getattr(fp, 'flipped', False) else 'B.Cu'\n";
+    code << "        'layer': 'B.Cu' if fp.layer == BoardLayer.BL_B_Cu else 'F.Cu'\n";
     code << "    })\n";
     code << "\n";
-    code << "# Count tracks, vias, zones\n";
-    code << "tracks = board.get_items(types=['track'])\n";
+    code << "# Count tracks, vias, zones using correct API\n";
+    code << "tracks = board.get_tracks()\n";
     code << "summary['tracks'] = len(tracks)\n";
     code << "\n";
-    code << "vias = board.get_items(types=['via'])\n";
+    code << "vias = board.get_vias()\n";
     code << "summary['vias'] = len(vias)\n";
     code << "\n";
-    code << "zones = board.get_items(types=['zone'])\n";
+    code << "zones = board.get_zones()\n";
     code << "summary['zones'] = len(zones)\n";
     code << "\n";
     code << "# Get nets\n";
     code << "try:\n";
     code << "    nets = board.get_nets()\n";
-    code << "    summary['nets'] = [{'name': n.name, 'code': n.code} for n in nets[:50]]  # Limit to 50\n";
+    code << "    summary['nets'] = [{'name': n.name} for n in nets[:50]]  # Limit to 50\n";
     code << "except:\n";
     code << "    pass\n";
     code << "\n";
     code << "# Get layers\n";
     code << "try:\n";
     code << "    layers = board.get_enabled_layers()\n";
-    code << "    summary['layers'] = [l.name for l in layers.layers] if hasattr(layers, 'layers') else []\n";
+    code << "    summary['layers'] = [BoardLayer.Name(l) for l in layers] if layers else []\n";
     code << "except:\n";
     code << "    pass\n";
     code << "\n";
@@ -250,12 +304,13 @@ std::string PCB_CRUD_HANDLER::GenerateReadSectionCode( const nlohmann::json& aIn
     std::string filter = aInput.value( "filter", "" );
 
     code << "import json\n";
+    code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
     code << "\n";
 
     if( section == "footprints" )
     {
         code << "# Read footprints\n";
-        code << "footprints = board.get_items(types=['footprint'])\n";
+        code << "footprints = board.get_footprints()\n";
         code << "result = []\n";
         code << "for fp in footprints:\n";
         code << "    ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else '?'\n";
@@ -266,7 +321,7 @@ std::string PCB_CRUD_HANDLER::GenerateReadSectionCode( const nlohmann::json& aIn
             code << "        continue\n";
         }
         code << "    pos = fp.position\n";
-        code << "    angle = fp.orientation.degrees if hasattr(fp.orientation, 'degrees') else 0\n";
+        code << "    angle = fp.orientation.degrees if hasattr(fp, 'orientation') and hasattr(fp.orientation, 'degrees') else 0\n";
         code << "    result.append({\n";
         code << "        'id': fp.id.value,\n";
         code << "        'ref': ref,\n";
@@ -274,7 +329,7 @@ std::string PCB_CRUD_HANDLER::GenerateReadSectionCode( const nlohmann::json& aIn
         code << "        'lib_id': f'{fp.definition.id.library}:{fp.definition.id.name}' if hasattr(fp, 'definition') else '',\n";
         code << "        'position': [pos.x / 1000000, pos.y / 1000000],\n";
         code << "        'angle': angle,\n";
-        code << "        'layer': 'F.Cu' if not getattr(fp, 'flipped', False) else 'B.Cu',\n";
+        code << "        'layer': 'B.Cu' if fp.layer == BoardLayer.BL_B_Cu else 'F.Cu',\n";
         code << "        'locked': getattr(fp, 'locked', False)\n";
         code << "    })\n";
         code << "print(json.dumps(result, indent=2))\n";
@@ -282,15 +337,15 @@ std::string PCB_CRUD_HANDLER::GenerateReadSectionCode( const nlohmann::json& aIn
     else if( section == "tracks" )
     {
         code << "# Read tracks\n";
-        code << "tracks = board.get_items(types=['track'])\n";
+        code << "tracks = board.get_tracks()\n";
         code << "result = []\n";
-        code << "for t in tracks[:100]:  # Limit to 100\n";
+        code << "for t in list(tracks)[:100]:  # Limit to 100\n";
         code << "    result.append({\n";
         code << "        'id': t.id.value,\n";
         code << "        'start': [t.start.x / 1000000, t.start.y / 1000000],\n";
         code << "        'end': [t.end.x / 1000000, t.end.y / 1000000],\n";
-        code << "        'width': t.width.value_nm / 1000000 if hasattr(t.width, 'value_nm') else 0,\n";
-        code << "        'layer': t.layer.name if hasattr(t, 'layer') else '',\n";
+        code << "        'width': t.width / 1000000,\n";
+        code << "        'layer': BoardLayer.Name(t.layer),\n";
         code << "        'net': t.net.name if hasattr(t, 'net') else ''\n";
         code << "    })\n";
         code << "print(json.dumps({'count': len(tracks), 'tracks': result}, indent=2))\n";
@@ -298,12 +353,14 @@ std::string PCB_CRUD_HANDLER::GenerateReadSectionCode( const nlohmann::json& aIn
     else if( section == "vias" )
     {
         code << "# Read vias\n";
-        code << "vias = board.get_items(types=['via'])\n";
+        code << "vias = board.get_vias()\n";
         code << "result = []\n";
         code << "for v in vias:\n";
         code << "    result.append({\n";
         code << "        'id': v.id.value,\n";
         code << "        'position': [v.position.x / 1000000, v.position.y / 1000000],\n";
+        code << "        'diameter': v.diameter / 1000000 if hasattr(v, 'diameter') else 0,\n";
+        code << "        'drill': v.drill_diameter / 1000000 if hasattr(v, 'drill_diameter') else 0,\n";
         code << "        'net': v.net.name if hasattr(v, 'net') else ''\n";
         code << "    })\n";
         code << "print(json.dumps(result, indent=2))\n";
@@ -311,13 +368,13 @@ std::string PCB_CRUD_HANDLER::GenerateReadSectionCode( const nlohmann::json& aIn
     else if( section == "zones" )
     {
         code << "# Read zones\n";
-        code << "zones = board.get_items(types=['zone'])\n";
+        code << "zones = board.get_zones()\n";
         code << "result = []\n";
         code << "for z in zones:\n";
         code << "    result.append({\n";
         code << "        'id': z.id.value,\n";
         code << "        'net': z.net.name if hasattr(z, 'net') else '',\n";
-        code << "        'layer': z.layer.name if hasattr(z, 'layer') else '',\n";
+        code << "        'layers': [BoardLayer.Name(l) for l in z.layers] if hasattr(z, 'layers') else [],\n";
         code << "        'priority': getattr(z, 'priority', 0)\n";
         code << "    })\n";
         code << "print(json.dumps(result, indent=2))\n";
@@ -326,14 +383,14 @@ std::string PCB_CRUD_HANDLER::GenerateReadSectionCode( const nlohmann::json& aIn
     {
         code << "# Read nets\n";
         code << "nets = board.get_nets()\n";
-        code << "result = [{'name': n.name, 'code': n.code} for n in nets]\n";
+        code << "result = [{'name': n.name} for n in nets]\n";
         code << "print(json.dumps(result, indent=2))\n";
     }
     else if( section == "layers" )
     {
         code << "# Read layers\n";
         code << "layers = board.get_enabled_layers()\n";
-        code << "result = [{'name': l.name} for l in layers.layers] if hasattr(layers, 'layers') else []\n";
+        code << "result = [{'name': BoardLayer.Name(l)} for l in layers] if layers else []\n";
         code << "print(json.dumps(result, indent=2))\n";
     }
     else if( section == "stackup" )
@@ -351,6 +408,96 @@ std::string PCB_CRUD_HANDLER::GenerateReadSectionCode( const nlohmann::json& aIn
         code << "print(json.dumps({'error': 'Unknown section: " << EscapePythonString( section )
              << "'}))\n";
     }
+
+    return code.str();
+}
+
+
+std::string PCB_CRUD_HANDLER::GenerateValidateCode( const nlohmann::json& aInput ) const
+{
+    std::ostringstream code;
+
+    code << "import json\n";
+    code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
+    code << "\n";
+    code << "# Validate PCB file - check for common issues\n";
+    code << "issues = []\n";
+    code << "warnings = []\n";
+    code << "stats = {}\n";
+    code << "\n";
+    code << "# Check board outline (Edge.Cuts layer)\n";
+    code << "try:\n";
+    code << "    shapes = board.get_shapes()\n";
+    code << "    edge_cuts = [s for s in shapes if hasattr(s, 'layer') and s.layer == BoardLayer.BL_Edge_Cuts]\n";
+    code << "    stats['edge_cuts_segments'] = len(edge_cuts)\n";
+    code << "    if not edge_cuts:\n";
+    code << "        issues.append({'type': 'missing_outline', 'message': 'No board outline found (Edge.Cuts layer is empty)'})\n";
+    code << "except Exception as e:\n";
+    code << "    warnings.append(f'Could not check board outline: {e}')\n";
+    code << "\n";
+    code << "# Check footprints\n";
+    code << "try:\n";
+    code << "    footprints = board.get_footprints()\n";
+    code << "    stats['footprints'] = len(footprints)\n";
+    code << "    origin_count = 0\n";
+    code << "    refs_seen = {}\n";
+    code << "    for fp in footprints:\n";
+    code << "        ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else '?'\n";
+    code << "        # Check for duplicate references\n";
+    code << "        if ref in refs_seen:\n";
+    code << "            issues.append({'type': 'duplicate_ref', 'message': f'Duplicate reference: {ref}', 'ref': ref})\n";
+    code << "        refs_seen[ref] = True\n";
+    code << "        # Check for footprints at origin (likely unplaced)\n";
+    code << "        if fp.position.x == 0 and fp.position.y == 0:\n";
+    code << "            origin_count += 1\n";
+    code << "    if origin_count > 0:\n";
+    code << "        warnings.append(f'{origin_count} footprint(s) at origin - may be unplaced')\n";
+    code << "except Exception as e:\n";
+    code << "    warnings.append(f'Could not check footprints: {e}')\n";
+    code << "\n";
+    code << "# Check nets and connectivity\n";
+    code << "try:\n";
+    code << "    nets = board.get_nets()\n";
+    code << "    stats['nets'] = len(nets)\n";
+    code << "    pads = board.get_pads()\n";
+    code << "    stats['pads'] = len(pads)\n";
+    code << "    # Count pads per net to find potentially unrouted nets\n";
+    code << "    net_pad_counts = {}\n";
+    code << "    for pad in pads:\n";
+    code << "        net_name = pad.net.name if hasattr(pad, 'net') else ''\n";
+    code << "        if net_name:\n";
+    code << "            net_pad_counts[net_name] = net_pad_counts.get(net_name, 0) + 1\n";
+    code << "    # Find nets with multiple pads (need routing)\n";
+    code << "    multi_pad_nets = [n for n, c in net_pad_counts.items() if c > 1]\n";
+    code << "    stats['nets_requiring_routing'] = len(multi_pad_nets)\n";
+    code << "except Exception as e:\n";
+    code << "    warnings.append(f'Could not check nets: {e}')\n";
+    code << "\n";
+    code << "# Check tracks and vias\n";
+    code << "try:\n";
+    code << "    tracks = board.get_tracks()\n";
+    code << "    vias = board.get_vias()\n";
+    code << "    stats['tracks'] = len(tracks)\n";
+    code << "    stats['vias'] = len(vias)\n";
+    code << "except Exception as e:\n";
+    code << "    warnings.append(f'Could not check tracks/vias: {e}')\n";
+    code << "\n";
+    code << "# Check zones\n";
+    code << "try:\n";
+    code << "    zones = board.get_zones()\n";
+    code << "    stats['zones'] = len(zones)\n";
+    code << "except Exception as e:\n";
+    code << "    warnings.append(f'Could not check zones: {e}')\n";
+    code << "\n";
+    code << "# Build result\n";
+    code << "is_valid = len(issues) == 0\n";
+    code << "result = {\n";
+    code << "    'valid': is_valid,\n";
+    code << "    'issues': issues,\n";
+    code << "    'warnings': warnings,\n";
+    code << "    'stats': stats\n";
+    code << "}\n";
+    code << "print(json.dumps(result, indent=2))\n";
 
     return code.str();
 }
@@ -388,20 +535,20 @@ std::string PCB_CRUD_HANDLER::GenerateSetOutlineCode( const nlohmann::json& aInp
     std::string shape = aInput.value( "shape", "rectangle" );
     bool clearExisting = aInput.value( "clear_existing", true );
 
-    code << "from kipy.board import BoardSegment\n";
+    code << "import json\n";
+    code << "from kipy.board_types import BoardSegment\n";
     code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
-    code << "from kipy.proto.common.types.base_types_pb2 import GraphicShape\n";
+    code << "from kipy.geometry import Vector2\n";
     code << "\n";
 
     if( clearExisting )
     {
-        code << "# Remove existing board outline\n";
-        code << "edge_cuts = board.get_items(types=['line', 'arc', 'rectangle'])\n";
-        code << "edge_items = [item for item in edge_cuts if hasattr(item, 'layer') and 'Edge' in str(item.layer)]\n";
+        code << "# Remove existing board outline (shapes on Edge.Cuts)\n";
+        code << "shapes = board.get_shapes()\n";
+        code << "edge_items = [s for s in shapes if hasattr(s, 'layer') and s.layer == BoardLayer.BL_Edge_Cuts]\n";
         code << "if edge_items:\n";
-        code << "    ids = [item.id for item in edge_items]\n";
-        code << "    board.delete_items(ids)\n";
-        code << "    print(f'Removed {len(ids)} existing outline segment(s)')\n";
+        code << "    board.remove_items(edge_items)\n";
+        code << "    print(f'Removed {len(edge_items)} existing outline segment(s)')\n";
         code << "\n";
     }
 
@@ -416,7 +563,7 @@ std::string PCB_CRUD_HANDLER::GenerateSetOutlineCode( const nlohmann::json& aInp
             originY = aInput["origin"][1].get<double>();
         }
 
-        code << "# Create rectangular outline\n";
+        code << "# Create rectangular outline on Edge.Cuts layer\n";
         code << "width_nm = " << MmToNm( width ) << "\n";
         code << "height_nm = " << MmToNm( height ) << "\n";
         code << "origin_x = " << MmToNm( originX ) << "\n";
@@ -431,22 +578,20 @@ std::string PCB_CRUD_HANDLER::GenerateSetOutlineCode( const nlohmann::json& aInp
         code << "\n";
         code << "segments = []\n";
         code << "for i in range(4):\n";
-        code << "    seg = GraphicShape()\n";
-        code << "    seg.segment.start.x_nm = corners[i][0]\n";
-        code << "    seg.segment.start.y_nm = corners[i][1]\n";
-        code << "    seg.segment.end.x_nm = corners[(i+1) % 4][0]\n";
-        code << "    seg.segment.end.y_nm = corners[(i+1) % 4][1]\n";
-        code << "    seg.layer = 'Edge.Cuts'\n";
-        code << "    segments.append(BoardSegment(proto=seg))\n";
+        code << "    seg = BoardSegment()\n";
+        code << "    seg.layer = BoardLayer.BL_Edge_Cuts\n";
+        code << "    seg.start = Vector2.from_xy(corners[i][0], corners[i][1])\n";
+        code << "    seg.end = Vector2.from_xy(corners[(i+1) % 4][0], corners[(i+1) % 4][1])\n";
+        code << "    segments.append(seg)\n";
         code << "\n";
-        code << "result = board.create_items(segments)\n";
-        code << "print(f'Created rectangular outline: {" << width << "}mm x {" << height << "}mm')\n";
+        code << "board.create_items(segments)\n";
+        code << "print(json.dumps({'status': 'success', 'message': f'Created rectangular outline: " << width << "mm x " << height << "mm'}))\n";
     }
     else if( shape == "polygon" )
     {
         if( aInput.contains( "points" ) && aInput["points"].is_array() )
         {
-            code << "# Create polygon outline\n";
+            code << "# Create polygon outline on Edge.Cuts layer\n";
             code << "points = [\n";
             for( const auto& pt : aInput["points"] )
             {
@@ -461,20 +606,18 @@ std::string PCB_CRUD_HANDLER::GenerateSetOutlineCode( const nlohmann::json& aInp
             code << "\n";
             code << "segments = []\n";
             code << "for i in range(len(points)):\n";
-            code << "    seg = GraphicShape()\n";
-            code << "    seg.segment.start.x_nm = points[i][0]\n";
-            code << "    seg.segment.start.y_nm = points[i][1]\n";
-            code << "    seg.segment.end.x_nm = points[(i+1) % len(points)][0]\n";
-            code << "    seg.segment.end.y_nm = points[(i+1) % len(points)][1]\n";
-            code << "    seg.layer = 'Edge.Cuts'\n";
-            code << "    segments.append(BoardSegment(proto=seg))\n";
+            code << "    seg = BoardSegment()\n";
+            code << "    seg.layer = BoardLayer.BL_Edge_Cuts\n";
+            code << "    seg.start = Vector2.from_xy(points[i][0], points[i][1])\n";
+            code << "    seg.end = Vector2.from_xy(points[(i+1) % len(points)][0], points[(i+1) % len(points)][1])\n";
+            code << "    segments.append(seg)\n";
             code << "\n";
-            code << "result = board.create_items(segments)\n";
-            code << "print(f'Created polygon outline with {len(points)} vertices')\n";
+            code << "board.create_items(segments)\n";
+            code << "print(json.dumps({'status': 'success', 'message': f'Created polygon outline with {len(points)} vertices'}))\n";
         }
         else
         {
-            code << "print('Error: polygon shape requires points array')\n";
+            code << "print(json.dumps({'status': 'error', 'message': 'polygon shape requires points array'}))\n";
         }
     }
     else if( shape == "rounded_rectangle" )
@@ -483,13 +626,12 @@ std::string PCB_CRUD_HANDLER::GenerateSetOutlineCode( const nlohmann::json& aInp
         double height = aInput.value( "height", 80.0 );
         double radius = aInput.value( "corner_radius", 5.0 );
 
-        code << "# Create rounded rectangle outline\n";
-        code << "# Note: Simplified - creates straight segments with corner arcs\n";
+        code << "# Create rounded rectangle outline on Edge.Cuts layer\n";
+        code << "# Note: Currently creates straight segments only (arc corners require additional work)\n";
         code << "width_nm = " << MmToNm( width ) << "\n";
         code << "height_nm = " << MmToNm( height ) << "\n";
         code << "radius_nm = " << MmToNm( radius ) << "\n";
         code << "\n";
-        code << "# For now, create a simple rectangle (arc support needs additional work)\n";
         code << "corners = [\n";
         code << "    (0, 0),\n";
         code << "    (width_nm, 0),\n";
@@ -498,15 +640,13 @@ std::string PCB_CRUD_HANDLER::GenerateSetOutlineCode( const nlohmann::json& aInp
         code << "]\n";
         code << "segments = []\n";
         code << "for i in range(4):\n";
-        code << "    seg = GraphicShape()\n";
-        code << "    seg.segment.start.x_nm = corners[i][0]\n";
-        code << "    seg.segment.start.y_nm = corners[i][1]\n";
-        code << "    seg.segment.end.x_nm = corners[(i+1) % 4][0]\n";
-        code << "    seg.segment.end.y_nm = corners[(i+1) % 4][1]\n";
-        code << "    seg.layer = 'Edge.Cuts'\n";
-        code << "    segments.append(BoardSegment(proto=seg))\n";
-        code << "result = board.create_items(segments)\n";
-        code << "print(f'Created outline: " << width << "mm x " << height << "mm (corner radius not yet supported)')\n";
+        code << "    seg = BoardSegment()\n";
+        code << "    seg.layer = BoardLayer.BL_Edge_Cuts\n";
+        code << "    seg.start = Vector2.from_xy(corners[i][0], corners[i][1])\n";
+        code << "    seg.end = Vector2.from_xy(corners[(i+1) % 4][0], corners[(i+1) % 4][1])\n";
+        code << "    segments.append(seg)\n";
+        code << "board.create_items(segments)\n";
+        code << "print(json.dumps({'status': 'success', 'message': f'Created outline: " << width << "mm x " << height << "mm (corner radius not yet supported)'}))\n";
     }
 
     return code.str();
@@ -557,17 +697,20 @@ std::string PCB_CRUD_HANDLER::GeneratePlaceCode( const nlohmann::json& aInput ) 
 
     if( !aInput.contains( "placements" ) || !aInput["placements"].is_array() )
     {
-        code << "print('Error: placements array is required')\n";
+        code << "import json\n";
+        code << "print(json.dumps({'status': 'error', 'message': 'placements array is required'}))\n";
         return code.str();
     }
 
     code << "import json\n";
+    code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
+    code << "from kipy.geometry import Vector2, Angle\n";
     code << "\n";
     code << "# Batch footprint placement\n";
     code << "placements = " << aInput["placements"].dump() << "\n";
     code << "\n";
     code << "# Get all footprints and build ref->footprint map\n";
-    code << "all_fps = board.get_items(types=['footprint'])\n";
+    code << "all_fps = board.get_footprints()\n";
     code << "ref_to_fp = {}\n";
     code << "for fp in all_fps:\n";
     code << "    ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else None\n";
@@ -588,18 +731,17 @@ std::string PCB_CRUD_HANDLER::GeneratePlaceCode( const nlohmann::json& aInput ) 
     code << "    \n";
     code << "    # Update position\n";
     code << "    if 'position' in p and len(p['position']) >= 2:\n";
-    code << "        fp.position.x = int(p['position'][0] * 1000000)\n";
-    code << "        fp.position.y = int(p['position'][1] * 1000000)\n";
+    code << "        fp.position = Vector2.from_xy(int(p['position'][0] * 1000000), int(p['position'][1] * 1000000))\n";
     code << "        updated = True\n";
     code << "    \n";
     code << "    # Update angle\n";
     code << "    if 'angle' in p:\n";
-    code << "        fp.orientation.degrees = p['angle']\n";
+    code << "        fp.orientation = Angle.from_degrees(p['angle'])\n";
     code << "        updated = True\n";
     code << "    \n";
     code << "    # Update layer (flip)\n";
     code << "    if 'layer' in p:\n";
-    code << "        fp.flipped = (p['layer'] == 'B.Cu')\n";
+    code << "        fp.layer = BoardLayer.BL_B_Cu if p['layer'] == 'B.Cu' else BoardLayer.BL_F_Cu\n";
     code << "        updated = True\n";
     code << "    \n";
     code << "    if updated:\n";
@@ -610,385 +752,376 @@ std::string PCB_CRUD_HANDLER::GeneratePlaceCode( const nlohmann::json& aInput ) 
     code << "    fps_to_update = [ref_to_fp[ref] for ref in placed]\n";
     code << "    board.update_items(fps_to_update)\n";
     code << "\n";
-    code << "result = {'placed': placed, 'not_found': not_found}\n";
+    code << "# Build result with pad positions for immediate routing\n";
+    code << "import math\n";
+    code << "placed_info = []\n";
+    code << "for ref in placed:\n";
+    code << "    fp = ref_to_fp[ref]\n";
+    code << "    fp_layer = 'B.Cu' if fp.layer == BoardLayer.BL_B_Cu else 'F.Cu'\n";
+    code << "    fp_x = fp.position.x\n";
+    code << "    fp_y = fp.position.y\n";
+    code << "    fp_angle_rad = math.radians(fp.orientation.degrees) if hasattr(fp, 'orientation') else 0\n";
+    code << "    cos_a = math.cos(fp_angle_rad)\n";
+    code << "    sin_a = math.sin(fp_angle_rad)\n";
+    code << "    \n";
+    code << "    fp_info = {\n";
+    code << "        'ref': ref,\n";
+    code << "        'position': [fp_x / 1000000, fp_y / 1000000],\n";
+    code << "        'angle': fp.orientation.degrees if hasattr(fp, 'orientation') and hasattr(fp.orientation, 'degrees') else 0,\n";
+    code << "        'layer': fp_layer,\n";
+    code << "        'pads': []\n";
+    code << "    }\n";
+    code << "    # Get pads from footprint definition and calculate absolute positions\n";
+    code << "    if hasattr(fp, 'definition') and hasattr(fp.definition, 'pads'):\n";
+    code << "        for pad in fp.definition.pads:\n";
+    code << "            rel_x = pad.position.x\n";
+    code << "            rel_y = pad.position.y\n";
+    code << "            abs_x = fp_x + rel_x * cos_a - rel_y * sin_a\n";
+    code << "            abs_y = fp_y + rel_x * sin_a + rel_y * cos_a\n";
+    code << "            fp_info['pads'].append({\n";
+    code << "                'number': str(pad.number) if hasattr(pad, 'number') else '',\n";
+    code << "                'position': [abs_x / 1000000, abs_y / 1000000],\n";
+    code << "                'net': pad.net.name if hasattr(pad, 'net') else ''\n";
+    code << "            })\n";
+    code << "    placed_info.append(fp_info)\n";
+    code << "\n";
+    code << "result = {'status': 'success', 'placed': placed_info, 'not_found': not_found}\n";
     code << "print(json.dumps(result, indent=2))\n";
 
     return code.str();
 }
 
 
-std::string PCB_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) const
+std::string PCB_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput ) const
 {
     std::ostringstream code;
 
-    std::string elementType = aInput.value( "element_type", "" );
-
-    code << "import json\n";
-    code << "from kipy.board import BoardTrack, BoardVia, BoardZone, BoardSegment, BoardText\n";
-    code << "from kipy.proto.board.board_pb2 import Track, Via, Zone\n";
-    code << "from kipy.proto.common.types.base_types_pb2 import GraphicShape\n";
-    code << "\n";
-
-    if( elementType == "track" )
+    if( !aInput.contains( "elements" ) || !aInput["elements"].is_array() )
     {
-        std::string layer = aInput.value( "layer", "F.Cu" );
-        double width = aInput.value( "width", 0.25 );
-        std::string net = aInput.value( "net", "" );
-
-        code << "# Create track(s)\n";
-        code << "tracks_to_create = []\n";
-
-        if( aInput.contains( "points" ) && aInput["points"].is_array() )
-        {
-            code << "points = [\n";
-            for( const auto& pt : aInput["points"] )
-            {
-                if( pt.is_array() && pt.size() >= 2 )
-                {
-                    double x = pt[0].get<double>();
-                    double y = pt[1].get<double>();
-                    code << "    (" << MmToNm( x ) << ", " << MmToNm( y ) << "),\n";
-                }
-            }
-            code << "]\n";
-            code << "\n";
-            code << "for i in range(len(points) - 1):\n";
-            code << "    track = Track()\n";
-            code << "    track.start.x_nm = points[i][0]\n";
-            code << "    track.start.y_nm = points[i][1]\n";
-            code << "    track.end.x_nm = points[i + 1][0]\n";
-            code << "    track.end.y_nm = points[i + 1][1]\n";
-            code << "    track.width.value_nm = " << MmToNm( width ) << "\n";
-            code << "    track.layer.name = '" << EscapePythonString( layer ) << "'\n";
-            if( !net.empty() )
-            {
-                code << "    track.net.name = '" << EscapePythonString( net ) << "'\n";
-            }
-            code << "    tracks_to_create.append(BoardTrack(proto=track))\n";
-        }
-
-        code << "\n";
-        code << "if tracks_to_create:\n";
-        code << "    result = board.create_items(tracks_to_create)\n";
-        code << "    print(f'Created {len(result)} track segment(s)')\n";
-        code << "else:\n";
-        code << "    print('Error: No track segments to create')\n";
-    }
-    else if( elementType == "via" )
-    {
-        double posX = 0, posY = 0;
-        if( aInput.contains( "position" ) && aInput["position"].is_array() &&
-            aInput["position"].size() >= 2 )
-        {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
-        }
-        double size = aInput.value( "size", 0.8 );
-        double drill = aInput.value( "drill", 0.4 );
-        std::string net = aInput.value( "net", "" );
-
-        code << "# Create via\n";
-        code << "via = Via()\n";
-        code << "via.position.x_nm = " << MmToNm( posX ) << "\n";
-        code << "via.position.y_nm = " << MmToNm( posY ) << "\n";
-        code << "via.padstack.size.x_nm = " << MmToNm( size ) << "\n";
-        code << "via.padstack.size.y_nm = " << MmToNm( size ) << "\n";
-        code << "via.padstack.drill.diameter_nm = " << MmToNm( drill ) << "\n";
-        if( !net.empty() )
-        {
-            code << "via.net.name = '" << EscapePythonString( net ) << "'\n";
-        }
-        code << "\n";
-        code << "result = board.create_items([BoardVia(proto=via)])\n";
-        code << "print(f'Created via at (" << posX << ", " << posY << ")')\n";
-    }
-    else if( elementType == "zone" )
-    {
-        std::string layer = aInput.value( "layer", "F.Cu" );
-        std::string net = aInput.value( "net", "" );
-        int priority = aInput.value( "priority", 0 );
-
-        code << "# Create zone\n";
-        code << "zone = Zone()\n";
-        code << "zone.layer.name = '" << EscapePythonString( layer ) << "'\n";
-        if( !net.empty() )
-        {
-            code << "zone.net.name = '" << EscapePythonString( net ) << "'\n";
-        }
-        code << "zone.priority = " << priority << "\n";
-
-        if( aInput.contains( "outline" ) && aInput["outline"].is_array() )
-        {
-            code << "# Set outline\n";
-            code << "outline_points = [\n";
-            for( const auto& pt : aInput["outline"] )
-            {
-                if( pt.is_array() && pt.size() >= 2 )
-                {
-                    double x = pt[0].get<double>();
-                    double y = pt[1].get<double>();
-                    code << "    (" << MmToNm( x ) << ", " << MmToNm( y ) << "),\n";
-                }
-            }
-            code << "]\n";
-            code << "for pt in outline_points:\n";
-            code << "    node = zone.outline.nodes.add()\n";
-            code << "    node.x_nm = pt[0]\n";
-            code << "    node.y_nm = pt[1]\n";
-        }
-
-        code << "\n";
-        code << "result = board.create_items([BoardZone(proto=zone)])\n";
-        code << "print(f'Created zone on layer " << layer << "')\n";
-    }
-    else if( elementType == "line" || elementType == "rectangle" || elementType == "circle" ||
-             elementType == "arc" )
-    {
-        std::string layer = aInput.value( "layer", "F.SilkS" );
-        double width = aInput.value( "width", 0.15 );
-
-        code << "# Create graphic: " << elementType << "\n";
-        code << "shape = GraphicShape()\n";
-        code << "shape.layer = '" << EscapePythonString( layer ) << "'\n";
-        code << "shape.stroke.width.value_nm = " << MmToNm( width ) << "\n";
-
-        if( elementType == "line" && aInput.contains( "points" ) && aInput["points"].size() >= 2 )
-        {
-            double x1 = aInput["points"][0][0].get<double>();
-            double y1 = aInput["points"][0][1].get<double>();
-            double x2 = aInput["points"][1][0].get<double>();
-            double y2 = aInput["points"][1][1].get<double>();
-            code << "shape.segment.start.x_nm = " << MmToNm( x1 ) << "\n";
-            code << "shape.segment.start.y_nm = " << MmToNm( y1 ) << "\n";
-            code << "shape.segment.end.x_nm = " << MmToNm( x2 ) << "\n";
-            code << "shape.segment.end.y_nm = " << MmToNm( y2 ) << "\n";
-        }
-        else if( elementType == "rectangle" && aInput.contains( "top_left" ) &&
-                 aInput.contains( "bottom_right" ) )
-        {
-            double x1 = aInput["top_left"][0].get<double>();
-            double y1 = aInput["top_left"][1].get<double>();
-            double x2 = aInput["bottom_right"][0].get<double>();
-            double y2 = aInput["bottom_right"][1].get<double>();
-            code << "shape.rectangle.top_left.x_nm = " << MmToNm( x1 ) << "\n";
-            code << "shape.rectangle.top_left.y_nm = " << MmToNm( y1 ) << "\n";
-            code << "shape.rectangle.bottom_right.x_nm = " << MmToNm( x2 ) << "\n";
-            code << "shape.rectangle.bottom_right.y_nm = " << MmToNm( y2 ) << "\n";
-        }
-        else if( elementType == "circle" && aInput.contains( "center" ) )
-        {
-            double cx = aInput["center"][0].get<double>();
-            double cy = aInput["center"][1].get<double>();
-            double radius = aInput.value( "radius", 5.0 );
-            code << "shape.circle.center.x_nm = " << MmToNm( cx ) << "\n";
-            code << "shape.circle.center.y_nm = " << MmToNm( cy ) << "\n";
-            code << "shape.circle.radius_nm = " << MmToNm( radius ) << "\n";
-        }
-
-        code << "\n";
-        code << "result = board.create_items([BoardSegment(proto=shape)])\n";
-        code << "print(f'Created " << elementType << " on " << layer << "')\n";
-    }
-    else if( elementType == "text" )
-    {
-        std::string layer = aInput.value( "layer", "F.SilkS" );
-        std::string text = aInput.value( "text", "" );
-        double textSize = aInput.value( "text_size", 1.0 );
-        double posX = 0, posY = 0;
-        if( aInput.contains( "position" ) && aInput["position"].is_array() &&
-            aInput["position"].size() >= 2 )
-        {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
-        }
-
-        code << "# Create text\n";
-        code << "from kipy.proto.board.board_pb2 import BoardText as BoardTextProto\n";
-        code << "txt = BoardTextProto()\n";
-        code << "txt.text.text = '" << EscapePythonString( text ) << "'\n";
-        code << "txt.position.x_nm = " << MmToNm( posX ) << "\n";
-        code << "txt.position.y_nm = " << MmToNm( posY ) << "\n";
-        code << "txt.text.attributes.size.x_nm = " << MmToNm( textSize ) << "\n";
-        code << "txt.text.attributes.size.y_nm = " << MmToNm( textSize ) << "\n";
-        code << "txt.layer.name = '" << EscapePythonString( layer ) << "'\n";
-        code << "\n";
-        code << "result = board.create_items([BoardText(proto=txt)])\n";
-        code << "print(f'Created text: " << EscapePythonString( text ) << "')\n";
-    }
-    else
-    {
-        code << "print('Error: Unknown element_type: " << EscapePythonString( elementType )
-             << "')\n";
-    }
-
-    return code.str();
-}
-
-
-std::string PCB_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput ) const
-{
-    std::ostringstream code;
-
-    std::string target = aInput.value( "target", "" );
-    if( target.empty() )
-    {
-        code << "print('Error: target UUID is required')\n";
+        code << "import json\n";
+        code << "print(json.dumps({'status': 'error', 'message': 'elements array is required'}))\n";
         return code.str();
     }
 
     code << "import json\n";
-    code << "from kipy.proto.common.types.base_types_pb2 import KIID\n";
+    code << "from kipy.geometry import Vector2\n";
+    code << "from kipy.board_types import Track, Via, Zone, BoardSegment, BoardCircle, BoardRectangle, BoardText\n";
+    code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
     code << "\n";
-    code << "# Find and update element\n";
-    code << "target_id = KIID(value='" << EscapePythonString( target ) << "')\n";
-    code << "items = board.get_items_by_id([target_id])\n";
+    code << "elements = " << aInput["elements"].dump() << "\n";
+    code << "created = []\n";
+    code << "errors = []\n";
     code << "\n";
-    code << "if not items:\n";
-    code << "    print(f'Error: Element not found: {target_id.value}')\n";
-    code << "else:\n";
-    code << "    item = items[0]\n";
-    code << "    updated = False\n";
-
-    // Position update
-    if( aInput.contains( "position" ) && aInput["position"].is_array() &&
-        aInput["position"].size() >= 2 )
-    {
-        double posX = aInput["position"][0].get<double>();
-        double posY = aInput["position"][1].get<double>();
-        code << "    \n";
-        code << "    if hasattr(item, 'position'):\n";
-        code << "        item.position.x = " << MmToNm( posX ) << "\n";
-        code << "        item.position.y = " << MmToNm( posY ) << "\n";
-        code << "        updated = True\n";
-    }
-
-    // Net update
-    if( aInput.contains( "net" ) )
-    {
-        std::string net = aInput.value( "net", "" );
-        code << "    \n";
-        code << "    if hasattr(item, 'net'):\n";
-        code << "        item.net.name = '" << EscapePythonString( net ) << "'\n";
-        code << "        updated = True\n";
-    }
-
-    // Text update
-    if( aInput.contains( "text" ) )
-    {
-        std::string text = aInput.value( "text", "" );
-        code << "    \n";
-        code << "    if hasattr(item, 'text'):\n";
-        code << "        item.text.text = '" << EscapePythonString( text ) << "'\n";
-        code << "        updated = True\n";
-    }
-
-    // Layer update
-    if( aInput.contains( "layer" ) )
-    {
-        std::string layer = aInput.value( "layer", "" );
-        code << "    \n";
-        code << "    if hasattr(item, 'layer'):\n";
-        code << "        item.layer.name = '" << EscapePythonString( layer ) << "'\n";
-        code << "        updated = True\n";
-    }
-
-    // Width update
-    if( aInput.contains( "width" ) )
-    {
-        double width = aInput.value( "width", 0.25 );
-        code << "    \n";
-        code << "    if hasattr(item, 'width'):\n";
-        code << "        item.width.value_nm = " << MmToNm( width ) << "\n";
-        code << "        updated = True\n";
-    }
-
-    // Locked update
-    if( aInput.contains( "locked" ) )
-    {
-        bool locked = aInput.value( "locked", false );
-        code << "    \n";
-        code << "    if hasattr(item, 'locked'):\n";
-        code << "        item.locked = " << ( locked ? "True" : "False" ) << "\n";
-        code << "        updated = True\n";
-    }
-
+    code << "def mm_to_nm(mm):\n";
+    code << "    return int(mm * 1000000)\n";
+    code << "\n";
+    code << "# Layer name to BoardLayer enum mapping\n";
+    code << "layer_map = {\n";
+    code << "    'F.Cu': BoardLayer.BL_F_Cu, 'B.Cu': BoardLayer.BL_B_Cu,\n";
+    code << "    'In1.Cu': BoardLayer.BL_In1_Cu, 'In2.Cu': BoardLayer.BL_In2_Cu,\n";
+    code << "    'F.SilkS': BoardLayer.BL_F_SilkS, 'B.SilkS': BoardLayer.BL_B_SilkS,\n";
+    code << "    'F.Mask': BoardLayer.BL_F_Mask, 'B.Mask': BoardLayer.BL_B_Mask,\n";
+    code << "    'Edge.Cuts': BoardLayer.BL_Edge_Cuts,\n";
+    code << "    'F.Fab': BoardLayer.BL_F_Fab, 'B.Fab': BoardLayer.BL_B_Fab,\n";
+    code << "    'F.CrtYd': BoardLayer.BL_F_CrtYd, 'B.CrtYd': BoardLayer.BL_B_CrtYd,\n";
+    code << "}\n";
+    code << "\n";
+    code << "for idx, elem in enumerate(elements):\n";
+    code << "    elem_type = elem.get('element_type', '')\n";
+    code << "    try:\n";
+    code << "        if elem_type == 'track':\n";
+    code << "            layer_name = elem.get('layer', 'F.Cu')\n";
+    code << "            layer = layer_map.get(layer_name, BoardLayer.BL_F_Cu)\n";
+    code << "            width = mm_to_nm(elem.get('width', 0.25))\n";
+    code << "            net = elem.get('net', '')\n";
+    code << "            points = elem.get('points', [])\n";
+    code << "            if len(points) < 2:\n";
+    code << "                errors.append({'index': idx, 'error': 'track requires at least 2 points'})\n";
+    code << "                continue\n";
+    code << "            # Use board.route_track for multi-point tracks\n";
+    code << "            point_vectors = [Vector2.from_xy(mm_to_nm(p[0]), mm_to_nm(p[1])) for p in points]\n";
+    code << "            tracks = board.route_track(points=point_vectors, width=width, layer=layer, net=net if net else None)\n";
+    code << "            created.append({'element_type': 'track', 'segments': len(tracks), 'ids': [str(t.id.value) for t in tracks]})\n";
+    code << "        \n";
+    code << "        elif elem_type == 'via':\n";
+    code << "            pos = elem.get('position', [0, 0])\n";
+    code << "            size = mm_to_nm(elem.get('size', 0.8))\n";
+    code << "            drill = mm_to_nm(elem.get('drill', 0.4))\n";
+    code << "            net = elem.get('net', '')\n";
+    code << "            position = Vector2.from_xy(mm_to_nm(pos[0]), mm_to_nm(pos[1]))\n";
+    code << "            via = board.add_via(position=position, diameter=size, drill=drill, net=net if net else None)\n";
+    code << "            created.append({'element_type': 'via', 'position': pos, 'id': str(via.id.value)})\n";
+    code << "        \n";
+    code << "        elif elem_type == 'zone':\n";
+    code << "            layer_name = elem.get('layer', 'F.Cu')\n";
+    code << "            layer = layer_map.get(layer_name, BoardLayer.BL_F_Cu)\n";
+    code << "            net = elem.get('net', '')\n";
+    code << "            priority = elem.get('priority', 0)\n";
+    code << "            outline_pts = elem.get('outline', [])\n";
+    code << "            outline = [Vector2.from_xy(mm_to_nm(p[0]), mm_to_nm(p[1])) for p in outline_pts]\n";
+    code << "            zone = board.add_zone(outline=outline, layers=[layer], net=net if net else None, priority=priority)\n";
+    code << "            created.append({'element_type': 'zone', 'layer': layer_name, 'id': str(zone.id.value)})\n";
+    code << "        \n";
+    code << "        elif elem_type == 'line':\n";
+    code << "            layer_name = elem.get('layer', 'F.SilkS')\n";
+    code << "            layer = layer_map.get(layer_name, BoardLayer.BL_F_SilkS)\n";
+    code << "            points = elem.get('points', [[0,0], [10,10]])\n";
+    code << "            seg = BoardSegment()\n";
+    code << "            seg.layer = layer\n";
+    code << "            seg.start = Vector2.from_xy(mm_to_nm(points[0][0]), mm_to_nm(points[0][1]))\n";
+    code << "            seg.end = Vector2.from_xy(mm_to_nm(points[1][0]), mm_to_nm(points[1][1]))\n";
+    code << "            result = board.create_items([seg])\n";
+    code << "            created.append({'element_type': 'line', 'layer': layer_name, 'id': str(result[0].id.value) if result else ''})\n";
+    code << "        \n";
+    code << "        elif elem_type == 'rectangle':\n";
+    code << "            layer_name = elem.get('layer', 'F.SilkS')\n";
+    code << "            layer = layer_map.get(layer_name, BoardLayer.BL_F_SilkS)\n";
+    code << "            tl = elem.get('top_left', [0, 0])\n";
+    code << "            br = elem.get('bottom_right', [10, 10])\n";
+    code << "            rect = BoardRectangle()\n";
+    code << "            rect.layer = layer\n";
+    code << "            rect.top_left = Vector2.from_xy(mm_to_nm(tl[0]), mm_to_nm(tl[1]))\n";
+    code << "            rect.bottom_right = Vector2.from_xy(mm_to_nm(br[0]), mm_to_nm(br[1]))\n";
+    code << "            result = board.create_items([rect])\n";
+    code << "            created.append({'element_type': 'rectangle', 'layer': layer_name, 'id': str(result[0].id.value) if result else ''})\n";
+    code << "        \n";
+    code << "        elif elem_type == 'circle':\n";
+    code << "            layer_name = elem.get('layer', 'F.SilkS')\n";
+    code << "            layer = layer_map.get(layer_name, BoardLayer.BL_F_SilkS)\n";
+    code << "            center = elem.get('center', [0, 0])\n";
+    code << "            radius = elem.get('radius', 5.0)\n";
+    code << "            circ = BoardCircle()\n";
+    code << "            circ.layer = layer\n";
+    code << "            circ.center = Vector2.from_xy(mm_to_nm(center[0]), mm_to_nm(center[1]))\n";
+    code << "            circ.radius_point = Vector2.from_xy(mm_to_nm(center[0] + radius), mm_to_nm(center[1]))\n";
+    code << "            result = board.create_items([circ])\n";
+    code << "            created.append({'element_type': 'circle', 'layer': layer_name, 'id': str(result[0].id.value) if result else ''})\n";
+    code << "        \n";
+    code << "        elif elem_type == 'text':\n";
+    code << "            layer_name = elem.get('layer', 'F.SilkS')\n";
+    code << "            layer = layer_map.get(layer_name, BoardLayer.BL_F_SilkS)\n";
+    code << "            text_content = elem.get('text', '')\n";
+    code << "            pos = elem.get('position', [0, 0])\n";
+    code << "            txt = BoardText()\n";
+    code << "            txt.layer = layer\n";
+    code << "            txt.position = Vector2.from_xy(mm_to_nm(pos[0]), mm_to_nm(pos[1]))\n";
+    code << "            txt.value = text_content\n";
+    code << "            result = board.create_items([txt])\n";
+    code << "            created.append({'element_type': 'text', 'text': text_content, 'id': str(result[0].id.value) if result else ''})\n";
+    code << "        \n";
+    code << "        else:\n";
+    code << "            errors.append({'index': idx, 'error': f'Unknown element_type: {elem_type}'})\n";
     code << "    \n";
-    code << "    if updated:\n";
-    code << "        board.update_items([item])\n";
-    code << "        print(f'Updated element')\n";
-    code << "    else:\n";
-    code << "        print('No changes specified')\n";
+    code << "    except Exception as e:\n";
+    code << "        errors.append({'index': idx, 'element_type': elem_type, 'error': str(e)})\n";
+    code << "\n";
+    code << "status = 'success' if not errors else ('partial' if created else 'error')\n";
+    code << "print(json.dumps({'status': status, 'created': created, 'errors': errors}, indent=2))\n";
 
     return code.str();
 }
 
 
-std::string PCB_CRUD_HANDLER::GenerateDeleteCode( const nlohmann::json& aInput ) const
+std::string PCB_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aInput ) const
 {
     std::ostringstream code;
 
-    std::string target = aInput.value( "target", "" );
-    if( target.empty() )
+    if( !aInput.contains( "updates" ) || !aInput["updates"].is_array() )
     {
-        code << "print('Error: target UUID is required')\n";
+        code << "import json\n";
+        code << "print(json.dumps({'status': 'error', 'message': 'updates array is required'}))\n";
         return code.str();
     }
 
-    code << "from kipy.proto.common.types.base_types_pb2 import KIID\n";
+    code << "import json\n";
+    code << "from kipy.geometry import Vector2, Angle\n";
+    code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
+    code << "from kipy.board_types import Net\n";
     code << "\n";
-    code << "target_id = KIID(value='" << EscapePythonString( target ) << "')\n";
-    code << "result = board.delete_items([target_id])\n";
-    code << "print(f'Deleted element')\n";
+    code << "updates = " << aInput["updates"].dump() << "\n";
+    code << "\n";
+    code << "def mm_to_nm(mm):\n";
+    code << "    return int(mm * 1000000)\n";
+    code << "\n";
+    code << "# Layer name to BoardLayer enum mapping\n";
+    code << "layer_map = {\n";
+    code << "    'F.Cu': BoardLayer.BL_F_Cu, 'B.Cu': BoardLayer.BL_B_Cu,\n";
+    code << "    'In1.Cu': BoardLayer.BL_In1_Cu, 'In2.Cu': BoardLayer.BL_In2_Cu,\n";
+    code << "}\n";
+    code << "\n";
+    code << "# Build ref->footprint map for reference lookups\n";
+    code << "all_fps = board.get_footprints()\n";
+    code << "ref_to_fp = {}\n";
+    code << "for fp in all_fps:\n";
+    code << "    ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else None\n";
+    code << "    if ref:\n";
+    code << "        ref_to_fp[ref] = fp\n";
+    code << "\n";
+    code << "updated = []\n";
+    code << "not_found = []\n";
+    code << "errors = []\n";
+    code << "\n";
+    code << "for upd in updates:\n";
+    code << "    target = upd.get('target', '')\n";
+    code << "    if not target:\n";
+    code << "        errors.append({'error': 'missing target'})\n";
+    code << "        continue\n";
+    code << "    \n";
+    code << "    item = None\n";
+    code << "    is_footprint = False\n";
+    code << "    \n";
+    code << "    # Try as reference first (footprints)\n";
+    code << "    if target in ref_to_fp:\n";
+    code << "        item = ref_to_fp[target]\n";
+    code << "        is_footprint = True\n";
+    code << "    # For UUIDs, we'd need to search all item types\n";
+    code << "    # This is currently only supported for footprints\n";
+    code << "    \n";
+    code << "    if not item:\n";
+    code << "        not_found.append(target)\n";
+    code << "        continue\n";
+    code << "    \n";
+    code << "    try:\n";
+    code << "        changed = False\n";
+    code << "        \n";
+    code << "        # Position update\n";
+    code << "        if 'position' in upd and len(upd['position']) >= 2:\n";
+    code << "            item.position = Vector2.from_xy(mm_to_nm(upd['position'][0]), mm_to_nm(upd['position'][1]))\n";
+    code << "            changed = True\n";
+    code << "        \n";
+    code << "        # Angle/rotation update (for footprints)\n";
+    code << "        if 'angle' in upd and is_footprint:\n";
+    code << "            item.orientation = Angle.from_degrees(upd['angle'])\n";
+    code << "            changed = True\n";
+    code << "        \n";
+    code << "        # Layer update (flip for footprints)\n";
+    code << "        if 'layer' in upd:\n";
+    code << "            layer_name = upd['layer']\n";
+    code << "            item.layer = layer_map.get(layer_name, BoardLayer.BL_F_Cu)\n";
+    code << "            changed = True\n";
+    code << "        \n";
+    code << "        # Locked update\n";
+    code << "        if 'locked' in upd:\n";
+    code << "            item.locked = upd['locked']\n";
+    code << "            changed = True\n";
+    code << "        \n";
+    code << "        if changed:\n";
+    code << "            board.update_items([item])\n";
+    code << "            updated.append(target)\n";
+    code << "    \n";
+    code << "    except Exception as e:\n";
+    code << "        errors.append({'target': target, 'error': str(e)})\n";
+    code << "\n";
+    code << "status = 'success' if not errors and not not_found else 'partial'\n";
+    code << "print(json.dumps({'status': status, 'updated': updated, 'not_found': not_found, 'errors': errors}, indent=2))\n";
 
     return code.str();
 }
 
 
-std::string PCB_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aInput ) const
+std::string PCB_CRUD_HANDLER::GenerateDeleteBatchCode( const nlohmann::json& aInput ) const
 {
     std::ostringstream code;
 
     code << "import json\n";
-    code << "from kipy.proto.common.types.base_types_pb2 import KIID\n";
+    code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
     code << "\n";
 
+    // Handle targets array (refs or UUIDs)
     if( aInput.contains( "targets" ) && aInput["targets"].is_array() )
     {
-        code << "# Delete by UUIDs\n";
-        code << "targets = [";
-        for( size_t i = 0; i < aInput["targets"].size(); ++i )
-        {
-            code << "'" << EscapePythonString( aInput["targets"][i].get<std::string>() ) << "'";
-            if( i < aInput["targets"].size() - 1 )
-                code << ", ";
-        }
-        code << "]\n";
+        code << "targets = " << aInput["targets"].dump() << "\n";
         code << "\n";
-        code << "ids_to_delete = [KIID(value=t) for t in targets]\n";
-        code << "result = board.delete_items(ids_to_delete)\n";
-        code << "print(f'Deleted {len(ids_to_delete)} element(s)')\n";
+        code << "# Build ref->footprint map for reference lookups\n";
+        code << "all_fps = board.get_footprints()\n";
+        code << "ref_to_fp = {}\n";
+        code << "for fp in all_fps:\n";
+        code << "    ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else None\n";
+        code << "    if ref:\n";
+        code << "        ref_to_fp[ref] = fp\n";
+        code << "\n";
+        code << "# Build id->item map for UUID lookups (shapes, text, tracks, vias, zones)\n";
+        code << "id_to_item = {}\n";
+        code << "for fp in all_fps:\n";
+        code << "    id_to_item[str(fp.id.value)] = fp\n";
+        code << "for item in board.get_shapes():\n";
+        code << "    id_to_item[str(item.id.value)] = item\n";
+        code << "for item in board.get_text():\n";
+        code << "    id_to_item[str(item.id.value)] = item\n";
+        code << "for item in board.get_tracks():\n";
+        code << "    id_to_item[str(item.id.value)] = item\n";
+        code << "for item in board.get_vias():\n";
+        code << "    id_to_item[str(item.id.value)] = item\n";
+        code << "for item in board.get_zones():\n";
+        code << "    id_to_item[str(item.id.value)] = item\n";
+        code << "\n";
+        code << "items_to_delete = []\n";
+        code << "not_found = []\n";
+        code << "\n";
+        code << "for target in targets:\n";
+        code << "    # Try as footprint reference first\n";
+        code << "    if target in ref_to_fp:\n";
+        code << "        items_to_delete.append(ref_to_fp[target])\n";
+        code << "    # Then try as UUID\n";
+        code << "    elif target in id_to_item:\n";
+        code << "        items_to_delete.append(id_to_item[target])\n";
+        code << "    else:\n";
+        code << "        not_found.append(target)\n";
+        code << "\n";
+        code << "deleted_count = 0\n";
+        code << "if items_to_delete:\n";
+        code << "    try:\n";
+        code << "        board.remove_items(items_to_delete)\n";
+        code << "        deleted_count = len(items_to_delete)\n";
+        code << "    except Exception as e:\n";
+        code << "        not_found.append(str(e))\n";
+        code << "\n";
+        code << "print(json.dumps({'status': 'success', 'deleted': deleted_count, 'not_found': not_found}, indent=2))\n";
     }
+    // Handle query-based deletion
     else if( aInput.contains( "query" ) && aInput["query"].is_object() )
     {
-        code << "# Delete by query\n";
         auto query = aInput["query"];
         std::string layer = query.value( "layer", "" );
         std::string type = query.value( "type", "" );
         std::string net = query.value( "net", "" );
 
-        std::string types = "[]";
-        if( !type.empty() )
+        // Map type name to getter method
+        code << "# Delete by query\n";
+        if( type == "track" )
         {
-            types = "['" + type + "']";
+            code << "items = board.get_tracks()\n";
+        }
+        else if( type == "via" )
+        {
+            code << "items = board.get_vias()\n";
+        }
+        else if( type == "zone" )
+        {
+            code << "items = board.get_zones()\n";
+        }
+        else if( type == "shape" || type == "line" || type == "rectangle" || type == "circle" )
+        {
+            code << "items = board.get_shapes()\n";
+        }
+        else if( type == "text" )
+        {
+            code << "items = board.get_text()\n";
+        }
+        else if( type == "footprint" )
+        {
+            code << "items = board.get_footprints()\n";
+        }
+        else
+        {
+            code << "items = []\n";
         }
 
-        code << "# Get items matching query\n";
-        code << "items = board.get_items(types=" << types << ")\n";
-        code << "ids_to_delete = []\n";
+        code << "items_to_delete = []\n";
         code << "for item in items:\n";
         if( !layer.empty() )
         {
-            code << "    if hasattr(item, 'layer') and item.layer.name != '"
+            code << "    if hasattr(item, 'layer') and BoardLayer.Name(item.layer) != '"
                  << EscapePythonString( layer ) << "':\n";
             code << "        continue\n";
         }
@@ -998,18 +1131,317 @@ std::string PCB_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
                  << EscapePythonString( net ) << "':\n";
             code << "        continue\n";
         }
-        code << "    ids_to_delete.append(item.id)\n";
+        code << "    items_to_delete.append(item)\n";
         code << "\n";
-        code << "if ids_to_delete:\n";
-        code << "    result = board.delete_items(ids_to_delete)\n";
-        code << "    print(f'Deleted {len(ids_to_delete)} element(s) matching query')\n";
-        code << "else:\n";
-        code << "    print('No elements matched query')\n";
+        code << "deleted_count = 0\n";
+        code << "if items_to_delete:\n";
+        code << "    board.remove_items(items_to_delete)\n";
+        code << "    deleted_count = len(items_to_delete)\n";
+        code << "\n";
+        code << "print(json.dumps({'status': 'success', 'deleted': deleted_count}, indent=2))\n";
     }
     else
     {
-        code << "print('Error: Either targets array or query object required')\n";
+        code << "print(json.dumps({'status': 'error', 'message': 'targets array or query object required'}))\n";
     }
+
+    return code.str();
+}
+
+
+std::string PCB_CRUD_HANDLER::GenerateGetPadsCode( const nlohmann::json& aInput ) const
+{
+    std::ostringstream code;
+
+    std::string ref = aInput.value( "ref", "" );
+    if( ref.empty() )
+    {
+        code << "import json\n";
+        code << "print(json.dumps({'status': 'error', 'message': 'ref is required'}))\n";
+        return code.str();
+    }
+
+    code << "import json\n";
+    code << "import math\n";
+    code << "\n";
+    code << "# Find footprint by reference\n";
+    code << "target_fp = board.footprints.get_by_reference('" << EscapePythonString( ref ) << "')\n";
+    code << "\n";
+    code << "if not target_fp:\n";
+    code << "    print(json.dumps({'status': 'error', 'message': 'Footprint not found: " << EscapePythonString( ref ) << "'}))\n";
+    code << "else:\n";
+    code << "    # Get pads from footprint definition and calculate absolute positions\n";
+    code << "    pads = []\n";
+    code << "    fp_x = target_fp.position.x\n";
+    code << "    fp_y = target_fp.position.y\n";
+    code << "    fp_angle_rad = math.radians(target_fp.orientation.degrees) if hasattr(target_fp, 'orientation') else 0\n";
+    code << "    cos_a = math.cos(fp_angle_rad)\n";
+    code << "    sin_a = math.sin(fp_angle_rad)\n";
+    code << "    \n";
+    code << "    if hasattr(target_fp, 'definition') and hasattr(target_fp.definition, 'pads'):\n";
+    code << "        for pad in target_fp.definition.pads:\n";
+    code << "            # Pad position is relative to footprint origin, rotate and translate\n";
+    code << "            rel_x = pad.position.x\n";
+    code << "            rel_y = pad.position.y\n";
+    code << "            abs_x = fp_x + rel_x * cos_a - rel_y * sin_a\n";
+    code << "            abs_y = fp_y + rel_x * sin_a + rel_y * cos_a\n";
+    code << "            pad_info = {\n";
+    code << "                'number': str(pad.number) if hasattr(pad, 'number') else '',\n";
+    code << "                'position': [abs_x / 1000000, abs_y / 1000000],\n";
+    code << "                'net': pad.net.name if hasattr(pad, 'net') else ''\n";
+    code << "            }\n";
+    code << "            pads.append(pad_info)\n";
+    code << "    \n";
+    code << "    result = {\n";
+    code << "        'status': 'success',\n";
+    code << "        'ref': '" << EscapePythonString( ref ) << "',\n";
+    code << "        'pads': pads\n";
+    code << "    }\n";
+    code << "    print(json.dumps(result, indent=2))\n";
+
+    return code.str();
+}
+
+
+std::string PCB_CRUD_HANDLER::GenerateGetFootprintCode( const nlohmann::json& aInput ) const
+{
+    std::ostringstream code;
+
+    std::string ref = aInput.value( "ref", "" );
+    if( ref.empty() )
+    {
+        code << "import json\n";
+        code << "print(json.dumps({'status': 'error', 'message': 'ref is required'}))\n";
+        return code.str();
+    }
+
+    code << "import json\n";
+    code << "import math\n";
+    code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
+    code << "\n";
+    code << "# Find footprint by reference\n";
+    code << "fp = board.footprints.get_by_reference('" << EscapePythonString( ref ) << "')\n";
+    code << "\n";
+    code << "if not fp:\n";
+    code << "    print(json.dumps({'status': 'error', 'message': 'Footprint not found: " << EscapePythonString( ref ) << "'}))\n";
+    code << "else:\n";
+    code << "    # Get pads from footprint definition and calculate absolute positions\n";
+    code << "    pads = []\n";
+    code << "    fp_x = fp.position.x\n";
+    code << "    fp_y = fp.position.y\n";
+    code << "    fp_angle_rad = math.radians(fp.orientation.degrees) if hasattr(fp, 'orientation') else 0\n";
+    code << "    cos_a = math.cos(fp_angle_rad)\n";
+    code << "    sin_a = math.sin(fp_angle_rad)\n";
+    code << "    \n";
+    code << "    if hasattr(fp, 'definition') and hasattr(fp.definition, 'pads'):\n";
+    code << "        for pad in fp.definition.pads:\n";
+    code << "            # Pad position is relative to footprint origin, rotate and translate\n";
+    code << "            rel_x = pad.position.x\n";
+    code << "            rel_y = pad.position.y\n";
+    code << "            abs_x = fp_x + rel_x * cos_a - rel_y * sin_a\n";
+    code << "            abs_y = fp_y + rel_x * sin_a + rel_y * cos_a\n";
+    code << "            pad_info = {\n";
+    code << "                'number': str(pad.number) if hasattr(pad, 'number') else '',\n";
+    code << "                'position': [abs_x / 1000000, abs_y / 1000000],\n";
+    code << "                'net': pad.net.name if hasattr(pad, 'net') else ''\n";
+    code << "            }\n";
+    code << "            pads.append(pad_info)\n";
+    code << "    \n";
+    code << "    fp_layer = 'B.Cu' if fp.layer == BoardLayer.BL_B_Cu else 'F.Cu'\n";
+    code << "    result = {\n";
+    code << "        'status': 'success',\n";
+    code << "        'ref': '" << EscapePythonString( ref ) << "',\n";
+    code << "        'lib_id': f'{fp.definition.id.library}:{fp.definition.id.name}' if hasattr(fp, 'definition') else '',\n";
+    code << "        'position': [fp.position.x / 1000000, fp.position.y / 1000000],\n";
+    code << "        'angle': fp.orientation.degrees if hasattr(fp, 'orientation') and hasattr(fp.orientation, 'degrees') else 0,\n";
+    code << "        'layer': fp_layer,\n";
+    code << "        'locked': getattr(fp, 'locked', False),\n";
+    code << "        'pads': pads\n";
+    code << "    }\n";
+    code << "    print(json.dumps(result, indent=2))\n";
+
+    return code.str();
+}
+
+
+std::string PCB_CRUD_HANDLER::GenerateRouteCode( const nlohmann::json& aInput ) const
+{
+    std::ostringstream code;
+
+    if( !aInput.contains( "from" ) || !aInput.contains( "to" ) )
+    {
+        code << "import json\n";
+        code << "print(json.dumps({'status': 'error', 'message': 'from and to are required'}))\n";
+        return code.str();
+    }
+
+    auto fromPad = aInput["from"];
+    auto toPad = aInput["to"];
+    std::string fromRef = fromPad.value( "ref", "" );
+    std::string fromPadNum = fromPad.value( "pad", "" );
+    std::string toRef = toPad.value( "ref", "" );
+    std::string toPadNum = toPad.value( "pad", "" );
+    double width = aInput.value( "width", 0.25 );
+    std::string layer = aInput.value( "layer", "" );
+
+    code << "import json\n";
+    code << "import math\n";
+    code << "from kipy.geometry import Vector2\n";
+    code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
+    code << "\n";
+    code << "def mm_to_nm(mm):\n";
+    code << "    return int(mm * 1000000)\n";
+    code << "\n";
+    code << "def get_pad_abs_position(fp, pad_num):\n";
+    code << "    \"\"\"Get absolute position of a pad by number, accounting for footprint rotation\"\"\"\n";
+    code << "    if not hasattr(fp, 'definition') or not hasattr(fp.definition, 'pads'):\n";
+    code << "        return None, None\n";
+    code << "    fp_x = fp.position.x\n";
+    code << "    fp_y = fp.position.y\n";
+    code << "    fp_angle_rad = math.radians(fp.orientation.degrees) if hasattr(fp, 'orientation') else 0\n";
+    code << "    cos_a = math.cos(fp_angle_rad)\n";
+    code << "    sin_a = math.sin(fp_angle_rad)\n";
+    code << "    for pad in fp.definition.pads:\n";
+    code << "        if str(pad.number) == str(pad_num):\n";
+    code << "            rel_x = pad.position.x\n";
+    code << "            rel_y = pad.position.y\n";
+    code << "            abs_x = fp_x + rel_x * cos_a - rel_y * sin_a\n";
+    code << "            abs_y = fp_y + rel_x * sin_a + rel_y * cos_a\n";
+    code << "            net = pad.net.name if hasattr(pad, 'net') else None\n";
+    code << "            return (abs_x, abs_y), net\n";
+    code << "    return None, None\n";
+    code << "\n";
+    code << "# Layer name to BoardLayer enum mapping\n";
+    code << "layer_map = {\n";
+    code << "    'F.Cu': BoardLayer.BL_F_Cu, 'B.Cu': BoardLayer.BL_B_Cu,\n";
+    code << "    'In1.Cu': BoardLayer.BL_In1_Cu, 'In2.Cu': BoardLayer.BL_In2_Cu,\n";
+    code << "}\n";
+    code << "\n";
+    code << "# Find footprints by reference\n";
+    code << "from_fp = board.footprints.get_by_reference('" << EscapePythonString( fromRef ) << "')\n";
+    code << "to_fp = board.footprints.get_by_reference('" << EscapePythonString( toRef ) << "')\n";
+    code << "\n";
+    code << "from_pad_num = '" << EscapePythonString( fromPadNum ) << "'\n";
+    code << "to_pad_num = '" << EscapePythonString( toPadNum ) << "'\n";
+    code << "width_nm = mm_to_nm(" << width << ")\n";
+    code << "layer_name = '" << ( layer.empty() ? "F.Cu" : EscapePythonString( layer ) ) << "'\n";
+    code << "route_layer = layer_map.get(layer_name, BoardLayer.BL_F_Cu)\n";
+    code << "\n";
+    code << "if not from_fp:\n";
+    code << "    print(json.dumps({'status': 'error', 'message': 'Footprint not found: " << EscapePythonString( fromRef ) << "'}))\n";
+    code << "elif not to_fp:\n";
+    code << "    print(json.dumps({'status': 'error', 'message': 'Footprint not found: " << EscapePythonString( toRef ) << "'}))\n";
+    code << "else:\n";
+    code << "    # Get pad positions from footprint definitions\n";
+    code << "    from_pos, from_net = get_pad_abs_position(from_fp, from_pad_num)\n";
+    code << "    to_pos, _ = get_pad_abs_position(to_fp, to_pad_num)\n";
+    code << "    \n";
+    code << "    if not from_pos:\n";
+    code << "        print(json.dumps({'status': 'error', 'message': f'Pad {from_pad_num} not found on " << EscapePythonString( fromRef ) << "'}))\n";
+    code << "    elif not to_pos:\n";
+    code << "        print(json.dumps({'status': 'error', 'message': f'Pad {to_pad_num} not found on " << EscapePythonString( toRef ) << "'}))\n";
+    code << "    else:\n";
+    code << "        # Create track using board.route_track\n";
+    code << "        points = [\n";
+    code << "            Vector2.from_xy(int(from_pos[0]), int(from_pos[1])),\n";
+    code << "            Vector2.from_xy(int(to_pos[0]), int(to_pos[1]))\n";
+    code << "        ]\n";
+    code << "        tracks = board.route_track(points=points, width=width_nm, layer=route_layer, net=from_net)\n";
+    code << "        \n";
+    code << "        track_info = []\n";
+    code << "        for t in tracks:\n";
+    code << "            track_info.append({\n";
+    code << "                'id': str(t.id.value),\n";
+    code << "                'layer': layer_name,\n";
+    code << "                'from': [t.start.x / 1000000, t.start.y / 1000000],\n";
+    code << "                'to': [t.end.x / 1000000, t.end.y / 1000000]\n";
+    code << "            })\n";
+    code << "        \n";
+    code << "        print(json.dumps({\n";
+    code << "            'status': 'success',\n";
+    code << "            'tracks': track_info,\n";
+    code << "            'vias': []\n";
+    code << "        }, indent=2))\n";
+
+    return code.str();
+}
+
+
+std::string PCB_CRUD_HANDLER::GenerateGetNetsCode( const nlohmann::json& aInput ) const
+{
+    std::ostringstream code;
+
+    std::string filter = aInput.value( "filter", "" );
+    bool includePads = aInput.value( "include_pads", true );
+    bool unroutedOnly = aInput.value( "unrouted_only", false );
+
+    code << "import json\n";
+    code << "import fnmatch\n";
+    code << "\n";
+    code << "# Get all nets\n";
+    code << "nets = board.get_nets()\n";
+    code << "result_nets = []\n";
+    code << "\n";
+    if( !filter.empty() )
+    {
+        code << "filter_pattern = '" << EscapePythonString( filter ) << "'\n";
+    }
+    code << "\n";
+    code << "# Build net->pads map if needed\n";
+    if( includePads )
+    {
+        code << "net_pads = {}  # net_name -> [{ref, pad}, ...]\n";
+        code << "all_fps = board.get_footprints()\n";
+        code << "\n";
+        code << "# Iterate through footprints and their definition pads to build net->pads map\n";
+        code << "for fp in all_fps:\n";
+        code << "    ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else '?'\n";
+        code << "    if hasattr(fp, 'definition') and hasattr(fp.definition, 'pads'):\n";
+        code << "        for pad in fp.definition.pads:\n";
+        code << "            net_name = pad.net.name if hasattr(pad, 'net') else ''\n";
+        code << "            if net_name:\n";
+        code << "                if net_name not in net_pads:\n";
+        code << "                    net_pads[net_name] = []\n";
+        code << "                net_pads[net_name].append({'ref': ref, 'pad': str(pad.number)})\n";
+        code << "\n";
+    }
+    code << "for net in nets:\n";
+    if( !filter.empty() )
+    {
+        code << "    if not fnmatch.fnmatch(net.name, filter_pattern):\n";
+        code << "        continue\n";
+    }
+    code << "    net_info = {'name': net.name}\n";
+    if( includePads )
+    {
+        code << "    net_info['pads'] = net_pads.get(net.name, [])\n";
+        if( unroutedOnly )
+        {
+            code << "    # Skip nets with 0 or 1 pad (nothing to route)\n";
+            code << "    if len(net_info['pads']) < 2:\n";
+            code << "        continue\n";
+        }
+    }
+    code << "    result_nets.append(net_info)\n";
+    code << "\n";
+    code << "print(json.dumps({'status': 'success', 'nets': result_nets}, indent=2))\n";
+
+    return code.str();
+}
+
+
+std::string PCB_CRUD_HANDLER::GenerateRefToFootprintMap() const
+{
+    std::ostringstream code;
+
+    code << "# Build ref->footprint map\n";
+    code << "all_fps = board.get_footprints()\n";
+    code << "ref_to_fp = {}\n";
+    code << "for fp in all_fps:\n";
+    code << "    ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else None\n";
+    code << "    if ref:\n";
+    code << "        ref_to_fp[ref] = fp\n";
+    code << "\n";
 
     return code.str();
 }

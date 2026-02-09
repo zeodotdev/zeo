@@ -47,9 +47,9 @@ TOOL_REGISTRY::TOOL_REGISTRY()
     m_handlers.push_back( std::make_unique<SCH_UTIL_HANDLER>() );
     m_handlers.push_back( std::make_unique<SCH_SIM_HANDLER>() );
 
-    // Register PCB tool handlers
-    m_handlers.push_back( std::make_unique<PCB_TOOL_HANDLER>() );
+    // Register PCB tool handlers (CRUD handler first since it has actual implementations)
     m_handlers.push_back( std::make_unique<PCB_CRUD_HANDLER>() );
+    m_handlers.push_back( std::make_unique<PCB_TOOL_HANDLER>() );
 
     // Register screenshot handler
     m_handlers.push_back( std::make_unique<SCREENSHOT_HANDLER>() );

@@ -26,7 +26,7 @@
  * Handler for PCB IPC-based operations via kipy.
  * Handles: pcb_get_summary, pcb_read_section, pcb_run_drc, pcb_set_outline,
  *          pcb_sync_schematic, pcb_place, pcb_add, pcb_update, pcb_delete,
- *          pcb_batch_delete, pcb_export
+ *          pcb_get_pads, pcb_get_footprint, pcb_route, pcb_get_nets, pcb_export
  */
 class PCB_CRUD_HANDLER : public TOOL_HANDLER
 {
@@ -44,20 +44,29 @@ public:
                                const nlohmann::json& aInput ) const override;
 
 private:
+    // Query operations
     std::string GenerateGetSummaryCode( const nlohmann::json& aInput ) const;
     std::string GenerateReadSectionCode( const nlohmann::json& aInput ) const;
+    std::string GenerateValidateCode( const nlohmann::json& aInput ) const;
     std::string GenerateRunDrcCode( const nlohmann::json& aInput ) const;
+    std::string GenerateGetPadsCode( const nlohmann::json& aInput ) const;
+    std::string GenerateGetFootprintCode( const nlohmann::json& aInput ) const;
+    std::string GenerateGetNetsCode( const nlohmann::json& aInput ) const;
+
+    // Modification operations
     std::string GenerateSetOutlineCode( const nlohmann::json& aInput ) const;
     std::string GenerateSyncSchematicCode( const nlohmann::json& aInput ) const;
     std::string GeneratePlaceCode( const nlohmann::json& aInput ) const;
-    std::string GenerateAddCode( const nlohmann::json& aInput ) const;
-    std::string GenerateUpdateCode( const nlohmann::json& aInput ) const;
-    std::string GenerateDeleteCode( const nlohmann::json& aInput ) const;
-    std::string GenerateBatchDeleteCode( const nlohmann::json& aInput ) const;
+    std::string GenerateAddBatchCode( const nlohmann::json& aInput ) const;
+    std::string GenerateUpdateBatchCode( const nlohmann::json& aInput ) const;
+    std::string GenerateDeleteBatchCode( const nlohmann::json& aInput ) const;
+    std::string GenerateRouteCode( const nlohmann::json& aInput ) const;
     std::string GenerateExportCode( const nlohmann::json& aInput ) const;
 
+    // Helpers
     std::string EscapePythonString( const std::string& aStr ) const;
     std::string MmToNm( double aMm ) const;
+    std::string GenerateRefToFootprintMap() const;
 };
 
 #endif // PCB_CRUD_HANDLER_H

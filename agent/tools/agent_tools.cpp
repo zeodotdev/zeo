@@ -975,221 +975,181 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbPlace );
 
-    // pcb_add - Universal add for PCB elements
+    // pcb_add - Batch add elements to PCB (matches sch_add pattern)
     LLM_TOOL pcbAdd;
     pcbAdd.name = "pcb_add";
     pcbAdd.description =
-        "Add elements to the open PCB via kipy API. Supports tracks, vias, zones, keepouts, "
-        "and graphics (line, rectangle, circle, arc, text). "
-        "REQUIRES: PCB editor must be open with a document loaded.";
+        "Add elements to the PCB. Accepts an array of elements - use for single or batch operations. "
+        "Returns IDs for all created elements. "
+        "REQUIRES: PCB editor must be open with a document loaded.\n\n"
+        "ELEMENT TYPES:\n"
+        "- track: {element_type, layer, width?, net?, points:[[x,y],...]}\n"
+        "- via: {element_type, position:[x,y], net?, size?, drill?}\n"
+        "- zone: {element_type, layer, net, outline:[[x,y],...], priority?}\n"
+        "- keepout: {element_type, layers:[], outline:[[x,y],...], no_tracks?, no_vias?, no_pour?}\n"
+        "- line: {element_type, layer, width?, points:[[x,y],[x,y]]}\n"
+        "- rectangle: {element_type, layer, width?, top_left:[x,y], bottom_right:[x,y], filled?}\n"
+        "- circle: {element_type, layer, width?, center:[x,y], radius, filled?}\n"
+        "- arc: {element_type, layer, width?, center:[x,y], radius, start_angle, end_angle}\n"
+        "- text: {element_type, layer, position:[x,y], text, text_size?, thickness?}\n\n"
+        "EXAMPLE (route with via layer transition):\n"
+        "elements: [\n"
+        "  {element_type:'track', layer:'F.Cu', width:0.25, net:'VCC', points:[[50,30],[60,30]]},\n"
+        "  {element_type:'via', position:[60,30], net:'VCC'},\n"
+        "  {element_type:'track', layer:'B.Cu', width:0.25, net:'VCC', points:[[60,30],[70,30]]}\n"
+        "]";
     pcbAdd.input_schema = {
         { "type", "object" },
         { "properties", {
-            { "element_type", {
-                { "type", "string" },
-                { "enum", json::array( { "track", "via", "zone", "keepout", "line", "rectangle", "circle", "arc", "text" } ) },
-                { "description", "Type of element to add" }
-            }},
-            // Track properties
-            { "layer", {
-                { "type", "string" },
-                { "description", "Layer name (e.g., 'F.Cu', 'B.Cu', 'F.SilkS')" }
-            }},
-            { "width", {
-                { "type", "number" },
-                { "description", "Track/line width in mm" }
-            }},
-            { "points", {
+            { "elements", {
                 { "type", "array" },
                 { "items", {
-                    { "type", "array" },
-                    { "items", { { "type", "number" } } }
+                    { "type", "object" },
+                    { "properties", {
+                        { "element_type", {
+                            { "type", "string" },
+                            { "enum", json::array( { "track", "via", "zone", "keepout", "line", "rectangle", "circle", "arc", "text" } ) },
+                            { "description", "Type of element to add" }
+                        }},
+                        { "layer", {
+                            { "type", "string" },
+                            { "description", "Layer name (e.g., 'F.Cu', 'B.Cu', 'F.SilkS')" }
+                        }},
+                        { "width", {
+                            { "type", "number" },
+                            { "description", "Track/line width in mm (default: 0.25)" }
+                        }},
+                        { "net", {
+                            { "type", "string" },
+                            { "description", "Net name for track/via/zone" }
+                        }},
+                        { "points", {
+                            { "type", "array" },
+                            { "items", { { "type", "array" } } },
+                            { "description", "Array of [x, y] points in mm" }
+                        }},
+                        { "position", {
+                            { "type", "array" },
+                            { "items", { { "type", "number" } } },
+                            { "description", "Position as [x, y] in mm" }
+                        }},
+                        { "size", {
+                            { "type", "number" },
+                            { "description", "Via size in mm (default: 0.8)" }
+                        }},
+                        { "drill", {
+                            { "type", "number" },
+                            { "description", "Via drill diameter in mm (default: 0.4)" }
+                        }},
+                        { "outline", {
+                            { "type", "array" },
+                            { "description", "Zone/keepout outline as [[x,y],...] vertices" }
+                        }},
+                        { "layers", {
+                            { "type", "array" },
+                            { "items", { { "type", "string" } } },
+                            { "description", "For keepout: layers to apply to" }
+                        }},
+                        { "no_tracks", { { "type", "boolean" } } },
+                        { "no_vias", { { "type", "boolean" } } },
+                        { "no_pour", { { "type", "boolean" } } },
+                        { "priority", { { "type", "integer" } } },
+                        { "top_left", { { "type", "array" } } },
+                        { "bottom_right", { { "type", "array" } } },
+                        { "center", { { "type", "array" } } },
+                        { "radius", { { "type", "number" } } },
+                        { "start_angle", { { "type", "number" } } },
+                        { "end_angle", { { "type", "number" } } },
+                        { "text", { { "type", "string" } } },
+                        { "text_size", { { "type", "number" } } },
+                        { "thickness", { { "type", "number" } } },
+                        { "filled", { { "type", "boolean" } } }
+                    }},
+                    { "required", json::array( { "element_type" } ) }
                 }},
-                { "description", "Array of [x, y] points in mm" }
-            }},
-            { "net", {
-                { "type", "string" },
-                { "description", "Net name for track/via/zone" }
-            }},
-            // Via properties
-            { "position", {
-                { "type", "array" },
-                { "items", { { "type", "number" } } },
-                { "description", "Position as [x, y] in mm" }
-            }},
-            { "size", {
-                { "type", "number" },
-                { "description", "Via/pad size in mm" }
-            }},
-            { "drill", {
-                { "type", "number" },
-                { "description", "Via drill diameter in mm" }
-            }},
-            // Zone/keepout properties
-            { "outline", {
-                { "type", "array" },
-                { "items", {
-                    { "type", "array" },
-                    { "items", { { "type", "number" } } }
-                }},
-                { "description", "Zone/keepout outline as array of [x, y] vertices" }
-            }},
-            { "layers", {
-                { "type", "array" },
-                { "items", { { "type", "string" } } },
-                { "description", "For keepout: layers to apply to (e.g., ['F.Cu', 'B.Cu'])" }
-            }},
-            { "no_tracks", {
-                { "type", "boolean" },
-                { "description", "For keepout: prohibit tracks" }
-            }},
-            { "no_vias", {
-                { "type", "boolean" },
-                { "description", "For keepout: prohibit vias" }
-            }},
-            { "no_pour", {
-                { "type", "boolean" },
-                { "description", "For keepout: prohibit copper pour" }
-            }},
-            { "priority", {
-                { "type", "integer" },
-                { "description", "Zone fill priority (higher = fills first)" }
-            }},
-            // Rectangle properties
-            { "top_left", {
-                { "type", "array" },
-                { "items", { { "type", "number" } } },
-                { "description", "Rectangle top-left corner [x, y] in mm" }
-            }},
-            { "bottom_right", {
-                { "type", "array" },
-                { "items", { { "type", "number" } } },
-                { "description", "Rectangle bottom-right corner [x, y] in mm" }
-            }},
-            // Circle/arc properties
-            { "center", {
-                { "type", "array" },
-                { "items", { { "type", "number" } } },
-                { "description", "Circle/arc center [x, y] in mm" }
-            }},
-            { "radius", {
-                { "type", "number" },
-                { "description", "Circle/arc radius in mm" }
-            }},
-            { "start_angle", {
-                { "type", "number" },
-                { "description", "Arc start angle in degrees" }
-            }},
-            { "end_angle", {
-                { "type", "number" },
-                { "description", "Arc end angle in degrees" }
-            }},
-            // Text properties
-            { "text", {
-                { "type", "string" },
-                { "description", "Text content" }
-            }},
-            { "text_size", {
-                { "type", "number" },
-                { "description", "Text height in mm" }
-            }},
-            { "thickness", {
-                { "type", "number" },
-                { "description", "Text stroke thickness in mm" }
-            }},
-            { "filled", {
-                { "type", "boolean" },
-                { "description", "Fill shape (for rectangle, circle)" }
+                { "description", "Array of elements to add. Processed in order." }
             }}
         }},
-        { "required", json::array( { "element_type" } ) }
+        { "required", json::array( { "elements" } ) }
     };
     tools.push_back( pcbAdd );
 
-    // pcb_update - Universal update for PCB elements
+    // pcb_update - Batch update elements (matches sch_update pattern)
     LLM_TOOL pcbUpdate;
     pcbUpdate.name = "pcb_update";
     pcbUpdate.description =
-        "Update elements in the open PCB via kipy API. Target by UUID. "
-        "Can modify position, properties, zone outline, text content, etc. "
+        "Update elements in the PCB. Accepts an array of updates - use for single or batch operations. "
+        "Target footprints by reference designator (e.g., 'U1') or any element by UUID. "
         "REQUIRES: PCB editor must be open with a document loaded.";
     pcbUpdate.input_schema = {
         { "type", "object" },
         { "properties", {
-            { "target", {
-                { "type", "string" },
-                { "description", "UUID of element to update" }
-            }},
-            { "position", {
-                { "type", "array" },
-                { "items", { { "type", "number" } } },
-                { "description", "New position as [x, y] in mm" }
-            }},
-            { "outline", {
+            { "updates", {
                 { "type", "array" },
                 { "items", {
-                    { "type", "array" },
-                    { "items", { { "type", "number" } } }
+                    { "type", "object" },
+                    { "properties", {
+                        { "target", {
+                            { "type", "string" },
+                            { "description", "Reference designator (e.g., 'U1') or UUID" }
+                        }},
+                        { "position", {
+                            { "type", "array" },
+                            { "items", { { "type", "number" } } },
+                            { "description", "New position [x, y] in mm" }
+                        }},
+                        { "angle", {
+                            { "type", "number" },
+                            { "description", "Rotation angle in degrees" }
+                        }},
+                        { "layer", {
+                            { "type", "string" },
+                            { "description", "'F.Cu' or 'B.Cu' (flips footprint)" }
+                        }},
+                        { "net", {
+                            { "type", "string" },
+                            { "description", "New net name (for tracks/vias/zones)" }
+                        }},
+                        { "width", {
+                            { "type", "number" },
+                            { "description", "New track/line width in mm" }
+                        }},
+                        { "locked", {
+                            { "type", "boolean" },
+                            { "description", "Lock/unlock element" }
+                        }},
+                        { "text", {
+                            { "type", "string" },
+                            { "description", "New text content" }
+                        }},
+                        { "outline", {
+                            { "type", "array" },
+                            { "description", "New zone/keepout outline [[x,y],...]" }
+                        }}
+                    }},
+                    { "required", json::array( { "target" } ) }
                 }},
-                { "description", "New zone/keepout outline" }
-            }},
-            { "net", {
-                { "type", "string" },
-                { "description", "New net name" }
-            }},
-            { "text", {
-                { "type", "string" },
-                { "description", "New text content" }
-            }},
-            { "layer", {
-                { "type", "string" },
-                { "description", "Move to different layer" }
-            }},
-            { "width", {
-                { "type", "number" },
-                { "description", "New line/track width in mm" }
-            }},
-            { "locked", {
-                { "type", "boolean" },
-                { "description", "Lock/unlock element" }
+                { "description", "Array of updates. Each must have 'target' plus properties to change." }
             }}
         }},
-        { "required", json::array( { "target" } ) }
+        { "required", json::array( { "updates" } ) }
     };
     tools.push_back( pcbUpdate );
 
-    // pcb_delete - Delete PCB element
+    // pcb_delete - Batch delete elements (matches sch_delete pattern)
     LLM_TOOL pcbDelete;
     pcbDelete.name = "pcb_delete";
     pcbDelete.description =
-        "Delete an element from the open PCB via kipy API. Target by UUID. "
+        "Delete elements from the PCB. Accepts an array of targets - use for single or batch operations. "
+        "Target footprints by reference designator (e.g., 'U1') or any element by UUID. "
         "REQUIRES: PCB editor must be open with a document loaded.";
     pcbDelete.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "target", {
-                { "type", "string" },
-                { "description", "UUID of element to delete" }
-            }}
-        }},
-        { "required", json::array( { "target" } ) }
-    };
-    tools.push_back( pcbDelete );
-
-    // pcb_batch_delete - Delete multiple PCB elements
-    LLM_TOOL pcbBatchDelete;
-    pcbBatchDelete.name = "pcb_batch_delete";
-    pcbBatchDelete.description =
-        "Delete multiple elements from the open PCB via kipy API. "
-        "Target by UUIDs or by query (layer + type). "
-        "REQUIRES: PCB editor must be open with a document loaded.";
-    pcbBatchDelete.input_schema = {
         { "type", "object" },
         { "properties", {
             { "targets", {
                 { "type", "array" },
                 { "items", { { "type", "string" } } },
-                { "description", "Array of UUIDs to delete" }
+                { "description", "Array of reference designators or UUIDs to delete (e.g., ['R1', 'C1', 'uuid-here'])" }
             }},
             { "query", {
                 { "type", "object" },
@@ -1198,12 +1158,132 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                     { "type", { { "type", "string" } } },
                     { "net", { { "type", "string" } } }
                 }},
-                { "description", "Query to select elements: {\"layer\": \"F.SilkS\", \"type\": \"text\"}" }
+                { "description", "Alternative: query to select elements (e.g., {\"layer\": \"F.SilkS\", \"type\": \"text\"})" }
             }}
         }},
         { "required", json::array() }
     };
-    tools.push_back( pcbBatchDelete );
+    tools.push_back( pcbDelete );
+
+    // pcb_get_pads - Get pad positions for a footprint (like sch_get_pins)
+    LLM_TOOL pcbGetPads;
+    pcbGetPads.name = "pcb_get_pads";
+    pcbGetPads.description =
+        "Get pad positions for a placed footprint. Returns exact pad coordinates for routing. "
+        "This is the PCB equivalent of sch_get_pins - use it to get precise connection points. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbGetPads.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "ref", {
+                { "type", "string" },
+                { "description", "Reference designator of the footprint (e.g., 'U1', 'R3', 'C5')" }
+            }}
+        }},
+        { "required", json::array( { "ref" } ) }
+    };
+    pcbGetPads.read_only = true;
+    tools.push_back( pcbGetPads );
+
+    // pcb_get_footprint - Get detailed footprint info including pads
+    LLM_TOOL pcbGetFootprint;
+    pcbGetFootprint.name = "pcb_get_footprint";
+    pcbGetFootprint.description =
+        "Get detailed information about a placed footprint including position, orientation, "
+        "all pads with their positions and net assignments, and courtyard bounds. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbGetFootprint.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "ref", {
+                { "type", "string" },
+                { "description", "Reference designator of the footprint (e.g., 'U1', 'R3')" }
+            }}
+        }},
+        { "required", json::array( { "ref" } ) }
+    };
+    pcbGetFootprint.read_only = true;
+    tools.push_back( pcbGetFootprint );
+
+    // pcb_route - High-level pad-to-pad routing
+    LLM_TOOL pcbRoute;
+    pcbRoute.name = "pcb_route";
+    pcbRoute.description =
+        "Draw a track between two pads with optional via layer transitions. "
+        "This is a convenience tool that handles coordinate lookup and multi-segment routing. "
+        "For simple connections, specify from/to pads. For complex routes, add waypoints. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbRoute.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "from", {
+                { "type", "object" },
+                { "properties", {
+                    { "ref", { { "type", "string" }, { "description", "Footprint reference (e.g., 'U1')" } } },
+                    { "pad", { { "type", "string" }, { "description", "Pad number/name (e.g., '1', 'VCC')" } } }
+                }},
+                { "description", "Starting pad: {ref, pad}" }
+            }},
+            { "to", {
+                { "type", "object" },
+                { "properties", {
+                    { "ref", { { "type", "string" } } },
+                    { "pad", { { "type", "string" } } }
+                }},
+                { "description", "Ending pad: {ref, pad}" }
+            }},
+            { "width", {
+                { "type", "number" },
+                { "description", "Track width in mm (default: net class width or 0.25)" }
+            }},
+            { "layer", {
+                { "type", "string" },
+                { "description", "Starting layer (default: auto-detect from pad)" }
+            }},
+            { "waypoints", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "object" },
+                    { "properties", {
+                        { "position", { { "type", "array" }, { "description", "[x, y] in mm" } } },
+                        { "via", { { "type", "boolean" }, { "description", "Place via at this waypoint" } } },
+                        { "layer", { { "type", "string" }, { "description", "Switch to this layer after via" } } }
+                    }}
+                }},
+                { "description", "Intermediate waypoints with optional layer transitions" }
+            }}
+        }},
+        { "required", json::array( { "from", "to" } ) }
+    };
+    tools.push_back( pcbRoute );
+
+    // pcb_get_nets - Get net information with connections
+    LLM_TOOL pcbGetNets;
+    pcbGetNets.name = "pcb_get_nets";
+    pcbGetNets.description =
+        "Get a list of all nets in the PCB with their connected pads and routing status. "
+        "Useful for verifying connections, finding unrouted nets, and understanding connectivity. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbGetNets.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "filter", {
+                { "type", "string" },
+                { "description", "Optional filter to match net names (e.g., 'VCC', 'GND', 'DATA*')" }
+            }},
+            { "include_pads", {
+                { "type", "boolean" },
+                { "description", "Include list of connected pads for each net (default: true)" }
+            }},
+            { "unrouted_only", {
+                { "type", "boolean" },
+                { "description", "Only return nets with unconnected pads (default: false)" }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    pcbGetNets.read_only = true;
+    tools.push_back( pcbGetNets );
 
     // pcb_export - Generate output files
     LLM_TOOL pcbExport;

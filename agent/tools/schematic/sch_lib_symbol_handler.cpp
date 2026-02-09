@@ -4,7 +4,7 @@
 
 bool SCH_LIB_SYMBOL_HANDLER::CanHandle( const std::string& aToolName ) const
 {
-    return aToolName == "sch_get_lib_symbol";
+    return aToolName == "sch_find_symbol";
 }
 
 
@@ -12,7 +12,7 @@ std::string SCH_LIB_SYMBOL_HANDLER::Execute( const std::string& aToolName,
                                               const nlohmann::json& aInput )
 {
     // This tool requires IPC execution - should not be called directly
-    return "Error: sch_get_lib_symbol requires IPC execution. Use GetIPCCommand() instead.";
+    return "Error: sch_find_symbol requires IPC execution. Use GetIPCCommand() instead.";
 }
 
 
@@ -42,7 +42,7 @@ std::string SCH_LIB_SYMBOL_HANDLER::GetDescription( const std::string& aToolName
 
 bool SCH_LIB_SYMBOL_HANDLER::RequiresIPC( const std::string& aToolName ) const
 {
-    return aToolName == "sch_get_lib_symbol";
+    return aToolName == "sch_find_symbol";
 }
 
 
@@ -66,12 +66,12 @@ std::string SCH_LIB_SYMBOL_HANDLER::GetIPCCommand( const std::string& aToolName,
 
     code << "import json, re, fnmatch, sys\n"
          << "\n"
-         << "print('[sch_get_lib_symbol] Starting tool execution', file=sys.stderr, flush=True)\n"
+         << "print('[sch_find_symbol] Starting tool execution', file=sys.stderr, flush=True)\n"
          << "lib_id = " << nlohmann::json( libId ).dump() << "\n"
          << "include_pins = " << ( includePins ? "True" : "False" ) << "\n"
          << "max_suggestions = " << maxSuggestions << "\n"
          << "pattern_type = " << nlohmann::json( patternType ).dump() << "\n"
-         << "print(f'[sch_get_lib_symbol] lib_id={lib_id}, pattern_type={pattern_type}', file=sys.stderr, flush=True)\n"
+         << "print(f'[sch_find_symbol] lib_id={lib_id}, pattern_type={pattern_type}', file=sys.stderr, flush=True)\n"
          << "\n"
          << "# Auto-detect pattern type if not specified\n"
          << "def detect_pattern_type(s):\n"
@@ -145,7 +145,7 @@ std::string SCH_LIB_SYMBOL_HANDLER::GetIPCCommand( const std::string& aToolName,
          << "                        pin_info['pos'] = get_pos(pin.position)\n"
          << "                    pins.append(pin_info)\n"
          << "        except Exception as pin_e:\n"
-         << "            print(f'[sch_get_lib_symbol] Could not get pin positions: {pin_e}', file=sys.stderr, flush=True)\n"
+         << "            print(f'[sch_find_symbol] Could not get pin positions: {pin_e}', file=sys.stderr, flush=True)\n"
          << "        \n"
          << "        # Fallback: use pin_names if no positions available\n"
          << "        if not pins and hasattr(info, 'pin_names') and info.pin_names:\n"
@@ -176,34 +176,48 @@ std::string SCH_LIB_SYMBOL_HANDLER::GetIPCCommand( const std::string& aToolName,
          << "\n"
          << "try:\n"
          << "    if pattern_type == 'exact':\n"
-         << "        # Try exact lookup first\n"
-         << "        try:\n"
-         << "            print(f'[sch_get_lib_symbol] Calling get_symbol_info({lib_id})', file=sys.stderr, flush=True)\n"
-         << "            info = sch.library.get_symbol_info(lib_id)\n"
-         << "            print('[sch_get_lib_symbol] get_symbol_info returned', file=sys.stderr, flush=True)\n"
-         << "            output = {'status': 'found', 'symbol': format_symbol(info)}\n"
-         << "            print(json.dumps(output, indent=2))\n"
-         << "        except Exception as e:\n"
-         << "            print(f'[sch_get_lib_symbol] get_symbol_info failed: {e}', file=sys.stderr, flush=True)\n"
-         << "            # Not found - search for suggestions (filter by library if specified)\n"
-         << "            if ':' in lib_id:\n"
+         << "        if ':' in lib_id:\n"
+         << "            # Full Library:Symbol format - try direct lookup\n"
+         << "            try:\n"
+         << "                print(f'[sch_find_symbol] Calling get_symbol_info({lib_id})', file=sys.stderr, flush=True)\n"
+         << "                info = sch.library.get_symbol_info(lib_id)\n"
+         << "                output = {'status': 'found', 'symbol': format_symbol(info)}\n"
+         << "                print(json.dumps(output, indent=2))\n"
+         << "            except Exception as e:\n"
+         << "                print(f'[sch_find_symbol] get_symbol_info failed: {e}', file=sys.stderr, flush=True)\n"
          << "                lib_name, search_term = lib_id.split(':', 1)\n"
-         << "                libraries_filter = [lib_name]\n"
+         << "                results = sch.library.search(search_term, libraries=[lib_name], max_results=max_suggestions)\n"
+         << "                suggestions = [format_suggestion(r) for r in results[:max_suggestions]]\n"
+         << "                output = {'status': 'not_found', 'query': lib_id, 'suggestions': suggestions}\n"
+         << "                print(json.dumps(output, indent=2))\n"
+         << "        else:\n"
+         << "            # Symbol name only - search all libraries for exact name match\n"
+         << "            print(f'[sch_find_symbol] Searching all libraries for {lib_id}', file=sys.stderr, flush=True)\n"
+         << "            results = sch.library.search(lib_id, max_results=50)\n"
+         << "            # Filter to exact name matches (case-insensitive)\n"
+         << "            exact = [r for r in results if r.name.lower() == lib_id.lower()]\n"
+         << "            print(f'[sch_find_symbol] Found {len(exact)} exact matches', file=sys.stderr, flush=True)\n"
+         << "            if len(exact) == 1:\n"
+         << "                output = {'status': 'found', 'symbol': format_symbol(exact[0])}\n"
+         << "            elif len(exact) > 1:\n"
+         << "                # Multiple libraries have this symbol - list them\n"
+         << "                output = {\n"
+         << "                    'status': 'multiple_matches',\n"
+         << "                    'query': lib_id,\n"
+         << "                    'count': len(exact),\n"
+         << "                    'symbols': [format_suggestion(r) for r in exact[:max_suggestions]]\n"
+         << "                }\n"
          << "            else:\n"
-         << "                search_term = lib_id\n"
-         << "                libraries_filter = None\n"
-         << "            print(f'[sch_get_lib_symbol] Calling search({search_term}, libraries={libraries_filter})', file=sys.stderr, flush=True)\n"
-         << "            results = sch.library.search(search_term, libraries=libraries_filter, max_results=max_suggestions)\n"
-         << "            print(f'[sch_get_lib_symbol] search returned {len(results)} results', file=sys.stderr, flush=True)\n"
-         << "            suggestions = [format_suggestion(r) for r in results[:max_suggestions]]\n"
-         << "            output = {'status': 'not_found', 'query': lib_id, 'suggestions': suggestions}\n"
+         << "                # No exact match - return search suggestions\n"
+         << "                suggestions = [format_suggestion(r) for r in results[:max_suggestions]]\n"
+         << "                output = {'status': 'not_found', 'query': lib_id, 'suggestions': suggestions}\n"
          << "            print(json.dumps(output, indent=2))\n"
          << "    else:\n"
          << "        # Pattern search\n"
          << "        search_term = get_search_term(lib_id)\n"
-         << "        print(f'[sch_get_lib_symbol] Pattern search: calling search({search_term})', file=sys.stderr, flush=True)\n"
+         << "        print(f'[sch_find_symbol] Pattern search: calling search({search_term})', file=sys.stderr, flush=True)\n"
          << "        results = sch.library.search(search_term, max_results=200)\n"
-         << "        print(f'[sch_get_lib_symbol] search returned {len(results)} results', file=sys.stderr, flush=True)\n"
+         << "        print(f'[sch_find_symbol] search returned {len(results)} results', file=sys.stderr, flush=True)\n"
          << "        \n"
          << "        # Filter by pattern\n"
          << "        if pattern_type == 'regex':\n"
@@ -211,11 +225,11 @@ std::string SCH_LIB_SYMBOL_HANDLER::GetIPCCommand( const std::string& aToolName,
          << "            filtered = [r for r in results if pattern.fullmatch(r.lib_id)]\n"
          << "        else:  # wildcard\n"
          << "            filtered = [r for r in results if fnmatch.fnmatch(r.lib_id, lib_id)]\n"
-         << "        print(f'[sch_get_lib_symbol] {len(filtered)} results after filtering', file=sys.stderr, flush=True)\n"
+         << "        print(f'[sch_find_symbol] {len(filtered)} results after filtering', file=sys.stderr, flush=True)\n"
          << "        \n"
          << "        if len(filtered) == 1:\n"
          << "            # Single match - return full details\n"
-         << "            print(f'[sch_get_lib_symbol] Single match, returning details', file=sys.stderr, flush=True)\n"
+         << "            print(f'[sch_find_symbol] Single match, returning details', file=sys.stderr, flush=True)\n"
          << "            output = {'status': 'found', 'symbol': format_symbol(filtered[0])}\n"
          << "        else:\n"
          << "            # Multiple or no matches\n"
@@ -228,9 +242,9 @@ std::string SCH_LIB_SYMBOL_HANDLER::GetIPCCommand( const std::string& aToolName,
          << "                'symbols': symbols\n"
          << "            }\n"
          << "        print(json.dumps(output, indent=2))\n"
-         << "    print('[sch_get_lib_symbol] Completed successfully', file=sys.stderr, flush=True)\n"
+         << "    print('[sch_find_symbol] Completed successfully', file=sys.stderr, flush=True)\n"
          << "except Exception as e:\n"
-         << "    print(f'[sch_get_lib_symbol] Exception: {e}', file=sys.stderr, flush=True)\n"
+         << "    print(f'[sch_find_symbol] Exception: {e}', file=sys.stderr, flush=True)\n"
          << "    error_msg = str(e)\n"
          << "    if 'no handler available' in error_msg and 'GetOpenDocuments' in error_msg:\n"
          << "        error_msg = 'Schematic editor must be open. Use open_schematic tool first.'\n"

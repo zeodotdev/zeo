@@ -12,7 +12,6 @@ set( TOOLS_SRCS
 
     # Schematic tools
     schematic/sch_parser.cpp
-    schematic/sch_validator.cpp
     schematic/sch_tool_handler.cpp
     schematic/sch_erc_handler.cpp
     schematic/sch_lib_symbol_handler.cpp

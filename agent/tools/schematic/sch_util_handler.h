@@ -7,7 +7,7 @@
 
 /**
  * Tool handler for schematic utility operations via kipy IPC.
- * Handles: sch_annotate, sch_save, sch_get_nets
+ * Handles: sch_annotate, sch_get_nets
  *
  * These tools work on the LIVE schematic through the kipy Python API.
  * Requires KiCad's schematic editor to be open with a document loaded.
@@ -33,11 +33,6 @@ private:
      * Generate Python code for sch_annotate operation.
      */
     std::string GenerateAnnotateCode( const nlohmann::json& aInput ) const;
-
-    /**
-     * Generate Python code for sch_save operation.
-     */
-    std::string GenerateSaveCode( const nlohmann::json& aInput ) const;
 
     /**
      * Generate Python code for sch_get_nets operation.

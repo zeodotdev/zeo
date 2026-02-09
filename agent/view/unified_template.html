@@ -87,18 +87,17 @@ img[src^="data:"] { cursor: pointer; }
     box-shadow: 0 -4px 12px rgba(0,0,0,0.25);
 }
 .editor-container:focus-within { border-color: #569cd6; }
-.textarea-wrapper { position: relative; width: 100%; }
-.highlight-layer {
-    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-    white-space: pre-wrap; word-wrap: break-word; pointer-events: none;
-    padding: 0; margin: 0; font: inherit; overflow: hidden; color: #FFFFFF;
+.textarea-wrapper { display: grid; width: 100%; }
+.highlight-layer, .input-textarea {
+    grid-area: 1 / 1; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;
+    padding: 0; padding-right: 28px; margin: 0; font: inherit; box-sizing: border-box;
 }
+.highlight-layer { pointer-events: none; overflow: hidden; color: #FFFFFF; }
 .input-textarea {
-    position: relative; width: 100%; min-height: 45px; resize: none;
+    width: 100%; min-height: 45px; resize: none;
     background: transparent; color: #FFFFFF; caret-color: #FFFFFF;
-    border: none; outline: none; padding: 0; padding-right: 28px; margin: 0; font: inherit;
-    overflow: hidden; -webkit-text-fill-color: transparent;
-    -webkit-user-select: text; user-select: text; box-sizing: border-box;
+    border: none; outline: none; overflow: hidden; -webkit-text-fill-color: transparent;
+    -webkit-user-select: text; user-select: text;
 }
 .input-textarea::selection { background: rgba(56,156,214,0.4); -webkit-text-fill-color: #FFFFFF; }
 .input-textarea::placeholder { -webkit-text-fill-color: #808080; }
@@ -306,7 +305,7 @@ img[src^="data:"] { cursor: pointer; }
     <div class="editor-container" id="editor-container">
         <div class="attachment-bar" id="attachment-bar"></div>
         <div class="textarea-wrapper">
-            <pre class="highlight-layer" id="highlight-layer"></pre>
+            <div class="highlight-layer" id="highlight-layer"></div>
             <textarea class="input-textarea" id="input-textarea"
                       placeholder="Message the agent..."
                       rows="1"></textarea>

@@ -155,6 +155,47 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandExplicitPatternType )
 
 
 /**
+ * Test IPC command generation for bare symbol name (no library prefix)
+ */
+BOOST_AUTO_TEST_CASE( GetIPCCommandBareSymbolName )
+{
+    SCH_LIB_SYMBOL_HANDLER handler;
+    nlohmann::json input = { { "lib_id", "R" } };
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
+
+    // Should start with run_shell sch
+    BOOST_CHECK( cmd.find( "run_shell sch" ) == 0 );
+
+    // Should contain the lib_id
+    BOOST_CHECK( cmd.find( "\"R\"" ) != std::string::npos );
+
+    // Should use library.search for bare names (not get_symbol_info)
+    BOOST_CHECK( cmd.find( "sch.library.search" ) != std::string::npos );
+
+    // Should filter for exact name matches
+    BOOST_CHECK( cmd.find( "r.name.lower() == lib_id.lower()" ) != std::string::npos );
+
+    // Should handle multiple_matches case
+    BOOST_CHECK( cmd.find( "multiple_matches" ) != std::string::npos );
+}
+
+
+/**
+ * Test description generation for bare symbol name
+ */
+BOOST_AUTO_TEST_CASE( GetDescriptionBareSymbolName )
+{
+    SCH_LIB_SYMBOL_HANDLER handler;
+    nlohmann::json input = { { "lib_id", "R" } };
+    std::string desc = handler.GetDescription( "sch_find_symbol", input );
+
+    BOOST_CHECK( !desc.empty() );
+    BOOST_CHECK( desc.find( "R" ) != std::string::npos );
+    BOOST_CHECK( desc.find( "Getting symbol info" ) != std::string::npos );
+}
+
+
+/**
  * Test description generation for exact match
  */
 BOOST_AUTO_TEST_CASE( GetDescriptionExactMatch )

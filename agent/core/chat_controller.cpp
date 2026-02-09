@@ -877,7 +877,6 @@ void CHAT_CONTROLLER::ExecuteNextTool()
     // Handle frame-managed tools specially - they are processed by AGENT_FRAME in OnChatToolStart
     // and call HandleToolResult() when done
     if( tool->tool_name == "open_editor" ||
-        tool->tool_name == "close_editor" ||
         tool->tool_name == "check_status" ||
         tool->tool_name == "save" ||
         tool->tool_name == "create_project" )

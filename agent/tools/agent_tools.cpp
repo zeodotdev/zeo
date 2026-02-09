@@ -56,29 +56,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( openEditor );
 
-    // close_editor - Close schematic or PCB editor
-    LLM_TOOL closeEditor;
-    closeEditor.name = "close_editor";
-    closeEditor.description = "Close the schematic or PCB editor. "
-                              "Optionally save before closing. "
-                              "Use this when you need to reopen an editor cleanly or free resources.";
-    closeEditor.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "editor_type", {
-                { "type", "string" },
-                { "enum", json::array( { "sch", "pcb" } ) },
-                { "description", "Editor to close: 'sch' for schematic, 'pcb' for PCB" }
-            }},
-            { "save_first", {
-                { "type", "boolean" },
-                { "description", "Save changes before closing (default: true)" }
-            }}
-        }},
-        { "required", json::array( { "editor_type" } ) }
-    };
-    tools.push_back( closeEditor );
-
     // check_status - Get project and editor status
     LLM_TOOL checkStatus;
     checkStatus.name = "check_status";
@@ -1406,12 +1383,6 @@ wxString GetToolDescription( const std::string& aToolName, const nlohmann::json&
         std::string editorType = aInput.value( "editor_type", "" );
         wxString label = ( editorType == "sch" ) ? "Schematic" : "PCB";
         return wxString::Format( "Open %s Editor", label );
-    }
-    else if( aToolName == "close_editor" )
-    {
-        std::string editorType = aInput.value( "editor_type", "" );
-        wxString label = ( editorType == "sch" ) ? "Schematic" : "PCB";
-        return wxString::Format( "Close %s Editor", label );
     }
     else if( aToolName == "check_status" )
     {

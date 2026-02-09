@@ -279,14 +279,6 @@ private:
     void OnApproveOpenEditor();
     void OnRejectOpenEditor();
 
-    // Pending editor close request
-    bool        m_pendingCloseSch;
-    bool        m_pendingClosePcb;
-    std::string m_pendingCloseToolId;
-    bool        m_pendingCloseSaveFirst;
-    void ShowCloseEditorApproval( const wxString& aEditorType );
-    void OnApproveCloseEditor();
-
     bool DoOpenEditor( FRAME_T aFrameType );
 };
 

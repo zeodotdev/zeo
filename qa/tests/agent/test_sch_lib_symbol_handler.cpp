@@ -18,7 +18,7 @@
  */
 
 /**
- * Unit tests for the sch_get_lib_symbol tool handler
+ * Unit tests for the sch_find_symbol tool handler
  */
 
 #include <boost/test/unit_test.hpp>
@@ -34,7 +34,7 @@ BOOST_AUTO_TEST_SUITE( SchLibSymbolHandler )
 BOOST_AUTO_TEST_CASE( CanHandleCorrectTool )
 {
     SCH_LIB_SYMBOL_HANDLER handler;
-    BOOST_CHECK( handler.CanHandle( "sch_get_lib_symbol" ) );
+    BOOST_CHECK( handler.CanHandle( "sch_find_symbol" ) );
     BOOST_CHECK( !handler.CanHandle( "sch_get_summary" ) );
     BOOST_CHECK( !handler.CanHandle( "sch_run_erc" ) );
     BOOST_CHECK( !handler.CanHandle( "other_tool" ) );
@@ -47,7 +47,7 @@ BOOST_AUTO_TEST_CASE( CanHandleCorrectTool )
 BOOST_AUTO_TEST_CASE( RequiresIPC )
 {
     SCH_LIB_SYMBOL_HANDLER handler;
-    BOOST_CHECK( handler.RequiresIPC( "sch_get_lib_symbol" ) );
+    BOOST_CHECK( handler.RequiresIPC( "sch_find_symbol" ) );
     BOOST_CHECK( !handler.RequiresIPC( "other_tool" ) );
 }
 
@@ -59,7 +59,7 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandExactMatch )
 {
     SCH_LIB_SYMBOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:R" } };
-    std::string cmd = handler.GetIPCCommand( "sch_get_lib_symbol", input );
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
     // Should start with run_shell sch
     BOOST_CHECK( cmd.find( "run_shell sch" ) == 0 );
@@ -82,7 +82,7 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandWildcard )
 {
     SCH_LIB_SYMBOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Connector:Conn_01x*" } };
-    std::string cmd = handler.GetIPCCommand( "sch_get_lib_symbol", input );
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
     // Should start with run_shell sch
     BOOST_CHECK( cmd.find( "run_shell sch" ) == 0 );
@@ -102,7 +102,7 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandRegex )
 {
     SCH_LIB_SYMBOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:R_[0-9]{4}" } };
-    std::string cmd = handler.GetIPCCommand( "sch_get_lib_symbol", input );
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
     // Should start with run_shell sch
     BOOST_CHECK( cmd.find( "run_shell sch" ) == 0 );
@@ -127,7 +127,7 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandWithOptions )
         { "include_pins", false },
         { "max_suggestions", 5 }
     };
-    std::string cmd = handler.GetIPCCommand( "sch_get_lib_symbol", input );
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
     // Should have include_pins = False
     BOOST_CHECK( cmd.find( "include_pins = False" ) != std::string::npos );
@@ -147,10 +147,51 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandExplicitPatternType )
         { "lib_id", "Device:R" },
         { "pattern_type", "wildcard" }
     };
-    std::string cmd = handler.GetIPCCommand( "sch_get_lib_symbol", input );
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
     // Should pass the explicit pattern type
     BOOST_CHECK( cmd.find( "pattern_type = \"wildcard\"" ) != std::string::npos );
+}
+
+
+/**
+ * Test IPC command generation for bare symbol name (no library prefix)
+ */
+BOOST_AUTO_TEST_CASE( GetIPCCommandBareSymbolName )
+{
+    SCH_LIB_SYMBOL_HANDLER handler;
+    nlohmann::json input = { { "lib_id", "R" } };
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
+
+    // Should start with run_shell sch
+    BOOST_CHECK( cmd.find( "run_shell sch" ) == 0 );
+
+    // Should contain the lib_id
+    BOOST_CHECK( cmd.find( "\"R\"" ) != std::string::npos );
+
+    // Should use library.search for bare names (not get_symbol_info)
+    BOOST_CHECK( cmd.find( "sch.library.search" ) != std::string::npos );
+
+    // Should filter for exact name matches
+    BOOST_CHECK( cmd.find( "r.name.lower() == lib_id.lower()" ) != std::string::npos );
+
+    // Should handle multiple_matches case
+    BOOST_CHECK( cmd.find( "multiple_matches" ) != std::string::npos );
+}
+
+
+/**
+ * Test description generation for bare symbol name
+ */
+BOOST_AUTO_TEST_CASE( GetDescriptionBareSymbolName )
+{
+    SCH_LIB_SYMBOL_HANDLER handler;
+    nlohmann::json input = { { "lib_id", "R" } };
+    std::string desc = handler.GetDescription( "sch_find_symbol", input );
+
+    BOOST_CHECK( !desc.empty() );
+    BOOST_CHECK( desc.find( "R" ) != std::string::npos );
+    BOOST_CHECK( desc.find( "Getting symbol info" ) != std::string::npos );
 }
 
 
@@ -161,7 +202,7 @@ BOOST_AUTO_TEST_CASE( GetDescriptionExactMatch )
 {
     SCH_LIB_SYMBOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:R" } };
-    std::string desc = handler.GetDescription( "sch_get_lib_symbol", input );
+    std::string desc = handler.GetDescription( "sch_find_symbol", input );
 
     BOOST_CHECK( !desc.empty() );
     BOOST_CHECK( desc.find( "Device:R" ) != std::string::npos );
@@ -176,7 +217,7 @@ BOOST_AUTO_TEST_CASE( GetDescriptionWildcard )
 {
     SCH_LIB_SYMBOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Connector:Conn_*" } };
-    std::string desc = handler.GetDescription( "sch_get_lib_symbol", input );
+    std::string desc = handler.GetDescription( "sch_find_symbol", input );
 
     BOOST_CHECK( !desc.empty() );
     BOOST_CHECK( desc.find( "Searching symbols matching" ) != std::string::npos );
@@ -190,7 +231,7 @@ BOOST_AUTO_TEST_CASE( GetDescriptionRegex )
 {
     SCH_LIB_SYMBOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:C_[0-9]+" } };
-    std::string desc = handler.GetDescription( "sch_get_lib_symbol", input );
+    std::string desc = handler.GetDescription( "sch_find_symbol", input );
 
     BOOST_CHECK( !desc.empty() );
     BOOST_CHECK( desc.find( "regex" ) != std::string::npos );
@@ -204,7 +245,7 @@ BOOST_AUTO_TEST_CASE( GetDescriptionEmpty )
 {
     SCH_LIB_SYMBOL_HANDLER handler;
     nlohmann::json input = {};
-    std::string desc = handler.GetDescription( "sch_get_lib_symbol", input );
+    std::string desc = handler.GetDescription( "sch_find_symbol", input );
 
     BOOST_CHECK( !desc.empty() );
     BOOST_CHECK( desc.find( "Getting library symbol info" ) != std::string::npos );
@@ -218,7 +259,7 @@ BOOST_AUTO_TEST_CASE( ExecuteReturnsError )
 {
     SCH_LIB_SYMBOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:R" } };
-    std::string result = handler.Execute( "sch_get_lib_symbol", input );
+    std::string result = handler.Execute( "sch_find_symbol", input );
 
     BOOST_CHECK( result.find( "Error" ) != std::string::npos );
     BOOST_CHECK( result.find( "IPC" ) != std::string::npos );

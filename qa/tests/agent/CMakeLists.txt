@@ -26,9 +26,6 @@ set( QA_AGENT_SRCS
     # Test module entry point
     test_module.cpp
 
-    # Validator tests
-    test_sch_validator.cpp
-
     # Parser tests
     test_sch_parser.cpp
 
@@ -36,7 +33,6 @@ set( QA_AGENT_SRCS
     test_sch_lib_symbol_handler.cpp
 
     # Agent source files needed for tests
-    ${CMAKE_SOURCE_DIR}/agent/tools/schematic/sch_validator.cpp
     ${CMAKE_SOURCE_DIR}/agent/tools/schematic/sch_parser.cpp
     ${CMAKE_SOURCE_DIR}/agent/tools/schematic/sch_lib_symbol_handler.cpp
     ${CMAKE_SOURCE_DIR}/agent/tools/kicad_file/sexpr_util.cpp

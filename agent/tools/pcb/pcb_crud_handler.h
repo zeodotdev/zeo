@@ -5,7 +5,7 @@
 
 /**
  * Handler for PCB IPC-based operations via kipy.
- * Handles: pcb_get_summary, pcb_read_section, pcb_run_drc, pcb_set_outline,
+ * Handles: pcb_get_summary, pcb_read_section, pcb_set_outline,
  *          pcb_sync_schematic, pcb_place, pcb_add, pcb_update, pcb_delete,
  *          pcb_get_pads, pcb_get_footprint, pcb_route, pcb_get_nets, pcb_export
  */
@@ -28,7 +28,6 @@ private:
     // Query operations
     std::string GenerateGetSummaryCode( const nlohmann::json& aInput ) const;
     std::string GenerateReadSectionCode( const nlohmann::json& aInput ) const;
-    std::string GenerateValidateCode( const nlohmann::json& aInput ) const;
     std::string GenerateRunDrcCode( const nlohmann::json& aInput ) const;
     std::string GenerateGetPadsCode( const nlohmann::json& aInput ) const;
     std::string GenerateGetFootprintCode( const nlohmann::json& aInput ) const;

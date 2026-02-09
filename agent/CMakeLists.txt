@@ -83,7 +83,6 @@ set( AGENT_SRCS
     tools/kicad_file/file_writer.cpp
     tools/kicad_file/uuid_util.cpp
     tools/schematic/sch_parser.cpp
-    tools/schematic/sch_validator.cpp
     tools/schematic/sch_tool_handler.cpp
     tools/schematic/sch_erc_handler.cpp
     tools/schematic/sch_lib_symbol_handler.cpp

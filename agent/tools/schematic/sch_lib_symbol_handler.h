@@ -5,7 +5,7 @@
 #include <string>
 
 /**
- * Tool handler for querying library symbols (sch_get_lib_symbol).
+ * Tool handler for querying library symbols (sch_find_symbol).
  * Supports exact match, wildcard patterns, and regex patterns.
  * Returns symbol information including pin positions for wiring.
  * Executes via kipy IPC (run_shell).

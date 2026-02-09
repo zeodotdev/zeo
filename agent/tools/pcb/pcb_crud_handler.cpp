@@ -5,7 +5,6 @@
 static const char* PCB_CRUD_TOOLS[] = {
     "pcb_get_summary",
     "pcb_read_section",
-    "pcb_validate",
     "pcb_run_drc",
     "pcb_set_outline",
     "pcb_sync_schematic",
@@ -48,8 +47,6 @@ std::string PCB_CRUD_HANDLER::GetDescription( const std::string& aToolName,
         std::string section = aInput.value( "section", "all" );
         return "Reading PCB " + section;
     }
-    else if( aToolName == "pcb_validate" )
-        return "Validating PCB file";
     else if( aToolName == "pcb_run_drc" )
         return "Running DRC check";
     else if( aToolName == "pcb_set_outline" )
@@ -156,8 +153,6 @@ std::string PCB_CRUD_HANDLER::GetIPCCommand( const std::string& aToolName,
         code = GenerateGetSummaryCode( aInput );
     else if( aToolName == "pcb_read_section" )
         code = GenerateReadSectionCode( aInput );
-    else if( aToolName == "pcb_validate" )
-        code = GenerateValidateCode( aInput );
     else if( aToolName == "pcb_run_drc" )
         code = GenerateRunDrcCode( aInput );
     else if( aToolName == "pcb_set_outline" )
@@ -389,96 +384,6 @@ std::string PCB_CRUD_HANDLER::GenerateReadSectionCode( const nlohmann::json& aIn
         code << "print(json.dumps({'error': 'Unknown section: " << EscapePythonString( section )
              << "'}))\n";
     }
-
-    return code.str();
-}
-
-
-std::string PCB_CRUD_HANDLER::GenerateValidateCode( const nlohmann::json& aInput ) const
-{
-    std::ostringstream code;
-
-    code << "import json\n";
-    code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
-    code << "\n";
-    code << "# Validate PCB file - check for common issues\n";
-    code << "issues = []\n";
-    code << "warnings = []\n";
-    code << "stats = {}\n";
-    code << "\n";
-    code << "# Check board outline (Edge.Cuts layer)\n";
-    code << "try:\n";
-    code << "    shapes = board.get_shapes()\n";
-    code << "    edge_cuts = [s for s in shapes if hasattr(s, 'layer') and s.layer == BoardLayer.BL_Edge_Cuts]\n";
-    code << "    stats['edge_cuts_segments'] = len(edge_cuts)\n";
-    code << "    if not edge_cuts:\n";
-    code << "        issues.append({'type': 'missing_outline', 'message': 'No board outline found (Edge.Cuts layer is empty)'})\n";
-    code << "except Exception as e:\n";
-    code << "    warnings.append(f'Could not check board outline: {e}')\n";
-    code << "\n";
-    code << "# Check footprints\n";
-    code << "try:\n";
-    code << "    footprints = board.get_footprints()\n";
-    code << "    stats['footprints'] = len(footprints)\n";
-    code << "    origin_count = 0\n";
-    code << "    refs_seen = {}\n";
-    code << "    for fp in footprints:\n";
-    code << "        ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else '?'\n";
-    code << "        # Check for duplicate references\n";
-    code << "        if ref in refs_seen:\n";
-    code << "            issues.append({'type': 'duplicate_ref', 'message': f'Duplicate reference: {ref}', 'ref': ref})\n";
-    code << "        refs_seen[ref] = True\n";
-    code << "        # Check for footprints at origin (likely unplaced)\n";
-    code << "        if fp.position.x == 0 and fp.position.y == 0:\n";
-    code << "            origin_count += 1\n";
-    code << "    if origin_count > 0:\n";
-    code << "        warnings.append(f'{origin_count} footprint(s) at origin - may be unplaced')\n";
-    code << "except Exception as e:\n";
-    code << "    warnings.append(f'Could not check footprints: {e}')\n";
-    code << "\n";
-    code << "# Check nets and connectivity\n";
-    code << "try:\n";
-    code << "    nets = board.get_nets()\n";
-    code << "    stats['nets'] = len(nets)\n";
-    code << "    pads = board.get_pads()\n";
-    code << "    stats['pads'] = len(pads)\n";
-    code << "    # Count pads per net to find potentially unrouted nets\n";
-    code << "    net_pad_counts = {}\n";
-    code << "    for pad in pads:\n";
-    code << "        net_name = pad.net.name if hasattr(pad, 'net') else ''\n";
-    code << "        if net_name:\n";
-    code << "            net_pad_counts[net_name] = net_pad_counts.get(net_name, 0) + 1\n";
-    code << "    # Find nets with multiple pads (need routing)\n";
-    code << "    multi_pad_nets = [n for n, c in net_pad_counts.items() if c > 1]\n";
-    code << "    stats['nets_requiring_routing'] = len(multi_pad_nets)\n";
-    code << "except Exception as e:\n";
-    code << "    warnings.append(f'Could not check nets: {e}')\n";
-    code << "\n";
-    code << "# Check tracks and vias\n";
-    code << "try:\n";
-    code << "    tracks = board.get_tracks()\n";
-    code << "    vias = board.get_vias()\n";
-    code << "    stats['tracks'] = len(tracks)\n";
-    code << "    stats['vias'] = len(vias)\n";
-    code << "except Exception as e:\n";
-    code << "    warnings.append(f'Could not check tracks/vias: {e}')\n";
-    code << "\n";
-    code << "# Check zones\n";
-    code << "try:\n";
-    code << "    zones = board.get_zones()\n";
-    code << "    stats['zones'] = len(zones)\n";
-    code << "except Exception as e:\n";
-    code << "    warnings.append(f'Could not check zones: {e}')\n";
-    code << "\n";
-    code << "# Build result\n";
-    code << "is_valid = len(issues) == 0\n";
-    code << "result = {\n";
-    code << "    'valid': is_valid,\n";
-    code << "    'issues': issues,\n";
-    code << "    'warnings': warnings,\n";
-    code << "    'stats': stats\n";
-    code << "}\n";
-    code << "print(json.dumps(result, indent=2))\n";
 
     return code.str();
 }

@@ -5,7 +5,6 @@ static const char* PCB_TOOL_NAMES[] = {
     "pcb_get_summary",
     "pcb_read_section",
     "pcb_modify",
-    "pcb_validate",
     "pcb_write"
 };
 
@@ -39,8 +38,6 @@ std::string PCB_TOOL_HANDLER::GetDescription( const std::string& aToolName,
         return "Reading PCB section (not implemented)";
     else if( aToolName == "pcb_modify" )
         return "Modifying PCB (not implemented)";
-    else if( aToolName == "pcb_validate" )
-        return "Validating PCB (not implemented)";
     else if( aToolName == "pcb_write" )
         return "Writing PCB (not implemented)";
 

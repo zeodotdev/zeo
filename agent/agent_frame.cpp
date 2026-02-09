@@ -3363,34 +3363,6 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         return;
     }
 
-    // Handle save - save current documents
-    // Note: Saving is better done via IPC tools which have direct access to the editor APIs.
-    // This is a simplified version that just reports status.
-    if( data->toolName == "save" )
-    {
-        std::string editorType = data->input.value( "editor_type", "all" );
-        nlohmann::json result;
-        result["status"] = "info";
-        result["message"] = "Use IPC tools for saving. Schematic: sch.save(), PCB: pcb.save()";
-
-        std::vector<std::string> openEditors;
-        KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
-        KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
-
-        if( schEditor && schEditor->IsShown() )
-            openEditors.push_back( "schematic" );
-        if( pcbEditor && pcbEditor->IsShown() )
-            openEditors.push_back( "pcb" );
-
-        result["open_editors"] = openEditors;
-
-        if( m_chatController )
-            m_chatController->HandleToolResult( data->toolId, result.dump( 2 ), true );
-
-        delete data;
-        return;
-    }
-
     // Handle create_project - create new KiCad project
     if( data->toolName == "create_project" )
     {

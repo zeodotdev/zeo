@@ -337,6 +337,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_thinkingExpanded = false;
     m_isThinking = false;
     m_isStreamingMarkdown = false;
+    m_thinkingHtmlDirty = false;
     m_currentThinkingIndex = -1;
 
     // Initialize tool result toggle state
@@ -750,6 +751,13 @@ wxString AGENT_FRAME::BuildStreamingContent()
 {
     // Build the streaming content HTML from current state
     wxString streamingContent;
+
+    // Rebuild thinking HTML lazily if content changed since last build
+    if( m_thinkingHtmlDirty )
+    {
+        RebuildThinkingHtml();
+        m_thinkingHtmlDirty = false;
+    }
 
     // Include thinking HTML if available (streamed directly in updateStreamingContent)
     if( !m_thinkingHtml.IsEmpty() )
@@ -1173,6 +1181,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_thinkingHtml = "";
     m_thinkingContent = "";
     m_thinkingExpanded = false;
+    m_thinkingHtmlDirty = false;
     m_isThinking = false;
     m_pendingToolCalls = nlohmann::json::array();
     // NOTE: Don't reset m_toolResultCounter here - old tool-result-N IDs persist in
@@ -1429,6 +1438,7 @@ void AGENT_FRAME::SendQueuedMessage()
     m_thinkingHtml = "";
     m_thinkingContent = "";
     m_thinkingExpanded = false;
+    m_thinkingHtmlDirty = false;
     m_isThinking = false;
     m_pendingToolCalls = nlohmann::json::array();
     m_activeRunningHtml.Clear();
@@ -1660,6 +1670,7 @@ void AGENT_FRAME::OnBridgeThinkingToggled( const nlohmann::json& aMsg )
     {
         m_thinkingExpanded = expanded;
         RebuildThinkingHtml();
+        m_thinkingHtmlDirty = false;
         FlushStreamingContentUpdate( true );
     }
     else if( index >= 0 && index < (int)m_historicalThinking.size() )
@@ -2052,6 +2063,12 @@ void AGENT_FRAME::InitializeTools()
 
 void AGENT_FRAME::StartAsyncLLMRequest()
 {
+    // Reset scroll guard so new streaming content (thinking, text) is visible.
+    // Without this, m_userScrolledUp can remain true after a tool call if the user
+    // scrolled during tool execution, causing FlushStreamingContentUpdate and the
+    // timer to skip all DOM updates for the new response.
+    m_userScrolledUp = false;
+
     // Start the generating animation
     StartGeneratingAnimation();
 
@@ -2111,6 +2128,7 @@ void AGENT_FRAME::RetryLastRequest()
     m_thinkingHtml.Clear();
     m_toolCallHtml.Clear();
     m_thinkingExpanded = false;
+    m_thinkingHtmlDirty = false;
     m_isThinking = false;
     m_pendingToolCalls = nlohmann::json::array();
 
@@ -2960,6 +2978,7 @@ void AGENT_FRAME::OnChatThinkingStart( wxThreadEvent& aEvent )
     // Rebuild thinking HTML and immediately flush to DOM
     // This bypasses the timer to minimize delay before thinking link is clickable
     RebuildThinkingHtml();
+    m_thinkingHtmlDirty = false;
     FlushStreamingContentUpdate();  // Immediate flush, don't wait for timer
 
     if( data )
@@ -2977,10 +2996,11 @@ void AGENT_FRAME::OnChatThinkingDelta( wxThreadEvent& aEvent )
     m_isThinking = true;
     m_thinkingContent = data->fullThinking;
 
-    // Rebuild thinking HTML and trigger update via timer
-    // The thinking content is included directly in BuildStreamingContent()
-    // and will be updated on the next timer tick (max 50ms delay)
-    RebuildThinkingHtml();
+    // Mark thinking HTML as dirty - defer the expensive HTML escape + rebuild to the
+    // next timer tick. Thinking deltas arrive hundreds of times per second but the timer
+    // only fires every 50ms, so rebuilding on every delta wastes O(n) work per delta
+    // (total O(n²) over the block).
+    m_thinkingHtmlDirty = true;
     UpdateAgentResponse();
 
     // Auto-scroll handled by CSS flex-direction: column-reverse
@@ -3005,6 +3025,7 @@ void AGENT_FRAME::OnChatThinkingDone( wxThreadEvent& aEvent )
 
     // Rebuild thinking display (removes loading animation)
     RebuildThinkingHtml();
+    m_thinkingHtmlDirty = false;
     UpdateAgentResponse();
 }
 

@@ -193,6 +193,7 @@ private:
     bool     m_thinkingExpanded;
     bool     m_isThinking;
     bool     m_isStreamingMarkdown;
+    bool     m_thinkingHtmlDirty;      // Deferred rebuild flag for thinking HTML
     int      m_currentThinkingIndex;
     wxString m_lastToolDesc;
     bool     m_userScrolledUp;

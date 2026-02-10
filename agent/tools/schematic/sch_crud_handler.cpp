@@ -864,6 +864,52 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput )
         code << "        updated = True\n";
     }
 
+    // Reposition text fields (Reference, Value, etc.) relative to symbol center
+    if( aInput.contains( "fields" ) && aInput["fields"].is_object() )
+    {
+        code << "    # Reposition text fields relative to symbol center\n";
+        code << "    sym_pos = target_item.position\n";
+
+        for( auto& [fieldName, fieldSpec] : aInput["fields"].items() )
+        {
+            if( !fieldSpec.is_object() )
+                continue;
+
+            bool hasOffset = fieldSpec.contains( "offset" ) &&
+                             fieldSpec["offset"].is_array() && fieldSpec["offset"].size() >= 2;
+            bool hasAngle = fieldSpec.contains( "angle" ) && fieldSpec["angle"].is_number();
+
+            if( !hasOffset && !hasAngle )
+                continue;
+
+            code << "    for _f in target_item._proto.fields:\n";
+            code << "        if _f.name == '" << EscapePythonString( fieldName ) << "':\n";
+
+            if( hasOffset )
+            {
+                double dx = SnapToGrid( fieldSpec["offset"][0].get<double>() );
+                double dy = SnapToGrid( fieldSpec["offset"][1].get<double>() );
+                code << "            _f.position.x_nm = sym_pos.x + int("
+                     << dx << " * 1_000_000)\n";
+                code << "            _f.position.y_nm = sym_pos.y + int("
+                     << dy << " * 1_000_000)\n";
+            }
+
+            if( hasAngle )
+            {
+                double angle = fieldSpec["angle"].get<double>();
+                code << "            _f.attributes.angle.value_degrees = " << angle << "\n";
+            }
+
+            code << "            break\n";
+        }
+
+        code << "    target_item = sch.crud.update_items(target_item)\n";
+        code << "    if target_item:\n";
+        code << "        target_item = target_item[0]\n";
+        code << "    updated = True\n";
+    }
+
     // Return post-update state for verification
     code << "    # Build state info from updated item\n";
     code << "    state = {}\n";
@@ -991,6 +1037,51 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
             code << "        if 'Footprint' in props_" << i << ":\n";
             code << "            sch.symbols.set_footprint(item_" << i << ", props_" << i << "['Footprint'])\n";
             code << "            updated_" << i << " = True\n";
+        }
+
+        // Reposition text fields relative to symbol center
+        if( update.contains( "fields" ) && update["fields"].is_object() )
+        {
+            code << "        sym_pos_" << i << " = item_" << i << ".position\n";
+
+            for( auto& [fieldName, fieldSpec] : update["fields"].items() )
+            {
+                if( !fieldSpec.is_object() )
+                    continue;
+
+                bool hasOffset = fieldSpec.contains( "offset" ) &&
+                                 fieldSpec["offset"].is_array() && fieldSpec["offset"].size() >= 2;
+                bool hasAngle = fieldSpec.contains( "angle" ) && fieldSpec["angle"].is_number();
+
+                if( !hasOffset && !hasAngle )
+                    continue;
+
+                code << "        for _f in item_" << i << "._proto.fields:\n";
+                code << "            if _f.name == '" << EscapePythonString( fieldName ) << "':\n";
+
+                if( hasOffset )
+                {
+                    double dx = SnapToGrid( fieldSpec["offset"][0].get<double>() );
+                    double dy = SnapToGrid( fieldSpec["offset"][1].get<double>() );
+                    code << "                _f.position.x_nm = sym_pos_" << i << ".x + int("
+                         << dx << " * 1_000_000)\n";
+                    code << "                _f.position.y_nm = sym_pos_" << i << ".y + int("
+                         << dy << " * 1_000_000)\n";
+                }
+
+                if( hasAngle )
+                {
+                    double angle = fieldSpec["angle"].get<double>();
+                    code << "                _f.attributes.angle.value_degrees = " << angle << "\n";
+                }
+
+                code << "                break\n";
+            }
+
+            code << "        _upd_" << i << " = sch.crud.update_items(item_" << i << ")\n";
+            code << "        if _upd_" << i << ":\n";
+            code << "            item_" << i << " = _upd_" << i << "[0]\n";
+            code << "        updated_" << i << " = True\n";
         }
 
         // Build state info

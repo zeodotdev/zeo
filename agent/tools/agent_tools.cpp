@@ -331,7 +331,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "- Power VCC/+V: 0°=standard (bar up), do NOT use 180\n\n"
         "WIRING RULES:\n"
         "- Use from_pin/to_pin for all wiring - backend auto-routes L-shapes\n"
-        "- AVOID OVERLAPPING WIRES: Wires at same coordinates create shorts!\n\n"
+        "- AVOID OVERLAPPING WIRES: Wires at same coordinates create shorts!\n"
+        "- WIRE-PIN CONNECTIONS: Wires only connect at endpoints, NOT midpoints. A wire passing through a pin does not connect to it. Always split wires at pin locations or use from_pin/to_pin.\n\n"
         "ERC TIPS:\n"
         "- Add 'power:PWR_FLAG' on nets powered by connectors to fix 'Power pin not driven'\n"
         "- Use no_connect on unused pins to fix 'Unconnected pin' warnings\n\n"
@@ -440,7 +441,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schUpdate.name = "sch_update";
     schUpdate.description =
         "Update elements in the schematic. Accepts an array of updates - use for single or batch operations. "
-        "Can modify position, rotation, mirror, and properties. Target by reference or UUID. "
+        "Can modify position, rotation, mirror, properties, and text field positions. Target by reference or UUID. "
+        "Use 'fields' to reposition Reference/Value text relative to symbol center (avoids overlap). "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schUpdate.input_schema = {
         { "type", "object" },
@@ -474,6 +476,27 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         { "dnp", {
                             { "type", "boolean" },
                             { "description", "Do Not Populate flag" }
+                        }},
+                        { "fields", {
+                            { "type", "object" },
+                            { "description", "Reposition/rotate text fields relative to symbol center. "
+                              "Keys: field names (Reference, Value). "
+                              "Values: {offset?: [dx, dy], angle?: degrees} (both optional, provide either or both). "
+                              "Examples: {\"Value\": {\"angle\": 90}}, {\"Reference\": {\"offset\": [0, -3], \"angle\": 0}}" },
+                            { "additionalProperties", {
+                                { "type", "object" },
+                                { "properties", {
+                                    { "offset", {
+                                        { "type", "array" },
+                                        { "items", { { "type", "number" } } },
+                                        { "description", "[dx, dy] offset from symbol center in mm" }
+                                    }},
+                                    { "angle", {
+                                        { "type", "number" },
+                                        { "description", "Text rotation in degrees (0=horizontal, 90=vertical)" }
+                                    }}
+                                }}
+                            }}
                         }}
                     }},
                     { "required", json::array( { "target" } ) }

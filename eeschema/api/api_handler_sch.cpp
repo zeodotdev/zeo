@@ -4152,6 +4152,20 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
         info->set_keywords( match.symbol->GetKeyWords().ToStdString() );
         info->set_unit_count( match.symbol->GetUnitCount() );
         info->set_is_power( match.symbol->IsPower() );
+
+        // Populate pin information
+        for( SCH_PIN* pin : match.symbol->GetPins() )
+        {
+            schematic::commands::PinInfo* pinInfo = info->add_pins();
+            pinInfo->set_number( pin->GetNumber().ToStdString() );
+            pinInfo->set_name( pin->GetName().ToStdString() );
+            kiapi::common::PackVector2Sch( *pinInfo->mutable_position(), pin->GetPosition() );
+            pinInfo->set_orientation( static_cast<int>( pin->GetOrientation() ) );
+            pinInfo->set_electrical_type( magic_enum::enum_name( pin->GetType() ).data() );
+            pinInfo->set_graphical_style( magic_enum::enum_name( pin->GetShape() ).data() );
+            pinInfo->set_unit( pin->GetUnit() );
+        }
+
         count++;
     }
 

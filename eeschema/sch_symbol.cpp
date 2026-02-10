@@ -88,6 +88,8 @@ void SCH_SYMBOL::Serialize( google::protobuf::Any& aContainer ) const
         protoField->set_name( field.GetName().ToStdString() );
         protoField->set_id_int( static_cast<int>( field.GetId() ) );
         protoField->mutable_attributes()->set_visible( field.IsVisible() );
+        protoField->mutable_attributes()->mutable_angle()->set_value_degrees(
+                field.GetDrawRotation().AsDegrees() );
     }
 
     // Pins
@@ -163,7 +165,7 @@ bool SCH_SYMBOL::Deserialize( const google::protobuf::Any& aContainer )
     }
     SetExcludedFromBoard( symbol.exclude_from_board() );
 
-    // Fields Update?
+    // Fields Update
     for( const auto& protoField : symbol.fields() )
     {
         SCH_FIELD* field = GetField( protoField.name() );
@@ -173,7 +175,27 @@ bool SCH_SYMBOL::Deserialize( const google::protobuf::Any& aContainer )
             field->SetPosition( kiapi::common::UnpackVector2Sch( protoField.position() ) );
 
             if( protoField.has_attributes() )
+            {
                 field->SetVisible( protoField.attributes().visible() );
+
+                if( protoField.attributes().has_angle() )
+                {
+                    EDA_ANGLE absAngle( protoField.attributes().angle().value_degrees(),
+                                        DEGREES_T );
+
+                    // Convert from absolute screen angle to stored angle
+                    // (reverse of GetDrawRotation: flip H↔V when symbol is rotated 90/270)
+                    if( GetTransform().y1 )
+                    {
+                        if( absAngle.IsHorizontal() )
+                            absAngle = ANGLE_VERTICAL;
+                        else
+                            absAngle = ANGLE_HORIZONTAL;
+                    }
+
+                    field->SetTextAngle( absAngle );
+                }
+            }
         }
     }
 

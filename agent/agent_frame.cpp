@@ -1356,6 +1356,10 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
     m_pendingOpenToolId.clear();
     m_pendingOpenFilePath.Clear();
 
+    // Take schematic snapshot so user edits before next message are detected
+    if( m_chatController )
+        m_chatController->TakeSchematicSnapshot();
+
     // Transition state machine to IDLE
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
 

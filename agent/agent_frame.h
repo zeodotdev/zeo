@@ -265,11 +265,6 @@ private:
     AGENT_WORKSPACE m_agentWorkspace;
     void SetAgentTargetSheet( const KIID& aSheetId, const wxString& aSheetName );
     AGENT_WORKSPACE& GetAgentWorkspace() { return m_agentWorkspace; }
-    void BeginAgentTransaction();
-    void EndAgentTransaction( bool aCommit );
-    void OnConflictDetected( const KIID& aItemId, const CONFLICT_INFO& aInfo );
-    void OnConflictResolved( const KIID& aItemId, CONFLICT_RESOLUTION aResolution );
-    void UpdateConflictDisplay();
 
     // Pending editor open request
     bool        m_pendingOpenSch;

@@ -1,25 +1,7 @@
-/*
- * This program source code file is part of KiCad, a free EDA CAD application.
- *
- * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
- *
- * This program is free software: you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation, either version 3 of the License, or (at your
- * option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 #ifndef TOOL_HANDLER_H
 #define TOOL_HANDLER_H
 
+#include <functional>
 #include <string>
 #include <nlohmann/json.hpp>
 
@@ -109,9 +91,23 @@ public:
      */
     virtual bool IsPcbEditorOpen() const { return m_pcbEditorOpen; }
 
+    /**
+     * Function type for sending IPC requests to other KiCad frames.
+     * Parameters: (destination frame type, JSON payload string)
+     * Returns: response string from the target frame.
+     */
+    using SendRequestFn = std::function<std::string( int, const std::string& )>;
+
+    /**
+     * Provide an IPC send function so the handler can communicate with editor frames.
+     * Called before Execute() by ExecuteToolSync.
+     */
+    void SetSendRequestFn( SendRequestFn aFn ) { m_sendRequestFn = std::move( aFn ); }
+
 protected:
     bool m_schematicEditorOpen = false;
     bool m_pcbEditorOpen = false;
+    SendRequestFn m_sendRequestFn;
 };
 
 #endif // TOOL_HANDLER_H

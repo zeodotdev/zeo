@@ -258,10 +258,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_isTrackingAgent( false ),
         m_hasPcbChanges( false ),
         m_pendingOpenSch( false ),
-        m_pendingOpenPcb( false ),
-        m_pendingCloseSch( false ),
-        m_pendingClosePcb( false ),
-        m_pendingCloseSaveFirst( true )
+        m_pendingOpenPcb( false )
 {
     SetBackgroundColour( wxColour( "#1E1E1E" ) );
 
@@ -340,6 +337,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_thinkingExpanded = false;
     m_isThinking = false;
     m_isStreamingMarkdown = false;
+    m_thinkingHtmlDirty = false;
     m_currentThinkingIndex = -1;
 
     // Initialize tool result toggle state
@@ -754,6 +752,13 @@ wxString AGENT_FRAME::BuildStreamingContent()
     // Build the streaming content HTML from current state
     wxString streamingContent;
 
+    // Rebuild thinking HTML lazily if content changed since last build
+    if( m_thinkingHtmlDirty )
+    {
+        RebuildThinkingHtml();
+        m_thinkingHtmlDirty = false;
+    }
+
     // Include thinking HTML if available (streamed directly in updateStreamingContent)
     if( !m_thinkingHtml.IsEmpty() )
         streamingContent += m_thinkingHtml;
@@ -913,33 +918,9 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 {
     if( aEvent.Command() == MAIL_AGENT_RESPONSE )
     {
-        std::string payload = aEvent.GetPayload();
-
-        // Check if we're in async tool execution mode (frame's context has an executing tool)
-        // NOTE: The controller also executes tools via the synchronous SendRequest path,
-        // which expects m_toolResponse to be set. Only use async path if the FRAME
-        // actually has a tool marked as executing.
-        PendingToolCall* executing = m_conversationCtx.GetExecutingToolCall();
-
-        if( executing )
-        {
-            // Frame has an executing tool - use async path
-            // Post tool completion event
-            ToolExecutionResult* result = new ToolExecutionResult();
-            result->tool_use_id = executing->tool_use_id;
-            result->tool_name = executing->tool_name;
-            result->result = payload;
-            result->success = !payload.empty() && payload.find( "Error:" ) != 0;
-            result->execution_time_ms = ( wxGetLocalTimeMillis() - executing->start_time ).GetValue();
-
-            PostToolResult( this, *result );
-            delete result;  // PostToolResult copies the data
-        }
-        else
-        {
-            // Sync mode (controller path) - store response for SendRequest() to pick up
-            m_toolResponse = payload;
-        }
+        // All tool execution goes through the controller's synchronous SendRequest path,
+        // which polls m_toolResponse. Store the KIWAY response for SendRequest() to pick up.
+        m_toolResponse = aEvent.GetPayload();
     }
     else if( aEvent.Command() == MAIL_SELECTION )
     {
@@ -1126,8 +1107,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // Auto-reject pending open/close editor request if user sends a new message.
     // This runs outside m_isGenerating because OnChatToolStart calls
     // StopGeneratingAnimation() which sets m_isGenerating = false.
-    bool hasApproval = m_pendingOpenSch || m_pendingOpenPcb
-                       || m_pendingCloseSch || m_pendingClosePcb;
+    bool hasApproval = m_pendingOpenSch || m_pendingOpenPcb;
 
     if( hasApproval )
     {
@@ -1201,6 +1181,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_thinkingHtml = "";
     m_thinkingContent = "";
     m_thinkingExpanded = false;
+    m_thinkingHtmlDirty = false;
     m_isThinking = false;
     m_pendingToolCalls = nlohmann::json::array();
     // NOTE: Don't reset m_toolResultCounter here - old tool-result-N IDs persist in
@@ -1305,7 +1286,7 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
     }
 
     // Replace approval box with "Cancelled" if an editor approval was pending
-    if( ( m_pendingOpenSch || m_pendingOpenPcb || m_pendingCloseSch || m_pendingClosePcb )
+    if( ( m_pendingOpenSch || m_pendingOpenPcb )
         && !m_activeRunningHtml.IsEmpty() && m_activeToolResultIdx >= 0 )
     {
         wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
@@ -1325,9 +1306,6 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
     m_pendingOpenPcb = false;
     m_pendingOpenToolId.clear();
     m_pendingOpenFilePath.Clear();
-    m_pendingCloseSch = false;
-    m_pendingClosePcb = false;
-    m_pendingCloseToolId.clear();
 
     // Transition state machine to IDLE
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
@@ -1460,6 +1438,7 @@ void AGENT_FRAME::SendQueuedMessage()
     m_thinkingHtml = "";
     m_thinkingContent = "";
     m_thinkingExpanded = false;
+    m_thinkingHtmlDirty = false;
     m_isThinking = false;
     m_pendingToolCalls = nlohmann::json::array();
     m_activeRunningHtml.Clear();
@@ -1601,8 +1580,6 @@ void AGENT_FRAME::OnBridgeLinkClick( const nlohmann::json& aMsg )
         OnApproveOpenEditor();
     else if( href == "agent:reject_open" )
         OnRejectOpenEditor();
-    else if( href == "agent:approve_close" )
-        OnApproveCloseEditor();
     else if( href.StartsWith( "http://" ) || href.StartsWith( "https://" ) )
         wxLaunchDefaultBrowser( href );
 }
@@ -1693,6 +1670,7 @@ void AGENT_FRAME::OnBridgeThinkingToggled( const nlohmann::json& aMsg )
     {
         m_thinkingExpanded = expanded;
         RebuildThinkingHtml();
+        m_thinkingHtmlDirty = false;
         FlushStreamingContentUpdate( true );
     }
     else if( index >= 0 && index < (int)m_historicalThinking.size() )
@@ -1742,7 +1720,11 @@ void AGENT_FRAME::OnBridgeScrollActivity( const nlohmann::json& aMsg )
     bool coupled = aMsg.value( "coupled", true );
 
     m_lastScrollActivityMs = wxGetLocalTimeMillis().GetValue();
-    m_userScrolledUp = active || !coupled;
+    // Only suppress streaming updates if user has scrolled away from the bottom.
+    // The 'active' flag is always true (scroll events only fire during activity),
+    // so basing m_userScrolledUp on it would suppress updates even when the user
+    // is at the bottom (e.g., after a layout reflow from tool result rendering).
+    m_userScrolledUp = !coupled;
 }
 
 void AGENT_FRAME::OnBridgeHistoryOpen()
@@ -1981,20 +1963,20 @@ void AGENT_FRAME::OnExit( wxCommandEvent& event )
 
 std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayload )
 {
-    // Ensure the target frame exists before sending the message
-    // This is necessary because Kiway silently drops messages to non-existent frames
-    KIWAY_PLAYER* targetPlayer = Kiway().Player( static_cast<FRAME_T>( aDestFrame ), true );
+    // Check if the target frame exists.
+    // For the terminal frame, create it on demand (needed for shell commands).
+    // For editor frames, don't create — the editor must already be open.
+    bool createIfMissing = ( static_cast<FRAME_T>( aDestFrame ) == FRAME_TERMINAL );
+    KIWAY_PLAYER* targetPlayer = Kiway().Player( static_cast<FRAME_T>( aDestFrame ),
+                                                  createIfMissing );
     if( !targetPlayer )
     {
-        wxLogError( "AGENT: SendRequest failed - could not create target frame %d", aDestFrame );
-        return "Error: Failed to create target frame for tool execution.";
+        wxLogWarning( "AGENT: SendRequest - target frame %d is not open", aDestFrame );
+        return "Error: Target frame is not open.";
     }
 
-    // Log the request (truncate payload if too long)
-    wxString payloadPreview = wxString::FromUTF8( aPayload.substr( 0, 200 ) );
-    if( aPayload.length() > 200 )
-        payloadPreview += "...";
-    wxLogInfo( "AGENT: SendRequest to frame %d, payload: %s", aDestFrame, payloadPreview );
+    wxLogInfo( "AGENT: SendRequest to frame %d, payload: %s",
+               aDestFrame, wxString::FromUTF8( aPayload ) );
 
     // Use a sentinel value to distinguish "no response yet" from "empty response received"
     static const std::string NO_RESPONSE_SENTINEL = "\x01__NO_RESPONSE__\x01";
@@ -2042,11 +2024,8 @@ std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayloa
             elapsed ).ToStdString();
     }
 
-    // Log successful response (truncate if too long)
-    wxString responsePreview = wxString::FromUTF8( m_toolResponse.substr( 0, 200 ) );
-    if( m_toolResponse.length() > 200 )
-        responsePreview += "...";
-    wxLogInfo( "AGENT: SendRequest got response after %ld ms: %s", elapsed, responsePreview );
+    wxLogInfo( "AGENT: SendRequest got response after %ld ms: %s",
+               elapsed, wxString::FromUTF8( m_toolResponse ) );
 
     return m_toolResponse;
 }
@@ -2087,6 +2066,12 @@ void AGENT_FRAME::InitializeTools()
 
 void AGENT_FRAME::StartAsyncLLMRequest()
 {
+    // Reset scroll guard so new streaming content (thinking, text) is visible.
+    // Without this, m_userScrolledUp can remain true after a tool call if the user
+    // scrolled during tool execution, causing FlushStreamingContentUpdate and the
+    // timer to skip all DOM updates for the new response.
+    m_userScrolledUp = false;
+
     // Start the generating animation
     StartGeneratingAnimation();
 
@@ -2146,11 +2131,9 @@ void AGENT_FRAME::RetryLastRequest()
     m_thinkingHtml.Clear();
     m_toolCallHtml.Clear();
     m_thinkingExpanded = false;
+    m_thinkingHtmlDirty = false;
     m_isThinking = false;
     m_pendingToolCalls = nlohmann::json::array();
-    m_pendingCloseSch = false;
-    m_pendingClosePcb = false;
-    m_pendingCloseToolId.clear();
 
     // Ensure we're in the right state
     m_conversationCtx.Reset();
@@ -2316,8 +2299,9 @@ void AGENT_FRAME::RenderChatHistory()
     // Clear historical thinking storage
     m_historicalThinking.clear();
 
-    // Counter for tool result toggle indices
-    int toolResultIndex = 0;
+    // Reset counter - RenderChatHistory updates m_toolResultCounter so that
+    // subsequent live tool calls get indices that don't collide with historical ones.
+    m_toolResultCounter = 0;
 
     // Build HTML from chat history (inner content only, no template wrapper)
     m_fullHtmlContent = "";
@@ -2547,13 +2531,23 @@ void AGENT_FRAME::RenderChatHistory()
                     wxString fullFormatted = FormatToolResult( textContent );
 
                     wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
-                    bool expanded = m_historicalToolResultExpanded.count( toolResultIndex ) > 0;
+                    bool expanded = m_historicalToolResultExpanded.count( m_toolResultCounter ) > 0;
 
-                    m_fullHtmlContent += BuildToolResultHtml( toolResultIndex, desc,
+                    m_fullHtmlContent += BuildToolResultHtml( m_toolResultCounter, desc,
                                                              statusClass, statusText,
                                                              fullFormatted,
-                                                             imageHtml, expanded );
-                    toolResultIndex++;
+                                                             wxEmptyString, expanded );
+
+                    // Render image AFTER the collapsible tool result so it is
+                    // always visible in the chat stream.
+                    if( !imageHtml.IsEmpty() )
+                    {
+                        m_fullHtmlContent += "<div class=\"my-2\">"
+                                             + imageHtml
+                                             + "</div>";
+                    }
+
+                    m_toolResultCounter++;
                     m_lastToolDesc = "";
                 }
             }
@@ -2789,25 +2783,6 @@ void AGENT_FRAME::ShowOpenEditorApproval( const wxString& aEditorType )
 }
 
 
-void AGENT_FRAME::ShowCloseEditorApproval( const wxString& aEditorType )
-{
-    int idx = m_activeToolResultIdx;
-    if( idx < 0 )
-        return;
-
-    wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Close editor" ) : m_lastToolDesc;
-    wxString approvalHtml = BuildToolApprovalHtml( idx, desc,
-                                                    "Close", "agent:approve_close",
-                                                    "#3d1a1a", "#f87171" );
-
-    m_fullHtmlContent.Replace( m_activeRunningHtml, approvalHtml );
-    m_htmlBeforeAgentResponse.Replace( m_activeRunningHtml, approvalHtml );
-    m_activeRunningHtml = approvalHtml;
-
-    SetHtml( m_fullHtmlContent );
-}
-
-
 void AGENT_FRAME::OnApproveOpenEditor()
 {
     wxLogInfo( "AGENT_FRAME::OnApproveOpenEditor called" );
@@ -2896,61 +2871,6 @@ void AGENT_FRAME::OnRejectOpenEditor()
     if( m_chatController )
         m_chatController->HandleToolResult( toolId,
             "User declined to open " + editorName.ToStdString() + " editor", false );
-}
-
-
-void AGENT_FRAME::OnApproveCloseEditor()
-{
-    wxLogInfo( "AGENT_FRAME::OnApproveCloseEditor called" );
-
-    if( m_pendingCloseToolId.empty() )
-    {
-        wxLogWarning( "OnApproveCloseEditor: empty tool ID - ignoring stale click" );
-        return;
-    }
-
-    if( !m_pendingCloseSch && !m_pendingClosePcb )
-    {
-        wxLogWarning( "OnApproveCloseEditor: no pending editor type" );
-        m_pendingCloseToolId.clear();
-        return;
-    }
-
-    if( m_chatController && !m_chatController->HasPendingTool( m_pendingCloseToolId ) )
-    {
-        wxLogWarning( "OnApproveCloseEditor: tool %s no longer pending",
-                      m_pendingCloseToolId.c_str() );
-        m_pendingCloseSch = false;
-        m_pendingClosePcb = false;
-        m_pendingCloseToolId.clear();
-        return;
-    }
-
-    FRAME_T frameType = m_pendingCloseSch ? FRAME_SCH : FRAME_PCB_EDITOR;
-    wxString editorLabel = m_pendingCloseSch ? "Schematic" : "PCB";
-    bool saveFirst = m_pendingCloseSaveFirst;
-
-    KIWAY_PLAYER* player = Kiway().Player( frameType, false );
-    if( player && player->IsShown() )
-    {
-        player->Close( !saveFirst );
-
-        if( frameType == FRAME_SCH )
-            TOOL_REGISTRY::Instance().SetSchematicEditorOpen( false );
-        else if( frameType == FRAME_PCB_EDITOR )
-            TOOL_REGISTRY::Instance().SetPcbEditorOpen( false );
-    }
-
-    std::string result = editorLabel.ToStdString() + " editor closed"
-                         + ( saveFirst ? " (saved)" : "" );
-    std::string toolId = m_pendingCloseToolId;
-
-    m_pendingCloseSch = false;
-    m_pendingClosePcb = false;
-    m_pendingCloseToolId.clear();
-
-    if( m_chatController )
-        m_chatController->HandleToolResult( toolId, result, true );
 }
 
 
@@ -3061,6 +2981,7 @@ void AGENT_FRAME::OnChatThinkingStart( wxThreadEvent& aEvent )
     // Rebuild thinking HTML and immediately flush to DOM
     // This bypasses the timer to minimize delay before thinking link is clickable
     RebuildThinkingHtml();
+    m_thinkingHtmlDirty = false;
     FlushStreamingContentUpdate();  // Immediate flush, don't wait for timer
 
     if( data )
@@ -3078,10 +2999,11 @@ void AGENT_FRAME::OnChatThinkingDelta( wxThreadEvent& aEvent )
     m_isThinking = true;
     m_thinkingContent = data->fullThinking;
 
-    // Rebuild thinking HTML and trigger update via timer
-    // The thinking content is included directly in BuildStreamingContent()
-    // and will be updated on the next timer tick (max 50ms delay)
-    RebuildThinkingHtml();
+    // Mark thinking HTML as dirty - defer the expensive HTML escape + rebuild to the
+    // next timer tick. Thinking deltas arrive hundreds of times per second but the timer
+    // only fires every 50ms, so rebuilding on every delta wastes O(n) work per delta
+    // (total O(n²) over the block).
+    m_thinkingHtmlDirty = true;
     UpdateAgentResponse();
 
     // Auto-scroll handled by CSS flex-direction: column-reverse
@@ -3106,6 +3028,7 @@ void AGENT_FRAME::OnChatThinkingDone( wxThreadEvent& aEvent )
 
     // Rebuild thinking display (removes loading animation)
     RebuildThinkingHtml();
+    m_thinkingHtmlDirty = false;
     UpdateAgentResponse();
 }
 
@@ -3449,65 +3372,6 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         return;
     }
 
-    // Handle close_editor - requires user approval before closing
-    if( data->toolName == "close_editor" )
-    {
-        std::string editorType = data->input.value( "editor_type", "" );
-        bool saveFirst = data->input.value( "save_first", true );
-        FRAME_T frameType = ( editorType == "sch" ) ? FRAME_SCH : FRAME_PCB_EDITOR;
-        wxString editorLabel = ( editorType == "sch" ) ? "Schematic" : "PCB";
-
-        KIWAY_PLAYER* player = Kiway().Player( frameType, false );
-        if( !player || !player->IsShown() )
-        {
-            // Editor not open - return success immediately (no popup needed)
-            if( m_chatController )
-                m_chatController->HandleToolResult( data->toolId,
-                    editorLabel.ToStdString() + " editor is not open", true );
-            delete data;
-            return;
-        }
-
-        // Store pending request and show approval dialog
-        m_pendingCloseSch = ( editorType == "sch" );
-        m_pendingClosePcb = ( editorType == "pcb" );
-        m_pendingCloseToolId = data->toolId;
-        m_pendingCloseSaveFirst = saveFirst;
-
-        ShowCloseEditorApproval( editorLabel );
-
-        delete data;
-        return;
-    }
-
-    // Handle save - save current documents
-    // Note: Saving is better done via IPC tools which have direct access to the editor APIs.
-    // This is a simplified version that just reports status.
-    if( data->toolName == "save" )
-    {
-        std::string editorType = data->input.value( "editor_type", "all" );
-        nlohmann::json result;
-        result["status"] = "info";
-        result["message"] = "Use IPC tools for saving. Schematic: sch.save(), PCB: pcb.save()";
-
-        std::vector<std::string> openEditors;
-        KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
-        KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
-
-        if( schEditor && schEditor->IsShown() )
-            openEditors.push_back( "schematic" );
-        if( pcbEditor && pcbEditor->IsShown() )
-            openEditors.push_back( "pcb" );
-
-        result["open_editors"] = openEditors;
-
-        if( m_chatController )
-            m_chatController->HandleToolResult( data->toolId, result.dump( 2 ), true );
-
-        delete data;
-        return;
-    }
-
     // Handle create_project - create new KiCad project
     if( data->toolName == "create_project" )
     {
@@ -3714,9 +3578,13 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
         m_bridge->PushToolResultImageEnd( idx );
     }
 
-    // Update internal HTML tracking (replace running HTML with full completed HTML)
+    // Update internal HTML tracking (replace running HTML with full completed HTML).
+    // Image is rendered OUTSIDE the collapsible tool result so it stays visible.
     wxString completedHtml = BuildToolResultHtml( idx, desc, statusClass, statusText,
-                                                  fullFormatted, imageHtml, false );
+                                                  fullFormatted, wxEmptyString, false );
+
+    if( !imageHtml.IsEmpty() )
+        completedHtml += "<div class=\"my-2\">" + imageHtml + "</div>";
 
     if( !m_activeRunningHtml.IsEmpty() )
     {
@@ -4054,11 +3922,11 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
     m_historicalThinkingExpanded.clear();
     m_historicalToolResultExpanded.clear();
     m_currentThinkingIndex = -1;
-    m_toolResultCounter = 0;
     m_activeRunningHtml.Clear();
     m_activeToolResultIdx = -1;
 
-    // Render the loaded chat history
+    // Render the loaded chat history (also advances m_toolResultCounter past
+    // historical tool-result indices so new live tools get non-colliding DOM IDs)
     RenderChatHistory();
 
     // Update DB ID so new messages go to this history

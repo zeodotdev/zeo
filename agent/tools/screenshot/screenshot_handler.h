@@ -1,22 +1,3 @@
-/*
- * This program source code file is part of KiCad, a free EDA CAD application.
- *
- * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
- *
- * This program is free software: you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation, either version 3 of the License, or (at your
- * option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 #ifndef SCREENSHOT_HANDLER_H
 #define SCREENSHOT_HANDLER_H
 
@@ -53,9 +34,18 @@ private:
     /**
      * Execute the screenshot tool.
      * @param aInput JSON with "file_path" parameter
-     * @return JSON string with __has_image envelope or error string
+     * @return JSON string with image envelope or error string
      */
     std::string ExecuteScreenshot( const nlohmann::json& aInput );
+
+    /**
+     * Export SVG via IPC from the in-memory editor state.
+     * Sends an export_screenshot command to the appropriate editor frame.
+     * @param aIsSchematic true for schematic, false for PCB
+     * @param aTempDir Temporary directory for output
+     * @return Path to the exported SVG, or empty on failure
+     */
+    std::string ExportViaIpc( bool aIsSchematic, const std::string& aTempDir );
 
     /**
      * Export a schematic to SVG using kicad-cli.

@@ -2798,6 +2798,10 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
 
     kiapi::schematic::commands::RunERCResponse response;
 
+    // Clear existing ERC markers before running new tests to prevent accumulation
+    SCH_SCREENS allScreens( m_frame->Schematic().Root() );
+    allScreens.DeleteAllMarkers( MARKER_BASE::MARKER_ERC, true );
+
     // Run ERC tests
     ERC_TESTER tester( &m_frame->Schematic() );
     tester.RunTests( nullptr, m_frame, nullptr, &m_frame->Prj(), nullptr );
@@ -2852,6 +2856,8 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
 
     response.set_error_count( errorCount );
     response.set_warning_count( warningCount );
+
+    m_frame->GetCanvas()->Refresh();
 
     return response;
 }
@@ -4332,7 +4338,7 @@ API_HANDLER_SCH::handleRunSimulation(
         wxLogInfo( "SIM API: Annotation check passed" );
     }
 
-    // Get or create the simulator frame
+    // Get or create the simulator frame (hidden — we only need the engine, not the GUI)
     SIMULATOR_FRAME* simFrame = nullptr;
 
     try
@@ -4340,6 +4346,14 @@ API_HANDLER_SCH::handleRunSimulation(
         wxLogInfo( "SIM API: Getting simulator frame" );
         simFrame = static_cast<SIMULATOR_FRAME*>(
                 m_frame->Kiway().Player( FRAME_SIMULATOR, true ) );
+
+        wxLogInfo( "SIM API: Frame created, IsShown=%d", simFrame ? simFrame->IsShown() : -1 );
+
+        if( simFrame && simFrame->IsShown() )
+        {
+            wxLogInfo( "SIM API: Hiding simulator frame" );
+            simFrame->Hide();
+        }
     }
     catch( const std::exception& e )
     {

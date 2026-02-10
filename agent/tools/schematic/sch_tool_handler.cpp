@@ -1,154 +1,12 @@
-/*
- * This program source code file is part of KiCad, a free EDA CAD application.
- *
- * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
- *
- * This program is free software: you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation, either version 3 of the License, or (at your
- * option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 #include "sch_tool_handler.h"
-#include "sch_parser.h"
-#include "sch_validator.h"
-#include "../kicad_file/file_writer.h"
-#include "../kicad_file/uuid_util.h"
-#include "../kicad_file/sexpr_util.h"
-#include <wx/string.h>
-#include <regex>
 #include <sstream>
-
-namespace
-{
-
-/**
- * Check if a UUID is missing, empty, or a placeholder.
- * Placeholders include all-zeros UUID and empty strings.
- *
- * @param aUuid The UUID to check.
- * @return true if the UUID needs to be replaced.
- */
-bool NeedsUuidReplacement( const std::string& aUuid )
-{
-    if( aUuid.empty() )
-        return true;
-
-    // Check for all-zeros placeholder
-    if( aUuid == "00000000-0000-0000-0000-000000000000" )
-        return true;
-
-    // Check if it's a valid UUID format
-    if( !UuidUtil::IsValidUuid( aUuid ) )
-        return true;
-
-    return false;
-}
-
-
-/**
- * Insert or replace a UUID in an element's S-expression.
- * If the element has an existing (uuid ...) expression, it's replaced.
- * If not, a new (uuid "...") is appended before the closing parenthesis.
- *
- * @param aElement The element S-expression string.
- * @param aNewUuid The UUID to insert.
- * @return The modified element with the new UUID.
- */
-std::string InsertOrReplaceUuid( const std::string& aElement, const std::string& aNewUuid )
-{
-    // Try to match and replace existing UUID (quoted or unquoted)
-    std::regex existingUuid(
-        R"(\(uuid\s+\"?[0-9a-fA-F-]*\"?\))"
-    );
-
-    std::string replacement = "(uuid \"" + aNewUuid + "\")";
-
-    if( std::regex_search( aElement, existingUuid ) )
-    {
-        return std::regex_replace( aElement, existingUuid, replacement );
-    }
-
-    // No existing UUID - insert before the final closing parenthesis
-    // Find the last ')' that closes the main element
-    size_t lastParen = aElement.rfind( ')' );
-    if( lastParen == std::string::npos )
-        return aElement;  // Malformed, let validation catch it
-
-    // Insert the UUID before the closing paren, with proper formatting
-    std::string result = aElement.substr( 0, lastParen );
-
-    // Check if we need to add whitespace/newline
-    if( !result.empty() && result.back() != '\n' && result.back() != ' ' && result.back() != '\t' )
-        result += "\n    ";
-
-    result += replacement;
-    result += "\n";
-    result += aElement.substr( lastParen );
-
-    return result;
-}
-
-
-/**
- * Ensure an element has a valid, unique UUID.
- * If the element is missing a UUID, has an empty UUID, or has a placeholder/duplicate UUID,
- * a new unique UUID is generated and inserted.
- *
- * @param aElement The element S-expression string.
- * @param aExistingUuids Set of UUIDs already in use in the schematic.
- * @return The element with a valid unique UUID.
- */
-std::string EnsureElementHasUuid( const std::string& aElement,
-                                   const std::set<std::string>& aExistingUuids )
-{
-    // Parse the element to check for existing UUID
-    auto parsed = SexprUtil::Parse( aElement );
-    if( !parsed )
-        return aElement;  // Let validation catch syntax errors
-
-    // Look for existing UUID
-    auto uuidExpr = SexprUtil::FindFirstChild( parsed.get(), "uuid" );
-
-    if( uuidExpr )
-    {
-        std::string uuid = SexprUtil::GetStringValue( uuidExpr );
-
-        // If UUID is valid and unique, keep it unchanged
-        if( !NeedsUuidReplacement( uuid ) &&
-            UuidUtil::IsUuidUnique( uuid, aExistingUuids ) )
-        {
-            return aElement;
-        }
-    }
-
-    // Generate a new unique UUID
-    std::string newUuid = UuidUtil::GenerateUniqueUuid( aExistingUuids );
-
-    // Insert or replace the UUID in the element
-    return InsertOrReplaceUuid( aElement, newUuid );
-}
-
-} // anonymous namespace
 
 
 // Static list of tool names this handler supports
 static const char* SCH_TOOL_NAMES[] = {
     "sch_get_summary",
-    "sch_file_summary",
-    "sch_live_summary",
     "sch_read_section",
-    // "sch_modify",  // DISABLED: Use sch_add/sch_update/sch_delete instead
-    "sch_export_spice_netlist",
-    "sch_get_pins"  // Lightweight pin lookup for a single symbol
+    "sch_get_pins"
 };
 
 
@@ -165,21 +23,12 @@ bool SCH_TOOL_HANDLER::CanHandle( const std::string& aToolName ) const
 
 std::string SCH_TOOL_HANDLER::Execute( const std::string& aToolName, const nlohmann::json& aInput )
 {
-    if( aToolName == "sch_get_summary" || aToolName == "sch_file_summary" )
-        return ExecuteGetSummary( aInput );
-    else if( aToolName == "sch_live_summary" )
-        // sch_live_summary requires IPC - if Execute is called, IPC failed
-        return "Error: sch_live_summary requires IPC execution. Schematic editor must be open.";
+    if( aToolName == "sch_get_summary" )
+        return "Error: sch_get_summary requires IPC execution. Schematic editor must be open.";
     else if( aToolName == "sch_get_pins" )
-        // sch_get_pins requires IPC - if Execute is called, IPC failed
         return "Error: sch_get_pins requires IPC execution. Schematic editor must be open.";
     else if( aToolName == "sch_read_section" )
-        return ExecuteReadSection( aInput );
-    // DISABLED: Use sch_add/sch_update/sch_delete instead
-    // else if( aToolName == "sch_modify" )
-    //     return ExecuteModify( aInput );
-    else if( aToolName == "sch_export_spice_netlist" )
-        return ExecuteExportSpiceNetlist( aInput );
+        return "Error: sch_read_section requires IPC execution. Schematic editor must be open.";
 
     return "Error: Unknown schematic tool: " + aToolName;
 }
@@ -188,15 +37,8 @@ std::string SCH_TOOL_HANDLER::Execute( const std::string& aToolName, const nlohm
 std::string SCH_TOOL_HANDLER::GetDescription( const std::string& aToolName,
                                                const nlohmann::json& aInput ) const
 {
-    std::string filePath = aInput.value( "file_path", "" );
-    std::string fileName = filePath.empty() ? "schematic" : FileWriter::GetFilename( filePath );
-
     if( aToolName == "sch_get_summary" )
-        return "Getting summary of " + fileName;
-    else if( aToolName == "sch_file_summary" )
-        return "Reading file summary of " + fileName;
-    else if( aToolName == "sch_live_summary" )
-        return "Getting live summary from editor";
+        return "Getting schematic summary";
     else if( aToolName == "sch_get_pins" )
     {
         std::string ref = aInput.value( "ref", "" );
@@ -205,267 +47,17 @@ std::string SCH_TOOL_HANDLER::GetDescription( const std::string& aToolName,
     else if( aToolName == "sch_read_section" )
     {
         std::string section = aInput.value( "section", "all" );
-        return "Reading " + section + " from " + fileName;
+        return "Reading schematic " + section;
     }
-    // DISABLED: Use sch_add/sch_update/sch_delete instead
-    // else if( aToolName == "sch_modify" )
-    // {
-    //     std::string operation = aInput.value( "operation", "modify" );
-    //     std::string elementType = aInput.value( "element_type", "element" );
-    //     return operation + " " + elementType + " in " + fileName;
-    // }
-    else if( aToolName == "sch_export_spice_netlist" )
-        return "Exporting SPICE netlist from " + fileName;
-
     return "Executing " + aToolName;
-}
-
-
-std::string SCH_TOOL_HANDLER::ExecuteGetSummary( const nlohmann::json& aInput )
-{
-    std::string filePath = aInput.value( "file_path", "" );
-    if( filePath.empty() )
-        return "Error: 'file_path' parameter is required";
-
-    if( !FileWriter::FileExists( filePath ) )
-        return "Error: File not found: " + filePath;
-
-    SchParser::SchematicSummary summary = SchParser::GetSummary( filePath );
-    return summary.ToJson().dump( 2 );
-}
-
-
-std::string SCH_TOOL_HANDLER::ExecuteReadSection( const nlohmann::json& aInput )
-{
-    std::string filePath = aInput.value( "file_path", "" );
-    if( filePath.empty() )
-        return "Error: 'file_path' parameter is required";
-
-    if( !FileWriter::FileExists( filePath ) )
-        return "Error: File not found: " + filePath;
-
-    std::string sectionName = aInput.value( "section", "all" );
-    std::string filter = aInput.value( "filter", "" );
-
-    SchParser::SectionType section = SchParser::SectionFromString( sectionName );
-    return SchParser::ReadSection( filePath, section, filter );
-}
-
-
-std::string SCH_TOOL_HANDLER::ExecuteModify( const nlohmann::json& aInput )
-{
-    // Block file-based modifications when schematic editor is open
-    // This prevents data conflicts between IPC (in-memory) and direct file operations
-    if( IsSchematicEditorOpen() )
-    {
-        nlohmann::json errorJson = {
-            { "success", false },
-            { "error", "File modification blocked: Schematic editor is open" },
-            { "message", "Direct file modifications are blocked while the schematic editor is open. "
-                         "Use IPC-based tools (sch_add, sch_update, sch_delete) instead, or close "
-                         "the editor first with close_editor." }
-        };
-        return errorJson.dump( 2 );
-    }
-
-    std::string filePath = aInput.value( "file_path", "" );
-    if( filePath.empty() )
-        return "Error: 'file_path' parameter is required";
-
-    if( !FileWriter::FileExists( filePath ) )
-        return "Error: File not found: " + filePath;
-
-    std::string operation = aInput.value( "operation", "" );
-    if( operation.empty() )
-        return "Error: 'operation' parameter is required (add, update, or delete)";
-
-    std::string elementType = aInput.value( "element_type", "" );
-    if( elementType.empty() )
-        return "Error: 'element_type' parameter is required (symbol, wire, junction, label, text)";
-
-    // Read current file content
-    std::string content;
-    if( !FileWriter::ReadFile( filePath, content ) )
-        return "Error: Failed to read file: " + filePath;
-
-    std::string newContent;
-
-    if( operation == "add" )
-    {
-        std::string data = aInput.value( "data", "" );
-        if( data.empty() )
-            return "Error: 'data' parameter is required for add operation";
-
-        // Auto-generate UUID if missing, empty, or invalid
-        std::set<std::string> existingUuids = UuidUtil::ExtractUuids( content );
-        data = EnsureElementHasUuid( data, existingUuids );
-
-        // Validate the element before adding
-        auto validation = SchValidator::ValidateElement( elementType, data );
-        if( !validation.valid )
-        {
-            nlohmann::json errorJson = {
-                { "success", false },
-                { "error", "Invalid element" },
-                { "validation", validation.ToJson() }
-            };
-            return errorJson.dump( 2 );
-        }
-
-        newContent = SchParser::AddElement( content, elementType, data );
-    }
-    else if( operation == "update" )
-    {
-        std::string target = aInput.value( "target", "" );
-        std::string data = aInput.value( "data", "" );
-
-        if( target.empty() )
-            return "Error: 'target' parameter is required for update operation (UUID or reference)";
-        if( data.empty() )
-            return "Error: 'data' parameter is required for update operation";
-
-        // Validate the new element
-        auto validation = SchValidator::ValidateElement( elementType, data );
-        if( !validation.valid )
-        {
-            nlohmann::json errorJson = {
-                { "success", false },
-                { "error", "Invalid element" },
-                { "validation", validation.ToJson() }
-            };
-            return errorJson.dump( 2 );
-        }
-
-        // If target looks like a UUID, use it directly
-        if( UuidUtil::IsValidUuid( target ) )
-        {
-            newContent = SchParser::UpdateElement( content, target, data );
-        }
-        else
-        {
-            // Target is a reference - find the UUID first
-            auto matches = SchParser::FindSymbolsByReference( content, target );
-            if( matches.empty() )
-                return "Error: No symbol found with reference: " + target;
-            if( matches.size() > 1 )
-                return "Error: Multiple symbols match reference pattern: " + target;
-
-            // Extract UUID from the matched symbol
-            auto parsed = SexprUtil::Parse( matches[0] );
-            if( !parsed )
-                return "Error: Failed to parse matched symbol";
-
-            auto uuidExpr = SexprUtil::FindFirstChild( parsed.get(), "uuid" );
-            if( !uuidExpr )
-                return "Error: Matched symbol has no UUID";
-
-            std::string uuid = SexprUtil::GetStringValue( uuidExpr );
-            newContent = SchParser::UpdateElement( content, uuid, data );
-        }
-
-        if( newContent == content )
-            return "Error: Target element not found for update";
-    }
-    else if( operation == "delete" )
-    {
-        std::string target = aInput.value( "target", "" );
-        if( target.empty() )
-            return "Error: 'target' parameter is required for delete operation (UUID or reference)";
-
-        // If target looks like a UUID, use it directly
-        if( UuidUtil::IsValidUuid( target ) )
-        {
-            newContent = SchParser::DeleteByUuid( content, target );
-        }
-        else
-        {
-            // Target is a reference - find the UUID first
-            auto matches = SchParser::FindSymbolsByReference( content, target );
-            if( matches.empty() )
-                return "Error: No symbol found with reference: " + target;
-            if( matches.size() > 1 )
-                return "Error: Multiple symbols match reference pattern: " + target;
-
-            // Extract UUID from the matched symbol
-            auto parsed = SexprUtil::Parse( matches[0] );
-            if( !parsed )
-                return "Error: Failed to parse matched symbol";
-
-            auto uuidExpr = SexprUtil::FindFirstChild( parsed.get(), "uuid" );
-            if( !uuidExpr )
-                return "Error: Matched symbol has no UUID";
-
-            std::string uuid = SexprUtil::GetStringValue( uuidExpr );
-            newContent = SchParser::DeleteByUuid( content, uuid );
-        }
-
-        if( newContent == content )
-            return "Error: Target element not found for deletion";
-    }
-    else
-    {
-        return "Error: Unknown operation: " + operation + " (expected: add, update, delete)";
-    }
-
-    // Validate the modified content before writing
-    auto validation = SchValidator::ValidateContent( newContent );
-    if( !validation.valid )
-    {
-        nlohmann::json errorJson = {
-            { "success", false },
-            { "error", "Modified content failed validation" },
-            { "validation", validation.ToJson() }
-        };
-        return errorJson.dump( 2 );
-    }
-
-    // Write the modified content
-    auto writeResult = FileWriter::WriteFileSafe( filePath, newContent, true );
-    if( !writeResult.success )
-        return "Error: Failed to write file: " + writeResult.error;
-
-    nlohmann::json result = {
-        { "success", true },
-        { "operation", operation },
-        { "element_type", elementType },
-        { "file", filePath }
-    };
-
-    if( !writeResult.backupPath.empty() )
-        result["backup"] = writeResult.backupPath;
-
-    if( !validation.warnings.empty() )
-        result["warnings"] = validation.warnings;
-
-    return result.dump( 2 );
-}
-
-
-std::string SCH_TOOL_HANDLER::ExecuteExportSpiceNetlist( const nlohmann::json& aInput )
-{
-    std::string filePath = aInput.value( "file_path", "" );
-    if( filePath.empty() )
-        return "Error: 'file_path' parameter is required";
-
-    if( !FileWriter::FileExists( filePath ) )
-        return "Error: File not found: " + filePath;
-
-    std::string netlist = SchParser::GenerateSpiceNetlist( filePath );
-    if( netlist.empty() )
-        return "Error: Failed to generate SPICE netlist. Ensure the schematic is annotated "
-               "and kicad-cli is available.";
-
-    return netlist;
 }
 
 
 bool SCH_TOOL_HANDLER::RequiresIPC( const std::string& aToolName ) const
 {
-    // sch_get_summary: prefers IPC, falls back to file
-    // sch_live_summary: requires IPC (no fallback)
-    // sch_get_pins: requires IPC (no fallback)
-    // sch_file_summary: never uses IPC (file only)
-    return aToolName == "sch_get_summary" || aToolName == "sch_live_summary" || aToolName == "sch_get_pins";
+    return aToolName == "sch_get_summary" ||
+           aToolName == "sch_read_section" ||
+           aToolName == "sch_get_pins";
 }
 
 
@@ -557,11 +149,14 @@ std::string SCH_TOOL_HANDLER::GetIPCCommand( const std::string& aToolName,
         return "run_shell sch " + code.str();
     }
 
-    if( aToolName != "sch_get_summary" && aToolName != "sch_live_summary" )
+    if( aToolName != "sch_get_summary" && aToolName != "sch_read_section" )
         return "";
 
+    // Handle sch_read_section IPC code generation
+    if( aToolName == "sch_read_section" )
+        return GenerateReadSectionIPCCommand( aInput );
+
     std::string filePath = aInput.value( "file_path", "" );
-    bool isLiveSummary = ( aToolName == "sch_live_summary" );
 
     std::ostringstream code;
 
@@ -786,18 +381,129 @@ std::string SCH_TOOL_HANDLER::GetIPCCommand( const std::string& aToolName,
          << "\n"
          << "except Exception as e:\n";
 
-    if( isLiveSummary )
-    {
-        // sch_live_summary: fail hard if IPC fails (no file fallback)
-        code << "    print(json.dumps({'status': 'error', 'message': f'IPC failed: {e}. Schematic editor must be open.'}))\n";
-    }
-    else
-    {
-        // sch_get_summary: signal for file-based fallback
-        code << "    # IPC failed - signal for file-based fallback\n"
-             << "    print(f'IPC_FALLBACK_REQUIRED: {e}', file=sys.stderr)\n"
-             << "    print(json.dumps({'status': 'ipc_fallback', 'error': str(e)}))\n";
-    }
+    code << "    print(json.dumps({'status': 'error', 'message': f'IPC failed: {e}. Schematic editor must be open.'}))\n";
+
+    return "run_shell sch " + code.str();
+}
+
+
+std::string SCH_TOOL_HANDLER::GenerateReadSectionIPCCommand( const nlohmann::json& aInput ) const
+{
+    std::string section = aInput.value( "section", "all" );
+    std::string filter = aInput.value( "filter", "" );
+
+    std::ostringstream code;
+
+    code << "import json, sys, math, re\n"
+         << "\n"
+         << "# Refresh document to handle close/reopen cycles\n"
+         << "if hasattr(sch, 'refresh_document'):\n"
+         << "    if not sch.refresh_document():\n"
+         << "        raise RuntimeError('Schematic editor not open or document not available')\n"
+         << "\n"
+         << "section = " << nlohmann::json( section ).dump() << "\n"
+         << "filter_str = " << nlohmann::json( filter ).dump() << "\n"
+         << "\n"
+         << "def get_pos(obj, scale=1000000):\n"
+         << "    if obj is None:\n"
+         << "        return [0, 0]\n"
+         << "    if hasattr(obj, 'x') and hasattr(obj, 'y'):\n"
+         << "        return [obj.x / scale, obj.y / scale]\n"
+         << "    if isinstance(obj, dict):\n"
+         << "        return [obj.get('x', 0) / scale, obj.get('y', 0) / scale]\n"
+         << "    if isinstance(obj, (list, tuple)) and len(obj) >= 2:\n"
+         << "        return [obj[0] / scale, obj[1] / scale]\n"
+         << "    return [0, 0]\n"
+         << "\n"
+         << "def matches_filter(item, filter_str):\n"
+         << "    if not filter_str:\n"
+         << "        return True\n"
+         << "    # Check UUID match\n"
+         << "    item_uuid = str(item.id.value) if hasattr(item, 'id') else ''\n"
+         << "    if filter_str == item_uuid:\n"
+         << "        return True\n"
+         << "    # Check reference match (for symbols)\n"
+         << "    ref = getattr(item, 'reference', '')\n"
+         << "    if ref:\n"
+         << "        pattern = filter_str.replace('*', '.*').replace('?', '.')\n"
+         << "        if re.match(f'^{pattern}$', ref, re.IGNORECASE):\n"
+         << "            return True\n"
+         << "    return False\n"
+         << "\n"
+         << "try:\n"
+         << "    result = {'section': section}\n"
+         << "\n"
+         << "    if section in ('symbols', 'all'):\n"
+         << "        symbols = sch.symbols.get_all()\n"
+         << "        symbol_data = []\n"
+         << "        for sym in symbols:\n"
+         << "            if not matches_filter(sym, filter_str):\n"
+         << "                continue\n"
+         << "            lib_id_str = ''\n"
+         << "            if hasattr(sym, 'lib_id'):\n"
+         << "                lib_id = sym.lib_id\n"
+         << "                lib_id_str = lib_id.to_string() if hasattr(lib_id, 'to_string') else str(lib_id)\n"
+         << "            pins = []\n"
+         << "            if hasattr(sym, 'pins'):\n"
+         << "                for pin in sym.pins:\n"
+         << "                    try:\n"
+         << "                        abs_pos = None\n"
+         << "                        if hasattr(sch.symbols, 'get_transformed_pin_position'):\n"
+         << "                            try:\n"
+         << "                                pin_pos = sch.symbols.get_transformed_pin_position(sym, pin.number)\n"
+         << "                                if pin_pos:\n"
+         << "                                    abs_pos = get_pos(pin_pos)\n"
+         << "                            except:\n"
+         << "                                pass\n"
+         << "                        if not abs_pos or (abs_pos[0] == 0 and abs_pos[1] == 0):\n"
+         << "                            pin_pos = get_pos(getattr(pin, 'position', None))\n"
+         << "                            if pin_pos and (pin_pos[0] != 0 or pin_pos[1] != 0):\n"
+         << "                                abs_pos = pin_pos\n"
+         << "                        if abs_pos:\n"
+         << "                            pins.append({'number': pin.number, 'name': getattr(pin, 'name', ''), 'pos': abs_pos})\n"
+         << "                    except:\n"
+         << "                        pass\n"
+         << "            symbol_data.append({\n"
+         << "                'uuid': str(sym.id.value) if hasattr(sym, 'id') else '',\n"
+         << "                'lib_id': lib_id_str,\n"
+         << "                'ref': sym.reference if hasattr(sym, 'reference') else '',\n"
+         << "                'value': sym.value if hasattr(sym, 'value') else '',\n"
+         << "                'pos': get_pos(getattr(sym, 'position', None)),\n"
+         << "                'angle': getattr(sym, 'angle', 0),\n"
+         << "                'unit': getattr(sym, 'unit', 1),\n"
+         << "                'pins': pins\n"
+         << "            })\n"
+         << "        result['symbols'] = symbol_data\n"
+         << "\n"
+         << "    if section in ('wires', 'all'):\n"
+         << "        wires = sch.crud.get_wires()\n"
+         << "        result['wires'] = [{'uuid': str(w.id.value) if hasattr(w, 'id') else '', 'start': get_pos(getattr(w, 'start', None)), 'end': get_pos(getattr(w, 'end', None))} for w in wires]\n"
+         << "\n"
+         << "    if section in ('junctions', 'all'):\n"
+         << "        junctions = sch.crud.get_junctions()\n"
+         << "        result['junctions'] = [{'uuid': str(j.id.value) if hasattr(j, 'id') else '', 'pos': get_pos(getattr(j, 'position', None))} for j in junctions]\n"
+         << "\n"
+         << "    if section in ('labels', 'all'):\n"
+         << "        labels = sch.labels.get_all()\n"
+         << "        result['labels'] = [{'uuid': str(l.id.value) if hasattr(l, 'id') else '', 'text': l.text if hasattr(l, 'text') else '', 'pos': get_pos(getattr(l, 'position', None)), 'type': type(l).__name__} for l in labels]\n"
+         << "\n"
+         << "    if section in ('sheets', 'all'):\n"
+         << "        sheets = sch.crud.get_sheets()\n"
+         << "        result['sheets'] = [{'uuid': str(s.id.value) if hasattr(s, 'id') else '', 'name': s.name if hasattr(s, 'name') else '', 'file': s.filename if hasattr(s, 'filename') else ''} for s in sheets]\n"
+         << "\n"
+         << "    if section == 'header':\n"
+         << "        doc = sch.document\n"
+         << "        result['header'] = {\n"
+         << "            'version': getattr(doc, 'version', 0),\n"
+         << "            'uuid': str(doc.uuid) if hasattr(doc, 'uuid') else '',\n"
+         << "            'paper': getattr(doc, 'paper', ''),\n"
+         << "            'title': getattr(doc, 'title', '')\n"
+         << "        }\n"
+         << "\n"
+         << "    print(json.dumps(result, indent=2))\n"
+         << "\n"
+         << "except Exception as e:\n"
+         << "    print(json.dumps({'status': 'error', 'message': f'IPC failed: {e}. Schematic editor must be open.'}))\n";
 
     return "run_shell sch " + code.str();
 }

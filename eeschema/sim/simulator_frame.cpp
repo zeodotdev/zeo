@@ -185,6 +185,11 @@ SIMULATOR_FRAME::SIMULATOR_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Ensure new items are taken in account by sizers:
     Layout();
 
+    // Keep the frame hidden during construction.  API-driven simulation runs create
+    // the frame solely for the engine — they never need the GUI.  The explicit open
+    // path (SCH_INSPECTION_TOOL::RunSimulation) calls Show() + Raise() afterwards.
+    Hide();
+
     // resize the subwindows size. At least on Windows, calling wxSafeYield before
     // resizing the subwindows forces the wxSplitWindows size events automatically generated
     // by wxWidgets to be executed before our resize code.
@@ -192,9 +197,6 @@ SIMULATOR_FRAME::SIMULATOR_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // events
     wxSafeYield();
     m_ui->SetSubWindowsSashSize();
-
-    // Ensure the window is on top
-    Raise();
 
     m_ui->InitWorkbook();
     UpdateTitle();

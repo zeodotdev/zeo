@@ -64,7 +64,10 @@
 #include <dialogs/dialog_settings_diff.h>
 #include <diff_manager.h>
 #include <agent_change_tracker.h>
+#include <settings/settings_manager.h>
 #include <python_scripting.h> // Fixed include path
+#include "pcb_plotter.h"
+#include <reporter.h>
 // #include <Python.h> // Included by python_scripting.h if KICAD_SCRIPTING is defined
 
 
@@ -723,6 +726,50 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                 fflush( stderr );
                 DetectAgentChanges();
                 break;  // No response needed
+            }
+            else if( j_in.contains( "type" ) && j_in["type"] == "export_screenshot" )
+            {
+                // Export the current in-memory PCB to SVG for screenshot
+                std::string outputDir = j_in.value( "output_dir", "" );
+                wxString    svgPath = wxString::FromUTF8( outputDir )
+                                      + wxFileName::GetPathSeparator() + wxT( "pcb.svg" );
+
+                PCB_PLOT_PARAMS plotOpts;
+                plotOpts.SetFormat( PLOT_FORMAT::SVG );
+                plotOpts.SetPlotFrameRef( false );
+                plotOpts.SetSvgFitPageToBoard( true );
+                plotOpts.SetBlackAndWhite( false );
+                plotOpts.SetMirror( false );
+                plotOpts.SetNegative( false );
+                plotOpts.SetScale( 1.0 );
+                plotOpts.SetAutoScale( false );
+                plotOpts.SetDrillMarksType( DRILL_MARKS::FULL_DRILL_SHAPE );
+                plotOpts.SetPlotReference( true );
+                plotOpts.SetPlotValue( true );
+
+                COLOR_SETTINGS* colors =
+                        ::GetColorSettings( wxT( "_builtin_default" ) );
+                plotOpts.SetColorSettings( colors );
+
+                LSEQ layers;
+                layers.push_back( F_Cu );
+                layers.push_back( B_Cu );
+                layers.push_back( F_SilkS );
+                layers.push_back( B_SilkS );
+                layers.push_back( Edge_Cuts );
+
+                PCB_PLOTTER plotter( GetBoard(), &NULL_REPORTER::GetInstance(), plotOpts );
+                bool        success =
+                        plotter.Plot( svgPath, layers, LSEQ(), false, true );
+
+                nlohmann::json resp;
+                resp["type"] = "export_screenshot_response";
+                resp["svg_path"] = svgPath.ToStdString();
+                resp["success"] = success;
+
+                std::string respStr = resp.dump();
+                Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, respStr, this );
+                break;
             }
             else if( j_in.contains( "type" ) && j_in["type"] == "propose_settings" )
             {

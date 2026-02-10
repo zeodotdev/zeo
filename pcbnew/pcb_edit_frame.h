@@ -932,6 +932,12 @@ public:
     bool HasAgentPendingChanges() const;
 
     /**
+     * Clear stale agent change state when all agent undo entries have been undone.
+     * Called from the undo handler to auto-reject when user Ctrl+Z's past baseline.
+     */
+    void ClearStaleAgentChanges();
+
+    /**
      * Get the agent change tracker.
      * @return Pointer to the tracker, or nullptr if not initialized.
      */

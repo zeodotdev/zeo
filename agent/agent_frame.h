@@ -193,6 +193,7 @@ private:
     bool     m_thinkingExpanded;
     bool     m_isThinking;
     bool     m_isStreamingMarkdown;
+    bool     m_thinkingHtmlDirty;      // Deferred rebuild flag for thinking HTML
     int      m_currentThinkingIndex;
     wxString m_lastToolDesc;
     bool     m_userScrolledUp;
@@ -278,14 +279,6 @@ private:
     void ShowOpenEditorApproval( const wxString& aEditorType );
     void OnApproveOpenEditor();
     void OnRejectOpenEditor();
-
-    // Pending editor close request
-    bool        m_pendingCloseSch;
-    bool        m_pendingClosePcb;
-    std::string m_pendingCloseToolId;
-    bool        m_pendingCloseSaveFirst;
-    void ShowCloseEditorApproval( const wxString& aEditorType );
-    void OnApproveCloseEditor();
 
     bool DoOpenEditor( FRAME_T aFrameType );
 };

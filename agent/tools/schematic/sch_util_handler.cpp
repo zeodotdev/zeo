@@ -1,22 +1,3 @@
-/*
- * This program source code file is part of KiCad, a free EDA CAD application.
- *
- * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
- *
- * This program is free software: you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation, either version 3 of the License, or (at your
- * option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 #include "sch_util_handler.h"
 #include <sstream>
 
@@ -24,7 +5,6 @@
 bool SCH_UTIL_HANDLER::CanHandle( const std::string& aToolName ) const
 {
     return aToolName == "sch_annotate" ||
-           aToolName == "sch_save" ||
            aToolName == "sch_get_nets";
 }
 
@@ -46,10 +26,6 @@ std::string SCH_UTIL_HANDLER::GetDescription( const std::string& aToolName,
             return "Annotating all symbols";
         return "Annotating unannotated symbols";
     }
-    else if( aToolName == "sch_save" )
-    {
-        return "Saving schematic";
-    }
     else if( aToolName == "sch_get_nets" )
     {
         return "Getting net list";
@@ -62,7 +38,6 @@ std::string SCH_UTIL_HANDLER::GetDescription( const std::string& aToolName,
 bool SCH_UTIL_HANDLER::RequiresIPC( const std::string& aToolName ) const
 {
     return aToolName == "sch_annotate" ||
-           aToolName == "sch_save" ||
            aToolName == "sch_get_nets";
 }
 
@@ -74,8 +49,6 @@ std::string SCH_UTIL_HANDLER::GetIPCCommand( const std::string& aToolName,
 
     if( aToolName == "sch_annotate" )
         code = GenerateAnnotateCode( aInput );
-    else if( aToolName == "sch_save" )
-        code = GenerateSaveCode( aInput );
     else if( aToolName == "sch_get_nets" )
         code = GenerateGetNetsCode( aInput );
 
@@ -163,50 +136,6 @@ std::string SCH_UTIL_HANDLER::GenerateAnnotateCode( const nlohmann::json& aInput
     code << "except Exception as e:\n";
     code << "    import traceback\n";
     code << "    print(json.dumps({'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}))\n";
-
-    return code.str();
-}
-
-
-std::string SCH_UTIL_HANDLER::GenerateSaveCode( const nlohmann::json& aInput ) const
-{
-    std::ostringstream code;
-
-    code << "import json\n";
-    code << "\n";
-    code << "# Refresh document to handle close/reopen cycles\n";
-    code << "if hasattr(sch, 'refresh_document'):\n";
-    code << "    if not sch.refresh_document():\n";
-    code << "        raise RuntimeError('Schematic editor not open or document not available')\n";
-    code << "\n";
-    code << "try:\n";
-    code << "    # Try to save the schematic via kipy API\n";
-    code << "    if hasattr(sch, 'save'):\n";
-    code << "        sch.save()\n";
-    code << "    elif hasattr(sch, 'document') and hasattr(sch.document, 'save'):\n";
-    code << "        sch.document.save()\n";
-    code << "    elif hasattr(sch, 'file') and hasattr(sch.file, 'save'):\n";
-    code << "        sch.file.save()\n";
-    code << "    else:\n";
-    code << "        raise AttributeError('No save method found in kipy API')\n";
-    code << "\n";
-    code << "    # Get file path if available for confirmation\n";
-    code << "    file_path = ''\n";
-    code << "    if hasattr(sch, 'file_path'):\n";
-    code << "        file_path = str(sch.file_path)\n";
-    code << "    elif hasattr(sch, 'document') and hasattr(sch.document, 'path'):\n";
-    code << "        file_path = str(sch.document.path)\n";
-    code << "\n";
-    code << "    result = {\n";
-    code << "        'status': 'success',\n";
-    code << "        'message': 'Schematic saved successfully'\n";
-    code << "    }\n";
-    code << "    if file_path:\n";
-    code << "        result['file_path'] = file_path\n";
-    code << "    print(json.dumps(result, indent=2))\n";
-    code << "\n";
-    code << "except Exception as e:\n";
-    code << "    print(json.dumps({'status': 'error', 'message': str(e)}))\n";
 
     return code.str();
 }

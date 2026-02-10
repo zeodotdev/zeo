@@ -1,22 +1,3 @@
-/*
- * This program source code file is part of KiCad, a free EDA CAD application.
- *
- * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
- *
- * This program is free software: you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation, either version 3 of the License, or (at your
- * option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 #include "chat_controller.h"
 #include "chat_events.h"
 #include "../tools/agent_tools.h"
@@ -896,9 +877,7 @@ void CHAT_CONTROLLER::ExecuteNextTool()
     // Handle frame-managed tools specially - they are processed by AGENT_FRAME in OnChatToolStart
     // and call HandleToolResult() when done
     if( tool->tool_name == "open_editor" ||
-        tool->tool_name == "close_editor" ||
         tool->tool_name == "check_status" ||
-        tool->tool_name == "save" ||
         tool->tool_name == "create_project" )
     {
         // Don't execute synchronously - wait for frame to handle via HandleToolResult
@@ -1021,7 +1000,7 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
         {
             auto resultJson = nlohmann::json::parse( aResult );
 
-            if( resultJson.value( "__has_image", false ) )
+            if( resultJson.contains( "image" ) )
             {
                 wxLogInfo( "CHAT_CONTROLLER: Detected image content in tool result for %s",
                            aToolId.c_str() );
@@ -1034,6 +1013,7 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
 
                 if( resultJson.contains( "image" ) )
                 {
+                    // Low-res image for the LLM API context
                     AgentConversationContext::ToolResultContentBlock imgBlock;
                     imgBlock.type = AgentConversationContext::ToolResultContentBlock::Type::IMAGE;
                     imgBlock.media_type = resultJson["image"].value( "media_type", "image/png" );
@@ -1042,12 +1022,24 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
                     tr.has_image_content = true;
 
                     hasImage = true;
-                    imageBase64 = imgBlock.base64_data;
                     imageMediaType = imgBlock.media_type;
 
-                    wxLogInfo( "CHAT_CONTROLLER: Image content block added - media_type=%s, "
-                               "base64_len=%zu, content_blocks=%zu",
-                               imgBlock.media_type.c_str(), imgBlock.base64_data.length(),
+                    // Use high-res display_image for the chat UI if available,
+                    // otherwise fall back to the API image
+                    if( resultJson.contains( "display_image" ) )
+                    {
+                        imageBase64 = resultJson["display_image"].value( "base64", "" );
+                        imageMediaType = resultJson["display_image"].value( "media_type",
+                                                                           imageMediaType );
+                    }
+                    else
+                    {
+                        imageBase64 = imgBlock.base64_data;
+                    }
+
+                    wxLogInfo( "CHAT_CONTROLLER: Image content block added - "
+                               "api_b64_len=%zu, display_b64_len=%zu, content_blocks=%zu",
+                               imgBlock.base64_data.length(), imageBase64.length(),
                                tr.content_blocks.size() );
                 }
 
@@ -1508,65 +1500,55 @@ void CHAT_CONTROLLER::SanitizeApiContext()
             }
         }
 
-        // Strip __stripped__ attachment blocks from user messages (loaded from history)
-        nlohmann::json cleanedMsg = msg;
+        // Filter out __stripped__ image/document blocks from legacy history.
+        // These are placeholders from when we used to strip base64 data on save.
+        nlohmann::json cleanMsg = msg;
 
-        if( role == "user" && cleanedMsg.contains( "content" )
-            && cleanedMsg["content"].is_array() )
+        if( cleanMsg.contains( "content" ) && cleanMsg["content"].is_array() )
         {
-            nlohmann::json cleanedContent = nlohmann::json::array();
+            nlohmann::json cleanContent = nlohmann::json::array();
 
-            for( const auto& block : cleanedMsg["content"] )
+            for( const auto& block : cleanMsg["content"] )
             {
-                std::string blockType = block.value( "type", "" );
+                // Check for image/document blocks with __stripped__ data
+                bool isStripped = false;
 
-                if( ( blockType == "image" || blockType == "document" )
-                    && block.contains( "source" )
-                    && block["source"].value( "data", "" ) == "__stripped__" )
+                if( block.contains( "source" ) && block["source"].contains( "data" )
+                    && block["source"]["data"] == "__stripped__" )
                 {
-                    continue;  // Drop stripped attachment blocks from API context
+                    isStripped = true;
                 }
 
-                // Handle tool_result blocks with nested stripped images (e.g. screenshots)
-                if( blockType == "tool_result"
-                    && block.contains( "content" ) && block["content"].is_array() )
+                // Also check inside tool_result content arrays
+                if( block.contains( "content" ) && block["content"].is_array() )
                 {
-                    nlohmann::json cleanedInner = nlohmann::json::array();
+                    nlohmann::json cleanInner = nlohmann::json::array();
 
                     for( const auto& inner : block["content"] )
                     {
-                        std::string innerType = inner.value( "type", "" );
-
-                        if( ( innerType == "image" || innerType == "document" )
-                            && inner.contains( "source" )
-                            && inner["source"].value( "data", "" ) == "__stripped__" )
+                        if( inner.contains( "source" ) && inner["source"].contains( "data" )
+                            && inner["source"]["data"] == "__stripped__" )
                         {
-                            continue;  // Drop stripped image blocks from tool results
+                            continue;  // Drop stripped image from tool result
                         }
 
-                        cleanedInner.push_back( inner );
+                        cleanInner.push_back( inner );
                     }
 
-                    nlohmann::json cleanedBlock = block;
-                    cleanedBlock["content"] = cleanedInner;
-                    cleanedContent.push_back( cleanedBlock );
+                    nlohmann::json cleanBlock = block;
+                    cleanBlock["content"] = cleanInner;
+                    cleanContent.push_back( cleanBlock );
                     continue;
                 }
 
-                cleanedContent.push_back( block );
+                if( !isStripped )
+                    cleanContent.push_back( block );
             }
 
-            if( cleanedContent.empty() )
-                continue;  // Skip entirely empty user messages
-
-            cleanedMsg["content"] = cleanedContent;
-
-            // If only a single text block remains, simplify to string content
-            if( cleanedContent.size() == 1 && cleanedContent[0].value( "type", "" ) == "text" )
-                cleanedMsg["content"] = cleanedContent[0].value( "text", "" );
+            cleanMsg["content"] = cleanContent;
         }
 
-        sanitized.push_back( cleanedMsg );
+        sanitized.push_back( cleanMsg );
         lastRole = role;
     }
 

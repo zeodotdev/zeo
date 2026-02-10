@@ -34,16 +34,34 @@ AGENT_CHANGE_TRACKER::~AGENT_CHANGE_TRACKER()
 }
 
 
-void AGENT_CHANGE_TRACKER::TrackItem( const KIID& aItemId, const wxString& aSheetPath )
+void AGENT_CHANGE_TRACKER::TrackItem( const KIID& aItemId, const wxString& aSheetPath,
+                                      UNDO_REDO aChangeType )
 {
-    m_trackedItems[aItemId] = aSheetPath;
+    auto it = m_trackedItems.find( aItemId );
+    if( it != m_trackedItems.end() )
+    {
+        if( it->second.changeType == UNDO_REDO::NEWITEM )
+        {
+            if( aChangeType == UNDO_REDO::DELETED )
+            {
+                // Agent created then deleted this item — net result is nothing, untrack it
+                m_trackedItems.erase( it );
+                return;
+            }
+
+            // A subsequent CHANGED entry doesn't change the fact that the agent created this item
+            return;
+        }
+    }
+
+    m_trackedItems[aItemId] = { aSheetPath, aChangeType };
 }
 
 
-void AGENT_CHANGE_TRACKER::TrackItem( const KIID& aItemId )
+void AGENT_CHANGE_TRACKER::TrackItem( const KIID& aItemId, UNDO_REDO aChangeType )
 {
     // For PCB items, use empty string for sheet path
-    TrackItem( aItemId, wxEmptyString );
+    TrackItem( aItemId, wxEmptyString, aChangeType );
 }
 
 
@@ -63,6 +81,7 @@ void AGENT_CHANGE_TRACKER::ClearTrackedItems()
 {
     m_trackedItems.clear();
     m_undoBaseline = 0;
+    m_agentUndoCount = 0;
 }
 
 
@@ -70,9 +89,9 @@ std::set<wxString> AGENT_CHANGE_TRACKER::GetAffectedSheets() const
 {
     std::set<wxString> sheets;
 
-    for( const auto& [kiid, sheetPath] : m_trackedItems )
+    for( const auto& [kiid, info] : m_trackedItems )
     {
-        sheets.insert( sheetPath );
+        sheets.insert( info.sheetPath );
     }
 
     return sheets;
@@ -83,9 +102,9 @@ std::set<KIID> AGENT_CHANGE_TRACKER::GetTrackedItemsOnSheet( const wxString& aSh
 {
     std::set<KIID> items;
 
-    for( const auto& [kiid, sheetPath] : m_trackedItems )
+    for( const auto& [kiid, info] : m_trackedItems )
     {
-        if( sheetPath == aSheetPath )
+        if( info.sheetPath == aSheetPath )
             items.insert( kiid );
     }
 
@@ -97,11 +116,11 @@ size_t AGENT_CHANGE_TRACKER::UntrackItemsOnSheetAndNested( const wxString& aShee
 {
     std::vector<KIID> toRemove;
 
-    for( const auto& [kiid, sheetPath] : m_trackedItems )
+    for( const auto& [kiid, info] : m_trackedItems )
     {
         // Match exact path or any path that starts with this path
         // e.g., aSheetPath="/root/sub" matches "/root/sub", "/root/sub/nested", etc.
-        if( sheetPath == aSheetPath || sheetPath.StartsWith( aSheetPath + "/" ) )
+        if( info.sheetPath == aSheetPath || info.sheetPath.StartsWith( aSheetPath + "/" ) )
         {
             toRemove.push_back( kiid );
         }
@@ -120,7 +139,7 @@ std::set<KIID> AGENT_CHANGE_TRACKER::GetAllTrackedItems() const
 {
     std::set<KIID> items;
 
-    for( const auto& [kiid, sheetPath] : m_trackedItems )
+    for( const auto& [kiid, info] : m_trackedItems )
     {
         items.insert( kiid );
     }
@@ -133,9 +152,19 @@ wxString AGENT_CHANGE_TRACKER::GetSheetPathForItem( const KIID& aItemId ) const
 {
     auto it = m_trackedItems.find( aItemId );
     if( it != m_trackedItems.end() )
-        return it->second;
+        return it->second.sheetPath;
 
     return wxEmptyString;
+}
+
+
+UNDO_REDO AGENT_CHANGE_TRACKER::GetChangeType( const KIID& aItemId ) const
+{
+    auto it = m_trackedItems.find( aItemId );
+    if( it != m_trackedItems.end() )
+        return it->second.changeType;
+
+    return UNDO_REDO::NEWITEM;
 }
 
 
@@ -148,6 +177,18 @@ void AGENT_CHANGE_TRACKER::SetUndoBaseline( int aUndoCount )
 int AGENT_CHANGE_TRACKER::GetUndoBaseline() const
 {
     return m_undoBaseline;
+}
+
+
+void AGENT_CHANGE_TRACKER::SetAgentUndoCount( int aCount )
+{
+    m_agentUndoCount = aCount;
+}
+
+
+int AGENT_CHANGE_TRACKER::GetAgentUndoCount() const
+{
+    return m_agentUndoCount;
 }
 
 

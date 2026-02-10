@@ -1,22 +1,3 @@
-/*
- * This program source code file is part of KiCad, a free EDA CAD application.
- *
- * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
- *
- * This program is free software: you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation, either version 3 of the License, or (at your
- * option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 #include "agent_tools.h"
 #include "../agent_llm_client.h"
 #include "tool_registry.h"
@@ -75,29 +56,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( openEditor );
 
-    // close_editor - Close schematic or PCB editor
-    LLM_TOOL closeEditor;
-    closeEditor.name = "close_editor";
-    closeEditor.description = "Close the schematic or PCB editor. "
-                              "Optionally save before closing. "
-                              "Use this when you need to reopen an editor cleanly or free resources.";
-    closeEditor.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "editor_type", {
-                { "type", "string" },
-                { "enum", json::array( { "sch", "pcb" } ) },
-                { "description", "Editor to close: 'sch' for schematic, 'pcb' for PCB" }
-            }},
-            { "save_first", {
-                { "type", "boolean" },
-                { "description", "Save changes before closing (default: true)" }
-            }}
-        }},
-        { "required", json::array( { "editor_type" } ) }
-    };
-    tools.push_back( closeEditor );
-
     // check_status - Get project and editor status
     LLM_TOOL checkStatus;
     checkStatus.name = "check_status";
@@ -111,24 +69,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     checkStatus.read_only = true;
     tools.push_back( checkStatus );
-
-    // save - Save current work
-    LLM_TOOL save;
-    save.name = "save";
-    save.description = "Save the current document in the specified editor. "
-                       "Use 'all' to save both schematic and PCB if open.";
-    save.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "editor_type", {
-                { "type", "string" },
-                { "enum", json::array( { "sch", "pcb", "all" } ) },
-                { "description", "Which editor to save: 'sch', 'pcb', or 'all' (default: 'all')" }
-            }}
-        }},
-        { "required", json::array() }
-    };
-    tools.push_back( save );
 
     // create_project - Create a new KiCad project
     LLM_TOOL createProject;
@@ -177,81 +117,33 @@ std::vector<LLM_TOOL> GetToolDefinitions()
 
     // ===== Direct File Tools (sch_*, pcb_*) =====
 
-    // sch_get_summary - Get high-level overview of schematic (auto-selects IPC or file)
+    // sch_get_summary - Get high-level overview of schematic via IPC
     LLM_TOOL schGetSummary;
     schGetSummary.name = "sch_get_summary";
-    schGetSummary.description = "Get a high-level overview of a .kicad_sch schematic file. "
-                                "Prefers IPC (live editor state) if available, falls back to file. "
+    schGetSummary.description = "Get a high-level overview of the schematic from the live editor. "
                                 "Returns JSON with symbols, wires, junctions, labels, and counts. "
-                                "Use sch_live_summary or sch_file_summary for explicit control.";
+                                "REQUIRES: Schematic editor must be open with a document loaded.";
     schGetSummary.input_schema = {
         { "type", "object" },
-        { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Absolute path to the .kicad_sch file" }
-            }}
-        }},
-        { "required", json::array( { "file_path" } ) }
+        { "properties", {} },
+        { "required", json::array() }
     };
     schGetSummary.read_only = true;
     tools.push_back( schGetSummary );
 
-    // sch_file_summary - Get schematic summary from disk file
-    LLM_TOOL schFileSummary;
-    schFileSummary.name = "sch_file_summary";
-    schFileSummary.description = "Get schematic summary by reading directly from disk. "
-                                 "Works without the editor open. Returns saved state (not unsaved changes). "
-                                 "Use sch_live_summary to see unsaved changes in the editor.";
-    schFileSummary.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Absolute path to the .kicad_sch file" }
-            }}
-        }},
-        { "required", json::array( { "file_path" } ) }
-    };
-    schFileSummary.read_only = true;
-    tools.push_back( schFileSummary );
-
-    // sch_live_summary - Get schematic summary from running editor via IPC
-    LLM_TOOL schLiveSummary;
-    schLiveSummary.name = "sch_live_summary";
-    schLiveSummary.description = "Get schematic summary from the running editor via IPC. "
-                                 "REQUIRES: Schematic editor must be open. "
-                                 "Returns live state including unsaved changes. "
-                                 "Use sch_file_summary if editor is not open.";
-    schLiveSummary.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Optional: path for reference (not required for IPC)" }
-            }}
-        }},
-        { "required", json::array() }
-    };
-    schLiveSummary.read_only = true;
-    tools.push_back( schLiveSummary );
-
     // sch_read_section - Read specific section of schematic
     LLM_TOOL schReadSection;
     schReadSection.name = "sch_read_section";
-    schReadSection.description = "Read a specific section of a .kicad_sch file. "
-                                 "Returns raw S-expression text for the requested section. "
-                                 "Sections: header, symbols, wires, junctions, labels, lib_symbols, text, sheets, all";
+    schReadSection.description = "Read a specific section of the schematic from the live editor. "
+                                 "Returns JSON data for the requested section. "
+                                 "Sections: header, symbols, wires, junctions, labels, sheets, all. "
+                                 "REQUIRES: Schematic editor must be open with a document loaded.";
     schReadSection.input_schema = {
         { "type", "object" },
         { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Absolute path to the .kicad_sch file" }
-            }},
             { "section", {
                 { "type", "string" },
-                { "enum", json::array( { "header", "symbols", "wires", "junctions", "labels", "lib_symbols", "text", "sheets", "all" } ) },
+                { "enum", json::array( { "header", "symbols", "wires", "junctions", "labels", "sheets", "all" } ) },
                 { "description", "Section to read" }
             }},
             { "filter", {
@@ -259,7 +151,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                 { "description", "Optional filter by reference (e.g., 'R*' for all resistors) or UUID" }
             }}
         }},
-        { "required", json::array( { "file_path", "section" } ) }
+        { "required", json::array( { "section" } ) }
     };
     schReadSection.read_only = true;
     tools.push_back( schReadSection );
@@ -304,25 +196,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     tools.push_back( schModify );
     */
 
-    // sch_validate - Validate schematic file
-    LLM_TOOL schValidate;
-    schValidate.name = "sch_validate";
-    schValidate.description = "Validate a .kicad_sch file without modifying it. "
-                              "Checks syntax (S-expression parsing), structure (required fields, UUID uniqueness), "
-                              "and returns warnings about potential issues.";
-    schValidate.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Absolute path to the .kicad_sch file" }
-            }}
-        }},
-        { "required", json::array( { "file_path" } ) }
-    };
-    schValidate.read_only = true;
-    tools.push_back( schValidate );
-
     // sch_run_erc - Run ERC on open schematic
     LLM_TOOL schRunErc;
     schRunErc.name = "sch_run_erc";
@@ -350,34 +223,13 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schRunErc );
 
-    // sch_export_spice_netlist - Export SPICE netlist from schematic
-    LLM_TOOL schExportSpice;
-    schExportSpice.name = "sch_export_spice_netlist";
-    schExportSpice.description =
-        "Export a SPICE netlist from a .kicad_sch schematic file using kicad-cli. "
-        "Returns the raw SPICE netlist text. "
-        "IMPORTANT: The schematic must be fully annotated (symbols have reference designators "
-        "like R1, C1, U1) before exporting, otherwise the netlist will be invalid. "
-        "Use this after the schematic design is complete, not during editing.";
-    schExportSpice.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Absolute path to the .kicad_sch file" }
-            }}
-        }},
-        { "required", json::array( { "file_path" } ) }
-    };
-    schExportSpice.read_only = true;
-    tools.push_back( schExportSpice );
-
     // sch_run_simulation - Run SPICE simulation on open schematic
     LLM_TOOL schRunSim;
     schRunSim.name = "sch_run_simulation";
     schRunSim.description =
         "Run a SPICE simulation on the currently open schematic. "
         "Returns trace summaries with signal names, point counts, and min/max/final values. "
+        "When matplotlib is available, also generates a visual plot of all signal traces. "
         "Supported commands:\n"
         "  .op - Operating point analysis\n"
         "  .tran <step> <stop> [start] [maxstep] - Transient analysis (e.g. '.tran 1u 10m')\n"
@@ -401,14 +253,15 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schRunSim );
 
-    // sch_get_lib_symbol - Query symbol library for pin positions
+    // sch_find_symbol - Query symbol library for pin positions
     LLM_TOOL schGetLibSymbol;
-    schGetLibSymbol.name = "sch_get_lib_symbol";
+    schGetLibSymbol.name = "sch_find_symbol";
     schGetLibSymbol.description =
         "Query symbol library for symbol definitions including pin positions. "
-        "Supports exact match (e.g., 'Device:R'), wildcards ('Connector:Conn_01x*'), "
-        "and regex patterns ('Device:R_[0-9]{4}'). "
-        "Returns pin positions in nanometers relative to symbol origin. "
+        "Accepts a symbol name ('R') or full Library:Symbol identifier ('Device:R'). "
+        "If just a name is given, searches all libraries. "
+        "Supports wildcards ('Connector:Conn_01x*') and regex ('Device:R_[0-9]{4}'). "
+        "Returns pin positions relative to symbol origin. "
         "Use this before wiring to get accurate pin locations. "
         "REQUIRES: Schematic editor must be open.";
     schGetLibSymbol.input_schema = {
@@ -416,9 +269,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "properties", {
             { "lib_id", {
                 { "type", "string" },
-                { "description", "Library:Symbol identifier. Supports patterns: "
-                                "exact ('Device:R'), wildcard ('Device:R*'), "
-                                "or regex ('Device:R_[0-9]+')." }
+                { "description", "Symbol name ('R') or Library:Symbol identifier ('Device:R'). "
+                                "Supports wildcards ('Device:R*') and regex ('Device:R_[0-9]+')." }
             }},
             { "include_pins", {
                 { "type", "boolean" },
@@ -727,20 +579,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schAnnotate );
 
-    // sch_save - Save schematic
-    LLM_TOOL schSave;
-    schSave.name = "sch_save";
-    schSave.description =
-        "Save the currently open schematic to disk. "
-        "Saves the active schematic file including any unsaved changes. "
-        "REQUIRES: Schematic editor must be open with a document loaded.";
-    schSave.input_schema = {
-        { "type", "object" },
-        { "properties", {} },
-        { "required", json::array() }
-    };
-    tools.push_back( schSave );
-
     // sch_get_nets - Get all nets and their connections
     LLM_TOOL schGetNets;
     schGetNets.name = "sch_get_nets";
@@ -807,25 +645,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     pcbReadSection.read_only = true;
     tools.push_back( pcbReadSection );
-
-    // pcb_validate - Validate PCB file
-    LLM_TOOL pcbValidate;
-    pcbValidate.name = "pcb_validate";
-    pcbValidate.description =
-        "Validate a .kicad_pcb file without modifying it. "
-        "Checks syntax, structure, and returns warnings about potential issues.";
-    pcbValidate.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Absolute path to the .kicad_pcb file" }
-            }}
-        }},
-        { "required", json::array( { "file_path" } ) }
-    };
-    pcbValidate.read_only = true;
-    tools.push_back( pcbValidate );
 
     // pcb_run_drc - Run design rule check
     LLM_TOOL pcbRunDrc;
@@ -1413,6 +1232,9 @@ std::string ExecuteToolSync( const std::string& aToolName, const nlohmann::json&
             return aSendRequestFn( FRAME_TERMINAL, command );
         }
 
+        // Provide the IPC send function so handlers can communicate with editor frames
+        TOOL_REGISTRY::Instance().SetSendRequestFn( aSendRequestFn );
+
         // Execute directly without going through terminal frame
         return TOOL_REGISTRY::Instance().Execute( aToolName, aInput );
     }
@@ -1454,12 +1276,6 @@ wxString GetToolDescription( const std::string& aToolName, const nlohmann::json&
         std::string editorType = aInput.value( "editor_type", "" );
         wxString label = ( editorType == "sch" ) ? "Schematic" : "PCB";
         return wxString::Format( "Open %s Editor", label );
-    }
-    else if( aToolName == "close_editor" )
-    {
-        std::string editorType = aInput.value( "editor_type", "" );
-        wxString label = ( editorType == "sch" ) ? "Schematic" : "PCB";
-        return wxString::Format( "Close %s Editor", label );
     }
     else if( aToolName == "check_status" )
     {

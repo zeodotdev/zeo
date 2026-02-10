@@ -25,9 +25,17 @@
 #define AGENT_CHANGE_TRACKER_H
 
 #include <kiid.h>
+#include <undo_redo_container.h>
 #include <set>
 #include <map>
 #include <wx/string.h>
+
+
+struct TrackedItemInfo
+{
+    wxString    sheetPath;
+    UNDO_REDO   changeType = UNDO_REDO::NEWITEM;
+};
 
 /**
  * AGENT_CHANGE_TRACKER provides item-based tracking of agent changes.
@@ -50,17 +58,20 @@ public:
     ~AGENT_CHANGE_TRACKER();
 
     /**
-     * Track an item by KIID with its sheet path (for schematic).
+     * Track an item by KIID with its sheet path and change type (for schematic).
      * @param aItemId The KIID of the item to track.
      * @param aSheetPath The sheet path where the item exists (as a string).
+     * @param aChangeType The type of change (NEWITEM, CHANGED, etc.).
      */
-    void TrackItem( const KIID& aItemId, const wxString& aSheetPath );
+    void TrackItem( const KIID& aItemId, const wxString& aSheetPath,
+                    UNDO_REDO aChangeType = UNDO_REDO::NEWITEM );
 
     /**
      * Track an item by KIID without sheet path (for PCB).
      * @param aItemId The KIID of the item to track.
+     * @param aChangeType The type of change (NEWITEM, CHANGED, etc.).
      */
-    void TrackItem( const KIID& aItemId );
+    void TrackItem( const KIID& aItemId, UNDO_REDO aChangeType = UNDO_REDO::NEWITEM );
 
     /**
      * Stop tracking an item.
@@ -116,6 +127,13 @@ public:
     wxString GetSheetPathForItem( const KIID& aItemId ) const;
 
     /**
+     * Get the change type for a tracked item.
+     * @param aItemId The KIID to query.
+     * @return The change type, or UNDO_REDO::NEWITEM if not tracked.
+     */
+    UNDO_REDO GetChangeType( const KIID& aItemId ) const;
+
+    /**
      * Set the undo stack baseline for this tracking session.
      * @param aUndoCount The undo stack count at session start.
      */
@@ -126,6 +144,18 @@ public:
      * @return The undo count at session start.
      */
     int GetUndoBaseline() const;
+
+    /**
+     * Set the number of undo entries created by the agent.
+     * @param aCount The number of agent-created undo entries.
+     */
+    void SetAgentUndoCount( int aCount );
+
+    /**
+     * Get the number of undo entries created by the agent.
+     * @return The agent undo count.
+     */
+    int GetAgentUndoCount() const;
 
     /**
      * Check if there are any tracked changes.
@@ -140,11 +170,14 @@ public:
     size_t GetTrackedItemCount() const;
 
 private:
-    // Map of KIID -> sheet path (empty string for PCB items)
-    std::map<KIID, wxString> m_trackedItems;
+    // Map of KIID -> tracked item info (sheet path + change type)
+    std::map<KIID, TrackedItemInfo> m_trackedItems;
 
     // Undo stack count at the start of agent session
     int m_undoBaseline = 0;
+
+    // Number of undo entries created by the agent
+    int m_agentUndoCount = 0;
 };
 
 #endif // AGENT_CHANGE_TRACKER_H

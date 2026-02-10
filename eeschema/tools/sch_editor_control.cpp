@@ -1276,6 +1276,11 @@ int SCH_EDITOR_CONTROL::Undo( const TOOL_EVENT& aEvent )
     std::string payload;
     m_frame->Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_CHECK_CHANGES, payload );
 
+    // Check if all agent undo entries have been undone — auto-reject if so
+    wxLogInfo( "SCH: Undo handler: checking for stale agent changes (undoCount=%d)",
+               m_frame->GetUndoCommandCount() );
+    m_frame->ClearStaleAgentChanges();
+
     return 0;
 }
 

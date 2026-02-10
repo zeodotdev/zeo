@@ -845,8 +845,12 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput )
     if( aInput.contains( "angle" ) )
     {
         double angle = aInput.value( "angle", 0.0 );
-        // Use set_angle() for absolute angle (not additive rotate())
-        code << "    target_item = sch.symbols.set_angle(target_item, " << angle << ")\n";
+        // Compute delta from current angle and use rotate() (set_angle doesn't exist)
+        code << "    current_angle = getattr(target_item, 'angle', 0) or 0\n";
+        code << "    desired_angle = " << angle << "\n";
+        code << "    delta = (desired_angle - current_angle) % 360\n";
+        code << "    if delta != 0:\n";
+        code << "        target_item = sch.symbols.rotate(target_item, delta)\n";
         code << "    updated = True\n";
     }
 
@@ -971,7 +975,11 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
         if( update.contains( "angle" ) )
         {
             double angle = update.value( "angle", 0.0 );
-            code << "        item_" << i << " = sch.symbols.set_angle(item_" << i << ", " << angle << ")\n";
+            code << "        current_angle_" << i << " = getattr(item_" << i << ", 'angle', 0) or 0\n";
+            code << "        desired_angle_" << i << " = " << angle << "\n";
+            code << "        delta_" << i << " = (desired_angle_" << i << " - current_angle_" << i << ") % 360\n";
+            code << "        if delta_" << i << " != 0:\n";
+            code << "            item_" << i << " = sch.symbols.rotate(item_" << i << ", delta_" << i << ")\n";
             code << "        updated_" << i << " = True\n";
         }
 

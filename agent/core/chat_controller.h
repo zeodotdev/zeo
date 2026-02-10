@@ -199,6 +199,23 @@ public:
         m_getProjectPathFn = aFn;
     }
 
+    /**
+     * Set the function used to get a JSON snapshot of the current schematic state.
+     * Used for detecting user edits between agent turns.
+     * @param aFn Function returning a JSON string summary of all schematic items
+     */
+    void SetSchematicSummaryFn( std::function<std::string()> aFn )
+    {
+        m_getSchematicSummaryFn = aFn;
+    }
+
+    /**
+     * Take a snapshot of the current schematic state.
+     * Called by the frame after the agent's turn completes so that
+     * user edits can be detected when the next message is sent.
+     */
+    void TakeSchematicSnapshot();
+
     // =========================================================================
     // Event handlers - Called by frame's event table, forwarded to controller
     // =========================================================================
@@ -260,6 +277,12 @@ private:
     class AGENT_AUTH*   m_auth;          ///< Authentication manager
     std::function<std::string( int, const std::string& )> m_sendRequestFn;
     std::function<std::string()> m_getProjectPathFn;  ///< Get project path for context injection
+    std::function<std::string()> m_getSchematicSummaryFn;  ///< Get schematic snapshot for edit detection
+
+    // -------------------------------------------------------------------------
+    // User edit detection (schematic diff between turns)
+    // -------------------------------------------------------------------------
+    std::string m_schematicSnapshot;  ///< JSON snapshot taken after agent turn completes
 
     // -------------------------------------------------------------------------
     // Tool definitions
@@ -354,6 +377,13 @@ private:
      * Emit a simple event with no payload.
      */
     void EmitEvent( wxEventType aType );
+
+    /**
+     * Compute a human-readable summary of user edits by diffing the stored
+     * schematic snapshot against the current state. Returns empty string if
+     * no changes detected or no snapshot available.
+     */
+    std::string GetUserEditsSummary();
 };
 
 #endif // CHAT_CONTROLLER_H

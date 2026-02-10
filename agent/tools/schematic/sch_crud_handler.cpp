@@ -148,6 +148,12 @@ std::string SCH_CRUD_HANDLER::EscapePythonString( const std::string& aStr ) cons
 }
 
 
+double SCH_CRUD_HANDLER::SnapToGrid( double aMm, double aGrid )
+{
+    return std::round( aMm / aGrid ) * aGrid;
+}
+
+
 std::string SCH_CRUD_HANDLER::MmToNm( double aMm ) const
 {
     int64_t nm = static_cast<int64_t>( aMm * 1000000.0 );
@@ -313,8 +319,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         double angle = aInput.value( "angle", 0.0 );
@@ -392,8 +398,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         double angle = aInput.value( "angle", 0.0 );
@@ -431,8 +437,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
                 {
                     if( waypoints[i].is_array() && waypoints[i].size() >= 2 )
                     {
-                        double x = waypoints[i][0].get<double>();
-                        double y = waypoints[i][1].get<double>();
+                        double x = SnapToGrid( waypoints[i][0].get<double>() );
+                        double y = SnapToGrid( waypoints[i][1].get<double>() );
                         code << "        (" << x << ", " << y << "),\n";
                     }
                 }
@@ -442,9 +448,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
             }
             else
             {
-                // No waypoints - draw direct wire between pins
-                // Agent should use waypoints for orthogonal routing
-                code << "    wires = sch.wiring.wire_pins(sym1, '" << EscapePythonString( fromPinNum ) << "', sym2, '" << EscapePythonString( toPinNum ) << "')\n";
+                // No waypoints - use auto_wire for L-shaped orthogonal routing
+                code << "    wires = sch.wiring.auto_wire(sym1, '" << EscapePythonString( fromPinNum ) << "', sym2, '" << EscapePythonString( toPinNum ) << "')\n";
                 code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires)}\n";
             }
         }
@@ -471,8 +476,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
             {
                 if( points[i].is_array() && points[i].size() >= 2 )
                 {
-                    double x = points[i][0].get<double>();
-                    double y = points[i][1].get<double>();
+                    double x = SnapToGrid( points[i][0].get<double>() );
+                    double y = SnapToGrid( points[i][1].get<double>() );
                     code << "    all_points.append(Vector2.from_xy_mm(" << x << ", " << y << "))\n";
                 }
             }
@@ -492,10 +497,10 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
                     if( points[i].is_array() && points[i].size() >= 2 &&
                         points[i + 1].is_array() && points[i + 1].size() >= 2 )
                     {
-                        double x1 = points[i][0].get<double>();
-                        double y1 = points[i][1].get<double>();
-                        double x2 = points[i + 1][0].get<double>();
-                        double y2 = points[i + 1][1].get<double>();
+                        double x1 = SnapToGrid( points[i][0].get<double>() );
+                        double y1 = SnapToGrid( points[i][1].get<double>() );
+                        double x2 = SnapToGrid( points[i + 1][0].get<double>() );
+                        double y2 = SnapToGrid( points[i + 1][1].get<double>() );
 
                         code << "    sch.wiring.add_wire(Vector2.from_xy_mm(" << x1 << ", " << y1 << "), Vector2.from_xy_mm(" << x2 << ", " << y2 << "))\n";
                         code << "    wires_created += 1\n";
@@ -515,8 +520,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         code << "    pos = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
@@ -532,8 +537,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         code << "    pos = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
@@ -555,8 +560,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         code << "    pos = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
@@ -569,8 +574,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         // direction: "right_down", "right_up", "left_down", "left_up"
@@ -589,8 +594,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         double sizeW = 50, sizeH = 50;
@@ -647,10 +652,10 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
                 if( points[i].is_array() && points[i].size() >= 2 &&
                     points[i + 1].is_array() && points[i + 1].size() >= 2 )
                 {
-                    double x1 = points[i][0].get<double>();
-                    double y1 = points[i][1].get<double>();
-                    double x2 = points[i + 1][0].get<double>();
-                    double y2 = points[i + 1][1].get<double>();
+                    double x1 = SnapToGrid( points[i][0].get<double>() );
+                    double y1 = SnapToGrid( points[i][1].get<double>() );
+                    double x2 = SnapToGrid( points[i + 1][0].get<double>() );
+                    double y2 = SnapToGrid( points[i + 1][1].get<double>() );
 
                     code << "        wire_uuid = generate_uuid()\n";
                     code << "        wire_sexpr = f'''(wire (pts (xy " << x1 << " " << y1 << ") (xy " << x2 << " " << y2 << "))\n";
@@ -670,8 +675,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         code << "        junc_uuid = generate_uuid()\n";
@@ -689,8 +694,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         code << "        label_uuid = generate_uuid()\n";
@@ -707,8 +712,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         code << "        nc_uuid = generate_uuid()\n";
@@ -724,8 +729,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         std::string direction = aInput.value( "direction", "right_down" );
@@ -829,8 +834,8 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput )
     if( aInput.contains( "position" ) && aInput["position"].is_array() &&
         aInput["position"].size() >= 2 )
     {
-        double posX = aInput["position"][0].get<double>();
-        double posY = aInput["position"][1].get<double>();
+        double posX = SnapToGrid( aInput["position"][0].get<double>() );
+        double posY = SnapToGrid( aInput["position"][1].get<double>() );
         code << "    new_pos = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
         code << "    target_item = sch.symbols.move(target_item, new_pos)\n";
         code << "    updated = True\n";
@@ -839,8 +844,12 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput )
     if( aInput.contains( "angle" ) )
     {
         double angle = aInput.value( "angle", 0.0 );
-        // Use set_angle() for absolute angle (not additive rotate())
-        code << "    target_item = sch.symbols.set_angle(target_item, " << angle << ")\n";
+        // Compute delta from current angle and use rotate() (set_angle doesn't exist)
+        code << "    current_angle = getattr(target_item, 'angle', 0) or 0\n";
+        code << "    desired_angle = " << angle << "\n";
+        code << "    delta = (desired_angle - current_angle) % 360\n";
+        code << "    if delta != 0:\n";
+        code << "        target_item = sch.symbols.rotate(target_item, delta)\n";
         code << "    updated = True\n";
     }
 
@@ -853,6 +862,52 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput )
         code << "    if 'Footprint' in props_to_update:\n";
         code << "        sch.symbols.set_footprint(target_item, props_to_update['Footprint'])\n";
         code << "        updated = True\n";
+    }
+
+    // Reposition text fields (Reference, Value, etc.) relative to symbol center
+    if( aInput.contains( "fields" ) && aInput["fields"].is_object() )
+    {
+        code << "    # Reposition text fields relative to symbol center\n";
+        code << "    sym_pos = target_item.position\n";
+
+        for( auto& [fieldName, fieldSpec] : aInput["fields"].items() )
+        {
+            if( !fieldSpec.is_object() )
+                continue;
+
+            bool hasOffset = fieldSpec.contains( "offset" ) &&
+                             fieldSpec["offset"].is_array() && fieldSpec["offset"].size() >= 2;
+            bool hasAngle = fieldSpec.contains( "angle" ) && fieldSpec["angle"].is_number();
+
+            if( !hasOffset && !hasAngle )
+                continue;
+
+            code << "    for _f in target_item._proto.fields:\n";
+            code << "        if _f.name == '" << EscapePythonString( fieldName ) << "':\n";
+
+            if( hasOffset )
+            {
+                double dx = SnapToGrid( fieldSpec["offset"][0].get<double>() );
+                double dy = SnapToGrid( fieldSpec["offset"][1].get<double>() );
+                code << "            _f.position.x_nm = sym_pos.x + int("
+                     << dx << " * 1_000_000)\n";
+                code << "            _f.position.y_nm = sym_pos.y + int("
+                     << dy << " * 1_000_000)\n";
+            }
+
+            if( hasAngle )
+            {
+                double angle = fieldSpec["angle"].get<double>();
+                code << "            _f.attributes.angle.value_degrees = " << angle << "\n";
+            }
+
+            code << "            break\n";
+        }
+
+        code << "    target_item = sch.crud.update_items(target_item)\n";
+        code << "    if target_item:\n";
+        code << "        target_item = target_item[0]\n";
+        code << "    updated = True\n";
     }
 
     // Return post-update state for verification
@@ -955,8 +1010,8 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
         if( update.contains( "position" ) && update["position"].is_array() &&
             update["position"].size() >= 2 )
         {
-            double posX = update["position"][0].get<double>();
-            double posY = update["position"][1].get<double>();
+            double posX = SnapToGrid( update["position"][0].get<double>() );
+            double posY = SnapToGrid( update["position"][1].get<double>() );
             code << "        new_pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        item_" << i << " = sch.symbols.move(item_" << i << ", new_pos_" << i << ")\n";
             code << "        updated_" << i << " = True\n";
@@ -965,7 +1020,11 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
         if( update.contains( "angle" ) )
         {
             double angle = update.value( "angle", 0.0 );
-            code << "        item_" << i << " = sch.symbols.set_angle(item_" << i << ", " << angle << ")\n";
+            code << "        current_angle_" << i << " = getattr(item_" << i << ", 'angle', 0) or 0\n";
+            code << "        desired_angle_" << i << " = " << angle << "\n";
+            code << "        delta_" << i << " = (desired_angle_" << i << " - current_angle_" << i << ") % 360\n";
+            code << "        if delta_" << i << " != 0:\n";
+            code << "            item_" << i << " = sch.symbols.rotate(item_" << i << ", delta_" << i << ")\n";
             code << "        updated_" << i << " = True\n";
         }
 
@@ -978,6 +1037,51 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
             code << "        if 'Footprint' in props_" << i << ":\n";
             code << "            sch.symbols.set_footprint(item_" << i << ", props_" << i << "['Footprint'])\n";
             code << "            updated_" << i << " = True\n";
+        }
+
+        // Reposition text fields relative to symbol center
+        if( update.contains( "fields" ) && update["fields"].is_object() )
+        {
+            code << "        sym_pos_" << i << " = item_" << i << ".position\n";
+
+            for( auto& [fieldName, fieldSpec] : update["fields"].items() )
+            {
+                if( !fieldSpec.is_object() )
+                    continue;
+
+                bool hasOffset = fieldSpec.contains( "offset" ) &&
+                                 fieldSpec["offset"].is_array() && fieldSpec["offset"].size() >= 2;
+                bool hasAngle = fieldSpec.contains( "angle" ) && fieldSpec["angle"].is_number();
+
+                if( !hasOffset && !hasAngle )
+                    continue;
+
+                code << "        for _f in item_" << i << "._proto.fields:\n";
+                code << "            if _f.name == '" << EscapePythonString( fieldName ) << "':\n";
+
+                if( hasOffset )
+                {
+                    double dx = SnapToGrid( fieldSpec["offset"][0].get<double>() );
+                    double dy = SnapToGrid( fieldSpec["offset"][1].get<double>() );
+                    code << "                _f.position.x_nm = sym_pos_" << i << ".x + int("
+                         << dx << " * 1_000_000)\n";
+                    code << "                _f.position.y_nm = sym_pos_" << i << ".y + int("
+                         << dy << " * 1_000_000)\n";
+                }
+
+                if( hasAngle )
+                {
+                    double angle = fieldSpec["angle"].get<double>();
+                    code << "                _f.attributes.angle.value_degrees = " << angle << "\n";
+                }
+
+                code << "                break\n";
+            }
+
+            code << "        _upd_" << i << " = sch.crud.update_items(item_" << i << ")\n";
+            code << "        if _upd_" << i << ":\n";
+            code << "            item_" << i << " = _upd_" << i << "[0]\n";
+            code << "        updated_" << i << " = True\n";
         }
 
         // Build state info
@@ -1456,9 +1560,12 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
     code << "        pin_x = pin_result['position'].x / 1_000_000\n";
     code << "        pin_y = pin_result['position'].y / 1_000_000\n";
     code << "\n";
-    code << "    # Calculate power symbol position\n";
-    code << "    power_x = pin_x + offset_x\n";
-    code << "    power_y = pin_y + offset_y\n";
+    code << "    # Snap to 1.27mm grid\n";
+    code << "    def snap_to_grid(val, grid=1.27):\n";
+    code << "        return round(val / grid) * grid\n";
+    code << "    # Calculate power symbol position (snapped to grid)\n";
+    code << "    power_x = snap_to_grid(pin_x + offset_x)\n";
+    code << "    power_y = snap_to_grid(pin_y + offset_y)\n";
     code << "\n";
     code << "    # Auto-detect angle based on power type if not specified\n";
 
@@ -1468,14 +1575,12 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
     }
     else
     {
-        code << "    # GND typically points down (180°), VCC/power typically points up (0°)\n";
+        code << "    # GND at 0° = bars down (standard). VCC at 0° = bar up (standard).\n";
         code << "    power_lower = power_name.lower()\n";
-        code << "    if 'gnd' in power_lower or 'vss' in power_lower or 'gnd' in power_lower:\n";
-        code << "        # GND pointing down - if offset_y > 0, symbol is below pin\n";
-        code << "        power_angle = 180 if offset_y >= 0 else 0\n";
+        code << "    if 'gnd' in power_lower or 'vss' in power_lower:\n";
+        code << "        power_angle = 0  # GND at 0° = bars down (standard orientation)\n";
         code << "    else:\n";
-        code << "        # VCC/power pointing up - if offset_y < 0, symbol is above pin\n";
-        code << "        power_angle = 0 if offset_y <= 0 else 180\n";
+        code << "        power_angle = 0  # VCC at 0° = bar up (standard orientation)\n";
     }
 
     code << "\n";
@@ -1575,8 +1680,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             if( elem.contains( "position" ) && elem["position"].is_array() &&
                 elem["position"].size() >= 2 )
             {
-                posX = elem["position"][0].get<double>();
-                posY = elem["position"][1].get<double>();
+                posX = SnapToGrid( elem["position"][0].get<double>() );
+                posY = SnapToGrid( elem["position"][1].get<double>() );
             }
             double angle = elem.value( "angle", 0.0 );
             std::string mirror = elem.value( "mirror", "none" );
@@ -1639,8 +1744,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             if( elem.contains( "position" ) && elem["position"].is_array() &&
                 elem["position"].size() >= 2 )
             {
-                posX = elem["position"][0].get<double>();
-                posY = elem["position"][1].get<double>();
+                posX = SnapToGrid( elem["position"][0].get<double>() );
+                posY = SnapToGrid( elem["position"][1].get<double>() );
             }
             double angle = elem.value( "angle", 0.0 );
 
@@ -1673,8 +1778,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                     {
                         if( waypoints[j].is_array() && waypoints[j].size() >= 2 )
                         {
-                            double x = waypoints[j][0].get<double>();
-                            double y = waypoints[j][1].get<double>();
+                            double x = SnapToGrid( waypoints[j][0].get<double>() );
+                            double y = SnapToGrid( waypoints[j][1].get<double>() );
                             code << "                (" << x << ", " << y << "),\n";
                         }
                     }
@@ -1683,8 +1788,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 }
                 else
                 {
-                    // No waypoints - draw direct wire between pins
-                    code << "            wires_" << i << " = sch.wiring.wire_pins(sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "', sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "')\n";
+                    // No waypoints - use auto_wire for L-shaped orthogonal routing
+                    code << "            wires_" << i << " = sch.wiring.auto_wire(sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "', sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "')\n";
                 }
                 code << "            results.append({'index': " << i << ", 'type': 'wire', 'wire_count': len(wires_" << i << ")})\n";
                 code << "        else:\n";
@@ -1702,10 +1807,10 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                         if( points[j].is_array() && points[j].size() >= 2 &&
                             points[j + 1].is_array() && points[j + 1].size() >= 2 )
                         {
-                            double x1 = points[j][0].get<double>();
-                            double y1 = points[j][1].get<double>();
-                            double x2 = points[j + 1][0].get<double>();
-                            double y2 = points[j + 1][1].get<double>();
+                            double x1 = SnapToGrid( points[j][0].get<double>() );
+                            double y1 = SnapToGrid( points[j][1].get<double>() );
+                            double x2 = SnapToGrid( points[j + 1][0].get<double>() );
+                            double y2 = SnapToGrid( points[j + 1][1].get<double>() );
                             code << "        sch.wiring.add_wire(Vector2.from_xy_mm(" << x1 << ", " << y1 << "), Vector2.from_xy_mm(" << x2 << ", " << y2 << "))\n";
                             code << "        wc_" << i << " += 1\n";
                         }
@@ -1720,8 +1825,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             if( elem.contains( "position" ) && elem["position"].is_array() &&
                 elem["position"].size() >= 2 )
             {
-                posX = elem["position"][0].get<double>();
-                posY = elem["position"][1].get<double>();
+                posX = SnapToGrid( elem["position"][0].get<double>() );
+                posY = SnapToGrid( elem["position"][1].get<double>() );
             }
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
@@ -1736,8 +1841,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             if( elem.contains( "position" ) && elem["position"].is_array() &&
                 elem["position"].size() >= 2 )
             {
-                posX = elem["position"][0].get<double>();
-                posY = elem["position"][1].get<double>();
+                posX = SnapToGrid( elem["position"][0].get<double>() );
+                posY = SnapToGrid( elem["position"][1].get<double>() );
             }
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
@@ -1755,8 +1860,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             if( elem.contains( "position" ) && elem["position"].is_array() &&
                 elem["position"].size() >= 2 )
             {
-                posX = elem["position"][0].get<double>();
-                posY = elem["position"][1].get<double>();
+                posX = SnapToGrid( elem["position"][0].get<double>() );
+                posY = SnapToGrid( elem["position"][1].get<double>() );
             }
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";

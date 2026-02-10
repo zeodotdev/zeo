@@ -323,28 +323,28 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "Add elements to the schematic. Accepts an array of elements - use for single or batch operations. "
         "Returns pin positions for all symbols, enabling immediate wiring. "
         "REQUIRES: Schematic editor must be open with a document loaded.\n\n"
-        "ROTATION (counter-clockwise from default orientation):\n"
-        "- 0°: Default orientation (resistors/caps horizontal, pins left/right)\n"
-        "- 90°: Rotated CCW 90° (vertical, pin 1 typically at top)\n"
-        "- 180°: Flipped (horizontal, pins swapped left/right)\n"
-        "- 270°: Rotated CCW 270° (vertical, pin 1 typically at bottom)\n"
-        "- Power symbols: GND at 0° points UP, at 180° points DOWN; VCC at 0° points UP\n\n"
+        "ROTATION (counter-clockwise degrees):\n"
+        "- Passives (R, C, L): 0°=vertical (pins top/bottom), 90°=horizontal (pins left/right)\n"
+        "- ICs: 0°=default (pin 1 top-left)\n"
+        "- Diode: 0°=vertical (K cathode top, A anode bottom)\n"
+        "- Power GND: 0°=standard (bars down), do NOT use 180\n"
+        "- Power VCC/+V: 0°=standard (bar up), do NOT use 180\n\n"
         "WIRING RULES:\n"
-        "- Wires without waypoints are DIRECT (diagonal) - only use when pins align\n"
-        "- For orthogonal routing, YOU must calculate waypoint coordinates\n"
-        "- AVOID OVERLAPPING WIRES: Wires at same coordinates create shorts!\n\n"
+        "- Use from_pin/to_pin for all wiring - backend auto-routes L-shapes\n"
+        "- AVOID OVERLAPPING WIRES: Wires at same coordinates create shorts!\n"
+        "- WIRE-PIN CONNECTIONS: Wires only connect at endpoints, NOT midpoints. A wire passing through a pin does not connect to it. Always split wires at pin locations or use from_pin/to_pin.\n\n"
         "ERC TIPS:\n"
         "- Add 'power:PWR_FLAG' on nets powered by connectors to fix 'Power pin not driven'\n"
         "- Use no_connect on unused pins to fix 'Unconnected pin' warnings\n\n"
         "ELEMENT TYPES:\n"
         "- symbol: {element_type, lib_id, position, angle?, mirror?, reference?, properties?}\n"
-        "- power: {element_type, lib_id, position, angle?} - GND: use 180 for arrow down, VCC: use 0 for arrow up\n"
+        "- power: {element_type, lib_id, position, angle?} - GND: 0=bars down(standard), VCC: 0=bar up(standard)\n"
         "- wire: {element_type, from_pin:{ref,pin}, to_pin:{ref,pin}, waypoints?} or {points:[[x,y],...]}\n"
         "- junction, label, no_connect, sheet\n\n"
-        "EXAMPLE (vertical resistor with GND pointing down):\n"
+        "EXAMPLE (horizontal resistor with GND):\n"
         "elements: [\n"
-        "  {element_type:'symbol', lib_id:'Device:R', position:[50,50], angle:90},\n"
-        "  {element_type:'power', lib_id:'power:GND', position:[50,65], angle:180}\n"
+        "  {element_type:'symbol', lib_id:'Device:R', position:[50.8,50.8], angle:90},\n"
+        "  {element_type:'power', lib_id:'power:GND', position:[50.8,63.5]}\n"
         "]";
     schAdd.input_schema = {
         { "type", "object" },
@@ -366,12 +366,12 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         { "position", {
                             { "type", "array" },
                             { "items", { { "type", "number" } } },
-                            { "description", "Position in mm [x, y]" }
+                            { "description", "Position in mm [x, y]. Auto-snapped to 1.27mm grid. Use multiples of 2.54 for clean placement (e.g., 50.8, 76.2, 101.6)." }
                         }},
                         { "angle", {
                             { "type", "number" },
-                            { "description", "CCW rotation: 0=default(horizontal), 90=vertical, 180=flipped, 270=vertical-flipped. "
-                                            "Power: GND use 180 (arrow down), VCC use 0 (arrow up)." }
+                            { "description", "CCW rotation degrees. Passives: 0=vertical, 90=horizontal. "
+                                            "Power GND: 0=bars down(standard). Power VCC: 0=bar up(standard)." }
                         }},
                         { "mirror", {
                             { "type", "string" },
@@ -441,7 +441,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schUpdate.name = "sch_update";
     schUpdate.description =
         "Update elements in the schematic. Accepts an array of updates - use for single or batch operations. "
-        "Can modify position, rotation, mirror, and properties. Target by reference or UUID. "
+        "Can modify position, rotation, mirror, properties, and text field positions. Target by reference or UUID. "
+        "Use 'fields' to reposition Reference/Value text relative to symbol center (avoids overlap). "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schUpdate.input_schema = {
         { "type", "object" },
@@ -475,6 +476,27 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         { "dnp", {
                             { "type", "boolean" },
                             { "description", "Do Not Populate flag" }
+                        }},
+                        { "fields", {
+                            { "type", "object" },
+                            { "description", "Reposition/rotate text fields relative to symbol center. "
+                              "Keys: field names (Reference, Value). "
+                              "Values: {offset?: [dx, dy], angle?: degrees} (both optional, provide either or both). "
+                              "Examples: {\"Value\": {\"angle\": 90}}, {\"Reference\": {\"offset\": [0, -3], \"angle\": 0}}" },
+                            { "additionalProperties", {
+                                { "type", "object" },
+                                { "properties", {
+                                    { "offset", {
+                                        { "type", "array" },
+                                        { "items", { { "type", "number" } } },
+                                        { "description", "[dx, dy] offset from symbol center in mm" }
+                                    }},
+                                    { "angle", {
+                                        { "type", "number" },
+                                        { "description", "Text rotation in degrees (0=horizontal, 90=vertical)" }
+                                    }}
+                                }}
+                            }}
                         }}
                     }},
                     { "required", json::array( { "target" } ) }

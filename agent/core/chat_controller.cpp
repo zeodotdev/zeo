@@ -139,6 +139,20 @@ void CHAT_CONTROLLER::DoSendMessage( const std::string& aText, const nlohmann::j
         }
     }
 
+    // Inject user edit context for follow-up messages
+    if( userMessageCount > 0 )
+    {
+        std::string editsSummary = GetUserEditsSummary();
+        if( !editsSummary.empty() )
+        {
+            messageText = "<schematic_changes_by_user>\nThe user made the following changes to the schematic since your last response:\n"
+                          + editsSummary
+                          + "</schematic_changes_by_user>\n\n" + messageText;
+
+            wxLogInfo( "CHAT: Injecting user edits context into message" );
+        }
+    }
+
     // Build the user message for history
     nlohmann::json userMsg;
 
@@ -347,6 +361,7 @@ void CHAT_CONTROLLER::NewChat()
     m_firstUserMessage.clear();
     m_pendingToolCalls = nlohmann::json::array();
     m_serverToolBlocks = nlohmann::json::array();
+    m_schematicSnapshot.clear();
 
     m_ctx.Reset();
 }
@@ -1688,6 +1703,188 @@ void CHAT_CONTROLLER::GenerateTitle()
             // Silently ignore title generation errors
         }
     }).detach();
+}
+
+
+// ============================================================================
+// Schematic edit detection (diff between turns)
+// ============================================================================
+
+void CHAT_CONTROLLER::TakeSchematicSnapshot()
+{
+    if( m_getSchematicSummaryFn )
+    {
+        m_schematicSnapshot = m_getSchematicSummaryFn();
+        wxLogInfo( "CHAT_CONTROLLER::TakeSchematicSnapshot - captured %zu bytes",
+                   m_schematicSnapshot.size() );
+    }
+}
+
+
+static std::string FormatDouble( double v )
+{
+    char buf[32];
+    snprintf( buf, sizeof( buf ), "%.2f", v );
+    return buf;
+}
+
+
+std::string CHAT_CONTROLLER::GetUserEditsSummary()
+{
+    if( !m_getSchematicSummaryFn || m_schematicSnapshot.empty() )
+        return "";
+
+    std::string currentSummary = m_getSchematicSummaryFn();
+    if( currentSummary.empty() || currentSummary[0] != '{' )
+        return "";
+
+    // Parse both snapshots
+    nlohmann::json before, after;
+    try
+    {
+        before = nlohmann::json::parse( m_schematicSnapshot );
+        after = nlohmann::json::parse( currentSummary );
+    }
+    catch( ... )
+    {
+        return "";
+    }
+
+    std::vector<std::string> changes;
+
+    // Compare symbols
+    auto beforeSyms = before.value( "symbols", nlohmann::json::object() );
+    auto afterSyms = after.value( "symbols", nlohmann::json::object() );
+
+    for( auto& [uuid, sym] : afterSyms.items() )
+    {
+        if( !beforeSyms.contains( uuid ) )
+        {
+            changes.push_back( "Added " + sym.value( "ref", std::string( "?" ) )
+                               + " (" + sym.value( "lib", std::string() ) + ") at ("
+                               + FormatDouble( sym.value( "x", 0.0 ) ) + ", "
+                               + FormatDouble( sym.value( "y", 0.0 ) ) + ")" );
+        }
+        else
+        {
+            auto& prev = beforeSyms[uuid];
+            std::vector<std::string> mods;
+
+            if( sym.value( "x", 0.0 ) != prev.value( "x", 0.0 )
+                || sym.value( "y", 0.0 ) != prev.value( "y", 0.0 ) )
+            {
+                mods.push_back( "moved to (" + FormatDouble( sym.value( "x", 0.0 ) )
+                                + ", " + FormatDouble( sym.value( "y", 0.0 ) ) + ")" );
+            }
+
+            if( sym.value( "ang", 0 ) != prev.value( "ang", 0 ) )
+            {
+                mods.push_back( "rotated to "
+                                + std::to_string( sym.value( "ang", 0 ) ) + "\xC2\xB0" );
+            }
+
+            if( sym.value( "val", std::string() ) != prev.value( "val", std::string() ) )
+            {
+                mods.push_back( "value changed to \""
+                                + sym.value( "val", std::string() ) + "\"" );
+            }
+
+            if( sym.value( "ref", std::string() ) != prev.value( "ref", std::string() ) )
+            {
+                mods.push_back( "reference changed from "
+                                + prev.value( "ref", std::string( "?" ) )
+                                + " to " + sym.value( "ref", std::string( "?" ) ) );
+            }
+
+            if( !mods.empty() )
+            {
+                std::string detail = sym.value( "ref", std::string( "?" ) ) + ": ";
+                for( size_t i = 0; i < mods.size(); i++ )
+                {
+                    if( i > 0 )
+                        detail += ", ";
+                    detail += mods[i];
+                }
+                changes.push_back( detail );
+            }
+        }
+    }
+
+    for( auto& [uuid, sym] : beforeSyms.items() )
+    {
+        if( !afterSyms.contains( uuid ) )
+        {
+            changes.push_back( "Removed " + sym.value( "ref", std::string( "?" ) )
+                               + " (" + sym.value( "lib", std::string() ) + ")" );
+        }
+    }
+
+    // Compare labels
+    auto beforeLabels = before.value( "labels", nlohmann::json::object() );
+    auto afterLabels = after.value( "labels", nlohmann::json::object() );
+
+    for( auto& [uuid, lbl] : afterLabels.items() )
+    {
+        if( !beforeLabels.contains( uuid ) )
+        {
+            changes.push_back( "Added label \"" + lbl.value( "name", std::string() )
+                               + "\" at (" + FormatDouble( lbl.value( "x", 0.0 ) )
+                               + ", " + FormatDouble( lbl.value( "y", 0.0 ) ) + ")" );
+        }
+        else
+        {
+            auto& prev = beforeLabels[uuid];
+            if( lbl.value( "name", std::string() ) != prev.value( "name", std::string() ) )
+            {
+                changes.push_back( "Label renamed from \""
+                                   + prev.value( "name", std::string() ) + "\" to \""
+                                   + lbl.value( "name", std::string() ) + "\"" );
+            }
+            else if( lbl.value( "x", 0.0 ) != prev.value( "x", 0.0 )
+                     || lbl.value( "y", 0.0 ) != prev.value( "y", 0.0 ) )
+            {
+                changes.push_back( "Label \"" + lbl.value( "name", std::string() )
+                                   + "\" moved to ("
+                                   + FormatDouble( lbl.value( "x", 0.0 ) ) + ", "
+                                   + FormatDouble( lbl.value( "y", 0.0 ) ) + ")" );
+            }
+        }
+    }
+
+    for( auto& [uuid, lbl] : beforeLabels.items() )
+    {
+        if( !afterLabels.contains( uuid ) )
+        {
+            changes.push_back( "Removed label \""
+                               + lbl.value( "name", std::string() ) + "\"" );
+        }
+    }
+
+    // Compare wire count
+    int beforeWires = before.value( "wire_count", 0 );
+    int afterWires = after.value( "wire_count", 0 );
+
+    if( afterWires != beforeWires )
+    {
+        int delta = afterWires - beforeWires;
+        if( delta > 0 )
+            changes.push_back( std::to_string( delta ) + " wire(s) added" );
+        else
+            changes.push_back( std::to_string( -delta ) + " wire(s) removed" );
+    }
+
+    if( changes.empty() )
+        return "";
+
+    // Update snapshot to current state
+    m_schematicSnapshot = currentSummary;
+
+    std::string result;
+    for( const auto& change : changes )
+        result += "- " + change + "\n";
+
+    wxLogInfo( "CHAT_CONTROLLER::GetUserEditsSummary - detected %zu changes", changes.size() );
+    return result;
 }
 
 

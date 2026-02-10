@@ -575,6 +575,53 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             return projectContext.dump( 2 );
         } );
 
+    // Schematic summary callback for user edit detection between turns.
+    // Returns a JSON snapshot of all symbols and labels for diffing.
+    m_chatController->SetSchematicSummaryFn(
+        [this]() -> std::string {
+            // Build a lightweight Python script that dumps schematic state as JSON
+            std::string pyCode =
+                "import json\n"
+                "r = {\"symbols\": {}, \"labels\": {}, \"wire_count\": 0}\n"
+                "try:\n"
+                "    if hasattr(sch, 'refresh_document'):\n"
+                "        sch.refresh_document()\n"
+                "    for sym in sch.symbols.get_all():\n"
+                "        uid = str(sym.id.value) if hasattr(sym, 'id') else ''\n"
+                "        pos = sym.position\n"
+                "        r['symbols'][uid] = {\n"
+                "            'ref': getattr(sym, 'reference', '?'),\n"
+                "            'val': getattr(sym, 'value', ''),\n"
+                "            'lib': str(getattr(sym, 'lib_id', '')),\n"
+                "            'x': round(pos.x / 1e6, 2),\n"
+                "            'y': round(pos.y / 1e6, 2),\n"
+                "            'ang': getattr(sym, 'angle', 0)\n"
+                "        }\n"
+                "    for lbl in sch.labels.get_all():\n"
+                "        uid = str(lbl.id.value) if hasattr(lbl, 'id') else ''\n"
+                "        pos = lbl.position\n"
+                "        r['labels'][uid] = {\n"
+                "            'name': getattr(lbl, 'text', getattr(lbl, 'name', '')),\n"
+                "            'x': round(pos.x / 1e6, 2),\n"
+                "            'y': round(pos.y / 1e6, 2)\n"
+                "        }\n"
+                "    try:\n"
+                "        r['wire_count'] = len(sch.crud.get_wires())\n"
+                "    except:\n"
+                "        pass\n"
+                "except:\n"
+                "    pass\n"
+                "print(json.dumps(r))\n";
+
+            std::string result = SendRequest( FRAME_TERMINAL, "run_shell sch " + pyCode );
+
+            // Validate result is JSON (not an error message)
+            if( result.empty() || result[0] != '{' )
+                return "";
+
+            return result;
+        } );
+
     // Set model on controller
     m_currentModel = "Claude 4.6 Opus";
     m_chatController->SetModel( m_currentModel );
@@ -1306,6 +1353,10 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
     m_pendingOpenPcb = false;
     m_pendingOpenToolId.clear();
     m_pendingOpenFilePath.Clear();
+
+    // Take schematic snapshot so user edits before next message are detected
+    if( m_chatController )
+        m_chatController->TakeSchematicSnapshot();
 
     // Transition state machine to IDLE
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
@@ -2683,82 +2734,6 @@ void AGENT_FRAME::SetAgentTargetSheet( const KIID& aSheetId, const wxString& aSh
 }
 
 
-void AGENT_FRAME::BeginAgentTransaction()
-{
-    if( m_agentWorkspace.BeginTransaction() )
-    {
-        wxLogInfo( "Agent transaction started" );
-
-        // Set up conflict callback
-        m_agentWorkspace.SetConflictCallback(
-            [this]( const KIID& aItemId, const CONFLICT_INFO& aInfo )
-            {
-                OnConflictDetected( aItemId, aInfo );
-            } );
-    }
-}
-
-
-void AGENT_FRAME::EndAgentTransaction( bool aCommit )
-{
-    if( m_agentWorkspace.EndTransaction( aCommit ) )
-    {
-        if( aCommit )
-        {
-            wxLogInfo( "Agent transaction committed - pending approval" );
-            // Changes are now staged and waiting for user approval
-            // The pending changes panel will show them
-        }
-        else
-        {
-            wxLogInfo( "Agent transaction reverted" );
-        }
-    }
-}
-
-
-void AGENT_FRAME::OnConflictDetected( const KIID& aItemId, const CONFLICT_INFO& aInfo )
-{
-    wxLogInfo( "Conflict detected for item %s: %s",
-                aItemId.AsString(), aInfo.m_propertyName );
-
-    // Update the conflict display in the pending changes panel
-    UpdateConflictDisplay();
-
-    // Optionally show a notification to the user
-    AppendHtml( wxString::Format(
-        "<p style='color: #FFA500;'><b>Conflict:</b> You modified item %s which the agent was also editing.</p>",
-        aItemId.AsString() ) );
-}
-
-
-void AGENT_FRAME::OnConflictResolved( const KIID& aItemId, CONFLICT_RESOLUTION aResolution )
-{
-    m_agentWorkspace.ResolveConflict( aItemId, aResolution );
-    UpdateConflictDisplay();
-
-    wxString resolutionStr;
-    switch( aResolution )
-    {
-    case CONFLICT_RESOLUTION::KEEP_USER:   resolutionStr = "kept your version"; break;
-    case CONFLICT_RESOLUTION::KEEP_AGENT:  resolutionStr = "kept agent's version"; break;
-    case CONFLICT_RESOLUTION::AUTO_MERGE:  resolutionStr = "merged both changes"; break;
-    default:                               resolutionStr = "resolved manually"; break;
-    }
-
-    AppendHtml( wxString::Format(
-        "<p><i>Conflict for %s: %s.</i></p>",
-        aItemId.AsString(), resolutionStr ) );
-}
-
-
-void AGENT_FRAME::UpdateConflictDisplay()
-{
-    // Conflicts are now handled via the diff overlay in each editor
-    // The pending changes panel just lists sheets with changes
-}
-
-
 //=============================================================================
 // Editor Open Approval
 //=============================================================================
@@ -3663,6 +3638,12 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
         {
             m_chatHistoryDb.Save( m_chatHistory );
         }
+    }
+
+    // Take schematic snapshot for user edit detection on next message
+    if( !continuing && m_chatController )
+    {
+        m_chatController->TakeSchematicSnapshot();
     }
 
     // Show plan approval button when plan mode turn completes

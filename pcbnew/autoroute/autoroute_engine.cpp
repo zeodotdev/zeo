@@ -177,7 +177,9 @@ void AUTOROUTE_ENGINE::BuildFreeSpaceRooms()
                 VECTOR2I max( std::min( x + gridSize, boardBounds.GetRight() ),
                               std::min( y + gridSize, boardBounds.GetBottom() ) );
 
-                // Check if this cell overlaps any obstacle
+                // Check if this cell truly overlaps any obstacle (not just touches)
+                // Use OverlapsBox() instead of IntersectsBox() so that cells adjacent
+                // to obstacles are still created - they will connect via doors
                 INT_BOX cellBox( min, max );
                 bool blocked = false;
 
@@ -186,7 +188,7 @@ void AUTOROUTE_ENGINE::BuildFreeSpaceRooms()
                     if( room->GetType() == ROOM_TYPE::OBSTACLE )
                     {
                         const INT_BOX* obstBox = dynamic_cast<const INT_BOX*>( &room->GetShape() );
-                        if( obstBox && cellBox.IntersectsBox( *obstBox ) )
+                        if( obstBox && cellBox.OverlapsBox( *obstBox ) )
                         {
                             blocked = true;
                             break;
@@ -245,9 +247,57 @@ bool AUTOROUTE_ENGINE::AreRoomsAdjacent( EXPANSION_ROOM* aRoom1, EXPANSION_ROOM*
     if( !box1 || !box2 )
         return false;
 
-    // Check if boxes touch (share an edge)
+    // Check if boxes touch exactly (share an edge)
     auto touching = box1->TouchingSegment( *box2 );
-    return touching.has_value() && touching->Length() > 0;
+    if( touching.has_value() && touching->Length() > 0 )
+        return true;
+
+    // Also check for "nearly adjacent" rooms - boxes that are close but not exactly touching
+    // This handles cases where grid alignment causes small gaps
+    int tolerance = m_control.clearance * 4;  // Allow gaps up to grid size
+
+    // Check horizontal adjacency (right edge of box1 near left edge of box2 or vice versa)
+    int horizGap1 = box2->Left() - box1->Right();
+    int horizGap2 = box1->Left() - box2->Right();
+
+    if( horizGap1 >= 0 && horizGap1 <= tolerance )
+    {
+        // Check vertical overlap
+        int top = std::max( box1->Top(), box2->Top() );
+        int bottom = std::min( box1->Bottom(), box2->Bottom() );
+        if( top < bottom )
+            return true;
+    }
+
+    if( horizGap2 >= 0 && horizGap2 <= tolerance )
+    {
+        int top = std::max( box1->Top(), box2->Top() );
+        int bottom = std::min( box1->Bottom(), box2->Bottom() );
+        if( top < bottom )
+            return true;
+    }
+
+    // Check vertical adjacency (bottom edge of box1 near top edge of box2 or vice versa)
+    int vertGap1 = box2->Top() - box1->Bottom();
+    int vertGap2 = box1->Top() - box2->Bottom();
+
+    if( vertGap1 >= 0 && vertGap1 <= tolerance )
+    {
+        int left = std::max( box1->Left(), box2->Left() );
+        int right = std::min( box1->Right(), box2->Right() );
+        if( left < right )
+            return true;
+    }
+
+    if( vertGap2 >= 0 && vertGap2 <= tolerance )
+    {
+        int left = std::max( box1->Left(), box2->Left() );
+        int right = std::min( box1->Right(), box2->Right() );
+        if( left < right )
+            return true;
+    }
+
+    return false;
 }
 
 
@@ -259,15 +309,89 @@ EXPANSION_DOOR* AUTOROUTE_ENGINE::CreateDoor( EXPANSION_ROOM* aRoom1, EXPANSION_
     if( !box1 || !box2 )
         return nullptr;
 
+    // Try exact touching first
     auto touching = box1->TouchingSegment( *box2 );
-    if( !touching || touching->Length() == 0 )
-        return nullptr;
+    if( touching && touching->Length() > 0 )
+    {
+        auto door = std::make_unique<EXPANSION_DOOR>( aRoom1, aRoom2, *touching );
+        EXPANSION_DOOR* doorPtr = door.get();
+        m_doors.push_back( std::move( door ) );
+        return doorPtr;
+    }
 
-    auto door = std::make_unique<EXPANSION_DOOR>( aRoom1, aRoom2, *touching );
-    EXPANSION_DOOR* doorPtr = door.get();
-    m_doors.push_back( std::move( door ) );
+    // For nearly-adjacent rooms, create a door at the midpoint between them
+    // Use same tolerance as AreRoomsAdjacent() to ensure doors are created for all adjacent rooms
+    int tolerance = m_control.clearance * 4;
 
-    return doorPtr;
+    // Check horizontal adjacency
+    int horizGap1 = box2->Left() - box1->Right();
+    int horizGap2 = box1->Left() - box2->Right();
+
+    if( horizGap1 >= 0 && horizGap1 <= tolerance )
+    {
+        int top = std::max( box1->Top(), box2->Top() );
+        int bottom = std::min( box1->Bottom(), box2->Bottom() );
+        if( top < bottom )
+        {
+            int midX = ( box1->Right() + box2->Left() ) / 2;
+            SEG doorSeg( VECTOR2I( midX, top ), VECTOR2I( midX, bottom ) );
+            auto door = std::make_unique<EXPANSION_DOOR>( aRoom1, aRoom2, doorSeg );
+            EXPANSION_DOOR* doorPtr = door.get();
+            m_doors.push_back( std::move( door ) );
+            return doorPtr;
+        }
+    }
+
+    if( horizGap2 >= 0 && horizGap2 <= tolerance )
+    {
+        int top = std::max( box1->Top(), box2->Top() );
+        int bottom = std::min( box1->Bottom(), box2->Bottom() );
+        if( top < bottom )
+        {
+            int midX = ( box2->Right() + box1->Left() ) / 2;
+            SEG doorSeg( VECTOR2I( midX, top ), VECTOR2I( midX, bottom ) );
+            auto door = std::make_unique<EXPANSION_DOOR>( aRoom1, aRoom2, doorSeg );
+            EXPANSION_DOOR* doorPtr = door.get();
+            m_doors.push_back( std::move( door ) );
+            return doorPtr;
+        }
+    }
+
+    // Check vertical adjacency
+    int vertGap1 = box2->Top() - box1->Bottom();
+    int vertGap2 = box1->Top() - box2->Bottom();
+
+    if( vertGap1 >= 0 && vertGap1 <= tolerance )
+    {
+        int left = std::max( box1->Left(), box2->Left() );
+        int right = std::min( box1->Right(), box2->Right() );
+        if( left < right )
+        {
+            int midY = ( box1->Bottom() + box2->Top() ) / 2;
+            SEG doorSeg( VECTOR2I( left, midY ), VECTOR2I( right, midY ) );
+            auto door = std::make_unique<EXPANSION_DOOR>( aRoom1, aRoom2, doorSeg );
+            EXPANSION_DOOR* doorPtr = door.get();
+            m_doors.push_back( std::move( door ) );
+            return doorPtr;
+        }
+    }
+
+    if( vertGap2 >= 0 && vertGap2 <= tolerance )
+    {
+        int left = std::max( box1->Left(), box2->Left() );
+        int right = std::min( box1->Right(), box2->Right() );
+        if( left < right )
+        {
+            int midY = ( box2->Bottom() + box1->Top() ) / 2;
+            SEG doorSeg( VECTOR2I( left, midY ), VECTOR2I( right, midY ) );
+            auto door = std::make_unique<EXPANSION_DOOR>( aRoom1, aRoom2, doorSeg );
+            EXPANSION_DOOR* doorPtr = door.get();
+            m_doors.push_back( std::move( door ) );
+            return doorPtr;
+        }
+    }
+
+    return nullptr;
 }
 
 
@@ -430,6 +554,23 @@ std::string AUTOROUTE_ENGINE::RouteConnection( const NET_CONNECTION& aConnection
     search.SetSources( aConnection.source_pads );
     search.SetDestinations( aConnection.dest_pads );
 
+    // Debug: Check source rooms
+    int sourceRoomCount = 0;
+    int sourceDoorsTotal = 0;
+    for( BOARD_ITEM* item : aConnection.source_pads )
+    {
+        PAD* pad = dynamic_cast<PAD*>( item );
+        if( pad )
+        {
+            std::vector<EXPANSION_ROOM*> rooms = CreatePadRooms( pad );
+            sourceRoomCount += rooms.size();
+            for( EXPANSION_ROOM* room : rooms )
+            {
+                sourceDoorsTotal += room->GetDoors().size();
+            }
+        }
+    }
+
     // Find path
     auto result = search.FindConnection();
 
@@ -437,6 +578,14 @@ std::string AUTOROUTE_ENGINE::RouteConnection( const NET_CONNECTION& aConnection
     {
         m_result.nets_failed++;
         m_result.failed_nets.push_back( aConnection.net_name );
+
+        // Store debug info for first failure only (to keep message short)
+        if( m_result.nets_failed == 1 )
+        {
+            m_result.error_message += "First fail '" + aConnection.net_name + "': ";
+            m_result.error_message += std::to_string( sourceRoomCount ) + " rooms, ";
+            m_result.error_message += std::to_string( sourceDoorsTotal ) + " doors; ";
+        }
         return "";
     }
 
@@ -453,17 +602,18 @@ std::string AUTOROUTE_ENGINE::RouteConnection( const NET_CONNECTION& aConnection
     if( !path.IsValid() )
         return "";
 
-    // Generate insertion code
+    // Insert tracks directly into board
     INSERT_CONNECTION inserter;
+    inserter.SetBoard( m_board );
     inserter.SetControl( m_control );
     inserter.SetNetName( aConnection.net_name );
 
-    std::string code = inserter.GenerateInsertCode( path );
+    INSERT_RESULT insertResult = inserter.Insert( path );
 
-    m_result.tracks_added += path.segments.size();
-    m_result.vias_added += path.GetViaCount();
+    m_result.tracks_added += insertResult.tracks_added;
+    m_result.vias_added += insertResult.vias_added;
 
-    return code;
+    return insertResult.success ? "ok" : "";
 }
 
 
@@ -473,7 +623,44 @@ std::string AUTOROUTE_ENGINE::RouteAll()
 
     BuildRoomModel();
 
+    // Debug: Log room and door counts
+    int totalRooms = m_rooms.size();
+    int totalDoors = m_doors.size();
+    int totalDrills = m_drills.size();
+
+    int obstacleRooms = 0, freeSpaceRooms = 0;
+    int roomsWithDoors = 0;
+    for( const auto& room : m_rooms )
+    {
+        if( room->GetType() == ROOM_TYPE::OBSTACLE )
+            obstacleRooms++;
+        else if( room->GetType() == ROOM_TYPE::FREE_SPACE )
+            freeSpaceRooms++;
+
+        if( !room->GetDoors().empty() )
+            roomsWithDoors++;
+    }
+
     std::vector<NET_CONNECTION> connections = GetConnectionsToRoute();
+
+    // Get board bounds for debug
+    BOX2I bounds = GetBoardBounds();
+    bool boundsValid = bounds.GetWidth() > 0 && bounds.GetHeight() > 0;
+
+    // Store debug stats in result for visibility
+    std::ostringstream debugStats;
+    debugStats << "Rooms:" << totalRooms << "(obst:" << obstacleRooms << ",free:" << freeSpaceRooms << ")";
+    debugStats << " Doors:" << totalDoors << " WithDoors:" << roomsWithDoors;
+    debugStats << " Bounds:" << (boundsValid ? "OK" : "INVALID");
+    if( boundsValid )
+    {
+        debugStats << "(" << bounds.GetWidth() / 1000000.0 << "x" << bounds.GetHeight() / 1000000.0 << "mm)";
+    }
+    debugStats << " Layers:" << m_layerCount;
+    debugStats << " Nets:" << connections.size() << "; ";
+
+    m_result.error_message = debugStats.str();
+
     std::ostringstream allCode;
 
     allCode << "# Autoroute generated code\n";

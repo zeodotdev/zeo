@@ -27,6 +27,7 @@ AUTOROUTER::AUTOROUTER()
 
 void AUTOROUTER::SetBoard( BOARD* aBoard )
 {
+    m_board = aBoard;
     m_engine.Initialize( aBoard, m_control );
 }
 
@@ -49,7 +50,7 @@ AUTOROUTE_RESULT AUTOROUTER::RouteNets( const std::set<std::string>& aNetNames )
     AUTOROUTE_CONTROL control = m_control;
     control.nets_to_route = aNetNames;
 
-    m_engine.Initialize( nullptr, control );  // Will use existing board
+    m_engine.Initialize( m_board, control );
     m_routingCode = m_engine.RouteAll();
 
     return m_engine.GetResult();

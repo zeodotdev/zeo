@@ -20,6 +20,7 @@
 
 #include <magic_enum.hpp>
 #include <memory>
+#include <atomic>
 
 #include <api/api_handler_pcb.h>
 #include <api/api_pcb_utils.h>
@@ -51,6 +52,7 @@
 #include <tools/pcb_selection_tool.h>
 #include <tools/drc_tool.h>
 #include <drc/drc_engine.h>
+#include <autoroute/autoroute_engine.h>
 #include <zone.h>
 #include <netlist_reader/pcb_netlist.h>
 #include <netlist_reader/netlist_reader.h>
@@ -203,6 +205,16 @@ API_HANDLER_PCB::API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame ) :
     registerHandler<CreateDocument, CreateDocumentResponse>( &API_HANDLER_PCB::handleCreateDocument );
     registerHandler<OpenDocument, OpenDocumentResponse>( &API_HANDLER_PCB::handleOpenDocument );
     registerHandler<CloseDocument, Empty>( &API_HANDLER_PCB::handleCloseDocument );
+
+    // Autoroute handlers
+    registerHandler<RunAutoroute, RunAutorouteResponse>( &API_HANDLER_PCB::handleRunAutoroute );
+    registerHandler<StopAutoroute, Empty>( &API_HANDLER_PCB::handleStopAutoroute );
+    registerHandler<GetAutorouteSettings, AutorouteSettingsResponse>(
+            &API_HANDLER_PCB::handleGetAutorouteSettings );
+    registerHandler<SetAutorouteSettings, AutorouteSettingsResponse>(
+            &API_HANDLER_PCB::handleSetAutorouteSettings );
+    registerHandler<GetAutorouteProgress, AutorouteProgressResponse>(
+            &API_HANDLER_PCB::handleGetAutorouteProgress );
 }
 
 
@@ -3996,6 +4008,280 @@ HANDLER_RESULT<GetGroupMembersResponse> API_HANDLER_PCB::handleGetGroupMembers(
         google::protobuf::Any itemAny;
         boardMember->Serialize( itemAny );
         response.add_items()->CopyFrom( itemAny );
+    }
+
+    return response;
+}
+
+
+// =============================================================================
+// Autoroute Handlers
+// =============================================================================
+
+// Static storage for autoroute state (per-board in future)
+static std::unique_ptr<AUTOROUTE_ENGINE> s_autorouteEngine;
+static AUTOROUTE_CONTROL s_autorouteSettings;
+static bool s_autorouteRunning = false;
+static std::atomic<bool> s_autorouteStopRequested{ false };
+
+
+HANDLER_RESULT<RunAutorouteResponse> API_HANDLER_PCB::handleRunAutoroute(
+        const HANDLER_CONTEXT<RunAutoroute>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    // Check if autoroute is already running
+    if( s_autorouteRunning )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BUSY );
+        e.set_error_message( "Autoroute is already running" );
+        return tl::unexpected( e );
+    }
+
+    BOARD* board = frame()->GetBoard();
+
+    // Build control settings from request
+    AUTOROUTE_CONTROL control = s_autorouteSettings;  // Start with saved settings
+
+    const AutorouteSettings& reqSettings = aCtx.Request.settings();
+
+    if( reqSettings.max_passes() > 0 )
+        control.max_passes = reqSettings.max_passes();
+
+    control.vias_allowed = reqSettings.vias_allowed();
+
+    if( reqSettings.via_diameter() > 0 )
+        control.via_diameter = reqSettings.via_diameter();
+
+    if( reqSettings.via_drill() > 0 )
+        control.via_drill = reqSettings.via_drill();
+
+    if( reqSettings.clearance() > 0 )
+        control.clearance = reqSettings.clearance();
+
+    if( reqSettings.via_cost() > 0 )
+        control.via_cost = reqSettings.via_cost();
+
+    if( reqSettings.trace_cost() > 0 )
+        control.trace_cost = reqSettings.trace_cost();
+
+    if( reqSettings.direction_change_cost() > 0 )
+        control.direction_change_cost = reqSettings.direction_change_cost();
+
+    if( reqSettings.max_time_seconds() > 0 )
+        control.max_time_seconds = reqSettings.max_time_seconds();
+
+    control.allow_ripup = reqSettings.allow_ripup();
+
+    if( reqSettings.ripup_passes() > 0 )
+        control.ripup_passes = reqSettings.ripup_passes();
+
+    // Per-layer trace widths
+    control.trace_width.clear();
+    for( int i = 0; i < reqSettings.trace_widths_size(); i++ )
+        control.trace_width.push_back( reqSettings.trace_widths( i ) );
+
+    // Per-layer direction preferences
+    control.layer_direction.clear();
+    for( int i = 0; i < reqSettings.layer_directions_size(); i++ )
+        control.layer_direction.push_back( reqSettings.layer_directions( i ) );
+
+    // Nets to route
+    control.nets_to_route.clear();
+    for( int i = 0; i < aCtx.Request.nets_to_route_size(); i++ )
+        control.nets_to_route.insert( aCtx.Request.nets_to_route( i ) );
+
+    // Create and initialize autoroute engine
+    s_autorouteEngine = std::make_unique<AUTOROUTE_ENGINE>();
+    s_autorouteEngine->Initialize( board, control );
+    s_autorouteStopRequested = false;
+    s_autorouteRunning = true;
+
+    // Run autoroute (blocking)
+    std::string generatedCode = s_autorouteEngine->RouteAll();
+
+    s_autorouteRunning = false;
+
+    // Get results
+    AUTOROUTE_RESULT result = s_autorouteEngine->GetResult();
+
+    // Build response
+    RunAutorouteResponse response;
+
+    if( s_autorouteStopRequested )
+    {
+        response.set_status( AutorouteStatus::ARS_STOPPED );
+    }
+    else if( !result.error_message.empty() )
+    {
+        response.set_status( AutorouteStatus::ARS_ERROR );
+        response.set_error_message( result.error_message );
+    }
+    else if( result.nets_failed == 0 && result.nets_routed > 0 )
+    {
+        response.set_status( AutorouteStatus::ARS_SUCCESS );
+    }
+    else if( result.nets_routed > 0 )
+    {
+        response.set_status( AutorouteStatus::ARS_PARTIAL );
+    }
+    else
+    {
+        response.set_status( AutorouteStatus::ARS_FAILED );
+    }
+
+    response.set_nets_routed( result.nets_routed );
+    response.set_nets_failed( result.nets_failed );
+    response.set_tracks_added( result.tracks_added );
+    response.set_vias_added( result.vias_added );
+    response.set_time_seconds( result.time_seconds );
+
+    for( const std::string& netName : result.failed_nets )
+        response.add_failed_nets( netName );
+
+    // Clean up
+    s_autorouteEngine.reset();
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_PCB::handleStopAutoroute(
+        const HANDLER_CONTEXT<StopAutoroute>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    // Request stop
+    s_autorouteStopRequested = true;
+
+    // TODO: Signal the engine to stop if running
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<AutorouteSettingsResponse> API_HANDLER_PCB::handleGetAutorouteSettings(
+        const HANDLER_CONTEXT<GetAutorouteSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    AutorouteSettingsResponse response;
+    AutorouteSettings* settings = response.mutable_settings();
+
+    settings->set_max_passes( s_autorouteSettings.max_passes );
+    settings->set_vias_allowed( s_autorouteSettings.vias_allowed );
+    settings->set_via_diameter( s_autorouteSettings.via_diameter );
+    settings->set_via_drill( s_autorouteSettings.via_drill );
+    settings->set_clearance( s_autorouteSettings.clearance );
+    settings->set_via_cost( s_autorouteSettings.via_cost );
+    settings->set_trace_cost( s_autorouteSettings.trace_cost );
+    settings->set_direction_change_cost( s_autorouteSettings.direction_change_cost );
+    settings->set_max_time_seconds( s_autorouteSettings.max_time_seconds );
+    settings->set_allow_ripup( s_autorouteSettings.allow_ripup );
+    settings->set_ripup_passes( s_autorouteSettings.ripup_passes );
+
+    for( int width : s_autorouteSettings.trace_width )
+        settings->add_trace_widths( width );
+
+    for( bool dir : s_autorouteSettings.layer_direction )
+        settings->add_layer_directions( dir );
+
+    return response;
+}
+
+
+HANDLER_RESULT<AutorouteSettingsResponse> API_HANDLER_PCB::handleSetAutorouteSettings(
+        const HANDLER_CONTEXT<SetAutorouteSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    const AutorouteSettings& reqSettings = aCtx.Request.settings();
+
+    if( reqSettings.max_passes() > 0 )
+        s_autorouteSettings.max_passes = reqSettings.max_passes();
+
+    s_autorouteSettings.vias_allowed = reqSettings.vias_allowed();
+
+    if( reqSettings.via_diameter() > 0 )
+        s_autorouteSettings.via_diameter = reqSettings.via_diameter();
+
+    if( reqSettings.via_drill() > 0 )
+        s_autorouteSettings.via_drill = reqSettings.via_drill();
+
+    if( reqSettings.clearance() > 0 )
+        s_autorouteSettings.clearance = reqSettings.clearance();
+
+    if( reqSettings.via_cost() > 0 )
+        s_autorouteSettings.via_cost = reqSettings.via_cost();
+
+    if( reqSettings.trace_cost() > 0 )
+        s_autorouteSettings.trace_cost = reqSettings.trace_cost();
+
+    if( reqSettings.direction_change_cost() > 0 )
+        s_autorouteSettings.direction_change_cost = reqSettings.direction_change_cost();
+
+    if( reqSettings.max_time_seconds() > 0 )
+        s_autorouteSettings.max_time_seconds = reqSettings.max_time_seconds();
+
+    s_autorouteSettings.allow_ripup = reqSettings.allow_ripup();
+
+    if( reqSettings.ripup_passes() > 0 )
+        s_autorouteSettings.ripup_passes = reqSettings.ripup_passes();
+
+    // Per-layer trace widths
+    s_autorouteSettings.trace_width.clear();
+    for( int i = 0; i < reqSettings.trace_widths_size(); i++ )
+        s_autorouteSettings.trace_width.push_back( reqSettings.trace_widths( i ) );
+
+    // Per-layer direction preferences
+    s_autorouteSettings.layer_direction.clear();
+    for( int i = 0; i < reqSettings.layer_directions_size(); i++ )
+        s_autorouteSettings.layer_direction.push_back( reqSettings.layer_directions( i ) );
+
+    // Return the updated settings
+    return handleGetAutorouteSettings( HANDLER_CONTEXT<GetAutorouteSettings>{ aCtx.ClientName,
+            GetAutorouteSettings() } );
+}
+
+
+HANDLER_RESULT<AutorouteProgressResponse> API_HANDLER_PCB::handleGetAutorouteProgress(
+        const HANDLER_CONTEXT<GetAutorouteProgress>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    AutorouteProgressResponse response;
+
+    response.set_is_running( s_autorouteRunning );
+
+    // TODO: Get progress from engine when running
+    if( s_autorouteRunning && s_autorouteEngine )
+    {
+        // For now, just report basic status
+        // Future: Add progress tracking to AUTOROUTE_ENGINE
+        response.set_current_pass( 0 );
+        response.set_total_passes( s_autorouteSettings.max_passes );
+        response.set_nets_routed( 0 );
+        response.set_total_nets( 0 );
+        response.set_elapsed_seconds( 0.0 );
     }
 
     return response;

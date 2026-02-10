@@ -96,6 +96,15 @@ bool INT_BOX::IntersectsBox( const INT_BOX& aOther ) const
 }
 
 
+bool INT_BOX::OverlapsBox( const INT_BOX& aOther ) const
+{
+    // Strict overlap: boxes must share interior area, not just touch at edges
+    // Use <= instead of < to exclude edge-touching cases
+    return !( m_max.x <= aOther.m_min.x || aOther.m_max.x <= m_min.x ||
+              m_max.y <= aOther.m_min.y || aOther.m_max.y <= m_min.y );
+}
+
+
 std::unique_ptr<TILE_SHAPE> INT_BOX::Intersection( const TILE_SHAPE& aOther ) const
 {
     // For now, only handle INT_BOX to INT_BOX intersection

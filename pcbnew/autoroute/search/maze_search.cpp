@@ -22,6 +22,7 @@
 #include "../expansion/expansion_room.h"
 #include "../expansion/expansion_door.h"
 #include "../expansion/expansion_drill.h"
+#include <pad.h>
 #include <cmath>
 
 
@@ -41,6 +42,20 @@ void MAZE_SEARCH::SetSources( const std::set<BOARD_ITEM*>& aSourceItems )
 void MAZE_SEARCH::SetDestinations( const std::set<BOARD_ITEM*>& aDestItems )
 {
     m_destDistance.Initialize( aDestItems );
+
+    // Convert destination items (pads) to their expansion rooms
+    for( BOARD_ITEM* item : aDestItems )
+    {
+        PAD* pad = dynamic_cast<PAD*>( item );
+        if( pad )
+        {
+            std::vector<EXPANSION_ROOM*> padRooms = m_engine.CreatePadRooms( pad );
+            for( EXPANSION_ROOM* room : padRooms )
+            {
+                m_destDistance.AddTargetRoom( room );
+            }
+        }
+    }
 }
 
 
@@ -61,12 +76,27 @@ void MAZE_SEARCH::Reset()
 
 bool MAZE_SEARCH::InitializeSearch()
 {
-    // Create expansion rooms for source items and add initial doors to queue
-    // This will be implemented when we have the full engine
+    // Convert source items (pads) to their expansion rooms
+    m_sourceRooms.clear();
 
-    // For each source item, find or create an expansion room
-    // Then add all doors from that room to the priority queue with cost 0
+    for( BOARD_ITEM* item : m_sourceItems )
+    {
+        PAD* pad = dynamic_cast<PAD*>( item );
+        if( pad )
+        {
+            // Find expansion rooms for this pad
+            std::vector<EXPANSION_ROOM*> padRooms = m_engine.CreatePadRooms( pad );
+            for( EXPANSION_ROOM* room : padRooms )
+            {
+                m_sourceRooms.insert( room );
+            }
+        }
+    }
 
+    if( m_sourceRooms.empty() )
+        return false;
+
+    // For each source room, add all doors to the priority queue with cost 0
     for( EXPANSION_ROOM* sourceRoom : m_sourceRooms )
     {
         // Add target door for the source room itself (to start expansion)

@@ -148,8 +148,16 @@ public:
 
     /**
      * Check if this box intersects with another INT_BOX.
+     * Boxes that only touch at an edge are considered intersecting.
      */
     bool IntersectsBox( const INT_BOX& aOther ) const;
+
+    /**
+     * Check if this box truly overlaps with another INT_BOX.
+     * Boxes that only touch at an edge are NOT considered overlapping.
+     * Use this when you need to know if boxes share interior area.
+     */
+    bool OverlapsBox( const INT_BOX& aOther ) const;
 
     /**
      * Compute intersection with another INT_BOX.

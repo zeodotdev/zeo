@@ -1517,581 +1517,89 @@ std::string PCB_CRUD_HANDLER::GenerateExportCode( const nlohmann::json& aInput )
 }
 
 
+
+
 std::string PCB_CRUD_HANDLER::GenerateAutorouteCode( const nlohmann::json& aInput ) const
 {
     std::ostringstream code;
 
-    int maxPasses = aInput.value( "max_passes", 100 );
+    // Extract settings from input
     bool viasAllowed = aInput.value( "vias_allowed", true );
+    int maxPasses = aInput.value( "max_passes", 100 );
+    double viaCost = aInput.value( "via_cost", 50.0 );
+    double traceCost = aInput.value( "trace_cost", 1.0 );
+    double maxTimeSeconds = aInput.value( "max_time_seconds", 0.0 );
+    bool allowRipup = aInput.value( "allow_ripup", false );
+    int ripupPasses = aInput.value( "ripup_passes", 3 );
 
     code << "import json\n";
-    code << "import heapq\n";
-    code << "import traceback\n";
-    code << "from kipy.geometry import Vector2\n";
-    code << "from kipy.proto.board import board_types_pb2\n";
-    code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
-    code << "\n";
-    code << "# Autoroute configuration\n";
-    code << "VIAS_ALLOWED = " << ( viasAllowed ? "True" : "False" ) << "\n";
-    code << "GRID_SIZE = 150000  # 0.15mm grid in nm (balance of precision and speed)\n";
-    code << "TRACK_WIDTH = 250000  # 0.25mm in nm\n";
-    code << "VIA_DIAMETER = 800000  # 0.8mm in nm\n";
-    code << "VIA_DRILL = 400000  # 0.4mm in nm\n";
-    code << "CLEARANCE = 200000  # 0.2mm clearance in nm\n";
+    code << "from kipy.board.autoroute import AutorouteSettings, AutorouteStatus\n";
     code << "\n";
 
-    // Check for specific nets to route
+    // Build settings
+    code << "# Configure autoroute settings\n";
+    code << "settings = AutorouteSettings(\n";
+    code << "    max_passes=" << maxPasses << ",\n";
+    code << "    vias_allowed=" << ( viasAllowed ? "True" : "False" ) << ",\n";
+    code << "    via_cost=" << viaCost << ",\n";
+    code << "    trace_cost=" << traceCost << ",\n";
+    code << "    max_time_seconds=" << maxTimeSeconds << ",\n";
+    code << "    allow_ripup=" << ( allowRipup ? "True" : "False" ) << ",\n";
+    code << "    ripup_passes=" << ripupPasses << ",\n";
+    code << ")\n\n";
+
+    // Handle specific nets to route
+    code << "# Nets to route (None = all unrouted nets)\n";
     if( aInput.contains( "nets" ) && aInput["nets"].is_array() && !aInput["nets"].empty() )
     {
-        code << "nets_to_route = set(" << aInput["nets"].dump() << ")\n";
+        code << "nets_to_route = " << aInput["nets"].dump() << "\n";
     }
     else
     {
-        code << "nets_to_route = None  # Route all unrouted nets\n";
+        code << "nets_to_route = None\n";
+    }
+    code << "\n";
+
+    // Run autoroute
+    code << R"PYTHON(
+# Run the autorouter
+try:
+    result = board.autoroute.run(settings=settings, nets=nets_to_route)
+
+    # Build response
+    status_map = {
+        AutorouteStatus.SUCCESS: 'success',
+        AutorouteStatus.PARTIAL: 'partial',
+        AutorouteStatus.FAILED: 'failed',
+        AutorouteStatus.STOPPED: 'stopped',
+        AutorouteStatus.TIMEOUT: 'timeout',
+        AutorouteStatus.ERROR: 'error',
     }
 
-    code << R"PYTHON(
-
-def mm_to_nm(mm):
-    return int(mm * 1000000)
-
-def nm_to_grid(nm):
-    """Convert nm to grid coordinates"""
-    return nm // GRID_SIZE
-
-def grid_to_nm(grid):
-    """Convert grid coordinates to nm (center of grid cell)"""
-    return grid * GRID_SIZE + GRID_SIZE // 2
-
-class ObstacleMap:
-    """Tracks occupied grid cells per layer"""
-    def __init__(self):
-        # layer -> set of (gx, gy) tuples
-        self.occupied = {0: set(), 1: set()}  # 0=F.Cu, 1=B.Cu
-
-    def mark_occupied(self, layer, gx, gy, radius=1):
-        """Mark grid cells as occupied"""
-        for dx in range(-radius, radius + 1):
-            for dy in range(-radius, radius + 1):
-                self.occupied[layer].add((gx + dx, gy + dy))
-
-    def mark_line(self, layer, gx1, gy1, gx2, gy2, width=1):
-        """Mark grid cells along a line as occupied"""
-        # Bresenham's line algorithm
-        dx = abs(gx2 - gx1)
-        dy = abs(gy2 - gy1)
-        sx = 1 if gx1 < gx2 else -1
-        sy = 1 if gy1 < gy2 else -1
-        err = dx - dy
-
-        gx, gy = gx1, gy1
-        while True:
-            self.mark_occupied(layer, gx, gy, width)
-            if gx == gx2 and gy == gy2:
-                break
-            e2 = 2 * err
-            if e2 > -dy:
-                err -= dy
-                gx += sx
-            if e2 < dx:
-                err += dx
-                gy += sy
-
-    def is_free(self, layer, gx, gy):
-        """Check if a grid cell is free"""
-        return (gx, gy) not in self.occupied[layer]
-
-    def is_path_free(self, layer, gx1, gy1, gx2, gy2):
-        """Check if a straight path is free"""
-        dx = abs(gx2 - gx1)
-        dy = abs(gy2 - gy1)
-        sx = 1 if gx1 < gx2 else -1
-        sy = 1 if gy1 < gy2 else -1
-        err = dx - dy
-
-        gx, gy = gx1, gy1
-        while True:
-            if not self.is_free(layer, gx, gy):
-                return False
-            if gx == gx2 and gy == gy2:
-                break
-            e2 = 2 * err
-            if e2 > -dy:
-                err -= dy
-                gx += sx
-            if e2 < dx:
-                err += dx
-                gy += sy
-        return True
-
-
-def astar_route(obstacles, start, end, start_layer=0, current_net=None, pad_net_map=None):
-    """
-    A* pathfinding with layer changes (vias).
-
-    State: (gx, gy, layer)
-    Returns: list of (gx, gy, layer) or None if no path
-
-    Args:
-        obstacles: ObstacleMap for tracks/vias
-        start: (x, y) in nm
-        end: (x, y) in nm
-        start_layer: starting layer (0=F.Cu, 1=B.Cu)
-        current_net: name of net being routed (to allow routing to own pads)
-        pad_net_map: dict mapping (gx, gy) -> net_name for pad collision checking
-    """
-    sgx, sgy = nm_to_grid(start[0]), nm_to_grid(start[1])
-    egx, egy = nm_to_grid(end[0]), nm_to_grid(end[1])
-
-    def heuristic(gx, gy, layer):
-        # Octile distance for 8-connected grid (diagonal cost = sqrt(2))
-        # This is optimal for A* with diagonal moves
-        dx = abs(gx - egx)
-        dy = abs(gy - egy)
-        return max(dx, dy) + 0.414 * min(dx, dy)  # sqrt(2) - 1 ≈ 0.414
-
-    def is_cell_free(layer, gx, gy):
-        """Check if cell is free from obstacles AND other nets' pads"""
-        # Check track/via obstacles
-        if not obstacles.is_free(layer, gx, gy):
-            return False
-        # Check pad obstacles - allow routing through our own net's pads
-        if pad_net_map and (gx, gy) in pad_net_map:
-            pad_owner = pad_net_map[(gx, gy)]
-            if pad_owner != current_net:
-                return False  # Can't route through another net's pad
-        return True
-
-    # Priority queue: (f_score, g_score, gx, gy, layer, path)
-    start_state = (sgx, sgy, start_layer)
-    initial_h = heuristic(sgx, sgy, start_layer)
-    heap = [(initial_h, 0, sgx, sgy, start_layer, [start_state])]
-    visited = set()
-
-    # Directions: 8-connected grid (orthogonal + diagonal for 45° angles)
-    # (dx, dy, cost) - diagonal moves cost sqrt(2) ~= 1.414
-    directions = [
-        (1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0),  # Orthogonal
-        (1, 1, 1.414), (1, -1, 1.414), (-1, 1, 1.414), (-1, -1, 1.414)  # Diagonal 45°
-    ]
-
-    max_iterations = 100000  # Balanced for 0.15mm grid
-    iterations = 0
-
-    while heap and iterations < max_iterations:
-        iterations += 1
-        f, g, gx, gy, layer, path = heapq.heappop(heap)
-
-        state = (gx, gy, layer)
-        if state in visited:
-            continue
-        visited.add(state)
-
-        # Check if reached destination
-        if gx == egx and gy == egy:
-            return path
-
-        # Try moving in each direction (orthogonal and diagonal)
-        for dx, dy, move_cost in directions:
-            nx, ny = gx + dx, gy + dy
-            if (nx, ny, layer) not in visited and is_cell_free(layer, nx, ny):
-                new_g = g + move_cost
-                new_h = heuristic(nx, ny, layer)
-                new_path = path + [(nx, ny, layer)]
-                heapq.heappush(heap, (new_g + new_h, new_g, nx, ny, layer, new_path))
-
-        # Try layer change (via) if allowed
-        if VIAS_ALLOWED:
-            other_layer = 1 - layer
-            if (gx, gy, other_layer) not in visited and is_cell_free(other_layer, gx, gy):
-                new_g = g + 5  # Via cost penalty
-                new_h = heuristic(gx, gy, other_layer)
-                new_path = path + [(gx, gy, other_layer)]
-                heapq.heappush(heap, (new_g + new_h, new_g, gx, gy, other_layer, new_path))
-
-    return None  # No path found
-
-
-def simplify_path(path):
-    """Remove redundant points from path (keep corners and layer changes)"""
-    if len(path) <= 2:
-        return path
-
-    simplified = [path[0]]
-
-    for i in range(1, len(path) - 1):
-        prev = path[i - 1]
-        curr = path[i]
-        next_pt = path[i + 1]
-
-        # Keep if layer changes
-        if prev[2] != curr[2] or curr[2] != next_pt[2]:
-            simplified.append(curr)
-            continue
-
-        # Keep if direction changes
-        dx1, dy1 = curr[0] - prev[0], curr[1] - prev[1]
-        dx2, dy2 = next_pt[0] - curr[0], next_pt[1] - curr[1]
-        if (dx1, dy1) != (dx2, dy2):
-            simplified.append(curr)
-
-    simplified.append(path[-1])
-    return simplified
-
-
-# Initialize obstacle map
-obstacles = ObstacleMap()
-
-# Collect all pads by iterating through footprints
-# NOTE: pad.position is already in ABSOLUTE board coordinates (KiCad API returns transformed positions)
-# No manual transformation is needed - the pad positions are already correct
-all_pad_positions = []  # List of (x, y, net_name, layer) tuples - layer: 0=F.Cu, 1=B.Cu, -1=both
-debug_info = []
-sample_pads = []  # Collect sample pads for debugging
-for fp in board.get_footprints():
-    fp_ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else 'unknown'
-    # Get footprint layer to determine pad layer for SMD pads
-    fp_layer = fp.layer if hasattr(fp, 'layer') else BoardLayer.BL_F_Cu
-    fp_layer_idx = 0 if fp_layer == BoardLayer.BL_F_Cu else 1
-
-    for pad in fp.definition.pads:
-        try:
-            pos = pad.position
-            # pad.position is already in absolute board coordinates (nm)
-            pad_x = pos.x if pos else None
-            pad_y = pos.y if pos else None
-
-            # Skip pads with invalid positions
-            if pad_x is None or pad_y is None:
-                debug_info.append(f'{fp_ref}: pad has None position')
-                continue
-
-            net_name = pad.net.name if hasattr(pad, 'net') and pad.net else ''
-
-            # Determine pad layer based on pad type
-            # SMD pads are on the footprint's layer only
-            # PTH (plated through-hole) and NPTH pads are on both layers
-            pad_type = pad.pad_type if hasattr(pad, 'pad_type') else None
-            # PadType enum: PT_UNKNOWN=0, PT_PTH=1, PT_SMD=2, PT_EDGE_CONNECTOR=3, PT_NPTH=4
-            if pad_type == board_types_pb2.PT_SMD:  # SMD pads on footprint's layer only
-                pad_layer = fp_layer_idx
-            else:
-                pad_layer = -1  # PTH/NPTH on both layers
-
-            # Collect samples for debugging
-            if len(sample_pads) < 5 and net_name:
-                sample_pads.append({
-                    'ref': fp_ref,
-                    'pad': str(pad.number),
-                    'net': net_name,
-                    'position': (pad_x, pad_y),
-                    'fp_layer': 'F.Cu' if fp_layer_idx == 0 else 'B.Cu',
-                    'pad_type': pad_type,
-                    'pad_layer': pad_layer
-                })
-
-            if net_name:
-                all_pad_positions.append((pad_x, pad_y, net_name, pad_layer))
-        except Exception as e:
-            debug_info.append(f'{fp_ref}: exception {e}')
-            continue
-
-# Compute board bounds from pads
-if all_pad_positions:
-    min_x = min(p[0] for p in all_pad_positions)
-    max_x = max(p[0] for p in all_pad_positions)
-    min_y = min(p[1] for p in all_pad_positions)
-    max_y = max(p[1] for p in all_pad_positions)
-    min_gx = nm_to_grid(min_x) - 20
-    min_gy = nm_to_grid(min_y) - 20
-    max_gx = nm_to_grid(max_x) + 20
-    max_gy = nm_to_grid(max_y) + 20
-else:
-    min_gx, min_gy, max_gx, max_gy = 0, 0, 1000, 1000
-
-# Mark existing tracks as obstacles
-for track in board.get_tracks():
-    try:
-        layer = 0 if track.layer == BoardLayer.BL_F_Cu else 1
-        gx1, gy1 = nm_to_grid(track.start.x), nm_to_grid(track.start.y)
-        gx2, gy2 = nm_to_grid(track.end.x), nm_to_grid(track.end.y)
-        obstacles.mark_line(layer, gx1, gy1, gx2, gy2, width=3)
-    except Exception:
-        continue
-
-# Mark existing vias as obstacles on both layers
-for via in board.get_vias():
-    try:
-        gx, gy = nm_to_grid(via.position.x), nm_to_grid(via.position.y)
-        obstacles.mark_occupied(0, gx, gy, radius=4)
-        obstacles.mark_occupied(1, gx, gy, radius=4)
-    except Exception:
-        continue
-
-# Build pad_net_map for obstacle checking
-# Map grid cells to their net names so we can avoid routing through other nets' pads
-pad_net_map = {}  # (gx, gy) -> net_name
-pad_grid_cells = {}  # net_name -> set of (gx, gy) cells occupied by that net's pads
-for x, y, net_name, pad_layer in all_pad_positions:
-    gx, gy = nm_to_grid(x), nm_to_grid(y)
-    # Mark pad area (with clearance) - pads are typically larger than a grid cell
-    # With 0.15mm grid: typical pad ~0.5mm + 0.2mm clearance = 0.7mm = ~5 cells diameter
-    pad_radius = 3  # ~0.9mm diameter around pad center
-    for dx in range(-pad_radius, pad_radius + 1):
-        for dy in range(-pad_radius, pad_radius + 1):
-            cell = (gx + dx, gy + dy)
-            pad_net_map[cell] = net_name
-            if net_name not in pad_grid_cells:
-                pad_grid_cells[net_name] = set()
-            pad_grid_cells[net_name].add(cell)
-
-# Build net->pads mapping with layer info
-# Each pad is stored as (x, y, layer) where layer is 0=F.Cu, 1=B.Cu, -1=both
-net_pads = {}
-for x, y, net_name, pad_layer in all_pad_positions:
-    if not net_name:
-        continue
-    if nets_to_route is not None and net_name not in nets_to_route:
-        continue
-
-    pos = (x, y, pad_layer)  # Include layer info
-    if net_name not in net_pads:
-        net_pads[net_name] = []
-    net_pads[net_name].append(pos)
-
-# Filter to nets with 2+ pads and sort by estimated routing difficulty
-nets_needing_routing = [(k, v) for k, v in net_pads.items() if len(v) >= 2]
-
-# Sort by total manhattan distance (route easier/shorter nets first)
-def net_complexity(item):
-    name, pads = item
-    total_dist = 0
-    for i in range(len(pads) - 1):
-        total_dist += abs(pads[i][0] - pads[i+1][0]) + abs(pads[i][1] - pads[i+1][1])
-    return total_dist
-
-nets_needing_routing.sort(key=net_complexity)
-
-# Route each net
-routed_count = 0
-failed_count = 0
-tracks_added = 0
-vias_added = 0
-errors = []
-
-layer_map = {0: BoardLayer.BL_F_Cu, 1: BoardLayer.BL_B_Cu}
-
-for net_name, pads in nets_needing_routing:
-    try:
-        # Connect pads using robust minimum spanning tree approach
-        # pads are now (x, y, layer) tuples where layer is 0=F.Cu, 1=B.Cu, -1=both
-        connected = {pads[0]}
-        unconnected = set(pads[1:])
-        failed_pairs = set()  # Track (from, to) pairs that failed
-        net_tracks = 0
-        net_vias = 0
-        max_attempts = len(pads) * 3  # Limit total attempts to avoid infinite loops
-        attempts = 0
-
-        while unconnected and attempts < max_attempts:
-            attempts += 1
-
-            # Find closest unconnected pad to any connected pad (that we haven't failed on)
-            best_dist = float('inf')
-            best_from = None
-            best_to = None
-
-            for c_pad in connected:
-                for u_pad in unconnected:
-                    # Skip pairs we've already failed on
-                    if (c_pad, u_pad) in failed_pairs:
-                        continue
-                    dist = abs(c_pad[0] - u_pad[0]) + abs(c_pad[1] - u_pad[1])
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_from = c_pad
-                        best_to = u_pad
-
-            if not best_from or not best_to:
-                # No more valid pairs to try - all remaining are blocked
-                break
-
-            # Validate coordinates before routing
-            # pads are now (x, y, layer) tuples
-            try:
-                from_x, from_y, from_pad_layer = best_from
-                to_x, to_y, to_pad_layer = best_to
-                # Force integer conversion to catch any type issues
-                from_x, from_y = int(from_x), int(from_y)
-                to_x, to_y = int(to_x), int(to_y)
-            except (TypeError, ValueError) as e:
-                errors.append(f'{net_name}: Coordinate type error from={best_from} to={best_to}: {e}')
-                failed_pairs.add((best_from, best_to))
-                continue
-
-            # Determine start layer for routing based on source pad
-            # -1 means pad is on both layers (PTH), so prefer F.Cu
-            start_layer = from_pad_layer if from_pad_layer >= 0 else 0
-
-            # Also determine destination layer preference
-            dest_layer = to_pad_layer if to_pad_layer >= 0 else start_layer
-
-            # Find path using A* with pad collision checking
-            path = None
-            try:
-                # Try routing on the preferred layers first
-                path = astar_route(obstacles, (from_x, from_y), (to_x, to_y),
-                                   start_layer=start_layer, current_net=net_name, pad_net_map=pad_net_map)
-                if not path and start_layer != dest_layer:
-                    # Try starting from destination's preferred layer
-                    path = astar_route(obstacles, (from_x, from_y), (to_x, to_y),
-                                       start_layer=dest_layer, current_net=net_name, pad_net_map=pad_net_map)
-                if not path:
-                    # Try the other layer as last resort
-                    alt_layer = 1 - start_layer
-                    path = astar_route(obstacles, (from_x, from_y), (to_x, to_y),
-                                       start_layer=alt_layer, current_net=net_name, pad_net_map=pad_net_map)
-            except Exception as e:
-                errors.append(f'{net_name}: A* error from=({from_x},{from_y}) to=({to_x},{to_y}): {e}')
-                failed_pairs.add((best_from, best_to))
-                continue
-
-            if path:
-                path = simplify_path(path)
-
-                # Convert path to tracks and vias
-                # Build list of track waypoints, inserting vias at layer changes
-                # Use exact pad positions for first/last endpoints to ensure KiCad connectivity
-
-                # Collect all waypoints with their layers
-                waypoints = []  # List of (x_nm, y_nm, layer)
-
-                # CRITICAL: First waypoint MUST be on pad's layer for connectivity
-                # The A* path starts at start_layer, but we override for exact pad layer
-                first_path_layer = path[0][2] if path else start_layer
-                actual_start_layer = from_pad_layer if from_pad_layer >= 0 else first_path_layer
-
-                # Similarly, last waypoint must be on destination pad's layer
-                last_path_layer = path[-1][2] if path else start_layer
-                actual_end_layer = to_pad_layer if to_pad_layer >= 0 else last_path_layer
-
-                for i, (gx, gy, layer) in enumerate(path):
-                    if i == 0:
-                        # First point: use exact source pad position and pad's actual layer
-                        waypoints.append((from_x, from_y, actual_start_layer))
-                    elif i == len(path) - 1:
-                        # Last point: use exact destination pad position and pad's actual layer
-                        waypoints.append((to_x, to_y, actual_end_layer))
-                    else:
-                        # Intermediate point: use grid center
-                        waypoints.append((grid_to_nm(gx), grid_to_nm(gy), layer))
-
-                # Create tracks and vias
-                # IMPORTANT: Track segments must be created on the correct layers for connectivity
-                # When layer changes occur, we need track on BOTH layers meeting at the via
-                current_layer = waypoints[0][2]
-                for i in range(1, len(waypoints)):
-                    prev_x, prev_y, prev_layer = waypoints[i-1]
-                    curr_x, curr_y, curr_layer = waypoints[i]
-
-                    # Check for layer change - need via and tracks on both layers
-                    if curr_layer != prev_layer:
-                        # For layer change: create track on current layer TO the via point,
-                        # then via, then track FROM via on new layer
-
-                        # If this is not the first segment, we already have a track ending here
-                        # For the first segment (from pad), we may need a short track on pad's layer
-
-                        # Create track from previous position to via position on CURRENT layer
-                        # (this ensures connectivity to pad on its layer)
-                        if prev_x != curr_x or prev_y != curr_y:
-                            # Track on old layer from prev to curr (where via will be)
-                            points = [
-                                Vector2.from_xy(prev_x, prev_y),
-                                Vector2.from_xy(curr_x, curr_y)
-                            ]
-                            tracks = board.route_track(
-                                points=points,
-                                width=TRACK_WIDTH,
-                                layer=layer_map[current_layer],
-                                net=net_name
-                            )
-                            net_tracks += len(tracks)
-                            obstacles.mark_line(current_layer,
-                                              nm_to_grid(prev_x), nm_to_grid(prev_y),
-                                              nm_to_grid(curr_x), nm_to_grid(curr_y), width=3)
-
-                        # Place via at the current position (where we change layers)
-                        via = board.add_via(
-                            position=Vector2.from_xy(curr_x, curr_y),
-                            diameter=VIA_DIAMETER,
-                            drill=VIA_DRILL,
-                            net=net_name,
-                            via_type=board_types_pb2.ViaType.VT_THROUGH
-                        )
-                        net_vias += 1
-                        obstacles.mark_occupied(0, nm_to_grid(curr_x), nm_to_grid(curr_y), radius=4)
-                        obstacles.mark_occupied(1, nm_to_grid(curr_x), nm_to_grid(curr_y), radius=4)
-                        current_layer = curr_layer
-                        # Via is now at curr position, next segment will start from here on new layer
-                    else:
-                        # Same layer - just create track segment if positions differ
-                        if prev_x != curr_x or prev_y != curr_y:
-                            points = [
-                                Vector2.from_xy(prev_x, prev_y),
-                                Vector2.from_xy(curr_x, curr_y)
-                            ]
-                            tracks = board.route_track(
-                                points=points,
-                                width=TRACK_WIDTH,
-                                layer=layer_map[current_layer],
-                                net=net_name
-                            )
-                            net_tracks += len(tracks)
-                            obstacles.mark_line(current_layer,
-                                              nm_to_grid(prev_x), nm_to_grid(prev_y),
-                                              nm_to_grid(curr_x), nm_to_grid(curr_y), width=3)
-
-                connected.add(best_to)
-                unconnected.remove(best_to)
-            else:
-                # No path found from this source - mark pair as failed and try other sources
-                failed_pairs.add((best_from, best_to))
-                # Don't remove from unconnected yet - we might reach it from another pad
-
-        # Report any pads that couldn't be connected
-        if unconnected:
-            errors.append(f'{net_name}: Could not connect {len(unconnected)} pads after {attempts} attempts')
-
-        if net_tracks > 0:
-            tracks_added += net_tracks
-            vias_added += net_vias
-            routed_count += 1
-        else:
-            failed_count += 1
-
-    except Exception as e:
-        failed_count += 1
-        tb = traceback.format_exc().split('\n')
-        # Get the last few lines of traceback for context
-        tb_short = ' | '.join([l.strip() for l in tb[-4:-1] if l.strip()])
-        errors.append(f'{net_name}: {e} @ {tb_short}')
-
-result = {
-    'status': 'success' if failed_count == 0 else 'partial',
-    'nets_routed': routed_count,
-    'nets_failed': failed_count,
-    'tracks_added': tracks_added,
-    'vias_added': vias_added,
-    'total_pads_found': len(all_pad_positions),
-    'nets_with_pads': len(net_pads),
-    'nets_to_route': len(nets_needing_routing),
-    'message': f'Routed {routed_count} nets with {tracks_added} tracks and {vias_added} vias',
-    'errors': errors[:10] if errors else [],
-    'debug': debug_info[:5] if debug_info else [],
-    'sample_pads': sample_pads  # Debug: show pad positions vs footprint positions
-}
-print(json.dumps(result, indent=2))
+    output = {
+        'status': status_map.get(result.status, 'unknown'),
+        'nets_routed': result.nets_routed,
+        'nets_failed': result.nets_failed,
+        'tracks_added': result.tracks_added,
+        'vias_added': result.vias_added,
+        'time_seconds': result.time_seconds,
+        'failed_nets': result.failed_nets,
+        'message': f'Routed {result.nets_routed} nets with {result.tracks_added} tracks and {result.vias_added} vias',
+    }
+
+    if result.error_message:
+        output['error'] = result.error_message
+
+    print(json.dumps(output, indent=2))
+
+except Exception as e:
+    import traceback
+    print(json.dumps({
+        'status': 'error',
+        'error': str(e),
+        'traceback': traceback.format_exc(),
+        'message': f'Autoroute failed: {e}'
+    }, indent=2))
 )PYTHON";
 
     return code.str();

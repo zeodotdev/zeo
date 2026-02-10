@@ -18,6 +18,10 @@
  */
 
 #include "insert_connection.h"
+#include <board.h>
+#include <pcb_track.h>
+#include <netinfo.h>
+#include <layer_ids.h>
 #include <sstream>
 
 
@@ -57,16 +61,72 @@ INSERT_RESULT INSERT_CONNECTION::Insert( const ROUTING_PATH& aPath )
 
 bool INSERT_CONNECTION::InsertTrackSegment( const PATH_SEGMENT& aSegment )
 {
-    // Direct board manipulation would go here
-    // For now, we use the IPC code generation approach
-    return false;
+    if( !m_board || aSegment.points.size() < 2 )
+        return false;
+
+    // Get the net
+    NETINFO_ITEM* net = nullptr;
+    if( !m_netName.empty() )
+    {
+        net = m_board->FindNet( wxString::FromUTF8( m_netName ) );
+    }
+
+    // Convert autoroute layer to KiCad layer
+    PCB_LAYER_ID layer = F_Cu;
+    int layerCount = m_board->GetCopperLayerCount();
+    if( aSegment.layer == 0 )
+        layer = F_Cu;
+    else if( aSegment.layer == layerCount - 1 )
+        layer = B_Cu;
+    else if( aSegment.layer >= 1 && aSegment.layer < layerCount - 1 )
+        layer = static_cast<PCB_LAYER_ID>( In1_Cu + aSegment.layer - 1 );
+
+    // Create track segments between consecutive points
+    bool anyAdded = false;
+    for( size_t i = 0; i < aSegment.points.size() - 1; ++i )
+    {
+        PCB_TRACK* track = new PCB_TRACK( m_board );
+        track->SetStart( aSegment.points[i] );
+        track->SetEnd( aSegment.points[i + 1] );
+        track->SetWidth( aSegment.width > 0 ? aSegment.width : m_control.GetTraceWidth( aSegment.layer ) );
+        track->SetLayer( layer );
+
+        if( net )
+            track->SetNet( net );
+
+        m_board->Add( track );
+        anyAdded = true;
+    }
+
+    return anyAdded;
 }
 
 
 bool INSERT_CONNECTION::InsertVia( const PATH_POINT& aViaPoint )
 {
-    // Direct board manipulation would go here
-    return false;
+    if( !m_board )
+        return false;
+
+    // Get the net
+    NETINFO_ITEM* net = nullptr;
+    if( !m_netName.empty() )
+    {
+        net = m_board->FindNet( wxString::FromUTF8( m_netName ) );
+    }
+
+    // Create the via
+    PCB_VIA* via = new PCB_VIA( m_board );
+    via->SetPosition( aViaPoint.position );
+    via->SetWidth( PADSTACK::ALL_LAYERS, m_control.via_diameter );
+    via->SetDrill( m_control.via_drill );
+    via->SetViaType( VIATYPE::THROUGH );
+    via->SetLayerPair( F_Cu, B_Cu );
+
+    if( net )
+        via->SetNet( net );
+
+    m_board->Add( via );
+    return true;
 }
 
 

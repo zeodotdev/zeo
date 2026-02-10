@@ -86,6 +86,7 @@ private:
     AUTOROUTE_ENGINE  m_engine;
     AUTOROUTE_CONTROL m_control;
     std::string       m_routingCode;
+    BOARD*            m_board = nullptr;
 };
 
 

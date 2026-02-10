@@ -20,6 +20,7 @@ include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
     ./dialogs
     ./autorouter
+    ./autoroute
     ./generators
     ${CMAKE_SOURCE_DIR}/3d-viewer
     ${CMAKE_SOURCE_DIR}/3d-viewer/dialogs
@@ -790,6 +791,7 @@ target_link_libraries( pcbnew_kiface_objects
     PRIVATE
         common
         core
+        autoroute
         nlohmann_json
         rectpack2d
         gzip-hpp

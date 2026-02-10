@@ -1,0 +1,53 @@
+name: Agent Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agent-tests:
+    name: Build & Test Agent
+    runs-on: ubuntu-latest
+    container:
+      image: registry.gitlab.com/kicad/kicad-ci/source_containers/master/fedora:41
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup ccache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/ccache
+          key: ccache-agent-${{ github.sha }}
+          restore-keys: ccache-agent-
+
+      - name: Configure
+        run: |
+          mkdir -p build
+          cd build
+          cmake -G Ninja \
+            -DCMAKE_BUILD_TYPE=QABUILD \
+            -DKICAD_BUILD_QA_TESTS=ON \
+            -DKICAD_USE_CMAKE_FINDPROTOBUF=ON \
+            -DUSE_CCACHE=ON \
+            ..
+        env:
+          CCACHE_DIR: /tmp/ccache
+
+      - name: Build
+        run: ninja -C build qa_agent
+        env:
+          CCACHE_DIR: /tmp/ccache
+
+      - name: Test
+        run: ctest --test-dir build -R qa_agent --output-on-failure
+        env:
+          BOOST_TEST_LOGGER: "JUNIT,warning,test_results.agent.xml:HRF,message"
+          BOOST_TEST_CATCH_SYSTEM_ERRORS: "no"

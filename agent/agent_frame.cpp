@@ -1963,13 +1963,16 @@ void AGENT_FRAME::OnExit( wxCommandEvent& event )
 
 std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayload )
 {
-    // Ensure the target frame exists before sending the message
-    // This is necessary because Kiway silently drops messages to non-existent frames
-    KIWAY_PLAYER* targetPlayer = Kiway().Player( static_cast<FRAME_T>( aDestFrame ), true );
+    // Check if the target frame exists.
+    // For the terminal frame, create it on demand (needed for shell commands).
+    // For editor frames, don't create — the editor must already be open.
+    bool createIfMissing = ( static_cast<FRAME_T>( aDestFrame ) == FRAME_TERMINAL );
+    KIWAY_PLAYER* targetPlayer = Kiway().Player( static_cast<FRAME_T>( aDestFrame ),
+                                                  createIfMissing );
     if( !targetPlayer )
     {
-        wxLogError( "AGENT: SendRequest failed - could not create target frame %d", aDestFrame );
-        return "Error: Failed to create target frame for tool execution.";
+        wxLogWarning( "AGENT: SendRequest - target frame %d is not open", aDestFrame );
+        return "Error: Target frame is not open.";
     }
 
     wxLogInfo( "AGENT: SendRequest to frame %d, payload: %s",

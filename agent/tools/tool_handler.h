@@ -1,6 +1,7 @@
 #ifndef TOOL_HANDLER_H
 #define TOOL_HANDLER_H
 
+#include <functional>
 #include <string>
 #include <nlohmann/json.hpp>
 
@@ -90,9 +91,23 @@ public:
      */
     virtual bool IsPcbEditorOpen() const { return m_pcbEditorOpen; }
 
+    /**
+     * Function type for sending IPC requests to other KiCad frames.
+     * Parameters: (destination frame type, JSON payload string)
+     * Returns: response string from the target frame.
+     */
+    using SendRequestFn = std::function<std::string( int, const std::string& )>;
+
+    /**
+     * Provide an IPC send function so the handler can communicate with editor frames.
+     * Called before Execute() by ExecuteToolSync.
+     */
+    void SetSendRequestFn( SendRequestFn aFn ) { m_sendRequestFn = std::move( aFn ); }
+
 protected:
     bool m_schematicEditorOpen = false;
     bool m_pcbEditorOpen = false;
+    SendRequestFn m_sendRequestFn;
 };
 
 #endif // TOOL_HANDLER_H

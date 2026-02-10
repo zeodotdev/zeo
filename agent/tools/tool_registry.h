@@ -1,6 +1,7 @@
 #ifndef TOOL_REGISTRY_H
 #define TOOL_REGISTRY_H
 
+#include <functional>
 #include <string>
 #include <memory>
 #include <vector>
@@ -77,6 +78,22 @@ public:
      * @param aOpen true if the PCB editor is open.
      */
     void SetPcbEditorOpen( bool aOpen );
+
+    /**
+     * Check if the schematic editor is currently open.
+     */
+    bool IsSchematicEditorOpen() const;
+
+    /**
+     * Check if the PCB editor is currently open.
+     */
+    bool IsPcbEditorOpen() const;
+
+    /**
+     * Provide an IPC send function to all handlers so they can communicate with editor frames.
+     * Called before Execute() by ExecuteToolSync.
+     */
+    void SetSendRequestFn( std::function<std::string( int, const std::string& )> aFn );
 
 private:
     TOOL_REGISTRY();

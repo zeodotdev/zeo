@@ -119,3 +119,30 @@ void TOOL_REGISTRY::SetPcbEditorOpen( bool aOpen )
         handler->SetPcbEditorOpen( aOpen );
     }
 }
+
+
+bool TOOL_REGISTRY::IsSchematicEditorOpen() const
+{
+    if( !m_handlers.empty() )
+        return m_handlers.front()->IsSchematicEditorOpen();
+
+    return false;
+}
+
+
+bool TOOL_REGISTRY::IsPcbEditorOpen() const
+{
+    if( !m_handlers.empty() )
+        return m_handlers.front()->IsPcbEditorOpen();
+
+    return false;
+}
+
+
+void TOOL_REGISTRY::SetSendRequestFn( std::function<std::string( int, const std::string& )> aFn )
+{
+    for( auto& handler : m_handlers )
+    {
+        handler->SetSendRequestFn( aFn );
+    }
+}

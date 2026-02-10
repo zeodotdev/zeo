@@ -47,7 +47,9 @@
 #include <libraries/symbol_library_adapter.h>
 #include <widgets/sch_design_block_pane.h>
 #include <agent_change_tracker.h>
+#include <settings/settings_manager.h>
 #include <wx/log.h>
+#include "sch_plotter.h"
 #include <nlohmann/json.hpp>
 #include <sch_text.h>
 #include <nlohmann/json.hpp>
@@ -929,6 +931,49 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                     // Detect changes after agent execution and show diff overlay
                     DetectAgentChanges();
                     break;  // No response needed
+                }
+                else if( j_in.contains( "type" ) && j_in["type"] == "export_screenshot" )
+                {
+                    // Export the current in-memory schematic to SVG for screenshot
+                    std::string outputDir = j_in.value( "output_dir", "" );
+
+                    SCH_RENDER_SETTINGS renderSettings;
+                    COLOR_SETTINGS* cs = ::GetColorSettings( wxT( "_builtin_default" ) );
+                    renderSettings.LoadColors( cs );
+                    renderSettings.SetDefaultPenWidth(
+                            Schematic().Settings().m_DefaultLineWidth );
+                    renderSettings.m_LabelSizeRatio =
+                            Schematic().Settings().m_LabelSizeRatio;
+                    renderSettings.m_TextOffsetRatio =
+                            Schematic().Settings().m_TextOffsetRatio;
+                    renderSettings.m_PinSymbolSize =
+                            Schematic().Settings().m_PinSymbolSize;
+                    renderSettings.SetDashLengthRatio(
+                            Schematic().Settings().m_DashedLineDashRatio );
+                    renderSettings.SetGapLengthRatio(
+                            Schematic().Settings().m_DashedLineGapRatio );
+
+                    SCH_PLOT_OPTS plotOpts;
+                    plotOpts.m_plotAll = false;
+                    plotOpts.m_plotDrawingSheet = false;
+                    plotOpts.m_useBackgroundColor = false;
+                    plotOpts.m_blackAndWhite = false;
+                    plotOpts.m_pageSizeSelect = PAGE_SIZE_AUTO;
+                    plotOpts.m_theme = wxT( "_builtin_default" );
+                    plotOpts.m_outputDirectory = wxString::FromUTF8( outputDir );
+
+                    SCH_PLOTTER plotter( this );
+                    plotter.Plot( PLOT_FORMAT::SVG, plotOpts, &renderSettings, nullptr );
+
+                    nlohmann::json resp;
+                    resp["type"] = "export_screenshot_response";
+                    resp["svg_path"] = plotter.GetLastOutputFilePath().ToStdString();
+                    resp["success"] = !plotter.GetLastOutputFilePath().IsEmpty();
+
+                    std::string respStr = resp.dump();
+                    Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, respStr,
+                                         this );
+                    break;
                 }
             }
         }

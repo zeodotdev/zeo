@@ -1203,6 +1203,9 @@ std::string ExecuteToolSync( const std::string& aToolName, const nlohmann::json&
             return aSendRequestFn( FRAME_TERMINAL, command );
         }
 
+        // Provide the IPC send function so handlers can communicate with editor frames
+        TOOL_REGISTRY::Instance().SetSendRequestFn( aSendRequestFn );
+
         // Execute directly without going through terminal frame
         return TOOL_REGISTRY::Instance().Execute( aToolName, aInput );
     }

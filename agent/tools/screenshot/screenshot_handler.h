@@ -39,6 +39,15 @@ private:
     std::string ExecuteScreenshot( const nlohmann::json& aInput );
 
     /**
+     * Export SVG via IPC from the in-memory editor state.
+     * Sends an export_screenshot command to the appropriate editor frame.
+     * @param aIsSchematic true for schematic, false for PCB
+     * @param aTempDir Temporary directory for output
+     * @return Path to the exported SVG, or empty on failure
+     */
+    std::string ExportViaIpc( bool aIsSchematic, const std::string& aTempDir );
+
+    /**
      * Export a schematic to SVG using kicad-cli.
      * @param aFilePath Path to the .kicad_sch file
      * @param aTempDir Temporary directory for output

@@ -4,6 +4,7 @@
 
 #include "screenshot_handler.h"
 #include "../kicad_cli_util.h"
+#include <frame_type.h>
 
 #include <chrono>
 #include <cstdio>
@@ -177,13 +178,28 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
         wxFileName::Rmdir( tempDir );
     } );
 
-    // Export to SVG
+    // Export to SVG — prefer in-memory IPC export when editor is open,
+    // fall back to kicad-cli disk-based export otherwise.
+    // We always attempt IPC when the send function is available; SendRequest will
+    // return an error if the target editor frame is not open, and we fall back.
     std::string svgPath;
 
-    if( isSchematic )
-        svgPath = ExportSchematicSvg( filePath, tempDirStr );
-    else
-        svgPath = ExportPcbSvg( filePath, tempDirStr );
+    if( m_sendRequestFn )
+    {
+        svgPath = ExportViaIpc( isSchematic, tempDirStr );
+
+        if( svgPath.empty() )
+            wxLogWarning( "SCREENSHOT: IPC export failed, falling back to kicad-cli" );
+    }
+
+    // Fall back to kicad-cli if IPC was not used or failed
+    if( svgPath.empty() )
+    {
+        if( isSchematic )
+            svgPath = ExportSchematicSvg( filePath, tempDirStr );
+        else
+            svgPath = ExportPcbSvg( filePath, tempDirStr );
+    }
 
     if( svgPath.empty() )
         return "Error: Failed to export SVG from " + filePath;
@@ -219,6 +235,59 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
     };
 
     return result.dump();
+}
+
+
+std::string SCREENSHOT_HANDLER::ExportViaIpc( bool aIsSchematic, const std::string& aTempDir )
+{
+    // Create svg_out subdirectory (schematic plotter writes into this directory)
+    std::string outputDir = aTempDir + "/svg_out";
+    wxFileName::Mkdir( wxString::FromUTF8( outputDir ), wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
+
+    int targetFrame = aIsSchematic ? FRAME_SCH : FRAME_PCB_EDITOR;
+
+    nlohmann::json cmd;
+    cmd["type"] = "export_screenshot";
+    cmd["output_dir"] = outputDir;
+
+    wxLogInfo( "SCREENSHOT: Requesting in-memory export via IPC (frame=%d)", targetFrame );
+
+    std::string responseStr = m_sendRequestFn( targetFrame, cmd.dump() );
+
+    if( responseStr.empty() )
+    {
+        wxLogError( "SCREENSHOT: IPC export returned empty response" );
+        return std::string();
+    }
+
+    // Parse response JSON
+    nlohmann::json response = nlohmann::json::parse( responseStr, nullptr, false );
+
+    if( response.is_discarded() )
+    {
+        wxLogError( "SCREENSHOT: IPC export response is not valid JSON: %s",
+                    responseStr.c_str() );
+        return std::string();
+    }
+
+    bool success = response.value( "success", false );
+
+    if( !success )
+    {
+        wxLogError( "SCREENSHOT: IPC export reported failure" );
+        return std::string();
+    }
+
+    std::string svgPath = response.value( "svg_path", "" );
+
+    if( svgPath.empty() || !wxFileName::FileExists( wxString::FromUTF8( svgPath ) ) )
+    {
+        wxLogError( "SCREENSHOT: IPC export SVG not found at: %s", svgPath.c_str() );
+        return std::string();
+    }
+
+    wxLogInfo( "SCREENSHOT: IPC export succeeded: %s", svgPath.c_str() );
+    return svgPath;
 }
 
 

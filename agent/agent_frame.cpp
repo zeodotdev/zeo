@@ -2345,6 +2345,22 @@ static std::string StripProjectContext( const std::string& aText )
 }
 
 
+static std::string StripSchematicChanges( const std::string& aText )
+{
+    static const std::string PREFIX = "<schematic_changes_by_user>\n";
+    static const std::string SUFFIX = "</schematic_changes_by_user>\n\n";
+
+    if( aText.compare( 0, PREFIX.size(), PREFIX ) == 0 )
+    {
+        size_t endPos = aText.find( SUFFIX );
+        if( endPos != std::string::npos )
+            return aText.substr( endPos + SUFFIX.size() );
+    }
+
+    return aText;
+}
+
+
 void AGENT_FRAME::RenderChatHistory()
 {
     // Clear historical thinking storage
@@ -2370,7 +2386,10 @@ void AGENT_FRAME::RenderChatHistory()
             std::string content = msg["content"];
 
             if( role == "user" )
+            {
                 content = StripProjectContext( content );
+                content = StripSchematicChanges( content );
+            }
 
             // Strip leading newlines to match live streaming behavior
             size_t start = content.find_first_not_of( "\n\r" );
@@ -2437,7 +2456,10 @@ void AGENT_FRAME::RenderChatHistory()
                     std::string text = block.value( "text", "" );
 
                     if( role == "user" )
+                    {
                         text = StripProjectContext( text );
+                        text = StripSchematicChanges( text );
+                    }
 
                     // Strip leading newlines to match live streaming behavior
                     size_t start = text.find_first_not_of( "\n\r" );

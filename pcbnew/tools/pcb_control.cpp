@@ -2116,6 +2116,15 @@ int PCB_CONTROL::Undo( const TOOL_EVENT& aEvent )
         // This clears stale selection references in the agent
         std::string payload;
         editFrame->Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_CHECK_CHANGES, payload );
+
+        // Check if all agent undo entries have been undone — auto-reject if so
+        PCB_EDIT_FRAME* pcbEditFrame = dynamic_cast<PCB_EDIT_FRAME*>( editFrame );
+        if( pcbEditFrame )
+        {
+            wxLogInfo( "PCB: Undo handler: checking for stale agent changes (undoCount=%d)",
+                       pcbEditFrame->GetUndoCommandCount() );
+            pcbEditFrame->ClearStaleAgentChanges();
+        }
     }
 
     return 0;

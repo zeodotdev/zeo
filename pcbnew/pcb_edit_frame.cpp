@@ -733,13 +733,19 @@ void PCB_EDIT_FRAME::OnBoardItemRemoved( BOARD& aBoard, BOARD_ITEM* aBoardItem )
         wxLogInfo( "PCB: Tracked item %s removed by user, untracking", aBoardItem->m_Uuid.AsString() );
         m_agentChangeTracker->UntrackItem( aBoardItem->m_Uuid );
 
-        // If all tracked items are gone, clear the diff view
+        // If all tracked items are gone, do full rejection
         if( !m_agentChangeTracker->HasChanges() )
         {
-            wxLogInfo( "PCB: All tracked items removed, clearing diff view" );
-            DIFF_MANAGER::GetInstance().ClearDiff();
+            wxLogInfo( "PCB: All tracked items removed by user, auto-rejecting agent changes "
+                       "(baseline=%d, undoCount=%d, agentUndoCount=%d)",
+                       m_agentChangeTracker->GetUndoBaseline(),
+                       GetUndoCommandCount(),
+                       m_agentChangeTracker->GetAgentUndoCount() );
+
             m_hasAgentPendingChanges = false;
             m_showingAgentBefore = false;
+            m_agentChangeTracker->ClearTrackedItems();
+            DIFF_MANAGER::GetInstance().ClearDiff();
         }
         else
         {
@@ -772,13 +778,19 @@ void PCB_EDIT_FRAME::OnBoardItemsRemoved( BOARD& aBoard, std::vector<BOARD_ITEM*
 
     if( anyRemoved )
     {
-        // If all tracked items are gone, clear the diff view
+        // If all tracked items are gone, do full rejection
         if( !m_agentChangeTracker->HasChanges() )
         {
-            wxLogInfo( "PCB: All tracked items removed, clearing diff view" );
-            DIFF_MANAGER::GetInstance().ClearDiff();
+            wxLogInfo( "PCB: All tracked items removed by user (batch), auto-rejecting agent changes "
+                       "(baseline=%d, undoCount=%d, agentUndoCount=%d)",
+                       m_agentChangeTracker->GetUndoBaseline(),
+                       GetUndoCommandCount(),
+                       m_agentChangeTracker->GetAgentUndoCount() );
+
             m_hasAgentPendingChanges = false;
             m_showingAgentBefore = false;
+            m_agentChangeTracker->ClearTrackedItems();
+            DIFF_MANAGER::GetInstance().ClearDiff();
         }
         else
         {
@@ -2105,6 +2117,33 @@ void PCB_EDIT_FRAME::OnModify()
     if( !GetTitle().StartsWith( wxT( "*" ) ) )
         UpdateTitle();
 
+    // Check if agent-tracked items were deleted by the user
+    // Skip when showing "before" state — items are intentionally absent from screen
+    if( m_hasAgentPendingChanges && !m_showingAgentBefore
+        && m_agentChangeTracker && m_agentChangeTracker->HasChanges() )
+    {
+        std::set<KIID>  trackedItems = m_agentChangeTracker->GetAllTrackedItems();
+        const auto&     itemCache = GetBoard()->GetItemByIdCache();
+
+        for( const KIID& kiid : trackedItems )
+        {
+            if( itemCache.find( kiid ) == itemCache.end() )
+                m_agentChangeTracker->UntrackItem( kiid );
+        }
+
+        if( !m_agentChangeTracker->HasChanges() )
+        {
+            wxLogInfo( "PCB: OnModify: all tracked items deleted, auto-rejecting" );
+
+            m_hasAgentPendingChanges = false;
+            m_agentChangeTracker->ClearTrackedItems();
+            DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
+
+            // Notify agent frame to refresh its pending changes panel
+            std::string payload;
+            Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_CHECK_CHANGES, payload );
+        }
+    }
 }
 
 
@@ -3482,29 +3521,18 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
                 wxLogInfo( "PCB: Tracking item %s (type=%s, status=%s)",
                            item->m_Uuid.AsString(), item->GetClass(), statusStr );
 
-                // Track the item by KIID (PCB has no sheet path)
-                m_agentChangeTracker->TrackItem( item->m_Uuid );
-            }
-
-            // For CHANGED operations, also track the linked item (current state)
-            if( status == UNDO_REDO::CHANGED )
-            {
-                EDA_ITEM* link = undoCommand->GetPickedItemLink( j );
-                if( link )
-                {
-                    wxLogInfo( "PCB: Tracking CHANGED link %s (type=%s)",
-                               link->m_Uuid.AsString(), link->GetClass() );
-                    m_agentChangeTracker->TrackItem( link->m_Uuid );
-                }
-                else
-                {
-                    wxLogInfo( "PCB: CHANGED item has no link!" );
-                }
+                // Track the item by KIID with change type (PCB has no sheet path)
+                m_agentChangeTracker->TrackItem( item->m_Uuid, status );
             }
         }
     }
 
     m_hasAgentPendingChanges = true;
+
+    int agentUndoCount = currentUndoCount - baseline;
+    m_agentChangeTracker->SetAgentUndoCount( agentUndoCount );
+    wxLogInfo( "PCB: DetectAgentChanges: baseline=%d, currentUndo=%d, agentUndoCount=%d",
+               baseline, currentUndoCount, agentUndoCount );
 
     wxLogInfo( "PCB: Agent diff tracking %zu items", m_agentChangeTracker->GetTrackedItemCount() );
 
@@ -3562,9 +3590,50 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
 
 bool PCB_EDIT_FRAME::HasAgentPendingChanges() const
 {
-    // Return the tracker's actual state, not the cached flag
-    // This ensures the panel always reflects reality
-    return m_agentChangeTracker && m_agentChangeTracker->HasChanges();
+    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
+        return false;
+
+    // If agent used undo-based changes and all have been undone, tracker is stale
+    int agentUndoCount = m_agentChangeTracker->GetAgentUndoCount();
+    if( agentUndoCount > 0 )
+    {
+        int baseline = m_agentChangeTracker->GetUndoBaseline();
+        int currentUndoCount = GetUndoCommandCount();
+
+        if( currentUndoCount <= baseline )
+        {
+            wxLogInfo( "PCB: HasAgentPendingChanges: returning false — stale tracker "
+                       "(undoCount=%d <= baseline=%d, agentUndoCount=%d)",
+                       currentUndoCount, baseline, agentUndoCount );
+            return false;
+        }
+    }
+
+    return true;
+}
+
+
+void PCB_EDIT_FRAME::ClearStaleAgentChanges()
+{
+    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
+        return;
+
+    int agentUndoCount = m_agentChangeTracker->GetAgentUndoCount();
+    int currentUndoCount = GetUndoCommandCount();
+    int baseline = m_agentChangeTracker->GetUndoBaseline();
+
+    wxLogInfo( "PCB: ClearStaleAgentChanges: agentUndoCount=%d, currentUndo=%d, baseline=%d",
+               agentUndoCount, currentUndoCount, baseline );
+
+    if( agentUndoCount > 0 && currentUndoCount <= baseline )
+    {
+        wxLogInfo( "PCB: All agent undo entries undone (undoCount %d <= baseline %d), auto-rejecting",
+                   currentUndoCount, baseline );
+        m_agentChangeTracker->ClearTrackedItems();
+        m_hasAgentPendingChanges = false;
+        m_showingAgentBefore = false;
+        DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
+    }
 }
 
 
@@ -3587,38 +3656,61 @@ void PCB_EDIT_FRAME::ClearAgentPendingChanges()
 
 void PCB_EDIT_FRAME::RevertAgentChanges()
 {
-    if( !m_hasAgentPendingChanges || !m_agentChangeTracker )
-        return;
+    wxLogInfo( "PCB: RevertAgentChanges called (hasAgentPendingChanges=%d, showingBefore=%d)",
+               m_hasAgentPendingChanges, m_showingAgentBefore );
 
-    // If we're currently showing "before" state, we've already undone via the view toggle
-    // Just need to clear the redo list so changes can't be redone
+    if( !HasAgentPendingChanges() || !m_agentChangeTracker )
+    {
+        wxLogInfo( "PCB: RevertAgentChanges: no real pending changes — cleaning up stale state" );
+        if( m_agentChangeTracker )
+            m_agentChangeTracker->ClearTrackedItems();
+        m_hasAgentPendingChanges = false;
+        m_showingAgentBefore = false;
+        DIFF_MANAGER::GetInstance().ClearDiff();
+        return;
+    }
+
     if( m_showingAgentBefore )
     {
-        // Already showing before state - just clear redo list
+        wxLogInfo( "PCB: RevertAgentChanges: showing 'before' state, clearing redo list" );
         ClearUndoORRedoList( REDO_LIST );
     }
     else
     {
-        // Showing "after" state - need to undo all agent changes
-        // Roll back each undo entry created by the agent without creating redo entries
         int currentUndoCount = GetUndoCommandCount();
         int baseline = m_agentChangeTracker->GetUndoBaseline();
-        int numToUndo = currentUndoCount - baseline;
+        int agentUndoCount = m_agentChangeTracker->GetAgentUndoCount();
+        int entriesSinceBaseline = currentUndoCount - baseline;
 
-        for( int i = 0; i < numToUndo; i++ )
+        wxLogInfo( "PCB: RevertAgentChanges: currentUndo=%d, baseline=%d, agentUndoCount=%d, "
+                   "entriesSinceBaseline=%d",
+                   currentUndoCount, baseline, agentUndoCount, entriesSinceBaseline );
+
+        if( agentUndoCount > 0 && entriesSinceBaseline == agentUndoCount )
         {
-            RollbackFromUndo();
+            wxLogInfo( "PCB: RevertAgentChanges: safe undo rollback (%d entries)", entriesSinceBaseline );
+            for( int i = 0; i < entriesSinceBaseline; i++ )
+                RollbackFromUndo();
+        }
+        else if( agentUndoCount > 0 && entriesSinceBaseline > agentUndoCount )
+        {
+            wxLogInfo( "PCB: RevertAgentChanges: user mixed in %d entries — clearing state "
+                       "(PCB has no per-sheet rejection)", entriesSinceBaseline - agentUndoCount );
+            // PCB has no per-sheet rejection, just clear state
+        }
+        else
+        {
+            wxLogInfo( "PCB: RevertAgentChanges: no undo entries to roll back "
+                       "(agentUndoCount=%d, entriesSinceBaseline=%d), clearing state",
+                       agentUndoCount, entriesSinceBaseline );
         }
     }
 
-    // Clear the diff overlay
     DIFF_MANAGER::GetInstance().ClearDiff();
-
-    // Clear the tracker
     m_agentChangeTracker->ClearTrackedItems();
-
     m_hasAgentPendingChanges = false;
     m_showingAgentBefore = false;
+    wxLogInfo( "PCB: RevertAgentChanges: done, state cleared" );
 }
 
 

@@ -2802,6 +2802,23 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
     SCH_SCREENS allScreens( m_frame->Schematic().Root() );
     allScreens.DeleteAllMarkers( MARKER_BASE::MARKER_ERC, true );
 
+    // Check for annotation errors (unannotated symbols, duplicate references)
+    m_frame->CheckAnnotate(
+            []( ERCE_T aType, const wxString& aMsg, SCH_REFERENCE* aItemA, SCH_REFERENCE* aItemB )
+            {
+                std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( aType );
+                ercItem->SetErrorMessage( aMsg );
+
+                if( aItemB )
+                    ercItem->SetItems( aItemA->GetSymbol(), aItemB->GetSymbol() );
+                else
+                    ercItem->SetItems( aItemA->GetSymbol() );
+
+                SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ),
+                                                     aItemA->GetSymbol()->GetPosition() );
+                aItemA->GetSheetPath().LastScreen()->Append( marker );
+            } );
+
     // Run ERC tests
     ERC_TESTER tester( &m_frame->Schematic() );
     tester.RunTests( nullptr, m_frame, nullptr, &m_frame->Prj(), nullptr );

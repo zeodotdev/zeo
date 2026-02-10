@@ -366,7 +366,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         { "position", {
                             { "type", "array" },
                             { "items", { { "type", "number" } } },
-                            { "description", "Position in mm [x, y]" }
+                            { "description", "Position in mm [x, y]. Auto-snapped to 1.27mm grid. Use multiples of 2.54 for clean placement (e.g., 50.8, 76.2, 101.6)." }
                         }},
                         { "angle", {
                             { "type", "number" },

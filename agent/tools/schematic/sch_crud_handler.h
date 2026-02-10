@@ -83,6 +83,12 @@ private:
     std::string EscapePythonString( const std::string& aStr ) const;
 
     /**
+     * Snap a position value (in mm) to the nearest grid point.
+     * Default grid is 1.27mm (50 mil), the standard KiCad schematic grid.
+     */
+    static double SnapToGrid( double aMm, double aGrid = 1.27 );
+
+    /**
      * Convert mm to nanometers (KiCad internal units).
      */
     std::string MmToNm( double aMm ) const;

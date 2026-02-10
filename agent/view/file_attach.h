@@ -28,6 +28,12 @@ namespace FileAttach
 static const int MAX_IMAGE_DIMENSION = 1568;
 
 /**
+ * Maximum image area in pixels (~12 megapixels).
+ * Images exceeding this are downscaled to keep history file sizes reasonable.
+ */
+static const int MAX_IMAGE_MEGAPIXELS = 12000000;
+
+/**
  * Maximum raw file size for non-image attachments (32 MB).
  * Matches the Anthropic API request size limit for PDF documents.
  */

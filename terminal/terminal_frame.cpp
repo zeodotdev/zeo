@@ -553,11 +553,8 @@ void TERMINAL_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
     {
         std::string payload = aEvent.GetPayload();
 
-        // Log received request (truncate if too long)
-        wxString payloadPreview = wxString::FromUTF8( payload.substr( 0, 200 ) );
-        if( payload.length() > 200 )
-            payloadPreview += "...";
-        wxLogInfo( "TERMINAL: Received MAIL_AGENT_REQUEST, payload: %s", payloadPreview );
+        wxLogInfo( "TERMINAL: Received MAIL_AGENT_REQUEST, payload: %s",
+                   wxString::FromUTF8( payload ) );
 
         // Use async execution to avoid blocking the UI thread
         ExecuteCommandForAgentAsync( payload );
@@ -569,11 +566,8 @@ void TERMINAL_FRAME::SendAgentResponse( const std::string& aResult )
 {
     m_asyncRequestPending = false;
 
-    // Log response being sent (truncate if too long)
-    wxString resultPreview = wxString::FromUTF8( aResult.substr( 0, 200 ) );
-    if( aResult.length() > 200 )
-        resultPreview += "...";
-    wxLogInfo( "TERMINAL: SendAgentResponse, result: %s", resultPreview );
+    wxLogInfo( "TERMINAL: SendAgentResponse, result: %s",
+               wxString::FromUTF8( aResult ) );
 
     // ExpressMail takes a non-const reference, so we need a copy
     std::string result = aResult;

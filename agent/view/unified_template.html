@@ -588,13 +588,15 @@ App.Chat = (function() {
     function toolImgEnd(index) {
         var el = document.getElementById('tool-result-' + index);
         if (el) {
-            var body = el.querySelector('.tool-result-body');
-            if (body) {
-                var img = document.createElement('img');
-                img.src = _toolImgBuf;
-                img.style.cssText = 'max-width:100%; border-radius:6px; margin:8px 0;';
-                body.appendChild(img);
-            }
+            // Render the image AFTER the collapsible tool result so it is
+            // always visible in the chat stream (not hidden behind the toggle).
+            var wrapper = document.createElement('div');
+            wrapper.className = 'my-2';
+            var img = document.createElement('img');
+            img.src = _toolImgBuf;
+            img.style.cssText = 'max-width:100%; border-radius:6px;';
+            wrapper.appendChild(img);
+            el.insertAdjacentElement('afterend', wrapper);
         }
         _toolImgBuf = '';
     }

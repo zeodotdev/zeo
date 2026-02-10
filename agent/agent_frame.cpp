@@ -910,33 +910,9 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 {
     if( aEvent.Command() == MAIL_AGENT_RESPONSE )
     {
-        std::string payload = aEvent.GetPayload();
-
-        // Check if we're in async tool execution mode (frame's context has an executing tool)
-        // NOTE: The controller also executes tools via the synchronous SendRequest path,
-        // which expects m_toolResponse to be set. Only use async path if the FRAME
-        // actually has a tool marked as executing.
-        PendingToolCall* executing = m_conversationCtx.GetExecutingToolCall();
-
-        if( executing )
-        {
-            // Frame has an executing tool - use async path
-            // Post tool completion event
-            ToolExecutionResult* result = new ToolExecutionResult();
-            result->tool_use_id = executing->tool_use_id;
-            result->tool_name = executing->tool_name;
-            result->result = payload;
-            result->success = !payload.empty() && payload.find( "Error:" ) != 0;
-            result->execution_time_ms = ( wxGetLocalTimeMillis() - executing->start_time ).GetValue();
-
-            PostToolResult( this, *result );
-            delete result;  // PostToolResult copies the data
-        }
-        else
-        {
-            // Sync mode (controller path) - store response for SendRequest() to pick up
-            m_toolResponse = payload;
-        }
+        // All tool execution goes through the controller's synchronous SendRequest path,
+        // which polls m_toolResponse. Store the KIWAY response for SendRequest() to pick up.
+        m_toolResponse = aEvent.GetPayload();
     }
     else if( aEvent.Command() == MAIL_SELECTION )
     {
@@ -1733,7 +1709,11 @@ void AGENT_FRAME::OnBridgeScrollActivity( const nlohmann::json& aMsg )
     bool coupled = aMsg.value( "coupled", true );
 
     m_lastScrollActivityMs = wxGetLocalTimeMillis().GetValue();
-    m_userScrolledUp = active || !coupled;
+    // Only suppress streaming updates if user has scrolled away from the bottom.
+    // The 'active' flag is always true (scroll events only fire during activity),
+    // so basing m_userScrolledUp on it would suppress updates even when the user
+    // is at the bottom (e.g., after a layout reflow from tool result rendering).
+    m_userScrolledUp = !coupled;
 }
 
 void AGENT_FRAME::OnBridgeHistoryOpen()
@@ -1981,11 +1961,8 @@ std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayloa
         return "Error: Failed to create target frame for tool execution.";
     }
 
-    // Log the request (truncate payload if too long)
-    wxString payloadPreview = wxString::FromUTF8( aPayload.substr( 0, 200 ) );
-    if( aPayload.length() > 200 )
-        payloadPreview += "...";
-    wxLogInfo( "AGENT: SendRequest to frame %d, payload: %s", aDestFrame, payloadPreview );
+    wxLogInfo( "AGENT: SendRequest to frame %d, payload: %s",
+               aDestFrame, wxString::FromUTF8( aPayload ) );
 
     // Use a sentinel value to distinguish "no response yet" from "empty response received"
     static const std::string NO_RESPONSE_SENTINEL = "\x01__NO_RESPONSE__\x01";
@@ -2033,11 +2010,8 @@ std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayloa
             elapsed ).ToStdString();
     }
 
-    // Log successful response (truncate if too long)
-    wxString responsePreview = wxString::FromUTF8( m_toolResponse.substr( 0, 200 ) );
-    if( m_toolResponse.length() > 200 )
-        responsePreview += "...";
-    wxLogInfo( "AGENT: SendRequest got response after %ld ms: %s", elapsed, responsePreview );
+    wxLogInfo( "AGENT: SendRequest got response after %ld ms: %s",
+               elapsed, wxString::FromUTF8( m_toolResponse ) );
 
     return m_toolResponse;
 }
@@ -2304,8 +2278,9 @@ void AGENT_FRAME::RenderChatHistory()
     // Clear historical thinking storage
     m_historicalThinking.clear();
 
-    // Counter for tool result toggle indices
-    int toolResultIndex = 0;
+    // Reset counter - RenderChatHistory updates m_toolResultCounter so that
+    // subsequent live tool calls get indices that don't collide with historical ones.
+    m_toolResultCounter = 0;
 
     // Build HTML from chat history (inner content only, no template wrapper)
     m_fullHtmlContent = "";
@@ -2535,13 +2510,23 @@ void AGENT_FRAME::RenderChatHistory()
                     wxString fullFormatted = FormatToolResult( textContent );
 
                     wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
-                    bool expanded = m_historicalToolResultExpanded.count( toolResultIndex ) > 0;
+                    bool expanded = m_historicalToolResultExpanded.count( m_toolResultCounter ) > 0;
 
-                    m_fullHtmlContent += BuildToolResultHtml( toolResultIndex, desc,
+                    m_fullHtmlContent += BuildToolResultHtml( m_toolResultCounter, desc,
                                                              statusClass, statusText,
                                                              fullFormatted,
-                                                             imageHtml, expanded );
-                    toolResultIndex++;
+                                                             wxEmptyString, expanded );
+
+                    // Render image AFTER the collapsible tool result so it is
+                    // always visible in the chat stream.
+                    if( !imageHtml.IsEmpty() )
+                    {
+                        m_fullHtmlContent += "<div class=\"my-2\">"
+                                             + imageHtml
+                                             + "</div>";
+                    }
+
+                    m_toolResultCounter++;
                     m_lastToolDesc = "";
                 }
             }
@@ -3569,9 +3554,13 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
         m_bridge->PushToolResultImageEnd( idx );
     }
 
-    // Update internal HTML tracking (replace running HTML with full completed HTML)
+    // Update internal HTML tracking (replace running HTML with full completed HTML).
+    // Image is rendered OUTSIDE the collapsible tool result so it stays visible.
     wxString completedHtml = BuildToolResultHtml( idx, desc, statusClass, statusText,
-                                                  fullFormatted, imageHtml, false );
+                                                  fullFormatted, wxEmptyString, false );
+
+    if( !imageHtml.IsEmpty() )
+        completedHtml += "<div class=\"my-2\">" + imageHtml + "</div>";
 
     if( !m_activeRunningHtml.IsEmpty() )
     {
@@ -3909,11 +3898,11 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
     m_historicalThinkingExpanded.clear();
     m_historicalToolResultExpanded.clear();
     m_currentThinkingIndex = -1;
-    m_toolResultCounter = 0;
     m_activeRunningHtml.Clear();
     m_activeToolResultIdx = -1;
 
-    // Render the loaded chat history
+    // Render the loaded chat history (also advances m_toolResultCounter past
+    // historical tool-result indices so new live tools get non-colliding DOM IDs)
     RenderChatHistory();
 
     // Update DB ID so new messages go to this history

@@ -14,6 +14,7 @@
 #include <wx/statbmp.h>
 
 #include <algorithm>
+#include <cmath>
 
 
 bool FileAttach::IsImageMediaType( const std::string& aMediaType )
@@ -37,15 +38,25 @@ bool FileAttach::LoadImageFromFile( const wxString& aPath, FILE_ATTACHMENT& aRes
         return false;
     }
 
-    // Resize to fit API limits
+    // Cap at ~12MP to keep history file sizes reasonable
     int w = image.GetWidth();
     int h = image.GetHeight();
+    long pixels = (long) w * h;
 
+    if( pixels > MAX_IMAGE_MEGAPIXELS )
+    {
+        double scale = std::sqrt( (double) MAX_IMAGE_MEGAPIXELS / pixels );
+        image.Rescale( (int)( w * scale ), (int)( h * scale ), wxIMAGE_QUALITY_HIGH );
+        w = image.GetWidth();
+        h = image.GetHeight();
+    }
+
+    // Resize to fit API limits
     if( w > MAX_IMAGE_DIMENSION || h > MAX_IMAGE_DIMENSION )
     {
         double scale = std::min( (double) MAX_IMAGE_DIMENSION / w,
                                  (double) MAX_IMAGE_DIMENSION / h );
-        image.Rescale( (int) ( w * scale ), (int) ( h * scale ), wxIMAGE_QUALITY_HIGH );
+        image.Rescale( (int)( w * scale ), (int)( h * scale ), wxIMAGE_QUALITY_HIGH );
     }
 
     // Encode as PNG base64
@@ -136,8 +147,65 @@ std::vector<FILE_ATTACHMENT> FileAttach::ParseAttachmentsFromJson( const nlohman
         fa.media_type = att.value( "media_type", "" );
         fa.filename = att.value( "filename", "" );
 
-        if( !fa.base64_data.empty() )
-            result.push_back( std::move( fa ) );
+        if( fa.base64_data.empty() )
+            continue;
+
+        // Resize images that exceed API limits
+        if( IsImageMediaType( fa.media_type ) )
+        {
+            wxMemoryBuffer buf = wxBase64Decode( wxString::FromUTF8( fa.base64_data ) );
+
+            if( buf.GetDataLen() > 0 )
+            {
+                wxMemoryInputStream stream( buf.GetData(), buf.GetDataLen() );
+                wxImage image( stream );
+
+                if( image.IsOk() )
+                {
+                    int w = image.GetWidth();
+                    int h = image.GetHeight();
+                    long pixels = (long) w * h;
+                    bool needsReencode = false;
+
+                    // Cap at ~12MP
+                    if( pixels > MAX_IMAGE_MEGAPIXELS )
+                    {
+                        double scale = std::sqrt( (double) MAX_IMAGE_MEGAPIXELS / pixels );
+                        image.Rescale( (int)( w * scale ), (int)( h * scale ),
+                                       wxIMAGE_QUALITY_HIGH );
+                        w = image.GetWidth();
+                        h = image.GetHeight();
+                        needsReencode = true;
+                    }
+
+                    if( w > MAX_IMAGE_DIMENSION || h > MAX_IMAGE_DIMENSION )
+                    {
+                        double scale = std::min( (double) MAX_IMAGE_DIMENSION / w,
+                                                 (double) MAX_IMAGE_DIMENSION / h );
+                        image.Rescale( (int)( w * scale ), (int)( h * scale ),
+                                       wxIMAGE_QUALITY_HIGH );
+                        needsReencode = true;
+                    }
+
+                    if( needsReencode )
+                    {
+
+                        wxMemoryOutputStream memStream;
+                        image.SaveFile( memStream, wxBITMAP_TYPE_PNG );
+
+                        size_t dataLen = memStream.GetLength();
+                        wxMemoryBuffer outBuf( dataLen );
+                        memStream.CopyTo( outBuf.GetData(), dataLen );
+                        outBuf.SetDataLen( dataLen );
+
+                        fa.base64_data = wxBase64Encode( outBuf ).ToStdString();
+                        fa.media_type = "image/png";
+                    }
+                }
+            }
+        }
+
+        result.push_back( std::move( fa ) );
     }
 
     return result;
@@ -193,7 +261,7 @@ wxString FileAttach::BuildAttachmentBubbleHtml(
         if( IsImageMediaType( att.media_type ) )
         {
             html += wxString::Format(
-                "<img src=\"data:%s;base64,%s\" style=\"max-width:200px; max-height:150px; "
+                "<img src=\"data:%s;base64,%s\" style=\"max-width:100%%; "
                 "border-radius:6px; margin:4px 0; display:block;\" />",
                 wxString::FromUTF8( att.media_type ),
                 wxString::FromUTF8( att.base64_data ) );
@@ -226,9 +294,8 @@ wxString FileAttach::BuildHistoryBubbleHtml( const nlohmann::json& aContentArray
             if( data != "__stripped__" && !data.empty() )
             {
                 attachHtml += wxString::Format(
-                    "<img src=\"data:%s;base64,%s\" style=\"max-width:200px; "
-                    "max-height:150px; border-radius:6px; margin:4px 0; "
-                    "display:block;\" />",
+                    "<img src=\"data:%s;base64,%s\" style=\"max-width:100%%; "
+                    "border-radius:6px; margin:4px 0; display:block;\" />",
                     wxString::FromUTF8( mediaType ),
                     wxString::FromUTF8( data ) );
             }
@@ -255,7 +322,20 @@ wxString FileAttach::BuildHistoryBubbleHtml( const nlohmann::json& aContentArray
         }
         else if( bt == "text" )
         {
-            wxString blockText = wxString::FromUTF8( block.value( "text", "" ) );
+            std::string raw = block.value( "text", "" );
+
+            // Strip <project_context>...</project_context> injected into first message
+            static const std::string CTX_PREFIX = "<project_context>\n";
+            static const std::string CTX_SUFFIX = "\n</project_context>\n\n";
+
+            if( raw.compare( 0, CTX_PREFIX.size(), CTX_PREFIX ) == 0 )
+            {
+                size_t end = raw.find( CTX_SUFFIX );
+                if( end != std::string::npos )
+                    raw = raw.substr( end + CTX_SUFFIX.size() );
+            }
+
+            wxString blockText = wxString::FromUTF8( raw );
 
             if( !textContent.IsEmpty() && !blockText.IsEmpty() )
                 textContent += "\n";
@@ -295,16 +375,6 @@ void FileAttach::ShowPreviewDialog( wxWindow* aParent, const wxString& aBase64 )
 
     if( !image.IsOk() )
         return;
-
-    int maxDim = 600;
-    int w = image.GetWidth();
-    int h = image.GetHeight();
-
-    if( w > maxDim || h > maxDim )
-    {
-        double scale = std::min( (double) maxDim / w, (double) maxDim / h );
-        image.Rescale( (int)( w * scale ), (int)( h * scale ), wxIMAGE_QUALITY_HIGH );
-    }
 
     wxDialog dlg( aParent, wxID_ANY, "Image Preview",
                   wxDefaultPosition, wxDefaultSize,

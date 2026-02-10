@@ -34,7 +34,7 @@ private:
     /**
      * Execute the screenshot tool.
      * @param aInput JSON with "file_path" parameter
-     * @return JSON string with __has_image envelope or error string
+     * @return JSON string with image envelope or error string
      */
     std::string ExecuteScreenshot( const nlohmann::json& aInput );
 

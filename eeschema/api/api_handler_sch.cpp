@@ -4332,7 +4332,7 @@ API_HANDLER_SCH::handleRunSimulation(
         wxLogInfo( "SIM API: Annotation check passed" );
     }
 
-    // Get or create the simulator frame
+    // Get or create the simulator frame (hidden — we only need the engine, not the GUI)
     SIMULATOR_FRAME* simFrame = nullptr;
 
     try
@@ -4340,6 +4340,14 @@ API_HANDLER_SCH::handleRunSimulation(
         wxLogInfo( "SIM API: Getting simulator frame" );
         simFrame = static_cast<SIMULATOR_FRAME*>(
                 m_frame->Kiway().Player( FRAME_SIMULATOR, true ) );
+
+        wxLogInfo( "SIM API: Frame created, IsShown=%d", simFrame ? simFrame->IsShown() : -1 );
+
+        if( simFrame && simFrame->IsShown() )
+        {
+            wxLogInfo( "SIM API: Hiding simulator frame" );
+            simFrame->Hide();
+        }
     }
     catch( const std::exception& e )
     {

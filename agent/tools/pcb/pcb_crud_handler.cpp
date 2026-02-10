@@ -765,34 +765,24 @@ std::string PCB_CRUD_HANDLER::GeneratePlaceCode( const nlohmann::json& aInput ) 
     code << "    board.update_items(fps_to_update)\n";
     code << "\n";
     code << "# Build result with pad positions for immediate routing\n";
-    code << "import math\n";
     code << "placed_info = []\n";
     code << "for ref in placed:\n";
     code << "    fp = ref_to_fp[ref]\n";
     code << "    fp_layer = 'B.Cu' if fp.layer == BoardLayer.BL_B_Cu else 'F.Cu'\n";
-    code << "    fp_x = fp.position.x\n";
-    code << "    fp_y = fp.position.y\n";
-    code << "    fp_angle_rad = math.radians(fp.orientation.degrees) if hasattr(fp, 'orientation') else 0\n";
-    code << "    cos_a = math.cos(fp_angle_rad)\n";
-    code << "    sin_a = math.sin(fp_angle_rad)\n";
     code << "    \n";
     code << "    fp_info = {\n";
     code << "        'ref': ref,\n";
-    code << "        'position': [fp_x / 1000000, fp_y / 1000000],\n";
+    code << "        'position': [fp.position.x / 1000000, fp.position.y / 1000000],\n";
     code << "        'angle': fp.orientation.degrees if hasattr(fp, 'orientation') and hasattr(fp.orientation, 'degrees') else 0,\n";
     code << "        'layer': fp_layer,\n";
     code << "        'pads': []\n";
     code << "    }\n";
-    code << "    # Get pads from footprint definition and calculate absolute positions\n";
+    code << "    # Get pads - pad.position is already in absolute board coordinates\n";
     code << "    if hasattr(fp, 'definition') and hasattr(fp.definition, 'pads'):\n";
     code << "        for pad in fp.definition.pads:\n";
-    code << "            rel_x = pad.position.x\n";
-    code << "            rel_y = pad.position.y\n";
-    code << "            abs_x = fp_x + rel_x * cos_a - rel_y * sin_a\n";
-    code << "            abs_y = fp_y + rel_x * sin_a + rel_y * cos_a\n";
     code << "            fp_info['pads'].append({\n";
     code << "                'number': str(pad.number) if hasattr(pad, 'number') else '',\n";
-    code << "                'position': [abs_x / 1000000, abs_y / 1000000],\n";
+    code << "                'position': [pad.position.x / 1000000, pad.position.y / 1000000],\n";
     code << "                'net': pad.net.name if hasattr(pad, 'net') else ''\n";
     code << "            })\n";
     code << "    placed_info.append(fp_info)\n";
@@ -1174,7 +1164,6 @@ std::string PCB_CRUD_HANDLER::GenerateGetPadsCode( const nlohmann::json& aInput 
     }
 
     code << "import json\n";
-    code << "import math\n";
     code << "\n";
     code << "# Find footprint by reference\n";
     code << "target_fp = board.footprints.get_by_reference('" << EscapePythonString( ref ) << "')\n";
@@ -1182,24 +1171,16 @@ std::string PCB_CRUD_HANDLER::GenerateGetPadsCode( const nlohmann::json& aInput 
     code << "if not target_fp:\n";
     code << "    print(json.dumps({'status': 'error', 'message': 'Footprint not found: " << EscapePythonString( ref ) << "'}))\n";
     code << "else:\n";
-    code << "    # Get pads from footprint definition and calculate absolute positions\n";
+    code << "    # Get pads from footprint definition\n";
+    code << "    # NOTE: pad.position is already in ABSOLUTE board coordinates\n";
+    code << "    # KiCad API returns transformed positions, no manual transformation needed\n";
     code << "    pads = []\n";
-    code << "    fp_x = target_fp.position.x\n";
-    code << "    fp_y = target_fp.position.y\n";
-    code << "    fp_angle_rad = math.radians(target_fp.orientation.degrees) if hasattr(target_fp, 'orientation') else 0\n";
-    code << "    cos_a = math.cos(fp_angle_rad)\n";
-    code << "    sin_a = math.sin(fp_angle_rad)\n";
     code << "    \n";
     code << "    if hasattr(target_fp, 'definition') and hasattr(target_fp.definition, 'pads'):\n";
     code << "        for pad in target_fp.definition.pads:\n";
-    code << "            # Pad position is relative to footprint origin, rotate and translate\n";
-    code << "            rel_x = pad.position.x\n";
-    code << "            rel_y = pad.position.y\n";
-    code << "            abs_x = fp_x + rel_x * cos_a - rel_y * sin_a\n";
-    code << "            abs_y = fp_y + rel_x * sin_a + rel_y * cos_a\n";
     code << "            pad_info = {\n";
     code << "                'number': str(pad.number) if hasattr(pad, 'number') else '',\n";
-    code << "                'position': [abs_x / 1000000, abs_y / 1000000],\n";
+    code << "                'position': [pad.position.x / 1000000, pad.position.y / 1000000],\n";
     code << "                'net': pad.net.name if hasattr(pad, 'net') else ''\n";
     code << "            }\n";
     code << "            pads.append(pad_info)\n";
@@ -1228,7 +1209,6 @@ std::string PCB_CRUD_HANDLER::GenerateGetFootprintCode( const nlohmann::json& aI
     }
 
     code << "import json\n";
-    code << "import math\n";
     code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
     code << "\n";
     code << "# Find footprint by reference\n";
@@ -1237,24 +1217,14 @@ std::string PCB_CRUD_HANDLER::GenerateGetFootprintCode( const nlohmann::json& aI
     code << "if not fp:\n";
     code << "    print(json.dumps({'status': 'error', 'message': 'Footprint not found: " << EscapePythonString( ref ) << "'}))\n";
     code << "else:\n";
-    code << "    # Get pads from footprint definition and calculate absolute positions\n";
+    code << "    # Get pads from footprint definition - pad.position is already absolute\n";
     code << "    pads = []\n";
-    code << "    fp_x = fp.position.x\n";
-    code << "    fp_y = fp.position.y\n";
-    code << "    fp_angle_rad = math.radians(fp.orientation.degrees) if hasattr(fp, 'orientation') else 0\n";
-    code << "    cos_a = math.cos(fp_angle_rad)\n";
-    code << "    sin_a = math.sin(fp_angle_rad)\n";
-    code << "    \n";
     code << "    if hasattr(fp, 'definition') and hasattr(fp.definition, 'pads'):\n";
     code << "        for pad in fp.definition.pads:\n";
-    code << "            # Pad position is relative to footprint origin, rotate and translate\n";
-    code << "            rel_x = pad.position.x\n";
-    code << "            rel_y = pad.position.y\n";
-    code << "            abs_x = fp_x + rel_x * cos_a - rel_y * sin_a\n";
-    code << "            abs_y = fp_y + rel_x * sin_a + rel_y * cos_a\n";
+    code << "            # pad.position contains absolute board coordinates (already transformed)\n";
     code << "            pad_info = {\n";
     code << "                'number': str(pad.number) if hasattr(pad, 'number') else '',\n";
-    code << "                'position': [abs_x / 1000000, abs_y / 1000000],\n";
+    code << "                'position': [pad.position.x / 1000000, pad.position.y / 1000000],\n";
     code << "                'net': pad.net.name if hasattr(pad, 'net') else ''\n";
     code << "            }\n";
     code << "            pads.append(pad_info)\n";
@@ -1297,7 +1267,6 @@ std::string PCB_CRUD_HANDLER::GenerateRouteCode( const nlohmann::json& aInput ) 
     std::string layer = aInput.value( "layer", "" );
 
     code << "import json\n";
-    code << "import math\n";
     code << "from kipy.geometry import Vector2\n";
     code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
     code << "\n";
@@ -1305,22 +1274,14 @@ std::string PCB_CRUD_HANDLER::GenerateRouteCode( const nlohmann::json& aInput ) 
     code << "    return int(mm * 1000000)\n";
     code << "\n";
     code << "def get_pad_abs_position(fp, pad_num):\n";
-    code << "    \"\"\"Get absolute position of a pad by number, accounting for footprint rotation\"\"\"\n";
+    code << "    \"\"\"Get absolute position of a pad by number - pad.position is already absolute\"\"\"\n";
     code << "    if not hasattr(fp, 'definition') or not hasattr(fp.definition, 'pads'):\n";
     code << "        return None, None\n";
-    code << "    fp_x = fp.position.x\n";
-    code << "    fp_y = fp.position.y\n";
-    code << "    fp_angle_rad = math.radians(fp.orientation.degrees) if hasattr(fp, 'orientation') else 0\n";
-    code << "    cos_a = math.cos(fp_angle_rad)\n";
-    code << "    sin_a = math.sin(fp_angle_rad)\n";
     code << "    for pad in fp.definition.pads:\n";
     code << "        if str(pad.number) == str(pad_num):\n";
-    code << "            rel_x = pad.position.x\n";
-    code << "            rel_y = pad.position.y\n";
-    code << "            abs_x = fp_x + rel_x * cos_a - rel_y * sin_a\n";
-    code << "            abs_y = fp_y + rel_x * sin_a + rel_y * cos_a\n";
+    code << "            # pad.position contains absolute board coordinates (already transformed)\n";
     code << "            net = pad.net.name if hasattr(pad, 'net') else None\n";
-    code << "            return (abs_x, abs_y), net\n";
+    code << "            return (pad.position.x, pad.position.y), net\n";
     code << "    return None, None\n";
     code << "\n";
     code << "# Layer name to BoardLayer enum mapping\n";
@@ -1399,13 +1360,14 @@ std::string PCB_CRUD_HANDLER::GenerateGetNetsCode( const nlohmann::json& aInput 
         code << "filter_pattern = '" << EscapePythonString( filter ) << "'\n";
     }
     code << "\n";
-    code << "# Build net->pads map if needed\n";
+
+    // Build pad map if needed
     if( includePads )
     {
+        code << "# Build net->pads map\n";
         code << "net_pads = {}  # net_name -> [{ref, pad}, ...]\n";
         code << "all_fps = board.get_footprints()\n";
         code << "\n";
-        code << "# Iterate through footprints and their definition pads to build net->pads map\n";
         code << "for fp in all_fps:\n";
         code << "    ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else '?'\n";
         code << "    if hasattr(fp, 'definition') and hasattr(fp.definition, 'pads'):\n";
@@ -1417,23 +1379,62 @@ std::string PCB_CRUD_HANDLER::GenerateGetNetsCode( const nlohmann::json& aInput 
         code << "                net_pads[net_name].append({'ref': ref, 'pad': str(pad.number)})\n";
         code << "\n";
     }
+
+    // Use connectivity API to get actual routing status
+    code << "# Get actual routing status from KiCad connectivity engine\n";
+    code << "unrouted_info = {}  # net_name -> {routed, unrouted, is_complete}\n";
+    code << "try:\n";
+    code << "    unrouted_nets = board.connectivity.get_unrouted_nets()\n";
+    code << "    for info in unrouted_nets:\n";
+    code << "        unrouted_info[info.net_name] = {\n";
+    code << "            'routed_connections': info.routed_connections,\n";
+    code << "            'unrouted_connections': info.unrouted_connections,\n";
+    code << "            'is_complete': info.is_complete\n";
+    code << "        }\n";
+    code << "except Exception as e:\n";
+    code << "    # Fallback if connectivity API unavailable\n";
+    code << "    pass\n";
+    code << "\n";
+
     code << "for net in nets:\n";
     if( !filter.empty() )
     {
         code << "    if not fnmatch.fnmatch(net.name, filter_pattern):\n";
         code << "        continue\n";
     }
-    code << "    net_info = {'name': net.name}\n";
-    if( includePads )
+
+    if( unroutedOnly )
     {
-        code << "    net_info['pads'] = net_pads.get(net.name, [])\n";
-        if( unroutedOnly )
+        // Only include nets that are actually unrouted according to connectivity engine
+        code << "    # Skip nets that are fully routed (or have < 2 pads)\n";
+        code << "    conn_info = unrouted_info.get(net.name)\n";
+        code << "    if conn_info and conn_info['is_complete']:\n";
+        code << "        continue\n";
+        if( includePads )
         {
-            code << "    # Skip nets with 0 or 1 pad (nothing to route)\n";
-            code << "    if len(net_info['pads']) < 2:\n";
+            code << "    pads = net_pads.get(net.name, [])\n";
+            code << "    if len(pads) < 2:\n";
             code << "        continue\n";
         }
     }
+
+    code << "    net_info = {'name': net.name}\n";
+
+    if( includePads )
+    {
+        code << "    net_info['pads'] = net_pads.get(net.name, [])\n";
+    }
+
+    // Add routing status from connectivity engine
+    code << "    conn_info = unrouted_info.get(net.name)\n";
+    code << "    if conn_info:\n";
+    code << "        net_info['routed_connections'] = conn_info['routed_connections']\n";
+    code << "        net_info['unrouted_connections'] = conn_info['unrouted_connections']\n";
+    code << "        net_info['is_complete'] = conn_info['is_complete']\n";
+    code << "    else:\n";
+    code << "        # Net not in unrouted list means it's complete (or single pad)\n";
+    code << "        net_info['is_complete'] = True\n";
+    code << "        net_info['unrouted_connections'] = 0\n";
     code << "    result_nets.append(net_info)\n";
     code << "\n";
     code << "print(json.dumps({'status': 'success', 'nets': result_nets}, indent=2))\n";
@@ -1532,7 +1533,7 @@ std::string PCB_CRUD_HANDLER::GenerateAutorouteCode( const nlohmann::json& aInpu
     code << "\n";
     code << "# Autoroute configuration\n";
     code << "VIAS_ALLOWED = " << ( viasAllowed ? "True" : "False" ) << "\n";
-    code << "GRID_SIZE = 250000  # 0.25mm grid in nm\n";
+    code << "GRID_SIZE = 150000  # 0.15mm grid in nm (balance of precision and speed)\n";
     code << "TRACK_WIDTH = 250000  # 0.25mm in nm\n";
     code << "VIA_DIAMETER = 800000  # 0.8mm in nm\n";
     code << "VIA_DRILL = 400000  # 0.4mm in nm\n";
@@ -1674,7 +1675,7 @@ def astar_route(obstacles, start, end, start_layer=0, current_net=None, pad_net_
         (1, 1, 1.414), (1, -1, 1.414), (-1, 1, 1.414), (-1, -1, 1.414)  # Diagonal 45°
     ]
 
-    max_iterations = 50000
+    max_iterations = 100000  # Balanced for 0.15mm grid
     iterations = 0
 
     while heap and iterations < max_iterations:
@@ -1814,7 +1815,7 @@ for track in board.get_tracks():
         layer = 0 if track.layer == BoardLayer.BL_F_Cu else 1
         gx1, gy1 = nm_to_grid(track.start.x), nm_to_grid(track.start.y)
         gx2, gy2 = nm_to_grid(track.end.x), nm_to_grid(track.end.y)
-        obstacles.mark_line(layer, gx1, gy1, gx2, gy2, width=2)
+        obstacles.mark_line(layer, gx1, gy1, gx2, gy2, width=3)
     except Exception:
         continue
 
@@ -1822,8 +1823,8 @@ for track in board.get_tracks():
 for via in board.get_vias():
     try:
         gx, gy = nm_to_grid(via.position.x), nm_to_grid(via.position.y)
-        obstacles.mark_occupied(0, gx, gy, radius=2)
-        obstacles.mark_occupied(1, gx, gy, radius=2)
+        obstacles.mark_occupied(0, gx, gy, radius=4)
+        obstacles.mark_occupied(1, gx, gy, radius=4)
     except Exception:
         continue
 
@@ -1834,7 +1835,8 @@ pad_grid_cells = {}  # net_name -> set of (gx, gy) cells occupied by that net's 
 for x, y, net_name, pad_layer in all_pad_positions:
     gx, gy = nm_to_grid(x), nm_to_grid(y)
     # Mark pad area (with clearance) - pads are typically larger than a grid cell
-    pad_radius = 2  # ~0.5mm radius around pad center
+    # With 0.15mm grid: typical pad ~0.5mm + 0.2mm clearance = 0.7mm = ~5 cells diameter
+    pad_radius = 3  # ~0.9mm diameter around pad center
     for dx in range(-pad_radius, pad_radius + 1):
         for dy in range(-pad_radius, pad_radius + 1):
             cell = (gx + dx, gy + dy)
@@ -1881,21 +1883,29 @@ layer_map = {0: BoardLayer.BL_F_Cu, 1: BoardLayer.BL_B_Cu}
 
 for net_name, pads in nets_needing_routing:
     try:
-        # Connect pads using minimum spanning tree approach
+        # Connect pads using robust minimum spanning tree approach
         # pads are now (x, y, layer) tuples where layer is 0=F.Cu, 1=B.Cu, -1=both
         connected = {pads[0]}
         unconnected = set(pads[1:])
+        failed_pairs = set()  # Track (from, to) pairs that failed
         net_tracks = 0
         net_vias = 0
+        max_attempts = len(pads) * 3  # Limit total attempts to avoid infinite loops
+        attempts = 0
 
-        while unconnected:
-            # Find closest unconnected pad to any connected pad
+        while unconnected and attempts < max_attempts:
+            attempts += 1
+
+            # Find closest unconnected pad to any connected pad (that we haven't failed on)
             best_dist = float('inf')
             best_from = None
             best_to = None
 
             for c_pad in connected:
                 for u_pad in unconnected:
+                    # Skip pairs we've already failed on
+                    if (c_pad, u_pad) in failed_pairs:
+                        continue
                     dist = abs(c_pad[0] - u_pad[0]) + abs(c_pad[1] - u_pad[1])
                     if dist < best_dist:
                         best_dist = dist
@@ -1903,6 +1913,7 @@ for net_name, pads in nets_needing_routing:
                         best_to = u_pad
 
             if not best_from or not best_to:
+                # No more valid pairs to try - all remaining are blocked
                 break
 
             # Validate coordinates before routing
@@ -1915,25 +1926,34 @@ for net_name, pads in nets_needing_routing:
                 to_x, to_y = int(to_x), int(to_y)
             except (TypeError, ValueError) as e:
                 errors.append(f'{net_name}: Coordinate type error from={best_from} to={best_to}: {e}')
-                unconnected.remove(best_to)
+                failed_pairs.add((best_from, best_to))
                 continue
 
             # Determine start layer for routing based on source pad
             # -1 means pad is on both layers (PTH), so prefer F.Cu
             start_layer = from_pad_layer if from_pad_layer >= 0 else 0
 
+            # Also determine destination layer preference
+            dest_layer = to_pad_layer if to_pad_layer >= 0 else start_layer
+
             # Find path using A* with pad collision checking
+            path = None
             try:
+                # Try routing on the preferred layers first
                 path = astar_route(obstacles, (from_x, from_y), (to_x, to_y),
                                    start_layer=start_layer, current_net=net_name, pad_net_map=pad_net_map)
+                if not path and start_layer != dest_layer:
+                    # Try starting from destination's preferred layer
+                    path = astar_route(obstacles, (from_x, from_y), (to_x, to_y),
+                                       start_layer=dest_layer, current_net=net_name, pad_net_map=pad_net_map)
                 if not path:
-                    # Try starting from other layer
+                    # Try the other layer as last resort
                     alt_layer = 1 - start_layer
                     path = astar_route(obstacles, (from_x, from_y), (to_x, to_y),
                                        start_layer=alt_layer, current_net=net_name, pad_net_map=pad_net_map)
             except Exception as e:
                 errors.append(f'{net_name}: A* error from=({from_x},{from_y}) to=({to_x},{to_y}): {e}')
-                unconnected.remove(best_to)
+                failed_pairs.add((best_from, best_to))
                 continue
 
             if path:
@@ -1967,50 +1987,81 @@ for net_name, pads in nets_needing_routing:
                         waypoints.append((grid_to_nm(gx), grid_to_nm(gy), layer))
 
                 # Create tracks and vias
+                # IMPORTANT: Track segments must be created on the correct layers for connectivity
+                # When layer changes occur, we need track on BOTH layers meeting at the via
                 current_layer = waypoints[0][2]
                 for i in range(1, len(waypoints)):
                     prev_x, prev_y, prev_layer = waypoints[i-1]
                     curr_x, curr_y, curr_layer = waypoints[i]
 
-                    # Check for layer change - insert via at the layer change point
+                    # Check for layer change - need via and tracks on both layers
                     if curr_layer != prev_layer:
-                        # Via goes at the previous position (where we change layers)
+                        # For layer change: create track on current layer TO the via point,
+                        # then via, then track FROM via on new layer
+
+                        # If this is not the first segment, we already have a track ending here
+                        # For the first segment (from pad), we may need a short track on pad's layer
+
+                        # Create track from previous position to via position on CURRENT layer
+                        # (this ensures connectivity to pad on its layer)
+                        if prev_x != curr_x or prev_y != curr_y:
+                            # Track on old layer from prev to curr (where via will be)
+                            points = [
+                                Vector2.from_xy(prev_x, prev_y),
+                                Vector2.from_xy(curr_x, curr_y)
+                            ]
+                            tracks = board.route_track(
+                                points=points,
+                                width=TRACK_WIDTH,
+                                layer=layer_map[current_layer],
+                                net=net_name
+                            )
+                            net_tracks += len(tracks)
+                            obstacles.mark_line(current_layer,
+                                              nm_to_grid(prev_x), nm_to_grid(prev_y),
+                                              nm_to_grid(curr_x), nm_to_grid(curr_y), width=3)
+
+                        # Place via at the current position (where we change layers)
                         via = board.add_via(
-                            position=Vector2.from_xy(prev_x, prev_y),
+                            position=Vector2.from_xy(curr_x, curr_y),
                             diameter=VIA_DIAMETER,
                             drill=VIA_DRILL,
                             net=net_name,
                             via_type=board_types_pb2.ViaType.VT_THROUGH
                         )
                         net_vias += 1
-                        obstacles.mark_occupied(0, nm_to_grid(prev_x), nm_to_grid(prev_y), radius=2)
-                        obstacles.mark_occupied(1, nm_to_grid(prev_x), nm_to_grid(prev_y), radius=2)
+                        obstacles.mark_occupied(0, nm_to_grid(curr_x), nm_to_grid(curr_y), radius=4)
+                        obstacles.mark_occupied(1, nm_to_grid(curr_x), nm_to_grid(curr_y), radius=4)
                         current_layer = curr_layer
-                        # Continue to next waypoint - via connects, next segment starts from via
-
-                    # Create track segment if positions differ
-                    if prev_x != curr_x or prev_y != curr_y:
-                        points = [
-                            Vector2.from_xy(prev_x, prev_y),
-                            Vector2.from_xy(curr_x, curr_y)
-                        ]
-                        tracks = board.route_track(
-                            points=points,
-                            width=TRACK_WIDTH,
-                            layer=layer_map[current_layer],
-                            net=net_name
-                        )
-                        net_tracks += len(tracks)
-                        obstacles.mark_line(current_layer,
-                                          nm_to_grid(prev_x), nm_to_grid(prev_y),
-                                          nm_to_grid(curr_x), nm_to_grid(curr_y), width=2)
+                        # Via is now at curr position, next segment will start from here on new layer
+                    else:
+                        # Same layer - just create track segment if positions differ
+                        if prev_x != curr_x or prev_y != curr_y:
+                            points = [
+                                Vector2.from_xy(prev_x, prev_y),
+                                Vector2.from_xy(curr_x, curr_y)
+                            ]
+                            tracks = board.route_track(
+                                points=points,
+                                width=TRACK_WIDTH,
+                                layer=layer_map[current_layer],
+                                net=net_name
+                            )
+                            net_tracks += len(tracks)
+                            obstacles.mark_line(current_layer,
+                                              nm_to_grid(prev_x), nm_to_grid(prev_y),
+                                              nm_to_grid(curr_x), nm_to_grid(curr_y), width=3)
 
                 connected.add(best_to)
                 unconnected.remove(best_to)
             else:
-                # No path found - try direct route as fallback
-                unconnected.remove(best_to)
-                errors.append(f'{net_name}: No path from {best_from} to {best_to}')
+                # No path found from this source - mark pair as failed and try other sources
+                failed_pairs.add((best_from, best_to))
+                # Don't remove from unconnected yet - we might reach it from another pad
+
+        # Report any pads that couldn't be connected
+        if unconnected:
+            errors.append(f'{net_name}: Could not connect {len(unconnected)} pads after {attempts} attempts')
 
         if net_tracks > 0:
             tracks_added += net_tracks

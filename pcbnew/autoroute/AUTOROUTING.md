@@ -121,58 +121,77 @@ Two implementations exist:
    - Result: Tracks placed at wrong coordinates (e.g., Y=165mm off-board)
    - Fix: Removed unnecessary transformation - use pad.position directly
 
-2. **[ ] Pad layer detection incorrect**
+2. **[x] Layer transitions breaking connectivity (FIXED)**
+   - Bug: When routing switched layers, via was placed at pad position but track
+     was created on the NEW layer, leaving no copper connection on pad's layer
+   - Result: KiCad connectivity engine didn't recognize pad-to-track connection
+   - Fix: Create track on current layer TO via position, then place via, then
+     continue on new layer. Via now placed at layer change point, not pad center.
+
+3. **[x] Orphaned pads in MST routing (FIXED)**
+   - Bug: When a route failed, the destination pad was removed from unconnected
+     set but never added to connected set, leaving it unreachable
+   - Result: Large nets (like GND with 53 pads) had many orphaned pads
+   - Fix: Track failed source-destination pairs separately, keep trying other
+     source pads. Only give up on a pad when ALL possible sources have failed.
+
+4. **[x] Supporting functions had same 2x coordinate bug (FIXED)**
+   - Bug: `pcb_get_pads`, `pcb_get_footprint`, `pcb_route`, and `pcb_place` all
+     applied footprint rotation/translation to pad positions that were already absolute
+   - Result: Pad positions reported at 2x the correct location
+   - Fix: All functions now use `pad.position` directly without transformation
+
+5. **[x] pcb_get_nets didn't check actual connectivity (FIXED)**
+   - Bug: `unrouted_only` filter just counted pads (>= 2), didn't check if nets
+     were actually routed according to KiCad's connectivity engine
+   - Result: Showed all multi-pad nets as "unrouted" even when fully connected
+   - Fix: Now uses `board.connectivity.get_unrouted_nets()` API to get actual
+     routing status (routed_connections, unrouted_connections, is_complete)
+
+6. **[ ] Pad layer detection incorrect**
    - SMD pads on back layer may not be detected correctly
    - PTH vs SMD distinction needs verification
 
-3. **[ ] Track connectivity not verified**
-   - Routes may not actually connect to pad centers
-   - First/last waypoint positioning may be off
-
-4. **[ ] Obstacle marking incomplete**
+7. **[ ] Obstacle marking incomplete**
    - Existing tracks marked but may have gaps
    - Footprint courtyards not considered
 
 ### High Priority
 
-5. **[ ] Layer transitions unreliable**
-   - Via insertion point may not align with track endpoints
-   - Layer change detection in path reconstruction
-
-6. **[ ] Path simplification aggressive**
+8. **[ ] Path simplification aggressive**
    - May remove necessary intermediate points
    - Direction changes at corners not preserved
 
-7. **[ ] Grid alignment issues**
+9. **[ ] Grid alignment issues**
    - Pad centers may not align to routing grid
    - Track endpoints may be off-grid
 
 ### Medium Priority
 
-8. **[ ] No diagonal obstacle checking**
-   - Diagonal moves may clip corners of obstacles
-   - Need proper line-rectangle intersection
+10. **[ ] No diagonal obstacle checking**
+    - Diagonal moves may clip corners of obstacles
+    - Need proper line-rectangle intersection
 
-9. **[ ] Fixed via size**
-   - Uses hardcoded 0.8mm diameter, 0.4mm drill
-   - Should read from board design rules
+11. **[ ] Fixed via size**
+    - Uses hardcoded 0.8mm diameter, 0.4mm drill
+    - Should read from board design rules
 
-10. **[ ] No pad shape consideration**
+12. **[ ] No pad shape consideration**
     - Assumes point pads
     - Should consider actual pad geometry for entry point
 
 ### Low Priority
 
-11. **[ ] No net class support**
+13. **[ ] No net class support**
     - All nets use same trace width/clearance
     - Power nets should use wider traces
 
-12. **[ ] No differential pair support**
+14. **[ ] No differential pair support**
     - Routes each signal independently
     - No length matching
 
-13. **[ ] Performance with large boards**
-    - 50000 iteration limit may be insufficient
+15. **[ ] Performance with large boards**
+    - 100000 iteration limit may be insufficient for complex boards
     - No spatial indexing for obstacle lookup
 
 ---

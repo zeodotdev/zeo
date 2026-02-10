@@ -253,6 +253,24 @@ BOOST_AUTO_TEST_CASE( GetDescriptionEmpty )
 
 
 /**
+ * Test that the fallback path checks for exact matches in search results.
+ * When get_symbol_info() fails but search() returns a result whose lib_id
+ * matches the query exactly, the code should return 'found' not 'not_found'.
+ */
+BOOST_AUTO_TEST_CASE( GetIPCCommandExactMatchFallback )
+{
+    SCH_LIB_SYMBOL_HANDLER handler;
+    nlohmann::json input = { { "lib_id", "Device:L" } };
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
+
+    // The fallback path (after get_symbol_info fails) should check search results
+    // for an exact lib_id match before returning not_found
+    BOOST_CHECK_MESSAGE( cmd.find( "r.lib_id == lib_id" ) != std::string::npos,
+                         "Fallback path must check for exact lib_id match in search results" );
+}
+
+
+/**
  * Test that Execute returns error (requires IPC)
  */
 BOOST_AUTO_TEST_CASE( ExecuteReturnsError )

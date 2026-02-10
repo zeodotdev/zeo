@@ -34,9 +34,10 @@ class BOARD_ITEM;
  */
 enum class ROOM_TYPE
 {
-    FREE_SPACE,    ///< Routable free space
-    OBSTACLE,      ///< Non-routable obstacle (pad, via, existing trace)
-    TARGET         ///< Destination target (pin/pad to connect to)
+    FREE_SPACE,            ///< Routable free space (complete)
+    FREE_SPACE_INCOMPLETE, ///< Incomplete free space (needs completion)
+    OBSTACLE,              ///< Non-routable obstacle (pad, via, existing trace)
+    TARGET                 ///< Destination target (pin/pad to connect to)
 };
 
 
@@ -142,6 +143,7 @@ protected:
 
 /**
  * Free space expansion room - represents routable area.
+ * This is a "complete" room whose shape has been fully calculated.
  */
 class FREE_SPACE_ROOM : public EXPANSION_ROOM
 {
@@ -161,8 +163,74 @@ public:
      */
     TILE_SHAPE& GetMutableShape() { return *m_shape; }
 
+    /**
+     * Check if this room is complete (always true for FREE_SPACE_ROOM).
+     */
+    bool IsComplete() const { return true; }
+
 private:
     std::unique_ptr<TILE_SHAPE> m_shape;
+};
+
+
+/**
+ * Incomplete free space expansion room.
+ *
+ * This represents a free space region that hasn't been fully computed yet.
+ * Incomplete rooms are completed on-demand during the maze search by
+ * intersecting with obstacles from the search tree.
+ *
+ * Similar to FreeRouting's IncompleteFreeSpaceExpansionRoom.
+ */
+class INCOMPLETE_FREE_SPACE_ROOM : public EXPANSION_ROOM
+{
+public:
+    /**
+     * Create an incomplete room with a bounding shape.
+     *
+     * @param aShape The bounding shape (can be a half-plane).
+     * @param aLayer The layer this room is on.
+     * @param aContainedShape A shape that must remain inside after completion.
+     */
+    INCOMPLETE_FREE_SPACE_ROOM( std::unique_ptr<TILE_SHAPE> aShape, int aLayer,
+                                std::unique_ptr<TILE_SHAPE> aContainedShape = nullptr );
+
+    const TILE_SHAPE& GetShape() const override { return *m_shape; }
+
+    /**
+     * Get the shape that must remain contained after completion.
+     * This is typically the intersection point or door that triggered this room.
+     */
+    const TILE_SHAPE* GetContainedShape() const { return m_containedShape.get(); }
+
+    /**
+     * Set the bounding shape.
+     */
+    void SetShape( std::unique_ptr<TILE_SHAPE> aShape ) { m_shape = std::move( aShape ); }
+
+    /**
+     * Set the contained shape.
+     */
+    void SetContainedShape( std::unique_ptr<TILE_SHAPE> aShape )
+    {
+        m_containedShape = std::move( aShape );
+    }
+
+    /**
+     * Check if this room is complete (always false for INCOMPLETE_FREE_SPACE_ROOM).
+     */
+    bool IsComplete() const { return false; }
+
+    /**
+     * Complete this room by calculating its final shape.
+     * Returns a new complete FREE_SPACE_ROOM, or nullptr if completion failed.
+     */
+    std::unique_ptr<FREE_SPACE_ROOM> Complete( class SHAPE_SEARCH_TREE& aSearchTree,
+                                                int aNetCode );
+
+private:
+    std::unique_ptr<TILE_SHAPE> m_shape;          ///< Bounding shape
+    std::unique_ptr<TILE_SHAPE> m_containedShape; ///< Shape that must remain inside
 };
 
 

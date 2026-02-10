@@ -72,6 +72,9 @@ struct MAZE_LIST_ELEMENT
     /// Whether the room was ripped up to make this path
     bool room_ripped = false;
 
+    /// The obstacle room that was ripped up (if any)
+    EXPANSION_ROOM* ripup_room = nullptr;
+
     /**
      * Comparison for priority queue (min-heap based on sorting_value).
      */

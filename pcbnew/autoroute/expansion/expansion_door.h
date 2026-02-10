@@ -151,6 +151,21 @@ public:
     VECTOR2I GetSectionCenter( int aSection ) const;
 
     /**
+     * Get section segments with offset applied (shrunk from edges).
+     * This is like FreeRouting's get_section_segments() which shrinks
+     * door segments to avoid traces touching the door boundaries.
+     *
+     * @param aOffset The offset distance (typically half trace width + clearance).
+     * @return Vector of shrunken segments, one per section. Empty segments are omitted.
+     */
+    std::vector<SEG> GetSectionSegmentsWithOffset( int aOffset ) const;
+
+    /**
+     * Get the dimension of this door (1 for line segment, 2 for area).
+     */
+    int GetDimension() const { return m_dimension; }
+
+    /**
      * Set the minimum section length for door subdivision.
      */
     static void SetMinSectionLength( int aLength ) { s_minSectionLength = aLength; }
@@ -159,6 +174,7 @@ private:
     EXPANSION_ROOM* m_room1;
     EXPANSION_ROOM* m_room2;
     SEG             m_segment;
+    int             m_dimension = 1;  ///< 1 for line segment, 2 for area overlap
 
     static int s_minSectionLength;
 };

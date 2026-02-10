@@ -28,7 +28,8 @@
 
 MAZE_SEARCH::MAZE_SEARCH( AUTOROUTE_ENGINE& aEngine, const AUTOROUTE_CONTROL& aControl ) :
     m_engine( aEngine ),
-    m_control( aControl )
+    m_control( aControl ),
+    m_ripupChecker( aControl )
 {
 }
 
@@ -208,9 +209,28 @@ void MAZE_SEARCH::ExpandToRoomDoors( const MAZE_LIST_ELEMENT& aElement )
     if( !room )
         return;
 
-    // Can we enter this room?
-    // (Check for obstacles from other nets)
-    // For now, allow all rooms
+    // Check room type
+    if( room->GetType() == ROOM_TYPE::OBSTACLE )
+    {
+        OBSTACLE_ROOM* obstRoom = dynamic_cast<OBSTACLE_ROOM*>( room );
+
+        // Check if this is our own net (can pass through)
+        if( obstRoom && obstRoom->GetNetCode() == m_netCode )
+        {
+            // Can pass through our own net's obstacles
+        }
+        else if( obstRoom && m_control.allow_ripup )
+        {
+            // Try ripup
+            CheckAndHandleRipup( obstRoom, aElement );
+            return;  // ExpandThroughObstacle handles the expansion
+        }
+        else
+        {
+            // Can't enter this obstacle room
+            return;
+        }
+    }
 
     room->SetVisited( true );
 
@@ -227,6 +247,12 @@ void MAZE_SEARCH::ExpandToRoomDoors( const MAZE_LIST_ELEMENT& aElement )
         {
             ExpandToDoorSection( door, section, aElement );
         }
+    }
+
+    // Also expand to any drills within this room (for layer transitions)
+    if( m_control.vias_allowed )
+    {
+        ExpandToDrillsInRoom( room, aElement );
     }
 }
 
@@ -310,6 +336,54 @@ void MAZE_SEARCH::ExpandToOtherLayers( const MAZE_LIST_ELEMENT& aElement )
         newElem.next_room = drill->GetRoomForLayer( toLayer );
 
         AddToQueue( newElem );
+    }
+}
+
+
+void MAZE_SEARCH::ExpandToDrillsInRoom( EXPANSION_ROOM* aRoom,
+                                         const MAZE_LIST_ELEMENT& aFromElement )
+{
+    if( !aRoom )
+        return;
+
+    int layer = aFromElement.layer;
+
+    // Get drills that are within this room
+    std::vector<EXPANSION_DRILL*> drills = m_engine.GetDrillsInRoom( aRoom, layer );
+
+    for( EXPANSION_DRILL* drill : drills )
+    {
+        // Don't go back through the drill we came from
+        if( drill == aFromElement.door )
+            continue;
+
+        // Calculate cost to reach the drill location
+        VECTOR2I fromPt = aFromElement.entry_point;
+        VECTOR2I drillPt = drill->GetLocation();
+
+        double traceCost = CalculateTraceCost( fromPt, drillPt, layer );
+        double newExpansion = aFromElement.expansion_value + traceCost;
+
+        // Add to queue for the current layer section of the drill
+        int layerSection = layer - drill->GetFirstLayer();
+        if( layerSection >= 0 && layerSection < drill->GetSectionCount()
+            && !drill->IsOccupied( layerSection ) )
+        {
+            double heuristic = m_destDistance.Calculate( drillPt, layer, m_control.via_cost );
+
+            MAZE_LIST_ELEMENT newElem;
+            newElem.door = drill;
+            newElem.section_no = layerSection;
+            newElem.backtrack_door = aFromElement.door;
+            newElem.backtrack_section = aFromElement.section_no;
+            newElem.expansion_value = newExpansion;
+            newElem.sorting_value = newExpansion + heuristic;
+            newElem.layer = layer;
+            newElem.entry_point = drillPt;
+            newElem.next_room = aRoom;  // Stay in same room, but can now transition layers
+
+            AddToQueue( newElem );
+        }
     }
 }
 
@@ -403,4 +477,93 @@ std::vector<std::pair<EXPANDABLE_OBJECT*, int>> MAZE_SEARCH::GetBacktrackPath() 
     std::reverse( path.begin(), path.end() );
 
     return path;
+}
+
+
+bool MAZE_SEARCH::CheckAndHandleRipup( OBSTACLE_ROOM* aRoom, const MAZE_LIST_ELEMENT& aFromElement )
+{
+    if( !aRoom || !m_control.allow_ripup )
+        return false;
+
+    // Don't rip up items from the same net
+    if( aRoom->GetNetCode() == m_netCode )
+        return false;
+
+    // Calculate the cost of routing through this obstacle (with ripup)
+    VECTOR2I fromPt = aFromElement.entry_point;
+    VECTOR2I toPt = aRoom->GetCenter();
+    double throughCost = aFromElement.expansion_value +
+                         CalculateTraceCost( fromPt, toPt, aFromElement.layer );
+
+    // Estimate the cost of routing around (using heuristic)
+    double aroundCost = throughCost * 2.0;  // Simplified estimate
+
+    // Check if ripup is beneficial
+    RIPUP_RESULT result = m_ripupChecker.CheckRipup( aRoom, throughCost, aroundCost );
+
+    if( result.should_ripup )
+    {
+        // Mark items for ripup
+        m_ripupChecker.MarkForRipup( result.candidates );
+
+        // Expand through the obstacle
+        ExpandThroughObstacle( aRoom, aFromElement );
+
+        return true;
+    }
+
+    return false;
+}
+
+
+void MAZE_SEARCH::ExpandThroughObstacle( OBSTACLE_ROOM* aRoom,
+                                          const MAZE_LIST_ELEMENT& aFromElement )
+{
+    if( !aRoom )
+        return;
+
+    // Calculate the ripup cost for this obstacle
+    double ripupCost = m_ripupChecker.CalculateRipupCost( aRoom );
+
+    // Get the entry point (center of the obstacle)
+    VECTOR2I entryPt = aRoom->GetCenter();
+    int layer = aFromElement.layer;
+
+    // Calculate base cost to reach the obstacle center
+    double traceCost = CalculateTraceCost( aFromElement.entry_point, entryPt, layer );
+    double baseCost = aFromElement.expansion_value + traceCost + ripupCost;
+
+    // Expand to all doors of the obstacle room
+    for( EXPANSION_DOOR* door : aRoom->GetDoors() )
+    {
+        int sectionCount = door->GetSectionCount();
+
+        for( int section = 0; section < sectionCount; ++section )
+        {
+            if( door->IsOccupied( section ) )
+                continue;
+
+            VECTOR2I doorPt = door->GetSectionCenter( section );
+            double doorCost = CalculateTraceCost( entryPt, doorPt, layer );
+            double totalCost = baseCost + doorCost;
+
+            // Calculate heuristic
+            double heuristic = m_destDistance.Calculate( doorPt, layer, m_control.via_cost );
+
+            MAZE_LIST_ELEMENT newElem;
+            newElem.door = door;
+            newElem.section_no = section;
+            newElem.backtrack_door = aFromElement.door;
+            newElem.backtrack_section = aFromElement.section_no;
+            newElem.expansion_value = totalCost;
+            newElem.sorting_value = totalCost + heuristic;
+            newElem.layer = layer;
+            newElem.entry_point = doorPt;
+            newElem.shape_entry = door->GetSectionSegment( section );
+            newElem.next_room = door->GetOtherRoom( aRoom );
+            newElem.ripup_room = aRoom;  // Mark that this path goes through a ripup
+
+            AddToQueue( newElem );
+        }
+    }
 }

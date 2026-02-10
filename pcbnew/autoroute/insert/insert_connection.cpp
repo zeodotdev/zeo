@@ -22,6 +22,8 @@
 #include <pcb_track.h>
 #include <netinfo.h>
 #include <layer_ids.h>
+#include <connectivity/connectivity_data.h>
+#include <commit.h>
 #include <sstream>
 
 
@@ -40,6 +42,12 @@ INSERT_RESULT INSERT_CONNECTION::Insert( const ROUTING_PATH& aPath )
         return result;
     }
 
+    if( !m_board )
+    {
+        result.error_message = "No board set";
+        return result;
+    }
+
     // Insert track segments
     for( const auto& seg : aPath.segments )
     {
@@ -52,6 +60,16 @@ INSERT_RESULT INSERT_CONNECTION::Insert( const ROUTING_PATH& aPath )
     {
         if( InsertVia( via ) )
             result.vias_added++;
+    }
+
+    // Update board connectivity after adding tracks (only if not using commit)
+    // When using a commit, connectivity will be rebuilt on Push()
+    if( !m_commit && ( result.tracks_added > 0 || result.vias_added > 0 ) )
+    {
+        if( auto connectivity = m_board->GetConnectivity() )
+        {
+            connectivity->Build( m_board );
+        }
     }
 
     result.success = ( result.tracks_added > 0 || result.vias_added > 0 );
@@ -94,7 +112,12 @@ bool INSERT_CONNECTION::InsertTrackSegment( const PATH_SEGMENT& aSegment )
         if( net )
             track->SetNet( net );
 
-        m_board->Add( track );
+        // Use commit if available, otherwise add directly
+        if( m_commit )
+            m_commit->Add( track );
+        else
+            m_board->Add( track );
+
         anyAdded = true;
     }
 
@@ -125,7 +148,12 @@ bool INSERT_CONNECTION::InsertVia( const PATH_POINT& aViaPoint )
     if( net )
         via->SetNet( net );
 
-    m_board->Add( via );
+    // Use commit if available, otherwise add directly
+    if( m_commit )
+        m_commit->Add( via );
+    else
+        m_board->Add( via );
+
     return true;
 }
 

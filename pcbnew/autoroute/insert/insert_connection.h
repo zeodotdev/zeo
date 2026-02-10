@@ -26,6 +26,7 @@
 
 // Forward declarations
 class BOARD;
+class COMMIT;
 
 
 /**
@@ -55,6 +56,12 @@ public:
      * Set the board to insert tracks/vias into.
      */
     void SetBoard( BOARD* aBoard ) { m_board = aBoard; }
+
+    /**
+     * Set the commit to use for adding items.
+     * If not set, items will be added directly to the board (not recommended).
+     */
+    void SetCommit( COMMIT* aCommit ) { m_commit = aCommit; }
 
     /**
      * Set routing parameters.
@@ -110,6 +117,7 @@ private:
     std::string LayerToName( int aLayer ) const;
 
     BOARD*            m_board = nullptr;
+    COMMIT*           m_commit = nullptr;
     AUTOROUTE_CONTROL m_control;
     std::string       m_netName;
 };

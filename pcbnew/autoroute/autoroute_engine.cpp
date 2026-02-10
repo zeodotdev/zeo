@@ -19,6 +19,7 @@
 
 #include "autoroute_engine.h"
 #include "search/maze_search.h"
+#include "search/room_completion.h"
 #include "locate/locate_connection.h"
 #include "insert/insert_connection.h"
 #include "geometry/tile_shape.h"
@@ -30,6 +31,7 @@
 #include <connectivity/connectivity_data.h>
 
 #include <chrono>
+#include <limits>
 #include <sstream>
 
 
@@ -63,7 +65,9 @@ void AUTOROUTE_ENGINE::ClearRoomModel()
     m_rooms.clear();
     m_doors.clear();
     m_drills.clear();
+    m_incompleteRooms.clear();
     m_roomsByLayer.clear();
+    m_searchTree.Clear();
 }
 
 
@@ -74,14 +78,36 @@ void AUTOROUTE_ENGINE::BuildRoomModel()
     if( !m_board )
         return;
 
+    // Initialize the search tree
+    BOX2I bounds = GetBoardBounds();
+    if( bounds.IsValid() )
+    {
+        // Cell size = clearance * 2 for good balance of resolution vs performance
+        int cellSize = m_control.clearance * 2;
+        m_searchTree.Initialize( bounds, cellSize, m_layerCount );
+    }
+
     // Step 1: Build obstacle rooms from existing items
     BuildObstacleRooms();
+
+    // Insert all obstacle rooms into search tree
+    for( auto& room : m_rooms )
+    {
+        if( room->GetType() == ROOM_TYPE::OBSTACLE )
+        {
+            m_searchTree.Insert( room.get() );
+        }
+    }
 
     // Step 2: Build free space rooms
     BuildFreeSpaceRooms();
 
     // Step 3: Create doors between adjacent rooms
     BuildDoors();
+
+    // Step 3b: Ensure obstacle rooms (pads) have connections to free space
+    // This handles cases where grid alignment prevents normal door creation
+    ConnectOrphanObstacles();
 
     // Step 4: Create potential via locations
     if( m_control.vias_allowed && m_layerCount > 1 )
@@ -164,8 +190,9 @@ void AUTOROUTE_ENGINE::BuildFreeSpaceRooms()
     if( !boardBounds.IsValid() )
         return;
 
-    // For now, create a simple grid of free space rooms
-    int gridSize = m_control.clearance * 4;  // Reasonable grid cell size
+    // Create a grid of free space rooms
+    // Grid size balances resolution vs. performance (O(n²) door building)
+    int gridSize = m_control.clearance * 4;
 
     for( int layer = 0; layer < m_layerCount; ++layer )
     {
@@ -252,52 +279,37 @@ bool AUTOROUTE_ENGINE::AreRoomsAdjacent( EXPANSION_ROOM* aRoom1, EXPANSION_ROOM*
     if( touching.has_value() && touching->Length() > 0 )
         return true;
 
-    // Also check for "nearly adjacent" rooms - boxes that are close but not exactly touching
-    // This handles cases where grid alignment causes small gaps
+    // For obstacle rooms connecting to free space, we need to be more lenient
+    // because grid cells don't align with obstacle boundaries.
+    // Check if boxes are "close enough" using minimum distance between them.
     int tolerance = m_control.clearance * 4;  // Allow gaps up to grid size
 
-    // Check horizontal adjacency (right edge of box1 near left edge of box2 or vice versa)
-    int horizGap1 = box2->Left() - box1->Right();
-    int horizGap2 = box1->Left() - box2->Right();
+    // Calculate the gap in each direction (negative means overlap)
+    int horizGap = std::max( box1->Left() - box2->Right(), box2->Left() - box1->Right() );
+    int vertGap = std::max( box1->Top() - box2->Bottom(), box2->Top() - box1->Bottom() );
 
-    if( horizGap1 >= 0 && horizGap1 <= tolerance )
+    // If both gaps are negative, boxes overlap - shouldn't happen for non-blocked cells
+    if( horizGap < 0 && vertGap < 0 )
+        return false;
+
+    // If one gap is negative (overlap in that direction), check the other gap
+    if( horizGap < 0 )
     {
-        // Check vertical overlap
-        int top = std::max( box1->Top(), box2->Top() );
-        int bottom = std::min( box1->Bottom(), box2->Bottom() );
-        if( top < bottom )
-            return true;
+        // Boxes overlap horizontally, check if vertical gap is within tolerance
+        return vertGap <= tolerance;
     }
 
-    if( horizGap2 >= 0 && horizGap2 <= tolerance )
+    if( vertGap < 0 )
     {
-        int top = std::max( box1->Top(), box2->Top() );
-        int bottom = std::min( box1->Bottom(), box2->Bottom() );
-        if( top < bottom )
-            return true;
+        // Boxes overlap vertically, check if horizontal gap is within tolerance
+        return horizGap <= tolerance;
     }
 
-    // Check vertical adjacency (bottom edge of box1 near top edge of box2 or vice versa)
-    int vertGap1 = box2->Top() - box1->Bottom();
-    int vertGap2 = box1->Top() - box2->Bottom();
-
-    if( vertGap1 >= 0 && vertGap1 <= tolerance )
-    {
-        int left = std::max( box1->Left(), box2->Left() );
-        int right = std::min( box1->Right(), box2->Right() );
-        if( left < right )
-            return true;
-    }
-
-    if( vertGap2 >= 0 && vertGap2 <= tolerance )
-    {
-        int left = std::max( box1->Left(), box2->Left() );
-        int right = std::min( box1->Right(), box2->Right() );
-        if( left < right )
-            return true;
-    }
-
-    return false;
+    // Both gaps are positive (boxes don't overlap in either direction)
+    // Consider adjacent if the boxes are close enough (within tolerance in both directions)
+    // This handles diagonal gaps created by grid misalignment
+    // Use a Chebyshev distance check: max(horizGap, vertGap) <= tolerance
+    return std::max( horizGap, vertGap ) <= tolerance;
 }
 
 
@@ -319,91 +331,168 @@ EXPANSION_DOOR* AUTOROUTE_ENGINE::CreateDoor( EXPANSION_ROOM* aRoom1, EXPANSION_
         return doorPtr;
     }
 
-    // For nearly-adjacent rooms, create a door at the midpoint between them
-    // Use same tolerance as AreRoomsAdjacent() to ensure doors are created for all adjacent rooms
+    // For nearly-adjacent rooms, create a door at the closest points between them
     int tolerance = m_control.clearance * 4;
 
-    // Check horizontal adjacency
-    int horizGap1 = box2->Left() - box1->Right();
-    int horizGap2 = box1->Left() - box2->Right();
+    // Calculate gaps in each direction
+    int horizGap = std::max( box1->Left() - box2->Right(), box2->Left() - box1->Right() );
+    int vertGap = std::max( box1->Top() - box2->Bottom(), box2->Top() - box1->Bottom() );
 
-    if( horizGap1 >= 0 && horizGap1 <= tolerance )
+    // Determine which box is on which side
+    bool box2IsRight = box2->Left() >= box1->Right();
+    bool box2IsLeft = box1->Left() >= box2->Right();
+    bool box2IsBelow = box2->Top() >= box1->Bottom();
+    bool box2IsAbove = box1->Top() >= box2->Bottom();
+
+    // Case 1: Boxes overlap horizontally (vertGap is the relevant gap)
+    if( horizGap < 0 && vertGap >= 0 && vertGap <= tolerance )
     {
-        int top = std::max( box1->Top(), box2->Top() );
-        int bottom = std::min( box1->Bottom(), box2->Bottom() );
-        if( top < bottom )
-        {
-            int midX = ( box1->Right() + box2->Left() ) / 2;
-            SEG doorSeg( VECTOR2I( midX, top ), VECTOR2I( midX, bottom ) );
-            auto door = std::make_unique<EXPANSION_DOOR>( aRoom1, aRoom2, doorSeg );
-            EXPANSION_DOOR* doorPtr = door.get();
-            m_doors.push_back( std::move( door ) );
-            return doorPtr;
-        }
-    }
-
-    if( horizGap2 >= 0 && horizGap2 <= tolerance )
-    {
-        int top = std::max( box1->Top(), box2->Top() );
-        int bottom = std::min( box1->Bottom(), box2->Bottom() );
-        if( top < bottom )
-        {
-            int midX = ( box2->Right() + box1->Left() ) / 2;
-            SEG doorSeg( VECTOR2I( midX, top ), VECTOR2I( midX, bottom ) );
-            auto door = std::make_unique<EXPANSION_DOOR>( aRoom1, aRoom2, doorSeg );
-            EXPANSION_DOOR* doorPtr = door.get();
-            m_doors.push_back( std::move( door ) );
-            return doorPtr;
-        }
-    }
-
-    // Check vertical adjacency
-    int vertGap1 = box2->Top() - box1->Bottom();
-    int vertGap2 = box1->Top() - box2->Bottom();
-
-    if( vertGap1 >= 0 && vertGap1 <= tolerance )
-    {
+        // Vertical gap only - create horizontal door segment
         int left = std::max( box1->Left(), box2->Left() );
         int right = std::min( box1->Right(), box2->Right() );
-        if( left < right )
-        {
-            int midY = ( box1->Bottom() + box2->Top() ) / 2;
-            SEG doorSeg( VECTOR2I( left, midY ), VECTOR2I( right, midY ) );
-            auto door = std::make_unique<EXPANSION_DOOR>( aRoom1, aRoom2, doorSeg );
-            EXPANSION_DOOR* doorPtr = door.get();
-            m_doors.push_back( std::move( door ) );
-            return doorPtr;
-        }
+        int midY = box2IsBelow ? ( box1->Bottom() + box2->Top() ) / 2
+                               : ( box2->Bottom() + box1->Top() ) / 2;
+        SEG doorSeg( VECTOR2I( left, midY ), VECTOR2I( right, midY ) );
+        auto door = std::make_unique<EXPANSION_DOOR>( aRoom1, aRoom2, doorSeg );
+        EXPANSION_DOOR* doorPtr = door.get();
+        m_doors.push_back( std::move( door ) );
+        return doorPtr;
     }
 
-    if( vertGap2 >= 0 && vertGap2 <= tolerance )
+    // Case 2: Boxes overlap vertically (horizGap is the relevant gap)
+    if( vertGap < 0 && horizGap >= 0 && horizGap <= tolerance )
     {
-        int left = std::max( box1->Left(), box2->Left() );
-        int right = std::min( box1->Right(), box2->Right() );
-        if( left < right )
+        // Horizontal gap only - create vertical door segment
+        int top = std::max( box1->Top(), box2->Top() );
+        int bottom = std::min( box1->Bottom(), box2->Bottom() );
+        int midX = box2IsRight ? ( box1->Right() + box2->Left() ) / 2
+                               : ( box2->Right() + box1->Left() ) / 2;
+        SEG doorSeg( VECTOR2I( midX, top ), VECTOR2I( midX, bottom ) );
+        auto door = std::make_unique<EXPANSION_DOOR>( aRoom1, aRoom2, doorSeg );
+        EXPANSION_DOOR* doorPtr = door.get();
+        m_doors.push_back( std::move( door ) );
+        return doorPtr;
+    }
+
+    // Case 3: Diagonal gap (both horizGap and vertGap are positive)
+    // Create a door at the closest corner between the boxes
+    if( horizGap >= 0 && vertGap >= 0 && std::max( horizGap, vertGap ) <= tolerance )
+    {
+        VECTOR2I pt1, pt2;
+
+        // Find the closest corners
+        if( box2IsRight && box2IsBelow )
         {
-            int midY = ( box2->Bottom() + box1->Top() ) / 2;
-            SEG doorSeg( VECTOR2I( left, midY ), VECTOR2I( right, midY ) );
-            auto door = std::make_unique<EXPANSION_DOOR>( aRoom1, aRoom2, doorSeg );
-            EXPANSION_DOOR* doorPtr = door.get();
-            m_doors.push_back( std::move( door ) );
-            return doorPtr;
+            // box2 is to the bottom-right of box1
+            pt1 = VECTOR2I( box1->Right(), box1->Bottom() );
+            pt2 = VECTOR2I( box2->Left(), box2->Top() );
         }
+        else if( box2IsRight && box2IsAbove )
+        {
+            // box2 is to the top-right of box1
+            pt1 = VECTOR2I( box1->Right(), box1->Top() );
+            pt2 = VECTOR2I( box2->Left(), box2->Bottom() );
+        }
+        else if( box2IsLeft && box2IsBelow )
+        {
+            // box2 is to the bottom-left of box1
+            pt1 = VECTOR2I( box1->Left(), box1->Bottom() );
+            pt2 = VECTOR2I( box2->Right(), box2->Top() );
+        }
+        else if( box2IsLeft && box2IsAbove )
+        {
+            // box2 is to the top-left of box1
+            pt1 = VECTOR2I( box1->Left(), box1->Top() );
+            pt2 = VECTOR2I( box2->Right(), box2->Bottom() );
+        }
+        else
+        {
+            // Fallback: use centers
+            pt1 = box1->Center();
+            pt2 = box2->Center();
+        }
+
+        // Create door at midpoint between closest corners
+        VECTOR2I midPt( ( pt1.x + pt2.x ) / 2, ( pt1.y + pt2.y ) / 2 );
+        // Create a small door segment (point-like) at the midpoint
+        SEG doorSeg( midPt, midPt );
+        auto door = std::make_unique<EXPANSION_DOOR>( aRoom1, aRoom2, doorSeg );
+        EXPANSION_DOOR* doorPtr = door.get();
+        m_doors.push_back( std::move( door ) );
+        return doorPtr;
     }
 
     return nullptr;
 }
 
 
+void AUTOROUTE_ENGINE::ConnectOrphanObstacles()
+{
+    // Find obstacle rooms with no doors and connect them to nearest free space
+    for( auto& room : m_rooms )
+    {
+        if( room->GetType() != ROOM_TYPE::OBSTACLE )
+            continue;
+
+        if( !room->GetDoors().empty() )
+            continue;  // Already has doors
+
+        EXPANSION_ROOM* nearest = FindNearestFreeSpace( room.get() );
+        if( nearest )
+        {
+            EXPANSION_DOOR* door = CreateDoor( room.get(), nearest );
+            if( door )
+            {
+                room->AddDoor( door );
+                nearest->AddDoor( door );
+            }
+        }
+    }
+}
+
+
+EXPANSION_ROOM* AUTOROUTE_ENGINE::FindNearestFreeSpace( EXPANSION_ROOM* aObstacle )
+{
+    if( !aObstacle )
+        return nullptr;
+
+    int layer = aObstacle->GetLayer();
+    VECTOR2I obstCenter = aObstacle->GetCenter();
+
+    EXPANSION_ROOM* nearest = nullptr;
+    int64_t minDist = std::numeric_limits<int64_t>::max();
+
+    for( EXPANSION_ROOM* room : m_roomsByLayer[layer] )
+    {
+        if( room->GetType() != ROOM_TYPE::FREE_SPACE )
+            continue;
+
+        // Calculate distance between centers
+        VECTOR2I roomCenter = room->GetCenter();
+        int64_t dx = roomCenter.x - obstCenter.x;
+        int64_t dy = roomCenter.y - obstCenter.y;
+        int64_t dist = dx * dx + dy * dy;  // Squared distance
+
+        if( dist < minDist )
+        {
+            minDist = dist;
+            nearest = room;
+        }
+    }
+
+    return nearest;
+}
+
+
 void AUTOROUTE_ENGINE::BuildDrills()
 {
     // Create potential via locations at room intersections across layers
-    // This is a simplified approach - a full implementation would be more sophisticated
+    // Drills connect rooms on different layers through the maze search
 
-    int gridSize = m_control.clearance * 2;
+    int gridSize = m_control.clearance * 4;  // Larger grid for fewer drills
     BOX2I bounds = GetBoardBounds();
 
-    if( !bounds.IsValid() )
+    if( !bounds.IsValid() || m_layerCount < 2 )
         return;
 
     for( int x = bounds.GetLeft() + gridSize; x < bounds.GetRight(); x += gridSize )
@@ -412,35 +501,39 @@ void AUTOROUTE_ENGINE::BuildDrills()
         {
             VECTOR2I pos( x, y );
 
-            // Check if this position is in free space on all layers
-            bool validOnAllLayers = true;
+            // Find free space rooms containing this position on each layer
+            std::vector<EXPANSION_ROOM*> roomsPerLayer( m_layerCount, nullptr );
+            int layersWithFreeSpace = 0;
 
             for( int layer = 0; layer < m_layerCount; ++layer )
             {
-                bool inFreeSpace = false;
-
                 for( EXPANSION_ROOM* room : m_roomsByLayer[layer] )
                 {
                     if( room->GetType() == ROOM_TYPE::FREE_SPACE &&
                         room->Contains( pos ) )
                     {
-                        inFreeSpace = true;
+                        roomsPerLayer[layer] = room;
+                        layersWithFreeSpace++;
                         break;
                     }
                 }
-
-                if( !inFreeSpace )
-                {
-                    validOnAllLayers = false;
-                    break;
-                }
             }
 
-            if( validOnAllLayers )
+            // Need at least 2 layers with free space for a via to be useful
+            if( layersWithFreeSpace >= 2 )
             {
                 auto drill = std::make_unique<EXPANSION_DRILL>( pos, 0, m_layerCount - 1 );
                 drill->SetViaDiameter( m_control.via_diameter );
                 drill->SetDrillDiameter( m_control.via_drill );
+
+                // Connect drill to rooms on each layer
+                for( int layer = 0; layer < m_layerCount; ++layer )
+                {
+                    if( roomsPerLayer[layer] )
+                    {
+                        drill->SetRoomForLayer( layer, roomsPerLayer[layer] );
+                    }
+                }
 
                 m_drills.push_back( std::move( drill ) );
             }
@@ -465,6 +558,26 @@ void AUTOROUTE_ENGINE::ResetSearchState()
     {
         drill->ClearOccupied();
     }
+}
+
+
+std::vector<EXPANSION_DRILL*> AUTOROUTE_ENGINE::GetDrillsInRoom( EXPANSION_ROOM* aRoom, int aLayer ) const
+{
+    std::vector<EXPANSION_DRILL*> result;
+
+    if( !aRoom )
+        return result;
+
+    for( const auto& drill : m_drills )
+    {
+        // Check if drill is on the specified layer and contained in the room
+        if( drill->CanReachLayer( aLayer ) && aRoom->Contains( drill->GetLocation() ) )
+        {
+            result.push_back( drill.get() );
+        }
+    }
+
+    return result;
 }
 
 
@@ -551,6 +664,7 @@ std::string AUTOROUTE_ENGINE::RouteConnection( const NET_CONNECTION& aConnection
 
     // Create maze search
     MAZE_SEARCH search( *this, m_control );
+    search.SetNetCode( aConnection.net_code );
     search.SetSources( aConnection.source_pads );
     search.SetDestinations( aConnection.dest_pads );
 
@@ -591,6 +705,23 @@ std::string AUTOROUTE_ENGINE::RouteConnection( const NET_CONNECTION& aConnection
 
     m_result.nets_routed++;
 
+    // Check if any items need to be ripped up
+    const auto& ripupItems = search.GetRipupItems();
+    if( !ripupItems.empty() && m_board )
+    {
+        // Remove items marked for ripup
+        for( BOARD_ITEM* item : ripupItems )
+        {
+            PCB_TRACK* track = dynamic_cast<PCB_TRACK*>( item );
+            if( track )
+            {
+                m_board->Remove( track );
+                // Note: In a real implementation, we'd need to rebuild
+                // the room model to reflect removed items
+            }
+        }
+    }
+
     // Locate the path
     LOCATE_CONNECTION locator;
     locator.SetMazeSearch( &search );
@@ -605,6 +736,7 @@ std::string AUTOROUTE_ENGINE::RouteConnection( const NET_CONNECTION& aConnection
     // Insert tracks directly into board
     INSERT_CONNECTION inserter;
     inserter.SetBoard( m_board );
+    inserter.SetCommit( m_commit );  // Use commit for proper persistence
     inserter.SetControl( m_control );
     inserter.SetNetName( aConnection.net_name );
 
@@ -771,4 +903,54 @@ std::vector<EXPANSION_ROOM*> AUTOROUTE_ENGINE::GetRoomsOnLayer( int aLayer ) con
         return it->second;
 
     return {};
+}
+
+
+INCOMPLETE_FREE_SPACE_ROOM* AUTOROUTE_ENGINE::AddIncompleteRoom(
+    std::unique_ptr<INCOMPLETE_FREE_SPACE_ROOM> aRoom )
+{
+    if( !aRoom )
+        return nullptr;
+
+    INCOMPLETE_FREE_SPACE_ROOM* roomPtr = aRoom.get();
+    m_incompleteRooms.push_back( std::move( aRoom ) );
+
+    return roomPtr;
+}
+
+
+FREE_SPACE_ROOM* AUTOROUTE_ENGINE::CompleteRoom( INCOMPLETE_FREE_SPACE_ROOM* aRoom, int aNetCode )
+{
+    if( !aRoom )
+        return nullptr;
+
+    // Use the room completion algorithm
+    ROOM_COMPLETION completion( *this, m_searchTree );
+    COMPLETION_RESULT result = completion.Complete( *aRoom, aNetCode );
+
+    if( !result.completed_room )
+        return nullptr;
+
+    FREE_SPACE_ROOM* roomPtr = result.completed_room.get();
+
+    // Add the completed room to our storage
+    m_roomsByLayer[roomPtr->GetLayer()].push_back( roomPtr );
+    m_rooms.push_back( std::move( result.completed_room ) );
+
+    // Add the new doors
+    for( auto& door : result.new_doors )
+    {
+        m_doors.push_back( std::move( door ) );
+    }
+
+    // Add the new incomplete rooms
+    for( auto& incompleteRoom : result.new_incomplete_rooms )
+    {
+        m_incompleteRooms.push_back( std::move( incompleteRoom ) );
+    }
+
+    // Insert the completed room into the search tree
+    m_searchTree.Insert( roomPtr );
+
+    return roomPtr;
 }

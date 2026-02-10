@@ -24,6 +24,7 @@
 #include "expansion/expansion_room.h"
 #include "expansion/expansion_door.h"
 #include "expansion/expansion_drill.h"
+#include "search/shape_search_tree.h"
 #include <math/vector2d.h>
 #include <math/box2.h>
 #include <memory>
@@ -37,6 +38,7 @@ class BOARD_ITEM;
 class PAD;
 class PCB_TRACK;
 class PCB_VIA;
+class COMMIT;
 
 
 /**
@@ -68,6 +70,12 @@ public:
      * Initialize the engine with a board.
      */
     void Initialize( BOARD* aBoard, const AUTOROUTE_CONTROL& aControl );
+
+    /**
+     * Set the commit to use for adding tracks/vias.
+     * This must be set before routing for changes to persist properly.
+     */
+    void SetCommit( COMMIT* aCommit ) { m_commit = aCommit; }
 
     /**
      * Build the expansion room model from the current board state.
@@ -145,6 +153,16 @@ public:
      */
     void ResetSearchState();
 
+    /**
+     * Get all drills.
+     */
+    const std::vector<std::unique_ptr<EXPANSION_DRILL>>& GetDrills() const { return m_drills; }
+
+    /**
+     * Get drills that are within a specific room on a layer.
+     */
+    std::vector<EXPANSION_DRILL*> GetDrillsInRoom( EXPANSION_ROOM* aRoom, int aLayer ) const;
+
 private:
     /**
      * Build obstacle rooms from existing board items.
@@ -166,18 +184,55 @@ private:
      */
     EXPANSION_DOOR* CreateDoor( EXPANSION_ROOM* aRoom1, EXPANSION_ROOM* aRoom2 );
 
+    /**
+     * Connect obstacle rooms that have no doors to nearby free space rooms.
+     * This handles cases where grid alignment prevents normal door creation.
+     */
+    void ConnectOrphanObstacles();
+
+    /**
+     * Find the nearest free space room to a given obstacle room on the same layer.
+     */
+    EXPANSION_ROOM* FindNearestFreeSpace( EXPANSION_ROOM* aObstacle );
+
     BOARD*                                  m_board = nullptr;
+    COMMIT*                                 m_commit = nullptr;
     AUTOROUTE_CONTROL                       m_control;
     AUTOROUTE_RESULT                        m_result;
     int                                     m_layerCount = 2;
+
+    // Spatial search tree for efficient obstacle queries
+    SHAPE_SEARCH_TREE                       m_searchTree;
 
     // Expansion room storage
     std::vector<std::unique_ptr<EXPANSION_ROOM>> m_rooms;
     std::vector<std::unique_ptr<EXPANSION_DOOR>> m_doors;
     std::vector<std::unique_ptr<EXPANSION_DRILL>> m_drills;
 
+    // Incomplete rooms waiting to be completed
+    std::vector<std::unique_ptr<INCOMPLETE_FREE_SPACE_ROOM>> m_incompleteRooms;
+
     // Layer-indexed room lookup
     std::map<int, std::vector<EXPANSION_ROOM*>> m_roomsByLayer;
+
+public:
+    /**
+     * Get the spatial search tree.
+     */
+    SHAPE_SEARCH_TREE& GetSearchTree() { return m_searchTree; }
+    const SHAPE_SEARCH_TREE& GetSearchTree() const { return m_searchTree; }
+
+    /**
+     * Add an incomplete expansion room.
+     * Returns the raw pointer for door connections.
+     */
+    INCOMPLETE_FREE_SPACE_ROOM* AddIncompleteRoom( std::unique_ptr<INCOMPLETE_FREE_SPACE_ROOM> aRoom );
+
+    /**
+     * Complete an incomplete room and add it to the room database.
+     * Returns the completed room.
+     */
+    FREE_SPACE_ROOM* CompleteRoom( INCOMPLETE_FREE_SPACE_ROOM* aRoom, int aNetCode );
 };
 
 

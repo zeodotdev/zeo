@@ -19,6 +19,7 @@
 
 #include "expansion_room.h"
 #include "expansion_door.h"
+#include "../search/shape_search_tree.h"
 #include <algorithm>
 
 
@@ -88,6 +89,40 @@ OBSTACLE_ROOM::OBSTACLE_ROOM( std::unique_ptr<TILE_SHAPE> aShape, BOARD_ITEM* aI
     m_shape( std::move( aShape ) ),
     m_item( aItem )
 {
+}
+
+
+//-----------------------------------------------------------------------------
+// INCOMPLETE_FREE_SPACE_ROOM Implementation
+//-----------------------------------------------------------------------------
+
+INCOMPLETE_FREE_SPACE_ROOM::INCOMPLETE_FREE_SPACE_ROOM( std::unique_ptr<TILE_SHAPE> aShape,
+                                                         int aLayer,
+                                                         std::unique_ptr<TILE_SHAPE> aContainedShape ) :
+    EXPANSION_ROOM( ROOM_TYPE::FREE_SPACE_INCOMPLETE, aLayer ),
+    m_shape( std::move( aShape ) ),
+    m_containedShape( std::move( aContainedShape ) )
+{
+}
+
+
+std::unique_ptr<FREE_SPACE_ROOM> INCOMPLETE_FREE_SPACE_ROOM::Complete(
+    class SHAPE_SEARCH_TREE& aSearchTree, int aNetCode )
+{
+    // TODO: Implement room completion algorithm
+    // This will query the search tree for overlapping obstacles,
+    // shrink the shape to avoid them, and create a complete room.
+    // For now, just convert to a complete room with the same shape.
+
+    auto completeRoom = std::make_unique<FREE_SPACE_ROOM>( m_shape->Clone(), m_layer );
+
+    // Transfer doors
+    for( EXPANSION_DOOR* door : m_doors )
+    {
+        completeRoom->AddDoor( door );
+    }
+
+    return completeRoom;
 }
 
 

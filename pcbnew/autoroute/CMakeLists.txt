@@ -35,6 +35,9 @@ set( AUTOROUTE_SRCS
     # A* maze search algorithm
     search/maze_search.cpp
     search/destination_distance.cpp
+    search/shape_search_tree.cpp
+    search/room_completion.cpp
+    search/ripup_checker.cpp
 
     # Path reconstruction and trace creation
     locate/locate_connection.cpp

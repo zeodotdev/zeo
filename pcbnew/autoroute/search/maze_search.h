@@ -22,6 +22,7 @@
 
 #include "maze_list_element.h"
 #include "destination_distance.h"
+#include "ripup_checker.h"
 #include "../autoroute_control.h"
 #include <queue>
 #include <vector>
@@ -104,6 +105,16 @@ public:
     int GetNodesExpanded() const { return m_nodesExpanded; }
     int GetMaxQueueSize() const { return m_maxQueueSize; }
 
+    /**
+     * Get items that need to be ripped up to complete the found route.
+     */
+    const std::set<BOARD_ITEM*>& GetRipupItems() const { return m_ripupChecker.GetMarkedItems(); }
+
+    /**
+     * Set the net code being routed (for ripup decisions).
+     */
+    void SetNetCode( int aNetCode ) { m_netCode = aNetCode; }
+
 private:
     /**
      * Initialize the search by creating expansion rooms for source items.
@@ -134,6 +145,11 @@ private:
     void ExpandToOtherLayers( const MAZE_LIST_ELEMENT& aElement );
 
     /**
+     * Expand to drills within a room for potential layer transitions.
+     */
+    void ExpandToDrillsInRoom( EXPANSION_ROOM* aRoom, const MAZE_LIST_ELEMENT& aFromElement );
+
+    /**
      * Calculate the cost of routing from one point to another on the same layer.
      */
     double CalculateTraceCost( const VECTOR2I& aFrom, const VECTOR2I& aTo,
@@ -148,6 +164,22 @@ private:
      * Check if we can route through a room (not blocked by same-net obstacle).
      */
     bool CanEnterRoom( const EXPANSION_ROOM* aRoom, int aNetCode ) const;
+
+    /**
+     * Check if we should consider ripping up an obstacle room.
+     * This is called when the normal route is blocked.
+     *
+     * @param aRoom The obstacle room blocking the route.
+     * @param aFromElement The element we're expanding from.
+     * @return True if ripup was beneficial and expansion should continue.
+     */
+    bool CheckAndHandleRipup( OBSTACLE_ROOM* aRoom, const MAZE_LIST_ELEMENT& aFromElement );
+
+    /**
+     * Expand through an obstacle room (for ripup scenarios).
+     * This adds the obstacle's doors to the queue with additional ripup cost.
+     */
+    void ExpandThroughObstacle( OBSTACLE_ROOM* aRoom, const MAZE_LIST_ELEMENT& aFromElement );
 
     /**
      * Store backtrack information for path reconstruction.
@@ -183,6 +215,10 @@ private:
     // Result from successful search
     MAZE_LIST_ELEMENT m_resultElement;
     bool              m_foundPath = false;
+
+    // Ripup support
+    RIPUP_CHECKER     m_ripupChecker;
+    int               m_netCode = 0;  ///< Net code being routed
 
     // Statistics
     int m_nodesExpanded = 0;

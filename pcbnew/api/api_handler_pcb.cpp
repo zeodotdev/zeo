@@ -4098,9 +4098,13 @@ HANDLER_RESULT<RunAutorouteResponse> API_HANDLER_PCB::handleRunAutoroute(
     for( int i = 0; i < aCtx.Request.nets_to_route_size(); i++ )
         control.nets_to_route.insert( aCtx.Request.nets_to_route( i ) );
 
+    // Create a commit for tracking all track/via additions
+    BOARD_COMMIT commit( frame() );
+
     // Create and initialize autoroute engine
     s_autorouteEngine = std::make_unique<AUTOROUTE_ENGINE>();
     s_autorouteEngine->Initialize( board, control );
+    s_autorouteEngine->SetCommit( &commit );
     s_autorouteStopRequested = false;
     s_autorouteRunning = true;
 
@@ -4111,6 +4115,12 @@ HANDLER_RESULT<RunAutorouteResponse> API_HANDLER_PCB::handleRunAutoroute(
 
     // Get results
     AUTOROUTE_RESULT result = s_autorouteEngine->GetResult();
+
+    // Push the commit to persist changes (if any tracks/vias were added)
+    if( result.tracks_added > 0 || result.vias_added > 0 )
+    {
+        commit.Push( wxS( "Autoroute" ) );
+    }
 
     // Build response
     RunAutorouteResponse response;

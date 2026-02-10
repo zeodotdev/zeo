@@ -161,3 +161,45 @@ VECTOR2I EXPANSION_DOOR::GetSectionCenter( int aSection ) const
 {
     return GetSectionSegment( aSection ).Center();
 }
+
+
+std::vector<SEG> EXPANSION_DOOR::GetSectionSegmentsWithOffset( int aOffset ) const
+{
+    std::vector<SEG> result;
+    int sectionCount = GetSectionCount();
+
+    if( sectionCount <= 0 )
+        return result;
+
+    // For each section, shrink the segment by the offset at both ends
+    for( int i = 0; i < sectionCount; ++i )
+    {
+        SEG sectionSeg = GetSectionSegment( i );
+        int length = sectionSeg.Length();
+
+        // If the segment is too short to shrink, skip it
+        if( length <= 2 * aOffset )
+            continue;
+
+        // Calculate the shrunk segment
+        VECTOR2I dir = sectionSeg.B - sectionSeg.A;
+        double len = static_cast<double>( length );
+
+        // Shrink from both ends
+        VECTOR2I start = sectionSeg.A + VECTOR2I(
+            static_cast<int>( dir.x * aOffset / len ),
+            static_cast<int>( dir.y * aOffset / len ) );
+
+        VECTOR2I end = sectionSeg.B - VECTOR2I(
+            static_cast<int>( dir.x * aOffset / len ),
+            static_cast<int>( dir.y * aOffset / len ) );
+
+        // Only add if the resulting segment has positive length
+        if( ( end - start ).SquaredEuclideanNorm() > 0 )
+        {
+            result.emplace_back( start, end );
+        }
+    }
+
+    return result;
+}

@@ -575,6 +575,55 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             return projectContext.dump( 2 );
         } );
 
+    // Schematic summary callback for user edit detection between turns.
+    // Returns a JSON snapshot of all symbols and labels for diffing.
+    m_chatController->SetSchematicSummaryFn(
+        [this]() -> std::string {
+            // Build a lightweight Python script that dumps schematic state as JSON
+            std::string pyCode =
+                "import json\n"
+                "r = {\"symbols\": {}, \"labels\": {}, \"wire_count\": 0}\n"
+                "try:\n"
+                "    if hasattr(sch, 'refresh_document'):\n"
+                "        sch.refresh_document()\n"
+                "    for sym in sch.symbols.get_all():\n"
+                "        uid = str(sym.id.value) if hasattr(sym, 'id') else ''\n"
+                "        px = getattr(sym, 'position_x', 0) or 0\n"
+                "        py = getattr(sym, 'position_y', 0) or 0\n"
+                "        r['symbols'][uid] = {\n"
+                "            'ref': getattr(sym, 'reference', '?'),\n"
+                "            'val': getattr(sym, 'value', ''),\n"
+                "            'lib': str(getattr(sym, 'lib_id', '')),\n"
+                "            'x': round(px / 1e6, 2),\n"
+                "            'y': round(py / 1e6, 2),\n"
+                "            'ang': getattr(sym, 'angle', 0)\n"
+                "        }\n"
+                "    for lbl in sch.labels.get_all():\n"
+                "        uid = str(lbl.id.value) if hasattr(lbl, 'id') else ''\n"
+                "        px = getattr(lbl, 'position_x', 0) or 0\n"
+                "        py = getattr(lbl, 'position_y', 0) or 0\n"
+                "        r['labels'][uid] = {\n"
+                "            'name': getattr(lbl, 'text', getattr(lbl, 'name', '')),\n"
+                "            'x': round(px / 1e6, 2),\n"
+                "            'y': round(py / 1e6, 2)\n"
+                "        }\n"
+                "    try:\n"
+                "        r['wire_count'] = len(sch.crud.get_wires())\n"
+                "    except:\n"
+                "        pass\n"
+                "except:\n"
+                "    pass\n"
+                "print(json.dumps(r))\n";
+
+            std::string result = SendRequest( FRAME_TERMINAL, "run_shell sch " + pyCode );
+
+            // Validate result is JSON (not an error message)
+            if( result.empty() || result[0] != '{' )
+                return "";
+
+            return result;
+        } );
+
     // Set model on controller
     m_currentModel = "Claude 4.6 Opus";
     m_chatController->SetModel( m_currentModel );
@@ -3663,6 +3712,12 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
         {
             m_chatHistoryDb.Save( m_chatHistory );
         }
+    }
+
+    // Take schematic snapshot for user edit detection on next message
+    if( !continuing && m_chatController )
+    {
+        m_chatController->TakeSchematicSnapshot();
     }
 
     // Show plan approval button when plan mode turn completes

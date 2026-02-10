@@ -448,9 +448,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
             }
             else
             {
-                // No waypoints - draw direct wire between pins
-                // Agent should use waypoints for orthogonal routing
-                code << "    wires = sch.wiring.wire_pins(sym1, '" << EscapePythonString( fromPinNum ) << "', sym2, '" << EscapePythonString( toPinNum ) << "')\n";
+                // No waypoints - use auto_wire for L-shaped orthogonal routing
+                code << "    wires = sch.wiring.auto_wire(sym1, '" << EscapePythonString( fromPinNum ) << "', sym2, '" << EscapePythonString( toPinNum ) << "')\n";
                 code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires)}\n";
             }
         }
@@ -1698,8 +1697,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 }
                 else
                 {
-                    // No waypoints - draw direct wire between pins
-                    code << "            wires_" << i << " = sch.wiring.wire_pins(sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "', sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "')\n";
+                    // No waypoints - use auto_wire for L-shaped orthogonal routing
+                    code << "            wires_" << i << " = sch.wiring.auto_wire(sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "', sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "')\n";
                 }
                 code << "            results.append({'index': " << i << ", 'type': 'wire', 'wire_count': len(wires_" << i << ")})\n";
                 code << "        else:\n";

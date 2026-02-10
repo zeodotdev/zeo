@@ -212,7 +212,6 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
 
     // Build result JSON envelope
     nlohmann::json result;
-    result["__has_image"] = true;
     result["text"] = "Screenshot of " + fn.GetFullName().ToStdString();
     result["image"] = {
         { "media_type", "image/png" },

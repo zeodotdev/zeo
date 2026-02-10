@@ -56,11 +56,8 @@ qa/tests/cli/output/**
 CMakeUserPresets.json
 CMakeCache.txt
 
-# demo project auxiliary files
-demos/**/*-bak
-demos/**/_autosave-*
-demos/**/fp-info-cache
-demos/**/~*.lck
+# demo projects
+demos/
 
 # MacOS package info created by CMake
 bitmap2component/Info.plist

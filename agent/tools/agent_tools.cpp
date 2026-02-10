@@ -229,6 +229,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schRunSim.description =
         "Run a SPICE simulation on the currently open schematic. "
         "Returns trace summaries with signal names, point counts, and min/max/final values. "
+        "When matplotlib is available, also generates a visual plot of all signal traces. "
         "Supported commands:\n"
         "  .op - Operating point analysis\n"
         "  .tran <step> <stop> [start] [maxstep] - Transient analysis (e.g. '.tran 1u 10m')\n"

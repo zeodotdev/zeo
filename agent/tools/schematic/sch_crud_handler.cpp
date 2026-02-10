@@ -1477,14 +1477,12 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
     }
     else
     {
-        code << "    # GND typically points down (180°), VCC/power typically points up (0°)\n";
+        code << "    # GND at 0° = bars down (standard). VCC at 0° = bar up (standard).\n";
         code << "    power_lower = power_name.lower()\n";
-        code << "    if 'gnd' in power_lower or 'vss' in power_lower or 'gnd' in power_lower:\n";
-        code << "        # GND pointing down - if offset_y > 0, symbol is below pin\n";
-        code << "        power_angle = 180 if offset_y >= 0 else 0\n";
+        code << "    if 'gnd' in power_lower or 'vss' in power_lower:\n";
+        code << "        power_angle = 0  # GND at 0° = bars down (standard orientation)\n";
         code << "    else:\n";
-        code << "        # VCC/power pointing up - if offset_y < 0, symbol is above pin\n";
-        code << "        power_angle = 0 if offset_y <= 0 else 180\n";
+        code << "        power_angle = 0  # VCC at 0° = bar up (standard orientation)\n";
     }
 
     code << "\n";

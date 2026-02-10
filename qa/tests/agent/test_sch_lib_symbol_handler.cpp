@@ -271,6 +271,65 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandExactMatchFallback )
 
 
 /**
+ * Regression: generated code must access info.pins directly (not call nonexistent methods).
+ * The old code called get_symbol_full()/get_symbol_pins() which don't exist in kipy,
+ * silently failed, and returned empty pins:[].
+ */
+BOOST_AUTO_TEST_CASE( GeneratedCodeAccessesPinDataDirectly )
+{
+    SCH_LIB_SYMBOL_HANDLER handler;
+    nlohmann::json input = { { "lib_id", "Device:R" }, { "include_pins", true } };
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
+
+    // Must read pins directly from SymbolInfo.pins (populated by search/get_symbol_info)
+    BOOST_CHECK_MESSAGE( cmd.find( "info.pins" ) != std::string::npos,
+        "Generated code must access info.pins directly" );
+
+    // Must NOT call nonexistent methods that silently fail
+    BOOST_CHECK_MESSAGE( cmd.find( "get_symbol_full" ) == std::string::npos,
+        "Must not call nonexistent get_symbol_full()" );
+    BOOST_CHECK_MESSAGE( cmd.find( "get_symbol_pins" ) == std::string::npos,
+        "Must not call nonexistent get_symbol_pins()" );
+
+    // Must convert nanometers to millimeters
+    BOOST_CHECK_MESSAGE( cmd.find( "1_000_000" ) != std::string::npos ||
+                         cmd.find( "1000000" ) != std::string::npos,
+        "Must convert nm to mm with scale factor" );
+}
+
+
+/**
+ * Regression: generated code must extract position_x/position_y from LibPinInfo.
+ */
+BOOST_AUTO_TEST_CASE( GeneratedCodeExtractsPinPositions )
+{
+    SCH_LIB_SYMBOL_HANDLER handler;
+    nlohmann::json input = { { "lib_id", "Device:R" }, { "include_pins", true } };
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
+
+    // Must extract position_x, position_y from LibPinInfo
+    BOOST_CHECK_MESSAGE( cmd.find( "position_x" ) != std::string::npos,
+        "Must extract position_x from pins" );
+    BOOST_CHECK_MESSAGE( cmd.find( "position_y" ) != std::string::npos,
+        "Must extract position_y from pins" );
+}
+
+
+/**
+ * Verify that include_pins=false skips pin extraction.
+ */
+BOOST_AUTO_TEST_CASE( PinsSkippedWhenNotRequested )
+{
+    SCH_LIB_SYMBOL_HANDLER handler;
+    nlohmann::json input = { { "lib_id", "Device:R" }, { "include_pins", false } };
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
+
+    // When include_pins=false, the flag should be set correctly
+    BOOST_CHECK( cmd.find( "include_pins = False" ) != std::string::npos );
+}
+
+
+/**
  * Test that Execute returns error (requires IPC)
  */
 BOOST_AUTO_TEST_CASE( ExecuteReturnsError )

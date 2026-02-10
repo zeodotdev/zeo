@@ -944,6 +944,12 @@ public:
     bool HasAgentPendingChanges() const;
 
     /**
+     * Clear stale agent change state when all agent undo entries have been undone.
+     * Called from the undo handler to auto-reject when user Ctrl+Z's past baseline.
+     */
+    void ClearStaleAgentChanges();
+
+    /**
      * Get the agent change tracker.
      * @return Pointer to the tracker, or nullptr if not initialized.
      */
@@ -1149,6 +1155,7 @@ private:
     bool              m_highlightedConnChanged;
 
     // Agent pending changes support (item-based tracking with dynamic bbox)
+    SCH_ITEM* FindPreAgentState( const KIID& aItemId );  ///< Find pre-agent state from undo entries
     std::unique_ptr<AGENT_CHANGE_TRACKER> m_agentChangeTracker;  ///< Item-based change tracker
     std::unique_ptr<FILE_EDIT_SESSION>    m_fileEditSession;     ///< File edit session manager
     bool           m_hasAgentPendingChanges = false;

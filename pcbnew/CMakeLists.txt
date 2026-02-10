@@ -4,6 +4,8 @@ add_subdirectory(connectivity)
 
 add_subdirectory(router)
 
+add_subdirectory(autoroute)
+
 # psnrouter depends on make_lexer outputs in common (bug #1285878 )
 add_dependencies( pnsrouter pcbcommon )
 
@@ -825,6 +827,7 @@ set( PCBNEW_KIFACE_LIBRARIES
     connectivity
     pcbcommon
     pnsrouter
+    autoroute
     kicommon
     kiplatform
     common

@@ -2798,6 +2798,10 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
 
     kiapi::schematic::commands::RunERCResponse response;
 
+    // Clear existing ERC markers before running new tests to prevent accumulation
+    SCH_SCREENS allScreens( m_frame->Schematic().Root() );
+    allScreens.DeleteAllMarkers( MARKER_BASE::MARKER_ERC, true );
+
     // Run ERC tests
     ERC_TESTER tester( &m_frame->Schematic() );
     tester.RunTests( nullptr, m_frame, nullptr, &m_frame->Prj(), nullptr );
@@ -2852,6 +2856,8 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
 
     response.set_error_count( errorCount );
     response.set_warning_count( warningCount );
+
+    m_frame->GetCanvas()->Refresh();
 
     return response;
 }

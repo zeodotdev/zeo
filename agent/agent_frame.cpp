@@ -1332,9 +1332,8 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
         m_pendingToolCalls = json::array();
     }
 
-    // Replace approval box with "Cancelled" if an editor approval was pending
-    if( ( m_pendingOpenSch || m_pendingOpenPcb )
-        && !m_activeRunningHtml.IsEmpty() && m_activeToolResultIdx >= 0 )
+    // Replace active "Running..." tool with "Cancelled" in both DOM and internal HTML
+    if( !m_activeRunningHtml.IsEmpty() && m_activeToolResultIdx >= 0 )
     {
         wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
         wxString cancelledHtml = BuildToolResultHtml( m_activeToolResultIdx, desc,
@@ -1347,6 +1346,15 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
             "<pre class=\"text-text-secondary font-mono text-[12px] whitespace-pre-wrap "
             "break-words m-0 mt-2\">User cancelled</pre>" );
     }
+
+    // Safety net: cancel ALL remaining "Running..." tool statuses in the DOM.
+    // Handles edge cases where queued tool events created "Running..." elements
+    // that aren't tracked by m_activeToolResultIdx.
+    m_bridge->RunScript(
+        "(function(){var ss=document.querySelectorAll('.tool-status');"
+        "ss.forEach(function(s){if(s.innerHTML.indexOf('Running')!==-1){"
+        "s.className='text-text-muted text-[12px] ml-auto';"
+        "s.innerHTML='<strong>Cancelled</strong>';}});})();" );
 
     // Clear pending editor open/close request state (prevents stale approval button clicks)
     m_pendingOpenSch = false;
@@ -3058,6 +3066,13 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     if( !data )
         return;
 
+    // Skip queued events that arrive after cancellation
+    if( m_stopRequested )
+    {
+        delete data;
+        return;
+    }
+
     wxLogInfo( "AGENT_FRAME::OnChatToolStart - tool: %s (id=%s)",
             data->toolName.c_str(), data->toolId.c_str() );
 
@@ -3506,6 +3521,13 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
     ChatToolCompleteData* data = aEvent.GetPayload<ChatToolCompleteData*>();
     if( !data )
         return;
+
+    // Skip queued events that arrive after cancellation
+    if( m_stopRequested )
+    {
+        delete data;
+        return;
+    }
 
     wxLogInfo( "AGENT_FRAME::OnChatToolComplete - tool: %s, success: %s",
             data->toolName.c_str(), data->success ? "true" : "false" );

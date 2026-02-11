@@ -327,6 +327,15 @@ void WEBVIEW_BRIDGE::PushToolResultImageEnd( int aIndex )
     RunScript( wxString::Format( "App.Chat.toolImgEnd(%d);", aIndex ) );
 }
 
+void WEBVIEW_BRIDGE::PushCancelRunningTools()
+{
+    RunScript(
+        "(function(){var ss=document.querySelectorAll('.tool-status');"
+        "ss.forEach(function(s){if(s.innerHTML.indexOf('Running')!==-1){"
+        "s.className='text-text-muted text-[12px] ml-auto';"
+        "s.innerHTML='<strong>Cancelled</strong>';}});})();" );
+}
+
 void WEBVIEW_BRIDGE::PushFullChatContent( const wxString& aHtml )
 {
     LogBridge( "C++->JS", "setFullContent" );

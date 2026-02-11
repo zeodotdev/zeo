@@ -1350,11 +1350,7 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
     // Safety net: cancel ALL remaining "Running..." tool statuses in the DOM.
     // Handles edge cases where queued tool events created "Running..." elements
     // that aren't tracked by m_activeToolResultIdx.
-    m_bridge->RunScript(
-        "(function(){var ss=document.querySelectorAll('.tool-status');"
-        "ss.forEach(function(s){if(s.innerHTML.indexOf('Running')!==-1){"
-        "s.className='text-text-muted text-[12px] ml-auto';"
-        "s.innerHTML='<strong>Cancelled</strong>';}});})();" );
+    m_bridge->PushCancelRunningTools();
 
     // Clear pending editor open/close request state (prevents stale approval button clicks)
     m_pendingOpenSch = false;

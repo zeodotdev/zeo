@@ -1251,127 +1251,42 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         break;
     }
 
-    // DISABLED: Users view changes via Changes tab
-    // case MAIL_AGENT_VIEW_CHANGES:
-    // {
-    //     // Navigate to the sheet with agent changes and zoom to the bounding box
-    //     // Payload can be JSON with optional "sheet_path" to specify which sheet to view
-    //     wxString targetSheetPath;
-    //     try
-    //     {
-    //         nlohmann::json j = nlohmann::json::parse( payload );
-    //         if( j.contains( "sheet_path" ) && !j["sheet_path"].get<std::string>().empty() )
-    //         {
-    //             targetSheetPath = wxString::FromUTF8( j["sheet_path"].get<std::string>() );
-    //         }
-    //     }
-    //     catch( ... )
-    //     {
-    //         // Legacy format or parse error - no specific sheet
-    //     }
-    //
-    //     BOX2I changedBBox = ComputeTrackedItemsBBox();
-    //
-    //     wxLogInfo( "MAIL_AGENT_VIEW_CHANGES: hasChanges=%d, bbox=(%d,%d,%d,%d)",
-    //                m_hasAgentPendingChanges,
-    //                changedBBox.GetX(), changedBBox.GetY(),
-    //                changedBBox.GetWidth(), changedBBox.GetHeight() );
-    //
-    //     if( m_hasAgentPendingChanges && changedBBox.GetWidth() > 0 )
-    //     {
-    //         // Bring editor to front
-    //         Raise();
-    //         // Find the target sheet to navigate to
-    //         SCH_SHEET_PATH targetSheet;
-    //         bool needSheetChange = false;
-    //
-    //         if( !targetSheetPath.IsEmpty() )
-    //         {
-    //             // Navigate to the specified sheet from payload
-    //             SCH_SHEET_LIST sheets = Schematic().Hierarchy();
-    //             for( const SCH_SHEET_PATH& path : sheets )
-    //             {
-    //                 if( path.PathHumanReadable( false ) == targetSheetPath )
-    //                 {
-    //                     targetSheet = path;
-    //                     needSheetChange = ( path != GetCurrentSheet() );
-    //                     break;
-    //                 }
-    //             }
-    //         }
-    //         else if( m_agentChangedSheetPath != GetCurrentSheet() && m_agentChangedSheetPath.size() > 0 )
-    //         {
-    //             // Fallback to the legacy m_agentChangedSheetPath
-    //             targetSheet = m_agentChangedSheetPath;
-    //             needSheetChange = true;
-    //         }
-    //
-    //         if( needSheetChange && targetSheet.size() > 0 )
-    //         {
-    //             GetToolManager()->RunAction<SCH_SHEET_PATH*>( SCH_ACTIONS::changeSheet,
-    //                                                           &targetSheet );
-    //
-    //             // Recompute bbox after sheet change (for the new sheet)
-    //             changedBBox = ComputeTrackedItemsBBox();
-    //
-    //             // After sheet change, re-register the diff overlay on the current view
-    //             // Capture sheet path for per-sheet approve/reject via overlay buttons
-    //             wxString currentSheetPath = GetCurrentSheet().PathHumanReadable( false );
-    //             wxString capturedSheetPath = currentSheetPath;
-    //             DIFF_CALLBACKS callbacks;
-    //             callbacks.onApprove = [this, capturedSheetPath]() {
-    //                 if( m_showingAgentBefore )
-    //                     ShowAgentChangesAfter();
-    //                 // Only approve changes on this sheet, not all sheets
-    //                 ApproveAgentChangesOnSheet( capturedSheetPath );
-    //                 // Notify agent frame with sheet path so it can update its UI
-    //                 nlohmann::json j;
-    //                 j["editor"] = "sch";
-    //                 j["sheet_path"] = capturedSheetPath.ToStdString();
-    //                 std::string payload = j.dump();
-    //                 Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
-    //             };
-    //             callbacks.onReject = [this, capturedSheetPath]() {
-    //                 if( m_showingAgentBefore )
-    //                     ShowAgentChangesAfter();
-    //                 // Only reject changes on this sheet, not all sheets
-    //                 RejectAgentChangesOnSheet( capturedSheetPath );
-    //                 // Notify agent frame with sheet path so it can update its UI
-    //                 nlohmann::json j;
-    //                 j["editor"] = "sch";
-    //                 j["sheet_path"] = capturedSheetPath.ToStdString();
-    //                 std::string payload = j.dump();
-    //                 Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
-    //             };
-    //             callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
-    //             callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
-    //             callbacks.onRefresh = [this]() {
-    //                 if( GetCanvas() )
-    //                     GetCanvas()->Refresh();
-    //             };
-    //
-    //             BBOX_COMPUTE_CALLBACK bboxCallback = [this]() -> BOX2I {
-    //                 return ComputeTrackedItemsBBox();
-    //             };
-    //
-    //             DIFF_MANAGER::GetInstance().RegisterOverlay(
-    //                 GetCanvas()->GetView(),
-    //                 m_agentChangeTracker.get(),
-    //                 currentSheetPath,
-    //                 callbacks,
-    //                 bboxCallback );
-    //         }
-    //
-    //         // Zoom to the changed area with some padding
-    //         BOX2I zoomBox = changedBBox;
-    //         zoomBox.Inflate( zoomBox.GetWidth() / 4, zoomBox.GetHeight() / 4 );
-    //         // Convert BOX2I to BOX2D for SetViewport
-    //         BOX2D viewport( VECTOR2D( zoomBox.GetPosition() ), VECTOR2D( zoomBox.GetSize() ) );
-    //         GetCanvas()->GetView()->SetViewport( viewport );
-    //         GetCanvas()->Refresh();
-    //     }
-    //     break;
-    // }
+    case MAIL_AGENT_VIEW_CHANGES:
+    {
+        wxString targetSheetPath;
+        try
+        {
+            nlohmann::json j = nlohmann::json::parse( payload );
+            if( j.contains( "sheet_path" ) && !j["sheet_path"].get<std::string>().empty() )
+                targetSheetPath = wxString::FromUTF8( j["sheet_path"].get<std::string>() );
+        }
+        catch( ... )
+        {
+        }
+
+        if( !targetSheetPath.IsEmpty() )
+        {
+            SCH_SHEET_LIST sheets = Schematic().Hierarchy();
+            for( const SCH_SHEET_PATH& path : sheets )
+            {
+                if( path.PathHumanReadable( false ) == targetSheetPath )
+                {
+                    if( path != GetCurrentSheet() )
+                    {
+                        SCH_SHEET_PATH target = path;
+                        GetToolManager()->RunAction<SCH_SHEET_PATH*>(
+                                SCH_ACTIONS::changeSheet, &target );
+                    }
+                    break;
+                }
+            }
+        }
+
+        if( GetCanvas() )
+            GetCanvas()->Refresh();
+
+        break;
+    }
 
     case MAIL_SELECTION:
         if( !eeconfig()->m_CrossProbing.on_selection )

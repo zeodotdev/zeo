@@ -8,7 +8,7 @@ bool SCH_CRUD_HANDLER::CanHandle( const std::string& aToolName ) const
     return aToolName == "sch_add" ||
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
-           aToolName == "sch_open_sheet" ||
+           aToolName == "sch_switch_sheet" ||
            aToolName == "sch_connect_to_power" ||
            aToolName == "sch_add_sheet";
 }
@@ -74,16 +74,6 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
         }
         return "Deleting elements";
     }
-    else if( aToolName == "sch_open_sheet" )
-    {
-        std::string sheetPath = aInput.value( "sheet_path", "" );
-        std::string filePath = aInput.value( "file_path", "" );
-        if( !sheetPath.empty() )
-            return "Navigating to sheet: " + sheetPath;
-        if( !filePath.empty() )
-            return "Opening sheet: " + filePath;
-        return "Getting current sheet";
-    }
     else if( aToolName == "sch_connect_to_power" )
     {
         std::string ref = aInput.value( "ref", "" );
@@ -96,6 +86,13 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
         std::string name = aInput.value( "sheet_name", "sheet" );
         return "Adding sheet: " + name;
     }
+    else if( aToolName == "sch_switch_sheet" )
+    {
+        std::string sheetPath = aInput.value( "sheet_path", "" );
+        if( !sheetPath.empty() )
+            return "Switching to sheet: " + sheetPath;
+        return "Listing available sheets";
+    }
     return "Executing " + aToolName;
 }
 
@@ -105,7 +102,7 @@ bool SCH_CRUD_HANDLER::RequiresIPC( const std::string& aToolName ) const
     return aToolName == "sch_add" ||
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
-           aToolName == "sch_open_sheet" ||
+           aToolName == "sch_switch_sheet" ||
            aToolName == "sch_connect_to_power" ||
            aToolName == "sch_add_sheet";
 }
@@ -122,8 +119,8 @@ std::string SCH_CRUD_HANDLER::GetIPCCommand( const std::string& aToolName,
         code = GenerateUpdateBatchCode( aInput );  // Now uses updates array
     else if( aToolName == "sch_delete" )
         code = GenerateBatchDeleteCode( aInput );  // Now uses targets array
-    else if( aToolName == "sch_open_sheet" )
-        code = GenerateOpenSheetCode( aInput );
+    else if( aToolName == "sch_switch_sheet" )
+        code = GenerateSwitchSheetCode( aInput );
     else if( aToolName == "sch_connect_to_power" )
         code = GenerateConnectToPowerCode( aInput );
     else if( aToolName == "sch_add_sheet" )
@@ -1470,20 +1467,17 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
 }
 
 
-std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInput ) const
+std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aInput ) const
 {
     std::ostringstream code;
 
-    // Extract parameters - match tool definition names
     std::string sheetPath = aInput.value( "sheet_path", "" );
-    std::string filePath = aInput.value( "file_path", "" );
 
     code << "import json, sys\n";
     code << "\n";
     code << GenerateRefreshPreamble();
     code << "\n";
     code << "sheet_path = " << nlohmann::json( sheetPath ).dump() << "\n";
-    code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
     code << "result = None\n";
     code << "\n";
     code << "try:\n";
@@ -1516,13 +1510,13 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
     code << "        try:\n";
     code << "            hierarchy_tree = sch.sheets.get_hierarchy()\n";
     code << "            hierarchy_nodes = flatten_hierarchy(hierarchy_tree)\n";
-    code << "            print(f'[sch_open_sheet] Hierarchy tree has {len(hierarchy_nodes)} nodes', file=sys.stderr)\n";
+    code << "            print(f'[sch_switch_sheet] Hierarchy tree has {len(hierarchy_nodes)} nodes', file=sys.stderr)\n";
     code << "        except Exception as he:\n";
-    code << "            print(f'[sch_open_sheet] get_hierarchy failed: {he}', file=sys.stderr)\n";
+    code << "            print(f'[sch_switch_sheet] get_hierarchy failed: {he}', file=sys.stderr)\n";
     code << "    \n";
     code << "    # Also get sheet items for fallback\n";
     code << "    sheets = sch.crud.get_sheets()\n";
-    code << "    print(f'[sch_open_sheet] Found {len(sheets)} sheet items', file=sys.stderr)\n";
+    code << "    print(f'[sch_switch_sheet] Found {len(sheets)} sheet items', file=sys.stderr)\n";
     code << "    \n";
     code << "    # Build lookup dictionaries\n";
     code << "    hierarchy = []\n";
@@ -1607,43 +1601,34 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
     code << "            elif sheet_path + '.kicad_sch' in sheet_by_file:\n";
     code << "                target_sheet, target_info = sheet_by_file[sheet_path + '.kicad_sch']\n";
     code << "    \n";
-    code << "    # Handle file_path - open a specific .kicad_sch file\n";
-    code << "    if not target_sheet and not navigated and file_path:\n";
-    code << "        import os\n";
-    code << "        basename = os.path.basename(file_path)\n";
-    code << "        if basename in sheet_by_file:\n";
-    code << "            target_sheet, target_info = sheet_by_file[basename]\n";
-    code << "        elif file_path in sheet_by_file:\n";
-    code << "            target_sheet, target_info = sheet_by_file[file_path]\n";
-    code << "    \n";
     code << "    # Navigate to target sheet if found\n";
     code << "    if target_sheet and not navigated:\n";
-    code << "        print(f'[sch_open_sheet] Attempting to navigate to sheet', file=sys.stderr)\n";
+    code << "        print(f'[sch_switch_sheet] Attempting to navigate to sheet', file=sys.stderr)\n";
     code << "        # First try navigate_to with the SheetPath (most reliable for hierarchy nodes)\n";
     code << "        if hasattr(sch.sheets, 'navigate_to') and hasattr(target_sheet, 'path') and target_sheet.path:\n";
     code << "            try:\n";
-    code << "                print(f'[sch_open_sheet] Using navigate_to with path', file=sys.stderr)\n";
+    code << "                print(f'[sch_switch_sheet] Using navigate_to with path', file=sys.stderr)\n";
     code << "                sch.sheets.navigate_to(target_sheet.path)\n";
     code << "                navigated = True\n";
     code << "            except Exception as nav_err:\n";
-    code << "                print(f'[sch_open_sheet] navigate_to failed: {nav_err}', file=sys.stderr)\n";
+    code << "                print(f'[sch_switch_sheet] navigate_to failed: {nav_err}', file=sys.stderr)\n";
     code << "        \n";
     code << "        if not navigated and hasattr(sch.sheets, 'enter'):\n";
     code << "            try:\n";
     code << "                # enter might work with the node directly\n";
-    code << "                print(f'[sch_open_sheet] Trying enter method', file=sys.stderr)\n";
+    code << "                print(f'[sch_switch_sheet] Trying enter method', file=sys.stderr)\n";
     code << "                sch.sheets.enter(target_sheet)\n";
     code << "                navigated = True\n";
     code << "            except Exception as enter_err:\n";
-    code << "                print(f'[sch_open_sheet] enter failed: {enter_err}', file=sys.stderr)\n";
+    code << "                print(f'[sch_switch_sheet] enter failed: {enter_err}', file=sys.stderr)\n";
     code << "        \n";
     code << "        if not navigated and hasattr(sch.sheets, 'open'):\n";
     code << "            try:\n";
-    code << "                print(f'[sch_open_sheet] Trying open method', file=sys.stderr)\n";
+    code << "                print(f'[sch_switch_sheet] Trying open method', file=sys.stderr)\n";
     code << "                sch.sheets.open(target_sheet)\n";
     code << "                navigated = True\n";
     code << "            except Exception as open_err:\n";
-    code << "                print(f'[sch_open_sheet] open failed: {open_err}', file=sys.stderr)\n";
+    code << "                print(f'[sch_switch_sheet] open failed: {open_err}', file=sys.stderr)\n";
     code << "    \n";
     code << "    # Build result\n";
     code << "    if navigated:\n";
@@ -1653,7 +1638,7 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
     code << "            'target': target_info,\n";
     code << "            'available_sheets': hierarchy\n";
     code << "        }\n";
-    code << "    elif not sheet_path and not file_path:\n";
+    code << "    elif not sheet_path:\n";
     code << "        # No target specified - list available sheets\n";
     code << "        if not hierarchy:\n";
     code << "            result = {\n";
@@ -1672,7 +1657,7 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
     code << "        # Target specified but not found\n";
     code << "        result = {\n";
     code << "            'status': 'error',\n";
-    code << "            'message': f'Sheet not found: {sheet_path or file_path}',\n";
+    code << "            'message': f'Sheet not found: {sheet_path}',\n";
     code << "            'available_sheets': hierarchy\n";
     code << "        }\n";
     code << "\n";

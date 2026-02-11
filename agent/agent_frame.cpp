@@ -203,7 +203,7 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
         "<span class=\"%s text-[12px] ml-auto\"><strong>%s</strong></span>"
         "</a>"
         // Expanded content (hidden by default)
-        "<div class=\"p-3 pt-0 border-t border-border-dark\" "
+        "<div class=\"tool-result-body p-3 pt-0 border-t border-border-dark\" "
         "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:%s;\">"
         "<pre class=\"text-text-secondary font-mono text-[12px] whitespace-pre-wrap break-words m-0 mt-2\">%s</pre>"
         "%s"
@@ -3117,6 +3117,9 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         m_activeRunningHtml = BuildRunningToolHtml( idx, desc );
         m_activeToolResultIdx = idx;
 
+        wxLogInfo( "AGENT_FRAME::OnChatToolStart - assigned idx=%d (counter now %d)",
+                   idx, m_toolResultCounter );
+
         // Append running box to permanent DOM
         AppendHtml( m_activeRunningHtml );
 
@@ -3574,6 +3577,10 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
         }
 
         m_bridge->PushToolResultImageEnd( idx );
+
+        size_t numChunks = ( b64.length() + chunkSize - 1 ) / chunkSize;
+        wxLogInfo( "AGENT_FRAME::OnChatToolComplete - pushed %zu image chunks for idx=%d",
+                   numChunks, idx );
     }
 
     // Update internal HTML tracking (replace running HTML with full completed HTML).
@@ -3586,10 +3593,33 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
     if( !m_activeRunningHtml.IsEmpty() )
     {
+        size_t prevLen = m_fullHtmlContent.length();
         m_fullHtmlContent.Replace( m_activeRunningHtml, completedHtml );
+        bool replaced = ( m_fullHtmlContent.length() != prevLen );
         m_htmlBeforeAgentResponse.Replace( m_activeRunningHtml, completedHtml );
+
+        if( !replaced )
+            wxLogWarning( "AGENT_FRAME::OnChatToolComplete - Replace FAILED for idx=%d "
+                          "(running HTML not found in m_fullHtmlContent)", idx );
     }
     m_activeRunningHtml.Clear();
+
+    // Safety net: if this tool had an image, re-push the status update on the next
+    // event loop iteration. The 50+ image chunk scripts can delay or disrupt the
+    // original updateToolResult call; this idempotent re-push ensures the DOM reflects
+    // the completed state.
+    if( data->hasImage && !data->imageBase64.empty() )
+    {
+        wxString safetyStatusClass = statusClass;
+        wxString safetyStatusText = statusText;
+        wxString safetyBody = textBody;
+        int safetyIdx = idx;
+
+        CallAfter( [this, safetyIdx, safetyStatusClass, safetyStatusText, safetyBody]() {
+            m_bridge->PushToolResultUpdate( safetyIdx, safetyStatusClass, safetyStatusText,
+                                            safetyBody );
+        } );
+    }
 
     // After schematic tools complete successfully, trigger editor refresh for live UI feedback
     if( data->success && data->toolName == "sch_modify" )

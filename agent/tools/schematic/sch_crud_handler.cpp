@@ -9,7 +9,8 @@ bool SCH_CRUD_HANDLER::CanHandle( const std::string& aToolName ) const
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
            aToolName == "sch_open_sheet" ||
-           aToolName == "sch_connect_to_power";
+           aToolName == "sch_connect_to_power" ||
+           aToolName == "sch_add_sheet";
 }
 
 
@@ -90,6 +91,11 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
         std::string power = aInput.value( "power", "" );
         return "Connecting " + ref + ":" + pin + " to " + power;
     }
+    else if( aToolName == "sch_add_sheet" )
+    {
+        std::string name = aInput.value( "sheet_name", "sheet" );
+        return "Adding sheet: " + name;
+    }
     return "Executing " + aToolName;
 }
 
@@ -100,7 +106,8 @@ bool SCH_CRUD_HANDLER::RequiresIPC( const std::string& aToolName ) const
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
            aToolName == "sch_open_sheet" ||
-           aToolName == "sch_connect_to_power";
+           aToolName == "sch_connect_to_power" ||
+           aToolName == "sch_add_sheet";
 }
 
 
@@ -119,6 +126,8 @@ std::string SCH_CRUD_HANDLER::GetIPCCommand( const std::string& aToolName,
         code = GenerateOpenSheetCode( aInput );
     else if( aToolName == "sch_connect_to_power" )
         code = GenerateConnectToPowerCode( aInput );
+    else if( aToolName == "sch_add_sheet" )
+        code = GenerateAddSheetCode( aInput );
 
     return "run_shell sch " + code;
 }
@@ -1733,6 +1742,70 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
 }
 
 
+std::string SCH_CRUD_HANDLER::GenerateAddSheetCode( const nlohmann::json& aInput ) const
+{
+    std::ostringstream code;
+
+    std::string sheetName = aInput.value( "sheet_name", "Subsheet" );
+    std::string sheetFile = aInput.value( "sheet_file", "" );
+
+    double posX = 0, posY = 0;
+    if( aInput.contains( "position" ) && aInput["position"].is_array() &&
+        aInput["position"].size() >= 2 )
+    {
+        posX = SnapToGrid( aInput["position"][0].get<double>() );
+        posY = SnapToGrid( aInput["position"][1].get<double>() );
+    }
+
+    double sizeW = 50, sizeH = 50;
+    if( aInput.contains( "size" ) && aInput["size"].is_array() && aInput["size"].size() >= 2 )
+    {
+        sizeW = aInput["size"][0].get<double>();
+        sizeH = aInput["size"][1].get<double>();
+    }
+
+    code << R"(import json, sys
+from kipy.geometry import Vector2
+
+)";
+    code << GenerateRefreshPreamble();
+    code << R"(
+def get_id(obj):
+    if obj is None:
+        return ''
+    if hasattr(obj, 'id'):
+        id_obj = obj.id
+        if hasattr(id_obj, 'value'):
+            return str(id_obj.value)
+        return str(id_obj)
+    if hasattr(obj, 'uuid'):
+        return str(obj.uuid)
+    if isinstance(obj, str):
+        return obj
+    return str(obj)
+
+try:
+)";
+    code << "    pos = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
+    code << "    size = Vector2.from_xy_mm(" << sizeW << ", " << sizeH << ")\n";
+    code << "    sheet = sch.sheets.create(\n";
+    code << "        name='" << EscapePythonString( sheetName ) << "',\n";
+    code << "        filename='" << EscapePythonString( sheetFile.empty() ? sheetName + ".kicad_sch" : sheetFile ) << "',\n";
+    code << "        position=pos,\n";
+    code << "        size=size\n";
+    code << "    )\n";
+    code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(sheet), 'name': '" << EscapePythonString( sheetName ) << "'}\n";
+    code << R"(
+except Exception as e:
+    result = {'status': 'error', 'message': str(e)}
+
+print(json.dumps(result, indent=2))
+)";
+
+    return code.str();
+}
+
+
 std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput ) const
 {
     std::ostringstream code;
@@ -1976,6 +2049,22 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        nc_" << i << " = sch.wiring.add_no_connect(pos_" << i << ")\n";
             code << "        results.append({'index': " << i << ", 'type': 'no_connect', 'id': get_id(nc_" << i << ")})\n";
+        }
+        else if( elementType == "bus_entry" )
+        {
+            double posX = 0, posY = 0;
+            if( elem.contains( "position" ) && elem["position"].is_array() &&
+                elem["position"].size() >= 2 )
+            {
+                posX = SnapToGrid( elem["position"][0].get<double>() );
+                posY = SnapToGrid( elem["position"][1].get<double>() );
+            }
+
+            std::string direction = elem.value( "direction", "right_down" );
+
+            code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
+            code << "        be_" << i << " = sch.buses.add_bus_entry(pos_" << i << ", direction='" << EscapePythonString( direction ) << "')\n";
+            code << "        results.append({'index': " << i << ", 'type': 'bus_entry', 'id': get_id(be_" << i << ")})\n";
         }
         else
         {

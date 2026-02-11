@@ -83,14 +83,15 @@ img[src^="data:"] { cursor: pointer; }
 /* ── Input area styles ─────────────────────────────────────────────── */
 .editor-container {
     position: relative; width: 100%; min-height: 45px; box-sizing: border-box;
-    background: #2a2a2a; border: 1px solid #404040; border-radius: 10px; padding: 8px 12px;
+    background: #2a2a2a; border: 1px solid #404040; border-radius: 10px; padding: 8px 0 8px 12px;
+    overflow: hidden;
     box-shadow: 0 -4px 12px rgba(0,0,0,0.25);
 }
 .editor-container:focus-within { border-color: #569cd6; }
 .textarea-wrapper { display: grid; width: 100%; }
 .highlight-layer, .input-textarea {
     grid-area: 1 / 1; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;
-    padding: 0; padding-right: 28px; margin: 0; font: inherit; box-sizing: border-box;
+    padding: 0; padding-right: 12px; margin: 0; font: inherit; box-sizing: border-box;
 }
 .highlight-layer { pointer-events: none; overflow: hidden; color: #FFFFFF; }
 .input-textarea {
@@ -115,11 +116,12 @@ img[src^="data:"] { cursor: pointer; }
 }
 .attachment-thumb .remove-btn:hover { background: #f44747; }
 
-/* Attach button (inside editor container) */
+/* Attach button (controls row) */
 .attach-btn {
-    position: absolute; right: 8px; bottom: 8px; width: 24px; height: 24px;
+    width: 24px; height: 24px;
     cursor: pointer; color: #808080; display: flex; align-items: center; justify-content: center;
     border-radius: 4px; -webkit-user-select: none; user-select: none;
+    background: none; border: none; padding: 0;
 }
 .attach-btn:hover { color: #FFFFFF; background: rgba(255,255,255,0.08); }
 .attach-btn svg { width: 16px; height: 16px; }
@@ -302,7 +304,7 @@ img[src^="data:"] { cursor: pointer; }
         <div id="pc-rows"></div>
     </div>
 
-    <!-- Editor container (textarea + highlight + attach) -->
+    <!-- Editor container (textarea + highlight) -->
     <div class="editor-container" id="editor-container">
         <div class="attachment-bar" id="attachment-bar"></div>
         <div class="textarea-wrapper">
@@ -310,11 +312,6 @@ img[src^="data:"] { cursor: pointer; }
             <textarea class="input-textarea" id="input-textarea"
                       placeholder="Message the agent..."
                       rows="1"></textarea>
-        </div>
-        <div class="attach-btn" id="attach-btn" title="Attach file">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-            </svg>
         </div>
     </div>
 
@@ -325,6 +322,11 @@ img[src^="data:"] { cursor: pointer; }
         </div>
         <div class="model-menu" id="model-menu"></div>
         <span class="flex-1"></span>
+        <div class="attach-btn" id="attach-btn" title="Attach file">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+        </div>
         <button class="ctrl-btn" id="plan-btn">Plan</button>
         <button class="ctrl-btn" id="track-btn" style="display:none;">Track</button>
         <button class="ctrl-btn primary" id="action-btn">Send</button>
@@ -812,7 +814,11 @@ App.Input = (function() {
         var scrollHeight = textarea.scrollHeight;
         var newHeight = Math.min(Math.max(scrollHeight, MIN_HEIGHT), MAX_HEIGHT);
         textarea.style.height = newHeight + 'px';
+        highlightLayer.style.height = newHeight + 'px';
         textarea.style.overflowY = (scrollHeight > MAX_HEIGHT) ? 'auto' : 'hidden';
+        // Match highlight layer padding to textarea content width (scrollbar eats space)
+        var scrollbarW = textarea.offsetWidth - textarea.clientWidth;
+        highlightLayer.style.paddingRight = (12 + scrollbarW) + 'px';
     }
 
     // @{tag} atomic deletion

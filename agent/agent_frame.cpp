@@ -401,8 +401,12 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     }
     else
     {
-        wxLogWarning( "Supabase configuration not found. Authentication features will be disabled." );
-        wxLogWarning( "Create supabase_config.json or set KICAD_AGENT_SUPABASE_URL/KEY environment variables." );
+        wxLogWarning( "Supabase config not found at: %s",
+                      configPath.GetFullPath().ToStdString().c_str() );
+
+        // Still load session from disk - tokens may have been saved by the launcher.
+        // The agent can use existing tokens and pick up refreshed ones via TryReloadSession().
+        m_auth->LoadSession();
     }
 
     // Wire auth to LLM client for proxy authentication

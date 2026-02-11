@@ -2798,12 +2798,15 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
 
     kiapi::schematic::commands::RunERCResponse response;
 
+    // Record existing exclusions before clearing markers (matches dialog_erc behavior)
+    m_frame->Schematic().RecordERCExclusions();
+
     // Clear existing ERC markers before running new tests to prevent accumulation
     SCH_SCREENS allScreens( m_frame->Schematic().Root() );
     allScreens.DeleteAllMarkers( MARKER_BASE::MARKER_ERC, true );
 
     // Check for annotation errors (unannotated symbols, duplicate references)
-    m_frame->CheckAnnotate(
+    int annotationErrors = m_frame->CheckAnnotate(
             []( ERCE_T aType, const wxString& aMsg, SCH_REFERENCE* aItemA, SCH_REFERENCE* aItemB )
             {
                 std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( aType );
@@ -2818,6 +2821,9 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
                                                      aItemA->GetSymbol()->GetPosition() );
                 aItemA->GetSheetPath().LastScreen()->Append( marker );
             } );
+
+    wxLogTrace( "SCHEMATIC", "handleRunERC: CheckAnnotate found %d annotation errors",
+                annotationErrors );
 
     // Run ERC tests
     ERC_TESTER tester( &m_frame->Schematic() );
@@ -2873,6 +2879,9 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
 
     response.set_error_count( errorCount );
     response.set_warning_count( warningCount );
+
+    wxLogTrace( "SCHEMATIC", "handleRunERC: %d errors, %d warnings (%d annotation errors)",
+                errorCount, warningCount, annotationErrors );
 
     m_frame->GetCanvas()->Refresh();
 

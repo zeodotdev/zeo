@@ -2297,6 +2297,11 @@ void AGENT_FRAME::DoNewChat()
     m_fullHtmlContent = "";
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
+
+    // Sync conversation ID to controller so it can persist streaming snapshots
+    if( m_chatController )
+        m_chatController->SetChatId( m_chatHistoryDb.GetConversationId() );
+
     m_bridge->PushChatTitle( "New Chat" );
 
     // Clear historical thinking state
@@ -2324,13 +2329,62 @@ void AGENT_FRAME::DoNewChat()
 
 void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
 {
-    wxLogInfo( "AGENT_FRAME::LoadConversation called with id: %s", aConversationId.c_str() );
+    wxLogInfo( "AGENT_FRAME::LoadConversation called with id: %s, isGenerating=%d, "
+               "llmInProgress=%d",
+               aConversationId.c_str(), m_isGenerating,
+               m_llmClient ? m_llmClient->IsRequestInProgress() : false );
+
+    // Clean up any in-progress streaming UI state before switching chats
+    if( m_isGenerating )
+    {
+        wxLogInfo( "AGENT_FRAME::LoadConversation - stopping generating animation" );
+        StopGeneratingAnimation();
+    }
+
+    m_stopRequested = true;
+    m_isCompacting = false;
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
+    m_pendingToolCalls = nlohmann::json::array();
+
+    if( m_llmClient && m_llmClient->IsRequestInProgress() )
+    {
+        wxLogInfo( "AGENT_FRAME::LoadConversation - cancelling in-progress LLM request" );
+        m_llmClient->CancelRequest();
+    }
+
     // Delegate to controller - it will emit EVT_CHAT_HISTORY_LOADED
     // which triggers OnChatHistoryLoaded for UI updates
     if( m_chatController )
     {
         m_chatController->LoadChat( aConversationId );
     }
+}
+
+
+/**
+ * Strip the *(Stopped)* marker from the end of a text string.
+ * Returns true if the marker was found and stripped.
+ */
+static bool StripStoppedMarker( std::string& aText )
+{
+    static const std::string MARKER = "\n\n*(Stopped)*";
+    static const std::string MARKER_ONLY = "*(Stopped)*";
+
+    if( aText == MARKER_ONLY )
+    {
+        aText.clear();
+        return true;
+    }
+
+    if( aText.size() >= MARKER.size() &&
+        aText.compare( aText.size() - MARKER.size(), MARKER.size(), MARKER ) == 0 )
+    {
+        aText.erase( aText.size() - MARKER.size() );
+        return true;
+    }
+
+    return false;
 }
 
 
@@ -2416,8 +2470,11 @@ void AGENT_FRAME::RenderChatHistory()
             }
             else if( role == "assistant" )
             {
-                // Left-aligned markdown formatted response
+                // Strip *(Stopped)* marker and render as styled div to match live stop
+                bool wasStopped = StripStoppedMarker( content );
                 m_fullHtmlContent += AgentMarkdown::ToHtml( content );
+                if( wasStopped )
+                    m_fullHtmlContent += "<div class=\"text-text-muted mb-1\">Stopped</div>";
             }
         }
         else if( msg["content"].is_array() )
@@ -2475,8 +2532,11 @@ void AGENT_FRAME::RenderChatHistory()
 
                     if( role == "assistant" )
                     {
-                        // Left-aligned markdown formatted response
-                        m_fullHtmlContent += AgentMarkdown::ToHtml( display );
+                        // Strip *(Stopped)* marker and render as styled div to match live stop
+                        bool wasStopped = StripStoppedMarker( text );
+                        m_fullHtmlContent += AgentMarkdown::ToHtml( text );
+                        if( wasStopped )
+                            m_fullHtmlContent += "<div class=\"text-text-muted mb-1\">Stopped</div>";
                     }
                     else if( role == "user" )
                     {

@@ -661,6 +661,10 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                                       "    exec(\"\"\""
                                       + code
                                       + "\"\"\")\n" // Triple quote for safety? user code might contain quotes.
+                                        "except SystemExit as e:\n"
+                                        "    print(f'Script exited (code={e.code})')\n"
+                                        "except KeyboardInterrupt:\n"
+                                        "    print('KeyboardInterrupt')\n"
                                         "except Exception as e:\n"
                                         "    import traceback\n"
                                         "    traceback.print_exc()\n"
@@ -680,12 +684,29 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                     // Acquire the GIL before calling Python functions
                     PyLOCK lock;
 
-                    // This runs the code
-                    PyRun_SimpleString( wrapper.c_str() );
-
-                    // Extracting result from __main__ namespace
+                    // Use PyRun_StringFlags instead of PyRun_SimpleString so we can
+                    // intercept SystemExit before PyErr_Print() calls Py_Exit()
                     PyObject* main_module = PyImport_AddModule( "__main__" );
-                    PyObject* main_dict = PyModule_GetDict( main_module );
+                    PyObject* main_dict = main_module ? PyModule_GetDict( main_module )
+                                                      : nullptr;
+
+                    if( main_dict )
+                    {
+                        PyObject* pyResult = PyRun_StringFlags( wrapper.c_str(),
+                                Py_file_input, main_dict, main_dict, nullptr );
+
+                        if( pyResult )
+                        {
+                            Py_DECREF( pyResult );
+                        }
+                        else if( PyErr_Occurred() )
+                        {
+                            if( PyErr_ExceptionMatches( PyExc_SystemExit ) )
+                                PyErr_Clear();
+                            else
+                                PyErr_Print();
+                        }
+                    }
                     PyObject* res_obj = PyDict_GetItemString( main_dict, "_agent_result" );
                     if( res_obj )
                     {

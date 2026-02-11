@@ -85,6 +85,10 @@ void* PYTHON_EXEC_THREAD::Entry()
                       "    with open(_term_code_file, 'r') as f:\n"
                       "        _term_code = f.read()\n"
                       "    exec(compile(_term_code, _term_code_file, 'exec'))\n"
+                      "except SystemExit as e:\n"
+                      "    print(f'Script exited (code={e.code})')\n"
+                      "except KeyboardInterrupt:\n"
+                      "    print('KeyboardInterrupt')\n"
                       "except Exception as e:\n"
                       "    import traceback\n"
                       "    traceback.print_exc()\n"
@@ -111,6 +115,10 @@ void* PYTHON_EXEC_THREAD::Entry()
                       "sys.stderr = _term_capture\n"
                       "try:\n"
                       "    exec(\"\"\"" + m_code + "\"\"\")\n"
+                      "except SystemExit as e:\n"
+                      "    print(f'Script exited (code={e.code})')\n"
+                      "except KeyboardInterrupt:\n"
+                      "    print('KeyboardInterrupt')\n"
                       "except Exception as e:\n"
                       "    import traceback\n"
                       "    traceback.print_exc()\n"
@@ -120,7 +128,40 @@ void* PYTHON_EXEC_THREAD::Entry()
                       "_term_result = _term_capture.getvalue()\n";
         }
 
-        int retCode = PyRun_SimpleString( wrapper.c_str() );
+        // Use PyRun_StringFlags instead of PyRun_SimpleString so we can
+        // intercept SystemExit BEFORE PyErr_Print() calls Py_Exit().
+        // PyRun_SimpleString calls PyErr_Print internally which handles
+        // SystemExit by calling Py_Exit() - terminating the process.
+        PyObject* main_module = PyImport_AddModule( "__main__" );
+        PyObject* main_dict = main_module ? PyModule_GetDict( main_module ) : nullptr;
+        PyObject* pyResult = nullptr;
+        int retCode = -1;
+
+        if( main_dict )
+        {
+            pyResult = PyRun_StringFlags( wrapper.c_str(), Py_file_input,
+                                          main_dict, main_dict, nullptr );
+        }
+
+        if( pyResult )
+        {
+            Py_DECREF( pyResult );
+            retCode = 0;
+        }
+        else if( PyErr_Occurred() )
+        {
+            if( PyErr_ExceptionMatches( PyExc_SystemExit ) )
+            {
+                // SystemExit escaped the Python wrapper - suppress it to
+                // prevent Py_Exit() from terminating the process
+                PyErr_Clear();
+            }
+            else
+            {
+                // Print non-SystemExit errors normally
+                PyErr_Print();
+            }
+        }
 
         if( retCode == 0 )
         {

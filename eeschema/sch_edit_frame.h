@@ -1160,6 +1160,8 @@ private:
     std::unique_ptr<FILE_EDIT_SESSION>    m_fileEditSession;     ///< File edit session manager
     bool           m_hasAgentPendingChanges = false;
     bool           m_showingAgentBefore = false;  ///< True if currently showing "before" state
+    bool           m_inUndoRedo = false;          ///< True during undo/redo (suppresses OnModify auto-reject)
+    BOX2I          m_cachedAgentBBox;             ///< Cached bbox for use when items are undone (before state)
     SCH_SHEET_PATH m_agentChangedSheetPath;       ///< Sheet path where agent changes were made
 
     // Concurrent editing support - agent transaction tracking

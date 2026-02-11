@@ -91,30 +91,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( createProject );
 
-    // sch_open_sheet - DISABLED: Navigation changes user's view
-    // Agent should work on sheets via file paths without navigating user's view
-    // LLM_TOOL schOpenSheet;
-    // schOpenSheet.name = "sch_open_sheet";
-    // schOpenSheet.description = "Navigate to a specific sheet in a hierarchical schematic. "
-    //                            "Use sheet_path for navigation within the current hierarchy (e.g., '/root_uuid/child_uuid'), "
-    //                            "or file_path to open a specific .kicad_sch file directly. "
-    //                            "REQUIRES: Schematic editor must be open.";
-    // schOpenSheet.input_schema = {
-    //     { "type", "object" },
-    //     { "properties", {
-    //         { "sheet_path", {
-    //             { "type", "string" },
-    //             { "description", "Sheet path in hierarchy format (e.g., '/uuid1/uuid2' or use sheet names)" }
-    //         }},
-    //         { "file_path", {
-    //             { "type", "string" },
-    //             { "description", "Direct path to .kicad_sch file to open" }
-    //         }}
-    //     }},
-    //     { "required", json::array() }
-    // };
-    // tools.push_back( schOpenSheet );
-
     // ===== Direct File Tools (sch_*, pcb_*) =====
 
     // sch_get_summary - Get high-level overview of schematic via IPC
@@ -323,28 +299,30 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "Add elements to the schematic. Accepts an array of elements - use for single or batch operations. "
         "Returns pin positions for all symbols, enabling immediate wiring. "
         "REQUIRES: Schematic editor must be open with a document loaded.\n\n"
-        "ROTATION (counter-clockwise from default orientation):\n"
-        "- 0°: Default orientation (resistors/caps horizontal, pins left/right)\n"
-        "- 90°: Rotated CCW 90° (vertical, pin 1 typically at top)\n"
-        "- 180°: Flipped (horizontal, pins swapped left/right)\n"
-        "- 270°: Rotated CCW 270° (vertical, pin 1 typically at bottom)\n"
-        "- Power symbols: GND at 0° points UP, at 180° points DOWN; VCC at 0° points UP\n\n"
+        "ROTATION (counter-clockwise degrees):\n"
+        "- Passives (R, C, L): 0°=vertical (pins top/bottom), 90°=horizontal (pins left/right)\n"
+        "- ICs: 0°=default (pin 1 top-left)\n"
+        "- Diode: 0°=vertical (K cathode top, A anode bottom)\n"
+        "- Power GND: 0°=standard (bars down), do NOT use 180\n"
+        "- Power VCC/+V: 0°=standard (bar up), do NOT use 180\n\n"
         "WIRING RULES:\n"
-        "- Wires without waypoints are DIRECT (diagonal) - only use when pins align\n"
-        "- For orthogonal routing, YOU must calculate waypoint coordinates\n"
-        "- AVOID OVERLAPPING WIRES: Wires at same coordinates create shorts!\n\n"
+        "- Use from_pin/to_pin for all wiring - backend auto-routes L-shapes\n"
+        "- AVOID OVERLAPPING WIRES: Wires at same coordinates create shorts!\n"
+        "- WIRE-PIN CONNECTIONS: Wires only connect at endpoints, NOT midpoints. A wire passing through a pin does not connect to it. Always split wires at pin locations or use from_pin/to_pin.\n\n"
         "ERC TIPS:\n"
         "- Add 'power:PWR_FLAG' on nets powered by connectors to fix 'Power pin not driven'\n"
         "- Use no_connect on unused pins to fix 'Unconnected pin' warnings\n\n"
         "ELEMENT TYPES:\n"
-        "- symbol: {element_type, lib_id, position, angle?, mirror?, reference?, properties?}\n"
-        "- power: {element_type, lib_id, position, angle?} - GND: use 180 for arrow down, VCC: use 0 for arrow up\n"
+        "- symbol: {element_type, lib_id, position, angle?, mirror?, unit?, reference?, properties?}\n"
+        "- power: {element_type, lib_id, position, angle?} - GND: 0=bars down(standard), VCC: 0=bar up(standard)\n"
         "- wire: {element_type, from_pin:{ref,pin}, to_pin:{ref,pin}, waypoints?} or {points:[[x,y],...]}\n"
-        "- junction, label, no_connect, sheet\n\n"
-        "EXAMPLE (vertical resistor with GND pointing down):\n"
+        "- label: {element_type, text, position, label_type?, angle?} - label_type: local|global|hierarchical. "
+"Angle auto-detected from nearby pin/wire direction if omitted.\n"
+"- junction, no_connect\n\n"
+        "EXAMPLE (horizontal resistor with GND):\n"
         "elements: [\n"
-        "  {element_type:'symbol', lib_id:'Device:R', position:[50,50], angle:90},\n"
-        "  {element_type:'power', lib_id:'power:GND', position:[50,65], angle:180}\n"
+        "  {element_type:'symbol', lib_id:'Device:R', position:[50.8,50.8], angle:90},\n"
+        "  {element_type:'power', lib_id:'power:GND', position:[50.8,63.5]}\n"
         "]";
     schAdd.input_schema = {
         { "type", "object" },
@@ -356,7 +334,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                     { "properties", {
                         { "element_type", {
                             { "type", "string" },
-                            { "enum", json::array( { "symbol", "power", "wire", "junction", "label", "no_connect", "sheet", "bus_entry" } ) },
+                            { "enum", json::array( { "symbol", "power", "wire", "junction", "label", "no_connect", "bus_entry" } ) },
                             { "description", "Type of element to add" }
                         }},
                         { "lib_id", {
@@ -366,16 +344,20 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         { "position", {
                             { "type", "array" },
                             { "items", { { "type", "number" } } },
-                            { "description", "Position in mm [x, y]" }
+                            { "description", "Position in mm [x, y]. Auto-snapped to 1.27mm grid. Use multiples of 2.54 for clean placement (e.g., 50.8, 76.2, 101.6)." }
                         }},
                         { "angle", {
                             { "type", "number" },
-                            { "description", "CCW rotation: 0=default(horizontal), 90=vertical, 180=flipped, 270=vertical-flipped. "
-                                            "Power: GND use 180 (arrow down), VCC use 0 (arrow up)." }
+                            { "description", "CCW rotation degrees. Passives: 0=vertical, 90=horizontal. "
+                                            "Power GND: 0=bars down(standard). Power VCC: 0=bar up(standard)." }
                         }},
                         { "mirror", {
                             { "type", "string" },
                             { "enum", json::array( { "none", "x", "y" } ) }
+                        }},
+                        { "unit", {
+                            { "type", "integer" },
+                            { "description", "Unit number for multi-unit symbols (e.g., 1-3 for LM358). Default: 1" }
                         }},
                         { "reference", {
                             { "type", "string" },
@@ -419,12 +401,10 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                             { "type", "string" },
                             { "enum", json::array( { "local", "global", "hierarchical" } ) }
                         }},
-                        { "sheet_name", { { "type", "string" } } },
-                        { "sheet_file", { { "type", "string" } } },
-                        { "size", {
-                            { "type", "array" },
-                            { "items", { { "type", "number" } } },
-                            { "description", "Sheet size [w, h] in mm" }
+                        { "direction", {
+                            { "type", "string" },
+                            { "enum", json::array( { "right_down", "right_up", "left_down", "left_up" } ) },
+                            { "description", "Bus entry direction. Default: right_down" }
                         }}
                     }},
                     { "required", json::array( { "element_type" } ) }
@@ -441,7 +421,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schUpdate.name = "sch_update";
     schUpdate.description =
         "Update elements in the schematic. Accepts an array of updates - use for single or batch operations. "
-        "Can modify position, rotation, mirror, and properties. Target by reference or UUID. "
+        "Can modify position, rotation, mirror, properties, and text field positions. Target by reference or UUID. "
+        "Use 'fields' to reposition Reference/Value text relative to symbol center (avoids overlap). "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schUpdate.input_schema = {
         { "type", "object" },
@@ -475,6 +456,27 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         { "dnp", {
                             { "type", "boolean" },
                             { "description", "Do Not Populate flag" }
+                        }},
+                        { "fields", {
+                            { "type", "object" },
+                            { "description", "Reposition/rotate text fields relative to symbol center. "
+                              "Keys: field names (Reference, Value). "
+                              "Values: {offset?: [dx, dy], angle?: degrees} (both optional, provide either or both). "
+                              "Examples: {\"Value\": {\"angle\": 90}}, {\"Reference\": {\"offset\": [0, -3], \"angle\": 0}}" },
+                            { "additionalProperties", {
+                                { "type", "object" },
+                                { "properties", {
+                                    { "offset", {
+                                        { "type", "array" },
+                                        { "items", { { "type", "number" } } },
+                                        { "description", "[dx, dy] offset from symbol center in mm" }
+                                    }},
+                                    { "angle", {
+                                        { "type", "number" },
+                                        { "description", "Text rotation in degrees (0=horizontal, 90=vertical)" }
+                                    }}
+                                }}
+                            }}
                         }}
                     }},
                     { "required", json::array( { "target" } ) }
@@ -491,15 +493,31 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schDelete.name = "sch_delete";
     schDelete.description =
         "Delete elements from the schematic. Accepts an array of targets - use for single or batch operations. "
-        "Target by reference designator or UUID. "
+        "Each target can be a string (reference designator like 'R1' or UUID) or a query object to match items by properties:\n"
+        "  {type: 'wire', start: [x,y], end: [x,y]} - match wire by endpoints\n"
+        "  {type: 'wire', position: [x,y]} - match wires touching this point\n"
+        "  {type: 'label', text: 'NET_NAME'} - match local label by text\n"
+        "  {type: 'label', text: 'NET_NAME', position: [x,y]} - match label by text and position\n"
+        "  {type: 'global_label', text: 'SPI_CLK'} - match global label\n"
+        "  {type: 'hierarchical_label', text: 'DATA'} - match hierarchical label\n"
+        "  {type: 'junction', position: [x,y]} - match junction at position\n"
+        "  {type: 'no_connect', position: [x,y]} - match no-connect at position\n"
+        "  {type: 'bus_entry', position: [x,y]} - match bus entry at position\n"
+        "Query: type is required. text/position/start/end are optional filters. All specified must match. Position tolerance: 0.01mm. "
+        "By default, recursively removes orphaned wires and junctions connected to deleted symbol pins. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schDelete.input_schema = {
         { "type", "object" },
         { "properties", {
             { "targets", {
                 { "type", "array" },
-                { "items", { { "type", "string" } } },
-                { "description", "Array of references or UUIDs to delete (e.g. ['R1', 'R2', 'C1'])" }
+                { "description", "Array of targets to delete. Each item is either a string (reference/UUID) "
+                  "or a query object with: type (required), text (optional), position [x,y] (optional), "
+                  "start [x,y] (optional, wires), end [x,y] (optional, wires)" }
+            }},
+            { "cleanup_wires", {
+                { "type", "boolean" },
+                { "description", "Recursively remove orphaned wires and junctions connected to deleted symbol pins. Default: true." }
             }}
         }},
         { "required", json::array( { "targets" } ) }
@@ -545,6 +563,89 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "required", json::array( { "ref", "pin", "power" } ) }
     };
     tools.push_back( schConnectToPower );
+
+    // sch_add_sheet - Add a hierarchical sheet
+    LLM_TOOL schAddSheet;
+    schAddSheet.name = "sch_add_sheet";
+    schAddSheet.description =
+        "Add a hierarchical sheet to the schematic. Creates a new sub-sheet with its own .kicad_sch file. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schAddSheet.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "sheet_name", {
+                { "type", "string" },
+                { "description", "Display name for the sheet (e.g., 'Power Supply')" }
+            }},
+            { "sheet_file", {
+                { "type", "string" },
+                { "description", "Filename for the sheet (e.g., 'power_supply.kicad_sch'). Defaults to sheet_name + '.kicad_sch'." }
+            }},
+            { "position", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "Position [x, y] in mm. Auto-snapped to 1.27mm grid." }
+            }},
+            { "size", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "Sheet size [width, height] in mm. Default: [50, 50]." }
+            }}
+        }},
+        { "required", json::array( { "sheet_name" } ) }
+    };
+    tools.push_back( schAddSheet );
+
+    // sch_switch_sheet - Navigate between sheets in a hierarchical schematic
+    LLM_TOOL schSwitchSheet;
+    schSwitchSheet.name = "sch_switch_sheet";
+    schSwitchSheet.description =
+        "Navigate to a specific sheet in a hierarchical schematic. "
+        "Use the human-readable sheet name or path (e.g., 'Power Supply' or '/Power Supply/'). "
+        "Use '/' to navigate back to the root sheet. "
+        "Call with no arguments to list available sheets. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schSwitchSheet.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "sheet_path", {
+                { "type", "string" },
+                { "description", "Sheet to navigate to. Use sheet name (e.g., 'Power Supply'), "
+                                "path (e.g., '/Power Supply/'), or '/' for root sheet." }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    tools.push_back( schSwitchSheet );
+
+    // sch_connect_net - Connect multiple pins on the same net in one call
+    LLM_TOOL schConnectNet;
+    schConnectNet.name = "sch_connect_net";
+    schConnectNet.description =
+        "Connect two or more component pins on the same net with wires and junctions in a single call. "
+        "Replaces multiple sch_add wire/junction calls. Resolves pin positions automatically, "
+        "computes an optimal trunk-and-branch wiring layout, and places junctions at T-connections. "
+        "Avoids routing the trunk wire through other components when possible. "
+        "For 2 pins: draws a direct L-shaped wire (same as auto_wire). "
+        "For 3+ pins: computes a shared trunk wire along the dominant axis, with branch wires to each pin. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schConnectNet.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "pins", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "string" },
+                    { "description", "Pin specifier as 'REF:PIN' (e.g., 'R1:1', 'U1:VCC', 'Q2:D')" }
+                }},
+                { "minItems", 2 },
+                { "description", "Array of pin specifiers to connect on the same net. Min 2 pins. "
+                                "Format: 'REFERENCE:PIN_NUMBER_OR_NAME' (e.g., ['Q2:D', 'D2:1', 'L2:1'])" }
+            }}
+        }},
+        { "required", json::array( { "pins" } ) }
+    };
+    tools.push_back( schConnectNet );
 
     // sch_annotate - Annotate schematic symbols
     LLM_TOOL schAnnotate;

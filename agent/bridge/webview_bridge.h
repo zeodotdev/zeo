@@ -33,6 +33,7 @@ public:
     void PushChatTitle( const wxString& aTitle );
     void PushHistoryList( const nlohmann::json& aEntries );
     void PushHistoryShow( bool aShow );
+    void PushActiveChat( const std::string& aConversationId );
 
     // Chat area
     void PushStreamingContent( const wxString& aHtml );
@@ -43,6 +44,7 @@ public:
     void PushToolResultImageBegin( int aIndex, const wxString& aPrefix );
     void PushToolResultImageChunk( int aIndex, const wxString& aChunk );
     void PushToolResultImageEnd( int aIndex );
+    void PushCancelRunningTools();
     void PushFullChatContent( const wxString& aHtml );
     void PushReplaceQueuedMessage( const wxString& aHtml );
     void PushRemoveQueuedMessage();

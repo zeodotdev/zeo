@@ -5,7 +5,7 @@
 
 /**
  * Handler for schematic CRUD and navigation operations via kipy IPC.
- * Handles: sch_add, sch_update, sch_delete, sch_open_sheet, sch_connect_to_power
+ * Handles: sch_add, sch_update, sch_delete, sch_switch_sheet, sch_connect_to_power, sch_add_sheet
  *
  * All CRUD operations accept arrays (elements, updates, targets) for batch processing.
  * Single-item operations are just arrays with one element.
@@ -55,15 +55,22 @@ private:
     std::string GenerateBatchDeleteCode( const nlohmann::json& aInput ) const;
 
     /**
-     * Generate Python code for sch_open_sheet operation.
+     * Generate Python code for sch_switch_sheet operation.
+     * Navigates the schematic hierarchy by sheet name or path.
      */
-    std::string GenerateOpenSheetCode( const nlohmann::json& aInput ) const;
+    std::string GenerateSwitchSheetCode( const nlohmann::json& aInput ) const;
 
     /**
      * Generate Python code for sch_connect_to_power operation.
      * Connects a symbol pin to a power rail in one call.
      */
     std::string GenerateConnectToPowerCode( const nlohmann::json& aInput ) const;
+
+    /**
+     * Generate Python code for sch_add_sheet operation.
+     * Creates a hierarchical sheet with its own .kicad_sch file.
+     */
+    std::string GenerateAddSheetCode( const nlohmann::json& aInput ) const;
 
     /**
      * Generate Python code for sch_add_batch operation.
@@ -83,9 +90,22 @@ private:
     std::string EscapePythonString( const std::string& aStr ) const;
 
     /**
+     * Snap a position value (in mm) to the nearest grid point.
+     * Default grid is 1.27mm (50 mil), the standard KiCad schematic grid.
+     */
+    static double SnapToGrid( double aMm, double aGrid = 1.27 );
+
+    /**
      * Convert mm to nanometers (KiCad internal units).
      */
     std::string MmToNm( double aMm ) const;
+
+    /**
+     * Generate Python helper functions for overlap/collision detection.
+     * Emits _check_overlap() for point items and _check_wire_overlap() for wire segments.
+     * Called before try blocks in placement code generators (same pattern as _auto_junction).
+     */
+    std::string GenerateOverlapCheckHelper() const;
 
     /**
      * Generate Python code preamble to refresh document specifier.

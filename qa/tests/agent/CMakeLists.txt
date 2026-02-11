@@ -32,9 +32,17 @@ set( QA_AGENT_SRCS
     # Library symbol handler tests
     test_sch_lib_symbol_handler.cpp
 
+    # Connect net handler tests
+    test_sch_connect_net_handler.cpp
+
+    # CRUD handler tests (sch_delete query-based deletion)
+    test_sch_crud_handler.cpp
+
     # Agent source files needed for tests
     ${CMAKE_SOURCE_DIR}/agent/tools/schematic/sch_parser.cpp
     ${CMAKE_SOURCE_DIR}/agent/tools/schematic/sch_lib_symbol_handler.cpp
+    ${CMAKE_SOURCE_DIR}/agent/tools/schematic/sch_connect_net_handler.cpp
+    ${CMAKE_SOURCE_DIR}/agent/tools/schematic/sch_crud_handler.cpp
     ${CMAKE_SOURCE_DIR}/agent/tools/kicad_file/sexpr_util.cpp
     ${CMAKE_SOURCE_DIR}/agent/tools/kicad_file/file_writer.cpp
     ${CMAKE_SOURCE_DIR}/agent/tools/kicad_file/uuid_util.cpp

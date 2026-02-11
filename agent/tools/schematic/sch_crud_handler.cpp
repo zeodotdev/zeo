@@ -8,8 +8,9 @@ bool SCH_CRUD_HANDLER::CanHandle( const std::string& aToolName ) const
     return aToolName == "sch_add" ||
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
-           aToolName == "sch_open_sheet" ||
-           aToolName == "sch_connect_to_power";
+           aToolName == "sch_switch_sheet" ||
+           aToolName == "sch_connect_to_power" ||
+           aToolName == "sch_add_sheet";
 }
 
 
@@ -68,20 +69,20 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
         {
             size_t count = aInput["targets"].size();
             if( count == 1 )
-                return "Deleting " + aInput["targets"][0].get<std::string>();
+            {
+                const auto& t = aInput["targets"][0];
+
+                if( t.is_string() )
+                    return "Deleting " + t.get<std::string>();
+                else if( t.is_object() )
+                    return "Deleting " + t.value( "type", std::string( "element" ) )
+                           + ( t.contains( "text" )
+                                   ? " '" + t["text"].get<std::string>() + "'"
+                                   : "" );
+            }
             return "Deleting " + std::to_string( count ) + " elements";
         }
         return "Deleting elements";
-    }
-    else if( aToolName == "sch_open_sheet" )
-    {
-        std::string sheetPath = aInput.value( "sheet_path", "" );
-        std::string filePath = aInput.value( "file_path", "" );
-        if( !sheetPath.empty() )
-            return "Navigating to sheet: " + sheetPath;
-        if( !filePath.empty() )
-            return "Opening sheet: " + filePath;
-        return "Getting current sheet";
     }
     else if( aToolName == "sch_connect_to_power" )
     {
@@ -90,7 +91,18 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
         std::string power = aInput.value( "power", "" );
         return "Connecting " + ref + ":" + pin + " to " + power;
     }
-
+    else if( aToolName == "sch_add_sheet" )
+    {
+        std::string name = aInput.value( "sheet_name", "sheet" );
+        return "Adding sheet: " + name;
+    }
+    else if( aToolName == "sch_switch_sheet" )
+    {
+        std::string sheetPath = aInput.value( "sheet_path", "" );
+        if( !sheetPath.empty() )
+            return "Switching to sheet: " + sheetPath;
+        return "Listing available sheets";
+    }
     return "Executing " + aToolName;
 }
 
@@ -100,8 +112,9 @@ bool SCH_CRUD_HANDLER::RequiresIPC( const std::string& aToolName ) const
     return aToolName == "sch_add" ||
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
-           aToolName == "sch_open_sheet" ||
-           aToolName == "sch_connect_to_power";
+           aToolName == "sch_switch_sheet" ||
+           aToolName == "sch_connect_to_power" ||
+           aToolName == "sch_add_sheet";
 }
 
 
@@ -116,10 +129,12 @@ std::string SCH_CRUD_HANDLER::GetIPCCommand( const std::string& aToolName,
         code = GenerateUpdateBatchCode( aInput );  // Now uses updates array
     else if( aToolName == "sch_delete" )
         code = GenerateBatchDeleteCode( aInput );  // Now uses targets array
-    else if( aToolName == "sch_open_sheet" )
-        code = GenerateOpenSheetCode( aInput );
+    else if( aToolName == "sch_switch_sheet" )
+        code = GenerateSwitchSheetCode( aInput );
     else if( aToolName == "sch_connect_to_power" )
         code = GenerateConnectToPowerCode( aInput );
+    else if( aToolName == "sch_add_sheet" )
+        code = GenerateAddSheetCode( aInput );
 
     return "run_shell sch " + code;
 }
@@ -145,6 +160,12 @@ std::string SCH_CRUD_HANDLER::EscapePythonString( const std::string& aStr ) cons
     }
 
     return result;
+}
+
+
+double SCH_CRUD_HANDLER::SnapToGrid( double aMm, double aGrid )
+{
+    return std::round( aMm / aGrid ) * aGrid;
 }
 
 
@@ -178,6 +199,168 @@ std::string SCH_CRUD_HANDLER::GenerateEditorOpenCheck() const
         "except:\n"
         "    pass  # Editor likely closed\n"
         "\n";
+}
+
+
+std::string SCH_CRUD_HANDLER::GenerateOverlapCheckHelper() const
+{
+    std::ostringstream code;
+
+    // _build_obstacles: builds obstacle list from all symbols (shared by both helpers)
+    code << "def _build_obstacles(exclude_refs=None):\n";
+    code << "    if exclude_refs is None:\n";
+    code << "        exclude_refs = set()\n";
+    code << "    obstacles = []\n";
+    code << "    try:\n";
+    code << "        for sym in sch.symbols.get_all():\n";
+    code << "            ref = getattr(sym, 'reference', '')\n";
+    code << "            if ref in exclude_refs:\n";
+    code << "                continue\n";
+    code << "            pxs = [sym.position.x / 1_000_000]\n";
+    code << "            pys = [sym.position.y / 1_000_000]\n";
+    code << "            for pin in sym.pins:\n";
+    code << "                try:\n";
+    code << "                    tp = sch.symbols.get_transformed_pin_position(sym, pin.number)\n";
+    code << "                    if tp:\n";
+    code << "                        pxs.append(tp['position'].x / 1_000_000)\n";
+    code << "                        pys.append(tp['position'].y / 1_000_000)\n";
+    code << "                except:\n";
+    code << "                    pass\n";
+    code << "            pad = 1.27\n";
+    code << "            obstacles.append({'ref': ref, 'min_x': min(pxs) - pad, 'max_x': max(pxs) + pad, 'min_y': min(pys) - pad, 'max_y': max(pys) + pad})\n";
+    code << "    except:\n";
+    code << "        pass\n";
+    code << "    return obstacles\n";
+    code << "\n";
+
+    // _check_overlap: checks if a point overlaps existing items
+    code << "def _check_overlap(check_x, check_y, exclude_refs=None):\n";
+    code << "    try:\n";
+    code << "        overlaps = []\n";
+    code << "        obs = _build_obstacles(exclude_refs)\n";
+    code << "        # Check symbol body bounding boxes\n";
+    code << "        for o in obs:\n";
+    code << "            if o['min_x'] <= check_x <= o['max_x'] and o['min_y'] <= check_y <= o['max_y']:\n";
+    code << "                overlaps.append({'type': 'symbol_body', 'ref': o['ref']})\n";
+    code << "        # Check label/power position overlap\n";
+    code << "        try:\n";
+    code << "            for lbl in sch.labels.get_all():\n";
+    code << "                lx = round(lbl.position.x / 1_000_000, 2)\n";
+    code << "                ly = round(lbl.position.y / 1_000_000, 2)\n";
+    code << "                if abs(lx - check_x) < 0.01 and abs(ly - check_y) < 0.01:\n";
+    code << "                    overlaps.append({'type': 'label', 'text': getattr(lbl, 'text', '')})\n";
+    code << "        except:\n";
+    code << "            pass\n";
+    code << "        # Check wire overlap (point on wire segment)\n";
+    code << "        try:\n";
+    code << "            for w in sch.crud.get_wires():\n";
+    code << "                sx, sy = round(w.start.x / 1_000_000, 2), round(w.start.y / 1_000_000, 2)\n";
+    code << "                ex, ey = round(w.end.x / 1_000_000, 2), round(w.end.y / 1_000_000, 2)\n";
+    code << "                if abs(sy - ey) < 0.01 and abs(check_y - sy) < 0.01:\n";
+    code << "                    if min(sx, ex) <= check_x <= max(sx, ex):\n";
+    code << "                        overlaps.append({'type': 'wire'})\n";
+    code << "                        break\n";
+    code << "                elif abs(sx - ex) < 0.01 and abs(check_x - sx) < 0.01:\n";
+    code << "                    if min(sy, ey) <= check_y <= max(sy, ey):\n";
+    code << "                        overlaps.append({'type': 'wire'})\n";
+    code << "                        break\n";
+    code << "        except:\n";
+    code << "            pass\n";
+    code << "        # Find suggested position via grid spiral\n";
+    code << "        suggested = None\n";
+    code << "        if overlaps:\n";
+    code << "            def _snap(v, g=1.27):\n";
+    code << "                return round(v / g) * g\n";
+    code << "            def _clear(cx, cy):\n";
+    code << "                for o in obs:\n";
+    code << "                    if o['min_x'] <= cx <= o['max_x'] and o['min_y'] <= cy <= o['max_y']:\n";
+    code << "                        return False\n";
+    code << "                return True\n";
+    code << "            for r in range(1, 11):\n";
+    code << "                for dx in range(-r, r + 1):\n";
+    code << "                    for dy in range(-r, r + 1):\n";
+    code << "                        if abs(dx) != r and abs(dy) != r:\n";
+    code << "                            continue\n";
+    code << "                        cx = _snap(check_x + dx * 1.27)\n";
+    code << "                        cy = _snap(check_y + dy * 1.27)\n";
+    code << "                        if _clear(cx, cy):\n";
+    code << "                            suggested = [cx, cy]\n";
+    code << "                            break\n";
+    code << "                    if suggested:\n";
+    code << "                        break\n";
+    code << "                if suggested:\n";
+    code << "                    break\n";
+    code << "        return {'overlaps': overlaps, 'suggested_position': suggested}\n";
+    code << "    except:\n";
+    code << "        return {'overlaps': [], 'suggested_position': None}\n";
+    code << "\n";
+
+    // _check_wire_overlap: checks if a wire segment overlaps existing items
+    code << "def _check_wire_overlap(x1, y1, x2, y2, exclude_refs=None):\n";
+    code << "    try:\n";
+    code << "        overlaps = []\n";
+    code << "        obs = _build_obstacles(exclude_refs)\n";
+    code << "        # Check wire-through-symbol (axis-aligned line vs rectangle)\n";
+    code << "        w_min_x, w_max_x = min(x1, x2), max(x1, x2)\n";
+    code << "        w_min_y, w_max_y = min(y1, y2), max(y1, y2)\n";
+    code << "        is_horiz = abs(y1 - y2) < 0.01\n";
+    code << "        is_vert = abs(x1 - x2) < 0.01\n";
+    code << "        for o in obs:\n";
+    code << "            if is_horiz:\n";
+    code << "                if o['min_y'] <= y1 <= o['max_y'] and w_max_x > o['min_x'] and w_min_x < o['max_x']:\n";
+    code << "                    overlaps.append({'type': 'wire_through_symbol', 'ref': o['ref']})\n";
+    code << "            elif is_vert:\n";
+    code << "                if o['min_x'] <= x1 <= o['max_x'] and w_max_y > o['min_y'] and w_min_y < o['max_y']:\n";
+    code << "                    overlaps.append({'type': 'wire_through_symbol', 'ref': o['ref']})\n";
+    code << "        # Check collinear wire overlap\n";
+    code << "        try:\n";
+    code << "            for w in sch.crud.get_wires():\n";
+    code << "                sx, sy = round(w.start.x / 1_000_000, 2), round(w.start.y / 1_000_000, 2)\n";
+    code << "                ex, ey = round(w.end.x / 1_000_000, 2), round(w.end.y / 1_000_000, 2)\n";
+    code << "                if is_horiz and abs(sy - ey) < 0.01 and abs(y1 - sy) < 0.01:\n";
+    code << "                    ew_min, ew_max = min(sx, ex), max(sx, ex)\n";
+    code << "                    if w_max_x > ew_min and w_min_x < ew_max:\n";
+    code << "                        overlaps.append({'type': 'collinear_wire'})\n";
+    code << "                        break\n";
+    code << "                elif is_vert and abs(sx - ex) < 0.01 and abs(x1 - sx) < 0.01:\n";
+    code << "                    ew_min, ew_max = min(sy, ey), max(sy, ey)\n";
+    code << "                    if w_max_y > ew_min and w_min_y < ew_max:\n";
+    code << "                        overlaps.append({'type': 'collinear_wire'})\n";
+    code << "                        break\n";
+    code << "        except:\n";
+    code << "            pass\n";
+    code << "        return {'overlaps': overlaps}\n";
+    code << "    except:\n";
+    code << "        return {'overlaps': []}\n";
+    code << "\n";
+
+    // _format_warnings: converts overlap results into warning dicts for JSON result
+    code << "def _format_warnings(overlap_result, pos_desc='item'):\n";
+    code << "    warnings = []\n";
+    code << "    for ov in overlap_result.get('overlaps', []):\n";
+    code << "        w = {'type': 'overlap'}\n";
+    code << "        if ov['type'] == 'symbol_body':\n";
+    code << "            w['message'] = f'{pos_desc} overlaps with {ov[\"ref\"]} body'\n";
+    code << "            w['overlapping_item'] = ov['ref']\n";
+    code << "        elif ov['type'] == 'label':\n";
+    code << "            w['message'] = f'{pos_desc} overlaps with label/power {ov[\"text\"]}'\n";
+    code << "            w['overlapping_item'] = ov['text']\n";
+    code << "        elif ov['type'] == 'wire':\n";
+    code << "            w['message'] = f'{pos_desc} is on an existing wire'\n";
+    code << "        elif ov['type'] == 'wire_through_symbol':\n";
+    code << "            w['message'] = f'Wire passes through {ov[\"ref\"]} body'\n";
+    code << "            w['overlapping_item'] = ov['ref']\n";
+    code << "        elif ov['type'] == 'collinear_wire':\n";
+    code << "            w['message'] = f'Wire overlaps an existing wire at same position'\n";
+    code << "        else:\n";
+    code << "            continue\n";
+    code << "        if overlap_result.get('suggested_position'):\n";
+    code << "            w['suggested_position'] = overlap_result['suggested_position']\n";
+    code << "        warnings.append(w)\n";
+    code << "    return warnings\n";
+    code << "\n";
+
+    return code.str();
 }
 
 
@@ -295,6 +478,63 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
     code << "result = None\n";
     code << "\n";
 
+    // Emit overlap check helpers for placement element types
+    if( elementType == "symbol" || elementType == "power" || elementType == "wire" )
+    {
+        code << GenerateOverlapCheckHelper();
+    }
+
+    // For wire elements, emit auto-junction helpers before the try block
+    if( elementType == "wire" )
+    {
+        code << "def _wire_pts(wires):\n";
+        code << "    pts = set()\n";
+        code << "    for w in wires:\n";
+        code << "        s, e = getattr(w, 'start', None), getattr(w, 'end', None)\n";
+        code << "        if s: pts.add((round(s.x / 1_000_000, 2), round(s.y / 1_000_000, 2)))\n";
+        code << "        if e: pts.add((round(e.x / 1_000_000, 2), round(e.y / 1_000_000, 2)))\n";
+        code << "    return list(pts)\n";
+        code << "\n";
+        code << "def _auto_junction(check_pts):\n";
+        code << "    try:\n";
+        code << "        all_wires = sch.crud.get_wires()\n";
+        code << "        junc_set = set()\n";
+        code << "        for j in sch.crud.get_junctions():\n";
+        code << "            p = getattr(j, 'position', None)\n";
+        code << "            if p: junc_set.add((round(p.x / 1_000_000, 2), round(p.y / 1_000_000, 2)))\n";
+        code << "        pin_set = set()\n";
+        code << "        for sym in sch.symbols.get_all():\n";
+        code << "            for pin in sym.pins:\n";
+        code << "                try:\n";
+        code << "                    tp = sch.symbols.get_transformed_pin_position(sym, pin.number)\n";
+        code << "                    if tp: pin_set.add((round(tp['position'].x / 1_000_000, 2), round(tp['position'].y / 1_000_000, 2)))\n";
+        code << "                except: pass\n";
+        code << "        added = 0\n";
+        code << "        for pt in check_pts:\n";
+        code << "            key = (round(pt[0], 2), round(pt[1], 2))\n";
+        code << "            if key in junc_set: continue\n";
+        code << "            count = 0\n";
+        code << "            for w in all_wires:\n";
+        code << "                s, e = getattr(w, 'start', None), getattr(w, 'end', None)\n";
+        code << "                if not s or not e: continue\n";
+        code << "                sk = (round(s.x / 1_000_000, 2), round(s.y / 1_000_000, 2))\n";
+        code << "                ek = (round(e.x / 1_000_000, 2), round(e.y / 1_000_000, 2))\n";
+        code << "                if sk == key: count += 1\n";
+        code << "                if ek == key: count += 1\n";
+        code << "                if sk != key and ek != key:\n";
+        code << "                    if abs(sk[1] - ek[1]) < 0.01 and abs(key[1] - sk[1]) < 0.01:\n";
+        code << "                        if min(sk[0], ek[0]) < key[0] < max(sk[0], ek[0]): count += 2\n";
+        code << "                    elif abs(sk[0] - ek[0]) < 0.01 and abs(key[0] - sk[0]) < 0.01:\n";
+        code << "                        if min(sk[1], ek[1]) < key[1] < max(sk[1], ek[1]): count += 2\n";
+        code << "            if key in pin_set: count += 1\n";
+        code << "            if count >= 3:\n";
+        code << "                sch.wiring.add_junction(Vector2.from_xy_mm(key[0], key[1]))\n";
+        code << "                added += 1\n";
+        code << "        return added\n";
+        code << "    except: return 0\n";
+        code << "\n";
+    }
+
     // IPC attempt
     code << "# Try IPC first\n";
     code << "try:\n";
@@ -305,7 +545,6 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( libId.empty() )
         {
             code << "    print(json.dumps({'status': 'error', 'message': 'lib_id is required for symbol'}))\n";
-            code << "    sys.exit(1)\n";
             return code.str();
         }
 
@@ -313,8 +552,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         double angle = aInput.value( "angle", 0.0 );
@@ -379,6 +618,10 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         code << "                pin_info['position'] = [pin.position.x / 1_000_000, pin.position.y / 1_000_000]\n";
         code << "            pins.append(pin_info)\n";
         code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(symbol), 'reference': getattr(symbol, 'reference', ''), 'pins': pins}\n";
+        code << "    _ov = _check_overlap(" << posX << ", " << posY << ")\n";
+        code << "    _ov_w = _format_warnings(_ov, f'Symbol at [" << posX << ", " << posY << "]')\n";
+        code << "    if _ov_w:\n";
+        code << "        result['warnings'] = _ov_w\n";
     }
     else if( elementType == "power" )
     {
@@ -392,8 +635,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         double angle = aInput.value( "angle", 0.0 );
@@ -402,6 +645,10 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         code << "    symbol = sch.labels.add_power('" << EscapePythonString( powerName ) << "', pos, angle=" << angle << ")\n";
         // Power symbol pin is at the symbol position itself (no offset)
         code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(symbol), 'name': '" << EscapePythonString( powerName ) << "', 'pin_position': [" << posX << ", " << posY << "]}\n";
+        code << "    _ov = _check_overlap(" << posX << ", " << posY << ")\n";
+        code << "    _ov_w = _format_warnings(_ov, f'Power symbol at [" << posX << ", " << posY << "]')\n";
+        code << "    if _ov_w:\n";
+        code << "        result['warnings'] = _ov_w\n";
     }
     else if( elementType == "wire" )
     {
@@ -431,21 +678,38 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
                 {
                     if( waypoints[i].is_array() && waypoints[i].size() >= 2 )
                     {
-                        double x = waypoints[i][0].get<double>();
-                        double y = waypoints[i][1].get<double>();
+                        double x = SnapToGrid( waypoints[i][0].get<double>() );
+                        double y = SnapToGrid( waypoints[i][1].get<double>() );
                         code << "        (" << x << ", " << y << "),\n";
                     }
                 }
                 code << "    ]\n";
                 code << "    wires = sch.wiring.wire_path((sym1, '" << EscapePythonString( fromPinNum ) << "'), waypoints, (sym2, '" << EscapePythonString( toPinNum ) << "'))\n";
-                code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires)}\n";
+                code << "    _junc_added = _auto_junction(_wire_pts(wires))\n";
+                code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires), 'junction_count': _junc_added}\n";
+                code << "    _wire_warnings = []\n";
+                code << "    for _w in wires:\n";
+                code << "        _ws, _we = getattr(_w, 'start', None), getattr(_w, 'end', None)\n";
+                code << "        if _ws and _we:\n";
+                code << "            _wov = _check_wire_overlap(_ws.x / 1_000_000, _ws.y / 1_000_000, _we.x / 1_000_000, _we.y / 1_000_000)\n";
+                code << "            _wire_warnings.extend(_format_warnings(_wov, 'Wire segment'))\n";
+                code << "    if _wire_warnings:\n";
+                code << "        result['warnings'] = _wire_warnings\n";
             }
             else
             {
-                // No waypoints - draw direct wire between pins
-                // Agent should use waypoints for orthogonal routing
-                code << "    wires = sch.wiring.wire_pins(sym1, '" << EscapePythonString( fromPinNum ) << "', sym2, '" << EscapePythonString( toPinNum ) << "')\n";
-                code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires)}\n";
+                // No waypoints - use auto_wire for L-shaped orthogonal routing
+                code << "    wires = sch.wiring.auto_wire(sym1, '" << EscapePythonString( fromPinNum ) << "', sym2, '" << EscapePythonString( toPinNum ) << "')\n";
+                code << "    _junc_added = _auto_junction(_wire_pts(wires))\n";
+                code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires), 'junction_count': _junc_added}\n";
+                code << "    _wire_warnings = []\n";
+                code << "    for _w in wires:\n";
+                code << "        _ws, _we = getattr(_w, 'start', None), getattr(_w, 'end', None)\n";
+                code << "        if _ws and _we:\n";
+                code << "            _wov = _check_wire_overlap(_ws.x / 1_000_000, _ws.y / 1_000_000, _we.x / 1_000_000, _we.y / 1_000_000)\n";
+                code << "            _wire_warnings.extend(_format_warnings(_wov, 'Wire segment'))\n";
+                code << "    if _wire_warnings:\n";
+                code << "        result['warnings'] = _wire_warnings\n";
             }
         }
         // Mode 2: from_pin + points (no to_pin) - start from pin, extend through points
@@ -471,14 +735,23 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
             {
                 if( points[i].is_array() && points[i].size() >= 2 )
                 {
-                    double x = points[i][0].get<double>();
-                    double y = points[i][1].get<double>();
+                    double x = SnapToGrid( points[i][0].get<double>() );
+                    double y = SnapToGrid( points[i][1].get<double>() );
                     code << "    all_points.append(Vector2.from_xy_mm(" << x << ", " << y << "))\n";
                 }
             }
 
             code << "    wires = sch.wiring.add_wires(all_points)\n";
-            code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires)}\n";
+            code << "    _junc_added = _auto_junction(_wire_pts(wires))\n";
+            code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires), 'junction_count': _junc_added}\n";
+            code << "    _wire_warnings = []\n";
+            code << "    for _w in wires:\n";
+            code << "        _ws, _we = getattr(_w, 'start', None), getattr(_w, 'end', None)\n";
+            code << "        if _ws and _we:\n";
+            code << "            _wov = _check_wire_overlap(_ws.x / 1_000_000, _ws.y / 1_000_000, _we.x / 1_000_000, _we.y / 1_000_000)\n";
+            code << "            _wire_warnings.extend(_format_warnings(_wov, 'Wire segment'))\n";
+            code << "    if _wire_warnings:\n";
+            code << "        result['warnings'] = _wire_warnings\n";
         }
         // Mode 3: points only - explicit coordinate-based wiring
         else if( aInput.contains( "points" ) && aInput["points"].is_array() )
@@ -487,21 +760,30 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
             if( points.size() >= 2 )
             {
                 code << "    wires_created = 0\n";
+                code << "    _check_pts = set()\n";
+                code << "    _wire_warnings = []\n";
                 for( size_t i = 0; i < points.size() - 1; ++i )
                 {
                     if( points[i].is_array() && points[i].size() >= 2 &&
                         points[i + 1].is_array() && points[i + 1].size() >= 2 )
                     {
-                        double x1 = points[i][0].get<double>();
-                        double y1 = points[i][1].get<double>();
-                        double x2 = points[i + 1][0].get<double>();
-                        double y2 = points[i + 1][1].get<double>();
+                        double x1 = SnapToGrid( points[i][0].get<double>() );
+                        double y1 = SnapToGrid( points[i][1].get<double>() );
+                        double x2 = SnapToGrid( points[i + 1][0].get<double>() );
+                        double y2 = SnapToGrid( points[i + 1][1].get<double>() );
 
                         code << "    sch.wiring.add_wire(Vector2.from_xy_mm(" << x1 << ", " << y1 << "), Vector2.from_xy_mm(" << x2 << ", " << y2 << "))\n";
+                        code << "    _check_pts.add((" << x1 << ", " << y1 << "))\n";
+                        code << "    _check_pts.add((" << x2 << ", " << y2 << "))\n";
                         code << "    wires_created += 1\n";
+                        code << "    _wov = _check_wire_overlap(" << x1 << ", " << y1 << ", " << x2 << ", " << y2 << ")\n";
+                        code << "    _wire_warnings.extend(_format_warnings(_wov, 'Wire segment'))\n";
                     }
                 }
-                code << "    result = {'status': 'success', 'source': 'ipc', 'count': wires_created}\n";
+                code << "    _junc_added = _auto_junction(list(_check_pts))\n";
+                code << "    result = {'status': 'success', 'source': 'ipc', 'count': wires_created, 'junction_count': _junc_added}\n";
+                code << "    if _wire_warnings:\n";
+                code << "        result['warnings'] = _wire_warnings\n";
             }
         }
         else
@@ -515,8 +797,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         code << "    pos = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
@@ -527,27 +809,82 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
     {
         std::string text = aInput.value( "text", "" );
         std::string labelType = aInput.value( "label_type", "local" );
+        bool hasExplicitAngle = aInput.contains( "angle" );
+        double angle = aInput.value( "angle", 0.0 );
 
         double posX = 0, posY = 0;
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         code << "    pos = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
 
-        if( labelType == "local" )
-            code << "    label = sch.labels.add_local('" << EscapePythonString( text ) << "', pos)\n";
-        else if( labelType == "global" )
-            code << "    label = sch.labels.add_global('" << EscapePythonString( text ) << "', pos)\n";
-        else if( labelType == "hierarchical" )
-            code << "    label = sch.labels.add_hierarchical('" << EscapePythonString( text ) << "', pos)\n";
+        if( hasExplicitAngle )
+        {
+            code << "    _label_angle = " << angle << "\n";
+        }
         else
-            code << "    label = sch.labels.add_local('" << EscapePythonString( text ) << "', pos)\n";
+        {
+            // Auto-detect angle from nearby pin orientation or wire direction
+            code << "    _label_angle = 0\n";
+            code << "    _lbl_x, _lbl_y = " << posX << ", " << posY << "\n";
+            code << "    _auto_found = False\n";
+            code << "    # Check for pin at label position\n";
+            code << "    try:\n";
+            code << "        for _sym in sch.symbols.get_all():\n";
+            code << "            if _auto_found:\n";
+            code << "                break\n";
+            code << "            for _pin in _sym.pins:\n";
+            code << "                try:\n";
+            code << "                    _tp = sch.symbols.get_transformed_pin_position(_sym, _pin.number)\n";
+            code << "                    if _tp:\n";
+            code << "                        _px = _tp['position'].x / 1_000_000\n";
+            code << "                        _py = _tp['position'].y / 1_000_000\n";
+            code << "                        if abs(_px - _lbl_x) < 0.02 and abs(_py - _lbl_y) < 0.02:\n";
+            code << "                            _label_angle = _tp.get('orientation', 0)\n";
+            code << "                            _auto_found = True\n";
+            code << "                            break\n";
+            code << "                except:\n";
+            code << "                    pass\n";
+            code << "    except:\n";
+            code << "        pass\n";
+            code << "    # Fall back to wire direction at label position\n";
+            code << "    if not _auto_found:\n";
+            code << "        try:\n";
+            code << "            import math\n";
+            code << "            for _w in sch.crud.get_wires():\n";
+            code << "                _sx = _w.start.x / 1_000_000\n";
+            code << "                _sy = _w.start.y / 1_000_000\n";
+            code << "                _ex = _w.end.x / 1_000_000\n";
+            code << "                _ey = _w.end.y / 1_000_000\n";
+            code << "                _other = None\n";
+            code << "                if abs(_sx - _lbl_x) < 0.02 and abs(_sy - _lbl_y) < 0.02:\n";
+            code << "                    _other = (_ex, _ey)\n";
+            code << "                elif abs(_ex - _lbl_x) < 0.02 and abs(_ey - _lbl_y) < 0.02:\n";
+            code << "                    _other = (_sx, _sy)\n";
+            code << "                if _other:\n";
+            code << "                    _dx = _other[0] - _lbl_x\n";
+            code << "                    _dy = _other[1] - _lbl_y\n";
+            code << "                    _deg = math.degrees(math.atan2(-_dy, _dx)) % 360\n";
+            code << "                    _label_angle = min([0, 90, 180, 270], key=lambda a: min(abs(_deg - a), 360 - abs(_deg - a)))\n";
+            code << "                    break\n";
+            code << "        except:\n";
+            code << "            pass\n";
+        }
 
-        code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(label)}\n";
+        if( labelType == "local" )
+            code << "    label = sch.labels.add_local('" << EscapePythonString( text ) << "', pos, angle=_label_angle)\n";
+        else if( labelType == "global" )
+            code << "    label = sch.labels.add_global('" << EscapePythonString( text ) << "', pos, angle=_label_angle)\n";
+        else if( labelType == "hierarchical" )
+            code << "    label = sch.labels.add_hierarchical('" << EscapePythonString( text ) << "', pos, angle=_label_angle)\n";
+        else
+            code << "    label = sch.labels.add_local('" << EscapePythonString( text ) << "', pos, angle=_label_angle)\n";
+
+        code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(label), 'angle': _label_angle}\n";
     }
     else if( elementType == "no_connect" )
     {
@@ -555,8 +892,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         code << "    pos = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
@@ -569,8 +906,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         // direction: "right_down", "right_up", "left_down", "left_up"
@@ -589,8 +926,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         double sizeW = 50, sizeH = 50;
@@ -647,10 +984,10 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
                 if( points[i].is_array() && points[i].size() >= 2 &&
                     points[i + 1].is_array() && points[i + 1].size() >= 2 )
                 {
-                    double x1 = points[i][0].get<double>();
-                    double y1 = points[i][1].get<double>();
-                    double x2 = points[i + 1][0].get<double>();
-                    double y2 = points[i + 1][1].get<double>();
+                    double x1 = SnapToGrid( points[i][0].get<double>() );
+                    double y1 = SnapToGrid( points[i][1].get<double>() );
+                    double x2 = SnapToGrid( points[i + 1][0].get<double>() );
+                    double y2 = SnapToGrid( points[i + 1][1].get<double>() );
 
                     code << "        wire_uuid = generate_uuid()\n";
                     code << "        wire_sexpr = f'''(wire (pts (xy " << x1 << " " << y1 << ") (xy " << x2 << " " << y2 << "))\n";
@@ -670,8 +1007,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         code << "        junc_uuid = generate_uuid()\n";
@@ -689,8 +1026,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         code << "        label_uuid = generate_uuid()\n";
@@ -707,8 +1044,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         code << "        nc_uuid = generate_uuid()\n";
@@ -724,8 +1061,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
             aInput["position"].size() >= 2 )
         {
-            posX = aInput["position"][0].get<double>();
-            posY = aInput["position"][1].get<double>();
+            posX = SnapToGrid( aInput["position"][0].get<double>() );
+            posY = SnapToGrid( aInput["position"][1].get<double>() );
         }
 
         std::string direction = aInput.value( "direction", "right_down" );
@@ -829,8 +1166,8 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput )
     if( aInput.contains( "position" ) && aInput["position"].is_array() &&
         aInput["position"].size() >= 2 )
     {
-        double posX = aInput["position"][0].get<double>();
-        double posY = aInput["position"][1].get<double>();
+        double posX = SnapToGrid( aInput["position"][0].get<double>() );
+        double posY = SnapToGrid( aInput["position"][1].get<double>() );
         code << "    new_pos = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
         code << "    target_item = sch.symbols.move(target_item, new_pos)\n";
         code << "    updated = True\n";
@@ -839,8 +1176,12 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput )
     if( aInput.contains( "angle" ) )
     {
         double angle = aInput.value( "angle", 0.0 );
-        // Use set_angle() for absolute angle (not additive rotate())
-        code << "    target_item = sch.symbols.set_angle(target_item, " << angle << ")\n";
+        // Compute delta from current angle and use rotate() (set_angle doesn't exist)
+        code << "    current_angle = getattr(target_item, 'angle', 0) or 0\n";
+        code << "    desired_angle = " << angle << "\n";
+        code << "    delta = (desired_angle - current_angle) % 360\n";
+        code << "    if delta != 0:\n";
+        code << "        target_item = sch.symbols.rotate(target_item, delta)\n";
         code << "    updated = True\n";
     }
 
@@ -853,6 +1194,52 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateCode( const nlohmann::json& aInput )
         code << "    if 'Footprint' in props_to_update:\n";
         code << "        sch.symbols.set_footprint(target_item, props_to_update['Footprint'])\n";
         code << "        updated = True\n";
+    }
+
+    // Reposition text fields (Reference, Value, etc.) relative to symbol center
+    if( aInput.contains( "fields" ) && aInput["fields"].is_object() )
+    {
+        code << "    # Reposition text fields relative to symbol center\n";
+        code << "    sym_pos = target_item.position\n";
+
+        for( auto& [fieldName, fieldSpec] : aInput["fields"].items() )
+        {
+            if( !fieldSpec.is_object() )
+                continue;
+
+            bool hasOffset = fieldSpec.contains( "offset" ) &&
+                             fieldSpec["offset"].is_array() && fieldSpec["offset"].size() >= 2;
+            bool hasAngle = fieldSpec.contains( "angle" ) && fieldSpec["angle"].is_number();
+
+            if( !hasOffset && !hasAngle )
+                continue;
+
+            code << "    for _f in target_item._proto.fields:\n";
+            code << "        if _f.name == '" << EscapePythonString( fieldName ) << "':\n";
+
+            if( hasOffset )
+            {
+                double dx = SnapToGrid( fieldSpec["offset"][0].get<double>() );
+                double dy = SnapToGrid( fieldSpec["offset"][1].get<double>() );
+                code << "            _f.position.x_nm = sym_pos.x + int("
+                     << dx << " * 1_000_000)\n";
+                code << "            _f.position.y_nm = sym_pos.y + int("
+                     << dy << " * 1_000_000)\n";
+            }
+
+            if( hasAngle )
+            {
+                double angle = fieldSpec["angle"].get<double>();
+                code << "            _f.attributes.angle.value_degrees = " << angle << "\n";
+            }
+
+            code << "            break\n";
+        }
+
+        code << "    target_item = sch.crud.update_items(target_item)\n";
+        code << "    if target_item:\n";
+        code << "        target_item = target_item[0]\n";
+        code << "    updated = True\n";
     }
 
     // Return post-update state for verification
@@ -955,8 +1342,8 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
         if( update.contains( "position" ) && update["position"].is_array() &&
             update["position"].size() >= 2 )
         {
-            double posX = update["position"][0].get<double>();
-            double posY = update["position"][1].get<double>();
+            double posX = SnapToGrid( update["position"][0].get<double>() );
+            double posY = SnapToGrid( update["position"][1].get<double>() );
             code << "        new_pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        item_" << i << " = sch.symbols.move(item_" << i << ", new_pos_" << i << ")\n";
             code << "        updated_" << i << " = True\n";
@@ -965,7 +1352,11 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
         if( update.contains( "angle" ) )
         {
             double angle = update.value( "angle", 0.0 );
-            code << "        item_" << i << " = sch.symbols.set_angle(item_" << i << ", " << angle << ")\n";
+            code << "        current_angle_" << i << " = getattr(item_" << i << ", 'angle', 0) or 0\n";
+            code << "        desired_angle_" << i << " = " << angle << "\n";
+            code << "        delta_" << i << " = (desired_angle_" << i << " - current_angle_" << i << ") % 360\n";
+            code << "        if delta_" << i << " != 0:\n";
+            code << "            item_" << i << " = sch.symbols.rotate(item_" << i << ", delta_" << i << ")\n";
             code << "        updated_" << i << " = True\n";
         }
 
@@ -978,6 +1369,51 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
             code << "        if 'Footprint' in props_" << i << ":\n";
             code << "            sch.symbols.set_footprint(item_" << i << ", props_" << i << "['Footprint'])\n";
             code << "            updated_" << i << " = True\n";
+        }
+
+        // Reposition text fields relative to symbol center
+        if( update.contains( "fields" ) && update["fields"].is_object() )
+        {
+            code << "        sym_pos_" << i << " = item_" << i << ".position\n";
+
+            for( auto& [fieldName, fieldSpec] : update["fields"].items() )
+            {
+                if( !fieldSpec.is_object() )
+                    continue;
+
+                bool hasOffset = fieldSpec.contains( "offset" ) &&
+                                 fieldSpec["offset"].is_array() && fieldSpec["offset"].size() >= 2;
+                bool hasAngle = fieldSpec.contains( "angle" ) && fieldSpec["angle"].is_number();
+
+                if( !hasOffset && !hasAngle )
+                    continue;
+
+                code << "        for _f in item_" << i << "._proto.fields:\n";
+                code << "            if _f.name == '" << EscapePythonString( fieldName ) << "':\n";
+
+                if( hasOffset )
+                {
+                    double dx = SnapToGrid( fieldSpec["offset"][0].get<double>() );
+                    double dy = SnapToGrid( fieldSpec["offset"][1].get<double>() );
+                    code << "                _f.position.x_nm = sym_pos_" << i << ".x + int("
+                         << dx << " * 1_000_000)\n";
+                    code << "                _f.position.y_nm = sym_pos_" << i << ".y + int("
+                         << dy << " * 1_000_000)\n";
+                }
+
+                if( hasAngle )
+                {
+                    double angle = fieldSpec["angle"].get<double>();
+                    code << "                _f.attributes.angle.value_degrees = " << angle << "\n";
+                }
+
+                code << "                break\n";
+            }
+
+            code << "        _upd_" << i << " = sch.crud.update_items(item_" << i << ")\n";
+            code << "        if _upd_" << i << ":\n";
+            code << "            item_" << i << " = _upd_" << i << "[0]\n";
+            code << "        updated_" << i << " = True\n";
         }
 
         // Build state info
@@ -1108,20 +1544,44 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
 
     auto targets = aInput["targets"];
     std::string filePath = aInput.value( "file_path", "" );
+    bool cleanupWires = aInput.value( "cleanup_wires", true );
 
     code << "import json, re, sys\n";
     code << "\n";
     code << GenerateRefreshPreamble();
     code << "\n";
-    code << "targets = [";
+
+    // Separate string targets from query targets
+    code << "string_targets = [";
+    bool firstStr = true;
     for( size_t i = 0; i < targets.size(); ++i )
     {
-        code << "'" << EscapePythonString( targets[i].get<std::string>() ) << "'";
-        if( i < targets.size() - 1 )
-            code << ", ";
+        if( targets[i].is_string() )
+        {
+            if( !firstStr )
+                code << ", ";
+            code << "'" << EscapePythonString( targets[i].get<std::string>() ) << "'";
+            firstStr = false;
+        }
     }
     code << "]\n";
+
+    code << "query_targets = [";
+    bool firstQuery = true;
+    for( size_t i = 0; i < targets.size(); ++i )
+    {
+        if( targets[i].is_object() )
+        {
+            if( !firstQuery )
+                code << ", ";
+            code << targets[i].dump();
+            firstQuery = false;
+        }
+    }
+    code << "]\n";
+
     code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
+    code << "cleanup_wires = " << ( cleanupWires ? "True" : "False" ) << "\n";
     code << "use_ipc = True\n";
     code << "result = None\n";
     code << "target_uuids = []\n";
@@ -1132,7 +1592,11 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "try:\n";
     code << "    items_to_delete = []\n";
     code << "    not_found = []\n";
-    code << "    for target in targets:\n";
+    code << "    query_not_found = []\n";
+    code << "\n";
+
+    // String target resolution (existing logic)
+    code << "    for target in string_targets:\n";
     code << "        is_uuid = bool(re.match(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', target))\n";
     code << "        if is_uuid:\n";
     code << "            items = sch.crud.get_by_id([target])\n";
@@ -1150,11 +1614,203 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "            else:\n";
     code << "                not_found.append(target)\n";
     code << "\n";
+
+    // Query target resolution (new)
+    code << "    # Process query-based targets\n";
+    code << "    def pos_match(actual_nm, expected_mm):\n";
+    code << "        ax = round(actual_nm.x / 1e6, 2)\n";
+    code << "        ay = round(actual_nm.y / 1e6, 2)\n";
+    code << "        return abs(ax - expected_mm[0]) <= 0.01 and abs(ay - expected_mm[1]) <= 0.01\n";
+    code << "\n";
+    code << "    for q in query_targets:\n";
+    code << "        q_type = q.get('type', '')\n";
+    code << "        q_text = q.get('text', None)\n";
+    code << "        q_pos = q.get('position', None)\n";
+    code << "        q_start = q.get('start', None)\n";
+    code << "        q_end = q.get('end', None)\n";
+    code << "        matched = []\n";
+    code << "\n";
+    code << "        if q_type == 'wire':\n";
+    code << "            for w in sch.crud.get_wires():\n";
+    code << "                ok = True\n";
+    code << "                if q_start is not None and not pos_match(w.start, q_start):\n";
+    code << "                    ok = False\n";
+    code << "                if q_end is not None and not pos_match(w.end, q_end):\n";
+    code << "                    ok = False\n";
+    code << "                if q_pos is not None:\n";
+    code << "                    if not pos_match(w.start, q_pos) and not pos_match(w.end, q_pos):\n";
+    code << "                        ok = False\n";
+    code << "                if ok:\n";
+    code << "                    matched.append(w)\n";
+    code << "\n";
+    code << "        elif q_type in ('label', 'global_label', 'hierarchical_label'):\n";
+    code << "            type_map = {'label': 'NetLabel', 'global_label': 'GlobalLabel', 'hierarchical_label': 'HierLabel'}\n";
+    code << "            expected_class = type_map.get(q_type, '')\n";
+    code << "            for lbl in sch.labels.get_all():\n";
+    code << "                ok = True\n";
+    code << "                if expected_class and type(lbl).__name__ != expected_class:\n";
+    code << "                    ok = False\n";
+    code << "                if q_text is not None and getattr(lbl, 'text', '') != q_text:\n";
+    code << "                    ok = False\n";
+    code << "                if q_pos is not None and not pos_match(lbl.position, q_pos):\n";
+    code << "                    ok = False\n";
+    code << "                if ok:\n";
+    code << "                    matched.append(lbl)\n";
+    code << "\n";
+    code << "        elif q_type == 'junction':\n";
+    code << "            for j in sch.crud.get_junctions():\n";
+    code << "                if q_pos is not None and not pos_match(j.position, q_pos):\n";
+    code << "                    continue\n";
+    code << "                matched.append(j)\n";
+    code << "\n";
+    code << "        elif q_type == 'no_connect':\n";
+    code << "            for nc in sch.crud.get_no_connects():\n";
+    code << "                if q_pos is not None and not pos_match(nc.position, q_pos):\n";
+    code << "                    continue\n";
+    code << "                matched.append(nc)\n";
+    code << "\n";
+    code << "        elif q_type == 'bus_entry':\n";
+    code << "            be_list = []\n";
+    code << "            try:\n";
+    code << "                if hasattr(sch, 'buses') and hasattr(sch.buses, 'get_bus_entries'):\n";
+    code << "                    be_list = sch.buses.get_bus_entries()\n";
+    code << "                elif hasattr(sch.crud, 'get_bus_entries'):\n";
+    code << "                    be_list = sch.crud.get_bus_entries()\n";
+    code << "            except:\n";
+    code << "                pass\n";
+    code << "            for be in be_list:\n";
+    code << "                if q_pos is not None and not pos_match(be.position, q_pos):\n";
+    code << "                    continue\n";
+    code << "                matched.append(be)\n";
+    code << "\n";
+    code << "        else:\n";
+    code << "            query_not_found.append(q)\n";
+    code << "            continue\n";
+    code << "\n";
+    code << "        if matched:\n";
+    code << "            for m in matched:\n";
+    code << "                items_to_delete.append(m)\n";
+    code << "                uid = str(m.id.value) if hasattr(m, 'id') and hasattr(m.id, 'value') else str(getattr(m, 'id', ''))\n";
+    code << "                target_uuids.append(uid)\n";
+    code << "        else:\n";
+    code << "            query_not_found.append(q)\n";
+    code << "\n";
+    code << "    # Record pin positions before deletion (for optional orphan cleanup)\n";
+    code << "    deleted_pin_positions = []\n";
+    code << "    if cleanup_wires:\n";
+    code << "        for item in items_to_delete:\n";
+    code << "            if hasattr(item, 'pins'):\n";
+    code << "                for p in item.pins:\n";
+    code << "                    try:\n";
+    code << "                        tp = sch.symbols.get_transformed_pin_position(item, p.number)\n";
+    code << "                        if tp:\n";
+    code << "                            dpx = round(tp['position'].x / 1_000_000, 4)\n";
+    code << "                            dpy = round(tp['position'].y / 1_000_000, 4)\n";
+    code << "                            deleted_pin_positions.append((dpx, dpy))\n";
+    code << "                    except:\n";
+    code << "                        pass\n";
+    code << "\n";
     code << "    if items_to_delete:\n";
     code << "        sch.crud.remove_items(items_to_delete)\n";
+    code << "\n";
+    code << "    # Recursively clean up orphaned wires and junctions\n";
+    code << "    orphaned_wires = []\n";
+    code << "    orphaned_junctions = []\n";
+    code << "    if deleted_pin_positions:\n";
+    code << "        try:\n";
+    code << "            rnd = lambda v: round(v, 2)\n";
+    code << "            def wire_ep(w):\n";
+    code << "                return (rnd(w.start.x/1e6), rnd(w.start.y/1e6)), (rnd(w.end.x/1e6), rnd(w.end.y/1e6))\n";
+    code << "\n";
+    code << "            # Collect all remaining connection points (symbol pins + labels)\n";
+    code << "            conn_pts = set()\n";
+    code << "            for sym in sch.symbols.get_all():\n";
+    code << "                for p in sym.pins:\n";
+    code << "                    try:\n";
+    code << "                        tp = sch.symbols.get_transformed_pin_position(sym, p.number)\n";
+    code << "                        if tp:\n";
+    code << "                            conn_pts.add((rnd(tp['position'].x/1e6), rnd(tp['position'].y/1e6)))\n";
+    code << "                    except:\n";
+    code << "                        pass\n";
+    code << "            for lbl in sch.labels.get_all():\n";
+    code << "                try:\n";
+    code << "                    conn_pts.add((rnd(lbl.position.x/1e6), rnd(lbl.position.y/1e6)))\n";
+    code << "                except:\n";
+    code << "                    pass\n";
+    code << "\n";
+    code << "            dead = set((rnd(px), rnd(py)) for px, py in deleted_pin_positions)\n";
+    code << "            checked = set()\n";
+    code << "\n";
+    code << "            for _iter in range(10):  # safety cap\n";
+    code << "                to_check = dead - checked\n";
+    code << "                if not to_check:\n";
+    code << "                    break\n";
+    code << "                checked |= to_check\n";
+    code << "\n";
+    code << "                cur_wires = sch.crud.get_wires()\n";
+    code << "                cur_juncs = sch.crud.get_junctions()\n";
+    code << "\n";
+    code << "                rm_wires = []\n";
+    code << "                freed = set()\n";
+    code << "                for w in cur_wires:\n";
+    code << "                    try:\n";
+    code << "                        s, e = wire_ep(w)\n";
+    code << "                        s_hit = s in to_check\n";
+    code << "                        e_hit = e in to_check\n";
+    code << "                        if s_hit or e_hit:\n";
+    code << "                            rm_wires.append(w)\n";
+    code << "                            uid = str(w.id.value) if hasattr(w, 'id') else ''\n";
+    code << "                            orphaned_wires.append({'uuid': uid, 'start': list(s), 'end': list(e)})\n";
+    code << "                            if s_hit:\n";
+    code << "                                freed.add(e)\n";
+    code << "                            if e_hit:\n";
+    code << "                                freed.add(s)\n";
+    code << "                    except:\n";
+    code << "                        pass\n";
+    code << "\n";
+    code << "                rm_juncs = []\n";
+    code << "                for j in cur_juncs:\n";
+    code << "                    try:\n";
+    code << "                        jp = (rnd(j.position.x/1e6), rnd(j.position.y/1e6))\n";
+    code << "                        if jp in to_check:\n";
+    code << "                            rm_juncs.append(j)\n";
+    code << "                            uid = str(j.id.value) if hasattr(j, 'id') else ''\n";
+    code << "                            orphaned_junctions.append({'uuid': uid, 'position': list(jp)})\n";
+    code << "                    except:\n";
+    code << "                        pass\n";
+    code << "\n";
+    code << "                if not rm_wires and not rm_juncs:\n";
+    code << "                    break\n";
+    code << "                sch.crud.remove_items(rm_wires + rm_juncs)\n";
+    code << "\n";
+    code << "                # Cascade: freed endpoints become dead if not at a component pin\n";
+    code << "                # and have <= 1 remaining wire (i.e. dangling)\n";
+    code << "                remaining = sch.crud.get_wires()\n";
+    code << "                for fp in freed - conn_pts - checked:\n";
+    code << "                    wc = 0\n";
+    code << "                    for w in remaining:\n";
+    code << "                        try:\n";
+    code << "                            s, e = wire_ep(w)\n";
+    code << "                            if s == fp or e == fp:\n";
+    code << "                                wc += 1\n";
+    code << "                        except:\n";
+    code << "                            pass\n";
+    code << "                    if wc <= 1:\n";
+    code << "                        dead.add(fp)\n";
+    code << "\n";
+    code << "        except Exception as cleanup_err:\n";
+    code << "            print(f'Orphan cleanup warning: {cleanup_err}', file=sys.stderr)\n";
+    code << "\n";
     code << "    result = {'status': 'success', 'source': 'ipc', 'deleted': len(items_to_delete)}\n";
+    code << "    if orphaned_wires:\n";
+    code << "        result['orphaned_wires_removed'] = len(orphaned_wires)\n";
+    code << "        result['orphaned_wires'] = orphaned_wires\n";
+    code << "    if orphaned_junctions:\n";
+    code << "        result['orphaned_junctions_removed'] = len(orphaned_junctions)\n";
     code << "    if not_found:\n";
     code << "        result['not_found'] = not_found\n";
+    code << "    if query_not_found:\n";
+    code << "        result['queries_not_matched'] = query_not_found\n";
     code << "\n";
     code << "except Exception as ipc_error:\n";
     code << "    use_ipc = False\n";
@@ -1190,20 +1846,17 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
 }
 
 
-std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInput ) const
+std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aInput ) const
 {
     std::ostringstream code;
 
-    // Extract parameters - match tool definition names
     std::string sheetPath = aInput.value( "sheet_path", "" );
-    std::string filePath = aInput.value( "file_path", "" );
 
     code << "import json, sys\n";
     code << "\n";
     code << GenerateRefreshPreamble();
     code << "\n";
     code << "sheet_path = " << nlohmann::json( sheetPath ).dump() << "\n";
-    code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
     code << "result = None\n";
     code << "\n";
     code << "try:\n";
@@ -1236,13 +1889,13 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
     code << "        try:\n";
     code << "            hierarchy_tree = sch.sheets.get_hierarchy()\n";
     code << "            hierarchy_nodes = flatten_hierarchy(hierarchy_tree)\n";
-    code << "            print(f'[sch_open_sheet] Hierarchy tree has {len(hierarchy_nodes)} nodes', file=sys.stderr)\n";
+    code << "            print(f'[sch_switch_sheet] Hierarchy tree has {len(hierarchy_nodes)} nodes', file=sys.stderr)\n";
     code << "        except Exception as he:\n";
-    code << "            print(f'[sch_open_sheet] get_hierarchy failed: {he}', file=sys.stderr)\n";
+    code << "            print(f'[sch_switch_sheet] get_hierarchy failed: {he}', file=sys.stderr)\n";
     code << "    \n";
     code << "    # Also get sheet items for fallback\n";
     code << "    sheets = sch.crud.get_sheets()\n";
-    code << "    print(f'[sch_open_sheet] Found {len(sheets)} sheet items', file=sys.stderr)\n";
+    code << "    print(f'[sch_switch_sheet] Found {len(sheets)} sheet items', file=sys.stderr)\n";
     code << "    \n";
     code << "    # Build lookup dictionaries\n";
     code << "    hierarchy = []\n";
@@ -1327,43 +1980,34 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
     code << "            elif sheet_path + '.kicad_sch' in sheet_by_file:\n";
     code << "                target_sheet, target_info = sheet_by_file[sheet_path + '.kicad_sch']\n";
     code << "    \n";
-    code << "    # Handle file_path - open a specific .kicad_sch file\n";
-    code << "    if not target_sheet and not navigated and file_path:\n";
-    code << "        import os\n";
-    code << "        basename = os.path.basename(file_path)\n";
-    code << "        if basename in sheet_by_file:\n";
-    code << "            target_sheet, target_info = sheet_by_file[basename]\n";
-    code << "        elif file_path in sheet_by_file:\n";
-    code << "            target_sheet, target_info = sheet_by_file[file_path]\n";
-    code << "    \n";
     code << "    # Navigate to target sheet if found\n";
     code << "    if target_sheet and not navigated:\n";
-    code << "        print(f'[sch_open_sheet] Attempting to navigate to sheet', file=sys.stderr)\n";
+    code << "        print(f'[sch_switch_sheet] Attempting to navigate to sheet', file=sys.stderr)\n";
     code << "        # First try navigate_to with the SheetPath (most reliable for hierarchy nodes)\n";
     code << "        if hasattr(sch.sheets, 'navigate_to') and hasattr(target_sheet, 'path') and target_sheet.path:\n";
     code << "            try:\n";
-    code << "                print(f'[sch_open_sheet] Using navigate_to with path', file=sys.stderr)\n";
+    code << "                print(f'[sch_switch_sheet] Using navigate_to with path', file=sys.stderr)\n";
     code << "                sch.sheets.navigate_to(target_sheet.path)\n";
     code << "                navigated = True\n";
     code << "            except Exception as nav_err:\n";
-    code << "                print(f'[sch_open_sheet] navigate_to failed: {nav_err}', file=sys.stderr)\n";
+    code << "                print(f'[sch_switch_sheet] navigate_to failed: {nav_err}', file=sys.stderr)\n";
     code << "        \n";
     code << "        if not navigated and hasattr(sch.sheets, 'enter'):\n";
     code << "            try:\n";
     code << "                # enter might work with the node directly\n";
-    code << "                print(f'[sch_open_sheet] Trying enter method', file=sys.stderr)\n";
+    code << "                print(f'[sch_switch_sheet] Trying enter method', file=sys.stderr)\n";
     code << "                sch.sheets.enter(target_sheet)\n";
     code << "                navigated = True\n";
     code << "            except Exception as enter_err:\n";
-    code << "                print(f'[sch_open_sheet] enter failed: {enter_err}', file=sys.stderr)\n";
+    code << "                print(f'[sch_switch_sheet] enter failed: {enter_err}', file=sys.stderr)\n";
     code << "        \n";
     code << "        if not navigated and hasattr(sch.sheets, 'open'):\n";
     code << "            try:\n";
-    code << "                print(f'[sch_open_sheet] Trying open method', file=sys.stderr)\n";
+    code << "                print(f'[sch_switch_sheet] Trying open method', file=sys.stderr)\n";
     code << "                sch.sheets.open(target_sheet)\n";
     code << "                navigated = True\n";
     code << "            except Exception as open_err:\n";
-    code << "                print(f'[sch_open_sheet] open failed: {open_err}', file=sys.stderr)\n";
+    code << "                print(f'[sch_switch_sheet] open failed: {open_err}', file=sys.stderr)\n";
     code << "    \n";
     code << "    # Build result\n";
     code << "    if navigated:\n";
@@ -1373,7 +2017,7 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
     code << "            'target': target_info,\n";
     code << "            'available_sheets': hierarchy\n";
     code << "        }\n";
-    code << "    elif not sheet_path and not file_path:\n";
+    code << "    elif not sheet_path:\n";
     code << "        # No target specified - list available sheets\n";
     code << "        if not hierarchy:\n";
     code << "            result = {\n";
@@ -1392,7 +2036,7 @@ std::string SCH_CRUD_HANDLER::GenerateOpenSheetCode( const nlohmann::json& aInpu
     code << "        # Target specified but not found\n";
     code << "        result = {\n";
     code << "            'status': 'error',\n";
-    code << "            'message': f'Sheet not found: {sheet_path or file_path}',\n";
+    code << "            'message': f'Sheet not found: {sheet_path}',\n";
     code << "            'available_sheets': hierarchy\n";
     code << "        }\n";
     code << "\n";
@@ -1437,6 +2081,7 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
     code << "offset_x = " << offsetX << "\n";
     code << "offset_y = " << offsetY << "\n";
     code << "\n";
+    code << GenerateOverlapCheckHelper();
     code << "try:\n";
     code << "    # Get the symbol and pin position\n";
     code << "    sym = sch.symbols.get_by_ref(ref)\n";
@@ -1456,9 +2101,12 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
     code << "        pin_x = pin_result['position'].x / 1_000_000\n";
     code << "        pin_y = pin_result['position'].y / 1_000_000\n";
     code << "\n";
-    code << "    # Calculate power symbol position\n";
-    code << "    power_x = pin_x + offset_x\n";
-    code << "    power_y = pin_y + offset_y\n";
+    code << "    # Snap to 1.27mm grid\n";
+    code << "    def snap_to_grid(val, grid=1.27):\n";
+    code << "        return round(val / grid) * grid\n";
+    code << "    # Calculate power symbol position (snapped to grid)\n";
+    code << "    power_x = snap_to_grid(pin_x + offset_x)\n";
+    code << "    power_y = snap_to_grid(pin_y + offset_y)\n";
     code << "\n";
     code << "    # Auto-detect angle based on power type if not specified\n";
 
@@ -1468,14 +2116,12 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
     }
     else
     {
-        code << "    # GND typically points down (180°), VCC/power typically points up (0°)\n";
+        code << "    # GND at 0° = bars down (standard). VCC at 0° = bar up (standard).\n";
         code << "    power_lower = power_name.lower()\n";
-        code << "    if 'gnd' in power_lower or 'vss' in power_lower or 'gnd' in power_lower:\n";
-        code << "        # GND pointing down - if offset_y > 0, symbol is below pin\n";
-        code << "        power_angle = 180 if offset_y >= 0 else 0\n";
+        code << "    if 'gnd' in power_lower or 'vss' in power_lower:\n";
+        code << "        power_angle = 0  # GND at 0° = bars down (standard orientation)\n";
         code << "    else:\n";
-        code << "        # VCC/power pointing up - if offset_y < 0, symbol is above pin\n";
-        code << "        power_angle = 0 if offset_y <= 0 else 180\n";
+        code << "        power_angle = 0  # VCC at 0° = bar up (standard orientation)\n";
     }
 
     code << "\n";
@@ -1499,6 +2145,21 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
     code << "            sch.wiring.add_wire(pin_vec, power_pos)\n";
     code << "            wire_count = 1\n";
     code << "\n";
+    code << "    # Check for overlaps\n";
+    code << "    _all_warnings = []\n";
+    code << "    _ov = _check_overlap(power_x, power_y, exclude_refs={ref})\n";
+    code << "    _all_warnings.extend(_format_warnings(_ov, f'Power symbol at [{power_x}, {power_y}]'))\n";
+    code << "    # Check wire overlaps if wires were drawn\n";
+    code << "    if abs(offset_x) > 0.01 or abs(offset_y) > 0.01:\n";
+    code << "        if abs(offset_x) > 0.01 and abs(offset_y) > 0.01:\n";
+    code << "            _wov1 = _check_wire_overlap(pin_x, pin_y, power_x, pin_y, exclude_refs={ref})\n";
+    code << "            _all_warnings.extend(_format_warnings(_wov1, f'Wire from pin to corner'))\n";
+    code << "            _wov2 = _check_wire_overlap(power_x, pin_y, power_x, power_y, exclude_refs={ref})\n";
+    code << "            _all_warnings.extend(_format_warnings(_wov2, f'Wire from corner to power'))\n";
+    code << "        else:\n";
+    code << "            _wov = _check_wire_overlap(pin_x, pin_y, power_x, power_y, exclude_refs={ref})\n";
+    code << "            _all_warnings.extend(_format_warnings(_wov, f'Wire from pin to power'))\n";
+    code << "\n";
     code << "    result = {\n";
     code << "        'status': 'success',\n";
     code << "        'source': 'ipc',\n";
@@ -1509,11 +2170,77 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
     code << "        'pin_position': [pin_x, pin_y],\n";
     code << "        'wire_count': wire_count\n";
     code << "    }\n";
+    code << "    if _all_warnings:\n";
+    code << "        result['warnings'] = _all_warnings\n";
     code << "\n";
     code << "except Exception as e:\n";
     code << "    result = {'status': 'error', 'message': str(e)}\n";
     code << "\n";
     code << "print(json.dumps(result, indent=2))\n";
+
+    return code.str();
+}
+
+
+std::string SCH_CRUD_HANDLER::GenerateAddSheetCode( const nlohmann::json& aInput ) const
+{
+    std::ostringstream code;
+
+    std::string sheetName = aInput.value( "sheet_name", "Subsheet" );
+    std::string sheetFile = aInput.value( "sheet_file", "" );
+
+    double posX = 0, posY = 0;
+    if( aInput.contains( "position" ) && aInput["position"].is_array() &&
+        aInput["position"].size() >= 2 )
+    {
+        posX = SnapToGrid( aInput["position"][0].get<double>() );
+        posY = SnapToGrid( aInput["position"][1].get<double>() );
+    }
+
+    double sizeW = 50, sizeH = 50;
+    if( aInput.contains( "size" ) && aInput["size"].is_array() && aInput["size"].size() >= 2 )
+    {
+        sizeW = aInput["size"][0].get<double>();
+        sizeH = aInput["size"][1].get<double>();
+    }
+
+    code << R"(import json, sys
+from kipy.geometry import Vector2
+
+)";
+    code << GenerateRefreshPreamble();
+    code << R"(
+def get_id(obj):
+    if obj is None:
+        return ''
+    if hasattr(obj, 'id'):
+        id_obj = obj.id
+        if hasattr(id_obj, 'value'):
+            return str(id_obj.value)
+        return str(id_obj)
+    if hasattr(obj, 'uuid'):
+        return str(obj.uuid)
+    if isinstance(obj, str):
+        return obj
+    return str(obj)
+
+try:
+)";
+    code << "    pos = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
+    code << "    size = Vector2.from_xy_mm(" << sizeW << ", " << sizeH << ")\n";
+    code << "    sheet = sch.sheets.create(\n";
+    code << "        name='" << EscapePythonString( sheetName ) << "',\n";
+    code << "        filename='" << EscapePythonString( sheetFile.empty() ? sheetName + ".kicad_sch" : sheetFile ) << "',\n";
+    code << "        position=pos,\n";
+    code << "        size=size\n";
+    code << "    )\n";
+    code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(sheet), 'name': '" << EscapePythonString( sheetName ) << "'}\n";
+    code << R"(
+except Exception as e:
+    result = {'status': 'error', 'message': str(e)}
+
+print(json.dumps(result, indent=2))
+)";
 
     return code.str();
 }
@@ -1556,7 +2283,9 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
     code << "results = []\n";
     code << "errors = []\n";
+    code << "_batch_warnings = []\n";
     code << "\n";
+    code << GenerateOverlapCheckHelper();
     code << "try:\n";
 
     // Process each element in the batch
@@ -1575,8 +2304,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             if( elem.contains( "position" ) && elem["position"].is_array() &&
                 elem["position"].size() >= 2 )
             {
-                posX = elem["position"][0].get<double>();
-                posY = elem["position"][1].get<double>();
+                posX = SnapToGrid( elem["position"][0].get<double>() );
+                posY = SnapToGrid( elem["position"][1].get<double>() );
             }
             double angle = elem.value( "angle", 0.0 );
             std::string mirror = elem.value( "mirror", "none" );
@@ -1626,6 +2355,11 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                        pass\n";
             code << "                pins_" << i << ".append(pin_info)\n";
             code << "        results.append({'index': " << i << ", 'type': 'symbol', 'id': get_id(sym_" << i << "), 'reference': getattr(sym_" << i << ", 'reference', ''), 'pins': pins_" << i << "})\n";
+            code << "        _ov_" << i << " = _check_overlap(" << posX << ", " << posY << ")\n";
+            code << "        _ov_w_" << i << " = _format_warnings(_ov_" << i << ", f'Element " << i << " (symbol) at [" << posX << ", " << posY << "]')\n";
+            code << "        for _w in _ov_w_" << i << ":\n";
+            code << "            _w['element_index'] = " << i << "\n";
+            code << "        _batch_warnings.extend(_ov_w_" << i << ")\n";
         }
         else if( elementType == "power" )
         {
@@ -1639,14 +2373,19 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             if( elem.contains( "position" ) && elem["position"].is_array() &&
                 elem["position"].size() >= 2 )
             {
-                posX = elem["position"][0].get<double>();
-                posY = elem["position"][1].get<double>();
+                posX = SnapToGrid( elem["position"][0].get<double>() );
+                posY = SnapToGrid( elem["position"][1].get<double>() );
             }
             double angle = elem.value( "angle", 0.0 );
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        pwr_" << i << " = sch.labels.add_power('" << EscapePythonString( powerName ) << "', pos_" << i << ", angle=" << angle << ")\n";
             code << "        results.append({'index': " << i << ", 'type': 'power', 'id': get_id(pwr_" << i << "), 'name': '" << EscapePythonString( powerName ) << "', 'pin_position': [" << posX << ", " << posY << "]})\n";
+            code << "        _ov_" << i << " = _check_overlap(" << posX << ", " << posY << ")\n";
+            code << "        _ov_w_" << i << " = _format_warnings(_ov_" << i << ", f'Element " << i << " (power) at [" << posX << ", " << posY << "]')\n";
+            code << "        for _w in _ov_w_" << i << ":\n";
+            code << "            _w['element_index'] = " << i << "\n";
+            code << "        _batch_warnings.extend(_ov_w_" << i << ")\n";
         }
         else if( elementType == "wire" )
         {
@@ -1673,8 +2412,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                     {
                         if( waypoints[j].is_array() && waypoints[j].size() >= 2 )
                         {
-                            double x = waypoints[j][0].get<double>();
-                            double y = waypoints[j][1].get<double>();
+                            double x = SnapToGrid( waypoints[j][0].get<double>() );
+                            double y = SnapToGrid( waypoints[j][1].get<double>() );
                             code << "                (" << x << ", " << y << "),\n";
                         }
                     }
@@ -1683,10 +2422,19 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 }
                 else
                 {
-                    // No waypoints - draw direct wire between pins
-                    code << "            wires_" << i << " = sch.wiring.wire_pins(sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "', sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "')\n";
+                    // No waypoints - use auto_wire for L-shaped orthogonal routing
+                    code << "            wires_" << i << " = sch.wiring.auto_wire(sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "', sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "')\n";
                 }
                 code << "            results.append({'index': " << i << ", 'type': 'wire', 'wire_count': len(wires_" << i << ")})\n";
+                code << "            _ww_" << i << " = []\n";
+                code << "            for _w in wires_" << i << ":\n";
+                code << "                _ws, _we = getattr(_w, 'start', None), getattr(_w, 'end', None)\n";
+                code << "                if _ws and _we:\n";
+                code << "                    _wov = _check_wire_overlap(_ws.x / 1_000_000, _ws.y / 1_000_000, _we.x / 1_000_000, _we.y / 1_000_000)\n";
+                code << "                    _ww_" << i << ".extend(_format_warnings(_wov, 'Wire segment'))\n";
+                code << "            for _w in _ww_" << i << ":\n";
+                code << "                _w['element_index'] = " << i << "\n";
+                code << "            _batch_warnings.extend(_ww_" << i << ")\n";
                 code << "        else:\n";
                 code << "            errors.append({'index': " << i << ", 'error': 'Symbol not found'})\n";
             }
@@ -1697,20 +2445,26 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 if( points.size() >= 2 )
                 {
                     code << "        wc_" << i << " = 0\n";
+                    code << "        _ww_" << i << " = []\n";
                     for( size_t j = 0; j < points.size() - 1; ++j )
                     {
                         if( points[j].is_array() && points[j].size() >= 2 &&
                             points[j + 1].is_array() && points[j + 1].size() >= 2 )
                         {
-                            double x1 = points[j][0].get<double>();
-                            double y1 = points[j][1].get<double>();
-                            double x2 = points[j + 1][0].get<double>();
-                            double y2 = points[j + 1][1].get<double>();
+                            double x1 = SnapToGrid( points[j][0].get<double>() );
+                            double y1 = SnapToGrid( points[j][1].get<double>() );
+                            double x2 = SnapToGrid( points[j + 1][0].get<double>() );
+                            double y2 = SnapToGrid( points[j + 1][1].get<double>() );
                             code << "        sch.wiring.add_wire(Vector2.from_xy_mm(" << x1 << ", " << y1 << "), Vector2.from_xy_mm(" << x2 << ", " << y2 << "))\n";
                             code << "        wc_" << i << " += 1\n";
+                            code << "        _wov = _check_wire_overlap(" << x1 << ", " << y1 << ", " << x2 << ", " << y2 << ")\n";
+                            code << "        _ww_" << i << ".extend(_format_warnings(_wov, 'Wire segment'))\n";
                         }
                     }
                     code << "        results.append({'index': " << i << ", 'type': 'wire', 'wire_count': wc_" << i << "})\n";
+                    code << "        for _w in _ww_" << i << ":\n";
+                    code << "            _w['element_index'] = " << i << "\n";
+                    code << "        _batch_warnings.extend(_ww_" << i << ")\n";
                 }
             }
         }
@@ -1720,8 +2474,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             if( elem.contains( "position" ) && elem["position"].is_array() &&
                 elem["position"].size() >= 2 )
             {
-                posX = elem["position"][0].get<double>();
-                posY = elem["position"][1].get<double>();
+                posX = SnapToGrid( elem["position"][0].get<double>() );
+                posY = SnapToGrid( elem["position"][1].get<double>() );
             }
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
@@ -1732,22 +2486,75 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
         {
             std::string text = elem.value( "text", "" );
             std::string labelType = elem.value( "label_type", "local" );
+            bool hasExplicitAngle = elem.contains( "angle" );
+            double angle = elem.value( "angle", 0.0 );
             double posX = 0, posY = 0;
             if( elem.contains( "position" ) && elem["position"].is_array() &&
                 elem["position"].size() >= 2 )
             {
-                posX = elem["position"][0].get<double>();
-                posY = elem["position"][1].get<double>();
+                posX = SnapToGrid( elem["position"][0].get<double>() );
+                posY = SnapToGrid( elem["position"][1].get<double>() );
             }
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
-            if( labelType == "global" )
-                code << "        lbl_" << i << " = sch.labels.add_global('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
-            else if( labelType == "hierarchical" )
-                code << "        lbl_" << i << " = sch.labels.add_hierarchical('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
+
+            if( hasExplicitAngle )
+            {
+                code << "        _la_" << i << " = " << angle << "\n";
+            }
             else
-                code << "        lbl_" << i << " = sch.labels.add_local('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
-            code << "        results.append({'index': " << i << ", 'type': 'label', 'id': get_id(lbl_" << i << "), 'text': '" << EscapePythonString( text ) << "'})\n";
+            {
+                code << "        _la_" << i << " = 0\n";
+                code << "        _lx_" << i << ", _ly_" << i << " = " << posX << ", " << posY << "\n";
+                code << "        _af_" << i << " = False\n";
+                code << "        try:\n";
+                code << "            for _sym in sch.symbols.get_all():\n";
+                code << "                if _af_" << i << ":\n";
+                code << "                    break\n";
+                code << "                for _pin in _sym.pins:\n";
+                code << "                    try:\n";
+                code << "                        _tp = sch.symbols.get_transformed_pin_position(_sym, _pin.number)\n";
+                code << "                        if _tp:\n";
+                code << "                            _px = _tp['position'].x / 1_000_000\n";
+                code << "                            _py = _tp['position'].y / 1_000_000\n";
+                code << "                            if abs(_px - _lx_" << i << ") < 0.02 and abs(_py - _ly_" << i << ") < 0.02:\n";
+                code << "                                _la_" << i << " = _tp.get('orientation', 0)\n";
+                code << "                                _af_" << i << " = True\n";
+                code << "                                break\n";
+                code << "                    except:\n";
+                code << "                        pass\n";
+                code << "        except:\n";
+                code << "            pass\n";
+                code << "        if not _af_" << i << ":\n";
+                code << "            try:\n";
+                code << "                import math\n";
+                code << "                for _w in sch.crud.get_wires():\n";
+                code << "                    _sx = _w.start.x / 1_000_000\n";
+                code << "                    _sy = _w.start.y / 1_000_000\n";
+                code << "                    _ex = _w.end.x / 1_000_000\n";
+                code << "                    _ey = _w.end.y / 1_000_000\n";
+                code << "                    _other = None\n";
+                code << "                    if abs(_sx - _lx_" << i << ") < 0.02 and abs(_sy - _ly_" << i << ") < 0.02:\n";
+                code << "                        _other = (_ex, _ey)\n";
+                code << "                    elif abs(_ex - _lx_" << i << ") < 0.02 and abs(_ey - _ly_" << i << ") < 0.02:\n";
+                code << "                        _other = (_sx, _sy)\n";
+                code << "                    if _other:\n";
+                code << "                        _dx = _other[0] - _lx_" << i << "\n";
+                code << "                        _dy = _other[1] - _ly_" << i << "\n";
+                code << "                        _deg = math.degrees(math.atan2(-_dy, _dx)) % 360\n";
+                code << "                        _la_" << i << " = min([0, 90, 180, 270], key=lambda a: min(abs(_deg - a), 360 - abs(_deg - a)))\n";
+                code << "                        break\n";
+                code << "            except:\n";
+                code << "                pass\n";
+            }
+
+            if( labelType == "global" )
+                code << "        lbl_" << i << " = sch.labels.add_global('" << EscapePythonString( text ) << "', pos_" << i << ", angle=_la_" << i << ")\n";
+            else if( labelType == "hierarchical" )
+                code << "        lbl_" << i << " = sch.labels.add_hierarchical('" << EscapePythonString( text ) << "', pos_" << i << ", angle=_la_" << i << ")\n";
+            else
+                code << "        lbl_" << i << " = sch.labels.add_local('" << EscapePythonString( text ) << "', pos_" << i << ", angle=_la_" << i << ")\n";
+            code << "        results.append({'index': " << i << ", 'type': 'label', 'id': get_id(lbl_" << i << "), 'text': '" << EscapePythonString( text ) << "', 'angle': _la_" << i << "})\n";
         }
         else if( elementType == "no_connect" )
         {
@@ -1755,13 +2562,29 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             if( elem.contains( "position" ) && elem["position"].is_array() &&
                 elem["position"].size() >= 2 )
             {
-                posX = elem["position"][0].get<double>();
-                posY = elem["position"][1].get<double>();
+                posX = SnapToGrid( elem["position"][0].get<double>() );
+                posY = SnapToGrid( elem["position"][1].get<double>() );
             }
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        nc_" << i << " = sch.wiring.add_no_connect(pos_" << i << ")\n";
             code << "        results.append({'index': " << i << ", 'type': 'no_connect', 'id': get_id(nc_" << i << ")})\n";
+        }
+        else if( elementType == "bus_entry" )
+        {
+            double posX = 0, posY = 0;
+            if( elem.contains( "position" ) && elem["position"].is_array() &&
+                elem["position"].size() >= 2 )
+            {
+                posX = SnapToGrid( elem["position"][0].get<double>() );
+                posY = SnapToGrid( elem["position"][1].get<double>() );
+            }
+
+            std::string direction = elem.value( "direction", "right_down" );
+
+            code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
+            code << "        be_" << i << " = sch.buses.add_bus_entry(pos_" << i << ", direction='" << EscapePythonString( direction ) << "')\n";
+            code << "        results.append({'index': " << i << ", 'type': 'bus_entry', 'id': get_id(be_" << i << ")})\n";
         }
         else
         {
@@ -1784,6 +2607,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "    }\n";
     code << "    if errors:\n";
     code << "        result['errors'] = errors\n";
+    code << "    if _batch_warnings:\n";
+    code << "        result['warnings'] = _batch_warnings\n";
     code << "\n";
     code << "except Exception as batch_error:\n";
     code << "    result = {'status': 'error', 'message': str(batch_error), 'partial_results': results, 'errors': errors}\n";

@@ -78,6 +78,10 @@ void WEBVIEW_BRIDGE::OnMessage( const wxString& aMessage )
             LogBridge( "JS->C++", "PAGE_READY", "Flushing pending scripts" );
             m_pageReady = true;
             FlushPendingScripts();
+
+            // Enable JS debug logging when WXTRACE includes KICAD_AGENT
+            if( wxLog::IsAllowedTraceMask( "KICAD_AGENT" ) )
+                RunScript( "App.Chat.setDebug(true);" );
         }
 
         // Debug
@@ -269,6 +273,13 @@ void WEBVIEW_BRIDGE::PushHistoryShow( bool aShow )
                                  aShow ? "true" : "false" ) );
 }
 
+void WEBVIEW_BRIDGE::PushActiveChat( const std::string& aConversationId )
+{
+    LogBridge( "C++->JS", "setActiveChat" );
+    RunScript( wxString::Format( "App.TopBar.setActiveChat('%s');",
+                                 EscapeJs( wxString::FromUTF8( aConversationId ) ) ) );
+}
+
 void WEBVIEW_BRIDGE::PushStreamingContent( const wxString& aHtml )
 {
     // No log here — this fires at 20Hz during streaming and would flood the log
@@ -314,6 +325,15 @@ void WEBVIEW_BRIDGE::PushToolResultImageChunk( int aIndex, const wxString& aChun
 void WEBVIEW_BRIDGE::PushToolResultImageEnd( int aIndex )
 {
     RunScript( wxString::Format( "App.Chat.toolImgEnd(%d);", aIndex ) );
+}
+
+void WEBVIEW_BRIDGE::PushCancelRunningTools()
+{
+    RunScript(
+        "(function(){var ss=document.querySelectorAll('.tool-status');"
+        "ss.forEach(function(s){if(s.innerHTML.indexOf('Running')!==-1){"
+        "s.className='text-text-muted text-[12px] ml-auto';"
+        "s.innerHTML='<strong>Cancelled</strong>';}});})();" );
 }
 
 void WEBVIEW_BRIDGE::PushFullChatContent( const wxString& aHtml )

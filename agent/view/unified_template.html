@@ -84,24 +84,21 @@ img[src^="data:"] { cursor: pointer; }
 .editor-container {
     position: relative; width: 100%; min-height: 45px; box-sizing: border-box;
     background: #2a2a2a; border: 1px solid #404040; border-radius: 10px; padding: 8px 12px;
+    overflow: hidden;
     box-shadow: 0 -4px 12px rgba(0,0,0,0.25);
 }
 .editor-container:focus-within { border-color: #569cd6; }
-.textarea-wrapper { display: grid; width: 100%; }
-.highlight-layer, .input-textarea {
-    grid-area: 1 / 1; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;
-    padding: 0; padding-right: 28px; margin: 0; font: inherit; box-sizing: border-box;
-}
-.highlight-layer { pointer-events: none; overflow: hidden; color: #FFFFFF; }
+.textarea-wrapper { width: 100%; }
 .input-textarea {
     width: 100%; min-height: 45px; resize: none;
+    white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;
+    padding: 0; margin: 0; font: inherit; box-sizing: border-box;
     background: transparent; color: #FFFFFF; caret-color: #FFFFFF;
-    border: none; outline: none; overflow: hidden; -webkit-text-fill-color: transparent;
+    border: none; outline: none; overflow: hidden;
     -webkit-user-select: text; user-select: text;
 }
-.input-textarea::selection { background: rgba(56,156,214,0.4); -webkit-text-fill-color: #FFFFFF; }
-.input-textarea::placeholder { -webkit-text-fill-color: #808080; }
-.hl-tag { color: #569cd6; font-weight: bold; }
+.input-textarea::selection { background: rgba(56,156,214,0.4); }
+.input-textarea::placeholder { color: #808080; }
 
 /* Attachment preview bar */
 .attachment-bar { display: none; flex-wrap: wrap; gap: 6px; padding: 6px 0 4px 0; }
@@ -115,11 +112,12 @@ img[src^="data:"] { cursor: pointer; }
 }
 .attachment-thumb .remove-btn:hover { background: #f44747; }
 
-/* Attach button (inside editor container) */
+/* Attach button (controls row) */
 .attach-btn {
-    position: absolute; right: 8px; bottom: 8px; width: 24px; height: 24px;
+    width: 24px; height: 24px;
     cursor: pointer; color: #808080; display: flex; align-items: center; justify-content: center;
     border-radius: 4px; -webkit-user-select: none; user-select: none;
+    background: none; border: none; padding: 0;
 }
 .attach-btn:hover { color: #FFFFFF; background: rgba(255,255,255,0.08); }
 .attach-btn svg { width: 16px; height: 16px; }
@@ -146,6 +144,7 @@ img[src^="data:"] { cursor: pointer; }
     padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #353535;
 }
 .history-item:hover { background: #3d3d3d; }
+.history-item.active { background: #353535; }
 .history-item .title { color: #fff; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 8px; }
 .history-item .timestamp { color: #666; font-size: 11px; white-space: nowrap; }
 
@@ -205,7 +204,7 @@ img[src^="data:"] { cursor: pointer; }
 
 /* Selection pill */
 .selection-pill {
-    display: none; padding: 2px 8px; border-radius: 12px; font-size: 11px;
+    display: none; padding: 4px 10px; border-radius: 12px; font-size: 13px;
     background: #3d3d3d; color: #d4d4d4; cursor: pointer; white-space: nowrap;
     -webkit-user-select: none; user-select: none;
 }
@@ -287,7 +286,7 @@ img[src^="data:"] { cursor: pointer; }
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="input-area" class="flex-shrink-0 pb-2 pt-0" style="padding-left:16px;padding-right:16px;">
     <!-- Top row: selection pill (hidden when empty) -->
-    <div class="flex items-center gap-2 px-1" id="selection-pill-row" style="display:none;">
+    <div class="flex items-center gap-2 px-1" id="selection-pill-row" style="display:none;margin-bottom:6px;">
         <span class="selection-pill" id="selection-pill"></span>
     </div>
 
@@ -301,19 +300,13 @@ img[src^="data:"] { cursor: pointer; }
         <div id="pc-rows"></div>
     </div>
 
-    <!-- Editor container (textarea + highlight + attach) -->
+    <!-- Editor container -->
     <div class="editor-container" id="editor-container">
         <div class="attachment-bar" id="attachment-bar"></div>
         <div class="textarea-wrapper">
-            <div class="highlight-layer" id="highlight-layer"></div>
             <textarea class="input-textarea" id="input-textarea"
                       placeholder="Message the agent..."
                       rows="1"></textarea>
-        </div>
-        <div class="attach-btn" id="attach-btn" title="Attach file">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-            </svg>
         </div>
     </div>
 
@@ -324,6 +317,11 @@ img[src^="data:"] { cursor: pointer; }
         </div>
         <div class="model-menu" id="model-menu"></div>
         <span class="flex-1"></span>
+        <div class="attach-btn" id="attach-btn" title="Attach file">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+        </div>
         <button class="ctrl-btn" id="plan-btn">Plan</button>
         <button class="ctrl-btn" id="track-btn" style="display:none;">Track</button>
         <button class="ctrl-btn primary" id="action-btn">Send</button>
@@ -389,6 +387,11 @@ App.TopBar = (function() {
     var listEl = document.getElementById('history-list');
     var titleEl = document.getElementById('chat-title');
     var entries = [];
+    var activeChatId = '';
+
+    function setActiveChat(id) {
+        activeChatId = id || '';
+    }
 
     function setTitle(title) {
         titleEl.textContent = title || 'New Chat';
@@ -424,7 +427,8 @@ App.TopBar = (function() {
         } else {
             for (var i = 0; i < filtered.length; i++) {
                 var e = filtered[i];
-                html += '<div class="history-item" data-id="' + e.id + '">'
+                var cls = 'history-item' + (e.id === activeChatId ? ' active' : '');
+                html += '<div class="' + cls + '" data-id="' + e.id + '">'
                      + '<span class="title">' + escapeHtml(e.title || 'Untitled Chat') + '</span>'
                      + '<span class="timestamp">' + relativeTime(e.timestamp, now) + '</span>'
                      + '</div>';
@@ -490,7 +494,7 @@ App.TopBar = (function() {
         }
     });
 
-    return { setTitle: setTitle, setHistoryList: setHistoryList, showHistory: showHistory };
+    return { setTitle: setTitle, setHistoryList: setHistoryList, showHistory: showHistory, setActiveChat: setActiveChat };
 })();
 
 // =====================================================================
@@ -501,6 +505,7 @@ App.Chat = (function() {
     // Without this, the C++ streaming timer rebuilds HTML with stale toggle state,
     // overwriting the user's click before the JS->C++ roundtrip completes.
     var _expandedToggles = {};
+    var _debug = false;
 
     function highlightCodeBlocks(element) {
         if (typeof hljs !== 'undefined') {
@@ -541,6 +546,7 @@ App.Chat = (function() {
     }
 
     function appendMessage(html) {
+        if (_debug) console.log('[ZENER] appendMessage len=' + html.length);
         var wrapper = document.querySelector('.content-wrapper');
         if (wrapper) {
             var temp = document.createElement('div');
@@ -566,9 +572,7 @@ App.Chat = (function() {
         }
     }
 
-    function updateToolResult(index, statusClass, statusText, bodyHtml) {
-        var el = document.getElementById('tool-result-' + index);
-        if (!el) return;
+    function _applyToolResultUpdate(el, statusClass, statusText, bodyHtml) {
         var status = el.querySelector('.tool-status');
         if (status) {
             status.className = statusClass + ' text-[12px] ml-auto';
@@ -581,24 +585,56 @@ App.Chat = (function() {
         }
     }
 
+    function updateToolResult(index, statusClass, statusText, bodyHtml) {
+        if (_debug) console.log('[ZENER] updateToolResult(' + index + ') status=' + statusText);
+        var el = document.getElementById('tool-result-' + index);
+        if (el) {
+            _applyToolResultUpdate(el, statusClass, statusText, bodyHtml);
+            return;
+        }
+        // Element not yet in DOM — retry. This handles the case where
+        // image chunk scripts from a previous tool delay DOM creation.
+        if (_debug) console.warn('[ZENER] updateToolResult(' + index + ') element not found, retrying');
+        var retryCount = 0;
+        var retryInterval = setInterval(function() {
+            retryCount++;
+            var el = document.getElementById('tool-result-' + index);
+            if (el) {
+                clearInterval(retryInterval);
+                if (_debug) console.log('[ZENER] updateToolResult(' + index + ') found after ' + retryCount + ' retries');
+                _applyToolResultUpdate(el, statusClass, statusText, bodyHtml);
+            } else if (retryCount >= 20) {
+                clearInterval(retryInterval);
+                console.warn('[ZENER] updateToolResult(' + index + ') gave up after 20 retries');
+            }
+        }, 50);
+    }
+
     // Chunked tool result image
     var _toolImgBuf = '';
     function toolImgBegin(index, prefix) { _toolImgBuf = prefix || ''; }
     function toolImgChunk(index, data) { _toolImgBuf += data; }
     function toolImgEnd(index) {
-        var el = document.getElementById('tool-result-' + index);
-        if (el) {
-            // Render the image AFTER the collapsible tool result so it is
-            // always visible in the chat stream (not hidden behind the toggle).
-            var wrapper = document.createElement('div');
-            wrapper.className = 'my-2';
-            var img = document.createElement('img');
-            img.src = _toolImgBuf;
-            img.style.cssText = 'max-width:100%; border-radius:6px;';
-            wrapper.appendChild(img);
-            el.insertAdjacentElement('afterend', wrapper);
-        }
+        if (_debug) console.log('[ZENER] toolImgEnd(' + index + ') bufLen=' + _toolImgBuf.length);
+        // Capture and clear buffer synchronously, then defer DOM insertion.
+        // The setTimeout(0) yields control back to WebKit's RunScriptAsync
+        // queue so pending scripts (appendMessage, updateToolResult for
+        // subsequent tools) execute before the large data URI assignment
+        // triggers a layout reflow.
+        var src = _toolImgBuf;
         _toolImgBuf = '';
+        setTimeout(function() {
+            var el = document.getElementById('tool-result-' + index);
+            if (el) {
+                var wrapper = document.createElement('div');
+                wrapper.className = 'my-2';
+                var img = document.createElement('img');
+                img.src = src;
+                img.style.cssText = 'max-width:100%; border-radius:6px;';
+                wrapper.appendChild(img);
+                el.insertAdjacentElement('afterend', wrapper);
+            }
+        }, 0);
     }
 
     // Event delegation for links, toggles, images
@@ -624,6 +660,7 @@ App.Chat = (function() {
                     var index = parts[2];
                     var content = document.querySelector('[data-toggle-type="' + type + '"][data-toggle-index="' + index + '"]');
                     var chevron = target.querySelector('.toggle-chevron');
+                    if (_debug) console.log('[ZENER] toggle ' + type + ':' + index + ' found=' + !!content);
                     if (content) {
                         var expanded = content.style.display === 'none' || content.style.display === '';
                         content.style.display = expanded ? 'block' : 'none';
@@ -727,16 +764,16 @@ App.Chat = (function() {
         toolImgChunk: toolImgChunk,
         toolImgEnd: toolImgEnd,
         showPlanApproval: showPlanApproval,
-        removePlanApproval: removePlanApproval
+        removePlanApproval: removePlanApproval,
+        setDebug: function(on) { _debug = on; }
     };
 })();
 
 // =====================================================================
-// App.Input — textarea, highlight, attachments
+// App.Input — textarea, attachments
 // =====================================================================
 App.Input = (function() {
     var textarea = document.getElementById('input-textarea');
-    var highlightLayer = document.getElementById('highlight-layer');
     var attachmentBar = document.getElementById('attachment-bar');
     var editorContainer = document.getElementById('editor-container');
     var attachments = [];
@@ -747,27 +784,8 @@ App.Input = (function() {
     var _historyIndex = -1;
     var _draft = '';
 
-    function highlightText(text) {
-        var html = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        html = html.replace(/@\{([^}]*)\}/g, '<span class="hl-tag">@{$1}</span>');
-        if (html.endsWith('\n') || html === '') html += '\n';
-        return html;
-    }
-
-    function syncHighlight() {
-        highlightLayer.innerHTML = highlightText(textarea.value);
-        syncScroll();
-        autoResize();
-    }
-
-    function syncScroll() {
-        highlightLayer.scrollTop = textarea.scrollTop;
-        highlightLayer.scrollLeft = textarea.scrollLeft;
-    }
-
     function autoResize() {
         textarea.style.height = 'auto';
-        highlightLayer.style.height = 'auto';
         var scrollHeight = textarea.scrollHeight;
         var newHeight = Math.min(Math.max(scrollHeight, MIN_HEIGHT), MAX_HEIGHT);
         textarea.style.height = newHeight + 'px';
@@ -792,7 +810,7 @@ App.Input = (function() {
                         e.preventDefault();
                         textarea.value = text.substring(0, openIdx) + text.substring(pos);
                         textarea.selectionStart = textarea.selectionEnd = openIdx;
-                        syncHighlight();
+                        autoResize();
                         App.Bridge.sendMsg('text_changed', { text: textarea.value });
                         return;
                     }
@@ -809,7 +827,7 @@ App.Input = (function() {
                         e.preventDefault();
                         textarea.value = text.substring(0, pos) + text.substring(closeIdx + 1);
                         textarea.selectionStart = textarea.selectionEnd = pos;
-                        syncHighlight();
+                        autoResize();
                         App.Bridge.sendMsg('text_changed', { text: textarea.value });
                         return;
                     }
@@ -853,7 +871,7 @@ App.Input = (function() {
     function setTextAndSync(text) {
         textarea.value = text;
         textarea.selectionStart = textarea.selectionEnd = text.length;
-        syncHighlight();
+        autoResize();
     }
 
     function handleArrowHistory(e) {
@@ -890,7 +908,7 @@ App.Input = (function() {
 
     textarea.addEventListener('input', function() {
         if (_historyIndex !== -1) _historyIndex = -1;
-        syncHighlight();
+        autoResize();
         App.Bridge.sendMsg('text_changed', { text: textarea.value });
     });
     textarea.addEventListener('keydown', function(e) {
@@ -898,7 +916,6 @@ App.Input = (function() {
         handleArrowHistory(e);
         handleEnter(e);
     });
-    textarea.addEventListener('scroll', syncScroll);
 
     // Paste handler - intercept image paste
     textarea.addEventListener('paste', function(e) {
@@ -1047,20 +1064,20 @@ App.Input = (function() {
     function clear() {
         textarea.value = '';
         clearAttachments();
-        syncHighlight();
+        autoResize();
     }
 
     function focus() { textarea.focus(); }
 
     function setText(text) {
         textarea.value = text;
-        syncHighlight();
+        autoResize();
     }
 
     function appendText(text) {
         if (textarea.value) textarea.value += ' ';
         textarea.value += text + ' ';
-        syncHighlight();
+        autoResize();
     }
 
     function submit() {
@@ -1087,7 +1104,7 @@ App.Input = (function() {
     }
 
     // Init
-    syncHighlight();
+    autoResize();
 
     return {
         clear: clear,

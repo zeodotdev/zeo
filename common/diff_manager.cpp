@@ -343,6 +343,11 @@ void DIFF_MANAGER::OnViewBefore( KIGFX::VIEW* aView )
         {
             if( state.callbacks.onUndo )
                 state.callbacks.onUndo();
+
+            // Re-check: the callback may have triggered ClearDiff() which deletes state.item
+            if( !state.item )
+                return;
+
             state.item->SetShowingBefore( true );
         }
 
@@ -372,6 +377,11 @@ void DIFF_MANAGER::OnViewAfter( KIGFX::VIEW* aView )
         {
             if( state.callbacks.onRedo )
                 state.callbacks.onRedo();
+
+            // Re-check: the callback may have triggered ClearDiff() which deletes state.item
+            if( !state.item )
+                return;
+
             state.item->SetShowingBefore( false );
         }
 

@@ -528,12 +528,12 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
                                   true,   // resetRef
                                   true ); // resetOtherFields
 
-            // Hide non-essential fields to reduce visual clutter on the schematic sheet.
-            // Only Reference and Value are shown; Description, Footprint, Datasheet, etc. are hidden.
+            // TEMP PATCH: Hide all fields (including Reference and Value) to avoid schematic clutter.
+            // TODO: Implement structured neat label placement instead of blanket-hiding.
             for( SCH_FIELD& field : symbol->GetFields() )
             {
-                if( field.GetId() != FIELD_T::REFERENCE && field.GetId() != FIELD_T::VALUE )
-                    field.SetVisible( false );
+                // if( field.GetId() != FIELD_T::REFERENCE && field.GetId() != FIELD_T::VALUE )
+                field.SetVisible( false );
             }
         }
 
@@ -2798,9 +2798,32 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
 
     kiapi::schematic::commands::RunERCResponse response;
 
+    // Record existing exclusions before clearing markers (matches dialog_erc behavior)
+    m_frame->Schematic().RecordERCExclusions();
+
     // Clear existing ERC markers before running new tests to prevent accumulation
     SCH_SCREENS allScreens( m_frame->Schematic().Root() );
     allScreens.DeleteAllMarkers( MARKER_BASE::MARKER_ERC, true );
+
+    // Check for annotation errors (unannotated symbols, duplicate references)
+    int annotationErrors = m_frame->CheckAnnotate(
+            []( ERCE_T aType, const wxString& aMsg, SCH_REFERENCE* aItemA, SCH_REFERENCE* aItemB )
+            {
+                std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( aType );
+                ercItem->SetErrorMessage( aMsg );
+
+                if( aItemB )
+                    ercItem->SetItems( aItemA->GetSymbol(), aItemB->GetSymbol() );
+                else
+                    ercItem->SetItems( aItemA->GetSymbol() );
+
+                SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ),
+                                                     aItemA->GetSymbol()->GetPosition() );
+                aItemA->GetSheetPath().LastScreen()->Append( marker );
+            } );
+
+    wxLogTrace( "SCHEMATIC", "handleRunERC: CheckAnnotate found %d annotation errors",
+                annotationErrors );
 
     // Run ERC tests
     ERC_TESTER tester( &m_frame->Schematic() );
@@ -2856,6 +2879,9 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
 
     response.set_error_count( errorCount );
     response.set_warning_count( warningCount );
+
+    wxLogTrace( "SCHEMATIC", "handleRunERC: %d errors, %d warnings (%d annotation errors)",
+                errorCount, warningCount, annotationErrors );
 
     m_frame->GetCanvas()->Refresh();
 
@@ -4152,6 +4178,20 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
         info->set_keywords( match.symbol->GetKeyWords().ToStdString() );
         info->set_unit_count( match.symbol->GetUnitCount() );
         info->set_is_power( match.symbol->IsPower() );
+
+        // Populate pin information
+        for( SCH_PIN* pin : match.symbol->GetPins() )
+        {
+            schematic::commands::PinInfo* pinInfo = info->add_pins();
+            pinInfo->set_number( pin->GetNumber().ToStdString() );
+            pinInfo->set_name( pin->GetName().ToStdString() );
+            kiapi::common::PackVector2Sch( *pinInfo->mutable_position(), pin->GetPosition() );
+            pinInfo->set_orientation( static_cast<int>( pin->GetOrientation() ) );
+            pinInfo->set_electrical_type( magic_enum::enum_name( pin->GetType() ).data() );
+            pinInfo->set_graphical_style( magic_enum::enum_name( pin->GetShape() ).data() );
+            pinInfo->set_unit( pin->GetUnit() );
+        }
+
         count++;
     }
 

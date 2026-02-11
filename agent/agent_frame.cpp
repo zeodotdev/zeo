@@ -203,7 +203,7 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
         "<span class=\"%s text-[12px] ml-auto\"><strong>%s</strong></span>"
         "</a>"
         // Expanded content (hidden by default)
-        "<div class=\"p-3 pt-0 border-t border-border-dark\" "
+        "<div class=\"tool-result-body p-3 pt-0 border-t border-border-dark\" "
         "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:%s;\">"
         "<pre class=\"text-text-secondary font-mono text-[12px] whitespace-pre-wrap break-words m-0 mt-2\">%s</pre>"
         "%s"
@@ -573,6 +573,53 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             }
 
             return projectContext.dump( 2 );
+        } );
+
+    // Schematic summary callback for user edit detection between turns.
+    // Returns a JSON snapshot of all symbols and labels for diffing.
+    m_chatController->SetSchematicSummaryFn(
+        [this]() -> std::string {
+            // Build a lightweight Python script that dumps schematic state as JSON
+            std::string pyCode =
+                "import json\n"
+                "r = {\"symbols\": {}, \"labels\": {}, \"wire_count\": 0}\n"
+                "try:\n"
+                "    if hasattr(sch, 'refresh_document'):\n"
+                "        sch.refresh_document()\n"
+                "    for sym in sch.symbols.get_all():\n"
+                "        uid = str(sym.id.value) if hasattr(sym, 'id') else ''\n"
+                "        pos = sym.position\n"
+                "        r['symbols'][uid] = {\n"
+                "            'ref': getattr(sym, 'reference', '?'),\n"
+                "            'val': getattr(sym, 'value', ''),\n"
+                "            'lib': str(getattr(sym, 'lib_id', '')),\n"
+                "            'x': round(pos.x / 1e6, 2),\n"
+                "            'y': round(pos.y / 1e6, 2),\n"
+                "            'ang': getattr(sym, 'angle', 0)\n"
+                "        }\n"
+                "    for lbl in sch.labels.get_all():\n"
+                "        uid = str(lbl.id.value) if hasattr(lbl, 'id') else ''\n"
+                "        pos = lbl.position\n"
+                "        r['labels'][uid] = {\n"
+                "            'name': getattr(lbl, 'text', getattr(lbl, 'name', '')),\n"
+                "            'x': round(pos.x / 1e6, 2),\n"
+                "            'y': round(pos.y / 1e6, 2)\n"
+                "        }\n"
+                "    try:\n"
+                "        r['wire_count'] = len(sch.crud.get_wires())\n"
+                "    except:\n"
+                "        pass\n"
+                "except:\n"
+                "    pass\n"
+                "print(json.dumps(r))\n";
+
+            std::string result = SendRequest( FRAME_TERMINAL, "run_shell sch " + pyCode );
+
+            // Validate result is JSON (not an error message)
+            if( result.empty() || result[0] != '{' )
+                return "";
+
+            return result;
         } );
 
     // Set model on controller
@@ -1285,9 +1332,8 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
         m_pendingToolCalls = json::array();
     }
 
-    // Replace approval box with "Cancelled" if an editor approval was pending
-    if( ( m_pendingOpenSch || m_pendingOpenPcb )
-        && !m_activeRunningHtml.IsEmpty() && m_activeToolResultIdx >= 0 )
+    // Replace active "Running..." tool with "Cancelled" in both DOM and internal HTML
+    if( !m_activeRunningHtml.IsEmpty() && m_activeToolResultIdx >= 0 )
     {
         wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
         wxString cancelledHtml = BuildToolResultHtml( m_activeToolResultIdx, desc,
@@ -1301,11 +1347,20 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
             "break-words m-0 mt-2\">User cancelled</pre>" );
     }
 
+    // Safety net: cancel ALL remaining "Running..." tool statuses in the DOM.
+    // Handles edge cases where queued tool events created "Running..." elements
+    // that aren't tracked by m_activeToolResultIdx.
+    m_bridge->PushCancelRunningTools();
+
     // Clear pending editor open/close request state (prevents stale approval button clicks)
     m_pendingOpenSch = false;
     m_pendingOpenPcb = false;
     m_pendingOpenToolId.clear();
     m_pendingOpenFilePath.Clear();
+
+    // Take schematic snapshot so user edits before next message are detected
+    if( m_chatController )
+        m_chatController->TakeSchematicSnapshot();
 
     // Transition state machine to IDLE
     m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
@@ -1741,6 +1796,7 @@ void AGENT_FRAME::OnBridgeHistoryOpen()
         entries.push_back( e );
     }
 
+    m_bridge->PushActiveChat( m_chatHistoryDb.GetConversationId() );
     m_bridge->PushHistoryList( entries );
     m_bridge->PushHistoryShow( true );
 }
@@ -2294,6 +2350,22 @@ static std::string StripProjectContext( const std::string& aText )
 }
 
 
+static std::string StripSchematicChanges( const std::string& aText )
+{
+    static const std::string PREFIX = "<schematic_changes_by_user>\n";
+    static const std::string SUFFIX = "</schematic_changes_by_user>\n\n";
+
+    if( aText.compare( 0, PREFIX.size(), PREFIX ) == 0 )
+    {
+        size_t endPos = aText.find( SUFFIX );
+        if( endPos != std::string::npos )
+            return aText.substr( endPos + SUFFIX.size() );
+    }
+
+    return aText;
+}
+
+
 void AGENT_FRAME::RenderChatHistory()
 {
     // Clear historical thinking storage
@@ -2319,7 +2391,10 @@ void AGENT_FRAME::RenderChatHistory()
             std::string content = msg["content"];
 
             if( role == "user" )
+            {
                 content = StripProjectContext( content );
+                content = StripSchematicChanges( content );
+            }
 
             // Strip leading newlines to match live streaming behavior
             size_t start = content.find_first_not_of( "\n\r" );
@@ -2386,7 +2461,10 @@ void AGENT_FRAME::RenderChatHistory()
                     std::string text = block.value( "text", "" );
 
                     if( role == "user" )
+                    {
                         text = StripProjectContext( text );
+                        text = StripSchematicChanges( text );
+                    }
 
                     // Strip leading newlines to match live streaming behavior
                     size_t start = text.find_first_not_of( "\n\r" );
@@ -2680,82 +2758,6 @@ void AGENT_FRAME::OnPcbChangeHandled( bool aAccepted )
 void AGENT_FRAME::SetAgentTargetSheet( const KIID& aSheetId, const wxString& aSheetName )
 {
     m_agentWorkspace.SetTargetSheet( aSheetId );
-}
-
-
-void AGENT_FRAME::BeginAgentTransaction()
-{
-    if( m_agentWorkspace.BeginTransaction() )
-    {
-        wxLogInfo( "Agent transaction started" );
-
-        // Set up conflict callback
-        m_agentWorkspace.SetConflictCallback(
-            [this]( const KIID& aItemId, const CONFLICT_INFO& aInfo )
-            {
-                OnConflictDetected( aItemId, aInfo );
-            } );
-    }
-}
-
-
-void AGENT_FRAME::EndAgentTransaction( bool aCommit )
-{
-    if( m_agentWorkspace.EndTransaction( aCommit ) )
-    {
-        if( aCommit )
-        {
-            wxLogInfo( "Agent transaction committed - pending approval" );
-            // Changes are now staged and waiting for user approval
-            // The pending changes panel will show them
-        }
-        else
-        {
-            wxLogInfo( "Agent transaction reverted" );
-        }
-    }
-}
-
-
-void AGENT_FRAME::OnConflictDetected( const KIID& aItemId, const CONFLICT_INFO& aInfo )
-{
-    wxLogInfo( "Conflict detected for item %s: %s",
-                aItemId.AsString(), aInfo.m_propertyName );
-
-    // Update the conflict display in the pending changes panel
-    UpdateConflictDisplay();
-
-    // Optionally show a notification to the user
-    AppendHtml( wxString::Format(
-        "<p style='color: #FFA500;'><b>Conflict:</b> You modified item %s which the agent was also editing.</p>",
-        aItemId.AsString() ) );
-}
-
-
-void AGENT_FRAME::OnConflictResolved( const KIID& aItemId, CONFLICT_RESOLUTION aResolution )
-{
-    m_agentWorkspace.ResolveConflict( aItemId, aResolution );
-    UpdateConflictDisplay();
-
-    wxString resolutionStr;
-    switch( aResolution )
-    {
-    case CONFLICT_RESOLUTION::KEEP_USER:   resolutionStr = "kept your version"; break;
-    case CONFLICT_RESOLUTION::KEEP_AGENT:  resolutionStr = "kept agent's version"; break;
-    case CONFLICT_RESOLUTION::AUTO_MERGE:  resolutionStr = "merged both changes"; break;
-    default:                               resolutionStr = "resolved manually"; break;
-    }
-
-    AppendHtml( wxString::Format(
-        "<p><i>Conflict for %s: %s.</i></p>",
-        aItemId.AsString(), resolutionStr ) );
-}
-
-
-void AGENT_FRAME::UpdateConflictDisplay()
-{
-    // Conflicts are now handled via the diff overlay in each editor
-    // The pending changes panel just lists sheets with changes
 }
 
 
@@ -3060,6 +3062,13 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     if( !data )
         return;
 
+    // Skip queued events that arrive after cancellation
+    if( m_stopRequested )
+    {
+        delete data;
+        return;
+    }
+
     wxLogInfo( "AGENT_FRAME::OnChatToolStart - tool: %s (id=%s)",
             data->toolName.c_str(), data->toolId.c_str() );
 
@@ -3118,6 +3127,9 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
         m_activeRunningHtml = BuildRunningToolHtml( idx, desc );
         m_activeToolResultIdx = idx;
+
+        wxLogInfo( "AGENT_FRAME::OnChatToolStart - assigned idx=%d (counter now %d)",
+                   idx, m_toolResultCounter );
 
         // Append running box to permanent DOM
         AppendHtml( m_activeRunningHtml );
@@ -3506,6 +3518,13 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
     if( !data )
         return;
 
+    // Skip queued events that arrive after cancellation
+    if( m_stopRequested )
+    {
+        delete data;
+        return;
+    }
+
     wxLogInfo( "AGENT_FRAME::OnChatToolComplete - tool: %s, success: %s",
             data->toolName.c_str(), data->success ? "true" : "false" );
 
@@ -3576,6 +3595,10 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
         }
 
         m_bridge->PushToolResultImageEnd( idx );
+
+        size_t numChunks = ( b64.length() + chunkSize - 1 ) / chunkSize;
+        wxLogInfo( "AGENT_FRAME::OnChatToolComplete - pushed %zu image chunks for idx=%d",
+                   numChunks, idx );
     }
 
     // Update internal HTML tracking (replace running HTML with full completed HTML).
@@ -3588,10 +3611,33 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
     if( !m_activeRunningHtml.IsEmpty() )
     {
+        size_t prevLen = m_fullHtmlContent.length();
         m_fullHtmlContent.Replace( m_activeRunningHtml, completedHtml );
+        bool replaced = ( m_fullHtmlContent.length() != prevLen );
         m_htmlBeforeAgentResponse.Replace( m_activeRunningHtml, completedHtml );
+
+        if( !replaced )
+            wxLogWarning( "AGENT_FRAME::OnChatToolComplete - Replace FAILED for idx=%d "
+                          "(running HTML not found in m_fullHtmlContent)", idx );
     }
     m_activeRunningHtml.Clear();
+
+    // Safety net: if this tool had an image, re-push the status update on the next
+    // event loop iteration. The 50+ image chunk scripts can delay or disrupt the
+    // original updateToolResult call; this idempotent re-push ensures the DOM reflects
+    // the completed state.
+    if( data->hasImage && !data->imageBase64.empty() )
+    {
+        wxString safetyStatusClass = statusClass;
+        wxString safetyStatusText = statusText;
+        wxString safetyBody = textBody;
+        int safetyIdx = idx;
+
+        CallAfter( [this, safetyIdx, safetyStatusClass, safetyStatusText, safetyBody]() {
+            m_bridge->PushToolResultUpdate( safetyIdx, safetyStatusClass, safetyStatusText,
+                                            safetyBody );
+        } );
+    }
 
     // After schematic tools complete successfully, trigger editor refresh for live UI feedback
     if( data->success && data->toolName == "sch_modify" )
@@ -3663,6 +3709,12 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
         {
             m_chatHistoryDb.Save( m_chatHistory );
         }
+    }
+
+    // Take schematic snapshot for user edit detection on next message
+    if( !continuing && m_chatController )
+    {
+        m_chatController->TakeSchematicSnapshot();
     }
 
     // Show plan approval button when plan mode turn completes

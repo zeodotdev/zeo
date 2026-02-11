@@ -1471,7 +1471,8 @@ void SCH_EDIT_FRAME::OnModify()
 
     // Check if agent-tracked items were deleted by the user
     // Skip when showing "before" state — items are intentionally absent from screen
-    if( m_hasAgentPendingChanges && !m_showingAgentBefore
+    // Skip during undo/redo — items are temporarily absent but on the redo/undo list
+    if( m_hasAgentPendingChanges && !m_showingAgentBefore && !m_inUndoRedo
         && m_agentChangeTracker && m_agentChangeTracker->HasChanges() )
     {
         std::set<KIID> trackedItems = m_agentChangeTracker->GetAllTrackedItems();
@@ -3521,10 +3522,10 @@ bool SCH_EDIT_FRAME::HasAgentPendingChanges() const
         int baseline = m_agentChangeTracker->GetUndoBaseline();
         int currentUndoCount = GetUndoCommandCount();
 
-        if( currentUndoCount <= baseline )
+        if( currentUndoCount <= baseline && GetRedoCommandCount() == 0 )
         {
             wxLogInfo( "SCH: HasAgentPendingChanges: returning false — stale tracker "
-                       "(undoCount=%d <= baseline=%d, agentUndoCount=%d)",
+                       "(undoCount=%d <= baseline=%d, agentUndoCount=%d, no redo entries)",
                        currentUndoCount, baseline, agentUndoCount );
             return false;
         }
@@ -3539,6 +3540,11 @@ void SCH_EDIT_FRAME::ClearStaleAgentChanges()
     if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
         return;
 
+    // Don't auto-reject while viewing "before" state via diff overlay —
+    // the undos are intentional for diff viewing, not actual user undos
+    if( m_showingAgentBefore )
+        return;
+
     int agentUndoCount = m_agentChangeTracker->GetAgentUndoCount();
     int currentUndoCount = GetUndoCommandCount();
     int baseline = m_agentChangeTracker->GetUndoBaseline();
@@ -3548,6 +3554,16 @@ void SCH_EDIT_FRAME::ClearStaleAgentChanges()
 
     if( agentUndoCount > 0 && currentUndoCount <= baseline )
     {
+        // If there are redo entries, the user just undid agent changes and can still
+        // redo them — don't auto-reject yet. Only auto-reject when the redo list is
+        // empty (user made new edits after undoing, which clears the redo list).
+        if( GetRedoCommandCount() > 0 )
+        {
+            wxLogInfo( "SCH: All agent undo entries undone but redo available (%d entries), "
+                       "keeping diff overlay", GetRedoCommandCount() );
+            return;
+        }
+
         wxLogInfo( "SCH: All agent undo entries undone (undoCount %d <= baseline %d), auto-rejecting",
                    currentUndoCount, baseline );
         m_agentChangeTracker->ClearTrackedItems();
@@ -3863,12 +3879,20 @@ void SCH_EDIT_FRAME::ShowAgentChangesBefore()
     int baseline = m_agentChangeTracker->GetUndoBaseline();
     int numToUndo = currentUndoCount - baseline;
 
+    // Cache the bbox before undoing so the overlay can still render at the correct position
+    if( numToUndo > 0 )
+    {
+        m_cachedAgentBBox = ComputeTrackedItemsBBox();
+
+        // Set flag BEFORE the undo loop so that ClearStaleAgentChanges() and OnModify()
+        // know these undos are intentional diff viewing, not actual user undos
+        m_showingAgentBefore = true;
+    }
+
     for( int i = 0; i < numToUndo; i++ )
     {
         GetToolManager()->RunAction( ACTIONS::undo );
     }
-
-    m_showingAgentBefore = true;
 }
 
 
@@ -3892,6 +3916,10 @@ void SCH_EDIT_FRAME::ShowAgentChangesAfter()
 
 BOX2I SCH_EDIT_FRAME::ComputeTrackedItemsBBox() const
 {
+    // When showing "before" state, items are undone off screen — use cached bbox
+    if( m_showingAgentBefore )
+        return m_cachedAgentBBox;
+
     BOX2I bbox;
 
     if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )

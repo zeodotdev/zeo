@@ -300,6 +300,57 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
     code << "result = None\n";
     code << "\n";
 
+    // For wire elements, emit auto-junction helpers before the try block
+    if( elementType == "wire" )
+    {
+        code << "def _wire_pts(wires):\n";
+        code << "    pts = set()\n";
+        code << "    for w in wires:\n";
+        code << "        s, e = getattr(w, 'start', None), getattr(w, 'end', None)\n";
+        code << "        if s: pts.add((round(s.x / 1_000_000, 2), round(s.y / 1_000_000, 2)))\n";
+        code << "        if e: pts.add((round(e.x / 1_000_000, 2), round(e.y / 1_000_000, 2)))\n";
+        code << "    return list(pts)\n";
+        code << "\n";
+        code << "def _auto_junction(check_pts):\n";
+        code << "    try:\n";
+        code << "        all_wires = sch.crud.get_wires()\n";
+        code << "        junc_set = set()\n";
+        code << "        for j in sch.crud.get_junctions():\n";
+        code << "            p = getattr(j, 'position', None)\n";
+        code << "            if p: junc_set.add((round(p.x / 1_000_000, 2), round(p.y / 1_000_000, 2)))\n";
+        code << "        pin_set = set()\n";
+        code << "        for sym in sch.symbols.get_all():\n";
+        code << "            for pin in sym.pins:\n";
+        code << "                try:\n";
+        code << "                    tp = sch.symbols.get_transformed_pin_position(sym, pin.number)\n";
+        code << "                    if tp: pin_set.add((round(tp['position'].x / 1_000_000, 2), round(tp['position'].y / 1_000_000, 2)))\n";
+        code << "                except: pass\n";
+        code << "        added = 0\n";
+        code << "        for pt in check_pts:\n";
+        code << "            key = (round(pt[0], 2), round(pt[1], 2))\n";
+        code << "            if key in junc_set: continue\n";
+        code << "            count = 0\n";
+        code << "            for w in all_wires:\n";
+        code << "                s, e = getattr(w, 'start', None), getattr(w, 'end', None)\n";
+        code << "                if not s or not e: continue\n";
+        code << "                sk = (round(s.x / 1_000_000, 2), round(s.y / 1_000_000, 2))\n";
+        code << "                ek = (round(e.x / 1_000_000, 2), round(e.y / 1_000_000, 2))\n";
+        code << "                if sk == key: count += 1\n";
+        code << "                if ek == key: count += 1\n";
+        code << "                if sk != key and ek != key:\n";
+        code << "                    if abs(sk[1] - ek[1]) < 0.01 and abs(key[1] - sk[1]) < 0.01:\n";
+        code << "                        if min(sk[0], ek[0]) < key[0] < max(sk[0], ek[0]): count += 2\n";
+        code << "                    elif abs(sk[0] - ek[0]) < 0.01 and abs(key[0] - sk[0]) < 0.01:\n";
+        code << "                        if min(sk[1], ek[1]) < key[1] < max(sk[1], ek[1]): count += 2\n";
+        code << "            if key in pin_set: count += 1\n";
+        code << "            if count >= 3:\n";
+        code << "                sch.wiring.add_junction(Vector2.from_xy_mm(key[0], key[1]))\n";
+        code << "                added += 1\n";
+        code << "        return added\n";
+        code << "    except: return 0\n";
+        code << "\n";
+    }
+
     // IPC attempt
     code << "# Try IPC first\n";
     code << "try:\n";
@@ -442,13 +493,15 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
                 }
                 code << "    ]\n";
                 code << "    wires = sch.wiring.wire_path((sym1, '" << EscapePythonString( fromPinNum ) << "'), waypoints, (sym2, '" << EscapePythonString( toPinNum ) << "'))\n";
-                code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires)}\n";
+                code << "    _junc_added = _auto_junction(_wire_pts(wires))\n";
+                code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires), 'junction_count': _junc_added}\n";
             }
             else
             {
                 // No waypoints - use auto_wire for L-shaped orthogonal routing
                 code << "    wires = sch.wiring.auto_wire(sym1, '" << EscapePythonString( fromPinNum ) << "', sym2, '" << EscapePythonString( toPinNum ) << "')\n";
-                code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires)}\n";
+                code << "    _junc_added = _auto_junction(_wire_pts(wires))\n";
+                code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires), 'junction_count': _junc_added}\n";
             }
         }
         // Mode 2: from_pin + points (no to_pin) - start from pin, extend through points
@@ -481,7 +534,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
             }
 
             code << "    wires = sch.wiring.add_wires(all_points)\n";
-            code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires)}\n";
+            code << "    _junc_added = _auto_junction(_wire_pts(wires))\n";
+            code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires), 'junction_count': _junc_added}\n";
         }
         // Mode 3: points only - explicit coordinate-based wiring
         else if( aInput.contains( "points" ) && aInput["points"].is_array() )
@@ -490,6 +544,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
             if( points.size() >= 2 )
             {
                 code << "    wires_created = 0\n";
+                code << "    _check_pts = set()\n";
                 for( size_t i = 0; i < points.size() - 1; ++i )
                 {
                     if( points[i].is_array() && points[i].size() >= 2 &&
@@ -501,10 +556,13 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
                         double y2 = SnapToGrid( points[i + 1][1].get<double>() );
 
                         code << "    sch.wiring.add_wire(Vector2.from_xy_mm(" << x1 << ", " << y1 << "), Vector2.from_xy_mm(" << x2 << ", " << y2 << "))\n";
+                        code << "    _check_pts.add((" << x1 << ", " << y1 << "))\n";
+                        code << "    _check_pts.add((" << x2 << ", " << y2 << "))\n";
                         code << "    wires_created += 1\n";
                     }
                 }
-                code << "    result = {'status': 'success', 'source': 'ipc', 'count': wires_created}\n";
+                code << "    _junc_added = _auto_junction(list(_check_pts))\n";
+                code << "    result = {'status': 'success', 'source': 'ipc', 'count': wires_created, 'junction_count': _junc_added}\n";
             }
         }
         else

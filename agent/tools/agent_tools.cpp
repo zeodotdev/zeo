@@ -91,30 +91,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( createProject );
 
-    // sch_open_sheet - DISABLED: Navigation changes user's view
-    // Agent should work on sheets via file paths without navigating user's view
-    // LLM_TOOL schOpenSheet;
-    // schOpenSheet.name = "sch_open_sheet";
-    // schOpenSheet.description = "Navigate to a specific sheet in a hierarchical schematic. "
-    //                            "Use sheet_path for navigation within the current hierarchy (e.g., '/root_uuid/child_uuid'), "
-    //                            "or file_path to open a specific .kicad_sch file directly. "
-    //                            "REQUIRES: Schematic editor must be open.";
-    // schOpenSheet.input_schema = {
-    //     { "type", "object" },
-    //     { "properties", {
-    //         { "sheet_path", {
-    //             { "type", "string" },
-    //             { "description", "Sheet path in hierarchy format (e.g., '/uuid1/uuid2' or use sheet names)" }
-    //         }},
-    //         { "file_path", {
-    //             { "type", "string" },
-    //             { "description", "Direct path to .kicad_sch file to open" }
-    //         }}
-    //     }},
-    //     { "required", json::array() }
-    // };
-    // tools.push_back( schOpenSheet );
-
     // ===== Direct File Tools (sch_*, pcb_*) =====
 
     // sch_get_summary - Get high-level overview of schematic via IPC
@@ -602,6 +578,28 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "required", json::array( { "sheet_name" } ) }
     };
     tools.push_back( schAddSheet );
+
+    // sch_switch_sheet - Navigate between sheets in a hierarchical schematic
+    LLM_TOOL schSwitchSheet;
+    schSwitchSheet.name = "sch_switch_sheet";
+    schSwitchSheet.description =
+        "Navigate to a specific sheet in a hierarchical schematic. "
+        "Use the human-readable sheet name or path (e.g., 'Power Supply' or '/Power Supply/'). "
+        "Use '/' to navigate back to the root sheet. "
+        "Call with no arguments to list available sheets. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schSwitchSheet.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "sheet_path", {
+                { "type", "string" },
+                { "description", "Sheet to navigate to. Use sheet name (e.g., 'Power Supply'), "
+                                "path (e.g., '/Power Supply/'), or '/' for root sheet." }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    tools.push_back( schSwitchSheet );
 
     // sch_connect_net - Connect multiple pins on the same net in one call
     LLM_TOOL schConnectNet;

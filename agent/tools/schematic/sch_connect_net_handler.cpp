@@ -140,7 +140,7 @@ try:
             sym_cx = sym.position.x / 1_000_000
             sym_cy = sym.position.y / 1_000_000
             pin_dir = 'v' if abs(py - sym_cy) >= abs(px - sym_cx) else 'h'
-        pin_positions.append({'ref': ref, 'pin': pin_id, 'x': snap_to_grid(px), 'y': snap_to_grid(py), 'sym': sym, 'dir': pin_dir})
+        pin_positions.append({'ref': ref, 'pin': pin_id, 'x': snap_to_grid(px), 'y': snap_to_grid(py), 'raw_x': px, 'raw_y': py, 'sym': sym, 'dir': pin_dir})
 
     wire_count = 0
     junction_count = 0
@@ -153,8 +153,8 @@ try:
     if len(pin_positions) == 2:
         # 2-pin case: midpoint-bend routing
         p0, p1 = pin_positions[0], pin_positions[1]
-        x0, y0 = p0['x'], p0['y']
-        x1, y1 = p1['x'], p1['y']
+        x0, y0 = p0['raw_x'], p0['raw_y']
+        x1, y1 = p1['raw_x'], p1['raw_y']
         if abs(x0 - x1) < 0.01 or abs(y0 - y1) < 0.01:
             sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), Vector2.from_xy_mm(x1, y1))
             wire_count = 1
@@ -186,15 +186,12 @@ try:
         y_spread = max(ys) - min(ys)
         is_horizontal = x_spread >= y_spread
 
-        # Build obstacle map from all symbols not in this net
+        # Build obstacle map from all symbols (including connected ones)
         connected_refs = {p['ref'] for p in pin_positions}
         obstacles = []
         try:
             all_symbols = sch.symbols.get_all()
             for obs_sym in all_symbols:
-                obs_ref = getattr(obs_sym, 'reference', '')
-                if obs_ref in connected_refs:
-                    continue
                 obs_pos = [obs_sym.position.x / 1_000_000, obs_sym.position.y / 1_000_000]
                 obs_pxs = [obs_pos[0]]
                 obs_pys = [obs_pos[1]]
@@ -334,7 +331,7 @@ try:
                 off_trunk = abs(p['x'] - trunk_perp) > 0.01
 
             if off_trunk:
-                pin_x, pin_y = p['x'], p['y']
+                pin_x, pin_y = p['raw_x'], p['raw_y']
                 tgt_x, tgt_y = p['_tgt']
                 if abs(pin_x - tgt_x) < 0.01 or abs(pin_y - tgt_y) < 0.01:
                     # Collinear: straight wire
@@ -381,7 +378,7 @@ try:
 
         # Count pins as branches at their positions
         for p in pin_positions:
-            _track(p['x'], p['y'])
+            _track(p['raw_x'], p['raw_y'])
 
         # Account for trunk passing through interior points
         for key in list(_wire_ep.keys()):
@@ -401,7 +398,10 @@ try:
                 junction_count += 1
                 _junctions_done.add(key)
 
-    pin_info = [{'ref': p['ref'], 'pin': p['pin'], 'position': [p['x'], p['y']]} for p in pin_positions]
+    pin_info = [{'ref': p['ref'], 'pin': p['pin'], 'position': [p['raw_x'], p['raw_y']]} for p in pin_positions]
+    all_rx = [p['raw_x'] for p in pin_positions]
+    all_ry = [p['raw_y'] for p in pin_positions]
+    wire_span = (max(all_rx) - min(all_rx)) + (max(all_ry) - min(all_ry))
     result = {
         'status': 'success',
         'source': 'ipc',
@@ -409,6 +409,8 @@ try:
         'wire_count': wire_count,
         'junction_count': junction_count
     }
+    if wire_span > 50.0:
+        result['warning'] = f'Long wire path ({wire_span:.1f}mm). Verify pins are on the correct sheet section.'
 
 except Exception as e:
     result = {'status': 'error', 'message': str(e)}

@@ -313,10 +313,12 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "- Add 'power:PWR_FLAG' on nets powered by connectors to fix 'Power pin not driven'\n"
         "- Use no_connect on unused pins to fix 'Unconnected pin' warnings\n\n"
         "ELEMENT TYPES:\n"
-        "- symbol: {element_type, lib_id, position, angle?, mirror?, reference?, properties?}\n"
+        "- symbol: {element_type, lib_id, position, angle?, mirror?, unit?, reference?, properties?}\n"
         "- power: {element_type, lib_id, position, angle?} - GND: 0=bars down(standard), VCC: 0=bar up(standard)\n"
         "- wire: {element_type, from_pin:{ref,pin}, to_pin:{ref,pin}, waypoints?} or {points:[[x,y],...]}\n"
-        "- junction, label, no_connect\n\n"
+        "- label: {element_type, text, position, label_type?, angle?} - label_type: local|global|hierarchical. "
+"Angle auto-detected from nearby pin/wire direction if omitted.\n"
+"- junction, no_connect\n\n"
         "EXAMPLE (horizontal resistor with GND):\n"
         "elements: [\n"
         "  {element_type:'symbol', lib_id:'Device:R', position:[50.8,50.8], angle:90},\n"
@@ -352,6 +354,10 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         { "mirror", {
                             { "type", "string" },
                             { "enum", json::array( { "none", "x", "y" } ) }
+                        }},
+                        { "unit", {
+                            { "type", "integer" },
+                            { "description", "Unit number for multi-unit symbols (e.g., 1-3 for LM358). Default: 1" }
                         }},
                         { "reference", {
                             { "type", "string" },

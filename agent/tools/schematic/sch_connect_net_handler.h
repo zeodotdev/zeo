@@ -35,11 +35,6 @@ private:
      * Helper to escape strings for Python code generation.
      */
     std::string EscapePythonString( const std::string& aStr ) const;
-
-    /**
-     * Generate Python code preamble to refresh document specifier.
-     */
-    std::string GenerateRefreshPreamble() const;
 };
 
 #endif // SCH_CONNECT_NET_HANDLER_H

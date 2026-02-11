@@ -107,6 +107,12 @@ private:
     static bool IsFileModifyingCommand( const std::string& aCommandName );
 
     /**
+     * Check if a command is a known filesystem browsing command
+     * (recursive directory traversal that can trigger macOS permission dialogs).
+     */
+    static bool IsFilesystemBrowseCommand( const std::string& aCommandName );
+
+    /**
      * Parse command arguments, respecting quotes.
      */
     static std::vector<std::string> ParseArguments( const std::string& aCommand );

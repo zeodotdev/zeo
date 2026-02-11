@@ -79,6 +79,17 @@ static const std::set<std::string> BLOCKED_COMMANDS = {
     "doas",    // Alternative to sudo
 };
 
+// Commands that recursively traverse directories.
+// Their target directory arguments must be within allowed paths to prevent
+// macOS permission dialogs when traversing protected directories.
+static const std::set<std::string> FILESYSTEM_BROWSE_COMMANDS = {
+    "find",    // Recursive file search
+    "locate",  // Database-based file search
+    "mdfind",  // macOS Spotlight search
+    "tree",    // Recursive directory listing
+    "du",      // Disk usage (recursive traversal)
+};
+
 // Safe system paths that are allowed as redirect targets
 static const std::set<std::string> SAFE_REDIRECT_TARGETS = {
     "/dev/null",
@@ -96,6 +107,17 @@ bool TerminalCommandValidator::IsFileModifyingCommand( const std::string& aComma
         cmdName = cmdName.substr( lastSlash + 1 );
 
     return FILE_MODIFY_COMMANDS.count( cmdName ) > 0;
+}
+
+
+bool TerminalCommandValidator::IsFilesystemBrowseCommand( const std::string& aCommandName )
+{
+    std::string cmdName = aCommandName;
+    size_t lastSlash = cmdName.find_last_of( '/' );
+    if( lastSlash != std::string::npos )
+        cmdName = cmdName.substr( lastSlash + 1 );
+
+    return FILESYSTEM_BROWSE_COMMANDS.count( cmdName ) > 0;
 }
 
 
@@ -349,6 +371,73 @@ std::vector<std::string> TerminalCommandValidator::ParseSimpleCommand( const std
             }
         }
     }
+    else if( cmdName == "find" )
+    {
+        // find syntax: find [options] [path...] [expression]
+        // Paths come before the first predicate. Predicates start with -, (, ), or !.
+        // Global options (-H, -L, -P) appear before paths and should be skipped.
+        static const std::set<std::string> FIND_GLOBAL_OPTIONS = {
+            "-H", "-L", "-P", "-O0", "-O1", "-O2", "-O3"
+        };
+
+        size_t i = 1;
+
+        // Skip global options
+        while( i < args.size() && FIND_GLOBAL_OPTIONS.count( args[i] ) > 0 )
+            i++;
+
+        // Collect path arguments until we hit a predicate or expression operator
+        while( i < args.size() )
+        {
+            const std::string& arg = args[i];
+
+            if( !arg.empty() && ( arg[0] == '-' || arg[0] == '(' || arg[0] == ')'
+                                  || arg[0] == '!' || arg[0] == ',' ) )
+                break;
+
+            paths.push_back( arg );
+            i++;
+        }
+
+        if( paths.empty() )
+            paths.push_back( "." );
+    }
+    else if( cmdName == "tree" || cmdName == "du" )
+    {
+        // tree and du: non-option arguments are root paths
+        for( size_t i = 1; i < args.size(); i++ )
+        {
+            if( !args[i].empty() && args[i][0] != '-' )
+                paths.push_back( args[i] );
+        }
+
+        if( paths.empty() )
+            paths.push_back( "." );
+    }
+    else if( cmdName == "mdfind" )
+    {
+        // mdfind: -onlyin <dir> restricts the search directory.
+        // Without -onlyin, it searches the entire drive.
+        bool hasOnlyIn = false;
+
+        for( size_t i = 1; i < args.size(); i++ )
+        {
+            if( args[i] == "-onlyin" && i + 1 < args.size() )
+            {
+                paths.push_back( args[i + 1] );
+                hasOnlyIn = true;
+                i++;
+            }
+        }
+
+        if( !hasOnlyIn )
+            paths.push_back( "/" );
+    }
+    else if( cmdName == "locate" )
+    {
+        // locate always searches the entire filesystem index
+        paths.push_back( "/" );
+    }
 
     return paths;
 }
@@ -526,7 +615,8 @@ TerminalValidationResult TerminalCommandValidator::ValidateCommand(
             }
 
             return TerminalValidationResult(
-                "Error: Cannot modify files outside allowed directories. "
+                "Error: Cannot access paths outside allowed directories. "
+                "Use sch_find_symbol to search KiCad libraries instead of searching the filesystem.\n"
                 "Blocked path: " + path + "\n"
                 "Allowed directories: " + allowedList );
         }

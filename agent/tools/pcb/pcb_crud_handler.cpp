@@ -16,8 +16,7 @@ static const char* PCB_CRUD_TOOLS[] = {
     "pcb_get_footprint",
     "pcb_route",
     "pcb_get_nets",
-    "pcb_export",
-    "pcb_autoroute"
+    "pcb_export"
 };
 
 
@@ -133,15 +132,6 @@ std::string PCB_CRUD_HANDLER::GetDescription( const std::string& aToolName,
         std::string format = aInput.value( "format", "gerber" );
         return "Exporting " + format;
     }
-    else if( aToolName == "pcb_autoroute" )
-    {
-        if( aInput.contains( "nets" ) && aInput["nets"].is_array() && !aInput["nets"].empty() )
-        {
-            size_t count = aInput["nets"].size();
-            return "Autorouting " + std::to_string( count ) + " net(s)";
-        }
-        return "Autorouting all nets";
-    }
 
     return "Executing " + aToolName;
 }
@@ -187,8 +177,6 @@ std::string PCB_CRUD_HANDLER::GetIPCCommand( const std::string& aToolName,
         code = GenerateGetNetsCode( aInput );
     else if( aToolName == "pcb_export" )
         code = GenerateExportCode( aInput );
-    else if( aToolName == "pcb_autoroute" )
-        code = GenerateAutorouteCode( aInput );
 
     return "run_shell pcb " + code;
 }
@@ -1398,95 +1386,6 @@ std::string PCB_CRUD_HANDLER::GenerateExportCode( const nlohmann::json& aInput )
     {
         code << "print(f'Unknown export format: " << format << "')\n";
     }
-
-    return code.str();
-}
-
-
-
-
-std::string PCB_CRUD_HANDLER::GenerateAutorouteCode( const nlohmann::json& aInput ) const
-{
-    std::ostringstream code;
-
-    // Extract settings from input
-    bool viasAllowed = aInput.value( "vias_allowed", true );
-    int maxPasses = aInput.value( "max_passes", 100 );
-    double viaCost = aInput.value( "via_cost", 50.0 );
-    double traceCost = aInput.value( "trace_cost", 1.0 );
-    double maxTimeSeconds = aInput.value( "max_time_seconds", 0.0 );
-    bool allowRipup = aInput.value( "allow_ripup", false );
-    int ripupPasses = aInput.value( "ripup_passes", 3 );
-
-    code << "import json\n";
-    code << "from kipy.board.autoroute import AutorouteSettings, AutorouteStatus\n";
-    code << "\n";
-
-    // Build settings
-    code << "# Configure autoroute settings\n";
-    code << "settings = AutorouteSettings(\n";
-    code << "    max_passes=" << maxPasses << ",\n";
-    code << "    vias_allowed=" << ( viasAllowed ? "True" : "False" ) << ",\n";
-    code << "    via_cost=" << viaCost << ",\n";
-    code << "    trace_cost=" << traceCost << ",\n";
-    code << "    max_time_seconds=" << maxTimeSeconds << ",\n";
-    code << "    allow_ripup=" << ( allowRipup ? "True" : "False" ) << ",\n";
-    code << "    ripup_passes=" << ripupPasses << ",\n";
-    code << ")\n\n";
-
-    // Handle specific nets to route
-    code << "# Nets to route (None = all unrouted nets)\n";
-    if( aInput.contains( "nets" ) && aInput["nets"].is_array() && !aInput["nets"].empty() )
-    {
-        code << "nets_to_route = " << aInput["nets"].dump() << "\n";
-    }
-    else
-    {
-        code << "nets_to_route = None\n";
-    }
-    code << "\n";
-
-    // Run autoroute
-    code << R"PYTHON(
-# Run the autorouter
-try:
-    result = board.autoroute.run(settings=settings, nets=nets_to_route)
-
-    # Build response
-    status_map = {
-        AutorouteStatus.SUCCESS: 'success',
-        AutorouteStatus.PARTIAL: 'partial',
-        AutorouteStatus.FAILED: 'failed',
-        AutorouteStatus.STOPPED: 'stopped',
-        AutorouteStatus.TIMEOUT: 'timeout',
-        AutorouteStatus.ERROR: 'error',
-    }
-
-    output = {
-        'status': status_map.get(result.status, 'unknown'),
-        'nets_routed': result.nets_routed,
-        'nets_failed': result.nets_failed,
-        'tracks_added': result.tracks_added,
-        'vias_added': result.vias_added,
-        'time_seconds': result.time_seconds,
-        'failed_nets': result.failed_nets,
-        'message': f'Routed {result.nets_routed} nets with {result.tracks_added} tracks and {result.vias_added} vias',
-    }
-
-    if result.error_message:
-        output['error'] = result.error_message
-
-    print(json.dumps(output, indent=2))
-
-except Exception as e:
-    import traceback
-    print(json.dumps({
-        'status': 'error',
-        'error': str(e),
-        'traceback': traceback.format_exc(),
-        'message': f'Autoroute failed: {e}'
-    }, indent=2))
-)PYTHON";
 
     return code.str();
 }

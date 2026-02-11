@@ -280,22 +280,6 @@ private:
     HANDLER_RESULT<GetGroupMembersResponse> handleGetGroupMembers(
             const HANDLER_CONTEXT<GetGroupMembers>& aCtx );
 
-    // Autoroute handlers
-    HANDLER_RESULT<RunAutorouteResponse> handleRunAutoroute(
-            const HANDLER_CONTEXT<RunAutoroute>& aCtx );
-
-    HANDLER_RESULT<Empty> handleStopAutoroute(
-            const HANDLER_CONTEXT<StopAutoroute>& aCtx );
-
-    HANDLER_RESULT<AutorouteSettingsResponse> handleGetAutorouteSettings(
-            const HANDLER_CONTEXT<GetAutorouteSettings>& aCtx );
-
-    HANDLER_RESULT<AutorouteSettingsResponse> handleSetAutorouteSettings(
-            const HANDLER_CONTEXT<SetAutorouteSettings>& aCtx );
-
-    HANDLER_RESULT<AutorouteProgressResponse> handleGetAutorouteProgress(
-            const HANDLER_CONTEXT<GetAutorouteProgress>& aCtx );
-
     // Document management handlers
     HANDLER_RESULT<commands::CreateDocumentResponse>
     handleCreateDocument( const HANDLER_CONTEXT<commands::CreateDocument>& aCtx );

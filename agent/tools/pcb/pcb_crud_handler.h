@@ -42,7 +42,6 @@ private:
     std::string GenerateDeleteBatchCode( const nlohmann::json& aInput ) const;
     std::string GenerateRouteCode( const nlohmann::json& aInput ) const;
     std::string GenerateExportCode( const nlohmann::json& aInput ) const;
-    std::string GenerateAutorouteCode( const nlohmann::json& aInput ) const;
 
     // Helpers
     std::string EscapePythonString( const std::string& aStr ) const;

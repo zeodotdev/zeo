@@ -1246,35 +1246,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbExport );
 
-    // pcb_autoroute - Automatically route unconnected nets
-    LLM_TOOL pcbAutoroute;
-    pcbAutoroute.name = "pcb_autoroute";
-    pcbAutoroute.description =
-        "Automatically route all unconnected nets on the PCB. "
-        "Uses A* maze search algorithm to find optimal paths between pads. "
-        "Supports multi-layer routing with vias. "
-        "REQUIRES: PCB editor must be open with a document loaded.";
-    pcbAutoroute.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "max_passes", {
-                { "type", "integer" },
-                { "description", "Maximum routing passes (default: 100)" }
-            }},
-            { "vias_allowed", {
-                { "type", "boolean" },
-                { "description", "Allow vias for layer transitions (default: true)" }
-            }},
-            { "nets", {
-                { "type", "array" },
-                { "items", { { "type", "string" } } },
-                { "description", "Specific nets to route (empty = all unrouted nets)" }
-            }}
-        }},
-        { "required", json::array() }
-    };
-    tools.push_back( pcbAutoroute );
-
     // screenshot - Export a visual render of a schematic or PCB
     LLM_TOOL screenshot;
     screenshot.name = "screenshot";

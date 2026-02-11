@@ -33,6 +33,8 @@
 #include <thread_pool.h>
 #include <dialog_HTML_reporter_base.h>
 #include <gestfich.h>
+#include <reporter.h>
+#include <launch_ext.h>
 #include <local_history.h>
 #include <pcb_edit_frame.h>
 #include <board_design_settings.h>
@@ -43,6 +45,7 @@
 #include <trace_helpers.h>
 #include <length_delay_calculation/length_delay_calculation.h>
 #include <lockfile.h>
+#include <wx/hyperlink.h>
 #include <wx/snglinst.h>
 #include <netlist_reader/pcb_netlist.h>
 #include <pcbnew_id.h>
@@ -775,9 +778,67 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
                 && loadedBoard->GetFileFormatVersionAtLoad() < SEXPR_BOARD_FILE_VERSION
                 && loadedBoard->GetGenerator().Lower() != wxT( "gerbview" ) ) )
         {
+            wxHyperlinkCtrl* backupBtn = new wxHyperlinkCtrl( m_infoBar, wxID_ANY,
+                    _( "Create Backup" ), wxEmptyString );
+
+            backupBtn->Bind( wxEVT_COMMAND_HYPERLINK, [this]( wxHyperlinkEvent& )
+            {
+                wxString backupsPath = GetSettingsManager()->GetProjectBackupsPath();
+                wxString fileName = Prj().GetProjectName() + wxT( "-pre-upgrade" );
+
+                wxFileName target;
+                target.SetPath( backupsPath );
+                target.SetName( fileName );
+                target.SetExt( FILEEXT::ArchiveFileExtension );
+
+                auto showBackupResult = [this]( const wxString& aMsg,
+                                                 const wxString& aBackupPath )
+                {
+                    wxHyperlinkCtrl* showBtn = new wxHyperlinkCtrl(
+                            m_infoBar, wxID_ANY, _( "Show" ), wxEmptyString );
+
+                    showBtn->Bind( wxEVT_COMMAND_HYPERLINK,
+                                   [aBackupPath]( wxHyperlinkEvent& )
+                                   {
+                                       LaunchExternal( wxFileName( aBackupPath ).GetPath() );
+                                   } );
+
+                    m_infoBar->RemoveAllButtons();
+                    m_infoBar->AddButton( showBtn );
+                    m_infoBar->AddCloseButton();
+                    m_infoBar->ShowMessage( aMsg, wxICON_INFORMATION,
+                                            WX_INFOBAR::MESSAGE_TYPE::OUTDATED_SAVE );
+                };
+
+                if( target.FileExists() )
+                {
+                    showBackupResult(
+                            wxString::Format( _( "Pre-upgrade backup already exists (%s)." ),
+                                              target.GetFullName() ),
+                            target.GetFullPath() );
+                    return;
+                }
+
+                WX_STRING_REPORTER reporter;
+
+                if( GetSettingsManager()->BackupProject( reporter, target ) )
+                {
+                    showBackupResult(
+                            wxString::Format( _( "Pre-upgrade backup created (%s)." ),
+                                              target.GetFullName() ),
+                            target.GetFullPath() );
+                }
+                else
+                {
+                    DisplayErrorMessage( this, _( "Error creating backup." ),
+                                         reporter.GetMessages() );
+                }
+            } );
+
             m_infoBar->RemoveAllButtons();
+            m_infoBar->AddButton( backupBtn );
             m_infoBar->AddCloseButton();
-            m_infoBar->ShowMessage( _( "This file was created by an older version of Zener. "
+            m_infoBar->ShowMessage( _( "This file was created by an older version of KiCad. "
                                        "It will be converted to the new format when saved." ),
                                     wxICON_WARNING, WX_INFOBAR::MESSAGE_TYPE::OUTDATED_SAVE );
         }

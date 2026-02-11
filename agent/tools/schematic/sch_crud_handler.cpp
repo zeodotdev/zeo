@@ -69,7 +69,17 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
         {
             size_t count = aInput["targets"].size();
             if( count == 1 )
-                return "Deleting " + aInput["targets"][0].get<std::string>();
+            {
+                const auto& t = aInput["targets"][0];
+
+                if( t.is_string() )
+                    return "Deleting " + t.get<std::string>();
+                else if( t.is_object() )
+                    return "Deleting " + t.value( "type", std::string( "element" ) )
+                           + ( t.contains( "text" )
+                                   ? " '" + t["text"].get<std::string>() + "'"
+                                   : "" );
+            }
             return "Deleting " + std::to_string( count ) + " elements";
         }
         return "Deleting elements";
@@ -1280,14 +1290,36 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "\n";
     code << GenerateRefreshPreamble();
     code << "\n";
-    code << "targets = [";
+
+    // Separate string targets from query targets
+    code << "string_targets = [";
+    bool firstStr = true;
     for( size_t i = 0; i < targets.size(); ++i )
     {
-        code << "'" << EscapePythonString( targets[i].get<std::string>() ) << "'";
-        if( i < targets.size() - 1 )
-            code << ", ";
+        if( targets[i].is_string() )
+        {
+            if( !firstStr )
+                code << ", ";
+            code << "'" << EscapePythonString( targets[i].get<std::string>() ) << "'";
+            firstStr = false;
+        }
     }
     code << "]\n";
+
+    code << "query_targets = [";
+    bool firstQuery = true;
+    for( size_t i = 0; i < targets.size(); ++i )
+    {
+        if( targets[i].is_object() )
+        {
+            if( !firstQuery )
+                code << ", ";
+            code << targets[i].dump();
+            firstQuery = false;
+        }
+    }
+    code << "]\n";
+
     code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
     code << "cleanup_wires = " << ( cleanupWires ? "True" : "False" ) << "\n";
     code << "use_ipc = True\n";
@@ -1300,7 +1332,11 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "try:\n";
     code << "    items_to_delete = []\n";
     code << "    not_found = []\n";
-    code << "    for target in targets:\n";
+    code << "    query_not_found = []\n";
+    code << "\n";
+
+    // String target resolution (existing logic)
+    code << "    for target in string_targets:\n";
     code << "        is_uuid = bool(re.match(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', target))\n";
     code << "        if is_uuid:\n";
     code << "            items = sch.crud.get_by_id([target])\n";
@@ -1317,6 +1353,87 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "                target_uuids.append(item_uuid)\n";
     code << "            else:\n";
     code << "                not_found.append(target)\n";
+    code << "\n";
+
+    // Query target resolution (new)
+    code << "    # Process query-based targets\n";
+    code << "    def pos_match(actual_nm, expected_mm):\n";
+    code << "        ax = round(actual_nm.x / 1e6, 2)\n";
+    code << "        ay = round(actual_nm.y / 1e6, 2)\n";
+    code << "        return abs(ax - expected_mm[0]) <= 0.01 and abs(ay - expected_mm[1]) <= 0.01\n";
+    code << "\n";
+    code << "    for q in query_targets:\n";
+    code << "        q_type = q.get('type', '')\n";
+    code << "        q_text = q.get('text', None)\n";
+    code << "        q_pos = q.get('position', None)\n";
+    code << "        q_start = q.get('start', None)\n";
+    code << "        q_end = q.get('end', None)\n";
+    code << "        matched = []\n";
+    code << "\n";
+    code << "        if q_type == 'wire':\n";
+    code << "            for w in sch.crud.get_wires():\n";
+    code << "                ok = True\n";
+    code << "                if q_start is not None and not pos_match(w.start, q_start):\n";
+    code << "                    ok = False\n";
+    code << "                if q_end is not None and not pos_match(w.end, q_end):\n";
+    code << "                    ok = False\n";
+    code << "                if q_pos is not None:\n";
+    code << "                    if not pos_match(w.start, q_pos) and not pos_match(w.end, q_pos):\n";
+    code << "                        ok = False\n";
+    code << "                if ok:\n";
+    code << "                    matched.append(w)\n";
+    code << "\n";
+    code << "        elif q_type in ('label', 'global_label', 'hierarchical_label'):\n";
+    code << "            type_map = {'label': 'NetLabel', 'global_label': 'GlobalLabel', 'hierarchical_label': 'HierLabel'}\n";
+    code << "            expected_class = type_map.get(q_type, '')\n";
+    code << "            for lbl in sch.labels.get_all():\n";
+    code << "                ok = True\n";
+    code << "                if expected_class and type(lbl).__name__ != expected_class:\n";
+    code << "                    ok = False\n";
+    code << "                if q_text is not None and getattr(lbl, 'text', '') != q_text:\n";
+    code << "                    ok = False\n";
+    code << "                if q_pos is not None and not pos_match(lbl.position, q_pos):\n";
+    code << "                    ok = False\n";
+    code << "                if ok:\n";
+    code << "                    matched.append(lbl)\n";
+    code << "\n";
+    code << "        elif q_type == 'junction':\n";
+    code << "            for j in sch.crud.get_junctions():\n";
+    code << "                if q_pos is not None and not pos_match(j.position, q_pos):\n";
+    code << "                    continue\n";
+    code << "                matched.append(j)\n";
+    code << "\n";
+    code << "        elif q_type == 'no_connect':\n";
+    code << "            for nc in sch.crud.get_no_connects():\n";
+    code << "                if q_pos is not None and not pos_match(nc.position, q_pos):\n";
+    code << "                    continue\n";
+    code << "                matched.append(nc)\n";
+    code << "\n";
+    code << "        elif q_type == 'bus_entry':\n";
+    code << "            be_list = []\n";
+    code << "            try:\n";
+    code << "                if hasattr(sch, 'buses') and hasattr(sch.buses, 'get_bus_entries'):\n";
+    code << "                    be_list = sch.buses.get_bus_entries()\n";
+    code << "                elif hasattr(sch.crud, 'get_bus_entries'):\n";
+    code << "                    be_list = sch.crud.get_bus_entries()\n";
+    code << "            except:\n";
+    code << "                pass\n";
+    code << "            for be in be_list:\n";
+    code << "                if q_pos is not None and not pos_match(be.position, q_pos):\n";
+    code << "                    continue\n";
+    code << "                matched.append(be)\n";
+    code << "\n";
+    code << "        else:\n";
+    code << "            query_not_found.append(q)\n";
+    code << "            continue\n";
+    code << "\n";
+    code << "        if matched:\n";
+    code << "            for m in matched:\n";
+    code << "                items_to_delete.append(m)\n";
+    code << "                uid = str(m.id.value) if hasattr(m, 'id') and hasattr(m.id, 'value') else str(getattr(m, 'id', ''))\n";
+    code << "                target_uuids.append(uid)\n";
+    code << "        else:\n";
+    code << "            query_not_found.append(q)\n";
     code << "\n";
     code << "    # Record pin positions before deletion (for optional orphan cleanup)\n";
     code << "    deleted_pin_positions = []\n";
@@ -1432,6 +1549,8 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "        result['orphaned_junctions_removed'] = len(orphaned_junctions)\n";
     code << "    if not_found:\n";
     code << "        result['not_found'] = not_found\n";
+    code << "    if query_not_found:\n";
+    code << "        result['queries_not_matched'] = query_not_found\n";
     code << "\n";
     code << "except Exception as ipc_error:\n";
     code << "    use_ipc = False\n";

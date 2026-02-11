@@ -101,6 +101,13 @@ private:
     std::string MmToNm( double aMm ) const;
 
     /**
+     * Generate Python helper functions for overlap/collision detection.
+     * Emits _check_overlap() for point items and _check_wire_overlap() for wire segments.
+     * Called before try blocks in placement code generators (same pattern as _auto_junction).
+     */
+    std::string GenerateOverlapCheckHelper() const;
+
+    /**
      * Generate Python code preamble to refresh document specifier.
      * This handles close/reopen cycles where the document UUID changes.
      */

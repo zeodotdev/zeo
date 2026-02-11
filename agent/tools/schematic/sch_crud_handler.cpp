@@ -192,6 +192,168 @@ std::string SCH_CRUD_HANDLER::GenerateEditorOpenCheck() const
 }
 
 
+std::string SCH_CRUD_HANDLER::GenerateOverlapCheckHelper() const
+{
+    std::ostringstream code;
+
+    // _build_obstacles: builds obstacle list from all symbols (shared by both helpers)
+    code << "def _build_obstacles(exclude_refs=None):\n";
+    code << "    if exclude_refs is None:\n";
+    code << "        exclude_refs = set()\n";
+    code << "    obstacles = []\n";
+    code << "    try:\n";
+    code << "        for sym in sch.symbols.get_all():\n";
+    code << "            ref = getattr(sym, 'reference', '')\n";
+    code << "            if ref in exclude_refs:\n";
+    code << "                continue\n";
+    code << "            pxs = [sym.position.x / 1_000_000]\n";
+    code << "            pys = [sym.position.y / 1_000_000]\n";
+    code << "            for pin in sym.pins:\n";
+    code << "                try:\n";
+    code << "                    tp = sch.symbols.get_transformed_pin_position(sym, pin.number)\n";
+    code << "                    if tp:\n";
+    code << "                        pxs.append(tp['position'].x / 1_000_000)\n";
+    code << "                        pys.append(tp['position'].y / 1_000_000)\n";
+    code << "                except:\n";
+    code << "                    pass\n";
+    code << "            pad = 1.27\n";
+    code << "            obstacles.append({'ref': ref, 'min_x': min(pxs) - pad, 'max_x': max(pxs) + pad, 'min_y': min(pys) - pad, 'max_y': max(pys) + pad})\n";
+    code << "    except:\n";
+    code << "        pass\n";
+    code << "    return obstacles\n";
+    code << "\n";
+
+    // _check_overlap: checks if a point overlaps existing items
+    code << "def _check_overlap(check_x, check_y, exclude_refs=None):\n";
+    code << "    try:\n";
+    code << "        overlaps = []\n";
+    code << "        obs = _build_obstacles(exclude_refs)\n";
+    code << "        # Check symbol body bounding boxes\n";
+    code << "        for o in obs:\n";
+    code << "            if o['min_x'] <= check_x <= o['max_x'] and o['min_y'] <= check_y <= o['max_y']:\n";
+    code << "                overlaps.append({'type': 'symbol_body', 'ref': o['ref']})\n";
+    code << "        # Check label/power position overlap\n";
+    code << "        try:\n";
+    code << "            for lbl in sch.labels.get_all():\n";
+    code << "                lx = round(lbl.position.x / 1_000_000, 2)\n";
+    code << "                ly = round(lbl.position.y / 1_000_000, 2)\n";
+    code << "                if abs(lx - check_x) < 0.01 and abs(ly - check_y) < 0.01:\n";
+    code << "                    overlaps.append({'type': 'label', 'text': getattr(lbl, 'text', '')})\n";
+    code << "        except:\n";
+    code << "            pass\n";
+    code << "        # Check wire overlap (point on wire segment)\n";
+    code << "        try:\n";
+    code << "            for w in sch.crud.get_wires():\n";
+    code << "                sx, sy = round(w.start.x / 1_000_000, 2), round(w.start.y / 1_000_000, 2)\n";
+    code << "                ex, ey = round(w.end.x / 1_000_000, 2), round(w.end.y / 1_000_000, 2)\n";
+    code << "                if abs(sy - ey) < 0.01 and abs(check_y - sy) < 0.01:\n";
+    code << "                    if min(sx, ex) <= check_x <= max(sx, ex):\n";
+    code << "                        overlaps.append({'type': 'wire'})\n";
+    code << "                        break\n";
+    code << "                elif abs(sx - ex) < 0.01 and abs(check_x - sx) < 0.01:\n";
+    code << "                    if min(sy, ey) <= check_y <= max(sy, ey):\n";
+    code << "                        overlaps.append({'type': 'wire'})\n";
+    code << "                        break\n";
+    code << "        except:\n";
+    code << "            pass\n";
+    code << "        # Find suggested position via grid spiral\n";
+    code << "        suggested = None\n";
+    code << "        if overlaps:\n";
+    code << "            def _snap(v, g=1.27):\n";
+    code << "                return round(v / g) * g\n";
+    code << "            def _clear(cx, cy):\n";
+    code << "                for o in obs:\n";
+    code << "                    if o['min_x'] <= cx <= o['max_x'] and o['min_y'] <= cy <= o['max_y']:\n";
+    code << "                        return False\n";
+    code << "                return True\n";
+    code << "            for r in range(1, 11):\n";
+    code << "                for dx in range(-r, r + 1):\n";
+    code << "                    for dy in range(-r, r + 1):\n";
+    code << "                        if abs(dx) != r and abs(dy) != r:\n";
+    code << "                            continue\n";
+    code << "                        cx = _snap(check_x + dx * 1.27)\n";
+    code << "                        cy = _snap(check_y + dy * 1.27)\n";
+    code << "                        if _clear(cx, cy):\n";
+    code << "                            suggested = [cx, cy]\n";
+    code << "                            break\n";
+    code << "                    if suggested:\n";
+    code << "                        break\n";
+    code << "                if suggested:\n";
+    code << "                    break\n";
+    code << "        return {'overlaps': overlaps, 'suggested_position': suggested}\n";
+    code << "    except:\n";
+    code << "        return {'overlaps': [], 'suggested_position': None}\n";
+    code << "\n";
+
+    // _check_wire_overlap: checks if a wire segment overlaps existing items
+    code << "def _check_wire_overlap(x1, y1, x2, y2, exclude_refs=None):\n";
+    code << "    try:\n";
+    code << "        overlaps = []\n";
+    code << "        obs = _build_obstacles(exclude_refs)\n";
+    code << "        # Check wire-through-symbol (axis-aligned line vs rectangle)\n";
+    code << "        w_min_x, w_max_x = min(x1, x2), max(x1, x2)\n";
+    code << "        w_min_y, w_max_y = min(y1, y2), max(y1, y2)\n";
+    code << "        is_horiz = abs(y1 - y2) < 0.01\n";
+    code << "        is_vert = abs(x1 - x2) < 0.01\n";
+    code << "        for o in obs:\n";
+    code << "            if is_horiz:\n";
+    code << "                if o['min_y'] <= y1 <= o['max_y'] and w_max_x > o['min_x'] and w_min_x < o['max_x']:\n";
+    code << "                    overlaps.append({'type': 'wire_through_symbol', 'ref': o['ref']})\n";
+    code << "            elif is_vert:\n";
+    code << "                if o['min_x'] <= x1 <= o['max_x'] and w_max_y > o['min_y'] and w_min_y < o['max_y']:\n";
+    code << "                    overlaps.append({'type': 'wire_through_symbol', 'ref': o['ref']})\n";
+    code << "        # Check collinear wire overlap\n";
+    code << "        try:\n";
+    code << "            for w in sch.crud.get_wires():\n";
+    code << "                sx, sy = round(w.start.x / 1_000_000, 2), round(w.start.y / 1_000_000, 2)\n";
+    code << "                ex, ey = round(w.end.x / 1_000_000, 2), round(w.end.y / 1_000_000, 2)\n";
+    code << "                if is_horiz and abs(sy - ey) < 0.01 and abs(y1 - sy) < 0.01:\n";
+    code << "                    ew_min, ew_max = min(sx, ex), max(sx, ex)\n";
+    code << "                    if w_max_x > ew_min and w_min_x < ew_max:\n";
+    code << "                        overlaps.append({'type': 'collinear_wire'})\n";
+    code << "                        break\n";
+    code << "                elif is_vert and abs(sx - ex) < 0.01 and abs(x1 - sx) < 0.01:\n";
+    code << "                    ew_min, ew_max = min(sy, ey), max(sy, ey)\n";
+    code << "                    if w_max_y > ew_min and w_min_y < ew_max:\n";
+    code << "                        overlaps.append({'type': 'collinear_wire'})\n";
+    code << "                        break\n";
+    code << "        except:\n";
+    code << "            pass\n";
+    code << "        return {'overlaps': overlaps}\n";
+    code << "    except:\n";
+    code << "        return {'overlaps': []}\n";
+    code << "\n";
+
+    // _format_warnings: converts overlap results into warning dicts for JSON result
+    code << "def _format_warnings(overlap_result, pos_desc='item'):\n";
+    code << "    warnings = []\n";
+    code << "    for ov in overlap_result.get('overlaps', []):\n";
+    code << "        w = {'type': 'overlap'}\n";
+    code << "        if ov['type'] == 'symbol_body':\n";
+    code << "            w['message'] = f'{pos_desc} overlaps with {ov[\"ref\"]} body'\n";
+    code << "            w['overlapping_item'] = ov['ref']\n";
+    code << "        elif ov['type'] == 'label':\n";
+    code << "            w['message'] = f'{pos_desc} overlaps with label/power {ov[\"text\"]}'\n";
+    code << "            w['overlapping_item'] = ov['text']\n";
+    code << "        elif ov['type'] == 'wire':\n";
+    code << "            w['message'] = f'{pos_desc} is on an existing wire'\n";
+    code << "        elif ov['type'] == 'wire_through_symbol':\n";
+    code << "            w['message'] = f'Wire passes through {ov[\"ref\"]} body'\n";
+    code << "            w['overlapping_item'] = ov['ref']\n";
+    code << "        elif ov['type'] == 'collinear_wire':\n";
+    code << "            w['message'] = f'Wire overlaps an existing wire at same position'\n";
+    code << "        else:\n";
+    code << "            continue\n";
+    code << "        if overlap_result.get('suggested_position'):\n";
+    code << "            w['suggested_position'] = overlap_result['suggested_position']\n";
+    code << "        warnings.append(w)\n";
+    code << "    return warnings\n";
+    code << "\n";
+
+    return code.str();
+}
+
+
 std::string SCH_CRUD_HANDLER::GenerateFileFallbackHeader() const
 {
     // Python code for file-based fallback operations
@@ -305,6 +467,12 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
     code << "use_ipc = True\n";
     code << "result = None\n";
     code << "\n";
+
+    // Emit overlap check helpers for placement element types
+    if( elementType == "symbol" || elementType == "power" || elementType == "wire" )
+    {
+        code << GenerateOverlapCheckHelper();
+    }
 
     // For wire elements, emit auto-junction helpers before the try block
     if( elementType == "wire" )
@@ -440,6 +608,10 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         code << "                pin_info['position'] = [pin.position.x / 1_000_000, pin.position.y / 1_000_000]\n";
         code << "            pins.append(pin_info)\n";
         code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(symbol), 'reference': getattr(symbol, 'reference', ''), 'pins': pins}\n";
+        code << "    _ov = _check_overlap(" << posX << ", " << posY << ")\n";
+        code << "    _ov_w = _format_warnings(_ov, f'Symbol at [" << posX << ", " << posY << "]')\n";
+        code << "    if _ov_w:\n";
+        code << "        result['warnings'] = _ov_w\n";
     }
     else if( elementType == "power" )
     {
@@ -463,6 +635,10 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         code << "    symbol = sch.labels.add_power('" << EscapePythonString( powerName ) << "', pos, angle=" << angle << ")\n";
         // Power symbol pin is at the symbol position itself (no offset)
         code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(symbol), 'name': '" << EscapePythonString( powerName ) << "', 'pin_position': [" << posX << ", " << posY << "]}\n";
+        code << "    _ov = _check_overlap(" << posX << ", " << posY << ")\n";
+        code << "    _ov_w = _format_warnings(_ov, f'Power symbol at [" << posX << ", " << posY << "]')\n";
+        code << "    if _ov_w:\n";
+        code << "        result['warnings'] = _ov_w\n";
     }
     else if( elementType == "wire" )
     {
@@ -501,6 +677,14 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
                 code << "    wires = sch.wiring.wire_path((sym1, '" << EscapePythonString( fromPinNum ) << "'), waypoints, (sym2, '" << EscapePythonString( toPinNum ) << "'))\n";
                 code << "    _junc_added = _auto_junction(_wire_pts(wires))\n";
                 code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires), 'junction_count': _junc_added}\n";
+                code << "    _wire_warnings = []\n";
+                code << "    for _w in wires:\n";
+                code << "        _ws, _we = getattr(_w, 'start', None), getattr(_w, 'end', None)\n";
+                code << "        if _ws and _we:\n";
+                code << "            _wov = _check_wire_overlap(_ws.x / 1_000_000, _ws.y / 1_000_000, _we.x / 1_000_000, _we.y / 1_000_000)\n";
+                code << "            _wire_warnings.extend(_format_warnings(_wov, 'Wire segment'))\n";
+                code << "    if _wire_warnings:\n";
+                code << "        result['warnings'] = _wire_warnings\n";
             }
             else
             {
@@ -508,6 +692,14 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
                 code << "    wires = sch.wiring.auto_wire(sym1, '" << EscapePythonString( fromPinNum ) << "', sym2, '" << EscapePythonString( toPinNum ) << "')\n";
                 code << "    _junc_added = _auto_junction(_wire_pts(wires))\n";
                 code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires), 'junction_count': _junc_added}\n";
+                code << "    _wire_warnings = []\n";
+                code << "    for _w in wires:\n";
+                code << "        _ws, _we = getattr(_w, 'start', None), getattr(_w, 'end', None)\n";
+                code << "        if _ws and _we:\n";
+                code << "            _wov = _check_wire_overlap(_ws.x / 1_000_000, _ws.y / 1_000_000, _we.x / 1_000_000, _we.y / 1_000_000)\n";
+                code << "            _wire_warnings.extend(_format_warnings(_wov, 'Wire segment'))\n";
+                code << "    if _wire_warnings:\n";
+                code << "        result['warnings'] = _wire_warnings\n";
             }
         }
         // Mode 2: from_pin + points (no to_pin) - start from pin, extend through points
@@ -542,6 +734,14 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
             code << "    wires = sch.wiring.add_wires(all_points)\n";
             code << "    _junc_added = _auto_junction(_wire_pts(wires))\n";
             code << "    result = {'status': 'success', 'source': 'ipc', 'wire_count': len(wires), 'junction_count': _junc_added}\n";
+            code << "    _wire_warnings = []\n";
+            code << "    for _w in wires:\n";
+            code << "        _ws, _we = getattr(_w, 'start', None), getattr(_w, 'end', None)\n";
+            code << "        if _ws and _we:\n";
+            code << "            _wov = _check_wire_overlap(_ws.x / 1_000_000, _ws.y / 1_000_000, _we.x / 1_000_000, _we.y / 1_000_000)\n";
+            code << "            _wire_warnings.extend(_format_warnings(_wov, 'Wire segment'))\n";
+            code << "    if _wire_warnings:\n";
+            code << "        result['warnings'] = _wire_warnings\n";
         }
         // Mode 3: points only - explicit coordinate-based wiring
         else if( aInput.contains( "points" ) && aInput["points"].is_array() )
@@ -551,6 +751,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
             {
                 code << "    wires_created = 0\n";
                 code << "    _check_pts = set()\n";
+                code << "    _wire_warnings = []\n";
                 for( size_t i = 0; i < points.size() - 1; ++i )
                 {
                     if( points[i].is_array() && points[i].size() >= 2 &&
@@ -565,10 +766,14 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
                         code << "    _check_pts.add((" << x1 << ", " << y1 << "))\n";
                         code << "    _check_pts.add((" << x2 << ", " << y2 << "))\n";
                         code << "    wires_created += 1\n";
+                        code << "    _wov = _check_wire_overlap(" << x1 << ", " << y1 << ", " << x2 << ", " << y2 << ")\n";
+                        code << "    _wire_warnings.extend(_format_warnings(_wov, 'Wire segment'))\n";
                     }
                 }
                 code << "    _junc_added = _auto_junction(list(_check_pts))\n";
                 code << "    result = {'status': 'success', 'source': 'ipc', 'count': wires_created, 'junction_count': _junc_added}\n";
+                code << "    if _wire_warnings:\n";
+                code << "        result['warnings'] = _wire_warnings\n";
             }
         }
         else
@@ -1702,6 +1907,7 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
     code << "offset_x = " << offsetX << "\n";
     code << "offset_y = " << offsetY << "\n";
     code << "\n";
+    code << GenerateOverlapCheckHelper();
     code << "try:\n";
     code << "    # Get the symbol and pin position\n";
     code << "    sym = sch.symbols.get_by_ref(ref)\n";
@@ -1765,6 +1971,21 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
     code << "            sch.wiring.add_wire(pin_vec, power_pos)\n";
     code << "            wire_count = 1\n";
     code << "\n";
+    code << "    # Check for overlaps\n";
+    code << "    _all_warnings = []\n";
+    code << "    _ov = _check_overlap(power_x, power_y, exclude_refs={ref})\n";
+    code << "    _all_warnings.extend(_format_warnings(_ov, f'Power symbol at [{power_x}, {power_y}]'))\n";
+    code << "    # Check wire overlaps if wires were drawn\n";
+    code << "    if abs(offset_x) > 0.01 or abs(offset_y) > 0.01:\n";
+    code << "        if abs(offset_x) > 0.01 and abs(offset_y) > 0.01:\n";
+    code << "            _wov1 = _check_wire_overlap(pin_x, pin_y, power_x, pin_y, exclude_refs={ref})\n";
+    code << "            _all_warnings.extend(_format_warnings(_wov1, f'Wire from pin to corner'))\n";
+    code << "            _wov2 = _check_wire_overlap(power_x, pin_y, power_x, power_y, exclude_refs={ref})\n";
+    code << "            _all_warnings.extend(_format_warnings(_wov2, f'Wire from corner to power'))\n";
+    code << "        else:\n";
+    code << "            _wov = _check_wire_overlap(pin_x, pin_y, power_x, power_y, exclude_refs={ref})\n";
+    code << "            _all_warnings.extend(_format_warnings(_wov, f'Wire from pin to power'))\n";
+    code << "\n";
     code << "    result = {\n";
     code << "        'status': 'success',\n";
     code << "        'source': 'ipc',\n";
@@ -1775,6 +1996,8 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
     code << "        'pin_position': [pin_x, pin_y],\n";
     code << "        'wire_count': wire_count\n";
     code << "    }\n";
+    code << "    if _all_warnings:\n";
+    code << "        result['warnings'] = _all_warnings\n";
     code << "\n";
     code << "except Exception as e:\n";
     code << "    result = {'status': 'error', 'message': str(e)}\n";
@@ -1886,7 +2109,9 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
     code << "results = []\n";
     code << "errors = []\n";
+    code << "_batch_warnings = []\n";
     code << "\n";
+    code << GenerateOverlapCheckHelper();
     code << "try:\n";
 
     // Process each element in the batch
@@ -1956,6 +2181,11 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                        pass\n";
             code << "                pins_" << i << ".append(pin_info)\n";
             code << "        results.append({'index': " << i << ", 'type': 'symbol', 'id': get_id(sym_" << i << "), 'reference': getattr(sym_" << i << ", 'reference', ''), 'pins': pins_" << i << "})\n";
+            code << "        _ov_" << i << " = _check_overlap(" << posX << ", " << posY << ")\n";
+            code << "        _ov_w_" << i << " = _format_warnings(_ov_" << i << ", f'Element " << i << " (symbol) at [" << posX << ", " << posY << "]')\n";
+            code << "        for _w in _ov_w_" << i << ":\n";
+            code << "            _w['element_index'] = " << i << "\n";
+            code << "        _batch_warnings.extend(_ov_w_" << i << ")\n";
         }
         else if( elementType == "power" )
         {
@@ -1977,6 +2207,11 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        pwr_" << i << " = sch.labels.add_power('" << EscapePythonString( powerName ) << "', pos_" << i << ", angle=" << angle << ")\n";
             code << "        results.append({'index': " << i << ", 'type': 'power', 'id': get_id(pwr_" << i << "), 'name': '" << EscapePythonString( powerName ) << "', 'pin_position': [" << posX << ", " << posY << "]})\n";
+            code << "        _ov_" << i << " = _check_overlap(" << posX << ", " << posY << ")\n";
+            code << "        _ov_w_" << i << " = _format_warnings(_ov_" << i << ", f'Element " << i << " (power) at [" << posX << ", " << posY << "]')\n";
+            code << "        for _w in _ov_w_" << i << ":\n";
+            code << "            _w['element_index'] = " << i << "\n";
+            code << "        _batch_warnings.extend(_ov_w_" << i << ")\n";
         }
         else if( elementType == "wire" )
         {
@@ -2017,6 +2252,15 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                     code << "            wires_" << i << " = sch.wiring.auto_wire(sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "', sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "')\n";
                 }
                 code << "            results.append({'index': " << i << ", 'type': 'wire', 'wire_count': len(wires_" << i << ")})\n";
+                code << "            _ww_" << i << " = []\n";
+                code << "            for _w in wires_" << i << ":\n";
+                code << "                _ws, _we = getattr(_w, 'start', None), getattr(_w, 'end', None)\n";
+                code << "                if _ws and _we:\n";
+                code << "                    _wov = _check_wire_overlap(_ws.x / 1_000_000, _ws.y / 1_000_000, _we.x / 1_000_000, _we.y / 1_000_000)\n";
+                code << "                    _ww_" << i << ".extend(_format_warnings(_wov, 'Wire segment'))\n";
+                code << "            for _w in _ww_" << i << ":\n";
+                code << "                _w['element_index'] = " << i << "\n";
+                code << "            _batch_warnings.extend(_ww_" << i << ")\n";
                 code << "        else:\n";
                 code << "            errors.append({'index': " << i << ", 'error': 'Symbol not found'})\n";
             }
@@ -2027,6 +2271,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 if( points.size() >= 2 )
                 {
                     code << "        wc_" << i << " = 0\n";
+                    code << "        _ww_" << i << " = []\n";
                     for( size_t j = 0; j < points.size() - 1; ++j )
                     {
                         if( points[j].is_array() && points[j].size() >= 2 &&
@@ -2038,9 +2283,14 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                             double y2 = SnapToGrid( points[j + 1][1].get<double>() );
                             code << "        sch.wiring.add_wire(Vector2.from_xy_mm(" << x1 << ", " << y1 << "), Vector2.from_xy_mm(" << x2 << ", " << y2 << "))\n";
                             code << "        wc_" << i << " += 1\n";
+                            code << "        _wov = _check_wire_overlap(" << x1 << ", " << y1 << ", " << x2 << ", " << y2 << ")\n";
+                            code << "        _ww_" << i << ".extend(_format_warnings(_wov, 'Wire segment'))\n";
                         }
                     }
                     code << "        results.append({'index': " << i << ", 'type': 'wire', 'wire_count': wc_" << i << "})\n";
+                    code << "        for _w in _ww_" << i << ":\n";
+                    code << "            _w['element_index'] = " << i << "\n";
+                    code << "        _batch_warnings.extend(_ww_" << i << ")\n";
                 }
             }
         }
@@ -2130,6 +2380,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "    }\n";
     code << "    if errors:\n";
     code << "        result['errors'] = errors\n";
+    code << "    if _batch_warnings:\n";
+    code << "        result['warnings'] = _batch_warnings\n";
     code << "\n";
     code << "except Exception as batch_error:\n";
     code << "    result = {'status': 'error', 'message': str(batch_error), 'partial_results': results, 'errors': errors}\n";

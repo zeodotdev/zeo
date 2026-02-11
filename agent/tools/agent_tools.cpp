@@ -514,6 +514,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schDelete.description =
         "Delete elements from the schematic. Accepts an array of targets - use for single or batch operations. "
         "Target by reference designator or UUID. "
+        "By default, recursively removes orphaned wires and junctions connected to deleted symbol pins. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schDelete.input_schema = {
         { "type", "object" },
@@ -522,6 +523,10 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                 { "type", "array" },
                 { "items", { { "type", "string" } } },
                 { "description", "Array of references or UUIDs to delete (e.g. ['R1', 'R2', 'C1'])" }
+            }},
+            { "cleanup_wires", {
+                { "type", "boolean" },
+                { "description", "Recursively remove orphaned wires and junctions connected to deleted symbol pins. Default: true." }
             }}
         }},
         { "required", json::array( { "targets" } ) }

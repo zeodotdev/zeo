@@ -146,6 +146,7 @@ img[src^="data:"] { cursor: pointer; }
     padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #353535;
 }
 .history-item:hover { background: #3d3d3d; }
+.history-item.active { background: #353535; }
 .history-item .title { color: #fff; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 8px; }
 .history-item .timestamp { color: #666; font-size: 11px; white-space: nowrap; }
 
@@ -389,6 +390,11 @@ App.TopBar = (function() {
     var listEl = document.getElementById('history-list');
     var titleEl = document.getElementById('chat-title');
     var entries = [];
+    var activeChatId = '';
+
+    function setActiveChat(id) {
+        activeChatId = id || '';
+    }
 
     function setTitle(title) {
         titleEl.textContent = title || 'New Chat';
@@ -424,7 +430,8 @@ App.TopBar = (function() {
         } else {
             for (var i = 0; i < filtered.length; i++) {
                 var e = filtered[i];
-                html += '<div class="history-item" data-id="' + e.id + '">'
+                var cls = 'history-item' + (e.id === activeChatId ? ' active' : '');
+                html += '<div class="' + cls + '" data-id="' + e.id + '">'
                      + '<span class="title">' + escapeHtml(e.title || 'Untitled Chat') + '</span>'
                      + '<span class="timestamp">' + relativeTime(e.timestamp, now) + '</span>'
                      + '</div>';
@@ -490,7 +497,7 @@ App.TopBar = (function() {
         }
     });
 
-    return { setTitle: setTitle, setHistoryList: setHistoryList, showHistory: showHistory };
+    return { setTitle: setTitle, setHistoryList: setHistoryList, showHistory: showHistory, setActiveChat: setActiveChat };
 })();
 
 // =====================================================================

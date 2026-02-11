@@ -1792,6 +1792,7 @@ void AGENT_FRAME::OnBridgeHistoryOpen()
         entries.push_back( e );
     }
 
+    m_bridge->PushActiveChat( m_chatHistoryDb.GetConversationId() );
     m_bridge->PushHistoryList( entries );
     m_bridge->PushHistoryShow( true );
 }

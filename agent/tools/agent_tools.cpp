@@ -340,7 +340,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "- symbol: {element_type, lib_id, position, angle?, mirror?, reference?, properties?}\n"
         "- power: {element_type, lib_id, position, angle?} - GND: 0=bars down(standard), VCC: 0=bar up(standard)\n"
         "- wire: {element_type, from_pin:{ref,pin}, to_pin:{ref,pin}, waypoints?} or {points:[[x,y],...]}\n"
-        "- junction, label, no_connect, sheet\n\n"
+        "- junction, label, no_connect\n\n"
         "EXAMPLE (horizontal resistor with GND):\n"
         "elements: [\n"
         "  {element_type:'symbol', lib_id:'Device:R', position:[50.8,50.8], angle:90},\n"
@@ -356,7 +356,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                     { "properties", {
                         { "element_type", {
                             { "type", "string" },
-                            { "enum", json::array( { "symbol", "power", "wire", "junction", "label", "no_connect", "sheet", "bus_entry" } ) },
+                            { "enum", json::array( { "symbol", "power", "wire", "junction", "label", "no_connect", "bus_entry" } ) },
                             { "description", "Type of element to add" }
                         }},
                         { "lib_id", {
@@ -419,12 +419,10 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                             { "type", "string" },
                             { "enum", json::array( { "local", "global", "hierarchical" } ) }
                         }},
-                        { "sheet_name", { { "type", "string" } } },
-                        { "sheet_file", { { "type", "string" } } },
-                        { "size", {
-                            { "type", "array" },
-                            { "items", { { "type", "number" } } },
-                            { "description", "Sheet size [w, h] in mm" }
+                        { "direction", {
+                            { "type", "string" },
+                            { "enum", json::array( { "right_down", "right_up", "left_down", "left_up" } ) },
+                            { "description", "Bus entry direction. Default: right_down" }
                         }}
                     }},
                     { "required", json::array( { "element_type" } ) }
@@ -572,6 +570,38 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "required", json::array( { "ref", "pin", "power" } ) }
     };
     tools.push_back( schConnectToPower );
+
+    // sch_add_sheet - Add a hierarchical sheet
+    LLM_TOOL schAddSheet;
+    schAddSheet.name = "sch_add_sheet";
+    schAddSheet.description =
+        "Add a hierarchical sheet to the schematic. Creates a new sub-sheet with its own .kicad_sch file. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schAddSheet.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "sheet_name", {
+                { "type", "string" },
+                { "description", "Display name for the sheet (e.g., 'Power Supply')" }
+            }},
+            { "sheet_file", {
+                { "type", "string" },
+                { "description", "Filename for the sheet (e.g., 'power_supply.kicad_sch'). Defaults to sheet_name + '.kicad_sch'." }
+            }},
+            { "position", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "Position [x, y] in mm. Auto-snapped to 1.27mm grid." }
+            }},
+            { "size", {
+                { "type", "array" },
+                { "items", { { "type", "number" } } },
+                { "description", "Sheet size [width, height] in mm. Default: [50, 50]." }
+            }}
+        }},
+        { "required", json::array( { "sheet_name" } ) }
+    };
+    tools.push_back( schAddSheet );
 
     // sch_connect_net - Connect multiple pins on the same net in one call
     LLM_TOOL schConnectNet;

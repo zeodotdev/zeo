@@ -5,7 +5,7 @@
 
 /**
  * Handler for schematic CRUD and navigation operations via kipy IPC.
- * Handles: sch_add, sch_update, sch_delete, sch_open_sheet, sch_connect_to_power, sch_add_batch
+ * Handles: sch_add, sch_update, sch_delete, sch_open_sheet, sch_connect_to_power, sch_add_sheet
  *
  * All CRUD operations accept arrays (elements, updates, targets) for batch processing.
  * Single-item operations are just arrays with one element.
@@ -64,6 +64,12 @@ private:
      * Connects a symbol pin to a power rail in one call.
      */
     std::string GenerateConnectToPowerCode( const nlohmann::json& aInput ) const;
+
+    /**
+     * Generate Python code for sch_add_sheet operation.
+     * Creates a hierarchical sheet with its own .kicad_sch file.
+     */
+    std::string GenerateAddSheetCode( const nlohmann::json& aInput ) const;
 
     /**
      * Generate Python code for sch_add_batch operation.

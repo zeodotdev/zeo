@@ -66,6 +66,12 @@ private:
     std::string GenerateConnectToPowerCode( const nlohmann::json& aInput ) const;
 
     /**
+     * Generate Python code for sch_connect_net operation.
+     * Connects multiple pins on the same net with trunk-and-branch wiring.
+     */
+    std::string GenerateConnectNetCode( const nlohmann::json& aInput ) const;
+
+    /**
      * Generate Python code for sch_add_batch operation.
      * Adds multiple elements in a single batch call for efficiency.
      */

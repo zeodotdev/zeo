@@ -568,6 +568,35 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schConnectToPower );
 
+    // sch_connect_net - Connect multiple pins on the same net in one call
+    LLM_TOOL schConnectNet;
+    schConnectNet.name = "sch_connect_net";
+    schConnectNet.description =
+        "Connect two or more component pins on the same net with wires and junctions in a single call. "
+        "Replaces multiple sch_add wire/junction calls. Resolves pin positions automatically, "
+        "computes an optimal trunk-and-branch wiring layout, and places junctions at T-connections. "
+        "Avoids routing the trunk wire through other components when possible. "
+        "For 2 pins: draws a direct L-shaped wire (same as auto_wire). "
+        "For 3+ pins: computes a shared trunk wire along the dominant axis, with branch wires to each pin. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schConnectNet.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "pins", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "string" },
+                    { "description", "Pin specifier as 'REF:PIN' (e.g., 'R1:1', 'U1:VCC', 'Q2:D')" }
+                }},
+                { "minItems", 2 },
+                { "description", "Array of pin specifiers to connect on the same net. Min 2 pins. "
+                                "Format: 'REFERENCE:PIN_NUMBER_OR_NAME' (e.g., ['Q2:D', 'D2:1', 'L2:1'])" }
+            }}
+        }},
+        { "required", json::array( { "pins" } ) }
+    };
+    tools.push_back( schConnectNet );
+
     // sch_annotate - Annotate schematic symbols
     LLM_TOOL schAnnotate;
     schAnnotate.name = "sch_annotate";

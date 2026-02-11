@@ -594,6 +594,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
     {
         std::string text = aInput.value( "text", "" );
         std::string labelType = aInput.value( "label_type", "local" );
+        bool hasExplicitAngle = aInput.contains( "angle" );
+        double angle = aInput.value( "angle", 0.0 );
 
         double posX = 0, posY = 0;
         if( aInput.contains( "position" ) && aInput["position"].is_array() &&
@@ -605,16 +607,69 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
 
         code << "    pos = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
 
-        if( labelType == "local" )
-            code << "    label = sch.labels.add_local('" << EscapePythonString( text ) << "', pos)\n";
-        else if( labelType == "global" )
-            code << "    label = sch.labels.add_global('" << EscapePythonString( text ) << "', pos)\n";
-        else if( labelType == "hierarchical" )
-            code << "    label = sch.labels.add_hierarchical('" << EscapePythonString( text ) << "', pos)\n";
+        if( hasExplicitAngle )
+        {
+            code << "    _label_angle = " << angle << "\n";
+        }
         else
-            code << "    label = sch.labels.add_local('" << EscapePythonString( text ) << "', pos)\n";
+        {
+            // Auto-detect angle from nearby pin orientation or wire direction
+            code << "    _label_angle = 0\n";
+            code << "    _lbl_x, _lbl_y = " << posX << ", " << posY << "\n";
+            code << "    _auto_found = False\n";
+            code << "    # Check for pin at label position\n";
+            code << "    try:\n";
+            code << "        for _sym in sch.symbols.get_all():\n";
+            code << "            if _auto_found:\n";
+            code << "                break\n";
+            code << "            for _pin in _sym.pins:\n";
+            code << "                try:\n";
+            code << "                    _tp = sch.symbols.get_transformed_pin_position(_sym, _pin.number)\n";
+            code << "                    if _tp:\n";
+            code << "                        _px = _tp['position'].x / 1_000_000\n";
+            code << "                        _py = _tp['position'].y / 1_000_000\n";
+            code << "                        if abs(_px - _lbl_x) < 0.02 and abs(_py - _lbl_y) < 0.02:\n";
+            code << "                            _label_angle = _tp.get('orientation', 0)\n";
+            code << "                            _auto_found = True\n";
+            code << "                            break\n";
+            code << "                except:\n";
+            code << "                    pass\n";
+            code << "    except:\n";
+            code << "        pass\n";
+            code << "    # Fall back to wire direction at label position\n";
+            code << "    if not _auto_found:\n";
+            code << "        try:\n";
+            code << "            import math\n";
+            code << "            for _w in sch.crud.get_wires():\n";
+            code << "                _sx = _w.start.x / 1_000_000\n";
+            code << "                _sy = _w.start.y / 1_000_000\n";
+            code << "                _ex = _w.end.x / 1_000_000\n";
+            code << "                _ey = _w.end.y / 1_000_000\n";
+            code << "                _other = None\n";
+            code << "                if abs(_sx - _lbl_x) < 0.02 and abs(_sy - _lbl_y) < 0.02:\n";
+            code << "                    _other = (_ex, _ey)\n";
+            code << "                elif abs(_ex - _lbl_x) < 0.02 and abs(_ey - _lbl_y) < 0.02:\n";
+            code << "                    _other = (_sx, _sy)\n";
+            code << "                if _other:\n";
+            code << "                    _dx = _other[0] - _lbl_x\n";
+            code << "                    _dy = _other[1] - _lbl_y\n";
+            code << "                    _deg = math.degrees(math.atan2(-_dy, _dx)) % 360\n";
+            code << "                    _label_angle = min([0, 90, 180, 270], key=lambda a: min(abs(_deg - a), 360 - abs(_deg - a)))\n";
+            code << "                    break\n";
+            code << "        except:\n";
+            code << "            pass\n";
+        }
 
-        code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(label)}\n";
+        if( labelType == "local" )
+            code << "    label = sch.labels.add_local('" << EscapePythonString( text ) << "', pos, angle=_label_angle)\n";
+        else if( labelType == "global" )
+            code << "    label = sch.labels.add_global('" << EscapePythonString( text ) << "', pos, angle=_label_angle)\n";
+        else if( labelType == "hierarchical" )
+            code << "    label = sch.labels.add_hierarchical('" << EscapePythonString( text ) << "', pos, angle=_label_angle)\n";
+        else
+            code << "    label = sch.labels.add_local('" << EscapePythonString( text ) << "', pos, angle=_label_angle)\n";
+
+        code << "    result = {'status': 'success', 'source': 'ipc', 'id': get_id(label), 'angle': _label_angle}\n";
     }
     else if( elementType == "no_connect" )
     {
@@ -2062,6 +2117,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
         {
             std::string text = elem.value( "text", "" );
             std::string labelType = elem.value( "label_type", "local" );
+            bool hasExplicitAngle = elem.contains( "angle" );
+            double angle = elem.value( "angle", 0.0 );
             double posX = 0, posY = 0;
             if( elem.contains( "position" ) && elem["position"].is_array() &&
                 elem["position"].size() >= 2 )
@@ -2071,13 +2128,64 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             }
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
-            if( labelType == "global" )
-                code << "        lbl_" << i << " = sch.labels.add_global('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
-            else if( labelType == "hierarchical" )
-                code << "        lbl_" << i << " = sch.labels.add_hierarchical('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
+
+            if( hasExplicitAngle )
+            {
+                code << "        _la_" << i << " = " << angle << "\n";
+            }
             else
-                code << "        lbl_" << i << " = sch.labels.add_local('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
-            code << "        results.append({'index': " << i << ", 'type': 'label', 'id': get_id(lbl_" << i << "), 'text': '" << EscapePythonString( text ) << "'})\n";
+            {
+                code << "        _la_" << i << " = 0\n";
+                code << "        _lx_" << i << ", _ly_" << i << " = " << posX << ", " << posY << "\n";
+                code << "        _af_" << i << " = False\n";
+                code << "        try:\n";
+                code << "            for _sym in sch.symbols.get_all():\n";
+                code << "                if _af_" << i << ":\n";
+                code << "                    break\n";
+                code << "                for _pin in _sym.pins:\n";
+                code << "                    try:\n";
+                code << "                        _tp = sch.symbols.get_transformed_pin_position(_sym, _pin.number)\n";
+                code << "                        if _tp:\n";
+                code << "                            _px = _tp['position'].x / 1_000_000\n";
+                code << "                            _py = _tp['position'].y / 1_000_000\n";
+                code << "                            if abs(_px - _lx_" << i << ") < 0.02 and abs(_py - _ly_" << i << ") < 0.02:\n";
+                code << "                                _la_" << i << " = _tp.get('orientation', 0)\n";
+                code << "                                _af_" << i << " = True\n";
+                code << "                                break\n";
+                code << "                    except:\n";
+                code << "                        pass\n";
+                code << "        except:\n";
+                code << "            pass\n";
+                code << "        if not _af_" << i << ":\n";
+                code << "            try:\n";
+                code << "                import math\n";
+                code << "                for _w in sch.crud.get_wires():\n";
+                code << "                    _sx = _w.start.x / 1_000_000\n";
+                code << "                    _sy = _w.start.y / 1_000_000\n";
+                code << "                    _ex = _w.end.x / 1_000_000\n";
+                code << "                    _ey = _w.end.y / 1_000_000\n";
+                code << "                    _other = None\n";
+                code << "                    if abs(_sx - _lx_" << i << ") < 0.02 and abs(_sy - _ly_" << i << ") < 0.02:\n";
+                code << "                        _other = (_ex, _ey)\n";
+                code << "                    elif abs(_ex - _lx_" << i << ") < 0.02 and abs(_ey - _ly_" << i << ") < 0.02:\n";
+                code << "                        _other = (_sx, _sy)\n";
+                code << "                    if _other:\n";
+                code << "                        _dx = _other[0] - _lx_" << i << "\n";
+                code << "                        _dy = _other[1] - _ly_" << i << "\n";
+                code << "                        _deg = math.degrees(math.atan2(-_dy, _dx)) % 360\n";
+                code << "                        _la_" << i << " = min([0, 90, 180, 270], key=lambda a: min(abs(_deg - a), 360 - abs(_deg - a)))\n";
+                code << "                        break\n";
+                code << "            except:\n";
+                code << "                pass\n";
+            }
+
+            if( labelType == "global" )
+                code << "        lbl_" << i << " = sch.labels.add_global('" << EscapePythonString( text ) << "', pos_" << i << ", angle=_la_" << i << ")\n";
+            else if( labelType == "hierarchical" )
+                code << "        lbl_" << i << " = sch.labels.add_hierarchical('" << EscapePythonString( text ) << "', pos_" << i << ", angle=_la_" << i << ")\n";
+            else
+                code << "        lbl_" << i << " = sch.labels.add_local('" << EscapePythonString( text ) << "', pos_" << i << ", angle=_la_" << i << ")\n";
+            code << "        results.append({'index': " << i << ", 'type': 'label', 'id': get_id(lbl_" << i << "), 'text': '" << EscapePythonString( text ) << "', 'angle': _la_" << i << "})\n";
         }
         else if( elementType == "no_connect" )
         {

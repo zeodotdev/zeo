@@ -33,6 +33,7 @@ public:
     void PushChatTitle( const wxString& aTitle );
     void PushHistoryList( const nlohmann::json& aEntries );
     void PushHistoryShow( bool aShow );
+    void PushActiveChat( const std::string& aConversationId );
 
     // Chat area
     void PushStreamingContent( const wxString& aHtml );

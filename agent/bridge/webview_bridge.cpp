@@ -269,6 +269,13 @@ void WEBVIEW_BRIDGE::PushHistoryShow( bool aShow )
                                  aShow ? "true" : "false" ) );
 }
 
+void WEBVIEW_BRIDGE::PushActiveChat( const std::string& aConversationId )
+{
+    LogBridge( "C++->JS", "setActiveChat" );
+    RunScript( wxString::Format( "App.TopBar.setActiveChat('%s');",
+                                 EscapeJs( wxString::FromUTF8( aConversationId ) ) ) );
+}
+
 void WEBVIEW_BRIDGE::PushStreamingContent( const wxString& aHtml )
 {
     // No log here — this fires at 20Hz during streaming and would flood the log

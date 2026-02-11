@@ -421,6 +421,10 @@ void CHAT_CONTROLLER::LoadChat( const std::string& aChatId )
     m_chatHistory = messages;
     m_apiContext = m_chatHistory;  // For now, use same as chat history
 
+    // Repair any structural issues in loaded history (e.g., orphaned tool_use
+    // blocks from previous errors). This fixes corrupted chats on load.
+    RepairHistory();
+
     // Title is stored in database object after Load() call
     std::string title = m_chatHistoryDb->GetTitle();
 
@@ -904,17 +908,48 @@ void CHAT_CONTROLLER::HandleLLMError( const std::string& aError )
         auto& lastMsg = m_chatHistory.back();
         if( lastMsg.contains( "role" ) && lastMsg["role"] == "user" )
         {
-            wxLogInfo( "CHAT_CONTROLLER::HandleLLMError - removing orphaned user message" );
-            m_chatHistory.erase( m_chatHistory.end() - 1 );
+            // Check if this user message contains tool_result blocks.
+            // tool_result messages are structurally required — they must follow
+            // the assistant's tool_use blocks. Removing them corrupts history.
+            bool hasToolResult = false;
 
-            // Also remove from API context
-            if( !m_apiContext.empty() )
+            if( lastMsg.contains( "content" ) && lastMsg["content"].is_array() )
             {
-                auto& lastApiMsg = m_apiContext.back();
-                if( lastApiMsg.contains( "role" ) && lastApiMsg["role"] == "user" )
+                for( const auto& block : lastMsg["content"] )
                 {
-                    m_apiContext.erase( m_apiContext.end() - 1 );
+                    if( block.contains( "type" ) && block["type"] == "tool_result" )
+                    {
+                        hasToolResult = true;
+                        break;
+                    }
                 }
+            }
+
+            if( hasToolResult )
+            {
+                wxLogInfo( "CHAT_CONTROLLER::HandleLLMError - keeping tool_result user message "
+                           "(structurally required)" );
+            }
+            else
+            {
+                wxLogInfo( "CHAT_CONTROLLER::HandleLLMError - removing orphaned user message" );
+                m_chatHistory.erase( m_chatHistory.end() - 1 );
+
+                // Also remove from API context
+                if( !m_apiContext.empty() )
+                {
+                    auto& lastApiMsg = m_apiContext.back();
+                    if( lastApiMsg.contains( "role" ) && lastApiMsg["role"] == "user" )
+                    {
+                        m_apiContext.erase( m_apiContext.end() - 1 );
+                    }
+                }
+
+                // Persist the removal — the frame already saved to disk before the
+                // API response arrived, so without this the orphaned message reappears
+                // when the chat is reloaded.
+                if( m_chatHistoryDb && !m_chatId.empty() )
+                    m_chatHistoryDb->Save( m_chatHistory );
             }
         }
     }
@@ -1482,6 +1517,50 @@ void CHAT_CONTROLLER::RepairHistory()
         }
     }
 
+    // PASS 3: Merge consecutive user messages.
+    // The Anthropic API requires strict user/assistant alternation.
+    // Consecutive user messages can accumulate when HandleLLMError removes orphaned
+    // messages but doesn't persist the removal, or when the app crashes mid-conversation.
+    // We merge them into one message by combining their content arrays.
+    for( size_t i = 1; i < m_chatHistory.size(); /* no increment */ )
+    {
+        auto& prev = m_chatHistory[i - 1];
+        auto& curr = m_chatHistory[i];
+
+        if( !prev.contains( "role" ) || !curr.contains( "role" ) ||
+            prev["role"] != "user" || curr["role"] != "user" )
+        {
+            i++;
+            continue;
+        }
+
+        // Merge curr's content into prev, combining content arrays
+        json prevContent;
+
+        if( prev.contains( "content" ) && prev["content"].is_array() )
+            prevContent = prev["content"];
+        else if( prev.contains( "content" ) && prev["content"].is_string() )
+            prevContent = json::array( { { { "type", "text" }, { "text", prev["content"].get<std::string>() } } } );
+        else
+            prevContent = json::array();
+
+        if( curr.contains( "content" ) && curr["content"].is_array() )
+        {
+            for( const auto& block : curr["content"] )
+                prevContent.push_back( block );
+        }
+        else if( curr.contains( "content" ) && curr["content"].is_string() )
+        {
+            prevContent.push_back( { { "type", "text" }, { "text", curr["content"].get<std::string>() } } );
+        }
+
+        prev["content"] = prevContent;
+        m_chatHistory.erase( m_chatHistory.begin() + i );
+        historyModified = true;
+        wxLogInfo( "CHAT_CONTROLLER::RepairHistory - merged consecutive user messages at index %zu", i );
+        // Don't increment — check the new element at position i
+    }
+
     if( historyModified )
     {
         // Sync API context after fix
@@ -1585,7 +1664,40 @@ void CHAT_CONTROLLER::SanitizeApiContext()
 
                 if( prevHasToolResult )
                 {
-                    wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - keeping tool_result user message" );
+                    // Merge current message's content into the tool_result message
+                    // to maintain role alternation while preserving the tool_result.
+                    wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - merging into tool_result "
+                               "user message" );
+                    auto& prevSanitized = sanitized.back();
+
+                    if( !prevSanitized.contains( "content" ) || !prevSanitized["content"].is_array() )
+                    {
+                        if( prevSanitized.contains( "content" ) && prevSanitized["content"].is_string() )
+                        {
+                            prevSanitized["content"] = nlohmann::json::array(
+                                { { { "type", "text" },
+                                    { "text", prevSanitized["content"].get<std::string>() } } } );
+                        }
+                        else
+                        {
+                            prevSanitized["content"] = nlohmann::json::array();
+                        }
+                    }
+
+                    // Append current message's content blocks
+                    if( msg.contains( "content" ) && msg["content"].is_array() )
+                    {
+                        for( const auto& block : msg["content"] )
+                            prevSanitized["content"].push_back( block );
+                    }
+                    else if( msg.contains( "content" ) && msg["content"].is_string() )
+                    {
+                        prevSanitized["content"].push_back(
+                            { { "type", "text" },
+                              { "text", msg["content"].get<std::string>() } } );
+                    }
+
+                    continue;  // Skip push_back — content was merged into previous
                 }
                 else
                 {
@@ -1689,6 +1801,9 @@ void CHAT_CONTROLLER::StartLLMRequest()
     }
 
     m_stopRequested = false;
+
+    // Repair structural issues (orphaned tool_use/tool_result) before sanitizing.
+    RepairHistory();
 
     // Sanitize context before sending to ensure valid message format
     SanitizeApiContext();

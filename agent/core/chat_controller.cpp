@@ -199,9 +199,11 @@ void CHAT_CONTROLLER::DoSendMessage( const std::string& aText, const nlohmann::j
 
 void CHAT_CONTROLLER::Cancel()
 {
-    wxLogInfo( "CHAT_CONTROLLER::Cancel called" );
+    wxLogInfo( "CHAT_CONTROLLER::Cancel called, state=%d, responseLen=%zu, thinkingLen=%zu, chatId=%s",
+               static_cast<int>( m_ctx.GetState() ), m_currentResponse.size(),
+               static_cast<size_t>( m_thinkingContent.length() ), m_chatId.c_str() );
     m_stopRequested = true;
-        m_continueAfterComplete = false;
+    m_continueAfterComplete = false;
 
     if( m_llmClient )
         m_llmClient->CancelRequest();
@@ -213,6 +215,10 @@ void CHAT_CONTROLLER::Cancel()
     bool toolStateActive = m_ctx.GetState() == AgentConversationState::TOOL_USE_DETECTED ||
                            m_ctx.GetState() == AgentConversationState::EXECUTING_TOOL ||
                            m_ctx.GetState() == AgentConversationState::PROCESSING_TOOL_RESULT;
+
+    wxLogInfo( "CHAT_CONTROLLER::Cancel toolStateActive=%d, willSavePartial=%d",
+               toolStateActive,
+               !toolStateActive && ( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() ) );
 
     if( !toolStateActive && ( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() ) )
     {
@@ -252,6 +258,8 @@ void CHAT_CONTROLLER::Cancel()
             { "content", content }
         };
         AddToHistory( assistantMsg );
+        wxLogInfo( "CHAT_CONTROLLER::Cancel - added partial response to history, historySize=%zu",
+                   m_chatHistory.size() );
 
         // Note: Don't clear m_currentResponse here - the UI needs it to finalize the display.
         // The frame's OnStop() will clear streaming state after finalizing.
@@ -376,10 +384,32 @@ void CHAT_CONTROLLER::LoadChat( const std::string& aChatId )
         return;
     }
 
-    // Cancel any ongoing operation
+    // Cancel any ongoing operation (adds partial response to m_chatHistory if streaming)
+    size_t historyBefore = m_chatHistory.size();
+    wxLogInfo( "CHAT_CONTROLLER::LoadChat - about to Cancel, oldChatId=%s, historySize=%zu",
+               m_chatId.c_str(), historyBefore );
     Cancel();
 
+    // Save old chat's history only if Cancel() actually added a partial response.
+    // This avoids re-saving unmodified chats (which would update their timestamp).
+    if( !m_chatId.empty() && m_chatHistory.size() > historyBefore )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::LoadChat - Cancel added content, saving old chat=%s, "
+                   "historySize=%zu", m_chatId.c_str(), m_chatHistory.size() );
+        m_chatHistoryDb->Save( m_chatHistory );
+    }
+
+    // Clear streaming state that Cancel() preserved for frame finalization.
+    // We're switching chats, not going through the normal OnStop() path.
+    m_currentResponse.clear();
+    m_thinkingContent.clear();
+    m_thinkingSignature.clear();
+    m_compactionContent.clear();
+    m_pendingToolCalls = nlohmann::json::array();
+    m_serverToolBlocks = nlohmann::json::array();
+
     // Load from database - returns messages array, stores title internally
+    wxLogInfo( "CHAT_CONTROLLER::LoadChat - loading new chat=%s", aChatId.c_str() );
     nlohmann::json messages = m_chatHistoryDb->Load( aChatId );
     if( messages.is_null() )
     {
@@ -399,6 +429,57 @@ void CHAT_CONTROLLER::LoadChat( const std::string& aChatId )
 
     // Emit loaded event
     EmitEvent( EVT_CHAT_HISTORY_LOADED, ChatHistoryLoadedData( aChatId, title ) );
+}
+
+
+void CHAT_CONTROLLER::SaveStreamingSnapshot()
+{
+    if( !m_chatHistoryDb || m_chatId.empty() )
+        return;
+
+    // Build a snapshot: committed history + any in-flight streaming content
+    nlohmann::json snapshot = m_chatHistory;
+    bool appendedStreaming = false;
+
+    // Append current streaming response as a temporary assistant message
+    if( m_ctx.GetState() == AgentConversationState::WAITING_FOR_LLM )
+    {
+        nlohmann::json content = nlohmann::json::array();
+
+        if( !m_thinkingContent.IsEmpty() && !m_thinkingSignature.empty() )
+        {
+            content.push_back( {
+                { "type", "thinking" },
+                { "thinking", m_thinkingContent.ToStdString() },
+                { "signature", m_thinkingSignature }
+            } );
+        }
+
+        if( !m_currentResponse.empty() )
+        {
+            content.push_back( {
+                { "type", "text" },
+                { "text", m_currentResponse }
+            } );
+        }
+
+        if( !content.empty() )
+        {
+            snapshot.push_back( {
+                { "role", "assistant" },
+                { "content", content }
+            } );
+            appendedStreaming = true;
+        }
+    }
+
+    wxLogInfo( "CHAT_CONTROLLER::SaveStreamingSnapshot - chatId=%s, historyMsgs=%zu, "
+               "appendedStreaming=%d, responseLen=%zu",
+               m_chatId.c_str(), m_chatHistory.size(), appendedStreaming,
+               m_currentResponse.size() );
+
+    m_chatHistoryDb->Save( snapshot );
+    m_lastSnapshotTime = std::chrono::steady_clock::now();
 }
 
 
@@ -495,6 +576,13 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
     case LLMChunkType::TEXT:
         m_currentResponse += aChunk.text;
         EmitEvent( EVT_CHAT_TEXT_DELTA, ChatTextDeltaData( m_currentResponse, aChunk.text ) );
+
+        // Periodic snapshot for crash protection (every 5 seconds)
+        {
+            auto now = std::chrono::steady_clock::now();
+            if( now - m_lastSnapshotTime > std::chrono::seconds( 5 ) )
+                SaveStreamingSnapshot();
+        }
         break;
 
     case LLMChunkType::THINKING_START:

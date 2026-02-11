@@ -4,6 +4,7 @@
 #include <wx/event.h>
 #include <wx/string.h>
 #include <nlohmann/json.hpp>
+#include <chrono>
 #include <functional>
 #include <string>
 #include <vector>
@@ -86,6 +87,13 @@ public:
      * @param aChatId The chat ID to load
      */
     void LoadChat( const std::string& aChatId );
+
+    /**
+     * Save a snapshot of the current chat including any in-flight streaming response.
+     * Used for crash protection (periodic saves during streaming) and before chat switches.
+     * Does not modify m_chatHistory — builds a temporary snapshot for persistence only.
+     */
+    void SaveStreamingSnapshot();
 
     /**
      * Set the model to use for requests.
@@ -171,6 +179,7 @@ public:
     }
     const std::string& GetCurrentModel() const { return m_currentModel; }
     const std::string& GetChatId() const { return m_chatId; }
+    void SetChatId( const std::string& aId ) { m_chatId = aId; }
     const std::vector<LLM_TOOL>& GetTools() const { return m_tools; }
 
     // =========================================================================
@@ -283,6 +292,11 @@ private:
     // User edit detection (schematic diff between turns)
     // -------------------------------------------------------------------------
     std::string m_schematicSnapshot;  ///< JSON snapshot taken after agent turn completes
+
+    // -------------------------------------------------------------------------
+    // Streaming snapshot (crash protection)
+    // -------------------------------------------------------------------------
+    std::chrono::steady_clock::time_point m_lastSnapshotTime;  ///< Throttle periodic saves
 
     // -------------------------------------------------------------------------
     // Tool definitions

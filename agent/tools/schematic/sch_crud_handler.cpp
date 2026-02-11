@@ -334,7 +334,6 @@ std::string SCH_CRUD_HANDLER::GenerateAddCode( const nlohmann::json& aInput ) co
         if( libId.empty() )
         {
             code << "    print(json.dumps({'status': 'error', 'message': 'lib_id is required for symbol'}))\n";
-            code << "    sys.exit(1)\n";
             return code.str();
         }
 

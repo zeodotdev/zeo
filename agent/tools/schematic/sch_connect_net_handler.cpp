@@ -145,6 +145,11 @@ try:
     wire_count = 0
     junction_count = 0
 
+    _wire_ep = {}
+    def _track(x, y):
+        key = (round(x, 2), round(y, 2))
+        _wire_ep[key] = _wire_ep.get(key, 0) + 1
+
     if len(pin_positions) == 2:
         # 2-pin case: midpoint-bend routing
         p0, p1 = pin_positions[0], pin_positions[1]
@@ -313,8 +318,12 @@ try:
         if trunk_min != trunk_max:
             if is_horizontal:
                 sch.wiring.add_wire(Vector2.from_xy_mm(trunk_min, trunk_perp), Vector2.from_xy_mm(trunk_max, trunk_perp))
+                _track(trunk_min, trunk_perp)
+                _track(trunk_max, trunk_perp)
             else:
                 sch.wiring.add_wire(Vector2.from_xy_mm(trunk_perp, trunk_min), Vector2.from_xy_mm(trunk_perp, trunk_max))
+                _track(trunk_perp, trunk_min)
+                _track(trunk_perp, trunk_max)
             wire_count += 1
 
         # Place branches
@@ -330,56 +339,67 @@ try:
                 if abs(pin_x - tgt_x) < 0.01 or abs(pin_y - tgt_y) < 0.01:
                     # Collinear: straight wire
                     sch.wiring.add_wire(Vector2.from_xy_mm(pin_x, pin_y), Vector2.from_xy_mm(tgt_x, tgt_y))
+                    _track(pin_x, pin_y)
+                    _track(tgt_x, tgt_y)
                     wire_count += 1
                 elif p.get('_ep'):
                     # Endpoint branch: L-bend following pin direction
                     if p['dir'] == 'h':
-                        corner = Vector2.from_xy_mm(tgt_x, pin_y)
+                        cx, cy = tgt_x, pin_y
                     else:
-                        corner = Vector2.from_xy_mm(pin_x, tgt_y)
+                        cx, cy = pin_x, tgt_y
+                    corner = Vector2.from_xy_mm(cx, cy)
                     sch.wiring.add_wire(Vector2.from_xy_mm(pin_x, pin_y), corner)
                     sch.wiring.add_wire(corner, Vector2.from_xy_mm(tgt_x, tgt_y))
+                    _track(pin_x, pin_y)
+                    _track(cx, cy)
+                    _track(cx, cy)
+                    _track(tgt_x, tgt_y)
                     wire_count += 2
                 else:
                     # Interior branch: midpoint-bend step route
                     if p['dir'] == 'v':
                         mid = snap_to_grid((pin_y + tgt_y) / 2)
-                        c0 = Vector2.from_xy_mm(pin_x, mid)
-                        c1 = Vector2.from_xy_mm(tgt_x, mid)
+                        c0x, c0y = pin_x, mid
+                        c1x, c1y = tgt_x, mid
                     else:
                         mid = snap_to_grid((pin_x + tgt_x) / 2)
-                        c0 = Vector2.from_xy_mm(mid, pin_y)
-                        c1 = Vector2.from_xy_mm(mid, tgt_y)
+                        c0x, c0y = mid, pin_y
+                        c1x, c1y = mid, tgt_y
+                    c0 = Vector2.from_xy_mm(c0x, c0y)
+                    c1 = Vector2.from_xy_mm(c1x, c1y)
                     sch.wiring.add_wire(Vector2.from_xy_mm(pin_x, pin_y), c0)
                     sch.wiring.add_wire(c0, c1)
                     sch.wiring.add_wire(c1, Vector2.from_xy_mm(tgt_x, tgt_y))
+                    _track(pin_x, pin_y)
+                    _track(c0x, c0y)
+                    _track(c0x, c0y)
+                    _track(c1x, c1y)
+                    _track(c1x, c1y)
+                    _track(tgt_x, tgt_y)
                     wire_count += 3
 
-        # Place junctions where 3+ wires meet
-        for i, p in enumerate(pin_positions):
-            if '_tgt' in p:
-                jx, jy = p['_tgt']
-                along = jx if is_horizontal else jy
+        # Count pins as branches at their positions
+        for p in pin_positions:
+            _track(p['x'], p['y'])
+
+        # Account for trunk passing through interior points
+        for key in list(_wire_ep.keys()):
+            kx, ky = key
+            if is_horizontal:
+                if abs(ky - trunk_perp) < 0.01 and kx > trunk_min + 0.01 and kx < trunk_max - 0.01:
+                    _wire_ep[key] += 2
             else:
-                jx, jy = p['x'], p['y']
-                along = jx if is_horizontal else jy
-            at_end = abs(along - trunk_min) < 0.01 or abs(along - trunk_max) < 0.01
-            if at_end:
-                # Endpoint: junction only if another pin connects here too
-                others = 0
-                for j, q in enumerate(pin_positions):
-                    if i == j:
-                        continue
-                    qa = (q['_tgt'][0] if is_horizontal else q['_tgt'][1]) if '_tgt' in q else (q['x'] if is_horizontal else q['y'])
-                    if abs(qa - along) < 0.01:
-                        others += 1
-                if others > 0:
-                    sch.wiring.add_junction(Vector2.from_xy_mm(jx, jy))
-                    junction_count += 1
-            else:
-                # Interior: trunk passes through, always needs junction
-                sch.wiring.add_junction(Vector2.from_xy_mm(jx, jy))
+                if abs(kx - trunk_perp) < 0.01 and ky > trunk_min + 0.01 and ky < trunk_max - 0.01:
+                    _wire_ep[key] += 2
+
+        # Place junctions where 3+ branches meet
+        _junctions_done = set()
+        for key, count in _wire_ep.items():
+            if count >= 3 and key not in _junctions_done:
+                sch.wiring.add_junction(Vector2.from_xy_mm(key[0], key[1]))
                 junction_count += 1
+                _junctions_done.add(key)
 
     pin_info = [{'ref': p['ref'], 'pin': p['pin'], 'position': [p['x'], p['y']]} for p in pin_positions]
     result = {

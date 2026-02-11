@@ -950,8 +950,11 @@ public:
      */
     BOX2I ComputeTrackedItemsBBox() const;
 
+    bool m_inUndoRedo = false;          ///< True during undo/redo (suppresses OnModify auto-reject)
+
 private:
     bool m_showingAgentBefore = false;  ///< True if currently showing "before" state
+    BOX2I m_cachedAgentBBox;            ///< Cached bbox for use when items are undone (before state)
 };
 
 #endif  // __PCB_EDIT_FRAME_H__

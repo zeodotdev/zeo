@@ -26,6 +26,9 @@
 
 // Forward declarations
 class EXPANDABLE_OBJECT;
+class BOARD;
+class SHAPE_SEARCH_TREE;
+struct AUTOROUTE_CONTROL;
 class EXPANSION_DOOR;
 class EXPANSION_DRILL;
 class MAZE_SEARCH;
@@ -38,13 +41,23 @@ struct PATH_POINT
 {
     VECTOR2I position;
     int      layer;
-    bool     is_via;      ///< True if a via should be placed here
-    bool     is_start;    ///< True if this is the path start
-    bool     is_end;      ///< True if this is the path end
+    bool     is_via;           ///< True if a via should be placed here
+    bool     is_start;         ///< True if this is the path start
+    bool     is_end;           ///< True if this is the path end
+    int      via_first_layer;  ///< First layer of via (for blind/buried)
+    int      via_last_layer;   ///< Last layer of via (for blind/buried)
 
-    PATH_POINT() : layer( 0 ), is_via( false ), is_start( false ), is_end( false ) {}
+    PATH_POINT()
+        : layer( 0 ), is_via( false ), is_start( false ), is_end( false )
+        , via_first_layer( 0 ), via_last_layer( -1 ) {}
+
     PATH_POINT( const VECTOR2I& aPos, int aLayer, bool aVia = false )
-        : position( aPos ), layer( aLayer ), is_via( aVia ), is_start( false ), is_end( false ) {}
+        : position( aPos ), layer( aLayer ), is_via( aVia ), is_start( false ), is_end( false )
+        , via_first_layer( 0 ), via_last_layer( -1 ) {}
+
+    PATH_POINT( const VECTOR2I& aPos, int aLayer, int aViaFirstLayer, int aViaLastLayer )
+        : position( aPos ), layer( aLayer ), is_via( true ), is_start( false ), is_end( false )
+        , via_first_layer( aViaFirstLayer ), via_last_layer( aViaLastLayer ) {}
 };
 
 
@@ -117,6 +130,31 @@ public:
     void SetClearance( int aClearance ) { m_clearance = aClearance; }
 
     /**
+     * Set the board for pull-tight optimization.
+     */
+    void SetBoard( BOARD* aBoard ) { m_board = aBoard; }
+
+    /**
+     * Set the search tree for pull-tight collision detection.
+     */
+    void SetSearchTree( SHAPE_SEARCH_TREE* aTree ) { m_searchTree = aTree; }
+
+    /**
+     * Set the net code for pull-tight same-net filtering.
+     */
+    void SetNetCode( int aNetCode ) { m_netCode = aNetCode; }
+
+    /**
+     * Set the control parameters.
+     */
+    void SetControl( const AUTOROUTE_CONTROL* aControl ) { m_control = aControl; }
+
+    /**
+     * Enable or disable pull-tight optimization.
+     */
+    void SetPullTightEnabled( bool aEnabled ) { m_pullTightEnabled = aEnabled; }
+
+    /**
      * Reconstruct the path from backtrack information.
      *
      * @return Routing path, or empty path if reconstruction failed
@@ -152,9 +190,14 @@ private:
      */
     void ExtractVias( const std::vector<PATH_POINT>& aPoints, ROUTING_PATH& aPath );
 
-    const MAZE_SEARCH* m_search = nullptr;
-    int                m_trackWidth = 250000;  // 0.25mm default
-    int                m_clearance = 200000;   // 0.2mm default
+    const MAZE_SEARCH*       m_search = nullptr;
+    int                      m_trackWidth = 250000;  // 0.25mm default
+    int                      m_clearance = 200000;   // 0.2mm default
+    BOARD*                   m_board = nullptr;
+    SHAPE_SEARCH_TREE*       m_searchTree = nullptr;
+    const AUTOROUTE_CONTROL* m_control = nullptr;
+    int                      m_netCode = 0;
+    bool                     m_pullTightEnabled = true;
 };
 
 

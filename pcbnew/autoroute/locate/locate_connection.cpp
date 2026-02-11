@@ -21,6 +21,8 @@
 #include "../search/maze_search.h"
 #include "../expansion/expansion_door.h"
 #include "../expansion/expansion_drill.h"
+#include "../optimize/pull_tight.h"
+#include "../optimize/via_optimizer.h"
 #include <cmath>
 
 
@@ -95,8 +97,28 @@ ROUTING_PATH LOCATE_CONNECTION::LocatePath()
     path.start_layer = points.front().layer;
     path.end_layer = points.back().layer;
 
-    // Simplify and optimize
+    // Simplify and optimize with 45-degree corners
     SimplifyPath( path );
+    OptimizePath( path, m_clearance );
+
+    // Apply pull-tight optimization to reduce path length
+    if( m_pullTightEnabled && m_board && m_control )
+    {
+        PULL_TIGHT pullTight( m_board, *m_control );
+        pullTight.SetSearchTree( m_searchTree );
+        pullTight.SetNetCode( m_netCode );
+        pullTight.SetMode( PULL_TIGHT_MODE::FORTYFIVE );
+        pullTight.OptimizePath( path );
+    }
+
+    // Apply via optimization to reduce via count and improve positions
+    if( m_board && m_control && !path.via_locations.empty() )
+    {
+        VIA_OPTIMIZER viaOpt( m_board, *m_control );
+        viaOpt.SetSearchTree( m_searchTree );
+        viaOpt.SetNetCode( m_netCode );
+        viaOpt.Optimize( path );
+    }
 
     return path;
 }
@@ -116,6 +138,8 @@ void LOCATE_CONNECTION::ProcessBacktrackElement( EXPANDABLE_OBJECT* aDoor, int a
         pt.position = drill->GetLocation();
         pt.layer = drill->GetFirstLayer() + aSection;
         pt.is_via = true;
+        pt.via_first_layer = drill->GetFirstLayer();
+        pt.via_last_layer = drill->GetLastLayer();
         aPoints.push_back( pt );
         return;
     }
@@ -225,12 +249,10 @@ void LOCATE_CONNECTION::SimplifyPath( ROUTING_PATH& aPath )
 
 void LOCATE_CONNECTION::OptimizePath( ROUTING_PATH& aPath, int aMinSegmentLength )
 {
-    // This could implement:
-    // - 45-degree chamfering of corners
-    // - Arc corner optimization
-    // - Length matching adjustments
+    // Implement 45-degree corner optimization (chamfering)
+    // Instead of 90-degree corners, create 45-degree chamfered corners
+    // This follows FreeRouting's LocateFoundConnectionAlgo45Degree approach
 
-    // For now, just ensure minimum segment lengths
     for( auto& seg : aPath.segments )
     {
         if( seg.points.size() <= 2 )
@@ -239,23 +261,98 @@ void LOCATE_CONNECTION::OptimizePath( ROUTING_PATH& aPath, int aMinSegmentLength
         std::vector<VECTOR2I> optimized;
         optimized.push_back( seg.points[0] );
 
-        for( size_t i = 1; i < seg.points.size(); ++i )
+        for( size_t i = 1; i < seg.points.size() - 1; ++i )
         {
             const VECTOR2I& prev = optimized.back();
             const VECTOR2I& curr = seg.points[i];
+            const VECTOR2I& next = seg.points[i + 1];
+
+            // Calculate direction vectors
+            int64_t dx1 = curr.x - prev.x;
+            int64_t dy1 = curr.y - prev.y;
+            int64_t dx2 = next.x - curr.x;
+            int64_t dy2 = next.y - curr.y;
+
+            // Check if this is a corner (direction change)
+            int64_t cross = dx1 * dy2 - dy1 * dx2;
+            if( cross == 0 )
+            {
+                // Collinear - skip this point
+                continue;
+            }
+
+            // Determine the angle change
+            bool isHorizontalFirst = ( std::abs( dx1 ) > std::abs( dy1 ) );
+            bool isVerticalSecond = ( std::abs( dy2 ) > std::abs( dx2 ) );
+            bool is90DegreeTurn = ( isHorizontalFirst && isVerticalSecond ) ||
+                                   ( !isHorizontalFirst && !isVerticalSecond );
+
+            if( is90DegreeTurn )
+            {
+                // Create 45-degree chamfer
+                // Calculate segment lengths
+                double len1 = std::sqrt( double( dx1 * dx1 + dy1 * dy1 ) );
+                double len2 = std::sqrt( double( dx2 * dx2 + dy2 * dy2 ) );
+
+                // Chamfer distance (minimum of segment lengths or minSegmentLength)
+                double chamferDist = std::min( { len1 * 0.4, len2 * 0.4,
+                                                  double( aMinSegmentLength ) } );
+
+                if( chamferDist >= aMinSegmentLength / 2 )
+                {
+                    // Calculate chamfer start point (on first segment)
+                    double t1 = 1.0 - ( chamferDist / len1 );
+                    VECTOR2I chamferStart(
+                        static_cast<int>( prev.x + dx1 * t1 ),
+                        static_cast<int>( prev.y + dy1 * t1 ) );
+
+                    // Calculate chamfer end point (on second segment)
+                    double t2 = chamferDist / len2;
+                    VECTOR2I chamferEnd(
+                        static_cast<int>( curr.x + dx2 * t2 ),
+                        static_cast<int>( curr.y + dy2 * t2 ) );
+
+                    // Add chamfer points
+                    optimized.push_back( chamferStart );
+                    optimized.push_back( chamferEnd );
+                }
+                else
+                {
+                    // Chamfer too small, keep original corner
+                    optimized.push_back( curr );
+                }
+            }
+            else
+            {
+                // Not a 90-degree turn, keep original corner point
+                optimized.push_back( curr );
+            }
+        }
+
+        // Always add the last point
+        optimized.push_back( seg.points.back() );
+
+        // Ensure minimum segment lengths
+        std::vector<VECTOR2I> filtered;
+        filtered.push_back( optimized[0] );
+
+        for( size_t i = 1; i < optimized.size(); ++i )
+        {
+            const VECTOR2I& prev = filtered.back();
+            const VECTOR2I& curr = optimized[i];
 
             int64_t dx = curr.x - prev.x;
             int64_t dy = curr.y - prev.y;
             int64_t len2 = dx * dx + dy * dy;
 
             // Keep point if segment is long enough or it's the last point
-            if( len2 >= (int64_t)aMinSegmentLength * aMinSegmentLength ||
-                i == seg.points.size() - 1 )
+            if( len2 >= (int64_t)aMinSegmentLength * aMinSegmentLength / 4 ||
+                i == optimized.size() - 1 )
             {
-                optimized.push_back( curr );
+                filtered.push_back( curr );
             }
         }
 
-        seg.points = optimized;
+        seg.points = filtered;
     }
 }

@@ -24,6 +24,7 @@
 #include "destination_distance.h"
 #include "ripup_checker.h"
 #include "../autoroute_control.h"
+#include <atomic>
 #include <queue>
 #include <vector>
 #include <set>
@@ -36,6 +37,7 @@ class EXPANSION_ROOM;
 class EXPANSION_DOOR;
 class EXPANSION_DRILL;
 class BOARD_ITEM;
+class CONGESTION_MAP;
 
 
 /**
@@ -114,6 +116,28 @@ public:
      * Set the net code being routed (for ripup decisions).
      */
     void SetNetCode( int aNetCode ) { m_netCode = aNetCode; }
+
+    /**
+     * Enable delayed occupation strategy.
+     * When enabled, failed searches will retry with previously blocked doors allowed.
+     */
+    void SetDelayedOccupation( bool aEnabled ) { m_delayedOccupationEnabled = aEnabled; }
+
+    /**
+     * Set maximum retry attempts for delayed occupation.
+     */
+    void SetMaxRetries( int aRetries ) { m_maxRetries = aRetries; }
+
+    /**
+     * Set the congestion map for congestion-aware routing.
+     */
+    void SetCongestionMap( const CONGESTION_MAP* aCongestionMap ) { m_congestionMap = aCongestionMap; }
+
+    /**
+     * Set a pointer to a cancellation flag.
+     * The search will check this flag periodically and abort if set.
+     */
+    void SetCancelledFlag( const std::atomic<bool>* aCancelled ) { m_cancelled = aCancelled; }
 
 private:
     /**
@@ -220,9 +244,26 @@ private:
     RIPUP_CHECKER     m_ripupChecker;
     int               m_netCode = 0;  ///< Net code being routed
 
-    // Statistics
+    // Statistics and limits
     int m_nodesExpanded = 0;
     int m_maxQueueSize = 0;
+    static constexpr int MAX_NODES_EXPANDED = 50000;   ///< Safety limit to prevent infinite search
+    static constexpr int MAX_QUEUE_SIZE = 100000;      ///< Max queue size to prevent memory issues
+    static constexpr int MAX_ROOM_COMPLETIONS = 1000;  ///< Limit on dynamic room completions per search
+    int m_roomCompletions = 0;                         ///< Track room completions
+
+    // Delayed occupation strategy
+    bool m_delayedOccupationEnabled = true;  ///< Enable retry with delayed occupation
+    int  m_maxRetries = 3;                    ///< Maximum retry attempts
+    int  m_currentRetry = 0;                  ///< Current retry count
+    std::set<std::pair<EXPANDABLE_OBJECT*, int>> m_delayedDoors;  ///< Doors marked for delayed retry
+    // Note: No m_inQueue - FreeRouting allows duplicates in queue, skips when popped if occupied
+
+    // Congestion-aware routing
+    const CONGESTION_MAP* m_congestionMap = nullptr;  ///< Optional congestion map for spread routing
+
+    // Cancellation support
+    const std::atomic<bool>* m_cancelled = nullptr;   ///< External cancellation flag
 };
 
 

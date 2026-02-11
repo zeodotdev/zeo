@@ -22,11 +22,15 @@
 
 #include "../locate/locate_connection.h"
 #include "../autoroute_control.h"
+#include "../search/shape_search_tree.h"
+#include <math/box2.h>
 #include <string>
 
 // Forward declarations
 class BOARD;
 class COMMIT;
+class ZONE;
+class CONGESTION_MAP;
 
 
 /**
@@ -64,6 +68,16 @@ public:
     void SetCommit( COMMIT* aCommit ) { m_commit = aCommit; }
 
     /**
+     * Set the search tree for collision detection.
+     */
+    void SetSearchTree( SHAPE_SEARCH_TREE* aSearchTree ) { m_searchTree = aSearchTree; }
+
+    /**
+     * Set the net code for collision filtering (same-net items don't block).
+     */
+    void SetNetCode( int aNetCode ) { m_netCode = aNetCode; }
+
+    /**
      * Set routing parameters.
      */
     void SetControl( const AUTOROUTE_CONTROL& aControl ) { m_control = aControl; }
@@ -72,6 +86,11 @@ public:
      * Set the net name for the connection.
      */
     void SetNetName( const std::string& aNetName ) { m_netName = aNetName; }
+
+    /**
+     * Set the congestion map for recording routed segments.
+     */
+    void SetCongestionMap( CONGESTION_MAP* aCongestionMap ) { m_congestionMap = aCongestionMap; }
 
     /**
      * Insert a routing path into the board.
@@ -102,6 +121,27 @@ private:
     bool InsertVia( const PATH_POINT& aViaPoint );
 
     /**
+     * Check if a track segment collides with obstacles.
+     * @return true if segment is valid (no collision), false if blocked
+     */
+    bool ValidateSegment( const VECTOR2I& aStart, const VECTOR2I& aEnd, int aLayer );
+
+    /**
+     * Check if a point is inside any keepout zone.
+     */
+    bool IsInKeepoutZone( const VECTOR2I& aPoint, int aLayer );
+
+    /**
+     * Check if a segment crosses any keepout zone.
+     */
+    bool SegmentCrossesKeepout( const VECTOR2I& aStart, const VECTOR2I& aEnd, int aLayer );
+
+    /**
+     * Check if a segment crosses any pad from another net.
+     */
+    bool SegmentCrossesPad( const VECTOR2I& aStart, const VECTOR2I& aEnd, int aLayer );
+
+    /**
      * Generate code for a track segment.
      */
     std::string GenerateTrackCode( const PATH_SEGMENT& aSegment ) const;
@@ -116,10 +156,34 @@ private:
      */
     std::string LayerToName( int aLayer ) const;
 
-    BOARD*            m_board = nullptr;
-    COMMIT*           m_commit = nullptr;
-    AUTOROUTE_CONTROL m_control;
-    std::string       m_netName;
+    /**
+     * Calculate neckdown width for connection to a pad.
+     * Returns the appropriate track width if neckdown is needed, or 0 if not.
+     *
+     * @param aPoint The point to check for pad proximity
+     * @param aLayer The routing layer
+     * @param aCurrentWidth Current track width
+     * @return Neckdown width if needed, or aCurrentWidth if not
+     */
+    int CalculateNeckdownWidth( const VECTOR2I& aPoint, int aLayer, int aCurrentWidth );
+
+    /**
+     * Find a pad at the given position.
+     */
+    class PAD* FindPadAt( const VECTOR2I& aPoint, int aLayer );
+
+    /**
+     * Calculate the neckdown distance (how far from pad center to start neckdown).
+     */
+    int CalculateNeckdownDistance( class PAD* aPad, int aTrackWidth );
+
+    BOARD*             m_board = nullptr;
+    COMMIT*            m_commit = nullptr;
+    SHAPE_SEARCH_TREE* m_searchTree = nullptr;
+    CONGESTION_MAP*    m_congestionMap = nullptr;
+    AUTOROUTE_CONTROL  m_control;
+    std::string        m_netName;
+    int                m_netCode = 0;
 };
 
 

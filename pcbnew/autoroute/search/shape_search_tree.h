@@ -145,6 +145,19 @@ public:
                            std::function<bool( const TREE_ENTRY& )> aCallback ) const;
 
     /**
+     * Find all entries that overlap with a given bounding box on a layer,
+     * excluding entries from the specified net (same-net items are not obstacles).
+     *
+     * @param aBounds The query bounding box.
+     * @param aLayer The layer to query.
+     * @param aExcludeNet Net code to exclude from results (-1 = no exclusion).
+     * @param aCallback Callback function called for each overlapping entry.
+     *                  Return false to stop iteration.
+     */
+    void QueryOverlappingWithNet( const BOX2I& aBounds, int aLayer, int aExcludeNet,
+                                   std::function<bool( const TREE_ENTRY& )> aCallback ) const;
+
+    /**
      * Find all entries that overlap with a given bounding box on a layer.
      *
      * @param aBounds The query bounding box.
@@ -152,6 +165,17 @@ public:
      * @return Vector of overlapping entries.
      */
     std::vector<TREE_ENTRY> GetOverlapping( const BOX2I& aBounds, int aLayer ) const;
+
+    /**
+     * Find all obstacle entries that overlap with a given bounding box,
+     * excluding same-net items.
+     *
+     * @param aBounds The query bounding box.
+     * @param aLayer The layer to query.
+     * @param aExcludeNet Net code to exclude from results.
+     * @return Vector of overlapping obstacle entries.
+     */
+    std::vector<TREE_ENTRY> GetObstacles( const BOX2I& aBounds, int aLayer, int aExcludeNet ) const;
 
     /**
      * Check if a point on a layer is blocked by any obstacle.

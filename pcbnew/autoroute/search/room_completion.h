@@ -130,10 +130,16 @@ private:
 
     /**
      * Try to remove an edge with no touching neighbors and enlarge the room.
+     * Now checks for obstacles before extending to prevent overlaps.
      *
+     * @param aShape The room shape to potentially extend.
+     * @param aNeighbours Current neighbors of the room.
+     * @param aLayer The layer of the room.
+     * @param aNetCode The net code being routed (to exclude same-net obstacles).
      * @return True if the shape was changed and needs re-completion.
      */
-    bool TryRemoveEdge( INT_BOX& aShape, const std::vector<ROOM_NEIGHBOUR>& aNeighbours );
+    bool TryRemoveEdge( INT_BOX& aShape, const std::vector<ROOM_NEIGHBOUR>& aNeighbours,
+                        int aLayer, int aNetCode );
 
     /**
      * Check if a door between two rooms is valid.

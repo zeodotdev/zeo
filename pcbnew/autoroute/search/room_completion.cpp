@@ -22,6 +22,10 @@
 #include <board_item.h>
 #include <algorithm>
 #include <cmath>
+#include <iostream>
+
+// Debug macro for room completion
+#define COMPLETION_DEBUG( msg ) std::cerr << "[COMPLETION] " << msg << std::endl
 
 
 //-----------------------------------------------------------------------------
@@ -93,40 +97,57 @@ ROOM_COMPLETION::ROOM_COMPLETION( AUTOROUTE_ENGINE& aEngine, SHAPE_SEARCH_TREE& 
 
 COMPLETION_RESULT ROOM_COMPLETION::Complete( INCOMPLETE_FREE_SPACE_ROOM& aRoom, int aNetCode )
 {
+    COMPLETION_DEBUG( "Complete: START, layer=" << aRoom.GetLayer() << " netCode=" << aNetCode );
+
     COMPLETION_RESULT result;
 
     const INT_BOX* roomShape = dynamic_cast<const INT_BOX*>( &aRoom.GetShape() );
     if( !roomShape )
     {
+        COMPLETION_DEBUG( "Complete: non-box shape, returning" );
         // Non-box shapes not yet supported
         return result;
     }
 
     INT_BOX workingShape = *roomShape;
     int layer = aRoom.GetLayer();
+    COMPLETION_DEBUG( "Complete: workingShape [" << workingShape.Left() << "," << workingShape.Top()
+                      << "] to [" << workingShape.Right() << "," << workingShape.Bottom() << "]" );
 
     // Find all neighbors
+    COMPLETION_DEBUG( "Complete: calling FindNeighbours" );
     auto neighbours = FindNeighbours( workingShape, layer, aNetCode );
+    COMPLETION_DEBUG( "Complete: FindNeighbours returned " << neighbours.size() << " neighbours" );
 
     // Sort neighbors counterclockwise
+    COMPLETION_DEBUG( "Complete: sorting neighbours" );
     SortNeighbours( neighbours, workingShape );
 
     // Try to enlarge the room if edges have no neighbors
     // (Iteratively until no more edges can be removed)
+    COMPLETION_DEBUG( "Complete: starting TryRemoveEdge loop" );
     int maxIterations = 4;  // At most 4 edges
-    while( maxIterations-- > 0 && TryRemoveEdge( workingShape, neighbours ) )
+    int iteration = 0;
+    while( maxIterations-- > 0 && TryRemoveEdge( workingShape, neighbours, layer, aNetCode ) )
     {
+        COMPLETION_DEBUG( "Complete: TryRemoveEdge iteration " << iteration++ );
         neighbours = FindNeighbours( workingShape, layer, aNetCode );
         SortNeighbours( neighbours, workingShape );
     }
+    COMPLETION_DEBUG( "Complete: TryRemoveEdge loop done" );
 
     // Create the complete room
+    COMPLETION_DEBUG( "Complete: creating completed room" );
     result.completed_room = std::make_unique<FREE_SPACE_ROOM>(
         std::make_unique<INT_BOX>( workingShape ), layer );
 
     // Calculate doors and new incomplete rooms
+    COMPLETION_DEBUG( "Complete: calling CalculateDoorsAndRooms" );
     CalculateDoorsAndRooms( workingShape, layer, neighbours, result );
+    COMPLETION_DEBUG( "Complete: CalculateDoorsAndRooms done, newDoors=" << result.new_doors.size()
+                      << " newIncomplete=" << result.new_incomplete_rooms.size() );
 
+    COMPLETION_DEBUG( "Complete: done" );
     return result;
 }
 
@@ -229,16 +250,31 @@ std::vector<ROOM_NEIGHBOUR> ROOM_COMPLETION::FindNeighbours( const INT_BOX& aSha
                                                               int aLayer,
                                                               int aNetCode )
 {
+    COMPLETION_DEBUG( "FindNeighbours: START, layer=" << aLayer << " netCode=" << aNetCode );
+
     std::vector<ROOM_NEIGHBOUR> neighbours;
 
     BOX2I queryBounds = aShape.BoundingBox();
+    COMPLETION_DEBUG( "FindNeighbours: queryBounds [" << queryBounds.GetX() << "," << queryBounds.GetY()
+                      << "] size=" << queryBounds.GetWidth() << "x" << queryBounds.GetHeight() );
+
+    int queryCount = 0;
+    int skipSameNet = 0;
+    int skipNoRoomItem = 0;
+    int skipNoIntersect = 0;
+    int skipPointTouch = 0;
+    int skipAreaOverlap = 0;
 
     m_searchTree.QueryOverlapping( queryBounds, aLayer,
         [&]( const TREE_ENTRY& entry ) -> bool
         {
+            queryCount++;
             // Skip entries from the same net (they're not obstacles)
             if( entry.room && entry.room->GetNetCode() == aNetCode )
+            {
+                skipSameNet++;
                 return true;
+            }
 
             // Get the entry's bounding box
             BOX2I entryBounds;
@@ -247,7 +283,10 @@ std::vector<ROOM_NEIGHBOUR> ROOM_COMPLETION::FindNeighbours( const INT_BOX& aSha
             else if( entry.item )
                 entryBounds = entry.item->GetBoundingBox();
             else
+            {
+                skipNoRoomItem++;
                 return true;
+            }
 
             // Check intersection with our shape
             auto intersection = aShape.IntersectionBox(
@@ -256,7 +295,10 @@ std::vector<ROOM_NEIGHBOUR> ROOM_COMPLETION::FindNeighbours( const INT_BOX& aSha
                                                               entryBounds.GetHeight() ) ) );
 
             if( !intersection || intersection->IsEmpty() )
+            {
+                skipNoIntersect++;
                 return true;
+            }
 
             // Determine dimension of intersection
             int intersectWidth = intersection->Width();
@@ -265,12 +307,56 @@ std::vector<ROOM_NEIGHBOUR> ROOM_COMPLETION::FindNeighbours( const INT_BOX& aSha
                            ( intersectWidth > 0 || intersectHeight > 0 ) ? 1 : 0;
 
             if( dimension < 1 )
+            {
+                skipPointTouch++;
                 return true;  // Point touch, skip
+            }
 
             if( dimension > 1 )
             {
-                // Area overlap - this is an error for free space rooms
-                // but normal for obstacle-to-obstacle
+                // 2D area overlap - the obstacle is inside our (very large) incomplete room.
+                // This is normal when incomplete rooms extend to board bounds.
+                // We need to create a door at the obstacle's boundary that's inside our room.
+                //
+                // Calculate which edge of the obstacle is most "inside" our room
+                // and use that as the door location.
+                ROOM_NEIGHBOUR neighbour;
+                neighbour.neighbour_room = entry.room;
+                neighbour.neighbour_item = entry.item;
+
+                // Find which side of the obstacle faces our room's contained edge
+                // For now, use the intersection - we'll create a door at the obstacle boundary
+                neighbour.intersection = *intersection;
+
+                // Determine touching side based on which edge of the obstacle is most central
+                VECTOR2I roomCenter = aShape.Center();
+                VECTOR2I obstCenter = intersection->Center();
+
+                int dx = std::abs( obstCenter.x - roomCenter.x );
+                int dy = std::abs( obstCenter.y - roomCenter.y );
+
+                if( dx > dy )
+                {
+                    // Horizontal separation - left or right edge
+                    if( obstCenter.x < roomCenter.x )
+                        neighbour.touching_side_no_of_room = 3;  // Left
+                    else
+                        neighbour.touching_side_no_of_room = 1;  // Right
+                }
+                else
+                {
+                    // Vertical separation - top or bottom edge
+                    if( obstCenter.y < roomCenter.y )
+                        neighbour.touching_side_no_of_room = 0;  // Top
+                    else
+                        neighbour.touching_side_no_of_room = 2;  // Bottom
+                }
+
+                neighbour.room_touch_is_corner = false;
+                neighbour.neighbour_touch_is_corner = false;
+                neighbour.touching_side_no_of_neighbour = 0;
+
+                neighbours.push_back( neighbour );
                 return true;
             }
 
@@ -306,6 +392,13 @@ std::vector<ROOM_NEIGHBOUR> ROOM_COMPLETION::FindNeighbours( const INT_BOX& aSha
             return true;
         } );
 
+    COMPLETION_DEBUG( "FindNeighbours: done, queryCount=" << queryCount
+                      << " neighbours=" << neighbours.size()
+                      << " skipSameNet=" << skipSameNet
+                      << " skipNoRoomItem=" << skipNoRoomItem
+                      << " skipNoIntersect=" << skipNoIntersect
+                      << " skipPointTouch=" << skipPointTouch
+                      << " skipAreaOverlap=" << skipAreaOverlap );
     return neighbours;
 }
 
@@ -417,7 +510,8 @@ void ROOM_COMPLETION::CalculateDoorsAndRooms( const INT_BOX& aRoomShape,
 
 
 bool ROOM_COMPLETION::TryRemoveEdge( INT_BOX& aShape,
-                                      const std::vector<ROOM_NEIGHBOUR>& aNeighbours )
+                                      const std::vector<ROOM_NEIGHBOUR>& aNeighbours,
+                                      int aLayer, int aNetCode )
 {
     // Check which sides have no touching neighbors
     bool hasTouchOnSide[4] = { false, false, false, false };
@@ -437,56 +531,75 @@ bool ROOM_COMPLETION::TryRemoveEdge( INT_BOX& aShape,
             const BOX2I& bounds = m_searchTree.GetBounds();
             int extension = m_searchTree.GetCellSize() * 2;
 
+            INT_BOX newShape;
+            BOX2I extensionArea;
+
             switch( side )
             {
             case 0: // Top
                 if( aShape.Top() > bounds.GetY() )
                 {
-                    INT_BOX newShape( VECTOR2I( aShape.Left(), aShape.Top() - extension ),
-                                      aShape.Max() );
-                    if( newShape.Top() >= bounds.GetY() )
-                    {
-                        aShape = newShape;
-                        return true;
-                    }
+                    newShape = INT_BOX( VECTOR2I( aShape.Left(), aShape.Top() - extension ),
+                                        aShape.Max() );
+                    // Area being added
+                    extensionArea = BOX2I( VECTOR2I( aShape.Left(), aShape.Top() - extension ),
+                                           VECTOR2I( aShape.Width(), extension ) );
                 }
+                else
+                    continue;
                 break;
             case 1: // Right
                 if( aShape.Right() < bounds.GetRight() )
                 {
-                    INT_BOX newShape( aShape.Min(),
-                                      VECTOR2I( aShape.Right() + extension, aShape.Bottom() ) );
-                    if( newShape.Right() <= bounds.GetRight() )
-                    {
-                        aShape = newShape;
-                        return true;
-                    }
+                    newShape = INT_BOX( aShape.Min(),
+                                        VECTOR2I( aShape.Right() + extension, aShape.Bottom() ) );
+                    extensionArea = BOX2I( VECTOR2I( aShape.Right(), aShape.Top() ),
+                                           VECTOR2I( extension, aShape.Height() ) );
                 }
+                else
+                    continue;
                 break;
             case 2: // Bottom
                 if( aShape.Bottom() < bounds.GetBottom() )
                 {
-                    INT_BOX newShape( aShape.Min(),
-                                      VECTOR2I( aShape.Right(), aShape.Bottom() + extension ) );
-                    if( newShape.Bottom() <= bounds.GetBottom() )
-                    {
-                        aShape = newShape;
-                        return true;
-                    }
+                    newShape = INT_BOX( aShape.Min(),
+                                        VECTOR2I( aShape.Right(), aShape.Bottom() + extension ) );
+                    extensionArea = BOX2I( VECTOR2I( aShape.Left(), aShape.Bottom() ),
+                                           VECTOR2I( aShape.Width(), extension ) );
                 }
+                else
+                    continue;
                 break;
             case 3: // Left
                 if( aShape.Left() > bounds.GetX() )
                 {
-                    INT_BOX newShape( VECTOR2I( aShape.Left() - extension, aShape.Top() ),
-                                      aShape.Max() );
-                    if( newShape.Left() >= bounds.GetX() )
-                    {
-                        aShape = newShape;
-                        return true;
-                    }
+                    newShape = INT_BOX( VECTOR2I( aShape.Left() - extension, aShape.Top() ),
+                                        aShape.Max() );
+                    extensionArea = BOX2I( VECTOR2I( aShape.Left() - extension, aShape.Top() ),
+                                           VECTOR2I( extension, aShape.Height() ) );
                 }
+                else
+                    continue;
                 break;
+            default:
+                continue;
+            }
+
+            // Check bounds
+            if( newShape.Top() < bounds.GetY() ||
+                newShape.Bottom() > bounds.GetBottom() ||
+                newShape.Left() < bounds.GetX() ||
+                newShape.Right() > bounds.GetRight() )
+            {
+                continue;
+            }
+
+            // Check if extension area overlaps any obstacles
+            // Skip same-net obstacles (they're not blocking)
+            if( !m_searchTree.HasOverlap( extensionArea, aLayer, aNetCode ) )
+            {
+                aShape = newShape;
+                return true;
             }
         }
     }

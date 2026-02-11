@@ -22,6 +22,7 @@
 
 #include "../expansion/expansion_room.h"
 #include "../autoroute_control.h"
+#include <math/vector2d.h>
 #include <vector>
 #include <set>
 #include <map>
@@ -51,14 +52,31 @@ struct RIPUP_CANDIDATE
 
 
 /**
+ * Proposed shove (push) for a trace segment.
+ */
+struct SHOVE_PROPOSAL
+{
+    BOARD_ITEM*  item = nullptr;           ///< The item to shove
+    VECTOR2I     original_start;           ///< Original start position
+    VECTOR2I     original_end;             ///< Original end position
+    VECTOR2I     new_start;                ///< New start position after shove
+    VECTOR2I     new_end;                  ///< New end position after shove
+    bool         is_valid = false;         ///< True if shove position is valid
+    double       shove_cost = 0.0;         ///< Cost of the shove
+};
+
+
+/**
  * Result of ripup analysis.
  */
 struct RIPUP_RESULT
 {
     bool            should_ripup = false;    ///< True if ripup is beneficial
+    bool            should_shove = false;    ///< True if shove is preferred over ripup
     double          ripup_cost = 0.0;        ///< Total cost of the ripup
     double          reroute_benefit = 0.0;   ///< Benefit from the new route
     std::vector<RIPUP_CANDIDATE> candidates; ///< Items to rip up
+    std::vector<SHOVE_PROPOSAL>  shoves;     ///< Items to push/shove
 
     /**
      * Get the net benefit (benefit - cost).
@@ -161,6 +179,36 @@ public:
      * Get nets that have been ripped up.
      */
     const std::set<int>& GetRippedNets() const { return m_rippedNets; }
+
+    /**
+     * Check if shoving (pushing) a trace is possible and beneficial.
+     *
+     * @param aRoom The obstacle room blocking the route.
+     * @param aShoveDirection The direction to push the trace.
+     * @param aShoveDistance The distance to push.
+     * @return Shove proposal if possible, or invalid proposal if not.
+     */
+    SHOVE_PROPOSAL TryShove( OBSTACLE_ROOM* aRoom, const VECTOR2I& aShoveDirection,
+                              int aShoveDistance );
+
+    /**
+     * Calculate the best shove direction for a blocking obstacle.
+     *
+     * @param aRoom The obstacle room.
+     * @param aRoutingDirection The direction of the trace being routed.
+     * @return Best shove direction vector.
+     */
+    VECTOR2I CalculateShoveDirection( OBSTACLE_ROOM* aRoom,
+                                       const VECTOR2I& aRoutingDirection );
+
+    /**
+     * Apply shoves to board items.
+     * This modifies the trace positions.
+     *
+     * @param aShoves The shove proposals to apply.
+     * @param aCommit The commit to record changes.
+     */
+    void ApplyShoves( const std::vector<SHOVE_PROPOSAL>& aShoves, class COMMIT* aCommit );
 
 private:
     /**

@@ -28,11 +28,19 @@
 #include <pad.h>
 #include <pcb_track.h>
 #include <footprint.h>
+#include <zone.h>
 #include <connectivity/connectivity_data.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cmath>
+#include <iostream>
 #include <limits>
 #include <sstream>
+
+// Debug macro for autorouter - uses std::cerr for unbuffered output
+#define AUTOROUTE_DEBUG( msg ) std::cerr << "[AUTOROUTE] " << msg << std::endl
 
 
 AUTOROUTE_ENGINE::AUTOROUTE_ENGINE()
@@ -51,12 +59,31 @@ void AUTOROUTE_ENGINE::Initialize( BOARD* aBoard, const AUTOROUTE_CONTROL& aCont
     m_board = aBoard;
     m_control = aControl;
     m_result = AUTOROUTE_RESULT();
+    m_cancelled.store( false );
 
     if( m_board )
     {
         // Get layer count from board
         m_layerCount = m_board->GetCopperLayerCount();
     }
+}
+
+
+bool AUTOROUTE_ENGINE::ReportProgress( const AUTOROUTE_PROGRESS& aProgress )
+{
+    if( m_cancelled.load() )
+        return false;
+
+    if( m_progressCallback )
+    {
+        if( !m_progressCallback( aProgress ) )
+        {
+            m_cancelled.store( true );
+            return false;
+        }
+    }
+
+    return true;
 }
 
 
@@ -73,60 +100,90 @@ void AUTOROUTE_ENGINE::ClearRoomModel()
 
 void AUTOROUTE_ENGINE::BuildRoomModel()
 {
+    AUTOROUTE_DEBUG( "BuildRoomModel: START" );
+
     ClearRoomModel();
 
     if( !m_board )
+    {
+        AUTOROUTE_DEBUG( "BuildRoomModel: No board, returning" );
         return;
+    }
 
     // Initialize the search tree
     BOX2I bounds = GetBoardBounds();
+    AUTOROUTE_DEBUG( "BuildRoomModel: bounds valid=" << bounds.IsValid()
+                     << " w=" << bounds.GetWidth() << " h=" << bounds.GetHeight() );
+
     if( bounds.IsValid() )
     {
         // Cell size = clearance * 2 for good balance of resolution vs performance
         int cellSize = m_control.clearance * 2;
+        AUTOROUTE_DEBUG( "BuildRoomModel: Initializing search tree, cellSize=" << cellSize
+                         << " layers=" << m_layerCount );
         m_searchTree.Initialize( bounds, cellSize, m_layerCount );
+
+        // Initialize congestion map with larger cells (1mm for efficiency)
+        int congestionCellSize = 1000000;  // 1mm cells
+        m_congestionMap = std::make_unique<CONGESTION_MAP>( bounds, congestionCellSize, m_layerCount );
+        AUTOROUTE_DEBUG( "BuildRoomModel: Congestion map initialized" );
     }
 
     // Step 1: Build obstacle rooms from existing items
+    AUTOROUTE_DEBUG( "BuildRoomModel: Calling BuildObstacleRooms" );
     BuildObstacleRooms();
+    AUTOROUTE_DEBUG( "BuildRoomModel: BuildObstacleRooms done, rooms=" << m_rooms.size() );
 
     // Insert all obstacle rooms into search tree
+    AUTOROUTE_DEBUG( "BuildRoomModel: Inserting obstacle rooms into search tree" );
+    int insertCount = 0;
     for( auto& room : m_rooms )
     {
         if( room->GetType() == ROOM_TYPE::OBSTACLE )
         {
             m_searchTree.Insert( room.get() );
+            insertCount++;
         }
     }
+    AUTOROUTE_DEBUG( "BuildRoomModel: Inserted " << insertCount << " obstacle rooms" );
 
-    // Step 2: Build free space rooms
-    BuildFreeSpaceRooms();
+    // Step 2: Create initial incomplete rooms adjacent to obstacles
+    // These will be completed on-demand during maze search (FreeRouting-style dynamic expansion)
+    AUTOROUTE_DEBUG( "BuildRoomModel: Calling BuildInitialIncompleteRooms" );
+    BuildInitialIncompleteRooms();
+    AUTOROUTE_DEBUG( "BuildRoomModel: BuildInitialIncompleteRooms done, incomplete="
+                     << m_incompleteRooms.size() << " doors=" << m_doors.size() );
 
-    // Step 3: Create doors between adjacent rooms
-    BuildDoors();
-
-    // Step 3b: Ensure obstacle rooms (pads) have connections to free space
-    // This handles cases where grid alignment prevents normal door creation
-    ConnectOrphanObstacles();
-
-    // Step 4: Create potential via locations
+    // Step 3: Create potential via locations
     if( m_control.vias_allowed && m_layerCount > 1 )
     {
+        AUTOROUTE_DEBUG( "BuildRoomModel: Calling BuildDrills" );
         BuildDrills();
+        AUTOROUTE_DEBUG( "BuildRoomModel: BuildDrills done, drills=" << m_drills.size() );
     }
+
+    AUTOROUTE_DEBUG( "BuildRoomModel: COMPLETE" );
 }
 
 
 void AUTOROUTE_ENGINE::BuildObstacleRooms()
 {
+    AUTOROUTE_DEBUG( "BuildObstacleRooms: START" );
+
     if( !m_board )
         return;
 
     int clearance = m_control.clearance;
+    int fpCount = 0;
+    int padCount = 0;
+    int trackCount = 0;
+    int zoneCount = 0;
 
     // Create obstacle rooms for pads
+    AUTOROUTE_DEBUG( "BuildObstacleRooms: Processing footprints" );
     for( FOOTPRINT* fp : m_board->Footprints() )
     {
+        fpCount++;
         for( PAD* pad : fp->Pads() )
         {
             // Get pad layers
@@ -151,13 +208,17 @@ void AUTOROUTE_ENGINE::BuildObstacleRooms()
 
                 m_roomsByLayer[layer].push_back( room.get() );
                 m_rooms.push_back( std::move( room ) );
+                padCount++;
             }
         }
     }
+    AUTOROUTE_DEBUG( "BuildObstacleRooms: Processed " << fpCount << " footprints, " << padCount << " pad rooms" );
 
     // Create obstacle rooms for existing tracks
+    AUTOROUTE_DEBUG( "BuildObstacleRooms: Processing tracks" );
     for( PCB_TRACK* track : m_board->Tracks() )
     {
+        trackCount++;
         int layer = track->GetLayer();
 
         // Simple layer mapping for now
@@ -178,13 +239,68 @@ void AUTOROUTE_ENGINE::BuildObstacleRooms()
         m_roomsByLayer[routeLayer].push_back( room.get() );
         m_rooms.push_back( std::move( room ) );
     }
+    AUTOROUTE_DEBUG( "BuildObstacleRooms: Processed " << trackCount << " tracks" );
+
+    // Create obstacle rooms for zones (keepouts and filled zones)
+    AUTOROUTE_DEBUG( "BuildObstacleRooms: Processing zones" );
+    for( ZONE* zone : m_board->Zones() )
+    {
+        // Check if this is a keepout zone or a copper zone
+        bool isKeepout = zone->GetIsRuleArea();
+        bool isCopper = !isKeepout && zone->IsOnCopperLayer();
+
+        // Skip zones that don't affect routing
+        if( !isKeepout && !isCopper )
+            continue;
+
+        // For keepout zones, check what's actually being kept out
+        if( isKeepout )
+        {
+            // Only create obstacles if traces or vias are not allowed
+            if( !zone->GetDoNotAllowTracks() && !zone->GetDoNotAllowVias() )
+                continue;
+        }
+
+        // Get zone bounding box
+        BOX2I zoneBox = zone->GetBoundingBox();
+        zoneBox.Inflate( clearance );
+
+        // Get zone layers
+        LSET layers = zone->GetLayerSet();
+
+        for( int layer = 0; layer < m_layerCount; ++layer )
+        {
+            PCB_LAYER_ID pcbLayer = ( layer == 0 ) ? F_Cu :
+                                    ( layer == m_layerCount - 1 ) ? B_Cu :
+                                    static_cast<PCB_LAYER_ID>( In1_Cu + layer - 1 );
+
+            if( !layers.test( pcbLayer ) )
+                continue;
+
+            auto shape = std::make_unique<INT_BOX>( zoneBox );
+            auto room = std::make_unique<OBSTACLE_ROOM>( std::move( shape ), zone, layer );
+
+            // Keepout zones have no net, copper zones have a net
+            if( isCopper )
+                room->SetNetCode( zone->GetNetCode() );
+            else
+                room->SetNetCode( -1 );  // No net for keepout zones
+
+            m_roomsByLayer[layer].push_back( room.get() );
+            m_rooms.push_back( std::move( room ) );
+            zoneCount++;
+        }
+    }
+    AUTOROUTE_DEBUG( "BuildObstacleRooms: Processed zones, created " << zoneCount << " zone rooms" );
+    AUTOROUTE_DEBUG( "BuildObstacleRooms: COMPLETE - total rooms=" << m_rooms.size() );
 }
 
 
 void AUTOROUTE_ENGINE::BuildFreeSpaceRooms()
 {
-    // This is a simplified implementation
-    // A full implementation would use a more sophisticated space partitioning algorithm
+    // DEPRECATED: This method builds a pre-computed grid of free space rooms.
+    // The new approach uses dynamic room expansion via BuildInitialIncompleteRooms().
+    // Keeping this for reference/fallback.
 
     BOX2I boardBounds = GetBoardBounds();
     if( !boardBounds.IsValid() )
@@ -192,7 +308,8 @@ void AUTOROUTE_ENGINE::BuildFreeSpaceRooms()
 
     // Create a grid of free space rooms
     // Grid size balances resolution vs. performance (O(n²) door building)
-    int gridSize = m_control.clearance * 4;
+    // Smaller grid = better routing quality but slower (clearance * 2 recommended)
+    int gridSize = m_control.clearance * 2;
 
     for( int layer = 0; layer < m_layerCount; ++layer )
     {
@@ -231,6 +348,167 @@ void AUTOROUTE_ENGINE::BuildFreeSpaceRooms()
                     m_roomsByLayer[layer].push_back( room.get() );
                     m_rooms.push_back( std::move( room ) );
                 }
+            }
+        }
+    }
+}
+
+
+void AUTOROUTE_ENGINE::BuildInitialIncompleteRooms()
+{
+    AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: START" );
+
+    // Create incomplete rooms adjacent to each obstacle room.
+    // These rooms will be completed on-demand during maze search,
+    // following FreeRouting's dynamic room expansion approach.
+    //
+    // For each obstacle (pad/track/zone), we create incomplete rooms
+    // on each side that extend towards the board edge. During maze search,
+    // these rooms are completed by intersecting with other obstacles.
+
+    BOX2I boardBounds = GetBoardBounds();
+    if( !boardBounds.IsValid() )
+    {
+        AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: Invalid bounds, returning" );
+        return;
+    }
+
+    // Limit total incomplete rooms to prevent memory/performance issues
+    static constexpr int MAX_INCOMPLETE_ROOMS = 10000;
+    int incompleteRoomCount = 0;
+    int obstacleCount = 0;
+
+    AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: layers=" << m_layerCount );
+
+    for( int layer = 0; layer < m_layerCount; ++layer )
+    {
+        AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: layer " << layer
+                         << " rooms=" << m_roomsByLayer[layer].size() );
+
+        for( EXPANSION_ROOM* obsRoom : m_roomsByLayer[layer] )
+        {
+            // Check limits
+            if( incompleteRoomCount >= MAX_INCOMPLETE_ROOMS )
+            {
+                AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: MAX_INCOMPLETE_ROOMS limit reached" );
+                return;
+            }
+
+            if( m_cancelled.load() )
+            {
+                AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: Cancelled" );
+                return;
+            }
+            if( obsRoom->GetType() != ROOM_TYPE::OBSTACLE )
+                continue;
+
+            const INT_BOX* obsBox = dynamic_cast<const INT_BOX*>( &obsRoom->GetShape() );
+            if( !obsBox )
+                continue;
+
+            // Create incomplete rooms on each side of the obstacle
+            // These extend from the obstacle edge to the board boundary
+
+            // Top side (extends upward)
+            if( obsBox->Top() > boardBounds.GetTop() && incompleteRoomCount < MAX_INCOMPLETE_ROOMS )
+            {
+                VECTOR2I min( obsBox->Left(), boardBounds.GetTop() );
+                VECTOR2I max( obsBox->Right(), obsBox->Top() );
+                auto shape = std::make_unique<INT_BOX>( min, max );
+
+                // Contained shape is the touching edge
+                VECTOR2I cMin( obsBox->Left(), obsBox->Top() - 1 );
+                VECTOR2I cMax( obsBox->Right(), obsBox->Top() + 1 );
+                auto contained = std::make_unique<INT_BOX>( cMin, cMax );
+
+                auto incomplete = std::make_unique<INCOMPLETE_FREE_SPACE_ROOM>(
+                    std::move( shape ), layer, std::move( contained ) );
+
+                // Create a door connecting obstacle to this incomplete room
+                SEG doorSeg( VECTOR2I( obsBox->Left(), obsBox->Top() ),
+                             VECTOR2I( obsBox->Right(), obsBox->Top() ) );
+                auto door = std::make_unique<EXPANSION_DOOR>( obsRoom, incomplete.get(), doorSeg );
+                obsRoom->AddDoor( door.get() );
+                incomplete->AddDoor( door.get() );
+                m_doors.push_back( std::move( door ) );
+
+                m_incompleteRooms.push_back( std::move( incomplete ) );
+                incompleteRoomCount++;
+            }
+
+            // Bottom side (extends downward)
+            if( obsBox->Bottom() < boardBounds.GetBottom() && incompleteRoomCount < MAX_INCOMPLETE_ROOMS )
+            {
+                VECTOR2I min( obsBox->Left(), obsBox->Bottom() );
+                VECTOR2I max( obsBox->Right(), boardBounds.GetBottom() );
+                auto shape = std::make_unique<INT_BOX>( min, max );
+
+                VECTOR2I cMin( obsBox->Left(), obsBox->Bottom() - 1 );
+                VECTOR2I cMax( obsBox->Right(), obsBox->Bottom() + 1 );
+                auto contained = std::make_unique<INT_BOX>( cMin, cMax );
+
+                auto incomplete = std::make_unique<INCOMPLETE_FREE_SPACE_ROOM>(
+                    std::move( shape ), layer, std::move( contained ) );
+
+                SEG doorSeg( VECTOR2I( obsBox->Left(), obsBox->Bottom() ),
+                             VECTOR2I( obsBox->Right(), obsBox->Bottom() ) );
+                auto door = std::make_unique<EXPANSION_DOOR>( obsRoom, incomplete.get(), doorSeg );
+                obsRoom->AddDoor( door.get() );
+                incomplete->AddDoor( door.get() );
+                m_doors.push_back( std::move( door ) );
+
+                m_incompleteRooms.push_back( std::move( incomplete ) );
+                incompleteRoomCount++;
+            }
+
+            // Left side (extends leftward)
+            if( obsBox->Left() > boardBounds.GetLeft() && incompleteRoomCount < MAX_INCOMPLETE_ROOMS )
+            {
+                VECTOR2I min( boardBounds.GetLeft(), obsBox->Top() );
+                VECTOR2I max( obsBox->Left(), obsBox->Bottom() );
+                auto shape = std::make_unique<INT_BOX>( min, max );
+
+                VECTOR2I cMin( obsBox->Left() - 1, obsBox->Top() );
+                VECTOR2I cMax( obsBox->Left() + 1, obsBox->Bottom() );
+                auto contained = std::make_unique<INT_BOX>( cMin, cMax );
+
+                auto incomplete = std::make_unique<INCOMPLETE_FREE_SPACE_ROOM>(
+                    std::move( shape ), layer, std::move( contained ) );
+
+                SEG doorSeg( VECTOR2I( obsBox->Left(), obsBox->Top() ),
+                             VECTOR2I( obsBox->Left(), obsBox->Bottom() ) );
+                auto door = std::make_unique<EXPANSION_DOOR>( obsRoom, incomplete.get(), doorSeg );
+                obsRoom->AddDoor( door.get() );
+                incomplete->AddDoor( door.get() );
+                m_doors.push_back( std::move( door ) );
+
+                m_incompleteRooms.push_back( std::move( incomplete ) );
+                incompleteRoomCount++;
+            }
+
+            // Right side (extends rightward)
+            if( obsBox->Right() < boardBounds.GetRight() && incompleteRoomCount < MAX_INCOMPLETE_ROOMS )
+            {
+                VECTOR2I min( obsBox->Right(), obsBox->Top() );
+                VECTOR2I max( boardBounds.GetRight(), obsBox->Bottom() );
+                auto shape = std::make_unique<INT_BOX>( min, max );
+
+                VECTOR2I cMin( obsBox->Right() - 1, obsBox->Top() );
+                VECTOR2I cMax( obsBox->Right() + 1, obsBox->Bottom() );
+                auto contained = std::make_unique<INT_BOX>( cMin, cMax );
+
+                auto incomplete = std::make_unique<INCOMPLETE_FREE_SPACE_ROOM>(
+                    std::move( shape ), layer, std::move( contained ) );
+
+                SEG doorSeg( VECTOR2I( obsBox->Right(), obsBox->Top() ),
+                             VECTOR2I( obsBox->Right(), obsBox->Bottom() ) );
+                auto door = std::make_unique<EXPANSION_DOOR>( obsRoom, incomplete.get(), doorSeg );
+                obsRoom->AddDoor( door.get() );
+                incomplete->AddDoor( door.get() );
+                m_doors.push_back( std::move( door ) );
+
+                m_incompleteRooms.push_back( std::move( incomplete ) );
+                incompleteRoomCount++;
             }
         }
     }
@@ -282,7 +560,7 @@ bool AUTOROUTE_ENGINE::AreRoomsAdjacent( EXPANSION_ROOM* aRoom1, EXPANSION_ROOM*
     // For obstacle rooms connecting to free space, we need to be more lenient
     // because grid cells don't align with obstacle boundaries.
     // Check if boxes are "close enough" using minimum distance between them.
-    int tolerance = m_control.clearance * 4;  // Allow gaps up to grid size
+    int tolerance = m_control.clearance * 2;  // Allow gaps up to grid size
 
     // Calculate the gap in each direction (negative means overlap)
     int horizGap = std::max( box1->Left() - box2->Right(), box2->Left() - box1->Right() );
@@ -332,7 +610,7 @@ EXPANSION_DOOR* AUTOROUTE_ENGINE::CreateDoor( EXPANSION_ROOM* aRoom1, EXPANSION_
     }
 
     // For nearly-adjacent rooms, create a door at the closest points between them
-    int tolerance = m_control.clearance * 4;
+    int tolerance = m_control.clearance * 2;
 
     // Calculate gaps in each direction
     int horizGap = std::max( box1->Left() - box2->Right(), box2->Left() - box1->Right() );
@@ -486,56 +764,78 @@ EXPANSION_ROOM* AUTOROUTE_ENGINE::FindNearestFreeSpace( EXPANSION_ROOM* aObstacl
 
 void AUTOROUTE_ENGINE::BuildDrills()
 {
-    // Create potential via locations at room intersections across layers
-    // Drills connect rooms on different layers through the maze search
+    AUTOROUTE_DEBUG( "BuildDrills: START" );
 
-    int gridSize = m_control.clearance * 4;  // Larger grid for fewer drills
+    // Create potential via locations across layers.
+    // With dynamic room expansion, we check for obstacle-free positions
+    // rather than relying on pre-computed free space rooms.
+
+    // Use larger grid for faster processing - vias are created dynamically during routing
+    int gridSize = std::max( m_control.clearance * 5, 500000 );  // At least 0.5mm grid
     BOX2I bounds = GetBoardBounds();
 
     if( !bounds.IsValid() || m_layerCount < 2 )
+    {
+        AUTOROUTE_DEBUG( "BuildDrills: Invalid bounds or single layer, returning" );
         return;
+    }
+
+    AUTOROUTE_DEBUG( "BuildDrills: gridSize=" << gridSize
+                     << " bounds=" << bounds.GetWidth() << "x" << bounds.GetHeight() );
+
+    // Limit total drills to prevent memory/performance issues
+    static constexpr int MAX_DRILLS = 5000;
+    int drillCount = 0;
+    int iterations = 0;
+
+    // Via clearance area for checking obstacles
+    int viaClearance = m_control.via_diameter / 2 + m_control.clearance;
 
     for( int x = bounds.GetLeft() + gridSize; x < bounds.GetRight(); x += gridSize )
     {
+        if( m_cancelled.load() || drillCount >= MAX_DRILLS )
+            break;
+
         for( int y = bounds.GetTop() + gridSize; y < bounds.GetBottom(); y += gridSize )
         {
+            iterations++;
+            if( iterations % 10000 == 0 )
+            {
+                AUTOROUTE_DEBUG( "BuildDrills: iteration " << iterations << " drills=" << drillCount );
+            }
+
+            if( drillCount >= MAX_DRILLS )
+                break;
             VECTOR2I pos( x, y );
 
-            // Find free space rooms containing this position on each layer
-            std::vector<EXPANSION_ROOM*> roomsPerLayer( m_layerCount, nullptr );
-            int layersWithFreeSpace = 0;
+            // Check if this position is clear of obstacles on all layers
+            BOX2I viaBox( VECTOR2I( x - viaClearance, y - viaClearance ),
+                          VECTOR2I( viaClearance * 2, viaClearance * 2 ) );
+
+            int layersClear = 0;
 
             for( int layer = 0; layer < m_layerCount; ++layer )
             {
-                for( EXPANSION_ROOM* room : m_roomsByLayer[layer] )
+                // Check if the via position overlaps any obstacles on this layer
+                // Using net code -1 means we check against all obstacles
+                if( !m_searchTree.HasOverlap( viaBox, layer, -1 ) )
                 {
-                    if( room->GetType() == ROOM_TYPE::FREE_SPACE &&
-                        room->Contains( pos ) )
-                    {
-                        roomsPerLayer[layer] = room;
-                        layersWithFreeSpace++;
-                        break;
-                    }
+                    layersClear++;
                 }
             }
 
-            // Need at least 2 layers with free space for a via to be useful
-            if( layersWithFreeSpace >= 2 )
+            // Need at least 2 layers clear for a via to be useful
+            if( layersClear >= 2 )
             {
                 auto drill = std::make_unique<EXPANSION_DRILL>( pos, 0, m_layerCount - 1 );
                 drill->SetViaDiameter( m_control.via_diameter );
                 drill->SetDrillDiameter( m_control.via_drill );
 
-                // Connect drill to rooms on each layer
-                for( int layer = 0; layer < m_layerCount; ++layer )
-                {
-                    if( roomsPerLayer[layer] )
-                    {
-                        drill->SetRoomForLayer( layer, roomsPerLayer[layer] );
-                    }
-                }
+                // With dynamic rooms, we don't pre-connect drills to rooms.
+                // They will be connected during maze search when rooms are completed.
 
                 m_drills.push_back( std::move( drill ) );
+                drillCount++;
             }
         }
     }
@@ -658,17 +958,160 @@ std::vector<NET_CONNECTION> AUTOROUTE_ENGINE::GetConnectionsToRoute() const
 }
 
 
-std::string AUTOROUTE_ENGINE::RouteConnection( const NET_CONNECTION& aConnection )
+double AUTOROUTE_ENGINE::CalculateNetPriority( const NET_CONNECTION& aConnection ) const
 {
+    // Priority calculation based on FreeRouting's approach:
+    // - Net class priority (user-specified)
+    // - Fewer pads = simpler net = higher priority (route first)
+    // - Shorter total wire length = simpler = higher priority
+    // - Power/ground nets (GND, VCC, VDD, etc.) route last
+
+    double priority = 0.0;
+
+    // Check for net class priority
+    const NET_CLASS_CONFIG* netClass = m_control.GetNetClass( aConnection.net_name );
+    if( netClass )
+    {
+        priority += netClass->priority;
+    }
+
+    // Check for power/ground nets (route these last)
+    std::string netName = aConnection.net_name;
+    std::transform( netName.begin(), netName.end(), netName.begin(), ::toupper );
+    if( netName.find( "GND" ) != std::string::npos ||
+        netName.find( "VCC" ) != std::string::npos ||
+        netName.find( "VDD" ) != std::string::npos ||
+        netName.find( "PWR" ) != std::string::npos ||
+        netName.find( "POWER" ) != std::string::npos )
+    {
+        priority += 10000.0;  // Large penalty to route last
+    }
+
+    // Pad count factor: fewer pads = simpler
+    size_t totalPads = aConnection.source_pads.size() + aConnection.dest_pads.size();
+    priority += totalPads * 100.0;
+
+    // Calculate minimum spanning tree length estimate
+    // This gives preference to shorter/simpler nets
+    double totalLength = 0.0;
+    std::vector<VECTOR2I> padPositions;
+
+    for( BOARD_ITEM* item : aConnection.source_pads )
+    {
+        if( PAD* pad = dynamic_cast<PAD*>( item ) )
+        {
+            padPositions.push_back( pad->GetPosition() );
+        }
+    }
+    for( BOARD_ITEM* item : aConnection.dest_pads )
+    {
+        if( PAD* pad = dynamic_cast<PAD*>( item ) )
+        {
+            padPositions.push_back( pad->GetPosition() );
+        }
+    }
+
+    // Simple estimate: sum of distances from first pad to all others
+    // A true MST would be better but this is faster
+    if( padPositions.size() >= 2 )
+    {
+        VECTOR2I center( 0, 0 );
+        for( const auto& pos : padPositions )
+        {
+            center.x += pos.x / static_cast<int>( padPositions.size() );
+            center.y += pos.y / static_cast<int>( padPositions.size() );
+        }
+
+        for( const auto& pos : padPositions )
+        {
+            int64_t dx = pos.x - center.x;
+            int64_t dy = pos.y - center.y;
+            totalLength += std::sqrt( double( dx * dx + dy * dy ) );
+        }
+    }
+
+    // Convert length to mm and add to priority (shorter = lower priority value)
+    priority += totalLength / 1000000.0;
+
+    return priority;
+}
+
+
+void AUTOROUTE_ENGINE::OrderConnections( std::vector<NET_CONNECTION>& aConnections ) const
+{
+    // Calculate priorities for all connections
+    std::vector<std::pair<double, size_t>> priorities;
+    priorities.reserve( aConnections.size() );
+
+    for( size_t i = 0; i < aConnections.size(); ++i )
+    {
+        double priority = CalculateNetPriority( aConnections[i] );
+        priorities.emplace_back( priority, i );
+    }
+
+    // Sort by priority (lower = higher priority = route first)
+    std::sort( priorities.begin(), priorities.end(),
+               []( const auto& a, const auto& b ) { return a.first < b.first; } );
+
+    // Reorder connections
+    std::vector<NET_CONNECTION> ordered;
+    ordered.reserve( aConnections.size() );
+
+    for( const auto& [priority, index] : priorities )
+    {
+        ordered.push_back( std::move( aConnections[index] ) );
+    }
+
+    aConnections = std::move( ordered );
+}
+
+
+std::string AUTOROUTE_ENGINE::RouteConnection( const NET_CONNECTION& aConnection, int aPass )
+{
+    AUTOROUTE_DEBUG( "RouteConnection: START net='" << aConnection.net_name
+                     << "' pass=" << aPass
+                     << " sources=" << aConnection.source_pads.size()
+                     << " dests=" << aConnection.dest_pads.size() );
+
+    // Check for cancellation before starting
+    if( m_cancelled.load() )
+    {
+        AUTOROUTE_DEBUG( "RouteConnection: Cancelled" );
+        return "";
+    }
+
     ResetSearchState();
 
-    // Create maze search
-    MAZE_SEARCH search( *this, m_control );
+    // Create pass-specific control parameters
+    // Later passes use more aggressive settings (lower via cost, ripup allowed)
+    AUTOROUTE_CONTROL passControl = m_control;
+
+    if( m_control.multi_pass_enabled && aPass > 0 )
+    {
+        // Reduce via cost in later passes to encourage finding solutions
+        passControl.via_cost = m_control.GetPassViaCost( aPass );
+
+        // Enable ripup in later passes
+        if( aPass >= 2 )
+        {
+            passControl.allow_ripup = true;
+        }
+    }
+
+    // Create maze search with pass-specific parameters
+    AUTOROUTE_DEBUG( "RouteConnection: Creating MAZE_SEARCH" );
+    MAZE_SEARCH search( *this, passControl );
     search.SetNetCode( aConnection.net_code );
+    search.SetCongestionMap( m_congestionMap.get() );  // For congestion-aware routing
+    search.SetCancelledFlag( &m_cancelled );  // Allow external cancellation
+
+    AUTOROUTE_DEBUG( "RouteConnection: Setting sources" );
     search.SetSources( aConnection.source_pads );
+    AUTOROUTE_DEBUG( "RouteConnection: Setting destinations" );
     search.SetDestinations( aConnection.dest_pads );
 
     // Debug: Check source rooms
+    AUTOROUTE_DEBUG( "RouteConnection: Checking source rooms" );
     int sourceRoomCount = 0;
     int sourceDoorsTotal = 0;
     for( BOARD_ITEM* item : aConnection.source_pads )
@@ -684,9 +1127,14 @@ std::string AUTOROUTE_ENGINE::RouteConnection( const NET_CONNECTION& aConnection
             }
         }
     }
+    AUTOROUTE_DEBUG( "RouteConnection: sourceRooms=" << sourceRoomCount
+                     << " sourceDoors=" << sourceDoorsTotal );
 
     // Find path
+    AUTOROUTE_DEBUG( "RouteConnection: Calling FindConnection" );
     auto result = search.FindConnection();
+    AUTOROUTE_DEBUG( "RouteConnection: FindConnection returned, found=" << result.has_value()
+                     << " nodes=" << search.GetNodesExpanded() );
 
     if( !result )
     {
@@ -722,23 +1170,37 @@ std::string AUTOROUTE_ENGINE::RouteConnection( const NET_CONNECTION& aConnection
         }
     }
 
-    // Locate the path
+    // Locate the path with net-specific parameters
+    int netTraceWidth = passControl.GetNetTraceWidth( aConnection.net_name, 0 );
+    int netClearance = passControl.GetNetClearance( aConnection.net_name );
+
     LOCATE_CONNECTION locator;
     locator.SetMazeSearch( &search );
-    locator.SetTrackWidth( m_control.GetTraceWidth( 0 ) );
-    locator.SetClearance( m_control.clearance );
+    locator.SetTrackWidth( netTraceWidth );
+    locator.SetClearance( netClearance );
+    locator.SetBoard( m_board );
+    locator.SetSearchTree( &m_searchTree );
+    locator.SetControl( &m_control );
+    locator.SetNetCode( aConnection.net_code );
 
     ROUTING_PATH path = locator.LocatePath();
 
     if( !path.IsValid() )
         return "";
 
-    // Insert tracks directly into board
+    // Insert tracks directly into board with net-specific parameters
+    AUTOROUTE_CONTROL netControl = m_control;
+    netControl.via_diameter = passControl.GetNetViaDiameter( aConnection.net_name );
+    netControl.via_drill = passControl.GetNetViaDrill( aConnection.net_name );
+
     INSERT_CONNECTION inserter;
     inserter.SetBoard( m_board );
     inserter.SetCommit( m_commit );  // Use commit for proper persistence
-    inserter.SetControl( m_control );
+    inserter.SetSearchTree( &m_searchTree );  // For collision detection
+    inserter.SetCongestionMap( m_congestionMap.get() );  // For congestion tracking
+    inserter.SetControl( netControl );
     inserter.SetNetName( aConnection.net_name );
+    inserter.SetNetCode( aConnection.net_code );  // For same-net filtering
 
     INSERT_RESULT insertResult = inserter.Insert( path );
 
@@ -751,9 +1213,18 @@ std::string AUTOROUTE_ENGINE::RouteConnection( const NET_CONNECTION& aConnection
 
 std::string AUTOROUTE_ENGINE::RouteAll()
 {
-    auto startTime = std::chrono::steady_clock::now();
+    AUTOROUTE_DEBUG( "RouteAll: START" );
 
+    m_startTime = std::chrono::steady_clock::now();
+    m_cancelled.store( false );
+
+    AUTOROUTE_DEBUG( "RouteAll: Calling BuildRoomModel" );
     BuildRoomModel();
+    AUTOROUTE_DEBUG( "RouteAll: BuildRoomModel complete" );
+
+    // Debug: Track room model build time
+    auto buildEndTime = std::chrono::steady_clock::now();
+    double buildTimeMs = std::chrono::duration<double, std::milli>( buildEndTime - m_startTime ).count();
 
     // Debug: Log room and door counts
     int totalRooms = m_rooms.size();
@@ -775,6 +1246,9 @@ std::string AUTOROUTE_ENGINE::RouteAll()
 
     std::vector<NET_CONNECTION> connections = GetConnectionsToRoute();
 
+    // Order connections for optimal routing (simpler nets first)
+    OrderConnections( connections );
+
     // Get board bounds for debug
     BOX2I bounds = GetBoardBounds();
     bool boundsValid = bounds.GetWidth() > 0 && bounds.GetHeight() > 0;
@@ -789,9 +1263,20 @@ std::string AUTOROUTE_ENGINE::RouteAll()
         debugStats << "(" << bounds.GetWidth() / 1000000.0 << "x" << bounds.GetHeight() / 1000000.0 << "mm)";
     }
     debugStats << " Layers:" << m_layerCount;
-    debugStats << " Nets:" << connections.size() << "; ";
+    debugStats << " IncompleteRooms:" << m_incompleteRooms.size();
+    debugStats << " Drills:" << m_drills.size();
+    debugStats << " Nets:" << connections.size();
+    debugStats << " BuildTime:" << static_cast<int>( buildTimeMs ) << "ms; ";
 
     m_result.error_message = debugStats.str();
+
+    // Check for cancellation after building room model
+    if( m_cancelled.load() )
+    {
+        m_result.error_message += "Cancelled during setup; ";
+        m_result.cancelled = true;
+        return "";
+    }
 
     std::ostringstream allCode;
 
@@ -806,9 +1291,49 @@ std::string AUTOROUTE_ENGINE::RouteAll()
     allCode << "nets_failed = 0\n";
     allCode << "\n";
 
+    // Track failed nets for retry
+    std::vector<NET_CONNECTION> failedNets;
+    bool timeExceeded = false;
+    bool cancelled = false;
+
+    // Determine number of passes based on configuration
+    int numPasses = m_control.multi_pass_enabled ? m_control.num_passes : 1;
+    int totalNets = connections.size();
+    int netIndex = 0;
+
+    // First pass (pass 0): route all nets in priority order with basic settings
+    allCode << "# Pass 1: Basic routing (via_cost=" << m_control.via_cost << ")\n";
+    allCode << "\n";
+
+    AUTOROUTE_DEBUG( "RouteAll: Starting pass 1, " << totalNets << " nets to route" );
+
     for( const auto& conn : connections )
     {
-        std::string code = RouteConnection( conn );
+        netIndex++;
+        AUTOROUTE_DEBUG( "RouteAll: Routing net " << netIndex << "/" << totalNets
+                         << " '" << conn.net_name << "'" );
+
+        // Report progress
+        AUTOROUTE_PROGRESS progress;
+        progress.current_net = netIndex;
+        progress.total_nets = totalNets;
+        progress.current_pass = 1;
+        progress.total_passes = numPasses;
+        progress.nets_routed = m_result.nets_routed;
+        progress.nets_failed = m_result.nets_failed;
+        progress.current_net_name = conn.net_name;
+        progress.phase = "routing";
+        progress.elapsed_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - m_startTime ).count();
+        progress.percent_complete = ( double( netIndex ) / totalNets ) * 100.0 / numPasses;
+
+        if( !ReportProgress( progress ) )
+        {
+            cancelled = true;
+            break;
+        }
+
+        std::string code = RouteConnection( conn, 0 );  // Pass 0
 
         if( !code.empty() )
         {
@@ -819,8 +1344,9 @@ std::string AUTOROUTE_ENGINE::RouteAll()
         }
         else
         {
-            allCode << "# Failed to route net: " << conn.net_name << "\n";
-            allCode << "nets_failed += 1\n";
+            // Track failed nets for retry
+            failedNets.push_back( conn );
+            allCode << "# Deferred net (pass 1): " << conn.net_name << "\n";
             allCode << "\n";
         }
 
@@ -828,14 +1354,101 @@ std::string AUTOROUTE_ENGINE::RouteAll()
         if( m_control.max_time_seconds > 0 )
         {
             auto now = std::chrono::steady_clock::now();
-            double elapsed = std::chrono::duration<double>( now - startTime ).count();
+            double elapsed = std::chrono::duration<double>( now - m_startTime ).count();
 
             if( elapsed > m_control.max_time_seconds )
             {
                 m_result.error_message = "Time limit exceeded";
+                timeExceeded = true;
                 break;
             }
         }
+    }
+
+    // Multi-pass optimization: retry failed nets with progressively more aggressive settings
+    int passNum = 1;  // Already did pass 0
+
+    while( !failedNets.empty() && !timeExceeded && !cancelled && passNum < numPasses )
+    {
+        std::vector<NET_CONNECTION> stillFailed;
+        int passNetIndex = 0;
+        int passNets = failedNets.size();
+
+        double passViaCost = m_control.GetPassViaCost( passNum );
+        bool passRipupEnabled = ( passNum >= 2 ) && m_control.allow_ripup;
+
+        allCode << "# Pass " << ( passNum + 1 ) << ": Aggressive routing";
+        allCode << " (via_cost=" << passViaCost;
+        if( passRipupEnabled )
+            allCode << ", ripup=enabled";
+        allCode << ")\n";
+        allCode << "\n";
+
+        for( const auto& conn : failedNets )
+        {
+            passNetIndex++;
+
+            // Report progress
+            AUTOROUTE_PROGRESS progress;
+            progress.current_net = passNetIndex;
+            progress.total_nets = passNets;
+            progress.current_pass = passNum + 1;
+            progress.total_passes = numPasses;
+            progress.nets_routed = m_result.nets_routed;
+            progress.nets_failed = m_result.nets_failed;
+            progress.current_net_name = conn.net_name;
+            progress.phase = "retry";
+            progress.elapsed_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - m_startTime ).count();
+            progress.percent_complete = ( double( passNum ) / numPasses +
+                double( passNetIndex ) / passNets / numPasses ) * 100.0;
+
+            if( !ReportProgress( progress ) )
+            {
+                cancelled = true;
+                break;
+            }
+
+            std::string code = RouteConnection( conn, passNum );  // Use pass number
+
+            if( !code.empty() )
+            {
+                allCode << "# Route net (pass " << ( passNum + 1 ) << "): " << conn.net_name << "\n";
+                allCode << code;
+                allCode << "nets_routed += 1\n";
+                allCode << "\n";
+            }
+            else
+            {
+                stillFailed.push_back( conn );
+            }
+
+            // Check time limit
+            if( m_control.max_time_seconds > 0 )
+            {
+                auto now = std::chrono::steady_clock::now();
+                double elapsed = std::chrono::duration<double>( now - m_startTime ).count();
+
+                if( elapsed > m_control.max_time_seconds )
+                {
+                    m_result.error_message = "Time limit exceeded";
+                    timeExceeded = true;
+                    break;
+                }
+            }
+        }
+
+        failedNets = std::move( stillFailed );
+        passNum++;  // Move to next pass
+        m_result.passes_completed = passNum;
+    }
+
+    // Report remaining failed nets
+    for( const auto& conn : failedNets )
+    {
+        allCode << "# Failed to route net: " << conn.net_name << "\n";
+        allCode << "nets_failed += 1\n";
+        allCode << "\n";
     }
 
     allCode << "\n";
@@ -848,8 +1461,25 @@ std::string AUTOROUTE_ENGINE::RouteAll()
     allCode << "}))\n";
 
     auto endTime = std::chrono::steady_clock::now();
-    m_result.time_seconds = std::chrono::duration<double>( endTime - startTime ).count();
-    m_result.success = ( m_result.nets_failed == 0 );
+    m_result.time_seconds = std::chrono::duration<double>( endTime - m_startTime ).count();
+    m_result.success = ( m_result.nets_failed == 0 && !cancelled );
+    m_result.cancelled = cancelled;
+
+    // Final progress report
+    if( !cancelled )
+    {
+        AUTOROUTE_PROGRESS finalProgress;
+        finalProgress.current_net = totalNets;
+        finalProgress.total_nets = totalNets;
+        finalProgress.current_pass = numPasses;
+        finalProgress.total_passes = numPasses;
+        finalProgress.nets_routed = m_result.nets_routed;
+        finalProgress.nets_failed = m_result.nets_failed;
+        finalProgress.phase = "complete";
+        finalProgress.elapsed_seconds = m_result.time_seconds;
+        finalProgress.percent_complete = 100.0;
+        ReportProgress( finalProgress );
+    }
 
     return allCode.str();
 }
@@ -951,6 +1581,101 @@ FREE_SPACE_ROOM* AUTOROUTE_ENGINE::CompleteRoom( INCOMPLETE_FREE_SPACE_ROOM* aRo
 
     // Insert the completed room into the search tree
     m_searchTree.Insert( roomPtr );
+
+    return roomPtr;
+}
+
+
+std::vector<FREE_SPACE_ROOM*> AUTOROUTE_ENGINE::CompleteExpansionRoom(
+    INCOMPLETE_FREE_SPACE_ROOM* aIncompleteRoom, int aNetCode )
+{
+    AUTOROUTE_DEBUG( "CompleteExpansionRoom: START, room=" << (void*)aIncompleteRoom
+                     << " netCode=" << aNetCode );
+
+    std::vector<FREE_SPACE_ROOM*> result;
+
+    if( !aIncompleteRoom )
+    {
+        AUTOROUTE_DEBUG( "CompleteExpansionRoom: null room, returning" );
+        return result;
+    }
+
+    // Use the room completion algorithm
+    AUTOROUTE_DEBUG( "CompleteExpansionRoom: calling completion.Complete" );
+    ROOM_COMPLETION completion( *this, m_searchTree );
+    COMPLETION_RESULT completionResult = completion.Complete( *aIncompleteRoom, aNetCode );
+    AUTOROUTE_DEBUG( "CompleteExpansionRoom: completion.Complete returned" );
+
+    if( !completionResult.completed_room )
+    {
+        AUTOROUTE_DEBUG( "CompleteExpansionRoom: no completed room, returning" );
+        return result;
+    }
+
+    FREE_SPACE_ROOM* roomPtr = completionResult.completed_room.get();
+    result.push_back( roomPtr );
+    AUTOROUTE_DEBUG( "CompleteExpansionRoom: got completed room=" << (void*)roomPtr );
+
+    // Add the completed room to our storage
+    int layer = roomPtr->GetLayer();
+    m_roomsByLayer[layer].push_back( roomPtr );
+    m_rooms.push_back( std::move( completionResult.completed_room ) );
+
+    // Add the new doors and connect them to rooms
+    AUTOROUTE_DEBUG( "CompleteExpansionRoom: adding " << completionResult.new_doors.size() << " doors" );
+    for( auto& door : completionResult.new_doors )
+    {
+        EXPANSION_DOOR* doorPtr = door.get();
+        m_doors.push_back( std::move( door ) );
+
+        // Add door to both connected rooms
+        EXPANSION_ROOM* room1 = doorPtr->GetRoom1();
+        EXPANSION_ROOM* room2 = doorPtr->GetRoom2();
+        if( room1 )
+            room1->AddDoor( doorPtr );
+        if( room2 )
+            room2->AddDoor( doorPtr );
+    }
+
+    // Add the new incomplete rooms for expansion frontier
+    AUTOROUTE_DEBUG( "CompleteExpansionRoom: adding " << completionResult.new_incomplete_rooms.size()
+                     << " incomplete rooms" );
+    for( auto& incompleteRoom : completionResult.new_incomplete_rooms )
+    {
+        m_incompleteRooms.push_back( std::move( incompleteRoom ) );
+    }
+
+    // Insert the completed room into the search tree for future queries
+    AUTOROUTE_DEBUG( "CompleteExpansionRoom: inserting into search tree" );
+    m_searchTree.Insert( roomPtr );
+
+    AUTOROUTE_DEBUG( "CompleteExpansionRoom: done" );
+    return result;
+}
+
+
+INCOMPLETE_FREE_SPACE_ROOM* AUTOROUTE_ENGINE::CreateInitialIncompleteRoom(
+    int aLayer, const VECTOR2I& aContainedPoint )
+{
+    BOX2I bounds = GetBoardBounds();
+    if( !bounds.IsValid() )
+        return nullptr;
+
+    // Create a shape from the board bounds
+    auto shape = std::make_unique<INT_BOX>( bounds );
+
+    // Create a small contained shape around the starting point
+    // This ensures the completed room will include this point
+    int smallSize = m_control.clearance;
+    VECTOR2I minPt( aContainedPoint.x - smallSize, aContainedPoint.y - smallSize );
+    VECTOR2I maxPt( aContainedPoint.x + smallSize, aContainedPoint.y + smallSize );
+    auto containedShape = std::make_unique<INT_BOX>( minPt, maxPt );
+
+    auto room = std::make_unique<INCOMPLETE_FREE_SPACE_ROOM>(
+        std::move( shape ), aLayer, std::move( containedShape ) );
+
+    INCOMPLETE_FREE_SPACE_ROOM* roomPtr = room.get();
+    m_incompleteRooms.push_back( std::move( room ) );
 
     return roomPtr;
 }

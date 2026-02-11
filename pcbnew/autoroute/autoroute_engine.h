@@ -25,12 +25,16 @@
 #include "expansion/expansion_door.h"
 #include "expansion/expansion_drill.h"
 #include "search/shape_search_tree.h"
+#include "search/congestion_map.h"
 #include <math/vector2d.h>
 #include <math/box2.h>
 #include <memory>
 #include <vector>
 #include <map>
 #include <set>
+#include <functional>
+#include <atomic>
+#include <chrono>
 
 // Forward declarations
 class BOARD;
@@ -39,6 +43,31 @@ class PAD;
 class PCB_TRACK;
 class PCB_VIA;
 class COMMIT;
+
+
+/**
+ * Progress update for autorouting.
+ */
+struct AUTOROUTE_PROGRESS
+{
+    int    current_net = 0;        ///< Current net being routed (1-based)
+    int    total_nets = 0;         ///< Total nets to route
+    int    current_pass = 0;       ///< Current optimization pass (1-based)
+    int    total_passes = 1;       ///< Total number of passes
+    int    nets_routed = 0;        ///< Nets successfully routed so far
+    int    nets_failed = 0;        ///< Nets failed to route so far
+    std::string current_net_name;  ///< Name of current net
+    std::string phase;             ///< Current phase ("routing", "optimizing", etc.)
+    double elapsed_seconds = 0;    ///< Time elapsed since start
+    double percent_complete = 0;   ///< Overall completion percentage (0-100)
+};
+
+
+/**
+ * Progress callback type for autorouting.
+ * Return false to cancel the operation.
+ */
+using AUTOROUTE_PROGRESS_CALLBACK = std::function<bool( const AUTOROUTE_PROGRESS& )>;
 
 
 /**
@@ -78,6 +107,27 @@ public:
     void SetCommit( COMMIT* aCommit ) { m_commit = aCommit; }
 
     /**
+     * Set the progress callback for routing updates.
+     * The callback is called periodically during routing.
+     * Return false from the callback to cancel the operation.
+     */
+    void SetProgressCallback( AUTOROUTE_PROGRESS_CALLBACK aCallback )
+    {
+        m_progressCallback = aCallback;
+    }
+
+    /**
+     * Request cancellation of the current routing operation.
+     * This is thread-safe and can be called from any thread.
+     */
+    void Cancel() { m_cancelled.store( true ); }
+
+    /**
+     * Check if routing has been cancelled.
+     */
+    bool IsCancelled() const { return m_cancelled.load(); }
+
+    /**
      * Build the expansion room model from the current board state.
      * Must be called before routing.
      */
@@ -97,9 +147,10 @@ public:
      * Route a single net connection.
      *
      * @param aConnection The connection to route
+     * @param aPass Optimization pass number (0 = first pass, higher = more aggressive)
      * @return Python code to insert the route (for IPC execution)
      */
-    std::string RouteConnection( const NET_CONNECTION& aConnection );
+    std::string RouteConnection( const NET_CONNECTION& aConnection, int aPass = 0 );
 
     /**
      * Route all unconnected nets.
@@ -171,8 +222,16 @@ private:
 
     /**
      * Build free space rooms in gaps between obstacles.
+     * DEPRECATED: Use BuildInitialIncompleteRooms() for dynamic expansion.
      */
     void BuildFreeSpaceRooms();
+
+    /**
+     * Build initial incomplete rooms adjacent to obstacles.
+     * These rooms will be completed on-demand during maze search.
+     * This is the FreeRouting-style dynamic room expansion approach.
+     */
+    void BuildInitialIncompleteRooms();
 
     /**
      * Check if two rooms are adjacent and can have a door between them.
@@ -195,6 +254,19 @@ private:
      */
     EXPANSION_ROOM* FindNearestFreeSpace( EXPANSION_ROOM* aObstacle );
 
+    /**
+     * Calculate routing priority for a net connection.
+     * Lower values = higher priority (route first).
+     * Based on: pad count, total wire length, complexity.
+     */
+    double CalculateNetPriority( const NET_CONNECTION& aConnection ) const;
+
+    /**
+     * Order connections for optimal routing sequence.
+     * Simpler nets (fewer pads, shorter distances) are routed first.
+     */
+    void OrderConnections( std::vector<NET_CONNECTION>& aConnections ) const;
+
     BOARD*                                  m_board = nullptr;
     COMMIT*                                 m_commit = nullptr;
     AUTOROUTE_CONTROL                       m_control;
@@ -203,6 +275,9 @@ private:
 
     // Spatial search tree for efficient obstacle queries
     SHAPE_SEARCH_TREE                       m_searchTree;
+
+    // Congestion tracking for spread routing
+    std::unique_ptr<CONGESTION_MAP>         m_congestionMap;
 
     // Expansion room storage
     std::vector<std::unique_ptr<EXPANSION_ROOM>> m_rooms;
@@ -223,6 +298,12 @@ public:
     const SHAPE_SEARCH_TREE& GetSearchTree() const { return m_searchTree; }
 
     /**
+     * Get the congestion map (may be nullptr if not initialized).
+     */
+    CONGESTION_MAP* GetCongestionMap() { return m_congestionMap.get(); }
+    const CONGESTION_MAP* GetCongestionMap() const { return m_congestionMap.get(); }
+
+    /**
      * Add an incomplete expansion room.
      * Returns the raw pointer for door connections.
      */
@@ -233,6 +314,47 @@ public:
      * Returns the completed room.
      */
     FREE_SPACE_ROOM* CompleteRoom( INCOMPLETE_FREE_SPACE_ROOM* aRoom, int aNetCode );
+
+    /**
+     * Complete expansion rooms on demand during maze search.
+     * This is the key to dynamic room expansion like FreeRouting.
+     *
+     * @param aIncompleteRoom The incomplete room to complete
+     * @return Vector of completed rooms (may be multiple if room is split)
+     */
+    std::vector<FREE_SPACE_ROOM*> CompleteExpansionRoom( INCOMPLETE_FREE_SPACE_ROOM* aIncompleteRoom,
+                                                          int aNetCode );
+
+    /**
+     * Create an initial incomplete room for a layer that extends to board bounds.
+     * Used to start the dynamic room expansion process.
+     */
+    INCOMPLETE_FREE_SPACE_ROOM* CreateInitialIncompleteRoom( int aLayer,
+                                                               const VECTOR2I& aContainedPoint );
+
+    /**
+     * Get the routing control parameters.
+     */
+    const AUTOROUTE_CONTROL& GetControl() const { return m_control; }
+
+    /**
+     * Generate a new unique room ID.
+     */
+    int GenerateRoomId() { return m_nextRoomId++; }
+
+    /**
+     * Report progress to the callback if set.
+     * @return False if cancelled, true to continue
+     */
+    bool ReportProgress( const AUTOROUTE_PROGRESS& aProgress );
+
+private:
+    int m_nextRoomId = 1;
+
+    // Progress and cancellation
+    AUTOROUTE_PROGRESS_CALLBACK m_progressCallback;
+    std::atomic<bool>           m_cancelled{ false };
+    std::chrono::steady_clock::time_point m_startTime;
 };
 
 

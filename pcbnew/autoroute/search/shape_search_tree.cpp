@@ -275,6 +275,40 @@ std::vector<TREE_ENTRY> SHAPE_SEARCH_TREE::GetOverlapping( const BOX2I& aBounds,
 }
 
 
+void SHAPE_SEARCH_TREE::QueryOverlappingWithNet( const BOX2I& aBounds, int aLayer, int aExcludeNet,
+                                                   std::function<bool( const TREE_ENTRY& )> aCallback ) const
+{
+    QueryOverlapping( aBounds, aLayer, [&aCallback, aExcludeNet]( const TREE_ENTRY& entry ) {
+        // Skip entries from the same net (they're not obstacles)
+        if( aExcludeNet >= 0 )
+        {
+            if( entry.room && entry.room->GetNetCode() == aExcludeNet )
+                return true;  // Skip, continue searching
+        }
+
+        return aCallback( entry );
+    } );
+}
+
+
+std::vector<TREE_ENTRY> SHAPE_SEARCH_TREE::GetObstacles( const BOX2I& aBounds, int aLayer,
+                                                          int aExcludeNet ) const
+{
+    std::vector<TREE_ENTRY> result;
+
+    QueryOverlappingWithNet( aBounds, aLayer, aExcludeNet, [&result]( const TREE_ENTRY& entry ) {
+        // Only include obstacle rooms
+        if( entry.room && entry.room->GetType() == ROOM_TYPE::OBSTACLE )
+        {
+            result.push_back( entry );
+        }
+        return true;  // Continue
+    } );
+
+    return result;
+}
+
+
 bool SHAPE_SEARCH_TREE::IsBlocked( const VECTOR2I& aPoint, int aLayer, int aExcludeNet ) const
 {
     // Create a small query box around the point

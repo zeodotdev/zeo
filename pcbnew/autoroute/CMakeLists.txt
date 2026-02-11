@@ -38,10 +38,24 @@ set( AUTOROUTE_SRCS
     search/shape_search_tree.cpp
     search/room_completion.cpp
     search/ripup_checker.cpp
+    search/congestion_map.cpp
 
     # Path reconstruction and trace creation
     locate/locate_connection.cpp
     insert/insert_connection.cpp
+
+    # Path optimization
+    optimize/pull_tight.cpp
+    optimize/via_optimizer.cpp
+
+    # Fanout routing for BGA/QFP
+    fanout/fanout_router.cpp
+
+    # Differential pair routing
+    differential/differential_pair.cpp
+
+    # Length matching
+    length_match/length_matcher.cpp
 )
 
 add_library( autoroute STATIC ${AUTOROUTE_SRCS} )

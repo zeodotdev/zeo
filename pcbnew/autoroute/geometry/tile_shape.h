@@ -215,4 +215,158 @@ private:
 };
 
 
+/**
+ * Represents a half-plane defined by a line.
+ * Points on the left side of the line (looking in direction) are inside.
+ * This matches FreeRouting's Line class.
+ */
+class HALF_PLANE
+{
+public:
+    HALF_PLANE() = default;
+
+    /**
+     * Create half-plane from a line through two points.
+     * The half-plane includes points on the left of the line from A to B.
+     */
+    HALF_PLANE( const VECTOR2I& aPointA, const VECTOR2I& aPointB );
+
+    /**
+     * Create half-plane from a line segment (uses segment endpoints).
+     */
+    explicit HALF_PLANE( const SEG& aSeg );
+
+    /**
+     * Check if a point is inside this half-plane (on the left side of the line).
+     */
+    bool Contains( const VECTOR2I& aPt ) const;
+
+    /**
+     * Get which side of the line a point is on.
+     * Returns positive for left (inside), negative for right (outside), 0 for on line.
+     */
+    int64_t SideOf( const VECTOR2I& aPt ) const;
+
+    /**
+     * Check if two half-planes are parallel.
+     */
+    bool IsParallel( const HALF_PLANE& aOther ) const;
+
+    /**
+     * Compute intersection point with another half-plane line.
+     */
+    std::optional<VECTOR2I> IntersectionPoint( const HALF_PLANE& aOther ) const;
+
+    /**
+     * Get the direction vector of this line.
+     */
+    VECTOR2I Direction() const { return m_dir; }
+
+    /**
+     * Get a point on this line.
+     */
+    VECTOR2I Point() const { return m_point; }
+
+private:
+    VECTOR2I m_point;  ///< A point on the line
+    VECTOR2I m_dir;    ///< Direction vector of the line
+};
+
+
+/**
+ * A convex shape defined by the intersection of half-planes.
+ * This matches FreeRouting's Simplex class.
+ *
+ * The simplex is the intersection of all half-planes, which is always convex.
+ * This allows efficient construction of shapes from arbitrary line constraints.
+ */
+class SIMPLEX : public TILE_SHAPE
+{
+public:
+    SIMPLEX();
+
+    /**
+     * Create simplex from an array of half-planes (lines).
+     * The simplex is the intersection of all half-plane interiors.
+     */
+    explicit SIMPLEX( const std::vector<HALF_PLANE>& aHalfPlanes );
+
+    /**
+     * Create simplex from a bounding box (4 half-planes).
+     */
+    static SIMPLEX FromBox( const BOX2I& aBox );
+
+    /**
+     * Create simplex from a bounding box extended to infinity in one direction.
+     * Used for creating rooms that extend to board edge.
+     */
+    static SIMPLEX FromHalfSpace( const SEG& aBoundary, const BOX2I& aBoardBounds );
+
+    // TILE_SHAPE interface
+    BOX2I BoundingBox() const override;
+    bool Contains( const VECTOR2I& aPt ) const override;
+    bool Intersects( const TILE_SHAPE& aOther ) const override;
+    std::unique_ptr<TILE_SHAPE> Intersection( const TILE_SHAPE& aOther ) const override;
+    VECTOR2I Center() const override;
+    std::vector<SEG> GetEdges() const override;
+    int DistanceToEdge( const VECTOR2I& aPt ) const override;
+    VECTOR2I NearestPointOnBoundary( const VECTOR2I& aPt ) const override;
+    std::unique_ptr<TILE_SHAPE> Clone() const override;
+    void Inflate( int aAmount ) override;
+
+    /**
+     * Check if the simplex is empty (half-planes don't intersect).
+     */
+    bool IsEmpty() const { return m_vertices.empty(); }
+
+    /**
+     * Get the half-planes defining this simplex.
+     */
+    const std::vector<HALF_PLANE>& HalfPlanes() const { return m_halfPlanes; }
+
+    /**
+     * Get the number of edges (border lines).
+     */
+    int EdgeCount() const { return m_halfPlanes.size(); }
+
+    /**
+     * Remove a border line (enlarges the simplex).
+     * Returns a new simplex without the specified edge.
+     */
+    SIMPLEX RemoveBorderLine( int aEdgeIndex ) const;
+
+    /**
+     * Compute intersection with another simplex.
+     */
+    SIMPLEX IntersectionSimplex( const SIMPLEX& aOther ) const;
+
+    /**
+     * Get the dimension of intersection with another shape.
+     * 0 = point, 1 = edge, 2 = area, -1 = empty
+     */
+    int IntersectionDimension( const TILE_SHAPE& aOther ) const;
+
+    /**
+     * Get corner point at specified index.
+     */
+    VECTOR2I Corner( int aIndex ) const;
+
+    /**
+     * Get index of next edge in counterclockwise order.
+     */
+    int NextEdge( int aIndex ) const { return ( aIndex + 1 ) % EdgeCount(); }
+
+    /**
+     * Get index of previous edge in counterclockwise order.
+     */
+    int PrevEdge( int aIndex ) const { return ( aIndex + EdgeCount() - 1 ) % EdgeCount(); }
+
+private:
+    std::vector<HALF_PLANE> m_halfPlanes;  ///< Half-planes defining this simplex
+    std::vector<VECTOR2I>   m_vertices;    ///< Computed vertices (corners)
+
+    void computeVertices();
+};
+
+
 #endif // TILE_SHAPE_H

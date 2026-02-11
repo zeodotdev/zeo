@@ -487,7 +487,17 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schDelete.name = "sch_delete";
     schDelete.description =
         "Delete elements from the schematic. Accepts an array of targets - use for single or batch operations. "
-        "Target by reference designator or UUID. "
+        "Each target can be a string (reference designator like 'R1' or UUID) or a query object to match items by properties:\n"
+        "  {type: 'wire', start: [x,y], end: [x,y]} - match wire by endpoints\n"
+        "  {type: 'wire', position: [x,y]} - match wires touching this point\n"
+        "  {type: 'label', text: 'NET_NAME'} - match local label by text\n"
+        "  {type: 'label', text: 'NET_NAME', position: [x,y]} - match label by text and position\n"
+        "  {type: 'global_label', text: 'SPI_CLK'} - match global label\n"
+        "  {type: 'hierarchical_label', text: 'DATA'} - match hierarchical label\n"
+        "  {type: 'junction', position: [x,y]} - match junction at position\n"
+        "  {type: 'no_connect', position: [x,y]} - match no-connect at position\n"
+        "  {type: 'bus_entry', position: [x,y]} - match bus entry at position\n"
+        "Query: type is required. text/position/start/end are optional filters. All specified must match. Position tolerance: 0.01mm. "
         "By default, recursively removes orphaned wires and junctions connected to deleted symbol pins. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schDelete.input_schema = {
@@ -495,8 +505,9 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "properties", {
             { "targets", {
                 { "type", "array" },
-                { "items", { { "type", "string" } } },
-                { "description", "Array of references or UUIDs to delete (e.g. ['R1', 'R2', 'C1'])" }
+                { "description", "Array of targets to delete. Each item is either a string (reference/UUID) "
+                  "or a query object with: type (required), text (optional), position [x,y] (optional), "
+                  "start [x,y] (optional, wires), end [x,y] (optional, wires)" }
             }},
             { "cleanup_wires", {
                 { "type", "boolean" },

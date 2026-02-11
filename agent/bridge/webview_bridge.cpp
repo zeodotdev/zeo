@@ -78,6 +78,10 @@ void WEBVIEW_BRIDGE::OnMessage( const wxString& aMessage )
             LogBridge( "JS->C++", "PAGE_READY", "Flushing pending scripts" );
             m_pageReady = true;
             FlushPendingScripts();
+
+            // Enable JS debug logging when WXTRACE includes KICAD_AGENT
+            if( wxLog::IsAllowedTraceMask( "KICAD_AGENT" ) )
+                RunScript( "App.Chat.setDebug(true);" );
         }
 
         // Debug

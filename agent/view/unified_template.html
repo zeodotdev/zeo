@@ -508,6 +508,7 @@ App.Chat = (function() {
     // Without this, the C++ streaming timer rebuilds HTML with stale toggle state,
     // overwriting the user's click before the JS->C++ roundtrip completes.
     var _expandedToggles = {};
+    var _debug = false;
 
     function highlightCodeBlocks(element) {
         if (typeof hljs !== 'undefined') {
@@ -548,6 +549,7 @@ App.Chat = (function() {
     }
 
     function appendMessage(html) {
+        if (_debug) console.log('[ZENER] appendMessage len=' + html.length);
         var wrapper = document.querySelector('.content-wrapper');
         if (wrapper) {
             var temp = document.createElement('div');
@@ -573,9 +575,7 @@ App.Chat = (function() {
         }
     }
 
-    function updateToolResult(index, statusClass, statusText, bodyHtml) {
-        var el = document.getElementById('tool-result-' + index);
-        if (!el) return;
+    function _applyToolResultUpdate(el, statusClass, statusText, bodyHtml) {
         var status = el.querySelector('.tool-status');
         if (status) {
             status.className = statusClass + ' text-[12px] ml-auto';
@@ -588,24 +588,56 @@ App.Chat = (function() {
         }
     }
 
+    function updateToolResult(index, statusClass, statusText, bodyHtml) {
+        if (_debug) console.log('[ZENER] updateToolResult(' + index + ') status=' + statusText);
+        var el = document.getElementById('tool-result-' + index);
+        if (el) {
+            _applyToolResultUpdate(el, statusClass, statusText, bodyHtml);
+            return;
+        }
+        // Element not yet in DOM — retry. This handles the case where
+        // image chunk scripts from a previous tool delay DOM creation.
+        if (_debug) console.warn('[ZENER] updateToolResult(' + index + ') element not found, retrying');
+        var retryCount = 0;
+        var retryInterval = setInterval(function() {
+            retryCount++;
+            var el = document.getElementById('tool-result-' + index);
+            if (el) {
+                clearInterval(retryInterval);
+                if (_debug) console.log('[ZENER] updateToolResult(' + index + ') found after ' + retryCount + ' retries');
+                _applyToolResultUpdate(el, statusClass, statusText, bodyHtml);
+            } else if (retryCount >= 20) {
+                clearInterval(retryInterval);
+                console.warn('[ZENER] updateToolResult(' + index + ') gave up after 20 retries');
+            }
+        }, 50);
+    }
+
     // Chunked tool result image
     var _toolImgBuf = '';
     function toolImgBegin(index, prefix) { _toolImgBuf = prefix || ''; }
     function toolImgChunk(index, data) { _toolImgBuf += data; }
     function toolImgEnd(index) {
-        var el = document.getElementById('tool-result-' + index);
-        if (el) {
-            // Render the image AFTER the collapsible tool result so it is
-            // always visible in the chat stream (not hidden behind the toggle).
-            var wrapper = document.createElement('div');
-            wrapper.className = 'my-2';
-            var img = document.createElement('img');
-            img.src = _toolImgBuf;
-            img.style.cssText = 'max-width:100%; border-radius:6px;';
-            wrapper.appendChild(img);
-            el.insertAdjacentElement('afterend', wrapper);
-        }
+        if (_debug) console.log('[ZENER] toolImgEnd(' + index + ') bufLen=' + _toolImgBuf.length);
+        // Capture and clear buffer synchronously, then defer DOM insertion.
+        // The setTimeout(0) yields control back to WebKit's RunScriptAsync
+        // queue so pending scripts (appendMessage, updateToolResult for
+        // subsequent tools) execute before the large data URI assignment
+        // triggers a layout reflow.
+        var src = _toolImgBuf;
         _toolImgBuf = '';
+        setTimeout(function() {
+            var el = document.getElementById('tool-result-' + index);
+            if (el) {
+                var wrapper = document.createElement('div');
+                wrapper.className = 'my-2';
+                var img = document.createElement('img');
+                img.src = src;
+                img.style.cssText = 'max-width:100%; border-radius:6px;';
+                wrapper.appendChild(img);
+                el.insertAdjacentElement('afterend', wrapper);
+            }
+        }, 0);
     }
 
     // Event delegation for links, toggles, images
@@ -631,6 +663,7 @@ App.Chat = (function() {
                     var index = parts[2];
                     var content = document.querySelector('[data-toggle-type="' + type + '"][data-toggle-index="' + index + '"]');
                     var chevron = target.querySelector('.toggle-chevron');
+                    if (_debug) console.log('[ZENER] toggle ' + type + ':' + index + ' found=' + !!content);
                     if (content) {
                         var expanded = content.style.display === 'none' || content.style.display === '';
                         content.style.display = expanded ? 'block' : 'none';
@@ -734,7 +767,8 @@ App.Chat = (function() {
         toolImgChunk: toolImgChunk,
         toolImgEnd: toolImgEnd,
         showPlanApproval: showPlanApproval,
-        removePlanApproval: removePlanApproval
+        removePlanApproval: removePlanApproval,
+        setDebug: function(on) { _debug = on; }
     };
 })();
 

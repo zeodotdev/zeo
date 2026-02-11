@@ -23,6 +23,9 @@
 #include "../expansion/expansion_room.h"
 #include "../expansion/expansion_door.h"
 #include "../expansion/expansion_drill.h"
+#include "../expansion/target_door.h"
+#include "../expansion/drill_page.h"
+#include "../expansion/drill_page_array.h"
 #include <pad.h>
 #include <cmath>
 #include <iostream>
@@ -48,6 +51,10 @@ void MAZE_SEARCH::SetSources( const std::set<BOARD_ITEM*>& aSourceItems )
 void MAZE_SEARCH::SetDestinations( const std::set<BOARD_ITEM*>& aDestItems )
 {
     m_destDistance.Initialize( aDestItems );
+
+    // Store destination items in the engine for TARGET_EXPANSION_DOOR creation
+    // during room completion
+    m_engine.SetCurrentDestinations( aDestItems );
 
     // Convert destination items (pads) to their expansion rooms
     for( BOARD_ITEM* item : aDestItems )
@@ -87,6 +94,17 @@ bool MAZE_SEARCH::InitializeSearch()
 {
     MAZE_DEBUG( "InitializeSearch: START, sourceItems=" << m_sourceItems.size() );
 
+    // FreeRouting: Mark source items with is_start_info = true
+    // This allows TARGET_EXPANSION_DOORs to distinguish start vs destination items
+    for( BOARD_ITEM* item : m_sourceItems )
+    {
+        ITEM_AUTOROUTE_INFO* info = m_engine.GetItemAutorouteInfo( item );
+        if( info )
+        {
+            info->SetStartInfo( true );
+        }
+    }
+
     // Convert source items (pads) to their expansion rooms
     m_sourceRooms.clear();
 
@@ -119,7 +137,7 @@ bool MAZE_SEARCH::InitializeSearch()
     {
         MAZE_DEBUG( "InitializeSearch: sourceRoom has " << sourceRoom->GetDoors().size() << " doors" );
 
-        // Add target door for the source room itself (to start expansion)
+        // Add regular doors from the source room
         for( EXPANSION_DOOR* door : sourceRoom->GetDoors() )
         {
             // Get the room on the other side of the door
@@ -150,6 +168,41 @@ bool MAZE_SEARCH::InitializeSearch()
                 totalDoors++;
             }
         }
+
+        // FreeRouting: Also add target doors from source rooms (start item target doors)
+        // These are the initial connections to own-net items
+        FREE_SPACE_ROOM* freeSpaceRoom = dynamic_cast<FREE_SPACE_ROOM*>( sourceRoom );
+        if( freeSpaceRoom )
+        {
+            for( TARGET_EXPANSION_DOOR* targetDoor : freeSpaceRoom->GetTargetDoors() )
+            {
+                // Only add start doors (not destination doors) to initial queue
+                if( targetDoor->IsStartDoor() )
+                {
+                    int sectionCount = targetDoor->GetSectionCount();
+                    for( int section = 0; section < sectionCount; ++section )
+                    {
+                        MAZE_LIST_ELEMENT elem;
+                        elem.door = targetDoor;
+                        elem.section_no = section;
+                        elem.backtrack_door = nullptr;
+                        elem.backtrack_section = 0;
+                        elem.expansion_value = 0.0;
+                        elem.layer = sourceRoom->GetLayer();
+                        elem.entry_point = targetDoor->GetSectionCenter( section );
+
+                        double heuristic = m_destDistance.Calculate( elem.entry_point,
+                                                                      elem.layer,
+                                                                      m_control.via_cost );
+                        elem.sorting_value = elem.expansion_value + heuristic;
+                        elem.next_room = sourceRoom;  // Target doors are within the same room
+
+                        AddToQueue( elem );
+                        totalDoors++;
+                    }
+                }
+            }
+        }
     }
 
     MAZE_DEBUG( "InitializeSearch: queued " << totalDoors << " doors, queueSize=" << m_queue.size() );
@@ -177,7 +230,7 @@ std::optional<MAZE_SEARCH_RESULT> MAZE_SEARCH::FindConnection()
         MAZE_DEBUG( "FindConnection: Starting A* loop, queueSize=" << m_queue.size() );
 
         // Main A* loop - FreeRouting approach
-        // Loop until: queue empty, destination found, or cancelled
+        // Loop until: queue empty, destination found, cancelled, or limits exceeded
         // OccupyNextElement handles skipping already-occupied duplicates
         while( OccupyNextElement() == false && !m_queue.empty() )
         {
@@ -185,6 +238,22 @@ std::optional<MAZE_SEARCH_RESULT> MAZE_SEARCH::FindConnection()
             if( m_cancelled && m_cancelled->load() )
             {
                 MAZE_DEBUG( "FindConnection: Cancelled externally, stopping" );
+                break;
+            }
+
+            // Safety limit to prevent infinite search
+            if( m_nodesExpanded >= MAX_NODES_EXPANDED )
+            {
+                MAZE_DEBUG( "FindConnection: MAX_NODES_EXPANDED limit reached ("
+                            << MAX_NODES_EXPANDED << "), stopping" );
+                break;
+            }
+
+            // Safety limit for queue size
+            if( static_cast<int>( m_queue.size() ) >= MAX_QUEUE_SIZE )
+            {
+                MAZE_DEBUG( "FindConnection: MAX_QUEUE_SIZE limit reached ("
+                            << MAX_QUEUE_SIZE << "), stopping" );
                 break;
             }
 
@@ -279,8 +348,16 @@ bool MAZE_SEARCH::OccupyNextElement()
         element = m_queue.top();
         m_queue.pop();
 
+        // Check if this is a drill page element (lazy via expansion)
+        if( element.drill_page )
+        {
+            // Drill pages don't have an occupied check - they expand to drills
+            found = true;
+            break;
+        }
+
         // Skip if already occupied (duplicate in queue)
-        if( !element.door->IsOccupied( element.section_no ) )
+        if( element.door && !element.door->IsOccupied( element.section_no ) )
         {
             found = true;
             break;
@@ -296,6 +373,14 @@ bool MAZE_SEARCH::OccupyNextElement()
 
     m_nodesExpanded++;
 
+    // Handle drill page elements - expand to individual drills
+    if( element.drill_page )
+    {
+        MAZE_DEBUG( "OccupyNextElement: expanding drill page" );
+        ExpandToDrillsOfPage( element.drill_page, element );
+        return false;  // Not at destination yet
+    }
+
     MAZE_DEBUG( "OccupyNextElement: door=" << (void*)element.door
                 << " section=" << element.section_no
                 << " layer=" << element.layer
@@ -307,11 +392,29 @@ bool MAZE_SEARCH::OccupyNextElement()
                     element.backtrack_door, element.backtrack_section,
                     element.entry_point, element.layer );
 
-    // Check if we've reached a destination
-    MAZE_DEBUG( "OccupyNextElement: checking if destination" );
+    // Check if this door is a destination target door
+    // FreeRouting: Only destination doors (not start doors) trigger path found
+    MAZE_DEBUG( "OccupyNextElement: checking for target door" );
+    EXPANSION_DOOR* expDoor = dynamic_cast<EXPANSION_DOOR*>( element.door );
+    if( expDoor )
+    {
+        TARGET_EXPANSION_DOOR* targetDoor = dynamic_cast<TARGET_EXPANSION_DOOR*>( expDoor );
+        if( targetDoor && targetDoor->IsDestinationDoor() )
+        {
+            MAZE_DEBUG( "OccupyNextElement: REACHED DESTINATION via TARGET_EXPANSION_DOOR!" );
+            m_resultElement = element;
+            m_foundPath = true;
+            element.door->SetOccupied( element.section_no, true );
+            return true;
+        }
+    }
+
+    // Check if we've reached a destination room
+    // (fallback check for rooms that were pre-created as destinations)
+    MAZE_DEBUG( "OccupyNextElement: checking if destination room" );
     if( element.next_room && m_destDistance.IsDestination( element.next_room ) )
     {
-        MAZE_DEBUG( "OccupyNextElement: REACHED DESTINATION!" );
+        MAZE_DEBUG( "OccupyNextElement: REACHED DESTINATION via destination room!" );
         m_resultElement = element;
         m_foundPath = true;
         // Mark as occupied before returning
@@ -360,6 +463,16 @@ void MAZE_SEARCH::ExpandToRoomDoors( const MAZE_LIST_ELEMENT& aElement )
     MAZE_DEBUG( "ExpandToRoomDoors: room=" << (void*)room
                 << " type=" << static_cast<int>( room->GetType() ) );
 
+    // CRITICAL: Skip rooms that have already been visited and expanded.
+    // Without this check, the same room gets expanded multiple times via different
+    // door sections, causing queue explosion (each expansion adds all doors again).
+    // FreeRouting: ExpansionRoom.is_search_tree_element_set() serves similar purpose.
+    if( room->IsVisited() )
+    {
+        MAZE_DEBUG( "ExpandToRoomDoors: room already visited, skipping expansion" );
+        return;
+    }
+
     // Check room type
     if( room->GetType() == ROOM_TYPE::OBSTACLE )
     {
@@ -405,26 +518,38 @@ void MAZE_SEARCH::ExpandToRoomDoors( const MAZE_LIST_ELEMENT& aElement )
 
         if( incompleteRoom )
         {
-            MAZE_DEBUG( "ExpandToRoomDoors: calling CompleteExpansionRoom" );
-            // Complete the room dynamically
-            std::vector<FREE_SPACE_ROOM*> completedRooms =
-                m_engine.CompleteExpansionRoom( incompleteRoom, m_netCode );
-            MAZE_DEBUG( "ExpandToRoomDoors: CompleteExpansionRoom returned "
-                        << completedRooms.size() << " rooms" );
-
-            m_roomCompletions++;  // Track completions
-
-            if( completedRooms.empty() )
+            // Check if this incomplete room was already completed
+            if( incompleteRoom->IsAlreadyCompleted() )
             {
-                MAZE_DEBUG( "ExpandToRoomDoors: no completed rooms, returning" );
-                // Room completion failed - can't expand through here
-                return;
+                MAZE_DEBUG( "ExpandToRoomDoors: room already completed, reusing" );
+                room = incompleteRoom->GetCompletedRoom();
             }
+            else
+            {
+                MAZE_DEBUG( "ExpandToRoomDoors: calling CompleteExpansionRoom" );
+                // Complete the room dynamically
+                std::vector<FREE_SPACE_ROOM*> completedRooms =
+                    m_engine.CompleteExpansionRoom( incompleteRoom, m_netCode );
+                MAZE_DEBUG( "ExpandToRoomDoors: CompleteExpansionRoom returned "
+                            << completedRooms.size() << " rooms" );
 
-            // Use the first completed room (typically there's only one)
-            // Note: The completed room will have new doors created by CompleteExpansionRoom()
-            room = completedRooms[0];
-            MAZE_DEBUG( "ExpandToRoomDoors: using completed room=" << (void*)room );
+                m_roomCompletions++;  // Track completions
+
+                if( completedRooms.empty() )
+                {
+                    MAZE_DEBUG( "ExpandToRoomDoors: no completed rooms, returning" );
+                    // Room completion failed - can't expand through here
+                    return;
+                }
+
+                // Use the first completed room (typically there's only one)
+                // Note: The completed room will have new doors created by CompleteExpansionRoom()
+                room = completedRooms[0];
+
+                // Remember the completed room so we don't complete this again
+                incompleteRoom->SetCompletedRoom( dynamic_cast<FREE_SPACE_ROOM*>( room ) );
+                MAZE_DEBUG( "ExpandToRoomDoors: using completed room=" << (void*)room );
+            }
         }
     }
 
@@ -456,15 +581,44 @@ void MAZE_SEARCH::ExpandToRoomDoors( const MAZE_LIST_ELEMENT& aElement )
         doorIdx++;
     }
 
-    // NOTE: Drill expansion within rooms is disabled for now.
-    // FreeRouting uses DrillPage abstraction to avoid queue explosion.
-    // Without DrillPages, expanding to all drills in each room causes
-    // the queue to overflow (hundreds of drills per room).
-    // Layer transitions via drills still work through ExpandToOtherLayers
-    // when we reach a drill that was added as a door's next_room target.
-    //
-    // TODO: Implement DrillPage like FreeRouting to enable efficient
-    // drill expansion within rooms.
+    // FreeRouting: expand_to_target_doors() - expand to own-net item doors
+    // This is critical for connecting to destination pads!
+    FREE_SPACE_ROOM* freeSpaceRoom = dynamic_cast<FREE_SPACE_ROOM*>( room );
+    if( freeSpaceRoom )
+    {
+        const auto& targetDoors = freeSpaceRoom->GetTargetDoors();
+        MAZE_DEBUG( "ExpandToRoomDoors: room has " << targetDoors.size() << " target doors" );
+
+        for( TARGET_EXPANSION_DOOR* targetDoor : targetDoors )
+        {
+            // Don't go back through the door we came from
+            if( targetDoor == aElement.door )
+                continue;
+
+            // Check if this is a destination door (not a start door)
+            if( targetDoor->IsDestinationDoor() )
+            {
+                // Expand to the destination target door
+                int sectionCount = targetDoor->GetSectionCount();
+                for( int section = 0; section < sectionCount; ++section )
+                {
+                    ExpandToDoorSection( targetDoor, section, aElement );
+                }
+            }
+        }
+    }
+
+    // Expand to drill pages (not individual drills) for lazy via expansion
+    if( m_control.vias_allowed && m_engine.GetDrillPageArray() )
+    {
+        auto pages = m_engine.GetDrillPageArray()->GetOverlappingPages( room->GetBoundingBox() );
+        MAZE_DEBUG( "ExpandToRoomDoors: found " << pages.size() << " overlapping drill pages" );
+
+        for( DRILL_PAGE* page : pages )
+        {
+            ExpandToDrillPage( page, aElement );
+        }
+    }
 
     MAZE_DEBUG( "ExpandToRoomDoors: done" );
 }
@@ -484,8 +638,26 @@ void MAZE_SEARCH::ExpandToDoorSection( EXPANSION_DOOR* aDoor, int aSection,
         return;
     }
 
-    // Get the next room - don't add if null (nowhere to expand to)
-    EXPANSION_ROOM* nextRoom = aDoor->GetOtherRoom( aFromElement.next_room );
+    // CRITICAL: Handle TARGET_EXPANSION_DOORs specially.
+    // Target doors are constructed with m_room2=nullptr, so GetOtherRoom() returns null.
+    // But target doors ARE valid destinations - they represent reaching the target pad.
+    // For target doors, use the containing room (aFromElement.next_room) as next_room.
+    TARGET_EXPANSION_DOOR* targetDoor = dynamic_cast<TARGET_EXPANSION_DOOR*>( aDoor );
+    EXPANSION_ROOM* nextRoom = nullptr;
+
+    if( targetDoor )
+    {
+        // Target door: use current room as next_room (we stay in this room)
+        nextRoom = aFromElement.next_room;
+        MAZE_DEBUG( "ExpandToDoorSection: TARGET_EXPANSION_DOOR, isDestination="
+                    << targetDoor->IsDestinationDoor() );
+    }
+    else
+    {
+        // Regular door: get the room on the other side
+        nextRoom = aDoor->GetOtherRoom( aFromElement.next_room );
+    }
+
     if( !nextRoom )
     {
         // This door leads nowhere - skip it
@@ -637,6 +809,110 @@ void MAZE_SEARCH::ExpandToDrillsInRoom( EXPANSION_ROOM* aRoom,
             AddToQueue( newElem );
         }
     }
+}
+
+
+void MAZE_SEARCH::ExpandToDrillPage( DRILL_PAGE* aPage, const MAZE_LIST_ELEMENT& aFromElement )
+{
+    if( !aPage )
+        return;
+
+    // Check if page is already occupied (section 0 represents the entire page)
+    if( aPage->IsOccupied( 0 ) )
+        return;
+
+    MAZE_LIST_ELEMENT element;
+    element.door = nullptr;          // Not a door
+    element.drill_page = aPage;      // This is a drill page element
+    element.layer = aFromElement.layer;
+    element.backtrack_door = aFromElement.door;
+    element.backtrack_section = aFromElement.section_no;
+    element.entry_point = aFromElement.entry_point;
+    element.next_room = aFromElement.next_room;  // Inherit room for drill expansion
+
+    // Calculate cost to reach this page
+    double pageCost = CalculatePageCost( aPage, aFromElement );
+    element.expansion_value = aFromElement.expansion_value + pageCost;
+
+    // Calculate heuristic from page center
+    double heuristic = m_destDistance.Calculate( aPage->GetCenter(), element.layer,
+                                                  m_control.via_cost );
+    element.sorting_value = element.expansion_value + heuristic;
+
+    AddToQueue( element );
+}
+
+
+void MAZE_SEARCH::ExpandToDrillsOfPage( DRILL_PAGE* aPage, const MAZE_LIST_ELEMENT& aFromElement )
+{
+    if( !aPage )
+        return;
+
+    MAZE_DEBUG( "ExpandToDrillsOfPage: page at " << aPage->GetCenter().x
+                << "," << aPage->GetCenter().y );
+
+    // Drills are pre-populated in BuildDrills() when pages are created.
+    // Mark the page as calculated and occupied so we don't expand it again.
+    aPage->SetCalculated( true );
+    aPage->SetOccupied( 0, true );
+
+    // Expand to each drill in the page
+    const auto& drills = aPage->GetDrills();
+    MAZE_DEBUG( "ExpandToDrillsOfPage: page has " << drills.size() << " drills" );
+
+    int layer = aFromElement.layer;
+
+    // Use the page center as the cost origin since the page element's expansion_value
+    // already includes the cost to reach the page center (via CalculatePageCost).
+    // This avoids double-counting the cost from entry to page.
+    VECTOR2I pageCenter = aPage->GetCenter();
+
+    for( EXPANSION_DRILL* drill : drills )
+    {
+        // Skip drills that don't reach this layer
+        if( layer < drill->GetFirstLayer() || layer > drill->GetLastLayer() )
+            continue;
+
+        int layerSection = layer - drill->GetFirstLayer();
+
+        // Skip if already occupied
+        if( drill->IsOccupied( layerSection ) )
+            continue;
+
+        // Calculate cost from page center to this drill (page cost already in expansion_value)
+        VECTOR2I drillPt = drill->GetLocation();
+        double traceCost = CalculateTraceCost( pageCenter, drillPt, layer );
+        double newExpansion = aFromElement.expansion_value + traceCost;
+
+        // Calculate heuristic
+        double heuristic = m_destDistance.Calculate( drillPt, layer, m_control.via_cost );
+
+        MAZE_LIST_ELEMENT newElem;
+        newElem.door = drill;
+        newElem.section_no = layerSection;
+        // Backtrack to the door that led us to the page (skipping the page itself)
+        newElem.backtrack_door = aFromElement.backtrack_door;
+        newElem.backtrack_section = aFromElement.backtrack_section;
+        newElem.expansion_value = newExpansion;
+        newElem.sorting_value = newExpansion + heuristic;
+        newElem.layer = layer;
+        newElem.entry_point = drillPt;
+        newElem.next_room = aFromElement.next_room;
+
+        AddToQueue( newElem );
+    }
+}
+
+
+double MAZE_SEARCH::CalculatePageCost( DRILL_PAGE* aPage,
+                                        const MAZE_LIST_ELEMENT& aFromElement ) const
+{
+    if( !aPage )
+        return 0.0;
+
+    // Cost is the trace cost to reach the page center
+    VECTOR2I pageCenter = aPage->GetCenter();
+    return CalculateTraceCost( aFromElement.entry_point, pageCenter, aFromElement.layer );
 }
 
 

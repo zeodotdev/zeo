@@ -26,6 +26,7 @@
 // Forward declarations
 class EXPANDABLE_OBJECT;
 class EXPANSION_ROOM;
+class DRILL_PAGE;
 
 
 /**
@@ -74,6 +75,9 @@ struct MAZE_LIST_ELEMENT
 
     /// The obstacle room that was ripped up (if any)
     EXPANSION_ROOM* ripup_room = nullptr;
+
+    /// Drill page for lazy via expansion (not a door or drill yet)
+    DRILL_PAGE* drill_page = nullptr;
 
     /**
      * Comparison for priority queue (min-heap based on sorting_value).

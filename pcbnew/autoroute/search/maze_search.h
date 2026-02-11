@@ -36,6 +36,7 @@ class AUTOROUTE_ENGINE;
 class EXPANSION_ROOM;
 class EXPANSION_DOOR;
 class EXPANSION_DRILL;
+class DRILL_PAGE;
 class BOARD_ITEM;
 class CONGESTION_MAP;
 
@@ -174,6 +175,23 @@ private:
     void ExpandToDrillsInRoom( EXPANSION_ROOM* aRoom, const MAZE_LIST_ELEMENT& aFromElement );
 
     /**
+     * Expand to a drill page (lazy via expansion).
+     * The page is added to the queue; individual drills are calculated later.
+     */
+    void ExpandToDrillPage( DRILL_PAGE* aPage, const MAZE_LIST_ELEMENT& aFromElement );
+
+    /**
+     * Expand from a drill page to individual drills.
+     * Called when a drill page is popped from the queue.
+     */
+    void ExpandToDrillsOfPage( DRILL_PAGE* aPage, const MAZE_LIST_ELEMENT& aFromElement );
+
+    /**
+     * Calculate the cost of expanding to a drill page.
+     */
+    double CalculatePageCost( DRILL_PAGE* aPage, const MAZE_LIST_ELEMENT& aFromElement ) const;
+
+    /**
      * Calculate the cost of routing from one point to another on the same layer.
      */
     double CalculateTraceCost( const VECTOR2I& aFrom, const VECTOR2I& aTo,
@@ -247,9 +265,9 @@ private:
     // Statistics and limits
     int m_nodesExpanded = 0;
     int m_maxQueueSize = 0;
-    static constexpr int MAX_NODES_EXPANDED = 50000;   ///< Safety limit to prevent infinite search
-    static constexpr int MAX_QUEUE_SIZE = 100000;      ///< Max queue size to prevent memory issues
-    static constexpr int MAX_ROOM_COMPLETIONS = 1000;  ///< Limit on dynamic room completions per search
+    static constexpr int MAX_NODES_EXPANDED = 10000;   ///< Safety limit to prevent infinite search
+    static constexpr int MAX_QUEUE_SIZE = 50000;       ///< Max queue size to prevent memory issues
+    static constexpr int MAX_ROOM_COMPLETIONS = 500;   ///< Limit on dynamic room completions per search
     int m_roomCompletions = 0;                         ///< Track room completions
 
     // Delayed occupation strategy

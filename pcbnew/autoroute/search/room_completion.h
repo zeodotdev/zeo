@@ -22,6 +22,7 @@
 
 #include "../expansion/expansion_room.h"
 #include "../expansion/expansion_door.h"
+#include "../expansion/target_door.h"
 #include "shape_search_tree.h"
 #include <vector>
 #include <memory>
@@ -69,9 +70,10 @@ struct ROOM_NEIGHBOUR
  */
 struct COMPLETION_RESULT
 {
-    std::unique_ptr<FREE_SPACE_ROOM>                   completed_room;
-    std::vector<std::unique_ptr<EXPANSION_DOOR>>       new_doors;
-    std::vector<std::unique_ptr<INCOMPLETE_FREE_SPACE_ROOM>> new_incomplete_rooms;
+    std::unique_ptr<FREE_SPACE_ROOM>                          completed_room;
+    std::vector<std::unique_ptr<EXPANSION_DOOR>>              new_doors;
+    std::vector<std::unique_ptr<TARGET_EXPANSION_DOOR>>       new_target_doors;  ///< Target doors to own-net items
+    std::vector<std::unique_ptr<INCOMPLETE_FREE_SPACE_ROOM>>  new_incomplete_rooms;
 };
 
 
@@ -163,8 +165,49 @@ private:
         const VECTOR2I& aEnd,
         int aLayer );
 
+    /**
+     * Grow a room from its center point outward until hitting obstacles.
+     * This is the FreeRouting approach: start small and expand until bounded.
+     *
+     * @param aShape The room shape (modified in place) - starts small, grows outward.
+     * @param aCenter The center point to grow from.
+     * @param aLayer The layer of the room.
+     * @param aNetCode The net code being routed (to exclude same-net obstacles).
+     */
+    void GrowFromCenter( INT_BOX& aShape, const VECTOR2I& aCenter, int aLayer, int aNetCode );
+
+    /**
+     * Find the closest obstacle in a given direction from a point.
+     *
+     * @param aFrom Starting point.
+     * @param aDirection 0=up, 1=right, 2=down, 3=left.
+     * @param aLayer The layer to search.
+     * @param aNetCode The net code being routed (to exclude same-net obstacles).
+     * @return Distance to closest obstacle, or max int if none found.
+     */
+    int FindClosestObstacleDistance( const VECTOR2I& aFrom, int aDirection,
+                                      int aWidth, int aLayer, int aNetCode );
+
     AUTOROUTE_ENGINE&  m_engine;
     SHAPE_SEARCH_TREE& m_searchTree;
+
+    std::vector<BOARD_ITEM*> m_ownNetItems;  ///< Own-net items for target door creation
+    std::set<BOARD_ITEM*> m_destItems;       ///< Destination items for target door creation
+
+public:
+    /**
+     * Get own-net items found during last FindNeighbours() call.
+     * These items are on the same net as the routing and should be
+     * used for target door creation rather than treated as obstacles.
+     */
+    const std::vector<BOARD_ITEM*>& GetOwnNetItems() const { return m_ownNetItems; }
+
+    /**
+     * Set destination items.
+     * When room completion finds same-net items that match destinations,
+     * TARGET_EXPANSION_DOORs will be created to connect to them.
+     */
+    void SetDestinations( const std::set<BOARD_ITEM*>& aDestItems ) { m_destItems = aDestItems; }
 };
 
 

@@ -24,6 +24,9 @@
 #include "expansion/expansion_room.h"
 #include "expansion/expansion_door.h"
 #include "expansion/expansion_drill.h"
+#include "expansion/item_autoroute_info.h"
+#include "expansion/target_door.h"
+#include "expansion/drill_page_array.h"
 #include "search/shape_search_tree.h"
 #include "search/congestion_map.h"
 #include <math/vector2d.h>
@@ -32,6 +35,7 @@
 #include <vector>
 #include <map>
 #include <set>
+#include <unordered_map>
 #include <functional>
 #include <atomic>
 #include <chrono>
@@ -210,15 +214,26 @@ public:
     const std::vector<std::unique_ptr<EXPANSION_DRILL>>& GetDrills() const { return m_drills; }
 
     /**
+     * Get all target doors (doors to own-net items).
+     */
+    const std::vector<std::unique_ptr<TARGET_EXPANSION_DOOR>>& GetTargetDoors() const { return m_targetDoors; }
+
+    /**
+     * Clear target doors (called when starting a new route).
+     */
+    void ClearTargetDoors() { m_targetDoors.clear(); }
+
+    /**
      * Get drills that are within a specific room on a layer.
      */
     std::vector<EXPANSION_DRILL*> GetDrillsInRoom( EXPANSION_ROOM* aRoom, int aLayer ) const;
 
 private:
     /**
-     * Build obstacle rooms from existing board items.
+     * Insert board items (pads, tracks, zones) directly into search tree.
+     * Replaces BuildObstacleRooms() - no OBSTACLE_ROOM wrappers needed.
      */
-    void BuildObstacleRooms();
+    void InsertBoardItems();
 
     /**
      * Build free space rooms in gaps between obstacles.
@@ -279,10 +294,17 @@ private:
     // Congestion tracking for spread routing
     std::unique_ptr<CONGESTION_MAP>         m_congestionMap;
 
+    // Per-item autoroute info (lazy creation of expansion rooms)
+    std::unordered_map<BOARD_ITEM*, std::unique_ptr<ITEM_AUTOROUTE_INFO>> m_itemInfo;
+
+    // Drill page array for lazy via location calculation
+    std::unique_ptr<DRILL_PAGE_ARRAY>       m_drillPageArray;
+
     // Expansion room storage
     std::vector<std::unique_ptr<EXPANSION_ROOM>> m_rooms;
     std::vector<std::unique_ptr<EXPANSION_DOOR>> m_doors;
     std::vector<std::unique_ptr<EXPANSION_DRILL>> m_drills;
+    std::vector<std::unique_ptr<TARGET_EXPANSION_DOOR>> m_targetDoors;  ///< Doors to own-net items
 
     // Incomplete rooms waiting to be completed
     std::vector<std::unique_ptr<INCOMPLETE_FREE_SPACE_ROOM>> m_incompleteRooms;
@@ -304,6 +326,18 @@ public:
     const CONGESTION_MAP* GetCongestionMap() const { return m_congestionMap.get(); }
 
     /**
+     * Get or create autoroute info for a board item.
+     * This provides lazy creation of expansion rooms per item.
+     */
+    ITEM_AUTOROUTE_INFO* GetItemAutorouteInfo( BOARD_ITEM* aItem );
+
+    /**
+     * Get the drill page array (may be nullptr if not initialized).
+     */
+    DRILL_PAGE_ARRAY* GetDrillPageArray() { return m_drillPageArray.get(); }
+    const DRILL_PAGE_ARRAY* GetDrillPageArray() const { return m_drillPageArray.get(); }
+
+    /**
      * Add an incomplete expansion room.
      * Returns the raw pointer for door connections.
      */
@@ -320,10 +354,26 @@ public:
      * This is the key to dynamic room expansion like FreeRouting.
      *
      * @param aIncompleteRoom The incomplete room to complete
+     * @param aNetCode The net code being routed
      * @return Vector of completed rooms (may be multiple if room is split)
      */
     std::vector<FREE_SPACE_ROOM*> CompleteExpansionRoom( INCOMPLETE_FREE_SPACE_ROOM* aIncompleteRoom,
                                                           int aNetCode );
+
+    /**
+     * Set destination items for the current routing operation.
+     * This is used during room completion to create TARGET_EXPANSION_DOORs
+     * when same-net items that are destinations are encountered.
+     */
+    void SetCurrentDestinations( const std::set<BOARD_ITEM*>& aDestItems )
+    {
+        m_currentDestItems = aDestItems;
+    }
+
+    /**
+     * Get the current destination items.
+     */
+    const std::set<BOARD_ITEM*>& GetCurrentDestinations() const { return m_currentDestItems; }
 
     /**
      * Create an initial incomplete room for a layer that extends to board bounds.
@@ -355,6 +405,9 @@ private:
     AUTOROUTE_PROGRESS_CALLBACK m_progressCallback;
     std::atomic<bool>           m_cancelled{ false };
     std::chrono::steady_clock::time_point m_startTime;
+
+    // Current routing destinations (for target door creation)
+    std::set<BOARD_ITEM*> m_currentDestItems;
 };
 
 

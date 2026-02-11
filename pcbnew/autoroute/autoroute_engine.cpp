@@ -23,6 +23,7 @@
 #include "locate/locate_connection.h"
 #include "insert/insert_connection.h"
 #include "geometry/tile_shape.h"
+#include "expansion/drill_page.h"
 
 #include <board.h>
 #include <pad.h>
@@ -95,6 +96,8 @@ void AUTOROUTE_ENGINE::ClearRoomModel()
     m_incompleteRooms.clear();
     m_roomsByLayer.clear();
     m_searchTree.Clear();
+    m_itemInfo.clear();
+    m_drillPageArray.reset();
 }
 
 
@@ -127,25 +130,17 @@ void AUTOROUTE_ENGINE::BuildRoomModel()
         int congestionCellSize = 1000000;  // 1mm cells
         m_congestionMap = std::make_unique<CONGESTION_MAP>( bounds, congestionCellSize, m_layerCount );
         AUTOROUTE_DEBUG( "BuildRoomModel: Congestion map initialized" );
+
+        // Initialize drill page array for lazy via location calculation
+        int viaPageWidth = std::max( m_control.via_diameter * 5, 500000 );
+        m_drillPageArray = std::make_unique<DRILL_PAGE_ARRAY>( bounds, viaPageWidth, 0, m_layerCount - 1 );
+        AUTOROUTE_DEBUG( "BuildRoomModel: Drill page array initialized, pageWidth=" << viaPageWidth );
     }
 
-    // Step 1: Build obstacle rooms from existing items
-    AUTOROUTE_DEBUG( "BuildRoomModel: Calling BuildObstacleRooms" );
-    BuildObstacleRooms();
-    AUTOROUTE_DEBUG( "BuildRoomModel: BuildObstacleRooms done, rooms=" << m_rooms.size() );
-
-    // Insert all obstacle rooms into search tree
-    AUTOROUTE_DEBUG( "BuildRoomModel: Inserting obstacle rooms into search tree" );
-    int insertCount = 0;
-    for( auto& room : m_rooms )
-    {
-        if( room->GetType() == ROOM_TYPE::OBSTACLE )
-        {
-            m_searchTree.Insert( room.get() );
-            insertCount++;
-        }
-    }
-    AUTOROUTE_DEBUG( "BuildRoomModel: Inserted " << insertCount << " obstacle rooms" );
+    // Step 1: Insert board items directly into search tree (no obstacle rooms)
+    AUTOROUTE_DEBUG( "BuildRoomModel: Calling InsertBoardItems" );
+    InsertBoardItems();
+    AUTOROUTE_DEBUG( "BuildRoomModel: InsertBoardItems done" );
 
     // Step 2: Create initial incomplete rooms adjacent to obstacles
     // These will be completed on-demand during maze search (FreeRouting-style dynamic expansion)
@@ -166,27 +161,24 @@ void AUTOROUTE_ENGINE::BuildRoomModel()
 }
 
 
-void AUTOROUTE_ENGINE::BuildObstacleRooms()
+void AUTOROUTE_ENGINE::InsertBoardItems()
 {
-    AUTOROUTE_DEBUG( "BuildObstacleRooms: START" );
+    AUTOROUTE_DEBUG( "InsertBoardItems: START" );
 
     if( !m_board )
         return;
 
     int clearance = m_control.clearance;
-    int fpCount = 0;
     int padCount = 0;
     int trackCount = 0;
     int zoneCount = 0;
 
-    // Create obstacle rooms for pads
-    AUTOROUTE_DEBUG( "BuildObstacleRooms: Processing footprints" );
+    // Insert pads directly into search tree
+    AUTOROUTE_DEBUG( "InsertBoardItems: Processing pads" );
     for( FOOTPRINT* fp : m_board->Footprints() )
     {
-        fpCount++;
         for( PAD* pad : fp->Pads() )
         {
-            // Get pad layers
             LSET layers = pad->GetLayerSet();
 
             for( int layer = 0; layer < m_layerCount; ++layer )
@@ -198,51 +190,38 @@ void AUTOROUTE_ENGINE::BuildObstacleRooms()
                 if( !layers.test( pcbLayer ) )
                     continue;
 
-                // Get pad bounding box with clearance
                 BOX2I padBox = pad->GetBoundingBox();
                 padBox.Inflate( clearance );
-
-                auto shape = std::make_unique<INT_BOX>( padBox );
-                auto room = std::make_unique<OBSTACLE_ROOM>( std::move( shape ), pad, layer );
-                room->SetNetCode( pad->GetNetCode() );
-
-                m_roomsByLayer[layer].push_back( room.get() );
-                m_rooms.push_back( std::move( room ) );
+                m_searchTree.Insert( pad, padBox, layer );
                 padCount++;
             }
         }
     }
-    AUTOROUTE_DEBUG( "BuildObstacleRooms: Processed " << fpCount << " footprints, " << padCount << " pad rooms" );
+    AUTOROUTE_DEBUG( "InsertBoardItems: Inserted " << padCount << " pad entries" );
 
-    // Create obstacle rooms for existing tracks
-    AUTOROUTE_DEBUG( "BuildObstacleRooms: Processing tracks" );
+    // Insert tracks directly into search tree
+    AUTOROUTE_DEBUG( "InsertBoardItems: Processing tracks" );
     for( PCB_TRACK* track : m_board->Tracks() )
     {
-        trackCount++;
-        int layer = track->GetLayer();
+        int pcbLayer = track->GetLayer();
 
-        // Simple layer mapping for now
-        int routeLayer = ( layer == F_Cu ) ? 0 :
-                         ( layer == B_Cu ) ? m_layerCount - 1 :
-                         ( layer - In1_Cu + 1 );
+        // Simple layer mapping
+        int layer = ( pcbLayer == F_Cu ) ? 0 :
+                    ( pcbLayer == B_Cu ) ? m_layerCount - 1 :
+                    ( pcbLayer - In1_Cu + 1 );
 
-        if( routeLayer < 0 || routeLayer >= m_layerCount )
+        if( layer < 0 || layer >= m_layerCount )
             continue;
 
         BOX2I trackBox = track->GetBoundingBox();
         trackBox.Inflate( clearance );
-
-        auto shape = std::make_unique<INT_BOX>( trackBox );
-        auto room = std::make_unique<OBSTACLE_ROOM>( std::move( shape ), track, routeLayer );
-        room->SetNetCode( track->GetNetCode() );
-
-        m_roomsByLayer[routeLayer].push_back( room.get() );
-        m_rooms.push_back( std::move( room ) );
+        m_searchTree.Insert( track, trackBox, layer );
+        trackCount++;
     }
-    AUTOROUTE_DEBUG( "BuildObstacleRooms: Processed " << trackCount << " tracks" );
+    AUTOROUTE_DEBUG( "InsertBoardItems: Inserted " << trackCount << " track entries" );
 
-    // Create obstacle rooms for zones (keepouts and filled zones)
-    AUTOROUTE_DEBUG( "BuildObstacleRooms: Processing zones" );
+    // Insert zones (keepouts and copper zones) directly into search tree
+    AUTOROUTE_DEBUG( "InsertBoardItems: Processing zones" );
     for( ZONE* zone : m_board->Zones() )
     {
         // Check if this is a keepout zone or a copper zone
@@ -261,7 +240,7 @@ void AUTOROUTE_ENGINE::BuildObstacleRooms()
                 continue;
         }
 
-        // Get zone bounding box
+        // Get zone bounding box with clearance
         BOX2I zoneBox = zone->GetBoundingBox();
         zoneBox.Inflate( clearance );
 
@@ -277,22 +256,89 @@ void AUTOROUTE_ENGINE::BuildObstacleRooms()
             if( !layers.test( pcbLayer ) )
                 continue;
 
-            auto shape = std::make_unique<INT_BOX>( zoneBox );
-            auto room = std::make_unique<OBSTACLE_ROOM>( std::move( shape ), zone, layer );
-
-            // Keepout zones have no net, copper zones have a net
-            if( isCopper )
-                room->SetNetCode( zone->GetNetCode() );
-            else
-                room->SetNetCode( -1 );  // No net for keepout zones
-
-            m_roomsByLayer[layer].push_back( room.get() );
-            m_rooms.push_back( std::move( room ) );
+            m_searchTree.Insert( zone, zoneBox, layer );
             zoneCount++;
         }
     }
-    AUTOROUTE_DEBUG( "BuildObstacleRooms: Processed zones, created " << zoneCount << " zone rooms" );
-    AUTOROUTE_DEBUG( "BuildObstacleRooms: COMPLETE - total rooms=" << m_rooms.size() );
+    AUTOROUTE_DEBUG( "InsertBoardItems: Inserted " << zoneCount << " zone entries" );
+
+    // Verification: check if items are in the tree
+    AUTOROUTE_DEBUG( "InsertBoardItems: Verifying - itemCount=" << m_searchTree.GetItemCount()
+                     << " roomCount=" << m_searchTree.GetRoomCount()
+                     << " layerCount=" << m_searchTree.GetLayerCount() );
+
+    // Test query for first pad to verify insertion worked
+    if( padCount > 0 && !m_board->Footprints().empty() )
+    {
+        for( FOOTPRINT* fp : m_board->Footprints() )
+        {
+            if( fp->Pads().empty() )
+                continue;
+
+            PAD* testPad = fp->Pads()[0];
+            BOX2I testBox = testPad->GetBoundingBox();
+            testBox.Inflate( clearance );
+
+            AUTOROUTE_DEBUG( "InsertBoardItems: Test pad at " << testPad->GetPosition().x
+                             << "," << testPad->GetPosition().y
+                             << " box [" << testBox.GetX() << "," << testBox.GetY()
+                             << "] size " << testBox.GetWidth() << "x" << testBox.GetHeight() );
+
+            LSET layers = testPad->GetLayerSet();
+            for( int layer = 0; layer < m_layerCount; ++layer )
+            {
+                PCB_LAYER_ID pcbLayer = ( layer == 0 ) ? F_Cu :
+                                        ( layer == m_layerCount - 1 ) ? B_Cu :
+                                        static_cast<PCB_LAYER_ID>( In1_Cu + layer - 1 );
+
+                if( !layers.test( pcbLayer ) )
+                    continue;
+
+                int itemsFound = 0;
+                int roomsFound = 0;
+                bool padFound = false;
+
+                m_searchTree.QueryOverlapping( testBox, layer,
+                    [&]( const TREE_ENTRY& entry ) -> bool
+                    {
+                        if( entry.item )
+                        {
+                            itemsFound++;
+                            if( entry.item == testPad )
+                                padFound = true;
+                        }
+                        if( entry.room )
+                            roomsFound++;
+                        return true;
+                    } );
+
+                AUTOROUTE_DEBUG( "InsertBoardItems: Layer " << layer << " query: items="
+                                 << itemsFound << " rooms=" << roomsFound
+                                 << " padFound=" << padFound );
+            }
+            break;  // Only test first footprint with pads
+        }
+    }
+
+    AUTOROUTE_DEBUG( "InsertBoardItems: COMPLETE" );
+}
+
+
+ITEM_AUTOROUTE_INFO* AUTOROUTE_ENGINE::GetItemAutorouteInfo( BOARD_ITEM* aItem )
+{
+    if( !aItem )
+        return nullptr;
+
+    auto it = m_itemInfo.find( aItem );
+    if( it != m_itemInfo.end() )
+        return it->second.get();
+
+    // Create new info for this item
+    auto info = std::make_unique<ITEM_AUTOROUTE_INFO>( aItem );
+    ITEM_AUTOROUTE_INFO* infoPtr = info.get();
+    m_itemInfo[aItem] = std::move( info );
+
+    return infoPtr;
 }
 
 
@@ -358,160 +404,18 @@ void AUTOROUTE_ENGINE::BuildInitialIncompleteRooms()
 {
     AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: START" );
 
-    // Create incomplete rooms adjacent to each obstacle room.
-    // These rooms will be completed on-demand during maze search,
-    // following FreeRouting's dynamic room expansion approach.
+    // With the new architecture, incomplete rooms are created on-demand
+    // during maze search when expanding from pad connection points.
+    // This avoids pre-creating thousands of incomplete rooms for every obstacle.
     //
-    // For each obstacle (pad/track/zone), we create incomplete rooms
-    // on each side that extend towards the board edge. During maze search,
-    // these rooms are completed by intersecting with other obstacles.
+    // The CreatePadRooms() method creates initial incomplete rooms starting
+    // from each pad's connection point, which are then completed dynamically
+    // as the maze search expands through the board.
+    //
+    // This follows FreeRouting's lazy room expansion approach more closely.
 
-    BOX2I boardBounds = GetBoardBounds();
-    if( !boardBounds.IsValid() )
-    {
-        AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: Invalid bounds, returning" );
-        return;
-    }
-
-    // Limit total incomplete rooms to prevent memory/performance issues
-    static constexpr int MAX_INCOMPLETE_ROOMS = 10000;
-    int incompleteRoomCount = 0;
-    int obstacleCount = 0;
-
-    AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: layers=" << m_layerCount );
-
-    for( int layer = 0; layer < m_layerCount; ++layer )
-    {
-        AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: layer " << layer
-                         << " rooms=" << m_roomsByLayer[layer].size() );
-
-        for( EXPANSION_ROOM* obsRoom : m_roomsByLayer[layer] )
-        {
-            // Check limits
-            if( incompleteRoomCount >= MAX_INCOMPLETE_ROOMS )
-            {
-                AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: MAX_INCOMPLETE_ROOMS limit reached" );
-                return;
-            }
-
-            if( m_cancelled.load() )
-            {
-                AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: Cancelled" );
-                return;
-            }
-            if( obsRoom->GetType() != ROOM_TYPE::OBSTACLE )
-                continue;
-
-            const INT_BOX* obsBox = dynamic_cast<const INT_BOX*>( &obsRoom->GetShape() );
-            if( !obsBox )
-                continue;
-
-            // Create incomplete rooms on each side of the obstacle
-            // These extend from the obstacle edge to the board boundary
-
-            // Top side (extends upward)
-            if( obsBox->Top() > boardBounds.GetTop() && incompleteRoomCount < MAX_INCOMPLETE_ROOMS )
-            {
-                VECTOR2I min( obsBox->Left(), boardBounds.GetTop() );
-                VECTOR2I max( obsBox->Right(), obsBox->Top() );
-                auto shape = std::make_unique<INT_BOX>( min, max );
-
-                // Contained shape is the touching edge
-                VECTOR2I cMin( obsBox->Left(), obsBox->Top() - 1 );
-                VECTOR2I cMax( obsBox->Right(), obsBox->Top() + 1 );
-                auto contained = std::make_unique<INT_BOX>( cMin, cMax );
-
-                auto incomplete = std::make_unique<INCOMPLETE_FREE_SPACE_ROOM>(
-                    std::move( shape ), layer, std::move( contained ) );
-
-                // Create a door connecting obstacle to this incomplete room
-                SEG doorSeg( VECTOR2I( obsBox->Left(), obsBox->Top() ),
-                             VECTOR2I( obsBox->Right(), obsBox->Top() ) );
-                auto door = std::make_unique<EXPANSION_DOOR>( obsRoom, incomplete.get(), doorSeg );
-                obsRoom->AddDoor( door.get() );
-                incomplete->AddDoor( door.get() );
-                m_doors.push_back( std::move( door ) );
-
-                m_incompleteRooms.push_back( std::move( incomplete ) );
-                incompleteRoomCount++;
-            }
-
-            // Bottom side (extends downward)
-            if( obsBox->Bottom() < boardBounds.GetBottom() && incompleteRoomCount < MAX_INCOMPLETE_ROOMS )
-            {
-                VECTOR2I min( obsBox->Left(), obsBox->Bottom() );
-                VECTOR2I max( obsBox->Right(), boardBounds.GetBottom() );
-                auto shape = std::make_unique<INT_BOX>( min, max );
-
-                VECTOR2I cMin( obsBox->Left(), obsBox->Bottom() - 1 );
-                VECTOR2I cMax( obsBox->Right(), obsBox->Bottom() + 1 );
-                auto contained = std::make_unique<INT_BOX>( cMin, cMax );
-
-                auto incomplete = std::make_unique<INCOMPLETE_FREE_SPACE_ROOM>(
-                    std::move( shape ), layer, std::move( contained ) );
-
-                SEG doorSeg( VECTOR2I( obsBox->Left(), obsBox->Bottom() ),
-                             VECTOR2I( obsBox->Right(), obsBox->Bottom() ) );
-                auto door = std::make_unique<EXPANSION_DOOR>( obsRoom, incomplete.get(), doorSeg );
-                obsRoom->AddDoor( door.get() );
-                incomplete->AddDoor( door.get() );
-                m_doors.push_back( std::move( door ) );
-
-                m_incompleteRooms.push_back( std::move( incomplete ) );
-                incompleteRoomCount++;
-            }
-
-            // Left side (extends leftward)
-            if( obsBox->Left() > boardBounds.GetLeft() && incompleteRoomCount < MAX_INCOMPLETE_ROOMS )
-            {
-                VECTOR2I min( boardBounds.GetLeft(), obsBox->Top() );
-                VECTOR2I max( obsBox->Left(), obsBox->Bottom() );
-                auto shape = std::make_unique<INT_BOX>( min, max );
-
-                VECTOR2I cMin( obsBox->Left() - 1, obsBox->Top() );
-                VECTOR2I cMax( obsBox->Left() + 1, obsBox->Bottom() );
-                auto contained = std::make_unique<INT_BOX>( cMin, cMax );
-
-                auto incomplete = std::make_unique<INCOMPLETE_FREE_SPACE_ROOM>(
-                    std::move( shape ), layer, std::move( contained ) );
-
-                SEG doorSeg( VECTOR2I( obsBox->Left(), obsBox->Top() ),
-                             VECTOR2I( obsBox->Left(), obsBox->Bottom() ) );
-                auto door = std::make_unique<EXPANSION_DOOR>( obsRoom, incomplete.get(), doorSeg );
-                obsRoom->AddDoor( door.get() );
-                incomplete->AddDoor( door.get() );
-                m_doors.push_back( std::move( door ) );
-
-                m_incompleteRooms.push_back( std::move( incomplete ) );
-                incompleteRoomCount++;
-            }
-
-            // Right side (extends rightward)
-            if( obsBox->Right() < boardBounds.GetRight() && incompleteRoomCount < MAX_INCOMPLETE_ROOMS )
-            {
-                VECTOR2I min( obsBox->Right(), obsBox->Top() );
-                VECTOR2I max( boardBounds.GetRight(), obsBox->Bottom() );
-                auto shape = std::make_unique<INT_BOX>( min, max );
-
-                VECTOR2I cMin( obsBox->Right() - 1, obsBox->Top() );
-                VECTOR2I cMax( obsBox->Right() + 1, obsBox->Bottom() );
-                auto contained = std::make_unique<INT_BOX>( cMin, cMax );
-
-                auto incomplete = std::make_unique<INCOMPLETE_FREE_SPACE_ROOM>(
-                    std::move( shape ), layer, std::move( contained ) );
-
-                SEG doorSeg( VECTOR2I( obsBox->Right(), obsBox->Top() ),
-                             VECTOR2I( obsBox->Right(), obsBox->Bottom() ) );
-                auto door = std::make_unique<EXPANSION_DOOR>( obsRoom, incomplete.get(), doorSeg );
-                obsRoom->AddDoor( door.get() );
-                incomplete->AddDoor( door.get() );
-                m_doors.push_back( std::move( door ) );
-
-                m_incompleteRooms.push_back( std::move( incomplete ) );
-                incompleteRoomCount++;
-            }
-        }
-    }
+    AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: Using on-demand room creation" );
+    AUTOROUTE_DEBUG( "BuildInitialIncompleteRooms: COMPLETE (no pre-created rooms)" );
 }
 
 
@@ -831,8 +735,15 @@ void AUTOROUTE_ENGINE::BuildDrills()
                 drill->SetViaDiameter( m_control.via_diameter );
                 drill->SetDrillDiameter( m_control.via_drill );
 
-                // With dynamic rooms, we don't pre-connect drills to rooms.
-                // They will be connected during maze search when rooms are completed.
+                // Add drill to overlapping pages in the drill page array
+                if( m_drillPageArray )
+                {
+                    auto pages = m_drillPageArray->GetOverlappingPages( viaBox );
+                    for( DRILL_PAGE* page : pages )
+                    {
+                        page->AddDrill( drill.get() );
+                    }
+                }
 
                 m_drills.push_back( std::move( drill ) );
                 drillCount++;
@@ -857,6 +768,18 @@ void AUTOROUTE_ENGINE::ResetSearchState()
     for( auto& drill : m_drills )
     {
         drill->ClearOccupied();
+    }
+
+    // Reset target doors' occupied flags
+    for( auto& targetDoor : m_targetDoors )
+    {
+        targetDoor->ClearOccupied();
+    }
+
+    // Reset is_start_info flags from previous route
+    for( auto& [item, info] : m_itemInfo )
+    {
+        info->SetStartInfo( false );
     }
 }
 
@@ -1492,14 +1415,56 @@ std::vector<EXPANSION_ROOM*> AUTOROUTE_ENGINE::CreatePadRooms( PAD* aPad )
     if( !aPad )
         return rooms;
 
-    // Already created during BuildObstacleRooms
-    // Find existing rooms for this pad
-    for( auto& room : m_rooms )
+    AUTOROUTE_DEBUG( "CreatePadRooms: pad at " << aPad->GetPosition().x << "," << aPad->GetPosition().y );
+
+    // FreeRouting approach: Create incomplete free-space rooms from pad connection points,
+    // then complete them. This gives us free space rooms with doors, not obstacle rooms.
+
+    BOX2I boardBounds = GetBoardBounds();
+    if( !boardBounds.IsValid() )
+        return rooms;
+
+    // Get pad layers
+    LSET padLayers = aPad->GetLayerSet() & LSET::AllCuMask();
+
+    for( int layer = 0; layer < m_layerCount; ++layer )
     {
-        OBSTACLE_ROOM* obstRoom = dynamic_cast<OBSTACLE_ROOM*>( room.get() );
-        if( obstRoom && obstRoom->GetItem() == aPad )
+        // Use same layer mapping as InsertBoardItems() for consistency
+        PCB_LAYER_ID pcbLayer = ( layer == 0 ) ? F_Cu :
+                                ( layer == m_layerCount - 1 ) ? B_Cu :
+                                static_cast<PCB_LAYER_ID>( In1_Cu + layer - 1 );
+
+        if( !padLayers.Contains( pcbLayer ) )
+            continue;
+
+        // Create incomplete room starting from pad center, extending to board bounds
+        // The "contained shape" is the pad center - this must remain in the completed room
+        VECTOR2I padCenter = aPad->GetPosition();
+
+        // Unbounded shape (board bounds)
+        auto shape = std::make_unique<INT_BOX>( boardBounds );
+
+        // Contained shape is a small box around pad center (connection point)
+        int padSize = std::min( aPad->GetSizeX(), aPad->GetSizeY() ) / 2;
+        VECTOR2I cMin( padCenter.x - padSize, padCenter.y - padSize );
+        VECTOR2I cMax( padCenter.x + padSize, padCenter.y + padSize );
+        auto contained = std::make_unique<INT_BOX>( cMin, cMax );
+
+        auto incompleteRoom = std::make_unique<INCOMPLETE_FREE_SPACE_ROOM>(
+            std::move( shape ), layer, std::move( contained ) );
+
+        AUTOROUTE_DEBUG( "CreatePadRooms: created incomplete room on layer " << layer );
+
+        // Complete the room immediately to get doors
+        int netCode = aPad->GetNetCode();
+        std::vector<FREE_SPACE_ROOM*> completedRooms = CompleteExpansionRoom( incompleteRoom.get(), netCode );
+
+        AUTOROUTE_DEBUG( "CreatePadRooms: completed " << completedRooms.size() << " rooms" );
+
+        for( FREE_SPACE_ROOM* completedRoom : completedRooms )
         {
-            rooms.push_back( obstRoom );
+            AUTOROUTE_DEBUG( "CreatePadRooms: completed room has " << completedRoom->GetDoors().size() << " doors" );
+            rooms.push_back( completedRoom );
         }
     }
 
@@ -1603,6 +1568,15 @@ std::vector<FREE_SPACE_ROOM*> AUTOROUTE_ENGINE::CompleteExpansionRoom(
     // Use the room completion algorithm
     AUTOROUTE_DEBUG( "CompleteExpansionRoom: calling completion.Complete" );
     ROOM_COMPLETION completion( *this, m_searchTree );
+
+    // Pass destination items so TARGET_EXPANSION_DOORs can be created
+    // when same-net items that are destinations are encountered
+    if( !m_currentDestItems.empty() )
+    {
+        AUTOROUTE_DEBUG( "CompleteExpansionRoom: setting " << m_currentDestItems.size() << " destinations" );
+        completion.SetDestinations( m_currentDestItems );
+    }
+
     COMPLETION_RESULT completionResult = completion.Complete( *aIncompleteRoom, aNetCode );
     AUTOROUTE_DEBUG( "CompleteExpansionRoom: completion.Complete returned" );
 
@@ -1621,20 +1595,19 @@ std::vector<FREE_SPACE_ROOM*> AUTOROUTE_ENGINE::CompleteExpansionRoom(
     m_roomsByLayer[layer].push_back( roomPtr );
     m_rooms.push_back( std::move( completionResult.completed_room ) );
 
-    // Add the new doors and connect them to rooms
+    // Add the new doors (doors are already connected to rooms in CalculateDoorsAndRooms)
     AUTOROUTE_DEBUG( "CompleteExpansionRoom: adding " << completionResult.new_doors.size() << " doors" );
     for( auto& door : completionResult.new_doors )
     {
-        EXPANSION_DOOR* doorPtr = door.get();
         m_doors.push_back( std::move( door ) );
+    }
 
-        // Add door to both connected rooms
-        EXPANSION_ROOM* room1 = doorPtr->GetRoom1();
-        EXPANSION_ROOM* room2 = doorPtr->GetRoom2();
-        if( room1 )
-            room1->AddDoor( doorPtr );
-        if( room2 )
-            room2->AddDoor( doorPtr );
+    // Add the new target doors (doors to own-net items)
+    AUTOROUTE_DEBUG( "CompleteExpansionRoom: adding " << completionResult.new_target_doors.size()
+                     << " target doors" );
+    for( auto& targetDoor : completionResult.new_target_doors )
+    {
+        m_targetDoors.push_back( std::move( targetDoor ) );
     }
 
     // Add the new incomplete rooms for expansion frontier

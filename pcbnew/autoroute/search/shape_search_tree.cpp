@@ -20,7 +20,32 @@
 #include "shape_search_tree.h"
 #include "../expansion/expansion_room.h"
 #include <board_item.h>
+#include <board_connected_item.h>
 #include <algorithm>
+
+
+bool TREE_ENTRY::IsTraceObstacle( int aNetCode ) const
+{
+    // Only items (not rooms) are considered here
+    // Rooms have their own obstacle checking via room type
+    if( !item )
+        return false;
+
+    // Check if the item is a connected item (has a net code)
+    if( item->IsConnected() )
+    {
+        const BOARD_CONNECTED_ITEM* connectedItem =
+            static_cast<const BOARD_CONNECTED_ITEM*>( item );
+
+        // Same-net items are not obstacles
+        if( connectedItem->GetNetCode() == aNetCode )
+            return false;
+    }
+
+    // Non-connected items (board edges, etc.) are always obstacles
+    // Connected items on different nets are obstacles
+    return true;
+}
 
 
 SHAPE_SEARCH_TREE::SHAPE_SEARCH_TREE()
@@ -282,8 +307,13 @@ void SHAPE_SEARCH_TREE::QueryOverlappingWithNet( const BOX2I& aBounds, int aLaye
         // Skip entries from the same net (they're not obstacles)
         if( aExcludeNet >= 0 )
         {
+            // Check rooms for net exclusion
             if( entry.room && entry.room->GetNetCode() == aExcludeNet )
                 return true;  // Skip, continue searching
+
+            // Check items for net exclusion
+            if( entry.item && !entry.IsTraceObstacle( aExcludeNet ) )
+                return true;  // Skip same-net items, continue searching
         }
 
         return aCallback( entry );
@@ -296,9 +326,14 @@ std::vector<TREE_ENTRY> SHAPE_SEARCH_TREE::GetObstacles( const BOX2I& aBounds, i
 {
     std::vector<TREE_ENTRY> result;
 
-    QueryOverlappingWithNet( aBounds, aLayer, aExcludeNet, [&result]( const TREE_ENTRY& entry ) {
-        // Only include obstacle rooms
+    QueryOverlappingWithNet( aBounds, aLayer, aExcludeNet, [&result, aExcludeNet]( const TREE_ENTRY& entry ) {
+        // Include obstacle rooms
         if( entry.room && entry.room->GetType() == ROOM_TYPE::OBSTACLE )
+        {
+            result.push_back( entry );
+        }
+        // Include items that are trace obstacles (different net or non-connected)
+        else if( entry.IsItem() && entry.IsTraceObstacle( aExcludeNet ) )
         {
             result.push_back( entry );
         }
@@ -317,6 +352,7 @@ bool SHAPE_SEARCH_TREE::IsBlocked( const VECTOR2I& aPoint, int aLayer, int aExcl
     bool blocked = false;
 
     QueryOverlapping( queryBox, aLayer, [&blocked, &aPoint, aExcludeNet]( const TREE_ENTRY& entry ) {
+        // Check obstacle rooms
         if( entry.room )
         {
             if( entry.room->GetType() == ROOM_TYPE::OBSTACLE )
@@ -331,6 +367,18 @@ bool SHAPE_SEARCH_TREE::IsBlocked( const VECTOR2I& aPoint, int aLayer, int aExcl
                 }
             }
         }
+        // Check items directly (for items not wrapped in obstacle rooms)
+        else if( entry.IsItem() && entry.IsTraceObstacle( aExcludeNet ) )
+        {
+            // For items, check if point is within bounding box
+            // (more precise shape check could be added if needed)
+            BOX2I itemBounds = entry.item->GetBoundingBox();
+            if( itemBounds.Contains( aPoint ) )
+            {
+                blocked = true;
+                return false;  // Stop iteration
+            }
+        }
         return true;  // Continue
     } );
 
@@ -343,6 +391,7 @@ bool SHAPE_SEARCH_TREE::HasOverlap( const BOX2I& aBounds, int aLayer, int aExclu
     bool hasOverlap = false;
 
     QueryOverlapping( aBounds, aLayer, [&hasOverlap, &aBounds, aExcludeNet]( const TREE_ENTRY& entry ) {
+        // Check obstacle rooms
         if( entry.room )
         {
             if( entry.room->GetType() == ROOM_TYPE::OBSTACLE )
@@ -360,6 +409,20 @@ bool SHAPE_SEARCH_TREE::HasOverlap( const BOX2I& aBounds, int aLayer, int aExclu
                         return false;  // Stop iteration
                     }
                 }
+            }
+        }
+        // Check items directly (for items not wrapped in obstacle rooms)
+        else if( entry.IsItem() && entry.IsTraceObstacle( aExcludeNet ) )
+        {
+            // Check if bounds truly overlap (not just touch)
+            BOX2I itemBounds = entry.item->GetBoundingBox();
+            if( aBounds.GetX() < itemBounds.GetRight() &&
+                aBounds.GetRight() > itemBounds.GetX() &&
+                aBounds.GetY() < itemBounds.GetBottom() &&
+                aBounds.GetBottom() > itemBounds.GetY() )
+            {
+                hasOverlap = true;
+                return false;  // Stop iteration
             }
         }
         return true;  // Continue

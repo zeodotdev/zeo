@@ -31,6 +31,7 @@
 // Forward declarations
 class EXPANSION_ROOM;
 class BOARD_ITEM;
+class BOARD_CONNECTED_ITEM;
 
 
 // Hash function for pair<BOARD_ITEM*, int> - must be defined before use
@@ -48,11 +49,18 @@ struct hash<std::pair<BOARD_ITEM*, int>>
 
 /**
  * Entry in the search tree containing an object and its shape.
+ *
+ * Entries can represent either:
+ * - A BOARD_ITEM directly (obstacle items stored without creating OBSTACLE_ROOM)
+ * - An EXPANSION_ROOM (free space rooms, or lazily-created obstacle rooms)
+ *
+ * For obstacle detection, items are stored directly. OBSTACLE_ROOMs are only
+ * created lazily when needed for door creation during expansion.
  */
 struct TREE_ENTRY
 {
     EXPANSION_ROOM* room = nullptr;
-    BOARD_ITEM*     item = nullptr;  // For obstacle items not yet converted to rooms
+    BOARD_ITEM*     item = nullptr;  // Primary storage for obstacles (not wrapped in room)
     int             layer = 0;
     int             shape_index = 0;  // For items with multiple shapes
 
@@ -61,6 +69,31 @@ struct TREE_ENTRY
         return room == other.room && item == other.item &&
                layer == other.layer && shape_index == other.shape_index;
     }
+
+    /**
+     * Check if this entry is an item (not a room).
+     */
+    bool IsItem() const { return item != nullptr && room == nullptr; }
+
+    /**
+     * Check if this entry is a room.
+     */
+    bool IsRoom() const { return room != nullptr; }
+
+    /**
+     * Check if this entry represents a trace obstacle for a given net.
+     *
+     * An entry is a trace obstacle if:
+     * - It has an item AND
+     * - The item belongs to a different net than aNetCode
+     *
+     * Items with the same net code are not obstacles (same-net items can overlap).
+     * Non-connected items (like board edges) are always obstacles.
+     *
+     * @param aNetCode The net code of the trace being routed.
+     * @return True if this entry blocks routing for the given net.
+     */
+    bool IsTraceObstacle( int aNetCode ) const;
 };
 
 
@@ -117,11 +150,29 @@ public:
     /**
      * Insert a board item (obstacle) into the search tree.
      *
+     * This stores the item directly without wrapping it in an OBSTACLE_ROOM.
+     * The item's net code is used for same-net exclusion during queries.
+     *
      * @param aItem The board item to insert.
-     * @param aShape The shape of the item (with clearance applied).
+     * @param aBounds The bounding box of the item (with clearance applied).
      * @param aLayer The layer the item is on.
      */
-    void Insert( BOARD_ITEM* aItem, const BOX2I& aShape, int aLayer );
+    void Insert( BOARD_ITEM* aItem, const BOX2I& aBounds, int aLayer );
+
+    /**
+     * Insert a board item (obstacle) into the search tree.
+     *
+     * This is an explicit alias for Insert(BOARD_ITEM*, BOX2I&, int) to make
+     * the intent clear when inserting obstacle items.
+     *
+     * @param aItem The board item to insert.
+     * @param aBounds The bounding box of the item (with clearance applied).
+     * @param aLayer The layer the item is on.
+     */
+    void InsertItem( BOARD_ITEM* aItem, const BOX2I& aBounds, int aLayer )
+    {
+        Insert( aItem, aBounds, aLayer );
+    }
 
     /**
      * Remove a room from the search tree.
@@ -201,6 +252,21 @@ public:
      * Get the cell size.
      */
     int GetCellSize() const { return m_cellSize; }
+
+    /**
+     * Get the number of items in the tree (for debugging).
+     */
+    size_t GetItemCount() const { return m_itemToCells.size(); }
+
+    /**
+     * Get the number of rooms in the tree (for debugging).
+     */
+    size_t GetRoomCount() const { return m_roomToCells.size(); }
+
+    /**
+     * Get the layer count.
+     */
+    int GetLayerCount() const { return m_layerCount; }
 
 private:
     /**

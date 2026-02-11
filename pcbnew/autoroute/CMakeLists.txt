@@ -31,6 +31,10 @@ set( AUTOROUTE_SRCS
     expansion/expansion_room.cpp
     expansion/expansion_door.cpp
     expansion/expansion_drill.cpp
+    expansion/drill_page.cpp
+    expansion/drill_page_array.cpp
+    expansion/item_autoroute_info.cpp
+    expansion/target_door.cpp
 
     # A* maze search algorithm
     search/maze_search.cpp

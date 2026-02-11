@@ -26,6 +26,7 @@
 
 // Forward declarations
 class EXPANSION_DOOR;
+class TARGET_EXPANSION_DOOR;
 class BOARD_ITEM;
 
 
@@ -144,6 +145,9 @@ protected:
 /**
  * Free space expansion room - represents routable area.
  * This is a "complete" room whose shape has been fully calculated.
+ *
+ * Like FreeRouting's CompleteFreeSpaceExpansionRoom, this class maintains
+ * both regular doors (to adjacent rooms) and target doors (to own-net items).
  */
 class FREE_SPACE_ROOM : public EXPANSION_ROOM
 {
@@ -168,8 +172,34 @@ public:
      */
     bool IsComplete() const { return true; }
 
+    /**
+     * Get all target doors (doors to own-net items like pads).
+     * Target doors are separate from regular doors per FreeRouting's design.
+     */
+    const std::vector<TARGET_EXPANSION_DOOR*>& GetTargetDoors() const { return m_targetDoors; }
+
+    /**
+     * Add a target door to this room.
+     */
+    void AddTargetDoor( TARGET_EXPANSION_DOOR* aDoor ) { m_targetDoors.push_back( aDoor ); }
+
+    /**
+     * Clear all target doors.
+     */
+    void ClearTargetDoors() { m_targetDoors.clear(); }
+
+    /**
+     * Clear all doors (both regular and target).
+     */
+    void ClearAllDoors()
+    {
+        ClearDoors();
+        ClearTargetDoors();
+    }
+
 private:
     std::unique_ptr<TILE_SHAPE> m_shape;
+    std::vector<TARGET_EXPANSION_DOOR*> m_targetDoors;  ///< Doors to own-net items
 };
 
 
@@ -217,9 +247,19 @@ public:
     }
 
     /**
-     * Check if this room is complete (always false for INCOMPLETE_FREE_SPACE_ROOM).
+     * Check if this room has already been completed.
      */
-    bool IsComplete() const { return false; }
+    bool IsAlreadyCompleted() const { return m_completedRoom != nullptr; }
+
+    /**
+     * Get the completed room (if this incomplete room was already completed).
+     */
+    FREE_SPACE_ROOM* GetCompletedRoom() const { return m_completedRoom; }
+
+    /**
+     * Set the completed room pointer (called after completion).
+     */
+    void SetCompletedRoom( FREE_SPACE_ROOM* aRoom ) { m_completedRoom = aRoom; }
 
     /**
      * Complete this room by calculating its final shape.
@@ -231,6 +271,7 @@ public:
 private:
     std::unique_ptr<TILE_SHAPE> m_shape;          ///< Bounding shape
     std::unique_ptr<TILE_SHAPE> m_containedShape; ///< Shape that must remain inside
+    FREE_SPACE_ROOM*            m_completedRoom = nullptr; ///< Pointer to completed room (if already completed)
 };
 
 

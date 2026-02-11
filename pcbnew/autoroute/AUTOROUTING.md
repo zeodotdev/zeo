@@ -1,777 +1,679 @@
-# PCB Autorouting Implementation Status
+# PCB Autorouting Implementation - FreeRouting Alignment
 
-This document tracks the implementation status of the Zener PCB autorouter compared to FreeRouting.
+This document provides a comprehensive implementation plan to align Zener's autorouter with FreeRouting's proven architecture.
 
-## Overview
+## Executive Summary
 
-The Zener autorouter is based on FreeRouting's architecture, which uses:
-- **Expansion Room Model**: Board decomposed into navigable regions
-- **A\* Maze Search**: Priority queue-based pathfinding with heuristics
-- **Doors & Drills**: Transitions between rooms and layers
-- **Dynamic Room Expansion**: Rooms completed on-demand during search
+After extensive analysis of FreeRouting's source code and Zener's current implementation, we've identified **critical architectural differences** that cause the autorouter to fail. This document provides an implementation roadmap to fix these issues.
 
-Two implementations exist:
-1. **Python Agent Code** (`pcb_crud_handler.cpp` → generates Python) - Simple grid-based A*
-2. **C++ Library** (`pcbnew/autoroute/`) - Full expansion room model (FreeRouting-style)
+**Current Status**: Autorouter hangs or produces incorrect routes due to fundamental architectural mismatches with FreeRouting.
+
+**Target State**: Full alignment with FreeRouuting's expansion room model for reliable routing.
 
 ---
 
-## Recent Changes (February 2026)
+## Architectural Comparison
 
-The C++ autorouter has been significantly rebuilt to match FreeRouting's architecture:
+### Overview of Key Differences
 
-### Completed Features
-
-| Feature | Description | Files Modified |
-|---------|-------------|----------------|
-| **Dynamic Room Expansion** | Rooms completed lazily during maze search instead of pre-computed grid | `autoroute_engine.cpp/h` |
-| **45-Degree Corner Optimization** | Chamfered corners instead of 90-degree turns | `locate_connection.cpp` |
-| **Delayed Occupation Strategy** | Retry mechanism with cost penalties for blocked paths | `maze_search.cpp/h` |
-| **Pin Neckdown** | Automatic trace width reduction when approaching smaller pads | `insert_connection.cpp/h` |
-| **Push-and-Shove** | Move blocking traces instead of removing them | `ripup_checker.cpp/h`, `maze_search.cpp` |
-| **Collision Validation** | Check tracks against obstacles, keepout zones, and other-net pads before insertion | `insert_connection.cpp` |
-| **Net-Aware Filtering** | Same-net items don't block routing | `shape_search_tree.cpp/h` |
-| **Half-Plane/Simplex Geometry** | FreeRouting-style convex shape representation | `tile_shape.cpp/h` |
-| **PullTight Optimization** | Path optimization with 90°/45°/any-angle vertex moving | `optimize/pull_tight.cpp/h` |
-| **Net Ordering** | Route simpler nets first, retry failed nets | `autoroute_engine.cpp` |
-| **Multi-Pass Optimization** | Multiple passes with increasing effort and ripup | `autoroute_engine.cpp`, `autoroute_control.h` |
-| **Congestion-Aware Routing** | Track congestion and penalize crowded areas | `search/congestion_map.cpp/h` |
+| Aspect | FreeRouting | Zener (Current) | Impact |
+|--------|-------------|-----------------|--------|
+| **Search Tree Contents** | Board Items (pads, traces, vias) | OBSTACLE_ROOM wrappers | Extra abstraction layer breaks queries |
+| **Obstacle Rooms** | Created on-demand via ItemAutorouteInfo | Pre-created for all items | Memory overhead, wrong query results |
+| **Room Completion** | Queries Items, creates obstacle rooms lazily | Queries obstacle rooms | Returns wrong neighbor set |
+| **DrillPageArray** | 2D page grid for lazy drill expansion | Flat list (expansion disabled) | Queue explosion, no vias |
+| **Target Doors** | TargetItemExpansionDoor to destination Items | TARGET_ROOM type (not integrated) | Cannot reach destinations |
+| **Database Persistence** | Cached across connections | Rebuilt per net | Performance loss |
+| **Shape Completion** | ShapeSearchTree.complete_shape() | GrowFromCenter() | Different algorithm |
 
 ---
 
-## Feature Comparison
+## Implementation Plan
 
-### Core Algorithm
+### Phase 1: Search Tree Architecture (Critical)
 
-| Feature | FreeRouting | Python Agent | C++ Library | Status |
-|---------|-------------|--------------|-------------|--------|
-| A* maze search | ✅ | ✅ | ✅ | Working |
-| Priority queue (min-heap) | ✅ | ✅ | ✅ | Working |
-| Heuristic distance | ✅ Octile | ✅ Octile | ✅ Manhattan | Working |
-| 8-connected grid (45°) | ✅ | ✅ | ✅ | **Now implemented** |
-| Expansion room model | ✅ | ❌ Grid only | ✅ | **Working** |
-| Dynamic room expansion | ✅ | ❌ | ✅ | **Now implemented** |
-| Delayed occupation retry | ✅ | ❌ | ✅ | **Now implemented** |
-| Object pooling | ✅ ThreadLocal | ❌ | ❌ | Not started |
+**Current Problem**: Zener stores `OBSTACLE_ROOM` objects in the search tree. FreeRouting stores board Items directly.
 
-### Spatial Model
+**Why It Matters**: When `SortedRoomNeighbours.calculate()` queries the search tree, it expects to receive Items (traces, pads, vias), not pre-wrapped obstacle rooms. The current approach breaks:
+1. Neighbor detection (queries return obstacle rooms, not Items)
+2. Net filtering (obstacle rooms have net codes, but filtering logic differs)
+3. Ripup/shove (requires access to actual Items)
 
-| Feature | FreeRouting | Python Agent | C++ Library | Status |
-|---------|-------------|--------------|-------------|--------|
-| Expansion rooms | ✅ | ❌ | ✅ | **Working** |
-| Free space rooms | ✅ | ❌ | ✅ | **Dynamic completion** |
-| Incomplete rooms | ✅ | ❌ | ✅ | **Now implemented** |
-| Obstacle rooms | ✅ | ✅ (ObstacleMap) | ✅ | **Working** |
-| Target rooms | ✅ | ❌ | ✅ | Working |
-| Expansion doors | ✅ | ❌ | ✅ | **Working** |
-| Expansion drills (vias) | ✅ | ❌ | ✅ | **Working** |
-| ShapeSearchTree (R-tree) | ✅ | ❌ | ✅ | **Now implemented** |
-| Half-plane geometry | ✅ | ❌ | ✅ | **Now implemented** |
-| Simplex shapes | ✅ | ❌ | ✅ | **Now implemented** |
-| Clearance compensation | ✅ | ✅ Fixed | ✅ | **Working** |
+#### 1.1 Remove Pre-Created Obstacle Rooms
 
-### Multi-Layer Support
+**Files**: `autoroute_engine.cpp`, `autoroute_engine.h`
 
-| Feature | FreeRouting | Python Agent | C++ Library | Status |
-|---------|-------------|--------------|-------------|--------|
-| 2-layer routing | ✅ | ✅ | ✅ | Working |
-| N-layer routing | ✅ | ❌ | ✅ | Working |
-| Through vias | ✅ | ✅ | ✅ | Working |
-| Blind vias | ✅ | ❌ | ✅ | **Now implemented** |
-| Buried vias | ✅ | ❌ | ✅ | **Now implemented** |
-| Microvias | ✅ | ❌ | ✅ | **Now implemented** |
-| Layer direction preference | ✅ | ❌ | ✅ | Config only |
-| Layer-specific trace width | ✅ | ❌ | ✅ | Config only |
-
-### Cost Functions
-
-| Feature | FreeRouting | Python Agent | C++ Library | Status |
-|---------|-------------|--------------|-------------|--------|
-| Trace length cost | ✅ | ✅ | ✅ | Working |
-| Via insertion cost | ✅ | ✅ (fixed=5) | ✅ | Working |
-| Direction change cost | ✅ | ❌ | ✅ | Config only |
-| Layer preference cost | ✅ | ❌ | ❌ | Not started |
-| Ripup cost | ✅ | ❌ | ✅ | **Now implemented** |
-| Shove cost | ✅ | ❌ | ✅ | **Now implemented** |
-| Congestion cost | ✅ | ❌ | ✅ | **Now implemented** |
-
-### Routing Strategies
-
-| Feature | FreeRouting | Python Agent | C++ Library | Status |
-|---------|-------------|--------------|-------------|--------|
-| Single net routing | ✅ | ✅ | ✅ | Working |
-| Batch routing (all nets) | ✅ | ✅ | ✅ | Working |
-| Net ordering (MST) | ✅ | ✅ | ❌ | Python only |
-| Ripup and retry | ✅ | ❌ | ✅ | **Now implemented** |
-| Push-and-shove | ✅ | ❌ | ✅ | **Now implemented** |
-| Multi-pass optimization | ✅ | ❌ | ✅ | **Now implemented** |
-| Fanout routing | ✅ | ❌ | ✅ | **Now implemented** |
-
-### Path Optimization
-
-| Feature | FreeRouting | Python Agent | C++ Library | Status |
-|---------|-------------|--------------|-------------|--------|
-| Path simplification | ✅ | ✅ | ✅ | **Working** |
-| 45-degree corners | ✅ | ❌ | ✅ | **Now implemented** |
-| PullTight 90° | ✅ | ❌ | ✅ | **Now implemented** |
-| PullTight 45° | ✅ | ❌ | ✅ | **Now implemented** |
-| PullTight any-angle | ✅ | ❌ | ✅ | **Now implemented** |
-| Via optimization | ✅ | ❌ | ✅ | **Now implemented** |
-| Pin neckdown | ✅ | ❌ | ✅ | **Now implemented** |
-
-### Design Rules
-
-| Feature | FreeRouting | Python Agent | C++ Library | Status |
-|---------|-------------|--------------|-------------|--------|
-| Fixed clearance | ✅ | ✅ 0.2mm | ✅ | Working |
-| Clearance matrix | ✅ | ❌ | ✅ | **Now implemented** |
-| Net class rules | ✅ | ❌ | ✅ | **Now implemented** |
-| Via rules | ✅ | ❌ | ✅ | **Now implemented** |
-| Keepout zones | ✅ | ❌ | ✅ | **Now implemented** |
-| DRC integration | ✅ | ❌ | ❌ | Not started |
-
-### Board Integration
-
-| Feature | FreeRouting | Python Agent | C++ Library | Status |
-|---------|-------------|--------------|-------------|--------|
-| Read footprints | ✅ | ✅ | ✅ | **Working** |
-| Read existing tracks | ✅ | ✅ | ✅ | **Working** |
-| Read existing vias | ✅ | ✅ | ✅ | **Working** |
-| Pad position transform | ✅ | ✅ | ✅ | **Working** |
-| Insert tracks | ✅ | ✅ | ✅ | **Direct board insertion** |
-| Insert vias | ✅ | ✅ | ✅ | **Direct board insertion** |
-| Commit support | ✅ | ❌ | ✅ | **Working** |
-| Undo support | ✅ | ❌ | ✅ | Via commit |
-
----
-
-## Remaining Work to Match FreeRouting
-
-### High Priority (Completed)
-
-1. ✅ **PullTight Optimization** - `optimize/pull_tight.cpp/h`
-   - Vertex moving to reduce path length
-   - Three modes: 90°, 45°, any-angle
-   - Collision detection during optimization
-   - Integrated into path reconstruction
-
-2. ✅ **Net Ordering Optimization** - `autoroute_engine.cpp`
-   - Route simpler nets first (fewer pads, shorter distances)
-   - Power/ground nets routed last
-   - Failed nets retried after successful routes complete
-   - Up to 3 retry passes
-
-3. ✅ **Multi-Pass Optimization** - `autoroute_engine.cpp`, `autoroute_control.h`
-   - Configurable number of passes (default 3)
-   - Pass-specific via cost (decreases each pass)
-   - Ripup enabled in later passes
-   - Retry failed nets with progressively aggressive settings
-
-4. ✅ **Congestion-Aware Routing** - `search/congestion_map.cpp/h`
-   - Grid-based congestion tracking
-   - Records routed segments and vias
-   - Penalizes routes through congested areas
-   - Spreads traces more evenly across board
-
-### Medium Priority (Completed)
-
-1. ✅ **Blind/Buried Via Support** - `autoroute_control.h`, `insert_connection.cpp`, `locate_connection.h`
-   - AUTOROUTE_VIA_TYPE enum (THROUGH, BLIND_TOP, BLIND_BOTTOM, BURIED, MICROVIA)
-   - VIA_TYPE_CONFIG with layer ranges and cost multipliers
-   - GetBestViaType() selects optimal via for layer transition
-   - Insert vias with proper layer spans
-
-2. ✅ **Net Class Support** - `autoroute_control.h`, `autoroute_engine.cpp`
-   - NET_CLASS_CONFIG with trace width, clearance, via sizes
-   - Per-net lookup methods (GetNetTraceWidth, GetNetClearance, etc.)
-   - Priority-based routing order
-   - Power/ground nets with wider traces
-
-3. ✅ **Clearance Matrix** - `autoroute_control.h`
-   - CLEARANCE_ENTRY for net class pair clearances
-   - GetClearanceBetweenNets() for pair lookups
-   - Falls back to max of individual clearances
-
-4. ✅ **Via Optimization** - `optimize/via_optimizer.cpp/h`
-   - RemoveUnnecessaryVias: removes vias where layer doesn't change
-   - OptimizeViaPositions: moves vias to reduce path length
-   - MergeShortSegments: removes vias with short segments on both sides
-   - Integrated into locate_connection path reconstruction
-
-5. ✅ **Fanout Routing** - `fanout/fanout_router.cpp/h`
-   - Multiple patterns: DIRECT, STAGGERED, DOG_BONE, CHANNEL
-   - Escape direction calculation based on pad position
-   - Collision-checked via and trace placement
-   - Support for BGA and QFP packages
-
-### Lower Priority (Completed)
-
-1. ✅ **Differential Pair Routing** - `differential/differential_pair.cpp/h`
-   - Route paired signals together with constant spacing
-   - Automatic net pairing by _P/_N suffix convention
-   - Coupled trace generation with configurable gap
-   - Length matching between positive and negative signals
-   - Serpentine generation for length equalization
-
-2. ✅ **Length Matching** - `length_match/length_matcher.cpp/h`
-   - Match trace lengths within configurable tolerance
-   - Multiple meander styles: trapezoidal, rectangular, rounded
-   - Automatic amplitude and spacing calculation
-   - Collision-checked serpentine placement
-   - Best segment selection for meander insertion
-
-3. ✅ **Progress Reporting** - `autoroute_engine.cpp/h`
-   - AUTOROUTE_PROGRESS struct with detailed status
-   - SetProgressCallback for real-time updates
-   - Cancel() method for thread-safe cancellation
-   - Per-net and per-pass progress tracking
-   - Elapsed time and completion percentage
-
-### Remaining Work
-
-1. **Object Pooling**
-   - Reuse `MAZE_LIST_ELEMENT` objects
-   - Reduce memory allocation overhead
-   - Files: `maze_search.cpp/h`
-
-2. **Multi-Threaded Routing**
-   - Route independent nets in parallel
-   - Lock shared data structures
-   - Files: `autoroute_engine.cpp`
-
----
-
-## Architecture
-
-### Zener C++ Class Hierarchy
-
-```
-AUTOROUTER (public API)
-└── AUTOROUTE_ENGINE
-    ├── EXPANSION_ROOM (abstract)
-    │   ├── FREE_SPACE_ROOM (complete)
-    │   ├── INCOMPLETE_FREE_SPACE_ROOM (dynamic)
-    │   ├── OBSTACLE_ROOM
-    │   └── TARGET_ROOM
-    ├── EXPANSION_DOOR
-    ├── EXPANSION_DRILL
-    ├── SHAPE_SEARCH_TREE (spatial index)
-    ├── ROOM_COMPLETION (dynamic room builder)
-    └── MAZE_SEARCH
-        ├── MAZE_LIST_ELEMENT
-        ├── DESTINATION_DISTANCE
-        └── RIPUP_CHECKER (ripup + shove)
-
-TILE_SHAPE (geometry)
-├── INT_BOX (axis-aligned box)
-├── CONVEX_POLY_SHAPE
-├── HALF_PLANE
-└── SIMPLEX (half-plane intersection)
-
-LOCATE_CONNECTION (path reconstruction)
-├── PATH_POINT
-├── PATH_SEGMENT
-└── ROUTING_PATH
-
-INSERT_CONNECTION (board insertion)
-└── INSERT_RESULT
-
-AUTOROUTE_CONTROL (configuration)
-AUTOROUTE_RESULT (statistics)
-AUTOROUTE_PROGRESS (progress reporting)
-
-VIA_OPTIMIZER (via count reduction)
-├── RemoveUnnecessaryVias
-├── OptimizeViaPositions
-└── MergeShortSegments
-
-FANOUT_ROUTER (BGA/QFP escape routing)
-├── FANOUT_CONNECTION
-└── FANOUT_PATTERN (DIRECT, STAGGERED, DOG_BONE, CHANNEL)
-
-DIFF_PAIR_ROUTER (differential pair routing)
-├── DIFF_PAIR_CONNECTION
-├── DIFF_PAIR_PATH
-└── DIFF_PAIR_CONFIG
-
-LENGTH_MATCHER (length matching)
-├── LENGTH_MATCH_TARGET
-├── LENGTH_MATCH_RESULT
-└── MEANDER_STYLE (TRAPEZOIDAL, ROUNDED, RECTANGULAR)
-```
-
-### Key Algorithms
-
-1. **Dynamic Room Expansion** (`room_completion.cpp`)
-   - Start with incomplete rooms adjacent to obstacles
-   - Complete rooms on-demand during maze search
-   - Sort neighbors counterclockwise around room border
-   - Create doors to adjacent rooms and obstacles
-   - Extend rooms to board bounds when no neighbors
-
-2. **45-Degree Corner Optimization** (`locate_connection.cpp`)
-   - Detect 90-degree turns in path
-   - Calculate chamfer distance (40% of segment length)
-   - Insert two 45-degree segments instead of one 90-degree turn
-   - Filter out too-short segments
-
-3. **Delayed Occupation** (`maze_search.cpp`)
-   - Track doors that are occupied during search
-   - On failure, retry with occupied doors cleared
-   - Apply cost penalty to discourage using blocked paths
-   - Up to 3 retry attempts
-
-4. **Push-and-Shove** (`ripup_checker.cpp`)
-   - Calculate perpendicular shove direction
-   - Try moving blocking trace by clearance + trace width
-   - Prefer shove over ripup (preserves routing)
-   - Apply shoves via commit
-
-5. **Pin Neckdown** (`insert_connection.cpp`)
-   - Detect when trace endpoint is at a pad
-   - Calculate max width that fits pad minus clearance
-   - Create tapered transition segment
-
----
-
-## File Structure
-
-```
-pcbnew/autoroute/
-├── autoroute_engine.cpp/h      # Main engine, room model, net ordering, multi-pass
-├── autoroute_control.h         # Configuration: net classes, via types, clearance matrix
-├── expansion/
-│   ├── expansion_room.cpp/h    # Room classes (free space, obstacle, target)
-│   ├── expansion_door.cpp/h    # Door between rooms
-│   └── expansion_drill.cpp/h   # Via/drill locations
-├── geometry/
-│   └── tile_shape.cpp/h        # INT_BOX, HALF_PLANE, SIMPLEX
-├── search/
-│   ├── maze_search.cpp/h       # A* algorithm, congestion-aware costs
-│   ├── maze_list_element.h     # Priority queue entry
-│   ├── destination_distance.cpp/h # Heuristic calculator
-│   ├── shape_search_tree.cpp/h # Spatial index (grid-based)
-│   ├── room_completion.cpp/h   # Dynamic room completion
-│   ├── ripup_checker.cpp/h     # Ripup and shove logic
-│   └── congestion_map.cpp/h    # Congestion tracking for spread routing
-├── locate/
-│   └── locate_connection.cpp/h # Path reconstruction, 45° optimization, via optimization
-├── insert/
-│   └── insert_connection.cpp/h # Board insertion, neckdown, blind/buried vias
-├── optimize/
-│   ├── pull_tight.cpp/h        # PullTight path optimization (90°/45°/any)
-│   └── via_optimizer.cpp/h     # Via count reduction and position optimization
-├── fanout/
-│   └── fanout_router.cpp/h     # BGA/QFP fanout routing with escape patterns
-├── differential/
-│   └── differential_pair.cpp/h # Differential pair routing with length matching
-├── length_match/
-│   └── length_matcher.cpp/h    # Length matching with serpentine patterns
-└── AUTOROUTING.md              # This file
-```
-
----
-
-## Testing
-
-### Test Cases Needed
-1. Simple 2-pad net (straight line)
-2. 2-pad net with obstacle (L-shape)
-3. Multi-pad net (star topology)
-4. Via required (pads on different layers)
-5. Blocked route (no solution, triggers retry)
-6. Blocked route (triggers push-and-shove)
-7. Large net (many pads)
-8. Dense board (many obstacles)
-9. Pin neckdown (large trace to small pad)
-10. Keepout zone avoidance
-
----
-
-## FreeRouting Algorithm Deep Dive
-
-This section documents the low-level technical details of FreeRouting's algorithms to ensure
-Zener's implementation matches the original behavior.
-
-### A* Maze Search Algorithm
-
-FreeRouting's `MazeSearchAlgo` implements a modified A* algorithm:
-
-**Priority Queue**
-- Uses a `PriorityQueue<MazeListElement>` ordered by `sorting_value` (ascending)
-- Elements extracted via `poll()` in O(log n) time
-- Already-occupied sections are skipped and recycled
-
-**MazeListElement Fields**
-```java
-door                        // Current EXPANDABLE_OBJECT (door or drill)
-section_no_of_door          // Section within the door (for multi-section doors)
-backtrack_door              // Previous door in path (for reconstruction)
-section_no_of_backtrack_door
-expansion_value             // g(n): Actual cost from start to this node
-sorting_value               // f(n) = g(n) + h(n): Used for priority ordering
-next_room                   // Room we're expanding into
-shape_entry                 // Entry geometry (TileShape)
-room_ripped                 // Whether this path requires ripup
-adjustment                  // Shove adjustment info
-already_checked             // Prevents re-expansion
-```
-
-**Cost Calculation**
-```
-expansion_value = previous_expansion_value + trace_cost + via_cost + ripup_penalty
-sorting_value = expansion_value + heuristic_distance_to_destination
-```
-
-Where:
-- `trace_cost` = weighted Manhattan distance (layer-specific weights)
-- `via_cost` = `add_via_costs` parameter (configurable per via type)
-- `ripup_penalty` = base_ripup_cost × detour_factor × fanout_protection_multiplier
-- `heuristic` = `destination_distance.calculate()` (octile distance)
-
-**Search Termination**
-FreeRouting terminates when:
-1. Destination door is reached: `curr_door.is_destination_door()`
-2. Queue becomes empty (no path exists)
-3. User requests stop: `autoroute_engine.is_stop_requested()`
-4. Fanout-specific: First drill expansion when both doors are drills
-
-**Key Difference from Zener**: FreeRouting does NOT have a hard node expansion limit.
-It relies on user cancellation and natural queue exhaustion. Zener adds safety limits
-(MAX_NODES_EXPANDED = 50000) to prevent hangs in edge cases.
-
-### Expansion Room Model
-
-**Room Types**
-```
-ExpansionRoom (abstract)
-├── FreeSpaceExpansionRoom
-│   ├── IncompleteFreeSpaceExpansionRoom  // Unbounded, completed on-demand
-│   └── CompleteFreeSpaceExpansionRoom    // Bounded, doors calculated
-├── ObstacleExpansionRoom                  // Pads, tracks, zones
-└── TargetExpansionRoom                    // Destination pads
-```
-
-**Incomplete Room Model**
-- Shape can be null (meaning "the whole plane")
-- Has a "contained shape" that must be preserved in the completed room
-- Completed lazily when first accessed during maze search
-
-**Room Completion Algorithm** (`complete_expansion_room`)
-1. Get the incomplete room's unbounded shape
-2. Call `search_tree.complete_shape()` to find obstacle boundaries
-3. Calculate final shape that avoids all obstacles while staying as large as possible
-4. Create doors to neighboring rooms via `calculate_doors()`
-5. Door algorithm varies by routing angle (90°, 45°, arbitrary)
-
-**Door Calculation Complexity**
-- FreeRouting uses door "snapshots" before iteration
-- Improves from O(N²) to O(N) by avoiding restarts
-
-**Database Persistence**
-FreeRouting's `maintain_database` mode:
-- Completed rooms persist across connections
-- Net-dependent rooms invalidated selectively
-- Avoids full recalculation after each route
-
-**Key Difference from Zener**: Zener rebuilds the room model for each net. FreeRouting
-caches completed rooms across nets, which is faster but more complex.
-
-### Drill/Via Management
-
-**DrillPageArray**
-- 2D array of rectangular pages containing ExpansionDrill objects
-- Pages invalidated when expansion room shapes change
-- Recalculated on next access (lazy evaluation)
-- Prevents recalculating entire drill database after each room completion
-
-**Zener Simplification**: Uses a single list of drills with a spatial query.
-May be slower for very large boards but simpler to implement.
-
-### Batch Autorouting Strategy
-
-**Net Ordering**
-- FreeRouting v2.3+ uses **natural board order** (disabled earlier optimizations)
-- Comment: "Disabled because it negatively impacts convergence compared to v1.9"
-- Earlier versions sorted by airline distance
-
-**Multi-Pass Approach**
-```
-for pass = 1 to maxPasses:
-    ripup_cost = start_ripup_costs × pass_number
-    time_limit = 100000 × 2^(pass_number - 1) ms  // Exponential increase
-
-    for each unrouted_connection:
-        if failure_count > threshold:
-            skip_with_log
-        else:
-            attempt_route(ripup_cost, time_limit)
-```
-
-**Failure Handling**
-- Failed items tracked in failure log
-- Items exceeding failure threshold are skipped
-- Board history maintained for state restoration
-- `MAXIMUM_TRIES_ON_THE_SAME_BOARD = 3`
-
-**Stagnation Detection**
-- After pass 8, check every 4 passes (`STOP_AT_PASS_MODULO = 4`)
-- If no improvement and board rank > 50, terminate
-- Prevents infinite loops on difficult boards
-
-**Key Difference from Zener**: Zener uses fixed pass counts and uniform time limits.
-FreeRouting uses exponentially increasing time limits and stagnation detection.
-
-### Safeguards and Limits
-
-**FreeRouting's Approach**
-```java
-MAX_RIPUP_COSTS = Integer.MAX_VALUE / 100  // Prevents integer overflow
-max_shove_trace_recursion_depth = 5        // Limits nested shove operations
-max_spring_over_recursion_depth = 5        // Limits nested spring operations
-is_stop_requested()                         // User cancellation check
-```
-
-**Zener's Additional Safeguards** (Not in FreeRouting)
+**Current**:
 ```cpp
-MAX_NODES_EXPANDED = 50000      // Prevents infinite search
-MAX_ROOM_COMPLETIONS = 1000     // Limits dynamic room expansion
-MAX_INCOMPLETE_ROOMS = 10000    // Limits initial room creation
-MAX_DRILLS = 5000               // Limits via location count
-m_cancelled flag                 // Thread-safe cancellation
+void AUTOROUTE_ENGINE::BuildObstacleRooms()
+{
+    // Creates OBSTACLE_ROOM for every pad, track, zone
+    for( PAD* pad : fp->Pads() )
+    {
+        auto room = std::make_unique<OBSTACLE_ROOM>( shape, pad, layer );
+        m_rooms.push_back( std::move( room ) );
+    }
+}
 ```
 
-These limits are practical safeguards for edge cases but may cause early termination
-on complex boards. Consider raising limits or making them configurable if routes fail.
+**FreeRouting Approach**:
+- Items (pads, traces, vias) are in the search tree directly via `ShapeSearchTree.insert(Item)`
+- No obstacle rooms are pre-created
+- `ObstacleExpansionRoom` is created on-demand only when needed for ripup/shove
 
-### Cost Function Details
+**Implementation**:
+1. Remove `BuildObstacleRooms()` entirely
+2. Insert board Items directly into search tree
+3. Create `ItemAutorouteInfo` equivalent for lazy obstacle room creation
 
-**Trace Cost**
-```
-trace_cost = manhattan_distance × layer_weight × direction_penalty
-```
-Where `layer_weight` allows preferring certain layers.
+#### 1.2 Modify Shape Search Tree
 
-**Via Cost**
-```
-via_cost = base_via_cost × layer_transition_multiplier
-```
-Configurable per via type (through, blind, buried, microvia).
+**Files**: `search/shape_search_tree.h`, `search/shape_search_tree.cpp`
 
-**Ripup Cost**
-```
-ripup_cost = base_cost × detour_factor × fanout_protection
-```
-Where:
-- `detour_factor` = estimated additional distance if routed around
-- `fanout_protection` = multiplier to protect recently placed fanout
-
-**Congestion Cost** (FreeRouting's spread routing)
-```
-congestion_cost = segment_length × congestion_factor[cell]
-```
-Where `congestion_factor` increases as more traces pass through a grid cell.
-
-### Heuristic Function
-
-FreeRouting uses **octile distance** (8-connected):
-```
-h(n) = max(|dx|, |dy|) + (√2 - 1) × min(|dx|, |dy|)
+**Current**:
+```cpp
+struct TREE_ENTRY
+{
+    EXPANSION_ROOM* room;      // Currently stores obstacle rooms
+    BOARD_ITEM*     item;
+    BOX2I           bounds;
+    int             layer;
+};
 ```
 
-This accounts for 45-degree routing and provides an admissible heuristic.
-
-Zener currently uses **Manhattan distance**:
+**FreeRouting Approach**:
+```java
+// ShapeSearchTree stores SearchTreeObject, which includes:
+// - Item (trace, via, pad, etc.)
+// - CompleteFreeSpaceExpansionRoom (after completion)
+// - ObstacleExpansionRoom is NOT stored - it wraps Items
 ```
-h(n) = |dx| + |dy|
+
+**Implementation**:
+1. Store `BOARD_ITEM*` as primary entry (not `EXPANSION_ROOM*`)
+2. Add optional `EXPANSION_ROOM*` for completed free space rooms
+3. Query methods return Items, not rooms
+4. Add `is_trace_obstacle(net_no)` equivalent for net filtering
+
+#### 1.3 Add ItemAutorouteInfo
+
+**Files**: New file `expansion/item_autoroute_info.h/.cpp`
+
+FreeRouting's `ItemAutorouteInfo` provides:
+- Lazy creation of `ObstacleExpansionRoom` for an Item
+- Caching of expansion rooms per shape index
+- Door management for ripup/shove
+
+```cpp
+class ITEM_AUTOROUTE_INFO
+{
+public:
+    ITEM_AUTOROUTE_INFO( BOARD_ITEM* aItem );
+
+    // Get or create obstacle room for this item's shape
+    OBSTACLE_ROOM* GetExpansionRoom( int aShapeIndex, SHAPE_SEARCH_TREE& aTree );
+
+    // Reset for new connection
+    void ResetDoors();
+
+private:
+    BOARD_ITEM* m_item;
+    std::vector<std::unique_ptr<OBSTACLE_ROOM>> m_expansionRooms;
+};
 ```
-
-This is also admissible but less tight for 45-degree paths.
-
-### Performance Characteristics
-
-**FreeRouting Optimizations**
-1. Room database persistence across nets
-2. Page-based drill management
-3. Door snapshots before iteration
-4. Natural net ordering (avoids sorting overhead)
-5. Lazy room completion
-
-**Zener Trade-offs**
-1. Simpler room model (rebuilt per net)
-2. Single drill list with grid queries
-3. Standard iteration
-4. Priority-based net ordering
-5. Safety limits may cause early termination
-
-### Known Deviations from FreeRouting
-
-| Aspect | FreeRouting | Zener | Impact |
-|--------|-------------|-------|--------|
-| Node limit | None (queue exhaustion) | 50,000 | May miss complex routes |
-| Room persistence | Cached across nets | Rebuilt per net | Slower on large boards |
-| Drill pages | 2D page array | Single list | O(n) vs O(1) lookup |
-| Net ordering | Natural order | Priority sorted | Different routing order |
-| Time limit | Exponential per pass | Fixed | Less adaptive |
-| Stagnation | Detected at pass 8+ | Not implemented | May run longer |
-| Heuristic | Octile distance | Manhattan | Slightly less optimal |
 
 ---
 
-## Current Implementation Issues (February 2026)
+### Phase 2: Room Completion Algorithm (Critical)
 
-This section documents active debugging work and issues for agents continuing this work.
+**Current Problem**: `ROOM_COMPLETION::Complete()` queries for `OBSTACLE_ROOM`s and tries to create doors to them. FreeRouting queries for Items and handles them differently.
 
-### Critical Issue: Queue Overflow
+#### 2.1 Rewrite FindNeighbours
 
-The A* maze search queue grows to 100,000+ elements and overflows. Root causes identified:
+**File**: `search/room_completion.cpp`
 
-1. **Null next_room elements** - Elements with `next_room=nullptr` were being added to queue
-   - **Fixed**: Added null checks in `InitializeSearch`, `ExpandToDoorSection`, `ExpandToOtherLayers`
-
-2. **ExpandToDrillsInRoom causing explosion** - Every room expansion was adding ALL drills
-   on the board to the queue (hundreds per room)
-   - **Temporarily disabled**: FreeRouting uses `DrillPage` abstraction to solve this
-   - See "Missing DrillPage Implementation" below
-
-3. **Rooms with 0 doors** - Completed rooms sometimes have no doors, creating dead ends
-   - Need investigation: Why are doorless rooms being created?
-
-### Missing: DrillPage Implementation
-
-FreeRouting prevents drill explosion with a critical abstraction we don't have:
-
-**FreeRouting's Approach** (see `/tools/freerouting/src/main/java/app/freerouting/autoroute/DrillPage.java`):
-```java
-// DrillPageArray divides board into rectangular pages
-// Each page contains drills within its bounds
-public class DrillPageArray {
-    DrillPage[][] arr;  // 2D grid of pages
-
-    Collection<DrillPage> overlapping_pages(TileShape room_shape);
+**Current**:
+```cpp
+std::vector<ROOM_NEIGHBOUR> ROOM_COMPLETION::FindNeighbours( const INT_BOX& aShape,
+                                                              int aLayer, int aNetCode )
+{
+    m_searchTree.QueryOverlapping( queryBounds, aLayer,
+        [&]( const TREE_ENTRY& entry ) -> bool
+        {
+            // Gets obstacle rooms, not items
+            if( entry.room && entry.room->GetNetCode() == aNetCode )
+                return true;  // Skip same net
+            // ...
+        } );
 }
+```
 
-// In expand_to_room_doors:
+**FreeRouting Approach** (from `SortedRoomNeighbours.calculate_neighbours()`):
+```java
+Collection<ShapeTree.TreeEntry> overlapping_objects = new LinkedList<>();
+p_autoroute_search_tree.overlapping_tree_entries(room_shape, p_room.get_layer(), overlapping_objects);
+
+for (ShapeTree.TreeEntry curr_entry : overlapping_objects) {
+    SearchTreeObject curr_object = (SearchTreeObject) curr_entry.object;
+
+    // Skip same room
+    if (curr_object == p_room) continue;
+
+    // For incomplete rooms, delay processing own-net items
+    if (p_room instanceof IncompleteFreeSpaceExpansionRoom &&
+        !curr_object.is_trace_obstacle(p_net_no)) {
+        result.own_net_objects.add(curr_entry);  // Save for target doors later
+        continue;
+    }
+
+    // Get shape and calculate intersection
+    TileShape curr_shape = curr_object.get_tree_shape(p_autoroute_search_tree, curr_entry.shape_index_in_object);
+    TileShape intersection = room_shape.intersection(curr_shape);
+    int dimension = intersection.dimension();
+
+    if (dimension > 1) {
+        // 2D overlap - only for ObstacleExpansionRoom
+        if (completed_room instanceof ObstacleExpansionRoom && curr_object instanceof Item) {
+            // Create overlap door between obstacle rooms
+            ObstacleExpansionRoom curr_overlap_room = item_info.get_expansion_room(...);
+            room.create_overlap_door(curr_overlap_room);
+        }
+        continue;
+    }
+
+    if (dimension == 1) {
+        // 1D touch - create door
+        // Get or create obstacle room from Item
+        ExpansionRoom neighbour_room = null;
+        if (curr_object instanceof Item curr_item) {
+            if (curr_item.is_routable()) {
+                ItemAutorouteInfo item_info = curr_item.get_autoroute_info();
+                neighbour_room = item_info.get_expansion_room(...);
+            }
+        }
+        if (neighbour_room != null) {
+            ExpansionDoor new_door = new ExpansionDoor(completed_room, neighbour_room, 1);
+            // ...
+        }
+    }
+}
+```
+
+**Implementation**:
+1. Query returns Items, not obstacle rooms
+2. Use `is_trace_obstacle(net_no)` for filtering
+3. Save own-net Items for target door creation
+4. Create `OBSTACLE_ROOM` on-demand when needed for door creation
+5. Handle 1D (edge touch) vs 2D (area overlap) differently
+
+#### 2.2 Add Target Door Mechanism
+
+**Files**: `expansion/target_door.h/.cpp` (new), `expansion/expansion_room.h`
+
+FreeRouting creates special "target doors" to destination Items:
+
+```java
+private static void calculate_target_doors(CompleteFreeSpaceExpansionRoom p_room,
+                                            Collection<ShapeTree.TreeEntry> p_own_net_objects,
+                                            AutorouteEngine p_autoroute_engine) {
+    for (ShapeTree.TreeEntry curr_entry : p_own_net_objects) {
+        if (curr_entry.object instanceof Connectable curr_object) {
+            if (curr_object.contains_net(p_autoroute_engine.get_net_no())) {
+                TileShape curr_connection_shape = curr_object.get_trace_connection_shape(...);
+                if (p_room.get_shape().intersects(curr_connection_shape)) {
+                    TargetItemExpansionDoor new_target_door = new TargetItemExpansionDoor(
+                        curr_item, curr_entry.shape_index_in_object, p_room, ...);
+                    p_room.add_target_door(new_target_door);
+                }
+            }
+        }
+    }
+}
+```
+
+**Implementation**:
+```cpp
+class TARGET_EXPANSION_DOOR : public EXPANSION_DOOR
+{
+public:
+    TARGET_EXPANSION_DOOR( BOARD_ITEM* aItem, int aShapeIndex,
+                           FREE_SPACE_ROOM* aRoom, SHAPE_SEARCH_TREE& aTree );
+
+    BOARD_ITEM* GetItem() const { return m_item; }
+    bool IsDestination() const { return true; }
+
+private:
+    BOARD_ITEM* m_item;
+    int m_shapeIndex;
+};
+
+// Add to FREE_SPACE_ROOM:
+std::vector<TARGET_EXPANSION_DOOR*> m_targetDoors;
+void AddTargetDoor( TARGET_EXPANSION_DOOR* aDoor );
+const std::vector<TARGET_EXPANSION_DOOR*>& GetTargetDoors() const;
+```
+
+---
+
+### Phase 3: DrillPage Implementation (Critical for Vias)
+
+**Current Problem**: Drill expansion disabled because adding all drills to queue causes explosion. FreeRouting uses DrillPage abstraction.
+
+#### 3.1 Implement DrillPage
+
+**Files**: `expansion/drill_page.h/.cpp` (new)
+
+```cpp
+class DRILL_PAGE : public EXPANDABLE_OBJECT
+{
+public:
+    DRILL_PAGE( const BOX2I& aBounds, int aFirstLayer, int aLastLayer );
+
+    // From EXPANDABLE_OBJECT
+    VECTOR2I GetCenter() const override;
+    int GetLayer() const override { return -1; }  // Multi-layer
+    int GetSectionCount() const override { return 1; }
+
+    // Drill management
+    void AddDrill( EXPANSION_DRILL* aDrill );
+    const std::vector<EXPANSION_DRILL*>& GetDrills() const;
+
+    // Lazy calculation
+    bool IsCalculated() const { return m_calculated; }
+    void Calculate( AUTOROUTE_ENGINE& aEngine );
+    void Invalidate() { m_calculated = false; m_drills.clear(); }
+
+private:
+    BOX2I m_bounds;
+    int m_firstLayer;
+    int m_lastLayer;
+    bool m_calculated = false;
+    std::vector<EXPANSION_DRILL*> m_drills;
+};
+```
+
+#### 3.2 Implement DrillPageArray
+
+**Files**: `expansion/drill_page_array.h/.cpp` (new)
+
+```cpp
+class DRILL_PAGE_ARRAY
+{
+public:
+    DRILL_PAGE_ARRAY( const BOX2I& aBoardBounds, int aMaxPageWidth );
+
+    // Get pages overlapping a shape
+    std::vector<DRILL_PAGE*> GetOverlappingPages( const BOX2I& aShape );
+
+    // Invalidate pages after board change
+    void Invalidate( const BOX2I& aShape );
+
+    // Reset for new connection
+    void Reset();
+
+private:
+    std::vector<std::vector<std::unique_ptr<DRILL_PAGE>>> m_pages;  // 2D grid
+    int m_pageWidth;
+    int m_pageHeight;
+    int m_colCount;
+    int m_rowCount;
+};
+```
+
+#### 3.3 Modify Maze Search for DrillPage
+
+**File**: `search/maze_search.cpp`
+
+**Current** (disabled):
+```cpp
+void MAZE_SEARCH::ExpandToDrillsInRoom( EXPANSION_ROOM* aRoom, const MAZE_LIST_ELEMENT& aFromElement )
+{
+    // DISABLED - causes queue explosion
+}
+```
+
+**FreeRouting Approach**:
+```java
+// In expand_to_room_doors():
 Collection<DrillPage> overlapping_drill_pages =
     drill_page_array.overlapping_pages(room.get_shape());
 for (DrillPage page : overlapping_drill_pages) {
-    expand_to_drill_page(page, from_element);  // Add PAGE, not individual drills
+    expand_to_drill_page(page, from_element);  // Expand to PAGE, not drills
 }
 
-// Only when processing a DrillPage element:
+// When processing a DrillPage element:
 if (list_element.door instanceof DrillPage) {
     expand_to_drills_of_page(list_element);  // NOW expand to individual drills
     return true;
 }
 ```
 
-**Why This Matters**:
-- Instead of N drills per room → M drill pages (where M << N)
-- Only expands to individual drills when we actually REACH that page
-- Drastically reduces queue size
+**Implementation**:
+```cpp
+void MAZE_SEARCH::ExpandToRoomDoors( EXPANSION_ROOM* aRoom, const MAZE_LIST_ELEMENT& aFromElement )
+{
+    // ... expand to doors ...
 
-**To Implement**:
-1. Create `DrillPage` class as `EXPANDABLE_OBJECT` subclass
-2. Create `DrillPageArray` grid structure
-3. Modify `ExpandToRoomDoors` to expand to pages, not drills
-4. Add `DrillPage` handling in `OccupyNextElement`
+    // Expand to drill pages (not individual drills)
+    std::vector<DRILL_PAGE*> pages =
+        m_engine.GetDrillPageArray().GetOverlappingPages( aRoom->GetBoundingBox() );
 
-### Key Differences from FreeRouting Found During Debugging
+    for( DRILL_PAGE* page : pages )
+    {
+        ExpandToDrillPage( page, aFromElement );
+    }
+}
 
-| Issue | FreeRouting | Zener (Current) | Impact |
-|-------|-------------|-----------------|--------|
-| Queue deduplication | Allows duplicates, skips if occupied when popped | Was using `m_inQueue` set (removed) | Fixed - now matches FR |
-| Occupation timing | Set AFTER expansion | Was setting BEFORE (fixed) | Fixed - now matches FR |
-| Drill expansion | Via DrillPage abstraction | Direct per-room (disabled) | **Needs DrillPage impl** |
-| Node limits | None | MAX_QUEUE_SIZE=100000 | May need raising |
+void MAZE_SEARCH::ExpandToDrillPage( DRILL_PAGE* aPage, const MAZE_LIST_ELEMENT& aFromElement )
+{
+    // Add page to queue with cost based on distance to page center
+    MAZE_LIST_ELEMENT element;
+    element.expandable = aPage;
+    element.expansion_value = aFromElement.expansion_value + PageCost( aPage, aFromElement );
+    element.sorting_value = element.expansion_value + m_destDistance.Calculate( aPage->GetCenter() );
+    m_queue.push( element );
+}
 
-### Debug Macros
+bool MAZE_SEARCH::OccupyNextElement()
+{
+    // ...
 
-The codebase has extensive debug logging (can be noisy):
+    if( auto* page = dynamic_cast<DRILL_PAGE*>( element.expandable ) )
+    {
+        // Now expand to individual drills within the page
+        ExpandToDrillsOfPage( page, element );
+        return false;  // Not at destination
+    }
+
+    // ...
+}
+```
+
+---
+
+### Phase 4: Maze Search Alignment
+
+#### 4.1 Queue Element Handling
+
+**Current Issue**: Zener uses a `m_delayedDoors` retry mechanism. FreeRouting allows duplicates in queue and skips when occupied.
+
+**FreeRouting Approach**:
+```java
+// In occupy_next_element():
+MazeListElement curr_element = this.maze_expansion_list.poll();
+if (curr_element == null) return false;
+
+// Check if already occupied
+ExpansionDoor curr_door = curr_element.door;
+if (curr_door.get_maze_search_element(curr_element.section_no_of_door).is_occupied) {
+    // Already processed, recycle and continue
+    curr_element.reset();
+    return false;
+}
+
+// Mark as occupied and process
+curr_door.get_maze_search_element(curr_element.section_no_of_door).set_occupied();
+```
+
+**Implementation**:
+Remove the delayed occupation retry mechanism and use FreeRouting's simpler approach:
+1. Allow duplicates in queue
+2. Check occupation when popping
+3. Skip if already occupied
+
+#### 4.2 Destination Detection
+
+**FreeRouting Approach**:
+```java
+if (curr_door.is_destination_door()) {
+    this.destination_door = (TargetItemExpansionDoor) curr_element.door;
+    return true;  // Found path!
+}
+```
+
+**Implementation**:
+Add destination check in `OccupyNextElement()`:
+```cpp
+if( auto* targetDoor = dynamic_cast<TARGET_EXPANSION_DOOR*>( element.door ) )
+{
+    m_destinationDoor = targetDoor;
+    return true;  // Found path
+}
+```
+
+---
+
+### Phase 5: Minor Alignments
+
+#### 5.1 Database Persistence (Performance)
+
+FreeRouting has `maintain_database` mode that caches completed rooms across connections. This is a performance optimization, not critical for correctness.
 
 ```cpp
-// In maze_search.cpp
-#define MAZE_DEBUG( msg ) std::cerr << "[MAZE] " << msg << std::endl
+// Optional: Add to AUTOROUTE_ENGINE
+bool m_maintainDatabase = false;
 
-// In autoroute_engine.cpp
-#define AUTOROUTE_DEBUG( msg ) std::cerr << "[AUTOROUTE] " << msg << std::endl
-
-// In room_completion.cpp
-#define COMPLETION_DEBUG( msg ) std::cerr << "[COMPLETION] " << msg << std::endl
+// In RouteConnection():
+if( !m_maintainDatabase )
+{
+    ClearRoomModel();  // Current behavior
+}
+else
+{
+    ResetAllDoors();  // Keep rooms, reset occupation
+    InvalidateNetDependentRooms( aNetCode );
+}
 ```
 
-To reduce noise, comment out the `#define` lines or make them conditional.
+#### 5.2 Octile Heuristic
 
-### FreeRouting Source Reference
+FreeRouting uses octile distance (8-connected grid), Zener uses Manhattan. This affects optimality but not correctness.
 
-FreeRouting code is available locally at:
+```cpp
+double DESTINATION_DISTANCE::CalculateOctile( const VECTOR2I& aFrom ) const
+{
+    // Octile distance: max(|dx|, |dy|) + (√2 - 1) × min(|dx|, |dy|)
+    int dx = std::abs( aFrom.x - m_target.x );
+    int dy = std::abs( aFrom.y - m_target.y );
+    static constexpr double SQRT2_MINUS_1 = 0.41421356;
+    return std::max( dx, dy ) + SQRT2_MINUS_1 * std::min( dx, dy );
+}
 ```
-/Users/gmp/workspaces/zener-design/tools/freerouting/
-```
 
-Key files for maze search:
-- `src/main/java/app/freerouting/autoroute/MazeSearchAlgo.java` - Main A* algorithm
-- `src/main/java/app/freerouting/autoroute/MazeListElement.java` - Queue element
-- `src/main/java/app/freerouting/autoroute/MazeSearchElement.java` - Per-door occupation tracking
-- `src/main/java/app/freerouting/autoroute/DrillPage.java` - Drill page abstraction
-- `src/main/java/app/freerouting/autoroute/DrillPageArray.java` - Page grid
-- `src/main/java/app/freerouting/autoroute/ExpansionDoor.java` - Door with sections
-- `src/main/java/app/freerouting/autoroute/ExpandableObject.java` - Base interface
+---
 
-### February 2026 Progress Update
+## Design Challenges (Zener/KiCad Limitations)
 
-**2D Overlap Fix (FindNeighbours)**:
-- Problem: `FindNeighbours` was skipping all items with 2D overlap (`skipAreaOverlap=131`)
-- The incomplete rooms extended to board bounds and overlapped obstacles in 2D
-- Fix: Treat 2D overlaps as neighbors too - create doors at obstacle boundaries
-- Result: Neighbors now found (e.g., `neighbours=521`), paths are found
+### 1. BOARD_ITEM Metadata
 
-**Pad Collision Detection Fix (InsertTrackSegment)**:
-- Problem: Traces were going through pads from other nets
-- `ValidateSegment()` only checked tracks and keepout zones, not pads
-- Fix: Added `SegmentCrossesPad()` to check pad collisions before insertion
-- File: `insert/insert_connection.cpp`
+**Challenge**: FreeRouting's `Item` class has `get_autoroute_info()` that returns cached autoroute data. KiCad's `BOARD_ITEM` does not have this.
 
-**Current Status**:
-- ✅ A* maze search finds paths (FOUND PATH, nodes=56)
-- ✅ Neighbors being detected (neighbours=521+)
-- ✅ Doors being created between rooms
-- ✅ Traces being inserted to board
-- ✅ Pad collision detection added
-- ⚠️ No vias/layer changes (drill expansion disabled - needs DrillPage)
-- ⚠️ Variable width traces from neckdown feature
+**Options**:
+1. **External Map**: `std::unordered_map<BOARD_ITEM*, std::unique_ptr<ITEM_AUTOROUTE_INFO>>` stored in `AUTOROUTE_ENGINE`
+2. **Temporary Member**: Add `void* m_autorouteInfo` to `BOARD_ITEM` (requires modifying KiCad base classes)
 
-### Next Steps for Agents
+**Recommendation**: Use external map in `AUTOROUTE_ENGINE`. Cleaner separation.
 
-1. **Implement DrillPage** - Critical for via/layer-transition routing
-2. **Test pad collision fix** - Verify traces no longer cross other-net pads
-3. **Consider raising MAX_QUEUE_SIZE** - 100K may be too low for complex boards
-4. **Add occupancy reset between nets** - Ensure doors are cleared before each net
-5. **Tune neckdown logic** - Currently may create unnecessary width transitions
+### 2. Shape Index
 
-### Build Commands
+**Challenge**: FreeRouting items can have multiple shapes (e.g., a trace with multiple segments). Each has a `shape_index_in_object`. KiCad items typically have one bounding box.
 
-```bash
-# Fast incremental build (agent module only)
-./mac_build_fast.sh
+**Options**:
+1. **Ignore**: Use single shape per item (current approach)
+2. **Segment Decomposition**: Break traces into per-segment entries
 
-# Full build with install
-./mac_build_hard.sh
+**Recommendation**: Start with single shape, add segment decomposition if needed for ripup.
 
-# With debug tracing
-WXTRACE=KICAD_AGENT "/path/to/Zener.app/Contents/MacOS/Zener"
-```
+### 3. Clearance Compensation
+
+**Challenge**: FreeRouting applies clearance compensation in the search tree itself (`ShapeSearchTree` has clearance knowledge). Zener applies clearance when creating obstacle shapes.
+
+**Options**:
+1. **Keep Current**: Apply clearance to shapes before insertion (simpler)
+2. **Tree Compensation**: Add clearance-aware queries to `SHAPE_SEARCH_TREE`
+
+**Recommendation**: Keep current approach for now.
+
+### 4. Thread Safety
+
+**Challenge**: KiCad's `BOARD` is not thread-safe. FreeRouting's `maintain_database` mode requires careful synchronization.
+
+**Recommendation**: Disable database persistence for now. Can add later with proper locking.
+
+---
+
+## Implementation Priority
+
+### Phase 1: Critical Fixes (Must Have)
+
+1. **Remove obstacle room pre-creation** - Stop storing obstacle rooms
+2. **Store Items in search tree** - Direct item storage
+3. **Rewrite FindNeighbours** - Query returns Items, not rooms
+4. **Add ItemAutorouteInfo** - Lazy obstacle room creation
+5. **Implement DrillPageArray** - Fix via expansion
+
+### Phase 2: Correctness (Should Have)
+
+6. **Add Target Doors** - Proper destination detection
+7. **Fix queue handling** - Allow duplicates, skip when occupied
+8. **Fix destination detection** - Check for TargetItemExpansionDoor
+
+### Phase 3: Performance (Nice to Have)
+
+9. **Database persistence** - Cache rooms across connections
+10. **Octile heuristic** - Better path optimality
+
+---
+
+## File Changes Summary
+
+| File | Change Type | Description |
+|------|-------------|-------------|
+| `autoroute_engine.cpp/h` | Major Rewrite | Remove BuildObstacleRooms, add item insertion, ItemAutorouteInfo storage |
+| `search/shape_search_tree.cpp/h` | Major Rewrite | Store Items not rooms, add is_trace_obstacle query |
+| `search/room_completion.cpp/h` | Major Rewrite | Query Items, create obstacle rooms lazily, add target doors |
+| `search/maze_search.cpp/h` | Significant | DrillPage handling, destination detection, queue handling |
+| `expansion/expansion_room.h` | Minor | Add target door support to FREE_SPACE_ROOM |
+| `expansion/item_autoroute_info.h/.cpp` | New File | Lazy obstacle room creation per Item |
+| `expansion/target_door.h/.cpp` | New File | TargetItemExpansionDoor equivalent |
+| `expansion/drill_page.h/.cpp` | New File | DrillPage abstraction |
+| `expansion/drill_page_array.h/.cpp` | New File | 2D grid of drill pages |
+
+---
+
+## Testing Plan
+
+### Unit Tests
+
+1. **Search Tree**
+   - Insert item, query returns item
+   - is_trace_obstacle filtering works
+   - Item removal works
+
+2. **Room Completion**
+   - Returns correct neighbors
+   - Creates obstacle rooms on demand
+   - Target doors created for own-net items
+
+3. **DrillPageArray**
+   - Pages calculated correctly
+   - Overlapping pages query works
+   - Invalidation clears correct pages
+
+### Integration Tests
+
+1. **Simple Route** - 2 pads, no obstacles
+2. **Route with Obstacles** - Pads with obstructions
+3. **Via Required** - Pads on different layers
+4. **Multi-Pad Net** - Star topology
+5. **Dense Board** - Many obstacles
+
+---
+
+## Known Bugs (Second Audit - Feb 2026)
+
+The following bugs were identified and fixed during the second audit:
+
+### Bug 1: CalculateDoorsAndRooms Never Creates Doors to Obstacles ✅ FIXED
+
+**File**: `search/room_completion.cpp`
+
+**Problem**: In `CalculateDoorsAndRooms()`, when a neighbor is an Item (not a room), the code tried to get `neighbour_room` from `entry.room` which was null for Items. This meant doors to obstacle rooms were never created.
+
+**Fix**: When `neighbour.neighbour_item` exists, get or create the obstacle room via `m_engine.GetItemAutorouteInfo()->GetExpansionRoom()`. The code now properly creates obstacle rooms on-demand and adds doors to them.
+
+### Bug 2: Cost Calculation Error in ExpandToDrillsOfPage ✅ FIXED
+
+**File**: `search/maze_search.cpp`
+
+**Problem**: When expanding to drills of a page, the trace cost was calculated from the room's entry point to the drill, but the page element's expansion_value already included the cost to reach the page center. This caused double-counting of costs.
+
+**Fix**: Changed to calculate trace cost from page center to drill, since the page element's expansion_value already includes the cost from room entry to page center.
+
+### Bug 3: Gap Handling Between Neighbors Incomplete ✅ FIXED
+
+**File**: `search/room_completion.cpp`
+
+**Problem**: When there were gaps between neighbors on a room edge (non-contiguous obstacles), incomplete rooms were not created for those gaps, preventing expansion through free space.
+
+**Fix**: Added gap detection and handling in `CalculateDoorsAndRooms()`. The code now sorts neighbors along each edge, finds gaps between them, and creates incomplete rooms with doors for each gap.
+
+### Bug 4: OBSTACLE Room Same-Net Fall-Through (Deferred)
+
+**File**: `search/room_completion.cpp`
+
+**Status**: Not a current issue. `FindNeighbours` is only called from `Complete()` for FREE_SPACE rooms. `CompleteObstacle()` creates incomplete rooms for each edge without querying neighbors, so same-net filtering doesn't apply there. If future changes require neighbor queries for obstacle rooms, this should be revisited.
+
+### Bug 5: Search Area Negative Size Edge Case ✅ FIXED
+
+**File**: `search/room_completion.cpp`
+
+**Problem**: In `FindClosestObstacleDistance()`, the search area calculation could produce zero or negative dimensions when the search point was at the board edge.
+
+**Fix**: Added bounds checks before creating each search area. If the dimension would be <= 0, return 0 immediately (already at edge).
+
+---
+
+## Known Bugs (Third Audit - Feb 2026)
+
+### Bug 6: ExpandToDrillPage Missing next_room ✅ FIXED
+
+**File**: `search/maze_search.cpp`
+
+**Problem**: When creating page elements in `ExpandToDrillPage()`, the `next_room` field was never set. This uninitialized value was then propagated to drill elements in `ExpandToDrillsOfPage()`, causing drills to have incorrect or null `next_room` which could break room expansion and destination detection.
+
+**Fix**: Added `element.next_room = aFromElement.next_room;` in `ExpandToDrillPage()` to properly inherit the room context for drill expansion.
+
+### Bug 7: Missing TARGET_EXPANSION_DOOR Creation ✅ FIXED
+
+**Files**: `search/room_completion.cpp`, `search/maze_search.cpp`, `autoroute_engine.cpp`
+
+**Problem**: The autorouter was timing out because destination pads were never connected to the expanding room graph. The issue manifested as:
+1. `FindNeighbours()` found same-net items (destination pads) and stored them in `m_ownNetItems`
+2. But `CalculateDoorsAndRooms()` never created `TARGET_EXPANSION_DOOR` entries for these items
+3. Maze search only checked `m_destDistance.IsDestination(next_room)` which never matched
+4. Result: Infinite room expansion with no path to destination
+
+**Evidence from logs**: `FindNeighbours: done, queryCount=13 neighbours=0 skipSameNet=1` - same-net items were collected but ignored.
+
+**Fix** (multi-part):
+1. **room_completion.h/cpp**: Added `SetDestinations()` method and `m_destItems` storage. Modified `CalculateDoorsAndRooms()` to create `TARGET_EXPANSION_DOOR` for destination items found in `m_ownNetItems`
+2. **autoroute_engine.h/cpp**: Added `SetCurrentDestinations()` and `m_currentDestItems` to pass destinations to room completion. Updated `CompleteExpansionRoom()` to call `completion.SetDestinations()`
+3. **maze_search.cpp**: Updated `SetDestinations()` to call `m_engine.SetCurrentDestinations()`. Added check for `TARGET_EXPANSION_DOOR` in `OccupyNextElement()` to detect reaching destination via target door
+
+**FreeRouting equivalent**: `calculate_target_doors()` in `SortedRoomNeighbours.java` creates `TargetItemExpansionDoor` entries when same-net items that are destinations are encountered during room completion.
 
 ---
 
 ## References
 
-- [FreeRouting Source](https://github.com/freerouting/freerouting)
-- **Local copy**: `/Users/gmp/workspaces/zener-design/tools/freerouting/`
-- [FreeRouting MazeSearchAlgo.java](src/main/java/app/freerouting/autoroute/MazeSearchAlgo.java)
-- [FreeRouting CompleteFreeSpaceExpansionRoom.java](src/main/java/app/freerouting/autoroute/CompleteFreeSpaceExpansionRoom.java)
-- [FreeRouting LocateFoundConnectionAlgo45Degree.java](src/main/java/app/freerouting/autoroute/LocateFoundConnectionAlgo45Degree.java)
-- [FreeRouting MazeShoveTraceAlgo.java](src/main/java/app/freerouting/autoroute/MazeShoveTraceAlgo.java)
-- [FreeRouting BatchAutorouter.java](src/main/java/app/freerouting/autoroute/BatchAutorouter.java)
-- [FreeRouting AutorouteEngine.java](src/main/java/app/freerouting/autoroute/AutorouteEngine.java)
-- [A* Algorithm](https://en.wikipedia.org/wiki/A*_search_algorithm)
+- **FreeRouting Source**: `/Users/gmp/workspaces/zener-design/tools/freerouting/`
+- Key files:
+  - `src/main/java/app/freerouting/autoroute/AutorouteEngine.java`
+  - `src/main/java/app/freerouting/autoroute/MazeSearchAlgo.java`
+  - `src/main/java/app/freerouting/autoroute/SortedRoomNeighbours.java`
+  - `src/main/java/app/freerouting/autoroute/DrillPage.java`
+  - `src/main/java/app/freerouting/autoroute/DrillPageArray.java`
+  - `src/main/java/app/freerouting/autoroute/ItemAutorouteInfo.java`
+  - `src/main/java/app/freerouting/autoroute/TargetItemExpansionDoor.java`
+  - `src/main/java/app/freerouting/board/ShapeSearchTree.java`

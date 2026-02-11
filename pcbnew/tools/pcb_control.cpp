@@ -2110,7 +2110,16 @@ int PCB_CONTROL::Undo( const TOOL_EVENT& aEvent )
 
     if( editFrame )
     {
+        // Suppress OnModify() auto-reject during undo — tracked items temporarily
+        // disappear from screen but are on the redo list, not actually deleted by user
+        PCB_EDIT_FRAME* pcbEditFrame = dynamic_cast<PCB_EDIT_FRAME*>( editFrame );
+        if( pcbEditFrame )
+            pcbEditFrame->m_inUndoRedo = true;
+
         editFrame->RestoreCopyFromUndoList( dummy );
+
+        if( pcbEditFrame )
+            pcbEditFrame->m_inUndoRedo = false;
 
         // Notify agent that items may have been restored/deleted by undo
         // This clears stale selection references in the agent
@@ -2118,7 +2127,6 @@ int PCB_CONTROL::Undo( const TOOL_EVENT& aEvent )
         editFrame->Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_CHECK_CHANGES, payload );
 
         // Check if all agent undo entries have been undone — auto-reject if so
-        PCB_EDIT_FRAME* pcbEditFrame = dynamic_cast<PCB_EDIT_FRAME*>( editFrame );
         if( pcbEditFrame )
         {
             wxLogInfo( "PCB: Undo handler: checking for stale agent changes (undoCount=%d)",
@@ -2138,7 +2146,15 @@ int PCB_CONTROL::Redo( const TOOL_EVENT& aEvent )
 
     if( editFrame )
     {
+        // Suppress OnModify() auto-reject during redo
+        PCB_EDIT_FRAME* pcbEditFrame = dynamic_cast<PCB_EDIT_FRAME*>( editFrame );
+        if( pcbEditFrame )
+            pcbEditFrame->m_inUndoRedo = true;
+
         editFrame->RestoreCopyFromRedoList( dummy );
+
+        if( pcbEditFrame )
+            pcbEditFrame->m_inUndoRedo = false;
 
         // Notify agent that items may have been restored/deleted by redo
         // This clears stale selection references in the agent

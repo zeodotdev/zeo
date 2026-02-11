@@ -1260,6 +1260,10 @@ int SCH_EDITOR_CONTROL::Undo( const TOOL_EVENT& aEvent )
 
     wxCHECK( undo_list, 0 );
 
+    // Suppress OnModify() auto-reject during undo — tracked items temporarily
+    // disappear from screen but are on the redo list, not actually deleted by user
+    m_frame->m_inUndoRedo = true;
+
     m_frame->PutDataInPreviousState( undo_list );
 
     // Now push the old command to the RedoList
@@ -1270,6 +1274,8 @@ int SCH_EDITOR_CONTROL::Undo( const TOOL_EVENT& aEvent )
 
     m_frame->GetCanvas()->Refresh();
     m_frame->OnModify();
+
+    m_frame->m_inUndoRedo = false;
 
     // Notify agent that items may have been restored/deleted by undo
     // This clears stale selection references in the agent
@@ -1300,6 +1306,9 @@ int SCH_EDITOR_CONTROL::Redo( const TOOL_EVENT& aEvent )
 
     wxCHECK( list, 0 );
 
+    // Suppress OnModify() auto-reject during redo
+    m_frame->m_inUndoRedo = true;
+
     /* Redo the command: */
     m_frame->PutDataInPreviousState( list );
 
@@ -1311,6 +1320,8 @@ int SCH_EDITOR_CONTROL::Redo( const TOOL_EVENT& aEvent )
 
     m_frame->GetCanvas()->Refresh();
     m_frame->OnModify();
+
+    m_frame->m_inUndoRedo = false;
 
     // Notify agent that items may have been restored/deleted by redo
     // This clears stale selection references in the agent

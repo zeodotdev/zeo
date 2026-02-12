@@ -5,9 +5,11 @@
 import os
 from subprocess import call
 
-# Source images
-APPLE_DARK_SVG = "/Users/jared/Documents/kicadpp/images/apple-dark.svg"
+# Source images - use the icon_kicad.svg from the dark theme sources
+ICON_SVG_DARK = "../../resources/bitmaps_png/sources/dark/icon_kicad.svg"
+ICON_SVG_LIGHT = "../../resources/bitmaps_png/sources/light/icon_kicad.svg"
 OUTPUT_DIR = "../../resources/bitmaps_png/png"
+ICONS_DIR = "../../resources/bitmaps_png/icons"
 
 # All the sizes we need
 SIZES = [16, 24, 32, 48, 64, 128, 256]
@@ -19,11 +21,13 @@ SIZE_COMBOS = [
     (32, 32),
 ]
 
-def generate_png(output_path, size):
+def generate_png(output_path, size, svg_source=None):
     """Generate a PNG from SVG at the specified size."""
+    if svg_source is None:
+        svg_source = ICON_SVG_DARK
     print(f"Generating {output_path} at {size}x{size}")
-    call(["rsvg-convert", "--width={}".format(size), "--height={}".format(size), 
-          "--output={}".format(output_path), APPLE_DARK_SVG])
+    call(["rsvg-convert", "--width={}".format(size), "--height={}".format(size),
+          "--output={}".format(output_path), svg_source])
 
 if __name__ == '__main__':
     # Generate basic size variants (both light and dark use same apple-dark source)
@@ -41,9 +45,14 @@ if __name__ == '__main__':
         # Regular versions
         generate_png(os.path.join(OUTPUT_DIR, f"icon_kicad_{icon_size}_{output_size}.png"), output_size)
         generate_png(os.path.join(OUTPUT_DIR, f"icon_kicad_{icon_size}_dark_{output_size}.png"), output_size)
-        
+
         # Nightly versions
         generate_png(os.path.join(OUTPUT_DIR, f"icon_kicad_nightly_{icon_size}_{output_size}.png"), output_size)
         generate_png(os.path.join(OUTPUT_DIR, f"icon_kicad_nightly_{icon_size}_dark_{output_size}.png"), output_size)
-    
+
+    # Generate icons directory files (using light theme SVG for consistency with mk_icn.sh)
+    print("\nGenerating icons directory files...")
+    generate_png(os.path.join(ICONS_DIR, "icon_kicad.png"), 128, ICON_SVG_LIGHT)
+    generate_png(os.path.join(ICONS_DIR, "icon_kicad_64.png"), 64, ICON_SVG_LIGHT)
+
     print("Done!")

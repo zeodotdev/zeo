@@ -679,31 +679,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schAnnotate );
 
-    // sch_get_nets - Get all nets and their connections
-    LLM_TOOL schGetNets;
-    schGetNets.name = "sch_get_nets";
-    schGetNets.description =
-        "Get a list of all nets in the schematic with their connected pins. "
-        "Returns net names and the symbol pins connected to each net. "
-        "Useful for verifying connections, debugging ERC issues, and understanding circuit topology. "
-        "REQUIRES: Schematic editor must be open with a document loaded.";
-    schGetNets.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "filter", {
-                { "type", "string" },
-                { "description", "Optional filter to match net names (e.g., 'VCC', 'GND', 'DATA')" }
-            }},
-            { "include_unconnected", {
-                { "type", "boolean" },
-                { "description", "Include nets with only one pin connected (default: false)" }
-            }}
-        }},
-        { "required", json::array() }
-    };
-    schGetNets.read_only = true;
-    tools.push_back( schGetNets );
-
     // ===== PCB Tools =====
 
     // pcb_get_summary - Get high-level overview of PCB

@@ -652,6 +652,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schAnnotate.description =
         "Annotate symbols in the open schematic. Assigns reference designators (R1, C1, U1, etc.) "
         "to symbols that have '?' placeholders. Can re-annotate all symbols or only unannotated ones. "
+        "Annotation is global across all sheets, so references on a sub-sheet may not start at 1 "
+        "(e.g., R5, C3) — this is expected. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schAnnotate.input_schema = {
         { "type", "object" },

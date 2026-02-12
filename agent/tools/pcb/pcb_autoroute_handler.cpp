@@ -138,6 +138,13 @@ std::string PCB_AUTOROUTE_HANDLER::ExecuteAutoroute( const nlohmann::json& aInpu
     wxLogInfo( "AUTOROUTE: DSN path: %s", dsnPath.c_str() );
     wxLogInfo( "AUTOROUTE: SES path: %s", sesPath.c_str() );
 
+    // Step 0: Take snapshot before any changes (for diff view)
+    wxLogInfo( "AUTOROUTE: Taking snapshot for diff view" );
+
+    nlohmann::json snapshotCmd;
+    snapshotCmd["type"] = "take_snapshot";
+    m_sendRequestFn( FRAME_PCB_EDITOR, snapshotCmd.dump() );
+
     // Step 1: Export DSN via IPC
     wxLogInfo( "AUTOROUTE: Requesting DSN export via IPC" );
 
@@ -210,6 +217,13 @@ std::string PCB_AUTOROUTE_HANDLER::ExecuteAutoroute( const nlohmann::json& aInpu
     }
 
     wxLogInfo( "AUTOROUTE: SES import successful" );
+
+    // Trigger diff view to show the changes
+    wxLogInfo( "AUTOROUTE: Triggering diff view" );
+
+    nlohmann::json detectCmd;
+    detectCmd["type"] = "detect_changes";
+    m_sendRequestFn( FRAME_PCB_EDITOR, detectCmd.dump() );
 
     // Build final result
     nlohmann::json result;
@@ -532,6 +546,13 @@ void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
     std::string sesPath = tempDir + "/board.ses";
 
     wxLogInfo( "AUTOROUTE ASYNC: Temp dir: %s", tempDir.c_str() );
+
+    // Step 0: Take snapshot before any changes (for diff view)
+    wxLogInfo( "AUTOROUTE ASYNC: Taking snapshot for diff view" );
+
+    nlohmann::json snapshotCmd;
+    snapshotCmd["type"] = "take_snapshot";
+    m_sendRequestFn( FRAME_PCB_EDITOR, snapshotCmd.dump() );
 
     // Step 1: Export DSN via IPC (on main thread - fast operation)
     wxLogInfo( "AUTOROUTE ASYNC: Requesting DSN export via IPC" );
@@ -916,6 +937,13 @@ void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
             }
 
             wxLogInfo( "AUTOROUTE ASYNC: SES import successful" );
+
+            // Trigger diff view to show the changes
+            wxLogInfo( "AUTOROUTE ASYNC: Triggering diff view" );
+
+            nlohmann::json detectCmd;
+            detectCmd["type"] = "detect_changes";
+            sendRequestFn( FRAME_PCB_EDITOR, detectCmd.dump() );
 
             // Build final success result
             nlohmann::json finalResult;

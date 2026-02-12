@@ -69,6 +69,7 @@
 #include "pcb_plotter.h"
 #include <reporter.h>
 #include <specctra_import_export/specctra.h>
+#include <set>
 // #include <Python.h> // Included by python_scripting.h if KICAD_SCRIPTING is defined
 
 
@@ -850,6 +851,13 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                     {
                         BOARD* board = GetBoard();
 
+                        // Remember existing track KIIDs before import (for identifying new tracks)
+                        std::set<KIID> existingTrackIds;
+                        for( PCB_TRACK* track : board->Tracks() )
+                        {
+                            existingTrackIds.insert( track->m_Uuid );
+                        }
+
                         // Count tracks/vias before import for statistics
                         int tracksBefore = 0;
                         int viasBefore = 0;
@@ -889,6 +897,27 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                             resp["success"] = true;
                             resp["tracks_added"] = tracksAfter - tracksBefore;
                             resp["vias_added"] = viasAfter - viasBefore;
+
+                            // Create undo entry for the new tracks (enables diff view)
+                            // Identify new tracks (those not in the original set)
+                            PICKED_ITEMS_LIST newItemsList;
+                            for( PCB_TRACK* track : board->Tracks() )
+                            {
+                                if( existingTrackIds.find( track->m_Uuid ) == existingTrackIds.end() )
+                                {
+                                    // This is a new track from the import
+                                    ITEM_PICKER picker( nullptr, track, UNDO_REDO::NEWITEM );
+                                    newItemsList.PushItem( picker );
+                                }
+                            }
+
+                            // Save the new tracks as an undo entry
+                            if( newItemsList.GetCount() > 0 )
+                            {
+                                SaveCopyInUndoList( newItemsList, UNDO_REDO::NEWITEM );
+                                wxLogInfo( "PCB: Created undo entry for %d new tracks/vias from autorouter",
+                                           newItemsList.GetCount() );
+                            }
 
                             // Mark board as modified
                             OnModify();

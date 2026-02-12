@@ -529,11 +529,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                 { "description", "Offset from pin position for power symbol as [dx, dy] in mm. "
                                 "Default [0, 0] places power symbol directly at pin (no wire needed). "
                                 "Use [0, 5] to place GND 5mm below pin with connecting wire." }
-            }},
-            { "power_angle", {
-                { "type", "number" },
-                { "description", "CCW rotation for power symbol. GND: 180=arrow down, 0=arrow up. "
-                                "VCC: 0=arrow up, 180=arrow down. Default: auto-detect." }
             }}
         }},
         { "required", json::array( { "ref", "pin", "power" } ) }

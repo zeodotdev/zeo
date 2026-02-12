@@ -987,10 +987,6 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
         offsetY = aInput["offset"][1].get<double>();
     }
 
-    // Get power angle - if not specified, auto-detect based on power type
-    bool hasAngle = aInput.contains( "power_angle" );
-    double powerAngle = aInput.value( "power_angle", 0.0 );
-
     code << "import json, sys\n";
     code << "from kipy.geometry import Vector2\n";
     code << "\n";
@@ -1028,37 +1024,24 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
     code << "    power_x = snap_to_grid(pin_x + offset_x)\n";
     code << "    power_y = snap_to_grid(pin_y + offset_y)\n";
     code << "\n";
-    code << "    # Determine power symbol rotation.\n";
-    code << "    # The stem should point back toward the pin (where the wire comes from).\n";
+    code << "    # Auto-rotate power symbol so stem faces the incoming wire.\n";
     code << "    # GND at 0°: stem UP.  VCC at 0°: stem DOWN.\n";
     code << "    # For L-shaped wires, orient based on the final (vertical) segment.\n";
-
-    if( hasAngle )
-    {
-        code << "    power_angle = " << powerAngle << "\n";
-    }
-    else
-    {
-        code << "    is_gnd = 'gnd' in power_name.lower() or 'vss' in power_name.lower()\n";
-        code << "    if abs(offset_x) < 0.01 and abs(offset_y) < 0.01:\n";
-        code << "        power_angle = 0  # No wire, use default orientation\n";
-        code << "    else:\n";
-        code << "        # Determine which direction the stem should face (toward pin)\n";
-        code << "        # For L-shaped or vertical wires, use vertical direction\n";
-        code << "        # For horizontal-only wires, use horizontal direction\n";
-        code << "        if abs(offset_y) > 0.01:\n";
-        code << "            # Vertical component: stem up if power is below, down if above\n";
-        code << "            if is_gnd:\n";
-        code << "                power_angle = 0 if offset_y > 0 else 180\n";
-        code << "            else:\n";
-        code << "                power_angle = 180 if offset_y > 0 else 0\n";
-        code << "        else:\n";
-        code << "            # Horizontal only: stem left if power is right, right if left\n";
-        code << "            if is_gnd:\n";
-        code << "                power_angle = 90 if offset_x > 0 else 270\n";
-        code << "            else:\n";
-        code << "                power_angle = 270 if offset_x > 0 else 90\n";
-    }
+    code << "    is_gnd = 'gnd' in power_name.lower() or 'vss' in power_name.lower()\n";
+    code << "    if abs(offset_x) < 0.01 and abs(offset_y) < 0.01:\n";
+    code << "        power_angle = 0  # No wire, use default orientation\n";
+    code << "    elif abs(offset_y) > 0.01:\n";
+    code << "        # Vertical or L-shaped: stem faces vertical direction of pin\n";
+    code << "        if is_gnd:\n";
+    code << "            power_angle = 0 if offset_y > 0 else 180\n";
+    code << "        else:\n";
+    code << "            power_angle = 180 if offset_y > 0 else 0\n";
+    code << "    else:\n";
+    code << "        # Horizontal only: stem faces horizontal direction of pin\n";
+    code << "        if is_gnd:\n";
+    code << "            power_angle = 90 if offset_x > 0 else 270\n";
+    code << "        else:\n";
+    code << "            power_angle = 270 if offset_x > 0 else 90\n";
     code << "\n";
     code << "    # Place the power symbol\n";
     code << "    power_pos = Vector2.from_xy_mm(power_x, power_y)\n";

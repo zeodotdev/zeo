@@ -332,7 +332,7 @@ img[src^="data:"] { cursor: pointer; }
      SIGN-IN OVERLAY
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="sign-in-overlay">
-    <div class="text-text-muted text-[14px]">Sign in to start using Zener</div>
+    <div class="text-text-muted text-[14px]">Sign in to start using Zeo</div>
     <button class="ctrl-btn primary text-[13px] px-6 py-2" id="sign-in-btn">Sign In</button>
 </div>
 
@@ -546,7 +546,7 @@ App.Chat = (function() {
     }
 
     function appendMessage(html) {
-        if (_debug) console.log('[ZENER] appendMessage len=' + html.length);
+        if (_debug) console.log('[ZEO] appendMessage len=' + html.length);
         var wrapper = document.querySelector('.content-wrapper');
         if (wrapper) {
             var temp = document.createElement('div');
@@ -586,7 +586,7 @@ App.Chat = (function() {
     }
 
     function updateToolResult(index, statusClass, statusText, bodyHtml) {
-        if (_debug) console.log('[ZENER] updateToolResult(' + index + ') status=' + statusText);
+        if (_debug) console.log('[ZEO] updateToolResult(' + index + ') status=' + statusText);
         var el = document.getElementById('tool-result-' + index);
         if (el) {
             _applyToolResultUpdate(el, statusClass, statusText, bodyHtml);
@@ -594,18 +594,18 @@ App.Chat = (function() {
         }
         // Element not yet in DOM — retry. This handles the case where
         // image chunk scripts from a previous tool delay DOM creation.
-        if (_debug) console.warn('[ZENER] updateToolResult(' + index + ') element not found, retrying');
+        if (_debug) console.warn('[ZEO] updateToolResult(' + index + ') element not found, retrying');
         var retryCount = 0;
         var retryInterval = setInterval(function() {
             retryCount++;
             var el = document.getElementById('tool-result-' + index);
             if (el) {
                 clearInterval(retryInterval);
-                if (_debug) console.log('[ZENER] updateToolResult(' + index + ') found after ' + retryCount + ' retries');
+                if (_debug) console.log('[ZEO] updateToolResult(' + index + ') found after ' + retryCount + ' retries');
                 _applyToolResultUpdate(el, statusClass, statusText, bodyHtml);
             } else if (retryCount >= 20) {
                 clearInterval(retryInterval);
-                console.warn('[ZENER] updateToolResult(' + index + ') gave up after 20 retries');
+                console.warn('[ZEO] updateToolResult(' + index + ') gave up after 20 retries');
             }
         }, 50);
     }
@@ -615,7 +615,7 @@ App.Chat = (function() {
     function toolImgBegin(index, prefix) { _toolImgBuf = prefix || ''; }
     function toolImgChunk(index, data) { _toolImgBuf += data; }
     function toolImgEnd(index) {
-        if (_debug) console.log('[ZENER] toolImgEnd(' + index + ') bufLen=' + _toolImgBuf.length);
+        if (_debug) console.log('[ZEO] toolImgEnd(' + index + ') bufLen=' + _toolImgBuf.length);
         // Capture and clear buffer synchronously, then defer DOM insertion.
         // The setTimeout(0) yields control back to WebKit's RunScriptAsync
         // queue so pending scripts (appendMessage, updateToolResult for
@@ -660,7 +660,7 @@ App.Chat = (function() {
                     var index = parts[2];
                     var content = document.querySelector('[data-toggle-type="' + type + '"][data-toggle-index="' + index + '"]');
                     var chevron = target.querySelector('.toggle-chevron');
-                    if (_debug) console.log('[ZENER] toggle ' + type + ':' + index + ' found=' + !!content);
+                    if (_debug) console.log('[ZEO] toggle ' + type + ':' + index + ' found=' + !!content);
                     if (content) {
                         var expanded = content.style.display === 'none' || content.style.display === '';
                         content.style.display = expanded ? 'block' : 'none';

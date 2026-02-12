@@ -38,7 +38,7 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 	m_renderingSizer->Add( m_rbAccelerated, 0, wxLEFT, 5 );
 
 	m_rbFallback = new wxRadioButton( this, wxID_ANY, _("Fallback Graphics"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_rbFallback->SetToolTip( _("Software graphics (for computers which do not support Zener's hardware acceleration requirements)") );
+	m_rbFallback->SetToolTip( _("Software graphics (for computers which do not support Zeo's hardware acceleration requirements)") );
 
 	m_renderingSizer->Add( m_rbFallback, 0, wxLEFT, 5 );
 
@@ -195,7 +195,7 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 	bUserInterfaceSizer->Add( bSizer14, 0, wxEXPAND, 5 );
 
 	m_disableCustomCursors = new wxCheckBox( this, wxID_ANY, _("Disable custom cursors"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_disableCustomCursors->SetToolTip( _("When enabled, Zener will use default system cursors instead of custom ones") );
+	m_disableCustomCursors->SetToolTip( _("When enabled, Zeo will use default system cursors instead of custom ones") );
 
 	bUserInterfaceSizer->Add( m_disableCustomCursors, 0, wxBOTTOM|wxLEFT|wxRIGHT, 5 );
 
@@ -238,7 +238,7 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 	bSizerToolbarSize->Add( m_rbIconSizeSmall, 0, wxALL, 5 );
 
 	m_rbIconSizeNormal = new wxRadioButton( this, wxID_ANY, _("Normal"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_rbIconSizeNormal->SetToolTip( _("Use the default Zener icon size in the toolbars") );
+	m_rbIconSizeNormal->SetToolTip( _("Use the default Zeo icon size in the toolbars") );
 
 	bSizerToolbarSize->Add( m_rbIconSizeNormal, 0, wxALL, 5 );
 

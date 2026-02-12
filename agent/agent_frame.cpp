@@ -3524,7 +3524,7 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
                 f.Write(
                     "(kicad_sch\n"
                     "  (version 20250114)\n"
-                    "  (generator \"zener_agent\")\n"
+                    "  (generator \"zeo_agent\")\n"
                     "  (generator_version \"1.0\")\n"
                     "  (uuid \"" + KIID().AsStdString() + "\")\n"
                     "  (paper \"A4\")\n"
@@ -3546,7 +3546,7 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
                 f.Write(
                     "(kicad_pcb\n"
                     "  (version 20250114)\n"
-                    "  (generator \"zener_agent\")\n"
+                    "  (generator \"zeo_agent\")\n"
                     "  (generator_version \"1.0\")\n"
                     "  (general\n"
                     "    (thickness 1.6)\n"

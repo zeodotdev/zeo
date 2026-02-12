@@ -402,7 +402,7 @@ void FileAttach::OpenFilePreview( const wxString& aBase64, const wxString& aFile
     wxString ext = fn.GetExt();
 
     wxString tempDir = wxStandardPaths::Get().GetTempDir();
-    wxString tempPath = wxFileName( tempDir, "zener_preview_" + fn.GetName(), ext ).GetFullPath();
+    wxString tempPath = wxFileName( tempDir, "zeo_preview_" + fn.GetName(), ext ).GetFullPath();
 
     wxFile file( tempPath, wxFile::write );
     if( !file.IsOpened() )

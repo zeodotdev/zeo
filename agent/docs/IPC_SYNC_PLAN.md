@@ -194,7 +194,7 @@ Added comprehensive logging to trace UUID flow during schematic loading. Run wit
 
 **To trace the issue:**
 ```bash
-WXTRACE=SCHEMATIC ./Zener
+WXTRACE=SCHEMATIC ./Zeo
 ```
 
 Then perform close/reopen cycle and examine logs to see where UUID mismatch occurs.

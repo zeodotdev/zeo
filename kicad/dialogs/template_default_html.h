@@ -1,10 +1,10 @@
 /*
- * Zener Project Template HTML defaults
+ * Zeo Project Template HTML defaults
  * Provides styled fallback pages when a template does not supply an info.html.
  */
 
-#ifndef ZENER_TEMPLATE_DEFAULT_HTML_H
-#define ZENER_TEMPLATE_DEFAULT_HTML_H
+#ifndef ZEO_TEMPLATE_DEFAULT_HTML_H
+#define ZEO_TEMPLATE_DEFAULT_HTML_H
 
 #include <wx/string.h>
 
@@ -19,7 +19,7 @@ inline wxString GetWelcomeHtml()
         "<head>"
         "<meta charset=\"UTF-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
-        "<title>Zener Project Template Selector</title>"
+        "<title>Zeo Project Template Selector</title>"
         "<style>"
         "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; margin: 0; padding: 24px; background: #1a1a1a; color: #ffffff; min-height: 100vh; box-sizing: border-box; }"
         ".container { max-width: 800px; margin: 0 auto; }"
@@ -50,7 +50,7 @@ inline wxString GetWelcomeHtml()
         "<body>"
         "<div class=\"container\">"
         "<div class=\"header\">"
-        "<div class=\"logo\">Zener</div>"
+        "<div class=\"logo\">Zeo</div>"
         "<div class=\"subtitle\">" + _( "Project Template Selector" ) + "</div>"
         "</div>"
         "<div class=\"welcome-card\">"
@@ -105,7 +105,7 @@ inline wxString GetTemplateInfoHtml( const wxString& aTemplateName )
         "<head>"
         "<meta charset=\"UTF-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
-        "<title>" + aTemplateName + " - Zener Template</title>"
+        "<title>" + aTemplateName + " - Zeo Template</title>"
         "<style>"
         "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; margin: 0; padding: 24px; background: #1a1a1a; color: #ffffff; min-height: 100vh; box-sizing: border-box; }"
         ".container { max-width: 700px; margin: 0 auto; }"
@@ -130,7 +130,7 @@ inline wxString GetTemplateInfoHtml( const wxString& aTemplateName )
         "<div class=\"cta\">"
         "<strong>" + _( "To use this template:" ) + "</strong>"
         "<div class=\"steps\">"
-        "<div class=\"step\"><h3>1. " + _( "Create the project" ) + "</h3><p>" + _( "Click OK below. Zener will create a new project folder populated with the contents of this template." ) + "</p></div>"
+        "<div class=\"step\"><h3>1. " + _( "Create the project" ) + "</h3><p>" + _( "Click OK below. Zeo will create a new project folder populated with the contents of this template." ) + "</p></div>"
         "<div class=\"step\"><h3>2. " + _( "Open schematic and PCB" ) + "</h3><p>" + _( "Use the Project Manager tree or launch Schematic and PCB editors to begin designing." ) + "</p></div>"
         "<div class=\"step\"><h3>3. " + _( "Review libraries & settings" ) + "</h3><p>" + _( "Confirm symbol/footprint libraries, design rules, and board stackup match your needs." ) + "</p></div>"
         "</div>"
@@ -152,7 +152,7 @@ inline wxString GetNoTemplatesHtml()
         "<head>"
         "<meta charset=\"UTF-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
-        "<title>No Templates - Zener</title>"
+        "<title>No Templates - Zeo</title>"
         "<style>"
         "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; margin: 0; padding: 24px; background: #1a1a1a; color: #ffffff; min-height: 100vh; box-sizing: border-box; }"
         ".container { max-width: 560px; margin: 0 auto; }"

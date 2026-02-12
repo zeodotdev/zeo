@@ -51,7 +51,7 @@ add_executable( terminal WIN32 MACOSX_BUNDLE
 if( APPLE )
     set_target_properties( terminal PROPERTIES
         MACOSX_BUNDLE_ICON_FILE terminal.icns
-        MACOSX_BUNDLE_GUI_IDENTIFIER org.zener.terminal
+        MACOSX_BUNDLE_GUI_IDENTIFIER org.zeo.terminal
         MACOSX_BUNDLE_NAME Terminal
         )
     

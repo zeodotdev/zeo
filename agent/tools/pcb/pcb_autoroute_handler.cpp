@@ -105,7 +105,7 @@ std::string PCB_AUTOROUTE_HANDLER::ExecuteAutoroute( const nlohmann::json& aInpu
 
     // Create temp directory for DSN/SES files
     std::string tempTemplate = ( wxFileName::GetTempDir() + wxFileName::GetPathSeparator()
-                                 + "zener_autoroute_XXXXXX" ).ToStdString();
+                                 + "zeo_autoroute_XXXXXX" ).ToStdString();
     std::vector<char> tempBuf( tempTemplate.begin(), tempTemplate.end() );
     tempBuf.push_back( '\0' );
 
@@ -526,7 +526,7 @@ void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
 
     // Create temp directory for DSN/SES files (on main thread)
     std::string tempTemplate = ( wxFileName::GetTempDir() + wxFileName::GetPathSeparator()
-                                 + "zener_autoroute_XXXXXX" ).ToStdString();
+                                 + "zeo_autoroute_XXXXXX" ).ToStdString();
     std::vector<char> tempBuf( tempTemplate.begin(), tempTemplate.end() );
     tempBuf.push_back( '\0' );
 

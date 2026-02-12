@@ -445,7 +445,7 @@ int SYMBOL_EDITOR_CONTROL::OpenWithTextEditor( const TOOL_EVENT& aEvent )
 
     if( textEditorName.IsEmpty() )
     {
-        wxMessageBox( _( "No text editor selected in Zener. Please choose one." ) );
+        wxMessageBox( _( "No text editor selected in Zeo. Please choose one." ) );
         return 0;
     }
 

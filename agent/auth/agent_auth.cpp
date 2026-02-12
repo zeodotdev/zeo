@@ -20,7 +20,7 @@ using json = nlohmann::json;
 static const size_t MAX_SESSION_FILE_SIZE = 1024 * 1024;  // 1MB safety limit
 
 AGENT_AUTH::AGENT_AUTH() :
-        m_authWebUrl( ZENER_BASE_URL + "/auth" ),
+        m_authWebUrl( ZEO_BASE_URL + "/auth" ),
         m_tokenExpiry( 0 )
 {
 }

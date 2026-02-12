@@ -825,7 +825,7 @@ std::string PCB_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "            drill = mm_to_nm(elem.get('drill', 0.4))\n";
     code << "            net = elem.get('net', '')\n";
     code << "            position = Vector2.from_xy(mm_to_nm(pos[0]), mm_to_nm(pos[1]))\n";
-    code << "            via = board.add_via(position=position, diameter=int(size), drill=int(drill), net=net if net else None)\n";
+    code << "            via = board.routing.add_via(position=position, diameter=int(size), drill=int(drill), net=net if net else None)\n";
     code << "            created.append({'element_type': 'via', 'position': pos, 'id': str(via.id.value)})\n";
     code << "        \n";
     code << "        elif elem_type == 'zone':\n";
@@ -1042,7 +1042,14 @@ std::string PCB_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
     code << "        \n";
     code << "        # Net update (tracks, vias, zones)\n";
     code << "        if 'net' in upd and hasattr(item, 'net'):\n";
-    code << "            item.net = Net(name=upd['net'])\n";
+    code << "            net_obj = Net()\n";
+    code << "            net_obj.name = upd['net']\n";
+    code << "            item.net = net_obj\n";
+    code << "            changed = True\n";
+    code << "        \n";
+    code << "        # Text/value update (text items)\n";
+    code << "        if 'text' in upd and hasattr(item, 'value'):\n";
+    code << "            item.value = upd['text']\n";
     code << "            changed = True\n";
     code << "        \n";
     code << "        if changed:\n";
@@ -1382,7 +1389,7 @@ std::string PCB_CRUD_HANDLER::GenerateRouteCode( const nlohmann::json& aInput ) 
         code << "                seg_pts = [Vector2.from_xy(int(p[0]), int(p[1])) for p in all_points[seg_start:vi+1]]\n";
         code << "                tracks = board.route_track(points=seg_pts, width=width_nm, layer=current_layer, net=from_net)\n";
         code << "                all_tracks.extend(tracks)\n";
-        code << "                via = board.add_via(position=Vector2.from_xy(int(all_points[vi][0]), int(all_points[vi][1])),\n";
+        code << "                via = board.routing.add_via(position=Vector2.from_xy(int(all_points[vi][0]), int(all_points[vi][1])),\n";
         code << "                                    diameter=mm_to_nm(0.8), drill=mm_to_nm(0.4), net=from_net)\n";
         code << "                all_vias.append(via)\n";
         code << "                if vi in layer_changes:\n";
@@ -1569,6 +1576,23 @@ std::string PCB_CRUD_HANDLER::GenerateExportCode( const nlohmann::json& aInput )
 
     code << "import os\n";
     code << "import json\n";
+    code << "import sys\n";
+    code << "\n";
+    code << "# Set KICAD_CLI path if not already set\n";
+    code << "if 'KICAD_CLI' not in os.environ:\n";
+    code << "    # Find kicad-cli relative to the running executable\n";
+    code << "    exe_dir = os.path.dirname(sys.executable)\n";
+    code << "    cli_path = os.path.join(exe_dir, 'kicad-cli')\n";
+    code << "    if not os.path.exists(cli_path):\n";
+    code << "        # Try macOS app bundle location\n";
+    code << "        for app_dir in ['/Applications/KiCad/KiCad.app/Contents/MacOS',\n";
+    code << "                        '/Applications/Zeo/Zeo.app/Contents/MacOS']:\n";
+    code << "            candidate = os.path.join(app_dir, 'kicad-cli')\n";
+    code << "            if os.path.exists(candidate):\n";
+    code << "                cli_path = candidate\n";
+    code << "                break\n";
+    code << "    if os.path.exists(cli_path):\n";
+    code << "        os.environ['KICAD_CLI'] = cli_path\n";
     code << "\n";
     code << "output_dir = '" << EscapePythonString( outputDir ) << "'\n";
     code << "os.makedirs(output_dir, exist_ok=True)\n";

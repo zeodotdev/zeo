@@ -110,8 +110,8 @@ if( APPLE )
         MACOSX_PACKAGE_LOCATION Resources
         )
     set( MACOSX_BUNDLE_ICON_FILE kicad.icns )
-    set( MACOSX_BUNDLE_GUI_IDENTIFIER org.zener.kicad )
-    set( MACOSX_BUNDLE_NAME Zener )
+    set( MACOSX_BUNDLE_GUI_IDENTIFIER org.zeo.kicad )
+    set( MACOSX_BUNDLE_NAME Zeo )
 endif()
 
 add_executable( kicad WIN32 MACOSX_BUNDLE
@@ -156,7 +156,7 @@ endif()
 if( APPLE )
     set_target_properties( kicad PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST ${PROJECT_BINARY_DIR}/kicad/Info.plist
-        OUTPUT_NAME Zener
+        OUTPUT_NAME Zeo
         )
     target_link_libraries( kicad
         nlohmann_json
@@ -250,7 +250,7 @@ if( APPLE )
         include( ${KICAD_CMAKE_MODULE_PATH}/InstallSteps/InstallMacOS.cmake )
 
         # Install the main bundle
-        install_runtime_deps( "${OSX_BUNDLE_INSTALL_BIN_DIR}/Zener"
+        install_runtime_deps( "${OSX_BUNDLE_INSTALL_BIN_DIR}/Zeo"
             ""
             ""
             )

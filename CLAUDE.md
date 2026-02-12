@@ -1,4 +1,4 @@
-# Zener
+# Zeo
 
 AI Agent extension for KiCad (open-source EDA software).
 
@@ -48,6 +48,6 @@ Ignore clang LSP diagnostic errors. The LSP cannot resolve CMake include paths, 
 
 ## Debugging
 
-Logs: `~/Library/Logs/Zener/agent-<timestamp>.log` (one per session)
+Logs: `~/Library/Logs/Zeo/agent-<timestamp>.log` (one per session)
 
-For terminal output: `WXTRACE=1 ./Zener`
+For terminal output: `WXTRACE=1 ./Zeo`

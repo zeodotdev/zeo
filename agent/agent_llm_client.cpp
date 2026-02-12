@@ -8,7 +8,7 @@
 
 using json = nlohmann::json;
 
-static const std::string ZENER_API_URL = ZENER_BASE_URL + "/api/llm/messages";
+static const std::string ZEO_API_URL = ZEO_BASE_URL + "/api/llm/messages";
 
 AGENT_LLM_CLIENT::AGENT_LLM_CLIENT( AGENT_FRAME* aParent ) :
         m_parent( aParent ),
@@ -168,8 +168,8 @@ void* LLM_REQUEST_THREAD::Entry()
         return nullptr;
     }
 
-    // Set up curl options - use zener.so proxy
-    curl_easy_setopt( curl, CURLOPT_URL, ZENER_API_URL.c_str() );
+    // Set up curl options - use zeo proxy
+    curl_easy_setopt( curl, CURLOPT_URL, ZEO_API_URL.c_str() );
     curl_easy_setopt( curl, CURLOPT_POST, 1L );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDS, requestBodyStr.c_str() );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDSIZE, requestBodyStr.size() );

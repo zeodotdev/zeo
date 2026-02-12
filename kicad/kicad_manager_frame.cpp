@@ -283,9 +283,9 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
     }
 
     if( ADVANCED_CFG::GetCfg().m_HideVersionFromTitle )
-        SetTitle( wxT( "Zener" ) );
+        SetTitle( wxT( "Zeo" ) );
     else
-        SetTitle( wxString( "Zener " ) + GetMajorMinorVersion() );
+        SetTitle( wxString( "Zeo " ) + GetMajorMinorVersion() );
 
     // Do not let the messages window have initial focus
     m_leftWin->SetFocus();
@@ -1173,9 +1173,9 @@ void KICAD_MANAGER_FRAME::ProjectChanged()
     }
 
     if( ADVANCED_CFG::GetCfg().m_HideVersionFromTitle )
-        title += wxT( " \u2014 " ) + wxString( wxS( "Zener" ) );
+        title += wxT( " \u2014 " ) + wxString( wxS( "Zeo" ) );
     else
-        title += wxT( " \u2014 " ) + wxString( wxS( "Zener " ) ) + GetMajorMinorVersion();
+        title += wxT( " \u2014 " ) + wxString( wxS( "Zeo " ) ) + GetMajorMinorVersion();
 
     SetTitle( title );
 

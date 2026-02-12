@@ -67,7 +67,7 @@ bool KIPLATFORM::APP::Init()
     wxLog::SetLogLevel( wxLOG_Trace );
 
     // Always log to file
-    wxString logDir = wxFileName::GetHomeDir() + wxS( "/Library/Logs/Zener" );
+    wxString logDir = wxFileName::GetHomeDir() + wxS( "/Library/Logs/Zeo" );
 
     if( !wxDir::Exists( logDir ) )
         wxFileName::Mkdir( logDir, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
@@ -95,7 +95,7 @@ bool KIPLATFORM::APP::Init()
     // Enable the "Agent" trace mask so wxLogTrace("Agent", ...) calls produce output
     wxLog::AddTraceMask( wxS( "Agent" ) );
 
-    wxLogInfo( wxS( "Zener session started, logging to %s" ), logPath );
+    wxLogInfo( wxS( "Zeo session started, logging to %s" ), logPath );
 
     // Clean up old log files: remove empty files and cap at 20
     wxDir logDirObj( logDir );

@@ -19,7 +19,7 @@
     <key>CFBundleExecutable</key>                   <string>pl_editor</string>
     <key>CFBundleGetInfoString</key>                <string></string>
     <key>CFBundleIconFile</key>                     <string>pagelayout_editor.icns</string>
-    <key>CFBundleIdentifier</key>                   <string>org.zener.pl_editor</string>
+    <key>CFBundleIdentifier</key>                   <string>org.zeo.pl_editor</string>
     <key>CFBundleInfoDictionaryVersion</key>        <string>6.0</string>
     <key>CFBundleLongVersionString</key>            <string>@KICAD_VERSION_FULL@</string>
     <key>CFBundleName</key>                         <string>Drawing Sheet Editor</string>
@@ -29,7 +29,7 @@
     <key>CFBundleVersion</key>                      <string>@KICAD_VERSION_FULL@</string>
     <key>CSResourcesFileMapped</key>                <true/>
     <key>LSRequiresCarbon</key>                     <true/>
-    <key>NSHumanReadableCopyright</key>             <string>Copyright The Zener Developers</string>
+    <key>NSHumanReadableCopyright</key>             <string>Copyright The Zeo Developers</string>
     <key>NSHighResolutionCapable</key>              <true/>
 </dict>
 </plist>

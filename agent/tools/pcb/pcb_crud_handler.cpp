@@ -212,6 +212,45 @@ std::string PCB_CRUD_HANDLER::MmToNm( double aMm ) const
 }
 
 
+std::string PCB_CRUD_HANDLER::DumpAsPython( const nlohmann::json& aJson ) const
+{
+    std::string result = aJson.dump();
+
+    // Replace JSON boolean/null literals with Python equivalents.
+    // We scan for ": true", ": false", ": null" patterns that appear as JSON values
+    // (followed by , } ] or end-of-string) to avoid corrupting string contents.
+    auto replaceJsonLiteral = [&result]( const std::string& jsonVal,
+                                          const std::string& pyVal )
+    {
+        std::string search = ": " + jsonVal;
+        size_t pos = 0;
+
+        while( ( pos = result.find( search, pos ) ) != std::string::npos )
+        {
+            size_t end = pos + search.size();
+
+            if( end >= result.size() || result[end] == ',' || result[end] == '}'
+                || result[end] == ']' )
+            {
+                std::string replacement = ": " + pyVal;
+                result.replace( pos, search.size(), replacement );
+                pos += replacement.size();
+            }
+            else
+            {
+                pos += search.size();
+            }
+        }
+    };
+
+    replaceJsonLiteral( "true", "True" );
+    replaceJsonLiteral( "false", "False" );
+    replaceJsonLiteral( "null", "None" );
+
+    return result;
+}
+
+
 std::string PCB_CRUD_HANDLER::GenerateGetSummaryCode( const nlohmann::json& aInput ) const
 {
     std::ostringstream code;
@@ -262,7 +301,7 @@ std::string PCB_CRUD_HANDLER::GenerateGetSummaryCode( const nlohmann::json& aInp
     code << "# Get layers\n";
     code << "try:\n";
     code << "    layers = board.get_enabled_layers()\n";
-    code << "    summary['layers'] = [BoardLayer.Name(l) for l in layers] if layers else []\n";
+    code << "    summary['layers'] = [BoardLayer.Name(l).replace('BL_', '').replace('_', '.') for l in layers] if layers else []\n";
     code << "except:\n";
     code << "    pass\n";
     code << "\n";
@@ -321,7 +360,7 @@ std::string PCB_CRUD_HANDLER::GenerateReadSectionCode( const nlohmann::json& aIn
         code << "        'start': [t.start.x / 1000000, t.start.y / 1000000],\n";
         code << "        'end': [t.end.x / 1000000, t.end.y / 1000000],\n";
         code << "        'width': t.width / 1000000,\n";
-        code << "        'layer': BoardLayer.Name(t.layer),\n";
+        code << "        'layer': BoardLayer.Name(t.layer).replace('BL_', '').replace('_', '.'),\n";
         code << "        'net': t.net.name if hasattr(t, 'net') else ''\n";
         code << "    })\n";
         code << "print(json.dumps({'count': len(tracks), 'tracks': result}, indent=2))\n";
@@ -350,7 +389,7 @@ std::string PCB_CRUD_HANDLER::GenerateReadSectionCode( const nlohmann::json& aIn
         code << "    result.append({\n";
         code << "        'id': z.id.value,\n";
         code << "        'net': z.net.name if hasattr(z, 'net') else '',\n";
-        code << "        'layers': [BoardLayer.Name(l) for l in z.layers] if hasattr(z, 'layers') else [],\n";
+        code << "        'layers': [BoardLayer.Name(l).replace('BL_', '').replace('_', '.') for l in z.layers] if hasattr(z, 'layers') else [],\n";
         code << "        'priority': getattr(z, 'priority', 0)\n";
         code << "    })\n";
         code << "print(json.dumps(result, indent=2))\n";
@@ -366,7 +405,7 @@ std::string PCB_CRUD_HANDLER::GenerateReadSectionCode( const nlohmann::json& aIn
     {
         code << "# Read layers\n";
         code << "layers = board.get_enabled_layers()\n";
-        code << "result = [{'name': BoardLayer.Name(l)} for l in layers] if layers else []\n";
+        code << "result = [{'name': BoardLayer.Name(l).replace('BL_', '').replace('_', '.')} for l in layers] if layers else []\n";
         code << "print(json.dumps(result, indent=2))\n";
     }
     else if( section == "stackup" )
@@ -378,6 +417,36 @@ std::string PCB_CRUD_HANDLER::GenerateReadSectionCode( const nlohmann::json& aIn
         code << "    print(json.dumps(result, indent=2))\n";
         code << "except Exception as e:\n";
         code << "    print(json.dumps({'error': str(e)}))\n";
+    }
+    else if( section == "drawings" )
+    {
+        code << "# Read drawings (shapes + text)\n";
+        code << "shapes = board.get_shapes()\n";
+        code << "texts = board.get_text()\n";
+        code << "result = {'shapes': [], 'text': []}\n";
+        code << "for s in shapes:\n";
+        code << "    shape_info = {'id': s.id.value, 'layer': BoardLayer.Name(s.layer).replace('BL_', '').replace('_', '.')}\n";
+        code << "    if hasattr(s, 'start') and hasattr(s, 'end'):\n";
+        code << "        shape_info['type'] = 'segment'\n";
+        code << "        shape_info['start'] = [s.start.x / 1000000, s.start.y / 1000000]\n";
+        code << "        shape_info['end'] = [s.end.x / 1000000, s.end.y / 1000000]\n";
+        code << "    elif hasattr(s, 'center') and hasattr(s, 'radius_point'):\n";
+        code << "        shape_info['type'] = 'circle'\n";
+        code << "        shape_info['center'] = [s.center.x / 1000000, s.center.y / 1000000]\n";
+        code << "    elif hasattr(s, 'top_left') and hasattr(s, 'bottom_right'):\n";
+        code << "        shape_info['type'] = 'rectangle'\n";
+        code << "        shape_info['top_left'] = [s.top_left.x / 1000000, s.top_left.y / 1000000]\n";
+        code << "        shape_info['bottom_right'] = [s.bottom_right.x / 1000000, s.bottom_right.y / 1000000]\n";
+        code << "    result['shapes'].append(shape_info)\n";
+        code << "\n";
+        code << "for t in texts:\n";
+        code << "    result['text'].append({\n";
+        code << "        'id': t.id.value,\n";
+        code << "        'text': t.value if hasattr(t, 'value') else '',\n";
+        code << "        'position': [t.position.x / 1000000, t.position.y / 1000000],\n";
+        code << "        'layer': BoardLayer.Name(t.layer).replace('BL_', '').replace('_', '.')\n";
+        code << "    })\n";
+        code << "print(json.dumps(result, indent=2))\n";
     }
     else
     {
@@ -393,22 +462,41 @@ std::string PCB_CRUD_HANDLER::GenerateRunDrcCode( const nlohmann::json& aInput )
 {
     std::ostringstream code;
 
-    // NOTE: pcb_run_drc is currently disabled due to a crash bug in KiCad's IPC API.
-    // The internal DRC_TOOL::RunTests() expects a non-null progress reporter but the
-    // API handler passes nullptr, causing a segfault at drc_tool.cpp:205.
-    // This needs to be fixed in KiCad's api_handler_pcb.cpp before we can enable this.
+    bool refillZones = aInput.value( "refill_zones", true );
+    std::string outputFormat = aInput.value( "output_format", "summary" );
 
     code << "import json\n";
     code << "\n";
-    code << "# DRC via IPC is temporarily disabled due to a KiCad API bug\n";
-    code << "# The internal API crashes when called without a progress reporter\n";
-    code << "result = {\n";
-    code << "    'status': 'error',\n";
-    code << "    'message': 'pcb_run_drc is temporarily disabled due to a crash bug in KiCad IPC API. '\n";
-    code << "               'Run DRC manually from the PCB editor: Inspect > Design Rules Checker.',\n";
-    code << "    'workaround': 'Use the PCB editor UI to run DRC: Inspect menu > Design Rules Checker'\n";
-    code << "}\n";
-    code << "print(json.dumps(result, indent=2))\n";
+    code << "try:\n";
+    code << "    errors, warnings, exclusions = board.drc.run(\n";
+    code << "        refill_zones=" << ( refillZones ? "True" : "False" ) << ",\n";
+    code << "        report_all_track_errors=False,\n";
+    code << "        test_footprints=False\n";
+    code << "    )\n";
+    code << "    result = {\n";
+    code << "        'status': 'success',\n";
+    code << "        'error_count': errors,\n";
+    code << "        'warning_count': warnings,\n";
+    code << "        'exclusion_count': exclusions\n";
+    code << "    }\n";
+
+    if( outputFormat == "detailed" || outputFormat == "by_type" )
+    {
+        code << "    violations = board.drc.get_violations()\n";
+        code << "    viol_list = []\n";
+        code << "    for v in violations:\n";
+        code << "        viol_list.append({\n";
+        code << "            'error_type': v.error_type,\n";
+        code << "            'message': v.message,\n";
+        code << "            'severity': v.severity,\n";
+        code << "            'position': [v.position.x / 1000000, v.position.y / 1000000] if v.position else None\n";
+        code << "        })\n";
+        code << "    result['violations'] = viol_list\n";
+    }
+
+    code << "    print(json.dumps(result, indent=2))\n";
+    code << "except Exception as e:\n";
+    code << "    print(json.dumps({'status': 'error', 'message': str(e)}, indent=2))\n";
 
     return code.str();
 }
@@ -511,28 +599,39 @@ std::string PCB_CRUD_HANDLER::GenerateSetOutlineCode( const nlohmann::json& aInp
         double width = aInput.value( "width", 100.0 );
         double height = aInput.value( "height", 80.0 );
         double radius = aInput.value( "corner_radius", 5.0 );
+        double originX = 0, originY = 0;
+        if( aInput.contains( "origin" ) && aInput["origin"].is_array() && aInput["origin"].size() >= 2 )
+        {
+            originX = aInput["origin"][0].get<double>();
+            originY = aInput["origin"][1].get<double>();
+        }
 
-        code << "# Create rounded rectangle outline on Edge.Cuts layer\n";
-        code << "# Note: Currently creates straight segments only (arc corners require additional work)\n";
-        code << "width_nm = " << MmToNm( width ) << "\n";
-        code << "height_nm = " << MmToNm( height ) << "\n";
-        code << "radius_nm = " << MmToNm( radius ) << "\n";
+        code << "import math\n";
+        code << "# Create rounded rectangle outline with arc corners\n";
+        code << "w = " << MmToNm( width ) << "\n";
+        code << "h = " << MmToNm( height ) << "\n";
+        code << "r = " << MmToNm( radius ) << "\n";
+        code << "ox = " << MmToNm( originX ) << "\n";
+        code << "oy = " << MmToNm( originY ) << "\n";
+        code << "n = 8  # points per corner arc\n";
+        code << "points = []\n";
+        code << "# Four corners: BR, TR, TL, BL (clockwise from bottom-right)\n";
+        code << "corners = [(ox+w-r, oy+h-r, 0), (ox+w-r, oy+r, 270), (ox+r, oy+r, 180), (ox+r, oy+h-r, 90)]\n";
+        code << "for cx, cy, start_deg in corners:\n";
+        code << "    for i in range(n):\n";
+        code << "        a = math.radians(start_deg + 90.0 * i / n)\n";
+        code << "        points.append((int(cx + r * math.cos(a)), int(cy + r * math.sin(a))))\n";
         code << "\n";
-        code << "corners = [\n";
-        code << "    (0, 0),\n";
-        code << "    (width_nm, 0),\n";
-        code << "    (width_nm, height_nm),\n";
-        code << "    (0, height_nm)\n";
-        code << "]\n";
         code << "segments = []\n";
-        code << "for i in range(4):\n";
+        code << "for i in range(len(points)):\n";
         code << "    seg = BoardSegment()\n";
         code << "    seg.layer = BoardLayer.BL_Edge_Cuts\n";
-        code << "    seg.start = Vector2.from_xy(corners[i][0], corners[i][1])\n";
-        code << "    seg.end = Vector2.from_xy(corners[(i+1) % 4][0], corners[(i+1) % 4][1])\n";
+        code << "    seg.start = Vector2.from_xy(points[i][0], points[i][1])\n";
+        code << "    seg.end = Vector2.from_xy(points[(i+1) % len(points)][0], points[(i+1) % len(points)][1])\n";
         code << "    segments.append(seg)\n";
         code << "board.create_items(segments)\n";
-        code << "print(json.dumps({'status': 'success', 'message': f'Created outline: " << width << "mm x " << height << "mm (corner radius not yet supported)'}))\n";
+        code << "print(json.dumps({'status': 'success', 'message': 'Created rounded rectangle: "
+             << width << "mm x " << height << "mm, corner radius " << radius << "mm'}))\n";
     }
 
     return code.str();
@@ -593,7 +692,7 @@ std::string PCB_CRUD_HANDLER::GeneratePlaceCode( const nlohmann::json& aInput ) 
     code << "from kipy.geometry import Vector2, Angle\n";
     code << "\n";
     code << "# Batch footprint placement\n";
-    code << "placements = " << aInput["placements"].dump() << "\n";
+    code << "placements = " << DumpAsPython( aInput["placements"] ) << "\n";
     code << "\n";
     code << "# Get all footprints and build ref->footprint map\n";
     code << "all_fps = board.get_footprints()\n";
@@ -680,11 +779,12 @@ std::string PCB_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     }
 
     code << "import json\n";
-    code << "from kipy.geometry import Vector2\n";
-    code << "from kipy.board_types import Track, Via, Zone, BoardSegment, BoardCircle, BoardRectangle, BoardText\n";
+    code << "import math\n";
+    code << "from kipy.geometry import Vector2, PolygonWithHoles, PolyLineNode\n";
+    code << "from kipy.board_types import Track, Via, Zone, BoardSegment, BoardCircle, BoardRectangle, BoardText, BoardArc\n";
     code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
     code << "\n";
-    code << "elements = " << aInput["elements"].dump() << "\n";
+    code << "elements = " << DumpAsPython( aInput["elements"] ) << "\n";
     code << "created = []\n";
     code << "errors = []\n";
     code << "\n";
@@ -725,7 +825,7 @@ std::string PCB_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "            drill = mm_to_nm(elem.get('drill', 0.4))\n";
     code << "            net = elem.get('net', '')\n";
     code << "            position = Vector2.from_xy(mm_to_nm(pos[0]), mm_to_nm(pos[1]))\n";
-    code << "            via = board.add_via(position=position, diameter=size, drill=drill, net=net if net else None)\n";
+    code << "            via = board.add_via(position=position, diameter=int(size), drill=int(drill), net=net if net else None)\n";
     code << "            created.append({'element_type': 'via', 'position': pos, 'id': str(via.id.value)})\n";
     code << "        \n";
     code << "        elif elem_type == 'zone':\n";
@@ -734,8 +834,11 @@ std::string PCB_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "            net = elem.get('net', '')\n";
     code << "            priority = elem.get('priority', 0)\n";
     code << "            outline_pts = elem.get('outline', [])\n";
-    code << "            outline = [Vector2.from_xy(mm_to_nm(p[0]), mm_to_nm(p[1])) for p in outline_pts]\n";
-    code << "            zone = board.add_zone(outline=outline, layers=[layer], net=net if net else None, priority=priority)\n";
+    code << "            poly = PolygonWithHoles()\n";
+    code << "            for pt in outline_pts:\n";
+    code << "                poly.outline.append(PolyLineNode.from_xy(mm_to_nm(pt[0]), mm_to_nm(pt[1])))\n";
+    code << "            poly.outline.closed = True\n";
+    code << "            zone = board.add_zone(outline=poly, layers=[layer], net=net if net else None, priority=priority)\n";
     code << "            created.append({'element_type': 'zone', 'layer': layer_name, 'id': str(zone.id.value)})\n";
     code << "        \n";
     code << "        elif elem_type == 'line':\n";
@@ -785,6 +888,40 @@ std::string PCB_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "            result = board.create_items([txt])\n";
     code << "            created.append({'element_type': 'text', 'text': text_content, 'id': str(result[0].id.value) if result else ''})\n";
     code << "        \n";
+    code << "        elif elem_type == 'keepout':\n";
+    code << "            layer_name = elem.get('layer', 'F.Cu')\n";
+    code << "            layer = layer_map.get(layer_name, BoardLayer.BL_F_Cu)\n";
+    code << "            outline_pts = elem.get('outline', [])\n";
+    code << "            poly = PolygonWithHoles()\n";
+    code << "            for pt in outline_pts:\n";
+    code << "                poly.outline.append(PolyLineNode.from_xy(mm_to_nm(pt[0]), mm_to_nm(pt[1])))\n";
+    code << "            poly.outline.closed = True\n";
+    code << "            zone = board.add_zone(outline=poly, layers=[layer])\n";
+    code << "            zone.is_keepout = True\n";
+    code << "            zone.keepout_copper = elem.get('no_copper', True)\n";
+    code << "            zone.keepout_vias = elem.get('no_vias', True)\n";
+    code << "            zone.keepout_tracks = elem.get('no_tracks', True)\n";
+    code << "            board.update_items([zone])\n";
+    code << "            created.append({'element_type': 'keepout', 'layer': layer_name, 'id': str(zone.id.value)})\n";
+    code << "        \n";
+    code << "        elif elem_type == 'arc':\n";
+    code << "            layer_name = elem.get('layer', 'F.SilkS')\n";
+    code << "            layer = layer_map.get(layer_name, BoardLayer.BL_F_SilkS)\n";
+    code << "            center = elem.get('center', [0, 0])\n";
+    code << "            radius = elem.get('radius', 5.0)\n";
+    code << "            start_angle = elem.get('start_angle', 0)\n";
+    code << "            end_angle = elem.get('end_angle', 90)\n";
+    code << "            arc_obj = BoardArc()\n";
+    code << "            arc_obj.layer = layer\n";
+    code << "            sa = math.radians(start_angle)\n";
+    code << "            ea = math.radians(end_angle)\n";
+    code << "            ma = (sa + ea) / 2\n";
+    code << "            arc_obj.start = Vector2.from_xy(mm_to_nm(center[0] + radius * math.cos(sa)), mm_to_nm(center[1] + radius * math.sin(sa)))\n";
+    code << "            arc_obj.mid = Vector2.from_xy(mm_to_nm(center[0] + radius * math.cos(ma)), mm_to_nm(center[1] + radius * math.sin(ma)))\n";
+    code << "            arc_obj.end = Vector2.from_xy(mm_to_nm(center[0] + radius * math.cos(ea)), mm_to_nm(center[1] + radius * math.sin(ea)))\n";
+    code << "            result = board.create_items([arc_obj])\n";
+    code << "            created.append({'element_type': 'arc', 'layer': layer_name, 'id': str(result[0].id.value) if result else ''})\n";
+    code << "        \n";
     code << "        else:\n";
     code << "            errors.append({'index': idx, 'error': f'Unknown element_type: {elem_type}'})\n";
     code << "    \n";
@@ -814,7 +951,7 @@ std::string PCB_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
     code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
     code << "from kipy.board_types import Net\n";
     code << "\n";
-    code << "updates = " << aInput["updates"].dump() << "\n";
+    code << "updates = " << DumpAsPython( aInput["updates"] ) << "\n";
     code << "\n";
     code << "def mm_to_nm(mm):\n";
     code << "    return int(mm * 1000000)\n";
@@ -833,6 +970,21 @@ std::string PCB_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
     code << "    if ref:\n";
     code << "        ref_to_fp[ref] = fp\n";
     code << "\n";
+    code << "# Build id->item map for UUID lookups\n";
+    code << "id_to_item = {}\n";
+    code << "for fp in all_fps:\n";
+    code << "    id_to_item[str(fp.id.value)] = ('footprint', fp)\n";
+    code << "for item in board.get_tracks():\n";
+    code << "    id_to_item[str(item.id.value)] = ('track', item)\n";
+    code << "for item in board.get_vias():\n";
+    code << "    id_to_item[str(item.id.value)] = ('via', item)\n";
+    code << "for item in board.get_shapes():\n";
+    code << "    id_to_item[str(item.id.value)] = ('shape', item)\n";
+    code << "for item in board.get_text():\n";
+    code << "    id_to_item[str(item.id.value)] = ('text', item)\n";
+    code << "for item in board.get_zones():\n";
+    code << "    id_to_item[str(item.id.value)] = ('zone', item)\n";
+    code << "\n";
     code << "updated = []\n";
     code << "not_found = []\n";
     code << "errors = []\n";
@@ -846,12 +998,14 @@ std::string PCB_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
     code << "    item = None\n";
     code << "    is_footprint = False\n";
     code << "    \n";
-    code << "    # Try as reference first (footprints)\n";
+    code << "    # Try as footprint reference first\n";
     code << "    if target in ref_to_fp:\n";
     code << "        item = ref_to_fp[target]\n";
     code << "        is_footprint = True\n";
-    code << "    # For UUIDs, we'd need to search all item types\n";
-    code << "    # This is currently only supported for footprints\n";
+    code << "    # Then try as UUID\n";
+    code << "    elif target in id_to_item:\n";
+    code << "        item_type, item = id_to_item[target]\n";
+    code << "        is_footprint = (item_type == 'footprint')\n";
     code << "    \n";
     code << "    if not item:\n";
     code << "        not_found.append(target)\n";
@@ -870,7 +1024,7 @@ std::string PCB_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
     code << "            item.orientation = Angle.from_degrees(upd['angle'])\n";
     code << "            changed = True\n";
     code << "        \n";
-    code << "        # Layer update (flip for footprints)\n";
+    code << "        # Layer update\n";
     code << "        if 'layer' in upd:\n";
     code << "            layer_name = upd['layer']\n";
     code << "            item.layer = layer_map.get(layer_name, BoardLayer.BL_F_Cu)\n";
@@ -879,6 +1033,16 @@ std::string PCB_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
     code << "        # Locked update\n";
     code << "        if 'locked' in upd:\n";
     code << "            item.locked = upd['locked']\n";
+    code << "            changed = True\n";
+    code << "        \n";
+    code << "        # Width update (tracks, vias)\n";
+    code << "        if 'width' in upd and hasattr(item, 'width'):\n";
+    code << "            item.width = mm_to_nm(upd['width'])\n";
+    code << "            changed = True\n";
+    code << "        \n";
+    code << "        # Net update (tracks, vias, zones)\n";
+    code << "        if 'net' in upd and hasattr(item, 'net'):\n";
+    code << "            item.net = Net(name=upd['net'])\n";
     code << "            changed = True\n";
     code << "        \n";
     code << "        if changed:\n";
@@ -906,7 +1070,7 @@ std::string PCB_CRUD_HANDLER::GenerateDeleteBatchCode( const nlohmann::json& aIn
     // Handle targets array (refs or UUIDs)
     if( aInput.contains( "targets" ) && aInput["targets"].is_array() )
     {
-        code << "targets = " << aInput["targets"].dump() << "\n";
+        code << "targets = " << DumpAsPython( aInput["targets"] ) << "\n";
         code << "\n";
         code << "# Build ref->footprint map for reference lookups\n";
         code << "all_fps = board.get_footprints()\n";
@@ -1139,6 +1303,8 @@ std::string PCB_CRUD_HANDLER::GenerateRouteCode( const nlohmann::json& aInput ) 
     std::string toPadNum = toPad.value( "pad", "" );
     double width = aInput.value( "width", 0.25 );
     std::string layer = aInput.value( "layer", "" );
+    bool hasWaypoints = aInput.contains( "waypoints" ) && aInput["waypoints"].is_array()
+                        && !aInput["waypoints"].empty();
 
     code << "import json\n";
     code << "from kipy.geometry import Vector2\n";
@@ -1188,26 +1354,79 @@ std::string PCB_CRUD_HANDLER::GenerateRouteCode( const nlohmann::json& aInput ) 
     code << "    elif not to_pos:\n";
     code << "        print(json.dumps({'status': 'error', 'message': f'Pad {to_pad_num} not found on " << EscapePythonString( toRef ) << "'}))\n";
     code << "    else:\n";
-    code << "        # Create track using board.route_track\n";
-    code << "        points = [\n";
-    code << "            Vector2.from_xy(int(from_pos[0]), int(from_pos[1])),\n";
-    code << "            Vector2.from_xy(int(to_pos[0]), int(to_pos[1]))\n";
-    code << "        ]\n";
-    code << "        tracks = board.route_track(points=points, width=width_nm, layer=route_layer, net=from_net)\n";
+
+    if( hasWaypoints )
+    {
+        code << "        # Parse waypoints for multi-segment routing\n";
+        code << "        waypoints_input = " << DumpAsPython( aInput["waypoints"] ) << "\n";
+        code << "        all_points = [from_pos]\n";
+        code << "        via_indices = []\n";
+        code << "        layer_changes = {}\n";
+        code << "        \n";
+        code << "        for i, wp in enumerate(waypoints_input):\n";
+        code << "            wp_pos = (mm_to_nm(wp['position'][0]), mm_to_nm(wp['position'][1]))\n";
+        code << "            all_points.append(wp_pos)\n";
+        code << "            if wp.get('via', False):\n";
+        code << "                via_indices.append(len(all_points) - 1)\n";
+        code << "                if 'layer' in wp:\n";
+        code << "                    layer_changes[len(all_points) - 1] = wp['layer']\n";
+        code << "        \n";
+        code << "        all_points.append(to_pos)\n";
+        code << "        all_tracks = []\n";
+        code << "        all_vias = []\n";
+        code << "        \n";
+        code << "        if via_indices:\n";
+        code << "            current_layer = route_layer\n";
+        code << "            seg_start = 0\n";
+        code << "            for vi in via_indices:\n";
+        code << "                seg_pts = [Vector2.from_xy(int(p[0]), int(p[1])) for p in all_points[seg_start:vi+1]]\n";
+        code << "                tracks = board.route_track(points=seg_pts, width=width_nm, layer=current_layer, net=from_net)\n";
+        code << "                all_tracks.extend(tracks)\n";
+        code << "                via = board.add_via(position=Vector2.from_xy(int(all_points[vi][0]), int(all_points[vi][1])),\n";
+        code << "                                    diameter=mm_to_nm(0.8), drill=mm_to_nm(0.4), net=from_net)\n";
+        code << "                all_vias.append(via)\n";
+        code << "                if vi in layer_changes:\n";
+        code << "                    current_layer = layer_map.get(layer_changes[vi], current_layer)\n";
+        code << "                seg_start = vi\n";
+        code << "            if seg_start < len(all_points) - 1:\n";
+        code << "                seg_pts = [Vector2.from_xy(int(p[0]), int(p[1])) for p in all_points[seg_start:]]\n";
+        code << "                tracks = board.route_track(points=seg_pts, width=width_nm, layer=current_layer, net=from_net)\n";
+        code << "                all_tracks.extend(tracks)\n";
+        code << "        else:\n";
+        code << "            pts = [Vector2.from_xy(int(p[0]), int(p[1])) for p in all_points]\n";
+        code << "            all_tracks = board.route_track(points=pts, width=width_nm, layer=route_layer, net=from_net)\n";
+    }
+    else
+    {
+        code << "        # Simple two-point route\n";
+        code << "        points = [\n";
+        code << "            Vector2.from_xy(int(from_pos[0]), int(from_pos[1])),\n";
+        code << "            Vector2.from_xy(int(to_pos[0]), int(to_pos[1]))\n";
+        code << "        ]\n";
+        code << "        all_tracks = board.route_track(points=points, width=width_nm, layer=route_layer, net=from_net)\n";
+        code << "        all_vias = []\n";
+    }
+
     code << "        \n";
     code << "        track_info = []\n";
-    code << "        for t in tracks:\n";
+    code << "        for t in all_tracks:\n";
     code << "            track_info.append({\n";
     code << "                'id': str(t.id.value),\n";
     code << "                'layer': layer_name,\n";
     code << "                'from': [t.start.x / 1000000, t.start.y / 1000000],\n";
     code << "                'to': [t.end.x / 1000000, t.end.y / 1000000]\n";
     code << "            })\n";
+    code << "        via_info = []\n";
+    code << "        for v in all_vias:\n";
+    code << "            via_info.append({\n";
+    code << "                'id': str(v.id.value),\n";
+    code << "                'position': [v.position.x / 1000000, v.position.y / 1000000]\n";
+    code << "            })\n";
     code << "        \n";
     code << "        print(json.dumps({\n";
     code << "            'status': 'success',\n";
     code << "            'tracks': track_info,\n";
-    code << "            'vias': []\n";
+    code << "            'vias': via_info\n";
     code << "        }, indent=2))\n";
 
     return code.str();
@@ -1343,7 +1562,8 @@ std::string PCB_CRUD_HANDLER::GenerateExportCode( const nlohmann::json& aInput )
 
     if( outputDir.empty() )
     {
-        code << "print('Error: output_dir is required')\n";
+        code << "import json\n";
+        code << "print(json.dumps({'status': 'error', 'message': 'output_dir is required'}))\n";
         return code.str();
     }
 
@@ -1356,35 +1576,42 @@ std::string PCB_CRUD_HANDLER::GenerateExportCode( const nlohmann::json& aInput )
 
     if( format == "gerber" )
     {
-        code << "# Export Gerber files\n";
         code << "try:\n";
-        code << "    # Note: Export API may vary - this is a placeholder\n";
-        code << "    # Real implementation would use board.export_gerber() or similar\n";
-        code << "    print(f'Gerber export to {output_dir} - API pending implementation')\n";
-        code << "    print('Use kicad-cli for production Gerber export')\n";
+        code << "    files = board.export.generate_gerbers(output_dir)\n";
+        code << "    print(json.dumps({'status': 'success', 'format': 'gerber', 'files': files}, indent=2))\n";
         code << "except Exception as e:\n";
-        code << "    print(f'Export error: {e}')\n";
+        code << "    print(json.dumps({'status': 'error', 'message': str(e)}))\n";
     }
     else if( format == "drill" )
     {
-        code << "# Export drill files\n";
-        code << "print(f'Drill export to {output_dir} - API pending implementation')\n";
-        code << "print('Use kicad-cli for production drill export')\n";
+        code << "try:\n";
+        code << "    files = board.export.generate_drill_files(output_dir)\n";
+        code << "    print(json.dumps({'status': 'success', 'format': 'drill', 'files': files}, indent=2))\n";
+        code << "except Exception as e:\n";
+        code << "    print(json.dumps({'status': 'error', 'message': str(e)}))\n";
     }
-    else if( format == "pdf" || format == "svg" )
+    else if( format == "pos" )
     {
-        code << "# Export " << format << "\n";
-        code << "print(f'" << format << " export to {output_dir} - API pending implementation')\n";
+        code << "try:\n";
+        code << "    out_path = os.path.join(output_dir, 'positions.csv')\n";
+        code << "    path = board.export.generate_pos(out_path)\n";
+        code << "    print(json.dumps({'status': 'success', 'format': 'pos', 'file': path}, indent=2))\n";
+        code << "except Exception as e:\n";
+        code << "    print(json.dumps({'status': 'error', 'message': str(e)}))\n";
     }
     else if( format == "step" )
     {
-        code << "# Export STEP 3D model\n";
-        code << "print(f'STEP export to {output_dir} - API pending implementation')\n";
-        code << "print('Use kicad-cli for STEP export')\n";
+        code << "try:\n";
+        code << "    out_path = os.path.join(output_dir, 'board.step')\n";
+        code << "    path = board.export.generate_step(out_path)\n";
+        code << "    print(json.dumps({'status': 'success', 'format': 'step', 'file': path}, indent=2))\n";
+        code << "except Exception as e:\n";
+        code << "    print(json.dumps({'status': 'error', 'message': str(e)}))\n";
     }
     else
     {
-        code << "print(f'Unknown export format: " << format << "')\n";
+        code << "print(json.dumps({'status': 'error', 'message': 'Unsupported export format: "
+             << EscapePythonString( format ) << "'}))\n";
     }
 
     return code.str();

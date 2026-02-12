@@ -133,6 +133,17 @@ TERMINAL_FRAME::~TERMINAL_FRAME()
 {
 }
 
+
+void TERMINAL_FRAME::CommonSettingsChanged( int aFlags )
+{
+    // TERMINAL_FRAME doesn't have toolbars or most of the infrastructure that
+    // EDA_BASE_FRAME::CommonSettingsChanged expects.
+    // Don't call base class to avoid RecreateToolbars() crash (m_toolbarSettings is null).
+    // The terminal frame is a simple notebook-based shell interface that doesn't need
+    // toolbar recreation or most common settings handling.
+}
+
+
 void TERMINAL_FRAME::OnExit( wxCommandEvent& event )
 {
     Close( true );

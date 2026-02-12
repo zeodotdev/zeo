@@ -202,7 +202,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryTargetGeneratesQueryList )
     SCH_CRUD_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
-            { "type", "label" }, { "text", "X" }
+            { "element_type", "label" }, { "text", "X" }
         } } ) }
     };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
@@ -216,7 +216,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryTargetContainsPosMatch )
     SCH_CRUD_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
-            { "type", "label" }, { "text", "X" }
+            { "element_type", "label" }, { "text", "X" }
         } } ) }
     };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
@@ -230,7 +230,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryTargetContainsTypeDispatch )
     SCH_CRUD_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
-            { "type", "label" }, { "text", "X" }
+            { "element_type", "label" }, { "text", "X" }
         } } ) }
     };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
@@ -278,7 +278,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryLabelUsesGetAll )
     SCH_CRUD_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
-            { "type", "label" }, { "text", "NET1" }
+            { "element_type", "label" }, { "text", "NET1" }
         } } ) }
     };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
@@ -292,7 +292,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryLabelMatchesText )
     SCH_CRUD_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
-            { "type", "label" }, { "text", "NET1" }
+            { "element_type", "label" }, { "text", "NET1" }
         } } ) }
     };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
@@ -400,7 +400,7 @@ BOOST_AUTO_TEST_CASE( DeleteMixedTargetsGeneratesBothLists )
     nlohmann::json input = {
         { "targets", nlohmann::json::array( {
             "R1",
-            nlohmann::json{ { "type", "label" }, { "text", "X" } }
+            nlohmann::json{ { "element_type", "label" }, { "text", "X" } }
         } ) }
     };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
@@ -418,7 +418,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryResultContainsNotMatched )
     SCH_CRUD_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
-            { "type", "label" }, { "text", "X" }
+            { "element_type", "label" }, { "text", "X" }
         } } ) }
     };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
@@ -447,6 +447,26 @@ BOOST_AUTO_TEST_CASE( DeleteQueryContainsRefreshPreamble )
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
 
     BOOST_CHECK( cmd.find( "refresh_document" ) != std::string::npos );
+}
+
+
+// --- Label angle: no angle= keyword in add_global/add_local/add_hierarchical ---
+// Note: sch_add routes to GenerateAddBatchCode, so all inputs use elements array.
+
+BOOST_AUTO_TEST_CASE( AddPowerStillUsesAngleKeyword )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "power" },
+            { "lib_id", "power:GND" },
+            { "position", { 10.16, 20.32 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    // Power symbols DO support angle= keyword — verify it's still used
+    BOOST_CHECK( cmd.find( "add_power('GND', pos_0, angle=" ) != std::string::npos );
 }
 
 

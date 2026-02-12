@@ -74,6 +74,7 @@
 #include <wx/app.h>
 #include <wx/ffile.h>
 #include <wx/filedlg.h>
+#include <wx/hyperlink.h>
 #include <wx/log.h>
 #include <wx/richmsgdlg.h>
 #include <wx/stdpaths.h>
@@ -85,6 +86,7 @@
 #include <widgets/wx_html_report_box.h>
 
 #include <kiplatform/io.h>
+#include <launch_ext.h>
 
 #include "widgets/filedlg_hook_save_project.h"
 #include "widgets/panel_remote_symbol.h"
@@ -644,11 +646,72 @@ bool SCH_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
             // Update all symbol library links for all sheets.
             schematic.UpdateSymbolLinks();
 
-            m_infoBar->RemoveAllButtons();
-            m_infoBar->AddCloseButton();
-            m_infoBar->ShowMessage( _( "This file was created by an older version of Zener. "
-                                       "It will be converted to the new format when saved." ),
-                                    wxICON_WARNING, WX_INFOBAR::MESSAGE_TYPE::OUTDATED_SAVE );
+            {
+                wxHyperlinkCtrl* backupBtn = new wxHyperlinkCtrl( m_infoBar, wxID_ANY,
+                        _( "Create Backup" ), wxEmptyString );
+
+                backupBtn->Bind( wxEVT_COMMAND_HYPERLINK, [this]( wxHyperlinkEvent& )
+                {
+                    wxString backupsPath = GetSettingsManager()->GetProjectBackupsPath();
+                    wxString fileName = Prj().GetProjectName() + wxT( "-pre-upgrade" );
+
+                    wxFileName target;
+                    target.SetPath( backupsPath );
+                    target.SetName( fileName );
+                    target.SetExt( FILEEXT::ArchiveFileExtension );
+
+                    auto showBackupResult = [this]( const wxString& aMsg,
+                                                     const wxString& aBackupPath )
+                    {
+                        wxHyperlinkCtrl* showBtn = new wxHyperlinkCtrl(
+                                m_infoBar, wxID_ANY, _( "Show" ), wxEmptyString );
+
+                        showBtn->Bind( wxEVT_COMMAND_HYPERLINK,
+                                       [aBackupPath]( wxHyperlinkEvent& )
+                                       {
+                                           LaunchExternal( wxFileName( aBackupPath ).GetPath() );
+                                       } );
+
+                        m_infoBar->RemoveAllButtons();
+                        m_infoBar->AddButton( showBtn );
+                        m_infoBar->AddCloseButton();
+                        m_infoBar->ShowMessage( aMsg, wxICON_INFORMATION,
+                                                WX_INFOBAR::MESSAGE_TYPE::OUTDATED_SAVE );
+                    };
+
+                    if( target.FileExists() )
+                    {
+                        showBackupResult(
+                                wxString::Format( _( "Pre-upgrade backup already exists (%s)." ),
+                                                  target.GetFullName() ),
+                                target.GetFullPath() );
+                        return;
+                    }
+
+                    WX_STRING_REPORTER reporter;
+
+                    if( GetSettingsManager()->BackupProject( reporter, target ) )
+                    {
+                        showBackupResult(
+                                wxString::Format( _( "Pre-upgrade backup created (%s)." ),
+                                                  target.GetFullName() ),
+                                target.GetFullPath() );
+                    }
+                    else
+                    {
+                        DisplayErrorMessage( this, _( "Error creating backup." ),
+                                             reporter.GetMessages() );
+                    }
+                } );
+
+                m_infoBar->RemoveAllButtons();
+                m_infoBar->AddButton( backupBtn );
+                m_infoBar->AddCloseButton();
+                m_infoBar->ShowMessage(
+                        _( "This file was created by an older version of KiCad. "
+                           "It will be converted to the new format when saved." ),
+                        wxICON_WARNING, WX_INFOBAR::MESSAGE_TYPE::OUTDATED_SAVE );
+            }
 
             // Legacy schematic can have duplicate time stamps so fix that before converting
             // to the s-expression format.
@@ -670,11 +733,70 @@ bool SCH_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
 
             if( first_screen && first_screen->GetFileFormatVersionAtLoad() < SEXPR_SCHEMATIC_FILE_VERSION )
             {
+                wxHyperlinkCtrl* backupBtn = new wxHyperlinkCtrl( m_infoBar, wxID_ANY,
+                        _( "Create Backup" ), wxEmptyString );
+
+                backupBtn->Bind( wxEVT_COMMAND_HYPERLINK, [this]( wxHyperlinkEvent& )
+                {
+                    wxString backupsPath = GetSettingsManager()->GetProjectBackupsPath();
+                    wxString fileName = Prj().GetProjectName() + wxT( "-pre-upgrade" );
+
+                    wxFileName target;
+                    target.SetPath( backupsPath );
+                    target.SetName( fileName );
+                    target.SetExt( FILEEXT::ArchiveFileExtension );
+
+                    auto showBackupResult = [this]( const wxString& aMsg,
+                                                     const wxString& aBackupPath )
+                    {
+                        wxHyperlinkCtrl* showBtn = new wxHyperlinkCtrl(
+                                m_infoBar, wxID_ANY, _( "Show" ), wxEmptyString );
+
+                        showBtn->Bind( wxEVT_COMMAND_HYPERLINK,
+                                       [aBackupPath]( wxHyperlinkEvent& )
+                                       {
+                                           LaunchExternal( wxFileName( aBackupPath ).GetPath() );
+                                       } );
+
+                        m_infoBar->RemoveAllButtons();
+                        m_infoBar->AddButton( showBtn );
+                        m_infoBar->AddCloseButton();
+                        m_infoBar->ShowMessage( aMsg, wxICON_INFORMATION,
+                                                WX_INFOBAR::MESSAGE_TYPE::OUTDATED_SAVE );
+                    };
+
+                    if( target.FileExists() )
+                    {
+                        showBackupResult(
+                                wxString::Format( _( "Pre-upgrade backup already exists (%s)." ),
+                                                  target.GetFullName() ),
+                                target.GetFullPath() );
+                        return;
+                    }
+
+                    WX_STRING_REPORTER reporter;
+
+                    if( GetSettingsManager()->BackupProject( reporter, target ) )
+                    {
+                        showBackupResult(
+                                wxString::Format( _( "Pre-upgrade backup created (%s)." ),
+                                                  target.GetFullName() ),
+                                target.GetFullPath() );
+                    }
+                    else
+                    {
+                        DisplayErrorMessage( this, _( "Error creating backup." ),
+                                             reporter.GetMessages() );
+                    }
+                } );
+
                 m_infoBar->RemoveAllButtons();
+                m_infoBar->AddButton( backupBtn );
                 m_infoBar->AddCloseButton();
-                m_infoBar->ShowMessage( _( "This file was created by an older version of Zener. "
-                                           "It will be converted to the new format when saved." ),
-                                        wxICON_WARNING, WX_INFOBAR::MESSAGE_TYPE::OUTDATED_SAVE );
+                m_infoBar->ShowMessage(
+                        _( "This file was created by an older version of KiCad. "
+                           "It will be converted to the new format when saved." ),
+                        wxICON_WARNING, WX_INFOBAR::MESSAGE_TYPE::OUTDATED_SAVE );
             }
 
             for( SCH_SCREEN* screen = schematic.GetFirst(); screen; screen = schematic.GetNext() )

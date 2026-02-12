@@ -207,7 +207,7 @@ std::string PCB_CRUD_HANDLER::EscapePythonString( const std::string& aStr ) cons
 
 std::string PCB_CRUD_HANDLER::MmToNm( double aMm ) const
 {
-    int64_t nm = static_cast<int64_t>( aMm * 1000000.0 );
+    int64_t nm = std::llround( aMm * 1000000.0 );
     return std::to_string( nm );
 }
 
@@ -716,7 +716,7 @@ std::string PCB_CRUD_HANDLER::GeneratePlaceCode( const nlohmann::json& aInput ) 
     code << "    \n";
     code << "    # Update position\n";
     code << "    if 'position' in p and len(p['position']) >= 2:\n";
-    code << "        fp.position = Vector2.from_xy(int(p['position'][0] * 1000000), int(p['position'][1] * 1000000))\n";
+    code << "        fp.position = Vector2.from_xy(round(p['position'][0] * 1000000), round(p['position'][1] * 1000000))\n";
     code << "        updated = True\n";
     code << "    \n";
     code << "    # Update angle\n";
@@ -789,7 +789,7 @@ std::string PCB_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "errors = []\n";
     code << "\n";
     code << "def mm_to_nm(mm):\n";
-    code << "    return int(mm * 1000000)\n";
+    code << "    return round(mm * 1000000)\n";
     code << "\n";
     code << "# Layer name to BoardLayer enum mapping\n";
     code << "layer_map = {\n";
@@ -954,7 +954,7 @@ std::string PCB_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
     code << "updates = " << DumpAsPython( aInput["updates"] ) << "\n";
     code << "\n";
     code << "def mm_to_nm(mm):\n";
-    code << "    return int(mm * 1000000)\n";
+    code << "    return round(mm * 1000000)\n";
     code << "\n";
     code << "# Layer name to BoardLayer enum mapping\n";
     code << "layer_map = {\n";
@@ -1311,7 +1311,7 @@ std::string PCB_CRUD_HANDLER::GenerateRouteCode( const nlohmann::json& aInput ) 
     code << "from kipy.proto.board.board_types_pb2 import BoardLayer\n";
     code << "\n";
     code << "def mm_to_nm(mm):\n";
-    code << "    return int(mm * 1000000)\n";
+    code << "    return round(mm * 1000000)\n";
     code << "\n";
     code << "def get_pad_abs_position(fp, pad_num):\n";
     code << "    \"\"\"Get absolute position of a pad by number - pad.position is already absolute\"\"\"\n";

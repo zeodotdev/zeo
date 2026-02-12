@@ -199,9 +199,11 @@ void CHAT_CONTROLLER::DoSendMessage( const std::string& aText, const nlohmann::j
 
 void CHAT_CONTROLLER::Cancel()
 {
-    wxLogInfo( "CHAT_CONTROLLER::Cancel called" );
+    wxLogInfo( "CHAT_CONTROLLER::Cancel called, state=%d, responseLen=%zu, thinkingLen=%zu, chatId=%s",
+               static_cast<int>( m_ctx.GetState() ), m_currentResponse.size(),
+               static_cast<size_t>( m_thinkingContent.length() ), m_chatId.c_str() );
     m_stopRequested = true;
-        m_continueAfterComplete = false;
+    m_continueAfterComplete = false;
 
     if( m_llmClient )
         m_llmClient->CancelRequest();
@@ -213,6 +215,10 @@ void CHAT_CONTROLLER::Cancel()
     bool toolStateActive = m_ctx.GetState() == AgentConversationState::TOOL_USE_DETECTED ||
                            m_ctx.GetState() == AgentConversationState::EXECUTING_TOOL ||
                            m_ctx.GetState() == AgentConversationState::PROCESSING_TOOL_RESULT;
+
+    wxLogInfo( "CHAT_CONTROLLER::Cancel toolStateActive=%d, willSavePartial=%d",
+               toolStateActive,
+               !toolStateActive && ( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() ) );
 
     if( !toolStateActive && ( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() ) )
     {
@@ -252,6 +258,8 @@ void CHAT_CONTROLLER::Cancel()
             { "content", content }
         };
         AddToHistory( assistantMsg );
+        wxLogInfo( "CHAT_CONTROLLER::Cancel - added partial response to history, historySize=%zu",
+                   m_chatHistory.size() );
 
         // Note: Don't clear m_currentResponse here - the UI needs it to finalize the display.
         // The frame's OnStop() will clear streaming state after finalizing.
@@ -376,10 +384,32 @@ void CHAT_CONTROLLER::LoadChat( const std::string& aChatId )
         return;
     }
 
-    // Cancel any ongoing operation
+    // Cancel any ongoing operation (adds partial response to m_chatHistory if streaming)
+    size_t historyBefore = m_chatHistory.size();
+    wxLogInfo( "CHAT_CONTROLLER::LoadChat - about to Cancel, oldChatId=%s, historySize=%zu",
+               m_chatId.c_str(), historyBefore );
     Cancel();
 
+    // Save old chat's history only if Cancel() actually added a partial response.
+    // This avoids re-saving unmodified chats (which would update their timestamp).
+    if( !m_chatId.empty() && m_chatHistory.size() > historyBefore )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::LoadChat - Cancel added content, saving old chat=%s, "
+                   "historySize=%zu", m_chatId.c_str(), m_chatHistory.size() );
+        m_chatHistoryDb->Save( m_chatHistory );
+    }
+
+    // Clear streaming state that Cancel() preserved for frame finalization.
+    // We're switching chats, not going through the normal OnStop() path.
+    m_currentResponse.clear();
+    m_thinkingContent.clear();
+    m_thinkingSignature.clear();
+    m_compactionContent.clear();
+    m_pendingToolCalls = nlohmann::json::array();
+    m_serverToolBlocks = nlohmann::json::array();
+
     // Load from database - returns messages array, stores title internally
+    wxLogInfo( "CHAT_CONTROLLER::LoadChat - loading new chat=%s", aChatId.c_str() );
     nlohmann::json messages = m_chatHistoryDb->Load( aChatId );
     if( messages.is_null() )
     {
@@ -391,6 +421,10 @@ void CHAT_CONTROLLER::LoadChat( const std::string& aChatId )
     m_chatHistory = messages;
     m_apiContext = m_chatHistory;  // For now, use same as chat history
 
+    // Repair any structural issues in loaded history (e.g., orphaned tool_use
+    // blocks from previous errors). This fixes corrupted chats on load.
+    RepairHistory();
+
     // Title is stored in database object after Load() call
     std::string title = m_chatHistoryDb->GetTitle();
 
@@ -399,6 +433,57 @@ void CHAT_CONTROLLER::LoadChat( const std::string& aChatId )
 
     // Emit loaded event
     EmitEvent( EVT_CHAT_HISTORY_LOADED, ChatHistoryLoadedData( aChatId, title ) );
+}
+
+
+void CHAT_CONTROLLER::SaveStreamingSnapshot()
+{
+    if( !m_chatHistoryDb || m_chatId.empty() )
+        return;
+
+    // Build a snapshot: committed history + any in-flight streaming content
+    nlohmann::json snapshot = m_chatHistory;
+    bool appendedStreaming = false;
+
+    // Append current streaming response as a temporary assistant message
+    if( m_ctx.GetState() == AgentConversationState::WAITING_FOR_LLM )
+    {
+        nlohmann::json content = nlohmann::json::array();
+
+        if( !m_thinkingContent.IsEmpty() && !m_thinkingSignature.empty() )
+        {
+            content.push_back( {
+                { "type", "thinking" },
+                { "thinking", m_thinkingContent.ToStdString() },
+                { "signature", m_thinkingSignature }
+            } );
+        }
+
+        if( !m_currentResponse.empty() )
+        {
+            content.push_back( {
+                { "type", "text" },
+                { "text", m_currentResponse }
+            } );
+        }
+
+        if( !content.empty() )
+        {
+            snapshot.push_back( {
+                { "role", "assistant" },
+                { "content", content }
+            } );
+            appendedStreaming = true;
+        }
+    }
+
+    wxLogInfo( "CHAT_CONTROLLER::SaveStreamingSnapshot - chatId=%s, historyMsgs=%zu, "
+               "appendedStreaming=%d, responseLen=%zu",
+               m_chatId.c_str(), m_chatHistory.size(), appendedStreaming,
+               m_currentResponse.size() );
+
+    m_chatHistoryDb->Save( snapshot );
+    m_lastSnapshotTime = std::chrono::steady_clock::now();
 }
 
 
@@ -495,6 +580,13 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
     case LLMChunkType::TEXT:
         m_currentResponse += aChunk.text;
         EmitEvent( EVT_CHAT_TEXT_DELTA, ChatTextDeltaData( m_currentResponse, aChunk.text ) );
+
+        // Periodic snapshot for crash protection (every 5 seconds)
+        {
+            auto now = std::chrono::steady_clock::now();
+            if( now - m_lastSnapshotTime > std::chrono::seconds( 5 ) )
+                SaveStreamingSnapshot();
+        }
         break;
 
     case LLMChunkType::THINKING_START:
@@ -816,17 +908,48 @@ void CHAT_CONTROLLER::HandleLLMError( const std::string& aError )
         auto& lastMsg = m_chatHistory.back();
         if( lastMsg.contains( "role" ) && lastMsg["role"] == "user" )
         {
-            wxLogInfo( "CHAT_CONTROLLER::HandleLLMError - removing orphaned user message" );
-            m_chatHistory.erase( m_chatHistory.end() - 1 );
+            // Check if this user message contains tool_result blocks.
+            // tool_result messages are structurally required — they must follow
+            // the assistant's tool_use blocks. Removing them corrupts history.
+            bool hasToolResult = false;
 
-            // Also remove from API context
-            if( !m_apiContext.empty() )
+            if( lastMsg.contains( "content" ) && lastMsg["content"].is_array() )
             {
-                auto& lastApiMsg = m_apiContext.back();
-                if( lastApiMsg.contains( "role" ) && lastApiMsg["role"] == "user" )
+                for( const auto& block : lastMsg["content"] )
                 {
-                    m_apiContext.erase( m_apiContext.end() - 1 );
+                    if( block.contains( "type" ) && block["type"] == "tool_result" )
+                    {
+                        hasToolResult = true;
+                        break;
+                    }
                 }
+            }
+
+            if( hasToolResult )
+            {
+                wxLogInfo( "CHAT_CONTROLLER::HandleLLMError - keeping tool_result user message "
+                           "(structurally required)" );
+            }
+            else
+            {
+                wxLogInfo( "CHAT_CONTROLLER::HandleLLMError - removing orphaned user message" );
+                m_chatHistory.erase( m_chatHistory.end() - 1 );
+
+                // Also remove from API context
+                if( !m_apiContext.empty() )
+                {
+                    auto& lastApiMsg = m_apiContext.back();
+                    if( lastApiMsg.contains( "role" ) && lastApiMsg["role"] == "user" )
+                    {
+                        m_apiContext.erase( m_apiContext.end() - 1 );
+                    }
+                }
+
+                // Persist the removal — the frame already saved to disk before the
+                // API response arrived, so without this the orphaned message reappears
+                // when the chat is reloaded.
+                if( m_chatHistoryDb && !m_chatId.empty() )
+                    m_chatHistoryDb->Save( m_chatHistory );
             }
         }
     }
@@ -903,6 +1026,27 @@ void CHAT_CONTROLLER::ExecuteNextTool()
     if( m_getProjectPathFn )
     {
         TOOL_REGISTRY::Instance().SetProjectPath( m_getProjectPathFn() );
+    }
+
+    // Sync editor state to TOOL_REGISTRY before tool execution
+    // This ensures handlers have accurate editor open/closed state
+    if( m_syncEditorStateFn )
+    {
+        m_syncEditorStateFn();
+    }
+
+    // Provide send request function to handlers that need IPC
+    TOOL_REGISTRY::Instance().SetSendRequestFn( m_sendRequestFn );
+
+    // Check if this is an async tool (runs in background thread)
+    if( TOOL_REGISTRY::Instance().HasHandler( tool->tool_name ) &&
+        TOOL_REGISTRY::Instance().IsAsync( tool->tool_name ) )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - executing async tool: %s", tool->tool_name.c_str() );
+        // Start async execution - result will come via EVT_TOOL_EXECUTION_COMPLETE event
+        TOOL_REGISTRY::Instance().ExecuteAsync( tool->tool_name, tool->tool_input,
+                                                 tool->tool_use_id, m_eventSink );
+        return;
     }
 
     // Log project path being used for debugging
@@ -1394,6 +1538,50 @@ void CHAT_CONTROLLER::RepairHistory()
         }
     }
 
+    // PASS 3: Merge consecutive user messages.
+    // The Anthropic API requires strict user/assistant alternation.
+    // Consecutive user messages can accumulate when HandleLLMError removes orphaned
+    // messages but doesn't persist the removal, or when the app crashes mid-conversation.
+    // We merge them into one message by combining their content arrays.
+    for( size_t i = 1; i < m_chatHistory.size(); /* no increment */ )
+    {
+        auto& prev = m_chatHistory[i - 1];
+        auto& curr = m_chatHistory[i];
+
+        if( !prev.contains( "role" ) || !curr.contains( "role" ) ||
+            prev["role"] != "user" || curr["role"] != "user" )
+        {
+            i++;
+            continue;
+        }
+
+        // Merge curr's content into prev, combining content arrays
+        json prevContent;
+
+        if( prev.contains( "content" ) && prev["content"].is_array() )
+            prevContent = prev["content"];
+        else if( prev.contains( "content" ) && prev["content"].is_string() )
+            prevContent = json::array( { { { "type", "text" }, { "text", prev["content"].get<std::string>() } } } );
+        else
+            prevContent = json::array();
+
+        if( curr.contains( "content" ) && curr["content"].is_array() )
+        {
+            for( const auto& block : curr["content"] )
+                prevContent.push_back( block );
+        }
+        else if( curr.contains( "content" ) && curr["content"].is_string() )
+        {
+            prevContent.push_back( { { "type", "text" }, { "text", curr["content"].get<std::string>() } } );
+        }
+
+        prev["content"] = prevContent;
+        m_chatHistory.erase( m_chatHistory.begin() + i );
+        historyModified = true;
+        wxLogInfo( "CHAT_CONTROLLER::RepairHistory - merged consecutive user messages at index %zu", i );
+        // Don't increment — check the new element at position i
+    }
+
     if( historyModified )
     {
         // Sync API context after fix
@@ -1497,7 +1685,40 @@ void CHAT_CONTROLLER::SanitizeApiContext()
 
                 if( prevHasToolResult )
                 {
-                    wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - keeping tool_result user message" );
+                    // Merge current message's content into the tool_result message
+                    // to maintain role alternation while preserving the tool_result.
+                    wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - merging into tool_result "
+                               "user message" );
+                    auto& prevSanitized = sanitized.back();
+
+                    if( !prevSanitized.contains( "content" ) || !prevSanitized["content"].is_array() )
+                    {
+                        if( prevSanitized.contains( "content" ) && prevSanitized["content"].is_string() )
+                        {
+                            prevSanitized["content"] = nlohmann::json::array(
+                                { { { "type", "text" },
+                                    { "text", prevSanitized["content"].get<std::string>() } } } );
+                        }
+                        else
+                        {
+                            prevSanitized["content"] = nlohmann::json::array();
+                        }
+                    }
+
+                    // Append current message's content blocks
+                    if( msg.contains( "content" ) && msg["content"].is_array() )
+                    {
+                        for( const auto& block : msg["content"] )
+                            prevSanitized["content"].push_back( block );
+                    }
+                    else if( msg.contains( "content" ) && msg["content"].is_string() )
+                    {
+                        prevSanitized["content"].push_back(
+                            { { "type", "text" },
+                              { "text", msg["content"].get<std::string>() } } );
+                    }
+
+                    continue;  // Skip push_back — content was merged into previous
                 }
                 else
                 {
@@ -1601,6 +1822,9 @@ void CHAT_CONTROLLER::StartLLMRequest()
     }
 
     m_stopRequested = false;
+
+    // Repair structural issues (orphaned tool_use/tool_result) before sanitizing.
+    RepairHistory();
 
     // Sanitize context before sending to ensure valid message format
     SanitizeApiContext();

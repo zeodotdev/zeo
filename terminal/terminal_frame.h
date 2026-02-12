@@ -18,6 +18,9 @@ public:
     void      KiwayMailIn( KIWAY_EXPRESS& aEvent ) override;
     wxWindow* GetToolCanvas() const override { return (wxWindow*) this; }
 
+    // Override CommonSettingsChanged to avoid toolbar recreation (TERMINAL_FRAME has no toolbars)
+    void      CommonSettingsChanged( int aFlags ) override;
+
     // Event handlers
     void OnExit( wxCommandEvent& event );
     void OnNewTab( wxCommandEvent& event );

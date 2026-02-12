@@ -401,8 +401,12 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     }
     else
     {
-        wxLogWarning( "Supabase configuration not found. Authentication features will be disabled." );
-        wxLogWarning( "Create supabase_config.json or set KICAD_AGENT_SUPABASE_URL/KEY environment variables." );
+        wxLogWarning( "Supabase config not found at: %s",
+                      configPath.GetFullPath().ToStdString().c_str() );
+
+        // Still load session from disk - tokens may have been saved by the launcher.
+        // The agent can use existing tokens and pick up refreshed ones via TryReloadSession().
+        m_auth->LoadSession();
     }
 
     // Wire auth to LLM client for proxy authentication
@@ -622,6 +626,19 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             return result;
         } );
 
+    // Editor state sync callback - ensures TOOL_REGISTRY has accurate editor state before tool execution
+    m_chatController->SetEditorStateSyncFn(
+        [this]() {
+            KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
+            KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
+
+            bool schOpen = schEditor && schEditor->IsShown();
+            bool pcbOpen = pcbEditor && pcbEditor->IsShown();
+
+            TOOL_REGISTRY::Instance().SetSchematicEditorOpen( schOpen );
+            TOOL_REGISTRY::Instance().SetPcbEditorOpen( pcbOpen );
+        } );
+
     // Set model on controller
     m_currentModel = "Claude 4.6 Opus";
     m_chatController->SetModel( m_currentModel );
@@ -640,6 +657,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( EVT_CHAT_TITLE_DELTA, &AGENT_FRAME::OnChatTitleDelta, this );
     Bind( EVT_CHAT_TITLE_GENERATED, &AGENT_FRAME::OnChatTitleGenerated, this );
     Bind( EVT_CHAT_HISTORY_LOADED, &AGENT_FRAME::OnChatHistoryLoaded, this );
+
+    // Bind async tool execution completion event (for background tools like autorouter)
+    Bind( EVT_TOOL_EXECUTION_COMPLETE, &AGENT_FRAME::OnAsyncToolComplete, this );
 
     // Create menu bar
     wxMenuBar* menuBar = new wxMenuBar();
@@ -2297,6 +2317,11 @@ void AGENT_FRAME::DoNewChat()
     m_fullHtmlContent = "";
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
+
+    // Sync conversation ID to controller so it can persist streaming snapshots
+    if( m_chatController )
+        m_chatController->SetChatId( m_chatHistoryDb.GetConversationId() );
+
     m_bridge->PushChatTitle( "New Chat" );
 
     // Clear historical thinking state
@@ -2324,13 +2349,62 @@ void AGENT_FRAME::DoNewChat()
 
 void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
 {
-    wxLogInfo( "AGENT_FRAME::LoadConversation called with id: %s", aConversationId.c_str() );
+    wxLogInfo( "AGENT_FRAME::LoadConversation called with id: %s, isGenerating=%d, "
+               "llmInProgress=%d",
+               aConversationId.c_str(), m_isGenerating,
+               m_llmClient ? m_llmClient->IsRequestInProgress() : false );
+
+    // Clean up any in-progress streaming UI state before switching chats
+    if( m_isGenerating )
+    {
+        wxLogInfo( "AGENT_FRAME::LoadConversation - stopping generating animation" );
+        StopGeneratingAnimation();
+    }
+
+    m_stopRequested = true;
+    m_isCompacting = false;
+    m_activeRunningHtml.Clear();
+    m_activeToolResultIdx = -1;
+    m_pendingToolCalls = nlohmann::json::array();
+
+    if( m_llmClient && m_llmClient->IsRequestInProgress() )
+    {
+        wxLogInfo( "AGENT_FRAME::LoadConversation - cancelling in-progress LLM request" );
+        m_llmClient->CancelRequest();
+    }
+
     // Delegate to controller - it will emit EVT_CHAT_HISTORY_LOADED
     // which triggers OnChatHistoryLoaded for UI updates
     if( m_chatController )
     {
         m_chatController->LoadChat( aConversationId );
     }
+}
+
+
+/**
+ * Strip the *(Stopped)* marker from the end of a text string.
+ * Returns true if the marker was found and stripped.
+ */
+static bool StripStoppedMarker( std::string& aText )
+{
+    static const std::string MARKER = "\n\n*(Stopped)*";
+    static const std::string MARKER_ONLY = "*(Stopped)*";
+
+    if( aText == MARKER_ONLY )
+    {
+        aText.clear();
+        return true;
+    }
+
+    if( aText.size() >= MARKER.size() &&
+        aText.compare( aText.size() - MARKER.size(), MARKER.size(), MARKER ) == 0 )
+    {
+        aText.erase( aText.size() - MARKER.size() );
+        return true;
+    }
+
+    return false;
 }
 
 
@@ -2416,8 +2490,11 @@ void AGENT_FRAME::RenderChatHistory()
             }
             else if( role == "assistant" )
             {
-                // Left-aligned markdown formatted response
+                // Strip *(Stopped)* marker and render as styled div to match live stop
+                bool wasStopped = StripStoppedMarker( content );
                 m_fullHtmlContent += AgentMarkdown::ToHtml( content );
+                if( wasStopped )
+                    m_fullHtmlContent += "<div class=\"text-text-muted mb-1\">Stopped</div>";
             }
         }
         else if( msg["content"].is_array() )
@@ -2475,8 +2552,11 @@ void AGENT_FRAME::RenderChatHistory()
 
                     if( role == "assistant" )
                     {
-                        // Left-aligned markdown formatted response
-                        m_fullHtmlContent += AgentMarkdown::ToHtml( display );
+                        // Strip *(Stopped)* marker and render as styled div to match live stop
+                        bool wasStopped = StripStoppedMarker( text );
+                        m_fullHtmlContent += AgentMarkdown::ToHtml( text );
+                        if( wasStopped )
+                            m_fullHtmlContent += "<div class=\"text-text-muted mb-1\">Stopped</div>";
                     }
                     else if( role == "user" )
                     {
@@ -3352,8 +3432,15 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
         KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
 
-        status["schematic_editor_open"] = ( schEditor && schEditor->IsShown() );
-        status["pcb_editor_open"] = ( pcbEditor && pcbEditor->IsShown() );
+        bool schOpen = schEditor && schEditor->IsShown();
+        bool pcbOpen = pcbEditor && pcbEditor->IsShown();
+
+        status["schematic_editor_open"] = schOpen;
+        status["pcb_editor_open"] = pcbOpen;
+
+        // Sync editor state to TOOL_REGISTRY so tool handlers know editor status
+        TOOL_REGISTRY::Instance().SetSchematicEditorOpen( schOpen );
+        TOOL_REGISTRY::Instance().SetPcbEditorOpen( pcbOpen );
 
         // Add project file paths
         wxString prjPath = Kiway().Prj().GetProjectPath();
@@ -3677,6 +3764,37 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
     // Auto-scroll handled by CSS flex-direction: column-reverse
 
     delete data;
+}
+
+
+void AGENT_FRAME::OnAsyncToolComplete( wxCommandEvent& aEvent )
+{
+    // Handle completion of async tools (like autorouter) that run in background threads
+    ToolExecutionResult* result = static_cast<ToolExecutionResult*>( aEvent.GetClientData() );
+    if( !result )
+        return;
+
+    wxLogInfo( "AGENT_FRAME::OnAsyncToolComplete - tool=%s, success=%s",
+               result->tool_name.c_str(), result->success ? "true" : "false" );
+
+    // Forward the result to the chat controller
+    if( m_chatController )
+    {
+        m_chatController->HandleToolResult( result->tool_use_id, result->result, result->success );
+    }
+
+    // Clean up - event data is owned by the event
+    delete result;
+}
+
+
+void AGENT_FRAME::CommonSettingsChanged( int aFlags )
+{
+    // AGENT_FRAME doesn't have toolbars or most of the infrastructure that
+    // EDA_BASE_FRAME::CommonSettingsChanged expects.
+    // Don't call base class to avoid RecreateToolbars() crash (m_toolbarSettings is null).
+    // The agent frame is a simple webview-based chat interface that doesn't need
+    // toolbar recreation or most common settings handling.
 }
 
 

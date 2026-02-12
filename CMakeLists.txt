@@ -1191,6 +1191,15 @@ if( APPLE )
             file( REMOVE \"${KICAD_BIN}/PCB Calculator.app\" )
             file( REMOVE \"${KICAD_BIN}/Pcbnew.app\" )
             file( REMOVE \"${KICAD_BIN}/Page Layout Editor.app\" )
+            # Remove Zener-specific app symlinks left over from previous installs
+            # (these become dangling after removing the main bundle below)
+            file( REMOVE \"${KICAD_BIN}/Agent.app\" )
+            file( REMOVE \"${KICAD_BIN}/agent.app\" )
+            file( REMOVE \"${KICAD_BIN}/Schematic Editor.app\" )
+            file( REMOVE \"${KICAD_BIN}/PCB Editor.app\" )
+            file( REMOVE \"${KICAD_BIN}/Image Converter.app\" )
+            file( REMOVE \"${KICAD_BIN}/terminal.app\" )
+            file( REMOVE \"${KICAD_BIN}/Terminal.app\" )
             # Remove main bundle
             file( REMOVE_RECURSE ${KICAD_BIN}/${OSX_BUNDLE_MAIN} )
         " COMPONENT Runtime

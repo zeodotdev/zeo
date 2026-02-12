@@ -30,24 +30,9 @@ public:
 
 private:
     /**
-     * Generate Python code for sch_add operation.
-     */
-    std::string GenerateAddCode( const nlohmann::json& aInput ) const;
-
-    /**
-     * Generate Python code for sch_update operation (single item - legacy).
-     */
-    std::string GenerateUpdateCode( const nlohmann::json& aInput ) const;
-
-    /**
      * Generate Python code for sch_update operation (batch - processes updates array).
      */
     std::string GenerateUpdateBatchCode( const nlohmann::json& aInput ) const;
-
-    /**
-     * Generate Python code for sch_delete operation.
-     */
-    std::string GenerateDeleteCode( const nlohmann::json& aInput ) const;
 
     /**
      * Generate Python code for sch_batch_delete operation.

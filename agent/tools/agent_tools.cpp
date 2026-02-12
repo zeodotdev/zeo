@@ -316,9 +316,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "- symbol: {element_type, lib_id, position, angle?, mirror?, unit?, reference?, properties?}\n"
         "- power: {element_type, lib_id, position, angle?} - GND: 0=bars down(standard), VCC: 0=bar up(standard)\n"
         "- wire: {element_type, from_pin:{ref,pin}, to_pin:{ref,pin}, waypoints?} or {points:[[x,y],...]}\n"
-        "- label: {element_type, text, position, label_type?, angle?} - label_type: local|global|hierarchical. "
-"Angle auto-detected from nearby pin/wire direction if omitted.\n"
-"- junction, no_connect\n\n"
+        "- label: {element_type, text, position, label_type?} - label_type: local|global|hierarchical\n"
+        "- junction, no_connect\n\n"
         "EXAMPLE (horizontal resistor with GND):\n"
         "elements: [\n"
         "  {element_type:'symbol', lib_id:'Device:R', position:[50.8,50.8], angle:90},\n"
@@ -1245,6 +1244,37 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "required", json::array( { "format", "output_dir" } ) }
     };
     tools.push_back( pcbExport );
+
+    // pcb_autoroute - Run Freerouting autorouter
+    LLM_TOOL pcbAutoroute;
+    pcbAutoroute.name = "pcb_autoroute";
+    pcbAutoroute.description =
+        "Run the Freerouting autorouter on unrouted connections. "
+        "Exports board to Specctra DSN format, runs headless Freerouting, then imports "
+        "the routed session (SES) file back into the PCB. "
+        "Returns statistics: {routed, total, failed, tracks_added, vias_added}. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbAutoroute.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "max_passes", {
+                { "type", "integer" },
+                { "minimum", 1 },
+                { "maximum", 999 },
+                { "description", "Maximum number of routing passes (default: 50). "
+                                "More passes may find better routes but take longer." }
+            }},
+            { "timeout", {
+                { "type", "integer" },
+                { "minimum", 30 },
+                { "maximum", 1800 },
+                { "description", "Timeout in seconds (default: 300). "
+                                "Complex boards may need longer timeouts." }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    tools.push_back( pcbAutoroute );
 
     // screenshot - Export a visual render of a schematic or PCB
     LLM_TOOL screenshot;

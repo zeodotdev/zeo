@@ -9,6 +9,7 @@
 #include "schematic/sch_sim_handler.h"
 #include "pcb/pcb_tool_handler.h"
 #include "pcb/pcb_crud_handler.h"
+#include "pcb/pcb_autoroute_handler.h"
 #include "screenshot/screenshot_handler.h"
 
 
@@ -33,6 +34,7 @@ TOOL_REGISTRY::TOOL_REGISTRY()
     // Register PCB tool handlers (CRUD handler first since it has actual implementations)
     m_handlers.push_back( std::make_unique<PCB_CRUD_HANDLER>() );
     m_handlers.push_back( std::make_unique<PCB_TOOL_HANDLER>() );
+    m_handlers.push_back( std::make_unique<PCB_AUTOROUTE_HANDLER>() );
 
     // Register screenshot handler
     m_handlers.push_back( std::make_unique<SCREENSHOT_HANDLER>() );
@@ -146,5 +148,30 @@ void TOOL_REGISTRY::SetSendRequestFn( std::function<std::string( int, const std:
     for( auto& handler : m_handlers )
     {
         handler->SetSendRequestFn( aFn );
+    }
+}
+
+
+bool TOOL_REGISTRY::IsAsync( const std::string& aToolName ) const
+{
+    for( const auto& handler : m_handlers )
+    {
+        if( handler->CanHandle( aToolName ) )
+            return handler->IsAsync( aToolName );
+    }
+    return false;
+}
+
+
+void TOOL_REGISTRY::ExecuteAsync( const std::string& aToolName, const nlohmann::json& aInput,
+                                   const std::string& aToolUseId, wxEvtHandler* aEventHandler )
+{
+    for( auto& handler : m_handlers )
+    {
+        if( handler->CanHandle( aToolName ) )
+        {
+            handler->ExecuteAsync( aToolName, aInput, aToolUseId, aEventHandler );
+            return;
+        }
     }
 }

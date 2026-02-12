@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 class TOOL_HANDLER;
+class wxEvtHandler;
 
 /**
  * Registry for direct file tools (sch_*, pcb_*).
@@ -56,6 +57,23 @@ public:
      * @return true if the tool requires IPC execution.
      */
     bool RequiresIPC( const std::string& aToolName ) const;
+
+    /**
+     * Check if a tool executes asynchronously.
+     * @param aToolName The name of the tool to check.
+     * @return true if the tool executes asynchronously.
+     */
+    bool IsAsync( const std::string& aToolName ) const;
+
+    /**
+     * Start asynchronous execution of a tool.
+     * @param aToolName The name of the tool to execute.
+     * @param aInput The JSON input parameters for the tool.
+     * @param aToolUseId The unique ID for this tool call.
+     * @param aEventHandler The event handler to post results to.
+     */
+    void ExecuteAsync( const std::string& aToolName, const nlohmann::json& aInput,
+                       const std::string& aToolUseId, wxEvtHandler* aEventHandler );
 
     /**
      * Get the IPC command string for a tool.

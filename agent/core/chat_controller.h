@@ -4,6 +4,7 @@
 #include <wx/event.h>
 #include <wx/string.h>
 #include <nlohmann/json.hpp>
+#include <chrono>
 #include <functional>
 #include <string>
 #include <vector>
@@ -86,6 +87,13 @@ public:
      * @param aChatId The chat ID to load
      */
     void LoadChat( const std::string& aChatId );
+
+    /**
+     * Save a snapshot of the current chat including any in-flight streaming response.
+     * Used for crash protection (periodic saves during streaming) and before chat switches.
+     * Does not modify m_chatHistory — builds a temporary snapshot for persistence only.
+     */
+    void SaveStreamingSnapshot();
 
     /**
      * Set the model to use for requests.
@@ -171,6 +179,7 @@ public:
     }
     const std::string& GetCurrentModel() const { return m_currentModel; }
     const std::string& GetChatId() const { return m_chatId; }
+    void SetChatId( const std::string& aId ) { m_chatId = aId; }
     const std::vector<LLM_TOOL>& GetTools() const { return m_tools; }
 
     // =========================================================================
@@ -197,6 +206,16 @@ public:
     void SetProjectPathFn( std::function<std::string()> aFn )
     {
         m_getProjectPathFn = aFn;
+    }
+
+    /**
+     * Set the function used to sync editor state to TOOL_REGISTRY.
+     * Called before tool execution to ensure handlers have accurate editor state.
+     * @param aFn Function that syncs editor open/closed state
+     */
+    void SetEditorStateSyncFn( std::function<void()> aFn )
+    {
+        m_syncEditorStateFn = aFn;
     }
 
     /**
@@ -278,11 +297,17 @@ private:
     std::function<std::string( int, const std::string& )> m_sendRequestFn;
     std::function<std::string()> m_getProjectPathFn;  ///< Get project path for context injection
     std::function<std::string()> m_getSchematicSummaryFn;  ///< Get schematic snapshot for edit detection
+    std::function<void()> m_syncEditorStateFn;  ///< Sync editor state to TOOL_REGISTRY before tool execution
 
     // -------------------------------------------------------------------------
     // User edit detection (schematic diff between turns)
     // -------------------------------------------------------------------------
     std::string m_schematicSnapshot;  ///< JSON snapshot taken after agent turn completes
+
+    // -------------------------------------------------------------------------
+    // Streaming snapshot (crash protection)
+    // -------------------------------------------------------------------------
+    std::chrono::steady_clock::time_point m_lastSnapshotTime;  ///< Throttle periodic saves
 
     // -------------------------------------------------------------------------
     // Tool definitions

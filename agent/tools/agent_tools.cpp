@@ -296,33 +296,10 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     LLM_TOOL schAdd;
     schAdd.name = "sch_add";
     schAdd.description =
-        "Add elements to the schematic. Accepts an array of elements - use for single or batch operations. "
-        "Returns pin positions for all symbols, enabling immediate wiring. "
-        "REQUIRES: Schematic editor must be open with a document loaded.\n\n"
-        "ROTATION (counter-clockwise degrees):\n"
-        "- Passives (R, C, L): 0°=vertical (pins top/bottom), 90°=horizontal (pins left/right)\n"
-        "- ICs: 0°=default (pin 1 top-left)\n"
-        "- Diode: 0°=vertical (K cathode top, A anode bottom)\n"
-        "- Power GND: 0°=standard (bars down), do NOT use 180\n"
-        "- Power VCC/+V: 0°=standard (bar up), do NOT use 180\n\n"
-        "WIRING RULES:\n"
-        "- Use from_pin/to_pin for all wiring - backend auto-routes L-shapes\n"
-        "- AVOID OVERLAPPING WIRES: Wires at same coordinates create shorts!\n"
-        "- WIRE-PIN CONNECTIONS: Wires only connect at endpoints, NOT midpoints. A wire passing through a pin does not connect to it. Always split wires at pin locations or use from_pin/to_pin.\n\n"
-        "ERC TIPS:\n"
-        "- Add 'power:PWR_FLAG' on nets powered by connectors to fix 'Power pin not driven'\n"
-        "- Use no_connect on unused pins to fix 'Unconnected pin' warnings\n\n"
-        "ELEMENT TYPES:\n"
-        "- symbol: {element_type, lib_id, position, angle?, mirror?, unit?, reference?, properties?}\n"
-        "- power: {element_type, lib_id, position, angle?} - GND: 0=bars down(standard), VCC: 0=bar up(standard)\n"
-        "- wire: {element_type, from_pin:{ref,pin}, to_pin:{ref,pin}, waypoints?} or {points:[[x,y],...]}\n"
-        "- label: {element_type, text, position, label_type?} - label_type: local|global|hierarchical\n"
-        "- junction, no_connect\n\n"
-        "EXAMPLE (horizontal resistor with GND):\n"
-        "elements: [\n"
-        "  {element_type:'symbol', lib_id:'Device:R', position:[50.8,50.8], angle:90},\n"
-        "  {element_type:'power', lib_id:'power:GND', position:[50.8,63.5]}\n"
-        "]";
+        "Add elements to the schematic. Accepts an array of elements. "
+        "Returns pin positions for all placed symbols. "
+        "Requires schematic editor open with a document loaded.\n\n"
+        "Element types: symbol, power, wire, junction, label, no_connect, bus_entry.";
     schAdd.input_schema = {
         { "type", "object" },
         { "properties", {

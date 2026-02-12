@@ -165,13 +165,16 @@ std::string SCH_CRUD_HANDLER::EscapePythonString( const std::string& aStr ) cons
 
 double SCH_CRUD_HANDLER::SnapToGrid( double aMm, double aGrid )
 {
-    return std::round( aMm / aGrid ) * aGrid;
+    double gridUnits = std::round( aMm / aGrid );
+    // Round to 4 decimal places to eliminate IEEE 754 artifacts
+    // (e.g. 51 * 1.27 might produce 64.77000000000001 instead of 64.77)
+    return std::round( gridUnits * aGrid * 1e4 ) / 1e4;
 }
 
 
 std::string SCH_CRUD_HANDLER::MmToNm( double aMm ) const
 {
-    int64_t nm = static_cast<int64_t>( aMm * 1000000.0 );
+    int64_t nm = std::llround( aMm * 1000000.0 );
     return std::to_string( nm );
 }
 
@@ -554,9 +557,9 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
                 {
                     double dx = SnapToGrid( fieldSpec["offset"][0].get<double>() );
                     double dy = SnapToGrid( fieldSpec["offset"][1].get<double>() );
-                    code << "                _f.position.x_nm = sym_pos_" << i << ".x + int("
+                    code << "                _f.position.x_nm = sym_pos_" << i << ".x + round("
                          << dx << " * 1_000_000)\n";
-                    code << "                _f.position.y_nm = sym_pos_" << i << ".y + int("
+                    code << "                _f.position.y_nm = sym_pos_" << i << ".y + round("
                          << dy << " * 1_000_000)\n";
                 }
 

@@ -3788,6 +3788,16 @@ void AGENT_FRAME::OnAsyncToolComplete( wxCommandEvent& aEvent )
 }
 
 
+void AGENT_FRAME::CommonSettingsChanged( int aFlags )
+{
+    // AGENT_FRAME doesn't have toolbars or most of the infrastructure that
+    // EDA_BASE_FRAME::CommonSettingsChanged expects.
+    // Don't call base class to avoid RecreateToolbars() crash (m_toolbarSettings is null).
+    // The agent frame is a simple webview-based chat interface that doesn't need
+    // toolbar recreation or most common settings handling.
+}
+
+
 void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
 {
     ChatTurnCompleteData* data = aEvent.GetPayload<ChatTurnCompleteData*>();

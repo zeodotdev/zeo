@@ -118,6 +118,9 @@ public:
     // Async tool execution completion (for background tools like autorouter)
     void OnAsyncToolComplete( wxCommandEvent& aEvent );
 
+    // Override CommonSettingsChanged to avoid toolbar recreation (AGENT_FRAME has no toolbars)
+    void CommonSettingsChanged( int aFlags ) override;
+
     // Tool call helper (synchronous)
     std::string SendRequest( int aDest, const std::string& aPayload );
 

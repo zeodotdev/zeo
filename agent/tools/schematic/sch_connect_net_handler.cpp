@@ -150,6 +150,44 @@ try:
         key = (round(x, 2), round(y, 2))
         _wire_ep[key] = _wire_ep.get(key, 0) + 1
 
+    # Build obstacle map excluding connected symbols
+    connected_refs = {p['ref'] for p in pin_positions}
+    obstacles = []
+    try:
+        all_symbols = sch.symbols.get_all()
+        for obs_sym in all_symbols:
+            obs_ref = getattr(obs_sym, 'reference', '')
+            if obs_ref in connected_refs:
+                continue
+            obs_pos = [obs_sym.position.x / 1_000_000, obs_sym.position.y / 1_000_000]
+            obs_pxs = [obs_pos[0]]
+            obs_pys = [obs_pos[1]]
+            for obs_pin in obs_sym.pins:
+                try:
+                    tp = sch.symbols.get_transformed_pin_position(obs_sym, obs_pin.number)
+                    if tp:
+                        obs_pxs.append(tp['position'].x / 1_000_000)
+                        obs_pys.append(tp['position'].y / 1_000_000)
+                except:
+                    pass
+            padding = 1.27
+            obstacles.append({
+                'min_x': min(obs_pxs) - padding,
+                'max_x': max(obs_pxs) + padding,
+                'min_y': min(obs_pys) - padding,
+                'max_y': max(obs_pys) + padding,
+            })
+    except:
+        pass
+
+    def _seg_hits_obs(sx0, sy0, sx1, sy1):
+        smin_x, smax_x = min(sx0, sx1), max(sx0, sx1)
+        smin_y, smax_y = min(sy0, sy1), max(sy0, sy1)
+        for obs in obstacles:
+            if smax_x > obs['min_x'] and smin_x < obs['max_x'] and smax_y > obs['min_y'] and smin_y < obs['max_y']:
+                return True
+        return False
+
     if len(pin_positions) == 2:
         # 2-pin case: midpoint-bend routing
         p0, p1 = pin_positions[0], pin_positions[1]
@@ -185,33 +223,6 @@ try:
         x_spread = max(xs) - min(xs)
         y_spread = max(ys) - min(ys)
         is_horizontal = x_spread >= y_spread
-
-        # Build obstacle map from all symbols (including connected ones)
-        connected_refs = {p['ref'] for p in pin_positions}
-        obstacles = []
-        try:
-            all_symbols = sch.symbols.get_all()
-            for obs_sym in all_symbols:
-                obs_pos = [obs_sym.position.x / 1_000_000, obs_sym.position.y / 1_000_000]
-                obs_pxs = [obs_pos[0]]
-                obs_pys = [obs_pos[1]]
-                for obs_pin in obs_sym.pins:
-                    try:
-                        tp = sch.symbols.get_transformed_pin_position(obs_sym, obs_pin.number)
-                        if tp:
-                            obs_pxs.append(tp['position'].x / 1_000_000)
-                            obs_pys.append(tp['position'].y / 1_000_000)
-                    except:
-                        pass
-                padding = 1.27
-                obstacles.append({
-                    'min_x': min(obs_pxs) - padding,
-                    'max_x': max(obs_pxs) + padding,
-                    'min_y': min(obs_pys) - padding,
-                    'max_y': max(obs_pys) + padding,
-                })
-        except:
-            pass  # If obstacle query fails, proceed without avoidance
 
         def trunk_hits_obstacle(trunk_val, t_min, t_max):
             for obs in obstacles:
@@ -258,6 +269,7 @@ try:
 
         # Count off-trunk pins at each endpoint to decide offset
         _ep_counts = {}
+        _on_trunk_at = set()  # Track which endpoints have on-trunk pins
         for p in pin_positions:
             if is_horizontal:
                 proj = snap_to_grid(p['x'])
@@ -270,6 +282,8 @@ try:
             if off and at_ep:
                 key = round(proj, 4)
                 _ep_counts[key] = _ep_counts.get(key, 0) + 1
+            elif not off and at_ep:
+                _on_trunk_at.add(round(proj, 4))
 
         # Pre-compute branch connection points on the trunk
         trunk_conn = []
@@ -278,7 +292,7 @@ try:
                 proj = snap_to_grid(p['x'])
                 off = abs(p['y'] - trunk_perp) > 0.01
                 at_ep = abs(proj - trunk_min) < 0.01 or abs(proj - trunk_max) < 0.01
-                solo_ep = off and at_ep and _ep_counts.get(round(proj, 4), 0) == 1
+                solo_ep = off and at_ep and _ep_counts.get(round(proj, 4), 0) == 1 and round(proj, 4) not in _on_trunk_at
                 if solo_ep:
                     inward = 2.54 if abs(proj - trunk_max) < 0.01 else -2.54
                     tgt_along = snap_to_grid(proj - inward)
@@ -294,7 +308,7 @@ try:
                 proj = snap_to_grid(p['y'])
                 off = abs(p['x'] - trunk_perp) > 0.01
                 at_ep = abs(proj - trunk_min) < 0.01 or abs(proj - trunk_max) < 0.01
-                solo_ep = off and at_ep and _ep_counts.get(round(proj, 4), 0) == 1
+                solo_ep = off and at_ep and _ep_counts.get(round(proj, 4), 0) == 1 and round(proj, 4) not in _on_trunk_at
                 if solo_ep:
                     inward = 2.54 if abs(proj - trunk_max) < 0.01 else -2.54
                     tgt_along = snap_to_grid(proj - inward)

@@ -1159,7 +1159,6 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     }
 
     auto elements = aInput["elements"];
-    std::string filePath = aInput.value( "file_path", "" );
 
     code << "import json, sys\n";
     code << "from kipy.geometry import Vector2\n";
@@ -1167,22 +1166,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << GenerateRefreshPreamble();
     code << "\n";
     code << "# Helper to safely extract ID from various object types\n";
-    code << "def get_id(obj):\n";
-    code << "    if obj is None:\n";
-    code << "        return ''\n";
-    code << "    if hasattr(obj, 'id'):\n";
-    code << "        id_obj = obj.id\n";
-    code << "        if hasattr(id_obj, 'value'):\n";
-    code << "            return str(id_obj.value)\n";
-    code << "        return str(id_obj)\n";
-    code << "    if hasattr(obj, 'uuid'):\n";
-    code << "        return str(obj.uuid)\n";
-    code << "    if isinstance(obj, str):\n";
-    code << "        return obj\n";
-    code << "    return str(obj)\n";
-    code << "\n";
-    code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
-    code << "results = []\n";
+    code << "succeeded = 0\n";
     code << "errors = []\n";
     code << "\n";
     code << "try:\n";
@@ -1239,21 +1223,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 code << "            sch.symbols.set_footprint(sym_" << i << ", props_" << i << "['Footprint'])\n";
             }
 
-            // Get pin positions for response
-            code << "        pins_" << i << " = []\n";
-            code << "        if hasattr(sym_" << i << ", 'pins'):\n";
-            code << "            for pin in sym_" << i << ".pins:\n";
-            code << "                pin_info = {'number': pin.number, 'name': getattr(pin, 'name', '')}\n";
-            code << "                if hasattr(sch.symbols, 'get_transformed_pin_position'):\n";
-            code << "                    try:\n";
-            code << "                        result = sch.symbols.get_transformed_pin_position(sym_" << i << ", pin.number)\n";
-            code << "                        if result:\n";
-            code << "                            p = result['position']\n";
-            code << "                            pin_info['position'] = [p.x / 1_000_000, p.y / 1_000_000]\n";
-            code << "                    except:\n";
-            code << "                        pass\n";
-            code << "                pins_" << i << ".append(pin_info)\n";
-            code << "        results.append({'index': " << i << ", 'type': 'symbol', 'id': get_id(sym_" << i << "), 'reference': getattr(sym_" << i << ", 'reference', ''), 'pins': pins_" << i << "})\n";
+            code << "        succeeded += 1\n";
         }
         else if( elementType == "power" )
         {
@@ -1274,7 +1244,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        pwr_" << i << " = sch.labels.add_power('" << EscapePythonString( powerName ) << "', pos_" << i << ", angle=" << angle << ")\n";
-            code << "        results.append({'index': " << i << ", 'type': 'power', 'id': get_id(pwr_" << i << "), 'name': '" << EscapePythonString( powerName ) << "', 'pin_position': [" << posX << ", " << posY << "]})\n";
+            code << "        succeeded += 1\n";
         }
         else if( elementType == "wire" )
         {
@@ -1314,7 +1284,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                     // No waypoints - use auto_wire for L-shaped orthogonal routing
                     code << "            wires_" << i << " = sch.wiring.auto_wire(sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "', sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "')\n";
                 }
-                code << "            results.append({'index': " << i << ", 'type': 'wire', 'wire_count': len(wires_" << i << ")})\n";
+                code << "            succeeded += 1\n";
                 code << "        else:\n";
                 code << "            errors.append({'index': " << i << ", 'error': 'Symbol not found'})\n";
             }
@@ -1338,7 +1308,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                             code << "        wc_" << i << " += 1\n";
                         }
                     }
-                    code << "        results.append({'index': " << i << ", 'type': 'wire', 'wire_count': wc_" << i << "})\n";
+                    code << "        succeeded += 1\n";
                 }
             }
         }
@@ -1354,7 +1324,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        junc_" << i << " = sch.wiring.add_junction(pos_" << i << ")\n";
-            code << "        results.append({'index': " << i << ", 'type': 'junction', 'id': get_id(junc_" << i << ")})\n";
+            code << "        succeeded += 1\n";
         }
         else if( elementType == "label" )
         {
@@ -1376,7 +1346,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 code << "        lbl_" << i << " = sch.labels.add_hierarchical('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
             else
                 code << "        lbl_" << i << " = sch.labels.add_local('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
-            code << "        results.append({'index': " << i << ", 'type': 'label', 'id': get_id(lbl_" << i << "), 'text': '" << EscapePythonString( text ) << "'})\n";
+            code << "        succeeded += 1\n";
         }
         else if( elementType == "no_connect" )
         {
@@ -1390,7 +1360,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        nc_" << i << " = sch.wiring.add_no_connect(pos_" << i << ")\n";
-            code << "        results.append({'index': " << i << ", 'type': 'no_connect', 'id': get_id(nc_" << i << ")})\n";
+            code << "        succeeded += 1\n";
         }
         else if( elementType == "bus_entry" )
         {
@@ -1406,7 +1376,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        be_" << i << " = sch.buses.add_bus_entry(pos_" << i << ", direction='" << EscapePythonString( direction ) << "')\n";
-            code << "        results.append({'index': " << i << ", 'type': 'bus_entry', 'id': get_id(be_" << i << ")})\n";
+            code << "        succeeded += 1\n";
         }
         else
         {
@@ -1421,17 +1391,15 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "\n";
     code << "    result = {\n";
     code << "        'status': 'success' if len(errors) == 0 else 'partial',\n";
-    code << "        'source': 'ipc',\n";
     code << "        'total': " << elements.size() << ",\n";
-    code << "        'succeeded': len(results),\n";
-    code << "        'failed': len(errors),\n";
-    code << "        'results': results\n";
+    code << "        'succeeded': succeeded,\n";
+    code << "        'failed': len(errors)\n";
     code << "    }\n";
     code << "    if errors:\n";
     code << "        result['errors'] = errors\n";
     code << "\n";
     code << "except Exception as batch_error:\n";
-    code << "    result = {'status': 'error', 'message': str(batch_error), 'partial_results': results, 'errors': errors}\n";
+    code << "    result = {'status': 'error', 'message': str(batch_error), 'errors': errors}\n";
     code << "\n";
     code << "print(json.dumps(result, indent=2))\n";
 

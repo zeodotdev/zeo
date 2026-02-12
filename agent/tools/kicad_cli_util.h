@@ -70,6 +70,52 @@ inline std::string GetKicadCliCommandPrefix()
     return prefix;
 }
 
+/**
+ * Locate the Freerouting JAR file in the app bundle.
+ * On macOS this is in Contents/SharedSupport/freerouting/freerouting.jar
+ *
+ * @return Full path to freerouting.jar, or empty string if not found.
+ */
+inline std::string GetFreeroutingJarPath()
+{
+    wxString exePathStr = wxStandardPaths::Get().GetExecutablePath();
+    wxFileName exePath( exePathStr );
+
+    // Navigate from MacOS to SharedSupport/freerouting
+    // App structure: Zener.app/Contents/MacOS/kicad -> Zener.app/Contents/SharedSupport/freerouting
+    wxFileName jarPath( exePath.GetPath(), "" );
+    jarPath.RemoveLastDir();  // Remove MacOS
+    jarPath.AppendDir( "SharedSupport" );
+    jarPath.AppendDir( "freerouting" );
+    jarPath.SetFullName( "freerouting.jar" );
+
+    wxLogInfo( "Freerouting: Looking for JAR at: %s", jarPath.GetFullPath() );
+
+    if( jarPath.FileExists() )
+        return jarPath.GetFullPath().ToStdString();
+
+    wxLogWarning( "Freerouting: JAR not found at %s", jarPath.GetFullPath() );
+    return std::string();
+}
+
+
+/**
+ * Get the path to the Java executable.
+ * Uses system Java on macOS.
+ *
+ * @return Path to java executable, or "java" if not found explicitly.
+ */
+inline std::string GetJavaPath()
+{
+    // On macOS, /usr/bin/java is a stub that invokes the real Java
+    // It will show the "install Java" dialog if Java isn't installed
+    if( wxFileName::FileExists( "/usr/bin/java" ) )
+        return "/usr/bin/java";
+
+    // Fall back to PATH lookup
+    return "java";
+}
+
 } // namespace KiCadCliUtil
 
 #endif // KICAD_CLI_UTIL_H

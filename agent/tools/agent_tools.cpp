@@ -1246,6 +1246,37 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbExport );
 
+    // pcb_autoroute - Run Freerouting autorouter
+    LLM_TOOL pcbAutoroute;
+    pcbAutoroute.name = "pcb_autoroute";
+    pcbAutoroute.description =
+        "Run the Freerouting autorouter on unrouted connections. "
+        "Exports board to Specctra DSN format, runs headless Freerouting, then imports "
+        "the routed session (SES) file back into the PCB. "
+        "Returns statistics: {routed, total, failed, tracks_added, vias_added}. "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbAutoroute.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "max_passes", {
+                { "type", "integer" },
+                { "minimum", 1 },
+                { "maximum", 999 },
+                { "description", "Maximum number of routing passes (default: 50). "
+                                "More passes may find better routes but take longer." }
+            }},
+            { "timeout", {
+                { "type", "integer" },
+                { "minimum", 30 },
+                { "maximum", 1800 },
+                { "description", "Timeout in seconds (default: 300). "
+                                "Complex boards may need longer timeouts." }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    tools.push_back( pcbAutoroute );
+
     // screenshot - Export a visual render of a schematic or PCB
     LLM_TOOL screenshot;
     screenshot.name = "screenshot";

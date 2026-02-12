@@ -5,6 +5,8 @@
 #include <string>
 #include <nlohmann/json.hpp>
 
+class wxEvtHandler;
+
 /**
  * Base interface for tool handlers.
  * Each tool handler is responsible for executing a specific tool or category of tools.
@@ -52,6 +54,29 @@ public:
      * @return true if the tool requires IPC execution.
      */
     virtual bool RequiresIPC( const std::string& aToolName ) const { return false; }
+
+    /**
+     * Check if this tool executes asynchronously.
+     * Async tools run in a background thread and post results via events.
+     * @param aToolName The name of the tool to check.
+     * @return true if the tool executes asynchronously.
+     */
+    virtual bool IsAsync( const std::string& aToolName ) const { return false; }
+
+    /**
+     * Start asynchronous execution of the tool.
+     * Only called if IsAsync() returns true. The tool should spawn a background
+     * thread and post EVT_TOOL_EXECUTION_COMPLETE when finished.
+     * @param aToolName The name of the tool to execute.
+     * @param aInput The JSON input parameters for the tool.
+     * @param aToolUseId The unique ID for this tool call (needed for result posting).
+     * @param aEventHandler The event handler to post results to (typically AGENT_FRAME).
+     */
+    virtual void ExecuteAsync( const std::string& aToolName, const nlohmann::json& aInput,
+                               const std::string& aToolUseId, wxEvtHandler* aEventHandler )
+    {
+        // Default implementation does nothing - override in async handlers
+    }
 
     /**
      * Get the IPC command string for tools that require IPC execution.

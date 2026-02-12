@@ -115,6 +115,9 @@ public:
     void OnChatTitleGenerated( wxThreadEvent& aEvent );
     void OnChatHistoryLoaded( wxThreadEvent& aEvent );
 
+    // Async tool execution completion (for background tools like autorouter)
+    void OnAsyncToolComplete( wxCommandEvent& aEvent );
+
     // Tool call helper (synchronous)
     std::string SendRequest( int aDest, const std::string& aPayload );
 

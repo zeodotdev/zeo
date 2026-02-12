@@ -94,6 +94,7 @@ set( AGENT_SRCS
     tools/pcb/pcb_validator.cpp
     tools/pcb/pcb_tool_handler.cpp
     tools/pcb/pcb_crud_handler.cpp
+    tools/pcb/pcb_autoroute_handler.cpp
     tools/screenshot/screenshot_handler.cpp
 )
 

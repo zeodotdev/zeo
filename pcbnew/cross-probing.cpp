@@ -68,6 +68,7 @@
 #include <python_scripting.h> // Fixed include path
 #include "pcb_plotter.h"
 #include <reporter.h>
+#include <specctra_import_export/specctra.h>
 // #include <Python.h> // Included by python_scripting.h if KICAD_SCRIPTING is defined
 
 
@@ -787,6 +788,137 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                 resp["type"] = "export_screenshot_response";
                 resp["svg_path"] = svgPath.ToStdString();
                 resp["success"] = success;
+
+                std::string respStr = resp.dump();
+                Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, respStr, this );
+                break;
+            }
+            else if( j_in.contains( "type" ) && j_in["type"] == "export_specctra_dsn" )
+            {
+                // Export the current board to Specctra DSN format for autorouting
+                std::string outputPath = j_in.value( "output_path", "" );
+
+                nlohmann::json resp;
+                resp["type"] = "export_specctra_dsn_response";
+
+                if( outputPath.empty() )
+                {
+                    resp["success"] = false;
+                    resp["error"] = "Missing output_path parameter";
+                }
+                else
+                {
+                    try
+                    {
+                        DSN::ExportBoardToSpecctraFile( GetBoard(),
+                                                        wxString::FromUTF8( outputPath ) );
+                        resp["success"] = true;
+                        resp["output_path"] = outputPath;
+                    }
+                    catch( const IO_ERROR& e )
+                    {
+                        resp["success"] = false;
+                        resp["error"] = e.What().ToStdString();
+                    }
+                    catch( const std::exception& e )
+                    {
+                        resp["success"] = false;
+                        resp["error"] = e.what();
+                    }
+                }
+
+                std::string respStr = resp.dump();
+                Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, respStr, this );
+                break;
+            }
+            else if( j_in.contains( "type" ) && j_in["type"] == "import_specctra_session" )
+            {
+                // Import a Specctra session file (SES) with routing results
+                std::string inputPath = j_in.value( "input_path", "" );
+
+                nlohmann::json resp;
+                resp["type"] = "import_specctra_session_response";
+
+                if( inputPath.empty() )
+                {
+                    resp["success"] = false;
+                    resp["error"] = "Missing input_path parameter";
+                }
+                else
+                {
+                    try
+                    {
+                        BOARD* board = GetBoard();
+
+                        // Count tracks/vias before import for statistics
+                        int tracksBefore = 0;
+                        int viasBefore = 0;
+                        for( PCB_TRACK* track : board->Tracks() )
+                        {
+                            if( track->Type() == PCB_VIA_T )
+                                viasBefore++;
+                            else
+                                tracksBefore++;
+                        }
+
+                        // Remove existing tracks from view before import
+                        // (DSN::ImportSpecctraSession will replace them on the board)
+                        if( GetCanvas() )
+                        {
+                            for( PCB_TRACK* track : board->Tracks() )
+                                GetCanvas()->GetView()->Remove( track );
+                        }
+
+                        // Import the session file
+                        bool success = DSN::ImportSpecctraSession( board,
+                                                        wxString::FromUTF8( inputPath ) );
+
+                        if( success )
+                        {
+                            // Count tracks/vias after import
+                            int tracksAfter = 0;
+                            int viasAfter = 0;
+                            for( PCB_TRACK* track : board->Tracks() )
+                            {
+                                if( track->Type() == PCB_VIA_T )
+                                    viasAfter++;
+                                else
+                                    tracksAfter++;
+                            }
+
+                            resp["success"] = true;
+                            resp["tracks_added"] = tracksAfter - tracksBefore;
+                            resp["vias_added"] = viasAfter - viasBefore;
+
+                            // Mark board as modified
+                            OnModify();
+
+                            // Add new tracks to the view
+                            if( GetCanvas() )
+                            {
+                                for( PCB_TRACK* track : board->Tracks() )
+                                    GetCanvas()->GetView()->Add( track );
+
+                                GetCanvas()->Refresh();
+                            }
+                        }
+                        else
+                        {
+                            resp["success"] = false;
+                            resp["error"] = "ImportSpecctraSession returned false";
+                        }
+                    }
+                    catch( const IO_ERROR& e )
+                    {
+                        resp["success"] = false;
+                        resp["error"] = e.What().ToStdString();
+                    }
+                    catch( const std::exception& e )
+                    {
+                        resp["success"] = false;
+                        resp["error"] = e.what();
+                    }
+                }
 
                 std::string respStr = resp.dump();
                 Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, respStr, this );

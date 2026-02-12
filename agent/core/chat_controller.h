@@ -209,6 +209,16 @@ public:
     }
 
     /**
+     * Set the function used to sync editor state to TOOL_REGISTRY.
+     * Called before tool execution to ensure handlers have accurate editor state.
+     * @param aFn Function that syncs editor open/closed state
+     */
+    void SetEditorStateSyncFn( std::function<void()> aFn )
+    {
+        m_syncEditorStateFn = aFn;
+    }
+
+    /**
      * Set the function used to get a JSON snapshot of the current schematic state.
      * Used for detecting user edits between agent turns.
      * @param aFn Function returning a JSON string summary of all schematic items
@@ -287,6 +297,7 @@ private:
     std::function<std::string( int, const std::string& )> m_sendRequestFn;
     std::function<std::string()> m_getProjectPathFn;  ///< Get project path for context injection
     std::function<std::string()> m_getSchematicSummaryFn;  ///< Get schematic snapshot for edit detection
+    std::function<void()> m_syncEditorStateFn;  ///< Sync editor state to TOOL_REGISTRY before tool execution
 
     // -------------------------------------------------------------------------
     // User edit detection (schematic diff between turns)

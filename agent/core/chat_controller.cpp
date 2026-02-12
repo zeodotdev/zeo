@@ -1028,6 +1028,27 @@ void CHAT_CONTROLLER::ExecuteNextTool()
         TOOL_REGISTRY::Instance().SetProjectPath( m_getProjectPathFn() );
     }
 
+    // Sync editor state to TOOL_REGISTRY before tool execution
+    // This ensures handlers have accurate editor open/closed state
+    if( m_syncEditorStateFn )
+    {
+        m_syncEditorStateFn();
+    }
+
+    // Provide send request function to handlers that need IPC
+    TOOL_REGISTRY::Instance().SetSendRequestFn( m_sendRequestFn );
+
+    // Check if this is an async tool (runs in background thread)
+    if( TOOL_REGISTRY::Instance().HasHandler( tool->tool_name ) &&
+        TOOL_REGISTRY::Instance().IsAsync( tool->tool_name ) )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - executing async tool: %s", tool->tool_name.c_str() );
+        // Start async execution - result will come via EVT_TOOL_EXECUTION_COMPLETE event
+        TOOL_REGISTRY::Instance().ExecuteAsync( tool->tool_name, tool->tool_input,
+                                                 tool->tool_use_id, m_eventSink );
+        return;
+    }
+
     // Log project path being used for debugging
     if( m_getProjectPathFn )
     {

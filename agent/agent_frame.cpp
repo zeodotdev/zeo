@@ -626,6 +626,19 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             return result;
         } );
 
+    // Editor state sync callback - ensures TOOL_REGISTRY has accurate editor state before tool execution
+    m_chatController->SetEditorStateSyncFn(
+        [this]() {
+            KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
+            KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
+
+            bool schOpen = schEditor && schEditor->IsShown();
+            bool pcbOpen = pcbEditor && pcbEditor->IsShown();
+
+            TOOL_REGISTRY::Instance().SetSchematicEditorOpen( schOpen );
+            TOOL_REGISTRY::Instance().SetPcbEditorOpen( pcbOpen );
+        } );
+
     // Set model on controller
     m_currentModel = "Claude 4.6 Opus";
     m_chatController->SetModel( m_currentModel );
@@ -644,6 +657,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( EVT_CHAT_TITLE_DELTA, &AGENT_FRAME::OnChatTitleDelta, this );
     Bind( EVT_CHAT_TITLE_GENERATED, &AGENT_FRAME::OnChatTitleGenerated, this );
     Bind( EVT_CHAT_HISTORY_LOADED, &AGENT_FRAME::OnChatHistoryLoaded, this );
+
+    // Bind async tool execution completion event (for background tools like autorouter)
+    Bind( EVT_TOOL_EXECUTION_COMPLETE, &AGENT_FRAME::OnAsyncToolComplete, this );
 
     // Create menu bar
     wxMenuBar* menuBar = new wxMenuBar();
@@ -3416,8 +3432,15 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
         KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
 
-        status["schematic_editor_open"] = ( schEditor && schEditor->IsShown() );
-        status["pcb_editor_open"] = ( pcbEditor && pcbEditor->IsShown() );
+        bool schOpen = schEditor && schEditor->IsShown();
+        bool pcbOpen = pcbEditor && pcbEditor->IsShown();
+
+        status["schematic_editor_open"] = schOpen;
+        status["pcb_editor_open"] = pcbOpen;
+
+        // Sync editor state to TOOL_REGISTRY so tool handlers know editor status
+        TOOL_REGISTRY::Instance().SetSchematicEditorOpen( schOpen );
+        TOOL_REGISTRY::Instance().SetPcbEditorOpen( pcbOpen );
 
         // Add project file paths
         wxString prjPath = Kiway().Prj().GetProjectPath();
@@ -3741,6 +3764,27 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
     // Auto-scroll handled by CSS flex-direction: column-reverse
 
     delete data;
+}
+
+
+void AGENT_FRAME::OnAsyncToolComplete( wxCommandEvent& aEvent )
+{
+    // Handle completion of async tools (like autorouter) that run in background threads
+    ToolExecutionResult* result = static_cast<ToolExecutionResult*>( aEvent.GetClientData() );
+    if( !result )
+        return;
+
+    wxLogInfo( "AGENT_FRAME::OnAsyncToolComplete - tool=%s, success=%s",
+               result->tool_name.c_str(), result->success ? "true" : "false" );
+
+    // Forward the result to the chat controller
+    if( m_chatController )
+    {
+        m_chatController->HandleToolResult( result->tool_use_id, result->result, result->success );
+    }
+
+    // Clean up - event data is owned by the event
+    delete result;
 }
 
 

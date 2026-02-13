@@ -284,8 +284,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     mainSizer->Add( m_webView, 1, wxEXPAND );
 
 #ifdef __APPLE__
-    // WKWebView handles Cmd+A through the Cocoa responder chain, bypassing wxWidgets.
-    // Install an NSEvent monitor to intercept Cmd+A when the webview has focus.
+    // WKWebView handles Cmd+key through the Cocoa responder chain, bypassing wxWidgets.
+    // Install an NSEvent monitor to intercept shortcuts when the webview has focus.
     void* nativeHandle = (void*) m_webView->GetWebView()->GetHandle();
 
     if( nativeHandle )
@@ -293,13 +293,38 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         // Disable WKWebView's default white background so parent dark panel shows through
         SetWebViewDarkBackground( nativeHandle );
 
-        InstallSelectAllMonitor(
+        InstallKeyboardMonitor(
                 nativeHandle,
-                [this]()
+                [this]( KEY_SHORTCUT aShortcut )
                 {
-                    m_webView->RunScriptAsync(
-                            wxS( "var ta = document.getElementById('input-textarea');"
-                                 "if(ta) { ta.focus(); ta.select(); }" ) );
+                    switch( aShortcut )
+                    {
+                    case KEY_SHORTCUT::SELECT_ALL:
+                        m_webView->RunScriptAsync(
+                                wxS( "var ta = document.getElementById('input-textarea');"
+                                     "if(ta) { ta.focus(); ta.select(); }" ) );
+                        break;
+
+                    case KEY_SHORTCUT::UNDO:
+                        m_webView->RunScriptAsync( wxS( "App.Input.undo()" ) );
+                        break;
+
+                    case KEY_SHORTCUT::REDO:
+                        m_webView->RunScriptAsync( wxS( "App.Input.redo()" ) );
+                        break;
+
+                    case KEY_SHORTCUT::FOCUS_INPUT:
+                        m_webView->RunScriptAsync( wxS( "App.Input.focus()" ) );
+                        break;
+
+                    case KEY_SHORTCUT::STOP_GENERATING:
+                        DoStopClick();
+                        break;
+
+                    case KEY_SHORTCUT::NEW_CHAT:
+                        DoNewChat();
+                        break;
+                    }
                 } );
     }
 #endif
@@ -693,7 +718,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 AGENT_FRAME::~AGENT_FRAME()
 {
 #ifdef __APPLE__
-    RemoveSelectAllMonitor();
+    RemoveKeyboardMonitor();
 #endif
 
     // Stop the generating animation timer to prevent timer events

@@ -3,7 +3,8 @@
 
 static id s_eventMonitor = nil;
 
-void InstallSelectAllMonitor( void* aInputNativeView, std::function<void()> aCallback )
+void InstallKeyboardMonitor( void* aNativeView,
+                             std::function<void( KEY_SHORTCUT )> aCallback )
 {
     if( s_eventMonitor )
         return;
@@ -11,21 +12,60 @@ void InstallSelectAllMonitor( void* aInputNativeView, std::function<void()> aCal
     s_eventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                                            handler:^NSEvent*( NSEvent* event )
     {
-        // Check for Cmd+A (no other modifiers like Shift, Ctrl, Option)
         NSUInteger flags = [event modifierFlags] & NSEventModifierFlagDeviceIndependentFlagsMask;
+        bool       hasCmd   = ( flags & NSEventModifierFlagCommand ) != 0;
+        bool       hasShift = ( flags & NSEventModifierFlagShift ) != 0;
+        bool       hasCtrl  = ( flags & NSEventModifierFlagControl ) != 0;
+        bool       hasOpt   = ( flags & NSEventModifierFlagOption ) != 0;
+        NSString*  key      = [[event charactersIgnoringModifiers] lowercaseString];
 
-        if( ( flags & NSEventModifierFlagCommand ) &&
-            !( flags & ( NSEventModifierFlagShift | NSEventModifierFlagControl | NSEventModifierFlagOption ) ) &&
-            [[event charactersIgnoringModifiers] isEqualToString:@"a"] )
+        KEY_SHORTCUT shortcut;
+        bool         matched = false;
+
+        // Escape (no modifiers required)
+        if( [event keyCode] == 53 && !hasCmd && !hasShift && !hasCtrl && !hasOpt )
         {
-            NSView* inputView = (__bridge NSView*) aInputNativeView;
-            NSResponder* responder = [[inputView window] firstResponder];
-
-            // Check if the first responder is the input view or a descendant of it
-            if( [responder isKindOfClass:[NSView class]] &&
-                [(NSView*) responder isDescendantOf:inputView] )
+            shortcut = KEY_SHORTCUT::STOP_GENERATING;
+            matched = true;
+        }
+        else if( hasCmd )
+        {
+            if( !hasShift && !hasCtrl && !hasOpt && [key isEqualToString:@"a"] )
             {
-                aCallback();
+                shortcut = KEY_SHORTCUT::SELECT_ALL;
+                matched = true;
+            }
+            else if( !hasShift && !hasCtrl && !hasOpt && [key isEqualToString:@"z"] )
+            {
+                shortcut = KEY_SHORTCUT::UNDO;
+                matched = true;
+            }
+            else if( hasShift && !hasCtrl && !hasOpt && [key isEqualToString:@"z"] )
+            {
+                shortcut = KEY_SHORTCUT::REDO;
+                matched = true;
+            }
+            else if( !hasShift && !hasCtrl && !hasOpt && [key isEqualToString:@"l"] )
+            {
+                shortcut = KEY_SHORTCUT::FOCUS_INPUT;
+                matched = true;
+            }
+            else if( !hasShift && !hasCtrl && !hasOpt && [key isEqualToString:@"n"] )
+            {
+                shortcut = KEY_SHORTCUT::NEW_CHAT;
+                matched = true;
+            }
+        }
+
+        if( matched )
+        {
+            NSView*      nativeView = (__bridge NSView*) aNativeView;
+            NSResponder* responder  = [[nativeView window] firstResponder];
+
+            if( [responder isKindOfClass:[NSView class]] &&
+                [(NSView*) responder isDescendantOf:nativeView] )
+            {
+                aCallback( shortcut );
                 return nil; // Consume the event
             }
         }
@@ -34,7 +74,7 @@ void InstallSelectAllMonitor( void* aInputNativeView, std::function<void()> aCal
     }];
 }
 
-void RemoveSelectAllMonitor()
+void RemoveKeyboardMonitor()
 {
     if( s_eventMonitor )
     {

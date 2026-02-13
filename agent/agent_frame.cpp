@@ -623,8 +623,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             TOOL_REGISTRY::Instance().SetPcbEditorOpen( pcbOpen );
         } );
 
-    // Set model on controller
-    m_currentModel = "Claude 4.6 Opus";
+    // Load persisted model preference (default to Claude 4.6 Opus)
+    m_currentModel = LoadModelPreference();
     m_chatController->SetModel( m_currentModel );
 
     // Bind Controller Events
@@ -1869,6 +1869,8 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
 
         if( m_chatController )
             m_chatController->SetModel( m_currentModel );
+
+        SaveModelPreference( m_currentModel );
     }
 }
 
@@ -4346,4 +4348,66 @@ std::vector<wxString> AGENT_FRAME::GetAllowedPaths()
     wxLogInfo( "AGENT: GetAllowedPaths: [%s]", pathList );
 
     return paths;
+}
+
+
+wxString AGENT_FRAME::GetPreferencesPath()
+{
+    wxString appSupport = wxStandardPaths::Get().GetUserDataDir();
+    wxFileName dir( appSupport, wxEmptyString );
+    dir.RemoveLastDir();
+    dir.AppendDir( "kicad" );
+    return wxFileName( dir.GetPath(), "agent_preferences", "json" ).GetFullPath();
+}
+
+
+void AGENT_FRAME::SaveModelPreference( const std::string& aModel )
+{
+    wxString path = GetPreferencesPath();
+
+    // Ensure parent directory exists
+    wxFileName fn( path );
+    if( !wxFileName::DirExists( fn.GetPath() ) )
+        wxFileName::Mkdir( fn.GetPath(), wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
+
+    // Load existing prefs (if any) so we don't clobber other future settings
+    nlohmann::json prefs;
+    std::ifstream inFile( path.ToStdString() );
+    if( inFile.is_open() )
+    {
+        try { inFile >> prefs; }
+        catch( ... ) { prefs = nlohmann::json::object(); }
+        inFile.close();
+    }
+
+    prefs["model"] = aModel;
+
+    std::ofstream outFile( path.ToStdString() );
+    if( outFile.is_open() )
+    {
+        outFile << prefs.dump( 2 );
+        outFile.close();
+    }
+}
+
+
+std::string AGENT_FRAME::LoadModelPreference()
+{
+    wxString path = GetPreferencesPath();
+
+    std::ifstream file( path.ToStdString() );
+    if( file.is_open() )
+    {
+        try
+        {
+            nlohmann::json prefs;
+            file >> prefs;
+
+            if( prefs.contains( "model" ) && prefs["model"].is_string() )
+                return prefs["model"].get<std::string>();
+        }
+        catch( ... ) {}
+    }
+
+    return "Claude 4.6 Opus";
 }

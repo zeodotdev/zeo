@@ -190,6 +190,11 @@ private:
     // Model Context (context prompt is now injected server-side via context_type)
     std::string    m_currentModel;    // Currently selected model name
 
+    // Preferences persistence
+    wxString    GetPreferencesPath();
+    void        SaveModelPreference( const std::string& aModel );
+    std::string LoadModelPreference();
+
     // ── HTML Rendering ────────────────────────────────────────────────────
 
     // m_fullHtmlContent tracks the chat area inner HTML (messages, tool results, streaming divs).

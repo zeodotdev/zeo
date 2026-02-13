@@ -97,7 +97,6 @@ static const char* CONNECT_NET_BODY = R"py(
 try:
     # Phase 1: Resolve pin positions
     pin_positions = []
-    _sym_bbox = {}  # Cache pin bounding box per symbol
     for ref, pin_id in pin_specs:
         sym = sch.symbols.get_by_ref(ref)
         if not sym:
@@ -109,46 +108,39 @@ try:
                 raise ValueError(f'Pin not found: {pin_id} on {ref}')
             px = pin_pos.x / 1_000_000
             py = pin_pos.y / 1_000_000
+            pin_orientation = None
         else:
             px = pin_result['position'].x / 1_000_000
             py = pin_result['position'].y / 1_000_000
-        # Determine pin direction from edge proximity on symbol pin bbox
-        if ref not in _sym_bbox:
-            bpxs, bpys = [], []
-            for sp in sym.pins:
-                try:
-                    tp = sch.symbols.get_transformed_pin_position(sym, sp.number)
-                    if tp:
-                        bpxs.append(tp['position'].x / 1_000_000)
-                        bpys.append(tp['position'].y / 1_000_000)
-                except:
-                    pass
-            _sym_bbox[ref] = (min(bpxs), max(bpxs), min(bpys), max(bpys)) if len(bpxs) >= 2 else None
-        bbox = _sym_bbox[ref]
-        if bbox:
-            bmin_x, bmax_x, bmin_y, bmax_y = bbox
-            d_lr = min(abs(snap_to_grid(px) - bmin_x), abs(snap_to_grid(px) - bmax_x))
-            d_tb = min(abs(snap_to_grid(py) - bmin_y), abs(snap_to_grid(py) - bmax_y))
-            if d_lr < d_tb:
+            pin_orientation = pin_result.get('orientation', None)
+        # Compute outward escape direction from pin orientation (degrees from KiCad API)
+        # 0°=right, 90°=up, 180°=left, 270°=down
+        if pin_orientation is not None:
+            ang = pin_orientation % 360
+            if ang < 45 or ang >= 315:
+                out_dx, out_dy = 1.27, 0       # right
                 pin_dir = 'h'
-            elif d_tb < d_lr:
+            elif 45 <= ang < 135:
+                out_dx, out_dy = 0, -1.27      # up (Y inverted in KiCad)
                 pin_dir = 'v'
+            elif 135 <= ang < 225:
+                out_dx, out_dy = -1.27, 0      # left
+                pin_dir = 'h'
             else:
-                # Tie: use bbox aspect ratio
-                pin_dir = 'v' if (bmax_y - bmin_y) >= (bmax_x - bmin_x) else 'h'
+                out_dx, out_dy = 0, 1.27       # down
+                pin_dir = 'v'
         else:
+            # Fallback: guess from symbol center
             sym_cx = sym.position.x / 1_000_000
             sym_cy = sym.position.y / 1_000_000
-            pin_dir = 'v' if abs(py - sym_cy) >= abs(px - sym_cx) else 'h'
-        # Compute outward escape direction (away from symbol center)
-        sym_cx = sym.position.x / 1_000_000
-        sym_cy = sym.position.y / 1_000_000
-        if pin_dir == 'h':
-            out_dx = 1.27 if px > sym_cx else -1.27
-            out_dy = 0
-        else:
-            out_dx = 0
-            out_dy = 1.27 if py > sym_cy else -1.27
+            if abs(px - sym_cx) >= abs(py - sym_cy):
+                out_dx = 1.27 if px > sym_cx else -1.27
+                out_dy = 0
+                pin_dir = 'h'
+            else:
+                out_dx = 0
+                out_dy = 1.27 if py > sym_cy else -1.27
+                pin_dir = 'v'
         pin_positions.append({'ref': ref, 'pin': pin_id, 'x': snap_to_grid(px), 'y': snap_to_grid(py), 'raw_x': px, 'raw_y': py, 'sym': sym, 'dir': pin_dir, 'out_dx': out_dx, 'out_dy': out_dy})
 
     wire_count = 0
@@ -208,10 +200,10 @@ try:
         return False
 
     import heapq
-    def _astar(x0, y0, x1, y1, grid=1.27, bend_cost=3, start_dir=-1):
+    def _astar(x0, y0, x1, y1, grid=1.27, bend_cost=3, start_dir=-1, end_dir=-1):
         """A* pathfinding on the schematic grid. Returns list of (x,y) waypoints.
-        start_dir: if >= 0, preferred initial direction (0=right, 1=left, 2=down, 3=up).
-        Non-preferred first-step directions incur bend_cost penalty."""
+        start_dir: if >= 0, forced first-step direction (0=right, 1=left, 2=down, 3=up).
+        end_dir: if >= 0, forced approach direction into the goal cell."""
         # Snap start/end to grid
         gx0, gy0 = round(x0 / grid), round(y0 / grid)
         gx1, gy1 = round(x1 / grid), round(y1 / grid)
@@ -262,6 +254,16 @@ try:
                 nx, ny = gx + dx, gy + dy
                 if nx < g_min_x or nx > g_max_x or ny < g_min_y or ny > g_max_y:
                     continue
+                # Force first step outward from pin (hard constraint, not just penalty)
+                if (gx, gy) == (gx0, gy0) and init_d >= 0 and di != init_d:
+                    edx, edy = dirs[init_d]
+                    if not _cell_blocked((gx0 + edx) * grid, (gy0 + edy) * grid, grid):
+                        continue
+                # Force approach direction into goal (pin escape at destination)
+                if (nx, ny) == goal and end_dir >= 0 and di != end_dir:
+                    edx, edy = dirs[end_dir]
+                    if not _cell_blocked((gx1 - edx) * grid, (gy1 - edy) * grid, grid):
+                        continue
                 # Allow start and goal cells even if blocked
                 if (nx, ny) != goal and (nx, ny) != (gx0, gy0):
                     if _cell_blocked(nx * grid, ny * grid, grid):
@@ -298,11 +300,14 @@ try:
         return -1
 
     def _route_pins(p0, p1):
-        """Route between two pins using A* with forced start direction."""
+        """Route between two pins using A* with forced escape at both ends."""
         x0, y0 = p0['raw_x'], p0['raw_y']
         x1, y1 = p1['raw_x'], p1['raw_y']
         sd = _dir_index(p0['out_dx'], p0['out_dy'])
-        return _astar(x0, y0, x1, y1, start_dir=sd)
+        ed = _dir_index(p1['out_dx'], p1['out_dy'])
+        # end_dir is opposite of outward (wire approaches from outside, moving inward)
+        ed = ed ^ 1 if ed >= 0 else -1
+        return _astar(x0, y0, x1, y1, start_dir=sd, end_dir=ed)
 
     if routing_mode == 'chain':
         # Chain mode: A* route each consecutive pin pair

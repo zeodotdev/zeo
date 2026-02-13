@@ -6,6 +6,7 @@
 #include <wx/timer.h>
 #include <string>
 #include <vector>
+#include <map>
 #include <set>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -202,6 +203,7 @@ private:
     bool     m_thinkingHtmlDirty;      // Deferred rebuild flag for thinking HTML
     int      m_currentThinkingIndex;
     wxString m_lastToolDesc;
+    std::map<std::string, wxString> m_toolDescByUseId; // tool_use id -> description (for history rendering)
     bool     m_userScrolledUp;
     long     m_lastScrollActivityMs;
     bool     m_htmlUpdatePending;

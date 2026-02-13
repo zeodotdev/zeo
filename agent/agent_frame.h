@@ -160,9 +160,11 @@ private:
 
     // ── Auth ──────────────────────────────────────────────────────────────
 
-    AGENT_AUTH*   m_auth;
+    AGENT_AUTH*   m_auth;       // Non-owning when shared with launcher, owning when fallback
+    bool          m_ownsAuth;   // True if agent frame created its own AGENT_AUTH
     void UpdateAuthUI();
     bool CheckAuthentication();
+    void EnsureAuth();          // Lazy-init fallback auth if no shared pointer received
 
     // ── Chat State ────────────────────────────────────────────────────────
 

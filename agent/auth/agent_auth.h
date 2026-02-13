@@ -104,8 +104,11 @@ private:
     bool        WriteSessionFile( const std::string& aData );
     bool        ReadSessionFile( std::string& aData );
 
-    // Check if access token is expired
+    // Check if access token is expired (includes 5-minute proactive refresh buffer)
     bool IsTokenExpired();
+
+    // Check if access token is actually expired (no buffer — token is unusable)
+    bool IsTokenHardExpired();
 
     // Parse query parameters from URL
     std::map<std::string, std::string> ParseQueryParams( const std::string& url );

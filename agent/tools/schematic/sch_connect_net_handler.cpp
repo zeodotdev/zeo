@@ -150,33 +150,43 @@ try:
         key = (round(x, 2), round(y, 2))
         _wire_ep[key] = _wire_ep.get(key, 0) + 1
 
-    # Build obstacle map excluding connected symbols
-    connected_refs = {p['ref'] for p in pin_positions}
+    # Build obstacle map from graphical bounding boxes of ALL symbols.
+    # Shrink bbox edges that have pins so wires can reach pin tips
+    # without the body registering as an obstacle.
     obstacles = []
     try:
         all_symbols = sch.symbols.get_all()
         for obs_sym in all_symbols:
-            obs_ref = getattr(obs_sym, 'reference', '')
-            if obs_ref in connected_refs:
+            try:
+                bbox = sch.transform.get_bounding_box(obs_sym, units='mm')
+            except:
                 continue
-            obs_pos = [obs_sym.position.x / 1_000_000, obs_sym.position.y / 1_000_000]
-            obs_pxs = [obs_pos[0]]
-            obs_pys = [obs_pos[1]]
-            for obs_pin in obs_sym.pins:
+            if not bbox:
+                continue
+            bx0, bx1 = bbox['min_x'], bbox['max_x']
+            by0, by1 = bbox['min_y'], bbox['max_y']
+            # Get pin positions to detect which edges have pins
+            pin_xs, pin_ys = [], []
+            for sp in obs_sym.pins:
                 try:
-                    tp = sch.symbols.get_transformed_pin_position(obs_sym, obs_pin.number)
+                    tp = sch.symbols.get_transformed_pin_position(obs_sym, sp.number)
                     if tp:
-                        obs_pxs.append(tp['position'].x / 1_000_000)
-                        obs_pys.append(tp['position'].y / 1_000_000)
+                        pin_xs.append(tp['position'].x / 1_000_000)
+                        pin_ys.append(tp['position'].y / 1_000_000)
                 except:
                     pass
-            padding = 1.27
-            obstacles.append({
-                'min_x': min(obs_pxs) - padding,
-                'max_x': max(obs_pxs) + padding,
-                'min_y': min(obs_pys) - padding,
-                'max_y': max(obs_pys) + padding,
-            })
+            # Shrink each edge that has a pin within 2mm of it
+            shrink = 1.27
+            if any(abs(px - bx0) < 2.0 for px in pin_xs):
+                bx0 += shrink
+            if any(abs(px - bx1) < 2.0 for px in pin_xs):
+                bx1 -= shrink
+            if any(abs(py - by0) < 2.0 for py in pin_ys):
+                by0 += shrink
+            if any(abs(py - by1) < 2.0 for py in pin_ys):
+                by1 -= shrink
+            if bx0 < bx1 and by0 < by1:
+                obstacles.append({'min_x': bx0, 'max_x': bx1, 'min_y': by0, 'max_y': by1})
     except:
         pass
 

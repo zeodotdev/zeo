@@ -188,7 +188,34 @@ try:
                 return True
         return False
 
-    if len(pin_positions) == 2:
+    if routing_mode == 'chain':
+        # Chain mode: wire pins sequentially as 2-pin pairs
+        for ci in range(len(pin_positions) - 1):
+            p0, p1 = pin_positions[ci], pin_positions[ci + 1]
+            x0, y0 = p0['raw_x'], p0['raw_y']
+            x1, y1 = p1['raw_x'], p1['raw_y']
+            if abs(x0 - x1) < 0.01 or abs(y0 - y1) < 0.01:
+                # Collinear: straight wire
+                sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), Vector2.from_xy_mm(x1, y1))
+                wire_count += 1
+            else:
+                # L-shaped: pick bend direction from pin directions
+                pin0_vertical = p0['dir'] == 'v'
+                pin1_vertical = p1['dir'] == 'v'
+                if pin0_vertical:
+                    # Extend p0 vertically, then horizontal to p1
+                    cx, cy = x0, y1
+                elif pin1_vertical:
+                    # Extend p1 vertically, then horizontal from p0
+                    cx, cy = x1, y0
+                else:
+                    # Both horizontal: default vertical-first
+                    cx, cy = x0, y1
+                sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), Vector2.from_xy_mm(cx, cy))
+                sch.wiring.add_wire(Vector2.from_xy_mm(cx, cy), Vector2.from_xy_mm(x1, y1))
+                wire_count += 2
+
+    elif len(pin_positions) == 2:
         # 2-pin case: midpoint-bend routing
         p0, p1 = pin_positions[0], pin_positions[1]
         x0, y0 = p0['raw_x'], p0['raw_y']
@@ -461,7 +488,9 @@ std::string SCH_CONNECT_NET_HANDLER::GenerateConnectNetCode( const nlohmann::jso
         pinSpecs.emplace_back( spec.substr( 0, colonPos ), spec.substr( colonPos + 1 ) );
     }
 
-    // Build pin_specs Python list (only dynamic part)
+    std::string mode = aInput.value( "mode", "chain" );
+
+    // Build pin_specs Python list and mode (only dynamic parts)
     std::ostringstream pinSpecCode;
     pinSpecCode << "pin_specs = [\n";
     for( const auto& [ref, pin] : pinSpecs )
@@ -470,6 +499,7 @@ std::string SCH_CONNECT_NET_HANDLER::GenerateConnectNetCode( const nlohmann::jso
                     << "', '" << EscapePythonString( pin ) << "'),\n";
     }
     pinSpecCode << "]\n";
+    pinSpecCode << "routing_mode = '" << EscapePythonString( mode ) << "'\n";
 
     // Concatenate: preamble + dynamic pin_specs + static body
     return std::string( CONNECT_NET_PREAMBLE ) + pinSpecCode.str()

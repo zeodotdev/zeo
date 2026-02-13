@@ -593,13 +593,10 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     LLM_TOOL schConnectNet;
     schConnectNet.name = "sch_connect_net";
     schConnectNet.description =
-        "Connect two or more component pins on the same net with wires and junctions in a single call. "
-        "Replaces multiple sch_add wire/junction calls. Resolves pin positions automatically, "
-        "computes an optimal trunk-and-branch wiring layout, and places junctions at T-connections. "
-        "Avoids routing the trunk wire through other components when possible. "
-        "For 2 pins: draws a direct L-shaped wire (same as auto_wire). "
-        "For 3+ pins: computes a shared trunk wire along the dominant axis, with branch wires to each pin. "
-        "REQUIRES: Schematic editor must be open with a document loaded.";
+        "Connect component pins with auto-routed wires. "
+        "Resolves pin positions automatically and places junctions at T-connections. "
+        "Use mode 'chain' for series component paths (pins wired sequentially in order). "
+        "Use mode 'star' (default) for shared nodes where multiple pins tap the same net.";
     schConnectNet.input_schema = {
         { "type", "object" },
         { "properties", {
@@ -610,8 +607,14 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                     { "description", "Pin specifier as 'REF:PIN' (e.g., 'R1:1', 'U1:VCC', 'Q2:D')" }
                 }},
                 { "minItems", 2 },
-                { "description", "Array of pin specifiers to connect on the same net. Min 2 pins. "
-                                "Format: 'REFERENCE:PIN_NUMBER_OR_NAME' (e.g., ['Q2:D', 'D2:1', 'L2:1'])" }
+                { "description", "Array of pin specifiers. "
+                                "Format: 'REFERENCE:PIN_NUMBER_OR_NAME' (e.g., ['R1:2', 'R2:1', 'U1:3'])" }
+            }},
+            { "mode", {
+                { "type", "string" },
+                { "enum", json::array( { "star", "chain" } ) },
+                { "description", "Routing topology. 'chain' (default): wire pins sequentially in order (for series paths). "
+                                "'star': trunk-and-branch (for shared nodes like power fan-outs)." }
             }}
         }},
         { "required", json::array( { "pins" } ) }

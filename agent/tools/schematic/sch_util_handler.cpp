@@ -92,12 +92,11 @@ std::string SCH_UTIL_HANDLER::GenerateAnnotateCode( const nlohmann::json& aInput
     code << "\n";
     code << "    # Call the annotation API via sch.erc.annotate()\n";
     code << "    # kipy API: annotate(scope, order, algorithm, start_number, reset_existing, recursive)\n";
-    code << "    # Note: KiCad adds 1 to start_number internally, so pass 0 to start at 1\n";
     code << "    response = sch.erc.annotate(\n";
     code << "        scope='" << kipyScope << "',\n";
     code << "        order='" << kipyOrder << "',\n";
     code << "        algorithm='incremental',\n";
-    code << "        start_number=0,\n";
+    code << "        start_number=1,\n";
     code << "        reset_existing=" << ( resetExisting || scope == "all" ? "True" : "False" ) << ",\n";
     code << "        recursive=True\n";
     code << "    )\n";

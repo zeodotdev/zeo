@@ -987,10 +987,26 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
         offsetY = aInput["offset"][1].get<double>();
     }
 
-    code << "import json, sys\n";
+    code << "import json, sys, re\n";
     code << "from kipy.geometry import Vector2\n";
     code << "\n";
     code << GenerateRefreshPreamble();
+    code << "\n";
+    code << "# Build map of used references for auto-numbering power symbols\n";
+    code << "used_refs = {}\n";
+    code << "for _s in sch.symbols.get_all():\n";
+    code << "    _r = getattr(_s, 'reference', '')\n";
+    code << "    _m = re.match(r'^([A-Za-z#]+)(\\d+)$', _r)\n";
+    code << "    if _m:\n";
+    code << "        used_refs.setdefault(_m.group(1), set()).add(int(_m.group(2)))\n";
+    code << "\n";
+    code << "def next_ref(prefix):\n";
+    code << "    nums = used_refs.get(prefix, set())\n";
+    code << "    n = 1\n";
+    code << "    while n in nums:\n";
+    code << "        n += 1\n";
+    code << "    used_refs.setdefault(prefix, set()).add(n)\n";
+    code << "    return f'{prefix}{n}'\n";
     code << "\n";
     code << "ref = '" << EscapePythonString( ref ) << "'\n";
     code << "pin_id = '" << EscapePythonString( pin ) << "'\n";
@@ -1046,6 +1062,12 @@ std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& 
     code << "    # Place the power symbol\n";
     code << "    power_pos = Vector2.from_xy_mm(power_x, power_y)\n";
     code << "    power_sym = sch.labels.add_power(power_name, power_pos, angle=power_angle)\n";
+    code << "    _pwr_ref = next_ref('#PWR')\n";
+    code << "    for _f in power_sym._proto.fields:\n";
+    code << "        if _f.name == 'Reference':\n";
+    code << "            _f.text = _pwr_ref\n";
+    code << "            break\n";
+    code << "    sch.crud.update_items(power_sym)\n";
     code << "\n";
     code << "    wire_count = 0\n";
     code << "    # If there's an offset, draw a wire from pin to power symbol\n";
@@ -1160,13 +1182,28 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
     auto elements = aInput["elements"];
 
-    code << "import json, sys\n";
+    code << "import json, sys, re\n";
     code << "from kipy.geometry import Vector2\n";
     code << "\n";
     code << GenerateRefreshPreamble();
     code << "\n";
-    code << "# Helper to safely extract ID from various object types\n";
-    code << "succeeded = 0\n";
+    code << "# Build map of used references for auto-numbering\n";
+    code << "used_refs = {}\n";
+    code << "for _s in sch.symbols.get_all():\n";
+    code << "    _r = getattr(_s, 'reference', '')\n";
+    code << "    _m = re.match(r'^([A-Za-z#]+)(\\d+)$', _r)\n";
+    code << "    if _m:\n";
+    code << "        used_refs.setdefault(_m.group(1), set()).add(int(_m.group(2)))\n";
+    code << "\n";
+    code << "def next_ref(prefix):\n";
+    code << "    nums = used_refs.get(prefix, set())\n";
+    code << "    n = 1\n";
+    code << "    while n in nums:\n";
+    code << "        n += 1\n";
+    code << "    used_refs.setdefault(prefix, set()).add(n)\n";
+    code << "    return f'{prefix}{n}'\n";
+    code << "\n";
+    code << "results = []\n";
     code << "errors = []\n";
     code << "\n";
     code << "try:\n";
@@ -1195,7 +1232,6 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             bool mirrorX = ( mirror == "x" );
             bool mirrorY = ( mirror == "y" );
             int unit = elem.value( "unit", 1 );
-            std::string reference = elem.value( "reference", "" );
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        sym_" << i << " = sch.symbols.add(\n";
@@ -1207,12 +1243,6 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "            mirror_y=" << ( mirrorY ? "True" : "False" ) << "\n";
             code << "        )\n";
 
-            if( !reference.empty() )
-            {
-                code << "        if hasattr(sch.symbols, 'set_reference'):\n";
-                code << "            sch.symbols.set_reference(sym_" << i << ", '" << EscapePythonString( reference ) << "')\n";
-            }
-
             // Handle properties
             if( elem.contains( "properties" ) && elem["properties"].is_object() )
             {
@@ -1223,7 +1253,14 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 code << "            sch.symbols.set_footprint(sym_" << i << ", props_" << i << "['Footprint'])\n";
             }
 
-            code << "        succeeded += 1\n";
+            code << "        _prefix_" << i << " = re.match(r'^([A-Za-z#]+)', getattr(sym_" << i << ", 'reference', 'X')).group(1)\n";
+            code << "        _new_ref_" << i << " = next_ref(_prefix_" << i << ")\n";
+            code << "        for _f in sym_" << i << "._proto.fields:\n";
+            code << "            if _f.name == 'Reference':\n";
+            code << "                _f.text = _new_ref_" << i << "\n";
+            code << "                break\n";
+            code << "        sch.crud.update_items(sym_" << i << ")\n";
+            code << "        results.append({'index': " << i << ", 'element_type': 'symbol', 'reference': _new_ref_" << i << "})\n";
         }
         else if( elementType == "power" )
         {
@@ -1244,7 +1281,13 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        pwr_" << i << " = sch.labels.add_power('" << EscapePythonString( powerName ) << "', pos_" << i << ", angle=" << angle << ")\n";
-            code << "        succeeded += 1\n";
+            code << "        _pwr_ref_" << i << " = next_ref('#PWR')\n";
+            code << "        for _f in pwr_" << i << "._proto.fields:\n";
+            code << "            if _f.name == 'Reference':\n";
+            code << "                _f.text = _pwr_ref_" << i << "\n";
+            code << "                break\n";
+            code << "        sch.crud.update_items(pwr_" << i << ")\n";
+            code << "        results.append({'index': " << i << ", 'element_type': 'power', 'reference': _pwr_ref_" << i << "})\n";
         }
         else if( elementType == "wire" )
         {
@@ -1284,7 +1327,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                     // No waypoints - use auto_wire for L-shaped orthogonal routing
                     code << "            wires_" << i << " = sch.wiring.auto_wire(sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "', sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "')\n";
                 }
-                code << "            succeeded += 1\n";
+                code << "            results.append({'index': " << i << ", 'element_type': 'wire'})\n";
                 code << "        else:\n";
                 code << "            errors.append({'index': " << i << ", 'error': 'Symbol not found'})\n";
             }
@@ -1308,7 +1351,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                             code << "        wc_" << i << " += 1\n";
                         }
                     }
-                    code << "        succeeded += 1\n";
+                    code << "        results.append({'index': " << i << ", 'element_type': 'wire'})\n";
                 }
             }
         }
@@ -1324,7 +1367,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        junc_" << i << " = sch.wiring.add_junction(pos_" << i << ")\n";
-            code << "        succeeded += 1\n";
+            code << "        results.append({'index': " << i << ", 'element_type': 'junction'})\n";
         }
         else if( elementType == "label" )
         {
@@ -1346,7 +1389,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 code << "        lbl_" << i << " = sch.labels.add_hierarchical('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
             else
                 code << "        lbl_" << i << " = sch.labels.add_local('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
-            code << "        succeeded += 1\n";
+            code << "        results.append({'index': " << i << ", 'element_type': 'label'})\n";
         }
         else if( elementType == "no_connect" )
         {
@@ -1360,7 +1403,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        nc_" << i << " = sch.wiring.add_no_connect(pos_" << i << ")\n";
-            code << "        succeeded += 1\n";
+            code << "        results.append({'index': " << i << ", 'element_type': 'no_connect'})\n";
         }
         else if( elementType == "bus_entry" )
         {
@@ -1376,7 +1419,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        be_" << i << " = sch.buses.add_bus_entry(pos_" << i << ", direction='" << EscapePythonString( direction ) << "')\n";
-            code << "        succeeded += 1\n";
+            code << "        results.append({'index': " << i << ", 'element_type': 'bus_entry'})\n";
         }
         else
         {
@@ -1392,14 +1435,15 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "    result = {\n";
     code << "        'status': 'success' if len(errors) == 0 else 'partial',\n";
     code << "        'total': " << elements.size() << ",\n";
-    code << "        'succeeded': succeeded,\n";
-    code << "        'failed': len(errors)\n";
+    code << "        'succeeded': len(results),\n";
+    code << "        'failed': len(errors),\n";
+    code << "        'results': results\n";
     code << "    }\n";
     code << "    if errors:\n";
     code << "        result['errors'] = errors\n";
     code << "\n";
     code << "except Exception as batch_error:\n";
-    code << "    result = {'status': 'error', 'message': str(batch_error), 'errors': errors}\n";
+    code << "    result = {'status': 'error', 'message': str(batch_error), 'results': results, 'errors': errors}\n";
     code << "\n";
     code << "print(json.dumps(result, indent=2))\n";
 

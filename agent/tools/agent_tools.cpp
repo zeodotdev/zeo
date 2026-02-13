@@ -595,8 +595,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schConnectNet.description =
         "Connect component pins with auto-routed wires. "
         "Resolves pin positions automatically and places junctions at T-connections. "
-        "Use mode 'chain' for series component paths (pins wired sequentially in order). "
-        "Use mode 'star' (default) for shared nodes where multiple pins tap the same net.";
+        "Use mode 'chain' (default) for series component paths (pins wired sequentially in order). "
+        "Use mode 'star' for shared nodes where multiple pins tap the same net.";
     schConnectNet.input_schema = {
         { "type", "object" },
         { "properties", {

@@ -140,7 +140,16 @@ try:
             sym_cx = sym.position.x / 1_000_000
             sym_cy = sym.position.y / 1_000_000
             pin_dir = 'v' if abs(py - sym_cy) >= abs(px - sym_cx) else 'h'
-        pin_positions.append({'ref': ref, 'pin': pin_id, 'x': snap_to_grid(px), 'y': snap_to_grid(py), 'raw_x': px, 'raw_y': py, 'sym': sym, 'dir': pin_dir})
+        # Compute outward escape direction (away from symbol center)
+        sym_cx = sym.position.x / 1_000_000
+        sym_cy = sym.position.y / 1_000_000
+        if pin_dir == 'h':
+            out_dx = 1.27 if px > sym_cx else -1.27
+            out_dy = 0
+        else:
+            out_dx = 0
+            out_dy = 1.27 if py > sym_cy else -1.27
+        pin_positions.append({'ref': ref, 'pin': pin_id, 'x': snap_to_grid(px), 'y': snap_to_grid(py), 'raw_x': px, 'raw_y': py, 'sym': sym, 'dir': pin_dir, 'out_dx': out_dx, 'out_dy': out_dy})
 
     wire_count = 0
     junction_count = 0
@@ -158,7 +167,7 @@ try:
         all_symbols = sch.symbols.get_all()
         for obs_sym in all_symbols:
             try:
-                bbox = sch.transform.get_bounding_box(obs_sym, units='mm')
+                bbox = sch.transform.get_bounding_box(obs_sym, units='mm', include_text=False)
             except:
                 continue
             if not bbox:
@@ -190,69 +199,122 @@ try:
     except:
         pass
 
-    def _seg_hits_obs(sx0, sy0, sx1, sy1):
-        smin_x, smax_x = min(sx0, sx1), max(sx0, sx1)
-        smin_y, smax_y = min(sy0, sy1), max(sy0, sy1)
+    def _cell_blocked(cx, cy, grid=1.27):
+        """Check if a grid cell center is inside any obstacle."""
+        half = grid / 2 - 0.01
         for obs in obstacles:
-            if smax_x > obs['min_x'] and smin_x < obs['max_x'] and smax_y > obs['min_y'] and smin_y < obs['max_y']:
+            if cx + half > obs['min_x'] and cx - half < obs['max_x'] and cy + half > obs['min_y'] and cy - half < obs['max_y']:
                 return True
         return False
 
-    if routing_mode == 'chain':
-        # Chain mode: wire pins sequentially as 2-pin pairs
-        for ci in range(len(pin_positions) - 1):
-            p0, p1 = pin_positions[ci], pin_positions[ci + 1]
-            x0, y0 = p0['raw_x'], p0['raw_y']
-            x1, y1 = p1['raw_x'], p1['raw_y']
-            if abs(x0 - x1) < 0.01 or abs(y0 - y1) < 0.01:
-                # Collinear: straight wire
-                sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), Vector2.from_xy_mm(x1, y1))
-                wire_count += 1
-            else:
-                # L-shaped: pick bend direction from pin directions
-                pin0_vertical = p0['dir'] == 'v'
-                pin1_vertical = p1['dir'] == 'v'
-                if pin0_vertical:
-                    # Extend p0 vertically, then horizontal to p1
-                    cx, cy = x0, y1
-                elif pin1_vertical:
-                    # Extend p1 vertically, then horizontal from p0
-                    cx, cy = x1, y0
-                else:
-                    # Both horizontal: default vertical-first
-                    cx, cy = x0, y1
-                sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), Vector2.from_xy_mm(cx, cy))
-                sch.wiring.add_wire(Vector2.from_xy_mm(cx, cy), Vector2.from_xy_mm(x1, y1))
-                wire_count += 2
+    import heapq
+    def _astar(x0, y0, x1, y1, grid=1.27, bend_cost=3, start_dir=-1):
+        """A* pathfinding on the schematic grid. Returns list of (x,y) waypoints.
+        start_dir: if >= 0, preferred initial direction (0=right, 1=left, 2=down, 3=up).
+        Non-preferred first-step directions incur bend_cost penalty."""
+        # Snap start/end to grid
+        gx0, gy0 = round(x0 / grid), round(y0 / grid)
+        gx1, gy1 = round(x1 / grid), round(y1 / grid)
+        if gx0 == gx1 and gy0 == gy1:
+            return [(x0, y0), (x1, y1)]
+        # Search bounds: bounding box of start/end + generous margin
+        margin = 15
+        g_min_x = min(gx0, gx1) - margin
+        g_max_x = max(gx0, gx1) + margin
+        g_min_y = min(gy0, gy1) - margin
+        g_max_y = max(gy0, gy1) + margin
+        # Directions: right, left, down, up
+        dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        # Use start_dir as initial prev_d so first step prefers outward direction
+        init_d = start_dir if start_dir >= 0 else -1
+        start_key = (gx0, gy0, init_d)
+        goal = (gx1, gy1)
+        open_set = [(abs(gx1 - gx0) + abs(gy1 - gy0), 0, gx0, gy0, init_d)]
+        g_scores = {start_key: 0}
+        came_from = {start_key: None}
+        while open_set:
+            f, g, gx, gy, prev_d = heapq.heappop(open_set)
+            if (gx, gy) == goal:
+                # Reconstruct path as grid coords
+                path_g = [(gx, gy)]
+                key = (gx, gy, prev_d)
+                while came_from.get(key) is not None:
+                    key = came_from[key]
+                    path_g.append((key[0], key[1]))
+                path_g.reverse()
+                # Convert to mm and simplify to waypoints (collapse collinear segments)
+                waypoints = [(path_g[0][0] * grid, path_g[0][1] * grid)]
+                for i in range(1, len(path_g) - 1):
+                    px, py = path_g[i - 1]
+                    cx, cy = path_g[i]
+                    nx, ny = path_g[i + 1]
+                    if (nx - cx) != (cx - px) or (ny - cy) != (cy - py):
+                        waypoints.append((cx * grid, cy * grid))
+                waypoints.append((path_g[-1][0] * grid, path_g[-1][1] * grid))
+                # Snap first/last to exact pin positions
+                waypoints[0] = (x0, y0)
+                waypoints[-1] = (x1, y1)
+                return waypoints
+            current_key = (gx, gy, prev_d)
+            if g > g_scores.get(current_key, float('inf')):
+                continue
+            for di, (dx, dy) in enumerate(dirs):
+                nx, ny = gx + dx, gy + dy
+                if nx < g_min_x or nx > g_max_x or ny < g_min_y or ny > g_max_y:
+                    continue
+                # Allow start and goal cells even if blocked
+                if (nx, ny) != goal and (nx, ny) != (gx0, gy0):
+                    if _cell_blocked(nx * grid, ny * grid, grid):
+                        continue
+                move_cost = 1
+                if prev_d >= 0 and di != prev_d:
+                    move_cost += bend_cost
+                new_g = g + move_cost
+                nkey = (nx, ny, di)
+                if new_g < g_scores.get(nkey, float('inf')):
+                    g_scores[nkey] = new_g
+                    h = abs(gx1 - nx) + abs(gy1 - ny)
+                    heapq.heappush(open_set, (new_g + h, new_g, nx, ny, di))
+                    came_from[nkey] = current_key
+        # No path found — fall back to direct L-wire
+        return [(x0, y0), (x0, y1), (x1, y1)]
 
-    elif len(pin_positions) == 2:
-        # 2-pin case: midpoint-bend routing
-        p0, p1 = pin_positions[0], pin_positions[1]
+    def _place_path(waypoints):
+        """Place wire segments along a list of waypoints."""
+        count = 0
+        for i in range(len(waypoints) - 1):
+            ax, ay = waypoints[i]
+            bx, by = waypoints[i + 1]
+            sch.wiring.add_wire(Vector2.from_xy_mm(ax, ay), Vector2.from_xy_mm(bx, by))
+            count += 1
+        return count
+
+    def _dir_index(dx, dy):
+        """Convert (dx, dy) outward direction to A* direction index."""
+        if dx > 0: return 0  # right
+        if dx < 0: return 1  # left
+        if dy > 0: return 2  # down
+        if dy < 0: return 3  # up
+        return -1
+
+    def _route_pins(p0, p1):
+        """Route between two pins using A* with forced start direction."""
         x0, y0 = p0['raw_x'], p0['raw_y']
         x1, y1 = p1['raw_x'], p1['raw_y']
-        if abs(x0 - x1) < 0.01 or abs(y0 - y1) < 0.01:
-            sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), Vector2.from_xy_mm(x1, y1))
-            wire_count = 1
-        else:
-            # 3-segment step route -- first segment follows pin direction
-            pin0_vertical = p0['dir'] == 'v'
-            pin1_vertical = p1['dir'] == 'v'
-            # If both agree, use that. If mixed, prefer vertical-first.
-            extend_vertical = pin0_vertical or pin1_vertical
-            if extend_vertical:
-                # Vertical first: midpoint Y
-                mid_y = snap_to_grid((y0 + y1) / 2)
-                c0 = Vector2.from_xy_mm(x0, mid_y)
-                c1 = Vector2.from_xy_mm(x1, mid_y)
-            else:
-                # Horizontal first: midpoint X
-                mid_x = snap_to_grid((x0 + x1) / 2)
-                c0 = Vector2.from_xy_mm(mid_x, y0)
-                c1 = Vector2.from_xy_mm(mid_x, y1)
-            sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), c0)
-            sch.wiring.add_wire(c0, c1)
-            sch.wiring.add_wire(c1, Vector2.from_xy_mm(x1, y1))
-            wire_count = 3
+        sd = _dir_index(p0['out_dx'], p0['out_dy'])
+        return _astar(x0, y0, x1, y1, start_dir=sd)
+
+    if routing_mode == 'chain':
+        # Chain mode: A* route each consecutive pin pair
+        for ci in range(len(pin_positions) - 1):
+            p0, p1 = pin_positions[ci], pin_positions[ci + 1]
+            waypoints = _route_pins(p0, p1)
+            wire_count += _place_path(waypoints)
+
+    elif len(pin_positions) == 2:
+        # 2-pin star: A* route
+        waypoints = _route_pins(pin_positions[0], pin_positions[1])
+        wire_count = _place_path(waypoints)
     else:
         # 3+ pins: trunk-and-branch routing with obstacle avoidance
         xs = [p['x'] for p in pin_positions]
@@ -304,6 +366,20 @@ try:
             if best is not None:
                 trunk_perp = best
 
+        # Collect on-trunk pin projections (along trunk axis) to avoid junctions on pins
+        _on_trunk_projs = set()
+        for p in pin_positions:
+            if is_horizontal:
+                if abs(p['y'] - trunk_perp) <= 0.01:
+                    _on_trunk_projs.add(round(snap_to_grid(p['x']), 4))
+            else:
+                if abs(p['x'] - trunk_perp) <= 0.01:
+                    _on_trunk_projs.add(round(snap_to_grid(p['y']), 4))
+
+        # Compute trunk midpoint for offset direction
+        _all_projs = [snap_to_grid(p['x'] if is_horizontal else p['y']) for p in pin_positions]
+        _proj_mid = (min(_all_projs) + max(_all_projs)) / 2
+
         # Count off-trunk pins at each endpoint to decide offset
         _ep_counts = {}
         _on_trunk_at = set()  # Track which endpoints have on-trunk pins
@@ -322,6 +398,13 @@ try:
             elif not off and at_ep:
                 _on_trunk_at.add(round(proj, 4))
 
+        def _offset_from_pin(proj):
+            """Offset a trunk projection away from on-trunk pins toward trunk center."""
+            if round(proj, 4) not in _on_trunk_projs:
+                return proj
+            offset_dir = 1.27 if proj < _proj_mid else -1.27
+            return snap_to_grid(proj + offset_dir)
+
         # Pre-compute branch connection points on the trunk
         trunk_conn = []
         for p in pin_positions:
@@ -337,8 +420,12 @@ try:
                     p['_ep'] = True
                     trunk_conn.append(tgt_along)
                 elif off:
-                    p['_tgt'] = (proj, trunk_perp)
-                    trunk_conn.append(proj)
+                    tgt_proj = _offset_from_pin(proj)
+                    if is_horizontal:
+                        p['_tgt'] = (tgt_proj, trunk_perp)
+                    else:
+                        p['_tgt'] = (trunk_perp, tgt_proj)
+                    trunk_conn.append(tgt_proj)
                 else:
                     trunk_conn.append(proj)
             else:
@@ -353,8 +440,12 @@ try:
                     p['_ep'] = True
                     trunk_conn.append(tgt_along)
                 elif off:
-                    p['_tgt'] = (trunk_perp, proj)
-                    trunk_conn.append(proj)
+                    tgt_proj = _offset_from_pin(proj)
+                    if is_horizontal:
+                        p['_tgt'] = (tgt_proj, trunk_perp)
+                    else:
+                        p['_tgt'] = (trunk_perp, tgt_proj)
+                    trunk_conn.append(tgt_proj)
                 else:
                     trunk_conn.append(proj)
 
@@ -365,16 +456,15 @@ try:
         # Place trunk wire
         if trunk_min != trunk_max:
             if is_horizontal:
-                sch.wiring.add_wire(Vector2.from_xy_mm(trunk_min, trunk_perp), Vector2.from_xy_mm(trunk_max, trunk_perp))
-                _track(trunk_min, trunk_perp)
-                _track(trunk_max, trunk_perp)
+                t0, t1 = (trunk_min, trunk_perp), (trunk_max, trunk_perp)
             else:
-                sch.wiring.add_wire(Vector2.from_xy_mm(trunk_perp, trunk_min), Vector2.from_xy_mm(trunk_perp, trunk_max))
-                _track(trunk_perp, trunk_min)
-                _track(trunk_perp, trunk_max)
+                t0, t1 = (trunk_perp, trunk_min), (trunk_perp, trunk_max)
+            sch.wiring.add_wire(Vector2.from_xy_mm(*t0), Vector2.from_xy_mm(*t1))
+            _track(t0[0], t0[1])
+            _track(t1[0], t1[1])
             wire_count += 1
 
-        # Place branches
+        # Place branches using A* with preferred start direction
         for p in pin_positions:
             if is_horizontal:
                 off_trunk = abs(p['y'] - trunk_perp) > 0.01
@@ -384,48 +474,13 @@ try:
             if off_trunk:
                 pin_x, pin_y = p['raw_x'], p['raw_y']
                 tgt_x, tgt_y = p['_tgt']
-                if abs(pin_x - tgt_x) < 0.01 or abs(pin_y - tgt_y) < 0.01:
-                    # Collinear: straight wire
-                    sch.wiring.add_wire(Vector2.from_xy_mm(pin_x, pin_y), Vector2.from_xy_mm(tgt_x, tgt_y))
-                    _track(pin_x, pin_y)
-                    _track(tgt_x, tgt_y)
-                    wire_count += 1
-                elif p.get('_ep'):
-                    # Endpoint branch: L-bend following pin direction
-                    if p['dir'] == 'h':
-                        cx, cy = tgt_x, pin_y
-                    else:
-                        cx, cy = pin_x, tgt_y
-                    corner = Vector2.from_xy_mm(cx, cy)
-                    sch.wiring.add_wire(Vector2.from_xy_mm(pin_x, pin_y), corner)
-                    sch.wiring.add_wire(corner, Vector2.from_xy_mm(tgt_x, tgt_y))
-                    _track(pin_x, pin_y)
-                    _track(cx, cy)
-                    _track(cx, cy)
-                    _track(tgt_x, tgt_y)
-                    wire_count += 2
-                else:
-                    # Interior branch: midpoint-bend step route
-                    if p['dir'] == 'v':
-                        mid = snap_to_grid((pin_y + tgt_y) / 2)
-                        c0x, c0y = pin_x, mid
-                        c1x, c1y = tgt_x, mid
-                    else:
-                        mid = snap_to_grid((pin_x + tgt_x) / 2)
-                        c0x, c0y = mid, pin_y
-                        c1x, c1y = mid, tgt_y
-                    c0 = Vector2.from_xy_mm(c0x, c0y)
-                    c1 = Vector2.from_xy_mm(c1x, c1y)
-                    sch.wiring.add_wire(Vector2.from_xy_mm(pin_x, pin_y), c0)
-                    sch.wiring.add_wire(c0, c1)
-                    sch.wiring.add_wire(c1, Vector2.from_xy_mm(tgt_x, tgt_y))
-                    _track(pin_x, pin_y)
-                    _track(c0x, c0y)
-                    _track(c0x, c0y)
-                    _track(c1x, c1y)
-                    _track(c1x, c1y)
-                    _track(tgt_x, tgt_y)
-                    wire_count += 3
+                sd = _dir_index(p['out_dx'], p['out_dy'])
+                waypoints = _astar(pin_x, pin_y, tgt_x, tgt_y, start_dir=sd)
+                w = _place_path(waypoints)
+                wire_count += w
+                # Track endpoints for junction detection
+                _track(pin_x, pin_y)
+                _track(tgt_x, tgt_y)
 
         # Count pins as branches at their positions
         for p in pin_positions:

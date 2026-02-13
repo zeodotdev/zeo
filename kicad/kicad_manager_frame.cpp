@@ -76,6 +76,7 @@
 #include <wx/process.h>
 #include <wx/snglinst.h>
 #include <atomic>
+#include <cstdint>
 #include <update_manager.h>
 #include <jobs/jobset.h>
 
@@ -1320,6 +1321,16 @@ void KICAD_MANAGER_FRAME::OnIdle( wxIdleEvent& aEvent )
     try
     {
         Kiway().Player( FRAME_AGENT, true );
+
+        // Pass the launcher's shared AGENT_AUTH pointer to the agent frame.
+        // This eliminates dual auth instances and the refresh token rotation race —
+        // both the launcher and agent frame use the same in-memory tokens.
+        if( m_sessionManager && m_sessionManager->GetAuth() )
+        {
+            std::string authPtr = std::to_string(
+                    reinterpret_cast<uintptr_t>( m_sessionManager->GetAuth() ) );
+            Kiway().ExpressMail( FRAME_AGENT, MAIL_AUTH_POINTER, authPtr, this );
+        }
     }
     catch( ... )
     {

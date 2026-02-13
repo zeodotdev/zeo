@@ -75,9 +75,13 @@ bool AGENT_AUTH::IsAuthenticated()
 
     if( IsTokenExpired() )
     {
-        // Try to refresh
+        // Try to proactively refresh (we're within the 5-min buffer)
         if( !RefreshToken() )
-            return false;
+        {
+            // Refresh failed, but if the token hasn't actually expired yet,
+            // it's still valid at the server — don't block the user
+            return !IsTokenHardExpired();
+        }
     }
 
     return true;
@@ -107,7 +111,14 @@ std::string AGENT_AUTH::GetAccessToken()
     if( IsTokenExpired() )
     {
         if( !RefreshToken() )
+        {
+            // Refresh failed, but if the token hasn't actually expired yet,
+            // it's still usable — return it so the request can proceed
+            if( !IsTokenHardExpired() )
+                return m_accessToken;
+
             return "";
+        }
     }
 
     return m_accessToken;
@@ -172,8 +183,18 @@ bool AGENT_AUTH::RefreshToken()
                 return true;
             }
 
-            wxLogTrace( "Agent", "Token refresh failed definitively, clearing session" );
-            ClearSession();
+            // Only clear session if the token is truly expired (not just in the buffer).
+            // Within the buffer, the token is still valid at the server — clearing the
+            // session would be premature and cause "Please sign in" for a usable token.
+            if( IsTokenHardExpired() )
+            {
+                wxLogTrace( "Agent", "Token refresh failed definitively, clearing session" );
+                ClearSession();
+            }
+            else
+            {
+                wxLogTrace( "Agent", "Token refresh failed but token still valid, keeping session" );
+            }
             return false;
         }
     }
@@ -282,8 +303,14 @@ bool AGENT_AUTH::TryReloadSession()
 
 bool AGENT_AUTH::IsTokenExpired()
 {
-    // Consider expired if within 5 minutes of expiry
+    // Consider expired if within 5 minutes of expiry (proactive refresh buffer)
     return ( wxDateTime::GetTimeNow() + 300 ) >= m_tokenExpiry;
+}
+
+bool AGENT_AUTH::IsTokenHardExpired()
+{
+    // Token is actually expired and will be rejected by the server
+    return wxDateTime::GetTimeNow() >= m_tokenExpiry;
 }
 
 

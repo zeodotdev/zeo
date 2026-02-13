@@ -19,6 +19,7 @@
 #include <frame_type.h>
 #include <sstream>
 #include <fstream>
+#include <cstdint>
 #include <thread>
 #include <set>
 #include <algorithm>
@@ -387,61 +388,19 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_llmClient = std::make_unique<AGENT_LLM_CLIENT>( this );
     InitializeTools();
 
-    // Initialize authentication
-    m_auth = new AGENT_AUTH();
+    // Auth will be set via MAIL_AUTH_POINTER from the launcher (shared instance).
+    // If the launcher doesn't provide one (rare fallback), EnsureAuth() creates a local one.
+    m_auth = nullptr;
+    m_ownsAuth = false;
 
-    // Load Supabase configuration from JSON file
-    std::string supabaseUrl, supabaseKey;
-
-    // Try loading from supabase_config.json in source directory
-    wxFileName configPath( __FILE__ );
-    configPath.SetFullName( "supabase_config.json" );
-
-    if( wxFileExists( configPath.GetFullPath() ) )
-    {
-        std::ifstream configFile( configPath.GetFullPath().ToStdString() );
-
-        if( configFile.is_open() )
-        {
-            try
-            {
-                json config = json::parse( configFile );
-                supabaseUrl = config.value( "project_url", "" );
-                supabaseKey = config.value( "publishable_key", "" );
-
-                wxLogTrace( "Agent", "Loaded Supabase config from %s", configPath.GetFullPath() );
-            }
-            catch( const std::exception& e )
-            {
-                wxLogWarning( "Failed to parse supabase_config.json: %s", e.what() );
-            }
-            configFile.close();
-        }
-    }
-
-    if( !supabaseUrl.empty() && !supabaseKey.empty() )
-    {
-        m_auth->Configure( supabaseUrl, supabaseKey );
-        wxLogTrace( "Agent", "Supabase authentication configured" );
-    }
-    else
-    {
-        wxLogWarning( "Supabase config not found at: %s",
-                      configPath.GetFullPath().ToStdString().c_str() );
-
-        // Still load session from disk - tokens may have been saved by the launcher.
-        // The agent can use existing tokens and pick up refreshed ones via TryReloadSession().
-        m_auth->LoadSession();
-    }
-
-    // Wire auth to LLM client for proxy authentication
-    m_llmClient->SetAuth( m_auth );
+    // Wire auth to LLM client (nullptr for now, updated when auth pointer arrives)
+    m_llmClient->SetAuth( nullptr );
 
     // Create chat controller
     m_chatController = std::make_unique<CHAT_CONTROLLER>( this );
     m_chatController->SetLLMClient( m_llmClient.get() );
     m_chatController->SetChatHistoryDb( &m_chatHistoryDb );
-    m_chatController->SetAuth( m_auth );
+    m_chatController->SetAuth( nullptr );
     m_chatController->SetKiwayRequestFn(
         [this]( int aFrameType, const std::string& aPayload ) -> std::string {
             return SendRequest( aFrameType, aPayload );
@@ -754,7 +713,8 @@ AGENT_FRAME::~AGENT_FRAME()
         wxMilliSleep( 50 );
     }
 
-    delete m_auth;
+    if( m_ownsAuth )
+        delete m_auth;
 }
 
 void AGENT_FRAME::ShowChangedLanguage()
@@ -1108,14 +1068,42 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
             }
         }
     }
+    else if( aEvent.Command() == MAIL_AUTH_POINTER )
+    {
+        // Receive shared AGENT_AUTH pointer from the launcher's SESSION_MANAGER.
+        // This eliminates dual auth instances and the refresh token rotation race.
+        std::string payload = aEvent.GetPayload();
+
+        if( !payload.empty() )
+        {
+            AGENT_AUTH* sharedAuth = reinterpret_cast<AGENT_AUTH*>(
+                    std::stoull( payload ) );
+
+            if( sharedAuth )
+            {
+                // If we previously created a fallback auth, clean it up
+                if( m_ownsAuth && m_auth )
+                    delete m_auth;
+
+                m_auth = sharedAuth;
+                m_ownsAuth = false;
+
+                // Wire the shared auth to LLM client and controller
+                m_llmClient->SetAuth( m_auth );
+
+                if( m_chatController )
+                    m_chatController->SetAuth( m_auth );
+
+                UpdateAuthUI();
+                wxLogTrace( "Agent", "Using shared auth from launcher" );
+            }
+        }
+    }
     else if( aEvent.Command() == MAIL_AUTH_STATE_CHANGED )
     {
-        // Reload session from keychain (tokens were saved by launcher's SESSION_MANAGER)
-        if( m_auth )
-        {
-            m_auth->LoadSession();
-            UpdateAuthUI();
-        }
+        // Auth state changed in the shared instance (sign-in, sign-out, refresh).
+        // Tokens are already updated — just refresh the UI.
+        UpdateAuthUI();
 
         // If sign-in was from agent frame, bring it to front (after UI is updated)
         std::string payload = aEvent.GetPayload();
@@ -2053,6 +2041,8 @@ void AGENT_FRAME::DoPendingChangesView( const wxString& aPath, bool aIsPcb )
 void AGENT_FRAME::DoSignIn()
 {
     wxLogInfo( "AGENT_FRAME::DoSignIn called" );
+    EnsureAuth();
+
     if( m_auth )
         m_auth->StartOAuthFlow( "agent" );
 }
@@ -2774,11 +2764,61 @@ void AGENT_FRAME::UpdateAuthUI()
 
 bool AGENT_FRAME::CheckAuthentication()
 {
+    EnsureAuth();
+
     if( m_auth )
-    {
         return m_auth->IsAuthenticated();
+
+    return false;
+}
+
+void AGENT_FRAME::EnsureAuth()
+{
+    if( m_auth )
+        return;
+
+    // Fallback: create a local AGENT_AUTH if the launcher didn't provide one
+    // (e.g., agent opened from sch/pcb editor when preload failed).
+    wxLogTrace( "Agent", "No shared auth from launcher, creating fallback auth" );
+
+    m_auth = new AGENT_AUTH();
+    m_ownsAuth = true;
+
+    // Load Supabase configuration from JSON file
+    std::string supabaseUrl, supabaseKey;
+
+    wxFileName configPath( __FILE__ );
+    configPath.SetFullName( "supabase_config.json" );
+
+    if( wxFileExists( configPath.GetFullPath() ) )
+    {
+        std::ifstream configFile( configPath.GetFullPath().ToStdString() );
+
+        if( configFile.is_open() )
+        {
+            try
+            {
+                json config = json::parse( configFile );
+                supabaseUrl = config.value( "project_url", "" );
+                supabaseKey = config.value( "publishable_key", "" );
+            }
+            catch( ... ) {}
+            configFile.close();
+        }
     }
-    return true; // No auth configured, allow access
+
+    if( !supabaseUrl.empty() && !supabaseKey.empty() )
+        m_auth->Configure( supabaseUrl, supabaseKey );
+    else
+        m_auth->LoadSession();
+
+    // Wire to LLM client and controller
+    m_llmClient->SetAuth( m_auth );
+
+    if( m_chatController )
+        m_chatController->SetAuth( m_auth );
+
+    UpdateAuthUI();
 }
 
 void AGENT_FRAME::OnSize( wxSizeEvent& aEvent )

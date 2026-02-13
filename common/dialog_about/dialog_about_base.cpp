@@ -61,11 +61,6 @@ DIALOG_ABOUT_BASE::DIALOG_ABOUT_BASE( wxWindow* parent, wxWindowID id, const wxS
 
 	bSizer5->Add( m_btReportBug, 0, wxALL|wxEXPAND, 5 );
 
-	m_btDonate = new wxButton( this, wxID_COPY, _("Donate"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_btDonate->SetToolTip( _("Donate to Zeo") );
-
-	bSizer5->Add( m_btDonate, 0, wxALL|wxEXPAND, 5 );
-
 
 	bSizer5->Add( 0, 0, 1, wxEXPAND, 5 );
 
@@ -102,7 +97,6 @@ DIALOG_ABOUT_BASE::DIALOG_ABOUT_BASE( wxWindow* parent, wxWindowID id, const wxS
 	// Connect Events
 	m_btCopyVersionInfo->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ABOUT_BASE::onCopyVersionInfo ), NULL, this );
 	m_btReportBug->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ABOUT_BASE::onReportBug ), NULL, this );
-	m_btDonate->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ABOUT_BASE::onDonateClick ), NULL, this );
 	m_notebook->Connect( wxEVT_COMMAND_NOTEBOOK_PAGE_CHANGED, wxNotebookEventHandler( DIALOG_ABOUT_BASE::OnNotebookPageChanged ), NULL, this );
 }
 
@@ -111,7 +105,6 @@ DIALOG_ABOUT_BASE::~DIALOG_ABOUT_BASE()
 	// Disconnect Events
 	m_btCopyVersionInfo->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ABOUT_BASE::onCopyVersionInfo ), NULL, this );
 	m_btReportBug->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ABOUT_BASE::onReportBug ), NULL, this );
-	m_btDonate->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ABOUT_BASE::onDonateClick ), NULL, this );
 	m_notebook->Disconnect( wxEVT_COMMAND_NOTEBOOK_PAGE_CHANGED, wxNotebookEventHandler( DIALOG_ABOUT_BASE::OnNotebookPageChanged ), NULL, this );
 
 }

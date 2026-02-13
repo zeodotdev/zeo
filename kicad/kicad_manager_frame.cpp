@@ -155,7 +155,7 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
     const int defaultLeftWinWidth = FromDIP( 250 );
 
     m_leftWinWidth = defaultLeftWinWidth; // Default value
-    m_aboutTitle = "KiCad";
+    m_aboutTitle = "Zeo";
 
     // JPC: A very ugly hack to fix an issue on Linux: if the wxbase315u_xml_gcc_custom.so is
     // used **only** in PCM, it is not found in some cases at run time.

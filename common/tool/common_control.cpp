@@ -46,15 +46,13 @@
 #include <gestfich.h>
 #include <tools/kicad_manager_actions.h>
 
-#define URL_GET_INVOLVED wxS( "https://go.kicad.org/contribute/" )
-#define URL_DONATE wxS( "https://go.kicad.org/app-donate" )
-#define URL_DOCUMENTATION wxS( "https://go.kicad.org/docs/" )
+#define URL_GET_INVOLVED wxS( "https://github.com/zeodotdev/" )
+#define URL_DOCUMENTATION wxS( "https://zeo.dev/docs" )
 
 
 /// URL to launch a new issue with pre-populated description
 wxString COMMON_CONTROL::m_bugReportUrl =
-        wxS( "https://gitlab.com/kicad/code/kicad/-/issues/new?issuable_template=bare&issue"
-             "[description]=%s" );
+        wxS( "https://github.com/zeodotdev/zeo/issues/new?body=%s" );
 
 
 /// Issue template to use for reporting bugs (this should not be translated)
@@ -287,70 +285,8 @@ int COMMON_CONTROL::ShowHelp( const TOOL_EVENT& aEvent )
     wxString helpFile;
     wxString msg;
 
-    // the URL of help files is "https://go.kicad.org/docs/<version>/<language>/<name>/"
-    const wxString baseUrl = URL_DOCUMENTATION + GetMajorMinorVersion() + wxT( "/" )
-                             + Pgm().GetLocale()->GetName().BeforeLast( '_' ) + wxT( "/" );
-
-    /* We have to get document for beginners,
-     * or the full specific doc
-     * if event id is wxID_INDEX, we want the document for beginners.
-     * else the specific doc file (its name is in Kiface().GetHelpFileName())
-     * The document for beginners is the same for all KiCad utilities
-     */
-    if( aEvent.IsAction( &ACTIONS::gettingStarted ) )
-    {
-        // List of possible names for Getting Started in KiCad
-        const wxChar* names[2] = {
-                wxT( "getting_started_in_kicad" ),
-                wxT( "Getting_Started_in_KiCad" )
-        };
-
-        // Search for "getting_started_in_kicad.html" or "getting_started_in_kicad.pdf"
-        // or "Getting_Started_in_KiCad.html" or "Getting_Started_in_KiCad.pdf"
-        for( auto& name : names )
-        {
-            helpFile = SearchHelpFileFullPath( name );
-
-            if( !helpFile.IsEmpty() )
-                break;
-        }
-
-        if( !helpFile )
-        {
-            msg = wxString::Format( _( "Help file '%s' or\n'%s' could not be found.\n"
-                                       "Do you want to access the KiCad online help?" ),
-                                    names[0], names[1] );
-            wxMessageDialog dlg( nullptr, msg, _( "File Not Found" ),
-                                 wxYES_NO | wxNO_DEFAULT | wxCANCEL );
-
-            if( dlg.ShowModal() != wxID_YES )
-                return -1;
-
-            helpFile = baseUrl + names[0] + wxS( "/" );
-        }
-    }
-    else
-    {
-        wxString base_name = m_frame->help_name();
-
-        helpFile = SearchHelpFileFullPath( base_name );
-
-        if( !helpFile )
-        {
-            msg = wxString::Format( _( "Help file '%s' could not be found.\n"
-                                       "Do you want to access the KiCad online help?" ),
-                                    base_name );
-            wxMessageDialog dlg( nullptr, msg, _( "File Not Found" ),
-                                 wxYES_NO | wxNO_DEFAULT | wxCANCEL );
-
-            if( dlg.ShowModal() != wxID_YES )
-                return -1;
-
-            helpFile = baseUrl + base_name + wxS( "/" );
-        }
-    }
-
-    GetAssociatedDocument( m_frame, helpFile, &m_frame->Prj() );
+    // Go directly to Zeo documentation
+    wxLaunchDefaultBrowser( URL_DOCUMENTATION );
     return 0;
 }
 
@@ -376,24 +312,9 @@ int COMMON_CONTROL::GetInvolved( const TOOL_EVENT& aEvent )
     {
         wxString msg;
         msg.Printf( _( "Could not launch the default browser.\n"
-                       "For information on how to help the KiCad project, visit %s" ),
+                       "For information on how to contribute to Zeo, visit %s" ),
                     URL_GET_INVOLVED );
-        wxMessageBox( msg, _( "Get involved with KiCad" ), wxOK, m_frame );
-    }
-
-    return 0;
-}
-
-
-int COMMON_CONTROL::Donate( const TOOL_EVENT& aEvent )
-{
-    if( !wxLaunchDefaultBrowser( URL_DONATE ) )
-    {
-        wxString msg;
-        msg.Printf( _( "Could not launch the default browser.\n"
-                       "To donate to the KiCad project, visit %s" ),
-                    URL_DONATE );
-        wxMessageBox( msg, _( "Donate to KiCad" ), wxOK, m_frame );
+        wxMessageBox( msg, _( "Get involved with Zeo" ), wxOK, m_frame );
     }
 
     return 0;
@@ -434,11 +355,9 @@ void COMMON_CONTROL::setTransitions()
     Go( &COMMON_CONTROL::Execute,         ACTIONS::showCalculatorTools.MakeEvent() );
     Go( &COMMON_CONTROL::ShowProjectManager, ACTIONS::showProjectManager.MakeEvent() );
 
-    Go( &COMMON_CONTROL::ShowHelp,           ACTIONS::gettingStarted.MakeEvent() );
     Go( &COMMON_CONTROL::ShowHelp,           ACTIONS::help.MakeEvent() );
     Go( &COMMON_CONTROL::ListHotKeys,        ACTIONS::listHotKeys.MakeEvent() );
     Go( &COMMON_CONTROL::GetInvolved,        ACTIONS::getInvolved.MakeEvent() );
-    Go( &COMMON_CONTROL::Donate,             ACTIONS::donate.MakeEvent() );
     Go( &COMMON_CONTROL::ReportBug,          ACTIONS::reportBug.MakeEvent() );
     Go( &COMMON_CONTROL::About,              ACTIONS::about.MakeEvent() );
 }

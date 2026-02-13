@@ -66,7 +66,7 @@ PCB_CALCULATOR_FRAME::PCB_CALCULATOR_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                   wxT( "calculator_tools" ), unityScale ),
     m_lastNotebookPage( -1 )
 {
-    m_aboutTitle = _HKI( "KiCad Calculator Tools" );
+    m_aboutTitle = _HKI( "Zeo Calculator Tools" );
 
     SHAPE_POLY_SET dummy;   // A ugly trick to force the linker to include
                             // some methods in code and avoid link errors

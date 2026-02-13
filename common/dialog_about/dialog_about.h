@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2010 Rafael Sokolowski <Rafael.Sokolowski@web.de>
  * Copyright The KiCad Developers, see AUTHORS.TXT for contributors.
+ * Copyright (C) 2026 Moonshine Distillery Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -33,17 +34,11 @@
 #include "aboutinfo.h"
 #include "dialog_about_base.h"
 
-// Used for the notebook image list
+// Used for the notebook image list - only 3 tabs: About, Version, License
 enum class IMAGES {
-    INFORMATION,
-    VERSION,
-    DEVELOPERS,
-    DOCWRITERS,
-    LIBRARIANS,
-    ARTISTS,
-    TRANSLATORS,
-    PACKAGERS,
-    LICENSE
+    INFORMATION,   // About tab
+    VERSION,       // Version tab
+    LICENSE        // License tab
 };
 
 /**
@@ -66,18 +61,11 @@ private:
 
     void onReportBug( wxCommandEvent& event ) override;
 
-    void onDonateClick( wxCommandEvent& event ) override;
-
     // Notebook pages
     void createNotebooks();
-    void createNotebookPageByCategory( wxNotebook* aParent, const wxString& aCaption,
-                                       IMAGES aIconIndex, const CONTRIBUTORS& aContributors );
     void createNotebookHtmlPage( wxNotebook* aParent, const wxString& aCaption,
                                  IMAGES aIconIndex, const wxString& aHtmlMessage,
                                  bool aSelection = false );
-
-    wxStaticText* wxStaticTextRef( wxScrolledWindow* aParent, const wxString& aReference );
-    wxStaticBitmap*  createStaticBitmap( wxScrolledWindow* aParent, wxBitmap* icon );
 
 private:
     wxImageList*    m_images;

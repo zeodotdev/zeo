@@ -660,10 +660,8 @@ void EDA_BASE_FRAME::AddStandardHelpMenu( wxMenuBar* aMenuBar )
     ACTION_MENU*    helpMenu = new ACTION_MENU( false, commonControl );
 
     helpMenu->Add( ACTIONS::help );
-    helpMenu->Add( ACTIONS::gettingStarted );
     helpMenu->Add( ACTIONS::listHotKeys );
     helpMenu->Add( ACTIONS::getInvolved );
-    helpMenu->Add( ACTIONS::donate );
     helpMenu->Add( ACTIONS::reportBug );
 
     helpMenu->AppendSeparator();

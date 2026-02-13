@@ -140,6 +140,9 @@ const std::tuple<int,int,int>& GetMajorMinorPatchTuple()
 }
 
 
+// Zeo version
+#define ZEO_VERSION "0.0.1"
+
 wxString GetVersionInfoData( const wxString& aTitle, bool aHtml, bool aBrief )
 {
     wxString aMsg;
@@ -153,8 +156,8 @@ wxString GetVersionInfoData( const wxString& aTitle, bool aHtml, bool aBrief )
 #define ON "ON" << eol
 #define OFF "OFF" << eol
 
-    wxString version;
-    version << ( KIPLATFORM::APP::IsOperatingSystemUnsupported() ? wxString( wxS( "(UNSUPPORTED)" ) )
+    wxString kicadVersion;
+    kicadVersion << ( KIPLATFORM::APP::IsOperatingSystemUnsupported() ? wxString( wxS( "(UNSUPPORTED)" ) )
                                                                  : GetBuildVersion() )
 #ifdef DEBUG
             << ", debug"
@@ -168,8 +171,9 @@ wxString GetVersionInfoData( const wxString& aTitle, bool aHtml, bool aBrief )
 
     aMsg << eol << eol;
 
-
-    aMsg << "Version: " << version << eol << eol;
+    // Show both Zeo version and KiCad version
+    aMsg << "Zeo Version: " << ZEO_VERSION << eol;
+    aMsg << "KiCad Version: " << kicadVersion << eol << eol;
     aMsg << "Libraries:" << eol;
 
     aMsg << indent4 << wxGetLibraryVersionInfo().GetVersionString() << eol;

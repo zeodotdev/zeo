@@ -1384,24 +1384,17 @@ TOOL_ACTION ACTIONS::showDesignBlockLibTable( TOOL_ACTION_ARGS()
         .Tooltip( _( "Edit the global and project design block library lists" ) )
         .Icon( BITMAPS::library_table ) );
 
-TOOL_ACTION ACTIONS::gettingStarted( TOOL_ACTION_ARGS()
-        .Name( "common.SuiteControl.gettingStarted" )
-        .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Getting Started with KiCad" ) )
-        .Tooltip( _( "Open \"Getting Started in KiCad\" guide for beginners" ) )
-        .Icon( BITMAPS::help ) );
-
 TOOL_ACTION ACTIONS::help( TOOL_ACTION_ARGS()
         .Name( "common.SuiteControl.help" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Help" ) )
-        .Tooltip( _( "Open product documentation in a web browser" ) )
+        .FriendlyName( _( "Documentation" ) )
+        .Tooltip( _( "Open Zeo documentation in a web browser" ) )
         .Icon( BITMAPS::help_online ) );
 
 TOOL_ACTION ACTIONS::about( TOOL_ACTION_ARGS()
         .Name( "common.SuiteControl.about" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "About KiCad" ) )
+        .FriendlyName( _( "About Zeo" ) )
         .UIId( wxID_ABOUT )
         .Icon( BITMAPS::about ) );
 
@@ -1418,20 +1411,14 @@ TOOL_ACTION ACTIONS::getInvolved( TOOL_ACTION_ARGS()
         .Name( "common.SuiteControl.getInvolved" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Get Involved" ) )
-        .Tooltip( _( "Open \"Contribute to KiCad\" in a web browser" ) )
+        .Tooltip( _( "Open Zeo GitHub in a web browser" ) )
         .Icon( BITMAPS::info ) );
-
-TOOL_ACTION ACTIONS::donate( TOOL_ACTION_ARGS()
-        .Name( "common.SuiteControl.donate" )
-        .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Donate" ) )
-        .Tooltip( _( "Open \"Donate to KiCad\" in a web browser" ) ) );
 
 TOOL_ACTION ACTIONS::reportBug( TOOL_ACTION_ARGS()
         .Name( "common.SuiteControl.reportBug" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Report Bug" ) )
-        .Tooltip( _( "Report a problem with KiCad" ) )
+        .Tooltip( _( "Report a problem with Zeo" ) )
         .Icon( BITMAPS::bug ) );
 
 TOOL_ACTION ACTIONS::ddAddLibrary( TOOL_ACTION_ARGS()

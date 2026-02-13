@@ -221,7 +221,7 @@ PCB_EDIT_FRAME::PCB_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // assume dirty
     m_ZoneFillsDirty = true;
 
-    m_aboutTitle = _HKI( "KiCad PCB Editor" );
+    m_aboutTitle = _HKI( "Zeo PCB Editor" );
 
     // Must be created before the menus are created.
     if( ADVANCED_CFG::GetCfg().m_ShowPcbnewExportNetlist )

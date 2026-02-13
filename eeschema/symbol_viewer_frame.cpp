@@ -110,7 +110,7 @@ SYMBOL_VIEWER_FRAME::SYMBOL_VIEWER_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_libList( nullptr ),
         m_symbolList( nullptr )
 {
-    m_aboutTitle = _HKI( "KiCad Symbol Library Browser" );
+    m_aboutTitle = _HKI( "Zeo Symbol Library Browser" );
 
     // Force the frame name used in config. the lib viewer frame has a name
     // depending on aFrameType (needed to identify the frame by wxWidgets),

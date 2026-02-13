@@ -117,21 +117,26 @@ void* LLM_REQUEST_THREAD::Entry()
         return nullptr;
     }
 
-    // Build the request (Opus only)
-    std::string apiModel = "claude-opus-4-6";
+    // Map display name to API model ID
+    std::string apiModel;
+    if( m_model == "Gemini 3 Pro" )
+        apiModel = "gemini-3.0-pro-preview";
+    else
+        apiModel = "claude-opus-4-6";
 
     json requestBody;
     requestBody["model"] = apiModel;
     requestBody["messages"] = m_messages;
     requestBody["stream"] = true;
 
-    // Set max_tokens based on model limits
-    // claude-opus-4-6 has a max output of 128000 tokens
-    // claude-sonnet-4-5 has a max output of 131072 tokens
-    if( apiModel == "claude-opus-4-6" )
-        requestBody["max_tokens"] = 128000;
-    else
-        requestBody["max_tokens"] = 131072;
+    // Set max_tokens for Anthropic models (Gemini doesn't need it — proxy handles)
+    if( apiModel.find( "gemini" ) == std::string::npos )
+    {
+        if( apiModel == "claude-opus-4-6" )
+            requestBody["max_tokens"] = 128000;
+        else
+            requestBody["max_tokens"] = 131072;
+    }
 
     // Signal agent mode to server for system prompt selection (proxy strips before forwarding)
     requestBody["metadata"] = {

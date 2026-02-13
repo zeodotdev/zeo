@@ -470,4 +470,242 @@ BOOST_AUTO_TEST_CASE( AddPowerStillUsesAngleKeyword )
 }
 
 
+// --- sch_add: reference auto-numbering ---
+
+BOOST_AUTO_TEST_CASE( AddSymbolGeneratesUsedRefsScan )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "symbol" },
+            { "lib_id", "Device:R" },
+            { "position", { 10.16, 20.32 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "used_refs" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "symbols.get_all()" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddSymbolGeneratesNextRefFunction )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "symbol" },
+            { "lib_id", "Device:R" },
+            { "position", { 10.16, 20.32 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "def next_ref(prefix):" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddSymbolSetsRefViaProtoFields )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "symbol" },
+            { "lib_id", "Device:R" },
+            { "position", { 10.16, 20.32 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "_proto.fields" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_f.name == 'Reference'" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_f.text = _new_ref_0" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddSymbolCallsCrudUpdateItems )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "symbol" },
+            { "lib_id", "Device:R" },
+            { "position", { 10.16, 20.32 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "crud.update_items(sym_0)" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddSymbolResultIncludesReference )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "symbol" },
+            { "lib_id", "Device:R" },
+            { "position", { 10.16, 20.32 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "'reference': _new_ref_0" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddSymbolExtractsPrefixFromAutoRef )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "symbol" },
+            { "lib_id", "Device:R" },
+            { "position", { 10.16, 20.32 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    // Extracts prefix from auto-assigned reference (e.g. 'R' from 'R?')
+    BOOST_CHECK( cmd.find( "_prefix_0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "next_ref(_prefix_0)" ) != std::string::npos );
+}
+
+
+// --- sch_add: power symbol auto-numbering ---
+
+BOOST_AUTO_TEST_CASE( AddPowerAutoNumbersWithPWRPrefix )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "power" },
+            { "lib_id", "power:GND" },
+            { "position", { 10.16, 20.32 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "next_ref('#PWR')" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddPowerSetsRefViaProtoFields )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "power" },
+            { "lib_id", "power:VCC" },
+            { "position", { 10.16, 20.32 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "pwr_0._proto.fields" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_f.text = _pwr_ref_0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "crud.update_items(pwr_0)" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddPowerResultIncludesReference )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "power" },
+            { "lib_id", "power:GND" },
+            { "position", { 10.16, 20.32 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "'reference': _pwr_ref_0" ) != std::string::npos );
+}
+
+
+// --- sch_add: results array ---
+
+BOOST_AUTO_TEST_CASE( AddBatchUsesResultsArray )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "symbol" },
+            { "lib_id", "Device:C" },
+            { "position", { 10.16, 20.32 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "results = []" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "'results': results" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddBatchImportsRe )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "symbol" },
+            { "lib_id", "Device:R" },
+            { "position", { 10.16, 20.32 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    // re module needed for reference prefix extraction
+    BOOST_CHECK( cmd.find( "import json, sys, re" ) != std::string::npos );
+}
+
+
+// --- sch_add: input validation ---
+
+BOOST_AUTO_TEST_CASE( AddErrorOnMissingElements )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = { { "other", "value" } };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "error" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "elements" ) != std::string::npos );
+}
+
+
+// --- sch_connect_to_power: auto-numbering ---
+
+BOOST_AUTO_TEST_CASE( ConnectToPowerAutoNumbersPWR )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "ref", "U1" },
+        { "pin", "1" },
+        { "power", "VCC" }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
+
+    BOOST_CHECK( cmd.find( "used_refs" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "def next_ref(prefix):" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "next_ref('#PWR')" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( ConnectToPowerSetsRefViaProtoFields )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "ref", "U1" },
+        { "pin", "1" },
+        { "power", "GND" }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
+
+    BOOST_CHECK( cmd.find( "power_sym._proto.fields" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_f.text = _pwr_ref" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "crud.update_items(power_sym)" ) != std::string::npos );
+}
+
+
 BOOST_AUTO_TEST_SUITE_END()

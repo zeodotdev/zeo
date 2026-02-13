@@ -335,10 +335,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                             { "type", "integer" },
                             { "description", "Unit number for multi-unit symbols (e.g., 1-3 for LM358). Default: 1" }
                         }},
-                        { "reference", {
-                            { "type", "string" },
-                            { "description", "Reference designator (e.g. 'R1')" }
-                        }},
                         { "properties", {
                             { "type", "object" },
                             { "description", "{Value, Footprint, ...}" }

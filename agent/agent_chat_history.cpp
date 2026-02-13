@@ -238,7 +238,10 @@ std::vector<AGENT_CHAT_HISTORY::HistoryEntry> AGENT_CHAT_HISTORY::GetHistoryList
 
 void AGENT_CHAT_HISTORY::StartNewConversation()
 {
-    m_conversationId = GenerateUUID();
+    // Use timestamp as conversation ID so filenames are human-readable
+    // Format: YYYY-MM-DD_HH-MM-SS
+    wxDateTime now = wxDateTime::Now();
+    m_conversationId = now.Format( "%Y-%m-%d_%H-%M-%S" ).ToStdString();
     m_title = "";
     m_createdAt = GetCurrentTimestamp();
     m_lastUpdated = m_createdAt;

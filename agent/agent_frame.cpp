@@ -2473,6 +2473,7 @@ void AGENT_FRAME::RenderChatHistory()
     // Reset counter - RenderChatHistory updates m_toolResultCounter so that
     // subsequent live tool calls get indices that don't collide with historical ones.
     m_toolResultCounter = 0;
+    m_toolDescByUseId.clear();
 
     // Build HTML from chat history (inner content only, no template wrapper)
     m_fullHtmlContent = "";
@@ -2634,10 +2635,14 @@ void AGENT_FRAME::RenderChatHistory()
                 {
                     // Render tool_use block with human-readable description
                     std::string toolName = block.value( "name", "unknown" );
+                    std::string toolId = block.value( "id", "" );
                     nlohmann::json toolInput = block.value( "input", nlohmann::json::object() );
                     wxString desc = AgentTools::GetToolDescription( toolName, toolInput );
 
-                    // Store for pairing with result (next block)
+                    // Store in map keyed by tool_use id for pairing with tool_result
+                    if( !toolId.empty() )
+                        m_toolDescByUseId[toolId] = desc;
+
                     m_lastToolDesc = desc;
                 }
                 else if( blockType == "tool_result" )
@@ -2713,7 +2718,18 @@ void AGENT_FRAME::RenderChatHistory()
                     // Format full result for expanded view
                     wxString fullFormatted = FormatToolResult( textContent );
 
-                    wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
+                    // Look up tool description by tool_use_id, fall back to
+                    // m_lastToolDesc (single-tool case), then generic fallback
+                    wxString desc;
+                    std::string toolUseId = block.value( "tool_use_id", "" );
+
+                    if( !toolUseId.empty() && m_toolDescByUseId.count( toolUseId ) )
+                        desc = m_toolDescByUseId[toolUseId];
+                    else if( !m_lastToolDesc.IsEmpty() )
+                        desc = m_lastToolDesc;
+                    else
+                        desc = "Tool execution";
+
                     bool expanded = m_historicalToolResultExpanded.count( m_toolResultCounter ) > 0;
 
                     m_fullHtmlContent += BuildToolResultHtml( m_toolResultCounter, desc,

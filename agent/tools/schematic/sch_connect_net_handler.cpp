@@ -141,6 +141,8 @@ try:
                 out_dx = 0
                 out_dy = 1.27 if py > sym_cy else -1.27
                 pin_dir = 'v'
+        _dir_name = {(1.27,0):'RIGHT', (-1.27,0):'LEFT', (0,-1.27):'UP', (0,1.27):'DOWN'}.get((out_dx,out_dy), '?')
+        print(f'[route] {ref}:{pin_id} pos=({px:.2f},{py:.2f}) orient={pin_orientation} -> {_dir_name} ({out_dx},{out_dy})', file=sys.stderr)
         pin_positions.append({'ref': ref, 'pin': pin_id, 'x': snap_to_grid(px), 'y': snap_to_grid(py), 'raw_x': px, 'raw_y': py, 'sym': sym, 'dir': pin_dir, 'out_dx': out_dx, 'out_dy': out_dy})
 
     wire_count = 0
@@ -152,8 +154,7 @@ try:
         _wire_ep[key] = _wire_ep.get(key, 0) + 1
 
     # Build obstacle map from graphical bounding boxes of ALL symbols.
-    # Shrink bbox edges that have pins so wires can reach pin tips
-    # without the body registering as an obstacle.
+    # Pin tip cells are reachable via A*'s start/goal exclusion — no edge shrinking needed.
     obstacles = []
     try:
         all_symbols = sch.symbols.get_all()
@@ -164,30 +165,7 @@ try:
                 continue
             if not bbox:
                 continue
-            bx0, bx1 = bbox['min_x'], bbox['max_x']
-            by0, by1 = bbox['min_y'], bbox['max_y']
-            # Get pin positions to detect which edges have pins
-            pin_xs, pin_ys = [], []
-            for sp in obs_sym.pins:
-                try:
-                    tp = sch.symbols.get_transformed_pin_position(obs_sym, sp.number)
-                    if tp:
-                        pin_xs.append(tp['position'].x / 1_000_000)
-                        pin_ys.append(tp['position'].y / 1_000_000)
-                except:
-                    pass
-            # Shrink each edge that has a pin within 2mm of it
-            shrink = 1.27
-            if any(abs(px - bx0) < 2.0 for px in pin_xs):
-                bx0 += shrink
-            if any(abs(px - bx1) < 2.0 for px in pin_xs):
-                bx1 -= shrink
-            if any(abs(py - by0) < 2.0 for py in pin_ys):
-                by0 += shrink
-            if any(abs(py - by1) < 2.0 for py in pin_ys):
-                by1 -= shrink
-            if bx0 < bx1 and by0 < by1:
-                obstacles.append({'min_x': bx0, 'max_x': bx1, 'min_y': by0, 'max_y': by1})
+            obstacles.append({'min_x': bbox['min_x'], 'max_x': bbox['max_x'], 'min_y': bbox['min_y'], 'max_y': bbox['max_y']})
     except:
         pass
 
@@ -281,6 +259,35 @@ try:
         # No path found — fall back to direct L-wire
         return [(x0, y0), (x0, y1), (x1, y1)]
 
+    def _path_hits_obstacle(waypoints, grid=1.27):
+        """Check if any intermediate cell on the path is inside an obstacle.
+        Excludes the first and last cells (pin endpoints sit inside their own
+        component's bounding box, matching A*'s start/goal exclusion).
+        Returns (hit, obs_desc) — hit is True if the path overlaps a component."""
+        # Pin endpoint cells to exclude
+        ep_start = (round(waypoints[0][0] / grid), round(waypoints[0][1] / grid))
+        ep_end = (round(waypoints[-1][0] / grid), round(waypoints[-1][1] / grid))
+        for i in range(len(waypoints) - 1):
+            ax, ay = waypoints[i]
+            bx, by = waypoints[i + 1]
+            gx0, gy0 = round(ax / grid), round(ay / grid)
+            gx1, gy1 = round(bx / grid), round(by / grid)
+            if gx0 == gx1:  # vertical segment
+                for gy in range(min(gy0, gy1), max(gy0, gy1) + 1):
+                    if (gx0, gy) == ep_start or (gx0, gy) == ep_end:
+                        continue
+                    cx, cy = gx0 * grid, gy * grid
+                    if _cell_blocked(cx, cy, grid):
+                        return True, f'({cx:.2f}, {cy:.2f})'
+            else:  # horizontal segment
+                for gx in range(min(gx0, gx1), max(gx0, gx1) + 1):
+                    if (gx, gy0) == ep_start or (gx, gy0) == ep_end:
+                        continue
+                    cx, cy = gx * grid, gy0 * grid
+                    if _cell_blocked(cx, cy, grid):
+                        return True, f'({cx:.2f}, {cy:.2f})'
+        return False, None
+
     def _place_path(waypoints):
         """Place wire segments along a list of waypoints."""
         count = 0
@@ -299,6 +306,7 @@ try:
         if dy < 0: return 3  # up
         return -1
 
+    _dir_names = {0:'RIGHT', 1:'LEFT', 2:'DOWN', 3:'UP', -1:'NONE'}
     def _route_pins(p0, p1):
         """Route between two pins using A* with forced escape at both ends."""
         x0, y0 = p0['raw_x'], p0['raw_y']
@@ -307,18 +315,28 @@ try:
         ed = _dir_index(p1['out_dx'], p1['out_dy'])
         # end_dir is opposite of outward (wire approaches from outside, moving inward)
         ed = ed ^ 1 if ed >= 0 else -1
-        return _astar(x0, y0, x1, y1, start_dir=sd, end_dir=ed)
+        print(f'[route] A* {p0["ref"]}:{p0["pin"]} -> {p1["ref"]}:{p1["pin"]}  start_dir={_dir_names.get(sd)} end_dir={_dir_names.get(ed)}', file=sys.stderr)
+        wp = _astar(x0, y0, x1, y1, start_dir=sd, end_dir=ed)
+        print(f'[route]   path: {[(round(x,2),round(y,2)) for x,y in wp]}', file=sys.stderr)
+        return wp
 
     if routing_mode == 'chain':
         # Chain mode: A* route each consecutive pin pair
         for ci in range(len(pin_positions) - 1):
             p0, p1 = pin_positions[ci], pin_positions[ci + 1]
             waypoints = _route_pins(p0, p1)
+            hit, loc = _path_hits_obstacle(waypoints)
+            if hit:
+                raise ValueError(f'Wire from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
             wire_count += _place_path(waypoints)
 
     elif len(pin_positions) == 2:
         # 2-pin star: A* route
-        waypoints = _route_pins(pin_positions[0], pin_positions[1])
+        p0, p1 = pin_positions[0], pin_positions[1]
+        waypoints = _route_pins(p0, p1)
+        hit, loc = _path_hits_obstacle(waypoints)
+        if hit:
+            raise ValueError(f'Wire from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
         wire_count = _place_path(waypoints)
     else:
         # 3+ pins: trunk-and-branch routing with obstacle avoidance
@@ -464,6 +482,10 @@ try:
                 t0, t1 = (trunk_min, trunk_perp), (trunk_max, trunk_perp)
             else:
                 t0, t1 = (trunk_perp, trunk_min), (trunk_perp, trunk_max)
+            trunk_wp = [t0, t1]
+            hit, loc = _path_hits_obstacle(trunk_wp)
+            if hit:
+                raise ValueError(f'Trunk wire would pass through a component at {loc}. Try repositioning components to clear the path.')
             sch.wiring.add_wire(Vector2.from_xy_mm(*t0), Vector2.from_xy_mm(*t1))
             _track(t0[0], t0[1])
             _track(t1[0], t1[1])
@@ -481,6 +503,9 @@ try:
                 tgt_x, tgt_y = p['_tgt']
                 sd = _dir_index(p['out_dx'], p['out_dy'])
                 waypoints = _astar(pin_x, pin_y, tgt_x, tgt_y, start_dir=sd)
+                hit, loc = _path_hits_obstacle(waypoints)
+                if hit:
+                    raise ValueError(f'Wire from {p["ref"]}:{p["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
                 w = _place_path(waypoints)
                 wire_count += w
                 # Track endpoints for junction detection

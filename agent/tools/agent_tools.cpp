@@ -300,7 +300,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "Returns pin positions for all placed symbols. "
         "Rejects placements that overlap existing components (1.27mm clearance). "
         "Use sch_connect_net for wiring.\n\n"
-        "Element types: symbol, power, junction, label, no_connect, bus_entry.";
+        "Element types: symbol, power, label, no_connect, bus_entry.";
     schAdd.input_schema = {
         { "type", "object" },
         { "properties", {
@@ -311,7 +311,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                     { "properties", {
                         { "element_type", {
                             { "type", "string" },
-                            { "enum", json::array( { "symbol", "power", "junction", "label", "no_connect", "bus_entry" } ) },
+                            { "enum", json::array( { "symbol", "power", "label", "no_connect", "bus_entry" } ) },
                             { "description", "Type of element to add" }
                         }},
                         { "lib_id", {

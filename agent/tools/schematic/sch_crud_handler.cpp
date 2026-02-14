@@ -1208,6 +1208,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
     // --- Overlap detection preamble ---
     code << "# Collect bounding boxes of all existing symbols for overlap detection\n";
+    code << "_BBOX_MARGIN = 1.27  # one grid step buffer around each bounding box\n";
     code << "placed_bboxes = []\n";
     code << "try:\n";
     code << "    _all_existing = sch.symbols.get_all()\n";
@@ -1217,7 +1218,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "        except:\n";
     code << "            continue\n";
     code << "        if _ebb:\n";
-    code << "            placed_bboxes.append({'min_x': _ebb['min_x'], 'max_x': _ebb['max_x'], 'min_y': _ebb['min_y'], 'max_y': _ebb['max_y']})\n";
+    code << "            placed_bboxes.append({'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
     code << "except:\n";
     code << "    pass\n";
     code << "\n";
@@ -1277,7 +1278,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "        try:\n";
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(sym_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
-            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'], 'max_x': _bb_" << i << "['max_x'], 'min_y': _bb_" << i << "['min_y'], 'max_y': _bb_" << i << "['max_y']}\n";
+            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN}\n";
             code << "                for _pb in placed_bboxes:\n";
             code << "                    if _bboxes_overlap(_new_bbox_" << i << ", _pb):\n";
             code << "                        _overlap_" << i << " = True\n";
@@ -1324,7 +1325,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "        try:\n";
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(pwr_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
-            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'], 'max_x': _bb_" << i << "['max_x'], 'min_y': _bb_" << i << "['min_y'], 'max_y': _bb_" << i << "['max_y']}\n";
+            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN}\n";
             code << "                for _pb in placed_bboxes:\n";
             code << "                    if _bboxes_overlap(_new_bbox_" << i << ", _pb):\n";
             code << "                        _overlap_" << i << " = True\n";

@@ -62,6 +62,7 @@
 #include <ki_exception.h>
 #include <wx/regex.h>
 #include <lib_id.h>
+#include <cli_progress_reporter.h>
 #include <connectivity/connectivity_data.h>
 #include <ratsnest/ratsnest_data.h>
 #include <connectivity/connectivity_items.h>
@@ -2157,7 +2158,7 @@ HANDLER_RESULT<RunDRCResponse> API_HANDLER_PCB::handleRunDRC(
     board->DeleteMARKERs( true, false );
 
     // Run DRC (blocking)
-    drcTool->RunTests( nullptr,  // No progress reporter for API
+    drcTool->RunTests( &CLI_PROGRESS_REPORTER::GetInstance(),
                        aCtx.Request.refill_zones(),
                        aCtx.Request.report_all_track_errors(),
                        aCtx.Request.test_footprints() );

@@ -296,33 +296,11 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     LLM_TOOL schAdd;
     schAdd.name = "sch_add";
     schAdd.description =
-        "Add elements to the schematic. Accepts an array of elements - use for single or batch operations. "
-        "Returns pin positions for all symbols, enabling immediate wiring. "
-        "REQUIRES: Schematic editor must be open with a document loaded.\n\n"
-        "ROTATION (counter-clockwise degrees):\n"
-        "- Passives (R, C, L): 0°=vertical (pins top/bottom), 90°=horizontal (pins left/right)\n"
-        "- ICs: 0°=default (pin 1 top-left)\n"
-        "- Diode: 0°=vertical (K cathode top, A anode bottom)\n"
-        "- Power GND: 0°=standard (bars down), do NOT use 180\n"
-        "- Power VCC/+V: 0°=standard (bar up), do NOT use 180\n\n"
-        "WIRING RULES:\n"
-        "- Use from_pin/to_pin for all wiring - backend auto-routes L-shapes\n"
-        "- AVOID OVERLAPPING WIRES: Wires at same coordinates create shorts!\n"
-        "- WIRE-PIN CONNECTIONS: Wires only connect at endpoints, NOT midpoints. A wire passing through a pin does not connect to it. Always split wires at pin locations or use from_pin/to_pin.\n\n"
-        "ERC TIPS:\n"
-        "- Add 'power:PWR_FLAG' on nets powered by connectors to fix 'Power pin not driven'\n"
-        "- Use no_connect on unused pins to fix 'Unconnected pin' warnings\n\n"
-        "ELEMENT TYPES:\n"
-        "- symbol: {element_type, lib_id, position, angle?, mirror?, unit?, reference?, properties?}\n"
-        "- power: {element_type, lib_id, position, angle?} - GND: 0=bars down(standard), VCC: 0=bar up(standard)\n"
-        "- wire: {element_type, from_pin:{ref,pin}, to_pin:{ref,pin}, waypoints?} or {points:[[x,y],...]}\n"
-        "- label: {element_type, text, position, label_type?} - label_type: local|global|hierarchical\n"
-        "- junction, no_connect\n\n"
-        "EXAMPLE (horizontal resistor with GND):\n"
-        "elements: [\n"
-        "  {element_type:'symbol', lib_id:'Device:R', position:[50.8,50.8], angle:90},\n"
-        "  {element_type:'power', lib_id:'power:GND', position:[50.8,63.5]}\n"
-        "]";
+        "Add elements to the schematic. Accepts an array of elements. "
+        "Returns pin positions for all placed symbols. "
+        "Rejects placements that overlap existing components (1.27mm clearance). "
+        "Use sch_connect_net for wiring.\n\n"
+        "Element types: symbol, power, label, no_connect, bus_entry.";
     schAdd.input_schema = {
         { "type", "object" },
         { "properties", {
@@ -333,7 +311,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                     { "properties", {
                         { "element_type", {
                             { "type", "string" },
-                            { "enum", json::array( { "symbol", "power", "wire", "junction", "label", "no_connect", "bus_entry" } ) },
+                            { "enum", json::array( { "symbol", "power", "label", "no_connect", "bus_entry" } ) },
                             { "description", "Type of element to add" }
                         }},
                         { "lib_id", {
@@ -358,39 +336,9 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                             { "type", "integer" },
                             { "description", "Unit number for multi-unit symbols (e.g., 1-3 for LM358). Default: 1" }
                         }},
-                        { "reference", {
-                            { "type", "string" },
-                            { "description", "Reference designator (e.g. 'R1')" }
-                        }},
                         { "properties", {
                             { "type", "object" },
                             { "description", "{Value, Footprint, ...}" }
-                        }},
-                        { "from_pin", {
-                            { "type", "object" },
-                            { "properties", {
-                                { "ref", { { "type", "string" } } },
-                                { "pin", { { "type", "string" } } }
-                            }},
-                            { "description", "Wire start: {ref:'R1', pin:'1'}" }
-                        }},
-                        { "to_pin", {
-                            { "type", "object" },
-                            { "properties", {
-                                { "ref", { { "type", "string" } } },
-                                { "pin", { { "type", "string" } } }
-                            }},
-                            { "description", "Wire end: {ref:'C1', pin:'2'}" }
-                        }},
-                        { "points", {
-                            { "type", "array" },
-                            { "items", { { "type", "array" } } },
-                            { "description", "Wire coordinates: [[x1,y1], [x2,y2], ...]" }
-                        }},
-                        { "waypoints", {
-                            { "type", "array" },
-                            { "items", { { "type", "array" } } },
-                            { "description", "L-route waypoints - YOU must calculate coordinates" }
                         }},
                         { "text", {
                             { "type", "string" },
@@ -408,7 +356,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                     }},
                     { "required", json::array( { "element_type" } ) }
                 }},
-                { "description", "Array of elements. Process in order: symbols before wires." }
+                { "description", "Array of elements to add to the schematic." }
             }}
         }},
         { "required", json::array( { "elements" } ) }
@@ -421,6 +369,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schUpdate.description =
         "Update elements in the schematic. Accepts an array of updates - use for single or batch operations. "
         "Can modify position, rotation, mirror, properties, and text field positions. Target by reference or UUID. "
+        "Moves are rejected if the new position overlaps an existing component (1.27mm clearance). "
         "Use 'fields' to reposition Reference/Value text relative to symbol center (avoids overlap). "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schUpdate.input_schema = {
@@ -552,11 +501,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                 { "description", "Offset from pin position for power symbol as [dx, dy] in mm. "
                                 "Default [0, 0] places power symbol directly at pin (no wire needed). "
                                 "Use [0, 5] to place GND 5mm below pin with connecting wire." }
-            }},
-            { "power_angle", {
-                { "type", "number" },
-                { "description", "CCW rotation for power symbol. GND: 180=arrow down, 0=arrow up. "
-                                "VCC: 0=arrow up, 180=arrow down. Default: auto-detect." }
             }}
         }},
         { "required", json::array( { "ref", "pin", "power" } ) }
@@ -621,13 +565,10 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     LLM_TOOL schConnectNet;
     schConnectNet.name = "sch_connect_net";
     schConnectNet.description =
-        "Connect two or more component pins on the same net with wires and junctions in a single call. "
-        "Replaces multiple sch_add wire/junction calls. Resolves pin positions automatically, "
-        "computes an optimal trunk-and-branch wiring layout, and places junctions at T-connections. "
-        "Avoids routing the trunk wire through other components when possible. "
-        "For 2 pins: draws a direct L-shaped wire (same as auto_wire). "
-        "For 3+ pins: computes a shared trunk wire along the dominant axis, with branch wires to each pin. "
-        "REQUIRES: Schematic editor must be open with a document loaded.";
+        "Connect component pins with auto-routed wires. "
+        "Resolves pin positions automatically and places junctions at T-connections. "
+        "Use mode 'chain' (default) for series component paths (pins wired sequentially in order). "
+        "Use mode 'star' for shared nodes where multiple pins tap the same net.";
     schConnectNet.input_schema = {
         { "type", "object" },
         { "properties", {
@@ -635,11 +576,19 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                 { "type", "array" },
                 { "items", {
                     { "type", "string" },
-                    { "description", "Pin specifier as 'REF:PIN' (e.g., 'R1:1', 'U1:VCC', 'Q2:D')" }
+                    { "description", "Pin specifier as 'REF:PIN' (e.g., 'R1:1', 'U1:VCC', '#PWR01:1') or label name without colon (e.g., 'VCC', 'OUT')" }
                 }},
                 { "minItems", 2 },
-                { "description", "Array of pin specifiers to connect on the same net. Min 2 pins. "
-                                "Format: 'REFERENCE:PIN_NUMBER_OR_NAME' (e.g., ['Q2:D', 'D2:1', 'L2:1'])" }
+                { "description", "Array of pin specifiers or label names. "
+                                "Pins: 'REF:PIN' (e.g., 'R1:2', 'U1:3', '#PWR01:1'). "
+                                "Labels: name without colon (e.g., 'VCC', 'OUT'). "
+                                "Example: ['U1:8', 'VCC']" }
+            }},
+            { "mode", {
+                { "type", "string" },
+                { "enum", json::array( { "star", "chain" } ) },
+                { "description", "Routing topology. 'chain' (default): wire pins sequentially in order (for series paths). "
+                                "'star': trunk-and-branch (for shared nodes like power fan-outs)." }
             }}
         }},
         { "required", json::array( { "pins" } ) }
@@ -652,6 +601,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schAnnotate.description =
         "Annotate symbols in the open schematic. Assigns reference designators (R1, C1, U1, etc.) "
         "to symbols that have '?' placeholders. Can re-annotate all symbols or only unannotated ones. "
+        "Annotation is global across all sheets, so references on a sub-sheet may not start at 1 "
+        "(e.g., R5, C3) — this is expected. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schAnnotate.input_schema = {
         { "type", "object" },
@@ -678,31 +629,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "required", json::array() }
     };
     tools.push_back( schAnnotate );
-
-    // sch_get_nets - Get all nets and their connections
-    LLM_TOOL schGetNets;
-    schGetNets.name = "sch_get_nets";
-    schGetNets.description =
-        "Get a list of all nets in the schematic with their connected pins. "
-        "Returns net names and the symbol pins connected to each net. "
-        "Useful for verifying connections, debugging ERC issues, and understanding circuit topology. "
-        "REQUIRES: Schematic editor must be open with a document loaded.";
-    schGetNets.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "filter", {
-                { "type", "string" },
-                { "description", "Optional filter to match net names (e.g., 'VCC', 'GND', 'DATA')" }
-            }},
-            { "include_unconnected", {
-                { "type", "boolean" },
-                { "description", "Include nets with only one pin connected (default: false)" }
-            }}
-        }},
-        { "required", json::array() }
-    };
-    schGetNets.read_only = true;
-    tools.push_back( schGetNets );
 
     // ===== PCB Tools =====
 

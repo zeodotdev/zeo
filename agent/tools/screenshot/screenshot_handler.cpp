@@ -127,7 +127,7 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
 
     // Create a unique temp directory atomically via mkdtemp to avoid TOCTOU races
     std::string tempTemplate = ( wxFileName::GetTempDir() + wxFileName::GetPathSeparator()
-                                 + "zener_screenshot_XXXXXX" ).ToStdString();
+                                 + "zeo_screenshot_XXXXXX" ).ToStdString();
     std::vector<char> tempBuf( tempTemplate.begin(), tempTemplate.end() );
     tempBuf.push_back( '\0' );
 

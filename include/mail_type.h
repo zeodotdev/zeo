@@ -60,7 +60,8 @@ enum MAIL_T
     MAIL_AGENT_REQUEST,       // Agent -> Editor request (JSON payload)
     MAIL_AGENT_RESPONSE,      // Editor -> Agent response (JSON payload)
     MAIL_SHOW_DIFF,           // Agent -> Editor: Show diff overlay (JSON payload)
-    MAIL_AUTH_STATE_CHANGED,  // Launcher -> Agent: Auth state changed (reload from keychain)
+    MAIL_AUTH_STATE_CHANGED,  // Launcher -> Agent: Auth state changed (UI update only)
+    MAIL_AUTH_POINTER,        // Launcher -> Agent: Pass shared AGENT_AUTH pointer (payload: uintptr_t as string)
     MAIL_AGENT_HAS_CHANGES,   // Agent -> Editor: Query pending changes (payload set to "true"/"false")
     MAIL_AGENT_APPROVE,       // Agent -> Editor: Approve pending changes
     MAIL_AGENT_REJECT,        // Agent -> Editor: Reject pending changes

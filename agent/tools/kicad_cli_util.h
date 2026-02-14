@@ -82,7 +82,7 @@ inline std::string GetFreeroutingJarPath()
     wxFileName exePath( exePathStr );
 
     // Navigate from MacOS to SharedSupport/freerouting
-    // App structure: Zener.app/Contents/MacOS/kicad -> Zener.app/Contents/SharedSupport/freerouting
+    // App structure: Zeo.app/Contents/MacOS/kicad -> Zeo.app/Contents/SharedSupport/freerouting
     wxFileName jarPath( exePath.GetPath(), "" );
     jarPath.RemoveLastDir();  // Remove MacOS
     jarPath.AppendDir( "SharedSupport" );

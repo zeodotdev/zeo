@@ -6,6 +6,7 @@
 #include <wx/timer.h>
 #include <string>
 #include <vector>
+#include <map>
 #include <set>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -160,9 +161,11 @@ private:
 
     // ── Auth ──────────────────────────────────────────────────────────────
 
-    AGENT_AUTH*   m_auth;
+    AGENT_AUTH*   m_auth;       // Non-owning when shared with launcher, owning when fallback
+    bool          m_ownsAuth;   // True if agent frame created its own AGENT_AUTH
     void UpdateAuthUI();
     bool CheckAuthentication();
+    void EnsureAuth();          // Lazy-init fallback auth if no shared pointer received
 
     // ── Chat State ────────────────────────────────────────────────────────
 
@@ -187,6 +190,11 @@ private:
     // Model Context (context prompt is now injected server-side via context_type)
     std::string    m_currentModel;    // Currently selected model name
 
+    // Preferences persistence
+    wxString    GetPreferencesPath();
+    void        SaveModelPreference( const std::string& aModel );
+    std::string LoadModelPreference();
+
     // ── HTML Rendering ────────────────────────────────────────────────────
 
     // m_fullHtmlContent tracks the chat area inner HTML (messages, tool results, streaming divs).
@@ -202,6 +210,7 @@ private:
     bool     m_thinkingHtmlDirty;      // Deferred rebuild flag for thinking HTML
     int      m_currentThinkingIndex;
     wxString m_lastToolDesc;
+    std::map<std::string, wxString> m_toolDescByUseId; // tool_use id -> description (for history rendering)
     bool     m_userScrolledUp;
     long     m_lastScrollActivityMs;
     bool     m_htmlUpdatePending;

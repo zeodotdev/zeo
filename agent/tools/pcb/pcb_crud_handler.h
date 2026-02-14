@@ -46,6 +46,7 @@ private:
     // Helpers
     std::string EscapePythonString( const std::string& aStr ) const;
     std::string MmToNm( double aMm ) const;
+    std::string DumpAsPython( const nlohmann::json& aJson ) const;
     std::string GenerateRefToFootprintMap() const;
 };
 

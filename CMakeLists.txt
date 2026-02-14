@@ -734,7 +734,7 @@ else()
         CACHE PATH "Location of KiCad binaries." FORCE )
 
     # some paths to single app bundle
-    set( OSX_BUNDLE_MAIN "Zener.app" )
+    set( OSX_BUNDLE_MAIN "Zeo.app" )
     set( OSX_BUNDLE_BIN_DIR "Contents/MacOS" )
     set( OSX_BUNDLE_LIB_DIR "Contents/Frameworks" )
     set( OSX_BUNDLE_KIFACE_DIR "Contents/PlugIns" )
@@ -1191,7 +1191,7 @@ if( APPLE )
             file( REMOVE \"${KICAD_BIN}/PCB Calculator.app\" )
             file( REMOVE \"${KICAD_BIN}/Pcbnew.app\" )
             file( REMOVE \"${KICAD_BIN}/Page Layout Editor.app\" )
-            # Remove Zener-specific app symlinks left over from previous installs
+            # Remove Zeo-specific app symlinks left over from previous installs
             # (these become dangling after removing the main bundle below)
             file( REMOVE \"${KICAD_BIN}/Agent.app\" )
             file( REMOVE \"${KICAD_BIN}/agent.app\" )

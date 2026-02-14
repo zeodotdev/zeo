@@ -332,7 +332,7 @@ img[src^="data:"] { cursor: pointer; }
      SIGN-IN OVERLAY
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="sign-in-overlay">
-    <div class="text-text-muted text-[14px]">Sign in to start using Zener</div>
+    <div class="text-text-muted text-[14px]">Sign in to start using Zeo</div>
     <button class="ctrl-btn primary text-[13px] px-6 py-2" id="sign-in-btn">Sign In</button>
 </div>
 
@@ -546,7 +546,7 @@ App.Chat = (function() {
     }
 
     function appendMessage(html) {
-        if (_debug) console.log('[ZENER] appendMessage len=' + html.length);
+        if (_debug) console.log('[ZEO] appendMessage len=' + html.length);
         var wrapper = document.querySelector('.content-wrapper');
         if (wrapper) {
             var temp = document.createElement('div');
@@ -586,7 +586,7 @@ App.Chat = (function() {
     }
 
     function updateToolResult(index, statusClass, statusText, bodyHtml) {
-        if (_debug) console.log('[ZENER] updateToolResult(' + index + ') status=' + statusText);
+        if (_debug) console.log('[ZEO] updateToolResult(' + index + ') status=' + statusText);
         var el = document.getElementById('tool-result-' + index);
         if (el) {
             _applyToolResultUpdate(el, statusClass, statusText, bodyHtml);
@@ -594,18 +594,18 @@ App.Chat = (function() {
         }
         // Element not yet in DOM — retry. This handles the case where
         // image chunk scripts from a previous tool delay DOM creation.
-        if (_debug) console.warn('[ZENER] updateToolResult(' + index + ') element not found, retrying');
+        if (_debug) console.warn('[ZEO] updateToolResult(' + index + ') element not found, retrying');
         var retryCount = 0;
         var retryInterval = setInterval(function() {
             retryCount++;
             var el = document.getElementById('tool-result-' + index);
             if (el) {
                 clearInterval(retryInterval);
-                if (_debug) console.log('[ZENER] updateToolResult(' + index + ') found after ' + retryCount + ' retries');
+                if (_debug) console.log('[ZEO] updateToolResult(' + index + ') found after ' + retryCount + ' retries');
                 _applyToolResultUpdate(el, statusClass, statusText, bodyHtml);
             } else if (retryCount >= 20) {
                 clearInterval(retryInterval);
-                console.warn('[ZENER] updateToolResult(' + index + ') gave up after 20 retries');
+                console.warn('[ZEO] updateToolResult(' + index + ') gave up after 20 retries');
             }
         }, 50);
     }
@@ -615,7 +615,7 @@ App.Chat = (function() {
     function toolImgBegin(index, prefix) { _toolImgBuf = prefix || ''; }
     function toolImgChunk(index, data) { _toolImgBuf += data; }
     function toolImgEnd(index) {
-        if (_debug) console.log('[ZENER] toolImgEnd(' + index + ') bufLen=' + _toolImgBuf.length);
+        if (_debug) console.log('[ZEO] toolImgEnd(' + index + ') bufLen=' + _toolImgBuf.length);
         // Capture and clear buffer synchronously, then defer DOM insertion.
         // The setTimeout(0) yields control back to WebKit's RunScriptAsync
         // queue so pending scripts (appendMessage, updateToolResult for
@@ -660,7 +660,7 @@ App.Chat = (function() {
                     var index = parts[2];
                     var content = document.querySelector('[data-toggle-type="' + type + '"][data-toggle-index="' + index + '"]');
                     var chevron = target.querySelector('.toggle-chevron');
-                    if (_debug) console.log('[ZENER] toggle ' + type + ':' + index + ' found=' + !!content);
+                    if (_debug) console.log('[ZEO] toggle ' + type + ':' + index + ' found=' + !!content);
                     if (content) {
                         var expanded = content.style.display === 'none' || content.style.display === '';
                         content.style.display = expanded ? 'block' : 'none';
@@ -784,6 +784,66 @@ App.Input = (function() {
     var _historyIndex = -1;
     var _draft = '';
 
+    // ── Undo / Redo stack ──
+    var _undoStack = [{ text: '', start: 0, end: 0 }];
+    var _redoStack = [];
+    var _undoIdx = 0;           // points at current state in _undoStack
+    var _undoTimer = null;
+    var _lastInputType = '';    // tracks what kind of input just happened
+    var UNDO_MAX = 200;
+
+    function _undoSnapshot() {
+        var snap = { text: textarea.value, start: textarea.selectionStart, end: textarea.selectionEnd };
+        // don't push duplicate of current state
+        if (_undoIdx < _undoStack.length && _undoStack[_undoIdx].text === snap.text) return;
+        // trim any forward history beyond current position
+        _undoStack.length = _undoIdx + 1;
+        _undoStack.push(snap);
+        if (_undoStack.length > UNDO_MAX) _undoStack.shift();
+        _undoIdx = _undoStack.length - 1;
+        _redoStack = [];
+    }
+
+    function _undoSchedule() {
+        if (_undoTimer) clearTimeout(_undoTimer);
+        _undoTimer = setTimeout(function() { _undoSnapshot(); _undoTimer = null; }, 400);
+    }
+
+    function undo() {
+        // flush any pending snapshot so current state is saved
+        if (_undoTimer) { clearTimeout(_undoTimer); _undoTimer = null; _undoSnapshot(); }
+        if (_undoIdx <= 0) return;
+        _redoStack.push({ text: textarea.value, start: textarea.selectionStart, end: textarea.selectionEnd });
+        _undoIdx--;
+        var snap = _undoStack[_undoIdx];
+        textarea.value = snap.text;
+        textarea.selectionStart = snap.start;
+        textarea.selectionEnd = snap.end;
+        autoResize();
+        App.Bridge.sendMsg('text_changed', { text: textarea.value });
+    }
+
+    function redo() {
+        if (_redoStack.length === 0) return;
+        _undoIdx++;
+        if (_undoIdx >= _undoStack.length) {
+            _undoStack.push({ text: textarea.value, start: textarea.selectionStart, end: textarea.selectionEnd });
+        }
+        var snap = _redoStack.pop();
+        textarea.value = snap.text;
+        textarea.selectionStart = snap.start;
+        textarea.selectionEnd = snap.end;
+        autoResize();
+        App.Bridge.sendMsg('text_changed', { text: textarea.value });
+    }
+
+    function _undoReset() {
+        if (_undoTimer) { clearTimeout(_undoTimer); _undoTimer = null; }
+        _undoStack = [{ text: '', start: 0, end: 0 }];
+        _redoStack = [];
+        _undoIdx = 0;
+    }
+
     function autoResize() {
         textarea.style.height = 'auto';
         var scrollHeight = textarea.scrollHeight;
@@ -906,8 +966,22 @@ App.Input = (function() {
         }
     }
 
-    textarea.addEventListener('input', function() {
+    textarea.addEventListener('input', function(e) {
         if (_historyIndex !== -1) _historyIndex = -1;
+        var type = e.inputType || '';
+        // Snapshot immediately on word boundaries, delete, or paste
+        if (type === 'insertParagraph' || type === 'insertLineBreak' ||
+            type.indexOf('delete') !== -1 || type.indexOf('Paste') !== -1 ||
+            type === 'insertFromPaste') {
+            _undoSnapshot();
+        } else if (type === 'insertText' && e.data && /\s|[.,;:!?)\]}]/.test(e.data)) {
+            // word boundary character typed - snapshot immediately
+            _undoSnapshot();
+        } else {
+            // regular character - schedule a deferred snapshot
+            _undoSchedule();
+        }
+        _lastInputType = type;
         autoResize();
         App.Bridge.sendMsg('text_changed', { text: textarea.value });
     });
@@ -1065,6 +1139,7 @@ App.Input = (function() {
         textarea.value = '';
         clearAttachments();
         autoResize();
+        _undoReset();
     }
 
     function focus() { textarea.focus(); }
@@ -1112,6 +1187,8 @@ App.Input = (function() {
         setText: setText,
         appendText: appendText,
         submit: submit,
+        undo: undo,
+        redo: redo,
         addAttachment: addAttachment,
         clearHistory: clearHistory,
         // Exposed for onclick handlers in rendered HTML

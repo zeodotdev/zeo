@@ -658,7 +658,7 @@ const wxString& PATHS::GetExecutablePath()
         wxFileName fn( bin_dir );
         WX_FILENAME::ResolvePossibleSymlinks( fn );
 
-        if( fn.GetName() == wxT( "kicad" ) || fn.GetName() == wxT( "kicad-cli" ) || fn.GetName() == wxT( "Zener" ) )
+        if( fn.GetName() == wxT( "kicad" ) || fn.GetName() == wxT( "kicad-cli" ) || fn.GetName() == wxT( "Zeo" ) )
         {
             // kicad launcher, so just remove the Contents/MacOS part
             fn.RemoveLastDir();

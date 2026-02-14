@@ -25,26 +25,26 @@
             </dict>
         </array>
     <key>CFBundleDevelopmentRegion</key>            <string>English</string>
-    <key>CFBundleExecutable</key>                   <string>Zener</string>
+    <key>CFBundleExecutable</key>                   <string>Zeo</string>
     <key>CFBundleGetInfoString</key>                <string></string>
     <key>CFBundleIconFile</key>                     <string>kicad.icns</string>
-    <key>CFBundleIdentifier</key>                   <string>org.zener.kicad</string>
+    <key>CFBundleIdentifier</key>                   <string>org.zeo.kicad</string>
     <key>CFBundleInfoDictionaryVersion</key>        <string>6.0</string>
     <key>CFBundleLongVersionString</key>            <string>@KICAD_VERSION_FULL@</string>
-    <key>CFBundleName</key>                         <string>Zener</string>
+    <key>CFBundleName</key>                         <string>Zeo</string>
     <key>CFBundlePackageType</key>                  <string>APPL</string>
     <key>CFBundleShortVersionString</key>           <string>@KICAD_VERSION@</string>
     <key>CFBundleSignature</key>                    <string>????</string>
     <key>CFBundleVersion</key>                      <string>@KICAD_VERSION_FULL@</string>
     <key>CSResourcesFileMapped</key>                <true/>
     <key>LSRequiresCarbon</key>                     <true/>
-    <key>NSHumanReadableCopyright</key>             <string>Copyright The Zener Developers</string>
+    <key>NSHumanReadableCopyright</key>             <string>Copyright The Zeo Developers</string>
     <key>NSHighResolutionCapable</key>              <true/>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
             <key>CFBundleURLName</key>
-            <string>org.zener.kicad-agent</string>
+            <string>org.zeo.kicad-agent</string>
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>kicad-agent</string>

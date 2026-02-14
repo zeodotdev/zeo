@@ -8,7 +8,7 @@
 
 using json = nlohmann::json;
 
-static const std::string ZENER_API_URL = ZENER_BASE_URL + "/api/llm/messages";
+static const std::string ZEO_API_URL = ZEO_BASE_URL + "/api/llm/messages";
 
 AGENT_LLM_CLIENT::AGENT_LLM_CLIENT( AGENT_FRAME* aParent ) :
         m_parent( aParent ),
@@ -117,21 +117,26 @@ void* LLM_REQUEST_THREAD::Entry()
         return nullptr;
     }
 
-    // Build the request (Opus only)
-    std::string apiModel = "claude-opus-4-6";
+    // Map display name to API model ID
+    std::string apiModel;
+    if( m_model == "Gemini 3 Pro" )
+        apiModel = "gemini-3-pro-preview";
+    else
+        apiModel = "claude-opus-4-6";
 
     json requestBody;
     requestBody["model"] = apiModel;
     requestBody["messages"] = m_messages;
     requestBody["stream"] = true;
 
-    // Set max_tokens based on model limits
-    // claude-opus-4-6 has a max output of 128000 tokens
-    // claude-sonnet-4-5 has a max output of 131072 tokens
-    if( apiModel == "claude-opus-4-6" )
-        requestBody["max_tokens"] = 128000;
-    else
-        requestBody["max_tokens"] = 131072;
+    // Set max_tokens for Anthropic models (Gemini doesn't need it — proxy handles)
+    if( apiModel.find( "gemini" ) == std::string::npos )
+    {
+        if( apiModel == "claude-opus-4-6" )
+            requestBody["max_tokens"] = 128000;
+        else
+            requestBody["max_tokens"] = 131072;
+    }
 
     // Signal agent mode to server for system prompt selection (proxy strips before forwarding)
     requestBody["metadata"] = {
@@ -168,8 +173,8 @@ void* LLM_REQUEST_THREAD::Entry()
         return nullptr;
     }
 
-    // Set up curl options - use zener.so proxy
-    curl_easy_setopt( curl, CURLOPT_URL, ZENER_API_URL.c_str() );
+    // Set up curl options - use zeo proxy
+    curl_easy_setopt( curl, CURLOPT_URL, ZEO_API_URL.c_str() );
     curl_easy_setopt( curl, CURLOPT_POST, 1L );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDS, requestBodyStr.c_str() );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDSIZE, requestBodyStr.size() );

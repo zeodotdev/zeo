@@ -71,7 +71,7 @@ public:
         m_mainSizer = new wxBoxSizer( wxVERTICAL );
 
         wxStaticText* pageTitle = new wxStaticText(
-                this, -1, wxString::Format( _( "Welcome to Zener %s" ), GetMajorMinorVersion() ) );
+                this, -1, wxString::Format( _( "Welcome to Zeo %s" ), GetMajorMinorVersion() ) );
         pageTitle->SetFont(
                 wxFont( 14, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD ) );
         m_mainSizer->Add( pageTitle, 0, wxALIGN_CENTRE | wxALL, 5 );
@@ -81,7 +81,7 @@ public:
         m_mainSizer->Add( pageDivider, 0, wxEXPAND | wxALL, 5 );
 
         m_welcomeText = new wxStaticText( this, -1,
-            _( "Zener is starting for the first time, or some of its configuration files are missing.\n\n"
+            _( "Zeo is starting for the first time, or some of its configuration files are missing.\n\n"
                "Let's take a moment to configure some basic settings.  You can always modify these "
                "settings later by opening the Preferences dialog." ) );
         m_mainSizer->Add( m_welcomeText, 0, wxEXPAND | wxALL, 5 );
@@ -157,7 +157,7 @@ void STARTWIZARD::CheckAndRun( wxWindow* aParent )
 
     Pgm().HideSplash();
 
-    m_wizard = new wxWizard( aParent, wxID_ANY, _( "Zener Setup" ) );
+    m_wizard = new wxWizard( aParent, wxID_ANY, _( "Zeo Setup" ) );
     m_wizard->SetWindowStyleFlag( wxRESIZE_BORDER );
 
     STARTWIZARD_WELCOME_PAGE* firstPage = new STARTWIZARD_WELCOME_PAGE( m_wizard );
@@ -199,7 +199,7 @@ void STARTWIZARD::CheckAndRun( wxWindow* aParent )
     m_wizard->Bind( wxEVT_WIZARD_CANCEL,
             [&]( wxWizardEvent& aEvt )
             {
-                if( IsOK( aParent, _( "Are you sure?  If you cancel Zener setup, default settings "
+                if( IsOK( aParent, _( "Are you sure?  If you cancel Zeo setup, default settings "
                                       "will be chosen for you." ) ) )
                 {
                     for( std::unique_ptr<STARTWIZARD_PROVIDER>& provider : m_providers )

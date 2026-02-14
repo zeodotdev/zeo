@@ -10,7 +10,7 @@ from subprocess import call
 PNG_SOURCE = "/Users/jared/Documents/kicadpp/images/apple-icon-padded.png"
 
 # (icon_name, output_dirs)
-# Only generate main app icons with Zener branding
+# Only generate main app icons with Zeo branding
 ICONS = [
     ("agent", ["../../agent"]),
     ("kicad", ["../../kicad"]),

@@ -19,6 +19,7 @@
 #include <frame_type.h>
 #include <sstream>
 #include <fstream>
+#include <cstdint>
 #include <thread>
 #include <set>
 #include <algorithm>
@@ -284,8 +285,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     mainSizer->Add( m_webView, 1, wxEXPAND );
 
 #ifdef __APPLE__
-    // WKWebView handles Cmd+A through the Cocoa responder chain, bypassing wxWidgets.
-    // Install an NSEvent monitor to intercept Cmd+A when the webview has focus.
+    // WKWebView handles Cmd+key through the Cocoa responder chain, bypassing wxWidgets.
+    // Install an NSEvent monitor to intercept shortcuts when the webview has focus.
     void* nativeHandle = (void*) m_webView->GetWebView()->GetHandle();
 
     if( nativeHandle )
@@ -293,13 +294,38 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         // Disable WKWebView's default white background so parent dark panel shows through
         SetWebViewDarkBackground( nativeHandle );
 
-        InstallSelectAllMonitor(
+        InstallKeyboardMonitor(
                 nativeHandle,
-                [this]()
+                [this]( KEY_SHORTCUT aShortcut )
                 {
-                    m_webView->RunScriptAsync(
-                            wxS( "var ta = document.getElementById('input-textarea');"
-                                 "if(ta) { ta.focus(); ta.select(); }" ) );
+                    switch( aShortcut )
+                    {
+                    case KEY_SHORTCUT::SELECT_ALL:
+                        m_webView->RunScriptAsync(
+                                wxS( "var ta = document.getElementById('input-textarea');"
+                                     "if(ta) { ta.focus(); ta.select(); }" ) );
+                        break;
+
+                    case KEY_SHORTCUT::UNDO:
+                        m_webView->RunScriptAsync( wxS( "App.Input.undo()" ) );
+                        break;
+
+                    case KEY_SHORTCUT::REDO:
+                        m_webView->RunScriptAsync( wxS( "App.Input.redo()" ) );
+                        break;
+
+                    case KEY_SHORTCUT::FOCUS_INPUT:
+                        m_webView->RunScriptAsync( wxS( "App.Input.focus()" ) );
+                        break;
+
+                    case KEY_SHORTCUT::STOP_GENERATING:
+                        DoStopClick();
+                        break;
+
+                    case KEY_SHORTCUT::NEW_CHAT:
+                        DoNewChat();
+                        break;
+                    }
                 } );
     }
 #endif
@@ -362,61 +388,19 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_llmClient = std::make_unique<AGENT_LLM_CLIENT>( this );
     InitializeTools();
 
-    // Initialize authentication
-    m_auth = new AGENT_AUTH();
+    // Auth will be set via MAIL_AUTH_POINTER from the launcher (shared instance).
+    // If the launcher doesn't provide one (rare fallback), EnsureAuth() creates a local one.
+    m_auth = nullptr;
+    m_ownsAuth = false;
 
-    // Load Supabase configuration from JSON file
-    std::string supabaseUrl, supabaseKey;
-
-    // Try loading from supabase_config.json in source directory
-    wxFileName configPath( __FILE__ );
-    configPath.SetFullName( "supabase_config.json" );
-
-    if( wxFileExists( configPath.GetFullPath() ) )
-    {
-        std::ifstream configFile( configPath.GetFullPath().ToStdString() );
-
-        if( configFile.is_open() )
-        {
-            try
-            {
-                json config = json::parse( configFile );
-                supabaseUrl = config.value( "project_url", "" );
-                supabaseKey = config.value( "publishable_key", "" );
-
-                wxLogTrace( "Agent", "Loaded Supabase config from %s", configPath.GetFullPath() );
-            }
-            catch( const std::exception& e )
-            {
-                wxLogWarning( "Failed to parse supabase_config.json: %s", e.what() );
-            }
-            configFile.close();
-        }
-    }
-
-    if( !supabaseUrl.empty() && !supabaseKey.empty() )
-    {
-        m_auth->Configure( supabaseUrl, supabaseKey );
-        wxLogTrace( "Agent", "Supabase authentication configured" );
-    }
-    else
-    {
-        wxLogWarning( "Supabase config not found at: %s",
-                      configPath.GetFullPath().ToStdString().c_str() );
-
-        // Still load session from disk - tokens may have been saved by the launcher.
-        // The agent can use existing tokens and pick up refreshed ones via TryReloadSession().
-        m_auth->LoadSession();
-    }
-
-    // Wire auth to LLM client for proxy authentication
-    m_llmClient->SetAuth( m_auth );
+    // Wire auth to LLM client (nullptr for now, updated when auth pointer arrives)
+    m_llmClient->SetAuth( nullptr );
 
     // Create chat controller
     m_chatController = std::make_unique<CHAT_CONTROLLER>( this );
     m_chatController->SetLLMClient( m_llmClient.get() );
     m_chatController->SetChatHistoryDb( &m_chatHistoryDb );
-    m_chatController->SetAuth( m_auth );
+    m_chatController->SetAuth( nullptr );
     m_chatController->SetKiwayRequestFn(
         [this]( int aFrameType, const std::string& aPayload ) -> std::string {
             return SendRequest( aFrameType, aPayload );
@@ -639,8 +623,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             TOOL_REGISTRY::Instance().SetPcbEditorOpen( pcbOpen );
         } );
 
-    // Set model on controller
-    m_currentModel = "Claude 4.6 Opus";
+    // Load persisted model preference (default to Claude 4.6 Opus)
+    m_currentModel = LoadModelPreference();
     m_chatController->SetModel( m_currentModel );
 
     // Bind Controller Events
@@ -676,7 +660,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         UpdateAuthUI();
 
         // Push model list
-        std::vector<std::string> models = { "Claude 4.6 Opus" };
+        std::vector<std::string> models = { "Claude 4.6 Opus", "Gemini 3 Pro" };
         m_bridge->PushModelList( models, m_currentModel );
 
         // Push initial title
@@ -693,7 +677,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 AGENT_FRAME::~AGENT_FRAME()
 {
 #ifdef __APPLE__
-    RemoveSelectAllMonitor();
+    RemoveKeyboardMonitor();
 #endif
 
     // Stop the generating animation timer to prevent timer events
@@ -729,7 +713,8 @@ AGENT_FRAME::~AGENT_FRAME()
         wxMilliSleep( 50 );
     }
 
-    delete m_auth;
+    if( m_ownsAuth )
+        delete m_auth;
 }
 
 void AGENT_FRAME::ShowChangedLanguage()
@@ -1083,14 +1068,42 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
             }
         }
     }
+    else if( aEvent.Command() == MAIL_AUTH_POINTER )
+    {
+        // Receive shared AGENT_AUTH pointer from the launcher's SESSION_MANAGER.
+        // This eliminates dual auth instances and the refresh token rotation race.
+        std::string payload = aEvent.GetPayload();
+
+        if( !payload.empty() )
+        {
+            AGENT_AUTH* sharedAuth = reinterpret_cast<AGENT_AUTH*>(
+                    std::stoull( payload ) );
+
+            if( sharedAuth )
+            {
+                // If we previously created a fallback auth, clean it up
+                if( m_ownsAuth && m_auth )
+                    delete m_auth;
+
+                m_auth = sharedAuth;
+                m_ownsAuth = false;
+
+                // Wire the shared auth to LLM client and controller
+                m_llmClient->SetAuth( m_auth );
+
+                if( m_chatController )
+                    m_chatController->SetAuth( m_auth );
+
+                UpdateAuthUI();
+                wxLogTrace( "Agent", "Using shared auth from launcher" );
+            }
+        }
+    }
     else if( aEvent.Command() == MAIL_AUTH_STATE_CHANGED )
     {
-        // Reload session from keychain (tokens were saved by launcher's SESSION_MANAGER)
-        if( m_auth )
-        {
-            m_auth->LoadSession();
-            UpdateAuthUI();
-        }
+        // Auth state changed in the shared instance (sign-in, sign-out, refresh).
+        // Tokens are already updated — just refresh the UI.
+        UpdateAuthUI();
 
         // If sign-in was from agent frame, bring it to front (after UI is updated)
         std::string payload = aEvent.GetPayload();
@@ -1856,6 +1869,8 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
 
         if( m_chatController )
             m_chatController->SetModel( m_currentModel );
+
+        SaveModelPreference( m_currentModel );
     }
 }
 
@@ -2028,6 +2043,8 @@ void AGENT_FRAME::DoPendingChangesView( const wxString& aPath, bool aIsPcb )
 void AGENT_FRAME::DoSignIn()
 {
     wxLogInfo( "AGENT_FRAME::DoSignIn called" );
+    EnsureAuth();
+
     if( m_auth )
         m_auth->StartOAuthFlow( "agent" );
 }
@@ -2448,6 +2465,7 @@ void AGENT_FRAME::RenderChatHistory()
     // Reset counter - RenderChatHistory updates m_toolResultCounter so that
     // subsequent live tool calls get indices that don't collide with historical ones.
     m_toolResultCounter = 0;
+    m_toolDescByUseId.clear();
 
     // Build HTML from chat history (inner content only, no template wrapper)
     m_fullHtmlContent = "";
@@ -2609,10 +2627,14 @@ void AGENT_FRAME::RenderChatHistory()
                 {
                     // Render tool_use block with human-readable description
                     std::string toolName = block.value( "name", "unknown" );
+                    std::string toolId = block.value( "id", "" );
                     nlohmann::json toolInput = block.value( "input", nlohmann::json::object() );
                     wxString desc = AgentTools::GetToolDescription( toolName, toolInput );
 
-                    // Store for pairing with result (next block)
+                    // Store in map keyed by tool_use id for pairing with tool_result
+                    if( !toolId.empty() )
+                        m_toolDescByUseId[toolId] = desc;
+
                     m_lastToolDesc = desc;
                 }
                 else if( blockType == "tool_result" )
@@ -2688,7 +2710,18 @@ void AGENT_FRAME::RenderChatHistory()
                     // Format full result for expanded view
                     wxString fullFormatted = FormatToolResult( textContent );
 
-                    wxString desc = m_lastToolDesc.IsEmpty() ? "Tool execution" : m_lastToolDesc;
+                    // Look up tool description by tool_use_id, fall back to
+                    // m_lastToolDesc (single-tool case), then generic fallback
+                    wxString desc;
+                    std::string toolUseId = block.value( "tool_use_id", "" );
+
+                    if( !toolUseId.empty() && m_toolDescByUseId.count( toolUseId ) )
+                        desc = m_toolDescByUseId[toolUseId];
+                    else if( !m_lastToolDesc.IsEmpty() )
+                        desc = m_lastToolDesc;
+                    else
+                        desc = "Tool execution";
+
                     bool expanded = m_historicalToolResultExpanded.count( m_toolResultCounter ) > 0;
 
                     m_fullHtmlContent += BuildToolResultHtml( m_toolResultCounter, desc,
@@ -2733,11 +2766,61 @@ void AGENT_FRAME::UpdateAuthUI()
 
 bool AGENT_FRAME::CheckAuthentication()
 {
+    EnsureAuth();
+
     if( m_auth )
-    {
         return m_auth->IsAuthenticated();
+
+    return false;
+}
+
+void AGENT_FRAME::EnsureAuth()
+{
+    if( m_auth )
+        return;
+
+    // Fallback: create a local AGENT_AUTH if the launcher didn't provide one
+    // (e.g., agent opened from sch/pcb editor when preload failed).
+    wxLogTrace( "Agent", "No shared auth from launcher, creating fallback auth" );
+
+    m_auth = new AGENT_AUTH();
+    m_ownsAuth = true;
+
+    // Load Supabase configuration from JSON file
+    std::string supabaseUrl, supabaseKey;
+
+    wxFileName configPath( __FILE__ );
+    configPath.SetFullName( "supabase_config.json" );
+
+    if( wxFileExists( configPath.GetFullPath() ) )
+    {
+        std::ifstream configFile( configPath.GetFullPath().ToStdString() );
+
+        if( configFile.is_open() )
+        {
+            try
+            {
+                json config = json::parse( configFile );
+                supabaseUrl = config.value( "project_url", "" );
+                supabaseKey = config.value( "publishable_key", "" );
+            }
+            catch( ... ) {}
+            configFile.close();
+        }
     }
-    return true; // No auth configured, allow access
+
+    if( !supabaseUrl.empty() && !supabaseKey.empty() )
+        m_auth->Configure( supabaseUrl, supabaseKey );
+    else
+        m_auth->LoadSession();
+
+    // Wire to LLM client and controller
+    m_llmClient->SetAuth( m_auth );
+
+    if( m_chatController )
+        m_chatController->SetAuth( m_auth );
+
+    UpdateAuthUI();
 }
 
 void AGENT_FRAME::OnSize( wxSizeEvent& aEvent )
@@ -3524,7 +3607,7 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
                 f.Write(
                     "(kicad_sch\n"
                     "  (version 20250114)\n"
-                    "  (generator \"zener_agent\")\n"
+                    "  (generator \"zeo_agent\")\n"
                     "  (generator_version \"1.0\")\n"
                     "  (uuid \"" + KIID().AsStdString() + "\")\n"
                     "  (paper \"A4\")\n"
@@ -3546,7 +3629,7 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
                 f.Write(
                     "(kicad_pcb\n"
                     "  (version 20250114)\n"
-                    "  (generator \"zener_agent\")\n"
+                    "  (generator \"zeo_agent\")\n"
                     "  (generator_version \"1.0\")\n"
                     "  (general\n"
                     "    (thickness 1.6)\n"
@@ -4265,4 +4348,66 @@ std::vector<wxString> AGENT_FRAME::GetAllowedPaths()
     wxLogInfo( "AGENT: GetAllowedPaths: [%s]", pathList );
 
     return paths;
+}
+
+
+wxString AGENT_FRAME::GetPreferencesPath()
+{
+    wxString appSupport = wxStandardPaths::Get().GetUserDataDir();
+    wxFileName dir( appSupport, wxEmptyString );
+    dir.RemoveLastDir();
+    dir.AppendDir( "kicad" );
+    return wxFileName( dir.GetPath(), "agent_preferences", "json" ).GetFullPath();
+}
+
+
+void AGENT_FRAME::SaveModelPreference( const std::string& aModel )
+{
+    wxString path = GetPreferencesPath();
+
+    // Ensure parent directory exists
+    wxFileName fn( path );
+    if( !wxFileName::DirExists( fn.GetPath() ) )
+        wxFileName::Mkdir( fn.GetPath(), wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
+
+    // Load existing prefs (if any) so we don't clobber other future settings
+    nlohmann::json prefs;
+    std::ifstream inFile( path.ToStdString() );
+    if( inFile.is_open() )
+    {
+        try { inFile >> prefs; }
+        catch( ... ) { prefs = nlohmann::json::object(); }
+        inFile.close();
+    }
+
+    prefs["model"] = aModel;
+
+    std::ofstream outFile( path.ToStdString() );
+    if( outFile.is_open() )
+    {
+        outFile << prefs.dump( 2 );
+        outFile.close();
+    }
+}
+
+
+std::string AGENT_FRAME::LoadModelPreference()
+{
+    wxString path = GetPreferencesPath();
+
+    std::ifstream file( path.ToStdString() );
+    if( file.is_open() )
+    {
+        try
+        {
+            nlohmann::json prefs;
+            file >> prefs;
+
+            if( prefs.contains( "model" ) && prefs["model"].is_string() )
+                return prefs["model"].get<std::string>();
+        }
+        catch( ... ) {}
+    }
+
+    return "Claude 4.6 Opus";
 }

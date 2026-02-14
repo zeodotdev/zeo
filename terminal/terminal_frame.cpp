@@ -1,6 +1,8 @@
 #include "terminal_frame.h"
-#include "terminal_panel_agent.h"
 #include "terminal_command_validator.h"
+#include "headless_python_executor.h"
+#include "agent_monitor_log.h"
+#include "pty_webview_panel.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/sizer.h>
@@ -15,7 +17,6 @@
 #include <wx/filename.h>
 #include <wx/log.h>
 #include <wx/menu.h>   // For menu IDs
-#include <wx/button.h> // For wxButton
 #include <nlohmann/json.hpp>
 #include <pgm_base.h>
 #include <set>
@@ -30,14 +31,12 @@
 enum
 {
     ID_NEW_TAB = wxID_HIGHEST + 1,
-    ID_NEW_AGENT_TAB,
     ID_CLOSE_TAB
 };
 
 BEGIN_EVENT_TABLE( TERMINAL_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, TERMINAL_FRAME::OnExit )
 EVT_MENU( ID_NEW_TAB, TERMINAL_FRAME::OnNewTab )
-EVT_MENU( ID_NEW_AGENT_TAB, TERMINAL_FRAME::OnNewAgentTab )
 EVT_MENU( ID_CLOSE_TAB, TERMINAL_FRAME::OnCloseTab )
 END_EVENT_TABLE()
 
@@ -49,42 +48,13 @@ TERMINAL_FRAME::TERMINAL_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 {
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
-    // Add Toolbar for "New Terminal"
-    wxBoxSizer* topBarSizer = new wxBoxSizer( wxHORIZONTAL );
-
-    // Dev Terminal Button
-    wxButton* newTabBtn =
-            new wxButton( this, ID_NEW_TAB, "+ New Dev Terminal", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
-    topBarSizer->Add( newTabBtn, 0, wxALIGN_CENTER_VERTICAL | wxALL, 5 );
-
-    // Agent Terminal Button (Green Text via SetForegroundColour if allowed, or just normal button)
-    // wxButton color support varies by OS. On macOS standard buttons might not change color easily without custom paint.
-    // Let's rely on text label for distinction or `SetForegroundColour`.
-    wxButton* newAgentTabBtn = new wxButton( this, ID_NEW_AGENT_TAB, "+ New Agent Terminal", wxDefaultPosition,
-                                             wxDefaultSize, wxBU_EXACTFIT );
-    // Try setting color (might not work on all macOS versions/themes perfectly but good intent)
-    // newAgentTabBtn->SetForegroundColour( wxColour( 0, 128, 0 ) );
-    topBarSizer->Add( newAgentTabBtn, 0, wxALIGN_CENTER_VERTICAL | wxALL, 5 );
-
-    topBarSizer->AddStretchSpacer();
-
-    mainSizer->Add( topBarSizer, 0, wxEXPAND | wxALL, 0 );
-
     // Create Notebook
     m_notebook = new wxAuiNotebook( this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                                     wxAUI_NB_TOP | wxAUI_NB_TAB_SPLIT | wxAUI_NB_TAB_MOVE | wxAUI_NB_SCROLL_BUTTONS
                                             | wxAUI_NB_MIDDLE_CLICK_CLOSE );
-    // Removed wxAUI_NB_CLOSE_ON_ACTIVE_TAB from default set to manage manually?
-    // Actually, AUI styles apply to whole notebook.
-    // We can toggle CLOSE_ON_ACTIVE_TAB dynamicallly or use SetCloseButton(idx, bool).
 
-    // Connect events via Bind/Connect or Event Table
     m_notebook->Bind( wxEVT_AUINOTEBOOK_PAGE_CLOSE, &TERMINAL_FRAME::OnTabClosed, this );
     m_notebook->Bind( wxEVT_AUINOTEBOOK_PAGE_CLOSED, &TERMINAL_FRAME::OnTabClosedDone, this );
-
-    // Bind buttons
-    newTabBtn->Bind( wxEVT_BUTTON, &TERMINAL_FRAME::OnNewTab, this );
-    newAgentTabBtn->Bind( wxEVT_BUTTON, &TERMINAL_FRAME::OnNewAgentTab, this );
 
     mainSizer->Add( m_notebook, 1, wxEXPAND | wxALL, 0 );
 
@@ -95,11 +65,13 @@ TERMINAL_FRAME::TERMINAL_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Add initial terminal
     AddTerminal( TERMINAL_PANEL::MODE_SYSTEM );
 
-    // Setup Menu (Optional, but good for keyboard shortcuts)
+    // Headless executor for agent Python/shell commands
+    m_headlessExecutor = new HEADLESS_PYTHON_EXECUTOR();
+
+    // Setup Menu
     wxMenuBar* menuBar = new wxMenuBar();
     wxMenu*    fileMenu = new wxMenu();
-    fileMenu->Append( ID_NEW_TAB, "New Dev Terminal\tCtrl+T" );
-    fileMenu->Append( ID_NEW_AGENT_TAB, "New Agent Terminal\tCtrl+Shift+T" );
+    fileMenu->Append( ID_NEW_TAB, "New Terminal\tCtrl+T" );
     fileMenu->Append( ID_CLOSE_TAB, "Close Terminal\tCtrl+W" );
     fileMenu->AppendSeparator();
     fileMenu->Append( wxID_EXIT, "Exit" );
@@ -131,6 +103,8 @@ void TERMINAL_FRAME::UpdateTabClosing()
 
 TERMINAL_FRAME::~TERMINAL_FRAME()
 {
+    delete m_headlessExecutor;
+    m_headlessExecutor = nullptr;
 }
 
 
@@ -152,11 +126,6 @@ void TERMINAL_FRAME::OnExit( wxCommandEvent& event )
 void TERMINAL_FRAME::OnNewTab( wxCommandEvent& event )
 {
     AddTerminal( TERMINAL_PANEL::MODE_SYSTEM );
-}
-
-void TERMINAL_FRAME::OnNewAgentTab( wxCommandEvent& event )
-{
-    AddAgentTerminal( TERMINAL_PANEL::MODE_SYSTEM );
 }
 
 void TERMINAL_FRAME::OnCloseTab( wxCommandEvent& event )
@@ -197,15 +166,18 @@ void TERMINAL_FRAME::OnTabClosedDone( wxAuiNotebookEvent& event )
 
 void TERMINAL_FRAME::AddTerminal( TERMINAL_PANEL::TERMINAL_MODE aMode )
 {
-    TERMINAL_PANEL* panel = new TERMINAL_PANEL( m_notebook, aMode );
-    m_notebook->AddPage( panel, panel->GetTitle(), true );
-    UpdateTabClosing();
-}
+    if( aMode == TERMINAL_PANEL::MODE_SYSTEM )
+    {
+        PTY_WEBVIEW_PANEL* panel = new PTY_WEBVIEW_PANEL( m_notebook );
+        panel->StartShell();
+        m_notebook->AddPage( panel, panel->GetTitle(), true );
+    }
+    else
+    {
+        TERMINAL_PANEL* panel = new TERMINAL_PANEL( m_notebook, aMode );
+        m_notebook->AddPage( panel, panel->GetTitle(), true );
+    }
 
-void TERMINAL_FRAME::AddAgentTerminal( TERMINAL_PANEL::TERMINAL_MODE aMode )
-{
-    AGENT_TERMINAL_PANEL* panel = new AGENT_TERMINAL_PANEL( m_notebook, aMode );
-    m_notebook->AddPage( panel, panel->GetTitle(), true );
     UpdateTabClosing();
 }
 
@@ -241,45 +213,21 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
         wxString mode = rest.BeforeFirst( ' ' );
         wxString code = rest.AfterFirst( ' ' );
 
-        // Find or create agent terminal
-        TERMINAL_PANEL* active = nullptr;
-        for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
-        {
-            TERMINAL_PANEL* p = GetPanel( i );
-            if( dynamic_cast<AGENT_TERMINAL_PANEL*>( p ) )
-            {
-                active = p;
-                break;
-            }
-        }
-        if( !active )
-        {
-            AddAgentTerminal( TERMINAL_PANEL::MODE_SYSTEM );
-            active = GetPanel( m_notebook->GetPageCount() - 1 );
-        }
-        if( !active )
-            return "Error: Could not create/find Agent terminal.";
-
         std::string initCode;
 
         // Common initialization: add kicad-python to sys.path if not already there
-        // Searches in order: env var, relative paths from executable, then direct import
         std::string commonInit =
             "import sys\n"
             "import os\n"
-            "# Find kicad-python/kipy module\n"
             "_kipy_found = False\n"
             "_search_paths = []\n"
-            "# 1. Check environment variable\n"
             "if os.environ.get('KICAD_PYTHON_PATH'):\n"
             "    _search_paths.append(os.environ['KICAD_PYTHON_PATH'])\n"
-            "# 2. Search relative to current directory and parent directories\n"
             "_cwd = os.getcwd()\n"
             "for _i in range(6):\n"
             "    _search_paths.append(os.path.join(_cwd, 'kicad-python'))\n"
             "    _search_paths.append(os.path.join(_cwd, 'code', 'kicad-python'))\n"
             "    _cwd = os.path.dirname(_cwd)\n"
-            "# 3. Try each search path\n"
             "for _p in _search_paths:\n"
             "    if os.path.isdir(_p) and _p not in sys.path:\n"
             "        sys.path.insert(0, _p)\n"
@@ -289,7 +237,6 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
             "            break\n"
             "        except ImportError:\n"
             "            sys.path.remove(_p)\n"
-            "# 4. Try direct import (if kipy is installed)\n"
             "if not _kipy_found:\n"
             "    try:\n"
             "        import kipy\n"
@@ -304,7 +251,6 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
                 "from kipy.geometry import Vector2\n"
                 "kicad = kipy.KiCad()\n"
                 "sch = kicad.get_schematic()\n"
-                "# Refresh document specifier to handle close/reopen cycles\n"
                 "if hasattr(sch, 'refresh_document'):\n"
                 "    sch.refresh_document()\n";
         }
@@ -317,26 +263,27 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
                 "board = kicad.get_board()\n";
         }
 
-        // Start Python execution (async)
-        active->RunLocalPython( initCode + code.ToStdString() );
+        // Execute via headless executor
+        std::string fullCode = initCode + code.ToStdString();
+        std::string immediateResult = m_headlessExecutor->RunPython( fullCode, nullptr );
+
+        if( !immediateResult.empty() && immediateResult.find( "Error:" ) == 0 )
+            return immediateResult;
 
         // Wait for Python to complete (with timeout)
         wxLongLong startTime = wxGetLocalTimeMillis();
-        const long timeoutMs = 30000; // 30 second timeout
+        const long timeoutMs = 30000;
 
-        while( active->IsPythonRunning() )
+        while( m_headlessExecutor->IsPythonRunning() )
         {
             wxMilliSleep( 50 );
-            wxYield(); // Allow UI events and timers to process
+            wxYield();
 
             if( wxGetLocalTimeMillis() - startTime > timeoutMs )
-            {
                 return "Error: Python execution timed out after 30 seconds";
-            }
         }
 
-        // Return the result
-        std::string result = active->GetLastPythonResult();
+        std::string result = m_headlessExecutor->GetLastPythonResult();
         return result.empty() ? "(no output)" : result;
     }
 
@@ -344,7 +291,6 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
     {
         wxString bashCmd = cmd.Mid( 13 ).Trim( false );
 
-        // Validate the command against allowed directory restrictions
         auto allowedPaths = GetAllowedPaths();
         TerminalValidationResult validation =
             TerminalCommandValidator::ValidateCommand( bashCmd.ToStdString(), allowedPaths );
@@ -355,26 +301,7 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
             return validation.error;
         }
 
-        // Find or create agent terminal
-        TERMINAL_PANEL* active = nullptr;
-        for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
-        {
-            TERMINAL_PANEL* p = GetPanel( i );
-            if( dynamic_cast<AGENT_TERMINAL_PANEL*>( p ) )
-            {
-                active = p;
-                break;
-            }
-        }
-        if( !active )
-        {
-            AddAgentTerminal( TERMINAL_PANEL::MODE_SYSTEM );
-            active = GetPanel( m_notebook->GetPageCount() - 1 );
-        }
-        if( !active )
-            return "Error: Could not create/find Agent terminal.";
-
-        return active->ProcessSystemCommand( bashCmd );
+        return m_headlessExecutor->RunSystemCommand( bashCmd );
     }
 
     // Legacy format: run_terminal_command [mode] [command]
@@ -396,166 +323,62 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
         return result;
     }
 
-    if( cmd.StartsWith( "create_agent " ) )
-    {
-        // "create_agent sys", "create_agent ipc"
-        wxString                      modeStr = cmd.Mid( 13 ).Trim( false );
-        TERMINAL_PANEL::TERMINAL_MODE mode = TERMINAL_PANEL::MODE_SYSTEM;
-        if( modeStr == "ipc" )
-            mode = TERMINAL_PANEL::MODE_IPC;
-        if( modeStr == "python" )
-            mode = TERMINAL_PANEL::MODE_PYTHON;
-
-        AddAgentTerminal( mode );
-        return "Agent Terminal created. ID: " + std::to_string( m_notebook->GetPageCount() - 1 );
-    }
-
-    if( cmd.StartsWith( "create " ) )
-    {
-        // "create sys", "create ipc"
-        wxString                      modeStr = cmd.Mid( 7 ).Trim( false );
-        TERMINAL_PANEL::TERMINAL_MODE mode = TERMINAL_PANEL::MODE_SYSTEM;
-        if( modeStr == "ipc" )
-            mode = TERMINAL_PANEL::MODE_IPC;
-        if( modeStr == "python" )
-            mode = TERMINAL_PANEL::MODE_PYTHON;
-
-        AddTerminal( mode );
-        return "Dev Terminal created. ID: " + std::to_string( m_notebook->GetPageCount() - 1 );
-    }
-
+    // Legacy fallback: dispatch via headless executor based on mode prefix
     wxString firstArg = cmd.BeforeFirst( ' ' );
     wxString rest = cmd.AfterFirst( ' ' );
 
-    // Check if first arg is a number (tab ID)
-    long tabId;
-    if( firstArg.ToLong( &tabId ) )
-    {
-        // Targeted command
-        TERMINAL_PANEL* panel = GetPanel( (int) tabId );
-        if( !panel )
-            return "Error: Invalid terminal ID " + firstArg.ToStdString();
-
-        // Now parse mode/cmd from rest
-        // "run_terminal_command 1 pcb print(x)"
-        // rest = "pcb print(x)"
-        wxString modeArg = rest.BeforeFirst( ' ' );
-        wxString actualCmd = rest.AfterFirst( ' ' );
-
-        // Mode switch check
-        if( modeArg == "sys" && panel->GetMode() != TERMINAL_PANEL::MODE_SYSTEM )
-            panel->SetMode( TERMINAL_PANEL::MODE_SYSTEM ); // Or check if compatible?
-        // Actually, panel handles mode switching via ExecuteCommand usually.
-        // But for explicit Agent commands, we might want to force it?
-        // Let's iterate: panel->ExecuteCommand handles the heavy lifting but requires "pcb ..." prefix for mode switch?
-        // If the command is "pcb ...", panel switches mode.
-        // So we just pass "modeArg actualCmd" to panel?
-        // i.e. we reconstruct command.
-
-        panel->ExecuteCommand( rest );                           // Just pass the rest!
-        return "Command sent to tab " + std::to_string( tabId ); // Wait, we need Output!
-        // TERMINAL_PANEL::ExecuteCommand returns void (UI upate).
-        // We implemented ProcessSystemCommand/RunLocalPython returning string in Panel.
-        // But ExecuteCommand determines logic.
-        // Refactoring needed: ExecuteCommand should probably return string?
-        // Or we duplicate the dispatch logic here for Agent?
-        // Agent wants output.
-        // Let's look at `panel->ExecuteCommand`. It adds output to CTRL.
-        // Capture is tricky if we just call ExecuteCommand.
-        // We should call the specific helper functions if we know what we are doing.
-
-        // Smart dispatch based on mode
-        if( modeArg == "sys" )
-            return panel->ProcessSystemCommand( actualCmd );
-        if( modeArg == "sch" )
-        {
-            // Schematic mode: pre-import kipy, connect to schematic, import Vector2
-            std::string initCode =
-                "import kipy\n"
-                "from kipy.geometry import Vector2\n"
-                "kicad = kipy.KiCad()\n"
-                "sch = kicad.get_schematic()\n"
-                "# Refresh document specifier to handle close/reopen cycles\n"
-                "if hasattr(sch, 'refresh_document'):\n"
-                "    sch.refresh_document()\n";
-            return panel->RunLocalPython( initCode + actualCmd.ToStdString() );
-        }
-        if( modeArg == "pcb" )
-        {
-            // PCB mode: pre-import kipy, connect to board, import Vector2
-            std::string initCode =
-                "import kipy\n"
-                "from kipy.geometry import Vector2\n"
-                "kicad = kipy.KiCad()\n"
-                "board = kicad.get_board()\n";
-            return panel->RunLocalPython( initCode + actualCmd.ToStdString() );
-        }
-        if( modeArg == "ipc" || modeArg == "python" )
-            return panel->RunLocalPython( actualCmd );
-
-        return panel->RunLocalPython( rest ); // fallback
-    }
-
-    // No ID (Active Tab) -> CHANGED: Default to dedicated Agent Tab
-    TERMINAL_PANEL* active = nullptr;
-
-    // Search for existing Agent Terminal
-    for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
-    {
-        TERMINAL_PANEL* p = GetPanel( i );
-        if( dynamic_cast<AGENT_TERMINAL_PANEL*>( p ) )
-        {
-            active = p;
-            break;
-        }
-    }
-
-    // If no Agent Terminal exists, create one
-    if( !active )
-    {
-        // AddAgentTerminal returns void, we need to get the pointer
-        AddAgentTerminal( TERMINAL_PANEL::MODE_SYSTEM );
-        // It's the last one now
-        active = GetPanel( m_notebook->GetPageCount() - 1 );
-    }
-
-    if( !active )
-        return "Error: Could not create/find Agent terminal.";
-
-    // "run_terminal_command sys ls"
-    // firstArg = "sys", rest = "ls"
     if( firstArg == "sys" )
-        return active->ProcessSystemCommand( rest );
+        return m_headlessExecutor->RunSystemCommand( rest );
+
+    // For Python modes, use headless executor with sync wait
+    std::string pythonCode;
+
     if( firstArg == "sch" )
     {
-        // Schematic mode: pre-import kipy, connect to schematic, import Vector2
-        std::string initCode =
-            "import kipy\n"
-            "from kipy.geometry import Vector2\n"
-            "kicad = kipy.KiCad()\n"
-            "sch = kicad.get_schematic()\n"
-            "# Refresh document specifier to handle close/reopen cycles\n"
-            "if hasattr(sch, 'refresh_document'):\n"
-            "    sch.refresh_document()\n";
-        return active->RunLocalPython( initCode + rest.ToStdString() );
+        pythonCode = "import kipy\n"
+                     "from kipy.geometry import Vector2\n"
+                     "kicad = kipy.KiCad()\n"
+                     "sch = kicad.get_schematic()\n"
+                     "if hasattr(sch, 'refresh_document'):\n"
+                     "    sch.refresh_document()\n"
+                     + rest.ToStdString();
     }
-    if( firstArg == "pcb" )
+    else if( firstArg == "pcb" )
     {
-        // PCB mode: pre-import kipy, connect to board, import Vector2
-        std::string initCode =
-            "import kipy\n"
-            "from kipy.geometry import Vector2\n"
-            "kicad = kipy.KiCad()\n"
-            "board = kicad.get_board()\n";
-        return active->RunLocalPython( initCode + rest.ToStdString() );
+        pythonCode = "import kipy\n"
+                     "from kipy.geometry import Vector2\n"
+                     "kicad = kipy.KiCad()\n"
+                     "board = kicad.get_board()\n"
+                     + rest.ToStdString();
     }
-    if( firstArg == "ipc" || firstArg == "python" )
+    else if( firstArg == "ipc" || firstArg == "python" )
     {
-        // Raw IPC/python mode - no pre-imports
-        return active->RunLocalPython( rest );
+        pythonCode = rest.ToStdString();
+    }
+    else
+    {
+        return "Error: Unknown mode/command format.";
     }
 
-    return "Error: Unknown mode/command format.";
+    std::string immediateResult = m_headlessExecutor->RunPython( pythonCode, nullptr );
+
+    if( !immediateResult.empty() && immediateResult.find( "Error:" ) == 0 )
+        return immediateResult;
+
+    wxLongLong startTime = wxGetLocalTimeMillis();
+    const long timeoutMs = 30000;
+
+    while( m_headlessExecutor->IsPythonRunning() )
+    {
+        wxMilliSleep( 50 );
+        wxYield();
+
+        if( wxGetLocalTimeMillis() - startTime > timeoutMs )
+            return "Error: Python execution timed out after 30 seconds";
+    }
+
+    std::string result = m_headlessExecutor->GetLastPythonResult();
+    return result.empty() ? "(no output)" : result;
 }
 
 void TERMINAL_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
@@ -606,48 +429,21 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
         wxString mode = rest.BeforeFirst( ' ' );
         wxString code = rest.AfterFirst( ' ' );
 
-        // Find or create agent terminal
-        TERMINAL_PANEL* active = nullptr;
-        for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
-        {
-            TERMINAL_PANEL* p = GetPanel( i );
-            if( dynamic_cast<AGENT_TERMINAL_PANEL*>( p ) )
-            {
-                active = p;
-                break;
-            }
-        }
-        if( !active )
-        {
-            AddAgentTerminal( TERMINAL_PANEL::MODE_SYSTEM );
-            active = GetPanel( m_notebook->GetPageCount() - 1 );
-        }
-        if( !active )
-        {
-            SendAgentResponse( "Error: Could not create/find Agent terminal." );
-            return;
-        }
-
         std::string initCode;
 
-        // Common initialization: add kicad-python to sys.path if not already there
-        // Searches in order: env var, relative paths from executable, then direct import
+        // Common initialization: add kicad-python to sys.path
         std::string commonInit =
             "import sys\n"
             "import os\n"
-            "# Find kicad-python/kipy module\n"
             "_kipy_found = False\n"
             "_search_paths = []\n"
-            "# 1. Check environment variable\n"
             "if os.environ.get('KICAD_PYTHON_PATH'):\n"
             "    _search_paths.append(os.environ['KICAD_PYTHON_PATH'])\n"
-            "# 2. Search relative to current directory and parent directories\n"
             "_cwd = os.getcwd()\n"
             "for _i in range(6):\n"
             "    _search_paths.append(os.path.join(_cwd, 'kicad-python'))\n"
             "    _search_paths.append(os.path.join(_cwd, 'code', 'kicad-python'))\n"
             "    _cwd = os.path.dirname(_cwd)\n"
-            "# 3. Try each search path\n"
             "for _p in _search_paths:\n"
             "    if os.path.isdir(_p) and _p not in sys.path:\n"
             "        sys.path.insert(0, _p)\n"
@@ -657,7 +453,6 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
             "            break\n"
             "        except ImportError:\n"
             "            sys.path.remove(_p)\n"
-            "# 4. Try direct import (if kipy is installed)\n"
             "if not _kipy_found:\n"
             "    try:\n"
             "        import kipy\n"
@@ -679,17 +474,14 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                 "from kipy.geometry import Vector2\n"
                 "kicad = kipy.KiCad(socket_path='" + socketPath + "', timeout_ms=5000)\n"
                 "sch = kicad.get_schematic()\n"
-                "# Refresh document specifier to handle close/reopen cycles\n"
                 "if hasattr(sch, 'refresh_document'):\n"
                 "    sch.refresh_document()\n";
 
-            // Begin agent transaction for concurrent editing support
             nlohmann::json beginMsg;
-            beginMsg["sheet_uuid"] = "";  // Empty means current sheet
+            beginMsg["sheet_uuid"] = "";
             std::string beginPayload = beginMsg.dump();
             Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_BEGIN_TRANSACTION, beginPayload );
 
-            // Tell SCH editor to take a snapshot before Python execution
             nlohmann::json snapshotMsg;
             snapshotMsg["type"] = "take_snapshot";
             std::string snapshotPayload = snapshotMsg.dump();
@@ -703,93 +495,81 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
                 "kicad = kipy.KiCad(socket_path='" + socketPath + "', timeout_ms=5000)\n"
                 "board = kicad.get_board()\n";
 
-            // Begin agent transaction for concurrent editing support
             nlohmann::json beginMsg;
-            beginMsg["sheet_uuid"] = "";  // Not applicable for PCB
+            beginMsg["sheet_uuid"] = "";
             std::string beginPayload = beginMsg.dump();
             Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_BEGIN_TRANSACTION, beginPayload );
 
-            // Tell PCB editor to take a snapshot before Python execution
             nlohmann::json snapshotMsg;
             snapshotMsg["type"] = "take_snapshot";
             std::string snapshotPayload = snapshotMsg.dump();
             Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REQUEST, snapshotPayload );
         }
 
-        // Set up completion callback BEFORE starting execution
+        // Set up completion callback and execute via headless executor
         bool isPcbMode = ( mode == "pcb" );
         bool isSchMode = ( mode == "sch" );
         m_asyncRequestPending = true;
-        wxLogInfo( "TERMINAL: Setting up Python completion callback, mode=%s",
-                   isPcbMode ? "pcb" : ( isSchMode ? "sch" : "unknown" ) );
-        active->SetPythonCompletionCallback(
-            [this, isPcbMode, isSchMode]( const std::string& result, bool success ) {
-                wxLogInfo( "TERMINAL: Python completion callback invoked, success=%d, result_len=%zu",
-                           success, result.length() );
-                // If this was pcb mode, tell PCB editor to detect changes and end transaction
-                if( isPcbMode )
-                {
-                    nlohmann::json detectMsg;
-                    detectMsg["type"] = "detect_changes";
-                    std::string detectPayload = detectMsg.dump();
-                    Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REQUEST, detectPayload );
 
-                    // End agent transaction for concurrent editing support
-                    nlohmann::json endMsg;
-                    endMsg["commit"] = true;
-                    std::string endPayload = endMsg.dump();
-                    Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_END_TRANSACTION, endPayload );
-                }
+        std::string modeStr = mode.ToStdString();
+        std::string codeStr = code.ToStdString();
+        wxLongLong cmdStartTime = wxGetLocalTimeMillis();
+        AGENT_MONITOR_LOG::Instance().LogCommandStart( "run_shell", modeStr, codeStr );
 
-                // If this was sch mode, tell SCH editor to detect changes and end transaction
-                if( isSchMode )
-                {
-                    nlohmann::json detectMsg;
-                    detectMsg["type"] = "detect_changes";
-                    std::string detectPayload = detectMsg.dump();
-                    Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REQUEST, detectPayload );
+        auto callback = [this, isPcbMode, isSchMode, modeStr, cmdStartTime]( const std::string& result, bool success ) {
+            long durationMs = ( wxGetLocalTimeMillis() - cmdStartTime ).ToLong();
+            AGENT_MONITOR_LOG::Instance().LogCommandEnd( "run_shell", modeStr, result, success, durationMs );
 
-                    // End agent transaction for concurrent editing support
-                    nlohmann::json endMsg;
-                    endMsg["commit"] = true;
-                    std::string endPayload = endMsg.dump();
-                    Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_END_TRANSACTION, endPayload );
-                }
+            wxLogInfo( "TERMINAL: Python completion callback invoked, success=%d, result_len=%zu",
+                       success, result.length() );
 
-                // This will be called from the main thread when Python completes
-                SendAgentResponse( result );
-            } );
+            if( isPcbMode )
+            {
+                nlohmann::json detectMsg;
+                detectMsg["type"] = "detect_changes";
+                std::string detectPayload = detectMsg.dump();
+                Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REQUEST, detectPayload );
 
-        // Display the command being executed in the Agent Terminal
-        active->DisplayAgentCommand( code, mode );
+                nlohmann::json endMsg;
+                endMsg["commit"] = true;
+                std::string endPayload = endMsg.dump();
+                Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_END_TRANSACTION, endPayload );
+            }
 
-        // Start Python execution (async, returns immediately)
+            if( isSchMode )
+            {
+                nlohmann::json detectMsg;
+                detectMsg["type"] = "detect_changes";
+                std::string detectPayload = detectMsg.dump();
+                Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REQUEST, detectPayload );
+
+                nlohmann::json endMsg;
+                endMsg["commit"] = true;
+                std::string endPayload = endMsg.dump();
+                Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_END_TRANSACTION, endPayload );
+            }
+
+            SendAgentResponse( result );
+        };
+
         std::string fullCode = initCode + code.ToStdString();
         wxLogInfo( "TERMINAL: Starting Python execution, code_len=%zu", fullCode.length() );
-        std::string immediateResult = active->RunLocalPython( fullCode );
+        std::string immediateResult = m_headlessExecutor->RunPython( fullCode, callback );
 
-        // Check if RunLocalPython returned an immediate error (didn't start async execution)
         if( !immediateResult.empty() && immediateResult.find( "Error:" ) == 0 )
         {
-            wxLogError( "TERMINAL: RunLocalPython immediate error: %s", immediateResult );
-            // Clear callback and send error response immediately
-            active->ClearPythonCompletionCallback();
+            wxLogError( "TERMINAL: RunPython immediate error: %s", immediateResult );
             SendAgentResponse( immediateResult );
         }
-        else
-        {
-            wxLogInfo( "TERMINAL: Python execution started async, waiting for callback" );
-        }
-        // Otherwise, execution started - callback will be invoked when done
+
         return;
     }
 
-    // Handle run_terminal (bash commands) - these are still synchronous but fast
+    // Handle run_terminal (bash commands) - headless execution
     if( cmd.StartsWith( "run_terminal " ) )
     {
         wxString bashCmd = cmd.Mid( 13 ).Trim( false );
 
-        // Validate the command against allowed directory restrictions
         auto allowedPaths = GetAllowedPaths();
         TerminalValidationResult validation =
             TerminalCommandValidator::ValidateCommand( bashCmd.ToStdString(), allowedPaths );
@@ -797,37 +577,23 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
         if( !validation.valid )
         {
             wxLogInfo( "TERMINAL: Command blocked (async): %s", validation.error );
+            AGENT_MONITOR_LOG::Instance().LogError( "validation", validation.error );
             SendAgentResponse( validation.error );
             return;
         }
 
-        TERMINAL_PANEL* active = nullptr;
-        for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
-        {
-            TERMINAL_PANEL* p = GetPanel( i );
-            if( dynamic_cast<AGENT_TERMINAL_PANEL*>( p ) )
-            {
-                active = p;
-                break;
-            }
-        }
-        if( !active )
-        {
-            AddAgentTerminal( TERMINAL_PANEL::MODE_SYSTEM );
-            active = GetPanel( m_notebook->GetPageCount() - 1 );
-        }
-        if( !active )
-        {
-            SendAgentResponse( "Error: Could not create/find Agent terminal." );
-            return;
-        }
+        m_asyncRequestPending = true;
+        std::string bashCmdStr = bashCmd.ToStdString();
+        AGENT_MONITOR_LOG::Instance().LogCommandStart( "run_terminal", "", bashCmdStr );
+        wxLongLong termStartTime = wxGetLocalTimeMillis();
 
-        // Display the command being executed in the Agent Terminal
-        active->DisplayAgentCommand( bashCmd, "shell" );
-
-        // System commands are still synchronous (they're typically fast)
-        std::string result = active->ProcessSystemCommand( bashCmd );
-        SendAgentResponse( result );
+        CallAfter( [this, bashCmd, termStartTime]() {
+            std::string result = m_headlessExecutor->RunSystemCommand( bashCmd );
+            long durationMs = ( wxGetLocalTimeMillis() - termStartTime ).ToLong();
+            std::string output = result.empty() ? "(no output)" : result;
+            AGENT_MONITOR_LOG::Instance().LogCommandEnd( "run_terminal", "", output, true, durationMs );
+            SendAgentResponse( output );
+        } );
         return;
     }
 

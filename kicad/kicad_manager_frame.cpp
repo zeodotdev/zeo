@@ -76,6 +76,7 @@
 #include <wx/process.h>
 #include <wx/snglinst.h>
 #include <atomic>
+#include <cstdint>
 #include <update_manager.h>
 #include <jobs/jobset.h>
 
@@ -155,7 +156,7 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
     const int defaultLeftWinWidth = FromDIP( 250 );
 
     m_leftWinWidth = defaultLeftWinWidth; // Default value
-    m_aboutTitle = "KiCad";
+    m_aboutTitle = "Zeo";
 
     // JPC: A very ugly hack to fix an issue on Linux: if the wxbase315u_xml_gcc_custom.so is
     // used **only** in PCM, it is not found in some cases at run time.
@@ -283,9 +284,9 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
     }
 
     if( ADVANCED_CFG::GetCfg().m_HideVersionFromTitle )
-        SetTitle( wxT( "Zener" ) );
+        SetTitle( wxT( "Zeo" ) );
     else
-        SetTitle( wxString( "Zener " ) + GetMajorMinorVersion() );
+        SetTitle( wxString( "Zeo " ) + GetMajorMinorVersion() );
 
     // Do not let the messages window have initial focus
     m_leftWin->SetFocus();
@@ -1173,9 +1174,9 @@ void KICAD_MANAGER_FRAME::ProjectChanged()
     }
 
     if( ADVANCED_CFG::GetCfg().m_HideVersionFromTitle )
-        title += wxT( " \u2014 " ) + wxString( wxS( "Zener" ) );
+        title += wxT( " \u2014 " ) + wxString( wxS( "Zeo" ) );
     else
-        title += wxT( " \u2014 " ) + wxString( wxS( "Zener " ) ) + GetMajorMinorVersion();
+        title += wxT( " \u2014 " ) + wxString( wxS( "Zeo " ) ) + GetMajorMinorVersion();
 
     SetTitle( title );
 
@@ -1320,6 +1321,16 @@ void KICAD_MANAGER_FRAME::OnIdle( wxIdleEvent& aEvent )
     try
     {
         Kiway().Player( FRAME_AGENT, true );
+
+        // Pass the launcher's shared AGENT_AUTH pointer to the agent frame.
+        // This eliminates dual auth instances and the refresh token rotation race —
+        // both the launcher and agent frame use the same in-memory tokens.
+        if( m_sessionManager && m_sessionManager->GetAuth() )
+        {
+            std::string authPtr = std::to_string(
+                    reinterpret_cast<uintptr_t>( m_sessionManager->GetAuth() ) );
+            Kiway().ExpressMail( FRAME_AGENT, MAIL_AUTH_POINTER, authPtr, this );
+        }
     }
     catch( ... )
     {

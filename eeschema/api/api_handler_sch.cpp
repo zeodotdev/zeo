@@ -106,6 +106,7 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
     registerHandler<GetOpenDocuments, GetOpenDocumentsResponse>( &API_HANDLER_SCH::handleGetOpenDocuments );
     registerHandler<GetItems, GetItemsResponse>( &API_HANDLER_SCH::handleGetItems );
     registerHandler<GetItemsById, GetItemsResponse>( &API_HANDLER_SCH::handleGetItemsById );
+    registerHandler<GetBoundingBox, GetBoundingBoxResponse>( &API_HANDLER_SCH::handleGetBoundingBox );
 
     // Selection handlers
     registerHandler<GetSelection, SelectionResponse>( &API_HANDLER_SCH::handleGetSelection );
@@ -926,6 +927,67 @@ HANDLER_RESULT<GetItemsResponse> API_HANDLER_SCH::handleGetItemsById(
     }
 
     response.set_status( ItemRequestStatus::IRS_OK );
+    return response;
+}
+
+
+HANDLER_RESULT<GetBoundingBoxResponse> API_HANDLER_SCH::handleGetBoundingBox(
+        const HANDLER_CONTEXT<GetBoundingBox>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateItemHeaderDocument( aCtx.Request.header() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    GetBoundingBoxResponse response;
+    bool includeText = aCtx.Request.mode() != BoundingBoxMode::BBM_ITEM_ONLY;
+
+    SCH_SCREEN* screen = m_frame->GetScreenForApi();
+
+    if( !screen )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "no screen available" );
+        return tl::unexpected( e );
+    }
+
+    for( const types::KIID& idMsg : aCtx.Request.items() )
+    {
+        KIID id( idMsg.value() );
+
+        for( SCH_ITEM* item : screen->Items() )
+        {
+            if( item->m_Uuid == id )
+            {
+                BOX2I bbox;
+
+                if( item->Type() == SCH_SYMBOL_T )
+                {
+                    SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+
+                    if( includeText )
+                        bbox = symbol->GetBoundingBox();
+                    else
+                        bbox = symbol->GetBodyAndPinsBoundingBox();
+                }
+                else
+                {
+                    bbox = item->GetBoundingBox();
+                }
+
+                response.add_items()->set_value( idMsg.value() );
+                PackBox2Sch( *response.add_boxes(), bbox );
+                break;
+            }
+        }
+    }
+
     return response;
 }
 

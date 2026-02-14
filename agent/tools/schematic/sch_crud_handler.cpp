@@ -1419,20 +1419,6 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                placed_bboxes.append({'ref': _pwr_ref_" << i << ", **_new_bbox_" << i << "})\n";
             code << "            results.append({'index': " << i << ", 'element_type': 'power', 'reference': _pwr_ref_" << i << "})\n";
         }
-        else if( elementType == "junction" )
-        {
-            double posX = 0, posY = 0;
-            if( elem.contains( "position" ) && elem["position"].is_array() &&
-                elem["position"].size() >= 2 )
-            {
-                posX = SnapToGrid( elem["position"][0].get<double>() );
-                posY = SnapToGrid( elem["position"][1].get<double>() );
-            }
-
-            code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
-            code << "        junc_" << i << " = sch.wiring.add_junction(pos_" << i << ")\n";
-            code << "        results.append({'index': " << i << ", 'element_type': 'junction'})\n";
-        }
         else if( elementType == "label" )
         {
             std::string text = elem.value( "text", "" );

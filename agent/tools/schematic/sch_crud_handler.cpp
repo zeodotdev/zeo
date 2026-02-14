@@ -1204,8 +1204,27 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "    return f'{prefix}{n}'\n";
     code << "\n";
     code << "results = []\n";
-    code << "errors = []\n";
     code << "\n";
+
+    // --- Overlap detection preamble ---
+    code << "# Collect bounding boxes of all existing symbols for overlap detection\n";
+    code << "placed_bboxes = []\n";
+    code << "try:\n";
+    code << "    _all_existing = sch.symbols.get_all()\n";
+    code << "    for _esym in _all_existing:\n";
+    code << "        try:\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_esym, units='mm', include_text=False)\n";
+    code << "        except:\n";
+    code << "            continue\n";
+    code << "        if _ebb:\n";
+    code << "            placed_bboxes.append({'min_x': _ebb['min_x'], 'max_x': _ebb['max_x'], 'min_y': _ebb['min_y'], 'max_y': _ebb['max_y']})\n";
+    code << "except:\n";
+    code << "    pass\n";
+    code << "\n";
+    code << "def _bboxes_overlap(a, b):\n";
+    code << "    return a['min_x'] < b['max_x'] and a['max_x'] > b['min_x'] and a['min_y'] < b['max_y'] and a['max_y'] > b['min_y']\n";
+    code << "\n";
+
     code << "try:\n";
 
     // Process each element in the batch
@@ -1253,14 +1272,32 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 code << "            sch.symbols.set_footprint(sym_" << i << ", props_" << i << "['Footprint'])\n";
             }
 
-            code << "        _prefix_" << i << " = re.match(r'^([A-Za-z#]+)', getattr(sym_" << i << ", 'reference', 'X')).group(1)\n";
-            code << "        _new_ref_" << i << " = next_ref(_prefix_" << i << ")\n";
-            code << "        for _f in sym_" << i << "._proto.fields:\n";
-            code << "            if _f.name == 'Reference':\n";
-            code << "                _f.text = _new_ref_" << i << "\n";
-            code << "                break\n";
-            code << "        sch.crud.update_items(sym_" << i << ")\n";
-            code << "        results.append({'index': " << i << ", 'element_type': 'symbol', 'reference': _new_ref_" << i << "})\n";
+            // --- Overlap check for symbol ---
+            code << "        _overlap_" << i << " = False\n";
+            code << "        try:\n";
+            code << "            _bb_" << i << " = sch.transform.get_bounding_box(sym_" << i << ", units='mm', include_text=False)\n";
+            code << "            if _bb_" << i << ":\n";
+            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'], 'max_x': _bb_" << i << "['max_x'], 'min_y': _bb_" << i << "['min_y'], 'max_y': _bb_" << i << "['max_y']}\n";
+            code << "                for _pb in placed_bboxes:\n";
+            code << "                    if _bboxes_overlap(_new_bbox_" << i << ", _pb):\n";
+            code << "                        _overlap_" << i << " = True\n";
+            code << "                        break\n";
+            code << "        except:\n";
+            code << "            pass\n";
+            code << "        if _overlap_" << i << ":\n";
+            code << "            sch.crud.remove_items([sym_" << i << "])\n";
+            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: bounding box overlaps an existing component'})\n";
+            code << "        else:\n";
+            code << "            if _bb_" << i << ":\n";
+            code << "                placed_bboxes.append(_new_bbox_" << i << ")\n";
+            code << "            _prefix_" << i << " = re.match(r'^([A-Za-z#]+)', getattr(sym_" << i << ", 'reference', 'X')).group(1)\n";
+            code << "            _new_ref_" << i << " = next_ref(_prefix_" << i << ")\n";
+            code << "            for _f in sym_" << i << "._proto.fields:\n";
+            code << "                if _f.name == 'Reference':\n";
+            code << "                    _f.text = _new_ref_" << i << "\n";
+            code << "                    break\n";
+            code << "            sch.crud.update_items(sym_" << i << ")\n";
+            code << "            results.append({'index': " << i << ", 'element_type': 'symbol', 'reference': _new_ref_" << i << "})\n";
         }
         else if( elementType == "power" )
         {
@@ -1281,13 +1318,32 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        pwr_" << i << " = sch.labels.add_power('" << EscapePythonString( powerName ) << "', pos_" << i << ", angle=" << angle << ")\n";
-            code << "        _pwr_ref_" << i << " = next_ref('#PWR')\n";
-            code << "        for _f in pwr_" << i << "._proto.fields:\n";
-            code << "            if _f.name == 'Reference':\n";
-            code << "                _f.text = _pwr_ref_" << i << "\n";
-            code << "                break\n";
-            code << "        sch.crud.update_items(pwr_" << i << ")\n";
-            code << "        results.append({'index': " << i << ", 'element_type': 'power', 'reference': _pwr_ref_" << i << "})\n";
+
+            // --- Overlap check for power ---
+            code << "        _overlap_" << i << " = False\n";
+            code << "        try:\n";
+            code << "            _bb_" << i << " = sch.transform.get_bounding_box(pwr_" << i << ", units='mm', include_text=False)\n";
+            code << "            if _bb_" << i << ":\n";
+            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'], 'max_x': _bb_" << i << "['max_x'], 'min_y': _bb_" << i << "['min_y'], 'max_y': _bb_" << i << "['max_y']}\n";
+            code << "                for _pb in placed_bboxes:\n";
+            code << "                    if _bboxes_overlap(_new_bbox_" << i << ", _pb):\n";
+            code << "                        _overlap_" << i << " = True\n";
+            code << "                        break\n";
+            code << "        except:\n";
+            code << "            pass\n";
+            code << "        if _overlap_" << i << ":\n";
+            code << "            sch.crud.remove_items([pwr_" << i << "])\n";
+            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: bounding box overlaps an existing component'})\n";
+            code << "        else:\n";
+            code << "            if _bb_" << i << ":\n";
+            code << "                placed_bboxes.append(_new_bbox_" << i << ")\n";
+            code << "            _pwr_ref_" << i << " = next_ref('#PWR')\n";
+            code << "            for _f in pwr_" << i << "._proto.fields:\n";
+            code << "                if _f.name == 'Reference':\n";
+            code << "                    _f.text = _pwr_ref_" << i << "\n";
+            code << "                    break\n";
+            code << "            sch.crud.update_items(pwr_" << i << ")\n";
+            code << "            results.append({'index': " << i << ", 'element_type': 'power', 'reference': _pwr_ref_" << i << "})\n";
         }
         else if( elementType == "wire" )
         {
@@ -1329,7 +1385,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 }
                 code << "            results.append({'index': " << i << ", 'element_type': 'wire'})\n";
                 code << "        else:\n";
-                code << "            errors.append({'index': " << i << ", 'error': 'Symbol not found'})\n";
+                code << "            results.append({'index': " << i << ", 'error': 'Symbol not found'})\n";
             }
             // Handle wire with points
             else if( elem.contains( "points" ) && elem["points"].is_array() )
@@ -1423,27 +1479,26 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
         }
         else
         {
-            code << "        errors.append({'index': " << i << ", 'error': 'Unknown element_type: " << EscapePythonString( elementType ) << "'})\n";
+            code << "        results.append({'index': " << i << ", 'error': 'Unknown element_type: " << EscapePythonString( elementType ) << "'})\n";
         }
 
         code << "    except Exception as e_" << i << ":\n";
-        code << "        errors.append({'index': " << i << ", 'error': str(e_" << i << ")})\n";
+        code << "        results.append({'index': " << i << ", 'error': str(e_" << i << ")})\n";
         code << "\n";
     }
 
     code << "\n";
+    code << "    _fail = sum(1 for r in results if 'error' in r)\n";
     code << "    result = {\n";
-    code << "        'status': 'success' if len(errors) == 0 else 'partial',\n";
+    code << "        'status': 'success' if _fail == 0 else 'partial',\n";
     code << "        'total': " << elements.size() << ",\n";
-    code << "        'succeeded': len(results),\n";
-    code << "        'failed': len(errors),\n";
+    code << "        'succeeded': len(results) - _fail,\n";
+    code << "        'failed': _fail,\n";
     code << "        'results': results\n";
     code << "    }\n";
-    code << "    if errors:\n";
-    code << "        result['errors'] = errors\n";
     code << "\n";
     code << "except Exception as batch_error:\n";
-    code << "    result = {'status': 'error', 'message': str(batch_error), 'results': results, 'errors': errors}\n";
+    code << "    result = {'status': 'error', 'message': str(batch_error), 'results': results}\n";
     code << "\n";
     code << "print(json.dumps(result, indent=2))\n";
 

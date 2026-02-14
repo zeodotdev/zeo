@@ -1276,6 +1276,120 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( pcbAutoroute );
 
+    // pcb_setup - Read/write board settings
+    LLM_TOOL pcbSetup;
+    pcbSetup.name = "pcb_setup";
+    pcbSetup.description =
+        "Read or modify PCB board settings (Board Setup dialog). "
+        "action='get' retrieves all settings including stackup, design rules, text/graphics defaults, "
+        "grid, DRC severities, net classes, title block, and origins. "
+        "action='set' updates only the provided fields, leaving others unchanged. "
+        "All dimensions are in nanometers (nm) unless otherwise noted. "
+        "Net classes are project-level settings (shared between schematic and PCB). "
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbSetup.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "action", {
+                { "type", "string" },
+                { "enum", json::array( { "get", "set" } ) },
+                { "description", "Action: 'get' to read all settings, 'set' to modify provided fields" }
+            }},
+            { "design_rules", {
+                { "type", "object" },
+                { "description", "Board design rules/constraints (all values in nanometers)" },
+                { "properties", {
+                    { "min_clearance_nm", { { "type", "integer" }, { "description", "Min copper-to-copper clearance" } } },
+                    { "min_track_width_nm", { { "type", "integer" }, { "description", "Min track width" } } },
+                    { "min_connection_nm", { { "type", "integer" }, { "description", "Min zone connection width" } } },
+                    { "min_via_diameter_nm", { { "type", "integer" }, { "description", "Min via pad diameter" } } },
+                    { "min_via_drill_nm", { { "type", "integer" }, { "description", "Min via drill diameter" } } },
+                    { "min_via_annular_width_nm", { { "type", "integer" }, { "description", "Min via annular ring" } } },
+                    { "copper_edge_clearance_nm", { { "type", "integer" }, { "description", "Min copper-to-edge clearance" } } },
+                    { "min_hole_to_hole_nm", { { "type", "integer" }, { "description", "Min hole-to-hole spacing" } } },
+                    { "hole_to_copper_clearance_nm", { { "type", "integer" }, { "description", "Min hole-to-copper clearance" } } },
+                    { "solder_mask_expansion_nm", { { "type", "integer" }, { "description", "Solder mask expansion" } } },
+                    { "solder_mask_min_width_nm", { { "type", "integer" }, { "description", "Min solder mask width" } } },
+                    { "solder_paste_margin_nm", { { "type", "integer" }, { "description", "Solder paste margin" } } },
+                    { "solder_paste_margin_ratio", { { "type", "number" }, { "description", "Solder paste margin ratio (0-1)" } } },
+                    { "min_silk_clearance_nm", { { "type", "integer" }, { "description", "Min silkscreen clearance" } } },
+                    { "min_silk_text_height_nm", { { "type", "integer" }, { "description", "Min silkscreen text height" } } },
+                    { "min_resolved_spokes", { { "type", "integer" }, { "description", "Min thermal relief spokes" } } }
+                }}
+            }},
+            { "grid", {
+                { "type", "object" },
+                { "description", "Grid settings" },
+                { "properties", {
+                    { "size_x_nm", { { "type", "integer" }, { "description", "Grid X spacing in nanometers" } } },
+                    { "size_y_nm", { { "type", "integer" }, { "description", "Grid Y spacing in nanometers" } } },
+                    { "visible", { { "type", "boolean" }, { "description", "Show/hide grid" } } },
+                    { "style", {
+                        { "type", "string" },
+                        { "enum", json::array( { "dots", "lines", "small_cross" } ) },
+                        { "description", "Grid display style" }
+                    }}
+                }}
+            }},
+            { "drc_severities", {
+                { "type", "object" },
+                { "description", "Map of DRC check names to severity: 'error', 'warning', or 'ignore'. "
+                                "Example: {\"clearance\": \"error\", \"track_width\": \"warning\"}" },
+                { "additionalProperties", { { "type", "string" }, { "enum", json::array( { "error", "warning", "ignore" } ) } } }
+            }},
+            { "net_classes", {
+                { "type", "array" },
+                { "description", "Net class definitions (project-level, shared with schematic)" },
+                { "items", {
+                    { "type", "object" },
+                    { "properties", {
+                        { "name", { { "type", "string" }, { "description", "Net class name" } } },
+                        { "priority", { { "type", "integer" }, { "description", "Priority (higher = more specific)" } } },
+                        { "clearance_nm", { { "type", "integer" }, { "description", "Clearance in nm" } } },
+                        { "track_width_nm", { { "type", "integer" }, { "description", "Track width in nm" } } },
+                        { "via_diameter_nm", { { "type", "integer" }, { "description", "Via diameter in nm" } } },
+                        { "via_drill_nm", { { "type", "integer" }, { "description", "Via drill in nm" } } },
+                        { "diff_pair_width_nm", { { "type", "integer" }, { "description", "Diff pair track width in nm" } } },
+                        { "diff_pair_gap_nm", { { "type", "integer" }, { "description", "Diff pair gap in nm" } } }
+                    }},
+                    { "required", json::array( { "name" } ) }
+                }}
+            }},
+            { "title_block", {
+                { "type", "object" },
+                { "description", "Title block information" },
+                { "properties", {
+                    { "title", { { "type", "string" } } },
+                    { "date", { { "type", "string" } } },
+                    { "revision", { { "type", "string" } } },
+                    { "company", { { "type", "string" } } },
+                    { "comment1", { { "type", "string" } } },
+                    { "comment2", { { "type", "string" } } },
+                    { "comment3", { { "type", "string" } } },
+                    { "comment4", { { "type", "string" } } }
+                }}
+            }},
+            { "origins", {
+                { "type", "object" },
+                { "description", "Board origins (in mm)" },
+                { "properties", {
+                    { "grid_mm", {
+                        { "type", "array" },
+                        { "items", { { "type", "number" } } },
+                        { "description", "Grid origin as [x, y] in mm" }
+                    }},
+                    { "drill_mm", {
+                        { "type", "array" },
+                        { "items", { { "type", "number" } } },
+                        { "description", "Drill/place origin as [x, y] in mm" }
+                    }}
+                }}
+            }}
+        }},
+        { "required", json::array( { "action" } ) }
+    };
+    tools.push_back( pcbSetup );
+
     // screenshot - Export a visual render of a schematic or PCB
     LLM_TOOL screenshot;
     screenshot.name = "screenshot";

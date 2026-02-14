@@ -10,6 +10,7 @@
 #include "pcb/pcb_tool_handler.h"
 #include "pcb/pcb_crud_handler.h"
 #include "pcb/pcb_autoroute_handler.h"
+#include "pcb/pcb_setup_handler.h"
 #include "screenshot/screenshot_handler.h"
 
 
@@ -35,6 +36,7 @@ TOOL_REGISTRY::TOOL_REGISTRY()
     m_handlers.push_back( std::make_unique<PCB_CRUD_HANDLER>() );
     m_handlers.push_back( std::make_unique<PCB_TOOL_HANDLER>() );
     m_handlers.push_back( std::make_unique<PCB_AUTOROUTE_HANDLER>() );
+    m_handlers.push_back( std::make_unique<PCB_SETUP_HANDLER>() );
 
     // Register screenshot handler
     m_handlers.push_back( std::make_unique<SCREENSHOT_HANDLER>() );

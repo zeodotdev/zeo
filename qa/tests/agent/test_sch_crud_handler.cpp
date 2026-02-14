@@ -708,4 +708,150 @@ BOOST_AUTO_TEST_CASE( ConnectToPowerSetsRefViaProtoFields )
 }
 
 
+// --- sch_add overlap detection ---
+
+BOOST_AUTO_TEST_CASE( AddSymbolGeneratesOverlapPreamble )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "symbol" },
+            { "lib_id", "Device:R" },
+            { "position", { 50.8, 50.8 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "placed_bboxes = []" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "def _bboxes_overlap(a, b):" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "get_bounding_box(_esym" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddSymbolGeneratesBboxCheck )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "symbol" },
+            { "lib_id", "Device:R" },
+            { "position", { 50.8, 50.8 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "get_bounding_box(sym_0" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddSymbolGeneratesRemoveOnOverlap )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "symbol" },
+            { "lib_id", "Device:R" },
+            { "position", { 50.8, 50.8 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "remove_items([sym_0])" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddSymbolOverlapErrorMessage )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "symbol" },
+            { "lib_id", "Device:R" },
+            { "position", { 50.8, 50.8 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "Placement rejected: bounding box overlaps an existing component" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddPowerGeneratesBboxCheck )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "power" },
+            { "lib_id", "power:VCC" },
+            { "position", { 50.8, 50.8 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "get_bounding_box(pwr_0" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddPowerGeneratesRemoveOnOverlap )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "power" },
+            { "lib_id", "power:VCC" },
+            { "position", { 50.8, 50.8 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "remove_items([pwr_0])" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddWireSkipsOverlapCheck )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "wire" },
+            { "points", nlohmann::json::array( { nlohmann::json::array( { 50.8, 50.8 } ), nlohmann::json::array( { 76.2, 50.8 } ) } ) }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    // Wires should NOT have overlap detection
+    BOOST_CHECK( cmd.find( "get_bounding_box(wc_0" ) == std::string::npos );
+    BOOST_CHECK( cmd.find( "_overlap_0" ) == std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddBatchSymbolsSharePlacedBboxes )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( {
+            nlohmann::json{
+                { "element_type", "symbol" },
+                { "lib_id", "Device:R" },
+                { "position", { 50.8, 50.8 } }
+            },
+            nlohmann::json{
+                { "element_type", "symbol" },
+                { "lib_id", "Device:C" },
+                { "position", { 76.2, 50.8 } }
+            }
+        } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    // Both symbols should have overlap checks
+    BOOST_CHECK( cmd.find( "get_bounding_box(sym_0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "get_bounding_box(sym_1" ) != std::string::npos );
+
+    // Both should append to shared placed_bboxes list on success
+    BOOST_CHECK( cmd.find( "placed_bboxes.append(_new_bbox_0)" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "placed_bboxes.append(_new_bbox_1)" ) != std::string::npos );
+}
+
+
 BOOST_AUTO_TEST_SUITE_END()

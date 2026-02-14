@@ -6,6 +6,8 @@
 #include "terminal_panel.h"
 #include <string>
 
+class HEADLESS_PYTHON_EXECUTOR;
+
 class TERMINAL_FRAME : public KIWAY_PLAYER
 {
 public:
@@ -24,14 +26,12 @@ public:
     // Event handlers
     void OnExit( wxCommandEvent& event );
     void OnNewTab( wxCommandEvent& event );
-    void OnNewAgentTab( wxCommandEvent& event );
     void OnCloseTab( wxCommandEvent& event );
     void OnTabClosed( wxAuiNotebookEvent& event );
     void OnTabClosedDone( wxAuiNotebookEvent& event );
 
     // Tab Management
     void            AddTerminal( TERMINAL_PANEL::TERMINAL_MODE aMode = TERMINAL_PANEL::MODE_SYSTEM );
-    void            AddAgentTerminal( TERMINAL_PANEL::TERMINAL_MODE aMode = TERMINAL_PANEL::MODE_SYSTEM );
     void            UpdateTabClosing();
     TERMINAL_PANEL* GetActivePanel();
     TERMINAL_PANEL* GetPanel( int aIndex );
@@ -46,6 +46,7 @@ public:
 
 private:
     wxAuiNotebook* m_notebook;
+    HEADLESS_PYTHON_EXECUTOR* m_headlessExecutor;
 
     // Track if we have an active async request
     bool m_asyncRequestPending;
@@ -54,8 +55,6 @@ private:
     std::vector<std::string> GetAllowedPaths();
 
     // Track the target sheet UUID for the current agent conversation turn.
-    // This is captured on the FIRST tool call and reused for all subsequent
-    // tool calls until the conversation turn ends.
     std::string m_agentTargetSheetUuid;
     bool m_hasAgentTargetSheet;
 

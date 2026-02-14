@@ -22,9 +22,12 @@ set( TERMINAL_SRCS
     terminal.cpp
     terminal_frame.cpp
     terminal_panel.cpp
-    terminal_panel_agent.cpp
     python_exec_thread.cpp
     terminal_command_validator.cpp
+    headless_python_executor.cpp
+    agent_monitor_log.cpp
+    pty_handler.cpp
+    pty_webview_panel.cpp
 )
 
 # Resources for the macOS bundle
@@ -124,6 +127,10 @@ target_link_libraries( terminal_kiface
     scripting
     ${PYTHON_LIBRARIES}
     )
+
+if( APPLE )
+    target_link_libraries( terminal_kiface PRIVATE "-lutil" )
+endif()
 
 target_compile_definitions( terminal PRIVATE KICAD_SCRIPTING )
 target_compile_definitions( terminal_kiface PRIVATE KICAD_SCRIPTING )

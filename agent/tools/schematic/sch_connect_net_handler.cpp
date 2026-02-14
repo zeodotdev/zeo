@@ -169,7 +169,7 @@ try:
         key = (round(x, 2), round(y, 2))
         _wire_ep[key] = _wire_ep.get(key, 0) + 1
 
-    # Build obstacle map from graphical bounding boxes of ALL symbols.
+    # Build obstacle map from graphical bounding boxes of ALL symbols and labels.
     # Pin tip cells are reachable via A*'s start/goal exclusion — no edge shrinking needed.
     obstacles = []
     try:
@@ -177,6 +177,17 @@ try:
         for obs_sym in all_symbols:
             try:
                 bbox = sch.transform.get_bounding_box(obs_sym, units='mm', include_text=False)
+            except:
+                continue
+            if not bbox:
+                continue
+            obstacles.append({'min_x': bbox['min_x'], 'max_x': bbox['max_x'], 'min_y': bbox['min_y'], 'max_y': bbox['max_y']})
+    except:
+        pass
+    try:
+        for obs_lbl in sch.labels.get_all():
+            try:
+                bbox = sch.transform.get_bounding_box(obs_lbl, units='mm', include_text=False)
             except:
                 continue
             if not bbox:

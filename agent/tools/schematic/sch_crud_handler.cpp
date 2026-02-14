@@ -324,7 +324,7 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
 
     if( hasPositionUpdate )
     {
-        code << "# Collect bounding boxes of all existing symbols for overlap detection\n";
+        code << "# Collect bounding boxes of all existing symbols and labels for overlap detection\n";
         code << "_BBOX_MARGIN = 0.635  # half grid step per side = 1.27mm total clearance\n";
         code << "placed_bboxes = []\n";
         code << "try:\n";
@@ -336,6 +336,16 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
         code << "            continue\n";
         code << "        if _ebb:\n";
         code << "            placed_bboxes.append({'id': str(_esym.id.value), 'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
+        code << "except:\n";
+        code << "    pass\n";
+        code << "try:\n";
+        code << "    for _elbl in sch.labels.get_all():\n";
+        code << "        try:\n";
+        code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm', include_text=False)\n";
+        code << "        except:\n";
+        code << "            continue\n";
+        code << "        if _ebb:\n";
+        code << "            placed_bboxes.append({'id': str(_elbl.id.value), 'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
         code << "except:\n";
         code << "    pass\n";
         code << "\n";
@@ -1276,7 +1286,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "\n";
 
     // --- Overlap detection preamble ---
-    code << "# Collect bounding boxes of all existing symbols for overlap detection\n";
+    code << "# Collect bounding boxes of all existing symbols and labels for overlap detection\n";
     code << "_BBOX_MARGIN = 0.635  # half grid step per side = 1.27mm total clearance between components\n";
     code << "placed_bboxes = []\n";
     code << "try:\n";
@@ -1288,6 +1298,16 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "            continue\n";
     code << "        if _ebb:\n";
     code << "            placed_bboxes.append({'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
+    code << "except:\n";
+    code << "    pass\n";
+    code << "try:\n";
+    code << "    for _elbl in sch.labels.get_all():\n";
+    code << "        try:\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm', include_text=False)\n";
+    code << "        except:\n";
+    code << "            continue\n";
+    code << "        if _ebb:\n";
+    code << "            placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
     code << "except:\n";
     code << "    pass\n";
     code << "\n";

@@ -854,4 +854,36 @@ BOOST_AUTO_TEST_CASE( AddBatchSymbolsSharePlacedBboxes )
 }
 
 
+BOOST_AUTO_TEST_CASE( AddLabelGeneratesBboxCheck )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "label" },
+            { "text", "NET1" },
+            { "position", { 50.8, 50.8 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "get_bounding_box(lbl_0" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AddLabelGeneratesRemoveOnOverlap )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "label" },
+            { "text", "NET1" },
+            { "position", { 50.8, 50.8 } }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    BOOST_CHECK( cmd.find( "remove_items([lbl_0])" ) != std::string::npos );
+}
+
+
 BOOST_AUTO_TEST_SUITE_END()

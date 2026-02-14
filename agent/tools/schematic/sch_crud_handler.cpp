@@ -308,8 +308,43 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
     code << "\n";
     code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
     code << "results = []\n";
-    code << "errors = []\n";
     code << "\n";
+
+    // --- Overlap detection preamble (only if any update has position) ---
+    bool hasPositionUpdate = false;
+    for( size_t i = 0; i < updates.size(); ++i )
+    {
+        if( updates[i].contains( "position" ) && updates[i]["position"].is_array() &&
+            updates[i]["position"].size() >= 2 )
+        {
+            hasPositionUpdate = true;
+            break;
+        }
+    }
+
+    if( hasPositionUpdate )
+    {
+        code << "# Collect bounding boxes of all existing symbols for overlap detection\n";
+        code << "_BBOX_MARGIN = 0.635  # half grid step per side = 1.27mm total clearance\n";
+        code << "placed_bboxes = []\n";
+        code << "try:\n";
+        code << "    _all_existing = sch.symbols.get_all()\n";
+        code << "    for _esym in _all_existing:\n";
+        code << "        try:\n";
+        code << "            _ebb = sch.transform.get_bounding_box(_esym, units='mm', include_text=False)\n";
+        code << "        except:\n";
+        code << "            continue\n";
+        code << "        if _ebb:\n";
+        code << "            placed_bboxes.append({'id': str(_esym.id.value), 'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
+        code << "except:\n";
+        code << "    pass\n";
+        code << "\n";
+        code << "def _bboxes_overlap(a, b):\n";
+        code << "    _eps = 0.001\n";
+        code << "    return a['min_x'] < b['max_x'] - _eps and a['max_x'] > b['min_x'] + _eps and a['min_y'] < b['max_y'] - _eps and a['max_y'] > b['min_y'] + _eps\n";
+        code << "\n";
+    }
+
     code << "try:\n";
 
     // Process each update in the array
@@ -320,7 +355,7 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
 
         if( target.empty() )
         {
-            code << "    errors.append({'index': " << i << ", 'error': 'target is required'})\n";
+            code << "    results.append({'index': " << i << ", 'error': 'target is required'})\n";
             continue;
         }
 
@@ -344,8 +379,43 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
         {
             double posX = SnapToGrid( update["position"][0].get<double>() );
             double posY = SnapToGrid( update["position"][1].get<double>() );
+
+            // Save original position before move (in mm, for revert)
+            code << "        _orig_x_" << i << " = item_" << i << ".position.x / 1_000_000\n";
+            code << "        _orig_y_" << i << " = item_" << i << ".position.y / 1_000_000\n";
+
+            // Perform the move
             code << "        new_pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        item_" << i << " = sch.symbols.move(item_" << i << ", new_pos_" << i << ")\n";
+
+            // Overlap detection: check new position against all existing (excluding self)
+            code << "        _overlap_" << i << " = False\n";
+            code << "        _item_id_" << i << " = str(item_" << i << ".id.value)\n";
+            code << "        try:\n";
+            code << "            _bb_" << i << " = sch.transform.get_bounding_box(item_" << i << ", units='mm', include_text=False)\n";
+            code << "            if _bb_" << i << ":\n";
+            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN}\n";
+            code << "                _obstacle_ref_" << i << " = '?'\n";
+            code << "                for _pb in placed_bboxes:\n";
+            code << "                    if _pb.get('id') == _item_id_" << i << ":\n";
+            code << "                        continue\n";
+            code << "                    if _bboxes_overlap(_new_bbox_" << i << ", _pb):\n";
+            code << "                        _overlap_" << i << " = True\n";
+            code << "                        _obstacle_ref_" << i << " = _pb.get('ref', '?')\n";
+            code << "                        break\n";
+            code << "        except:\n";
+            code << "            pass\n";
+            code << "        if _overlap_" << i << ":\n";
+            code << "            item_" << i << " = sch.symbols.move(item_" << i << ", Vector2.from_xy_mm(_orig_x_" << i << ", _orig_y_" << i << "))\n";
+            code << "            raise ValueError(f'Move rejected: overlaps {_obstacle_ref_" << i << "}')\n";
+
+            // Update placed_bboxes with new position
+            code << "        if _bb_" << i << ":\n";
+            code << "            for _idx, _pb in enumerate(placed_bboxes):\n";
+            code << "                if _pb.get('id') == _item_id_" << i << ":\n";
+            code << "                    placed_bboxes[_idx] = {'id': _item_id_" << i << ", 'min_x': _new_bbox_" << i << "['min_x'], 'max_x': _new_bbox_" << i << "['max_x'], 'min_y': _new_bbox_" << i << "['min_y'], 'max_y': _new_bbox_" << i << "['max_y']}\n";
+            code << "                    break\n";
+
             code << "        updated_" << i << " = True\n";
         }
 
@@ -427,24 +497,23 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
         code << "            state_" << i << "['reference'] = item_" << i << ".reference\n";
         code << "        results.append({'index': " << i << ", 'target': target_" << i << ", 'updated': updated_" << i << ", 'state': state_" << i << "})\n";
         code << "    except Exception as e_" << i << ":\n";
-        code << "        errors.append({'index': " << i << ", 'target': '" << EscapePythonString( target ) << "', 'error': str(e_" << i << ")})\n";
+        code << "        results.append({'index': " << i << ", 'target': '" << EscapePythonString( target ) << "', 'error': str(e_" << i << ")})\n";
         code << "\n";
     }
 
     code << "\n";
+    code << "    _fail = sum(1 for r in results if 'error' in r)\n";
     code << "    result = {\n";
-    code << "        'status': 'success' if len(errors) == 0 else 'partial',\n";
+    code << "        'status': 'success' if _fail == 0 else 'partial',\n";
     code << "        'source': 'ipc',\n";
     code << "        'total': " << updates.size() << ",\n";
-    code << "        'succeeded': len(results),\n";
-    code << "        'failed': len(errors),\n";
+    code << "        'succeeded': len(results) - _fail,\n";
+    code << "        'failed': _fail,\n";
     code << "        'results': results\n";
     code << "    }\n";
-    code << "    if errors:\n";
-    code << "        result['errors'] = errors\n";
     code << "\n";
     code << "except Exception as batch_error:\n";
-    code << "    result = {'status': 'error', 'message': str(batch_error), 'partial_results': results, 'errors': errors}\n";
+    code << "    result = {'status': 'error', 'message': str(batch_error), 'results': results}\n";
     code << "\n";
     code << "print(json.dumps(result, indent=2))\n";
 
@@ -1218,7 +1287,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "        except:\n";
     code << "            continue\n";
     code << "        if _ebb:\n";
-    code << "            placed_bboxes.append({'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
+    code << "            placed_bboxes.append({'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
     code << "except:\n";
     code << "    pass\n";
     code << "\n";
@@ -1279,18 +1348,18 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(sym_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
             code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN}\n";
+            code << "                _obstacle_ref_" << i << " = '?'\n";
             code << "                for _pb in placed_bboxes:\n";
             code << "                    if _bboxes_overlap(_new_bbox_" << i << ", _pb):\n";
             code << "                        _overlap_" << i << " = True\n";
+            code << "                        _obstacle_ref_" << i << " = _pb.get('ref', '?')\n";
             code << "                        break\n";
             code << "        except:\n";
             code << "            pass\n";
             code << "        if _overlap_" << i << ":\n";
             code << "            sch.crud.remove_items([sym_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: bounding box overlaps an existing component'})\n";
+            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: overlaps {_obstacle_ref_" << i << "}'})\n";
             code << "        else:\n";
-            code << "            if _bb_" << i << ":\n";
-            code << "                placed_bboxes.append(_new_bbox_" << i << ")\n";
             code << "            _prefix_" << i << " = re.match(r'^([A-Za-z#]+)', getattr(sym_" << i << ", 'reference', 'X')).group(1)\n";
             code << "            _new_ref_" << i << " = next_ref(_prefix_" << i << ")\n";
             code << "            for _f in sym_" << i << "._proto.fields:\n";
@@ -1298,6 +1367,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                    _f.text = _new_ref_" << i << "\n";
             code << "                    break\n";
             code << "            sch.crud.update_items(sym_" << i << ")\n";
+            code << "            if _bb_" << i << ":\n";
+            code << "                placed_bboxes.append({'ref': _new_ref_" << i << ", **_new_bbox_" << i << "})\n";
             code << "            results.append({'index': " << i << ", 'element_type': 'symbol', 'reference': _new_ref_" << i << "})\n";
         }
         else if( elementType == "power" )
@@ -1326,91 +1397,27 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(pwr_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
             code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN}\n";
+            code << "                _obstacle_ref_" << i << " = '?'\n";
             code << "                for _pb in placed_bboxes:\n";
             code << "                    if _bboxes_overlap(_new_bbox_" << i << ", _pb):\n";
             code << "                        _overlap_" << i << " = True\n";
+            code << "                        _obstacle_ref_" << i << " = _pb.get('ref', '?')\n";
             code << "                        break\n";
             code << "        except:\n";
             code << "            pass\n";
             code << "        if _overlap_" << i << ":\n";
             code << "            sch.crud.remove_items([pwr_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: bounding box overlaps an existing component'})\n";
+            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: overlaps {_obstacle_ref_" << i << "}'})\n";
             code << "        else:\n";
-            code << "            if _bb_" << i << ":\n";
-            code << "                placed_bboxes.append(_new_bbox_" << i << ")\n";
             code << "            _pwr_ref_" << i << " = next_ref('#PWR')\n";
             code << "            for _f in pwr_" << i << "._proto.fields:\n";
             code << "                if _f.name == 'Reference':\n";
             code << "                    _f.text = _pwr_ref_" << i << "\n";
             code << "                    break\n";
             code << "            sch.crud.update_items(pwr_" << i << ")\n";
+            code << "            if _bb_" << i << ":\n";
+            code << "                placed_bboxes.append({'ref': _pwr_ref_" << i << ", **_new_bbox_" << i << "})\n";
             code << "            results.append({'index': " << i << ", 'element_type': 'power', 'reference': _pwr_ref_" << i << "})\n";
-        }
-        else if( elementType == "wire" )
-        {
-            // Handle wire with from_pin/to_pin
-            if( elem.contains( "from_pin" ) && elem.contains( "to_pin" ) )
-            {
-                auto fromPin = elem["from_pin"];
-                auto toPin = elem["to_pin"];
-                std::string fromRef = fromPin.value( "ref", "" );
-                std::string fromPinNum = fromPin.value( "pin", "" );
-                std::string toRef = toPin.value( "ref", "" );
-                std::string toPinNum = toPin.value( "pin", "" );
-
-                code << "        sym1_" << i << " = sch.symbols.get_by_ref('" << EscapePythonString( fromRef ) << "')\n";
-                code << "        sym2_" << i << " = sch.symbols.get_by_ref('" << EscapePythonString( toRef ) << "')\n";
-                code << "        if sym1_" << i << " and sym2_" << i << ":\n";
-
-                // Check for waypoints - if present, use wire_path for custom routing
-                if( elem.contains( "waypoints" ) && elem["waypoints"].is_array() && elem["waypoints"].size() > 0 )
-                {
-                    auto waypoints = elem["waypoints"];
-                    code << "            waypoints_" << i << " = [\n";
-                    for( size_t j = 0; j < waypoints.size(); ++j )
-                    {
-                        if( waypoints[j].is_array() && waypoints[j].size() >= 2 )
-                        {
-                            double x = SnapToGrid( waypoints[j][0].get<double>() );
-                            double y = SnapToGrid( waypoints[j][1].get<double>() );
-                            code << "                (" << x << ", " << y << "),\n";
-                        }
-                    }
-                    code << "            ]\n";
-                    code << "            wires_" << i << " = sch.wiring.wire_path((sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "'), waypoints_" << i << ", (sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "'))\n";
-                }
-                else
-                {
-                    // No waypoints - use auto_wire for L-shaped orthogonal routing
-                    code << "            wires_" << i << " = sch.wiring.auto_wire(sym1_" << i << ", '" << EscapePythonString( fromPinNum ) << "', sym2_" << i << ", '" << EscapePythonString( toPinNum ) << "')\n";
-                }
-                code << "            results.append({'index': " << i << ", 'element_type': 'wire'})\n";
-                code << "        else:\n";
-                code << "            results.append({'index': " << i << ", 'error': 'Symbol not found'})\n";
-            }
-            // Handle wire with points
-            else if( elem.contains( "points" ) && elem["points"].is_array() )
-            {
-                auto points = elem["points"];
-                if( points.size() >= 2 )
-                {
-                    code << "        wc_" << i << " = 0\n";
-                    for( size_t j = 0; j < points.size() - 1; ++j )
-                    {
-                        if( points[j].is_array() && points[j].size() >= 2 &&
-                            points[j + 1].is_array() && points[j + 1].size() >= 2 )
-                        {
-                            double x1 = SnapToGrid( points[j][0].get<double>() );
-                            double y1 = SnapToGrid( points[j][1].get<double>() );
-                            double x2 = SnapToGrid( points[j + 1][0].get<double>() );
-                            double y2 = SnapToGrid( points[j + 1][1].get<double>() );
-                            code << "        sch.wiring.add_wire(Vector2.from_xy_mm(" << x1 << ", " << y1 << "), Vector2.from_xy_mm(" << x2 << ", " << y2 << "))\n";
-                            code << "        wc_" << i << " += 1\n";
-                        }
-                    }
-                    code << "        results.append({'index': " << i << ", 'element_type': 'wire'})\n";
-                }
-            }
         }
         else if( elementType == "junction" )
         {
@@ -1453,18 +1460,20 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(lbl_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
             code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN}\n";
+            code << "                _obstacle_ref_" << i << " = '?'\n";
             code << "                for _pb in placed_bboxes:\n";
             code << "                    if _bboxes_overlap(_new_bbox_" << i << ", _pb):\n";
             code << "                        _overlap_" << i << " = True\n";
+            code << "                        _obstacle_ref_" << i << " = _pb.get('ref', '?')\n";
             code << "                        break\n";
             code << "        except:\n";
             code << "            pass\n";
             code << "        if _overlap_" << i << ":\n";
             code << "            sch.crud.remove_items([lbl_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: bounding box overlaps an existing component'})\n";
+            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: overlaps {_obstacle_ref_" << i << "}'})\n";
             code << "        else:\n";
             code << "            if _bb_" << i << ":\n";
-            code << "                placed_bboxes.append(_new_bbox_" << i << ")\n";
+            code << "                placed_bboxes.append({'ref': '" << EscapePythonString( elem.value( "text", "label" ) ) << "', **_new_bbox_" << i << "})\n";
             code << "            results.append({'index': " << i << ", 'element_type': 'label'})\n";
         }
         else if( elementType == "no_connect" )

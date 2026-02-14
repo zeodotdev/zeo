@@ -1,0 +1,474 @@
+#include "pty_webview_panel.h"
+#include "pty_handler.h"
+
+#include <widgets/webview_panel.h>
+#include <wx/sizer.h>
+#include <wx/base64.h>
+#include <wx/log.h>
+
+#include <nlohmann/json.hpp>
+
+
+PTY_WEBVIEW_PANEL::PTY_WEBVIEW_PANEL( wxWindow* aParent ) :
+        wxPanel( aParent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxNO_BORDER ),
+        m_cols( 80 ),
+        m_rows( 24 ),
+        m_pageReady( false ),
+        m_shellRequested( false ),
+        m_agentCapturing( false ),
+        m_agentSentinelStartFound( false )
+{
+    SetBackgroundColour( wxColour( 30, 30, 30 ) );
+
+    // Create the webview that will host xterm.js
+    m_webView = new WEBVIEW_PANEL( this );
+    m_webView->BindLoadedEvent();
+
+    // Register message handler for JS → C++ communication
+    m_webView->AddMessageHandler( wxS( "terminal" ),
+            [this]( const wxString& msg ) { OnMessage( msg ); } );
+
+    // Load the xterm.js HTML page
+    m_webView->SetPage( GetTerminalHtml() );
+
+    // Layout: webview fills entire panel
+    wxBoxSizer* sizer = new wxBoxSizer( wxVERTICAL );
+    sizer->Add( m_webView, 1, wxEXPAND );
+    SetSizer( sizer );
+
+    // Bind PTY events
+    Bind( wxEVT_PTY_DATA, &PTY_WEBVIEW_PANEL::OnPtyData, this );
+    Bind( wxEVT_PTY_EXIT, &PTY_WEBVIEW_PANEL::OnPtyExit, this );
+
+    // Agent timeout timer
+    m_agentTimeoutTimer.SetOwner( this );
+    Bind( wxEVT_TIMER, &PTY_WEBVIEW_PANEL::OnAgentTimeout, this, m_agentTimeoutTimer.GetId() );
+}
+
+
+PTY_WEBVIEW_PANEL::~PTY_WEBVIEW_PANEL()
+{
+    m_agentTimeoutTimer.Stop();
+
+    if( m_pty )
+        m_pty->Stop();
+}
+
+
+bool PTY_WEBVIEW_PANEL::StartShell()
+{
+    m_shellRequested = true;
+
+    // If the page is already ready, start immediately
+    if( m_pageReady )
+    {
+        m_pty = std::make_unique<PTY_HANDLER>( this );
+
+        if( !m_pty->Start( m_cols, m_rows ) )
+        {
+            wxLogError( "PTY_WEBVIEW: Failed to start PTY" );
+            m_pty.reset();
+            return false;
+        }
+    }
+    // Otherwise, PTY will be started when JS sends 'ready'
+
+    return true;
+}
+
+
+bool PTY_WEBVIEW_PANEL::IsShellRunning() const
+{
+    return m_pty && m_pty->IsRunning();
+}
+
+
+wxString PTY_WEBVIEW_PANEL::GetTitle() const
+{
+    if( !m_termTitle.IsEmpty() )
+        return m_termTitle;
+
+    return "Shell";
+}
+
+
+// ---- PTY Events ----
+
+void PTY_WEBVIEW_PANEL::OnPtyData( wxThreadEvent& aEvent )
+{
+    std::string data = aEvent.GetPayload<std::string>();
+
+    // Process agent capture if active
+    if( m_agentCapturing )
+        ProcessAgentCapture( data );
+
+    // Send to xterm.js
+    if( m_pageReady )
+        SendDataToTerminal( data );
+    else
+        m_pendingOutput += data;
+}
+
+
+void PTY_WEBVIEW_PANEL::OnPtyExit( wxThreadEvent& aEvent )
+{
+    wxLogInfo( "PTY_WEBVIEW: Shell process exited" );
+
+    if( m_agentCapturing && m_agentCallback )
+    {
+        m_agentTimeoutTimer.Stop();
+        m_agentCapturing = false;
+        m_agentCallback( "Error: Shell process exited", false );
+        m_agentCallback = nullptr;
+    }
+}
+
+
+void PTY_WEBVIEW_PANEL::SendDataToTerminal( const std::string& aData )
+{
+    if( aData.empty() )
+        return;
+
+    // Base64 encode the raw PTY output for safe JS transfer
+    wxString b64 = wxBase64Encode( aData.data(), aData.size() );
+
+    // Call the JS function that writes to xterm.js
+    m_webView->RunScriptAsync( wxString::Format( "termWrite('%s')", b64 ) );
+}
+
+
+// ---- JS Message Handler ----
+
+void PTY_WEBVIEW_PANEL::OnMessage( const wxString& aMsg )
+{
+    try
+    {
+        nlohmann::json msg = nlohmann::json::parse( aMsg.ToStdString() );
+        std::string    action = msg.value( "action", "" );
+
+        if( action == "ready" )
+        {
+            m_pageReady = true;
+            m_cols = msg.value( "cols", 80 );
+            m_rows = msg.value( "rows", 24 );
+
+            wxLogInfo( "PTY_WEBVIEW: Page ready, cols=%d rows=%d", m_cols, m_rows );
+
+            // Start PTY if requested
+            if( m_shellRequested && !m_pty )
+            {
+                m_pty = std::make_unique<PTY_HANDLER>( this );
+
+                if( !m_pty->Start( m_cols, m_rows ) )
+                {
+                    wxLogError( "PTY_WEBVIEW: Failed to start PTY" );
+                    m_pty.reset();
+                }
+            }
+
+            // Flush any buffered output
+            if( !m_pendingOutput.empty() )
+            {
+                SendDataToTerminal( m_pendingOutput );
+                m_pendingOutput.clear();
+            }
+
+            // Execute queued agent command if any
+            if( !m_queuedAgentCmd.empty() && m_queuedAgentCallback )
+            {
+                ExecuteForAgent( m_queuedAgentCmd, m_queuedAgentCallback );
+                m_queuedAgentCmd.clear();
+                m_queuedAgentCallback = nullptr;
+            }
+        }
+        else if( action == "input" )
+        {
+            // User typed something in xterm.js → send to PTY
+            std::string b64Data = msg.value( "data", "" );
+
+            if( !b64Data.empty() && m_pty )
+            {
+                wxMemoryBuffer decoded = wxBase64Decode( wxString::FromUTF8( b64Data ) );
+                m_pty->Write( (const char*) decoded.GetData(), decoded.GetDataLen() );
+            }
+        }
+        else if( action == "resize" )
+        {
+            int cols = msg.value( "cols", m_cols );
+            int rows = msg.value( "rows", m_rows );
+
+            if( cols != m_cols || rows != m_rows )
+            {
+                m_cols = cols;
+                m_rows = rows;
+
+                if( m_pty )
+                    m_pty->Resize( cols, rows );
+            }
+        }
+        else if( action == "title" )
+        {
+            m_termTitle = wxString::FromUTF8( msg.value( "title", "" ) );
+        }
+    }
+    catch( const std::exception& e )
+    {
+        wxLogDebug( "PTY_WEBVIEW: Failed to parse message: %s", e.what() );
+    }
+}
+
+
+// ---- Agent Integration ----
+
+void PTY_WEBVIEW_PANEL::WriteToShell( const std::string& aData )
+{
+    if( m_pty )
+        m_pty->Write( aData );
+}
+
+
+void PTY_WEBVIEW_PANEL::DisplayAgentCommand( const wxString& aCmd, const wxString& aMode )
+{
+    // No-op: the command will be visible in the terminal output via PTY echo
+}
+
+
+void PTY_WEBVIEW_PANEL::ExecuteForAgent( const std::string& aCmd, AgentCallback aCallback )
+{
+    if( !m_pty || !m_pty->IsRunning() )
+    {
+        // If PTY isn't ready yet, queue the command
+        if( m_shellRequested && !m_pty )
+        {
+            m_queuedAgentCmd = aCmd;
+            m_queuedAgentCallback = aCallback;
+            return;
+        }
+
+        if( aCallback )
+            aCallback( "Error: Shell not running", false );
+
+        return;
+    }
+
+    m_agentCallback = aCallback;
+    m_agentCapturing = true;
+    m_agentCaptureBuffer.clear();
+    m_agentSentinelStart = "__ZEO_CMD_START_" + std::to_string( (intptr_t) this ) + "__";
+    m_agentSentinelEnd = "__ZEO_CMD_END_" + std::to_string( (intptr_t) this ) + "__";
+    m_agentSentinelStartFound = false;
+
+    // Start timeout timer
+    m_agentTimeoutTimer.Start( AGENT_TIMEOUT_MS, wxTIMER_ONE_SHOT );
+
+    // Write the command wrapped in sentinels
+    std::string wrappedCmd = "echo '" + m_agentSentinelStart + "'\n"
+                             + aCmd + "\n"
+                             + "echo '" + m_agentSentinelEnd + "'\n";
+    m_pty->Write( wrappedCmd );
+}
+
+
+void PTY_WEBVIEW_PANEL::ProcessAgentCapture( const std::string& aData )
+{
+    m_agentCaptureBuffer += aData;
+
+    // Look for start sentinel
+    if( !m_agentSentinelStartFound )
+    {
+        size_t startPos = m_agentCaptureBuffer.find( m_agentSentinelStart );
+
+        if( startPos != std::string::npos )
+        {
+            m_agentSentinelStartFound = true;
+
+            size_t endOfSentinel = startPos + m_agentSentinelStart.size();
+
+            if( endOfSentinel < m_agentCaptureBuffer.size()
+                && m_agentCaptureBuffer[endOfSentinel] == '\n' )
+            {
+                endOfSentinel++;
+            }
+
+            m_agentCaptureBuffer = m_agentCaptureBuffer.substr( endOfSentinel );
+        }
+    }
+
+    // Look for end sentinel
+    if( m_agentSentinelStartFound )
+    {
+        size_t endPos = m_agentCaptureBuffer.find( m_agentSentinelEnd );
+
+        if( endPos != std::string::npos )
+        {
+            std::string output = m_agentCaptureBuffer.substr( 0, endPos );
+
+            while( !output.empty() && output.back() == '\n' )
+                output.pop_back();
+
+            m_agentTimeoutTimer.Stop();
+            m_agentCapturing = false;
+
+            if( m_agentCallback )
+            {
+                m_agentCallback( output.empty() ? "(no output)" : output, true );
+                m_agentCallback = nullptr;
+            }
+        }
+    }
+}
+
+
+void PTY_WEBVIEW_PANEL::OnAgentTimeout( wxTimerEvent& aEvent )
+{
+    if( !m_agentCapturing )
+        return;
+
+    m_agentCapturing = false;
+
+    if( m_agentCallback )
+    {
+        m_agentCallback( "Error: Command execution timed out", false );
+        m_agentCallback = nullptr;
+    }
+}
+
+
+// ---- HTML Template ----
+
+wxString PTY_WEBVIEW_PANEL::GetTerminalHtml()
+{
+    return R"HTML(<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<style>
+    html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #1e1e1e;
+    }
+    #terminal {
+        width: 100%;
+        height: 100%;
+    }
+    /* Ensure xterm fills the container */
+    .xterm {
+        height: 100%;
+    }
+</style>
+</head>
+<body>
+<div id="terminal"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<script>
+(function() {
+    'use strict';
+
+    // Send message to C++ via WebKit message handler
+    function sendMsg(action, data) {
+        var msg = JSON.stringify(Object.assign({action: action}, data || {}));
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.terminal) {
+            window.webkit.messageHandlers.terminal.postMessage(msg);
+        }
+    }
+
+    // Create terminal with dark theme
+    var term = new Terminal({
+        theme: {
+            background: '#1e1e1e',
+            foreground: '#d4d4d4',
+            cursor: '#aeafad',
+            cursorAccent: '#1e1e1e',
+            selectionBackground: '#44688b',
+            black: '#1e1e1e',
+            red: '#f44747',
+            green: '#6a9955',
+            yellow: '#d7ba7d',
+            blue: '#569cd6',
+            magenta: '#c586c0',
+            cyan: '#4ec9b0',
+            white: '#d4d4d4',
+            brightBlack: '#808080',
+            brightRed: '#f44747',
+            brightGreen: '#6a9955',
+            brightYellow: '#d7ba7d',
+            brightBlue: '#569cd6',
+            brightMagenta: '#c586c0',
+            brightCyan: '#4ec9b0',
+            brightWhite: '#ffffff'
+        },
+        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        fontSize: 13,
+        cursorBlink: true,
+        scrollback: 10000,
+        allowProposedApi: true
+    });
+
+    // Fit addon for auto-resize
+    var fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+
+    // Open terminal in container
+    term.open(document.getElementById('terminal'));
+    fitAddon.fit();
+
+    // User input → C++ → PTY
+    term.onData(function(data) {
+        sendMsg('input', { data: btoa(data) });
+    });
+
+    // Binary input (e.g., from some paste operations)
+    term.onBinary(function(data) {
+        sendMsg('input', { data: btoa(data) });
+    });
+
+    // Terminal resized → notify C++ to resize PTY
+    term.onResize(function(size) {
+        sendMsg('resize', { cols: size.cols, rows: size.rows });
+    });
+
+    // Title change → notify C++
+    term.onTitleChange(function(title) {
+        sendMsg('title', { title: title });
+    });
+
+    // Watch for container resize → refit terminal
+    var resizeObserver = new ResizeObserver(function() {
+        try { fitAddon.fit(); } catch(e) {}
+    });
+    resizeObserver.observe(document.getElementById('terminal'));
+
+    // C++ calls this to write PTY data to the terminal
+    // Data is base64 encoded for safe transfer
+    window.termWrite = function(b64data) {
+        try {
+            var raw = atob(b64data);
+            var bytes = new Uint8Array(raw.length);
+            for (var i = 0; i < raw.length; i++) {
+                bytes[i] = raw.charCodeAt(i);
+            }
+            term.write(bytes);
+        } catch(e) {
+            console.error('termWrite error:', e);
+        }
+    };
+
+    // Signal to C++ that the page is ready
+    // Use setTimeout to ensure xterm.js is fully initialized
+    setTimeout(function() {
+        sendMsg('ready', { cols: term.cols, rows: term.rows });
+    }, 50);
+
+})();
+</script>
+</body>
+</html>)HTML";
+}

@@ -22,3 +22,27 @@ target_link_libraries( utf8_tests
     )
 
 add_subdirectory( newstroke )
+
+# Install zeo CLI tool (Python script — goes in SharedSupport, not MacOS, to avoid codesign issues)
+if( APPLE )
+    set( ZEO_CLI_BUILD_DIR "${OSX_BUNDLE_BUILD_DIR}/${OSX_BUNDLE_SUP_DIR}/bin" )
+
+    add_custom_target( zeo_cli ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${ZEO_CLI_BUILD_DIR}
+        COMMAND ${CMAKE_COMMAND} -E copy
+            ${CMAKE_CURRENT_SOURCE_DIR}/zeo
+            ${ZEO_CLI_BUILD_DIR}/zeo
+        COMMAND chmod +x ${ZEO_CLI_BUILD_DIR}/zeo
+        COMMENT "Copying zeo CLI tool to app bundle"
+        )
+
+    install( PROGRAMS zeo
+        DESTINATION ${OSX_BUNDLE_INSTALL_DIR}/${OSX_BUNDLE_SUP_DIR}/bin
+        COMPONENT binary
+        )
+else()
+    install( PROGRAMS zeo
+        DESTINATION ${KICAD_BIN}
+        COMPONENT binary
+        )
+endif()

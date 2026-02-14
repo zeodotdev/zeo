@@ -1,0 +1,190 @@
+#!/bin/bash
+# zeo - CLI tool for Zeo (AI Agent extension for KiCad)
+#
+# Must clear PYTHONHOME/PYTHONPATH set by the Zeo app bundle to avoid
+# conflicts between the bundled Python framework and system Python.
+
+unset PYTHONHOME
+unset PYTHONPATH
+
+exec /usr/bin/env python3 - "$@" <<'PYTHON_EOF'
+import argparse
+import json
+import os
+import sys
+import time
+
+
+LOG_DIR = os.path.expanduser("~/Library/Logs/Zeo")
+MONITOR_LOG = os.path.join(LOG_DIR, "agent-monitor.jsonl")
+
+
+def cmd_monitor(args):
+    """Watch agent shell calls and responses."""
+    if not os.path.exists(MONITOR_LOG):
+        print(f"No monitor log found at {MONITOR_LOG}")
+        print("Agent commands will appear here once the agent starts running.")
+        if args.follow:
+            print("Waiting for log file...")
+            while not os.path.exists(MONITOR_LOG):
+                time.sleep(0.5)
+        else:
+            return
+
+    if args.follow:
+        _tail_follow(args)
+    else:
+        _show_recent(args)
+
+
+def _show_recent(args, count=50):
+    """Show the last N events from the log."""
+    lines = []
+    try:
+        with open(MONITOR_LOG, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    lines.append(line)
+    except FileNotFoundError:
+        print("No monitor log found.")
+        return
+
+    recent = lines[-count:]
+
+    if not recent:
+        print("No events recorded yet.")
+        return
+
+    for line in recent:
+        _format_line(line, args.json)
+
+
+def _tail_follow(args):
+    """Stream events in real-time (tail -f style)."""
+    try:
+        with open(MONITOR_LOG, "r") as f:
+            # Seek to end
+            f.seek(0, 2)
+
+            while True:
+                line = f.readline()
+                if line:
+                    line = line.strip()
+                    if line:
+                        _format_line(line, args.json)
+                else:
+                    time.sleep(0.1)
+    except KeyboardInterrupt:
+        pass
+
+
+def _format_line(line, raw_json=False):
+    """Format a JSONL line for display."""
+    if raw_json:
+        print(line)
+        return
+
+    try:
+        data = json.loads(line)
+    except json.JSONDecodeError:
+        print(line)
+        return
+
+    ts = data.get("ts", "")
+    # Show just time portion (HH:MM:SS.mmm)
+    time_str = ts.split("T")[1] if "T" in ts else ts
+
+    event = data.get("event", "")
+
+    if event == "cmd_start":
+        cmd_type = data.get("type", "")
+        mode = data.get("mode", "")
+        cmd = data.get("cmd", "")
+
+        # Truncate long commands for display
+        if len(cmd) > 200:
+            cmd = cmd[:200] + "..."
+
+        mode_str = f"  {mode:<5}" if mode else "      "
+        print(f"\033[36m{time_str}\033[0m{mode_str} \033[33m{cmd_type}\033[0m")
+        # Show the command indented
+        for cmd_line in cmd.split("\\n"):
+            if cmd_line.strip():
+                print(f"  {cmd_line}")
+
+    elif event == "cmd_end":
+        success = data.get("success", False)
+        duration = data.get("duration_ms", 0)
+        output = data.get("output", "")
+
+        if success:
+            status = f"\033[32mOK\033[0m ({duration}ms)"
+        else:
+            status = f"\033[31mFAIL\033[0m ({duration}ms)"
+
+        # Truncate long output for display
+        if len(output) > 500:
+            output = output[:500] + "..."
+
+        print(f"  {status}")
+        if output and output != "(no output)":
+            # Show first few lines of output
+            out_lines = output.split("\\n")
+            for out_line in out_lines[:10]:
+                if out_line.strip():
+                    print(f"  \033[2m{out_line}\033[0m")
+            if len(out_lines) > 10:
+                print(f"  \033[2m... ({len(out_lines) - 10} more lines)\033[0m")
+        print()
+
+    elif event == "error":
+        context = data.get("context", "")
+        error = data.get("error", "")
+        print(f"\033[36m{time_str}\033[0m  \033[31mERROR\033[0m [{context}] {error}")
+        print()
+
+    else:
+        # Unknown event type, show raw
+        print(line)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="zeo",
+        description="CLI tool for Zeo (AI Agent extension for KiCad)",
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # monitor subcommand
+    monitor_parser = subparsers.add_parser(
+        "monitor",
+        help="Watch agent shell calls and responses",
+    )
+    monitor_parser.add_argument(
+        "-f", "--follow",
+        action="store_true",
+        help="Stream events in real-time (tail -f style)",
+    )
+    monitor_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output raw JSON lines",
+    )
+
+    args = parser.parse_args()
+
+    if args.command is None:
+        parser.print_help()
+        sys.exit(1)
+
+    if args.command == "monitor":
+        cmd_monitor(args)
+    else:
+        parser.print_help()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+PYTHON_EOF

@@ -97,15 +97,16 @@ BOOST_AUTO_TEST_CASE( ErrorOnEmptyPinsArray )
 }
 
 
-BOOST_AUTO_TEST_CASE( ErrorOnPinSpecMissingColon )
+BOOST_AUTO_TEST_CASE( LabelSpecWithoutColonIsAccepted )
 {
     SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1_1", "R2:2" } ) } };
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "VCC", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
-    BOOST_CHECK( cmd.find( "error" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "R1_1" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "missing colon" ) != std::string::npos );
+    // Label specs (no colon) should produce ('label', 'VCC', '') tuples, not a validation error
+    BOOST_CHECK( cmd.find( "pin_specs = [" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "('label', 'VCC', '')" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "('pin', 'R2', '2')" ) != std::string::npos );
 }
 
 
@@ -203,8 +204,8 @@ BOOST_AUTO_TEST_CASE( GeneratedCodeContainsPinSpecs )
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
     BOOST_CHECK( cmd.find( "pin_specs = [" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "('R1', '1')" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "('R2', '2')" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "('pin', 'R1', '1')" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "('pin', 'R2', '2')" ) != std::string::npos );
 }
 
 
@@ -217,9 +218,9 @@ BOOST_AUTO_TEST_CASE( PinOrderIsPreserved )
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
     // U3 should appear before R8, R8 before R9
-    size_t posU3 = cmd.find( "('U3', '7')" );
-    size_t posR8 = cmd.find( "('R8', '2')" );
-    size_t posR9 = cmd.find( "('R9', '1')" );
+    size_t posU3 = cmd.find( "('pin', 'U3', '7')" );
+    size_t posR8 = cmd.find( "('pin', 'R8', '2')" );
+    size_t posR9 = cmd.find( "('pin', 'R9', '1')" );
 
     BOOST_REQUIRE( posU3 != std::string::npos );
     BOOST_REQUIRE( posR8 != std::string::npos );
@@ -237,7 +238,7 @@ BOOST_AUTO_TEST_CASE( SpecialCharsInRefAreEscaped )
     };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
-    // Single quote in ref should be escaped as \'
+    // Single quote in ref should be escaped as \' (inside 3-tuple)
     BOOST_CHECK( cmd.find( "R1\\'x" ) != std::string::npos );
 }
 

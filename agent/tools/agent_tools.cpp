@@ -576,11 +576,13 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                 { "type", "array" },
                 { "items", {
                     { "type", "string" },
-                    { "description", "Pin specifier as 'REF:PIN' (e.g., 'R1:1', 'U1:VCC', 'Q2:D')" }
+                    { "description", "Pin specifier as 'REF:PIN' (e.g., 'R1:1', 'U1:VCC', '#PWR01:1') or label name without colon (e.g., 'VCC', 'OUT')" }
                 }},
                 { "minItems", 2 },
-                { "description", "Array of pin specifiers. "
-                                "Format: 'REFERENCE:PIN_NUMBER_OR_NAME' (e.g., ['R1:2', 'R2:1', 'U1:3'])" }
+                { "description", "Array of pin specifiers or label names. "
+                                "Pins: 'REF:PIN' (e.g., 'R1:2', 'U1:3', '#PWR01:1'). "
+                                "Labels: name without colon (e.g., 'VCC', 'OUT'). "
+                                "Example: ['U1:8', 'VCC']" }
             }},
             { "mode", {
                 { "type", "string" },

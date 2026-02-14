@@ -95,55 +95,71 @@ def snap_to_grid(val, grid=1.27):
 // Expects `pin_specs` list to be defined before this code runs.
 static const char* CONNECT_NET_BODY = R"py(
 try:
-    # Phase 1: Resolve pin positions
+    # Phase 1: Resolve pin/label positions
     pin_positions = []
-    for ref, pin_id in pin_specs:
-        sym = sch.symbols.get_by_ref(ref)
-        if not sym:
-            raise ValueError(f'Symbol not found: {ref}')
-        pin_result = sch.symbols.get_transformed_pin_position(sym, pin_id)
-        if not pin_result:
-            pin_pos = sch.symbols.get_pin_position(sym, pin_id)
-            if not pin_pos:
-                raise ValueError(f'Pin not found: {pin_id} on {ref}')
-            px = pin_pos.x / 1_000_000
-            py = pin_pos.y / 1_000_000
-            pin_orientation = None
+    for spec_type, name, pin_id in pin_specs:
+        if spec_type == 'label':
+            # Label spec: find existing label by text
+            ref = name
+            all_labels = sch.labels.get_all()
+            matches = [l for l in all_labels if hasattr(l, 'text') and l.text == name]
+            if not matches:
+                raise ValueError(f'Label not found: {name}')
+            lbl = matches[0]
+            px = lbl.position.x / 1_000_000
+            py = lbl.position.y / 1_000_000
+            out_dx, out_dy = 0, 0
+            pin_dir = 'h'
+            print(f'[route] label:{name} pos=({px:.2f},{py:.2f})', file=sys.stderr)
         else:
-            px = pin_result['position'].x / 1_000_000
-            py = pin_result['position'].y / 1_000_000
-            pin_orientation = pin_result.get('orientation', None)
-        # Compute outward escape direction from pin orientation (degrees from KiCad API)
-        # 0°=right, 90°=up, 180°=left, 270°=down
-        if pin_orientation is not None:
-            ang = pin_orientation % 360
-            if ang < 45 or ang >= 315:
-                out_dx, out_dy = 1.27, 0       # right
-                pin_dir = 'h'
-            elif 45 <= ang < 135:
-                out_dx, out_dy = 0, -1.27      # up (Y inverted in KiCad)
-                pin_dir = 'v'
-            elif 135 <= ang < 225:
-                out_dx, out_dy = -1.27, 0      # left
-                pin_dir = 'h'
+            # Pin spec: existing symbol pin logic
+            ref = name
+            sym = sch.symbols.get_by_ref(ref)
+            if not sym:
+                raise ValueError(f'Symbol not found: {ref}')
+            pin_result = sch.symbols.get_transformed_pin_position(sym, pin_id)
+            if not pin_result:
+                pin_pos = sch.symbols.get_pin_position(sym, pin_id)
+                if not pin_pos:
+                    raise ValueError(f'Pin not found: {pin_id} on {ref}')
+                px = pin_pos.x / 1_000_000
+                py = pin_pos.y / 1_000_000
+                pin_orientation = None
             else:
-                out_dx, out_dy = 0, 1.27       # down
-                pin_dir = 'v'
-        else:
-            # Fallback: guess from symbol center
-            sym_cx = sym.position.x / 1_000_000
-            sym_cy = sym.position.y / 1_000_000
-            if abs(px - sym_cx) >= abs(py - sym_cy):
-                out_dx = 1.27 if px > sym_cx else -1.27
-                out_dy = 0
-                pin_dir = 'h'
+                px = pin_result['position'].x / 1_000_000
+                py = pin_result['position'].y / 1_000_000
+                pin_orientation = pin_result.get('orientation', None)
+            # Compute outward escape direction from pin orientation (degrees from KiCad API)
+            # 0°=right, 90°=up, 180°=left, 270°=down
+            if pin_orientation is not None:
+                ang = pin_orientation % 360
+                if ang < 45 or ang >= 315:
+                    out_dx, out_dy = 1.27, 0       # right
+                    pin_dir = 'h'
+                elif 45 <= ang < 135:
+                    out_dx, out_dy = 0, -1.27      # up (Y inverted in KiCad)
+                    pin_dir = 'v'
+                elif 135 <= ang < 225:
+                    out_dx, out_dy = -1.27, 0      # left
+                    pin_dir = 'h'
+                else:
+                    out_dx, out_dy = 0, 1.27       # down
+                    pin_dir = 'v'
             else:
-                out_dx = 0
-                out_dy = 1.27 if py > sym_cy else -1.27
-                pin_dir = 'v'
-        _dir_name = {(1.27,0):'RIGHT', (-1.27,0):'LEFT', (0,-1.27):'UP', (0,1.27):'DOWN'}.get((out_dx,out_dy), '?')
-        print(f'[route] {ref}:{pin_id} pos=({px:.2f},{py:.2f}) orient={pin_orientation} -> {_dir_name} ({out_dx},{out_dy})', file=sys.stderr)
-        pin_positions.append({'ref': ref, 'pin': pin_id, 'x': snap_to_grid(px), 'y': snap_to_grid(py), 'raw_x': px, 'raw_y': py, 'sym': sym, 'dir': pin_dir, 'out_dx': out_dx, 'out_dy': out_dy})
+                # Fallback: guess from symbol center
+                sym_cx = sym.position.x / 1_000_000
+                sym_cy = sym.position.y / 1_000_000
+                if abs(px - sym_cx) >= abs(py - sym_cy):
+                    out_dx = 1.27 if px > sym_cx else -1.27
+                    out_dy = 0
+                    pin_dir = 'h'
+                else:
+                    out_dx = 0
+                    out_dy = 1.27 if py > sym_cy else -1.27
+                    pin_dir = 'v'
+            _dir_name = {(1.27,0):'RIGHT', (-1.27,0):'LEFT', (0,-1.27):'UP', (0,1.27):'DOWN'}.get((out_dx,out_dy), '?')
+            print(f'[route] {ref}:{pin_id} pos=({px:.2f},{py:.2f}) orient={pin_orientation} -> {_dir_name} ({out_dx},{out_dy})', file=sys.stderr)
+        pin_positions.append({'ref': ref, 'pin': pin_id, 'x': snap_to_grid(px), 'y': snap_to_grid(py), 'raw_x': px, 'raw_y': py, 'dir': pin_dir, 'out_dx': out_dx, 'out_dy': out_dy})
 
     wire_count = 0
     junction_count = 0
@@ -567,20 +583,19 @@ std::string SCH_CONNECT_NET_HANDLER::GenerateConnectNetCode( const nlohmann::jso
 
     auto pins = aInput["pins"];
 
-    // Parse and validate pin specifiers at C++ time
-    std::vector<std::pair<std::string, std::string>> pinSpecs;
+    // Parse pin/label specifiers at C++ time.
+    // With colon  → pin spec:   ('pin',   'R1', '1')
+    // Without colon → label spec: ('label', 'VCC', '')
+    struct PinOrLabel { std::string type; std::string name; std::string pin; };
+    std::vector<PinOrLabel> pinSpecs;
     for( size_t i = 0; i < pins.size(); ++i )
     {
         std::string spec = pins[i].get<std::string>();
         size_t colonPos = spec.find( ':' );
         if( colonPos == std::string::npos )
-        {
-            return "import json\n"
-                   "print(json.dumps({'status': 'error', 'message': "
-                   "'Invalid pin specifier (missing colon): "
-                   + EscapePythonString( spec ) + "'}))\n";
-        }
-        pinSpecs.emplace_back( spec.substr( 0, colonPos ), spec.substr( colonPos + 1 ) );
+            pinSpecs.push_back( { "label", spec, "" } );
+        else
+            pinSpecs.push_back( { "pin", spec.substr( 0, colonPos ), spec.substr( colonPos + 1 ) } );
     }
 
     std::string mode = aInput.value( "mode", "chain" );
@@ -588,10 +603,11 @@ std::string SCH_CONNECT_NET_HANDLER::GenerateConnectNetCode( const nlohmann::jso
     // Build pin_specs Python list and mode (only dynamic parts)
     std::ostringstream pinSpecCode;
     pinSpecCode << "pin_specs = [\n";
-    for( const auto& [ref, pin] : pinSpecs )
+    for( const auto& ps : pinSpecs )
     {
-        pinSpecCode << "    ('" << EscapePythonString( ref )
-                    << "', '" << EscapePythonString( pin ) << "'),\n";
+        pinSpecCode << "    ('" << EscapePythonString( ps.type )
+                    << "', '" << EscapePythonString( ps.name )
+                    << "', '" << EscapePythonString( ps.pin ) << "'),\n";
     }
     pinSpecCode << "]\n";
     pinSpecCode << "routing_mode = '" << EscapePythonString( mode ) << "'\n";

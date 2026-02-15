@@ -1755,26 +1755,6 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         break;
     }
 
-    case MAIL_AGENT_TRACKING_MODE:
-    {
-        try
-        {
-            nlohmann::json j = nlohmann::json::parse( payload );
-            bool enabled = j.value( "tracking", false );
-
-            if( GetCanvas() && GetCanvas()->GetView() )
-            {
-                DIFF_MANAGER::GetInstance().SetTrackingMode( GetCanvas()->GetView(), enabled );
-                GetCanvas()->Refresh();
-            }
-        }
-        catch( const std::exception& e )
-        {
-            wxLogWarning( "Failed to parse MAIL_AGENT_TRACKING_MODE payload: %s", e.what() );
-        }
-        break;
-    }
-
     default:;
     }
 }

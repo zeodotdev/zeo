@@ -56,7 +56,6 @@ void WEBVIEW_BRIDGE::OnMessage( const wxString& aMessage )
 
         // Control row actions
         else if( action == BridgeAction::MODEL_CHANGE )         HandleModelChange( msg );
-        else if( action == BridgeAction::TRACK_TOGGLE )         HandleTrackToggle( msg );
         else if( action == BridgeAction::SEND_CLICK )           HandleSendClick( msg );
         else if( action == BridgeAction::STOP_CLICK )           HandleStopClick( msg );
         else if( action == BridgeAction::SELECTION_PILL_CLICK ) HandleSelectionPillClick( msg );
@@ -185,11 +184,6 @@ void WEBVIEW_BRIDGE::HandleModelChange( const nlohmann::json& aMsg )
     std::string model = aMsg.value( "model", "" );
     if( !model.empty() )
         m_frame->DoModelChange( model );
-}
-
-void WEBVIEW_BRIDGE::HandleTrackToggle( const nlohmann::json& aMsg )
-{
-    m_frame->DoTrackToggle();
 }
 
 void WEBVIEW_BRIDGE::HandlePlanToggle( const nlohmann::json& aMsg )
@@ -410,22 +404,6 @@ void WEBVIEW_BRIDGE::PushModelList( const std::vector<std::string>& aModels,
     j["selected"] = aSelected;
     RunScript( wxString::Format( "App.Controls.setModelList(%s);",
                                  wxString::FromUTF8( j.dump() ) ) );
-}
-
-void WEBVIEW_BRIDGE::PushTrackingState( bool aTracking )
-{
-    LogBridge( "C++->JS", wxString::Format( "setTrackingState(%s)",
-                                            aTracking ? "true" : "false" ) );
-    RunScript( wxString::Format( "App.Controls.setTrackingState(%s);",
-                                 aTracking ? "true" : "false" ) );
-}
-
-void WEBVIEW_BRIDGE::PushTrackButtonVisible( bool aVisible )
-{
-    LogBridge( "C++->JS", wxString::Format( "setTrackButtonVisible(%s)",
-                                            aVisible ? "true" : "false" ) );
-    RunScript( wxString::Format( "App.Controls.setTrackButtonVisible(%s);",
-                                 aVisible ? "true" : "false" ) );
 }
 
 void WEBVIEW_BRIDGE::PushPlanMode( bool aPlanMode )

@@ -2,6 +2,9 @@
 #include <sstream>
 #include <iomanip>
 
+// Overlap detection padding per side (mm). Total clearance = 2x this value.
+static constexpr double BBOX_MARGIN_MM = 0.5;
+
 
 bool SCH_CRUD_HANDLER::CanHandle( const std::string& aToolName ) const
 {
@@ -325,7 +328,7 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
     if( hasPositionUpdate )
     {
         code << "# Collect bounding boxes of all existing symbols and labels for overlap detection\n";
-        code << "_BBOX_MARGIN = 0.635  # half grid step per side = 1.27mm total clearance\n";
+        code << "_BBOX_MARGIN = " << BBOX_MARGIN_MM << "\n";
         code << "placed_bboxes = []\n";
         code << "try:\n";
         code << "    _all_existing = sch.symbols.get_all()\n";
@@ -1411,7 +1414,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
     // --- Overlap detection preamble ---
     code << "# Collect bounding boxes of all existing symbols and labels for overlap detection\n";
-    code << "_BBOX_MARGIN = 0.635  # half grid step per side = 1.27mm total clearance between components\n";
+    code << "_BBOX_MARGIN = " << BBOX_MARGIN_MM << "\n";
     code << "placed_bboxes = []\n";
     code << "try:\n";
     code << "    _all_existing = sch.symbols.get_all()\n";

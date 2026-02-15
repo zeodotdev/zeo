@@ -23,7 +23,6 @@
 
 #include <diff_manager.h>
 #include <preview_items/diff_overlay_item.h>
-#include <preview_items/tracking_border_overlay.h>
 #include <view/view.h>
 #include <wx/log.h>
 
@@ -48,11 +47,6 @@ DIFF_MANAGER::~DIFF_MANAGER()
         {
             view->Remove( state.item );
             delete state.item;
-        }
-        if( view && state.trackingBorder )
-        {
-            view->Remove( state.trackingBorder );
-            delete state.trackingBorder;
         }
     }
     m_viewStates.clear();
@@ -218,17 +212,6 @@ void DIFF_MANAGER::UnregisterOverlay( KIGFX::VIEW* aView )
     {
         delete state.item;
         state.item = nullptr;
-    }
-
-    if( aView && state.trackingBorder )
-    {
-        aView->Remove( state.trackingBorder );
-    }
-
-    if( state.trackingBorder )
-    {
-        delete state.trackingBorder;
-        state.trackingBorder = nullptr;
     }
 
     // Clear callbacks to prevent dangling references
@@ -486,110 +469,4 @@ wxString DIFF_MANAGER::GetSheetPath( KIGFX::VIEW* aView ) const
 }
 
 
-void DIFF_MANAGER::SetTrackingMode( KIGFX::VIEW* aView, bool aEnabled )
-{
-    std::lock_guard<std::recursive_mutex> lock( m_mutex );
 
-    if( !aView )
-        return;
-
-    // Ensure state exists for this view
-    DIFF_VIEW_STATE& state = m_viewStates[aView];
-
-    if( aEnabled && !state.trackingActive )
-    {
-        // Enable tracking - create and add border overlay
-        state.trackingActive = true;
-
-        if( !state.trackingBorder )
-        {
-            state.trackingBorder = new KIGFX::PREVIEW::TRACKING_BORDER_OVERLAY();
-            aView->Add( state.trackingBorder );
-            aView->SetVisible( state.trackingBorder, true );
-            aView->Update( state.trackingBorder );
-        }
-
-        aView->MarkDirty();
-        wxLogInfo( "Agent tracking: enabled on view" );
-    }
-    else if( !aEnabled && state.trackingActive )
-    {
-        // Disable tracking - remove border overlay
-        state.trackingActive = false;
-
-        if( state.trackingBorder )
-        {
-            aView->Remove( state.trackingBorder );
-            delete state.trackingBorder;
-            state.trackingBorder = nullptr;
-        }
-
-        aView->MarkDirty();
-        wxLogInfo( "Agent tracking: disabled on view" );
-
-        // Clear callback if no views are tracking
-        bool anyTracking = false;
-        for( const auto& [v, s] : m_viewStates )
-        {
-            if( s.trackingActive )
-            {
-                anyTracking = true;
-                break;
-            }
-        }
-        if( !anyTracking )
-            m_trackingBrokenCallback = nullptr;
-    }
-}
-
-
-bool DIFF_MANAGER::IsTrackingActive( KIGFX::VIEW* aView ) const
-{
-    std::lock_guard<std::recursive_mutex> lock( m_mutex );
-
-    auto it = m_viewStates.find( aView );
-    if( it == m_viewStates.end() )
-        return false;
-
-    return it->second.trackingActive;
-}
-
-
-void DIFF_MANAGER::BreakTracking( KIGFX::VIEW* aView )
-{
-    std::lock_guard<std::recursive_mutex> lock( m_mutex );
-
-    auto it = m_viewStates.find( aView );
-    if( it == m_viewStates.end() )
-        return;
-
-    DIFF_VIEW_STATE& state = it->second;
-
-    if( !state.trackingActive )
-        return;
-
-    wxLogInfo( "Agent tracking: broken by user interaction" );
-
-    // Disable tracking
-    state.trackingActive = false;
-
-    if( state.trackingBorder )
-    {
-        aView->Remove( state.trackingBorder );
-        delete state.trackingBorder;
-        state.trackingBorder = nullptr;
-    }
-
-    aView->MarkDirty();
-
-    // Invoke callback to notify agent
-    if( m_trackingBrokenCallback )
-        m_trackingBrokenCallback();
-}
-
-
-void DIFF_MANAGER::SetTrackingBrokenCallback( std::function<void()> aCallback )
-{
-    std::lock_guard<std::recursive_mutex> lock( m_mutex );
-    m_trackingBrokenCallback = aCallback;
-}

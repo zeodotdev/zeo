@@ -21,7 +21,6 @@ namespace KIGFX
 namespace PREVIEW
 {
     class DIFF_OVERLAY_ITEM;
-    class TRACKING_BORDER_OVERLAY;
 }
 } // namespace KIGFX
 
@@ -57,10 +56,6 @@ struct DIFF_VIEW_STATE
     AGENT_CHANGE_TRACKER*              tracker = nullptr;     ///< Item-based tracker (optional)
     wxString                           sheetPath;             ///< Sheet path for multi-sheet (optional)
     BBOX_COMPUTE_CALLBACK              bboxCallback;          ///< Dynamic bbox computation callback
-
-    // Tracking mode state
-    bool                                       trackingActive = false;
-    KIGFX::PREVIEW::TRACKING_BORDER_OVERLAY*   trackingBorder = nullptr;
 };
 
 class DIFF_MANAGER
@@ -141,35 +136,6 @@ public:
      */
     wxString GetSheetPath( KIGFX::VIEW* aView ) const;
 
-    /**
-     * Enable or disable tracking mode for a view.
-     * When enabled, displays a green border around the viewport.
-     * @param aView The view to enable/disable tracking on.
-     * @param aEnabled True to enable tracking, false to disable.
-     */
-    void SetTrackingMode( KIGFX::VIEW* aView, bool aEnabled );
-
-    /**
-     * Check if tracking mode is active on a view.
-     * @param aView The view to check.
-     * @return True if tracking is active on the view.
-     */
-    bool IsTrackingActive( KIGFX::VIEW* aView ) const;
-
-    /**
-     * Break tracking mode on a view.
-     * Called when user interacts with the editor (scroll, drag, click).
-     * This disables tracking and invokes the callback to notify the agent.
-     * @param aView The view where tracking should be broken.
-     */
-    void BreakTracking( KIGFX::VIEW* aView );
-
-    /**
-     * Set the callback to invoke when tracking is broken by user interaction.
-     * @param aCallback Function to call when tracking is broken.
-     */
-    void SetTrackingBrokenCallback( std::function<void()> aCallback );
-
 private:
     DIFF_MANAGER();
     ~DIFF_MANAGER();
@@ -190,9 +156,6 @@ private:
 
     // Current active view (set by RegisterOverlay, used by parameterless methods)
     KIGFX::VIEW* m_currentView = nullptr;
-
-    // Callback for when tracking is broken by user interaction
-    std::function<void()> m_trackingBrokenCallback;
 };
 
 #endif // DIFF_MANAGER_H

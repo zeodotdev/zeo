@@ -35,7 +35,6 @@ namespace BridgeAction
 
     // Control row actions
     constexpr const char* MODEL_CHANGE       = "model_change";
-    constexpr const char* TRACK_TOGGLE       = "track_toggle";
     constexpr const char* SEND_CLICK         = "send_click";
     constexpr const char* STOP_CLICK         = "stop_click";
     constexpr const char* SELECTION_PILL_CLICK = "selection_pill_click";

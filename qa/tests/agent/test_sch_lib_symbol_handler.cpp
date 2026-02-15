@@ -395,4 +395,29 @@ BOOST_AUTO_TEST_CASE( ExecuteReturnsError )
 }
 
 
+/**
+ * Test that generated code extracts bounding box data from SymbolInfo.
+ */
+BOOST_AUTO_TEST_CASE( GeneratedCodeExtractsBoundingBox )
+{
+    SCH_LIB_SYMBOL_HANDLER handler;
+    nlohmann::json input = { { "lib_id", "Device:R" } };
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
+
+    // Must extract bounding box fields from SymbolInfo
+    BOOST_CHECK_MESSAGE( cmd.find( "body_bbox_min_x_nm" ) != std::string::npos,
+        "Must extract body_bbox_min_x_nm from symbol info" );
+    BOOST_CHECK_MESSAGE( cmd.find( "body_bbox_max_x_nm" ) != std::string::npos,
+        "Must extract body_bbox_max_x_nm from symbol info" );
+
+    // Must include body_size in the result
+    BOOST_CHECK_MESSAGE( cmd.find( "body_size" ) != std::string::npos,
+        "Must include body_size in format_symbol result" );
+
+    // Must convert nm to mm
+    BOOST_CHECK_MESSAGE( cmd.find( "1_000_000" ) != std::string::npos,
+        "Must convert nm to mm" );
+}
+
+
 BOOST_AUTO_TEST_SUITE_END()

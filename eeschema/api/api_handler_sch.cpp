@@ -4325,6 +4325,17 @@ API_HANDLER_SCH::handleGetSymbolInfo(
             pinInfo->set_graphical_style( magic_enum::enum_name( pin->GetShape() ).data() );
             pinInfo->set_unit( pin->GetUnit() );
         }
+
+        // Add bounding box (body + pins, all units)
+        BOX2I bbox = symbol->GetBodyBoundingBox( 0, 0, true, false );
+
+        if( bbox.GetWidth() > 0 || bbox.GetHeight() > 0 )
+        {
+            info->set_body_bbox_min_x_nm( bbox.GetPosition().x );
+            info->set_body_bbox_min_y_nm( bbox.GetPosition().y );
+            info->set_body_bbox_max_x_nm( bbox.GetPosition().x + bbox.GetWidth() );
+            info->set_body_bbox_max_y_nm( bbox.GetPosition().y + bbox.GetHeight() );
+        }
     }
     catch( const IO_ERROR& e )
     {

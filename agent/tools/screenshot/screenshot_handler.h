@@ -43,9 +43,11 @@ private:
      * Sends an export_screenshot command to the appropriate editor frame.
      * @param aIsSchematic true for schematic, false for PCB
      * @param aTempDir Temporary directory for output
+     * @param aFilePath Path to the schematic file (used to identify sub-sheets)
      * @return Path to the exported SVG, or empty on failure
      */
-    std::string ExportViaIpc( bool aIsSchematic, const std::string& aTempDir );
+    std::string ExportViaIpc( bool aIsSchematic, const std::string& aTempDir,
+                              const std::string& aFilePath = std::string() );
 
     /**
      * Export a schematic to SVG using kicad-cli.

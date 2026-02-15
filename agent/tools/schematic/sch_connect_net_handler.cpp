@@ -349,6 +349,7 @@ try:
 
     if routing_mode == 'chain':
         # Chain mode: A* route each consecutive pin pair
+        all_segments = []
         for ci in range(len(pin_positions) - 1):
             p0, p1 = pin_positions[ci], pin_positions[ci + 1]
             waypoints = _route_pins(p0, p1)
@@ -356,6 +357,37 @@ try:
             if hit:
                 raise ValueError(f'Wire from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
             wire_count += _place_path(waypoints)
+            # Track wire segment endpoints for junction detection
+            for wi in range(len(waypoints) - 1):
+                ax, ay = waypoints[wi]
+                bx, by = waypoints[wi + 1]
+                all_segments.append((round(ax, 2), round(ay, 2), round(bx, 2), round(by, 2)))
+                _track(ax, ay)
+                _track(bx, by)
+
+        # Account for wires passing through interior of other segments
+        for key in list(_wire_ep.keys()):
+            kx, ky = key
+            for sx, sy, ex, ey in all_segments:
+                # Skip if point is at segment endpoints (already tracked)
+                if (kx, ky) == (sx, sy) or (kx, ky) == (ex, ey):
+                    continue
+                # Horizontal segment: same y, x between endpoints
+                if abs(sy - ey) < 0.01 and abs(ky - sy) < 0.01:
+                    if min(sx, ex) < kx < max(sx, ex):
+                        _wire_ep[key] += 2
+                # Vertical segment: same x, y between endpoints
+                elif abs(sx - ex) < 0.01 and abs(kx - sx) < 0.01:
+                    if min(sy, ey) < ky < max(sy, ey):
+                        _wire_ep[key] += 2
+
+        # Place junctions where 3+ wire endpoints meet
+        _junctions_done = set()
+        for key, count in _wire_ep.items():
+            if count >= 3 and key not in _junctions_done:
+                sch.wiring.add_junction(Vector2.from_xy_mm(key[0], key[1]))
+                junction_count += 1
+                _junctions_done.add(key)
 
     elif len(pin_positions) == 2:
         # 2-pin star: A* route

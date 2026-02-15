@@ -298,7 +298,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schAdd.description =
         "Add elements to the schematic. Accepts an array of elements. "
         "Returns pin positions for all placed symbols. "
-        "Rejects placements that overlap existing components (1.27mm clearance). "
+        "Rejects placements that overlap existing components (1.0mm clearance). "
         "Use sch_connect_net for wiring.\n\n"
         "Element types: symbol, power, label, no_connect, bus_entry.";
     schAdd.input_schema = {
@@ -369,7 +369,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schUpdate.description =
         "Update elements in the schematic. Accepts an array of updates - use for single or batch operations. "
         "Can modify position, rotation, mirror, properties, and text field positions. Target by reference or UUID. "
-        "Moves are rejected if the new position overlaps an existing component (1.27mm clearance). "
+        "Moves are rejected if the new position overlaps an existing component (1.0mm clearance). "
         "Use 'fields' to reposition Reference/Value text relative to symbol center (avoids overlap). "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schUpdate.input_schema = {

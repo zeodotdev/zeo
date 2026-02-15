@@ -1472,7 +1472,10 @@ void SCH_EDIT_FRAME::OnModify()
     // Check if agent-tracked items were deleted by the user
     // Skip when showing "before" state — items are intentionally absent from screen
     // Skip during undo/redo — items are temporarily absent but on the redo/undo list
+    // Skip during agent transactions — the agent may be mid-operation (e.g. overlap
+    // rejection removes a symbol before re-adding at a different position)
     if( m_hasAgentPendingChanges && !m_showingAgentBefore && !m_inUndoRedo
+        && !m_agentTransactionActive
         && m_agentChangeTracker && m_agentChangeTracker->HasChanges() )
     {
         std::set<KIID> trackedItems = m_agentChangeTracker->GetAllTrackedItems();

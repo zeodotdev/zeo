@@ -1209,13 +1209,17 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "Export a visual screenshot (PNG render) of a schematic or PCB file. "
         "Returns the image for visual inspection. Use this to verify layout, "
         "check component placement, review wiring, or confirm design changes. "
-        "The file must be a .kicad_sch (schematic) or .kicad_pcb (PCB layout) file.";
+        "The file must be a .kicad_sch (schematic) or .kicad_pcb (PCB layout) file. "
+        "For multi-sheet schematics, pass the specific sub-sheet .kicad_sch file "
+        "to screenshot that sheet.";
     screenshot.input_schema = {
         { "type", "object" },
         { "properties", {
             { "file_path", {
                 { "type", "string" },
-                { "description", "Absolute path to the .kicad_sch or .kicad_pcb file to screenshot" }
+                { "description", "Absolute path to the .kicad_sch or .kicad_pcb file to screenshot. "
+                                 "For multi-sheet schematics, pass the sub-sheet .kicad_sch file "
+                                 "path to screenshot that specific sheet." }
             }}
         }},
         { "required", json::array( { "file_path" } ) }

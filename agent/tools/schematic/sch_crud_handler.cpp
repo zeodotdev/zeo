@@ -390,13 +390,22 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
             double posX = SnapToGrid( update["position"][0].get<double>() );
             double posY = SnapToGrid( update["position"][1].get<double>() );
 
-            // Save original position before move (in mm, for revert)
-            code << "        _orig_x_" << i << " = item_" << i << ".position.x / 1_000_000\n";
-            code << "        _orig_y_" << i << " = item_" << i << ".position.y / 1_000_000\n";
+            // Capture old symbol position and pin positions before move (for wire dragging)
+            code << "        _old_sym_x_" << i << " = round(item_" << i << ".position.x / 1e6, 2)\n";
+            code << "        _old_sym_y_" << i << " = round(item_" << i << ".position.y / 1e6, 2)\n";
+            code << "        _old_pins_" << i << " = []\n";
+            code << "        for _pin in item_" << i << ".pins:\n";
+            code << "            try:\n";
+            code << "                _tp = sch.symbols.get_transformed_pin_position(item_" << i << ", _pin.number)\n";
+            code << "                if _tp:\n";
+            code << "                    _old_pins_" << i << ".append((round(_tp['position'].x / 1e6, 2), round(_tp['position'].y / 1e6, 2)))\n";
+            code << "            except: pass\n";
 
-            // Perform the move
+
+            // Move the symbol
             code << "        new_pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        item_" << i << " = sch.symbols.move(item_" << i << ", new_pos_" << i << ")\n";
+
 
             // Overlap detection: check new position against all existing (excluding self)
             code << "        _overlap_" << i << " = False\n";
@@ -416,7 +425,7 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
             code << "        except:\n";
             code << "            pass\n";
             code << "        if _overlap_" << i << ":\n";
-            code << "            item_" << i << " = sch.symbols.move(item_" << i << ", Vector2.from_xy_mm(_orig_x_" << i << ", _orig_y_" << i << "))\n";
+            code << "            item_" << i << " = sch.symbols.move(item_" << i << ", Vector2.from_xy_mm(_old_sym_x_" << i << ", _old_sym_y_" << i << "))\n";
             code << "            raise ValueError(f'Move rejected: overlaps {_obstacle_ref_" << i << "}')\n";
 
             // Update placed_bboxes with new position
@@ -425,6 +434,121 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
             code << "                if _pb.get('id') == _item_id_" << i << ":\n";
             code << "                    placed_bboxes[_idx] = {'id': _item_id_" << i << ", 'min_x': _new_bbox_" << i << "['min_x'], 'max_x': _new_bbox_" << i << "['max_x'], 'min_y': _new_bbox_" << i << "['min_y'], 'max_y': _new_bbox_" << i << "['max_y']}\n";
             code << "                    break\n";
+
+
+            // Compute move delta from known target position (avoids stale position reads)
+            code << "        _dx_" << i << " = round(" << posX << " - _old_sym_x_" << i << ", 4)\n";
+            code << "        _dy_" << i << " = round(" << posY << " - _old_sym_y_" << i << ", 4)\n";
+            // Build pos_map by applying delta to old pin positions
+            code << "        _pos_map_" << i << " = {}\n";
+            code << "        if abs(_dx_" << i << ") > 0.001 or abs(_dy_" << i << ") > 0.001:\n";
+            code << "            for _op in _old_pins_" << i << ":\n";
+            code << "                _np = (round(_op[0] + _dx_" << i << ", 2), round(_op[1] + _dy_" << i << ", 2))\n";
+            code << "                _pos_map_" << i << "[_op] = _np\n";
+            code << "        if _pos_map_" << i << ":\n";
+            code << "            _rnd = lambda v: round(v, 2)\n";
+            code << "            def _mpos(p):\n";
+            code << "                for k, v in _pos_map_" << i << ".items():\n";
+            code << "                    if abs(p[0]-k[0]) < 0.05 and abs(p[1]-k[1]) < 0.05:\n";
+            code << "                        return v\n";
+            code << "                return None\n";
+            // Pre-scan for overshoot: if a pin moves past the far end of a wire,
+            // add the far end to pos_map so the connected wire gets an L-bend instead
+            code << "            for _w in sch.crud.get_wires():\n";
+            code << "                _ws2 = (_rnd(_w.start.x / 1e6), _rnd(_w.start.y / 1e6))\n";
+            code << "                _we2 = (_rnd(_w.end.x / 1e6), _rnd(_w.end.y / 1e6))\n";
+            code << "                _ns2 = _mpos(_ws2)\n";
+            code << "                _ne2 = _mpos(_we2)\n";
+            code << "                if _ns2 and not _ne2:\n";
+            code << "                    if abs(_ws2[0]-_we2[0]) < 0.01 and (_ws2[1]-_we2[1])*(_ns2[1]-_we2[1]) < 0:\n";
+            code << "                        _pos_map_" << i << "[_we2] = (_we2[0], _ns2[1])\n";
+            code << "                    elif abs(_ws2[1]-_we2[1]) < 0.01 and (_ws2[0]-_we2[0])*(_ns2[0]-_we2[0]) < 0:\n";
+            code << "                        _pos_map_" << i << "[_we2] = (_ns2[0], _we2[1])\n";
+            code << "                elif _ne2 and not _ns2:\n";
+            code << "                    if abs(_ws2[0]-_we2[0]) < 0.01 and (_we2[1]-_ws2[1])*(_ne2[1]-_ws2[1]) < 0:\n";
+            code << "                        _pos_map_" << i << "[_ws2] = (_ws2[0], _ne2[1])\n";
+            code << "                    elif abs(_ws2[1]-_we2[1]) < 0.01 and (_we2[0]-_ws2[0])*(_ne2[0]-_ws2[0]) < 0:\n";
+            code << "                        _pos_map_" << i << "[_ws2] = (_ne2[0], _ws2[1])\n";
+            // Update wires with orthogonal bend routing (like KiCad drag)
+            code << "            _all_w = sch.crud.get_wires()\n";
+            code << "            _rm_w = []\n";
+            code << "            _add_segs = []\n";
+            code << "            for _w in _all_w:\n";
+            code << "                _ws = (_rnd(_w.start.x / 1e6), _rnd(_w.start.y / 1e6))\n";
+            code << "                _we = (_rnd(_w.end.x / 1e6), _rnd(_w.end.y / 1e6))\n";
+            code << "                _ns = _mpos(_ws)\n";
+            code << "                _ne = _mpos(_we)\n";
+            code << "                if _ns or _ne:\n";
+            code << "                    _rm_w.append(_w)\n";
+            code << "                    _s = _ns or _ws\n";
+            code << "                    _e = _ne or _we\n";
+            code << "                    if abs(_s[0] - _e[0]) < 0.01 or abs(_s[1] - _e[1]) < 0.01:\n";
+            code << "                        _add_segs.append((_s, _e))\n";
+            code << "                    else:\n";
+            code << "                        _horiz = abs(_ws[1] - _we[1]) < abs(_ws[0] - _we[0])\n";
+            code << "                        if (_ns and _horiz) or (_ne and not _horiz):\n";
+            code << "                            _c = (_e[0], _s[1])\n";
+            code << "                        else:\n";
+            code << "                            _c = (_s[0], _e[1])\n";
+            code << "                        _add_segs.append((_s, _c))\n";
+            code << "                        _add_segs.append((_c, _e))\n";
+            // Also check for wires passing THROUGH old pin positions (pin between start/end)
+            code << "                elif not _ns and not _ne:\n";
+            code << "                    _is_h = abs(_ws[1] - _we[1]) < 0.01\n";
+            code << "                    _is_v = abs(_ws[0] - _we[0]) < 0.01\n";
+            code << "                    if _is_h or _is_v:\n";
+            code << "                        for _op, _np in _pos_map_" << i << ".items():\n";
+            code << "                            if _is_h and abs(_op[1] - _ws[1]) < 0.01:\n";
+            code << "                                _lo = min(_ws[0], _we[0])\n";
+            code << "                                _hi = max(_ws[0], _we[0])\n";
+            code << "                                if _lo + 0.01 < _op[0] < _hi - 0.01:\n";
+            code << "                                    _rm_w.append(_w)\n";
+            code << "                                    _add_segs.append((_ws, _np))\n";
+            code << "                                    _add_segs.append((_np, _we))\n";
+            code << "                                    break\n";
+            code << "                            elif _is_v and abs(_op[0] - _ws[0]) < 0.01:\n";
+            code << "                                _lo = min(_ws[1], _we[1])\n";
+            code << "                                _hi = max(_ws[1], _we[1])\n";
+            code << "                                if _lo + 0.01 < _op[1] < _hi - 0.01:\n";
+            code << "                                    _rm_w.append(_w)\n";
+            code << "                                    _add_segs.append((_ws, _np))\n";
+            code << "                                    _add_segs.append((_np, _we))\n";
+            code << "                                    break\n";
+            // Filter out zero-length segments (from overshoot collapsing)
+            code << "            _add_segs = [seg for seg in _add_segs if abs(seg[0][0]-seg[1][0]) > 0.01 or abs(seg[0][1]-seg[1][1]) > 0.01]\n";
+            code << "            if _rm_w:\n";
+            code << "                sch.crud.remove_items(_rm_w)\n";
+            code << "                for (_s, _e) in _add_segs:\n";
+            code << "                    sch.wiring.add_wire(Vector2.from_xy_mm(_s[0], _s[1]), Vector2.from_xy_mm(_e[0], _e[1]))\n";
+            // Update junctions
+            code << "            _all_j = sch.crud.get_junctions()\n";
+            code << "            _rm_j = []\n";
+            code << "            _add_j = []\n";
+            code << "            for _j in _all_j:\n";
+            code << "                _jp = (_rnd(_j.position.x / 1e6), _rnd(_j.position.y / 1e6))\n";
+            code << "                _jm = _mpos(_jp)\n";
+            code << "                if _jm:\n";
+            code << "                    _rm_j.append(_j)\n";
+            code << "                    _add_j.append(_jm)\n";
+            code << "            if _rm_j:\n";
+            code << "                sch.crud.remove_items(_rm_j)\n";
+            code << "                for _np in _add_j:\n";
+            code << "                    sch.wiring.add_junction(Vector2.from_xy_mm(_np[0], _np[1]))\n";
+            // Update no-connects
+            code << "            _all_nc = sch.crud.get_no_connects()\n";
+            code << "            _rm_nc = []\n";
+            code << "            _add_nc = []\n";
+            code << "            for _nc in _all_nc:\n";
+            code << "                _ncp = (_rnd(_nc.position.x / 1e6), _rnd(_nc.position.y / 1e6))\n";
+            code << "                _ncm = _mpos(_ncp)\n";
+            code << "                if _ncm:\n";
+            code << "                    _rm_nc.append(_nc)\n";
+            code << "                    _add_nc.append(_ncm)\n";
+            code << "            if _rm_nc:\n";
+            code << "                sch.crud.remove_items(_rm_nc)\n";
+            code << "                for _np in _add_nc:\n";
+            code << "                    sch.wiring.add_no_connect(Vector2.from_xy_mm(_np[0], _np[1]))\n";
+
 
             code << "        updated_" << i << " = True\n";
         }

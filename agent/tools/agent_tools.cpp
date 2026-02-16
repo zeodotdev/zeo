@@ -233,12 +233,12 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     LLM_TOOL schGetLibSymbol;
     schGetLibSymbol.name = "sch_find_symbol";
     schGetLibSymbol.description =
-        "Query symbol library for symbol definitions including pin positions. "
+        "Query symbol library for symbol definitions including pin positions and body size. "
         "Accepts a symbol name ('R') or full Library:Symbol identifier ('Device:R'). "
         "If just a name is given, searches all libraries. "
         "Supports wildcards ('Connector:Conn_01x*') and regex ('Device:R_[0-9]{4}'). "
-        "Returns pin positions relative to symbol origin. "
-        "Use this before wiring to get accurate pin locations. "
+        "Returns pin positions relative to symbol origin and body_size (width/height in mm). "
+        "Use this before placing/wiring to get accurate pin locations and symbol dimensions. "
         "REQUIRES: Schematic editor must be open.";
     schGetLibSymbol.input_schema = {
         { "type", "object" },

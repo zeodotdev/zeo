@@ -129,22 +129,28 @@ try:
                 px = pin_result['position'].x / 1_000_000
                 py = pin_result['position'].y / 1_000_000
                 pin_orientation = pin_result.get('orientation', None)
-            # Compute outward escape direction from pin orientation (degrees from KiCad API)
-            # 0°=right, 90°=up, 180°=left, 270°=down
+            # Compute outward escape direction from pin orientation enum.
+            # KiCad API returns PIN_ORIENTATION enum:
+            #   0 = PIN_RIGHT (pin extends right from tip toward body) -> escape LEFT
+            #   1 = PIN_LEFT  (pin extends left from tip toward body)  -> escape RIGHT
+            #   2 = PIN_UP    (pin extends up from tip toward body)    -> escape DOWN
+            #   3 = PIN_DOWN  (pin extends down from tip toward body)  -> escape UP
             if pin_orientation is not None:
-                ang = pin_orientation % 360
-                if ang < 45 or ang >= 315:
-                    out_dx, out_dy = 1.27, 0       # right
+                if pin_orientation == 1:
+                    out_dx, out_dy = 1.27, 0       # PIN_LEFT -> escape right
                     pin_dir = 'h'
-                elif 45 <= ang < 135:
-                    out_dx, out_dy = 0, -1.27      # up (Y inverted in KiCad)
+                elif pin_orientation == 0:
+                    out_dx, out_dy = -1.27, 0      # PIN_RIGHT -> escape left
+                    pin_dir = 'h'
+                elif pin_orientation == 2:
+                    out_dx, out_dy = 0, 1.27       # PIN_UP -> escape down (positive Y in schematic)
                     pin_dir = 'v'
-                elif 135 <= ang < 225:
-                    out_dx, out_dy = -1.27, 0      # left
-                    pin_dir = 'h'
+                elif pin_orientation == 3:
+                    out_dx, out_dy = 0, -1.27      # PIN_DOWN -> escape up (negative Y in schematic)
+                    pin_dir = 'v'
                 else:
-                    out_dx, out_dy = 0, 1.27       # down
-                    pin_dir = 'v'
+                    out_dx, out_dy = 1.27, 0       # fallback: right
+                    pin_dir = 'h'
             else:
                 # Fallback: guess from symbol center
                 sym_cx = sym.position.x / 1_000_000

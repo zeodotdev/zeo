@@ -186,7 +186,7 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
 
     if( m_sendRequestFn )
     {
-        svgPath = ExportViaIpc( isSchematic, tempDirStr );
+        svgPath = ExportViaIpc( isSchematic, tempDirStr, filePath );
 
         if( svgPath.empty() )
             wxLogWarning( "SCREENSHOT: IPC export failed, falling back to kicad-cli" );
@@ -238,7 +238,8 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
 }
 
 
-std::string SCREENSHOT_HANDLER::ExportViaIpc( bool aIsSchematic, const std::string& aTempDir )
+std::string SCREENSHOT_HANDLER::ExportViaIpc( bool aIsSchematic, const std::string& aTempDir,
+                                              const std::string& aFilePath )
 {
     // Create svg_out subdirectory (schematic plotter writes into this directory)
     std::string outputDir = aTempDir + "/svg_out";
@@ -250,7 +251,15 @@ std::string SCREENSHOT_HANDLER::ExportViaIpc( bool aIsSchematic, const std::stri
     cmd["type"] = "export_screenshot";
     cmd["output_dir"] = outputDir;
 
-    wxLogInfo( "SCREENSHOT: Requesting in-memory export via IPC (frame=%d)", targetFrame );
+    // Pass the filename so the IPC handler can find the correct sheet
+    if( !aFilePath.empty() )
+    {
+        wxFileName fn( wxString::FromUTF8( aFilePath ) );
+        cmd["sheet_file"] = fn.GetFullName().ToStdString();
+    }
+
+    wxLogInfo( "SCREENSHOT: Requesting in-memory export via IPC (frame=%d, file=%s)",
+               targetFrame, aFilePath.empty() ? "current" : aFilePath.c_str() );
 
     std::string responseStr = m_sendRequestFn( targetFrame, cmd.dump() );
 

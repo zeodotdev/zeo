@@ -330,6 +330,58 @@ BOOST_AUTO_TEST_CASE( PinsSkippedWhenNotRequested )
 
 
 /**
+ * Regression: bare wildcard patterns (no library prefix) must also match against
+ * r.name, not just r.lib_id.  Otherwise a search for "ESP32*" won't match
+ * "RF_Module:ESP32-C3-MINI-1" because fnmatch("RF_Module:ESP32-C3-MINI-1", "ESP32*")
+ * returns False.
+ */
+BOOST_AUTO_TEST_CASE( BareWildcardMatchesSymbolName )
+{
+    SCH_LIB_SYMBOL_HANDLER handler;
+    nlohmann::json input = { { "lib_id", "ESP32*" } };
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
+
+    // Pattern has no ':', so has_lib_prefix should be false
+    BOOST_CHECK_MESSAGE( cmd.find( "has_lib_prefix = ':' in lib_id" ) != std::string::npos,
+                         "Must check whether pattern contains library prefix" );
+
+    // Must match against r.name for bare patterns (wildcard path)
+    BOOST_CHECK_MESSAGE( cmd.find( "fnmatch.fnmatch(r.name, lib_id)" ) != std::string::npos,
+                         "Bare wildcard must also match against r.name" );
+}
+
+
+/**
+ * Verify that wildcard patterns WITH a library prefix only match against r.lib_id.
+ */
+BOOST_AUTO_TEST_CASE( PrefixedWildcardMatchesLibIdOnly )
+{
+    SCH_LIB_SYMBOL_HANDLER handler;
+    nlohmann::json input = { { "lib_id", "RF_Module:ESP32*" } };
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
+
+    // Pattern has ':', so should only match against r.lib_id
+    BOOST_CHECK_MESSAGE( cmd.find( "fnmatch.fnmatch(r.lib_id, lib_id)" ) != std::string::npos,
+                         "Prefixed wildcard must match against r.lib_id" );
+}
+
+
+/**
+ * Regression: bare regex patterns must also match against r.name.
+ */
+BOOST_AUTO_TEST_CASE( BareRegexMatchesSymbolName )
+{
+    SCH_LIB_SYMBOL_HANDLER handler;
+    nlohmann::json input = { { "lib_id", "ESP32[_-]C3.*" } };
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
+
+    // Must match against r.name for bare regex patterns
+    BOOST_CHECK_MESSAGE( cmd.find( "pattern.fullmatch(r.name)" ) != std::string::npos,
+                         "Bare regex must also match against r.name" );
+}
+
+
+/**
  * Test that Execute returns error (requires IPC)
  */
 BOOST_AUTO_TEST_CASE( ExecuteReturnsError )
@@ -340,6 +392,31 @@ BOOST_AUTO_TEST_CASE( ExecuteReturnsError )
 
     BOOST_CHECK( result.find( "Error" ) != std::string::npos );
     BOOST_CHECK( result.find( "IPC" ) != std::string::npos );
+}
+
+
+/**
+ * Test that generated code extracts bounding box data from SymbolInfo.
+ */
+BOOST_AUTO_TEST_CASE( GeneratedCodeExtractsBoundingBox )
+{
+    SCH_LIB_SYMBOL_HANDLER handler;
+    nlohmann::json input = { { "lib_id", "Device:R" } };
+    std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
+
+    // Must extract bounding box fields from SymbolInfo
+    BOOST_CHECK_MESSAGE( cmd.find( "body_bbox_min_x_nm" ) != std::string::npos,
+        "Must extract body_bbox_min_x_nm from symbol info" );
+    BOOST_CHECK_MESSAGE( cmd.find( "body_bbox_max_x_nm" ) != std::string::npos,
+        "Must extract body_bbox_max_x_nm from symbol info" );
+
+    // Must include body_size in the result
+    BOOST_CHECK_MESSAGE( cmd.find( "body_size" ) != std::string::npos,
+        "Must include body_size in format_symbol result" );
+
+    // Must convert nm to mm
+    BOOST_CHECK_MESSAGE( cmd.find( "1_000_000" ) != std::string::npos,
+        "Must convert nm to mm" );
 }
 
 

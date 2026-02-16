@@ -934,8 +934,43 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                 }
                 else if( j_in.contains( "type" ) && j_in["type"] == "export_screenshot" )
                 {
-                    // Export the current in-memory schematic to SVG for screenshot
+                    // Export a schematic sheet to SVG for screenshot.
+                    // If sheet_file is provided, find that sheet in the hierarchy
+                    // and temporarily switch to it before plotting.
                     std::string outputDir = j_in.value( "output_dir", "" );
+                    std::string sheetFile = j_in.value( "sheet_file", "" );
+
+                    // If a specific sheet file was requested, navigate to it
+                    SCH_SHEET_PATH savedSheet = Schematic().CurrentSheet();
+                    bool sheetSwitched = false;
+
+                    if( !sheetFile.empty() )
+                    {
+                        wxString targetFile = wxString::FromUTF8( sheetFile );
+
+                        SCH_SHEET_LIST sheetList;
+                        sheetList.BuildSheetList( &Schematic().Root(), true );
+
+                        for( const SCH_SHEET_PATH& path : sheetList )
+                        {
+                            SCH_SCREEN* screen = path.LastScreen();
+
+                            if( screen )
+                            {
+                                wxFileName screenFn( screen->GetFileName() );
+
+                                if( screenFn.GetFullName() == targetFile )
+                                {
+                                    Schematic().SetCurrentSheet( path );
+                                    Schematic().CurrentSheet()
+                                            .UpdateAllScreenReferences();
+                                    Schematic().SetSheetNumberAndCount();
+                                    sheetSwitched = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
 
                     SCH_RENDER_SETTINGS renderSettings;
                     COLOR_SETTINGS* cs = ::GetColorSettings( wxT( "_builtin_default" ) );
@@ -964,6 +999,14 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
                     SCH_PLOTTER plotter( this );
                     plotter.Plot( PLOT_FORMAT::SVG, plotOpts, &renderSettings, nullptr );
+
+                    // Restore original sheet if we switched
+                    if( sheetSwitched )
+                    {
+                        Schematic().SetCurrentSheet( savedSheet );
+                        Schematic().CurrentSheet().UpdateAllScreenReferences();
+                        Schematic().SetSheetNumberAndCount();
+                    }
 
                     nlohmann::json resp;
                     resp["type"] = "export_screenshot_response";
@@ -1709,26 +1752,6 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
     {
         // Refresh the diff overlay - items may have moved
         DIFF_MANAGER::GetInstance().RefreshOverlay( GetCanvas()->GetView() );
-        break;
-    }
-
-    case MAIL_AGENT_TRACKING_MODE:
-    {
-        try
-        {
-            nlohmann::json j = nlohmann::json::parse( payload );
-            bool enabled = j.value( "tracking", false );
-
-            if( GetCanvas() && GetCanvas()->GetView() )
-            {
-                DIFF_MANAGER::GetInstance().SetTrackingMode( GetCanvas()->GetView(), enabled );
-                GetCanvas()->Refresh();
-            }
-        }
-        catch( const std::exception& e )
-        {
-            wxLogWarning( "Failed to parse MAIL_AGENT_TRACKING_MODE payload: %s", e.what() );
-        }
         break;
     }
 

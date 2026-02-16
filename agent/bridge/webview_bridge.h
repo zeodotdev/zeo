@@ -64,8 +64,6 @@ public:
     void PushActionButtonState( const wxString& aLabel, bool aEnabled = true );
     void PushModelList( const std::vector<std::string>& aModels,
                         const std::string& aSelected );
-    void PushTrackingState( bool aTracking );
-    void PushTrackButtonVisible( bool aVisible );
     void PushPlanMode( bool aPlanMode );
     void PushPlanApproval();
     void PushRemovePlanApproval();
@@ -103,7 +101,6 @@ private:
 
     // Controls
     void HandleModelChange( const nlohmann::json& aMsg );
-    void HandleTrackToggle( const nlohmann::json& aMsg );
     void HandlePlanToggle( const nlohmann::json& aMsg );
     void HandlePlanApprove( const nlohmann::json& aMsg );
     void HandleSendClick( const nlohmann::json& aMsg );

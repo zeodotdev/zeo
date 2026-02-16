@@ -761,6 +761,12 @@ message SymbolInfo
   repeated PinInfo pins = 7;             // Pin information
   bool is_power = 8;                     // True if power symbol
   string datasheet = 9;                  // Datasheet URL or path
+
+  // Bounding box of the symbol body including pins, relative to symbol origin, in nm
+  int64 body_bbox_min_x_nm = 10;
+  int64 body_bbox_min_y_nm = 11;
+  int64 body_bbox_max_x_nm = 12;
+  int64 body_bbox_max_y_nm = 13;
 }
 
 /// Information about a symbol pin

@@ -80,7 +80,6 @@ public:
 
     void DoNewChat();
     void DoModelChange( const std::string& aModel );
-    void DoTrackToggle();
     void DoPlanToggle();
     void DoPlanApprove();
     void DoSendClick();
@@ -146,9 +145,6 @@ private:
 
     // Selection pill state (label stored here since the button is now in JS)
     wxString    m_currentSelectionLabel;
-
-    // Track Agent state
-    bool        m_isTrackingAgent;
 
     // Plan mode state
     AgentMode   m_agentMode = AgentMode::EXECUTE;

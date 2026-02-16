@@ -233,12 +233,12 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     LLM_TOOL schGetLibSymbol;
     schGetLibSymbol.name = "sch_find_symbol";
     schGetLibSymbol.description =
-        "Query symbol library for symbol definitions including pin positions. "
+        "Query symbol library for symbol definitions including pin positions and body size. "
         "Accepts a symbol name ('R') or full Library:Symbol identifier ('Device:R'). "
         "If just a name is given, searches all libraries. "
         "Supports wildcards ('Connector:Conn_01x*') and regex ('Device:R_[0-9]{4}'). "
-        "Returns pin positions relative to symbol origin. "
-        "Use this before wiring to get accurate pin locations. "
+        "Returns pin positions relative to symbol origin and body_size (width/height in mm). "
+        "Use this before placing/wiring to get accurate pin locations and symbol dimensions. "
         "REQUIRES: Schematic editor must be open.";
     schGetLibSymbol.input_schema = {
         { "type", "object" },
@@ -298,7 +298,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schAdd.description =
         "Add elements to the schematic. Accepts an array of elements. "
         "Returns pin positions for all placed symbols. "
-        "Rejects placements that overlap existing components (1.27mm clearance). "
+        "Rejects placements that overlap existing components (1.0mm clearance). "
         "Use sch_connect_net for wiring.\n\n"
         "Element types: symbol, power, label, no_connect, bus_entry.";
     schAdd.input_schema = {
@@ -369,7 +369,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schUpdate.description =
         "Update elements in the schematic. Accepts an array of updates - use for single or batch operations. "
         "Can modify position, rotation, mirror, properties, and text field positions. Target by reference or UUID. "
-        "Moves are rejected if the new position overlaps an existing component (1.27mm clearance). "
+        "Moves are rejected if the new position overlaps an existing component (1.0mm clearance). "
         "Use 'fields' to reposition Reference/Value text relative to symbol center (avoids overlap). "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schUpdate.input_schema = {
@@ -567,8 +567,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schConnectNet.description =
         "Connect component pins with auto-routed wires. "
         "Resolves pin positions automatically and places junctions at T-connections. "
-        "Use mode 'chain' (default) for series component paths (pins wired sequentially in order). "
-        "Use mode 'star' for shared nodes where multiple pins tap the same net.";
+        "For 2 pins, routes a direct path. For 3+ pins, uses trunk-and-branch topology.";
     schConnectNet.input_schema = {
         { "type", "object" },
         { "properties", {
@@ -583,12 +582,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                                 "Pins: 'REF:PIN' (e.g., 'R1:2', 'U1:3', '#PWR01:1'). "
                                 "Labels: name without colon (e.g., 'VCC', 'OUT'). "
                                 "Example: ['U1:8', 'VCC']" }
-            }},
-            { "mode", {
-                { "type", "string" },
-                { "enum", json::array( { "star", "chain" } ) },
-                { "description", "Routing topology. 'chain' (default): wire pins sequentially in order (for series paths). "
-                                "'star': trunk-and-branch (for shared nodes like power fan-outs)." }
             }}
         }},
         { "required", json::array( { "pins" } ) }
@@ -1323,13 +1316,17 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "Export a visual screenshot (PNG render) of a schematic or PCB file. "
         "Returns the image for visual inspection. Use this to verify layout, "
         "check component placement, review wiring, or confirm design changes. "
-        "The file must be a .kicad_sch (schematic) or .kicad_pcb (PCB layout) file.";
+        "The file must be a .kicad_sch (schematic) or .kicad_pcb (PCB layout) file. "
+        "For multi-sheet schematics, pass the specific sub-sheet .kicad_sch file "
+        "to screenshot that sheet.";
     screenshot.input_schema = {
         { "type", "object" },
         { "properties", {
             { "file_path", {
                 { "type", "string" },
-                { "description", "Absolute path to the .kicad_sch or .kicad_pcb file to screenshot" }
+                { "description", "Absolute path to the .kicad_sch or .kicad_pcb file to screenshot. "
+                                 "For multi-sheet schematics, pass the sub-sheet .kicad_sch file "
+                                 "path to screenshot that specific sheet." }
             }}
         }},
         { "required", json::array( { "file_path" } ) }

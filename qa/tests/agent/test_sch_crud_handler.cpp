@@ -843,6 +843,22 @@ BOOST_AUTO_TEST_CASE( AddPowerGeneratesRemoveOnOverlap )
 }
 
 
+BOOST_AUTO_TEST_CASE( AddWireSkipsOverlapCheck )
+{
+    SCH_CRUD_HANDLER handler;
+    nlohmann::json input = {
+        { "elements", nlohmann::json::array( { nlohmann::json{
+            { "element_type", "wire" },
+            { "points", nlohmann::json::array( { nlohmann::json::array( { 50.8, 50.8 } ), nlohmann::json::array( { 76.2, 50.8 } ) } ) }
+        } } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_add", input );
+
+    // Wires should NOT have overlap detection
+    BOOST_CHECK( cmd.find( "get_bounding_box(wc_0" ) == std::string::npos );
+    BOOST_CHECK( cmd.find( "_overlap_0" ) == std::string::npos );
+}
+
 
 BOOST_AUTO_TEST_CASE( AddBatchSymbolsSharePlacedBboxes )
 {
@@ -937,8 +953,8 @@ BOOST_AUTO_TEST_CASE( UpdatePositionGeneratesRevertOnOverlap )
     std::string cmd = handler.GetIPCCommand( "sch_update", input );
 
     // Should save original position
-    BOOST_CHECK( cmd.find( "_orig_x_0" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_orig_y_0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_old_sym_x_0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_old_sym_y_0" ) != std::string::npos );
 
     // Should revert and report on overlap
     BOOST_CHECK( cmd.find( "Move rejected: overlaps {_obstacle_ref_0}" ) != std::string::npos );

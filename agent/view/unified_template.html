@@ -323,7 +323,6 @@ img[src^="data:"] { cursor: pointer; }
             </svg>
         </div>
         <button class="ctrl-btn" id="plan-btn">Plan</button>
-        <button class="ctrl-btn" id="track-btn" style="display:none;">Track</button>
         <button class="ctrl-btn primary" id="action-btn">Send</button>
     </div>
 </div>
@@ -1198,11 +1197,10 @@ App.Input = (function() {
 })();
 
 // =====================================================================
-// App.Controls — model selector, track, send/stop, selection pill, pending changes btn
+// App.Controls — model selector, send/stop, selection pill, pending changes btn
 // =====================================================================
 App.Controls = (function() {
     var actionBtn = document.getElementById('action-btn');
-    var trackBtn = document.getElementById('track-btn');
     var planBtn = document.getElementById('plan-btn');
     var modelTrigger = document.getElementById('model-trigger');
     var modelLabel = document.getElementById('model-label');
@@ -1250,15 +1248,6 @@ App.Controls = (function() {
         modelTrigger.classList.remove('open');
     }
 
-    function setTrackingState(tracking) {
-        trackBtn.textContent = tracking ? 'Tracking' : 'Track';
-        trackBtn.style.color = tracking ? '#4ec9b0' : '';
-    }
-
-    function setTrackButtonVisible(visible) {
-        trackBtn.style.display = visible ? '' : 'none';
-    }
-
     function setPlanMode(active) {
         planBtn.textContent = active ? 'Planning' : 'Plan';
         planBtn.style.color = active ? '#4ec9b0' : '';
@@ -1279,10 +1268,6 @@ App.Controls = (function() {
         } else {
             App.Input.submit();
         }
-    });
-
-    trackBtn.addEventListener('click', function() {
-        App.Bridge.sendMsg('track_toggle');
     });
 
     planBtn.addEventListener('click', function() {
@@ -1318,8 +1303,6 @@ App.Controls = (function() {
     return {
         setActionButton: setActionButton,
         setModelList: setModelList,
-        setTrackingState: setTrackingState,
-        setTrackButtonVisible: setTrackButtonVisible,
         setPlanMode: setPlanMode,
         setSelectionPill: setSelectionPill
     };

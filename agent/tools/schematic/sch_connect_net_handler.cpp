@@ -129,22 +129,28 @@ try:
                 px = pin_result['position'].x / 1_000_000
                 py = pin_result['position'].y / 1_000_000
                 pin_orientation = pin_result.get('orientation', None)
-            # Compute outward escape direction from pin orientation (degrees from KiCad API)
-            # 0°=right, 90°=up, 180°=left, 270°=down
+            # Compute outward escape direction from pin orientation enum.
+            # KiCad API returns PIN_ORIENTATION enum:
+            #   0 = PIN_RIGHT (pin extends right from tip toward body) -> escape LEFT
+            #   1 = PIN_LEFT  (pin extends left from tip toward body)  -> escape RIGHT
+            #   2 = PIN_UP    (pin extends up from tip toward body)    -> escape DOWN
+            #   3 = PIN_DOWN  (pin extends down from tip toward body)  -> escape UP
             if pin_orientation is not None:
-                ang = pin_orientation % 360
-                if ang < 45 or ang >= 315:
-                    out_dx, out_dy = 1.27, 0       # right
+                if pin_orientation == 1:
+                    out_dx, out_dy = 1.27, 0       # PIN_LEFT -> escape right
                     pin_dir = 'h'
-                elif 45 <= ang < 135:
-                    out_dx, out_dy = 0, -1.27      # up (Y inverted in KiCad)
+                elif pin_orientation == 0:
+                    out_dx, out_dy = -1.27, 0      # PIN_RIGHT -> escape left
+                    pin_dir = 'h'
+                elif pin_orientation == 2:
+                    out_dx, out_dy = 0, 1.27       # PIN_UP -> escape down (positive Y in schematic)
                     pin_dir = 'v'
-                elif 135 <= ang < 225:
-                    out_dx, out_dy = -1.27, 0      # left
-                    pin_dir = 'h'
+                elif pin_orientation == 3:
+                    out_dx, out_dy = 0, -1.27      # PIN_DOWN -> escape up (negative Y in schematic)
+                    pin_dir = 'v'
                 else:
-                    out_dx, out_dy = 0, 1.27       # down
-                    pin_dir = 'v'
+                    out_dx, out_dy = 1.27, 0       # fallback: right
+                    pin_dir = 'h'
             else:
                 # Fallback: guess from symbol center
                 sym_cx = sym.position.x / 1_000_000
@@ -342,23 +348,25 @@ try:
         ed = _dir_index(p1['out_dx'], p1['out_dy'])
         # end_dir is opposite of outward (wire approaches from outside, moving inward)
         ed = ed ^ 1 if ed >= 0 else -1
+        # Suppress escape when pin-to-pin axis is perpendicular to the escape
+        # direction — the wire can go straight without needing to escape first.
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        if dx < 0.01 and dy > 0.01:
+            # Vertical alignment: suppress horizontal escapes
+            if sd in (0, 1): sd = -1
+            if ed in (0, 1): ed = -1
+        elif dy < 0.01 and dx > 0.01:
+            # Horizontal alignment: suppress vertical escapes
+            if sd in (2, 3): sd = -1
+            if ed in (2, 3): ed = -1
         print(f'[route] A* {p0["ref"]}:{p0["pin"]} -> {p1["ref"]}:{p1["pin"]}  start_dir={_dir_names.get(sd)} end_dir={_dir_names.get(ed)}', file=sys.stderr)
         wp = _astar(x0, y0, x1, y1, start_dir=sd, end_dir=ed)
         print(f'[route]   path: {[(round(x,2),round(y,2)) for x,y in wp]}', file=sys.stderr)
         return wp
 
-    if routing_mode == 'chain':
-        # Chain mode: A* route each consecutive pin pair
-        for ci in range(len(pin_positions) - 1):
-            p0, p1 = pin_positions[ci], pin_positions[ci + 1]
-            waypoints = _route_pins(p0, p1)
-            hit, loc = _path_hits_obstacle(waypoints)
-            if hit:
-                raise ValueError(f'Wire from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
-            wire_count += _place_path(waypoints)
-
-    elif len(pin_positions) == 2:
-        # 2-pin star: A* route
+    if len(pin_positions) == 2:
+        # 2-pin: direct A* route
         p0, p1 = pin_positions[0], pin_positions[1]
         waypoints = _route_pins(p0, p1)
         hit, loc = _path_hits_obstacle(waypoints)
@@ -504,6 +512,7 @@ try:
         trunk_max = snap_to_grid(max(trunk_conn))
 
         # Place trunk wire
+        all_segments = []
         if trunk_min != trunk_max:
             if is_horizontal:
                 t0, t1 = (trunk_min, trunk_perp), (trunk_max, trunk_perp)
@@ -514,6 +523,7 @@ try:
             if hit:
                 raise ValueError(f'Trunk wire would pass through a component at {loc}. Try repositioning components to clear the path.')
             sch.wiring.add_wire(Vector2.from_xy_mm(*t0), Vector2.from_xy_mm(*t1))
+            all_segments.append((round(t0[0], 2), round(t0[1], 2), round(t1[0], 2), round(t1[1], 2)))
             _track(t0[0], t0[1])
             _track(t1[0], t1[1])
             wire_count += 1
@@ -535,23 +545,33 @@ try:
                     raise ValueError(f'Wire from {p["ref"]}:{p["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
                 w = _place_path(waypoints)
                 wire_count += w
-                # Track endpoints for junction detection
-                _track(pin_x, pin_y)
-                _track(tgt_x, tgt_y)
+                # Track all waypoint endpoints for junction detection
+                for wi in range(len(waypoints) - 1):
+                    ax, ay = waypoints[wi]
+                    bx, by = waypoints[wi + 1]
+                    all_segments.append((round(ax, 2), round(ay, 2), round(bx, 2), round(by, 2)))
+                    _track(ax, ay)
+                    _track(bx, by)
 
         # Count pins as branches at their positions
         for p in pin_positions:
             _track(p['raw_x'], p['raw_y'])
 
-        # Account for trunk passing through interior points
+        # Account for wires passing through interior of other segments
         for key in list(_wire_ep.keys()):
             kx, ky = key
-            if is_horizontal:
-                if abs(ky - trunk_perp) < 0.01 and kx > trunk_min + 0.01 and kx < trunk_max - 0.01:
-                    _wire_ep[key] += 2
-            else:
-                if abs(kx - trunk_perp) < 0.01 and ky > trunk_min + 0.01 and ky < trunk_max - 0.01:
-                    _wire_ep[key] += 2
+            for sx, sy, ex, ey in all_segments:
+                # Skip if point is at segment endpoints (already tracked)
+                if (kx, ky) == (sx, sy) or (kx, ky) == (ex, ey):
+                    continue
+                # Horizontal segment: same y, x between endpoints
+                if abs(sy - ey) < 0.01 and abs(ky - sy) < 0.01:
+                    if min(sx, ex) < kx < max(sx, ex):
+                        _wire_ep[key] += 2
+                # Vertical segment: same x, y between endpoints
+                elif abs(sx - ex) < 0.01 and abs(kx - sx) < 0.01:
+                    if min(sy, ey) < ky < max(sy, ey):
+                        _wire_ep[key] += 2
 
         # Place junctions where 3+ branches meet
         _junctions_done = set()
@@ -609,9 +629,7 @@ std::string SCH_CONNECT_NET_HANDLER::GenerateConnectNetCode( const nlohmann::jso
             pinSpecs.push_back( { "pin", spec.substr( 0, colonPos ), spec.substr( colonPos + 1 ) } );
     }
 
-    std::string mode = aInput.value( "mode", "chain" );
-
-    // Build pin_specs Python list and mode (only dynamic parts)
+    // Build pin_specs Python list (only dynamic parts)
     std::ostringstream pinSpecCode;
     pinSpecCode << "pin_specs = [\n";
     for( const auto& ps : pinSpecs )
@@ -621,7 +639,6 @@ std::string SCH_CONNECT_NET_HANDLER::GenerateConnectNetCode( const nlohmann::jso
                     << "', '" << EscapePythonString( ps.pin ) << "'),\n";
     }
     pinSpecCode << "]\n";
-    pinSpecCode << "routing_mode = '" << EscapePythonString( mode ) << "'\n";
 
     // Concatenate: preamble + dynamic pin_specs + static body
     return std::string( CONNECT_NET_PREAMBLE ) + pinSpecCode.str()

@@ -4325,6 +4325,19 @@ API_HANDLER_SCH::handleGetSymbolInfo(
             pinInfo->set_graphical_style( magic_enum::enum_name( pin->GetShape() ).data() );
             pinInfo->set_unit( pin->GetUnit() );
         }
+
+        // Add bounding box (body + pins, all units)
+        // BOX2I is in schematic IU; proto fields are in nanometers
+        BOX2I bbox = symbol->GetBodyBoundingBox( 0, 0, true, false );
+
+        if( bbox.GetWidth() > 0 || bbox.GetHeight() > 0 )
+        {
+            constexpr int64_t IU_TO_NM = 100;
+            info->set_body_bbox_min_x_nm( static_cast<int64_t>( bbox.GetPosition().x ) * IU_TO_NM );
+            info->set_body_bbox_min_y_nm( static_cast<int64_t>( bbox.GetPosition().y ) * IU_TO_NM );
+            info->set_body_bbox_max_x_nm( static_cast<int64_t>( bbox.GetPosition().x + bbox.GetWidth() ) * IU_TO_NM );
+            info->set_body_bbox_max_y_nm( static_cast<int64_t>( bbox.GetPosition().y + bbox.GetHeight() ) * IU_TO_NM );
+        }
     }
     catch( const IO_ERROR& e )
     {

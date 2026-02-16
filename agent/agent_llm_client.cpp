@@ -5,6 +5,8 @@
 #include <id.h>
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
+#include <wx/log.h>
+#include <thread>
 
 using json = nlohmann::json;
 
@@ -179,6 +181,9 @@ void* LLM_REQUEST_THREAD::Entry()
     curl_easy_setopt( curl, CURLOPT_POSTFIELDS, requestBodyStr.c_str() );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDSIZE, requestBodyStr.size() );
 
+    // Connection timeouts
+    curl_easy_setopt( curl, CURLOPT_CONNECTTIMEOUT, 30L );
+
     // Headers - use Bearer auth for proxy
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append( headers, "Content-Type: application/json" );
@@ -187,18 +192,6 @@ void* LLM_REQUEST_THREAD::Entry()
         ( std::string( "X-Agent-Mode: " )
           + ( ( m_agentMode == AgentMode::PLAN ) ? "plan" : "execute" ) ).c_str() );
     curl_easy_setopt( curl, CURLOPT_HTTPHEADER, headers );
-
-    // Set up streaming callback
-    StreamContext ctx;
-    ctx.handler = m_handler;
-    ctx.cancelFlag = m_cancelFlag;
-    ctx.inToolInput = false;
-    ctx.inThinking = false;
-    ctx.inCompaction = false;
-    ctx.inServerTool = false;
-
-    curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, StreamWriteCallback );
-    curl_easy_setopt( curl, CURLOPT_WRITEDATA, &ctx );
 
     // Set up progress callback for fast cancellation
     // The progress callback is called frequently and can abort immediately
@@ -212,14 +205,75 @@ void* LLM_REQUEST_THREAD::Entry()
         });
     curl_easy_setopt( curl, CURLOPT_XFERINFODATA, m_cancelFlag );
 
-    // Perform the request (this blocks until complete or cancelled)
-    CURLcode res = curl_easy_perform( curl );
+    // Retry loop for transient connection errors
+    static constexpr int    MAX_RETRIES       = 3;
+    static constexpr int    BASE_DELAY_MS     = 1000;
+    CURLcode                res               = CURLE_OK;
+    long                    http_code         = 0;
+    bool                    wasCancelled      = false;
+    StreamContext           ctx;
+
+    for( int attempt = 0; attempt <= MAX_RETRIES; attempt++ )
+    {
+        // Reset streaming context for each attempt
+        ctx = {};
+        ctx.handler = m_handler;
+        ctx.cancelFlag = m_cancelFlag;
+
+        curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, StreamWriteCallback );
+        curl_easy_setopt( curl, CURLOPT_WRITEDATA, &ctx );
+
+        res = curl_easy_perform( curl );
+
+        wasCancelled = m_cancelFlag && m_cancelFlag->load();
+        if( wasCancelled )
+            break;
+
+        // Check for transient errors worth retrying
+        bool isTransient = ( res == CURLE_SSL_CONNECT_ERROR
+                             || res == CURLE_COULDNT_CONNECT
+                             || res == CURLE_OPERATION_TIMEDOUT
+                             || res == CURLE_GOT_NOTHING
+                             || res == CURLE_SEND_ERROR
+                             || res == CURLE_RECV_ERROR );
+
+        if( res == CURLE_OK )
+        {
+            curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &http_code );
+
+            // Retry on 502/503/529 (server transient errors)
+            isTransient = ( http_code == 502 || http_code == 503 || http_code == 529 );
+
+            if( !isTransient )
+                break;  // Success or non-transient HTTP error
+        }
+
+        if( !isTransient || attempt == MAX_RETRIES )
+            break;
+
+        // Exponential backoff: 1s, 2s, 4s
+        int delayMs = BASE_DELAY_MS * ( 1 << attempt );
+        std::string reason = res != CURLE_OK
+                ? curl_easy_strerror( res )
+                : "HTTP " + std::to_string( http_code );
+        wxLogInfo( "LLM request failed (attempt %d/%d): %s — retrying in %dms",
+                   attempt + 1, MAX_RETRIES + 1, reason.c_str(), delayMs );
+
+        std::this_thread::sleep_for( std::chrono::milliseconds( delayMs ) );
+
+        // Re-check cancellation after sleep
+        if( m_cancelFlag && m_cancelFlag->load() )
+        {
+            wasCancelled = true;
+            break;
+        }
+
+        // Reset curl handle state for retry (reuse the connection cache)
+        curl_easy_setopt( curl, CURLOPT_FRESH_CONNECT, 1L );
+    }
 
     // Clean up headers
     curl_slist_free_all( headers );
-
-    // Check if we were cancelled - don't post events to potentially destroyed handler
-    bool wasCancelled = m_cancelFlag && m_cancelFlag->load();
 
     // Check result
     if( res != CURLE_OK )
@@ -230,10 +284,6 @@ void* LLM_REQUEST_THREAD::Entry()
         curl_easy_cleanup( curl );
         return nullptr;
     }
-
-    // Check HTTP status
-    long http_code = 0;
-    curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &http_code );
 
     if( http_code != 200 )
     {

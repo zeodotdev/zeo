@@ -34,7 +34,6 @@
 #include <bitmaps.h>
 #include <id.h>
 #include <nlohmann/json.hpp>
-#include <diff_manager.h>
 #include <wx/settings.h>
 #include <wx/base64.h>
 #include <wx/clipbrd.h>
@@ -256,7 +255,6 @@ END_EVENT_TABLE()
 AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         KIWAY_PLAYER( aKiway, aParent, FRAME_AGENT, "Agent", wxDefaultPosition, wxDefaultSize, wxDEFAULT_FRAME_STYLE,
                       "agent_frame_name", schIUScale ),
-        m_isTrackingAgent( false ),
         m_hasPcbChanges( false ),
         m_pendingOpenSch( false ),
         m_pendingOpenPcb( false )
@@ -319,7 +317,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                         break;
 
                     case KEY_SHORTCUT::STOP_GENERATING:
-                        DoStopClick();
+                        if( m_isGenerating )
+                            DoStopClick();
                         break;
 
                     case KEY_SHORTCUT::NEW_CHAT:
@@ -666,9 +665,6 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         // Push initial title
         m_bridge->PushChatTitle( "New Chat" );
 
-        // Push tracking state
-        m_bridge->PushTrackingState( m_isTrackingAgent );
-
         // Push plan mode state
         m_bridge->PushPlanMode( m_agentMode == AgentMode::PLAN );
     } );
@@ -906,17 +902,6 @@ void AGENT_FRAME::StartGeneratingAnimation()
     m_generatingDots = 1;
     m_generatingTimer.Start( 400 ); // Update every 400ms
     m_bridge->PushActionButtonState( "Stop" );
-
-    KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
-    KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
-    bool editorOpen = ( schEditor && schEditor->IsShown() )
-                   || ( pcbEditor && pcbEditor->IsShown() );
-
-    if( editorOpen )
-    {
-        m_bridge->PushTrackButtonVisible( true );
-        m_bridge->PushTrackingState( m_isTrackingAgent );
-    }
 }
 
 void AGENT_FRAME::StopGeneratingAnimation()
@@ -1125,11 +1110,6 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
         m_currentSelectionLabel.Clear();
         m_bridge->PushSelectionPill( wxEmptyString, false );
     }
-    else if( aEvent.Command() == MAIL_AGENT_TRACKING_BROKEN )
-    {
-        m_isTrackingAgent = false;
-        m_bridge->PushTrackingState( false );
-    }
 }
 
 void AGENT_FRAME::DoSelectionPillClick()
@@ -1336,7 +1316,6 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
 
     // Stop generating animation and compacting state
     StopGeneratingAnimation();
-    m_bridge->PushTrackButtonVisible( false );
     m_isCompacting = false;
 
     // Cancel any in-progress async LLM request
@@ -1886,32 +1865,6 @@ void AGENT_FRAME::DoStopClick()
     OnStop( evt );
 }
 
-void AGENT_FRAME::DoTrackToggle()
-{
-    m_isTrackingAgent = !m_isTrackingAgent;
-
-    nlohmann::json payload;
-    payload["tracking"] = m_isTrackingAgent;
-    std::string payloadStr = payload.dump();
-
-    m_bridge->PushTrackingState( m_isTrackingAgent );
-
-    Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_TRACKING_MODE, payloadStr );
-    Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_TRACKING_MODE, payloadStr );
-
-    if( m_isTrackingAgent )
-    {
-        DIFF_MANAGER::GetInstance().SetTrackingBrokenCallback( [this]() {
-            std::string emptyPayload;
-            Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_TRACKING_BROKEN, emptyPayload );
-        } );
-    }
-    else
-    {
-        DIFF_MANAGER::GetInstance().SetTrackingBrokenCallback( nullptr );
-    }
-}
-
 void AGENT_FRAME::DoPlanToggle()
 {
     m_agentMode = ( m_agentMode == AgentMode::EXECUTE )
@@ -2350,18 +2303,6 @@ void AGENT_FRAME::DoNewChat()
     m_activeRunningHtml.Clear();
     m_activeToolResultIdx = -1;
 
-    // Reset tracking on new chat
-    if( m_isTrackingAgent )
-    {
-        m_isTrackingAgent = false;
-        nlohmann::json payload;
-        payload["tracking"] = false;
-        std::string payloadStr = payload.dump();
-        m_bridge->PushTrackingState( false );
-        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_TRACKING_MODE, payloadStr );
-        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_TRACKING_MODE, payloadStr );
-    }
-    m_bridge->PushTrackButtonVisible( false );
 }
 
 void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
@@ -3834,15 +3775,6 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
     // Check for pending approval
     QueryPendingChanges();
 
-    // Auto-follow on tool complete - DISABLED: Users view changes via Changes tab
-    // if( m_isTrackingAgent && data->success )
-    // {
-    //     // Send to both editors - each will check if it has changes to show
-    //     std::string emptyPayload;
-    //     Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_VIEW_CHANGES, emptyPayload );
-    //     Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_VIEW_CHANGES, emptyPayload );
-    // }
-
     UpdateAgentResponse();
     // Auto-scroll handled by CSS flex-direction: column-reverse
 
@@ -3894,7 +3826,6 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
     if( !continuing )
     {
         StopGeneratingAnimation();
-        m_bridge->PushTrackButtonVisible( false );
         m_bridge->PushActionButtonState( "Send" );
     }
 
@@ -3996,7 +3927,6 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
 
     // Stop all animations and reset button
     StopGeneratingAnimation();
-    m_bridge->PushTrackButtonVisible( false );
     m_isCompacting = false;
     ClearQueuedMessage();
     m_bridge->PushActionButtonState( "Send" );

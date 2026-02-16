@@ -59,14 +59,20 @@ void InstallKeyboardMonitor( void* aNativeView,
 
         if( matched )
         {
-            NSView*      nativeView = (__bridge NSView*) aNativeView;
-            NSResponder* responder  = [[nativeView window] firstResponder];
+            NSView*  nativeView  = (__bridge NSView*) aNativeView;
+            NSWindow* eventWindow = [event window];
 
-            if( [responder isKindOfClass:[NSView class]] &&
-                [(NSView*) responder isDescendantOf:nativeView] )
+            // Only intercept events targeting the agent's own window
+            if( eventWindow && eventWindow == [nativeView window] )
             {
-                aCallback( shortcut );
-                return nil; // Consume the event
+                NSResponder* responder = [eventWindow firstResponder];
+
+                if( [responder isKindOfClass:[NSView class]] &&
+                    [(NSView*) responder isDescendantOf:nativeView] )
+                {
+                    aCallback( shortcut );
+                    return nil; // Consume the event
+                }
             }
         }
 

@@ -317,7 +317,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                         break;
 
                     case KEY_SHORTCUT::STOP_GENERATING:
-                        DoStopClick();
+                        if( m_isGenerating )
+                            DoStopClick();
                         break;
 
                     case KEY_SHORTCUT::NEW_CHAT:

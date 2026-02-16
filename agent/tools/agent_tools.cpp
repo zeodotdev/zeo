@@ -299,8 +299,9 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "Add elements to the schematic. Accepts an array of elements. "
         "Returns pin positions for all placed symbols. "
         "Rejects placements that overlap existing components (1.0mm clearance). "
-        "Use sch_connect_net for wiring.\n\n"
-        "Element types: symbol, power, label, no_connect, bus_entry.";
+        "Use sch_connect_net for auto-routed wiring. Use wire element type for manual wires "
+        "(rejected if any segment crosses a component bounding box).\n\n"
+        "Element types: symbol, power, wire, label, no_connect, bus_entry.";
     schAdd.input_schema = {
         { "type", "object" },
         { "properties", {
@@ -311,7 +312,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                     { "properties", {
                         { "element_type", {
                             { "type", "string" },
-                            { "enum", json::array( { "symbol", "power", "label", "no_connect", "bus_entry" } ) },
+                            { "enum", json::array( { "symbol", "power", "wire", "label", "no_connect", "bus_entry" } ) },
                             { "description", "Type of element to add" }
                         }},
                         { "lib_id", {
@@ -339,6 +340,11 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         { "properties", {
                             { "type", "object" },
                             { "description", "{Value, Footprint, ...}" }
+                        }},
+                        { "points", {
+                            { "type", "array" },
+                            { "items", { { "type", "array" } } },
+                            { "description", "Wire coordinates: [[x1,y1], [x2,y2], ...]. Segments are drawn between consecutive points." }
                         }},
                         { "text", {
                             { "type", "string" },
@@ -567,7 +573,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schConnectNet.description =
         "Connect component pins with auto-routed wires. "
         "Resolves pin positions automatically and places junctions at T-connections. "
-        "For 2 pins, routes a direct path. For 3+ pins, uses trunk-and-branch topology.";
+        "Use mode 'chain' (default) for series component paths (pins wired sequentially in order). "
+        "Use mode 'star' for shared nodes where multiple pins tap the same net (trunk-and-branch).";
     schConnectNet.input_schema = {
         { "type", "object" },
         { "properties", {
@@ -582,6 +589,12 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                                 "Pins: 'REF:PIN' (e.g., 'R1:2', 'U1:3', '#PWR01:1'). "
                                 "Labels: name without colon (e.g., 'VCC', 'OUT'). "
                                 "Example: ['U1:8', 'VCC']" }
+            }},
+            { "mode", {
+                { "type", "string" },
+                { "enum", json::array( { "chain", "star" } ) },
+                { "description", "Routing topology. 'chain' (default): wire pins sequentially in order. "
+                                "'star': trunk-and-branch for shared nodes like power fan-outs." }
             }}
         }},
         { "required", json::array( { "pins" } ) }

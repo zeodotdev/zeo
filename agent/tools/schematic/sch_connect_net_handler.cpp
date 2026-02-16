@@ -365,7 +365,46 @@ try:
         print(f'[route]   path: {[(round(x,2),round(y,2)) for x,y in wp]}', file=sys.stderr)
         return wp
 
-    if len(pin_positions) == 2:
+    if routing_mode == 'chain':
+        # Chain mode: A* route each consecutive pin pair
+        all_segments = []
+        for ci in range(len(pin_positions) - 1):
+            p0, p1 = pin_positions[ci], pin_positions[ci + 1]
+            waypoints = _route_pins(p0, p1)
+            hit, loc = _path_hits_obstacle(waypoints)
+            if hit:
+                raise ValueError(f'Wire from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
+            wire_count += _place_path(waypoints)
+            # Track wire segment endpoints for junction detection
+            for wi in range(len(waypoints) - 1):
+                ax, ay = waypoints[wi]
+                bx, by = waypoints[wi + 1]
+                all_segments.append((round(ax, 2), round(ay, 2), round(bx, 2), round(by, 2)))
+                _track(ax, ay)
+                _track(bx, by)
+
+        # Account for wires passing through interior of other segments
+        for key in list(_wire_ep.keys()):
+            kx, ky = key
+            for sx, sy, ex, ey in all_segments:
+                if (kx, ky) == (sx, sy) or (kx, ky) == (ex, ey):
+                    continue
+                if abs(sy - ey) < 0.01 and abs(ky - sy) < 0.01:
+                    if min(sx, ex) < kx < max(sx, ex):
+                        _wire_ep[key] += 2
+                elif abs(sx - ex) < 0.01 and abs(kx - sx) < 0.01:
+                    if min(sy, ey) < ky < max(sy, ey):
+                        _wire_ep[key] += 2
+
+        # Place junctions where 3+ wire endpoints meet
+        _junctions_done = set()
+        for key, count in _wire_ep.items():
+            if count >= 3 and key not in _junctions_done:
+                sch.wiring.add_junction(Vector2.from_xy_mm(key[0], key[1]))
+                junction_count += 1
+                _junctions_done.add(key)
+
+    elif len(pin_positions) == 2:
         # 2-pin: direct A* route
         p0, p1 = pin_positions[0], pin_positions[1]
         waypoints = _route_pins(p0, p1)
@@ -629,7 +668,9 @@ std::string SCH_CONNECT_NET_HANDLER::GenerateConnectNetCode( const nlohmann::jso
             pinSpecs.push_back( { "pin", spec.substr( 0, colonPos ), spec.substr( colonPos + 1 ) } );
     }
 
-    // Build pin_specs Python list (only dynamic parts)
+    std::string mode = aInput.value( "mode", "chain" );
+
+    // Build pin_specs Python list and mode (only dynamic parts)
     std::ostringstream pinSpecCode;
     pinSpecCode << "pin_specs = [\n";
     for( const auto& ps : pinSpecs )
@@ -639,6 +680,7 @@ std::string SCH_CONNECT_NET_HANDLER::GenerateConnectNetCode( const nlohmann::jso
                     << "', '" << EscapePythonString( ps.pin ) << "'),\n";
     }
     pinSpecCode << "]\n";
+    pinSpecCode << "routing_mode = '" << EscapePythonString( mode ) << "'\n";
 
     // Concatenate: preamble + dynamic pin_specs + static body
     return std::string( CONNECT_NET_PREAMBLE ) + pinSpecCode.str()

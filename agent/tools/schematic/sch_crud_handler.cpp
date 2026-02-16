@@ -1609,6 +1609,54 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                placed_bboxes.append({'ref': '" << EscapePythonString( elem.value( "text", "label" ) ) << "', **_new_bbox_" << i << "})\n";
             code << "            results.append({'index': " << i << ", 'element_type': 'label'})\n";
         }
+        else if( elementType == "wire" )
+        {
+            // Handle wire with points — place segments between consecutive coordinate pairs
+            if( elem.contains( "points" ) && elem["points"].is_array() &&
+                elem["points"].size() >= 2 )
+            {
+                auto points = elem["points"];
+
+                // Build list of snapped (x,y) tuples
+                code << "        _wpts_" << i << " = [\n";
+                for( size_t j = 0; j < points.size(); ++j )
+                {
+                    if( points[j].is_array() && points[j].size() >= 2 )
+                    {
+                        double x = SnapToGrid( points[j][0].get<double>() );
+                        double y = SnapToGrid( points[j][1].get<double>() );
+                        code << "            (" << x << ", " << y << "),\n";
+                    }
+                }
+                code << "        ]\n";
+
+                // Check each wire segment against component bounding boxes
+                code << "        _wire_blocked_" << i << " = False\n";
+                code << "        _wire_obstacle_" << i << " = '?'\n";
+                code << "        for _si in range(len(_wpts_" << i << ") - 1):\n";
+                code << "            _wa, _wb = _wpts_" << i << "[_si], _wpts_" << i << "[_si + 1]\n";
+                code << "            for _pb in placed_bboxes:\n";
+                code << "                _ax, _ay = min(_wa[0], _wb[0]), min(_wa[1], _wb[1])\n";
+                code << "                _bx, _by = max(_wa[0], _wb[0]), max(_wa[1], _wb[1])\n";
+                code << "                if _bboxes_overlap({'min_x': _ax, 'max_x': _bx, 'min_y': _ay, 'max_y': _by}, _pb):\n";
+                code << "                    _wire_blocked_" << i << " = True\n";
+                code << "                    _wire_obstacle_" << i << " = _pb.get('ref', '?')\n";
+                code << "                    break\n";
+                code << "            if _wire_blocked_" << i << ": break\n";
+                code << "        if _wire_blocked_" << i << ":\n";
+                code << "            results.append({'index': " << i << ", 'error': f'Wire rejected: crosses {_wire_obstacle_" << i << "}'})\n";
+                code << "        else:\n";
+                code << "            _wc_" << i << " = 0\n";
+                code << "            for _si in range(len(_wpts_" << i << ") - 1):\n";
+                code << "                sch.wiring.add_wire(Vector2.from_xy_mm(*_wpts_" << i << "[_si]), Vector2.from_xy_mm(*_wpts_" << i << "[_si + 1]))\n";
+                code << "                _wc_" << i << " += 1\n";
+                code << "            results.append({'index': " << i << ", 'element_type': 'wire', 'segments': _wc_" << i << "})\n";
+            }
+            else
+            {
+                code << "        results.append({'index': " << i << ", 'error': 'Wire requires points array with at least 2 coordinate pairs'})\n";
+            }
+        }
         else if( elementType == "no_connect" )
         {
             double posX = 0, posY = 0;

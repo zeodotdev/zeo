@@ -567,8 +567,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schConnectNet.description =
         "Connect component pins with auto-routed wires. "
         "Resolves pin positions automatically and places junctions at T-connections. "
-        "Use mode 'chain' (default) for series component paths (pins wired sequentially in order). "
-        "Use mode 'star' for shared nodes where multiple pins tap the same net.";
+        "For 2 pins, routes a direct path. For 3+ pins, uses trunk-and-branch topology.";
     schConnectNet.input_schema = {
         { "type", "object" },
         { "properties", {
@@ -583,12 +582,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                                 "Pins: 'REF:PIN' (e.g., 'R1:2', 'U1:3', '#PWR01:1'). "
                                 "Labels: name without colon (e.g., 'VCC', 'OUT'). "
                                 "Example: ['U1:8', 'VCC']" }
-            }},
-            { "mode", {
-                { "type", "string" },
-                { "enum", json::array( { "star", "chain" } ) },
-                { "description", "Routing topology. 'chain' (default): wire pins sequentially in order (for series paths). "
-                                "'star': trunk-and-branch (for shared nodes like power fan-outs)." }
             }}
         }},
         { "required", json::array( { "pins" } ) }

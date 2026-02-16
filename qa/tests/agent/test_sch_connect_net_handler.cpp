@@ -283,4 +283,127 @@ BOOST_AUTO_TEST_CASE( GeneratedCodeContainsTrunkLogicForThreePlusPins )
 }
 
 
+// --- Orientation enum mapping (regression: was treating 0-3 enum as degrees) ---
+
+BOOST_AUTO_TEST_CASE( OrientationUsesEnumNotDegrees )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // Must use direct enum comparisons, not degree-based math
+    BOOST_CHECK( cmd.find( "pin_orientation == 0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "pin_orientation == 1" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "pin_orientation == 2" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "pin_orientation == 3" ) != std::string::npos );
+
+    // The old buggy code used modulo-360 degree math — must NOT be present
+    BOOST_CHECK_EQUAL( cmd.find( "% 360" ), std::string::npos );
+    BOOST_CHECK_EQUAL( cmd.find( "ang < 45" ), std::string::npos );
+    BOOST_CHECK_EQUAL( cmd.find( "ang >= 315" ), std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( PinRightEscapesLeft )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // PIN_RIGHT (enum 0): pin body extends right, so escape LEFT (-1.27, 0)
+    size_t pos = cmd.find( "pin_orientation == 0" );
+    BOOST_REQUIRE( pos != std::string::npos );
+
+    std::string after = cmd.substr( pos, 200 );
+    BOOST_CHECK( after.find( "-1.27, 0" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( PinLeftEscapesRight )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // PIN_LEFT (enum 1): pin body extends left, so escape RIGHT (1.27, 0)
+    size_t pos = cmd.find( "pin_orientation == 1" );
+    BOOST_REQUIRE( pos != std::string::npos );
+
+    std::string after = cmd.substr( pos, 200 );
+    BOOST_CHECK( after.find( "1.27, 0" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( PinUpEscapesDown )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // PIN_UP (enum 2): pin body extends up, so escape DOWN (0, 1.27)
+    size_t pos = cmd.find( "pin_orientation == 2" );
+    BOOST_REQUIRE( pos != std::string::npos );
+
+    std::string after = cmd.substr( pos, 200 );
+    BOOST_CHECK( after.find( "0, 1.27" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( PinDownEscapesUp )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // PIN_DOWN (enum 3): pin body extends down, so escape UP (0, -1.27)
+    size_t pos = cmd.find( "pin_orientation == 3" );
+    BOOST_REQUIRE( pos != std::string::npos );
+
+    std::string after = cmd.substr( pos, 200 );
+    BOOST_CHECK( after.find( "0, -1.27" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AllOrientationsMustNotMapToSameDirection )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // The old bug caused all 4 enum values (0-3) to fall into the same branch
+    // (ang < 45 was true for all). Verify each enum has a distinct branch
+    // by checking that the code after each enum comparison differs.
+    auto getEscape = [&]( const std::string& enumCheck ) -> std::string
+    {
+        size_t pos = cmd.find( enumCheck );
+        if( pos == std::string::npos )
+            return "";
+        // Extract the escape assignment (out_dx, out_dy = ...)
+        std::string after = cmd.substr( pos, 200 );
+        size_t eqPos = after.find( "out_dx, out_dy =" );
+        if( eqPos == std::string::npos )
+            return "";
+        return after.substr( eqPos, 40 );
+    };
+
+    std::string esc0 = getEscape( "pin_orientation == 0" );
+    std::string esc1 = getEscape( "pin_orientation == 1" );
+    std::string esc2 = getEscape( "pin_orientation == 2" );
+    std::string esc3 = getEscape( "pin_orientation == 3" );
+
+    BOOST_REQUIRE( !esc0.empty() );
+    BOOST_REQUIRE( !esc1.empty() );
+    BOOST_REQUIRE( !esc2.empty() );
+    BOOST_REQUIRE( !esc3.empty() );
+
+    // All four must be different — the old bug made them all identical
+    BOOST_CHECK( esc0 != esc1 );
+    BOOST_CHECK( esc0 != esc2 );
+    BOOST_CHECK( esc0 != esc3 );
+    BOOST_CHECK( esc1 != esc2 );
+    BOOST_CHECK( esc1 != esc3 );
+    BOOST_CHECK( esc2 != esc3 );
+}
+
+
 BOOST_AUTO_TEST_SUITE_END()

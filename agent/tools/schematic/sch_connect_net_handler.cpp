@@ -129,12 +129,20 @@ try:
                 px = pin_result['position'].x / 1_000_000
                 py = pin_result['position'].y / 1_000_000
                 pin_orientation = pin_result.get('orientation', None)
+            # The API returns library-level pin orientation, not transformed
+            # by symbol rotation.  Apply the symbol's rotation manually.
+            # Each 90° CCW step in schematic coords (Y-down) maps:
+            #   RIGHT(0)->UP(2), LEFT(1)->DOWN(3), UP(2)->LEFT(1), DOWN(3)->RIGHT(0)
+            if pin_orientation is not None:
+                _rot90 = {0: 2, 1: 3, 2: 1, 3: 0}
+                _rot_steps = round(getattr(sym, 'angle', 0) / 90) % 4
+                for _ in range(_rot_steps):
+                    pin_orientation = _rot90.get(pin_orientation, pin_orientation)
             # Compute outward escape direction from pin orientation enum.
-            # KiCad API returns PIN_ORIENTATION enum:
-            #   0 = PIN_RIGHT (pin extends right from tip toward body) -> escape LEFT
-            #   1 = PIN_LEFT  (pin extends left from tip toward body)  -> escape RIGHT
-            #   2 = PIN_UP    (pin extends up from tip toward body)    -> escape DOWN
-            #   3 = PIN_DOWN  (pin extends down from tip toward body)  -> escape UP
+            #   0 = PIN_RIGHT (toward body) -> escape LEFT
+            #   1 = PIN_LEFT  (toward body) -> escape RIGHT
+            #   2 = PIN_UP    (toward body) -> escape DOWN
+            #   3 = PIN_DOWN  (toward body) -> escape UP
             if pin_orientation is not None:
                 if pin_orientation == 1:
                     out_dx, out_dy = 1.27, 0       # PIN_LEFT -> escape right
@@ -143,13 +151,13 @@ try:
                     out_dx, out_dy = -1.27, 0      # PIN_RIGHT -> escape left
                     pin_dir = 'h'
                 elif pin_orientation == 2:
-                    out_dx, out_dy = 0, 1.27       # PIN_UP -> escape down (positive Y in schematic)
+                    out_dx, out_dy = 0, 1.27       # PIN_UP -> escape down
                     pin_dir = 'v'
                 elif pin_orientation == 3:
-                    out_dx, out_dy = 0, -1.27      # PIN_DOWN -> escape up (negative Y in schematic)
+                    out_dx, out_dy = 0, -1.27      # PIN_DOWN -> escape up
                     pin_dir = 'v'
                 else:
-                    out_dx, out_dy = 1.27, 0       # fallback: right
+                    out_dx, out_dy = 1.27, 0
                     pin_dir = 'h'
             else:
                 # Fallback: guess from symbol center
@@ -164,8 +172,8 @@ try:
                     out_dy = 1.27 if py > sym_cy else -1.27
                     pin_dir = 'v'
             _dir_name = {(1.27,0):'RIGHT', (-1.27,0):'LEFT', (0,-1.27):'UP', (0,1.27):'DOWN'}.get((out_dx,out_dy), '?')
-            print(f'[route] {ref}:{pin_id} pos=({px:.2f},{py:.2f}) orient={pin_orientation} -> {_dir_name} ({out_dx},{out_dy})', file=sys.stderr)
-        pin_positions.append({'ref': ref, 'pin': pin_id, 'x': snap_to_grid(px), 'y': snap_to_grid(py), 'raw_x': px, 'raw_y': py, 'dir': pin_dir, 'out_dx': out_dx, 'out_dy': out_dy})
+            print(f'[route] {ref}:{pin_id} pos=({px:.2f},{py:.2f}) orient={pin_orientation} ang={getattr(sym, "angle", 0)} -> {_dir_name} ({out_dx},{out_dy})', file=sys.stderr)
+        pin_positions.append({'ref': ref, 'pin': pin_id, 'x': snap_to_grid(px), 'y': snap_to_grid(py), 'raw_x': px, 'raw_y': py, 'esc_x': snap_to_grid(px + out_dx), 'esc_y': snap_to_grid(py + out_dy), 'dir': pin_dir, 'out_dx': out_dx, 'out_dy': out_dy})
 
     wire_count = 0
     junction_count = 0
@@ -365,6 +373,8 @@ try:
         print(f'[route]   path: {[(round(x,2),round(y,2)) for x,y in wp]}', file=sys.stderr)
         return wp
 
+    print(f'[route] MODE={routing_mode} pins={len(pin_positions)}', file=sys.stderr)
+
     if routing_mode == 'chain':
         # Chain mode: A* route each consecutive pin pair
         all_segments = []
@@ -413,11 +423,12 @@ try:
             raise ValueError(f'Wire from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
         wire_count = _place_path(waypoints)
     else:
-        # 3+ pins: trunk-and-branch routing with obstacle avoidance
-        xs = [p['x'] for p in pin_positions]
-        ys = [p['y'] for p in pin_positions]
-        x_spread = max(xs) - min(xs)
-        y_spread = max(ys) - min(ys)
+        # 3+ pins: trunk-and-branch routing with pre-escaped positions.
+        # Use escaped positions so the trunk never extends into component bboxes.
+        esc_xs = [p['esc_x'] for p in pin_positions]
+        esc_ys = [p['esc_y'] for p in pin_positions]
+        x_spread = max(esc_xs) - min(esc_xs)
+        y_spread = max(esc_ys) - min(esc_ys)
         is_horizontal = x_spread >= y_spread
 
         def trunk_hits_obstacle(trunk_val, t_min, t_max):
@@ -432,15 +443,15 @@ try:
                             return True
             return False
 
-        # Choose trunk position (median of perpendicular coords)
+        # Choose trunk position (median of perpendicular escaped coords)
         if is_horizontal:
-            perp_coords = sorted(ys)
-            trunk_min = snap_to_grid(min(xs))
-            trunk_max = snap_to_grid(max(xs))
+            perp_coords = sorted(esc_ys)
+            trunk_min = snap_to_grid(min(esc_xs))
+            trunk_max = snap_to_grid(max(esc_xs))
         else:
-            perp_coords = sorted(xs)
-            trunk_min = snap_to_grid(min(ys))
-            trunk_max = snap_to_grid(max(ys))
+            perp_coords = sorted(esc_xs)
+            trunk_min = snap_to_grid(min(esc_ys))
+            trunk_max = snap_to_grid(max(esc_ys))
 
         mid = len(perp_coords) // 2
         if len(perp_coords) % 2 == 0:
@@ -463,31 +474,31 @@ try:
             if best is not None:
                 trunk_perp = best
 
-        # Collect on-trunk pin projections (along trunk axis) to avoid junctions on pins
+        # Collect on-trunk escape projections (along trunk axis) to avoid branch collisions
         _on_trunk_projs = set()
         for p in pin_positions:
             if is_horizontal:
-                if abs(p['y'] - trunk_perp) <= 0.01:
-                    _on_trunk_projs.add(round(snap_to_grid(p['x']), 4))
+                if abs(p['esc_y'] - trunk_perp) <= 0.01:
+                    _on_trunk_projs.add(round(p['esc_x'], 4))
             else:
-                if abs(p['x'] - trunk_perp) <= 0.01:
-                    _on_trunk_projs.add(round(snap_to_grid(p['y']), 4))
+                if abs(p['esc_x'] - trunk_perp) <= 0.01:
+                    _on_trunk_projs.add(round(p['esc_y'], 4))
 
         # Compute trunk midpoint for offset direction
-        _all_projs = [snap_to_grid(p['x'] if is_horizontal else p['y']) for p in pin_positions]
+        _all_projs = [p['esc_x'] if is_horizontal else p['esc_y'] for p in pin_positions]
         _proj_mid = (min(_all_projs) + max(_all_projs)) / 2
 
         # Count off-trunk pins at each endpoint to decide offset
         _ep_counts = {}
-        _on_trunk_at = set()  # Track which endpoints have on-trunk pins
+        _on_trunk_at = set()  # Track which endpoints have on-trunk escapes
         for p in pin_positions:
             if is_horizontal:
-                proj = snap_to_grid(p['x'])
-                off = abs(p['y'] - trunk_perp) > 0.01
+                proj = p['esc_x']
+                off = abs(p['esc_y'] - trunk_perp) > 0.01
                 at_ep = abs(proj - trunk_min) < 0.01 or abs(proj - trunk_max) < 0.01
             else:
-                proj = snap_to_grid(p['y'])
-                off = abs(p['x'] - trunk_perp) > 0.01
+                proj = p['esc_y']
+                off = abs(p['esc_x'] - trunk_perp) > 0.01
                 at_ep = abs(proj - trunk_min) < 0.01 or abs(proj - trunk_max) < 0.01
             if off and at_ep:
                 key = round(proj, 4)
@@ -502,12 +513,12 @@ try:
             offset_dir = 1.27 if proj < _proj_mid else -1.27
             return snap_to_grid(proj + offset_dir)
 
-        # Pre-compute branch connection points on the trunk
+        # Pre-compute branch connection points on the trunk using escaped positions
         trunk_conn = []
         for p in pin_positions:
             if is_horizontal:
-                proj = snap_to_grid(p['x'])
-                off = abs(p['y'] - trunk_perp) > 0.01
+                proj = p['esc_x']
+                off = abs(p['esc_y'] - trunk_perp) > 0.01
                 at_ep = abs(proj - trunk_min) < 0.01 or abs(proj - trunk_max) < 0.01
                 solo_ep = off and at_ep and _ep_counts.get(round(proj, 4), 0) == 1 and round(proj, 4) not in _on_trunk_at
                 if solo_ep:
@@ -526,8 +537,8 @@ try:
                 else:
                     trunk_conn.append(proj)
             else:
-                proj = snap_to_grid(p['y'])
-                off = abs(p['x'] - trunk_perp) > 0.01
+                proj = p['esc_y']
+                off = abs(p['esc_x'] - trunk_perp) > 0.01
                 at_ep = abs(proj - trunk_min) < 0.01 or abs(proj - trunk_max) < 0.01
                 solo_ep = off and at_ep and _ep_counts.get(round(proj, 4), 0) == 1 and round(proj, 4) not in _on_trunk_at
                 if solo_ep:
@@ -550,7 +561,24 @@ try:
         trunk_min = snap_to_grid(min(trunk_conn))
         trunk_max = snap_to_grid(max(trunk_conn))
 
-        # Place trunk wire
+        # Collect trunk split points: off-trunk branch targets + on-trunk interior escapes
+        _branch_conn_pts = set()
+        for p in pin_positions:
+            if is_horizontal:
+                off = abs(p['esc_y'] - trunk_perp) > 0.01
+            else:
+                off = abs(p['esc_x'] - trunk_perp) > 0.01
+            if off and '_tgt' in p:
+                tgt = p['_tgt']
+                proj = tgt[0] if is_horizontal else tgt[1]
+                if trunk_min < proj < trunk_max:
+                    _branch_conn_pts.add(round(proj, 4))
+            elif not off:
+                # On-trunk escape in trunk interior needs a split point
+                esc_proj = p['esc_x'] if is_horizontal else p['esc_y']
+                if trunk_min + 0.01 < esc_proj < trunk_max - 0.01:
+                    _branch_conn_pts.add(round(esc_proj, 4))
+
         all_segments = []
         if trunk_min != trunk_max:
             if is_horizontal:
@@ -561,30 +589,45 @@ try:
             hit, loc = _path_hits_obstacle(trunk_wp)
             if hit:
                 raise ValueError(f'Trunk wire would pass through a component at {loc}. Try repositioning components to clear the path.')
-            sch.wiring.add_wire(Vector2.from_xy_mm(*t0), Vector2.from_xy_mm(*t1))
-            all_segments.append((round(t0[0], 2), round(t0[1], 2), round(t1[0], 2), round(t1[1], 2)))
-            _track(t0[0], t0[1])
-            _track(t1[0], t1[1])
-            wire_count += 1
+            # Build sorted list of split points along trunk axis
+            _split_vals = sorted(_branch_conn_pts)
+            _trunk_points = [trunk_min] + _split_vals + [trunk_max]
+            # Remove duplicates while preserving order
+            _trunk_points_dedup = []
+            for _tv in _trunk_points:
+                if not _trunk_points_dedup or abs(_tv - _trunk_points_dedup[-1]) > 0.001:
+                    _trunk_points_dedup.append(_tv)
+            _trunk_points = _trunk_points_dedup
+            if _branch_conn_pts:
+                print(f'[route] TRUNK split at {sorted(_branch_conn_pts)} (segs={len(_trunk_points)-1})', file=sys.stderr)
+            for _ti in range(len(_trunk_points) - 1):
+                if is_horizontal:
+                    _ts = (_trunk_points[_ti], trunk_perp)
+                    _te = (_trunk_points[_ti + 1], trunk_perp)
+                else:
+                    _ts = (trunk_perp, _trunk_points[_ti])
+                    _te = (trunk_perp, _trunk_points[_ti + 1])
+                sch.wiring.add_wire(Vector2.from_xy_mm(*_ts), Vector2.from_xy_mm(*_te))
+                all_segments.append((round(_ts[0], 2), round(_ts[1], 2), round(_te[0], 2), round(_te[1], 2)))
+                _track(_ts[0], _ts[1])
+                _track(_te[0], _te[1])
+                wire_count += 1
 
-        # Place branches using A* with preferred start direction
+        # Place branches from escaped position to trunk target (no forced escape)
         for p in pin_positions:
             if is_horizontal:
-                off_trunk = abs(p['y'] - trunk_perp) > 0.01
+                off_trunk = abs(p['esc_y'] - trunk_perp) > 0.01
             else:
-                off_trunk = abs(p['x'] - trunk_perp) > 0.01
+                off_trunk = abs(p['esc_x'] - trunk_perp) > 0.01
 
             if off_trunk:
-                pin_x, pin_y = p['raw_x'], p['raw_y']
+                esc_x, esc_y = p['esc_x'], p['esc_y']
                 tgt_x, tgt_y = p['_tgt']
-                sd = _dir_index(p['out_dx'], p['out_dy'])
-                waypoints = _astar(pin_x, pin_y, tgt_x, tgt_y, start_dir=sd)
+                waypoints = _astar(esc_x, esc_y, tgt_x, tgt_y)
                 hit, loc = _path_hits_obstacle(waypoints)
                 if hit:
                     raise ValueError(f'Wire from {p["ref"]}:{p["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
-                w = _place_path(waypoints)
-                wire_count += w
-                # Track all waypoint endpoints for junction detection
+                wire_count += _place_path(waypoints)
                 for wi in range(len(waypoints) - 1):
                     ax, ay = waypoints[wi]
                     bx, by = waypoints[wi + 1]
@@ -592,7 +635,18 @@ try:
                     _track(ax, ay)
                     _track(bx, by)
 
-        # Count pins as branches at their positions
+        # Place pin-to-escape wires for all pins
+        for p in pin_positions:
+            px, py = p['raw_x'], p['raw_y']
+            ex, ey = p['esc_x'], p['esc_y']
+            if abs(px - ex) > 0.001 or abs(py - ey) > 0.001:
+                sch.wiring.add_wire(Vector2.from_xy_mm(px, py), Vector2.from_xy_mm(ex, ey))
+                all_segments.append((round(px, 2), round(py, 2), round(ex, 2), round(ey, 2)))
+                _track(px, py)
+                _track(ex, ey)
+                wire_count += 1
+
+        # Count pin positions for junction detection
         for p in pin_positions:
             _track(p['raw_x'], p['raw_y'])
 

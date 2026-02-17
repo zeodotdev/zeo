@@ -714,6 +714,166 @@ message SetEditorPreferences
 
 
 //
+// Schematic Formatting Settings Commands
+// (Project-level settings from Schematic Setup -> General -> Formatting)
+//
+
+/// Schematic formatting settings stored in the project file
+message FormattingSettings
+{
+  // Text section
+  optional int32 default_text_size_mils = 1;
+  optional double overbar_offset_ratio = 2;      // Percentage (e.g., 123.0 = 123%)
+  optional double label_offset_ratio = 3;        // Percentage
+  optional double global_label_margin_ratio = 4; // Percentage
+
+  // Symbols section
+  optional int32 default_line_width_mils = 10;
+  optional int32 pin_symbol_size_mils = 11;
+
+  // Connections section
+  optional int32 junction_size_choice = 20;      // 0=none, 1=smallest, 2=small, etc.
+  optional int32 hop_over_size_choice = 21;      // 0=none, 1=smallest, etc.
+  optional int32 connection_grid_mils = 22;
+
+  // Inter-sheet References section
+  optional bool intersheet_refs_show = 30;
+  optional bool intersheet_refs_list_own_page = 31;
+  optional bool intersheet_refs_format_short = 32;  // true=Abbreviated(1..3), false=Standard(1,2,3)
+  optional string intersheet_refs_prefix = 33;
+  optional string intersheet_refs_suffix = 34;
+
+  // Dashed Lines section
+  optional double dashed_line_dash_ratio = 40;   // Ratio of line width
+  optional double dashed_line_gap_ratio = 41;    // Ratio of line width
+
+  // Operating-point Overlay section
+  optional int32 opo_voltage_precision = 50;     // Significant digits
+  optional string opo_voltage_range = 51;        // "Auto", "V", "mV", etc.
+  optional int32 opo_current_precision = 52;     // Significant digits
+  optional string opo_current_range = 53;        // "Auto", "A", "mA", etc.
+}
+
+/// Gets schematic formatting settings
+message GetFormattingSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetFormattingSettingsResponse
+{
+  FormattingSettings settings = 1;
+}
+
+/// Sets schematic formatting settings
+message SetFormattingSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  FormattingSettings settings = 2;
+}
+
+
+//
+// Field Name Templates Commands
+// (Project-level settings from Schematic Setup -> General -> Field Name Templates)
+//
+
+/// A single field name template entry
+message FieldNameTemplate
+{
+  string name = 1;           // Field name
+  bool visible = 2;          // Default visibility
+  bool url = 3;              // Has URL/browse button
+}
+
+/// Gets all field name templates
+message GetFieldNameTemplates
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetFieldNameTemplatesResponse
+{
+  repeated FieldNameTemplate templates = 1;
+}
+
+/// Sets (replaces) all field name templates
+/// Provide the complete list of templates to replace existing ones
+message SetFieldNameTemplates
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated FieldNameTemplate templates = 2;
+}
+
+
+//
+// Annotation Settings Commands
+// (Project-level settings from Schematic Setup -> General -> Annotation)
+//
+
+/// Symbol unit notation options (subpart separator and first ID)
+/// Maps to combinations of m_SubpartIdSeparator and m_SubpartFirstId
+enum SymbolUnitNotation
+{
+  SUN_A = 0;        // A (no separator, letter)
+  SUN_DOT_A = 1;    // .A (dot separator, letter)
+  SUN_DASH_A = 2;   // -A (dash separator, letter)
+  SUN_UNDER_A = 3;  // _A (underscore separator, letter)
+  SUN_DOT_1 = 4;    // .1 (dot separator, number)
+  SUN_DASH_1 = 5;   // -1 (dash separator, number)
+  SUN_UNDER_1 = 6;  // _1 (underscore separator, number)
+}
+
+/// Annotation sort order
+enum AnnotationSortOrder
+{
+  ASO_X_POSITION = 0;  // Sort symbols by X position
+  ASO_Y_POSITION = 1;  // Sort symbols by Y position
+}
+
+/// Annotation numbering method
+enum AnnotationNumberingMethod
+{
+  ANM_FIRST_FREE = 0;       // Use first free number after start_number
+  ANM_SHEET_X_100 = 1;      // First free after sheet number X 100
+  ANM_SHEET_X_1000 = 2;     // First free after sheet number X 1000
+}
+
+/// Annotation settings stored in the project file
+message AnnotationSettingsData
+{
+  // Units section
+  optional SymbolUnitNotation symbol_unit_notation = 1;
+
+  // Order section
+  optional AnnotationSortOrder sort_order = 10;
+
+  // Numbering section
+  optional AnnotationNumberingMethod numbering_method = 20;
+  optional int32 start_number = 21;             // Starting number for annotation
+  optional bool allow_reference_reuse = 22;     // Allow reusing reference designators
+}
+
+/// Gets annotation settings
+message GetAnnotationSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetAnnotationSettingsResponse
+{
+  AnnotationSettingsData settings = 1;
+}
+
+/// Sets annotation settings
+message SetAnnotationSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  AnnotationSettingsData settings = 2;
+}
+
+
+//
 // Simulation Settings Commands
 //
 
@@ -1263,3 +1423,138 @@ message PlaceDesignBlockResponse
 }
 
 
+//
+// Net Class Commands
+// (Project-level settings from Schematic Setup -> Project -> Net Classes)
+//
+
+/// Line style for schematic wires/buses
+enum SchematicLineStyle
+{
+  SLS_SOLID = 0;
+  SLS_DASH = 1;
+  SLS_DOT = 2;
+  SLS_DASH_DOT = 3;
+  SLS_DASH_DOT_DOT = 4;
+}
+
+/// A netclass definition for schematic use
+message NetClassData
+{
+  string name = 1;                       // Netclass name (required)
+  optional string description = 2;       // Optional description
+  optional int32 wire_width_mils = 3;    // Wire thickness in mils
+  optional int32 bus_width_mils = 4;     // Bus thickness in mils
+  optional string color = 5;             // Color in hex format (#RRGGBB) or "transparent"
+  optional SchematicLineStyle line_style = 6;  // Line style
+  optional int32 priority = 7;           // Priority for multi-netclass resolution
+}
+
+/// Gets all netclasses
+message GetNetClasses
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetNetClassesResponse
+{
+  NetClassData default_netclass = 1;     // The default netclass (always exists)
+  repeated NetClassData netclasses = 2;  // User-defined netclasses
+}
+
+/// Creates or updates a netclass
+message SetNetClass
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  NetClassData netclass = 2;             // Netclass data (name is used as key)
+}
+
+/// Deletes a netclass
+message DeleteNetClass
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string name = 2;                       // Netclass name to delete (cannot delete "Default")
+}
+
+/// A netclass pattern assignment (pattern -> netclass)
+message NetClassAssignment
+{
+  string pattern = 1;                    // Wildcard pattern to match net names
+  string netclass = 2;                   // Netclass to assign
+}
+
+/// Gets all netclass pattern assignments
+message GetNetClassAssignments
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetNetClassAssignmentsResponse
+{
+  repeated NetClassAssignment assignments = 1;
+}
+
+/// Sets all netclass pattern assignments (replaces existing)
+message SetNetClassAssignments
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated NetClassAssignment assignments = 2;
+}
+
+/// Adds a single netclass pattern assignment
+message AddNetClassAssignment
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  NetClassAssignment assignment = 2;
+}
+
+/// Removes a netclass pattern assignment by pattern
+message RemoveNetClassAssignment
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string pattern = 2;                    // Pattern to remove
+}
+
+
+//
+// Bus Alias Commands
+//
+
+/// Bus alias definition - maps an alias name to a list of member signals
+message BusAliasData
+{
+  string name = 1;                       // Alias name (e.g., "DATA_BUS")
+  repeated string members = 2;            // Member signal names (e.g., ["D0", "D1", "D2", ...])
+}
+
+/// Gets all bus aliases defined in the project
+message GetBusAliases
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetBusAliasesResponse
+{
+  repeated BusAliasData aliases = 1;
+}
+
+/// Creates or updates a bus alias
+message SetBusAlias
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  BusAliasData alias = 2;
+}
+
+/// Deletes a bus alias by name
+message DeleteBusAlias
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string name = 2;
+}
+
+/// Replaces all bus aliases at once
+message SetBusAliases
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated BusAliasData aliases = 2;
+}

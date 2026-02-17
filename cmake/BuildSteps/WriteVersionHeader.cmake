@@ -26,6 +26,25 @@
 include( ${KICAD_CMAKE_MODULE_PATH}/KiCadVersion.cmake )
 include( ${KICAD_CMAKE_MODULE_PATH}/KiCadFullVersion.cmake )
 
+# Create the Zeo version strings
+include( ${KICAD_CMAKE_MODULE_PATH}/ZeoVersion.cmake )
+
+# Extract the Zeo major, minor, and patch version
+string( REGEX MATCH
+        "([0-9]+)\\.([0-9]+)\\.([0-9]+).*"
+        ZEO_MAJOR_MINOR_PATCH_VERSION
+        "${ZEO_SEMANTIC_VERSION}"
+    )
+
+if( CMAKE_MATCH_COUNT EQUAL 3 )
+    set( ZEO_MAJOR_VERSION "${CMAKE_MATCH_1}" )
+    set( ZEO_MINOR_VERSION "${CMAKE_MATCH_2}" )
+    set( ZEO_PATCH_VERSION "${CMAKE_MATCH_3}" )
+    set( ZEO_MAJOR_MINOR_VERSION "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}" )
+    set( ZEO_MAJOR_MINOR_PATCH_VERSION "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}" )
+    set( ZEO_MAJOR_MINOR_PATCH_TUPLE "{ ${CMAKE_MATCH_1}, ${CMAKE_MATCH_2}, ${CMAKE_MATCH_3} }" )
+endif()
+
 # Extract the major and minor build version as a string
 string( REGEX MATCH
         "([0-9]+)\\.([0-9]+)\\.([0-9]+).*"
@@ -86,6 +105,16 @@ set( _wvh_new_version_text
 #define KICAD_WIN32_RC_PRODVER_STR      \"${KICAD_WIN32_RC_PRODVER_STR}\"
 #define KICAD_WIN32_RC_FILEVER          ${KICAD_WIN32_RC_FILEVER}
 #define KICAD_WIN32_RC_FILEVER_STR      \"${KICAD_WIN32_RC_FILEVER_STR}\"
+
+/* Zeo version strings */
+#define ZEO_VERSION                     \"${ZEO_VERSION}\"
+#define ZEO_SEMANTIC_VERSION            \"${ZEO_SEMANTIC_VERSION}\"
+#define ZEO_MAJOR_VERSION               \"${ZEO_MAJOR_VERSION}\"
+#define ZEO_MINOR_VERSION               \"${ZEO_MINOR_VERSION}\"
+#define ZEO_PATCH_VERSION               \"${ZEO_PATCH_VERSION}\"
+#define ZEO_MAJOR_MINOR_VERSION         \"${ZEO_MAJOR_MINOR_VERSION}\"
+#define ZEO_MAJOR_MINOR_PATCH_VERSION   \"${ZEO_MAJOR_MINOR_PATCH_VERSION}\"
+#define ZEO_MAJOR_MINOR_PATCH_TUPLE     ${ZEO_MAJOR_MINOR_PATCH_TUPLE}
 
 #endif  /* __KICAD_VERSION_H__ */
 " )

@@ -89,10 +89,38 @@ namespace kiapi { namespace schematic { namespace commands {
     class SetERCSettings;
     // Net class commands
     class AssignNetToClass;
+    class GetNetClasses;
+    class GetNetClassesResponse;
+    class SetNetClass;
+    class DeleteNetClass;
+    class GetNetClassAssignments;
+    class GetNetClassAssignmentsResponse;
+    class SetNetClassAssignments;
+    class AddNetClassAssignment;
+    class RemoveNetClassAssignment;
+    // Bus alias commands
+    class BusAliasData;
+    class GetBusAliases;
+    class GetBusAliasesResponse;
+    class SetBusAlias;
+    class DeleteBusAlias;
+    class SetBusAliases;
     // Editor preferences commands
     class GetEditorPreferences;
     class GetEditorPreferencesResponse;
     class SetEditorPreferences;
+    // Formatting settings commands
+    class GetFormattingSettings;
+    class GetFormattingSettingsResponse;
+    class SetFormattingSettings;
+    // Field name templates commands
+    class GetFieldNameTemplates;
+    class GetFieldNameTemplatesResponse;
+    class SetFieldNameTemplates;
+    // Annotation settings commands
+    class GetAnnotationSettings;
+    class GetAnnotationSettingsResponse;
+    class SetAnnotationSettings;
     // Simulation settings commands
     class GetSimulationSettings;
     class GetSimulationSettingsResponse;
@@ -334,12 +362,67 @@ private:
     HANDLER_RESULT<Empty>
     handleAssignNetToClass( const HANDLER_CONTEXT<schematic::commands::AssignNetToClass>& aCtx );
 
+    HANDLER_RESULT<schematic::commands::GetNetClassesResponse>
+    handleGetNetClasses( const HANDLER_CONTEXT<schematic::commands::GetNetClasses>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetNetClass( const HANDLER_CONTEXT<schematic::commands::SetNetClass>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleDeleteNetClass( const HANDLER_CONTEXT<schematic::commands::DeleteNetClass>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetNetClassAssignmentsResponse>
+    handleGetNetClassAssignments( const HANDLER_CONTEXT<schematic::commands::GetNetClassAssignments>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetNetClassAssignments( const HANDLER_CONTEXT<schematic::commands::SetNetClassAssignments>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleAddNetClassAssignment( const HANDLER_CONTEXT<schematic::commands::AddNetClassAssignment>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleRemoveNetClassAssignment( const HANDLER_CONTEXT<schematic::commands::RemoveNetClassAssignment>& aCtx );
+
+    // Bus alias handlers
+    HANDLER_RESULT<schematic::commands::GetBusAliasesResponse>
+    handleGetBusAliases( const HANDLER_CONTEXT<schematic::commands::GetBusAliases>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetBusAlias( const HANDLER_CONTEXT<schematic::commands::SetBusAlias>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleDeleteBusAlias( const HANDLER_CONTEXT<schematic::commands::DeleteBusAlias>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetBusAliases( const HANDLER_CONTEXT<schematic::commands::SetBusAliases>& aCtx );
+
     // Editor preferences handlers
     HANDLER_RESULT<schematic::commands::GetEditorPreferencesResponse>
     handleGetEditorPreferences( const HANDLER_CONTEXT<schematic::commands::GetEditorPreferences>& aCtx );
 
     HANDLER_RESULT<Empty>
     handleSetEditorPreferences( const HANDLER_CONTEXT<schematic::commands::SetEditorPreferences>& aCtx );
+
+    // Formatting settings handlers (project-level settings from Schematic Setup)
+    HANDLER_RESULT<schematic::commands::GetFormattingSettingsResponse>
+    handleGetFormattingSettings( const HANDLER_CONTEXT<schematic::commands::GetFormattingSettings>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetFormattingSettings( const HANDLER_CONTEXT<schematic::commands::SetFormattingSettings>& aCtx );
+
+    // Field name templates handlers (project-level settings from Schematic Setup)
+    HANDLER_RESULT<schematic::commands::GetFieldNameTemplatesResponse>
+    handleGetFieldNameTemplates( const HANDLER_CONTEXT<schematic::commands::GetFieldNameTemplates>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetFieldNameTemplates( const HANDLER_CONTEXT<schematic::commands::SetFieldNameTemplates>& aCtx );
+
+    // Annotation settings handlers (project-level settings from Schematic Setup)
+    HANDLER_RESULT<schematic::commands::GetAnnotationSettingsResponse>
+    handleGetAnnotationSettings( const HANDLER_CONTEXT<schematic::commands::GetAnnotationSettings>& aCtx );
+
+    HANDLER_RESULT<Empty>
+    handleSetAnnotationSettings( const HANDLER_CONTEXT<schematic::commands::SetAnnotationSettings>& aCtx );
 
     // Simulation settings handlers
     HANDLER_RESULT<schematic::commands::GetSimulationSettingsResponse>

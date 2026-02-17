@@ -636,6 +636,438 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schAnnotate );
 
+    // sch_setup - Read/modify schematic document settings
+    LLM_TOOL schSetup;
+    schSetup.name = "sch_setup";
+    schSetup.description =
+        "Read or modify schematic document settings from Schematic Setup dialog. "
+        "Use action='get' to retrieve all settings, action='set' to update specific settings. "
+        "Settings include: page size, title block, grid, formatting (text/symbol defaults, "
+        "connections, inter-sheet refs, dashed lines, operating-point overlay), annotation "
+        "(symbol unit notation, sort order, numbering method), field name templates, ERC rules, "
+        "pin_conflict_map (ERC pin-to-pin error matrix), net_classes (wire/bus styling), "
+        "net_class_assignments (pattern-based net to netclass mappings), bus_aliases "
+        "(named groups of signals for bus definitions), and text_variables (project-level "
+        "variable substitution like ${AUTHOR}, ${VERSION}). "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schSetup.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "action", {
+                { "type", "string" },
+                { "enum", json::array( { "get", "set" } ) },
+                { "description", "Action: 'get' retrieves settings, 'set' updates settings" }
+            }},
+            { "page", {
+                { "type", "object" },
+                { "description", "Page size settings (for set action)" },
+                { "properties", {
+                    { "size", { { "type", "string" }, { "enum", json::array( { "A5", "A4", "A3", "A2", "A1", "A0", "A", "B", "C", "D", "E", "USLetter", "USLegal", "USLedger", "USER" } ) } } },
+                    { "portrait", { { "type", "boolean" } } },
+                    { "width_mm", { { "type", "number" }, { "description", "Custom width (for USER size)" } } },
+                    { "height_mm", { { "type", "number" }, { "description", "Custom height (for USER size)" } } }
+                }}
+            }},
+            { "title_block", {
+                { "type", "object" },
+                { "description", "Title block information (for set action)" },
+                { "properties", {
+                    { "title", { { "type", "string" } } },
+                    { "date", { { "type", "string" } } },
+                    { "revision", { { "type", "string" } } },
+                    { "company", { { "type", "string" } } },
+                    { "comments", { { "type", "object" }, { "description", "Comments 1-9 as {\"comment1\": \"...\", ...}" } } }
+                }}
+            }},
+            { "grid", {
+                { "type", "object" },
+                { "description", "Grid settings (for set action)" },
+                { "properties", {
+                    { "size_mm", { { "type", "number" } } },
+                    { "size_mils", { { "type", "number" } } },
+                    { "visible", { { "type", "boolean" } } },
+                    { "snap", { { "type", "boolean" } } }
+                }}
+            }},
+            { "formatting", {
+                { "type", "object" },
+                { "description", "Formatting settings from Schematic Setup (for set action)" },
+                { "properties", {
+                    { "text", {
+                        { "type", "object" },
+                        { "properties", {
+                            { "default_text_size_mils", { { "type", "integer" }, { "description", "Default text size (mils)" } } },
+                            { "overbar_offset_ratio", { { "type", "number" }, { "description", "Overbar offset (percentage)" } } },
+                            { "label_offset_ratio", { { "type", "number" }, { "description", "Label offset (percentage)" } } },
+                            { "global_label_margin_ratio", { { "type", "number" }, { "description", "Global label margin (percentage)" } } }
+                        }}
+                    }},
+                    { "symbols", {
+                        { "type", "object" },
+                        { "properties", {
+                            { "default_line_width_mils", { { "type", "integer" }, { "description", "Default line width (mils)" } } },
+                            { "pin_symbol_size_mils", { { "type", "integer" }, { "description", "Pin symbol size (mils)" } } }
+                        }}
+                    }},
+                    { "connections", {
+                        { "type", "object" },
+                        { "properties", {
+                            { "junction_size_choice", { { "type", "integer" }, { "description", "Junction dot size: 0=none, 1=smallest, 2=small, 3=default, 4=large, 5=largest" } } },
+                            { "hop_over_size_choice", { { "type", "integer" }, { "description", "Hop-over size: 0=none, 1=smallest, etc." } } },
+                            { "connection_grid_mils", { { "type", "integer" }, { "description", "Connection grid size (mils)" } } }
+                        }}
+                    }},
+                    { "intersheet_refs", {
+                        { "type", "object" },
+                        { "properties", {
+                            { "show", { { "type", "boolean" }, { "description", "Show inter-sheet references" } } },
+                            { "list_own_page", { { "type", "boolean" }, { "description", "Show own page reference" } } },
+                            { "format_short", { { "type", "boolean" }, { "description", "Use abbreviated format (1..3) vs standard (1,2,3)" } } },
+                            { "prefix", { { "type", "string" } } },
+                            { "suffix", { { "type", "string" } } }
+                        }}
+                    }},
+                    { "dashed_lines", {
+                        { "type", "object" },
+                        { "properties", {
+                            { "dash_ratio", { { "type", "number" }, { "description", "Dash length as ratio of line width" } } },
+                            { "gap_ratio", { { "type", "number" }, { "description", "Gap length as ratio of line width" } } }
+                        }}
+                    }},
+                    { "opo", {
+                        { "type", "object" },
+                        { "description", "Operating-point overlay settings" },
+                        { "properties", {
+                            { "voltage_precision", { { "type", "integer" }, { "description", "Voltage significant digits" } } },
+                            { "voltage_range", { { "type", "string" }, { "description", "Voltage range: 'Auto', 'V', 'mV', etc." } } },
+                            { "current_precision", { { "type", "integer" }, { "description", "Current significant digits" } } },
+                            { "current_range", { { "type", "string" }, { "description", "Current range: 'Auto', 'A', 'mA', etc." } } }
+                        }}
+                    }}
+                }}
+            }},
+            { "erc", {
+                { "type", "object" },
+                { "description", "ERC (Electrical Rules Check) violation severity settings. Maps rule codes to severity levels." },
+                { "properties", {
+                    { "rule_severities", {
+                        { "type", "object" },
+                        { "description",
+                            "Map of ERC rule codes to severity ('error', 'warning', or 'ignore'). "
+                            "Available codes - Connections: ERCE_PIN_NOT_CONNECTED, ERCE_PIN_NOT_DRIVEN, "
+                            "ERCE_POWERPIN_NOT_DRIVEN, ERCE_NOCONNECT_CONNECTED, ERCE_NOCONNECT_NOT_CONNECTED, "
+                            "ERCE_LABEL_NOT_CONNECTED, ERCE_LABEL_SINGLE_PIN, ERCE_SINGLE_GLOBAL_LABEL, "
+                            "ERCE_SAME_LOCAL_GLOBAL_LABEL, ERCE_WIRE_DANGLING, ERCE_BUS_ENTRY_NEEDED, "
+                            "ERCE_ENDPOINT_OFF_GRID, ERCE_FOUR_WAY_JUNCTION, ERCE_LABEL_MULTIPLE_WIRES, "
+                            "ERCE_UNCONNECTED_WIRE_ENDPOINT. "
+                            "Conflicts: ERCE_DUPLICATE_REFERENCE, ERCE_DIFFERENT_UNIT_VALUE, "
+                            "ERCE_DIFFERENT_UNIT_FP, ERCE_DIFFERENT_UNIT_NET, ERCE_DUPLICATE_SHEET_NAME, "
+                            "ERCE_HIERACHICAL_LABEL, ERCE_DRIVER_CONFLICT, ERCE_BUS_ALIAS_CONFLICT, "
+                            "ERCE_BUS_TO_BUS_CONFLICT, ERCE_BUS_ENTRY_CONFLICT, ERCE_BUS_TO_NET_CONFLICT, "
+                            "ERCE_GROUND_PIN_NOT_GROUND. "
+                            "Miscellaneous: ERCE_STACKED_PIN_SYNTAX, ERCE_UNANNOTATED, ERCE_UNRESOLVED_VARIABLE, "
+                            "ERCE_UNDEFINED_NETCLASS, ERCE_SIMULATION_MODEL, ERCE_SIMILAR_LABELS, "
+                            "ERCE_SIMILAR_POWER, ERCE_SIMILAR_LABEL_AND_POWER, ERCE_LIB_SYMBOL_ISSUES, "
+                            "ERCE_LIB_SYMBOL_MISMATCH, ERCE_FOOTPRINT_LINK_ISSUES, ERCE_FOOTPRINT_FILTERS, "
+                            "ERCE_EXTRA_UNITS, ERCE_MISSING_UNIT, ERCE_MISSING_INPUT_PIN, ERCE_MISSING_BIDI_PIN, "
+                            "ERCE_MISSING_POWER_INPUT_PIN." },
+                        { "additionalProperties", {
+                            { "type", "string" },
+                            { "enum", json::array( { "error", "warning", "ignore" } ) }
+                        }}
+                    }}
+                }}
+            }},
+            { "field_name_templates", {
+                { "type", "array" },
+                { "description", "Field name templates - custom fields for symbols (for set action). Replaces all existing templates." },
+                { "items", {
+                    { "type", "object" },
+                    { "properties", {
+                        { "name", {
+                            { "type", "string" },
+                            { "description", "Field name" }
+                        }},
+                        { "visible", {
+                            { "type", "boolean" },
+                            { "description", "Default visibility when field is added to symbol" }
+                        }},
+                        { "url", {
+                            { "type", "boolean" },
+                            { "description", "Field contains URL (shows browse button)" }
+                        }}
+                    }},
+                    { "required", json::array( { "name" } ) }
+                }}
+            }},
+            { "annotation", {
+                { "type", "object" },
+                { "description", "Annotation settings from Schematic Setup (for set action)" },
+                { "properties", {
+                    { "units", {
+                        { "type", "object" },
+                        { "description", "Symbol unit notation settings" },
+                        { "properties", {
+                            { "symbol_unit_notation", {
+                                { "type", "string" },
+                                { "enum", json::array( { "A", ".A", "-A", "_A", ".1", "-1", "_1" } ) },
+                                { "description", "Symbol unit notation style: A (no separator), .A, -A, _A (letters), .1, -1, _1 (numbers)" }
+                            }}
+                        }}
+                    }},
+                    { "order", {
+                        { "type", "object" },
+                        { "description", "Annotation sort order" },
+                        { "properties", {
+                            { "sort_order", {
+                                { "type", "string" },
+                                { "enum", json::array( { "x", "y" } ) },
+                                { "description", "Sort symbols by position: 'x' (left-to-right) or 'y' (top-to-bottom)" }
+                            }}
+                        }}
+                    }},
+                    { "numbering", {
+                        { "type", "object" },
+                        { "description", "Annotation numbering settings" },
+                        { "properties", {
+                            { "method", {
+                                { "type", "string" },
+                                { "enum", json::array( { "first_free", "sheet_x_100", "sheet_x_1000" } ) },
+                                { "description", "Numbering method: first_free (sequential), sheet_x_100, or sheet_x_1000" }
+                            }},
+                            { "start_number", {
+                                { "type", "integer" },
+                                { "description", "Starting number for annotation" }
+                            }},
+                            { "allow_reference_reuse", {
+                                { "type", "boolean" },
+                                { "description", "Allow reusing reference designators from deleted symbols" }
+                            }}
+                        }}
+                    }}
+                }}
+            }},
+            { "pin_conflict_map", {
+                { "type", "object" },
+                { "description",
+                    "Pin conflict map (ERC pin-to-pin error matrix). Defines what happens when pins of "
+                    "different electrical types are connected. The matrix is symmetric - setting (A,B) also affects (B,A)." },
+                { "properties", {
+                    { "reset_to_defaults", {
+                        { "type", "boolean" },
+                        { "description", "Reset the entire pin conflict map to default values before applying any entries" }
+                    }},
+                    { "entries", {
+                        { "type", "array" },
+                        { "description",
+                            "List of pin conflict entries to set. Each entry specifies a pair of pin types and the conflict level. "
+                            "Pin types: input, output, bidirectional, tri_state, passive, free, unspecified, power_in, power_out, "
+                            "open_collector, open_emitter, no_connect. "
+                            "Error types: ok (green, no error), warning (yellow triangle), error (red circle)." },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "first_pin_type", {
+                                    { "type", "string" },
+                                    { "enum", json::array( { "input", "output", "bidirectional", "tri_state", "passive", "free", "unspecified", "power_in", "power_out", "open_collector", "open_emitter", "no_connect" } ) },
+                                    { "description", "First pin type in the connection" }
+                                }},
+                                { "second_pin_type", {
+                                    { "type", "string" },
+                                    { "enum", json::array( { "input", "output", "bidirectional", "tri_state", "passive", "free", "unspecified", "power_in", "power_out", "open_collector", "open_emitter", "no_connect" } ) },
+                                    { "description", "Second pin type in the connection" }
+                                }},
+                                { "error_type", {
+                                    { "type", "string" },
+                                    { "enum", json::array( { "ok", "warning", "error" } ) },
+                                    { "description", "Conflict level: ok (no error), warning (yellow), error (red)" }
+                                }}
+                            }},
+                            { "required", json::array( { "first_pin_type", "second_pin_type", "error_type" } ) }
+                        }}
+                    }}
+                }}
+            }},
+            { "net_classes", {
+                { "type", "object" },
+                { "description",
+                    "Net classes define visual properties for groups of nets (wire thickness, bus thickness, color, line style). "
+                    "Use 'create' to add new net classes, 'update' to modify existing ones (including 'Default'), 'delete' to remove." },
+                { "properties", {
+                    { "create", {
+                        { "type", "array" },
+                        { "description", "Net classes to create" },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "name", { { "type", "string" }, { "description", "Unique net class name" } } },
+                                { "wire_width_mils", { { "type", "integer" }, { "description", "Wire thickness in mils (default: 6)" } } },
+                                { "bus_width_mils", { { "type", "integer" }, { "description", "Bus thickness in mils (default: 12)" } } },
+                                { "color", { { "type", "string" }, { "description", "Color in hex format (#RRGGBB) or empty for default" } } },
+                                { "line_style", {
+                                    { "type", "string" },
+                                    { "enum", json::array( { "solid", "dash", "dot", "dash_dot", "dash_dot_dot" } ) },
+                                    { "description", "Line style for wires/buses" }
+                                }},
+                                { "description", { { "type", "string" }, { "description", "Optional description" } } },
+                                { "priority", { { "type", "integer" }, { "description", "Priority for multi-netclass resolution (lower = higher priority)" } } }
+                            }},
+                            { "required", json::array( { "name" } ) }
+                        }}
+                    }},
+                    { "update", {
+                        { "type", "array" },
+                        { "description", "Net classes to update (including 'Default')" },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "name", { { "type", "string" }, { "description", "Net class name (must exist)" } } },
+                                { "wire_width_mils", { { "type", "integer" } } },
+                                { "bus_width_mils", { { "type", "integer" } } },
+                                { "color", { { "type", "string" } } },
+                                { "line_style", {
+                                    { "type", "string" },
+                                    { "enum", json::array( { "solid", "dash", "dot", "dash_dot", "dash_dot_dot" } ) }
+                                }},
+                                { "description", { { "type", "string" } } },
+                                { "priority", { { "type", "integer" } } }
+                            }},
+                            { "required", json::array( { "name" } ) }
+                        }}
+                    }},
+                    { "delete", {
+                        { "type", "array" },
+                        { "description", "Net class names to delete (cannot delete 'Default')" },
+                        { "items", { { "type", "string" } } }
+                    }}
+                }}
+            }},
+            { "net_class_assignments", {
+                { "type", "object" },
+                { "description",
+                    "Net class assignments map net name patterns to net classes using wildcard matching "
+                    "(e.g., 'VCC*' matches 'VCC', 'VCC_3V3', etc.)." },
+                { "properties", {
+                    { "replace_all", {
+                        { "type", "array" },
+                        { "description", "Replace ALL assignments with this list" },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "pattern", { { "type", "string" }, { "description", "Wildcard pattern (e.g., 'VCC*', '*_CLK')" } } },
+                                { "netclass", { { "type", "string" }, { "description", "Net class name to assign" } } }
+                            }},
+                            { "required", json::array( { "pattern", "netclass" } ) }
+                        }}
+                    }},
+                    { "add", {
+                        { "type", "array" },
+                        { "description", "Assignments to add" },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "pattern", { { "type", "string" } } },
+                                { "netclass", { { "type", "string" } } }
+                            }},
+                            { "required", json::array( { "pattern", "netclass" } ) }
+                        }}
+                    }},
+                    { "remove", {
+                        { "type", "array" },
+                        { "description", "Patterns to remove (exact match)" },
+                        { "items", { { "type", "string" } } }
+                    }}
+                }}
+            }},
+            { "bus_aliases", {
+                { "type", "object" },
+                { "description",
+                    "Bus aliases define named groups of signals that can be used together as a bus. "
+                    "For example, 'DATA_BUS' could contain signals D0, D1, D2, ..., D7." },
+                { "properties", {
+                    { "replace_all", {
+                        { "type", "array" },
+                        { "description", "Replace ALL bus aliases with this list" },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "name", { { "type", "string" }, { "description", "Bus alias name" } } },
+                                { "members", {
+                                    { "type", "array" },
+                                    { "description", "List of member signal names" },
+                                    { "items", { { "type", "string" } } }
+                                }}
+                            }},
+                            { "required", json::array( { "name", "members" } ) }
+                        }}
+                    }},
+                    { "create", {
+                        { "type", "array" },
+                        { "description", "Bus aliases to create" },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "name", { { "type", "string" }, { "description", "Bus alias name (must be unique)" } } },
+                                { "members", {
+                                    { "type", "array" },
+                                    { "description", "List of member signal names" },
+                                    { "items", { { "type", "string" } } }
+                                }}
+                            }},
+                            { "required", json::array( { "name", "members" } ) }
+                        }}
+                    }},
+                    { "update", {
+                        { "type", "array" },
+                        { "description", "Bus aliases to update (replaces members)" },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "name", { { "type", "string" }, { "description", "Bus alias name (must exist)" } } },
+                                { "members", {
+                                    { "type", "array" },
+                                    { "description", "New list of member signal names" },
+                                    { "items", { { "type", "string" } } }
+                                }}
+                            }},
+                            { "required", json::array( { "name", "members" } ) }
+                        }}
+                    }},
+                    { "delete", {
+                        { "type", "array" },
+                        { "description", "Bus alias names to delete" },
+                        { "items", { { "type", "string" } } }
+                    }}
+                }}
+            }},
+            { "text_variables", {
+                { "type", "object" },
+                { "description",
+                    "Text variables for substitution in schematic text fields. Variables are referenced "
+                    "as ${VARIABLE_NAME} in text. Project-level setting shared with PCB." },
+                { "properties", {
+                    { "replace_all", {
+                        { "type", "object" },
+                        { "description", "Replace ALL text variables with this map (clears existing)" },
+                        { "additionalProperties", { { "type", "string" } } }
+                    }},
+                    { "set", {
+                        { "type", "object" },
+                        { "description", "Set/merge text variables (adds new, updates existing)" },
+                        { "additionalProperties", { { "type", "string" } } }
+                    }},
+                    { "delete", {
+                        { "type", "array" },
+                        { "description", "Variable names to delete" },
+                        { "items", { { "type", "string" } } }
+                    }}
+                }}
+            }}
+        }},
+        { "required", json::array( { "action" } ) }
+    };
+    tools.push_back( schSetup );
+
     // ===== PCB Tools =====
 
     // pcb_get_summary - Get high-level overview of PCB

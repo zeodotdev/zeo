@@ -119,4 +119,29 @@ KICOMMON_API void SetOpenGLInfo( const char* aRenderer, const char* aVendor, con
 KICOMMON_API wxString GetVersionInfoData( const wxString& aTitle, bool aHtml = false,
                                           bool aBrief = false );
 
+// =============================================================================
+// Zeo Version Functions
+// =============================================================================
+
+/**
+ * Get the Zeo version string.
+ *
+ * @return the Zeo version string (e.g., "0.1.0")
+ */
+KICOMMON_API wxString GetZeoVersion();
+
+/**
+ * Get the Zeo major, minor, and patch version as a string.
+ *
+ * @return the Zeo version as "major.minor.patch"
+ */
+KICOMMON_API wxString GetZeoMajorMinorPatchVersion();
+
+/**
+ * Get the Zeo build version numbers as a tuple.
+ *
+ * @return A tuple with three ints for major/minor/patch revisions
+ */
+KICOMMON_API const std::tuple<int, int, int>& GetZeoMajorMinorPatchTuple();
+
 #endif  // KICAD_BUILD_VERSION_H

@@ -7,6 +7,7 @@
 #include "schematic/sch_connect_net_handler.h"
 #include "schematic/sch_util_handler.h"
 #include "schematic/sch_sim_handler.h"
+#include "schematic/sch_setup_handler.h"
 #include "pcb/pcb_tool_handler.h"
 #include "pcb/pcb_crud_handler.h"
 #include "pcb/pcb_autoroute_handler.h"
@@ -31,6 +32,7 @@ TOOL_REGISTRY::TOOL_REGISTRY()
     m_handlers.push_back( std::make_unique<SCH_CONNECT_NET_HANDLER>() );
     m_handlers.push_back( std::make_unique<SCH_UTIL_HANDLER>() );
     m_handlers.push_back( std::make_unique<SCH_SIM_HANDLER>() );
+    m_handlers.push_back( std::make_unique<SCH_SETUP_HANDLER>() );
 
     // Register PCB tool handlers (CRUD handler first since it has actual implementations)
     m_handlers.push_back( std::make_unique<PCB_CRUD_HANDLER>() );

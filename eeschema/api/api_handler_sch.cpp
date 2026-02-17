@@ -42,6 +42,8 @@
 #include <sch_table.h>
 #include <sch_group.h>
 #include <schematic.h>
+#include <bus_alias.h>
+#include <refdes_tracker.h>
 #include <wx/filename.h>
 #include <wx/wfstream.h>
 #include <wx/sstream.h>
@@ -188,10 +190,35 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
 
     // Net class handlers
     registerHandler<AssignNetToClass, Empty>( &API_HANDLER_SCH::handleAssignNetToClass );
+    registerHandler<GetNetClasses, GetNetClassesResponse>( &API_HANDLER_SCH::handleGetNetClasses );
+    registerHandler<SetNetClass, Empty>( &API_HANDLER_SCH::handleSetNetClass );
+    registerHandler<DeleteNetClass, Empty>( &API_HANDLER_SCH::handleDeleteNetClass );
+    registerHandler<GetNetClassAssignments, GetNetClassAssignmentsResponse>( &API_HANDLER_SCH::handleGetNetClassAssignments );
+    registerHandler<SetNetClassAssignments, Empty>( &API_HANDLER_SCH::handleSetNetClassAssignments );
+    registerHandler<AddNetClassAssignment, Empty>( &API_HANDLER_SCH::handleAddNetClassAssignment );
+    registerHandler<RemoveNetClassAssignment, Empty>( &API_HANDLER_SCH::handleRemoveNetClassAssignment );
+
+    // Bus alias handlers
+    registerHandler<GetBusAliases, GetBusAliasesResponse>( &API_HANDLER_SCH::handleGetBusAliases );
+    registerHandler<SetBusAlias, Empty>( &API_HANDLER_SCH::handleSetBusAlias );
+    registerHandler<DeleteBusAlias, Empty>( &API_HANDLER_SCH::handleDeleteBusAlias );
+    registerHandler<SetBusAliases, Empty>( &API_HANDLER_SCH::handleSetBusAliases );
 
     // Editor preferences handlers
     registerHandler<GetEditorPreferences, GetEditorPreferencesResponse>( &API_HANDLER_SCH::handleGetEditorPreferences );
     registerHandler<SetEditorPreferences, Empty>( &API_HANDLER_SCH::handleSetEditorPreferences );
+
+    // Formatting settings handlers (project-level settings from Schematic Setup)
+    registerHandler<GetFormattingSettings, GetFormattingSettingsResponse>( &API_HANDLER_SCH::handleGetFormattingSettings );
+    registerHandler<SetFormattingSettings, Empty>( &API_HANDLER_SCH::handleSetFormattingSettings );
+
+    // Field name templates handlers (project-level settings from Schematic Setup)
+    registerHandler<GetFieldNameTemplates, GetFieldNameTemplatesResponse>( &API_HANDLER_SCH::handleGetFieldNameTemplates );
+    registerHandler<SetFieldNameTemplates, Empty>( &API_HANDLER_SCH::handleSetFieldNameTemplates );
+
+    // Annotation settings handlers (project-level settings from Schematic Setup)
+    registerHandler<GetAnnotationSettings, GetAnnotationSettingsResponse>( &API_HANDLER_SCH::handleGetAnnotationSettings );
+    registerHandler<SetAnnotationSettings, Empty>( &API_HANDLER_SCH::handleSetAnnotationSettings );
 
     // Simulation settings handlers
     registerHandler<GetSimulationSettings, GetSimulationSettingsResponse>( &API_HANDLER_SCH::handleGetSimulationSettings );
@@ -3904,6 +3931,578 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleAssignNetToClass(
 }
 
 
+HANDLER_RESULT<schematic::commands::GetNetClassesResponse>
+API_HANDLER_SCH::handleGetNetClasses(
+        const HANDLER_CONTEXT<schematic::commands::GetNetClasses>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetNetClassesResponse response;
+
+    std::shared_ptr<NET_SETTINGS>& netSettings = m_frame->Prj().GetProjectFile().NetSettings();
+
+    if( !netSettings )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Net settings not available" );
+        return tl::unexpected( e );
+    }
+
+    // Helper lambda to populate netclass data
+    auto populateNetClassData = []( schematic::commands::NetClassData* data,
+                                    const std::shared_ptr<NETCLASS>& nc )
+    {
+        data->set_name( nc->GetName().ToStdString() );
+
+        if( !nc->GetDescription().IsEmpty() )
+            data->set_description( nc->GetDescription().ToStdString() );
+
+        if( nc->HasWireWidth() )
+            data->set_wire_width_mils( nc->GetWireWidth() / 2540 );  // nm to mils
+
+        if( nc->HasBusWidth() )
+            data->set_bus_width_mils( nc->GetBusWidth() / 2540 );  // nm to mils
+
+        COLOR4D color = nc->GetSchematicColor();
+        if( color != COLOR4D::UNSPECIFIED )
+        {
+            data->set_color( color.ToCSSString().ToStdString() );
+        }
+        else
+        {
+            data->set_color( "transparent" );
+        }
+
+        if( nc->HasLineStyle() )
+        {
+            switch( nc->GetLineStyle() )
+            {
+            case 0: data->set_line_style( schematic::commands::SLS_SOLID ); break;
+            case 1: data->set_line_style( schematic::commands::SLS_DASH ); break;
+            case 2: data->set_line_style( schematic::commands::SLS_DOT ); break;
+            case 3: data->set_line_style( schematic::commands::SLS_DASH_DOT ); break;
+            case 4: data->set_line_style( schematic::commands::SLS_DASH_DOT_DOT ); break;
+            default: data->set_line_style( schematic::commands::SLS_SOLID ); break;
+            }
+        }
+
+        data->set_priority( nc->GetPriority() );
+    };
+
+    // Get default netclass
+    std::shared_ptr<NETCLASS> defaultNc = netSettings->GetDefaultNetclass();
+    if( defaultNc )
+    {
+        populateNetClassData( response.mutable_default_netclass(), defaultNc );
+    }
+
+    // Get user-defined netclasses
+    for( const auto& [name, nc] : netSettings->GetNetclasses() )
+    {
+        populateNetClassData( response.add_netclasses(), nc );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetNetClass(
+        const HANDLER_CONTEXT<schematic::commands::SetNetClass>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    std::shared_ptr<NET_SETTINGS>& netSettings = m_frame->Prj().GetProjectFile().NetSettings();
+
+    if( !netSettings )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Net settings not available" );
+        return tl::unexpected( e );
+    }
+
+    const auto& ncData = aCtx.Request.netclass();
+    wxString name = wxString::FromUTF8( ncData.name() );
+
+    if( name.IsEmpty() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Netclass name is required" );
+        return tl::unexpected( e );
+    }
+
+    // Check if this is the default netclass or a user-defined one
+    std::shared_ptr<NETCLASS> nc;
+    bool isDefault = ( name == NETCLASS::Default );
+
+    if( isDefault )
+    {
+        nc = netSettings->GetDefaultNetclass();
+    }
+    else
+    {
+        // Check if netclass exists
+        if( netSettings->HasNetclass( name ) )
+        {
+            nc = netSettings->GetNetClassByName( name );
+        }
+        else
+        {
+            // Create new netclass
+            nc = std::make_shared<NETCLASS>( name );
+        }
+    }
+
+    // Update netclass properties
+    if( ncData.has_description() )
+        nc->SetDescription( wxString::FromUTF8( ncData.description() ) );
+
+    if( ncData.has_wire_width_mils() )
+        nc->SetWireWidth( ncData.wire_width_mils() * 2540 );  // mils to nm
+
+    if( ncData.has_bus_width_mils() )
+        nc->SetBusWidth( ncData.bus_width_mils() * 2540 );  // mils to nm
+
+    if( ncData.has_color() )
+    {
+        std::string colorStr = ncData.color();
+        if( colorStr == "transparent" || colorStr.empty() )
+        {
+            nc->SetSchematicColor( COLOR4D::UNSPECIFIED );
+        }
+        else
+        {
+            COLOR4D color;
+            color.SetFromHexString( wxString::FromUTF8( colorStr ) );
+            nc->SetSchematicColor( color );
+        }
+    }
+
+    if( ncData.has_line_style() )
+    {
+        int style = 0;
+        switch( ncData.line_style() )
+        {
+        case schematic::commands::SLS_SOLID: style = 0; break;
+        case schematic::commands::SLS_DASH: style = 1; break;
+        case schematic::commands::SLS_DOT: style = 2; break;
+        case schematic::commands::SLS_DASH_DOT: style = 3; break;
+        case schematic::commands::SLS_DASH_DOT_DOT: style = 4; break;
+        default: style = 0; break;
+        }
+        nc->SetLineStyle( style );
+    }
+
+    if( ncData.has_priority() )
+        nc->SetPriority( ncData.priority() );
+
+    // Save the netclass
+    if( !isDefault )
+    {
+        netSettings->SetNetclass( name, nc );
+    }
+
+    netSettings->RecomputeEffectiveNetclasses();
+    m_frame->OnModify();
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleDeleteNetClass(
+        const HANDLER_CONTEXT<schematic::commands::DeleteNetClass>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    std::shared_ptr<NET_SETTINGS>& netSettings = m_frame->Prj().GetProjectFile().NetSettings();
+
+    if( !netSettings )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Net settings not available" );
+        return tl::unexpected( e );
+    }
+
+    wxString name = wxString::FromUTF8( aCtx.Request.name() );
+
+    if( name == NETCLASS::Default )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Cannot delete the default netclass" );
+        return tl::unexpected( e );
+    }
+
+    if( !netSettings->HasNetclass( name ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( fmt::format( "Netclass '{}' does not exist", name.ToStdString() ) );
+        return tl::unexpected( e );
+    }
+
+    // Remove the netclass by getting all netclasses, removing this one, and setting them back
+    std::map<wxString, std::shared_ptr<NETCLASS>> netclasses = netSettings->GetNetclasses();
+    netclasses.erase( name );
+    netSettings->SetNetclasses( netclasses );
+
+    m_frame->OnModify();
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<schematic::commands::GetNetClassAssignmentsResponse>
+API_HANDLER_SCH::handleGetNetClassAssignments(
+        const HANDLER_CONTEXT<schematic::commands::GetNetClassAssignments>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetNetClassAssignmentsResponse response;
+
+    std::shared_ptr<NET_SETTINGS>& netSettings = m_frame->Prj().GetProjectFile().NetSettings();
+
+    if( !netSettings )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Net settings not available" );
+        return tl::unexpected( e );
+    }
+
+    // Get all pattern assignments
+    auto& assignments = netSettings->GetNetclassPatternAssignments();
+    for( const auto& [matcher, netclassName] : assignments )
+    {
+        auto* assignment = response.add_assignments();
+        assignment->set_pattern( matcher->GetPattern().ToStdString() );
+        assignment->set_netclass( netclassName.ToStdString() );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetNetClassAssignments(
+        const HANDLER_CONTEXT<schematic::commands::SetNetClassAssignments>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    std::shared_ptr<NET_SETTINGS>& netSettings = m_frame->Prj().GetProjectFile().NetSettings();
+
+    if( !netSettings )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Net settings not available" );
+        return tl::unexpected( e );
+    }
+
+    // Clear existing assignments
+    netSettings->ClearNetclassPatternAssignments();
+
+    // Add new assignments
+    for( const auto& assignment : aCtx.Request.assignments() )
+    {
+        wxString pattern = wxString::FromUTF8( assignment.pattern() );
+        wxString netclass = wxString::FromUTF8( assignment.netclass() );
+        netSettings->SetNetclassPatternAssignment( pattern, netclass );
+    }
+
+    netSettings->ClearAllCaches();
+    m_frame->OnModify();
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleAddNetClassAssignment(
+        const HANDLER_CONTEXT<schematic::commands::AddNetClassAssignment>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    std::shared_ptr<NET_SETTINGS>& netSettings = m_frame->Prj().GetProjectFile().NetSettings();
+
+    if( !netSettings )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Net settings not available" );
+        return tl::unexpected( e );
+    }
+
+    const auto& assignment = aCtx.Request.assignment();
+    wxString pattern = wxString::FromUTF8( assignment.pattern() );
+    wxString netclass = wxString::FromUTF8( assignment.netclass() );
+
+    netSettings->SetNetclassPatternAssignment( pattern, netclass );
+    netSettings->ClearAllCaches();
+    m_frame->OnModify();
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleRemoveNetClassAssignment(
+        const HANDLER_CONTEXT<schematic::commands::RemoveNetClassAssignment>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    std::shared_ptr<NET_SETTINGS>& netSettings = m_frame->Prj().GetProjectFile().NetSettings();
+
+    if( !netSettings )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Net settings not available" );
+        return tl::unexpected( e );
+    }
+
+    wxString patternToRemove = wxString::FromUTF8( aCtx.Request.pattern() );
+
+    // Get current assignments, filter out the one to remove, and set them back
+    auto& currentAssignments = netSettings->GetNetclassPatternAssignments();
+    std::vector<std::pair<std::unique_ptr<EDA_COMBINED_MATCHER>, wxString>> newAssignments;
+
+    for( auto& [matcher, netclassName] : currentAssignments )
+    {
+        if( matcher->GetPattern() != patternToRemove )
+        {
+            newAssignments.emplace_back(
+                std::make_unique<EDA_COMBINED_MATCHER>( matcher->GetPattern(), CTX_NETCLASS ),
+                netclassName );
+        }
+    }
+
+    netSettings->SetNetclassPatternAssignments( std::move( newAssignments ) );
+    netSettings->ClearAllCaches();
+    m_frame->OnModify();
+
+    return Empty();
+}
+
+
+// ============================================================================
+// Bus Alias Handlers
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::GetBusAliasesResponse>
+API_HANDLER_SCH::handleGetBusAliases(
+        const HANDLER_CONTEXT<schematic::commands::GetBusAliases>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetBusAliasesResponse response;
+
+    SCHEMATIC& schematic = m_frame->Schematic();
+    const auto& aliases = schematic.GetAllBusAliases();
+
+    for( const auto& alias : aliases )
+    {
+        if( !alias )
+            continue;
+
+        auto* aliasData = response.add_aliases();
+        aliasData->set_name( alias->GetName().ToUTF8().data() );
+
+        for( const wxString& member : alias->Members() )
+        {
+            aliasData->add_members( member.ToUTF8().data() );
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetBusAlias(
+        const HANDLER_CONTEXT<schematic::commands::SetBusAlias>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    const auto& aliasData = aCtx.Request.alias();
+
+    if( aliasData.name().empty() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Bus alias name is required" );
+        return tl::unexpected( e );
+    }
+
+    SCHEMATIC& schematic = m_frame->Schematic();
+    wxString aliasName = wxString::FromUTF8( aliasData.name() );
+
+    // Get current aliases
+    auto currentAliases = schematic.GetAllBusAliases();
+
+    // Check if alias exists and remove it (to allow update)
+    currentAliases.erase(
+        std::remove_if( currentAliases.begin(), currentAliases.end(),
+            [&aliasName]( const std::shared_ptr<BUS_ALIAS>& a ) {
+                return a && a->GetName() == aliasName;
+            }),
+        currentAliases.end() );
+
+    // Create new alias
+    auto newAlias = std::make_shared<BUS_ALIAS>();
+    newAlias->SetName( aliasName );
+
+    for( const auto& member : aliasData.members() )
+    {
+        newAlias->Members().push_back( wxString::FromUTF8( member ) );
+    }
+
+    currentAliases.push_back( newAlias );
+
+    // Set all aliases back
+    schematic.SetBusAliases( currentAliases );
+    m_frame->OnModify();
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleDeleteBusAlias(
+        const HANDLER_CONTEXT<schematic::commands::DeleteBusAlias>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    wxString nameToDelete = wxString::FromUTF8( aCtx.Request.name() );
+
+    if( nameToDelete.empty() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Bus alias name is required" );
+        return tl::unexpected( e );
+    }
+
+    SCHEMATIC& schematic = m_frame->Schematic();
+
+    // Get current aliases and filter out the one to delete
+    auto currentAliases = schematic.GetAllBusAliases();
+    bool found = false;
+
+    currentAliases.erase(
+        std::remove_if( currentAliases.begin(), currentAliases.end(),
+            [&nameToDelete, &found]( const std::shared_ptr<BUS_ALIAS>& a ) {
+                if( a && a->GetName() == nameToDelete )
+                {
+                    found = true;
+                    return true;
+                }
+                return false;
+            }),
+        currentAliases.end() );
+
+    if( !found )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Bus alias not found: " + aCtx.Request.name() );
+        return tl::unexpected( e );
+    }
+
+    schematic.SetBusAliases( currentAliases );
+    m_frame->OnModify();
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetBusAliases(
+        const HANDLER_CONTEXT<schematic::commands::SetBusAliases>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    SCHEMATIC& schematic = m_frame->Schematic();
+
+    std::vector<std::shared_ptr<BUS_ALIAS>> newAliases;
+
+    for( const auto& aliasData : aCtx.Request.aliases() )
+    {
+        if( aliasData.name().empty() )
+            continue;
+
+        auto alias = std::make_shared<BUS_ALIAS>();
+        alias->SetName( wxString::FromUTF8( aliasData.name() ) );
+
+        for( const auto& member : aliasData.members() )
+        {
+            alias->Members().push_back( wxString::FromUTF8( member ) );
+        }
+
+        newAliases.push_back( alias );
+    }
+
+    schematic.SetBusAliases( newAliases );
+    m_frame->OnModify();
+
+    return Empty();
+}
+
+
 // ============================================================================
 // Editor Preferences Handlers
 // ============================================================================
@@ -3980,6 +4579,362 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetEditorPreferences(
     }
 
     m_frame->GetCanvas()->Refresh();
+
+    return Empty();
+}
+
+
+// ============================================================================
+// Formatting Settings Handlers (Project-level settings from Schematic Setup)
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::GetFormattingSettingsResponse>
+API_HANDLER_SCH::handleGetFormattingSettings(
+        const HANDLER_CONTEXT<schematic::commands::GetFormattingSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetFormattingSettingsResponse response;
+    schematic::commands::FormattingSettings* settings = response.mutable_settings();
+
+    SCHEMATIC_SETTINGS& schSettings = m_frame->Schematic().Settings();
+
+    // Text section (stored in IU internally, convert to mils)
+    settings->set_default_text_size_mils( schSettings.m_DefaultTextSize / schIUScale.MilsToIU( 1 ) );
+    settings->set_label_offset_ratio( schSettings.m_LabelSizeRatio * 100.0 );  // Convert to percentage
+    settings->set_global_label_margin_ratio( schSettings.m_TextOffsetRatio * 100.0 );
+
+    // Symbols section
+    settings->set_default_line_width_mils( schSettings.m_DefaultLineWidth / schIUScale.MilsToIU( 1 ) );
+    settings->set_pin_symbol_size_mils( schSettings.m_PinSymbolSize / schIUScale.MilsToIU( 1 ) );
+
+    // Connections section
+    settings->set_junction_size_choice( schSettings.m_JunctionSizeChoice );
+    settings->set_hop_over_size_choice( schSettings.m_HopOverSizeChoice );
+    settings->set_connection_grid_mils( schSettings.m_ConnectionGridSize / schIUScale.MilsToIU( 1 ) );
+
+    // Inter-sheet References section
+    settings->set_intersheet_refs_show( schSettings.m_IntersheetRefsShow );
+    settings->set_intersheet_refs_list_own_page( schSettings.m_IntersheetRefsListOwnPage );
+    settings->set_intersheet_refs_format_short( schSettings.m_IntersheetRefsFormatShort );
+    settings->set_intersheet_refs_prefix( schSettings.m_IntersheetRefsPrefix.ToStdString() );
+    settings->set_intersheet_refs_suffix( schSettings.m_IntersheetRefsSuffix.ToStdString() );
+
+    // Dashed Lines section
+    settings->set_dashed_line_dash_ratio( schSettings.m_DashedLineDashRatio );
+    settings->set_dashed_line_gap_ratio( schSettings.m_DashedLineGapRatio );
+
+    // Operating-point Overlay section
+    settings->set_opo_voltage_precision( schSettings.m_OPO_VPrecision );
+    settings->set_opo_voltage_range( schSettings.m_OPO_VRange.ToStdString() );
+    settings->set_opo_current_precision( schSettings.m_OPO_IPrecision );
+    settings->set_opo_current_range( schSettings.m_OPO_IRange.ToStdString() );
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetFormattingSettings(
+        const HANDLER_CONTEXT<schematic::commands::SetFormattingSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    const schematic::commands::FormattingSettings& settings = aCtx.Request.settings();
+    SCHEMATIC_SETTINGS& schSettings = m_frame->Schematic().Settings();
+
+    // Text section (convert from mils to IU)
+    if( settings.has_default_text_size_mils() )
+        schSettings.m_DefaultTextSize = schIUScale.MilsToIU( settings.default_text_size_mils() );
+    if( settings.has_label_offset_ratio() )
+        schSettings.m_LabelSizeRatio = settings.label_offset_ratio() / 100.0;
+    if( settings.has_global_label_margin_ratio() )
+        schSettings.m_TextOffsetRatio = settings.global_label_margin_ratio() / 100.0;
+
+    // Symbols section
+    if( settings.has_default_line_width_mils() )
+        schSettings.m_DefaultLineWidth = schIUScale.MilsToIU( settings.default_line_width_mils() );
+    if( settings.has_pin_symbol_size_mils() )
+        schSettings.m_PinSymbolSize = schIUScale.MilsToIU( settings.pin_symbol_size_mils() );
+
+    // Connections section
+    if( settings.has_junction_size_choice() )
+        schSettings.m_JunctionSizeChoice = settings.junction_size_choice();
+    if( settings.has_hop_over_size_choice() )
+        schSettings.m_HopOverSizeChoice = settings.hop_over_size_choice();
+    if( settings.has_connection_grid_mils() )
+        schSettings.m_ConnectionGridSize = schIUScale.MilsToIU( settings.connection_grid_mils() );
+
+    // Inter-sheet References section
+    if( settings.has_intersheet_refs_show() )
+        schSettings.m_IntersheetRefsShow = settings.intersheet_refs_show();
+    if( settings.has_intersheet_refs_list_own_page() )
+        schSettings.m_IntersheetRefsListOwnPage = settings.intersheet_refs_list_own_page();
+    if( settings.has_intersheet_refs_format_short() )
+        schSettings.m_IntersheetRefsFormatShort = settings.intersheet_refs_format_short();
+    if( !settings.intersheet_refs_prefix().empty() || settings.has_intersheet_refs_prefix() )
+        schSettings.m_IntersheetRefsPrefix = wxString::FromUTF8( settings.intersheet_refs_prefix() );
+    if( !settings.intersheet_refs_suffix().empty() || settings.has_intersheet_refs_suffix() )
+        schSettings.m_IntersheetRefsSuffix = wxString::FromUTF8( settings.intersheet_refs_suffix() );
+
+    // Dashed Lines section
+    if( settings.has_dashed_line_dash_ratio() )
+        schSettings.m_DashedLineDashRatio = settings.dashed_line_dash_ratio();
+    if( settings.has_dashed_line_gap_ratio() )
+        schSettings.m_DashedLineGapRatio = settings.dashed_line_gap_ratio();
+
+    // Operating-point Overlay section
+    if( settings.has_opo_voltage_precision() )
+        schSettings.m_OPO_VPrecision = settings.opo_voltage_precision();
+    if( !settings.opo_voltage_range().empty() )
+        schSettings.m_OPO_VRange = wxString::FromUTF8( settings.opo_voltage_range() );
+    if( settings.has_opo_current_precision() )
+        schSettings.m_OPO_IPrecision = settings.opo_current_precision();
+    if( !settings.opo_current_range().empty() )
+        schSettings.m_OPO_IRange = wxString::FromUTF8( settings.opo_current_range() );
+
+    // Mark the schematic as modified and refresh
+    m_frame->OnModify();
+    m_frame->GetCanvas()->Refresh();
+
+    return Empty();
+}
+
+
+// ============================================================================
+// Field Name Templates Handlers (Project-level settings from Schematic Setup)
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::GetFieldNameTemplatesResponse>
+API_HANDLER_SCH::handleGetFieldNameTemplates(
+        const HANDLER_CONTEXT<schematic::commands::GetFieldNameTemplates>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetFieldNameTemplatesResponse response;
+
+    SCHEMATIC_SETTINGS& schSettings = m_frame->Schematic().Settings();
+
+    // Get project-level template field names (aGlobal=false)
+    const std::vector<TEMPLATE_FIELDNAME>& templates =
+            schSettings.m_TemplateFieldNames.GetTemplateFieldNames( false );
+
+    for( const TEMPLATE_FIELDNAME& field : templates )
+    {
+        schematic::commands::FieldNameTemplate* tmpl = response.add_templates();
+        tmpl->set_name( field.m_Name.ToStdString() );
+        tmpl->set_visible( field.m_Visible );
+        tmpl->set_url( field.m_URL );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetFieldNameTemplates(
+        const HANDLER_CONTEXT<schematic::commands::SetFieldNameTemplates>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    SCHEMATIC_SETTINGS& schSettings = m_frame->Schematic().Settings();
+
+    // Clear existing project-level templates
+    schSettings.m_TemplateFieldNames.DeleteAllFieldNameTemplates( false );
+
+    // Add new templates from the request
+    for( const schematic::commands::FieldNameTemplate& tmpl : aCtx.Request.templates() )
+    {
+        TEMPLATE_FIELDNAME field( wxString::FromUTF8( tmpl.name() ) );
+        field.m_Visible = tmpl.visible();
+        field.m_URL = tmpl.url();
+        schSettings.m_TemplateFieldNames.AddTemplateFieldName( field, false );
+    }
+
+    // Mark the schematic as modified
+    m_frame->OnModify();
+
+    return Empty();
+}
+
+
+// ============================================================================
+// Annotation Settings Handlers (Project-level settings from Schematic Setup)
+// ============================================================================
+
+HANDLER_RESULT<schematic::commands::GetAnnotationSettingsResponse>
+API_HANDLER_SCH::handleGetAnnotationSettings(
+        const HANDLER_CONTEXT<schematic::commands::GetAnnotationSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetAnnotationSettingsResponse response;
+    schematic::commands::AnnotationSettingsData* settings = response.mutable_settings();
+
+    SCHEMATIC_SETTINGS& schSettings = m_frame->Schematic().Settings();
+
+    // Units section - convert from SubpartIdSeparator/SubpartFirstId to SymbolUnitNotation enum
+    // m_SubpartFirstId: 'A' for letters, '1' for numbers
+    // m_SubpartIdSeparator: 0 (none), '.' (dot), '-' (dash), '_' (underscore)
+    schematic::commands::SymbolUnitNotation notation = schematic::commands::SUN_A;
+    if( schSettings.m_SubpartFirstId == 'A' || schSettings.m_SubpartFirstId == 'a' )
+    {
+        switch( schSettings.m_SubpartIdSeparator )
+        {
+        case 0:   notation = schematic::commands::SUN_A;       break;
+        case '.': notation = schematic::commands::SUN_DOT_A;   break;
+        case '-': notation = schematic::commands::SUN_DASH_A;  break;
+        case '_': notation = schematic::commands::SUN_UNDER_A; break;
+        default:  notation = schematic::commands::SUN_A;       break;
+        }
+    }
+    else // '1' for numbers
+    {
+        switch( schSettings.m_SubpartIdSeparator )
+        {
+        case '.': notation = schematic::commands::SUN_DOT_1;   break;
+        case '-': notation = schematic::commands::SUN_DASH_1;  break;
+        case '_': notation = schematic::commands::SUN_UNDER_1; break;
+        default:  notation = schematic::commands::SUN_DOT_1;   break;
+        }
+    }
+    settings->set_symbol_unit_notation( notation );
+
+    // Order section - convert from ANNOTATE_ORDER_T
+    settings->set_sort_order(
+        schSettings.m_AnnotateSortOrder == ANNOTATE_ORDER_T::SORT_BY_Y_POSITION
+            ? schematic::commands::ASO_Y_POSITION
+            : schematic::commands::ASO_X_POSITION );
+
+    // Numbering section - convert from ANNOTATE_ALGO_T
+    switch( schSettings.m_AnnotateMethod )
+    {
+    case ANNOTATE_ALGO_T::SHEET_NUMBER_X_100:
+        settings->set_numbering_method( schematic::commands::ANM_SHEET_X_100 );
+        break;
+    case ANNOTATE_ALGO_T::SHEET_NUMBER_X_1000:
+        settings->set_numbering_method( schematic::commands::ANM_SHEET_X_1000 );
+        break;
+    default:
+        settings->set_numbering_method( schematic::commands::ANM_FIRST_FREE );
+        break;
+    }
+
+    settings->set_start_number( schSettings.m_AnnotateStartNum );
+
+    // Allow reference reuse from the refdes tracker
+    if( schSettings.m_refDesTracker )
+        settings->set_allow_reference_reuse( schSettings.m_refDesTracker->GetReuseRefDes() );
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetAnnotationSettings(
+        const HANDLER_CONTEXT<schematic::commands::SetAnnotationSettings>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    const schematic::commands::AnnotationSettingsData& settings = aCtx.Request.settings();
+    SCHEMATIC_SETTINGS& schSettings = m_frame->Schematic().Settings();
+
+    // Units section - convert from SymbolUnitNotation enum to SubpartIdSeparator/SubpartFirstId
+    if( settings.has_symbol_unit_notation() )
+    {
+        switch( settings.symbol_unit_notation() )
+        {
+        case schematic::commands::SUN_A:
+            schSettings.m_SubpartFirstId = 'A';
+            schSettings.m_SubpartIdSeparator = 0;
+            break;
+        case schematic::commands::SUN_DOT_A:
+            schSettings.m_SubpartFirstId = 'A';
+            schSettings.m_SubpartIdSeparator = '.';
+            break;
+        case schematic::commands::SUN_DASH_A:
+            schSettings.m_SubpartFirstId = 'A';
+            schSettings.m_SubpartIdSeparator = '-';
+            break;
+        case schematic::commands::SUN_UNDER_A:
+            schSettings.m_SubpartFirstId = 'A';
+            schSettings.m_SubpartIdSeparator = '_';
+            break;
+        case schematic::commands::SUN_DOT_1:
+            schSettings.m_SubpartFirstId = '1';
+            schSettings.m_SubpartIdSeparator = '.';
+            break;
+        case schematic::commands::SUN_DASH_1:
+            schSettings.m_SubpartFirstId = '1';
+            schSettings.m_SubpartIdSeparator = '-';
+            break;
+        case schematic::commands::SUN_UNDER_1:
+            schSettings.m_SubpartFirstId = '1';
+            schSettings.m_SubpartIdSeparator = '_';
+            break;
+        default:
+            break;
+        }
+    }
+
+    // Order section
+    if( settings.has_sort_order() )
+    {
+        schSettings.m_AnnotateSortOrder =
+            settings.sort_order() == schematic::commands::ASO_Y_POSITION
+                ? ANNOTATE_ORDER_T::SORT_BY_Y_POSITION
+                : ANNOTATE_ORDER_T::SORT_BY_X_POSITION;
+    }
+
+    // Numbering section
+    if( settings.has_numbering_method() )
+    {
+        switch( settings.numbering_method() )
+        {
+        case schematic::commands::ANM_SHEET_X_100:
+            schSettings.m_AnnotateMethod = ANNOTATE_ALGO_T::SHEET_NUMBER_X_100;
+            break;
+        case schematic::commands::ANM_SHEET_X_1000:
+            schSettings.m_AnnotateMethod = ANNOTATE_ALGO_T::SHEET_NUMBER_X_1000;
+            break;
+        default:
+            schSettings.m_AnnotateMethod = ANNOTATE_ALGO_T::INCREMENTAL_BY_REF;
+            break;
+        }
+    }
+
+    if( settings.has_start_number() )
+        schSettings.m_AnnotateStartNum = settings.start_number();
+
+    if( settings.has_allow_reference_reuse() && schSettings.m_refDesTracker )
+        schSettings.m_refDesTracker->SetReuseRefDes( settings.allow_reference_reuse() );
+
+    // Mark the schematic as modified
+    m_frame->OnModify();
 
     return Empty();
 }

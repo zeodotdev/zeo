@@ -1,5 +1,5 @@
 #!/bin/bash
-# zeo - CLI tool for Zeo (AI Agent extension for KiCad)
+# zeo - CLI tool for Zeo
 #
 # Must clear PYTHONHOME/PYTHONPATH set by the Zeo app bundle to avoid
 # conflicts between the bundled Python framework and system Python.
@@ -7,7 +7,8 @@
 unset PYTHONHOME
 unset PYTHONPATH
 
-exec /usr/bin/env python3 - "$@" <<'PYTHON_EOF'
+# Use process substitution to keep stdin available for interactive use
+exec /usr/bin/env python3 <(cat <<'PYTHON_EOF'
 import argparse
 import json
 import os
@@ -17,6 +18,223 @@ import time
 
 LOG_DIR = os.path.expanduser("~/Library/Logs/Zeo")
 MONITOR_LOG = os.path.join(LOG_DIR, "agent-monitor.jsonl")
+
+# Zeo version - read from cmake/ZeoVersion.cmake as single source of truth
+ZEO_VERSION = "0.1.0"  # Fallback if cmake file not found
+
+def _get_zeo_version():
+    """Get Zeo version from cmake/ZeoVersion.cmake."""
+    # Find the cmake file relative to this script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    cmake_file = os.path.join(script_dir, "..", "cmake", "ZeoVersion.cmake")
+
+    if os.path.exists(cmake_file):
+        try:
+            with open(cmake_file, "r") as f:
+                for line in f:
+                    if "ZEO_SEMANTIC_VERSION" in line and "set(" in line:
+                        # Parse: set( ZEO_SEMANTIC_VERSION "0.1.0" )
+                        import re
+                        match = re.search(r'"([^"]+)"', line)
+                        if match:
+                            return match.group(1)
+        except Exception:
+            pass
+
+    return ZEO_VERSION
+
+
+def cmd_tool(args):
+    """Execute agent tool calls interactively."""
+    import traceback
+
+    # Try to import kipy
+    try:
+        from kipy import KiCad
+    except ImportError as e:
+        print(f"Error: Could not import kipy: {e}")
+        print("\nMake sure kipy is installed. You can install it with:")
+        print("  pip install -e /path/to/zeo-python")
+        sys.exit(1)
+
+    # Connect to Zeo
+    zeo_version = _get_zeo_version()
+    print(f"Connecting to Zeo {zeo_version}...")
+    try:
+        kicad = KiCad()
+        kicad_version = kicad.get_version()
+        print(f"Connected (KiCad {kicad_version})")
+    except Exception as e:
+        print(f"Error: Could not connect to Zeo: {e}")
+        print("Make sure Zeo is running with a project open.")
+        sys.exit(1)
+
+    # Get schematic and board
+    sch = None
+    board = None
+    try:
+        sch = kicad.get_schematic()
+        print("Schematic editor: connected")
+    except Exception:
+        print("Schematic editor: not open")
+
+    try:
+        board = kicad.get_board()
+        print("PCB editor: connected")
+    except Exception:
+        print("PCB editor: not open")
+
+    if not sch and not board:
+        print("\n\033[33mWarning: No editors connected. Open the schematic or PCB editor in Zeo first.\033[0m")
+
+    print("\n" + "=" * 50)
+    print("Zeo Tool Runner")
+    print("=" * 50)
+    print("\nPaste Python code to execute against the editor.")
+    print("The code has access to: kicad, sch, board")
+    print("\nMulti-line input: end with a blank line")
+    print("Type 'exit' or Ctrl-D to quit.")
+    print()
+
+    # Set up namespace for exec
+    namespace = {
+        'kicad': kicad,
+        'sch': sch,
+        'board': board,
+        'json': json,
+    }
+
+    while True:
+        try:
+            # Read multi-line input
+            lines = []
+            prompt = ">>> "
+            while True:
+                try:
+                    line = input(prompt)
+                except EOFError:
+                    print()
+                    return
+
+                if line.strip() == "exit":
+                    return
+
+                if line == "" and lines:
+                    # Blank line ends input
+                    break
+
+                lines.append(line)
+                prompt = "... "
+
+                # Single line that looks complete? Execute immediately
+                if len(lines) == 1 and not line.rstrip().endswith((':',  '\\', '(', '[', '{')):
+                    break
+
+            if not lines:
+                continue
+
+            code = "\n".join(lines)
+
+            # Execute the code
+            try:
+                # Try as expression first (to print result)
+                result = eval(code, namespace)
+                if result is not None:
+                    # Pretty print JSON-serializable results
+                    try:
+                        print(json.dumps(result, indent=2, default=str))
+                    except (TypeError, ValueError):
+                        print(result)
+            except SyntaxError:
+                # Not an expression, execute as statement
+                exec(code, namespace)
+
+        except KeyboardInterrupt:
+            print("\n(Interrupted)")
+            continue
+        except Exception as e:
+            print(f"\033[31mError:\033[0m {e}")
+            if args.verbose:
+                traceback.print_exc()
+
+
+def cmd_shell(args):
+    """Open an interactive Python shell with kipy imported."""
+    import code
+    import readline  # noqa: F401 - enables arrow keys, history
+    import rlcompleter  # noqa: F401 - enables tab completion
+
+    # Try to import kipy
+    try:
+        from kipy import KiCad
+    except ImportError as e:
+        print(f"Error: Could not import kipy: {e}")
+        print("\nMake sure kipy is installed. You can install it with:")
+        print("  pip install -e /path/to/zeo-python")
+        sys.exit(1)
+
+    # Connect to Zeo
+    zeo_version = _get_zeo_version()
+    print(f"Connecting to Zeo {zeo_version}...")
+    try:
+        kicad = KiCad()
+        kicad_version = kicad.get_version()
+        print(f"Connected (KiCad {kicad_version})")
+    except Exception as e:
+        print(f"Warning: Could not connect to Zeo: {e}")
+        print("You can try connecting manually with: kicad = KiCad()")
+        kicad = None
+
+    # Set up the namespace with useful imports and objects
+    namespace = {
+        'KiCad': KiCad,
+        'kicad': kicad,
+    }
+
+    # Try to get schematic and board if connected
+    sch = None
+    board = None
+    if kicad:
+        try:
+            sch = kicad.get_schematic()
+            namespace['sch'] = sch
+            print("Schematic available as 'sch'")
+        except Exception:
+            pass
+
+        try:
+            board = kicad.get_board()
+            namespace['board'] = board
+            print("Board available as 'board'")
+        except Exception:
+            pass
+
+        if not sch and not board:
+            print("\n\033[33mWarning: No editors connected. Open the schematic or PCB editor in Zeo first.\033[0m")
+
+    # Enable tab completion
+    readline.set_completer(rlcompleter.Completer(namespace).complete)
+    readline.parse_and_bind("tab: complete")
+
+    # Print help
+    print("\n" + "=" * 50)
+    print("Zeo Shell - Interactive Python with kipy")
+    print("=" * 50)
+    print("\nAvailable objects:")
+    print("  kicad   - KiCad connection")
+    if sch:
+        print("  sch     - Current schematic")
+    if board:
+        print("  board   - Current board")
+    print("\nExample commands:")
+    print("  kicad.ping()")
+    print("  sch.get_symbols()")
+    print("  board.get_footprints()")
+    print("\nType 'exit()' or Ctrl-D to quit.")
+    print()
+
+    # Start interactive shell
+    code.interact(local=namespace, banner="", exitmsg="")
 
 
 def cmd_monitor(args):
@@ -150,11 +368,35 @@ def _format_line(line, raw_json=False):
 
 
 def main():
+    zeo_version = _get_zeo_version()
+
     parser = argparse.ArgumentParser(
         prog="zeo",
-        description="CLI tool for Zeo (AI Agent extension for KiCad)",
+        description="CLI tool for Zeo",
+    )
+    parser.add_argument(
+        "-V", "--version",
+        action="version",
+        version=f"Zeo {zeo_version}",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # shell subcommand
+    subparsers.add_parser(
+        "shell",
+        help="Open an interactive Python shell with kipy imported",
+    )
+
+    # tool subcommand
+    tool_parser = subparsers.add_parser(
+        "tool",
+        help="Execute agent tool calls (paste Python code from monitor logs)",
+    )
+    tool_parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Show full stack traces on errors",
+    )
 
     # monitor subcommand
     monitor_parser = subparsers.add_parser(
@@ -178,7 +420,11 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    if args.command == "monitor":
+    if args.command == "shell":
+        cmd_shell(args)
+    elif args.command == "tool":
+        cmd_tool(args)
+    elif args.command == "monitor":
         cmd_monitor(args)
     else:
         parser.print_help()
@@ -188,3 +434,4 @@ def main():
 if __name__ == "__main__":
     main()
 PYTHON_EOF
+) "$@"

@@ -97,10 +97,9 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     LLM_TOOL schGetSummary;
     schGetSummary.name = "sch_get_summary";
     schGetSummary.description = "Get a high-level overview of the schematic from the live editor. "
-                                "Returns JSON with symbols, wires, junctions, labels, counts, and an audit section "
-                                "that flags orphaned items (power symbols with no wire connections, labels not touching "
-                                "any wire or pin, junctions with fewer than 2 wires). "
-                                "Call this for each sheet after making changes to validate the schematic and catch orphaned parts. "
+                                "Returns JSON with symbols, wires, junctions, labels, and counts. "
+                                "Includes an audit section that flags orphaned items (power symbols with no wire "
+                                "connections, labels not touching any wire or pin, junctions with fewer than 2 wires). "
                                 "REQUIRES: Schematic editor must be open with a document loaded.";
     schGetSummary.input_schema = {
         { "type", "object" },

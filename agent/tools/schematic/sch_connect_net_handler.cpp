@@ -289,8 +289,9 @@ try:
         return False
 
     import heapq
-    def _astar(x0, y0, x1, y1, grid=1.27, bend_cost=3, start_dir=-1, end_dir=-1):
-        """A* pathfinding on the schematic grid. Returns list of (x,y) waypoints.
+    def _astar(x0, y0, x1, y1, grid=1.27, bend_cost=3, start_dir=-1, end_dir=-1, margin=15):
+        """A* pathfinding on the schematic grid. Returns list of (x,y) waypoints,
+        or None if no path found within the search bounds.
         start_dir: if >= 0, forced first-step direction (0=right, 1=left, 2=down, 3=up).
         end_dir: if >= 0, forced approach direction into the goal cell."""
         # Snap start/end to grid
@@ -298,8 +299,7 @@ try:
         gx1, gy1 = round(x1 / grid), round(y1 / grid)
         if gx0 == gx1 and gy0 == gy1:
             return [(x0, y0), (x1, y1)]
-        # Search bounds: bounding box of start/end + generous margin
-        margin = 15
+        # Search bounds: bounding box of start/end + margin
         g_min_x = min(gx0, gx1) - margin
         g_max_x = max(gx0, gx1) + margin
         g_min_y = min(gy0, gy1) - margin
@@ -372,8 +372,7 @@ try:
                     h = abs(gx1 - nx) + abs(gy1 - ny)
                     heapq.heappush(open_set, (new_g + h, new_g, nx, ny, di))
                     came_from[nkey] = current_key
-        # No path found — fall back to direct L-wire
-        return [(x0, y0), (x0, y1), (x1, y1)]
+        return None
 
     def _path_hits_obstacle(waypoints, grid=1.27):
         """Check if any intermediate cell on the path is inside an obstacle
@@ -438,7 +437,8 @@ try:
 
     _dir_names = {0:'RIGHT', 1:'LEFT', 2:'DOWN', 3:'UP', -1:'NONE'}
     def _route_pins(p0, p1):
-        """Route between two pins using A* with forced escape at both ends."""
+        """Route between two pins using A* with forced escape at both ends.
+        Retries with progressively relaxed constraints if no path is found."""
         x0, y0 = p0['raw_x'], p0['raw_y']
         x1, y1 = p1['raw_x'], p1['raw_y']
         sd = _dir_index(p0['out_dx'], p0['out_dy'])
@@ -458,7 +458,24 @@ try:
             if sd in (2, 3): sd = -1
             if ed in (2, 3): ed = -1
         print(f'[route] A* {p0["ref"]}:{p0["pin"]} -> {p1["ref"]}:{p1["pin"]}  start_dir={_dir_names.get(sd)} end_dir={_dir_names.get(ed)}', file=sys.stderr)
-        wp = _astar(x0, y0, x1, y1, start_dir=sd, end_dir=ed)
+        # Try progressively relaxed search strategies
+        attempts = [
+            (sd, ed, 15, 'default'),
+            (sd, ed, 30, 'wider margin'),
+            (-1, -1, 30, 'no escape constraints'),
+            (sd, ed, 50, 'max margin'),
+            (-1, -1, 50, 'max margin + no escape'),
+        ]
+        wp = None
+        for a_sd, a_ed, a_margin, a_label in attempts:
+            wp = _astar(x0, y0, x1, y1, start_dir=a_sd, end_dir=a_ed, margin=a_margin)
+            if wp is not None:
+                if a_label != 'default':
+                    print(f'[route]   found path with retry: {a_label}', file=sys.stderr)
+                break
+            print(f'[route]   no path with {a_label}, retrying...', file=sys.stderr)
+        if wp is None:
+            raise ValueError(f'No path found from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]}. Try repositioning components to clear the path.')
         print(f'[route]   path: {[(round(x,2),round(y,2)) for x,y in wp]}', file=sys.stderr)
         return wp
 
@@ -703,7 +720,13 @@ try:
             if off_trunk:
                 esc_x, esc_y = p['esc_x'], p['esc_y']
                 tgt_x, tgt_y = p['_tgt']
-                waypoints = _astar(esc_x, esc_y, tgt_x, tgt_y)
+                waypoints = None
+                for _bm in [15, 30, 50]:
+                    waypoints = _astar(esc_x, esc_y, tgt_x, tgt_y, margin=_bm)
+                    if waypoints is not None:
+                        break
+                if waypoints is None:
+                    raise ValueError(f'No path found for branch from {p["ref"]}:{p["pin"]} to trunk. Try repositioning components to clear the path.')
                 hit, loc = _path_hits_obstacle(waypoints)
                 if hit:
                     raise ValueError(f'Wire from {p["ref"]}:{p["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')

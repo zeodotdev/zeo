@@ -1510,6 +1510,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "\n";
     code << "results = []\n";
     code << "_placed_syms = {}\n";
+    code << "_placed_wires = []\n";
     code << "\n";
 
     // --- Overlap detection preamble ---
@@ -1758,7 +1759,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 code << "        else:\n";
                 code << "            _wc_" << i << " = 0\n";
                 code << "            for _si in range(len(_wpts_" << i << ") - 1):\n";
-                code << "                sch.wiring.add_wire(Vector2.from_xy_mm(*_wpts_" << i << "[_si]), Vector2.from_xy_mm(*_wpts_" << i << "[_si + 1]))\n";
+                code << "                _w = sch.wiring.add_wire(Vector2.from_xy_mm(*_wpts_" << i << "[_si]), Vector2.from_xy_mm(*_wpts_" << i << "[_si + 1]))\n";
+                code << "                _placed_wires.append(_w)\n";
                 code << "                _wc_" << i << " += 1\n";
                 code << "            results.append({'index': " << i << ", 'element_type': 'wire', 'segments': _wc_" << i << "})\n";
             }
@@ -1833,6 +1835,17 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "            pass\n";
 
     code << "\n";
+    code << "    # --- Auto-place junctions for any wires placed in this batch ---\n";
+    code << "    _junction_count = 0\n";
+    code << "    if _placed_wires:\n";
+    code << "        try:\n";
+    code << "            _junc_positions = sch.wiring.get_needed_junctions(_placed_wires)\n";
+    code << "            for _jp in _junc_positions:\n";
+    code << "                sch.wiring.add_junction(_jp)\n";
+    code << "                _junction_count += 1\n";
+    code << "        except:\n";
+    code << "            pass\n";
+    code << "\n";
     code << "    _fail = sum(1 for r in results if 'error' in r)\n";
     code << "    result = {\n";
     code << "        'status': 'success' if _fail == 0 else 'partial',\n";
@@ -1841,6 +1854,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "        'failed': _fail,\n";
     code << "        'results': results\n";
     code << "    }\n";
+    code << "    if _junction_count > 0:\n";
+    code << "        result['junctions_placed'] = _junction_count\n";
     code << "\n";
     code << "except Exception as batch_error:\n";
     code << "    result = {'status': 'error', 'message': str(batch_error), 'results': results}\n";

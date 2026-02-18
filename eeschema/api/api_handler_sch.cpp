@@ -2621,14 +2621,42 @@ API_HANDLER_SCH::handleSyncSheetPins(
             }
         }
 
-        // Add pins for labels that don't have pins
+        // Add pins for labels that don't have pins, positioned along the left edge
+        std::vector<wxString> newPinNames;
         for( const wxString& labelName : labelNames )
         {
             if( !existingPinNames.count( labelName ) )
+                newPinNames.push_back( labelName );
+        }
+
+        if( !newPinNames.empty() )
+        {
+            // Find the lowest existing pin Y on the left edge to stack below it
+            VECTOR2I sheetPos = sheet->GetPosition();
+            VECTOR2I sheetSize = sheet->GetSize();
+            int topY = sheetPos.y;
+            int botY = sheetPos.y + sheetSize.y;
+            int nextY = topY + schIUScale.MilsToIU( 100 );  // Start 100 mils from top
+
+            for( SCH_SHEET_PIN* pin : sheet->GetPins() )
+            {
+                if( pin->GetSide() == SHEET_SIDE::LEFT && pin->GetTextPos().y >= nextY )
+                    nextY = pin->GetTextPos().y + schIUScale.MilsToIU( 100 );
+            }
+
+            int pinSpacing = schIUScale.MilsToIU( 100 );  // 100 mils between pins
+
+            for( const wxString& labelName : newPinNames )
             {
                 SCH_SHEET_PIN* newPin = new SCH_SHEET_PIN( sheet );
                 newPin->SetText( labelName );
                 newPin->SetSide( SHEET_SIDE::LEFT );
+
+                // Position on the left edge, clamped within the sheet box
+                int pinY = std::min( nextY, botY - schIUScale.MilsToIU( 50 ) );
+                newPin->SetTextPos( VECTOR2I( sheetPos.x, pinY ) );
+                newPin->SetSide( SHEET_SIDE::LEFT );  // Re-set to fix X after SetTextPos
+                nextY += pinSpacing;
 
                 // Find the matching label to get its shape
                 for( SCH_ITEM* item : childScreen->Items() )

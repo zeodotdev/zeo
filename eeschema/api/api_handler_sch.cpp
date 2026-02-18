@@ -559,12 +559,12 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
                                   true,   // resetRef
                                   true ); // resetOtherFields
 
-            // TEMP PATCH: Hide all fields (including Reference and Value) to avoid schematic clutter.
-            // TODO: Implement structured neat label placement instead of blanket-hiding.
+            // Hide non-essential fields to reduce visual clutter on the schematic sheet.
+            // Only Reference and Value are shown; Description, Footprint, Datasheet, etc. are hidden.
             for( SCH_FIELD& field : symbol->GetFields() )
             {
-                // if( field.GetId() != FIELD_T::REFERENCE && field.GetId() != FIELD_T::VALUE )
-                field.SetVisible( false );
+                if( field.GetId() != FIELD_T::REFERENCE && field.GetId() != FIELD_T::VALUE )
+                    field.SetVisible( false );
             }
         }
 

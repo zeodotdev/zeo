@@ -523,6 +523,40 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schConnectToPower );
 
+    // sch_label_pins - Batch label pins on a symbol
+    LLM_TOOL schLabelPins;
+    schLabelPins.name = "sch_label_pins";
+    schLabelPins.description =
+        "Batch-label pins on a symbol. Places labels directly at pin tips with auto-justified "
+        "text based on pin orientation (text reads away from the symbol body). No wires are drawn — "
+        "labels at pin tips connect to the net automatically. "
+        "Use this instead of placing labels one by one with sch_add. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schLabelPins.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "ref", {
+                { "type", "string" },
+                { "description", "Reference designator of the symbol (e.g., 'U1', 'R3')" }
+            }},
+            { "labels", {
+                { "type", "object" },
+                { "description", "Map of pin number/name to label text. "
+                                 "Example: {\"2\": \"EN\", \"18\": \"SPI_CS\", \"23\": \"I2C_SDA\"}" },
+                { "additionalProperties", { { "type", "string" } } }
+            }},
+            { "label_type", {
+                { "type", "string" },
+                { "enum", json::array( { "local", "global", "hierarchical" } ) },
+                { "description", "Label type. 'local' for intra-sheet (default). "
+                                 "'hierarchical' for inter-sheet signals. "
+                                 "'global' only when genuinely needed everywhere." }
+            }}
+        }},
+        { "required", json::array( { "ref", "labels" } ) }
+    };
+    tools.push_back( schLabelPins );
+
     // sch_add_sheet - Add a hierarchical sheet
     LLM_TOOL schAddSheet;
     schAddSheet.name = "sch_add_sheet";

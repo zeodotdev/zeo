@@ -91,6 +91,7 @@ set( AGENT_SRCS
     tools/schematic/sch_util_handler.cpp
     tools/schematic/sch_sim_handler.cpp
     tools/schematic/sch_setup_handler.cpp
+    tools/schematic/sch_label_pins_handler.cpp
     tools/pcb/pcb_parser.cpp
     tools/pcb/pcb_validator.cpp
     tools/pcb/pcb_tool_handler.cpp

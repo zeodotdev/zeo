@@ -405,4 +405,49 @@ BOOST_AUTO_TEST_CASE( AllOrientationsMustNotMapToSameDirection )
 }
 
 
+// --- Wire overlap junction exemptions (regression: arrival wires blocked escape from shared pin) ---
+
+BOOST_AUTO_TEST_CASE( AStarSkipsWireOverlapAtStartCell )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // A* must skip wire overlap checks when leaving the start cell.
+    // The guard "(gx, gy) != (gx0, gy0)" before the h_wire_cells/v_wire_cells
+    // checks ensures the first step from a pin is never blocked by an arrival wire.
+    BOOST_CHECK( cmd.find( "(gx, gy) != (gx0, gy0)" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( PathHitsObstacleBuildsEndpointAdjacencySet )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // _path_hits_obstacle must build an adjacency set around endpoints
+    // so wire overlap near pin junctions is allowed.
+    BOOST_CHECK( cmd.find( "_ep_adj" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( PathHitsObstacleExemptsEndpointNeighborsFromWireOverlap )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // Wire overlap checks in _path_hits_obstacle must gate on "not in _ep_adj"
+    // for both vertical and horizontal segments.
+    BOOST_CHECK( cmd.find( "not in _ep_adj and" ) != std::string::npos );
+
+    // Should appear twice: once for v_wire_cells, once for h_wire_cells
+    size_t first = cmd.find( "not in _ep_adj" );
+    BOOST_REQUIRE( first != std::string::npos );
+    size_t second = cmd.find( "not in _ep_adj", first + 1 );
+    BOOST_CHECK( second != std::string::npos );
+}
+
+
 BOOST_AUTO_TEST_SUITE_END()

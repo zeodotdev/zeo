@@ -1614,28 +1614,14 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 code << "        for _wp in _wpts_" << i << ":\n";
                 code << "            _check_bounds(_wp[0], _wp[1], " << i << ")\n";
 
-                // Check each wire segment against component bounding boxes
-                code << "        _wire_blocked_" << i << " = False\n";
-                code << "        _wire_obstacle_" << i << " = '?'\n";
+                // Place wire segments (no bbox overlap check — wires routinely
+                // pass through component bounding boxes to reach pins)
+                code << "        _wc_" << i << " = 0\n";
                 code << "        for _si in range(len(_wpts_" << i << ") - 1):\n";
-                code << "            _wa, _wb = _wpts_" << i << "[_si], _wpts_" << i << "[_si + 1]\n";
-                code << "            for _pb in placed_bboxes:\n";
-                code << "                _ax, _ay = min(_wa[0], _wb[0]), min(_wa[1], _wb[1])\n";
-                code << "                _bx, _by = max(_wa[0], _wb[0]), max(_wa[1], _wb[1])\n";
-                code << "                if _bboxes_overlap({'min_x': _ax, 'max_x': _bx, 'min_y': _ay, 'max_y': _by}, _pb):\n";
-                code << "                    _wire_blocked_" << i << " = True\n";
-                code << "                    _wire_obstacle_" << i << " = _pb.get('ref', '?')\n";
-                code << "                    break\n";
-                code << "            if _wire_blocked_" << i << ": break\n";
-                code << "        if _wire_blocked_" << i << ":\n";
-                code << "            results.append({'index': " << i << ", 'error': f'Wire rejected: crosses {_wire_obstacle_" << i << "}'})\n";
-                code << "        else:\n";
-                code << "            _wc_" << i << " = 0\n";
-                code << "            for _si in range(len(_wpts_" << i << ") - 1):\n";
-                code << "                _w = sch.wiring.add_wire(Vector2.from_xy_mm(*_wpts_" << i << "[_si]), Vector2.from_xy_mm(*_wpts_" << i << "[_si + 1]))\n";
-                code << "                _placed_wires.append(_w)\n";
-                code << "                _wc_" << i << " += 1\n";
-                code << "            results.append({'index': " << i << ", 'element_type': 'wire', 'segments': _wc_" << i << "})\n";
+                code << "            _w = sch.wiring.add_wire(Vector2.from_xy_mm(*_wpts_" << i << "[_si]), Vector2.from_xy_mm(*_wpts_" << i << "[_si + 1]))\n";
+                code << "            _placed_wires.append(_w)\n";
+                code << "            _wc_" << i << " += 1\n";
+                code << "        results.append({'index': " << i << ", 'element_type': 'wire', 'segments': _wc_" << i << "})\n";
             }
             else
             {

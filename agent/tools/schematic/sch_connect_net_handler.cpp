@@ -357,11 +357,14 @@ try:
                 if (nx, ny) != goal and (nx, ny) != (gx0, gy0):
                     if _cell_blocked(nx * grid, ny * grid, grid):
                         continue
-                    # Block parallel movement along existing wires (prevents MergeOverlap)
-                    if dy == 0 and (nx, ny) in h_wire_cells:
-                        continue
-                    if dx == 0 and (nx, ny) in v_wire_cells:
-                        continue
+                    # Block parallel movement along existing wires (prevents MergeOverlap).
+                    # Skip when leaving the start cell — arrival wires from previous
+                    # chain segments form junctions at the pin, not illegal overlaps.
+                    if (gx, gy) != (gx0, gy0):
+                        if dy == 0 and (nx, ny) in h_wire_cells:
+                            continue
+                        if dx == 0 and (nx, ny) in v_wire_cells:
+                            continue
                 move_cost = 1
                 if prev_d >= 0 and di != prev_d:
                     move_cost += bend_cost
@@ -383,6 +386,11 @@ try:
         # Pin endpoint cells to exclude
         ep_start = (round(waypoints[0][0] / grid), round(waypoints[0][1] / grid))
         ep_end = (round(waypoints[-1][0] / grid), round(waypoints[-1][1] / grid))
+        # Cells adjacent to endpoints — wire overlap is expected here (junctions)
+        _ep_adj = {ep_start, ep_end}
+        for _ep in [ep_start, ep_end]:
+            for _ddx, _ddy in [(1,0),(-1,0),(0,1),(0,-1)]:
+                _ep_adj.add((_ep[0]+_ddx, _ep[1]+_ddy))
         for i in range(len(waypoints) - 1):
             ax, ay = waypoints[i]
             bx, by = waypoints[i + 1]
@@ -395,7 +403,7 @@ try:
                     cx, cy = gx0 * grid, gy * grid
                     if _cell_blocked(cx, cy, grid):
                         return True, f'({cx:.2f}, {cy:.2f})'
-                    if (gx0, gy) in v_wire_cells:
+                    if (gx0, gy) not in _ep_adj and (gx0, gy) in v_wire_cells:
                         return True, f'wire overlap at ({cx:.2f}, {cy:.2f})'
             else:  # horizontal segment
                 for gx in range(min(gx0, gx1), max(gx0, gx1) + 1):
@@ -404,7 +412,7 @@ try:
                     cx, cy = gx * grid, gy0 * grid
                     if _cell_blocked(cx, cy, grid):
                         return True, f'({cx:.2f}, {cy:.2f})'
-                    if (gx, gy0) in h_wire_cells:
+                    if (gx, gy0) not in _ep_adj and (gx, gy0) in h_wire_cells:
                         return True, f'wire overlap at ({cx:.2f}, {cy:.2f})'
         return False, None
 

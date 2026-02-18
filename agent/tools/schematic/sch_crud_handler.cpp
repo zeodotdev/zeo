@@ -1673,14 +1673,6 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             std::string text = elem.value( "text", "" );
             std::string labelType = elem.value( "label_type", "local" );
 
-            if( labelType == "global" )
-            {
-                code << "        results.append({'index': " << i
-                     << ", 'error': 'Global (bidirectional) labels are not supported. "
-                        "Use local labels or text boxes instead.'})\n";
-                continue;
-            }
-
             double posX = 0, posY = 0;
             if( elem.contains( "position" ) && elem["position"].is_array() &&
                 elem["position"].size() >= 2 )

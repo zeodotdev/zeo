@@ -226,7 +226,7 @@ try:
             if _edge_top: by0 = max(by0, max(_edge_top))
             if _edge_bottom: by1 = min(by1, min(_edge_bottom))
             if bx0 < bx1 and by0 < by1:
-                obstacles.append({'min_x': bx0, 'max_x': bx1, 'min_y': by0, 'max_y': by1})
+                obstacles.append({'min_x': bx0, 'max_x': bx1, 'min_y': by0, 'max_y': by1, 'ref': getattr(obs_sym, 'reference', '')})
     except:
         pass
     try:
@@ -280,20 +280,24 @@ try:
                 for gy in range(min(gy0, gy1), max(gy0, gy1) + 1):
                     v_wire_cells.add((gx0, gy))
 
-    def _cell_blocked(cx, cy, grid=1.27):
-        """Check if a grid cell center is inside any obstacle."""
+    def _cell_blocked(cx, cy, grid=1.27, exclude_refs=None):
+        """Check if a grid cell center is inside any obstacle.
+        exclude_refs: set of symbol refs whose bboxes should be ignored."""
         half = grid / 2 - 0.01
         for obs in obstacles:
+            if exclude_refs and obs.get('ref') in exclude_refs:
+                continue
             if cx + half > obs['min_x'] and cx - half < obs['max_x'] and cy + half > obs['min_y'] and cy - half < obs['max_y']:
                 return True
         return False
 
     import heapq
-    def _astar(x0, y0, x1, y1, grid=1.27, bend_cost=3, start_dir=-1, end_dir=-1, margin=15):
+    def _astar(x0, y0, x1, y1, grid=1.27, bend_cost=3, start_dir=-1, end_dir=-1, margin=15, exclude_refs=None):
         """A* pathfinding on the schematic grid. Returns list of (x,y) waypoints,
         or None if no path found within the search bounds.
         start_dir: if >= 0, forced first-step direction (0=right, 1=left, 2=down, 3=up).
-        end_dir: if >= 0, forced approach direction into the goal cell."""
+        end_dir: if >= 0, forced approach direction into the goal cell.
+        exclude_refs: set of symbol refs whose bboxes are ignored for obstacle checks."""
         # Snap start/end to grid
         gx0, gy0 = round(x0 / grid), round(y0 / grid)
         gx1, gy1 = round(x1 / grid), round(y1 / grid)
@@ -346,16 +350,16 @@ try:
                 # Force first step outward from pin (hard constraint, not just penalty)
                 if (gx, gy) == (gx0, gy0) and init_d >= 0 and di != init_d:
                     edx, edy = dirs[init_d]
-                    if not _cell_blocked((gx0 + edx) * grid, (gy0 + edy) * grid, grid):
+                    if not _cell_blocked((gx0 + edx) * grid, (gy0 + edy) * grid, grid, exclude_refs):
                         continue
                 # Force approach direction into goal (pin escape at destination)
                 if (nx, ny) == goal and end_dir >= 0 and di != end_dir:
                     edx, edy = dirs[end_dir]
-                    if not _cell_blocked((gx1 - edx) * grid, (gy1 - edy) * grid, grid):
+                    if not _cell_blocked((gx1 - edx) * grid, (gy1 - edy) * grid, grid, exclude_refs):
                         continue
                 # Allow start and goal cells even if blocked
                 if (nx, ny) != goal and (nx, ny) != (gx0, gy0):
-                    if _cell_blocked(nx * grid, ny * grid, grid):
+                    if _cell_blocked(nx * grid, ny * grid, grid, exclude_refs):
                         continue
                     # Block parallel movement along existing wires (prevents MergeOverlap).
                     # Skip when leaving the start cell — arrival wires from previous
@@ -377,11 +381,12 @@ try:
                     came_from[nkey] = current_key
         return None
 
-    def _path_hits_obstacle(waypoints, grid=1.27):
+    def _path_hits_obstacle(waypoints, grid=1.27, exclude_refs=None):
         """Check if any intermediate cell on the path is inside an obstacle
         or would overlap an existing wire in the same direction.
         Excludes the first and last cells (pin endpoints sit inside their own
         component's bounding box, matching A*'s start/goal exclusion).
+        exclude_refs: set of symbol refs whose bboxes are ignored.
         Returns (hit, obs_desc) — hit is True if the path overlaps a component or wire."""
         # Pin endpoint cells to exclude
         ep_start = (round(waypoints[0][0] / grid), round(waypoints[0][1] / grid))
@@ -401,7 +406,7 @@ try:
                     if (gx0, gy) == ep_start or (gx0, gy) == ep_end:
                         continue
                     cx, cy = gx0 * grid, gy * grid
-                    if _cell_blocked(cx, cy, grid):
+                    if _cell_blocked(cx, cy, grid, exclude_refs):
                         return True, f'({cx:.2f}, {cy:.2f})'
                     if (gx0, gy) not in _ep_adj and (gx0, gy) in v_wire_cells:
                         return True, f'wire overlap at ({cx:.2f}, {cy:.2f})'
@@ -410,7 +415,7 @@ try:
                     if (gx, gy0) == ep_start or (gx, gy0) == ep_end:
                         continue
                     cx, cy = gx * grid, gy0 * grid
-                    if _cell_blocked(cx, cy, grid):
+                    if _cell_blocked(cx, cy, grid, exclude_refs):
                         return True, f'({cx:.2f}, {cy:.2f})'
                     if (gx, gy0) not in _ep_adj and (gx, gy0) in h_wire_cells:
                         return True, f'wire overlap at ({cx:.2f}, {cy:.2f})'
@@ -438,14 +443,17 @@ try:
     def _route_pins(p0, p1):
         """Route between two pins using A* without forced escape directions.
         Chain/2-pin mode routes directly pin-to-pin; pin escape is only needed
-        for trunk-and-branch mode where junctions must not land on pins."""
+        for trunk-and-branch mode where junctions must not land on pins.
+        Endpoint symbol bboxes are excluded from obstacles so wires can reach pins directly."""
         x0, y0 = p0['raw_x'], p0['raw_y']
         x1, y1 = p1['raw_x'], p1['raw_y']
-        print(f'[route] A* {p0["ref"]}:{p0["pin"]} -> {p1["ref"]}:{p1["pin"]}', file=sys.stderr)
+        # Exclude endpoint symbols from obstacle map so the wire can reach their pins
+        _exc = {p0['ref'], p1['ref']}
+        print(f'[route] A* {p0["ref"]}:{p0["pin"]} -> {p1["ref"]}:{p1["pin"]}  exclude={_exc}', file=sys.stderr)
         # Try progressively wider search margins
         wp = None
         for a_margin, a_label in [(15, 'default'), (30, 'wider margin'), (50, 'max margin')]:
-            wp = _astar(x0, y0, x1, y1, margin=a_margin)
+            wp = _astar(x0, y0, x1, y1, margin=a_margin, exclude_refs=_exc)
             if wp is not None:
                 if a_label != 'default':
                     print(f'[route]   found path with retry: {a_label}', file=sys.stderr)
@@ -464,7 +472,8 @@ try:
         for ci in range(len(pin_positions) - 1):
             p0, p1 = pin_positions[ci], pin_positions[ci + 1]
             waypoints = _route_pins(p0, p1)
-            hit, loc = _path_hits_obstacle(waypoints)
+            _exc = {p0['ref'], p1['ref']}
+            hit, loc = _path_hits_obstacle(waypoints, exclude_refs=_exc)
             if hit:
                 raise ValueError(f'Wire from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
             _n, _ws = _place_path(waypoints)
@@ -478,7 +487,8 @@ try:
         # 2-pin: direct A* route
         p0, p1 = pin_positions[0], pin_positions[1]
         waypoints = _route_pins(p0, p1)
-        hit, loc = _path_hits_obstacle(waypoints)
+        _exc = {p0['ref'], p1['ref']}
+        hit, loc = _path_hits_obstacle(waypoints, exclude_refs=_exc)
         if hit:
             raise ValueError(f'Wire from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
         _n, _ws = _place_path(waypoints)

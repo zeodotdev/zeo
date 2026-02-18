@@ -435,48 +435,17 @@ try:
             sch.wiring.add_junction(pos)
         return len(positions)
 
-    def _dir_index(dx, dy):
-        """Convert (dx, dy) outward direction to A* direction index."""
-        if dx > 0: return 0  # right
-        if dx < 0: return 1  # left
-        if dy > 0: return 2  # down
-        if dy < 0: return 3  # up
-        return -1
-
-    _dir_names = {0:'RIGHT', 1:'LEFT', 2:'DOWN', 3:'UP', -1:'NONE'}
     def _route_pins(p0, p1):
-        """Route between two pins using A* with forced escape at both ends.
-        Retries with progressively relaxed constraints if no path is found."""
+        """Route between two pins using A* without forced escape directions.
+        Chain/2-pin mode routes directly pin-to-pin; pin escape is only needed
+        for trunk-and-branch mode where junctions must not land on pins."""
         x0, y0 = p0['raw_x'], p0['raw_y']
         x1, y1 = p1['raw_x'], p1['raw_y']
-        sd = _dir_index(p0['out_dx'], p0['out_dy'])
-        ed = _dir_index(p1['out_dx'], p1['out_dy'])
-        # end_dir is opposite of outward (wire approaches from outside, moving inward)
-        ed = ed ^ 1 if ed >= 0 else -1
-        # Suppress escape when pin-to-pin axis is perpendicular to the escape
-        # direction — the wire can go straight without needing to escape first.
-        dx = abs(x1 - x0)
-        dy = abs(y1 - y0)
-        if dx < 0.01 and dy > 0.01:
-            # Vertical alignment: suppress horizontal escapes
-            if sd in (0, 1): sd = -1
-            if ed in (0, 1): ed = -1
-        elif dy < 0.01 and dx > 0.01:
-            # Horizontal alignment: suppress vertical escapes
-            if sd in (2, 3): sd = -1
-            if ed in (2, 3): ed = -1
-        print(f'[route] A* {p0["ref"]}:{p0["pin"]} -> {p1["ref"]}:{p1["pin"]}  start_dir={_dir_names.get(sd)} end_dir={_dir_names.get(ed)}', file=sys.stderr)
-        # Try progressively relaxed search strategies
-        attempts = [
-            (sd, ed, 15, 'default'),
-            (sd, ed, 30, 'wider margin'),
-            (-1, -1, 30, 'no escape constraints'),
-            (sd, ed, 50, 'max margin'),
-            (-1, -1, 50, 'max margin + no escape'),
-        ]
+        print(f'[route] A* {p0["ref"]}:{p0["pin"]} -> {p1["ref"]}:{p1["pin"]}', file=sys.stderr)
+        # Try progressively wider search margins
         wp = None
-        for a_sd, a_ed, a_margin, a_label in attempts:
-            wp = _astar(x0, y0, x1, y1, start_dir=a_sd, end_dir=a_ed, margin=a_margin)
+        for a_margin, a_label in [(15, 'default'), (30, 'wider margin'), (50, 'max margin')]:
+            wp = _astar(x0, y0, x1, y1, margin=a_margin)
             if wp is not None:
                 if a_label != 'default':
                     print(f'[route]   found path with retry: {a_label}', file=sys.stderr)

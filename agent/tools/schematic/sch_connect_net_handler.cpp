@@ -179,7 +179,8 @@ try:
     junction_count = 0
 
     # Build obstacle map from graphical bounding boxes of ALL symbols and labels.
-    # Pin tip cells are reachable via A*'s start/goal exclusion — no edge shrinking needed.
+    # Shrink bbox edges that have pins so wires can reach pin tips
+    # without the body registering as an obstacle.
     obstacles = []
     try:
         all_symbols = sch.symbols.get_all()
@@ -190,7 +191,42 @@ try:
                 continue
             if not bbox:
                 continue
-            obstacles.append({'min_x': bbox['min_x'], 'max_x': bbox['max_x'], 'min_y': bbox['min_y'], 'max_y': bbox['max_y']})
+            bx0, bx1 = bbox['min_x'], bbox['max_x']
+            by0, by1 = bbox['min_y'], bbox['max_y']
+            # Shrink each edge to the pin tips that exit from it, using pin
+            # orientation rotated by symbol angle (same transform the router uses).
+            # This moves each edge inward to exactly where the outermost pin is,
+            # so pin tips sit at the bbox boundary rather than inside it.
+            _edge_left = []   # pin x-coords exiting left
+            _edge_right = []  # pin x-coords exiting right
+            _edge_top = []    # pin y-coords exiting up
+            _edge_bottom = [] # pin y-coords exiting down
+            _rot90 = {0: 2, 1: 3, 2: 1, 3: 0}
+            _rot_steps = round(getattr(obs_sym, 'angle', 0) / 90) % 4
+            for sp in obs_sym.pins:
+                try:
+                    tp = sch.symbols.get_transformed_pin_position(obs_sym, sp.number)
+                    if not tp:
+                        continue
+                    po = tp.get('orientation', None)
+                    if po is None:
+                        continue
+                    px = tp['position'].x / 1_000_000
+                    py = tp['position'].y / 1_000_000
+                    for _ in range(_rot_steps):
+                        po = _rot90.get(po, po)
+                    if po == 0: _edge_left.append(px)      # PIN_RIGHT toward body -> escape left
+                    elif po == 1: _edge_right.append(px)    # PIN_LEFT toward body -> escape right
+                    elif po == 2: _edge_bottom.append(py)   # PIN_UP toward body -> escape down
+                    elif po == 3: _edge_top.append(py)      # PIN_DOWN toward body -> escape up
+                except:
+                    pass
+            if _edge_left: bx0 = max(bx0, max(_edge_left))
+            if _edge_right: bx1 = min(bx1, min(_edge_right))
+            if _edge_top: by0 = max(by0, max(_edge_top))
+            if _edge_bottom: by1 = min(by1, min(_edge_bottom))
+            if bx0 < bx1 and by0 < by1:
+                obstacles.append({'min_x': bx0, 'max_x': bx1, 'min_y': by0, 'max_y': by1})
     except:
         pass
     try:

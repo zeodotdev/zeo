@@ -1410,6 +1410,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "    return f'{prefix}{n}'\n";
     code << "\n";
     code << "results = []\n";
+    code << "_placed_syms = {}\n";
     code << "\n";
 
     // --- Overlap detection preamble ---
@@ -1516,6 +1517,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "            sch.crud.update_items(sym_" << i << ")\n";
             code << "            if _bb_" << i << ":\n";
             code << "                placed_bboxes.append({'ref': _new_ref_" << i << ", **_new_bbox_" << i << "})\n";
+            code << "            _placed_syms[" << i << "] = sym_" << i << "\n";
             code << "            results.append({'index': " << i << ", 'element_type': 'symbol', 'reference': _new_ref_" << i << "})\n";
         }
         else if( elementType == "power" )
@@ -1696,6 +1698,31 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
         code << "        results.append({'index': " << i << ", 'error': str(e_" << i << ")})\n";
         code << "\n";
     }
+
+    // --- Pin position enrichment (best-effort, after all placements) ---
+    // Done as a separate pass so placement is never blocked by pin lookups.
+    // Each pin lookup is an IPC round-trip, so we wrap individually to degrade gracefully.
+    code << "\n";
+    code << "    # --- Collect pin positions for placed symbols (best-effort) ---\n";
+    code << "    for _idx, _sym in _placed_syms.items():\n";
+    code << "        try:\n";
+    code << "            _pins = []\n";
+    code << "            if hasattr(_sym, 'pins'):\n";
+    code << "                for _p in _sym.pins:\n";
+    code << "                    _pin_info = {'number': _p.number, 'name': getattr(_p, 'name', '')}\n";
+    code << "                    try:\n";
+    code << "                        _tr = sch.symbols.get_transformed_pin_position(_sym, _p.number)\n";
+    code << "                        if _tr:\n";
+    code << "                            _pin_info['position'] = [round(_tr['position'].x / 1_000_000, 4), round(_tr['position'].y / 1_000_000, 4)]\n";
+    code << "                    except:\n";
+    code << "                        pass\n";
+    code << "                    _pins.append(_pin_info)\n";
+    code << "            for _r in results:\n";
+    code << "                if _r.get('index') == _idx and 'error' not in _r:\n";
+    code << "                    _r['pins'] = _pins\n";
+    code << "                    break\n";
+    code << "        except:\n";
+    code << "            pass\n";
 
     code << "\n";
     code << "    _fail = sum(1 for r in results if 'error' in r)\n";

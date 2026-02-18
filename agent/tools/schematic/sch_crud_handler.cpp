@@ -3,7 +3,9 @@
 #include <iomanip>
 
 // Overlap detection padding per side (mm). Total clearance = 2x this value.
-static constexpr double BBOX_MARGIN_MM = 0.5;
+// Set to 0 — bounding boxes are already shrunk (include_text=False) to expose
+// pin tips, and any padding causes false rejections for labels/wires near pins.
+static constexpr double BBOX_MARGIN_MM = 0.0;
 
 
 bool SCH_CRUD_HANDLER::CanHandle( const std::string& aToolName ) const

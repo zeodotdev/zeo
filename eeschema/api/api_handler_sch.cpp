@@ -90,6 +90,8 @@
 #include <io/kicad/kicad_io_utils.h>
 #include <sch_screen.h>
 #include <wildcards_and_files_ext.h>
+#include <junction_helpers.h>
+#include <trigo.h>
 
 #include <api/common/types/base_types.pb.h>
 #include <api/schematic/schematic_commands.pb.h>
@@ -229,6 +231,7 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
     registerHandler<SearchLibrarySymbols, SearchLibrarySymbolsResponse>( &API_HANDLER_SCH::handleSearchLibrarySymbols );
     registerHandler<GetSymbolInfo, GetSymbolInfoResponse>( &API_HANDLER_SCH::handleGetSymbolInfo );
     registerHandler<GetTransformedPinPosition, GetTransformedPinPositionResponse>( &API_HANDLER_SCH::handleGetTransformedPinPosition );
+    registerHandler<GetNeededJunctions, GetNeededJunctionsResponse>( &API_HANDLER_SCH::handleGetNeededJunctions );
 
     // Simulation handlers
     registerHandler<RunSimulation, RunSimulationResponse>( &API_HANDLER_SCH::handleRunSimulation );
@@ -5353,6 +5356,87 @@ API_HANDLER_SCH::handleGetTransformedPinPosition(
     VECTOR2I worldPos = pin->GetPosition();
     kiapi::common::PackVector2Sch( *response.mutable_position(), worldPos );
     response.set_orientation( static_cast<int>( pin->GetOrientation() ) );
+
+    return response;
+}
+
+
+HANDLER_RESULT<schematic::commands::GetNeededJunctionsResponse>
+API_HANDLER_SCH::handleGetNeededJunctions(
+        const HANDLER_CONTEXT<schematic::commands::GetNeededJunctions>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetNeededJunctionsResponse response;
+
+    SCH_SCREEN* screen = m_frame->GetScreenForApi();
+
+    if( !screen )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No screen available" );
+        return tl::unexpected( e );
+    }
+
+    // Get all existing connection points on the screen
+    std::vector<VECTOR2I> connections = screen->GetConnections();
+
+    // Collect candidate points from the specified items
+    std::vector<VECTOR2I> pts;
+
+    for( const auto& idProto : aCtx.Request.item_ids() )
+    {
+        KIID id( idProto.value() );
+        std::optional<SCH_ITEM*> itemOpt = getItemById( id );
+
+        if( !itemOpt || !*itemOpt )
+            continue;
+
+        SCH_ITEM* item = *itemOpt;
+
+        // Connection points of the item itself
+        std::vector<VECTOR2I> itemPts = item->GetConnectionPoints();
+        pts.insert( pts.end(), itemPts.begin(), itemPts.end() );
+
+        // For wire/bus lines, also check if existing connections lie on the segment interior
+        if( item->Type() == SCH_LINE_T )
+        {
+            SCH_LINE* line = static_cast<SCH_LINE*>( item );
+
+            for( const VECTOR2I& pt : connections )
+            {
+                if( IsPointOnSegment( line->GetStartPoint(), line->GetEndPoint(), pt ) )
+                    pts.push_back( pt );
+            }
+        }
+    }
+
+    // Deduplicate
+    std::sort( pts.begin(), pts.end(),
+               []( const VECTOR2I& a, const VECTOR2I& b )
+               {
+                   return a.x < b.x || ( a.x == b.x && a.y < b.y );
+               } );
+    pts.erase( std::unique( pts.begin(), pts.end() ), pts.end() );
+
+    // Analyze each candidate point using the screen's RTREE
+    const EE_RTREE& rtree = screen->Items();
+
+    for( const VECTOR2I& pt : pts )
+    {
+        JUNCTION_HELPERS::POINT_INFO info =
+                JUNCTION_HELPERS::AnalyzePoint( rtree, pt, false );
+
+        if( info.isJunction && !info.hasExplicitJunctionDot
+            && ( !info.hasBusEntry || info.hasBusEntryToMultipleWires ) )
+        {
+            kiapi::common::PackVector2Sch( *response.add_positions(), pt );
+        }
+    }
 
     return response;
 }

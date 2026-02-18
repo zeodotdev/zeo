@@ -178,11 +178,6 @@ try:
     wire_count = 0
     junction_count = 0
 
-    _wire_ep = {}
-    def _track(x, y):
-        key = (round(x, 2), round(y, 2))
-        _wire_ep[key] = _wire_ep.get(key, 0) + 1
-
     # Build obstacle map from graphical bounding boxes of ALL symbols and labels.
     # Pin tip cells are reachable via A*'s start/goal exclusion — no edge shrinking needed.
     obstacles = []
@@ -330,14 +325,23 @@ try:
         return False, None
 
     def _place_path(waypoints):
-        """Place wire segments along a list of waypoints."""
-        count = 0
+        """Place wire segments along a list of waypoints. Returns (count, wires)."""
+        wires = []
         for i in range(len(waypoints) - 1):
             ax, ay = waypoints[i]
             bx, by = waypoints[i + 1]
-            sch.wiring.add_wire(Vector2.from_xy_mm(ax, ay), Vector2.from_xy_mm(bx, by))
-            count += 1
-        return count
+            w = sch.wiring.add_wire(Vector2.from_xy_mm(ax, ay), Vector2.from_xy_mm(bx, by))
+            wires.append(w)
+        return len(wires), wires
+
+    def _place_needed_junctions(placed_wires):
+        """Query KiCad for needed junctions and place them."""
+        if not placed_wires:
+            return 0
+        positions = sch.wiring.get_needed_junctions(placed_wires)
+        for pos in positions:
+            sch.wiring.add_junction(pos)
+        return len(positions)
 
     def _dir_index(dx, dy):
         """Convert (dx, dy) outward direction to A* direction index."""
@@ -377,42 +381,18 @@ try:
 
     if routing_mode == 'chain':
         # Chain mode: A* route each consecutive pin pair
-        all_segments = []
+        _all_wires = []
         for ci in range(len(pin_positions) - 1):
             p0, p1 = pin_positions[ci], pin_positions[ci + 1]
             waypoints = _route_pins(p0, p1)
             hit, loc = _path_hits_obstacle(waypoints)
             if hit:
                 raise ValueError(f'Wire from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
-            wire_count += _place_path(waypoints)
-            # Track wire segment endpoints for junction detection
-            for wi in range(len(waypoints) - 1):
-                ax, ay = waypoints[wi]
-                bx, by = waypoints[wi + 1]
-                all_segments.append((round(ax, 2), round(ay, 2), round(bx, 2), round(by, 2)))
-                _track(ax, ay)
-                _track(bx, by)
+            _n, _ws = _place_path(waypoints)
+            wire_count += _n
+            _all_wires.extend(_ws)
 
-        # Account for wires passing through interior of other segments
-        for key in list(_wire_ep.keys()):
-            kx, ky = key
-            for sx, sy, ex, ey in all_segments:
-                if (kx, ky) == (sx, sy) or (kx, ky) == (ex, ey):
-                    continue
-                if abs(sy - ey) < 0.01 and abs(ky - sy) < 0.01:
-                    if min(sx, ex) < kx < max(sx, ex):
-                        _wire_ep[key] += 2
-                elif abs(sx - ex) < 0.01 and abs(kx - sx) < 0.01:
-                    if min(sy, ey) < ky < max(sy, ey):
-                        _wire_ep[key] += 2
-
-        # Place junctions where 3+ wire endpoints meet
-        _junctions_done = set()
-        for key, count in _wire_ep.items():
-            if count >= 3 and key not in _junctions_done:
-                sch.wiring.add_junction(Vector2.from_xy_mm(key[0], key[1]))
-                junction_count += 1
-                _junctions_done.add(key)
+        junction_count = _place_needed_junctions(_all_wires)
 
     elif len(pin_positions) == 2:
         # 2-pin: direct A* route
@@ -421,7 +401,9 @@ try:
         hit, loc = _path_hits_obstacle(waypoints)
         if hit:
             raise ValueError(f'Wire from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
-        wire_count = _place_path(waypoints)
+        _n, _ws = _place_path(waypoints)
+        wire_count += _n
+        junction_count = _place_needed_junctions(_ws)
     else:
         # 3+ pins: trunk-and-branch routing with pre-escaped positions.
         # Use escaped positions so the trunk never extends into component bboxes.
@@ -579,7 +561,7 @@ try:
                 if trunk_min + 0.01 < esc_proj < trunk_max - 0.01:
                     _branch_conn_pts.add(round(esc_proj, 4))
 
-        all_segments = []
+        _all_wires = []
         if trunk_min != trunk_max:
             if is_horizontal:
                 t0, t1 = (trunk_min, trunk_perp), (trunk_max, trunk_perp)
@@ -607,10 +589,8 @@ try:
                 else:
                     _ts = (trunk_perp, _trunk_points[_ti])
                     _te = (trunk_perp, _trunk_points[_ti + 1])
-                sch.wiring.add_wire(Vector2.from_xy_mm(*_ts), Vector2.from_xy_mm(*_te))
-                all_segments.append((round(_ts[0], 2), round(_ts[1], 2), round(_te[0], 2), round(_te[1], 2)))
-                _track(_ts[0], _ts[1])
-                _track(_te[0], _te[1])
+                _tw = sch.wiring.add_wire(Vector2.from_xy_mm(*_ts), Vector2.from_xy_mm(*_te))
+                _all_wires.append(_tw)
                 wire_count += 1
 
         # Place branches from escaped position to trunk target (no forced escape)
@@ -627,52 +607,20 @@ try:
                 hit, loc = _path_hits_obstacle(waypoints)
                 if hit:
                     raise ValueError(f'Wire from {p["ref"]}:{p["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
-                wire_count += _place_path(waypoints)
-                for wi in range(len(waypoints) - 1):
-                    ax, ay = waypoints[wi]
-                    bx, by = waypoints[wi + 1]
-                    all_segments.append((round(ax, 2), round(ay, 2), round(bx, 2), round(by, 2)))
-                    _track(ax, ay)
-                    _track(bx, by)
+                _n, _ws = _place_path(waypoints)
+                wire_count += _n
+                _all_wires.extend(_ws)
 
         # Place pin-to-escape wires for all pins
         for p in pin_positions:
             px, py = p['raw_x'], p['raw_y']
             ex, ey = p['esc_x'], p['esc_y']
             if abs(px - ex) > 0.001 or abs(py - ey) > 0.001:
-                sch.wiring.add_wire(Vector2.from_xy_mm(px, py), Vector2.from_xy_mm(ex, ey))
-                all_segments.append((round(px, 2), round(py, 2), round(ex, 2), round(ey, 2)))
-                _track(px, py)
-                _track(ex, ey)
+                _tw = sch.wiring.add_wire(Vector2.from_xy_mm(px, py), Vector2.from_xy_mm(ex, ey))
+                _all_wires.append(_tw)
                 wire_count += 1
 
-        # Count pin positions for junction detection
-        for p in pin_positions:
-            _track(p['raw_x'], p['raw_y'])
-
-        # Account for wires passing through interior of other segments
-        for key in list(_wire_ep.keys()):
-            kx, ky = key
-            for sx, sy, ex, ey in all_segments:
-                # Skip if point is at segment endpoints (already tracked)
-                if (kx, ky) == (sx, sy) or (kx, ky) == (ex, ey):
-                    continue
-                # Horizontal segment: same y, x between endpoints
-                if abs(sy - ey) < 0.01 and abs(ky - sy) < 0.01:
-                    if min(sx, ex) < kx < max(sx, ex):
-                        _wire_ep[key] += 2
-                # Vertical segment: same x, y between endpoints
-                elif abs(sx - ex) < 0.01 and abs(kx - sx) < 0.01:
-                    if min(sy, ey) < ky < max(sy, ey):
-                        _wire_ep[key] += 2
-
-        # Place junctions where 3+ branches meet
-        _junctions_done = set()
-        for key, count in _wire_ep.items():
-            if count >= 3 and key not in _junctions_done:
-                sch.wiring.add_junction(Vector2.from_xy_mm(key[0], key[1]))
-                junction_count += 1
-                _junctions_done.add(key)
+        junction_count = _place_needed_junctions(_all_wires)
 
     pin_info = [{'ref': p['ref'], 'pin': p['pin'], 'position': [p['raw_x'], p['raw_y']]} for p in pin_positions]
     all_rx = [p['raw_x'] for p in pin_positions]

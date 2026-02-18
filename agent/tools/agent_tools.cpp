@@ -354,7 +354,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         }},
                         { "label_type", {
                             { "type", "string" },
-                            { "enum", json::array( { "local", "global", "hierarchical" } ) }
+                            { "enum", json::array( { "local", "hierarchical" } ) },
+                            { "description", "Label type. Use 'local' for net labels (default). Use 'hierarchical' only for inter-sheet connections. Global (bidirectional) labels are not supported — use local labels or text boxes instead." }
                         }},
                         { "direction", {
                             { "type", "string" },

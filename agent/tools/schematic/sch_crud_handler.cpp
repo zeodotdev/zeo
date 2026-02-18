@@ -1709,6 +1709,29 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "except Exception as batch_error:\n";
     code << "    result = {'status': 'error', 'message': str(batch_error), 'results': results}\n";
     code << "\n";
+
+    // Auto-sync sheet pins if any hierarchical labels were placed
+    bool hasHierarchicalLabel = false;
+    for( size_t i = 0; i < elements.size(); ++i )
+    {
+        if( elements[i].value( "element_type", "" ) == "label" &&
+            elements[i].value( "label_type", "local" ) == "hierarchical" )
+        {
+            hasHierarchicalLabel = true;
+            break;
+        }
+    }
+
+    if( hasHierarchicalLabel )
+    {
+        code << "# Sync sheet pins on parent sheet to match hierarchical labels\n";
+        code << "try:\n";
+        code << "    sch.sheets.sync_pins()\n";
+        code << "except:\n";
+        code << "    pass\n";
+        code << "\n";
+    }
+
     code << "print(json.dumps(result, indent=2))\n";
 
     return code.str();

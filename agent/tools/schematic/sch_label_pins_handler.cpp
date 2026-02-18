@@ -214,6 +214,18 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "except Exception as e:\n";
     code << "    results = [{'error': str(e)}]\n";
     code << "\n";
+
+    // Auto-sync sheet pins when placing hierarchical labels
+    if( labelType == "hierarchical" )
+    {
+        code << "# Sync sheet pins on parent sheet to match hierarchical labels\n";
+        code << "try:\n";
+        code << "    sch.sheets.sync_pins()\n";
+        code << "except:\n";
+        code << "    pass\n";
+        code << "\n";
+    }
+
     code << "print(json.dumps({'status': 'success', 'ref': ref, 'labels_placed': len([r for r in results if 'error' not in r]), 'labels_failed': len([r for r in results if 'error' in r]), 'results': results}, indent=2))\n";
 
     return code.str();

@@ -90,39 +90,50 @@ std::string SCREENSHOT_HANDLER::GetDescription( const std::string& aToolName,
         return "Taking screenshot of " + fn.GetFullName().ToStdString();
     }
 
-    return "Taking screenshot";
+    return "Taking screenshot of current view";
 }
 
 
 std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput )
 {
-    // Extract and validate file_path parameter
+    // Extract file_path parameter (optional — omit to screenshot current view)
     std::string filePath = aInput.value( "file_path", "" );
 
-    if( filePath.empty() )
-        return "Error: 'file_path' parameter is required";
+    bool isSchematic = false;
+    bool isPcb = false;
+    bool useCurrentView = filePath.empty();
 
-    wxLogInfo( "SCREENSHOT: Processing %s", filePath.c_str() );
-
-    // Validate path is safe for shell commands
-    if( !IsPathSafeForShell( filePath ) )
-        return "Error: file_path contains characters that are not allowed";
-
-    // Check file exists
-    if( !wxFileName::FileExists( wxString::FromUTF8( filePath ) ) )
-        return "Error: File not found: " + filePath;
-
-    // Determine file type from extension
-    wxFileName fn( wxString::FromUTF8( filePath ) );
-    wxString ext = fn.GetExt().Lower();
-
-    bool isSchematic = ( ext == "kicad_sch" );
-    bool isPcb = ( ext == "kicad_pcb" );
-
-    if( !isSchematic && !isPcb )
+    if( useCurrentView )
     {
-        return "Error: Unsupported file type '" + ext.ToStdString()
-               + "'. Expected .kicad_sch or .kicad_pcb";
+        wxLogInfo( "SCREENSHOT: No file_path provided, will screenshot current view" );
+
+        // Try schematic editor first via IPC, then PCB editor
+        isSchematic = true;
+    }
+    else
+    {
+        wxLogInfo( "SCREENSHOT: Processing %s", filePath.c_str() );
+
+        // Validate path is safe for shell commands
+        if( !IsPathSafeForShell( filePath ) )
+            return "Error: file_path contains characters that are not allowed";
+
+        // Check file exists
+        if( !wxFileName::FileExists( wxString::FromUTF8( filePath ) ) )
+            return "Error: File not found: " + filePath;
+
+        // Determine file type from extension
+        wxFileName fn( wxString::FromUTF8( filePath ) );
+        wxString ext = fn.GetExt().Lower();
+
+        isSchematic = ( ext == "kicad_sch" );
+        isPcb = ( ext == "kicad_pcb" );
+
+        if( !isSchematic && !isPcb )
+        {
+            return "Error: Unsupported file type '" + ext.ToStdString()
+                   + "'. Expected .kicad_sch or .kicad_pcb";
+        }
     }
 
     // Create a unique temp directory atomically via mkdtemp to avoid TOCTOU races
@@ -186,14 +197,27 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
 
     if( m_sendRequestFn )
     {
-        svgPath = ExportViaIpc( isSchematic, tempDirStr, filePath );
+        // When useCurrentView is true, first try schematic, then PCB.
+        // Pass empty filePath for current view so IPC handler doesn't navigate.
+        svgPath = ExportViaIpc( isSchematic, tempDirStr,
+                                useCurrentView ? "" : filePath );
+
+        // If screenshotting current view and schematic failed, try PCB
+        if( svgPath.empty() && useCurrentView && isSchematic )
+        {
+            wxLogInfo( "SCREENSHOT: Schematic IPC failed for current view, trying PCB" );
+            isSchematic = false;
+            isPcb = true;
+            svgPath = ExportViaIpc( false, tempDirStr, "" );
+        }
 
         if( svgPath.empty() )
             wxLogWarning( "SCREENSHOT: IPC export failed, falling back to kicad-cli" );
     }
 
     // Fall back to kicad-cli if IPC was not used or failed
-    if( svgPath.empty() )
+    // (kicad-cli requires a file path, so this only works when one was provided)
+    if( svgPath.empty() && !useCurrentView )
     {
         if( isSchematic )
             svgPath = ExportSchematicSvg( filePath, tempDirStr );
@@ -202,7 +226,10 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
     }
 
     if( svgPath.empty() )
-        return "Error: Failed to export SVG from " + filePath;
+    {
+        return useCurrentView ? "Error: Failed to export current view. Is a schematic or PCB editor open?"
+                              : "Error: Failed to export SVG from " + filePath;
+    }
 
     // Convert SVG to PNG (NOTE: uses macOS sips, will fail on other platforms)
     std::string pngPath = tempDirStr + "/screenshot.png";
@@ -228,7 +255,14 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
 
     // Build result JSON envelope
     nlohmann::json result;
-    result["text"] = "Screenshot of " + fn.GetFullName().ToStdString();
+    std::string label;
+
+    if( useCurrentView )
+        label = isSchematic ? "current schematic sheet" : "current PCB view";
+    else
+        label = wxFileName( wxString::FromUTF8( filePath ) ).GetFullName().ToStdString();
+
+    result["text"] = "Screenshot of " + label;
     result["image"] = {
         { "media_type", "image/png" },
         { "base64", base64Data }

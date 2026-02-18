@@ -329,7 +329,11 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         { "angle", {
                             { "type", "number" },
                             { "description", "CCW rotation degrees. Passives: 0=vertical, 90=horizontal. "
-                                            "Power GND: 0=bars down(standard). Power VCC: 0=bar up(standard)." }
+                                            "Power symbols MUST match target pin direction: "
+                                            "vertical pin down→GND 0°, vertical pin up→VCC 0°, "
+                                            "horizontal pin left→GND 90°/VCC 270°, "
+                                            "horizontal pin right→GND 270°/VCC 90°. "
+                                            "Wrong orientation crosses wires and creates false connections." }
                         }},
                         { "mirror", {
                             { "type", "string" },

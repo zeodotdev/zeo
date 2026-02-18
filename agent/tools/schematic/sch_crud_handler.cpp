@@ -1399,6 +1399,18 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "def _bboxes_overlap(a, b):\n";
     code << "    return a['min_x'] < b['max_x'] and a['max_x'] > b['min_x'] and a['min_y'] < b['max_y'] and a['max_y'] > b['min_y']\n";
     code << "\n";
+    code << "def _wire_crosses_bbox(bbox, pin_x, pin_y):\n";
+    code << "    \"\"\"Check if any existing wire crosses through a bounding box (excluding wires that terminate at pin_x,pin_y).\"\"\"\n";
+    code << "    _tol = 0.2\n";
+    code << "    for _w in sch.crud.get_wires():\n";
+    code << "        _sx, _sy = round(_w.start.x/1e6, 2), round(_w.start.y/1e6, 2)\n";
+    code << "        _ex, _ey = round(_w.end.x/1e6, 2), round(_w.end.y/1e6, 2)\n";
+    code << "        if (abs(_sx-pin_x)<_tol and abs(_sy-pin_y)<_tol) or (abs(_ex-pin_x)<_tol and abs(_ey-pin_y)<_tol):\n";
+    code << "            continue\n";
+    code << "        if max(_sx,_ex) > bbox['min_x'] and min(_sx,_ex) < bbox['max_x'] and max(_sy,_ey) > bbox['min_y'] and min(_sy,_ey) < bbox['max_y']:\n";
+    code << "            return True\n";
+    code << "    return False\n";
+    code << "\n";
 
     // --- Sheet bounds check ---
     code << "# Get sheet dimensions for bounds checking\n";
@@ -1516,8 +1528,9 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        pwr_" << i << " = sch.labels.add_power('" << EscapePythonString( powerName ) << "', pos_" << i << ", angle=" << angle << ")\n";
 
-            // --- Overlap check for power ---
+            // --- Overlap and wire-crossing check for power ---
             code << "        _overlap_" << i << " = False\n";
+            code << "        _wire_cross_" << i << " = False\n";
             code << "        try:\n";
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(pwr_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
@@ -1528,11 +1541,16 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                        _overlap_" << i << " = True\n";
             code << "                        _obstacle_ref_" << i << " = _pb.get('ref', '?')\n";
             code << "                        break\n";
+            code << "                if not _overlap_" << i << ":\n";
+            code << "                    _wire_cross_" << i << " = _wire_crosses_bbox(_bb_" << i << ", " << posX << ", " << posY << ")\n";
             code << "        except:\n";
             code << "            pass\n";
             code << "        if _overlap_" << i << ":\n";
             code << "            sch.crud.remove_items([pwr_" << i << "])\n";
             code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: overlaps {_obstacle_ref_" << i << "}'})\n";
+            code << "        elif _wire_cross_" << i << ":\n";
+            code << "            sch.crud.remove_items([pwr_" << i << "])\n";
+            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: power symbol body crosses existing wire(s). Rotate to match the target pin direction or increase spacing.'})\n";
             code << "        else:\n";
             code << "            _pwr_ref_" << i << " = next_ref('#PWR')\n";
             code << "            for _f in pwr_" << i << "._proto.fields:\n";

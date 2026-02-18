@@ -488,41 +488,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schDelete );
 
-    // sch_connect_to_power - Connect a pin to power in one call
-    LLM_TOOL schConnectToPower;
-    schConnectToPower.name = "sch_connect_to_power";
-    schConnectToPower.description =
-        "Connect a symbol pin to a power rail (GND, VCC, +3V3, etc.) in a single call. "
-        "Places the power symbol and optionally draws a wire. "
-        "This is a convenience tool that replaces 3 separate calls (place power, get pin position, draw wire). "
-        "REQUIRES: Schematic editor must be open with a document loaded.";
-    schConnectToPower.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "ref", {
-                { "type", "string" },
-                { "description", "Reference designator of the symbol to connect (e.g., 'U1', 'R3')" }
-            }},
-            { "pin", {
-                { "type", "string" },
-                { "description", "Pin name or number to connect (e.g., 'VCC', 'GND', '1', '14')" }
-            }},
-            { "power", {
-                { "type", "string" },
-                { "description", "Power symbol name: 'GND', 'VCC', '+3V3', '+5V', '+3.3V', 'VBUS', 'VBAT', etc." }
-            }},
-            { "offset", {
-                { "type", "array" },
-                { "items", { { "type", "number" } } },
-                { "description", "Offset from pin position for power symbol as [dx, dy] in mm. "
-                                "Default [0, 0] places power symbol directly at pin (no wire needed). "
-                                "Use [0, 5] to place GND 5mm below pin with connecting wire." }
-            }}
-        }},
-        { "required", json::array( { "ref", "pin", "power" } ) }
-    };
-    tools.push_back( schConnectToPower );
-
     // sch_label_pins - Batch label pins on a symbol
     LLM_TOOL schLabelPins;
     schLabelPins.name = "sch_label_pins";

@@ -14,7 +14,6 @@ bool SCH_CRUD_HANDLER::CanHandle( const std::string& aToolName ) const
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
            aToolName == "sch_switch_sheet" ||
-           aToolName == "sch_connect_to_power" ||
            aToolName == "sch_add_sheet";
 }
 
@@ -92,13 +91,6 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
         }
         return prefix + "elements";
     }
-    else if( aToolName == "sch_connect_to_power" )
-    {
-        std::string ref = aInput.value( "ref", "" );
-        std::string pin = aInput.value( "pin", "" );
-        std::string power = aInput.value( "power", "" );
-        return "Connecting " + ref + ":" + pin + " to " + power;
-    }
     else if( aToolName == "sch_add_sheet" )
     {
         std::string name = aInput.value( "sheet_name", "sheet" );
@@ -121,7 +113,6 @@ bool SCH_CRUD_HANDLER::RequiresIPC( const std::string& aToolName ) const
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
            aToolName == "sch_switch_sheet" ||
-           aToolName == "sch_connect_to_power" ||
            aToolName == "sch_add_sheet";
 }
 
@@ -139,8 +130,6 @@ std::string SCH_CRUD_HANDLER::GetIPCCommand( const std::string& aToolName,
         code = GenerateBatchDeleteCode( aInput );  // Now uses targets array
     else if( aToolName == "sch_switch_sheet" )
         code = GenerateSwitchSheetCode( aInput );
-    else if( aToolName == "sch_connect_to_power" )
-        code = GenerateConnectToPowerCode( aInput );
     else if( aToolName == "sch_add_sheet" )
         code = GenerateAddSheetCode( aInput );
 
@@ -1271,140 +1260,6 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "except Exception as e:\n";
     code << "    import traceback\n";
     code << "    result = {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}\n";
-    code << "\n";
-    code << "print(json.dumps(result, indent=2))\n";
-
-    return code.str();
-}
-
-
-std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& aInput ) const
-{
-    std::ostringstream code;
-
-    std::string ref = aInput.value( "ref", "" );
-    std::string pin = aInput.value( "pin", "" );
-    std::string power = aInput.value( "power", "" );
-
-    // Get offset - default [0, 0] means place directly at pin (no wire)
-    double offsetX = 0, offsetY = 0;
-    if( aInput.contains( "offset" ) && aInput["offset"].is_array() && aInput["offset"].size() >= 2 )
-    {
-        offsetX = aInput["offset"][0].get<double>();
-        offsetY = aInput["offset"][1].get<double>();
-    }
-
-    code << "import json, sys, re\n";
-    code << "from kipy.geometry import Vector2\n";
-    code << "\n";
-    code << GenerateRefreshPreamble();
-    code << "\n";
-    code << "# Build map of used references for auto-numbering power symbols\n";
-    code << "used_refs = {}\n";
-    code << "for _s in sch.symbols.get_all():\n";
-    code << "    _r = getattr(_s, 'reference', '')\n";
-    code << "    _m = re.match(r'^([A-Za-z#]+)(\\d+)$', _r)\n";
-    code << "    if _m:\n";
-    code << "        used_refs.setdefault(_m.group(1), set()).add(int(_m.group(2)))\n";
-    code << "\n";
-    code << "def next_ref(prefix):\n";
-    code << "    nums = used_refs.get(prefix, set())\n";
-    code << "    n = 1\n";
-    code << "    while n in nums:\n";
-    code << "        n += 1\n";
-    code << "    used_refs.setdefault(prefix, set()).add(n)\n";
-    code << "    return f'{prefix}{n}'\n";
-    code << "\n";
-    code << "ref = '" << EscapePythonString( ref ) << "'\n";
-    code << "pin_id = '" << EscapePythonString( pin ) << "'\n";
-    code << "power_name = '" << EscapePythonString( power ) << "'\n";
-    code << "offset_x = " << offsetX << "\n";
-    code << "offset_y = " << offsetY << "\n";
-    code << "\n";
-    code << "try:\n";
-    code << "    # Get the symbol and pin position\n";
-    code << "    sym = sch.symbols.get_by_ref(ref)\n";
-    code << "    if not sym:\n";
-    code << "        raise ValueError(f'Symbol not found: {ref}')\n";
-    code << "\n";
-    code << "    # Get exact pin position via IPC\n";
-    code << "    pin_result = sch.symbols.get_transformed_pin_position(sym, pin_id)\n";
-    code << "    if not pin_result:\n";
-    code << "        # Fallback to cached position\n";
-    code << "        pin_pos = sch.symbols.get_pin_position(sym, pin_id)\n";
-    code << "        if not pin_pos:\n";
-    code << "            raise ValueError(f'Pin not found: {pin_id} on {ref}')\n";
-    code << "        pin_x = pin_pos.x / 1_000_000\n";
-    code << "        pin_y = pin_pos.y / 1_000_000\n";
-    code << "    else:\n";
-    code << "        pin_x = pin_result['position'].x / 1_000_000\n";
-    code << "        pin_y = pin_result['position'].y / 1_000_000\n";
-    code << "\n";
-    code << "    # Snap to 1.27mm grid\n";
-    code << "    def snap_to_grid(val, grid=1.27):\n";
-    code << "        return round(val / grid) * grid\n";
-    code << "    # Calculate power symbol position (snapped to grid)\n";
-    code << "    power_x = snap_to_grid(pin_x + offset_x)\n";
-    code << "    power_y = snap_to_grid(pin_y + offset_y)\n";
-    code << "\n";
-    code << "    # Auto-rotate power symbol so stem faces the incoming wire.\n";
-    code << "    # GND at 0°: stem UP.  VCC at 0°: stem DOWN.\n";
-    code << "    # For L-shaped wires, orient based on the final (vertical) segment.\n";
-    code << "    is_gnd = 'gnd' in power_name.lower() or 'vss' in power_name.lower()\n";
-    code << "    if abs(offset_x) < 0.01 and abs(offset_y) < 0.01:\n";
-    code << "        power_angle = 0  # No wire, use default orientation\n";
-    code << "    elif abs(offset_y) > 0.01:\n";
-    code << "        # Vertical or L-shaped: stem faces vertical direction of pin\n";
-    code << "        if is_gnd:\n";
-    code << "            power_angle = 0 if offset_y > 0 else 180\n";
-    code << "        else:\n";
-    code << "            power_angle = 180 if offset_y > 0 else 0\n";
-    code << "    else:\n";
-    code << "        # Horizontal only: stem faces horizontal direction of pin\n";
-    code << "        if is_gnd:\n";
-    code << "            power_angle = 90 if offset_x > 0 else 270\n";
-    code << "        else:\n";
-    code << "            power_angle = 270 if offset_x > 0 else 90\n";
-    code << "\n";
-    code << "    # Place the power symbol\n";
-    code << "    power_pos = Vector2.from_xy_mm(power_x, power_y)\n";
-    code << "    power_sym = sch.labels.add_power(power_name, power_pos, angle=power_angle)\n";
-    code << "    _pwr_ref = next_ref('#PWR')\n";
-    code << "    for _f in power_sym._proto.fields:\n";
-    code << "        if _f.name == 'Reference':\n";
-    code << "            _f.text = _pwr_ref\n";
-    code << "            break\n";
-    code << "    sch.crud.update_items(power_sym)\n";
-    code << "\n";
-    code << "    wire_count = 0\n";
-    code << "    # If there's an offset, draw a wire from pin to power symbol\n";
-    code << "    if abs(offset_x) > 0.01 or abs(offset_y) > 0.01:\n";
-    code << "        pin_vec = Vector2.from_xy_mm(pin_x, pin_y)\n";
-    code << "        # For L-shaped routes when both offsets are non-zero\n";
-    code << "        if abs(offset_x) > 0.01 and abs(offset_y) > 0.01:\n";
-    code << "            # Create corner point - horizontal first\n";
-    code << "            corner = Vector2.from_xy_mm(power_x, pin_y)\n";
-    code << "            sch.wiring.add_wire(pin_vec, corner)\n";
-    code << "            sch.wiring.add_wire(corner, power_pos)\n";
-    code << "            wire_count = 2\n";
-    code << "        else:\n";
-    code << "            # Direct wire\n";
-    code << "            sch.wiring.add_wire(pin_vec, power_pos)\n";
-    code << "            wire_count = 1\n";
-    code << "\n";
-    code << "    result = {\n";
-    code << "        'status': 'success',\n";
-    code << "        'source': 'ipc',\n";
-    code << "        'ref': ref,\n";
-    code << "        'pin': pin_id,\n";
-    code << "        'power': power_name,\n";
-    code << "        'power_position': [power_x, power_y],\n";
-    code << "        'pin_position': [pin_x, pin_y],\n";
-    code << "        'wire_count': wire_count\n";
-    code << "    }\n";
-    code << "\n";
-    code << "except Exception as e:\n";
-    code << "    result = {'status': 'error', 'message': str(e)}\n";
     code << "\n";
     code << "print(json.dumps(result, indent=2))\n";
 

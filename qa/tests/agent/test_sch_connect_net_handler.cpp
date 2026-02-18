@@ -41,7 +41,6 @@ BOOST_AUTO_TEST_CASE( CanHandleRejectsOtherTools )
 {
     SCH_CONNECT_NET_HANDLER handler;
     BOOST_CHECK( !handler.CanHandle( "sch_add" ) );
-    BOOST_CHECK( !handler.CanHandle( "sch_connect_to_power" ) );
     BOOST_CHECK( !handler.CanHandle( "other_tool" ) );
 }
 

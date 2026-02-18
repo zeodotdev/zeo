@@ -1400,6 +1400,23 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "    return a['min_x'] < b['max_x'] and a['max_x'] > b['min_x'] and a['min_y'] < b['max_y'] and a['max_y'] > b['min_y']\n";
     code << "\n";
 
+    // --- Sheet bounds check ---
+    code << "# Get sheet dimensions for bounds checking\n";
+    code << "_sheet_w, _sheet_h = 297.0, 210.0\n";
+    code << "try:\n";
+    code << "    _page = sch.page.get_settings()\n";
+    code << "    _sheet_w = _page.width_mm\n";
+    code << "    _sheet_h = _page.height_mm\n";
+    code << "except:\n";
+    code << "    pass\n";
+    code << "\n";
+    code << "class _OOB(Exception): pass\n";
+    code << "def _check_bounds(x, y, idx):\n";
+    code << "    if not (0 <= x <= _sheet_w and 0 <= y <= _sheet_h):\n";
+    code << "        results.append({'index': idx, 'error': f'Position ({x}, {y}) is outside sheet ({_sheet_w}x{_sheet_h}mm)'})\n";
+    code << "        raise _OOB()\n";
+    code << "\n";
+
     code << "try:\n";
 
     // Process each element in the batch
@@ -1427,6 +1444,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             bool mirrorY = ( mirror == "y" );
             int unit = elem.value( "unit", 1 );
 
+            code << "        _check_bounds(" << posX << ", " << posY << ", " << i << ")\n";
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        sym_" << i << " = sch.symbols.add(\n";
             code << "            lib_id='" << EscapePythonString( libId ) << "',\n";
@@ -1494,6 +1512,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             }
             double angle = elem.value( "angle", 0.0 );
 
+            code << "        _check_bounds(" << posX << ", " << posY << ", " << i << ")\n";
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        pwr_" << i << " = sch.labels.add_power('" << EscapePythonString( powerName ) << "', pos_" << i << ", angle=" << angle << ")\n";
 
@@ -1538,6 +1557,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 posY = SnapToGrid( elem["position"][1].get<double>() );
             }
 
+            code << "        _check_bounds(" << posX << ", " << posY << ", " << i << ")\n";
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
 
             if( labelType == "global" )
@@ -1590,6 +1610,10 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 }
                 code << "        ]\n";
 
+                // Bounds check all wire points
+                code << "        for _wp in _wpts_" << i << ":\n";
+                code << "            _check_bounds(_wp[0], _wp[1], " << i << ")\n";
+
                 // Check each wire segment against component bounding boxes
                 code << "        _wire_blocked_" << i << " = False\n";
                 code << "        _wire_obstacle_" << i << " = '?'\n";
@@ -1628,6 +1652,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 posY = SnapToGrid( elem["position"][1].get<double>() );
             }
 
+            code << "        _check_bounds(" << posX << ", " << posY << ", " << i << ")\n";
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        nc_" << i << " = sch.wiring.add_no_connect(pos_" << i << ")\n";
             code << "        results.append({'index': " << i << ", 'element_type': 'no_connect'})\n";
@@ -1644,6 +1669,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
             std::string direction = elem.value( "direction", "right_down" );
 
+            code << "        _check_bounds(" << posX << ", " << posY << ", " << i << ")\n";
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        be_" << i << " = sch.buses.add_bus_entry(pos_" << i << ", direction='" << EscapePythonString( direction ) << "')\n";
             code << "        results.append({'index': " << i << ", 'element_type': 'bus_entry'})\n";
@@ -1653,6 +1679,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "        results.append({'index': " << i << ", 'error': 'Unknown element_type: " << EscapePythonString( elementType ) << "'})\n";
         }
 
+        code << "    except _OOB:\n";
+        code << "        pass\n";
         code << "    except Exception as e_" << i << ":\n";
         code << "        results.append({'index': " << i << ", 'error': str(e_" << i << ")})\n";
         code << "\n";

@@ -993,8 +993,9 @@ void CHAT_CONTROLLER::ExecuteNextTool()
         return;
     }
 
-    wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - executing tool: %s (id=%s)",
-               tool->tool_name.c_str(), tool->tool_use_id.c_str() );
+    wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - executing tool: %s (id=%s) input=%s",
+               tool->tool_name.c_str(), tool->tool_use_id.c_str(),
+               tool->tool_input.dump().c_str() );
 
     // Mark as executing
     tool->is_executing = true;

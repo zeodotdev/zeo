@@ -205,6 +205,45 @@ try:
     except:
         pass
 
+    # Build directional wire obstacle sets.
+    # Horizontal wires block horizontal movement; vertical wires block vertical movement.
+    # This prevents collinear overlap which triggers MergeOverlap (false connections).
+    # Perpendicular crossings are safe and remain unblocked.
+    h_wire_cells = set()
+    v_wire_cells = set()
+    try:
+        _grid = 1.27
+        for w in sch.wiring.get_wires():
+            wx0 = w.start.x / 1_000_000
+            wy0 = w.start.y / 1_000_000
+            wx1 = w.end.x / 1_000_000
+            wy1 = w.end.y / 1_000_000
+            gwx0, gwy0 = round(wx0 / _grid), round(wy0 / _grid)
+            gwx1, gwy1 = round(wx1 / _grid), round(wy1 / _grid)
+            if gwy0 == gwy1 and gwx0 != gwx1:
+                for gx in range(min(gwx0, gwx1), max(gwx0, gwx1) + 1):
+                    h_wire_cells.add((gx, gwy0))
+            elif gwx0 == gwx1 and gwy0 != gwy1:
+                for gy in range(min(gwy0, gwy1), max(gwy0, gwy1) + 1):
+                    v_wire_cells.add((gwx0, gy))
+    except Exception:
+        pass
+    print(f'[route] Wire obstacles: {len(h_wire_cells)} horizontal cells, {len(v_wire_cells)} vertical cells', file=sys.stderr)
+
+    def _add_waypoints_to_wire_sets(waypoints, grid=1.27):
+        """Register a just-placed path in the directional wire cell sets."""
+        for i in range(len(waypoints) - 1):
+            ax, ay = waypoints[i]
+            bx, by = waypoints[i + 1]
+            gx0, gy0 = round(ax / grid), round(ay / grid)
+            gx1, gy1 = round(bx / grid), round(by / grid)
+            if gy0 == gy1 and gx0 != gx1:
+                for gx in range(min(gx0, gx1), max(gx0, gx1) + 1):
+                    h_wire_cells.add((gx, gy0))
+            elif gx0 == gx1 and gy0 != gy1:
+                for gy in range(min(gy0, gy1), max(gy0, gy1) + 1):
+                    v_wire_cells.add((gx0, gy))
+
     def _cell_blocked(cx, cy, grid=1.27):
         """Check if a grid cell center is inside any obstacle."""
         half = grid / 2 - 0.01
@@ -282,6 +321,11 @@ try:
                 if (nx, ny) != goal and (nx, ny) != (gx0, gy0):
                     if _cell_blocked(nx * grid, ny * grid, grid):
                         continue
+                    # Block parallel movement along existing wires (prevents MergeOverlap)
+                    if dy == 0 and (nx, ny) in h_wire_cells:
+                        continue
+                    if dx == 0 and (nx, ny) in v_wire_cells:
+                        continue
                 move_cost = 1
                 if prev_d >= 0 and di != prev_d:
                     move_cost += bend_cost
@@ -296,10 +340,11 @@ try:
         return [(x0, y0), (x0, y1), (x1, y1)]
 
     def _path_hits_obstacle(waypoints, grid=1.27):
-        """Check if any intermediate cell on the path is inside an obstacle.
+        """Check if any intermediate cell on the path is inside an obstacle
+        or would overlap an existing wire in the same direction.
         Excludes the first and last cells (pin endpoints sit inside their own
         component's bounding box, matching A*'s start/goal exclusion).
-        Returns (hit, obs_desc) — hit is True if the path overlaps a component."""
+        Returns (hit, obs_desc) — hit is True if the path overlaps a component or wire."""
         # Pin endpoint cells to exclude
         ep_start = (round(waypoints[0][0] / grid), round(waypoints[0][1] / grid))
         ep_end = (round(waypoints[-1][0] / grid), round(waypoints[-1][1] / grid))
@@ -315,6 +360,8 @@ try:
                     cx, cy = gx0 * grid, gy * grid
                     if _cell_blocked(cx, cy, grid):
                         return True, f'({cx:.2f}, {cy:.2f})'
+                    if (gx0, gy) in v_wire_cells:
+                        return True, f'wire overlap at ({cx:.2f}, {cy:.2f})'
             else:  # horizontal segment
                 for gx in range(min(gx0, gx1), max(gx0, gx1) + 1):
                     if (gx, gy0) == ep_start or (gx, gy0) == ep_end:
@@ -322,6 +369,8 @@ try:
                     cx, cy = gx * grid, gy0 * grid
                     if _cell_blocked(cx, cy, grid):
                         return True, f'({cx:.2f}, {cy:.2f})'
+                    if (gx, gy0) in h_wire_cells:
+                        return True, f'wire overlap at ({cx:.2f}, {cy:.2f})'
         return False, None
 
     def _place_path(waypoints):
@@ -391,6 +440,7 @@ try:
             _n, _ws = _place_path(waypoints)
             wire_count += _n
             _all_wires.extend(_ws)
+            _add_waypoints_to_wire_sets(waypoints)
 
         junction_count = _place_needed_junctions(_all_wires)
 
@@ -423,6 +473,19 @@ try:
                     if obs['min_x'] <= trunk_val <= obs['max_x']:
                         if obs['max_y'] > t_min and obs['min_y'] < t_max:
                             return True
+            # Check wire overlap along the trunk line
+            _tg = 1.27
+            g_trunk = round(trunk_val / _tg)
+            g_min = round(t_min / _tg)
+            g_max = round(t_max / _tg)
+            if is_horizontal:
+                for gx in range(g_min, g_max + 1):
+                    if (gx, g_trunk) in h_wire_cells:
+                        return True
+            else:
+                for gy in range(g_min, g_max + 1):
+                    if (g_trunk, gy) in v_wire_cells:
+                        return True
             return False
 
         # Choose trunk position (median of perpendicular escaped coords)
@@ -592,6 +655,7 @@ try:
                 _tw = sch.wiring.add_wire(Vector2.from_xy_mm(*_ts), Vector2.from_xy_mm(*_te))
                 _all_wires.append(_tw)
                 wire_count += 1
+                _add_waypoints_to_wire_sets([_ts, _te])
 
         # Place branches from escaped position to trunk target (no forced escape)
         for p in pin_positions:
@@ -610,6 +674,7 @@ try:
                 _n, _ws = _place_path(waypoints)
                 wire_count += _n
                 _all_wires.extend(_ws)
+                _add_waypoints_to_wire_sets(waypoints)
 
         # Place pin-to-escape wires for all pins
         for p in pin_positions:
@@ -619,6 +684,7 @@ try:
                 _tw = sch.wiring.add_wire(Vector2.from_xy_mm(px, py), Vector2.from_xy_mm(ex, ey))
                 _all_wires.append(_tw)
                 wire_count += 1
+                _add_waypoints_to_wire_sets([(px, py), (ex, ey)])
 
         junction_count = _place_needed_junctions(_all_wires)
 

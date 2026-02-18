@@ -459,6 +459,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "  {type: 'bus_entry', position: [x,y]} - match bus entry at position\n"
         "Query: type is required. text/position/start/end are optional filters. All specified must match. Position tolerance: 0.01mm. "
         "By default, recursively removes orphaned wires and junctions connected to deleted symbol pins. "
+        "Set chain_delete: true to expand wire/junction/label targets to delete the ENTIRE connected net "
+        "(all wires, junctions, labels on the same net). Does not delete symbols. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schDelete.input_schema = {
         { "type", "object" },
@@ -472,6 +474,11 @@ std::vector<LLM_TOOL> GetToolDefinitions()
             { "cleanup_wires", {
                 { "type", "boolean" },
                 { "description", "Recursively remove orphaned wires and junctions connected to deleted symbol pins. Default: true." }
+            }},
+            { "chain_delete", {
+                { "type", "boolean" },
+                { "description", "When true, expand each wire/junction/label target to delete ALL wires, junctions, and labels on the same net. "
+                  "Does not delete symbols or pins. Default: false." }
             }}
         }},
         { "required", json::array( { "targets" } ) }

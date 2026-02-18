@@ -68,6 +68,9 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
     }
     else if( aToolName == "sch_delete" )
     {
+        bool chainDelete = aInput.value( "chain_delete", false );
+        std::string prefix = chainDelete ? "Chain-deleting net for " : "Deleting ";
+
         if( aInput.contains( "targets" ) && aInput["targets"].is_array() )
         {
             size_t count = aInput["targets"].size();
@@ -76,16 +79,16 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
                 const auto& t = aInput["targets"][0];
 
                 if( t.is_string() )
-                    return "Deleting " + t.get<std::string>();
+                    return prefix + t.get<std::string>();
                 else if( t.is_object() )
-                    return "Deleting " + t.value( "type", std::string( "element" ) )
+                    return prefix + t.value( "type", std::string( "element" ) )
                            + ( t.contains( "text" )
                                    ? " '" + t["text"].get<std::string>() + "'"
                                    : "" );
             }
-            return "Deleting " + std::to_string( count ) + " elements";
+            return prefix + std::to_string( count ) + " elements";
         }
-        return "Deleting elements";
+        return prefix + "elements";
     }
     else if( aToolName == "sch_connect_to_power" )
     {
@@ -672,6 +675,7 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     auto targets = aInput["targets"];
     std::string filePath = aInput.value( "file_path", "" );
     bool cleanupWires = aInput.value( "cleanup_wires", true );
+    bool chainDelete = aInput.value( "chain_delete", false );
 
     code << "import json, re, sys\n";
     code << "\n";
@@ -709,6 +713,7 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
 
     code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
     code << "cleanup_wires = " << ( cleanupWires ? "True" : "False" ) << "\n";
+    code << "chain_delete = " << ( chainDelete ? "True" : "False" ) << "\n";
     code << "use_ipc = True\n";
     code << "result = None\n";
     code << "target_uuids = []\n";
@@ -822,6 +827,56 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "        else:\n";
     code << "            query_not_found.append(q)\n";
     code << "\n";
+    // Chain delete: expand wire/junction/label targets to full net
+    code << "    # Chain delete: expand wire/junction/label targets to full net\n";
+    code << "    chain_deleted_nets = []\n";
+    code << "    if chain_delete:\n";
+    code << "        nets_to_delete = set()\n";
+    code << "        for item in items_to_delete[:]:\n";
+    code << "            item_type = type(item).__name__\n";
+    code << "            if item_type in ('Wire', 'Junction', 'NetLabel', 'GlobalLabel', 'HierLabel'):\n";
+    code << "                try:\n";
+    code << "                    item_id = item.id.value if hasattr(item, 'id') and hasattr(item.id, 'value') else str(getattr(item, 'id', ''))\n";
+    code << "                    net_resp = sch.connectivity.get_net_for_item(item_id)\n";
+    code << "                    if net_resp.is_connected and net_resp.connection.name:\n";
+    code << "                        net_name = net_resp.connection.name\n";
+    code << "                        if 'unconnected' not in net_name.lower():\n";
+    code << "                            nets_to_delete.add(net_name)\n";
+    code << "                except:\n";
+    code << "                    pass\n";
+    code << "\n";
+    code << "        existing_ids = set()\n";
+    code << "        for item in items_to_delete:\n";
+    code << "            uid = str(item.id.value) if hasattr(item, 'id') and hasattr(item.id, 'value') else str(getattr(item, 'id', ''))\n";
+    code << "            existing_ids.add(uid)\n";
+    code << "\n";
+    code << "        for net_name in nets_to_delete:\n";
+    code << "            try:\n";
+    code << "                net_items_resp = sch.connectivity.get_net_items(net_name)\n";
+    code << "                net_item_ids = [item_id.value for item_id in net_items_resp.item_ids]\n";
+    code << "                new_ids = [nid for nid in net_item_ids if nid not in existing_ids]\n";
+    code << "                if new_ids:\n";
+    code << "                    net_items = sch.crud.get_by_id(new_ids)\n";
+    code << "                    deletable_types = ('Wire', 'Junction', 'NetLabel', 'GlobalLabel', 'HierLabel', 'NoConnect')\n";
+    code << "                    for ni in net_items:\n";
+    code << "                        if type(ni).__name__ in deletable_types:\n";
+    code << "                            items_to_delete.append(ni)\n";
+    code << "                            uid = str(ni.id.value) if hasattr(ni, 'id') and hasattr(ni.id, 'value') else str(getattr(ni, 'id', ''))\n";
+    code << "                            target_uuids.append(uid)\n";
+    code << "                            existing_ids.add(uid)\n";
+    code << "                # Also get labels with matching text\n";
+    code << "                for lbl in sch.labels.get_all():\n";
+    code << "                    if hasattr(lbl, 'text') and lbl.text == net_name:\n";
+    code << "                        uid = str(lbl.id.value) if hasattr(lbl, 'id') and hasattr(lbl.id, 'value') else ''\n";
+    code << "                        if uid and uid not in existing_ids:\n";
+    code << "                            items_to_delete.append(lbl)\n";
+    code << "                            target_uuids.append(uid)\n";
+    code << "                            existing_ids.add(uid)\n";
+    code << "                chain_deleted_nets.append(net_name)\n";
+    code << "            except Exception as chain_err:\n";
+    code << "                print(f'Chain delete warning for net {net_name}: {chain_err}', file=sys.stderr)\n";
+    code << "\n";
+
     code << "    # Record pin positions before deletion (for optional orphan cleanup)\n";
     code << "    deleted_pin_positions = []\n";
     code << "    if cleanup_wires:\n";
@@ -938,6 +993,8 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "        result['not_found'] = not_found\n";
     code << "    if query_not_found:\n";
     code << "        result['queries_not_matched'] = query_not_found\n";
+    code << "    if chain_deleted_nets:\n";
+    code << "        result['chain_deleted_nets'] = chain_deleted_nets\n";
     code << "\n";
     code << "except Exception as ipc_error:\n";
     code << "    use_ipc = False\n";

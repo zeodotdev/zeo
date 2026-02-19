@@ -3,7 +3,7 @@
 #include <iomanip>
 
 // Overlap detection padding per side (mm). Total clearance = 2x this value.
-static constexpr double BBOX_MARGIN_MM = 0.5;
+static constexpr double BBOX_MARGIN_MM = 1.0;
 
 
 bool SCH_CRUD_HANDLER::CanHandle( const std::string& aToolName ) const

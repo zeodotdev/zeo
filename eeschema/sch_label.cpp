@@ -1589,14 +1589,37 @@ SCH_LABEL::SCH_LABEL( const VECTOR2I& pos, const wxString& text ) :
 
 void SCH_LABEL::Serialize( google::protobuf::Any& aContainer ) const
 {
+    using namespace kiapi::common;
     kiapi::schematic::types::LocalLabel label;
 
     label.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2Sch( *label.mutable_position(), GetPosition() );
+    PackVector2Sch( *label.mutable_position(), GetPosition() );
 
-    // Serialize text content and attributes
+    // Serialize text content
     label.mutable_text()->set_text( GetText().ToStdString() );
-    kiapi::common::PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
+    label.mutable_text()->set_hyperlink( GetHyperlink().ToStdString() );
+    PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
+
+    // Serialize text attributes (must match what Deserialize reads for round-trip fidelity)
+    auto* attrs = label.mutable_text()->mutable_attributes();
+    attrs->set_bold( IsBold() );
+    attrs->set_italic( IsItalic() );
+    attrs->set_underlined( GetAttributes().m_Underlined );
+    attrs->set_mirrored( IsMirrored() );
+    attrs->set_multiline( IsMultilineAllowed() );
+    attrs->set_keep_upright( GetAttributes().m_KeepUpright );
+    PackVector2Sch( *attrs->mutable_size(), GetTextSize() );
+
+    if( GetFont() )
+        attrs->set_font_name( GetFont()->GetName().ToStdString() );
+
+    attrs->mutable_angle()->set_value_degrees( GetTextAngleDegrees() );
+    attrs->set_line_spacing( GetLineSpacing() );
+    attrs->mutable_stroke_width()->set_value_nm( GetTextThickness() * 100 );
+    attrs->set_horizontal_alignment(
+            ToProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>( GetHorizJustify() ) );
+    attrs->set_vertical_alignment(
+            ToProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>( GetVertJustify() ) );
 
     aContainer.PackFrom( label );
 }
@@ -2110,14 +2133,37 @@ SCH_GLOBALLABEL::SCH_GLOBALLABEL( const SCH_GLOBALLABEL& aGlobalLabel ) :
 
 void SCH_GLOBALLABEL::Serialize( google::protobuf::Any& aContainer ) const
 {
+    using namespace kiapi::common;
     kiapi::schematic::types::GlobalLabel label;
 
     label.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2Sch( *label.mutable_position(), GetPosition() );
+    PackVector2Sch( *label.mutable_position(), GetPosition() );
 
-    // Serialize text content and attributes
+    // Serialize text content
     label.mutable_text()->set_text( GetText().ToStdString() );
-    kiapi::common::PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
+    label.mutable_text()->set_hyperlink( GetHyperlink().ToStdString() );
+    PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
+
+    // Serialize text attributes (must match what Deserialize reads for round-trip fidelity)
+    auto* attrs = label.mutable_text()->mutable_attributes();
+    attrs->set_bold( IsBold() );
+    attrs->set_italic( IsItalic() );
+    attrs->set_underlined( GetAttributes().m_Underlined );
+    attrs->set_mirrored( IsMirrored() );
+    attrs->set_multiline( IsMultilineAllowed() );
+    attrs->set_keep_upright( GetAttributes().m_KeepUpright );
+    PackVector2Sch( *attrs->mutable_size(), GetTextSize() );
+
+    if( GetFont() )
+        attrs->set_font_name( GetFont()->GetName().ToStdString() );
+
+    attrs->mutable_angle()->set_value_degrees( GetTextAngleDegrees() );
+    attrs->set_line_spacing( GetLineSpacing() );
+    attrs->mutable_stroke_width()->set_value_nm( GetTextThickness() * 100 );
+    attrs->set_horizontal_alignment(
+            ToProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>( GetHorizJustify() ) );
+    attrs->set_vertical_alignment(
+            ToProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>( GetVertJustify() ) );
 
     aContainer.PackFrom( label );
 }
@@ -2391,14 +2437,37 @@ SCH_HIERLABEL::SCH_HIERLABEL( const VECTOR2I& pos, const wxString& text, KICAD_T
 
 void SCH_HIERLABEL::Serialize( google::protobuf::Any& aContainer ) const
 {
+    using namespace kiapi::common;
     kiapi::schematic::types::HierarchicalLabel label;
 
     label.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2Sch( *label.mutable_position(), GetPosition() );
+    PackVector2Sch( *label.mutable_position(), GetPosition() );
 
-    // Serialize text content and attributes
+    // Serialize text content
     label.mutable_text()->set_text( GetText().ToStdString() );
-    kiapi::common::PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
+    label.mutable_text()->set_hyperlink( GetHyperlink().ToStdString() );
+    PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
+
+    // Serialize text attributes (must match what Deserialize reads for round-trip fidelity)
+    auto* attrs = label.mutable_text()->mutable_attributes();
+    attrs->set_bold( IsBold() );
+    attrs->set_italic( IsItalic() );
+    attrs->set_underlined( GetAttributes().m_Underlined );
+    attrs->set_mirrored( IsMirrored() );
+    attrs->set_multiline( IsMultilineAllowed() );
+    attrs->set_keep_upright( GetAttributes().m_KeepUpright );
+    PackVector2Sch( *attrs->mutable_size(), GetTextSize() );
+
+    if( GetFont() )
+        attrs->set_font_name( GetFont()->GetName().ToStdString() );
+
+    attrs->mutable_angle()->set_value_degrees( GetTextAngleDegrees() );
+    attrs->set_line_spacing( GetLineSpacing() );
+    attrs->mutable_stroke_width()->set_value_nm( GetTextThickness() * 100 );
+    attrs->set_horizontal_alignment(
+            ToProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>( GetHorizJustify() ) );
+    attrs->set_vertical_alignment(
+            ToProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>( GetVertJustify() ) );
 
     aContainer.PackFrom( label );
 }

@@ -517,6 +517,20 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                 { "description", "Label type. 'local' for intra-sheet (default). "
                                  "'hierarchical' for inter-sheet signals. "
                                  "'global' only when genuinely needed everywhere." }
+            }},
+            { "h_align", {
+                { "type", "string" },
+                { "enum", json::array( { "left", "right" } ) },
+                { "description", "Horizontal alignment of the label connection point. "
+                                 "'left' places the pin on the left side, 'right' on the right. "
+                                 "Overrides auto-justification when set." }
+            }},
+            { "v_align", {
+                { "type", "string" },
+                { "enum", json::array( { "top", "bottom" } ) },
+                { "description", "Vertical alignment of the label connection point. "
+                                 "'top' places the pin on the top, 'bottom' on the bottom. "
+                                 "Overrides auto-justification when set." }
             }}
         }},
         { "required", json::array( { "ref", "labels" } ) }

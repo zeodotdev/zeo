@@ -991,6 +991,21 @@ message GetTransformedPinPositionResponse
 }
 
 
+/// Returns positions where explicit junction dots are needed for the given items.
+/// Items must already be placed on the schematic.  Analyzes each item's connection
+/// points (and interior crossings for wires) using KiCad's AnalyzePoint.
+message GetNeededJunctions
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated kiapi.common.types.KIID item_ids = 2;
+}
+
+message GetNeededJunctionsResponse
+{
+  repeated kiapi.common.types.Vector2 positions = 1;
+}
+
+
 //
 // Simulation Commands
 //

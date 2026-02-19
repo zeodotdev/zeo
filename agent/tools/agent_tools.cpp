@@ -98,6 +98,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schGetSummary.name = "sch_get_summary";
     schGetSummary.description = "Get a high-level overview of the schematic from the live editor. "
                                 "Returns JSON with symbols, wires, junctions, labels, and counts. "
+                                "Includes an audit section that flags orphaned items (power symbols with no wire "
+                                "connections, labels not touching any wire or pin, junctions with fewer than 2 wires). "
                                 "REQUIRES: Schematic editor must be open with a document loaded.";
     schGetSummary.input_schema = {
         { "type", "object" },
@@ -298,7 +300,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schAdd.description =
         "Add elements to the schematic. Accepts an array of elements. "
         "Returns pin positions for all placed symbols. "
-        "Rejects placements that overlap existing components (1.0mm clearance). "
+        "Rejects placements that overlap existing components. "
         "Use sch_connect_net for auto-routed wiring. Use wire element type for manual wires "
         "(rejected if any segment crosses a component bounding box).\n\n"
         "Element types: symbol, power, wire, label, no_connect, bus_entry.";
@@ -326,8 +328,9 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         }},
                         { "angle", {
                             { "type", "number" },
-                            { "description", "CCW rotation degrees. Passives: 0=vertical, 90=horizontal. "
-                                            "Power GND: 0=bars down(standard). Power VCC: 0=bar up(standard)." }
+                            { "description", "CCW rotation degrees (0, 90, 180, 270). "
+                                            "Passives: 0=vertical, 90=horizontal. "
+                                            "Power symbols: see system prompt for wire-exit direction table." }
                         }},
                         { "mirror", {
                             { "type", "string" },
@@ -352,7 +355,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         }},
                         { "label_type", {
                             { "type", "string" },
-                            { "enum", json::array( { "local", "global", "hierarchical" } ) }
+                            { "enum", json::array( { "local", "global", "hierarchical" } ) },
+                            { "description", "Label type. 'local' for intra-sheet net labels (default). 'hierarchical' for inter-sheet signals (creates sheet pins). 'global' only when a signal genuinely needs to be visible everywhere." }
                         }},
                         { "direction", {
                             { "type", "string" },
@@ -375,7 +379,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schUpdate.description =
         "Update elements in the schematic. Accepts an array of updates - use for single or batch operations. "
         "Can modify position, rotation, mirror, properties, and text field positions. Target by reference or UUID. "
-        "Moves are rejected if the new position overlaps an existing component (1.0mm clearance). "
+        "Moves are rejected if the new position overlaps an existing component. "
         "Use 'fields' to reposition Reference/Value text relative to symbol center (avoids overlap). "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schUpdate.input_schema = {
@@ -458,7 +462,9 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "  {type: 'no_connect', position: [x,y]} - match no-connect at position\n"
         "  {type: 'bus_entry', position: [x,y]} - match bus entry at position\n"
         "Query: type is required. text/position/start/end are optional filters. All specified must match. Position tolerance: 0.01mm. "
-        "By default, recursively removes orphaned wires and junctions connected to deleted symbol pins. "
+        "By default, recursively removes orphaned wires, junctions, and power symbols (#PWR) connected to deleted symbol pins. "
+        "Set chain_delete: true to expand wire/junction/label targets to delete the ENTIRE connected net "
+        "(all wires, junctions, labels on the same net). Does not delete symbols. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schDelete.input_schema = {
         { "type", "object" },
@@ -471,47 +477,51 @@ std::vector<LLM_TOOL> GetToolDefinitions()
             }},
             { "cleanup_wires", {
                 { "type", "boolean" },
-                { "description", "Recursively remove orphaned wires and junctions connected to deleted symbol pins. Default: true." }
+                { "description", "Recursively remove orphaned wires, junctions, and power symbols (#PWR) connected to deleted symbol pins. Default: true." }
+            }},
+            { "chain_delete", {
+                { "type", "boolean" },
+                { "description", "When true, expand each wire/junction/label target to delete ALL wires, junctions, and labels on the same net. "
+                  "Does not delete symbols or pins. Default: false." }
             }}
         }},
         { "required", json::array( { "targets" } ) }
     };
     tools.push_back( schDelete );
 
-    // sch_connect_to_power - Connect a pin to power in one call
-    LLM_TOOL schConnectToPower;
-    schConnectToPower.name = "sch_connect_to_power";
-    schConnectToPower.description =
-        "Connect a symbol pin to a power rail (GND, VCC, +3V3, etc.) in a single call. "
-        "Places the power symbol and optionally draws a wire. "
-        "This is a convenience tool that replaces 3 separate calls (place power, get pin position, draw wire). "
+    // sch_label_pins - Batch label pins on a symbol
+    LLM_TOOL schLabelPins;
+    schLabelPins.name = "sch_label_pins";
+    schLabelPins.description =
+        "Batch-label pins on a symbol. Places labels directly at pin tips with auto-justified "
+        "text based on pin orientation (text reads away from the symbol body). No wires are drawn — "
+        "labels at pin tips connect to the net automatically. "
+        "Use this instead of placing labels one by one with sch_add. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
-    schConnectToPower.input_schema = {
+    schLabelPins.input_schema = {
         { "type", "object" },
         { "properties", {
             { "ref", {
                 { "type", "string" },
-                { "description", "Reference designator of the symbol to connect (e.g., 'U1', 'R3')" }
+                { "description", "Reference designator of the symbol (e.g., 'U1', 'R3')" }
             }},
-            { "pin", {
+            { "labels", {
+                { "type", "object" },
+                { "description", "Map of pin number/name to label text. "
+                                 "Example: {\"2\": \"EN\", \"18\": \"SPI_CS\", \"23\": \"I2C_SDA\"}" },
+                { "additionalProperties", { { "type", "string" } } }
+            }},
+            { "label_type", {
                 { "type", "string" },
-                { "description", "Pin name or number to connect (e.g., 'VCC', 'GND', '1', '14')" }
-            }},
-            { "power", {
-                { "type", "string" },
-                { "description", "Power symbol name: 'GND', 'VCC', '+3V3', '+5V', '+3.3V', 'VBUS', 'VBAT', etc." }
-            }},
-            { "offset", {
-                { "type", "array" },
-                { "items", { { "type", "number" } } },
-                { "description", "Offset from pin position for power symbol as [dx, dy] in mm. "
-                                "Default [0, 0] places power symbol directly at pin (no wire needed). "
-                                "Use [0, 5] to place GND 5mm below pin with connecting wire." }
+                { "enum", json::array( { "local", "global", "hierarchical" } ) },
+                { "description", "Label type. 'local' for intra-sheet (default). "
+                                 "'hierarchical' for inter-sheet signals. "
+                                 "'global' only when genuinely needed everywhere." }
             }}
         }},
-        { "required", json::array( { "ref", "pin", "power" } ) }
+        { "required", json::array( { "ref", "labels" } ) }
     };
-    tools.push_back( schConnectToPower );
+    tools.push_back( schLabelPins );
 
     // sch_add_sheet - Add a hierarchical sheet
     LLM_TOOL schAddSheet;
@@ -2425,20 +2435,20 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "Export a visual screenshot (PNG render) of a schematic or PCB file. "
         "Returns the image for visual inspection. Use this to verify layout, "
         "check component placement, review wiring, or confirm design changes. "
-        "The file must be a .kicad_sch (schematic) or .kicad_pcb (PCB layout) file. "
-        "For multi-sheet schematics, pass the specific sub-sheet .kicad_sch file "
-        "to screenshot that sheet.";
+        "If file_path is omitted, screenshots the currently open sheet or PCB — "
+        "this is the preferred default. Only pass file_path when you need to "
+        "screenshot a specific sub-sheet that is NOT currently open.";
     screenshot.input_schema = {
         { "type", "object" },
         { "properties", {
             { "file_path", {
                 { "type", "string" },
-                { "description", "Absolute path to the .kicad_sch or .kicad_pcb file to screenshot. "
-                                 "For multi-sheet schematics, pass the sub-sheet .kicad_sch file "
-                                 "path to screenshot that specific sheet." }
+                { "description", "Absolute path to a .kicad_sch or .kicad_pcb file. "
+                                 "If omitted, screenshots the currently open/visible sheet or PCB. "
+                                 "Only needed to screenshot a specific sub-sheet that isn't currently visible." }
             }}
         }},
-        { "required", json::array( { "file_path" } ) }
+        { "required", json::array() }
     };
     screenshot.read_only = true;
     tools.push_back( screenshot );

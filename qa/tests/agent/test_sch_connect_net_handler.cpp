@@ -41,7 +41,6 @@ BOOST_AUTO_TEST_CASE( CanHandleRejectsOtherTools )
 {
     SCH_CONNECT_NET_HANDLER handler;
     BOOST_CHECK( !handler.CanHandle( "sch_add" ) );
-    BOOST_CHECK( !handler.CanHandle( "sch_connect_to_power" ) );
     BOOST_CHECK( !handler.CanHandle( "other_tool" ) );
 }
 
@@ -403,6 +402,111 @@ BOOST_AUTO_TEST_CASE( AllOrientationsMustNotMapToSameDirection )
     BOOST_CHECK( esc1 != esc2 );
     BOOST_CHECK( esc1 != esc3 );
     BOOST_CHECK( esc2 != esc3 );
+}
+
+
+// --- Wire overlap junction exemptions (regression: arrival wires blocked escape from shared pin) ---
+
+BOOST_AUTO_TEST_CASE( AStarSkipsWireOverlapAtStartCell )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // A* must skip wire overlap checks when leaving the start cell.
+    // The guard "(gx, gy) != (gx0, gy0)" before the h_wire_cells/v_wire_cells
+    // checks ensures the first step from a pin is never blocked by an arrival wire.
+    BOOST_CHECK( cmd.find( "(gx, gy) != (gx0, gy0)" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( PathHitsObstacleBuildsEndpointAdjacencySet )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // _path_hits_obstacle must build an adjacency set around endpoints
+    // so wire overlap near pin junctions is allowed.
+    BOOST_CHECK( cmd.find( "_ep_adj" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( PathHitsObstacleExemptsEndpointNeighborsFromWireOverlap )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // Wire overlap checks in _path_hits_obstacle must gate on "not in _ep_adj"
+    // for both vertical and horizontal segments.
+    BOOST_CHECK( cmd.find( "not in _ep_adj and" ) != std::string::npos );
+
+    // Should appear twice: once for v_wire_cells, once for h_wire_cells
+    size_t first = cmd.find( "not in _ep_adj" );
+    BOOST_REQUIRE( first != std::string::npos );
+    size_t second = cmd.find( "not in _ep_adj", first + 1 );
+    BOOST_CHECK( second != std::string::npos );
+}
+
+
+// --- Pin cell obstacles (regression: wires crossing intermediate connector pins) ---
+
+BOOST_AUTO_TEST_CASE( BuildsPinCellsSetFromAllSymbols )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // The router must build a pin_cells set during obstacle map construction
+    BOOST_CHECK( cmd.find( "pin_cells = set()" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "pin_cells.add(" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( AStarBlocksPinCells )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // A* must block movement into pin_cells (except start/goal)
+    BOOST_CHECK( cmd.find( "in pin_cells" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( PathHitsObstacleChecksPinCells )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // _path_hits_obstacle must reject paths crossing pin cells.
+    // Should appear in both vertical and horizontal segment checks.
+    size_t first = cmd.find( "in pin_cells" );
+    BOOST_REQUIRE( first != std::string::npos );
+    size_t second = cmd.find( "in pin_cells", first + 1 );
+    BOOST_REQUIRE( second != std::string::npos );
+    // Also in trunk_hits_obstacle (third and fourth occurrences)
+    size_t third = cmd.find( "in pin_cells", second + 1 );
+    BOOST_CHECK( third != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( TrunkHitsObstacleChecksPinCells )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    // 3+ pins to trigger trunk-and-branch mode
+    nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2", "R3:1" } ) } };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // trunk_hits_obstacle must check pin_cells for both horizontal and vertical trunks
+    std::string trunk_fn;
+    size_t fn_start = cmd.find( "def trunk_hits_obstacle" );
+    BOOST_REQUIRE( fn_start != std::string::npos );
+    // Find pin_cells check within the trunk function
+    size_t pin_check = cmd.find( "in pin_cells", fn_start );
+    BOOST_CHECK( pin_check != std::string::npos );
 }
 
 

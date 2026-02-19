@@ -1397,7 +1397,9 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
 
     if( aShowStopped )
     {
-        m_toolResultCounter = 0;
+        // NOTE: Don't reset m_toolResultCounter - old tool-result-N IDs persist in
+        // m_fullHtmlContent. Counter must stay monotonically increasing to avoid
+        // duplicate DOM IDs that cause subsequent tool updates to target stale elements.
         AppendHtml( "<div class=\"text-text-muted mb-1\">Stopped</div>" );
         m_bridge->PushActionButtonState( "Send" );
     }

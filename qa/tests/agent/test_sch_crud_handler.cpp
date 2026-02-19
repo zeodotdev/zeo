@@ -674,40 +674,6 @@ BOOST_AUTO_TEST_CASE( AddErrorOnMissingElements )
 }
 
 
-// --- sch_connect_to_power: auto-numbering ---
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerAutoNumbersPWR )
-{
-    SCH_CRUD_HANDLER handler;
-    nlohmann::json input = {
-        { "ref", "U1" },
-        { "pin", "1" },
-        { "power", "VCC" }
-    };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    BOOST_CHECK( cmd.find( "used_refs" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "def next_ref(prefix):" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "next_ref('#PWR')" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerSetsRefViaProtoFields )
-{
-    SCH_CRUD_HANDLER handler;
-    nlohmann::json input = {
-        { "ref", "U1" },
-        { "pin", "1" },
-        { "power", "GND" }
-    };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    BOOST_CHECK( cmd.find( "power_sym._proto.fields" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_f.text = _pwr_ref" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "crud.update_items(power_sym)" ) != std::string::npos );
-}
-
-
 // --- sch_add overlap detection ---
 
 BOOST_AUTO_TEST_CASE( AddSymbolGeneratesOverlapPreamble )

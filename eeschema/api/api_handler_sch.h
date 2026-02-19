@@ -444,6 +444,9 @@ private:
     HANDLER_RESULT<schematic::commands::GetTransformedPinPositionResponse>
     handleGetTransformedPinPosition( const HANDLER_CONTEXT<schematic::commands::GetTransformedPinPosition>& aCtx );
 
+    HANDLER_RESULT<schematic::commands::GetNeededJunctionsResponse>
+    handleGetNeededJunctions( const HANDLER_CONTEXT<schematic::commands::GetNeededJunctions>& aCtx );
+
     // Simulation handlers
     HANDLER_RESULT<schematic::commands::RunSimulationResponse>
     handleRunSimulation( const HANDLER_CONTEXT<schematic::commands::RunSimulation>& aCtx );

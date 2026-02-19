@@ -3,7 +3,9 @@
 #include <iomanip>
 
 // Overlap detection padding per side (mm). Total clearance = 2x this value.
-static constexpr double BBOX_MARGIN_MM = 0.5;
+// Set to 0 — bounding boxes are already shrunk (include_text=False) to expose
+// pin tips, and any padding causes false rejections for labels/wires near pins.
+static constexpr double BBOX_MARGIN_MM = 0.0;
 
 
 bool SCH_CRUD_HANDLER::CanHandle( const std::string& aToolName ) const
@@ -12,7 +14,6 @@ bool SCH_CRUD_HANDLER::CanHandle( const std::string& aToolName ) const
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
            aToolName == "sch_switch_sheet" ||
-           aToolName == "sch_connect_to_power" ||
            aToolName == "sch_add_sheet";
 }
 
@@ -68,6 +69,9 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
     }
     else if( aToolName == "sch_delete" )
     {
+        bool chainDelete = aInput.value( "chain_delete", false );
+        std::string prefix = chainDelete ? "Chain-deleting net for " : "Deleting ";
+
         if( aInput.contains( "targets" ) && aInput["targets"].is_array() )
         {
             size_t count = aInput["targets"].size();
@@ -76,23 +80,16 @@ std::string SCH_CRUD_HANDLER::GetDescription( const std::string& aToolName,
                 const auto& t = aInput["targets"][0];
 
                 if( t.is_string() )
-                    return "Deleting " + t.get<std::string>();
+                    return prefix + t.get<std::string>();
                 else if( t.is_object() )
-                    return "Deleting " + t.value( "type", std::string( "element" ) )
+                    return prefix + t.value( "type", std::string( "element" ) )
                            + ( t.contains( "text" )
                                    ? " '" + t["text"].get<std::string>() + "'"
                                    : "" );
             }
-            return "Deleting " + std::to_string( count ) + " elements";
+            return prefix + std::to_string( count ) + " elements";
         }
-        return "Deleting elements";
-    }
-    else if( aToolName == "sch_connect_to_power" )
-    {
-        std::string ref = aInput.value( "ref", "" );
-        std::string pin = aInput.value( "pin", "" );
-        std::string power = aInput.value( "power", "" );
-        return "Connecting " + ref + ":" + pin + " to " + power;
+        return prefix + "elements";
     }
     else if( aToolName == "sch_add_sheet" )
     {
@@ -116,7 +113,6 @@ bool SCH_CRUD_HANDLER::RequiresIPC( const std::string& aToolName ) const
            aToolName == "sch_update" ||
            aToolName == "sch_delete" ||
            aToolName == "sch_switch_sheet" ||
-           aToolName == "sch_connect_to_power" ||
            aToolName == "sch_add_sheet";
 }
 
@@ -134,8 +130,6 @@ std::string SCH_CRUD_HANDLER::GetIPCCommand( const std::string& aToolName,
         code = GenerateBatchDeleteCode( aInput );  // Now uses targets array
     else if( aToolName == "sch_switch_sheet" )
         code = GenerateSwitchSheetCode( aInput );
-    else if( aToolName == "sch_connect_to_power" )
-        code = GenerateConnectToPowerCode( aInput );
     else if( aToolName == "sch_add_sheet" )
         code = GenerateAddSheetCode( aInput );
 
@@ -672,6 +666,7 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     auto targets = aInput["targets"];
     std::string filePath = aInput.value( "file_path", "" );
     bool cleanupWires = aInput.value( "cleanup_wires", true );
+    bool chainDelete = aInput.value( "chain_delete", false );
 
     code << "import json, re, sys\n";
     code << "\n";
@@ -709,6 +704,7 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
 
     code << "file_path = " << nlohmann::json( filePath ).dump() << "\n";
     code << "cleanup_wires = " << ( cleanupWires ? "True" : "False" ) << "\n";
+    code << "chain_delete = " << ( chainDelete ? "True" : "False" ) << "\n";
     code << "use_ipc = True\n";
     code << "result = None\n";
     code << "target_uuids = []\n";
@@ -822,6 +818,97 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "        else:\n";
     code << "            query_not_found.append(q)\n";
     code << "\n";
+    // Chain delete: flood-fill from initial items along physically connected wires
+    code << "    # Chain delete: flood-fill from initial items along physically connected wires\n";
+    code << "    chain_deleted_nets = []\n";
+    code << "    if chain_delete:\n";
+    code << "        # Get connection points for an item\n";
+    code << "        def _get_points(it):\n";
+    code << "            pts = []\n";
+    code << "            t = type(it).__name__\n";
+    code << "            if t == 'Wire' and hasattr(it, 'start') and hasattr(it, 'end'):\n";
+    code << "                pts.append((it.start.x, it.start.y))\n";
+    code << "                pts.append((it.end.x, it.end.y))\n";
+    code << "            elif hasattr(it, 'position'):\n";
+    code << "                pts.append((it.position.x, it.position.y))\n";
+    code << "            return pts\n";
+    code << "\n";
+    code << "        # Collect net names and all net items for each initial target\n";
+    code << "        seen_nets = set()\n";
+    code << "        all_net_items = {}  # uid -> item\n";
+    code << "        for item in items_to_delete[:]:\n";
+    code << "            item_type = type(item).__name__\n";
+    code << "            if item_type in ('Wire', 'Junction', 'NetLabel', 'GlobalLabel', 'HierLabel'):\n";
+    code << "                try:\n";
+    code << "                    item_id = item.id.value if hasattr(item, 'id') and hasattr(item.id, 'value') else str(getattr(item, 'id', ''))\n";
+    code << "                    net_resp = sch.connectivity.get_net_for_item(item_id)\n";
+    code << "                    if net_resp.is_connected and net_resp.connection.name:\n";
+    code << "                        net_name = net_resp.connection.name\n";
+    code << "                        if 'unconnected' not in net_name.lower() and net_name not in seen_nets:\n";
+    code << "                            seen_nets.add(net_name)\n";
+    code << "                            # Fetch all items on this net\n";
+    code << "                            net_items_resp = sch.connectivity.get_net_items(net_name)\n";
+    code << "                            net_item_ids = [nid.value for nid in net_items_resp.item_ids]\n";
+    code << "                            fetched = sch.crud.get_by_id(net_item_ids)\n";
+    code << "                            for fi in fetched:\n";
+    code << "                                uid = str(fi.id.value) if hasattr(fi, 'id') and hasattr(fi.id, 'value') else ''\n";
+    code << "                                if uid:\n";
+    code << "                                    all_net_items[uid] = fi\n";
+    code << "                            # Also add labels with matching text\n";
+    code << "                            for lbl in sch.labels.get_all():\n";
+    code << "                                if hasattr(lbl, 'text') and lbl.text == net_name:\n";
+    code << "                                    uid = str(lbl.id.value) if hasattr(lbl, 'id') and hasattr(lbl.id, 'value') else ''\n";
+    code << "                                    if uid:\n";
+    code << "                                        all_net_items[uid] = lbl\n";
+    code << "                            chain_deleted_nets.append(net_name)\n";
+    code << "                except:\n";
+    code << "                    pass\n";
+    code << "\n";
+    code << "        # Build point -> [uid] index from all net items\n";
+    code << "        from collections import defaultdict, deque\n";
+    code << "        point_to_uids = defaultdict(set)\n";
+    code << "        uid_to_points = {}\n";
+    code << "        for uid, it in all_net_items.items():\n";
+    code << "            pts = _get_points(it)\n";
+    code << "            uid_to_points[uid] = pts\n";
+    code << "            for p in pts:\n";
+    code << "                point_to_uids[p].add(uid)\n";
+    code << "\n";
+    code << "        # BFS flood-fill from initial items\n";
+    code << "        existing_ids = set()\n";
+    code << "        for item in items_to_delete:\n";
+    code << "            uid = str(item.id.value) if hasattr(item, 'id') and hasattr(item.id, 'value') else str(getattr(item, 'id', ''))\n";
+    code << "            existing_ids.add(uid)\n";
+    code << "        visited = set(existing_ids)\n";
+    code << "        queue = deque()\n";
+    code << "        # Seed BFS with points from initial items\n";
+    code << "        for uid in existing_ids:\n";
+    code << "            if uid in uid_to_points:\n";
+    code << "                for p in uid_to_points[uid]:\n";
+    code << "                    queue.append(p)\n";
+    code << "            # Also seed from the item itself if it wasn't in all_net_items\n";
+    code << "            for item in items_to_delete:\n";
+    code << "                iid = str(item.id.value) if hasattr(item, 'id') and hasattr(item.id, 'value') else ''\n";
+    code << "                if iid == uid:\n";
+    code << "                    for p in _get_points(item):\n";
+    code << "                        queue.append(p)\n";
+    code << "        deletable_types = ('Wire', 'Junction', 'NetLabel', 'GlobalLabel', 'HierLabel', 'NoConnect')\n";
+    code << "        while queue:\n";
+    code << "            pt = queue.popleft()\n";
+    code << "            for neighbor_uid in point_to_uids.get(pt, []):\n";
+    code << "                if neighbor_uid in visited:\n";
+    code << "                    continue\n";
+    code << "                visited.add(neighbor_uid)\n";
+    code << "                ni = all_net_items.get(neighbor_uid)\n";
+    code << "                if ni and type(ni).__name__ in deletable_types:\n";
+    code << "                    items_to_delete.append(ni)\n";
+    code << "                    target_uuids.append(neighbor_uid)\n";
+    code << "                    existing_ids.add(neighbor_uid)\n";
+    code << "                    # Enqueue this item's other connection points\n";
+    code << "                    for p2 in uid_to_points.get(neighbor_uid, []):\n";
+    code << "                        queue.append(p2)\n";
+    code << "\n";
+
     code << "    # Record pin positions before deletion (for optional orphan cleanup)\n";
     code << "    deleted_pin_positions = []\n";
     code << "    if cleanup_wires:\n";
@@ -840,9 +927,10 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "    if items_to_delete:\n";
     code << "        sch.crud.remove_items(items_to_delete)\n";
     code << "\n";
-    code << "    # Recursively clean up orphaned wires and junctions\n";
+    code << "    # Recursively clean up orphaned wires, junctions, and power symbols\n";
     code << "    orphaned_wires = []\n";
     code << "    orphaned_junctions = []\n";
+    code << "    orphaned_power = []\n";
     code << "    if deleted_pin_positions:\n";
     code << "        try:\n";
     code << "            rnd = lambda v: round(v, 2)\n";
@@ -925,6 +1013,44 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "                    if wc <= 1:\n";
     code << "                        dead.add(fp)\n";
     code << "\n";
+    code << "            # Check for orphaned power symbols (#PWR) after wire cleanup\n";
+    code << "            remaining_wires = sch.crud.get_wires()\n";
+    code << "            wire_pts = set()\n";
+    code << "            for w in remaining_wires:\n";
+    code << "                try:\n";
+    code << "                    s, e = wire_ep(w)\n";
+    code << "                    wire_pts.add(s)\n";
+    code << "                    wire_pts.add(e)\n";
+    code << "                except:\n";
+    code << "                    pass\n";
+    code << "            for sym in sch.symbols.get_all():\n";
+    code << "                try:\n";
+    code << "                    if not sym.reference.startswith('#PWR'):\n";
+    code << "                        continue\n";
+    code << "                    connected = False\n";
+    code << "                    for p in sym.pins:\n";
+    code << "                        try:\n";
+    code << "                            tp = sch.symbols.get_transformed_pin_position(sym, p.number)\n";
+    code << "                            if tp:\n";
+    code << "                                pp = (rnd(tp['position'].x/1e6), rnd(tp['position'].y/1e6))\n";
+    code << "                                if pp in wire_pts:\n";
+    code << "                                    connected = True\n";
+    code << "                                    break\n";
+    code << "                        except:\n";
+    code << "                            pass\n";
+    code << "                    if not connected:\n";
+    code << "                        orphaned_power.append({'ref': sym.reference, 'uuid': str(sym.id.value) if hasattr(sym, 'id') else ''})\n";
+    code << "                except:\n";
+    code << "                    pass\n";
+    code << "            if orphaned_power:\n";
+    code << "                pwr_items = []\n";
+    code << "                for op in orphaned_power:\n";
+    code << "                    s = sch.symbols.get_by_ref(op['ref'])\n";
+    code << "                    if s:\n";
+    code << "                        pwr_items.append(s)\n";
+    code << "                if pwr_items:\n";
+    code << "                    sch.crud.remove_items(pwr_items)\n";
+    code << "\n";
     code << "        except Exception as cleanup_err:\n";
     code << "            print(f'Orphan cleanup warning: {cleanup_err}', file=sys.stderr)\n";
     code << "\n";
@@ -934,10 +1060,15 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "        result['orphaned_wires'] = orphaned_wires\n";
     code << "    if orphaned_junctions:\n";
     code << "        result['orphaned_junctions_removed'] = len(orphaned_junctions)\n";
+    code << "    if orphaned_power:\n";
+    code << "        result['orphaned_power_removed'] = len(orphaned_power)\n";
+    code << "        result['orphaned_power'] = orphaned_power\n";
     code << "    if not_found:\n";
     code << "        result['not_found'] = not_found\n";
     code << "    if query_not_found:\n";
     code << "        result['queries_not_matched'] = query_not_found\n";
+    code << "    if chain_deleted_nets:\n";
+    code << "        result['chain_deleted_nets'] = chain_deleted_nets\n";
     code << "\n";
     code << "except Exception as ipc_error:\n";
     code << "    use_ipc = False\n";
@@ -1177,140 +1308,6 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
 }
 
 
-std::string SCH_CRUD_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& aInput ) const
-{
-    std::ostringstream code;
-
-    std::string ref = aInput.value( "ref", "" );
-    std::string pin = aInput.value( "pin", "" );
-    std::string power = aInput.value( "power", "" );
-
-    // Get offset - default [0, 0] means place directly at pin (no wire)
-    double offsetX = 0, offsetY = 0;
-    if( aInput.contains( "offset" ) && aInput["offset"].is_array() && aInput["offset"].size() >= 2 )
-    {
-        offsetX = aInput["offset"][0].get<double>();
-        offsetY = aInput["offset"][1].get<double>();
-    }
-
-    code << "import json, sys, re\n";
-    code << "from kipy.geometry import Vector2\n";
-    code << "\n";
-    code << GenerateRefreshPreamble();
-    code << "\n";
-    code << "# Build map of used references for auto-numbering power symbols\n";
-    code << "used_refs = {}\n";
-    code << "for _s in sch.symbols.get_all():\n";
-    code << "    _r = getattr(_s, 'reference', '')\n";
-    code << "    _m = re.match(r'^([A-Za-z#]+)(\\d+)$', _r)\n";
-    code << "    if _m:\n";
-    code << "        used_refs.setdefault(_m.group(1), set()).add(int(_m.group(2)))\n";
-    code << "\n";
-    code << "def next_ref(prefix):\n";
-    code << "    nums = used_refs.get(prefix, set())\n";
-    code << "    n = 1\n";
-    code << "    while n in nums:\n";
-    code << "        n += 1\n";
-    code << "    used_refs.setdefault(prefix, set()).add(n)\n";
-    code << "    return f'{prefix}{n}'\n";
-    code << "\n";
-    code << "ref = '" << EscapePythonString( ref ) << "'\n";
-    code << "pin_id = '" << EscapePythonString( pin ) << "'\n";
-    code << "power_name = '" << EscapePythonString( power ) << "'\n";
-    code << "offset_x = " << offsetX << "\n";
-    code << "offset_y = " << offsetY << "\n";
-    code << "\n";
-    code << "try:\n";
-    code << "    # Get the symbol and pin position\n";
-    code << "    sym = sch.symbols.get_by_ref(ref)\n";
-    code << "    if not sym:\n";
-    code << "        raise ValueError(f'Symbol not found: {ref}')\n";
-    code << "\n";
-    code << "    # Get exact pin position via IPC\n";
-    code << "    pin_result = sch.symbols.get_transformed_pin_position(sym, pin_id)\n";
-    code << "    if not pin_result:\n";
-    code << "        # Fallback to cached position\n";
-    code << "        pin_pos = sch.symbols.get_pin_position(sym, pin_id)\n";
-    code << "        if not pin_pos:\n";
-    code << "            raise ValueError(f'Pin not found: {pin_id} on {ref}')\n";
-    code << "        pin_x = pin_pos.x / 1_000_000\n";
-    code << "        pin_y = pin_pos.y / 1_000_000\n";
-    code << "    else:\n";
-    code << "        pin_x = pin_result['position'].x / 1_000_000\n";
-    code << "        pin_y = pin_result['position'].y / 1_000_000\n";
-    code << "\n";
-    code << "    # Snap to 1.27mm grid\n";
-    code << "    def snap_to_grid(val, grid=1.27):\n";
-    code << "        return round(val / grid) * grid\n";
-    code << "    # Calculate power symbol position (snapped to grid)\n";
-    code << "    power_x = snap_to_grid(pin_x + offset_x)\n";
-    code << "    power_y = snap_to_grid(pin_y + offset_y)\n";
-    code << "\n";
-    code << "    # Auto-rotate power symbol so stem faces the incoming wire.\n";
-    code << "    # GND at 0°: stem UP.  VCC at 0°: stem DOWN.\n";
-    code << "    # For L-shaped wires, orient based on the final (vertical) segment.\n";
-    code << "    is_gnd = 'gnd' in power_name.lower() or 'vss' in power_name.lower()\n";
-    code << "    if abs(offset_x) < 0.01 and abs(offset_y) < 0.01:\n";
-    code << "        power_angle = 0  # No wire, use default orientation\n";
-    code << "    elif abs(offset_y) > 0.01:\n";
-    code << "        # Vertical or L-shaped: stem faces vertical direction of pin\n";
-    code << "        if is_gnd:\n";
-    code << "            power_angle = 0 if offset_y > 0 else 180\n";
-    code << "        else:\n";
-    code << "            power_angle = 180 if offset_y > 0 else 0\n";
-    code << "    else:\n";
-    code << "        # Horizontal only: stem faces horizontal direction of pin\n";
-    code << "        if is_gnd:\n";
-    code << "            power_angle = 90 if offset_x > 0 else 270\n";
-    code << "        else:\n";
-    code << "            power_angle = 270 if offset_x > 0 else 90\n";
-    code << "\n";
-    code << "    # Place the power symbol\n";
-    code << "    power_pos = Vector2.from_xy_mm(power_x, power_y)\n";
-    code << "    power_sym = sch.labels.add_power(power_name, power_pos, angle=power_angle)\n";
-    code << "    _pwr_ref = next_ref('#PWR')\n";
-    code << "    for _f in power_sym._proto.fields:\n";
-    code << "        if _f.name == 'Reference':\n";
-    code << "            _f.text = _pwr_ref\n";
-    code << "            break\n";
-    code << "    sch.crud.update_items(power_sym)\n";
-    code << "\n";
-    code << "    wire_count = 0\n";
-    code << "    # If there's an offset, draw a wire from pin to power symbol\n";
-    code << "    if abs(offset_x) > 0.01 or abs(offset_y) > 0.01:\n";
-    code << "        pin_vec = Vector2.from_xy_mm(pin_x, pin_y)\n";
-    code << "        # For L-shaped routes when both offsets are non-zero\n";
-    code << "        if abs(offset_x) > 0.01 and abs(offset_y) > 0.01:\n";
-    code << "            # Create corner point - horizontal first\n";
-    code << "            corner = Vector2.from_xy_mm(power_x, pin_y)\n";
-    code << "            sch.wiring.add_wire(pin_vec, corner)\n";
-    code << "            sch.wiring.add_wire(corner, power_pos)\n";
-    code << "            wire_count = 2\n";
-    code << "        else:\n";
-    code << "            # Direct wire\n";
-    code << "            sch.wiring.add_wire(pin_vec, power_pos)\n";
-    code << "            wire_count = 1\n";
-    code << "\n";
-    code << "    result = {\n";
-    code << "        'status': 'success',\n";
-    code << "        'source': 'ipc',\n";
-    code << "        'ref': ref,\n";
-    code << "        'pin': pin_id,\n";
-    code << "        'power': power_name,\n";
-    code << "        'power_position': [power_x, power_y],\n";
-    code << "        'pin_position': [pin_x, pin_y],\n";
-    code << "        'wire_count': wire_count\n";
-    code << "    }\n";
-    code << "\n";
-    code << "except Exception as e:\n";
-    code << "    result = {'status': 'error', 'message': str(e)}\n";
-    code << "\n";
-    code << "print(json.dumps(result, indent=2))\n";
-
-    return code.str();
-}
-
-
 std::string SCH_CRUD_HANDLER::GenerateAddSheetCode( const nlohmann::json& aInput ) const
 {
     std::ostringstream code;
@@ -1410,6 +1407,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "    return f'{prefix}{n}'\n";
     code << "\n";
     code << "results = []\n";
+    code << "_placed_syms = {}\n";
+    code << "_placed_wires = []\n";
     code << "\n";
 
     // --- Overlap detection preamble ---
@@ -1441,6 +1440,32 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "def _bboxes_overlap(a, b):\n";
     code << "    return a['min_x'] < b['max_x'] and a['max_x'] > b['min_x'] and a['min_y'] < b['max_y'] and a['max_y'] > b['min_y']\n";
     code << "\n";
+    code << "def _any_wire_in_bbox(bbox):\n";
+    code << "    \"\"\"Check if any existing wire segment overlaps a bounding box.\"\"\"\n";
+    code << "    for _w in sch.crud.get_wires():\n";
+    code << "        _sx, _sy = round(_w.start.x/1e6, 2), round(_w.start.y/1e6, 2)\n";
+    code << "        _ex, _ey = round(_w.end.x/1e6, 2), round(_w.end.y/1e6, 2)\n";
+    code << "        if max(_sx,_ex) > bbox['min_x'] and min(_sx,_ex) < bbox['max_x'] and max(_sy,_ey) > bbox['min_y'] and min(_sy,_ey) < bbox['max_y']:\n";
+    code << "            return True\n";
+    code << "    return False\n";
+    code << "\n";
+
+    // --- Sheet bounds check ---
+    code << "# Get sheet dimensions for bounds checking\n";
+    code << "_sheet_w, _sheet_h = 297.0, 210.0\n";
+    code << "try:\n";
+    code << "    _page = sch.page.get_settings()\n";
+    code << "    _sheet_w = _page.width_mm\n";
+    code << "    _sheet_h = _page.height_mm\n";
+    code << "except:\n";
+    code << "    pass\n";
+    code << "\n";
+    code << "class _OOB(Exception): pass\n";
+    code << "def _check_bounds(x, y, idx):\n";
+    code << "    if not (0 <= x <= _sheet_w and 0 <= y <= _sheet_h):\n";
+    code << "        results.append({'index': idx, 'error': f'Position ({x}, {y}) is outside sheet ({_sheet_w}x{_sheet_h}mm)'})\n";
+    code << "        raise _OOB()\n";
+    code << "\n";
 
     code << "try:\n";
 
@@ -1469,6 +1494,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             bool mirrorY = ( mirror == "y" );
             int unit = elem.value( "unit", 1 );
 
+            code << "        _check_bounds(" << posX << ", " << posY << ", " << i << ")\n";
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        sym_" << i << " = sch.symbols.add(\n";
             code << "            lib_id='" << EscapePythonString( libId ) << "',\n";
@@ -1489,8 +1515,9 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 code << "            sch.symbols.set_footprint(sym_" << i << ", props_" << i << "['Footprint'])\n";
             }
 
-            // --- Overlap check for symbol ---
+            // --- Overlap check for symbol (vs other symbols/labels AND existing wires) ---
             code << "        _overlap_" << i << " = False\n";
+            code << "        _wire_cross_" << i << " = False\n";
             code << "        try:\n";
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(sym_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
@@ -1501,11 +1528,16 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                        _overlap_" << i << " = True\n";
             code << "                        _obstacle_ref_" << i << " = _pb.get('ref', '?')\n";
             code << "                        break\n";
+            code << "                if not _overlap_" << i << ":\n";
+            code << "                    _wire_cross_" << i << " = _any_wire_in_bbox(_bb_" << i << ")\n";
             code << "        except:\n";
             code << "            pass\n";
             code << "        if _overlap_" << i << ":\n";
             code << "            sch.crud.remove_items([sym_" << i << "])\n";
             code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: overlaps {_obstacle_ref_" << i << "}'})\n";
+            code << "        elif _wire_cross_" << i << ":\n";
+            code << "            sch.crud.remove_items([sym_" << i << "])\n";
+            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: component body crosses existing wire(s). Reposition with more clearance.'})\n";
             code << "        else:\n";
             code << "            _prefix_" << i << " = re.match(r'^([A-Za-z#]+)', getattr(sym_" << i << ", 'reference', 'X')).group(1)\n";
             code << "            _new_ref_" << i << " = next_ref(_prefix_" << i << ")\n";
@@ -1516,6 +1548,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "            sch.crud.update_items(sym_" << i << ")\n";
             code << "            if _bb_" << i << ":\n";
             code << "                placed_bboxes.append({'ref': _new_ref_" << i << ", **_new_bbox_" << i << "})\n";
+            code << "            _placed_syms[" << i << "] = sym_" << i << "\n";
             code << "            results.append({'index': " << i << ", 'element_type': 'symbol', 'reference': _new_ref_" << i << "})\n";
         }
         else if( elementType == "power" )
@@ -1535,11 +1568,13 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             }
             double angle = elem.value( "angle", 0.0 );
 
+            code << "        _check_bounds(" << posX << ", " << posY << ", " << i << ")\n";
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        pwr_" << i << " = sch.labels.add_power('" << EscapePythonString( powerName ) << "', pos_" << i << ", angle=" << angle << ")\n";
 
-            // --- Overlap check for power ---
+            // --- Overlap check for power (vs other symbols/labels AND existing wires) ---
             code << "        _overlap_" << i << " = False\n";
+            code << "        _wire_cross_" << i << " = False\n";
             code << "        try:\n";
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(pwr_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
@@ -1550,11 +1585,16 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                        _overlap_" << i << " = True\n";
             code << "                        _obstacle_ref_" << i << " = _pb.get('ref', '?')\n";
             code << "                        break\n";
+            code << "                if not _overlap_" << i << ":\n";
+            code << "                    _wire_cross_" << i << " = _any_wire_in_bbox(_bb_" << i << ")\n";
             code << "        except:\n";
             code << "            pass\n";
             code << "        if _overlap_" << i << ":\n";
             code << "            sch.crud.remove_items([pwr_" << i << "])\n";
             code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: overlaps {_obstacle_ref_" << i << "}'})\n";
+            code << "        elif _wire_cross_" << i << ":\n";
+            code << "            sch.crud.remove_items([pwr_" << i << "])\n";
+            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: power symbol body crosses existing wire(s). Rotate to match the target pin direction or increase spacing.'})\n";
             code << "        else:\n";
             code << "            _pwr_ref_" << i << " = next_ref('#PWR')\n";
             code << "            for _f in pwr_" << i << "._proto.fields:\n";
@@ -1570,6 +1610,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
         {
             std::string text = elem.value( "text", "" );
             std::string labelType = elem.value( "label_type", "local" );
+
             double posX = 0, posY = 0;
             if( elem.contains( "position" ) && elem["position"].is_array() &&
                 elem["position"].size() >= 2 )
@@ -1578,6 +1619,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 posY = SnapToGrid( elem["position"][1].get<double>() );
             }
 
+            code << "        _check_bounds(" << posX << ", " << posY << ", " << i << ")\n";
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
 
             if( labelType == "global" )
@@ -1587,8 +1629,9 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             else
                 code << "        lbl_" << i << " = sch.labels.add_local('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
 
-            // --- Overlap check for label ---
+            // --- Overlap check for label (vs other symbols/labels AND existing wires) ---
             code << "        _overlap_" << i << " = False\n";
+            code << "        _wire_cross_" << i << " = False\n";
             code << "        try:\n";
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(lbl_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
@@ -1599,11 +1642,16 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                        _overlap_" << i << " = True\n";
             code << "                        _obstacle_ref_" << i << " = _pb.get('ref', '?')\n";
             code << "                        break\n";
+            code << "                if not _overlap_" << i << ":\n";
+            code << "                    _wire_cross_" << i << " = _any_wire_in_bbox(_bb_" << i << ")\n";
             code << "        except:\n";
             code << "            pass\n";
             code << "        if _overlap_" << i << ":\n";
             code << "            sch.crud.remove_items([lbl_" << i << "])\n";
             code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: overlaps {_obstacle_ref_" << i << "}'})\n";
+            code << "        elif _wire_cross_" << i << ":\n";
+            code << "            sch.crud.remove_items([lbl_" << i << "])\n";
+            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: label crosses existing wire(s). Reposition with more clearance.'})\n";
             code << "        else:\n";
             code << "            if _bb_" << i << ":\n";
             code << "                placed_bboxes.append({'ref': '" << EscapePythonString( elem.value( "text", "label" ) ) << "', **_new_bbox_" << i << "})\n";
@@ -1630,27 +1678,18 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 }
                 code << "        ]\n";
 
-                // Check each wire segment against component bounding boxes
-                code << "        _wire_blocked_" << i << " = False\n";
-                code << "        _wire_obstacle_" << i << " = '?'\n";
+                // Bounds check all wire points
+                code << "        for _wp in _wpts_" << i << ":\n";
+                code << "            _check_bounds(_wp[0], _wp[1], " << i << ")\n";
+
+                // Place wire segments (no bbox overlap check — wires routinely
+                // pass through component bounding boxes to reach pins)
+                code << "        _wc_" << i << " = 0\n";
                 code << "        for _si in range(len(_wpts_" << i << ") - 1):\n";
-                code << "            _wa, _wb = _wpts_" << i << "[_si], _wpts_" << i << "[_si + 1]\n";
-                code << "            for _pb in placed_bboxes:\n";
-                code << "                _ax, _ay = min(_wa[0], _wb[0]), min(_wa[1], _wb[1])\n";
-                code << "                _bx, _by = max(_wa[0], _wb[0]), max(_wa[1], _wb[1])\n";
-                code << "                if _bboxes_overlap({'min_x': _ax, 'max_x': _bx, 'min_y': _ay, 'max_y': _by}, _pb):\n";
-                code << "                    _wire_blocked_" << i << " = True\n";
-                code << "                    _wire_obstacle_" << i << " = _pb.get('ref', '?')\n";
-                code << "                    break\n";
-                code << "            if _wire_blocked_" << i << ": break\n";
-                code << "        if _wire_blocked_" << i << ":\n";
-                code << "            results.append({'index': " << i << ", 'error': f'Wire rejected: crosses {_wire_obstacle_" << i << "}'})\n";
-                code << "        else:\n";
-                code << "            _wc_" << i << " = 0\n";
-                code << "            for _si in range(len(_wpts_" << i << ") - 1):\n";
-                code << "                sch.wiring.add_wire(Vector2.from_xy_mm(*_wpts_" << i << "[_si]), Vector2.from_xy_mm(*_wpts_" << i << "[_si + 1]))\n";
-                code << "                _wc_" << i << " += 1\n";
-                code << "            results.append({'index': " << i << ", 'element_type': 'wire', 'segments': _wc_" << i << "})\n";
+                code << "            _w = sch.wiring.add_wire(Vector2.from_xy_mm(*_wpts_" << i << "[_si]), Vector2.from_xy_mm(*_wpts_" << i << "[_si + 1]))\n";
+                code << "            _placed_wires.append(_w)\n";
+                code << "            _wc_" << i << " += 1\n";
+                code << "        results.append({'index': " << i << ", 'element_type': 'wire', 'segments': _wc_" << i << "})\n";
             }
             else
             {
@@ -1667,6 +1706,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 posY = SnapToGrid( elem["position"][1].get<double>() );
             }
 
+            code << "        _check_bounds(" << posX << ", " << posY << ", " << i << ")\n";
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        nc_" << i << " = sch.wiring.add_no_connect(pos_" << i << ")\n";
             code << "        results.append({'index': " << i << ", 'element_type': 'no_connect'})\n";
@@ -1683,6 +1723,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
             std::string direction = elem.value( "direction", "right_down" );
 
+            code << "        _check_bounds(" << posX << ", " << posY << ", " << i << ")\n";
             code << "        pos_" << i << " = Vector2.from_xy_mm(" << posX << ", " << posY << ")\n";
             code << "        be_" << i << " = sch.buses.add_bus_entry(pos_" << i << ", direction='" << EscapePythonString( direction ) << "')\n";
             code << "        results.append({'index': " << i << ", 'element_type': 'bus_entry'})\n";
@@ -1692,11 +1733,49 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "        results.append({'index': " << i << ", 'error': 'Unknown element_type: " << EscapePythonString( elementType ) << "'})\n";
         }
 
+        code << "    except _OOB:\n";
+        code << "        pass\n";
         code << "    except Exception as e_" << i << ":\n";
         code << "        results.append({'index': " << i << ", 'error': str(e_" << i << ")})\n";
         code << "\n";
     }
 
+    // --- Pin position enrichment (best-effort, after all placements) ---
+    // Done as a separate pass so placement is never blocked by pin lookups.
+    // Each pin lookup is an IPC round-trip, so we wrap individually to degrade gracefully.
+    code << "\n";
+    code << "    # --- Collect pin positions for placed symbols (best-effort) ---\n";
+    code << "    for _idx, _sym in _placed_syms.items():\n";
+    code << "        try:\n";
+    code << "            _pins = []\n";
+    code << "            if hasattr(_sym, 'pins'):\n";
+    code << "                for _p in _sym.pins:\n";
+    code << "                    _pin_info = {'number': _p.number, 'name': getattr(_p, 'name', '')}\n";
+    code << "                    try:\n";
+    code << "                        _tr = sch.symbols.get_transformed_pin_position(_sym, _p.number)\n";
+    code << "                        if _tr:\n";
+    code << "                            _pin_info['position'] = [round(_tr['position'].x / 1_000_000, 4), round(_tr['position'].y / 1_000_000, 4)]\n";
+    code << "                    except:\n";
+    code << "                        pass\n";
+    code << "                    _pins.append(_pin_info)\n";
+    code << "            for _r in results:\n";
+    code << "                if _r.get('index') == _idx and 'error' not in _r:\n";
+    code << "                    _r['pins'] = _pins\n";
+    code << "                    break\n";
+    code << "        except:\n";
+    code << "            pass\n";
+
+    code << "\n";
+    code << "    # --- Auto-place junctions for any wires placed in this batch ---\n";
+    code << "    _junction_count = 0\n";
+    code << "    if _placed_wires:\n";
+    code << "        try:\n";
+    code << "            _junc_positions = sch.wiring.get_needed_junctions(_placed_wires)\n";
+    code << "            for _jp in _junc_positions:\n";
+    code << "                sch.wiring.add_junction(_jp)\n";
+    code << "                _junction_count += 1\n";
+    code << "        except:\n";
+    code << "            pass\n";
     code << "\n";
     code << "    _fail = sum(1 for r in results if 'error' in r)\n";
     code << "    result = {\n";
@@ -1706,10 +1785,35 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "        'failed': _fail,\n";
     code << "        'results': results\n";
     code << "    }\n";
+    code << "    if _junction_count > 0:\n";
+    code << "        result['junctions_placed'] = _junction_count\n";
     code << "\n";
     code << "except Exception as batch_error:\n";
     code << "    result = {'status': 'error', 'message': str(batch_error), 'results': results}\n";
     code << "\n";
+
+    // Auto-sync sheet pins if any hierarchical labels were placed
+    bool hasHierarchicalLabel = false;
+    for( size_t i = 0; i < elements.size(); ++i )
+    {
+        if( elements[i].value( "element_type", "" ) == "label" &&
+            elements[i].value( "label_type", "local" ) == "hierarchical" )
+        {
+            hasHierarchicalLabel = true;
+            break;
+        }
+    }
+
+    if( hasHierarchicalLabel )
+    {
+        code << "# Sync sheet pins on parent sheet to match hierarchical labels\n";
+        code << "try:\n";
+        code << "    sch.sheets.sync_pins()\n";
+        code << "except:\n";
+        code << "    pass\n";
+        code << "\n";
+    }
+
     code << "print(json.dumps(result, indent=2))\n";
 
     return code.str();

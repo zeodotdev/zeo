@@ -18,6 +18,7 @@ set( TOOLS_SRCS
     schematic/sch_crud_handler.cpp
     schematic/sch_connect_net_handler.cpp
     schematic/sch_util_handler.cpp
+    schematic/sch_label_pins_handler.cpp
 
     # PCB tools
     pcb/pcb_parser.cpp

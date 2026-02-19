@@ -836,6 +836,8 @@ try:
 // Expects `power_name`, `pwr_offset`, `force_angle` to be set.
 // Continues inside try: block. Closes with except handler.
 static const char* CONNECT_TO_POWER_ROUTING = R"py(
+    import math
+
     # Build map of used #PWR references for auto-numbering
     used_refs = {}
     for _s in sch.symbols.get_all():
@@ -851,6 +853,119 @@ static const char* CONNECT_TO_POWER_ROUTING = R"py(
             n += 1
         used_refs.setdefault(prefix, set()).add(n)
         return f'{prefix}{n}'
+
+    # --- Overlap detection for placed power symbols ---
+    _BBOX_MARGIN = 1.0
+    placed_bboxes = []
+    try:
+        for _esym in sch.symbols.get_all():
+            try:
+                _ebb = sch.transform.get_bounding_box(_esym, units='mm', include_text=False)
+            except:
+                continue
+            if _ebb:
+                placed_bboxes.append({'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})
+    except:
+        pass
+    try:
+        for _elbl in sch.labels.get_all():
+            try:
+                _ebb = sch.transform.get_bounding_box(_elbl, units='mm', include_text=False)
+            except:
+                continue
+            if _ebb:
+                placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})
+    except:
+        pass
+
+    def _bboxes_overlap(a, b):
+        return a['min_x'] < b['max_x'] and a['max_x'] > b['min_x'] and a['min_y'] < b['max_y'] and a['max_y'] > b['min_y']
+
+    def _find_crossing_wire(bbox):
+        """Return AABB dict of the first wire segment crossing bbox, or None."""
+        for _w in sch.crud.get_wires():
+            _sx, _sy = round(_w.start.x/1e6, 2), round(_w.start.y/1e6, 2)
+            _ex, _ey = round(_w.end.x/1e6, 2), round(_w.end.y/1e6, 2)
+            _wbb = {'min_x': min(_sx,_ex), 'max_x': max(_sx,_ex), 'min_y': min(_sy,_ey), 'max_y': max(_sy,_ey)}
+            if _wbb['min_x'] == _wbb['max_x']:
+                _wbb['min_x'] -= 0.01
+                _wbb['max_x'] += 0.01
+            if _wbb['min_y'] == _wbb['max_y']:
+                _wbb['min_y'] -= 0.01
+                _wbb['max_y'] += 0.01
+            if _wbb['max_x'] > bbox['min_x'] and _wbb['min_x'] < bbox['max_x'] and _wbb['max_y'] > bbox['min_y'] and _wbb['min_y'] < bbox['max_y']:
+                return _wbb
+        return None
+
+    _SLIDE_GRID = 1.27
+    _SLIDE_MAX_ITER = 5
+    _SLIDE_MAX_MM = 30.0
+
+    def _snap_slide(v, grid=_SLIDE_GRID):
+        return round(round(v / grid) * grid, 4)
+
+    def _slide_off(item, raw_bb, margined_bb):
+        """Slide item to clear position via repulsion. Returns (ok, dx, dy)."""
+        total_dx, total_dy = 0.0, 0.0
+        r_bb = dict(raw_bb)
+        m_bb = dict(margined_bb)
+        for _iter in range(_SLIDE_MAX_ITER):
+            obstacle = None
+            use_margin = True
+            for _pb in placed_bboxes:
+                if _bboxes_overlap(m_bb, _pb):
+                    obstacle = _pb
+                    break
+            if obstacle is None:
+                _wcross = _find_crossing_wire(r_bb)
+                if _wcross:
+                    obstacle = _wcross
+                    use_margin = False
+            if obstacle is None:
+                return (True, total_dx, total_dy)
+            comp_cx = (r_bb['min_x'] + r_bb['max_x']) / 2
+            comp_cy = (r_bb['min_y'] + r_bb['max_y']) / 2
+            obs_cx = (obstacle['min_x'] + obstacle['max_x']) / 2
+            obs_cy = (obstacle['min_y'] + obstacle['max_y']) / 2
+            dir_x = comp_cx - obs_cx
+            dir_y = comp_cy - obs_cy
+            mag = math.sqrt(dir_x * dir_x + dir_y * dir_y)
+            if mag < 1e-6:
+                dir_x, dir_y, mag = 1.0, 0.0, 1.0
+            dir_x /= mag
+            dir_y /= mag
+            if use_margin:
+                hw_c = (m_bb['max_x'] - m_bb['min_x']) / 2
+                hh_c = (m_bb['max_y'] - m_bb['min_y']) / 2
+            else:
+                hw_c = (r_bb['max_x'] - r_bb['min_x']) / 2
+                hh_c = (r_bb['max_y'] - r_bb['min_y']) / 2
+            hw_o = (obstacle['max_x'] - obstacle['min_x']) / 2
+            hh_o = (obstacle['max_y'] - obstacle['min_y']) / 2
+            candidates = []
+            if abs(dir_x) > 1e-9:
+                candidates.append((hw_c + hw_o) / abs(dir_x))
+            if abs(dir_y) > 1e-9:
+                candidates.append((hh_c + hh_o) / abs(dir_y))
+            if not candidates:
+                return (False, total_dx, total_dy)
+            t = min(candidates)
+            new_cx = obs_cx + dir_x * t
+            new_cy = obs_cy + dir_y * t
+            dx = _snap_slide(new_cx - comp_cx)
+            dy = _snap_slide(new_cy - comp_cy)
+            if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+                if abs(dir_x) >= abs(dir_y):
+                    dx = _SLIDE_GRID if dir_x >= 0 else -_SLIDE_GRID
+                else:
+                    dy = _SLIDE_GRID if dir_y >= 0 else -_SLIDE_GRID
+            total_dx += dx
+            total_dy += dy
+            if abs(total_dx) > _SLIDE_MAX_MM or abs(total_dy) > _SLIDE_MAX_MM:
+                return (False, total_dx, total_dy)
+            r_bb = {'min_x': r_bb['min_x']+dx, 'max_x': r_bb['max_x']+dx, 'min_y': r_bb['min_y']+dy, 'max_y': r_bb['max_y']+dy}
+            m_bb = {'min_x': m_bb['min_x']+dx, 'max_x': m_bb['max_x']+dx, 'min_y': m_bb['min_y']+dy, 'max_y': m_bb['max_y']+dy}
+        return (False, total_dx, total_dy)
 
     is_gnd = 'gnd' in power_name.lower() or 'vss' in power_name.lower()
 
@@ -898,16 +1013,55 @@ static const char* CONNECT_TO_POWER_ROUTING = R"py(
         # Place the power symbol
         power_pos = Vector2.from_xy_mm(power_x, power_y)
         power_sym = sch.labels.add_power(power_name, power_pos, angle=power_angle)
+
+        # --- Overlap detection + slide-off ---
+        _shifted = False
+        _rejected = False
+        try:
+            _bb = sch.transform.get_bounding_box(power_sym, units='mm', include_text=False)
+            if _bb:
+                _raw_bb = dict(_bb)
+                _margined_bb = {'min_x': _bb['min_x'] - _BBOX_MARGIN, 'max_x': _bb['max_x'] + _BBOX_MARGIN, 'min_y': _bb['min_y'] - _BBOX_MARGIN, 'max_y': _bb['max_y'] + _BBOX_MARGIN}
+                _has_conflict = any(_bboxes_overlap(_margined_bb, _pb) for _pb in placed_bboxes) or (_find_crossing_wire(_raw_bb) is not None)
+                if _has_conflict:
+                    _sok, _sdx, _sdy = _slide_off(power_sym, _raw_bb, _margined_bb)
+                    if _sok and (abs(_sdx) > 1e-6 or abs(_sdy) > 1e-6):
+                        sch.transform.move(power_sym, delta_x_mm=_sdx, delta_y_mm=_sdy)
+                        power_x = snap_to_grid(power_x + _sdx)
+                        power_y = snap_to_grid(power_y + _sdy)
+                        _bb = sch.transform.get_bounding_box(power_sym, units='mm', include_text=False)
+                        if _bb:
+                            _margined_bb = {'min_x': _bb['min_x'] - _BBOX_MARGIN, 'max_x': _bb['max_x'] + _BBOX_MARGIN, 'min_y': _bb['min_y'] - _BBOX_MARGIN, 'max_y': _bb['max_y'] + _BBOX_MARGIN}
+                        _shifted = True
+                        print(f'[power] slid {power_name} by ({_sdx:.2f},{_sdy:.2f}) to ({power_x:.2f},{power_y:.2f})', file=sys.stderr)
+                    elif not _sok:
+                        _rejected = True
+        except:
+            pass
+
+        if _rejected:
+            sch.crud.remove_items([power_sym])
+            raise ValueError(f'Power symbol {power_name} for {p["ref"]}:{p["pin"]} overlaps existing element(s) and could not auto-slide to clear position.')
+
+        # Set #PWR reference
         _pwr_ref = next_ref('#PWR')
         for _f in power_sym._proto.fields:
             if _f.name == 'Reference':
                 _f.text = _pwr_ref
                 break
         sch.crud.update_items(power_sym)
-        placed_powers.append({'ref': _pwr_ref, 'position': [power_x, power_y], 'angle': power_angle})
+
+        # Track placed bbox for subsequent power symbols in the same batch
+        if _bb:
+            placed_bboxes.append({'ref': _pwr_ref, **_margined_bb})
+
+        _pwr_result = {'ref': _pwr_ref, 'position': [power_x, power_y], 'angle': power_angle}
+        if _shifted:
+            _pwr_result['shifted'] = True
+        placed_powers.append(_pwr_result)
 
         # Route wire from pin to power symbol using A*
-        if abs(pwr_offset) >= 0.01:
+        if abs(pwr_offset) >= 0.01 or _shifted:
             sd = _dir_index(esc_dx, esc_dy)
             # end_dir: wire approaches power symbol from opposite of escape direction
             ed = sd ^ 1 if sd >= 0 else -1

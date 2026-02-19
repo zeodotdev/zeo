@@ -742,4 +742,25 @@ BOOST_AUTO_TEST_CASE( ConnectToPowerMultiplePinSpecs )
 }
 
 
+BOOST_AUTO_TEST_CASE( ConnectToPowerHasOverlapDetection )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = {
+        { "pins", nlohmann::json::array( { "U1:1" } ) },
+        { "power", "VCC" }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
+
+    // Must have overlap detection infrastructure
+    BOOST_CHECK( cmd.find( "placed_bboxes" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_bboxes_overlap" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_slide_off" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_BBOX_MARGIN" ) != std::string::npos );
+    // Must check overlap after placing and slide or reject
+    BOOST_CHECK( cmd.find( "_has_conflict" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_rejected" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "remove_items" ) != std::string::npos );
+}
+
+
 BOOST_AUTO_TEST_SUITE_END()

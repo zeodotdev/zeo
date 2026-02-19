@@ -127,7 +127,7 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "try:\n";
     code << "    for _elbl in sch.labels.get_all():\n";
     code << "        try:\n";
-    code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm', include_text=False)\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm')\n";
     code << "        except:\n";
     code << "            continue\n";
     code << "        if _ebb:\n";
@@ -264,7 +264,7 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "            _SLIDE_GRID = 1.27\n";
     code << "            _SLIDE_MAX_STEPS = 8\n";
     code << "            try:\n";
-    code << "                _bb = sch.transform.get_bounding_box(_lbl, units='mm', include_text=False)\n";
+    code << "                _bb = sch.transform.get_bounding_box(_lbl, units='mm')\n";
     code << "                if _bb:\n";
     code << "                    _new_bbox = {'min_x': _bb['min_x'], 'max_x': _bb['max_x'], 'min_y': _bb['min_y'], 'max_y': _bb['max_y']}\n";
     code << "                    def _has_real_overlap(bbox):\n";
@@ -285,7 +285,7 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "                            if not _has_real_overlap(_try_bbox):\n";
     code << "                                sch.transform.move(_lbl, delta_x_mm=_sdx, delta_y_mm=_sdy)\n";
     code << "                                lbl_x, lbl_y = _try_x, _try_y\n";
-    code << "                                _bb = sch.transform.get_bounding_box(_lbl, units='mm', include_text=False)\n";
+    code << "                                _bb = sch.transform.get_bounding_box(_lbl, units='mm')\n";
     code << "                                if _bb:\n";
     code << "                                    _new_bbox = {'min_x': _bb['min_x'], 'max_x': _bb['max_x'], 'min_y': _bb['min_y'], 'max_y': _bb['max_y']}\n";
     code << "                                _shifted = True\n";

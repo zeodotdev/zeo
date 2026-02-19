@@ -336,7 +336,7 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
         code << "try:\n";
         code << "    for _elbl in sch.labels.get_all():\n";
         code << "        try:\n";
-        code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm', include_text=False)\n";
+        code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm')\n";
         code << "        except:\n";
         code << "            continue\n";
         code << "        if _ebb:\n";
@@ -1417,7 +1417,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "try:\n";
     code << "    for _elbl in sch.labels.get_all():\n";
     code << "        try:\n";
-    code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm', include_text=False)\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm')\n";
     code << "        except:\n";
     code << "            continue\n";
     code << "        if _ebb:\n";
@@ -1764,7 +1764,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "        _shift_dy_" << i << " = 0\n";
             code << "        _rejected_" << i << " = False\n";
             code << "        try:\n";
-            code << "            _bb_" << i << " = sch.transform.get_bounding_box(lbl_" << i << ", units='mm', include_text=False)\n";
+            code << "            _bb_" << i << " = sch.transform.get_bounding_box(lbl_" << i << ", units='mm')\n";
             code << "            if _bb_" << i << ":\n";
             code << "                _raw_bb_" << i << " = dict(_bb_" << i << ")\n";
             code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN}\n";
@@ -1773,7 +1773,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                    _sok_" << i << ", _sdx_" << i << ", _sdy_" << i << " = _slide_off(lbl_" << i << ", _raw_bb_" << i << ", _new_bbox_" << i << ")\n";
             code << "                    if _sok_" << i << " and (abs(_sdx_" << i << ") > 1e-6 or abs(_sdy_" << i << ") > 1e-6):\n";
             code << "                        sch.transform.move(lbl_" << i << ", delta_x_mm=_sdx_" << i << ", delta_y_mm=_sdy_" << i << ")\n";
-            code << "                        _bb_" << i << " = sch.transform.get_bounding_box(lbl_" << i << ", units='mm', include_text=False)\n";
+            code << "                        _bb_" << i << " = sch.transform.get_bounding_box(lbl_" << i << ", units='mm')\n";
             code << "                        if _bb_" << i << ":\n";
             code << "                            _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN}\n";
             code << "                        _shifted_" << i << " = True\n";

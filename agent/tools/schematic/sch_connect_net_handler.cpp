@@ -271,7 +271,7 @@ static const char* ROUTING_INFRASTRUCTURE = R"py(
     try:
         for obs_lbl in sch.labels.get_all():
             try:
-                bbox = sch.transform.get_bounding_box(obs_lbl, units='mm', include_text=False)
+                bbox = sch.transform.get_bounding_box(obs_lbl, units='mm')
             except:
                 continue
             if not bbox:
@@ -870,7 +870,7 @@ static const char* CONNECT_TO_POWER_ROUTING = R"py(
     try:
         for _elbl in sch.labels.get_all():
             try:
-                _ebb = sch.transform.get_bounding_box(_elbl, units='mm', include_text=False)
+                _ebb = sch.transform.get_bounding_box(_elbl, units='mm')
             except:
                 continue
             if _ebb:

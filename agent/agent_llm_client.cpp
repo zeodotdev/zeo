@@ -37,6 +37,25 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
                                                  const std::vector<LLM_TOOL>& aTools,
                                                  wxEvtHandler* aHandler )
 {
+    // If a previous request was cancelled but the thread hasn't finished yet, wait for it.
+    // This is common with Gemini where thinking pauses mean curl's cancel callbacks fire
+    // less frequently, so the abort takes longer to take effect.
+    if( m_requestInProgress.load() && m_cancelRequested.load() )
+    {
+        const int maxWaitMs = 3000;
+        const int sleepMs = 10;
+        int waited = 0;
+
+        while( m_requestInProgress.load() && waited < maxWaitMs )
+        {
+            std::this_thread::sleep_for( std::chrono::milliseconds( sleepMs ) );
+            waited += sleepMs;
+        }
+
+        if( m_requestInProgress.load() )
+            wxLogWarning( "Cancelled LLM request did not finish within %dms", maxWaitMs );
+    }
+
     // Check if a request is already in progress
     if( m_requestInProgress.load() )
     {

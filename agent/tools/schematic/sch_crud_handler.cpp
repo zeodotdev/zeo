@@ -1144,7 +1144,7 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "    \n";
     code << "    # Build lookup dictionaries\n";
     code << "    hierarchy = []\n";
-    code << "    sheet_by_name = {}\n";
+    code << "    sheet_by_name = {}   # name -> list of (node, info)\n";
     code << "    sheet_by_file = {}\n";
     code << "    sheet_by_uuid = {}\n";
     code << "    \n";
@@ -1154,7 +1154,7 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "        info = {'name': name, 'file': filename, 'uuid': uuid, 'path': path_str}\n";
     code << "        hierarchy.append(info)\n";
     code << "        if name:\n";
-    code << "            sheet_by_name[name] = (node, info)\n";
+    code << "            sheet_by_name.setdefault(name, []).append((node, info))\n";
     code << "        if filename:\n";
     code << "            sheet_by_file[filename] = (node, info)\n";
     code << "        if uuid:\n";
@@ -1169,7 +1169,7 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "            info = {'name': name, 'file': filename, 'uuid': uuid}\n";
     code << "            hierarchy.append(info)\n";
     code << "            if name:\n";
-    code << "                sheet_by_name[name] = (sheet, info)\n";
+    code << "                sheet_by_name.setdefault(name, []).append((sheet, info))\n";
     code << "            if filename:\n";
     code << "                sheet_by_file[filename] = (sheet, info)\n";
     code << "            sheet_by_uuid[uuid] = (sheet, info)\n";
@@ -1204,7 +1204,13 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "                    target_sheet, target_info = sheet_by_uuid[last_part]\n";
     code << "                # Try as sheet name (e.g., '/Power/')\n";
     code << "                elif last_part in sheet_by_name:\n";
-    code << "                    target_sheet, target_info = sheet_by_name[last_part]\n";
+    code << "                    matches = sheet_by_name[last_part]\n";
+    code << "                    if len(matches) > 1:\n";
+    code << "                        dupes = [m[1] for m in matches]\n";
+    code << "                        result = {'status': 'error', 'message': f\"Ambiguous sheet name '{last_part}' matches {len(matches)} sheets. Use UUID to disambiguate.\", 'matches': dupes, 'available_sheets': hierarchy}\n";
+    code << "                        print(json.dumps(result, indent=2))\n";
+    code << "                        sys.exit(0)\n";
+    code << "                    target_sheet, target_info = matches[0]\n";
     code << "                # Try as filename (e.g., '/Power.kicad_sch/')\n";
     code << "                elif last_part in sheet_by_file:\n";
     code << "                    target_sheet, target_info = sheet_by_file[last_part]\n";
@@ -1214,7 +1220,13 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "        else:\n";
     code << "            # Try as sheet name first\n";
     code << "            if sheet_path in sheet_by_name:\n";
-    code << "                target_sheet, target_info = sheet_by_name[sheet_path]\n";
+    code << "                matches = sheet_by_name[sheet_path]\n";
+    code << "                if len(matches) > 1:\n";
+    code << "                    dupes = [m[1] for m in matches]\n";
+    code << "                    result = {'status': 'error', 'message': f\"Ambiguous sheet name '{sheet_path}' matches {len(matches)} sheets. Use UUID to disambiguate.\", 'matches': dupes, 'available_sheets': hierarchy}\n";
+    code << "                    print(json.dumps(result, indent=2))\n";
+    code << "                    sys.exit(0)\n";
+    code << "                target_sheet, target_info = matches[0]\n";
     code << "            # Try as UUID\n";
     code << "            elif sheet_path in sheet_by_uuid:\n";
     code << "                target_sheet, target_info = sheet_by_uuid[sheet_path]\n";

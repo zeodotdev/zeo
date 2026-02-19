@@ -586,6 +586,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "Use the human-readable sheet name or path (e.g., 'Power Supply' or '/Power Supply/'). "
         "Use '/' to navigate back to the root sheet. "
         "Call with no arguments to list available sheets. "
+        "If multiple sheets share the same name, you must use the UUID instead to disambiguate. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schSwitchSheet.input_schema = {
         { "type", "object" },

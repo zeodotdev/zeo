@@ -500,7 +500,10 @@ PCB_EDIT_FRAME::PCB_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
 #ifdef KICAD_IPC_API
     m_apiHandler = std::make_unique<API_HANDLER_PCB>( this );
-    Pgm().GetApiServer().RegisterHandler( m_apiHandler.get() );
+    KICAD_API_SERVER& apiServer = Pgm().GetApiServer();
+    wxLogMessage( "PCB_EDIT_FRAME: Registering API_HANDLER_PCB with API_SERVER[%p]", &apiServer );
+    apiServer.RegisterHandler( m_apiHandler.get() );
+    wxLogMessage( "PCB_EDIT_FRAME: API_HANDLER_PCB registered" );
 
     if( Kiface().IsSingle() )
     {

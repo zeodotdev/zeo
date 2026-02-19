@@ -144,6 +144,13 @@ private:
     HANDLER_RESULT<BoardEnabledLayersResponse> handleSetBoardEnabledLayers(
             const HANDLER_CONTEXT<SetBoardEnabledLayers>& aCtx );
 
+    HANDLER_RESULT<BoardLayersInfoResponse> handleGetBoardLayersInfo(
+            const HANDLER_CONTEXT<GetBoardLayersInfo>& aCtx );
+
+    HANDLER_RESULT<Empty> handleSetLayerName( const HANDLER_CONTEXT<SetLayerName>& aCtx );
+
+    HANDLER_RESULT<Empty> handleSetLayerType( const HANDLER_CONTEXT<SetLayerType>& aCtx );
+
     HANDLER_RESULT<GraphicsDefaultsResponse> handleGetGraphicsDefaults(
             const HANDLER_CONTEXT<GetGraphicsDefaults>& aCtx );
 
@@ -163,6 +170,9 @@ private:
 
     HANDLER_RESULT<types::TitleBlockInfo> handleGetTitleBlockInfo(
             const HANDLER_CONTEXT<commands::GetTitleBlockInfo>& aCtx );
+
+    HANDLER_RESULT<Empty> handleSetTitleBlockInfo(
+            const HANDLER_CONTEXT<commands::SetTitleBlockInfo>& aCtx );
 
     HANDLER_RESULT<commands::ExpandTextVariablesResponse> handleExpandTextVariables(
             const HANDLER_CONTEXT<commands::ExpandTextVariables>& aCtx );
@@ -279,6 +289,69 @@ private:
 
     HANDLER_RESULT<GetGroupMembersResponse> handleGetGroupMembers(
             const HANDLER_CONTEXT<GetGroupMembers>& aCtx );
+
+    // Zone hatch offsets handlers
+    HANDLER_RESULT<ZoneHatchOffsetsResponse> handleGetZoneHatchOffsets(
+            const HANDLER_CONTEXT<GetZoneHatchOffsets>& aCtx );
+
+    HANDLER_RESULT<ZoneHatchOffsetsResponse> handleSetZoneHatchOffsets(
+            const HANDLER_CONTEXT<SetZoneHatchOffsets>& aCtx );
+
+    // Dimension defaults handlers
+    HANDLER_RESULT<DimensionDefaultsResponse> handleGetDimensionDefaults(
+            const HANDLER_CONTEXT<GetDimensionDefaults>& aCtx );
+
+    HANDLER_RESULT<DimensionDefaultsResponse> handleSetDimensionDefaults(
+            const HANDLER_CONTEXT<SetDimensionDefaults>& aCtx );
+
+    // Zone defaults handlers
+    HANDLER_RESULT<ZoneDefaultsResponse> handleGetZoneDefaults(
+            const HANDLER_CONTEXT<GetZoneDefaults>& aCtx );
+
+    HANDLER_RESULT<ZoneDefaultsResponse> handleSetZoneDefaults(
+            const HANDLER_CONTEXT<SetZoneDefaults>& aCtx );
+
+    // Pre-defined sizes handlers
+    HANDLER_RESULT<PreDefinedSizesResponse> handleGetPreDefinedSizes(
+            const HANDLER_CONTEXT<GetPreDefinedSizes>& aCtx );
+
+    HANDLER_RESULT<PreDefinedSizesResponse> handleSetPreDefinedSizes(
+            const HANDLER_CONTEXT<SetPreDefinedSizes>& aCtx );
+
+    // Teardrop settings handlers
+    HANDLER_RESULT<TeardropSettingsResponse> handleGetTeardropSettings(
+            const HANDLER_CONTEXT<GetTeardropSettings>& aCtx );
+
+    HANDLER_RESULT<TeardropSettingsResponse> handleSetTeardropSettings(
+            const HANDLER_CONTEXT<SetTeardropSettings>& aCtx );
+
+    // Length-tuning pattern settings handlers
+    HANDLER_RESULT<LengthTuningPatternSettingsResponse> handleGetLengthTuningPatternSettings(
+            const HANDLER_CONTEXT<GetLengthTuningPatternSettings>& aCtx );
+
+    HANDLER_RESULT<LengthTuningPatternSettingsResponse> handleSetLengthTuningPatternSettings(
+            const HANDLER_CONTEXT<SetLengthTuningPatternSettings>& aCtx );
+
+    // Tuning profiles handlers
+    HANDLER_RESULT<TuningProfilesResponse> handleGetTuningProfiles(
+            const HANDLER_CONTEXT<GetTuningProfiles>& aCtx );
+
+    HANDLER_RESULT<TuningProfilesResponse> handleSetTuningProfiles(
+            const HANDLER_CONTEXT<SetTuningProfiles>& aCtx );
+
+    // Component class settings handlers
+    HANDLER_RESULT<ComponentClassSettingsResponse> handleGetComponentClassSettings(
+            const HANDLER_CONTEXT<GetComponentClassSettings>& aCtx );
+
+    HANDLER_RESULT<ComponentClassSettingsResponse> handleSetComponentClassSettings(
+            const HANDLER_CONTEXT<SetComponentClassSettings>& aCtx );
+
+    // Custom DRC rules handlers
+    HANDLER_RESULT<CustomRulesResponse> handleGetCustomRules(
+            const HANDLER_CONTEXT<GetCustomRules>& aCtx );
+
+    HANDLER_RESULT<CustomRulesResponse> handleSetCustomRules(
+            const HANDLER_CONTEXT<SetCustomRules>& aCtx );
 
     // Document management handlers
     HANDLER_RESULT<commands::CreateDocumentResponse>

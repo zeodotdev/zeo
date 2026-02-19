@@ -48,11 +48,19 @@
 #include <layer_ids.h>
 #include <project.h>
 #include <tool/tool_manager.h>
+#include <tool/actions.h>
 #include <tools/pcb_actions.h>
 #include <tools/pcb_selection_tool.h>
 #include <tools/drc_tool.h>
 #include <drc/drc_engine.h>
 #include <zone.h>
+#include <zone_settings.h>
+#include <pcb_dimension.h>
+#include <teardrop/teardrop_parameters.h>
+#include <router/pns_meander.h>
+#include <project/tuning_profiles.h>
+#include <project/project_file.h>
+#include <project/component_class_settings.h>
 #include <netlist_reader/pcb_netlist.h>
 #include <netlist_reader/netlist_reader.h>
 #include <netlist_reader/board_netlist_updater.h>
@@ -74,6 +82,8 @@
 #include <api/common/types/base_types.pb.h>
 #include <widgets/appearance_controls.h>
 #include <wx/wfstream.h>
+#include <wx/textfile.h>
+#include <wx/file.h>
 #include <widgets/report_severity.h>
 
 using namespace kiapi::common::commands;
@@ -85,6 +95,8 @@ using types::ItemRequestStatus;
 API_HANDLER_PCB::API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame ) :
         API_HANDLER_EDITOR( aFrame )
 {
+    wxLogMessage( "API_HANDLER_PCB: Registering handlers..." );
+
     registerHandler<RunAction, RunActionResponse>( &API_HANDLER_PCB::handleRunAction );
     registerHandler<GetOpenDocuments, GetOpenDocumentsResponse>(
             &API_HANDLER_PCB::handleGetOpenDocuments );
@@ -106,6 +118,10 @@ API_HANDLER_PCB::API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame ) :
         &API_HANDLER_PCB::handleGetBoardEnabledLayers );
     registerHandler<SetBoardEnabledLayers, BoardEnabledLayersResponse>(
         &API_HANDLER_PCB::handleSetBoardEnabledLayers );
+    registerHandler<GetBoardLayersInfo, BoardLayersInfoResponse>(
+        &API_HANDLER_PCB::handleGetBoardLayersInfo );
+    registerHandler<SetLayerName, Empty>( &API_HANDLER_PCB::handleSetLayerName );
+    registerHandler<SetLayerType, Empty>( &API_HANDLER_PCB::handleSetLayerType );
     registerHandler<GetGraphicsDefaults, GraphicsDefaultsResponse>(
             &API_HANDLER_PCB::handleGetGraphicsDefaults );
     registerHandler<GetBoundingBox, GetBoundingBoxResponse>(
@@ -114,12 +130,22 @@ API_HANDLER_PCB::API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame ) :
             &API_HANDLER_PCB::handleGetPadShapeAsPolygon );
     registerHandler<CheckPadstackPresenceOnLayers, PadstackPresenceResponse>(
             &API_HANDLER_PCB::handleCheckPadstackPresenceOnLayers );
-    registerHandler<GetTitleBlockInfo, types::TitleBlockInfo>(
+    // Use fully qualified names to ensure correct proto types are registered
+    registerHandler<kiapi::common::commands::GetTitleBlockInfo, kiapi::common::types::TitleBlockInfo>(
             &API_HANDLER_PCB::handleGetTitleBlockInfo );
+    registerHandler<kiapi::common::commands::SetTitleBlockInfo, Empty>(
+            &API_HANDLER_PCB::handleSetTitleBlockInfo );
+    wxLogMessage( "API_HANDLER_PCB: Registered TitleBlock handlers. Type name: %s",
+                  std::string( kiapi::common::commands::GetTitleBlockInfo().GetTypeName() ).c_str() );
+
     registerHandler<ExpandTextVariables, ExpandTextVariablesResponse>(
             &API_HANDLER_PCB::handleExpandTextVariables );
-    registerHandler<GetBoardOrigin, types::Vector2>( &API_HANDLER_PCB::handleGetBoardOrigin );
-    registerHandler<SetBoardOrigin, Empty>( &API_HANDLER_PCB::handleSetBoardOrigin );
+    registerHandler<kiapi::board::commands::GetBoardOrigin, kiapi::common::types::Vector2>(
+            &API_HANDLER_PCB::handleGetBoardOrigin );
+    registerHandler<kiapi::board::commands::SetBoardOrigin, Empty>(
+            &API_HANDLER_PCB::handleSetBoardOrigin );
+    wxLogMessage( "API_HANDLER_PCB: Registered BoardOrigin handlers. Type name: %s",
+                  std::string( kiapi::board::commands::GetBoardOrigin().GetTypeName() ).c_str() );
 
     registerHandler<InteractiveMoveItems, Empty>( &API_HANDLER_PCB::handleInteractiveMoveItems );
     registerHandler<ShowDiffOverlay, Empty>( &API_HANDLER_PCB::handleShowDiffOverlay );
@@ -201,10 +227,66 @@ API_HANDLER_PCB::API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame ) :
     registerHandler<GetGroupMembers, GetGroupMembersResponse>(
             &API_HANDLER_PCB::handleGetGroupMembers );
 
+    // Zone hatch offsets handlers
+    registerHandler<GetZoneHatchOffsets, ZoneHatchOffsetsResponse>(
+            &API_HANDLER_PCB::handleGetZoneHatchOffsets );
+    registerHandler<SetZoneHatchOffsets, ZoneHatchOffsetsResponse>(
+            &API_HANDLER_PCB::handleSetZoneHatchOffsets );
+
+    // Dimension defaults handlers
+    registerHandler<GetDimensionDefaults, DimensionDefaultsResponse>(
+            &API_HANDLER_PCB::handleGetDimensionDefaults );
+    registerHandler<SetDimensionDefaults, DimensionDefaultsResponse>(
+            &API_HANDLER_PCB::handleSetDimensionDefaults );
+
+    // Zone defaults handlers
+    registerHandler<GetZoneDefaults, ZoneDefaultsResponse>(
+            &API_HANDLER_PCB::handleGetZoneDefaults );
+    registerHandler<SetZoneDefaults, ZoneDefaultsResponse>(
+            &API_HANDLER_PCB::handleSetZoneDefaults );
+
+    // Pre-defined sizes handlers
+    registerHandler<GetPreDefinedSizes, PreDefinedSizesResponse>(
+            &API_HANDLER_PCB::handleGetPreDefinedSizes );
+    registerHandler<SetPreDefinedSizes, PreDefinedSizesResponse>(
+            &API_HANDLER_PCB::handleSetPreDefinedSizes );
+
+    // Teardrop settings handlers
+    registerHandler<GetTeardropSettings, TeardropSettingsResponse>(
+            &API_HANDLER_PCB::handleGetTeardropSettings );
+    registerHandler<SetTeardropSettings, TeardropSettingsResponse>(
+            &API_HANDLER_PCB::handleSetTeardropSettings );
+
+    // Length-tuning pattern settings handlers
+    registerHandler<GetLengthTuningPatternSettings, LengthTuningPatternSettingsResponse>(
+            &API_HANDLER_PCB::handleGetLengthTuningPatternSettings );
+    registerHandler<SetLengthTuningPatternSettings, LengthTuningPatternSettingsResponse>(
+            &API_HANDLER_PCB::handleSetLengthTuningPatternSettings );
+
+    // Tuning profiles handlers
+    registerHandler<GetTuningProfiles, TuningProfilesResponse>(
+            &API_HANDLER_PCB::handleGetTuningProfiles );
+    registerHandler<SetTuningProfiles, TuningProfilesResponse>(
+            &API_HANDLER_PCB::handleSetTuningProfiles );
+
+    // Component class settings handlers
+    registerHandler<GetComponentClassSettings, ComponentClassSettingsResponse>(
+            &API_HANDLER_PCB::handleGetComponentClassSettings );
+    registerHandler<SetComponentClassSettings, ComponentClassSettingsResponse>(
+            &API_HANDLER_PCB::handleSetComponentClassSettings );
+
+    // Custom DRC rules handlers
+    registerHandler<GetCustomRules, CustomRulesResponse>(
+            &API_HANDLER_PCB::handleGetCustomRules );
+    registerHandler<SetCustomRules, CustomRulesResponse>(
+            &API_HANDLER_PCB::handleSetCustomRules );
+
     // Document management handlers
     registerHandler<CreateDocument, CreateDocumentResponse>( &API_HANDLER_PCB::handleCreateDocument );
     registerHandler<OpenDocument, OpenDocumentResponse>( &API_HANDLER_PCB::handleOpenDocument );
     registerHandler<CloseDocument, Empty>( &API_HANDLER_PCB::handleCloseDocument );
+
+    wxLogMessage( "API_HANDLER_PCB: Constructor complete. Total handlers registered: %zu", m_handlers.size() );
 }
 
 
@@ -1155,6 +1237,181 @@ HANDLER_RESULT<BoardEnabledLayersResponse> API_HANDLER_PCB::handleSetBoardEnable
 }
 
 
+namespace
+{
+
+BoardLayerType ToProtoBoardLayerType( LAYER_T aType )
+{
+    switch( aType )
+    {
+    case LT_UNDEFINED: return BoardLayerType::BLT_UNDEFINED;
+    case LT_SIGNAL:    return BoardLayerType::BLT_SIGNAL;
+    case LT_POWER:     return BoardLayerType::BLT_POWER;
+    case LT_MIXED:     return BoardLayerType::BLT_MIXED;
+    case LT_JUMPER:    return BoardLayerType::BLT_JUMPER;
+    case LT_AUX:       return BoardLayerType::BLT_AUX;
+    case LT_FRONT:     return BoardLayerType::BLT_FRONT;
+    case LT_BACK:      return BoardLayerType::BLT_BACK;
+    default:           return BoardLayerType::BLT_UNDEFINED;
+    }
+}
+
+
+LAYER_T FromProtoBoardLayerType( BoardLayerType aType )
+{
+    switch( aType )
+    {
+    case BoardLayerType::BLT_UNDEFINED: return LT_UNDEFINED;
+    case BoardLayerType::BLT_SIGNAL:    return LT_SIGNAL;
+    case BoardLayerType::BLT_POWER:     return LT_POWER;
+    case BoardLayerType::BLT_MIXED:     return LT_MIXED;
+    case BoardLayerType::BLT_JUMPER:    return LT_JUMPER;
+    case BoardLayerType::BLT_AUX:       return LT_AUX;
+    case BoardLayerType::BLT_FRONT:     return LT_FRONT;
+    case BoardLayerType::BLT_BACK:      return LT_BACK;
+    default:                            return LT_UNDEFINED;
+    }
+}
+
+} // anonymous namespace
+
+
+HANDLER_RESULT<BoardLayersInfoResponse> API_HANDLER_PCB::handleGetBoardLayersInfo(
+        const HANDLER_CONTEXT<GetBoardLayersInfo>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BoardLayersInfoResponse response;
+
+    BOARD* board = frame()->GetBoard();
+    int copperLayerCount = board->GetCopperLayerCount();
+
+    response.set_copper_layer_count( copperLayerCount );
+
+    LSET enabled = board->GetEnabledLayers();
+    LSET visible = board->GetVisibleLayers();
+
+    // Remove Rescue layer from visible set
+    enabled.reset( Rescue );
+
+    for( PCB_LAYER_ID layer_id : enabled.Seq() )
+    {
+        BoardLayerInfo* layerInfo = response.add_layers();
+
+        layerInfo->set_layer( ToProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( layer_id ) );
+        layerInfo->set_name( board->GetStandardLayerName( layer_id ).ToStdString() );
+        layerInfo->set_user_name( board->GetLayerName( layer_id ).ToStdString() );
+        layerInfo->set_type( ToProtoBoardLayerType( board->GetLayerType( layer_id ) ) );
+        layerInfo->set_enabled( true );
+        layerInfo->set_visible( visible[layer_id] );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_PCB::handleSetLayerName(
+        const HANDLER_CONTEXT<SetLayerName>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    PCB_LAYER_ID layer_id = FromProtoEnum<PCB_LAYER_ID>( aCtx.Request.layer() );
+
+    if( layer_id == UNDEFINED_LAYER )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Invalid layer specified" );
+        return tl::unexpected( e );
+    }
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board->GetEnabledLayers()[layer_id] )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Layer is not enabled" );
+        return tl::unexpected( e );
+    }
+
+    wxString newName = wxString::FromUTF8( aCtx.Request.name() );
+
+    if( !board->SetLayerName( layer_id, newName ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Failed to set layer name" );
+        return tl::unexpected( e );
+    }
+
+    frame()->UpdateUserInterface();
+    frame()->OnModify();
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_PCB::handleSetLayerType(
+        const HANDLER_CONTEXT<SetLayerType>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    PCB_LAYER_ID layer_id = FromProtoEnum<PCB_LAYER_ID>( aCtx.Request.layer() );
+
+    if( layer_id == UNDEFINED_LAYER )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Invalid layer specified" );
+        return tl::unexpected( e );
+    }
+
+    // Layer type can only be set for copper layers
+    if( !IsCopperLayer( layer_id ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Layer type can only be set for copper layers" );
+        return tl::unexpected( e );
+    }
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board->GetEnabledLayers()[layer_id] )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Layer is not enabled" );
+        return tl::unexpected( e );
+    }
+
+    LAYER_T newType = FromProtoBoardLayerType( aCtx.Request.type() );
+
+    if( !board->SetLayerType( layer_id, newType ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Failed to set layer type" );
+        return tl::unexpected( e );
+    }
+
+    frame()->UpdateUserInterface();
+    frame()->OnModify();
+
+    return Empty();
+}
+
+
 HANDLER_RESULT<GraphicsDefaultsResponse> API_HANDLER_PCB::handleGetGraphicsDefaults(
         const HANDLER_CONTEXT<GetGraphicsDefaults>& aCtx )
 {
@@ -1198,9 +1455,12 @@ HANDLER_RESULT<GraphicsDefaultsResponse> API_HANDLER_PCB::handleGetGraphicsDefau
 HANDLER_RESULT<types::Vector2> API_HANDLER_PCB::handleGetBoardOrigin(
         const HANDLER_CONTEXT<GetBoardOrigin>& aCtx )
 {
+    wxLogMessage( "API_HANDLER_PCB::handleGetBoardOrigin called" );
+
     if( HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
         !documentValidation )
     {
+        wxLogMessage( "API_HANDLER_PCB::handleGetBoardOrigin - validateDocument failed" );
         return tl::unexpected( documentValidation.error() );
     }
 
@@ -1436,10 +1696,15 @@ HANDLER_RESULT<PadstackPresenceResponse> API_HANDLER_PCB::handleCheckPadstackPre
 HANDLER_RESULT<types::TitleBlockInfo> API_HANDLER_PCB::handleGetTitleBlockInfo(
         const HANDLER_CONTEXT<GetTitleBlockInfo>& aCtx )
 {
+    wxLogMessage( "API_HANDLER_PCB::handleGetTitleBlockInfo called" );
+
     HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
 
     if( !documentValidation )
+    {
+        wxLogMessage( "API_HANDLER_PCB::handleGetTitleBlockInfo - validateDocument failed" );
         return tl::unexpected( documentValidation.error() );
+    }
 
     BOARD* board = frame()->GetBoard();
     const TITLE_BLOCK& block = board->GetTitleBlock();
@@ -1461,6 +1726,56 @@ HANDLER_RESULT<types::TitleBlockInfo> API_HANDLER_PCB::handleGetTitleBlockInfo(
     response.set_comment9( block.GetComment( 8 ).ToUTF8() );
 
     return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_PCB::handleSetTitleBlockInfo(
+        const HANDLER_CONTEXT<SetTitleBlockInfo>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    BOARD* board = frame()->GetBoard();
+    TITLE_BLOCK block = board->GetTitleBlock();
+
+    const types::TitleBlockInfo& info = aCtx.Request.title_block();
+
+    if( !info.title().empty() )
+        block.SetTitle( wxString::FromUTF8( info.title() ) );
+    if( !info.date().empty() )
+        block.SetDate( wxString::FromUTF8( info.date() ) );
+    if( !info.revision().empty() )
+        block.SetRevision( wxString::FromUTF8( info.revision() ) );
+    if( !info.company().empty() )
+        block.SetCompany( wxString::FromUTF8( info.company() ) );
+    if( !info.comment1().empty() )
+        block.SetComment( 0, wxString::FromUTF8( info.comment1() ) );
+    if( !info.comment2().empty() )
+        block.SetComment( 1, wxString::FromUTF8( info.comment2() ) );
+    if( !info.comment3().empty() )
+        block.SetComment( 2, wxString::FromUTF8( info.comment3() ) );
+    if( !info.comment4().empty() )
+        block.SetComment( 3, wxString::FromUTF8( info.comment4() ) );
+    if( !info.comment5().empty() )
+        block.SetComment( 4, wxString::FromUTF8( info.comment5() ) );
+    if( !info.comment6().empty() )
+        block.SetComment( 5, wxString::FromUTF8( info.comment6() ) );
+    if( !info.comment7().empty() )
+        block.SetComment( 6, wxString::FromUTF8( info.comment7() ) );
+    if( !info.comment8().empty() )
+        block.SetComment( 7, wxString::FromUTF8( info.comment8() ) );
+    if( !info.comment9().empty() )
+        block.SetComment( 8, wxString::FromUTF8( info.comment9() ) );
+
+    board->SetTitleBlock( block );
+    frame()->OnModify();
+
+    return Empty();
 }
 
 
@@ -2316,6 +2631,9 @@ HANDLER_RESULT<DesignRulesResponse> API_HANDLER_PCB::handleGetDesignRules(
     rules->set_solder_mask_expansion( bds.m_SolderMaskExpansion );
     rules->set_solder_mask_min_width( bds.m_SolderMaskMinWidth );
     rules->set_solder_mask_to_copper_clearance( bds.m_SolderMaskToCopperClearance );
+    rules->set_allow_soldermask_bridges_in_fps( bds.m_AllowSoldermaskBridgesInFPs );
+    rules->set_tent_vias_front( bds.m_TentViasFront );
+    rules->set_tent_vias_back( bds.m_TentViasBack );
 
     // Solder paste
     rules->set_solder_paste_margin( bds.m_SolderPasteMargin );
@@ -2323,6 +2641,15 @@ HANDLER_RESULT<DesignRulesResponse> API_HANDLER_PCB::handleGetDesignRules(
 
     // Minimum resolved spokes
     rules->set_min_resolved_spokes( bds.m_MinResolvedSpokes );
+
+    // Arc/Circle Approximations
+    rules->set_max_error( bds.m_MaxError );
+
+    // Zone Fill Strategy
+    rules->set_allow_external_fillets( bds.m_ZoneKeepExternalFillets );
+
+    // Length Tuning
+    rules->set_include_stackup_in_length( bds.m_UseHeightForLengthCalcs );
 
     return response;
 }
@@ -2343,6 +2670,10 @@ HANDLER_RESULT<DesignRulesResponse> API_HANDLER_PCB::handleSetDesignRules(
     BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
     const BoardDesignRules& rules = aCtx.Request.rules();
 
+    // DEBUG: Log all incoming min values
+    wxLogMessage( "SetDesignRules INCOMING: min_via_drill=%lld, min_through_hole=%lld, current m_MinThroughDrill=%d",
+                  (long long)rules.min_via_drill(), (long long)rules.min_through_hole(), bds.m_MinThroughDrill );
+
     // Copper clearances
     if( rules.min_clearance() > 0 )
         bds.m_MinClearance = rules.min_clearance();
@@ -2354,8 +2685,6 @@ HANDLER_RESULT<DesignRulesResponse> API_HANDLER_PCB::handleSetDesignRules(
     // Via constraints
     if( rules.min_via_diameter() > 0 )
         bds.m_ViasMinSize = rules.min_via_diameter();
-    if( rules.min_via_drill() > 0 )
-        bds.m_MinThroughDrill = rules.min_via_drill();
     if( rules.min_via_annular_width() > 0 )
         bds.m_ViasMinAnnularWidth = rules.min_via_annular_width();
 
@@ -2365,9 +2694,19 @@ HANDLER_RESULT<DesignRulesResponse> API_HANDLER_PCB::handleSetDesignRules(
     if( rules.min_microvia_drill() > 0 )
         bds.m_MicroViasMinDrill = rules.min_microvia_drill();
 
-    // Hole constraints
-    if( rules.min_through_hole() > 0 )
+    // Hole constraints - min_via_drill and min_through_hole both map to m_MinThroughDrill
+    // Prioritize min_via_drill if set, otherwise use min_through_hole
+    if( rules.min_via_drill() > 0 )
+    {
+        wxLogMessage( "SetDesignRules: Setting m_MinThroughDrill from min_via_drill=%lld", (long long)rules.min_via_drill() );
+        bds.m_MinThroughDrill = rules.min_via_drill();
+    }
+    else if( rules.min_through_hole() > 0 )
+    {
+        wxLogMessage( "SetDesignRules: Setting m_MinThroughDrill from min_through_hole=%lld", (long long)rules.min_through_hole() );
         bds.m_MinThroughDrill = rules.min_through_hole();
+    }
+    wxLogMessage( "SetDesignRules AFTER: m_MinThroughDrill=%d", bds.m_MinThroughDrill );
     if( rules.min_hole_to_hole() > 0 )
         bds.m_HoleToHoleMin = rules.min_hole_to_hole();
     if( rules.hole_to_copper_clearance() > 0 )
@@ -2391,6 +2730,9 @@ HANDLER_RESULT<DesignRulesResponse> API_HANDLER_PCB::handleSetDesignRules(
         bds.m_SolderMaskMinWidth = rules.solder_mask_min_width();
     if( rules.solder_mask_to_copper_clearance() >= 0 )
         bds.m_SolderMaskToCopperClearance = rules.solder_mask_to_copper_clearance();
+    bds.m_AllowSoldermaskBridgesInFPs = rules.allow_soldermask_bridges_in_fps();
+    bds.m_TentViasFront = rules.tent_vias_front();
+    bds.m_TentViasBack = rules.tent_vias_back();
 
     // Solder paste
     bds.m_SolderPasteMargin = rules.solder_paste_margin();
@@ -2399,6 +2741,16 @@ HANDLER_RESULT<DesignRulesResponse> API_HANDLER_PCB::handleSetDesignRules(
     // Minimum resolved spokes
     if( rules.min_resolved_spokes() > 0 )
         bds.m_MinResolvedSpokes = rules.min_resolved_spokes();
+
+    // Arc/Circle Approximations
+    if( rules.max_error() > 0 )
+        bds.m_MaxError = rules.max_error();
+
+    // Zone Fill Strategy
+    bds.m_ZoneKeepExternalFillets = rules.allow_external_fillets();
+
+    // Length Tuning
+    bds.m_UseHeightForLengthCalcs = rules.include_stackup_in_length();
 
     board->SetModified();
     frame()->OnModify();
@@ -2425,9 +2777,15 @@ HANDLER_RESULT<DesignRulesResponse> API_HANDLER_PCB::handleSetDesignRules(
     updatedRules->set_solder_mask_expansion( bds.m_SolderMaskExpansion );
     updatedRules->set_solder_mask_min_width( bds.m_SolderMaskMinWidth );
     updatedRules->set_solder_mask_to_copper_clearance( bds.m_SolderMaskToCopperClearance );
+    updatedRules->set_allow_soldermask_bridges_in_fps( bds.m_AllowSoldermaskBridgesInFPs );
+    updatedRules->set_tent_vias_front( bds.m_TentViasFront );
+    updatedRules->set_tent_vias_back( bds.m_TentViasBack );
     updatedRules->set_solder_paste_margin( bds.m_SolderPasteMargin );
     updatedRules->set_solder_paste_margin_ratio( bds.m_SolderPasteMarginRatio );
     updatedRules->set_min_resolved_spokes( bds.m_MinResolvedSpokes );
+    updatedRules->set_max_error( bds.m_MaxError );
+    updatedRules->set_allow_external_fillets( bds.m_ZoneKeepExternalFillets );
+    updatedRules->set_include_stackup_in_length( bds.m_UseHeightForLengthCalcs );
 
     return response;
 }
@@ -2447,11 +2805,25 @@ HANDLER_RESULT<DRCSettingsResponse> API_HANDLER_PCB::handleGetDRCSettings(
     DRCSettingsResponse response;
     DRCSettingsData* settings = response.mutable_settings();
 
-    // Export DRC severities
-    for( const auto& [errorCode, severity] : bds.m_DRCSeverities )
+    // Export DRC severities using settings keys (human-readable names)
+    for( const RC_ITEM& item : DRC_ITEM::GetItemsWithSeverities() )
     {
+        wxString settingsKey = item.GetSettingsKey();
+
+        // Skip heading items (empty settings key)
+        if( settingsKey.IsEmpty() )
+            continue;
+
+        int errorCode = item.GetErrorCode();
+
+        // Get severity from board settings, or use default RPT_SEVERITY_ERROR
+        SEVERITY severity = RPT_SEVERITY_ERROR;
+        auto it = bds.m_DRCSeverities.find( errorCode );
+        if( it != bds.m_DRCSeverities.end() )
+            severity = it->second;
+
         DRCCheckSeverity* checkSeverity = settings->add_check_severities();
-        checkSeverity->set_check_name( std::to_string( errorCode ) );
+        checkSeverity->set_check_name( settingsKey.ToStdString() );
         checkSeverity->set_severity( ToProtoEnum<SEVERITY, DrcSeverity>( severity ) );
     }
 
@@ -2475,19 +2847,21 @@ HANDLER_RESULT<Empty> API_HANDLER_PCB::handleSetDRCSettings(
 
     const DRCSettingsData& settings = aCtx.Request.settings();
 
-    // Apply DRC severity settings
+    // Apply DRC severity settings using settings keys
     for( const DRCCheckSeverity& checkSeverity : settings.check_severities() )
     {
-        try
+        wxString settingsKey = wxString::FromUTF8( checkSeverity.check_name() );
+
+        // Look up the DRC item by settings key to get its error code
+        std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( settingsKey );
+
+        if( drcItem )
         {
-            int errorCode = std::stoi( checkSeverity.check_name() );
+            int errorCode = drcItem->GetErrorCode();
             SEVERITY severity = FromProtoEnum<SEVERITY>( checkSeverity.severity() );
             bds.m_DRCSeverities[errorCode] = severity;
         }
-        catch( ... )
-        {
-            // Skip invalid check names
-        }
+        // Skip unknown settings keys silently
     }
 
     board->SetModified();
@@ -2510,16 +2884,30 @@ HANDLER_RESULT<PCBGridSettingsResponse> API_HANDLER_PCB::handleGetPCBGridSetting
     PCBGridSettingsResponse response;
     PCBGridSettings* settings = response.mutable_settings();
 
-    // Get current grid size
-    int currentIdx = gridSettings.last_size_idx;
+    // Get current grid size - prefer reading from GAL for accuracy
+    bool gotGridFromGAL = false;
 
-    if( currentIdx >= 0 && currentIdx < static_cast<int>( gridSettings.grids.size() ) )
+    if( frame()->GetCanvas() && frame()->GetCanvas()->GetGAL() )
     {
-        const GRID& grid = gridSettings.grids[currentIdx];
-        VECTOR2D gridSize = grid.ToDouble( pcbIUScale );
-
+        VECTOR2D gridSize = frame()->GetCanvas()->GetGAL()->GetGridSize();
         settings->set_grid_size_x_nm( static_cast<int64_t>( gridSize.x ) );
         settings->set_grid_size_y_nm( static_cast<int64_t>( gridSize.y ) );
+        gotGridFromGAL = true;
+    }
+
+    // Fallback to settings if GAL not available
+    if( !gotGridFromGAL )
+    {
+        int currentIdx = gridSettings.last_size_idx;
+
+        if( currentIdx >= 0 && currentIdx < static_cast<int>( gridSettings.grids.size() ) )
+        {
+            const GRID& grid = gridSettings.grids[currentIdx];
+            VECTOR2D gridSize = grid.ToDouble( pcbIUScale );
+
+            settings->set_grid_size_x_nm( static_cast<int64_t>( gridSize.x ) );
+            settings->set_grid_size_y_nm( static_cast<int64_t>( gridSize.y ) );
+        }
     }
 
     settings->set_show_grid( gridSettings.show );
@@ -2569,20 +2957,84 @@ HANDLER_RESULT<Empty> API_HANDLER_PCB::handleSetPCBGridSettings(
     // Set custom grid size if specified
     if( aCtx.Request.has_grid_size_x_nm() || aCtx.Request.has_grid_size_y_nm() )
     {
-        // Convert nm to appropriate unit string for user grid
+        // Convert nm to appropriate unit string for grid
         double gridX = aCtx.Request.has_grid_size_x_nm()
                            ? aCtx.Request.grid_size_x_nm() / 1e6  // nm to mm
                            : 1.0;
         double gridY = aCtx.Request.has_grid_size_y_nm()
                            ? aCtx.Request.grid_size_y_nm() / 1e6  // nm to mm
-                           : 1.0;
+                           : gridX;  // Default to square grid
 
+        // Store as user grid for persistence
         gridSettings.user_grid_x = wxString::Format( wxT( "%g mm" ), gridX );
         gridSettings.user_grid_y = wxString::Format( wxT( "%g mm" ), gridY );
+
+        // Create a GRID entry with the new size
+        GRID newGrid;
+        newGrid.name = wxT( "API" );
+        newGrid.x = wxString::Format( wxT( "%g mm" ), gridX );
+        newGrid.y = wxString::Format( wxT( "%g mm" ), gridY );
+
+        // Find or add the "API" grid entry
+        int apiGridIdx = -1;
+        for( size_t i = 0; i < gridSettings.grids.size(); ++i )
+        {
+            if( gridSettings.grids[i].name == wxT( "API" ) )
+            {
+                apiGridIdx = static_cast<int>( i );
+                break;
+            }
+        }
+
+        if( apiGridIdx >= 0 )
+        {
+            // Update existing API grid
+            gridSettings.grids[apiGridIdx] = newGrid;
+        }
+        else
+        {
+            // Add new API grid at the end
+            apiGridIdx = static_cast<int>( gridSettings.grids.size() );
+            gridSettings.grids.push_back( newGrid );
+        }
+
+        // Select the API grid
+        gridSettings.last_size_idx = apiGridIdx;
+
+        // Apply the grid size directly to the GAL and canvas
+        // The gridPreset action uses a cached grid list (m_grids) that doesn't include
+        // our runtime-added "API" grid entry, so we set the size directly
+        if( frame()->GetCanvas() )
+        {
+            KIGFX::GAL* gal = frame()->GetCanvas()->GetGAL();
+            KIGFX::VIEW* view = frame()->GetCanvas()->GetView();
+
+            if( gal )
+            {
+                VECTOR2D gridSize( gridX * pcbIUScale.IU_PER_MM, gridY * pcbIUScale.IU_PER_MM );
+                gal->SetGridSize( gridSize );
+            }
+
+            if( view )
+            {
+                view->MarkTargetDirty( KIGFX::TARGET_NONCACHED );
+            }
+        }
+    }
+
+    // Update grid visibility in GAL
+    if( aCtx.Request.has_show_grid() && frame()->GetCanvas() && frame()->GetCanvas()->GetGAL() )
+    {
+        frame()->GetCanvas()->GetGAL()->SetGridVisibility( aCtx.Request.show_grid() );
     }
 
     // Refresh the view
-    frame()->GetCanvas()->Refresh();
+    if( frame()->GetCanvas() )
+    {
+        if( frame()->GetCanvas()->GetView() )
+            frame()->GetCanvas()->GetView()->MarkTargetDirty( KIGFX::TARGET_NONCACHED );
+        frame()->GetCanvas()->Refresh();
+    }
 
     return Empty();
 }
@@ -4001,4 +4453,1311 @@ HANDLER_RESULT<GetGroupMembersResponse> API_HANDLER_PCB::handleGetGroupMembers(
     }
 
     return response;
+}
+
+
+HANDLER_RESULT<ZoneHatchOffsetsResponse> API_HANDLER_PCB::handleGetZoneHatchOffsets(
+        const HANDLER_CONTEXT<GetZoneHatchOffsets>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+    ZoneHatchOffsetsResponse response;
+
+    // Iterate through all enabled copper layers
+    for( PCB_LAYER_ID layer : LSET::AllCuMask().UIOrder() )
+    {
+        if( !bds.IsLayerEnabled( layer ) )
+            continue;
+
+        ZoneHatchOffset* offset = response.add_layer_offsets();
+        offset->set_layer( ToProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( layer ) );
+
+        if( bds.m_ZoneLayerProperties.contains( layer ) )
+        {
+            const ZONE_LAYER_PROPERTIES& props = bds.m_ZoneLayerProperties.at( layer );
+            if( props.hatching_offset.has_value() )
+            {
+                offset->mutable_offset()->set_x_nm( props.hatching_offset->x );
+                offset->mutable_offset()->set_y_nm( props.hatching_offset->y );
+            }
+            else
+            {
+                offset->mutable_offset()->set_x_nm( 0 );
+                offset->mutable_offset()->set_y_nm( 0 );
+            }
+        }
+        else
+        {
+            offset->mutable_offset()->set_x_nm( 0 );
+            offset->mutable_offset()->set_y_nm( 0 );
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<ZoneHatchOffsetsResponse> API_HANDLER_PCB::handleSetZoneHatchOffsets(
+        const HANDLER_CONTEXT<SetZoneHatchOffsets>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+
+    // Update only the specified layers
+    for( const ZoneHatchOffset& layerOffset : aCtx.Request.layer_offsets() )
+    {
+        PCB_LAYER_ID layer = FromProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>(
+                layerOffset.layer() );
+
+        if( !IsCopperLayer( layer ) )
+            continue;
+
+        ZONE_LAYER_PROPERTIES& props = bds.m_ZoneLayerProperties[layer];
+        props.hatching_offset = VECTOR2I( layerOffset.offset().x_nm(), layerOffset.offset().y_nm() );
+    }
+
+    frame()->OnModify();
+
+    // Return updated offsets
+    return handleGetZoneHatchOffsets(
+            HANDLER_CONTEXT<GetZoneHatchOffsets>{ aCtx.ClientName, GetZoneHatchOffsets() } );
+}
+
+
+HANDLER_RESULT<DimensionDefaultsResponse> API_HANDLER_PCB::handleGetDimensionDefaults(
+        const HANDLER_CONTEXT<GetDimensionDefaults>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+    DimensionDefaultsResponse response;
+
+    // Map DIM_UNITS_MODE to proto enum
+    switch( bds.m_DimensionUnitsMode )
+    {
+    case DIM_UNITS_MODE::INCH:      response.set_units_mode( DimensionUnitsMode::DUM_INCHES ); break;
+    case DIM_UNITS_MODE::MILS:      response.set_units_mode( DimensionUnitsMode::DUM_MILS ); break;
+    case DIM_UNITS_MODE::MM:        response.set_units_mode( DimensionUnitsMode::DUM_MILLIMETERS ); break;
+    case DIM_UNITS_MODE::AUTOMATIC: response.set_units_mode( DimensionUnitsMode::DUM_AUTOMATIC ); break;
+    }
+
+    // Map DIM_UNITS_FORMAT to proto enum
+    switch( bds.m_DimensionUnitsFormat )
+    {
+    case DIM_UNITS_FORMAT::NO_SUFFIX:    response.set_units_format( DimensionUnitsFormat::DUF_NO_SUFFIX ); break;
+    case DIM_UNITS_FORMAT::BARE_SUFFIX:  response.set_units_format( DimensionUnitsFormat::DUF_BARE_SUFFIX ); break;
+    case DIM_UNITS_FORMAT::PAREN_SUFFIX: response.set_units_format( DimensionUnitsFormat::DUF_PAREN_SUFFIX ); break;
+    }
+
+    // Map DIM_PRECISION to proto enum
+    response.set_precision( static_cast<DimensionPrecision>( static_cast<int>( bds.m_DimensionPrecision ) ) );
+
+    response.set_suppress_zeroes( bds.m_DimensionSuppressZeroes );
+
+    // Map DIM_TEXT_POSITION to proto enum
+    switch( bds.m_DimensionTextPosition )
+    {
+    case DIM_TEXT_POSITION::OUTSIDE: response.set_text_position( DimensionTextPosition::DTP_OUTSIDE ); break;
+    case DIM_TEXT_POSITION::INLINE:  response.set_text_position( DimensionTextPosition::DTP_INLINE ); break;
+    case DIM_TEXT_POSITION::MANUAL:  response.set_text_position( DimensionTextPosition::DTP_MANUAL ); break;
+    }
+
+    response.set_keep_text_aligned( bds.m_DimensionKeepTextAligned );
+    response.mutable_arrow_length()->set_value_nm( bds.m_DimensionArrowLength );
+    response.mutable_extension_offset()->set_value_nm( bds.m_DimensionExtensionOffset );
+
+    return response;
+}
+
+
+HANDLER_RESULT<DimensionDefaultsResponse> API_HANDLER_PCB::handleSetDimensionDefaults(
+        const HANDLER_CONTEXT<SetDimensionDefaults>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+
+    if( aCtx.Request.has_units_mode() )
+    {
+        switch( aCtx.Request.units_mode() )
+        {
+        case DimensionUnitsMode::DUM_INCHES:      bds.m_DimensionUnitsMode = DIM_UNITS_MODE::INCH; break;
+        case DimensionUnitsMode::DUM_MILS:        bds.m_DimensionUnitsMode = DIM_UNITS_MODE::MILS; break;
+        case DimensionUnitsMode::DUM_MILLIMETERS: bds.m_DimensionUnitsMode = DIM_UNITS_MODE::MM; break;
+        case DimensionUnitsMode::DUM_AUTOMATIC:   bds.m_DimensionUnitsMode = DIM_UNITS_MODE::AUTOMATIC; break;
+        }
+    }
+
+    if( aCtx.Request.has_units_format() )
+    {
+        switch( aCtx.Request.units_format() )
+        {
+        case DimensionUnitsFormat::DUF_NO_SUFFIX:    bds.m_DimensionUnitsFormat = DIM_UNITS_FORMAT::NO_SUFFIX; break;
+        case DimensionUnitsFormat::DUF_BARE_SUFFIX:  bds.m_DimensionUnitsFormat = DIM_UNITS_FORMAT::BARE_SUFFIX; break;
+        case DimensionUnitsFormat::DUF_PAREN_SUFFIX: bds.m_DimensionUnitsFormat = DIM_UNITS_FORMAT::PAREN_SUFFIX; break;
+        }
+    }
+
+    if( aCtx.Request.has_precision() )
+    {
+        bds.m_DimensionPrecision = static_cast<DIM_PRECISION>( aCtx.Request.precision() );
+    }
+
+    if( aCtx.Request.has_suppress_zeroes() )
+    {
+        bds.m_DimensionSuppressZeroes = aCtx.Request.suppress_zeroes();
+    }
+
+    if( aCtx.Request.has_text_position() )
+    {
+        switch( aCtx.Request.text_position() )
+        {
+        case DimensionTextPosition::DTP_OUTSIDE: bds.m_DimensionTextPosition = DIM_TEXT_POSITION::OUTSIDE; break;
+        case DimensionTextPosition::DTP_INLINE:  bds.m_DimensionTextPosition = DIM_TEXT_POSITION::INLINE; break;
+        case DimensionTextPosition::DTP_MANUAL:  bds.m_DimensionTextPosition = DIM_TEXT_POSITION::MANUAL; break;
+        }
+    }
+
+    if( aCtx.Request.has_keep_text_aligned() )
+    {
+        bds.m_DimensionKeepTextAligned = aCtx.Request.keep_text_aligned();
+    }
+
+    if( aCtx.Request.has_arrow_length() )
+    {
+        bds.m_DimensionArrowLength = aCtx.Request.arrow_length().value_nm();
+    }
+
+    if( aCtx.Request.has_extension_offset() )
+    {
+        bds.m_DimensionExtensionOffset = aCtx.Request.extension_offset().value_nm();
+    }
+
+    frame()->OnModify();
+
+    // Return updated defaults
+    return handleGetDimensionDefaults(
+            HANDLER_CONTEXT<GetDimensionDefaults>{ aCtx.ClientName, GetDimensionDefaults() } );
+}
+
+
+HANDLER_RESULT<ZoneDefaultsResponse> API_HANDLER_PCB::handleGetZoneDefaults(
+        const HANDLER_CONTEXT<GetZoneDefaults>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+    const ZONE_SETTINGS& zs = bds.GetDefaultZoneSettings();
+    ZoneDefaultsResponse response;
+
+    response.set_name( zs.m_Name.ToStdString() );
+    response.set_locked( zs.m_Locked );
+    response.set_priority( zs.m_ZonePriority );
+
+    // Map corner smoothing type
+    switch( zs.GetCornerSmoothingType() )
+    {
+    case ZONE_SETTINGS::SMOOTHING_NONE:    response.set_corner_smoothing( ZoneCornerSmoothing::ZCS_NONE ); break;
+    case ZONE_SETTINGS::SMOOTHING_CHAMFER: response.set_corner_smoothing( ZoneCornerSmoothing::ZCS_CHAMFER ); break;
+    case ZONE_SETTINGS::SMOOTHING_FILLET:  response.set_corner_smoothing( ZoneCornerSmoothing::ZCS_FILLET ); break;
+    default:                               response.set_corner_smoothing( ZoneCornerSmoothing::ZCS_NONE ); break;
+    }
+
+    response.mutable_corner_radius()->set_value_nm( zs.GetCornerRadius() );
+    response.mutable_clearance()->set_value_nm( zs.m_ZoneClearance );
+    response.mutable_min_thickness()->set_value_nm( zs.m_ZoneMinThickness );
+
+    // Map pad connection type
+    switch( zs.GetPadConnection() )
+    {
+    case ZONE_CONNECTION::INHERITED:   response.set_pad_connection( ZonePadConnection::ZPC_INHERITED ); break;
+    case ZONE_CONNECTION::NONE:        response.set_pad_connection( ZonePadConnection::ZPC_NONE ); break;
+    case ZONE_CONNECTION::THERMAL:     response.set_pad_connection( ZonePadConnection::ZPC_THERMAL ); break;
+    case ZONE_CONNECTION::FULL:        response.set_pad_connection( ZonePadConnection::ZPC_SOLID ); break;
+    case ZONE_CONNECTION::THT_THERMAL: response.set_pad_connection( ZonePadConnection::ZPC_THT_THERMAL ); break;
+    }
+
+    response.mutable_thermal_gap()->set_value_nm( zs.m_ThermalReliefGap );
+    response.mutable_thermal_spoke_width()->set_value_nm( zs.m_ThermalReliefSpokeWidth );
+
+    // Map island removal mode
+    switch( zs.GetIslandRemovalMode() )
+    {
+    case ISLAND_REMOVAL_MODE::ALWAYS: response.set_island_removal( ZoneIslandRemoval::ZIR_ALWAYS ); break;
+    case ISLAND_REMOVAL_MODE::NEVER:  response.set_island_removal( ZoneIslandRemoval::ZIR_NEVER ); break;
+    case ISLAND_REMOVAL_MODE::AREA:   response.set_island_removal( ZoneIslandRemoval::ZIR_AREA ); break;
+    }
+
+    response.set_min_island_area_nm2( zs.GetMinIslandArea() );
+
+    return response;
+}
+
+
+HANDLER_RESULT<ZoneDefaultsResponse> API_HANDLER_PCB::handleSetZoneDefaults(
+        const HANDLER_CONTEXT<SetZoneDefaults>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+    ZONE_SETTINGS zs = bds.GetDefaultZoneSettings();
+
+    if( aCtx.Request.has_name() )
+    {
+        zs.m_Name = wxString::FromUTF8( aCtx.Request.name() );
+    }
+
+    if( aCtx.Request.has_locked() )
+    {
+        zs.m_Locked = aCtx.Request.locked();
+    }
+
+    if( aCtx.Request.has_priority() )
+    {
+        zs.m_ZonePriority = aCtx.Request.priority();
+    }
+
+    if( aCtx.Request.has_corner_smoothing() )
+    {
+        switch( aCtx.Request.corner_smoothing() )
+        {
+        case ZoneCornerSmoothing::ZCS_NONE:    zs.SetCornerSmoothingType( ZONE_SETTINGS::SMOOTHING_NONE ); break;
+        case ZoneCornerSmoothing::ZCS_CHAMFER: zs.SetCornerSmoothingType( ZONE_SETTINGS::SMOOTHING_CHAMFER ); break;
+        case ZoneCornerSmoothing::ZCS_FILLET:  zs.SetCornerSmoothingType( ZONE_SETTINGS::SMOOTHING_FILLET ); break;
+        }
+    }
+
+    if( aCtx.Request.has_corner_radius() )
+    {
+        zs.SetCornerRadius( aCtx.Request.corner_radius().value_nm() );
+    }
+
+    if( aCtx.Request.has_clearance() )
+    {
+        zs.m_ZoneClearance = aCtx.Request.clearance().value_nm();
+    }
+
+    if( aCtx.Request.has_min_thickness() )
+    {
+        zs.m_ZoneMinThickness = aCtx.Request.min_thickness().value_nm();
+    }
+
+    if( aCtx.Request.has_pad_connection() )
+    {
+        switch( aCtx.Request.pad_connection() )
+        {
+        case ZonePadConnection::ZPC_INHERITED:   zs.SetPadConnection( ZONE_CONNECTION::INHERITED ); break;
+        case ZonePadConnection::ZPC_NONE:        zs.SetPadConnection( ZONE_CONNECTION::NONE ); break;
+        case ZonePadConnection::ZPC_THERMAL:     zs.SetPadConnection( ZONE_CONNECTION::THERMAL ); break;
+        case ZonePadConnection::ZPC_SOLID:       zs.SetPadConnection( ZONE_CONNECTION::FULL ); break;
+        case ZonePadConnection::ZPC_THT_THERMAL: zs.SetPadConnection( ZONE_CONNECTION::THT_THERMAL ); break;
+        }
+    }
+
+    if( aCtx.Request.has_thermal_gap() )
+    {
+        zs.m_ThermalReliefGap = aCtx.Request.thermal_gap().value_nm();
+    }
+
+    if( aCtx.Request.has_thermal_spoke_width() )
+    {
+        zs.m_ThermalReliefSpokeWidth = aCtx.Request.thermal_spoke_width().value_nm();
+    }
+
+    if( aCtx.Request.has_island_removal() )
+    {
+        switch( aCtx.Request.island_removal() )
+        {
+        case ZoneIslandRemoval::ZIR_ALWAYS: zs.SetIslandRemovalMode( ISLAND_REMOVAL_MODE::ALWAYS ); break;
+        case ZoneIslandRemoval::ZIR_NEVER:  zs.SetIslandRemovalMode( ISLAND_REMOVAL_MODE::NEVER ); break;
+        case ZoneIslandRemoval::ZIR_AREA:   zs.SetIslandRemovalMode( ISLAND_REMOVAL_MODE::AREA ); break;
+        }
+    }
+
+    if( aCtx.Request.has_min_island_area_nm2() )
+    {
+        zs.SetMinIslandArea( aCtx.Request.min_island_area_nm2() );
+    }
+
+    bds.SetDefaultZoneSettings( zs );
+    frame()->OnModify();
+
+    // Return updated defaults
+    return handleGetZoneDefaults(
+            HANDLER_CONTEXT<GetZoneDefaults>{ aCtx.ClientName, GetZoneDefaults() } );
+}
+
+
+HANDLER_RESULT<PreDefinedSizesResponse> API_HANDLER_PCB::handleGetPreDefinedSizes(
+        const HANDLER_CONTEXT<GetPreDefinedSizes>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+    PreDefinedSizesResponse response;
+    PreDefinedSizes* sizes = response.mutable_sizes();
+
+    // Track widths (skip index 0 which is the netclass default)
+    for( size_t i = 1; i < bds.m_TrackWidthList.size(); ++i )
+    {
+        sizes->add_track_widths_nm( bds.m_TrackWidthList[i] );
+    }
+
+    // Via sizes (skip index 0 which is the netclass default)
+    for( size_t i = 1; i < bds.m_ViasDimensionsList.size(); ++i )
+    {
+        ViaDimension* via = sizes->add_via_sizes();
+        via->set_diameter_nm( bds.m_ViasDimensionsList[i].m_Diameter );
+        via->set_drill_nm( bds.m_ViasDimensionsList[i].m_Drill );
+    }
+
+    // Diff pair dimensions (skip index 0 which is the netclass default)
+    for( size_t i = 1; i < bds.m_DiffPairDimensionsList.size(); ++i )
+    {
+        DiffPairDimension* dp = sizes->add_diff_pairs();
+        dp->set_width_nm( bds.m_DiffPairDimensionsList[i].m_Width );
+        dp->set_gap_nm( bds.m_DiffPairDimensionsList[i].m_Gap );
+        dp->set_via_gap_nm( bds.m_DiffPairDimensionsList[i].m_ViaGap );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<PreDefinedSizesResponse> API_HANDLER_PCB::handleSetPreDefinedSizes(
+        const HANDLER_CONTEXT<SetPreDefinedSizes>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+    const PreDefinedSizes& sizes = aCtx.Request.sizes();
+
+    // Update track widths - preserve index 0 (netclass default)
+    // Note: We always update if the sizes message is present (even if empty arrays).
+    // Empty arrays mean "clear to just the netclass default".
+    // Keep the first entry (netclass default)
+    int defaultWidth = bds.m_TrackWidthList.empty() ? 0 : bds.m_TrackWidthList[0];
+    bds.m_TrackWidthList.clear();
+    bds.m_TrackWidthList.push_back( defaultWidth );
+
+    for( int i = 0; i < sizes.track_widths_nm_size(); ++i )
+    {
+        bds.m_TrackWidthList.push_back( sizes.track_widths_nm( i ) );
+    }
+
+    // Update via sizes - preserve index 0 (netclass default)
+    VIA_DIMENSION defaultVia = bds.m_ViasDimensionsList.empty() ?
+                               VIA_DIMENSION() : bds.m_ViasDimensionsList[0];
+    bds.m_ViasDimensionsList.clear();
+    bds.m_ViasDimensionsList.push_back( defaultVia );
+
+    for( int i = 0; i < sizes.via_sizes_size(); ++i )
+    {
+        const ViaDimension& via = sizes.via_sizes( i );
+        bds.m_ViasDimensionsList.push_back(
+                VIA_DIMENSION( via.diameter_nm(), via.drill_nm() ) );
+    }
+
+    // Update diff pair dimensions - preserve index 0 (netclass default)
+    DIFF_PAIR_DIMENSION defaultDp = bds.m_DiffPairDimensionsList.empty() ?
+                                    DIFF_PAIR_DIMENSION() : bds.m_DiffPairDimensionsList[0];
+    bds.m_DiffPairDimensionsList.clear();
+    bds.m_DiffPairDimensionsList.push_back( defaultDp );
+
+    for( int i = 0; i < sizes.diff_pairs_size(); ++i )
+    {
+        const DiffPairDimension& dp = sizes.diff_pairs( i );
+        bds.m_DiffPairDimensionsList.push_back(
+                DIFF_PAIR_DIMENSION( dp.width_nm(), dp.gap_nm(), dp.via_gap_nm() ) );
+    }
+
+    frame()->OnModify();
+
+    // Return updated sizes
+    return handleGetPreDefinedSizes(
+            HANDLER_CONTEXT<GetPreDefinedSizes>{ aCtx.ClientName, GetPreDefinedSizes() } );
+}
+
+
+// Helper to populate TeardropParameters proto from TEARDROP_PARAMETERS
+static void populateTeardropParams( TeardropParameters* aProto, const TEARDROP_PARAMETERS* aParams )
+{
+    aProto->set_best_length_ratio( aParams->m_BestLengthRatio );
+    aProto->set_max_length_nm( aParams->m_TdMaxLen );
+    aProto->set_best_width_ratio( aParams->m_BestWidthRatio );
+    aProto->set_max_width_nm( aParams->m_TdMaxWidth );
+    aProto->set_curved_edges( aParams->m_CurvedEdges );
+    aProto->set_allow_two_segments( aParams->m_AllowUseTwoTracks );
+    aProto->set_prefer_zone_connection( aParams->m_TdOnPadsInZones );
+    aProto->set_track_width_limit_ratio( aParams->m_WidthtoSizeFilterRatio );
+}
+
+
+// Helper to apply TeardropParameters proto to TEARDROP_PARAMETERS
+// Only applies fields that were explicitly set in the proto (partial update support)
+static void applyTeardropParams( TEARDROP_PARAMETERS* aParams, const TeardropParameters& aProto )
+{
+    if( aProto.has_best_length_ratio() )
+        aParams->m_BestLengthRatio = aProto.best_length_ratio();
+    if( aProto.has_max_length_nm() )
+        aParams->m_TdMaxLen = aProto.max_length_nm();
+    if( aProto.has_best_width_ratio() )
+        aParams->m_BestWidthRatio = aProto.best_width_ratio();
+    if( aProto.has_max_width_nm() )
+        aParams->m_TdMaxWidth = aProto.max_width_nm();
+    if( aProto.has_curved_edges() )
+        aParams->m_CurvedEdges = aProto.curved_edges();
+    if( aProto.has_allow_two_segments() )
+        aParams->m_AllowUseTwoTracks = aProto.allow_two_segments();
+    if( aProto.has_prefer_zone_connection() )
+        aParams->m_TdOnPadsInZones = aProto.prefer_zone_connection();
+    if( aProto.has_track_width_limit_ratio() )
+        aParams->m_WidthtoSizeFilterRatio = aProto.track_width_limit_ratio();
+}
+
+
+HANDLER_RESULT<TeardropSettingsResponse> API_HANDLER_PCB::handleGetTeardropSettings(
+        const HANDLER_CONTEXT<GetTeardropSettings>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+    TEARDROP_PARAMETERS_LIST* tdParams = bds.GetTeadropParamsList();
+
+    TeardropSettingsResponse response;
+    TeardropSettings* settings = response.mutable_settings();
+
+    // Global flags
+    settings->set_target_vias( tdParams->m_TargetVias );
+    settings->set_target_pth_pads( tdParams->m_TargetPTHPads );
+    settings->set_target_smd_pads( tdParams->m_TargetSMDPads );
+    settings->set_target_track_to_track( tdParams->m_TargetTrack2Track );
+    settings->set_round_shapes_only( tdParams->m_UseRoundShapesOnly );
+
+    // Per-type parameters
+    populateTeardropParams( settings->mutable_round_shapes(),
+                            tdParams->GetParameters( TARGET_ROUND ) );
+    populateTeardropParams( settings->mutable_rect_shapes(),
+                            tdParams->GetParameters( TARGET_RECT ) );
+    populateTeardropParams( settings->mutable_track_to_track(),
+                            tdParams->GetParameters( TARGET_TRACK ) );
+
+    return response;
+}
+
+
+HANDLER_RESULT<TeardropSettingsResponse> API_HANDLER_PCB::handleSetTeardropSettings(
+        const HANDLER_CONTEXT<SetTeardropSettings>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+    TEARDROP_PARAMETERS_LIST* tdParams = bds.GetTeadropParamsList();
+
+    // Update global flags (only if provided)
+    if( aCtx.Request.has_target_vias() )
+        tdParams->m_TargetVias = aCtx.Request.target_vias();
+
+    if( aCtx.Request.has_target_pth_pads() )
+        tdParams->m_TargetPTHPads = aCtx.Request.target_pth_pads();
+
+    if( aCtx.Request.has_target_smd_pads() )
+        tdParams->m_TargetSMDPads = aCtx.Request.target_smd_pads();
+
+    if( aCtx.Request.has_target_track_to_track() )
+        tdParams->m_TargetTrack2Track = aCtx.Request.target_track_to_track();
+
+    if( aCtx.Request.has_round_shapes_only() )
+        tdParams->m_UseRoundShapesOnly = aCtx.Request.round_shapes_only();
+
+    // Update per-type parameters (only if provided)
+    if( aCtx.Request.has_round_shapes() )
+        applyTeardropParams( tdParams->GetParameters( TARGET_ROUND ), aCtx.Request.round_shapes() );
+
+    if( aCtx.Request.has_rect_shapes() )
+        applyTeardropParams( tdParams->GetParameters( TARGET_RECT ), aCtx.Request.rect_shapes() );
+
+    if( aCtx.Request.has_track_to_track() )
+        applyTeardropParams( tdParams->GetParameters( TARGET_TRACK ), aCtx.Request.track_to_track() );
+
+    frame()->OnModify();
+
+    // Return updated settings
+    return handleGetTeardropSettings(
+            HANDLER_CONTEXT<GetTeardropSettings>{ aCtx.ClientName, GetTeardropSettings() } );
+}
+
+
+// Helper to populate MeanderPatternSettings proto from PNS::MEANDER_SETTINGS
+static void populateMeanderSettings( MeanderPatternSettings* aProto, const PNS::MEANDER_SETTINGS& aSettings )
+{
+    aProto->set_min_amplitude_nm( aSettings.m_minAmplitude );
+    aProto->set_max_amplitude_nm( aSettings.m_maxAmplitude );
+    aProto->set_spacing_nm( aSettings.m_spacing );
+
+    // Map KiCad MEANDER_STYLE to proto MeanderCornerStyle
+    switch( aSettings.m_cornerStyle )
+    {
+    case PNS::MEANDER_STYLE_ROUND:   aProto->set_corner_style( MeanderCornerStyle::MCS_ROUND ); break;
+    case PNS::MEANDER_STYLE_CHAMFER: aProto->set_corner_style( MeanderCornerStyle::MCS_CHAMFER ); break;
+    default:                         aProto->set_corner_style( MeanderCornerStyle::MCS_ROUND ); break;
+    }
+
+    aProto->set_corner_radius_percent( aSettings.m_cornerRadiusPercentage );
+    aProto->set_single_sided( aSettings.m_singleSided );
+}
+
+
+// Helper to apply MeanderPatternSettings proto to PNS::MEANDER_SETTINGS
+// Only applies fields that were explicitly set in the proto (partial update support)
+static void applyMeanderSettings( PNS::MEANDER_SETTINGS* aSettings, const MeanderPatternSettings& aProto )
+{
+    if( aProto.has_min_amplitude_nm() )
+        aSettings->m_minAmplitude = aProto.min_amplitude_nm();
+    if( aProto.has_max_amplitude_nm() )
+        aSettings->m_maxAmplitude = aProto.max_amplitude_nm();
+    if( aProto.has_spacing_nm() )
+        aSettings->m_spacing = aProto.spacing_nm();
+
+    // Map proto MeanderCornerStyle to KiCad MEANDER_STYLE
+    if( aProto.has_corner_style() )
+    {
+        switch( aProto.corner_style() )
+        {
+        case MeanderCornerStyle::MCS_ROUND:   aSettings->m_cornerStyle = PNS::MEANDER_STYLE_ROUND; break;
+        case MeanderCornerStyle::MCS_CHAMFER: aSettings->m_cornerStyle = PNS::MEANDER_STYLE_CHAMFER; break;
+        default:                              aSettings->m_cornerStyle = PNS::MEANDER_STYLE_ROUND; break;
+        }
+    }
+
+    if( aProto.has_corner_radius_percent() )
+        aSettings->m_cornerRadiusPercentage = aProto.corner_radius_percent();
+    if( aProto.has_single_sided() )
+        aSettings->m_singleSided = aProto.single_sided();
+}
+
+
+HANDLER_RESULT<LengthTuningPatternSettingsResponse> API_HANDLER_PCB::handleGetLengthTuningPatternSettings(
+        const HANDLER_CONTEXT<GetLengthTuningPatternSettings>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+
+    LengthTuningPatternSettingsResponse response;
+    LengthTuningPatternSettings* settings = response.mutable_settings();
+
+    // Single track meander settings
+    populateMeanderSettings( settings->mutable_single_track(), bds.m_SingleTrackMeanderSettings );
+
+    // Differential pair meander settings
+    populateMeanderSettings( settings->mutable_diff_pair(), bds.m_DiffPairMeanderSettings );
+
+    // Differential pair skew meander settings
+    populateMeanderSettings( settings->mutable_diff_pair_skew(), bds.m_SkewMeanderSettings );
+
+    return response;
+}
+
+
+HANDLER_RESULT<LengthTuningPatternSettingsResponse> API_HANDLER_PCB::handleSetLengthTuningPatternSettings(
+        const HANDLER_CONTEXT<SetLengthTuningPatternSettings>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+
+    if( !board )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "No board loaded" );
+        return tl::unexpected( e );
+    }
+
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+
+    // Update single track meander settings (only if provided)
+    if( aCtx.Request.has_single_track() )
+        applyMeanderSettings( &bds.m_SingleTrackMeanderSettings, aCtx.Request.single_track() );
+
+    // Update differential pair meander settings (only if provided)
+    if( aCtx.Request.has_diff_pair() )
+        applyMeanderSettings( &bds.m_DiffPairMeanderSettings, aCtx.Request.diff_pair() );
+
+    // Update differential pair skew meander settings (only if provided)
+    if( aCtx.Request.has_diff_pair_skew() )
+        applyMeanderSettings( &bds.m_SkewMeanderSettings, aCtx.Request.diff_pair_skew() );
+
+    frame()->OnModify();
+
+    // Return updated settings
+    return handleGetLengthTuningPatternSettings(
+            HANDLER_CONTEXT<GetLengthTuningPatternSettings>{ aCtx.ClientName, GetLengthTuningPatternSettings() } );
+}
+
+
+// Helper to populate a protobuf TrackPropagationEntry from a KiCad entry
+static void populateTrackPropagationEntry( TrackPropagationEntry* aProto,
+                                           const DELAY_PROFILE_TRACK_PROPAGATION_ENTRY& aEntry )
+{
+    aProto->set_signal_layer( ToProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aEntry.GetSignalLayer() ) );
+    aProto->set_top_reference_layer( ToProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aEntry.GetTopReferenceLayer() ) );
+    aProto->set_bottom_reference_layer( ToProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aEntry.GetBottomReferenceLayer() ) );
+    aProto->set_width_nm( aEntry.GetWidth() );
+    aProto->set_diff_pair_gap_nm( aEntry.GetDiffPairGap() );
+    aProto->set_delay_ps_per_mm( aEntry.GetDelay( true ) ); // Force get delay even if time domain disabled
+    // Note: The entry's enable state is per-entry in KiCad
+}
+
+
+// Helper to populate a protobuf ViaPropagationOverride from a KiCad entry
+static void populateViaPropagationOverride( ViaPropagationOverride* aProto,
+                                            const DELAY_PROFILE_VIA_OVERRIDE_ENTRY& aEntry )
+{
+    aProto->set_signal_layer_from( ToProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aEntry.m_SignalLayerFrom ) );
+    aProto->set_signal_layer_to( ToProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aEntry.m_SignalLayerTo ) );
+    aProto->set_via_layer_from( ToProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aEntry.m_ViaLayerFrom ) );
+    aProto->set_via_layer_to( ToProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aEntry.m_ViaLayerTo ) );
+    aProto->set_delay_ps( aEntry.m_Delay );
+}
+
+
+// Helper to populate a protobuf TuningProfile from a KiCad profile
+static void populateTuningProfile( TuningProfile* aProto, const TUNING_PROFILE& aProfile )
+{
+    aProto->set_name( aProfile.m_ProfileName.ToStdString() );
+
+    switch( aProfile.m_Type )
+    {
+    case TUNING_PROFILE::PROFILE_TYPE::SINGLE:
+        aProto->set_type( TuningProfileType::TPT_SINGLE );
+        break;
+    case TUNING_PROFILE::PROFILE_TYPE::DIFFERENTIAL:
+        aProto->set_type( TuningProfileType::TPT_DIFFERENTIAL );
+        break;
+    }
+
+    aProto->set_target_impedance_ohms( aProfile.m_TargetImpedance );
+    aProto->set_enable_time_domain_tuning( aProfile.m_EnableTimeDomainTuning );
+    aProto->set_via_propagation_delay_ps( aProfile.m_ViaPropagationDelay );
+
+    for( const auto& entry : aProfile.m_TrackPropagationEntries )
+    {
+        TrackPropagationEntry* protoEntry = aProto->add_track_entries();
+        populateTrackPropagationEntry( protoEntry, entry );
+    }
+
+    for( const auto& override : aProfile.m_ViaOverrides )
+    {
+        ViaPropagationOverride* protoOverride = aProto->add_via_overrides();
+        populateViaPropagationOverride( protoOverride, override );
+    }
+}
+
+
+// Helper to apply a protobuf TrackPropagationEntry to a KiCad entry
+static DELAY_PROFILE_TRACK_PROPAGATION_ENTRY applyTrackPropagationEntry(
+        const TrackPropagationEntry& aProto )
+{
+    DELAY_PROFILE_TRACK_PROPAGATION_ENTRY entry;
+
+    entry.SetSignalLayer( FromProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aProto.signal_layer() ) );
+    entry.SetTopReferenceLayer( FromProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aProto.top_reference_layer() ) );
+    entry.SetBottomReferenceLayer( FromProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aProto.bottom_reference_layer() ) );
+    entry.SetWidth( aProto.width_nm() );
+    entry.SetDiffPairGap( aProto.diff_pair_gap_nm() );
+    entry.SetDelay( aProto.delay_ps_per_mm() );
+    entry.SetEnableTimeDomainTuning( aProto.enable_time_domain() );
+
+    return entry;
+}
+
+
+// Helper to apply a protobuf ViaPropagationOverride to a KiCad entry
+static DELAY_PROFILE_VIA_OVERRIDE_ENTRY applyViaPropagationOverride(
+        const ViaPropagationOverride& aProto )
+{
+    DELAY_PROFILE_VIA_OVERRIDE_ENTRY entry;
+
+    entry.m_SignalLayerFrom = FromProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aProto.signal_layer_from() );
+    entry.m_SignalLayerTo = FromProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aProto.signal_layer_to() );
+    entry.m_ViaLayerFrom = FromProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aProto.via_layer_from() );
+    entry.m_ViaLayerTo = FromProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( aProto.via_layer_to() );
+    entry.m_Delay = aProto.delay_ps();
+
+    return entry;
+}
+
+
+// Helper to apply a protobuf TuningProfile to a KiCad profile
+static TUNING_PROFILE applyTuningProfile( const TuningProfile& aProto )
+{
+    TUNING_PROFILE profile;
+
+    profile.m_ProfileName = wxString::FromUTF8( aProto.name() );
+
+    switch( aProto.type() )
+    {
+    case TuningProfileType::TPT_DIFFERENTIAL:
+        profile.m_Type = TUNING_PROFILE::PROFILE_TYPE::DIFFERENTIAL;
+        break;
+    case TuningProfileType::TPT_SINGLE:
+    default:
+        profile.m_Type = TUNING_PROFILE::PROFILE_TYPE::SINGLE;
+        break;
+    }
+
+    profile.m_TargetImpedance = aProto.target_impedance_ohms();
+    profile.m_EnableTimeDomainTuning = aProto.enable_time_domain_tuning();
+    profile.m_ViaPropagationDelay = aProto.via_propagation_delay_ps();
+
+    for( const auto& protoEntry : aProto.track_entries() )
+    {
+        profile.m_TrackPropagationEntries.push_back( applyTrackPropagationEntry( protoEntry ) );
+    }
+
+    for( const auto& protoOverride : aProto.via_overrides() )
+    {
+        profile.m_ViaOverrides.push_back( applyViaPropagationOverride( protoOverride ) );
+    }
+
+    return profile;
+}
+
+
+HANDLER_RESULT<TuningProfilesResponse> API_HANDLER_PCB::handleGetTuningProfiles(
+        const HANDLER_CONTEXT<GetTuningProfiles>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    PROJECT& project = frame()->Prj();
+    std::shared_ptr<TUNING_PROFILES> tuningProfiles = project.GetProjectFile().TuningProfileParameters();
+
+    TuningProfilesResponse response;
+    TuningProfiles* profiles = response.mutable_profiles();
+
+    if( tuningProfiles )
+    {
+        for( const auto& profile : tuningProfiles->GetTuningProfiles() )
+        {
+            TuningProfile* protoProfile = profiles->add_profiles();
+            populateTuningProfile( protoProfile, profile );
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<TuningProfilesResponse> API_HANDLER_PCB::handleSetTuningProfiles(
+        const HANDLER_CONTEXT<SetTuningProfiles>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    PROJECT& project = frame()->Prj();
+    std::shared_ptr<TUNING_PROFILES> tuningProfiles = project.GetProjectFile().TuningProfileParameters();
+
+    if( !tuningProfiles )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Tuning profiles not initialized" );
+        return tl::unexpected( e );
+    }
+
+    // Clear existing profiles and add new ones
+    tuningProfiles->ClearTuningProfiles();
+
+    for( const auto& protoProfile : aCtx.Request.profiles().profiles() )
+    {
+        TUNING_PROFILE profile = applyTuningProfile( protoProfile );
+        tuningProfiles->AddTuningProfile( std::move( profile ) );
+    }
+
+    frame()->OnModify();
+
+    // Return updated profiles
+    return handleGetTuningProfiles(
+            HANDLER_CONTEXT<GetTuningProfiles>{ aCtx.ClientName, GetTuningProfiles() } );
+}
+
+
+// Helper to convert condition type from KiCad to protobuf
+static ComponentClassConditionType toProtoConditionType(
+        COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE aType )
+{
+    switch( aType )
+    {
+    case COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::REFERENCE:
+        return ComponentClassConditionType::CCCT_REFERENCE;
+    case COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::FOOTPRINT:
+        return ComponentClassConditionType::CCCT_FOOTPRINT;
+    case COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::SIDE:
+        return ComponentClassConditionType::CCCT_SIDE;
+    case COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::ROTATION:
+        return ComponentClassConditionType::CCCT_ROTATION;
+    case COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::FOOTPRINT_FIELD:
+        return ComponentClassConditionType::CCCT_FOOTPRINT_FIELD;
+    case COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::CUSTOM:
+        return ComponentClassConditionType::CCCT_CUSTOM;
+    case COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::SHEET_NAME:
+        return ComponentClassConditionType::CCCT_SHEET_NAME;
+    default:
+        return ComponentClassConditionType::CCCT_REFERENCE;
+    }
+}
+
+
+// Helper to convert condition type from protobuf to KiCad
+static COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE fromProtoConditionType(
+        ComponentClassConditionType aType )
+{
+    switch( aType )
+    {
+    case ComponentClassConditionType::CCCT_REFERENCE:
+        return COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::REFERENCE;
+    case ComponentClassConditionType::CCCT_FOOTPRINT:
+        return COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::FOOTPRINT;
+    case ComponentClassConditionType::CCCT_SIDE:
+        return COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::SIDE;
+    case ComponentClassConditionType::CCCT_ROTATION:
+        return COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::ROTATION;
+    case ComponentClassConditionType::CCCT_FOOTPRINT_FIELD:
+        return COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::FOOTPRINT_FIELD;
+    case ComponentClassConditionType::CCCT_CUSTOM:
+        return COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::CUSTOM;
+    case ComponentClassConditionType::CCCT_SHEET_NAME:
+        return COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::SHEET_NAME;
+    default:
+        return COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITION_TYPE::REFERENCE;
+    }
+}
+
+
+HANDLER_RESULT<ComponentClassSettingsResponse> API_HANDLER_PCB::handleGetComponentClassSettings(
+        const HANDLER_CONTEXT<GetComponentClassSettings>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    PROJECT& project = frame()->Prj();
+    std::shared_ptr<COMPONENT_CLASS_SETTINGS> ccSettings =
+            project.GetProjectFile().ComponentClassSettings();
+
+    ComponentClassSettingsResponse response;
+    ComponentClassSettings* settings = response.mutable_settings();
+
+    if( ccSettings )
+    {
+        settings->set_enable_sheet_component_classes( ccSettings->GetEnableSheetComponentClasses() );
+
+        for( const auto& assignment : ccSettings->GetComponentClassAssignments() )
+        {
+            ComponentClassAssignment* protoAssignment = settings->add_assignments();
+            protoAssignment->set_component_class( assignment.GetComponentClass().ToStdString() );
+
+            // Set operator
+            if( assignment.GetConditionsOperator() ==
+                COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITIONS_OPERATOR::ANY )
+            {
+                protoAssignment->set_operator_( ComponentClassConditionsOperator::CCCO_ANY );
+            }
+            else
+            {
+                protoAssignment->set_operator_( ComponentClassConditionsOperator::CCCO_ALL );
+            }
+
+            // Add conditions
+            for( const auto& [condType, condData] : assignment.GetConditions() )
+            {
+                ComponentClassCondition* condition = protoAssignment->add_conditions();
+                condition->set_type( toProtoConditionType( condType ) );
+                condition->set_primary_data( condData.first.ToStdString() );
+                condition->set_secondary_data( condData.second.ToStdString() );
+            }
+        }
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<ComponentClassSettingsResponse> API_HANDLER_PCB::handleSetComponentClassSettings(
+        const HANDLER_CONTEXT<SetComponentClassSettings>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    PROJECT& project = frame()->Prj();
+    std::shared_ptr<COMPONENT_CLASS_SETTINGS> ccSettings =
+            project.GetProjectFile().ComponentClassSettings();
+
+    if( !ccSettings )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Component class settings not initialized" );
+        return tl::unexpected( e );
+    }
+
+    const ComponentClassSettings& protoSettings = aCtx.Request.settings();
+
+    // Update enable sheet component classes
+    ccSettings->SetEnableSheetComponentClasses( protoSettings.enable_sheet_component_classes() );
+
+    // Clear and rebuild assignments
+    ccSettings->ClearComponentClassAssignments();
+
+    for( const auto& protoAssignment : protoSettings.assignments() )
+    {
+        COMPONENT_CLASS_ASSIGNMENT_DATA assignment;
+        assignment.SetComponentClass( wxString::FromUTF8( protoAssignment.component_class() ) );
+
+        // Set operator
+        if( protoAssignment.operator_() == ComponentClassConditionsOperator::CCCO_ANY )
+        {
+            assignment.SetConditionsOperation(
+                    COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITIONS_OPERATOR::ANY );
+        }
+        else
+        {
+            assignment.SetConditionsOperation(
+                    COMPONENT_CLASS_ASSIGNMENT_DATA::CONDITIONS_OPERATOR::ALL );
+        }
+
+        // Add conditions
+        for( const auto& protoCondition : protoAssignment.conditions() )
+        {
+            assignment.SetCondition(
+                    fromProtoConditionType( protoCondition.type() ),
+                    wxString::FromUTF8( protoCondition.primary_data() ),
+                    wxString::FromUTF8( protoCondition.secondary_data() ) );
+        }
+
+        ccSettings->AddComponentClassAssignment( assignment );
+    }
+
+    frame()->OnModify();
+
+    // Return updated settings
+    return handleGetComponentClassSettings(
+            HANDLER_CONTEXT<GetComponentClassSettings>{ aCtx.ClientName, GetComponentClassSettings() } );
+}
+
+
+HANDLER_RESULT<CustomRulesResponse> API_HANDLER_PCB::handleGetCustomRules(
+        const HANDLER_CONTEXT<GetCustomRules>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    wxString rulesPath = frame()->GetDesignRulesPath();
+    CustomRulesResponse response;
+
+    if( wxFileExists( rulesPath ) )
+    {
+        wxTextFile file( rulesPath );
+
+        if( file.Open() )
+        {
+            wxString rulesText;
+
+            // wxTextFile iteration: GetFirstLine()/GetNextLine() loop doesn't include
+            // the last line when Eof() becomes true, so we need to handle it separately
+            size_t lineCount = file.GetLineCount();
+
+            for( size_t i = 0; i < lineCount; ++i )
+            {
+                rulesText += file.GetLine( i ) + wxT( "\n" );
+            }
+
+            response.set_rules_text( rulesText.ToStdString() );
+        }
+        else
+        {
+            // File exists but can't be opened - return empty with default version header
+            response.set_rules_text( "(version 1)\n" );
+        }
+    }
+    else
+    {
+        // No rules file exists yet - return default version header
+        response.set_rules_text( "(version 1)\n" );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<CustomRulesResponse> API_HANDLER_PCB::handleSetCustomRules(
+        const HANDLER_CONTEXT<SetCustomRules>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    if( frame()->Prj().IsNullProject() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Cannot set custom rules without a project" );
+        return tl::unexpected( e );
+    }
+
+    wxString rulesPath = frame()->GetDesignRulesPath();
+    wxString rulesText = wxString::FromUTF8( aCtx.Request.rules_text() );
+
+    // Write the rules to file
+    wxFile file( rulesPath, wxFile::write );
+
+    if( !file.IsOpened() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Failed to open rules file for writing" );
+        return tl::unexpected( e );
+    }
+
+    if( !file.Write( rulesText ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Failed to write rules to file" );
+        return tl::unexpected( e );
+    }
+
+    file.Close();
+
+    // Reinitialize the DRC engine with the new rules
+    try
+    {
+        frame()->GetBoard()->GetDesignSettings().m_DRCEngine->InitEngine( rulesPath );
+    }
+    catch( const PARSE_ERROR& e )
+    {
+        // Rules file has syntax errors but was still saved
+        // Return the content but with an error indication
+        CustomRulesResponse response;
+        response.set_rules_text( rulesText.ToStdString() );
+        return response;
+    }
+
+    frame()->OnModify();
+
+    // Return updated rules
+    return handleGetCustomRules(
+            HANDLER_CONTEXT<GetCustomRules>{ aCtx.ClientName, GetCustomRules() } );
 }

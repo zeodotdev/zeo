@@ -35,8 +35,16 @@ message BoardImpedanceControl
   bool is_controlled = 1;
 }
 
+enum EdgeConnectorConstraints
+{
+  ECC_NONE = 0;      // No edge connectors
+  ECC_IN_USE = 1;    // Edge connectors present
+  ECC_BEVELLED = 2;  // Edge connectors present and bevelled
+}
+
 message BoardEdgeConnector
 {
+  EdgeConnectorConstraints constraints = 1;
 }
 
 message Castellation

@@ -1645,11 +1645,27 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     pcbSetup.name = "pcb_setup";
     pcbSetup.description =
         "Read or modify PCB board settings (Board Setup dialog). "
-        "action='get' retrieves all settings including stackup, design rules, text/graphics defaults, "
-        "grid, DRC severities, net classes, title block, and origins. "
+        "action='get' retrieves all settings including physical_stackup, board_finish, solder_mask_paste, "
+        "zone_hatch_offsets, text_and_graphics, dimension_defaults, zone_defaults, predefined_sizes, teardrops, "
+        "board_editor_layers, design rules, grid, DRC severities, net classes, text variables, title block, and origins. "
         "action='set' updates only the provided fields, leaving others unchanged. "
+        "physical_stackup contains full layer stackup with dielectric properties, impedance control, etc. "
+        "board_finish contains copper finish type, edge plating, and edge connector settings. "
+        "solder_mask_paste contains mask expansion, via tenting, and paste margins. "
+        "zone_hatch_offsets contains per-layer X/Y offsets for zone hatched fills. "
+        "text_and_graphics contains per-layer-class defaults (silkscreen, copper, edges, etc.) for line thickness, text size, italic, keep_upright. "
+        "dimension_defaults contains units, precision, text position, arrow settings for new dimensions. "
+        "zone_defaults contains clearance, pad connection, thermal relief, island removal for new zones. "
+        "predefined_sizes contains track widths, via sizes (diameter/drill), and diff pair dimensions for quick selection. "
+        "teardrops contains settings for teardrop shapes at pad/via connections (length/width ratios, max sizes, curved edges). "
+        "length_tuning_patterns contains meander settings for single track, diff pair, and diff pair skew tuning. "
+        "tuning_profiles contains impedance/delay tuning profiles for controlled impedance and time domain analysis (set replaces all profiles). "
+        "component_classes contains component class assignment rules (enable_sheet_component_classes toggle and custom assignment rules). "
+        "custom_rules contains the DRC custom rules text (get returns rules_text, set REPLACES the entire file - append to existing rules yourself if needed). "
+        "drc_severities is a map of DRC check names to severity ('error', 'warning', 'ignore') for violation severity settings. "
+        "text_variables is a map of variable names to substitution values (project-level, use as ${VAR_NAME} in text). "
         "All dimensions are in nanometers (nm) unless otherwise noted. "
-        "Net classes are project-level settings (shared between schematic and PCB). "
+        "Net classes are project-level settings (shared between schematic and PCB). Set REPLACES all classes (except Default). "
         "REQUIRES: PCB editor must be open with a document loaded.";
     pcbSetup.input_schema = {
         { "type", "object" },
@@ -1658,6 +1674,610 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                 { "type", "string" },
                 { "enum", json::array( { "get", "set" } ) },
                 { "description", "Action: 'get' to read all settings, 'set' to modify provided fields" }
+            }},
+            { "board_editor_layers", {
+                { "type", "object" },
+                { "description", "Board editor layers: manage copper layer count, layer names, and types" },
+                { "properties", {
+                    { "copper_layer_count", {
+                        { "type", "integer" },
+                        { "description", "Number of copper layers (must be even, 2-32). WARNING: reducing layers deletes content on removed layers" }
+                    }},
+                    { "layers", {
+                        { "type", "array" },
+                        { "description", "Layer-specific settings to update" },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "layer", {
+                                    { "type", "string" },
+                                    { "description", "Layer name (e.g., 'BL_F_Cu', 'BL_In1_Cu', 'BL_B_SilkS')" }
+                                }},
+                                { "user_name", {
+                                    { "type", "string" },
+                                    { "description", "Custom layer name (empty to reset to default)" }
+                                }},
+                                { "type", {
+                                    { "type", "string" },
+                                    { "enum", json::array( { "signal", "power", "mixed", "jumper" } ) },
+                                    { "description", "Layer type (for copper layers only)" }
+                                }}
+                            }},
+                            { "required", json::array( { "layer" } ) }
+                        }}
+                    }}
+                }}
+            }},
+            { "physical_stackup", {
+                { "type", "object" },
+                { "description", "Physical board stackup with dielectric properties, impedance control, and layer materials. "
+                               "Use to configure PCB fabrication parameters." },
+                { "properties", {
+                    { "impedance_controlled", {
+                        { "type", "boolean" },
+                        { "description", "Enable impedance control for the board" }
+                    }},
+                    { "finish_type", {
+                        { "type", "string" },
+                        { "description", "Board finish type (e.g., 'HASL', 'ENIG', 'OSP', 'Immersion gold')" }
+                    }},
+                    { "has_edge_plating", {
+                        { "type", "boolean" },
+                        { "description", "Board has edge plating" }
+                    }},
+                    { "layers", {
+                        { "type", "array" },
+                        { "description", "Stackup layer properties to update" },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "layer", {
+                                    { "type", "string" },
+                                    { "description", "Layer name (e.g., 'BL_F_Cu', 'BL_F_Mask'). Omit for dielectric layers." }
+                                }},
+                                { "type", {
+                                    { "type", "string" },
+                                    { "enum", json::array( { "BSLT_COPPER", "BSLT_DIELECTRIC", "BSLT_SILKSCREEN", "BSLT_SOLDERMASK", "BSLT_SOLDERPASTE" } ) },
+                                    { "description", "Layer type in stackup" }
+                                }},
+                                { "thickness_nm", {
+                                    { "type", "integer" },
+                                    { "description", "Layer thickness in nanometers (e.g., 35000 for 35µm copper)" }
+                                }},
+                                { "material", {
+                                    { "type", "string" },
+                                    { "description", "Material name (e.g., 'FR4', 'Copper', 'Not specified')" }
+                                }},
+                                { "color", {
+                                    { "type", "object" },
+                                    { "description", "Layer color (for silkscreen/soldermask)" },
+                                    { "properties", {
+                                        { "r", { { "type", "integer" }, { "minimum", 0 }, { "maximum", 255 } } },
+                                        { "g", { { "type", "integer" }, { "minimum", 0 }, { "maximum", 255 } } },
+                                        { "b", { { "type", "integer" }, { "minimum", 0 }, { "maximum", 255 } } },
+                                        { "a", { { "type", "integer" }, { "minimum", 0 }, { "maximum", 255 } } }
+                                    }}
+                                }},
+                                { "dielectric", {
+                                    { "type", "array" },
+                                    { "description", "Dielectric sub-layer properties (for BSLT_DIELECTRIC layers)" },
+                                    { "items", {
+                                        { "type", "object" },
+                                        { "properties", {
+                                            { "epsilon_r", {
+                                                { "type", "number" },
+                                                { "description", "Relative permittivity (dielectric constant). Typical: FR4=4.5, Rogers 4350B=3.66" }
+                                            }},
+                                            { "loss_tangent", {
+                                                { "type", "number" },
+                                                { "description", "Loss tangent (dissipation factor). Typical: FR4=0.02, Rogers 4350B=0.004" }
+                                            }},
+                                            { "material", {
+                                                { "type", "string" },
+                                                { "description", "Dielectric material name (e.g., 'FR4', 'Prepreg', 'Core')" }
+                                            }},
+                                            { "thickness_nm", {
+                                                { "type", "integer" },
+                                                { "description", "Sub-layer thickness in nanometers" }
+                                            }}
+                                        }}
+                                    }}
+                                }}
+                            }}
+                        }}
+                    }}
+                }}
+            }},
+            { "board_finish", {
+                { "type", "object" },
+                { "description", "Board finish options: copper finish, edge plating, and edge connectors" },
+                { "properties", {
+                    { "copper_finish", {
+                        { "type", "string" },
+                        { "description", "Copper finish type (e.g., 'None', 'HASL', 'ENIG', 'OSP', 'Hard gold', 'Immersion tin')" }
+                    }},
+                    { "has_plated_edge", {
+                        { "type", "boolean" },
+                        { "description", "Whether board edges are plated" }
+                    }},
+                    { "edge_connector", {
+                        { "type", "string" },
+                        { "enum", json::array( { "none", "in_use", "bevelled" } ) },
+                        { "description", "Edge card connector constraints: 'none', 'in_use' (present), or 'bevelled' (present and bevelled)" }
+                    }}
+                }}
+            }},
+            { "solder_mask_paste", {
+                { "type", "object" },
+                { "description", "Solder mask and paste settings. Controls mask expansion, via tenting, and paste margins." },
+                { "properties", {
+                    { "solder_mask_expansion_nm", {
+                        { "type", "integer" },
+                        { "description", "Solder mask expansion (clearance around pads) in nanometers. Typical: 51000 (0.051mm)" }
+                    }},
+                    { "solder_mask_min_width_nm", {
+                        { "type", "integer" },
+                        { "description", "Minimum solder mask web width in nanometers" }
+                    }},
+                    { "solder_mask_to_copper_clearance_nm", {
+                        { "type", "integer" },
+                        { "description", "Solder mask to copper clearance in nanometers" }
+                    }},
+                    { "allow_bridged_apertures", {
+                        { "type", "boolean" },
+                        { "description", "Allow bridged solder mask apertures between pads within footprints" }
+                    }},
+                    { "tent_vias_front", {
+                        { "type", "boolean" },
+                        { "description", "Tent (cover with solder mask) vias on front side" }
+                    }},
+                    { "tent_vias_back", {
+                        { "type", "boolean" },
+                        { "description", "Tent (cover with solder mask) vias on back side" }
+                    }},
+                    { "solder_paste_clearance_nm", {
+                        { "type", "integer" },
+                        { "description", "Solder paste clearance/margin in nanometers (positive = larger, negative = smaller than pad)" }
+                    }},
+                    { "solder_paste_ratio", {
+                        { "type", "number" },
+                        { "description", "Solder paste ratio (percentage of pad size, e.g., -0.1 = 10% smaller)" }
+                    }}
+                }}
+            }},
+            { "zone_hatch_offsets", {
+                { "type", "array" },
+                { "description", "Zone hatched fill offsets per copper layer. Offsets the hatch pattern for multi-layer boards." },
+                { "items", {
+                    { "type", "object" },
+                    { "properties", {
+                        { "layer", {
+                            { "type", "string" },
+                            { "description", "Layer name (e.g., 'BL_F_Cu', 'BL_In1_Cu', 'BL_B_Cu')" }
+                        }},
+                        { "offset_x_nm", {
+                            { "type", "integer" },
+                            { "description", "X offset in nanometers" }
+                        }},
+                        { "offset_y_nm", {
+                            { "type", "integer" },
+                            { "description", "Y offset in nanometers" }
+                        }}
+                    }},
+                    { "required", json::array( { "layer" } ) }
+                }}
+            }},
+            { "text_and_graphics", {
+                { "type", "object" },
+                { "description", "Default text and graphics properties per layer class. Controls line thickness and text settings for new objects." },
+                { "properties", {
+                    { "silkscreen", {
+                        { "type", "object" },
+                        { "description", "Default properties for silkscreen layers (F.SilkS, B.SilkS)" },
+                        { "properties", {
+                            { "line_thickness_nm", { { "type", "integer" }, { "description", "Default line thickness in nanometers" } } },
+                            { "text_width_nm", { { "type", "integer" }, { "description", "Default text width in nanometers" } } },
+                            { "text_height_nm", { { "type", "integer" }, { "description", "Default text height in nanometers" } } },
+                            { "text_thickness_nm", { { "type", "integer" }, { "description", "Default text stroke thickness in nanometers" } } },
+                            { "italic", { { "type", "boolean" }, { "description", "Default text italic style" } } },
+                            { "keep_upright", { { "type", "boolean" }, { "description", "Keep text upright (don't mirror when rotated)" } } }
+                        }}
+                    }},
+                    { "copper", {
+                        { "type", "object" },
+                        { "description", "Default properties for copper layers" },
+                        { "properties", {
+                            { "line_thickness_nm", { { "type", "integer" }, { "description", "Default line thickness in nanometers" } } },
+                            { "text_width_nm", { { "type", "integer" }, { "description", "Default text width in nanometers" } } },
+                            { "text_height_nm", { { "type", "integer" }, { "description", "Default text height in nanometers" } } },
+                            { "text_thickness_nm", { { "type", "integer" }, { "description", "Default text stroke thickness in nanometers" } } },
+                            { "italic", { { "type", "boolean" }, { "description", "Default text italic style" } } },
+                            { "keep_upright", { { "type", "boolean" }, { "description", "Keep text upright (don't mirror when rotated)" } } }
+                        }}
+                    }},
+                    { "edges", {
+                        { "type", "object" },
+                        { "description", "Default properties for board edge layer (Edge.Cuts)" },
+                        { "properties", {
+                            { "line_thickness_nm", { { "type", "integer" }, { "description", "Default line thickness in nanometers" } } },
+                            { "text_width_nm", { { "type", "integer" }, { "description", "Default text width in nanometers" } } },
+                            { "text_height_nm", { { "type", "integer" }, { "description", "Default text height in nanometers" } } },
+                            { "text_thickness_nm", { { "type", "integer" }, { "description", "Default text stroke thickness in nanometers" } } },
+                            { "italic", { { "type", "boolean" }, { "description", "Default text italic style" } } },
+                            { "keep_upright", { { "type", "boolean" }, { "description", "Keep text upright (don't mirror when rotated)" } } }
+                        }}
+                    }},
+                    { "courtyard", {
+                        { "type", "object" },
+                        { "description", "Default properties for courtyard layers (F.CrtYd, B.CrtYd)" },
+                        { "properties", {
+                            { "line_thickness_nm", { { "type", "integer" }, { "description", "Default line thickness in nanometers" } } },
+                            { "text_width_nm", { { "type", "integer" }, { "description", "Default text width in nanometers" } } },
+                            { "text_height_nm", { { "type", "integer" }, { "description", "Default text height in nanometers" } } },
+                            { "text_thickness_nm", { { "type", "integer" }, { "description", "Default text stroke thickness in nanometers" } } },
+                            { "italic", { { "type", "boolean" }, { "description", "Default text italic style" } } },
+                            { "keep_upright", { { "type", "boolean" }, { "description", "Keep text upright (don't mirror when rotated)" } } }
+                        }}
+                    }},
+                    { "fabrication", {
+                        { "type", "object" },
+                        { "description", "Default properties for fabrication layers (F.Fab, B.Fab)" },
+                        { "properties", {
+                            { "line_thickness_nm", { { "type", "integer" }, { "description", "Default line thickness in nanometers" } } },
+                            { "text_width_nm", { { "type", "integer" }, { "description", "Default text width in nanometers" } } },
+                            { "text_height_nm", { { "type", "integer" }, { "description", "Default text height in nanometers" } } },
+                            { "text_thickness_nm", { { "type", "integer" }, { "description", "Default text stroke thickness in nanometers" } } },
+                            { "italic", { { "type", "boolean" }, { "description", "Default text italic style" } } },
+                            { "keep_upright", { { "type", "boolean" }, { "description", "Keep text upright (don't mirror when rotated)" } } }
+                        }}
+                    }},
+                    { "other", {
+                        { "type", "object" },
+                        { "description", "Default properties for other layers (User layers, comments, etc.)" },
+                        { "properties", {
+                            { "line_thickness_nm", { { "type", "integer" }, { "description", "Default line thickness in nanometers" } } },
+                            { "text_width_nm", { { "type", "integer" }, { "description", "Default text width in nanometers" } } },
+                            { "text_height_nm", { { "type", "integer" }, { "description", "Default text height in nanometers" } } },
+                            { "text_thickness_nm", { { "type", "integer" }, { "description", "Default text stroke thickness in nanometers" } } },
+                            { "italic", { { "type", "boolean" }, { "description", "Default text italic style" } } },
+                            { "keep_upright", { { "type", "boolean" }, { "description", "Keep text upright (don't mirror when rotated)" } } }
+                        }}
+                    }}
+                }}
+            }},
+            { "dimension_defaults", {
+                { "type", "object" },
+                { "description", "Default settings for new dimension objects (units, precision, text position, arrows)" },
+                { "properties", {
+                    { "units_mode", {
+                        { "type", "string" },
+                        { "enum", json::array( { "automatic", "inches", "mils", "millimeters" } ) },
+                        { "description", "Units mode: 'automatic' (use editor units), 'inches', 'mils', or 'millimeters'" }
+                    }},
+                    { "units_format", {
+                        { "type", "string" },
+                        { "enum", json::array( { "no_suffix", "bare_suffix", "paren_suffix" } ) },
+                        { "description", "Units display: 'no_suffix' (1234.0), 'bare_suffix' (1234.0 mm), 'paren_suffix' (1234.0 (mm))" }
+                    }},
+                    { "precision", {
+                        { "description", "Number of decimal places (0-5) or variable format ('V.VV', 'V.VVV', 'V.VVVV', 'V.VVVVV')" }
+                    }},
+                    { "suppress_zeroes", {
+                        { "type", "boolean" },
+                        { "description", "Suppress trailing zeroes in dimension text" }
+                    }},
+                    { "text_position", {
+                        { "type", "string" },
+                        { "enum", json::array( { "outside", "inline", "manual" } ) },
+                        { "description", "Text position: 'outside' (above line), 'inline' (on line), 'manual' (user-placed)" }
+                    }},
+                    { "keep_text_aligned", {
+                        { "type", "boolean" },
+                        { "description", "Keep text aligned with dimension line" }
+                    }},
+                    { "arrow_length_nm", {
+                        { "type", "integer" },
+                        { "description", "Arrow length in nanometers" }
+                    }},
+                    { "extension_offset_nm", {
+                        { "type", "integer" },
+                        { "description", "Extension line offset from measured point in nanometers" }
+                    }}
+                }}
+            }},
+            { "zone_defaults", {
+                { "type", "object" },
+                { "description", "Default settings for new zones (clearance, pad connection, thermal relief, islands)" },
+                { "properties", {
+                    { "name", {
+                        { "type", "string" },
+                        { "description", "Default zone name (usually empty)" }
+                    }},
+                    { "locked", {
+                        { "type", "boolean" },
+                        { "description", "Default locked state for new zones" }
+                    }},
+                    { "priority", {
+                        { "type", "integer" },
+                        { "minimum", 0 },
+                        { "description", "Default zone priority (0 = lowest)" }
+                    }},
+                    { "corner_smoothing", {
+                        { "type", "string" },
+                        { "enum", json::array( { "none", "chamfer", "fillet" } ) },
+                        { "description", "Corner smoothing type" }
+                    }},
+                    { "corner_radius_nm", {
+                        { "type", "integer" },
+                        { "description", "Corner radius for chamfer/fillet in nanometers" }
+                    }},
+                    { "clearance_nm", {
+                        { "type", "integer" },
+                        { "description", "Zone clearance in nanometers" }
+                    }},
+                    { "min_thickness_nm", {
+                        { "type", "integer" },
+                        { "description", "Minimum fill width in nanometers" }
+                    }},
+                    { "pad_connection", {
+                        { "type", "string" },
+                        { "enum", json::array( { "inherited", "none", "thermal", "solid", "tht_thermal" } ) },
+                        { "description", "Pad connection: 'thermal' (spokes), 'solid' (full), 'none', 'tht_thermal' (thermal for THT, solid for SMD)" }
+                    }},
+                    { "thermal_gap_nm", {
+                        { "type", "integer" },
+                        { "description", "Thermal relief gap in nanometers" }
+                    }},
+                    { "thermal_spoke_width_nm", {
+                        { "type", "integer" },
+                        { "description", "Thermal relief spoke width in nanometers" }
+                    }},
+                    { "island_removal", {
+                        { "type", "string" },
+                        { "enum", json::array( { "always", "never", "area" } ) },
+                        { "description", "Remove isolated islands: 'always', 'never', or 'area' (below min area)" }
+                    }},
+                    { "min_island_area_nm2", {
+                        { "type", "integer" },
+                        { "description", "Minimum island area in nm² (for island_removal='area')" }
+                    }}
+                }}
+            }},
+            { "predefined_sizes", {
+                { "type", "object" },
+                { "description", "Pre-defined track widths, via sizes, and differential pair dimensions for quick selection" },
+                { "properties", {
+                    { "tracks", {
+                        { "type", "array" },
+                        { "description", "List of predefined track widths" },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "width_nm", { { "type", "integer" }, { "description", "Track width in nanometers" } } }
+                            }},
+                            { "required", json::array( { "width_nm" } ) }
+                        }}
+                    }},
+                    { "vias", {
+                        { "type", "array" },
+                        { "description", "List of predefined via sizes (diameter and drill)" },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "diameter_nm", { { "type", "integer" }, { "description", "Via pad diameter in nanometers" } } },
+                                { "drill_nm", { { "type", "integer" }, { "description", "Via drill diameter in nanometers" } } }
+                            }},
+                            { "required", json::array( { "diameter_nm", "drill_nm" } ) }
+                        }}
+                    }},
+                    { "diff_pairs", {
+                        { "type", "array" },
+                        { "description", "List of predefined differential pair dimensions" },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "width_nm", { { "type", "integer" }, { "description", "Track width in nanometers" } } },
+                                { "gap_nm", { { "type", "integer" }, { "description", "Gap between tracks in nanometers" } } },
+                                { "via_gap_nm", { { "type", "integer" }, { "description", "Gap between vias in nanometers" } } }
+                            }},
+                            { "required", json::array( { "width_nm", "gap_nm" } ) }
+                        }}
+                    }}
+                }}
+            }},
+            { "teardrops", {
+                { "type", "object" },
+                { "description", "Teardrop settings for pad/via connections. Teardrops strengthen track-to-pad junctions." },
+                { "properties", {
+                    { "target_vias", { { "type", "boolean" }, { "description", "Create teardrops for vias" } } },
+                    { "target_pth_pads", { { "type", "boolean" }, { "description", "Create teardrops for PTH (through-hole) pads" } } },
+                    { "target_smd_pads", { { "type", "boolean" }, { "description", "Create teardrops for SMD pads" } } },
+                    { "target_track_to_track", { { "type", "boolean" }, { "description", "Create teardrops at track-to-track width transitions" } } },
+                    { "round_shapes_only", { { "type", "boolean" }, { "description", "Only apply to round-shaped pads/vias" } } },
+                    { "round_shapes", {
+                        { "type", "object" },
+                        { "description", "Teardrop parameters for round pads/vias" },
+                        { "properties", {
+                            { "best_length_ratio", { { "type", "number" }, { "description", "Best length as ratio of pad size (0.5 = 50%)" } } },
+                            { "max_length_nm", { { "type", "integer" }, { "description", "Maximum length in nanometers" } } },
+                            { "best_width_ratio", { { "type", "number" }, { "description", "Best width as ratio of pad size (1.0 = 100%)" } } },
+                            { "max_width_nm", { { "type", "integer" }, { "description", "Maximum width in nanometers" } } },
+                            { "curved_edges", { { "type", "boolean" }, { "description", "Use curved edges for teardrop shape" } } },
+                            { "allow_two_segments", { { "type", "boolean" }, { "description", "Allow teardrop to span two track segments" } } },
+                            { "prefer_zone_connection", { { "type", "boolean" }, { "description", "Prefer zone connection over teardrop for pads in zones" } } },
+                            { "track_width_limit_ratio", { { "type", "number" }, { "description", "Max track width to pad size ratio for teardrop (0.9 = 90%)" } } }
+                        }}
+                    }},
+                    { "rect_shapes", {
+                        { "type", "object" },
+                        { "description", "Teardrop parameters for rectangular pads" },
+                        { "properties", {
+                            { "best_length_ratio", { { "type", "number" }, { "description", "Best length as ratio of pad width (0.5 = 50%)" } } },
+                            { "max_length_nm", { { "type", "integer" }, { "description", "Maximum length in nanometers" } } },
+                            { "best_width_ratio", { { "type", "number" }, { "description", "Best width as ratio of pad width (1.0 = 100%)" } } },
+                            { "max_width_nm", { { "type", "integer" }, { "description", "Maximum width in nanometers" } } },
+                            { "curved_edges", { { "type", "boolean" }, { "description", "Use curved edges for teardrop shape" } } },
+                            { "allow_two_segments", { { "type", "boolean" }, { "description", "Allow teardrop to span two track segments" } } },
+                            { "prefer_zone_connection", { { "type", "boolean" }, { "description", "Prefer zone connection over teardrop for pads in zones" } } },
+                            { "track_width_limit_ratio", { { "type", "number" }, { "description", "Max track width to pad width ratio for teardrop (0.9 = 90%)" } } }
+                        }}
+                    }},
+                    { "track_to_track", {
+                        { "type", "object" },
+                        { "description", "Teardrop parameters for track-to-track width transitions" },
+                        { "properties", {
+                            { "best_length_ratio", { { "type", "number" }, { "description", "Best length as ratio of wider track (0.5 = 50%)" } } },
+                            { "max_length_nm", { { "type", "integer" }, { "description", "Maximum length in nanometers" } } },
+                            { "best_width_ratio", { { "type", "number" }, { "description", "Best width as ratio of wider track (1.0 = 100%)" } } },
+                            { "max_width_nm", { { "type", "integer" }, { "description", "Maximum width in nanometers" } } },
+                            { "curved_edges", { { "type", "boolean" }, { "description", "Use curved edges for teardrop shape" } } },
+                            { "allow_two_segments", { { "type", "boolean" }, { "description", "Allow teardrop to span two track segments" } } },
+                            { "track_width_limit_ratio", { { "type", "number" }, { "description", "Max track width ratio for teardrop (0.9 = 90%)" } } }
+                        }}
+                    }}
+                }}
+            }},
+            { "length_tuning_patterns", {
+                { "type", "object" },
+                { "description", "Length-tuning meander pattern settings for single tracks, diff pairs, and skew tuning" },
+                { "properties", {
+                    { "single_track", {
+                        { "type", "object" },
+                        { "description", "Settings for single track length tuning" },
+                        { "properties", {
+                            { "min_amplitude_nm", { { "type", "integer" }, { "description", "Minimum amplitude (A) in nanometers" } } },
+                            { "max_amplitude_nm", { { "type", "integer" }, { "description", "Maximum amplitude (A) in nanometers" } } },
+                            { "spacing_nm", { { "type", "integer" }, { "description", "Spacing (s) between meanders in nanometers" } } },
+                            { "corner_style", {
+                                { "type", "string" },
+                                { "enum", json::array( { "round", "chamfer" } ) },
+                                { "description", "Corner style: 'round' (fillet) or 'chamfer' (45 degree)" }
+                            }},
+                            { "corner_radius_percent", { { "type", "integer" }, { "minimum", 0 }, { "maximum", 100 }, { "description", "Corner radius as percentage (0-100)" } } },
+                            { "single_sided", { { "type", "boolean" }, { "description", "Place meanders on one side only" } } }
+                        }}
+                    }},
+                    { "diff_pair", {
+                        { "type", "object" },
+                        { "description", "Settings for differential pair length tuning" },
+                        { "properties", {
+                            { "min_amplitude_nm", { { "type", "integer" }, { "description", "Minimum amplitude (A) in nanometers" } } },
+                            { "max_amplitude_nm", { { "type", "integer" }, { "description", "Maximum amplitude (A) in nanometers" } } },
+                            { "spacing_nm", { { "type", "integer" }, { "description", "Spacing (s) between meanders in nanometers" } } },
+                            { "corner_style", {
+                                { "type", "string" },
+                                { "enum", json::array( { "round", "chamfer" } ) },
+                                { "description", "Corner style: 'round' (fillet) or 'chamfer' (45 degree)" }
+                            }},
+                            { "corner_radius_percent", { { "type", "integer" }, { "minimum", 0 }, { "maximum", 100 }, { "description", "Corner radius as percentage (0-100)" } } },
+                            { "single_sided", { { "type", "boolean" }, { "description", "Place meanders on one side only" } } }
+                        }}
+                    }},
+                    { "diff_pair_skew", {
+                        { "type", "object" },
+                        { "description", "Settings for differential pair skew tuning" },
+                        { "properties", {
+                            { "min_amplitude_nm", { { "type", "integer" }, { "description", "Minimum amplitude (A) in nanometers" } } },
+                            { "max_amplitude_nm", { { "type", "integer" }, { "description", "Maximum amplitude (A) in nanometers" } } },
+                            { "spacing_nm", { { "type", "integer" }, { "description", "Spacing (s) between meanders in nanometers" } } },
+                            { "corner_style", {
+                                { "type", "string" },
+                                { "enum", json::array( { "round", "chamfer" } ) },
+                                { "description", "Corner style: 'round' (fillet) or 'chamfer' (45 degree)" }
+                            }},
+                            { "corner_radius_percent", { { "type", "integer" }, { "minimum", 0 }, { "maximum", 100 }, { "description", "Corner radius as percentage (0-100)" } } },
+                            { "single_sided", { { "type", "boolean" }, { "description", "Place meanders on one side only" } } }
+                        }}
+                    }}
+                }}
+            }},
+            { "tuning_profiles", {
+                { "type", "array" },
+                { "description", "Impedance/delay tuning profiles for controlled impedance routing and time domain analysis. Set replaces all profiles." },
+                { "items", {
+                    { "type", "object" },
+                    { "properties", {
+                        { "name", { { "type", "string" }, { "description", "Profile name (unique identifier)" } } },
+                        { "type", {
+                            { "type", "string" },
+                            { "enum", json::array( { "single", "differential" } ) },
+                            { "description", "Profile type: 'single' (single-ended) or 'differential' (differential pair)" }
+                        }},
+                        { "target_impedance_ohms", { { "type", "number" }, { "description", "Target impedance in ohms" } } },
+                        { "enable_time_domain_tuning", { { "type", "boolean" }, { "description", "Enable time domain tuning (uses propagation delays)" } } },
+                        { "via_propagation_delay_ps", { { "type", "integer" }, { "description", "Default via propagation delay in picoseconds" } } },
+                        { "track_entries", {
+                            { "type", "array" },
+                            { "description", "Per-layer track propagation settings" },
+                            { "items", {
+                                { "type", "object" },
+                                { "properties", {
+                                    { "signal_layer", { { "type", "integer" }, { "description", "Signal layer ID" } } },
+                                    { "top_reference_layer", { { "type", "integer" }, { "description", "Top reference plane layer ID" } } },
+                                    { "bottom_reference_layer", { { "type", "integer" }, { "description", "Bottom reference plane layer ID" } } },
+                                    { "width_nm", { { "type", "integer" }, { "description", "Track width in nanometers" } } },
+                                    { "diff_pair_gap_nm", { { "type", "integer" }, { "description", "Differential pair gap in nanometers (0 for single-ended)" } } },
+                                    { "delay_ps_per_mm", { { "type", "integer" }, { "description", "Propagation delay in picoseconds per millimeter" } } },
+                                    { "enable_time_domain", { { "type", "boolean" }, { "description", "Enable time domain tuning for this entry" } } }
+                                }}
+                            }}
+                        }},
+                        { "via_overrides", {
+                            { "type", "array" },
+                            { "description", "Via propagation delay overrides for specific layer transitions" },
+                            { "items", {
+                                { "type", "object" },
+                                { "properties", {
+                                    { "signal_layer_from", { { "type", "integer" }, { "description", "Signal start layer ID" } } },
+                                    { "signal_layer_to", { { "type", "integer" }, { "description", "Signal end layer ID" } } },
+                                    { "via_layer_from", { { "type", "integer" }, { "description", "Via start layer ID" } } },
+                                    { "via_layer_to", { { "type", "integer" }, { "description", "Via end layer ID" } } },
+                                    { "delay_ps", { { "type", "integer" }, { "description", "Via propagation delay in picoseconds" } } }
+                                }}
+                            }}
+                        }}
+                    }}
+                }}
+            }},
+            { "component_classes", {
+                { "type", "object" },
+                { "description", "Component class assignment settings. Set replaces all assignments." },
+                { "properties", {
+                    { "enable_sheet_component_classes", { { "type", "boolean" }, { "description", "Assign component class per hierarchical sheet" } } },
+                    { "assignments", {
+                        { "type", "array" },
+                        { "description", "Custom component class assignment rules" },
+                        { "items", {
+                            { "type", "object" },
+                            { "properties", {
+                                { "component_class", { { "type", "string" }, { "description", "Name of the component class to assign" } } },
+                                { "operator", {
+                                    { "type", "string" },
+                                    { "enum", json::array( { "all", "any" } ) },
+                                    { "description", "How conditions are combined: 'all' (AND) or 'any' (OR)" }
+                                }},
+                                { "conditions", {
+                                    { "type", "array" },
+                                    { "description", "Conditions that must match for assignment" },
+                                    { "items", {
+                                        { "type", "object" },
+                                        { "properties", {
+                                            { "type", {
+                                                { "type", "string" },
+                                                { "enum", json::array( { "reference", "footprint", "side", "rotation", "footprint_field", "custom", "sheet_name" } ) },
+                                                { "description", "Condition type: reference (designator pattern), footprint (name pattern), side (Top/Bottom), rotation (angle), footprint_field (field match), custom (expression), sheet_name (hierarchical sheet)" }
+                                            }},
+                                            { "primary_data", { { "type", "string" }, { "description", "Primary match data (pattern, field name, side, etc.)" } } },
+                                            { "secondary_data", { { "type", "string" }, { "description", "Secondary data (e.g., field value for footprint_field type)" } } }
+                                        }},
+                                        { "required", json::array( { "type", "primary_data" } ) }
+                                    }}
+                                }}
+                            }},
+                            { "required", json::array( { "component_class" } ) }
+                        }}
+                    }}
+                }}
             }},
             { "design_rules", {
                 { "type", "object" },
@@ -1678,7 +2298,11 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                     { "solder_paste_margin_ratio", { { "type", "number" }, { "description", "Solder paste margin ratio (0-1)" } } },
                     { "min_silk_clearance_nm", { { "type", "integer" }, { "description", "Min silkscreen clearance" } } },
                     { "min_silk_text_height_nm", { { "type", "integer" }, { "description", "Min silkscreen text height" } } },
-                    { "min_resolved_spokes", { { "type", "integer" }, { "description", "Min thermal relief spokes" } } }
+                    { "min_silk_text_thickness_nm", { { "type", "integer" }, { "description", "Min silkscreen text thickness" } } },
+                    { "min_resolved_spokes", { { "type", "integer" }, { "description", "Min thermal relief spokes" } } },
+                    { "max_error_nm", { { "type", "integer" }, { "description", "Arc/circle approximation: max allowed deviation (nm)" } } },
+                    { "allow_external_fillets", { { "type", "boolean" }, { "description", "Zone fill: allow fillets/chamfers outside zone outline" } } },
+                    { "include_stackup_in_length", { { "type", "boolean" }, { "description", "Length tuning: include stackup height in track length" } } }
                 }}
             }},
             { "grid", {
@@ -1698,26 +2322,66 @@ std::vector<LLM_TOOL> GetToolDefinitions()
             { "drc_severities", {
                 { "type", "object" },
                 { "description", "Map of DRC check names to severity: 'error', 'warning', or 'ignore'. "
-                                "Example: {\"clearance\": \"error\", \"track_width\": \"warning\"}" },
+                                "Check names by category - "
+                                "Electrical: shorting_items, tracks_crossing, clearance, creepage, via_dangling, track_dangling, starved_thermal. "
+                                "DFM: copper_edge_clearance, hole_clearance, hole_to_hole, holes_co_located, track_width, track_angle, track_segment_length, annular_width, drill_out_of_range, microvia_drill_out_of_range, courtyards_overlap, missing_courtyard, malformed_courtyard, invalid_outline, copper_sliver, solder_mask_bridge, connection_width. "
+                                "Schematic Parity: duplicate_footprints, missing_footprint, extra_footprint, footprint_symbol_mismatch, footprint_filters_mismatch, net_conflict, unconnected_items. "
+                                "Signal Integrity: length_out_of_range, skew_out_of_range, too_many_vias, diff_pair_gap_out_of_range, diff_pair_uncoupled_length_too_long. "
+                                "Readability: silk_overlap, silk_over_copper, silk_edge_clearance, text_height, text_thickness, mirrored_text_on_front_layer, nonmirrored_text_on_back_layer. "
+                                "Miscellaneous: items_not_allowed, text_on_edge_cuts, zones_intersect, isolated_copper, footprint, padstack, pth_inside_courtyard, npth_inside_courtyard, item_on_disabled_layer, unresolved_variable, lib_footprint_issues, lib_footprint_mismatch, through_hole_pad_without_hole, missing_tuning_profile. "
+                                "Example: {\"clearance\": \"error\", \"track_width\": \"warning\", \"missing_courtyard\": \"ignore\"}" },
                 { "additionalProperties", { { "type", "string" }, { "enum", json::array( { "error", "warning", "ignore" } ) } } }
+            }},
+            { "custom_rules", {
+                { "type", "object" },
+                { "description", "Custom DRC rules (contents of .kicad_dru file). Get returns the rules text. "
+                                "SET COMPLETELY REPLACES the file - to add rules to existing, first GET current rules, "
+                                "append your new rule(s), then SET the combined text. To clear all rules, SET empty or minimal '(version 1)'." },
+                { "properties", {
+                    { "rules_text", {
+                        { "type", "string" },
+                        { "description", "Full text content of the custom DRC rules file. Must start with '(version 1)'. "
+                                        "See KiCad DRC rules syntax for format." }
+                    }}
+                }}
             }},
             { "net_classes", {
                 { "type", "array" },
-                { "description", "Net class definitions (project-level, shared with schematic)" },
+                { "description", "Net class definitions (project-level, shared with schematic). SET REPLACES all net classes - classes not in the input are REMOVED (except Default which is always kept). Include all desired classes in each set operation." },
                 { "items", {
                     { "type", "object" },
                     { "properties", {
-                        { "name", { { "type", "string" }, { "description", "Net class name" } } },
+                        { "name", { { "type", "string" }, { "description", "Net class name ('Default' for the default class)" } } },
                         { "priority", { { "type", "integer" }, { "description", "Priority (higher = more specific)" } } },
                         { "clearance_nm", { { "type", "integer" }, { "description", "Clearance in nm" } } },
                         { "track_width_nm", { { "type", "integer" }, { "description", "Track width in nm" } } },
-                        { "via_diameter_nm", { { "type", "integer" }, { "description", "Via diameter in nm" } } },
-                        { "via_drill_nm", { { "type", "integer" }, { "description", "Via drill in nm" } } },
-                        { "diff_pair_width_nm", { { "type", "integer" }, { "description", "Diff pair track width in nm" } } },
-                        { "diff_pair_gap_nm", { { "type", "integer" }, { "description", "Diff pair gap in nm" } } }
+                        { "via_diameter_nm", { { "type", "integer" }, { "description", "Via pad diameter in nm" } } },
+                        { "via_drill_nm", { { "type", "integer" }, { "description", "Via drill diameter in nm" } } },
+                        { "microvia_diameter_nm", { { "type", "integer" }, { "description", "Microvia pad diameter in nm" } } },
+                        { "microvia_drill_nm", { { "type", "integer" }, { "description", "Microvia drill diameter in nm" } } },
+                        { "diff_pair_width_nm", { { "type", "integer" }, { "description", "Differential pair track width in nm" } } },
+                        { "diff_pair_gap_nm", { { "type", "integer" }, { "description", "Differential pair gap in nm" } } },
+                        { "diff_pair_via_gap_nm", { { "type", "integer" }, { "description", "Differential pair via gap in nm" } } },
+                        { "tuning_profile", { { "type", "string" }, { "description", "Name of tuning profile to use for this net class" } } },
+                        { "pcb_color", {
+                            { "type", "object" },
+                            { "description", "PCB color for nets in this class (transparent = use layer default)" },
+                            { "properties", {
+                                { "r", { { "type", "number" }, { "minimum", 0 }, { "maximum", 1 }, { "description", "Red (0-1)" } } },
+                                { "g", { { "type", "number" }, { "minimum", 0 }, { "maximum", 1 }, { "description", "Green (0-1)" } } },
+                                { "b", { { "type", "number" }, { "minimum", 0 }, { "maximum", 1 }, { "description", "Blue (0-1)" } } },
+                                { "a", { { "type", "number" }, { "minimum", 0 }, { "maximum", 1 }, { "description", "Alpha (0-1, 0=transparent)" } } }
+                            }}
+                        }}
                     }},
                     { "required", json::array( { "name" } ) }
                 }}
+            }},
+            { "text_variables", {
+                { "type", "object" },
+                { "description", "User-defined text variables (project-level). Map of variable names to text substitution values. "
+                                "Use in text items as ${VARIABLE_NAME}. Set uses merge mode - existing variables updated, new ones added." },
+                { "additionalProperties", { { "type", "string" } } }
             }},
             { "title_block", {
                 { "type", "object" },

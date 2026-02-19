@@ -7,8 +7,11 @@
 unset PYTHONHOME
 unset PYTHONPATH
 
-# Use process substitution to keep stdin available for interactive use
-exec /usr/bin/env python3 <(cat <<'PYTHON_EOF'
+# Create temp file for Python script, keeping stdin available for interactive use
+_ZEO_SCRIPT=$(mktemp)
+trap "rm -f '$_ZEO_SCRIPT'" EXIT
+
+cat > "$_ZEO_SCRIPT" <<'PYTHON_EOF'
 import argparse
 import json
 import os
@@ -45,15 +48,129 @@ def _get_zeo_version():
 
 
 def cmd_tool(args):
-    """Execute agent tool calls interactively."""
+    """TUI for executing agent tool calls."""
     import traceback
+
+    # ANSI colors
+    CYAN = "\033[36m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    RED = "\033[31m"
+    DIM = "\033[2m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+
+    def clear_screen():
+        print("\033[2J\033[H", end="")
+
+    def print_header(sch_status, board_status):
+        print(f"{BOLD}╔══════════════════════════════════════════════════════════════╗{RESET}")
+        print(f"{BOLD}║  Zeo Tool Runner                                        [?]  ║{RESET}")
+        print(f"{BOLD}╠══════════════════════════════════════════════════════════════╣{RESET}")
+        print(f"{BOLD}║{RESET}  Schematic: {sch_status:<12}  PCB: {board_status:<12}              {BOLD}║{RESET}")
+        print(f"{BOLD}╚══════════════════════════════════════════════════════════════╝{RESET}")
+
+    def print_menu():
+        print(f"\n{DIM}Commands:{RESET}")
+        print(f"  {CYAN}[p]{RESET}aste  - Paste tool call JSON (end with blank line)")
+        print(f"  {CYAN}[r]{RESET}un    - Execute the current buffer")
+        print(f"  {CYAN}[c]{RESET}lear  - Clear the buffer")
+        print(f"  {CYAN}[?]{RESET}      - List available tools")
+        print(f"  {CYAN}[q]{RESET}uit   - Exit")
+
+    def print_buffer(buffer_lines):
+        print(f"\n{BOLD}─── Tool Call Buffer ───{RESET}")
+        if buffer_lines:
+            for i, line in enumerate(buffer_lines[:20]):  # Show first 20 lines
+                print(f"{DIM}{i+1:3}│{RESET} {line}")
+            if len(buffer_lines) > 20:
+                print(f"{DIM}... ({len(buffer_lines) - 20} more lines){RESET}")
+        else:
+            print(f"{DIM}(empty - use 'p' to paste){RESET}")
+        print(f"{BOLD}────────────────────────{RESET}")
+
+    def print_tools():
+        """Print available agent tools."""
+        tools = [
+            ("sch_get_summary", "Get high-level overview of schematic"),
+            ("sch_read_section", "Read specific section (symbols, wires, etc.)"),
+            ("sch_add", "Add elements to schematic"),
+            ("sch_update", "Update schematic elements"),
+            ("sch_delete", "Delete schematic elements"),
+            ("sch_switch_sheet", "Switch to a different sheet"),
+            ("sch_add_sheet", "Add a new hierarchical sheet"),
+            ("sch_connect_to_power", "Connect pin to power symbol"),
+            ("sch_run_erc", "Run electrical rules check"),
+            ("sch_setup", "Get/set schematic settings"),
+            ("pcb_get_summary", "Get high-level overview of PCB"),
+            ("pcb_read_section", "Read specific section of PCB"),
+            ("pcb_add", "Add elements to PCB"),
+            ("pcb_update", "Update PCB elements"),
+            ("pcb_delete", "Delete PCB elements"),
+            ("run_terminal", "Execute bash/shell commands"),
+            ("check_status", "Get project and editor status"),
+        ]
+
+        print(f"\n{BOLD}─── Available Tools ───{RESET}")
+        for name, desc in tools:
+            print(f"  {CYAN}{name:<22}{RESET} {desc}")
+        print(f"{BOLD}───────────────────────{RESET}")
+        print(f"\n{DIM}Tool call format:{RESET}")
+        print(f'  {{"name": "tool_name", "input": {{...}}}}')
+
+    def execute_tool(buffer_lines, namespace):
+        """Execute the tool call in the buffer."""
+        if not buffer_lines:
+            print(f"{YELLOW}Buffer is empty. Use 'p' to paste a tool call.{RESET}")
+            return
+
+        buffer_text = "\n".join(buffer_lines)
+
+        # Try to parse as JSON tool call
+        try:
+            tool_call = json.loads(buffer_text)
+            if isinstance(tool_call, dict) and "name" in tool_call:
+                # It's a tool call JSON - generate Python code
+                tool_name = tool_call.get("name", "")
+                tool_input = tool_call.get("input", {})
+
+                print(f"\n{CYAN}Executing tool: {tool_name}{RESET}")
+                print(f"{DIM}Input: {json.dumps(tool_input, indent=2)}{RESET}")
+
+                # For now, we can't directly execute tool calls without the C++ handler
+                # So we'll show what the user would need to do in Python
+                print(f"\n{YELLOW}Note: Direct tool execution not yet implemented.{RESET}")
+                print(f"{DIM}Use 'zeo shell' to run Python code directly, e.g.:{RESET}")
+                if tool_name.startswith("sch_"):
+                    print(f"  sch.get_symbols()  # for sch_read_section")
+                elif tool_name.startswith("pcb_"):
+                    print(f"  board.get_footprints()  # for pcb_read_section")
+                return
+        except json.JSONDecodeError:
+            pass
+
+        # Execute as Python code
+        print(f"\n{CYAN}Executing Python code...{RESET}")
+        try:
+            # Try as expression first
+            result = eval(buffer_text, namespace)
+            if result is not None:
+                print(f"\n{GREEN}Result:{RESET}")
+                try:
+                    print(json.dumps(result, indent=2, default=str))
+                except (TypeError, ValueError):
+                    print(result)
+        except SyntaxError:
+            # Execute as statements
+            exec(buffer_text, namespace)
+            print(f"{GREEN}Executed successfully.{RESET}")
 
     # Try to import kipy
     try:
         from kipy import KiCad
     except ImportError as e:
         print(f"Error: Could not import kipy: {e}")
-        print("\nMake sure kipy is installed. You can install it with:")
+        print("\nMake sure kipy is installed with:")
         print("  pip install -e /path/to/zeo-python")
         sys.exit(1)
 
@@ -72,29 +189,20 @@ def cmd_tool(args):
     # Get schematic and board
     sch = None
     board = None
+    sch_status = f"{RED}not open{RESET}"
+    board_status = f"{RED}not open{RESET}"
+
     try:
         sch = kicad.get_schematic()
-        print("Schematic editor: connected")
+        sch_status = f"{GREEN}connected{RESET}"
     except Exception:
-        print("Schematic editor: not open")
+        pass
 
     try:
         board = kicad.get_board()
-        print("PCB editor: connected")
+        board_status = f"{GREEN}connected{RESET}"
     except Exception:
-        print("PCB editor: not open")
-
-    if not sch and not board:
-        print("\n\033[33mWarning: No editors connected. Open the schematic or PCB editor in Zeo first.\033[0m")
-
-    print("\n" + "=" * 50)
-    print("Zeo Tool Runner")
-    print("=" * 50)
-    print("\nPaste Python code to execute against the editor.")
-    print("The code has access to: kicad, sch, board")
-    print("\nMulti-line input: end with a blank line")
-    print("Type 'exit' or Ctrl-D to quit.")
-    print()
+        pass
 
     # Set up namespace for exec
     namespace = {
@@ -104,58 +212,63 @@ def cmd_tool(args):
         'json': json,
     }
 
+    buffer_lines = []
+
+    # Main loop
+    clear_screen()
     while True:
         try:
-            # Read multi-line input
-            lines = []
-            prompt = ">>> "
-            while True:
-                try:
-                    line = input(prompt)
-                except EOFError:
-                    print()
-                    return
+            print_header(sch_status, board_status)
+            print_buffer(buffer_lines)
+            print_menu()
 
-                if line.strip() == "exit":
-                    return
+            cmd = input(f"\n{BOLD}>{RESET} ").strip().lower()
 
-                if line == "" and lines:
-                    # Blank line ends input
-                    break
-
-                lines.append(line)
-                prompt = "... "
-
-                # Single line that looks complete? Execute immediately
-                if len(lines) == 1 and not line.rstrip().endswith((':',  '\\', '(', '[', '{')):
-                    break
-
-            if not lines:
-                continue
-
-            code = "\n".join(lines)
-
-            # Execute the code
-            try:
-                # Try as expression first (to print result)
-                result = eval(code, namespace)
-                if result is not None:
-                    # Pretty print JSON-serializable results
+            if cmd in ('q', 'quit', 'exit'):
+                break
+            elif cmd in ('?', 'tools', 'help'):
+                clear_screen()
+                print_tools()
+                input(f"\n{DIM}Press Enter to continue...{RESET}")
+                clear_screen()
+            elif cmd in ('p', 'paste'):
+                clear_screen()
+                print(f"{CYAN}Paste your tool call JSON or Python code.{RESET}")
+                print(f"{DIM}End with a blank line.{RESET}\n")
+                buffer_lines = []
+                while True:
                     try:
-                        print(json.dumps(result, indent=2, default=str))
-                    except (TypeError, ValueError):
-                        print(result)
-            except SyntaxError:
-                # Not an expression, execute as statement
-                exec(code, namespace)
+                        line = input()
+                        if line == "":
+                            break
+                        buffer_lines.append(line)
+                    except EOFError:
+                        break
+                clear_screen()
+                if buffer_lines:
+                    print(f"{GREEN}Pasted {len(buffer_lines)} lines.{RESET}\n")
+            elif cmd in ('r', 'run'):
+                try:
+                    execute_tool(buffer_lines, namespace)
+                except Exception as e:
+                    print(f"{RED}Error:{RESET} {e}")
+                    if args.verbose:
+                        traceback.print_exc()
+                input(f"\n{DIM}Press Enter to continue...{RESET}")
+                clear_screen()
+            elif cmd in ('c', 'clear'):
+                buffer_lines = []
+                clear_screen()
+                print(f"{GREEN}Buffer cleared.{RESET}\n")
+            else:
+                clear_screen()
+                print(f"{YELLOW}Unknown command: {cmd}{RESET}\n")
 
         except KeyboardInterrupt:
-            print("\n(Interrupted)")
+            print(f"\n{DIM}(Use 'q' to quit){RESET}")
             continue
-        except Exception as e:
-            print(f"\033[31mError:\033[0m {e}")
-            if args.verbose:
-                traceback.print_exc()
+
+    print(f"\n{DIM}Goodbye!{RESET}")
 
 
 def cmd_shell(args):
@@ -434,4 +547,5 @@ def main():
 if __name__ == "__main__":
     main()
 PYTHON_EOF
-) "$@"
+
+exec /usr/bin/env python3 "$_ZEO_SCRIPT" "$@"

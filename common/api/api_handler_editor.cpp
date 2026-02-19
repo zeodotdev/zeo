@@ -214,10 +214,16 @@ void API_HANDLER_EDITOR::pushCurrentCommit( const std::string& aClientName,
 
 HANDLER_RESULT<bool> API_HANDLER_EDITOR::validateDocument( const DocumentSpecifier& aDocument )
 {
+    // Debug: log entry for TitleBlock/Origin related requests
+    wxLogMessage( "API_HANDLER_EDITOR[%p]: validateDocument called - doc.type=%d, expected=%d, filename='%s'",
+                  this, (int)aDocument.type(), (int)thisDocumentType(), aDocument.board_filename().c_str() );
+
     // First check if the document type matches what this handler expects.
     // If not, return AS_UNHANDLED so the server can try other handlers.
     if( aDocument.type() != thisDocumentType() )
     {
+        wxLogMessage( "API_HANDLER_EDITOR[%p]: validateDocument FAILED - type mismatch",
+                      this );
         ApiResponseStatus e;
         e.set_status( ApiStatusCode::AS_UNHANDLED );
         return tl::unexpected( e );
@@ -225,6 +231,8 @@ HANDLER_RESULT<bool> API_HANDLER_EDITOR::validateDocument( const DocumentSpecifi
 
     if( !validateDocumentInternal( aDocument ) )
     {
+        wxLogMessage( "API_HANDLER_EDITOR[%p]: validateDocument FAILED - validateDocumentInternal returned false",
+                      this );
         ApiResponseStatus e;
         e.set_status( ApiStatusCode::AS_BAD_REQUEST );
         e.set_error_message( fmt::format( "the requested document {} is not open",
@@ -232,6 +240,7 @@ HANDLER_RESULT<bool> API_HANDLER_EDITOR::validateDocument( const DocumentSpecifi
         return tl::unexpected( e );
     }
 
+    wxLogMessage( "API_HANDLER_EDITOR[%p]: validateDocument SUCCESS", this );
     return true;
 }
 

@@ -424,6 +424,26 @@ void BOARD_STACKUP::Serialize( google::protobuf::Any& aContainer ) const
     using namespace kiapi::board;
     BoardStackup stackup;
 
+    // Serialize board finish settings
+    stackup.mutable_finish()->set_type_name( m_FinishType.ToUTF8() );
+    stackup.mutable_impedance()->set_is_controlled( m_HasDielectricConstrains );
+    stackup.mutable_edge()->mutable_plating()->set_has_edge_plating( m_EdgePlating );
+
+    // Serialize edge connector constraints
+    switch( m_EdgeConnectorConstraints )
+    {
+    case BS_EDGE_CONNECTOR_NONE:
+        stackup.mutable_edge()->mutable_connector()->set_constraints( EdgeConnectorConstraints::ECC_NONE );
+        break;
+    case BS_EDGE_CONNECTOR_IN_USE:
+        stackup.mutable_edge()->mutable_connector()->set_constraints( EdgeConnectorConstraints::ECC_IN_USE );
+        break;
+    case BS_EDGE_CONNECTOR_BEVELLED:
+        stackup.mutable_edge()->mutable_connector()->set_constraints( EdgeConnectorConstraints::ECC_BEVELLED );
+        break;
+    }
+
+    // Serialize layers
     for( const BOARD_STACKUP_ITEM* item : m_list )
     {
         BoardStackupLayer* layer = stackup.mutable_layers()->Add();
@@ -469,8 +489,48 @@ void BOARD_STACKUP::Serialize( google::protobuf::Any& aContainer ) const
 
 bool BOARD_STACKUP::Deserialize( const google::protobuf::Any& aContainer )
 {
-    // Read-only for now
-    return false;
+    using namespace kiapi::board;
+    BoardStackup stackup;
+
+    if( !aContainer.UnpackTo( &stackup ) )
+        return false;
+
+    // Deserialize board finish settings
+    if( stackup.has_finish() )
+        m_FinishType = wxString::FromUTF8( stackup.finish().type_name() );
+
+    if( stackup.has_impedance() )
+        m_HasDielectricConstrains = stackup.impedance().is_controlled();
+
+    if( stackup.has_edge() )
+    {
+        if( stackup.edge().has_plating() )
+            m_EdgePlating = stackup.edge().plating().has_edge_plating();
+
+        if( stackup.edge().has_connector() )
+        {
+            switch( stackup.edge().connector().constraints() )
+            {
+            case EdgeConnectorConstraints::ECC_NONE:
+                m_EdgeConnectorConstraints = BS_EDGE_CONNECTOR_NONE;
+                break;
+            case EdgeConnectorConstraints::ECC_IN_USE:
+                m_EdgeConnectorConstraints = BS_EDGE_CONNECTOR_IN_USE;
+                break;
+            case EdgeConnectorConstraints::ECC_BEVELLED:
+                m_EdgeConnectorConstraints = BS_EDGE_CONNECTOR_BEVELLED;
+                break;
+            default:
+                m_EdgeConnectorConstraints = BS_EDGE_CONNECTOR_NONE;
+                break;
+            }
+        }
+    }
+
+    // Note: Layer deserialization is handled separately by the caller if needed,
+    // as changing layer structure requires coordination with the board
+
+    return true;
 }
 
 

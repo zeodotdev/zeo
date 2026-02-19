@@ -220,7 +220,8 @@ bool NETCLASS::Deserialize( const google::protobuf::Any &aContainer )
     if( nc.type() == project::NCT_IMPLICIT )
         return false;
 
-    SetConstituentNetclasses( {} );
+    // Reset constituents to just this netclass (explicit netclasses always point to themselves)
+    m_constituents = { this };
 
     if( nc.board().has_clearance() )
         m_Clearance = nc.board().clearance().value_nm();
@@ -293,32 +294,42 @@ bool NETCLASS::ContainsNetclassWithName( const wxString& netclass ) const
 
 const wxString NETCLASS::GetHumanReadableName() const
 {
-    if( m_constituents.size() == 1 )
+    // For explicit netclasses (size <= 1), return the name directly
+    if( m_constituents.size() <= 1 )
         return m_Name;
 
     wxASSERT( m_constituents.size() >= 2 );
 
+    // Build list of valid constituent names
+    std::vector<wxString> names;
+    for( const NETCLASS* nc : m_constituents )
+    {
+        if( nc != nullptr )
+            names.push_back( nc->GetName() );
+    }
+
+    // Fall back if no valid constituents
+    if( names.empty() )
+        return m_Name;
+
     wxString name;
 
-    if( m_constituents.size() == 2 )
+    if( names.size() == 1 )
     {
-        name.Printf( _( "%s and %s" ),
-                     m_constituents[0]->GetName(),
-                     m_constituents[1]->GetName() );
+        name = names[0];
     }
-    else if( m_constituents.size() == 3 )
+    else if( names.size() == 2 )
     {
-        name.Printf( _( "%s, %s and %s" ),
-                     m_constituents[0]->GetName(),
-                     m_constituents[1]->GetName(),
-                     m_constituents[2]->GetName() );
+        name.Printf( _( "%s and %s" ), names[0], names[1] );
     }
-    else if( m_constituents.size() > 3 )
+    else if( names.size() == 3 )
     {
-        name.Printf( _( "%s, %s and %d more" ),
-                     m_constituents[0]->GetName(),
-                     m_constituents[1]->GetName(),
-                     static_cast<int>( m_constituents.size() - 2 ) );
+        name.Printf( _( "%s, %s and %s" ), names[0], names[1], names[2] );
+    }
+    else
+    {
+        name.Printf( _( "%s, %s and %d more" ), names[0], names[1],
+                     static_cast<int>( names.size() - 2 ) );
     }
 
     return name;
@@ -327,18 +338,31 @@ const wxString NETCLASS::GetHumanReadableName() const
 
 const wxString NETCLASS::GetName() const
 {
-    if( m_constituents.size() == 1 )
+    // For explicit netclasses (size <= 1), return the name directly
+    if( m_constituents.size() <= 1 )
         return m_Name;
 
     wxASSERT( m_constituents.size() >= 2 );
 
-    wxString name = m_constituents[0]->m_Name;
+    // Build composite name from constituents, with null pointer safety
+    wxString name;
+    bool first = true;
 
-    for( std::size_t i = 1; i < m_constituents.size(); ++i )
+    for( const NETCLASS* nc : m_constituents )
     {
-        name += ",";
-        name += m_constituents[i]->m_Name;
+        if( nc == nullptr )
+            continue;
+
+        if( !first )
+            name += ",";
+
+        name += nc->m_Name;
+        first = false;
     }
+
+    // If all constituents were null, fall back to m_Name
+    if( name.IsEmpty() )
+        return m_Name;
 
     return name;
 }

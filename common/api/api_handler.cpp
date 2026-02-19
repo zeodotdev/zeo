@@ -52,7 +52,58 @@ API_RESULT API_HANDLER::Handle( ApiRequest& aMsg )
     if( it != m_handlers.end() )
     {
         REQUEST_HANDLER& handler = it->second;
-        return handler( aMsg );
+
+        // Debug logging for TitleBlock/Origin commands
+        bool isTitleBlockOrOrigin = typeName.find( "TitleBlock" ) != std::string::npos ||
+                                    typeName.find( "BoardOrigin" ) != std::string::npos;
+        if( isTitleBlockOrOrigin )
+        {
+            wxLogMessage( "API_HANDLER[%p]: Found handler for '%s', calling it...",
+                          this, typeName );
+        }
+
+        API_RESULT result = handler( aMsg );
+
+        if( isTitleBlockOrOrigin )
+        {
+            if( result.has_value() )
+            {
+                wxLogMessage( "API_HANDLER[%p]: Handler for '%s' succeeded",
+                              this, typeName );
+            }
+            else
+            {
+                wxLogMessage( "API_HANDLER[%p]: Handler for '%s' returned error status=%d, msg='%s'",
+                              this, typeName,
+                              (int)result.error().status(),
+                              result.error().error_message() );
+            }
+        }
+
+        return result;
+    }
+
+    // Debug: log unhandled type names for title_block/origin related messages
+    if( typeName.find( "TitleBlock" ) != std::string::npos ||
+        typeName.find( "BoardOrigin" ) != std::string::npos )
+    {
+        wxLogMessage( "API_HANDLER[%p]: Unhandled type '%s', available handlers: %zu",
+                      this, typeName, m_handlers.size() );
+        for( const auto& [name, _] : m_handlers )
+        {
+            wxLogMessage( "  - registered: %s", name );
+        }
+        // Also check if we have ANY TitleBlock/Origin handlers
+        bool hasTitleBlock = false, hasOrigin = false;
+        for( const auto& [name, _] : m_handlers )
+        {
+            if( name.find( "TitleBlock" ) != std::string::npos )
+                hasTitleBlock = true;
+            if( name.find( "Origin" ) != std::string::npos )
+                hasOrigin = true;
+        }
+        wxLogMessage( "  Has TitleBlock handlers: %s, Has Origin handlers: %s",
+                      hasTitleBlock ? "YES" : "NO", hasOrigin ? "YES" : "NO" );
     }
 
     status.set_status( ApiStatusCode::AS_UNHANDLED );

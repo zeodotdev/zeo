@@ -183,6 +183,7 @@ void KICAD_API_SERVER::RegisterHandler( API_HANDLER* aHandler )
 {
     wxCHECK( aHandler, /* void */ );
     m_handlers.insert( aHandler );
+    wxLogMessage( "API_SERVER[%p]: Registered handler %p, total handlers: %zu", this, aHandler, m_handlers.size() );
     wxLogTrace( traceApi, "API_SERVER[%p]: Registered handler %p, total handlers: %zu", this, aHandler, m_handlers.size() );
 }
 
@@ -341,17 +342,38 @@ void KICAD_API_SERVER::processApiRequest( uint64_t aRequestId, const std::string
         {
             API_RESULT result;
 
-            wxLogTrace( traceApi, "API_SERVER[%p]: Processing request %lu, checking %zu handlers",
-                        this, aRequestId, m_handlers.size() );
+            // Parse type name for logging
+            std::string requestTypeName = "<unparseable>";
+            google::protobuf::Any::ParseAnyTypeUrl( request.message().type_url(), &requestTypeName );
 
+            wxLogMessage( "API_SERVER[%p]: Processing request %lu type='%s', checking %zu handlers",
+                          this, aRequestId, requestTypeName, m_handlers.size() );
+
+            int handlerIndex = 0;
             for( API_HANDLER* handler : m_handlers )
             {
+                wxLogMessage( "API_SERVER[%p]: Trying handler %d at %p",
+                              this, handlerIndex, handler );
+
                 result = handler->Handle( request );
 
                 if( result.has_value() )
+                {
+                    wxLogMessage( "API_SERVER[%p]: Handler %d succeeded", this, handlerIndex );
                     break;
+                }
                 else if( result.error().status() != ApiStatusCode::AS_UNHANDLED )
+                {
+                    wxLogMessage( "API_SERVER[%p]: Handler %d returned error status=%d",
+                                  this, handlerIndex, (int)result.error().status() );
                     break;
+                }
+                else
+                {
+                    wxLogMessage( "API_SERVER[%p]: Handler %d returned UNHANDLED, trying next",
+                                  this, handlerIndex );
+                }
+                handlerIndex++;
             }
 
             if( result.has_value() )

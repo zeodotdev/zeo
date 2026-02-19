@@ -537,6 +537,67 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schLabelPins );
 
+    // sch_place_companions - Place companion components adjacent to IC pins
+    LLM_TOOL schPlaceCompanions;
+    schPlaceCompanions.name = "sch_place_companions";
+    schPlaceCompanions.description =
+        "Place companion components adjacent to an IC's pins. Companion circuits are small "
+        "supporting parts (decoupling caps, pull-up/down resistors, termination resistors, "
+        "filter caps, LED indicators) that wire directly to specific IC pins.\n\n"
+        "The tool calculates optimal positions based on IC geometry and pin locations. "
+        "Components are placed adjacent to pins with short wire stubs. "
+        "Other connections use labels instead of long wires.\n\n"
+        "Use this for IC support circuitry AFTER placing the IC with sch_add. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schPlaceCompanions.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "ic_ref", {
+                { "type", "string" },
+                { "description", "Reference designator of anchor IC (e.g., 'U1')" }
+            }},
+            { "companions", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "object" },
+                    { "properties", {
+                        { "lib_id", {
+                            { "type", "string" },
+                            { "description", "Library ID (e.g., 'Device:C', 'Device:R')" }
+                        }},
+                        { "ic_pin", {
+                            { "type", "string" },
+                            { "description", "IC pin number or name to place adjacent to" }
+                        }},
+                        { "offset_grids", {
+                            { "type", "integer" },
+                            { "description", "Distance in grid units (1.27mm each). Default: 3" }
+                        }},
+                        { "properties", {
+                            { "type", "object" },
+                            { "description", "Symbol properties like {\"Value\": \"100nF\", \"Footprint\": \"...\"}" },
+                            { "additionalProperties", { { "type", "string" } } }
+                        }},
+                        { "terminal_labels", {
+                            { "type", "object" },
+                            { "description", "Text labels for companion terminals. Map pin number to label text: {\"2\": \"SPI_CLK\"}" },
+                            { "additionalProperties", { { "type", "string" } } }
+                        }},
+                        { "terminal_power", {
+                            { "type", "object" },
+                            { "description", "Power symbols for companion terminals. Map pin number to power symbol: {\"2\": \"GND\"} or {\"1\": \"VCC\"}" },
+                            { "additionalProperties", { { "type", "string" } } }
+                        }}
+                    }},
+                    { "required", json::array( { "lib_id", "ic_pin" } ) }
+                }},
+                { "description", "Array of companion components to place" }
+            }}
+        }},
+        { "required", json::array( { "ic_ref", "companions" } ) }
+    };
+    tools.push_back( schPlaceCompanions );
+
     // sch_add_sheet - Add a hierarchical sheet
     LLM_TOOL schAddSheet;
     schAddSheet.name = "sch_add_sheet";

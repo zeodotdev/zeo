@@ -3,7 +3,11 @@
 #include <iomanip>
 
 // Overlap detection padding per side (mm). Total clearance = 2x this value.
+// Default margin for passives and small components.
 static constexpr double BBOX_MARGIN_MM = 0.5;
+
+// Larger margin for ICs (>6 pins, MCUs, connectors) to leave room for companion circuits.
+static constexpr double IC_BBOX_MARGIN_MM = 5.08;  // 200 mil = 4 grid squares
 
 
 bool SCH_CRUD_HANDLER::CanHandle( const std::string& aToolName ) const
@@ -319,8 +323,23 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
 
     if( hasPositionUpdate )
     {
+        code << "# Margin constants: ICs (>6 pins, MCUs) get larger margin for companion circuits\n";
+        code << "_BBOX_MARGIN_DEFAULT = " << BBOX_MARGIN_MM << "\n";
+        code << "_BBOX_MARGIN_IC = " << IC_BBOX_MARGIN_MM << "\n";
+        code << "\n";
+        code << "def _get_bbox_margin(sym):\n";
+        code << "    \"\"\"Return appropriate margin based on symbol type/pin count.\"\"\"\n";
+        code << "    try:\n";
+        code << "        lib_id = getattr(sym, 'lib_id', '') or ''\n";
+        code << "        pin_count = len(getattr(sym, 'pins', []))\n";
+        code << "        # ICs: >6 pins or MCU libraries (not small connectors/passives)\n";
+        code << "        if pin_count > 6 or 'MCU' in lib_id:\n";
+        code << "            return _BBOX_MARGIN_IC\n";
+        code << "    except:\n";
+        code << "        pass\n";
+        code << "    return _BBOX_MARGIN_DEFAULT\n";
+        code << "\n";
         code << "# Collect bounding boxes of all existing symbols and labels for overlap detection\n";
-        code << "_BBOX_MARGIN = " << BBOX_MARGIN_MM << "\n";
         code << "placed_bboxes = []\n";
         code << "try:\n";
         code << "    _all_existing = sch.symbols.get_all()\n";
@@ -330,7 +349,8 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
         code << "        except:\n";
         code << "            continue\n";
         code << "        if _ebb:\n";
-        code << "            placed_bboxes.append({'id': str(_esym.id.value), 'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
+        code << "            _margin = _get_bbox_margin(_esym)\n";
+        code << "            placed_bboxes.append({'id': str(_esym.id.value), 'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _margin, 'max_x': _ebb['max_x'] + _margin, 'min_y': _ebb['min_y'] - _margin, 'max_y': _ebb['max_y'] + _margin})\n";
         code << "except:\n";
         code << "    pass\n";
         code << "try:\n";
@@ -340,7 +360,7 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
         code << "        except:\n";
         code << "            continue\n";
         code << "        if _ebb:\n";
-        code << "            placed_bboxes.append({'id': str(_elbl.id.value), 'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
+        code << "            placed_bboxes.append({'id': str(_elbl.id.value), 'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN_DEFAULT, 'max_x': _ebb['max_x'] + _BBOX_MARGIN_DEFAULT, 'min_y': _ebb['min_y'] - _BBOX_MARGIN_DEFAULT, 'max_y': _ebb['max_y'] + _BBOX_MARGIN_DEFAULT})\n";
         code << "except:\n";
         code << "    pass\n";
         code << "\n";
@@ -408,7 +428,8 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
             code << "        try:\n";
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(item_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
-            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN}\n";
+            code << "                _margin_" << i << " = _get_bbox_margin(item_" << i << ")\n";
+            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _margin_" << i << ", 'max_x': _bb_" << i << "['max_x'] + _margin_" << i << ", 'min_y': _bb_" << i << "['min_y'] - _margin_" << i << ", 'max_y': _bb_" << i << "['max_y'] + _margin_" << i << "}\n";
             code << "                _obstacle_ref_" << i << " = '?'\n";
             code << "                for _pb in placed_bboxes:\n";
             code << "                    if _pb.get('id') == _item_id_" << i << ":\n";
@@ -1400,8 +1421,23 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "\n";
 
     // --- Overlap detection preamble ---
+    code << "# Margin constants: ICs (>6 pins, MCUs) get larger margin for companion circuits\n";
+    code << "_BBOX_MARGIN_DEFAULT = " << BBOX_MARGIN_MM << "\n";
+    code << "_BBOX_MARGIN_IC = " << IC_BBOX_MARGIN_MM << "\n";
+    code << "\n";
+    code << "def _get_bbox_margin(sym):\n";
+    code << "    \"\"\"Return appropriate margin based on symbol type/pin count.\"\"\"\n";
+    code << "    try:\n";
+    code << "        lib_id = getattr(sym, 'lib_id', '') or ''\n";
+    code << "        pin_count = len(getattr(sym, 'pins', []))\n";
+    code << "        # ICs: >6 pins or MCU libraries (not small connectors/passives)\n";
+    code << "        if pin_count > 6 or 'MCU' in lib_id:\n";
+    code << "            return _BBOX_MARGIN_IC\n";
+    code << "    except:\n";
+    code << "        pass\n";
+    code << "    return _BBOX_MARGIN_DEFAULT\n";
+    code << "\n";
     code << "# Collect bounding boxes of all existing symbols and labels for overlap detection\n";
-    code << "_BBOX_MARGIN = " << BBOX_MARGIN_MM << "\n";
     code << "placed_bboxes = []\n";
     code << "try:\n";
     code << "    _all_existing = sch.symbols.get_all()\n";
@@ -1411,7 +1447,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "        except:\n";
     code << "            continue\n";
     code << "        if _ebb:\n";
-    code << "            placed_bboxes.append({'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
+    code << "            _margin = _get_bbox_margin(_esym)\n";
+    code << "            placed_bboxes.append({'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _margin, 'max_x': _ebb['max_x'] + _margin, 'min_y': _ebb['min_y'] - _margin, 'max_y': _ebb['max_y'] + _margin})\n";
     code << "except:\n";
     code << "    pass\n";
     code << "try:\n";
@@ -1421,7 +1458,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "        except:\n";
     code << "            continue\n";
     code << "        if _ebb:\n";
-    code << "            placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
+    code << "            placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN_DEFAULT, 'max_x': _ebb['max_x'] + _BBOX_MARGIN_DEFAULT, 'min_y': _ebb['min_y'] - _BBOX_MARGIN_DEFAULT, 'max_y': _ebb['max_y'] + _BBOX_MARGIN_DEFAULT})\n";
     code << "except:\n";
     code << "    pass\n";
     code << "\n";
@@ -1436,6 +1473,84 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "        if max(_sx,_ex) > bbox['min_x'] and min(_sx,_ex) < bbox['max_x'] and max(_sy,_ey) > bbox['min_y'] and min(_sy,_ey) < bbox['max_y']:\n";
     code << "            return True\n";
     code << "    return False\n";
+    code << "\n";
+
+    // Wire-through-component detection: build body-only obstacles (excluding pins)
+    // Debug info collected in _debug list and included in JSON result
+    code << "_debug = []\n";
+    code << "# Build body-only bboxes for wire crossing detection\n";
+    code << "# Pins extend beyond body, so we shrink the full bbox to approximate body-only\n";
+    code << "_body_bboxes = []\n";
+    code << "try:\n";
+    code << "    _all_syms = sch.symbols.get_all()\n";
+    code << "    _debug.append(f'Found {len(_all_syms)} existing symbols')\n";
+    code << "    for _esym in _all_syms:\n";
+    code << "        _ref = getattr(_esym, 'reference', '?')\n";
+    code << "        try:\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_esym, units='mm', include_text=False)\n";
+    code << "        except Exception as _e:\n";
+    code << "            _debug.append(f'{_ref}: bbox error: {_e}')\n";
+    code << "            continue\n";
+    code << "        if not _ebb:\n";
+    code << "            _debug.append(f'{_ref}: no bbox')\n";
+    code << "            continue\n";
+    code << "        _pin_count = len(getattr(_esym, 'pins', []))\n";
+    code << "        # Shrink bbox to approximate body-only (excluding pin extension)\n";
+    code << "        # Must be small enough to not invalidate narrow dimensions\n";
+    code << "        # Resistor body is ~2mm narrow dimension, so max shrink ~0.5mm per side\n";
+    code << "        if _pin_count <= 2:\n";
+    code << "            _shrink = 0.5  # Passives: small shrink to preserve narrow body dimension\n";
+    code << "        elif _pin_count <= 4:\n";
+    code << "            _shrink = 0.4  # Small components\n";
+    code << "        else:\n";
+    code << "            _shrink = 0.3  # ICs: pins on all sides\n";
+    code << "        _bx0 = _ebb['min_x'] + _shrink\n";
+    code << "        _bx1 = _ebb['max_x'] - _shrink\n";
+    code << "        _by0 = _ebb['min_y'] + _shrink\n";
+    code << "        _by1 = _ebb['max_y'] - _shrink\n";
+    code << "        # Only add if shrunk bbox is still valid (not inverted)\n";
+    code << "        if _bx0 < _bx1 and _by0 < _by1:\n";
+    code << "            _body_bboxes.append({'ref': _ref, 'min_x': _bx0, 'max_x': _bx1, 'min_y': _by0, 'max_y': _by1})\n";
+    code << "            _debug.append(f'{_ref}: pins={_pin_count} body=({_bx0:.2f},{_by0:.2f})-({_bx1:.2f},{_by1:.2f}) ADDED')\n";
+    code << "        else:\n";
+    code << "            _debug.append(f'{_ref}: pins={_pin_count} shrunk bbox invalid, SKIPPED')\n";
+    code << "except Exception as _e:\n";
+    code << "    _debug.append(f'Error building body_bboxes: {_e}')\n";
+    code << "_debug.append(f'Total body_bboxes: {len(_body_bboxes)}')\n";
+    code << "\n";
+    code << "def _line_crosses_bbox(x0, y0, x1, y1, bb):\n";
+    code << "    \"\"\"Check if line segment (x0,y0)-(x1,y1) passes THROUGH bbox interior.\n";
+    code << "    Endpoints touching the bbox boundary are OK (they're at pin tips).\n";
+    code << "    Returns True if any intermediate point is inside.\"\"\"\n";
+    code << "    # Simple approach: sample points along line and check if any are inside\n";
+    code << "    dx, dy = x1 - x0, y1 - y0\n";
+    code << "    length = (dx**2 + dy**2) ** 0.5\n";
+    code << "    if length < 0.01:\n";
+    code << "        return False\n";
+    code << "    # Sample every 0.5mm along the line (excluding endpoints)\n";
+    code << "    steps = max(2, int(length / 0.5))\n";
+    code << "    for i in range(1, steps):\n";
+    code << "        t = i / steps\n";
+    code << "        px, py = x0 + t * dx, y0 + t * dy\n";
+    code << "        if bb['min_x'] < px < bb['max_x'] and bb['min_y'] < py < bb['max_y']:\n";
+    code << "            return True\n";
+    code << "    return False\n";
+    code << "\n";
+    code << "def _wire_crosses_component(pts, wire_idx):\n";
+    code << "    \"\"\"Check if wire path crosses through any component body.\n";
+    code << "    Returns (crosses, ref) where ref is the component reference.\"\"\"\n";
+    code << "    _debug.append(f'Wire {wire_idx}: checking {len(pts)} points against {len(_body_bboxes)} bodies')\n";
+    code << "    for i in range(len(pts) - 1):\n";
+    code << "        x0, y0 = pts[i]\n";
+    code << "        x1, y1 = pts[i + 1]\n";
+    code << "        _debug.append(f'  seg[{i}]: ({x0:.2f},{y0:.2f})->({x1:.2f},{y1:.2f})')\n";
+    code << "        for bb in _body_bboxes:\n";
+    code << "            crosses = _line_crosses_bbox(x0, y0, x1, y1, bb)\n";
+    code << "            if crosses:\n";
+    code << "                _debug.append(f'    -> CROSSES {bb[\"ref\"]} ({bb[\"min_x\"]:.2f},{bb[\"min_y\"]:.2f})-({bb[\"max_x\"]:.2f},{bb[\"max_y\"]:.2f})')\n";
+    code << "                return True, bb['ref']\n";
+    code << "    _debug.append(f'  -> NO CROSSING')\n";
+    code << "    return False, None\n";
     code << "\n";
 
     // --- Sheet bounds check ---
@@ -1509,7 +1624,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "        try:\n";
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(sym_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
-            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN}\n";
+            code << "                _margin_" << i << " = _get_bbox_margin(sym_" << i << ")\n";
+            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _margin_" << i << ", 'max_x': _bb_" << i << "['max_x'] + _margin_" << i << ", 'min_y': _bb_" << i << "['min_y'] - _margin_" << i << ", 'max_y': _bb_" << i << "['max_y'] + _margin_" << i << "}\n";
             code << "                _obstacle_ref_" << i << " = '?'\n";
             code << "                for _pb in placed_bboxes:\n";
             code << "                    if _bboxes_overlap(_new_bbox_" << i << ", _pb):\n";
@@ -1536,6 +1652,20 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "            sch.crud.update_items(sym_" << i << ")\n";
             code << "            if _bb_" << i << ":\n";
             code << "                placed_bboxes.append({'ref': _new_ref_" << i << ", **_new_bbox_" << i << "})\n";
+            // Also add to _body_bboxes for wire crossing detection
+            code << "                _pc_" << i << " = len(getattr(sym_" << i << ", 'pins', []))\n";
+            code << "                if _pc_" << i << " <= 2:\n";
+            code << "                    _bshrink_" << i << " = 0.5\n";
+            code << "                elif _pc_" << i << " <= 4:\n";
+            code << "                    _bshrink_" << i << " = 0.4\n";
+            code << "                else:\n";
+            code << "                    _bshrink_" << i << " = 0.3\n";
+            code << "                _bbx0_" << i << " = _bb_" << i << "['min_x'] + _bshrink_" << i << "\n";
+            code << "                _bbx1_" << i << " = _bb_" << i << "['max_x'] - _bshrink_" << i << "\n";
+            code << "                _bby0_" << i << " = _bb_" << i << "['min_y'] + _bshrink_" << i << "\n";
+            code << "                _bby1_" << i << " = _bb_" << i << "['max_y'] - _bshrink_" << i << "\n";
+            code << "                if _bbx0_" << i << " < _bbx1_" << i << " and _bby0_" << i << " < _bby1_" << i << ":\n";
+            code << "                    _body_bboxes.append({'ref': _new_ref_" << i << ", 'min_x': _bbx0_" << i << ", 'max_x': _bbx1_" << i << ", 'min_y': _bby0_" << i << ", 'max_y': _bby1_" << i << "})\n";
             code << "            _placed_syms[" << i << "] = sym_" << i << "\n";
             code << "            results.append({'index': " << i << ", 'element_type': 'symbol', 'reference': _new_ref_" << i << "})\n";
         }
@@ -1561,12 +1691,13 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "        pwr_" << i << " = sch.labels.add_power('" << EscapePythonString( powerName ) << "', pos_" << i << ", angle=" << angle << ")\n";
 
             // --- Overlap check for power (vs other symbols/labels AND existing wires) ---
+            // Power symbols use default margin (they're small components)
             code << "        _overlap_" << i << " = False\n";
             code << "        _wire_cross_" << i << " = False\n";
             code << "        try:\n";
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(pwr_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
-            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN}\n";
+            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN_DEFAULT, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN_DEFAULT, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN_DEFAULT, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN_DEFAULT}\n";
             code << "                _obstacle_ref_" << i << " = '?'\n";
             code << "                for _pb in placed_bboxes:\n";
             code << "                    if _bboxes_overlap(_new_bbox_" << i << ", _pb):\n";
@@ -1643,12 +1774,13 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             }
 
             // --- Overlap check for label (vs other symbols/labels AND existing wires) ---
+            // Labels use default margin (they're small elements)
             code << "        _overlap_" << i << " = False\n";
             code << "        _wire_cross_" << i << " = False\n";
             code << "        try:\n";
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(lbl_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
-            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN}\n";
+            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN_DEFAULT, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN_DEFAULT, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN_DEFAULT, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN_DEFAULT}\n";
             code << "                _obstacle_ref_" << i << " = '?'\n";
             code << "                for _pb in placed_bboxes:\n";
             code << "                    if _bboxes_overlap(_new_bbox_" << i << ", _pb):\n";
@@ -1695,14 +1827,18 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 code << "        for _wp in _wpts_" << i << ":\n";
                 code << "            _check_bounds(_wp[0], _wp[1], " << i << ")\n";
 
-                // Place wire segments (no bbox overlap check — wires routinely
-                // pass through component bounding boxes to reach pins)
-                code << "        _wc_" << i << " = 0\n";
-                code << "        for _si in range(len(_wpts_" << i << ") - 1):\n";
-                code << "            _w = sch.wiring.add_wire(Vector2.from_xy_mm(*_wpts_" << i << "[_si]), Vector2.from_xy_mm(*_wpts_" << i << "[_si + 1]))\n";
-                code << "            _placed_wires.append(_w)\n";
-                code << "            _wc_" << i << " += 1\n";
-                code << "        results.append({'index': " << i << ", 'element_type': 'wire', 'segments': _wc_" << i << "})\n";
+                // Check if wire path crosses through any component body
+                code << "        _crosses_" << i << ", _crosses_ref_" << i << " = _wire_crosses_component(_wpts_" << i << ", " << i << ")\n";
+                code << "        if _crosses_" << i << ":\n";
+                code << "            results.append({'index': " << i << ", 'error': f'Wire crosses through component {_crosses_ref_" << i << "}. Use sch_connect_net for routed wires or reposition components.'})\n";
+                code << "        else:\n";
+                // Place wire segments
+                code << "            _wc_" << i << " = 0\n";
+                code << "            for _si in range(len(_wpts_" << i << ") - 1):\n";
+                code << "                _w = sch.wiring.add_wire(Vector2.from_xy_mm(*_wpts_" << i << "[_si]), Vector2.from_xy_mm(*_wpts_" << i << "[_si + 1]))\n";
+                code << "                _placed_wires.append(_w)\n";
+                code << "                _wc_" << i << " += 1\n";
+                code << "            results.append({'index': " << i << ", 'element_type': 'wire', 'segments': _wc_" << i << "})\n";
             }
             else
             {
@@ -1800,9 +1936,11 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "    }\n";
     code << "    if _junction_count > 0:\n";
     code << "        result['junctions_placed'] = _junction_count\n";
+    code << "    if _debug:\n";
+    code << "        result['_debug'] = _debug\n";
     code << "\n";
     code << "except Exception as batch_error:\n";
-    code << "    result = {'status': 'error', 'message': str(batch_error), 'results': results}\n";
+    code << "    result = {'status': 'error', 'message': str(batch_error), 'results': results, '_debug': _debug}\n";
     code << "\n";
 
     // Auto-sync sheet pins if any hierarchical labels were placed

@@ -179,8 +179,8 @@ try:
     junction_count = 0
 
     # Build obstacle map from graphical bounding boxes of ALL symbols and labels.
-    # Shrink bbox edges that have pins so wires can reach pin tips
-    # without the body registering as an obstacle.
+    # For ICs (>4 pins), shrink bbox edges that have pins so wires can reach pin tips.
+    # For passives (2-4 pins), use full body bbox to prevent wires crossing through.
     # Also collect all pin-tip grid cells so the router won't cross
     # intermediate pins on multi-pin components (prevents MergeOverlap shorts).
     obstacles = []
@@ -191,20 +191,16 @@ try:
         for obs_sym in all_symbols:
             try:
                 bbox = sch.transform.get_bounding_box(obs_sym, units='mm', include_text=False)
-            except:
+            except Exception as e:
+                print(f'[route] bbox error for {getattr(obs_sym, "reference", "?")} : {e}', file=sys.stderr)
                 continue
             if not bbox:
                 continue
             bx0, bx1 = bbox['min_x'], bbox['max_x']
             by0, by1 = bbox['min_y'], bbox['max_y']
-            # Shrink each edge to the pin tips that exit from it, using pin
-            # orientation rotated by symbol angle (same transform the router uses).
-            # This moves each edge inward to exactly where the outermost pin is,
-            # so pin tips sit at the bbox boundary rather than inside it.
-            _edge_left = []   # pin x-coords exiting left
-            _edge_right = []  # pin x-coords exiting right
-            _edge_top = []    # pin y-coords exiting up
-            _edge_bottom = [] # pin y-coords exiting down
+            _pin_count = len(getattr(obs_sym, 'pins', []))
+            _ref = getattr(obs_sym, 'reference', '?')
+            # Collect pin cells for all components
             _rot90 = {0: 2, 1: 3, 2: 1, 3: 0}
             _rot_steps = round(getattr(obs_sym, 'angle', 0) / 90) % 4
             for sp in obs_sym.pins:
@@ -212,32 +208,55 @@ try:
                     tp = sch.symbols.get_transformed_pin_position(obs_sym, sp.number)
                     if not tp:
                         continue
-                    po = tp.get('orientation', None)
-                    if po is None:
-                        continue
                     px = tp['position'].x / 1_000_000
                     py = tp['position'].y / 1_000_000
-                    for _ in range(_rot_steps):
-                        po = _rot90.get(po, po)
-                    if po == 0: _edge_left.append(px)      # PIN_RIGHT toward body -> escape left
-                    elif po == 1: _edge_right.append(px)    # PIN_LEFT toward body -> escape right
-                    elif po == 2: _edge_bottom.append(py)   # PIN_UP toward body -> escape down
-                    elif po == 3: _edge_top.append(py)      # PIN_DOWN toward body -> escape up
                     pin_cells.add((round(px / _grid), round(py / _grid)))
                 except:
                     pass
-            # Push each edge grid/2 past the outermost pin so that
-            # _cell_blocked (which uses half = grid/2 - 0.01) treats
-            # pin-tip cells as outside the bbox, not on the boundary.
-            _shrink = 1.27 / 2
-            if _edge_left: bx0 = max(bx0, max(_edge_left) + _shrink)
-            if _edge_right: bx1 = min(bx1, min(_edge_right) - _shrink)
-            if _edge_top: by0 = max(by0, max(_edge_top) + _shrink)
-            if _edge_bottom: by1 = min(by1, min(_edge_bottom) - _shrink)
-            if bx0 < bx1 and by0 < by1:
-                obstacles.append({'min_x': bx0, 'max_x': bx1, 'min_y': by0, 'max_y': by1})
-    except:
-        pass
+            # For passives (<=4 pins), use full body bbox with small margin
+            # This prevents wires from crossing through component bodies
+            if _pin_count <= 4:
+                _margin = 0.3  # Small margin around body
+                obstacles.append({
+                    'min_x': bx0 - _margin, 'max_x': bx1 + _margin,
+                    'min_y': by0 - _margin, 'max_y': by1 + _margin,
+                    'ref': _ref
+                })
+            else:
+                # For ICs (>4 pins), shrink bbox edges to pin tips so wires can reach pins
+                _edge_left = []   # pin x-coords exiting left
+                _edge_right = []  # pin x-coords exiting right
+                _edge_top = []    # pin y-coords exiting up
+                _edge_bottom = [] # pin y-coords exiting down
+                for sp in obs_sym.pins:
+                    try:
+                        tp = sch.symbols.get_transformed_pin_position(obs_sym, sp.number)
+                        if not tp:
+                            continue
+                        po = tp.get('orientation', None)
+                        if po is None:
+                            continue
+                        px = tp['position'].x / 1_000_000
+                        py = tp['position'].y / 1_000_000
+                        for _ in range(_rot_steps):
+                            po = _rot90.get(po, po)
+                        if po == 0: _edge_left.append(px)
+                        elif po == 1: _edge_right.append(px)
+                        elif po == 2: _edge_bottom.append(py)
+                        elif po == 3: _edge_top.append(py)
+                    except:
+                        pass
+                # Shrink edges to pin positions
+                _shrink = 1.27 / 2
+                if _edge_left: bx0 = max(bx0, max(_edge_left) + _shrink)
+                if _edge_right: bx1 = min(bx1, min(_edge_right) - _shrink)
+                if _edge_top: by0 = max(by0, max(_edge_top) + _shrink)
+                if _edge_bottom: by1 = min(by1, min(_edge_bottom) - _shrink)
+                if bx0 < bx1 and by0 < by1:
+                    obstacles.append({'min_x': bx0, 'max_x': bx1, 'min_y': by0, 'max_y': by1, 'ref': _ref})
+    except Exception as e:
+        print(f'[route] obstacle build error: {e}', file=sys.stderr)
+    _sym_obstacle_count = len(obstacles)
     try:
         for obs_lbl in sch.labels.get_all():
             try:
@@ -246,10 +265,11 @@ try:
                 continue
             if not bbox:
                 continue
-            obstacles.append({'min_x': bbox['min_x'], 'max_x': bbox['max_x'], 'min_y': bbox['min_y'], 'max_y': bbox['max_y']})
-    except:
-        pass
+            obstacles.append({'min_x': bbox['min_x'], 'max_x': bbox['max_x'], 'min_y': bbox['min_y'], 'max_y': bbox['max_y'], 'ref': getattr(obs_lbl, 'text', 'label')})
+    except Exception as e:
+        print(f'[route] label obstacle error: {e}', file=sys.stderr)
 
+    print(f'[route] Symbol obstacles: {_sym_obstacle_count}, Label obstacles: {len(obstacles) - _sym_obstacle_count}', file=sys.stderr)
     print(f'[route] Pin obstacle cells: {len(pin_cells)}', file=sys.stderr)
 
     # Build directional wire obstacle sets.
@@ -290,12 +310,17 @@ try:
                 for gy in range(min(gy0, gy1), max(gy0, gy1) + 1):
                     v_wire_cells.add((gx0, gy))
 
-    def _cell_blocked(cx, cy, grid=1.27):
-        """Check if a grid cell center is inside any obstacle."""
+    def _cell_blocked(cx, cy, grid=1.27, return_ref=False):
+        """Check if a grid cell center is inside any obstacle.
+        If return_ref=True, returns (blocked, ref) tuple."""
         half = grid / 2 - 0.01
         for obs in obstacles:
             if cx + half > obs['min_x'] and cx - half < obs['max_x'] and cy + half > obs['min_y'] and cy - half < obs['max_y']:
+                if return_ref:
+                    return True, obs.get('ref', '?')
                 return True
+        if return_ref:
+            return False, None
         return False
 
     import heapq

@@ -329,7 +329,11 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         { "angle", {
                             { "type", "number" },
                             { "description", "CCW rotation degrees (0, 90, 180, 270). "
-                                            "Passives: 0=vertical, 90=horizontal. "
+                                            "Passives (R, C, L): "
+                                            "0°=vertical (pin1 top, pin2 bottom), "
+                                            "90°=horizontal (pin1 left, pin2 right), "
+                                            "180°=vertical (pin1 bottom, pin2 top), "
+                                            "270°=horizontal (pin1 right, pin2 left). "
                                             "Power symbols: see system prompt for wire-exit direction table." }
                         }},
                         { "mirror", {

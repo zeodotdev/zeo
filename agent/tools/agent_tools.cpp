@@ -489,48 +489,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schDelete );
 
-    // sch_connect_to_power - Connect pins to a power rail with auto-routed wires
-    LLM_TOOL schConnectToPower;
-    schConnectToPower.name = "sch_connect_to_power";
-    schConnectToPower.description =
-        "Connect one or more component pins to a power rail (GND, VCC, +3V3, etc.) in a single call. "
-        "For each pin, places a power symbol and draws an auto-routed wire. "
-        "Power symbols auto-rotate to face the incoming wire based on pin direction. "
-        "This replaces multiple sch_add + sch_connect_net calls for power connections. "
-        "REQUIRES: Schematic editor must be open with a document loaded.";
-    schConnectToPower.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "pins", {
-                { "type", "array" },
-                { "items", {
-                    { "type", "string" },
-                    { "description", "Pin specifier as 'REF:PIN' (e.g., 'U1:VCC', 'R3:1', 'U2:14')" }
-                }},
-                { "minItems", 1 },
-                { "description", "Array of pin specifiers to connect to power. "
-                                "Each pin gets its own power symbol and wire. "
-                                "Example: ['U1:VCC', 'U2:14', 'R1:1']" }
-            }},
-            { "power", {
-                { "type", "string" },
-                { "description", "Power symbol name: 'GND', 'VCC', '+3V3', '+5V', '+3.3V', 'VBUS', 'VBAT', etc." }
-            }},
-            { "offset", {
-                { "type", "number" },
-                { "description", "Distance in mm from pin to power symbol along the pin's escape direction. "
-                                "Default 5.08 (4 grid units). Use 0 to place directly at pin (no wire)." }
-            }},
-            { "angle", {
-                { "type", "number" },
-                { "description", "Force power symbol rotation angle (0, 90, 180, 270 degrees). "
-                                "If omitted, auto-rotates based on pin direction." }
-            }}
-        }},
-        { "required", json::array( { "pins", "power" } ) }
-    };
-    tools.push_back( schConnectToPower );
-
     // sch_label_pins - Batch label pins on a symbol
     LLM_TOOL schLabelPins;
     schLabelPins.name = "sch_label_pins";

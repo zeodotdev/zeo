@@ -296,8 +296,10 @@ try:
     def _astar(x0, y0, x1, y1, grid=1.27, bend_cost=3, start_dir=-1, end_dir=-1, margin=15):
         """A* pathfinding on the schematic grid. Returns list of (x,y) waypoints,
         or None if no path found within the search bounds.
-        start_dir: if >= 0, forced first-step direction (0=right, 1=left, 2=down, 3=up).
-        end_dir: if >= 0, forced approach direction into the goal cell."""
+        start_dir: if >= 0, preferred first-step direction (0=right, 1=left, 2=down, 3=up).
+                   Deviating costs an extra bend penalty (soft constraint).
+        end_dir: if >= 0, preferred approach direction into the goal cell.
+                 Arriving from a different direction costs an extra bend penalty."""
         # Snap start/end to grid
         gx0, gy0 = round(x0 / grid), round(y0 / grid)
         gx1, gy1 = round(x1 / grid), round(y1 / grid)
@@ -347,16 +349,6 @@ try:
                 nx, ny = gx + dx, gy + dy
                 if nx < g_min_x or nx > g_max_x or ny < g_min_y or ny > g_max_y:
                     continue
-                # Force first step outward from pin (hard constraint, not just penalty)
-                if (gx, gy) == (gx0, gy0) and init_d >= 0 and di != init_d:
-                    edx, edy = dirs[init_d]
-                    if not _cell_blocked((gx0 + edx) * grid, (gy0 + edy) * grid, grid):
-                        continue
-                # Force approach direction into goal (pin escape at destination)
-                if (nx, ny) == goal and end_dir >= 0 and di != end_dir:
-                    edx, edy = dirs[end_dir]
-                    if not _cell_blocked((gx1 - edx) * grid, (gy1 - edy) * grid, grid):
-                        continue
                 # Allow start and goal cells even if blocked
                 if (nx, ny) != goal and (nx, ny) != (gx0, gy0):
                     if _cell_blocked(nx * grid, ny * grid, grid):
@@ -371,6 +363,10 @@ try:
                             continue
                 move_cost = 1
                 if prev_d >= 0 and di != prev_d:
+                    move_cost += bend_cost
+                # Soft penalty for arriving at goal from a direction that
+                # doesn't match the destination pin's escape direction.
+                if (nx, ny) == goal and end_dir >= 0 and di != end_dir:
                     move_cost += bend_cost
                 new_g = g + move_cost
                 nkey = (nx, ny, di)
@@ -439,17 +435,30 @@ try:
             sch.wiring.add_junction(pos)
         return len(positions)
 
+    def _dir_index(dx, dy):
+        """Convert (dx, dy) outward direction to A* direction index."""
+        if dx > 0: return 0  # right
+        if dx < 0: return 1  # left
+        if dy > 0: return 2  # down
+        if dy < 0: return 3  # up
+        return -1
+
     def _route_pins(p0, p1):
-        """Route between two pins using A* without forced escape directions.
-        Chain/2-pin mode routes directly pin-to-pin; pin escape is only needed
-        for trunk-and-branch mode where junctions must not land on pins."""
+        """Route between two pins using A* with soft pin direction penalties.
+        The pin escape direction sets the preferred initial/final wire direction;
+        deviating costs an extra bend penalty but is not forbidden."""
         x0, y0 = p0['raw_x'], p0['raw_y']
         x1, y1 = p1['raw_x'], p1['raw_y']
-        print(f'[route] A* {p0["ref"]}:{p0["pin"]} -> {p1["ref"]}:{p1["pin"]}', file=sys.stderr)
+        sd = _dir_index(p0['out_dx'], p0['out_dy'])
+        ed = _dir_index(p1['out_dx'], p1['out_dy'])
+        # end_dir is opposite of outward (wire approaches from outside, moving inward)
+        ed = ed ^ 1 if ed >= 0 else -1
+        _dn = {0:'RIGHT', 1:'LEFT', 2:'DOWN', 3:'UP', -1:'NONE'}
+        print(f'[route] A* {p0["ref"]}:{p0["pin"]} -> {p1["ref"]}:{p1["pin"]}  start_dir={_dn.get(sd)} end_dir={_dn.get(ed)}', file=sys.stderr)
         # Try progressively wider search margins
         wp = None
         for a_margin, a_label in [(15, 'default'), (30, 'wider margin'), (50, 'max margin')]:
-            wp = _astar(x0, y0, x1, y1, margin=a_margin)
+            wp = _astar(x0, y0, x1, y1, start_dir=sd, end_dir=ed, margin=a_margin)
             if wp is not None:
                 if a_label != 'default':
                     print(f'[route]   found path with retry: {a_label}', file=sys.stderr)

@@ -1444,6 +1444,19 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "            return _wbb\n";
     code << "    return None\n";
     code << "\n";
+    code << "def _overlap_info(new_bb):\n";
+    code << "    \"\"\"Find first overlap and return descriptive string with overlap amounts.\"\"\"\n";
+    code << "    for _pb in placed_bboxes:\n";
+    code << "        if _bboxes_overlap(new_bb, _pb):\n";
+    code << "            ox = min(new_bb['max_x'], _pb['max_x']) - max(new_bb['min_x'], _pb['min_x'])\n";
+    code << "            oy = min(new_bb['max_y'], _pb['max_y']) - max(new_bb['min_y'], _pb['min_y'])\n";
+    code << "            ref = _pb.get('ref', '?')\n";
+    code << "            return f\"Overlaps '{ref}' by {ox:.1f}mm horizontal, {oy:.1f}mm vertical\"\n";
+    code << "    _wcross = _find_crossing_wire(new_bb)\n";
+    code << "    if _wcross:\n";
+    code << "        return 'Overlaps a wire segment'\n";
+    code << "    return 'Overlaps existing element(s)'\n";
+    code << "\n";
 
     // --- Sheet bounds check ---
     code << "# Get sheet dimensions for bounds checking\n";
@@ -1611,7 +1624,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "            pass\n";
             code << "        if _rejected_" << i << ":\n";
             code << "            sch.crud.remove_items([sym_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: overlaps existing element(s) and could not auto-slide to clear position.'})\n";
+            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: {_overlap_info(_new_bbox_" << i << ")}. Could not auto-slide to clear position.'})\n";
             code << "        else:\n";
             code << "            _prefix_" << i << " = re.match(r'^([A-Za-z#]+)', getattr(sym_" << i << ", 'reference', 'X')).group(1)\n";
             code << "            _new_ref_" << i << " = next_ref(_prefix_" << i << ")\n";
@@ -1624,6 +1637,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                placed_bboxes.append({'ref': _new_ref_" << i << ", **_new_bbox_" << i << "})\n";
             code << "            _placed_syms[" << i << "] = sym_" << i << "\n";
             code << "            _res_" << i << " = {'index': " << i << ", 'element_type': 'symbol', 'reference': _new_ref_" << i << "}\n";
+            code << "            if _bb_" << i << ":\n";
+            code << "                _res_" << i << "['bbox_mm'] = {'min_x': round(_new_bbox_" << i << "['min_x'], 2), 'max_x': round(_new_bbox_" << i << "['max_x'], 2), 'min_y': round(_new_bbox_" << i << "['min_y'], 2), 'max_y': round(_new_bbox_" << i << "['max_y'], 2)}\n";
             code << "            if _shifted_" << i << ":\n";
             code << "                _res_" << i << "['shifted'] = True\n";
             code << "                _res_" << i << "['shift_mm'] = [round(_shift_dx_" << i << ", 2), round(_shift_dy_" << i << ", 2)]\n";
@@ -1677,7 +1692,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "            pass\n";
             code << "        if _rejected_" << i << ":\n";
             code << "            sch.crud.remove_items([pwr_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: overlaps existing element(s) and could not auto-slide to clear position.'})\n";
+            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: {_overlap_info(_new_bbox_" << i << ")}. Could not auto-slide to clear position.'})\n";
             code << "        else:\n";
             code << "            _pwr_ref_" << i << " = next_ref('#PWR')\n";
             code << "            for _f in pwr_" << i << "._proto.fields:\n";
@@ -1688,6 +1703,8 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "            if _bb_" << i << ":\n";
             code << "                placed_bboxes.append({'ref': _pwr_ref_" << i << ", **_new_bbox_" << i << "})\n";
             code << "            _res_" << i << " = {'index': " << i << ", 'element_type': 'power', 'reference': _pwr_ref_" << i << "}\n";
+            code << "            if _bb_" << i << ":\n";
+            code << "                _res_" << i << "['bbox_mm'] = {'min_x': round(_new_bbox_" << i << "['min_x'], 2), 'max_x': round(_new_bbox_" << i << "['max_x'], 2), 'min_y': round(_new_bbox_" << i << "['min_y'], 2), 'max_y': round(_new_bbox_" << i << "['max_y'], 2)}\n";
             code << "            if _shifted_" << i << ":\n";
             code << "                _res_" << i << "['shifted'] = True\n";
             code << "                _res_" << i << "['shift_mm'] = [round(_shift_dx_" << i << ", 2), round(_shift_dy_" << i << ", 2)]\n";
@@ -1768,11 +1785,13 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "            pass\n";
             code << "        if _rejected_" << i << ":\n";
             code << "            sch.crud.remove_items([lbl_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: overlaps existing element(s) and could not auto-slide to clear position.'})\n";
+            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: {_overlap_info(_new_bbox_" << i << ")}. Could not auto-slide to clear position.'})\n";
             code << "        else:\n";
             code << "            if _bb_" << i << ":\n";
             code << "                placed_bboxes.append({'ref': '" << EscapePythonString( elem.value( "text", "label" ) ) << "', **_new_bbox_" << i << "})\n";
             code << "            _res_" << i << " = {'index': " << i << ", 'element_type': 'label'}\n";
+            code << "            if _bb_" << i << ":\n";
+            code << "                _res_" << i << "['bbox_mm'] = {'min_x': round(_new_bbox_" << i << "['min_x'], 2), 'max_x': round(_new_bbox_" << i << "['max_x'], 2), 'min_y': round(_new_bbox_" << i << "['min_y'], 2), 'max_y': round(_new_bbox_" << i << "['max_y'], 2)}\n";
             code << "            if _shifted_" << i << ":\n";
             code << "                _res_" << i << "['shifted'] = True\n";
             code << "                _res_" << i << "['shift_mm'] = [round(_shift_dx_" << i << ", 2), round(_shift_dy_" << i << ", 2)]\n";

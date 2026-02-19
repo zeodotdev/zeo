@@ -897,6 +897,19 @@ static const char* CONNECT_TO_POWER_ROUTING = R"py(
                 return _wbb
         return None
 
+    def _overlap_info(new_bb):
+        """Find first overlap and return descriptive string with overlap amounts."""
+        for _pb in placed_bboxes:
+            if _bboxes_overlap(new_bb, _pb):
+                ox = min(new_bb['max_x'], _pb['max_x']) - max(new_bb['min_x'], _pb['min_x'])
+                oy = min(new_bb['max_y'], _pb['max_y']) - max(new_bb['min_y'], _pb['min_y'])
+                ref = _pb.get('ref', '?')
+                return f"Overlaps '{ref}' by {ox:.1f}mm horizontal, {oy:.1f}mm vertical"
+        _wcross = _find_crossing_wire(new_bb)
+        if _wcross:
+            return 'Overlaps a wire segment'
+        return 'Overlaps existing element(s)'
+
     _SLIDE_GRID = 1.27
     _SLIDE_MAX_ITER = 5
     _SLIDE_MAX_MM = 30.0
@@ -1041,7 +1054,7 @@ static const char* CONNECT_TO_POWER_ROUTING = R"py(
 
         if _rejected:
             sch.crud.remove_items([power_sym])
-            raise ValueError(f'Power symbol {power_name} for {p["ref"]}:{p["pin"]} overlaps existing element(s) and could not auto-slide to clear position.')
+            raise ValueError(f'Power symbol {power_name} for {p["ref"]}:{p["pin"]}: {_overlap_info(_margined_bb)}. Could not auto-slide to clear position.')
 
         # Set #PWR reference
         _pwr_ref = next_ref('#PWR')

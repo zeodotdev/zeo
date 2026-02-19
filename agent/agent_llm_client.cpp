@@ -121,8 +121,8 @@ void* LLM_REQUEST_THREAD::Entry()
 
     // Map display name to API model ID
     std::string apiModel;
-    if( m_model == "Gemini 3 Pro" )
-        apiModel = "gemini-3-pro-preview";
+    if( m_model == "Gemini 3.1 Pro" )
+        apiModel = "gemini-3.1-pro-preview";
     else
         apiModel = "claude-opus-4-6";
 

@@ -659,7 +659,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         UpdateAuthUI();
 
         // Push model list
-        std::vector<std::string> models = { "Claude 4.6 Opus", "Gemini 3 Pro" };
+        std::vector<std::string> models = { "Claude 4.6 Opus", "Gemini 3.1 Pro" };
         m_bridge->PushModelList( models, m_currentModel );
 
         // Push initial title

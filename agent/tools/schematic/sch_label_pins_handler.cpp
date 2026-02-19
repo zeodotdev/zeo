@@ -120,8 +120,10 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "def snap_to_grid(val, grid=1.27):\n";
     code << "    return round(val / grid) * grid\n";
     code << "\n";
+    code << "_LABEL_SHRINK = 0.4  # Shrink label bboxes to allow stacking at 2.54mm pitch\n";
+    code << "\n";
 
-    // Overlap detection preamble — collect existing label bounding boxes (0 margin)
+    // Overlap detection preamble — collect existing label bounding boxes (shrunk)
     code << "# Collect existing label bounding boxes for overlap detection\n";
     code << "placed_bboxes = []\n";
     code << "try:\n";
@@ -131,7 +133,7 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "        except:\n";
     code << "            continue\n";
     code << "        if _ebb:\n";
-    code << "            placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'], 'max_x': _ebb['max_x'], 'min_y': _ebb['min_y'], 'max_y': _ebb['max_y']})\n";
+    code << "            placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] + _LABEL_SHRINK, 'max_x': _ebb['max_x'] - _LABEL_SHRINK, 'min_y': _ebb['min_y'] + _LABEL_SHRINK, 'max_y': _ebb['max_y'] - _LABEL_SHRINK})\n";
     code << "except:\n";
     code << "    pass\n";
     code << "\n";
@@ -266,7 +268,7 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "            try:\n";
     code << "                _bb = sch.transform.get_bounding_box(_lbl, units='mm')\n";
     code << "                if _bb:\n";
-    code << "                    _new_bbox = {'min_x': _bb['min_x'], 'max_x': _bb['max_x'], 'min_y': _bb['min_y'], 'max_y': _bb['max_y']}\n";
+    code << "                    _new_bbox = {'min_x': _bb['min_x'] + _LABEL_SHRINK, 'max_x': _bb['max_x'] - _LABEL_SHRINK, 'min_y': _bb['min_y'] + _LABEL_SHRINK, 'max_y': _bb['max_y'] - _LABEL_SHRINK}\n";
     code << "                    def _has_real_overlap(bbox):\n";
     code << "                        for _pb in placed_bboxes:\n";
     code << "                            if _bboxes_overlap(bbox, _pb) and not _point_in_bbox(px, py, _pb):\n";
@@ -284,10 +286,14 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "                            _try_bbox = {'min_x': _new_bbox['min_x'] + _sdx, 'max_x': _new_bbox['max_x'] + _sdx, 'min_y': _new_bbox['min_y'] + _sdy, 'max_y': _new_bbox['max_y'] + _sdy}\n";
     code << "                            if not _has_real_overlap(_try_bbox):\n";
     code << "                                sch.transform.move(_lbl, delta_x_mm=_sdx, delta_y_mm=_sdy)\n";
+    code << "                                # Re-apply alignment after move (KiCad may reset it)\n";
+    code << "                                _lbl._proto.text.attributes.horizontal_alignment = h_align\n";
+    code << "                                _lbl._proto.text.attributes.vertical_alignment = v_align\n";
+    code << "                                sch.crud.update_items(_lbl)\n";
     code << "                                lbl_x, lbl_y = _try_x, _try_y\n";
     code << "                                _bb = sch.transform.get_bounding_box(_lbl, units='mm')\n";
     code << "                                if _bb:\n";
-    code << "                                    _new_bbox = {'min_x': _bb['min_x'], 'max_x': _bb['max_x'], 'min_y': _bb['min_y'], 'max_y': _bb['max_y']}\n";
+    code << "                                    _new_bbox = {'min_x': _bb['min_x'] + _LABEL_SHRINK, 'max_x': _bb['max_x'] - _LABEL_SHRINK, 'min_y': _bb['min_y'] + _LABEL_SHRINK, 'max_y': _bb['max_y'] - _LABEL_SHRINK}\n";
     code << "                                _shifted = True\n";
     code << "                                _slid_ok = True\n";
     code << "                                break\n";

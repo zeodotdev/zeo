@@ -123,9 +123,30 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "_LABEL_SHRINK = 0.4  # Shrink label bboxes to allow stacking at 2.54mm pitch\n";
     code << "\n";
 
-    // Overlap detection preamble — collect existing label bounding boxes (shrunk)
-    code << "# Collect existing label bounding boxes for overlap detection\n";
+    // Overlap detection preamble — collect existing symbol, sheet, and label bboxes
+    code << "# Collect bounding boxes of existing elements for overlap detection\n";
+    code << "_BBOX_MARGIN = 1.0\n";
     code << "placed_bboxes = []\n";
+    code << "try:\n";
+    code << "    for _esym in sch.symbols.get_all():\n";
+    code << "        try:\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_esym, units='mm', include_text=False)\n";
+    code << "        except:\n";
+    code << "            continue\n";
+    code << "        if _ebb:\n";
+    code << "            placed_bboxes.append({'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
+    code << "except:\n";
+    code << "    pass\n";
+    code << "try:\n";
+    code << "    for _esht in sch.crud.get_sheets():\n";
+    code << "        try:\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_esht, units='mm')\n";
+    code << "        except:\n";
+    code << "            continue\n";
+    code << "        if _ebb:\n";
+    code << "            placed_bboxes.append({'ref': getattr(_esht, 'name', 'sheet'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
+    code << "except:\n";
+    code << "    pass\n";
     code << "try:\n";
     code << "    for _elbl in sch.labels.get_all():\n";
     code << "        try:\n";

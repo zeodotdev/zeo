@@ -1387,6 +1387,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
     code << "import json, sys, re\n";
     code << "from kipy.geometry import Vector2\n";
+    code << "from kipy.proto.common.types.enums_pb2 import HA_LEFT, HA_RIGHT, VA_TOP, VA_BOTTOM\n";
     code << "\n";
     code << GenerateRefreshPreamble();
     code << "\n";
@@ -1628,6 +1629,31 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 code << "        lbl_" << i << " = sch.labels.add_hierarchical('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
             else
                 code << "        lbl_" << i << " = sch.labels.add_local('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
+
+            // Map angle to label connection point alignment (rotate the pin, not the text)
+            // 0° → pin left (default), 90° → pin bottom, 180° → pin right, 270° → pin top
+            int angle = static_cast<int>( elem.value( "angle", 0.0 ) ) % 360;
+
+            if( angle != 0 )
+            {
+                if( angle == 90 )
+                {
+                    code << "        lbl_" << i << "._proto.text.attributes.horizontal_alignment = HA_LEFT\n";
+                    code << "        lbl_" << i << "._proto.text.attributes.vertical_alignment = VA_BOTTOM\n";
+                }
+                else if( angle == 180 )
+                {
+                    code << "        lbl_" << i << "._proto.text.attributes.horizontal_alignment = HA_RIGHT\n";
+                    code << "        lbl_" << i << "._proto.text.attributes.vertical_alignment = VA_BOTTOM\n";
+                }
+                else if( angle == 270 )
+                {
+                    code << "        lbl_" << i << "._proto.text.attributes.horizontal_alignment = HA_LEFT\n";
+                    code << "        lbl_" << i << "._proto.text.attributes.vertical_alignment = VA_TOP\n";
+                }
+
+                code << "        sch.crud.update_items([lbl_" << i << "])\n";
+            }
 
             // --- Overlap check for label (vs other symbols/labels AND existing wires) ---
             code << "        _overlap_" << i << " = False\n";

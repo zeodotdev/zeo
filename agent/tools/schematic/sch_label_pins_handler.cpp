@@ -73,6 +73,8 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
 
     std::string ref = aInput.value( "ref", "" );
     std::string labelType = aInput.value( "label_type", "local" );
+    std::string hAlignOverride = aInput.value( "h_align", "" );
+    std::string vAlignOverride = aInput.value( "v_align", "" );
 
     // Build the pin->label map as a Python dict literal
     std::ostringstream labelsDict;
@@ -110,6 +112,8 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "ref = '" << EscapePythonString( ref ) << "'\n";
     code << "label_type = '" << EscapePythonString( labelType ) << "'\n";
     code << "pin_labels = " << labelsDict.str() << "\n";
+    code << "h_align_override = " << ( hAlignOverride.empty() ? "None" : ( "'" + hAlignOverride + "'" ) ) << "\n";
+    code << "v_align_override = " << ( vAlignOverride.empty() ? "None" : ( "'" + vAlignOverride + "'" ) ) << "\n";
     code << "\n";
 
     code << "results = []\n";
@@ -200,6 +204,14 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "                else:\n";
     code << "                    h_align, v_align = HA_RIGHT, VA_BOTTOM\n";
     code << "                    direction = 'left'\n";
+    code << "\n";
+
+    // Apply alignment overrides if specified
+    code << "            # Apply alignment overrides\n";
+    code << "            if h_align_override is not None:\n";
+    code << "                h_align = HA_LEFT if h_align_override == 'left' else HA_RIGHT\n";
+    code << "            if v_align_override is not None:\n";
+    code << "                v_align = VA_TOP if v_align_override == 'top' else VA_BOTTOM\n";
     code << "\n";
 
     // Place label at pin tip

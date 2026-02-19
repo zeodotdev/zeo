@@ -1256,6 +1256,10 @@ void CHAT_CONTROLLER::AddToHistory( const nlohmann::json& aMessage )
 {
     m_chatHistory.push_back( aMessage );
     m_apiContext.push_back( aMessage );
+
+    // Persist after every history change so crashes/errors don't lose data
+    if( m_chatHistoryDb && !m_chatId.empty() )
+        m_chatHistoryDb->Save( m_chatHistory );
 }
 
 

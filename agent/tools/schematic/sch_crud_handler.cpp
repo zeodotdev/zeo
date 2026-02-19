@@ -765,7 +765,7 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "                    matched.append(w)\n";
     code << "\n";
     code << "        elif q_type in ('label', 'global_label', 'hierarchical_label'):\n";
-    code << "            type_map = {'label': 'NetLabel', 'global_label': 'GlobalLabel', 'hierarchical_label': 'HierLabel'}\n";
+    code << "            type_map = {'label': 'NetLabel', 'global_label': 'GlobalLabel', 'hierarchical_label': 'HierarchicalLabel'}\n";
     code << "            expected_class = type_map.get(q_type, '')\n";
     code << "            for lbl in sch.labels.get_all():\n";
     code << "                ok = True\n";
@@ -878,7 +878,7 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "        for item in items_to_delete:\n";
     code << "            for p in _get_points(item):\n";
     code << "                queue.append(p)\n";
-    code << "        deletable_types = ('Wire', 'Junction', 'NetLabel', 'GlobalLabel', 'HierLabel', 'NoConnect')\n";
+    code << "        deletable_types = ('Wire', 'Junction', 'NetLabel', 'GlobalLabel', 'HierarchicalLabel', 'NoConnect')\n";
     code << "        while queue:\n";
     code << "            pt = queue.popleft()\n";
     code << "            if pt in pin_positions:\n";

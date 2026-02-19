@@ -3487,9 +3487,6 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
             status["open_editor_files"] = arr;
         }
 
-        // Get current sheet if schematic is open (via IPC would be more accurate, but this is fast)
-        status["current_sheet"] = ""; // Would need IPC call for sch.sheets.get_current()
-
         if( m_chatController )
             m_chatController->HandleToolResult( data->toolId, status.dump( 2 ), true );
 

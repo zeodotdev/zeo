@@ -181,7 +181,11 @@ try:
     # Build obstacle map from graphical bounding boxes of ALL symbols and labels.
     # Shrink bbox edges that have pins so wires can reach pin tips
     # without the body registering as an obstacle.
+    # Also collect all pin-tip grid cells so the router won't cross
+    # intermediate pins on multi-pin components (prevents MergeOverlap shorts).
     obstacles = []
+    pin_cells = set()
+    _grid = 1.27
     try:
         all_symbols = sch.symbols.get_all()
         for obs_sym in all_symbols:
@@ -219,6 +223,7 @@ try:
                     elif po == 1: _edge_right.append(px)    # PIN_LEFT toward body -> escape right
                     elif po == 2: _edge_bottom.append(py)   # PIN_UP toward body -> escape down
                     elif po == 3: _edge_top.append(py)      # PIN_DOWN toward body -> escape up
+                    pin_cells.add((round(px / _grid), round(py / _grid)))
                 except:
                     pass
             # Push each edge grid/2 past the outermost pin so that
@@ -245,6 +250,8 @@ try:
     except:
         pass
 
+    print(f'[route] Pin obstacle cells: {len(pin_cells)}', file=sys.stderr)
+
     # Build directional wire obstacle sets.
     # Horizontal wires block horizontal movement; vertical wires block vertical movement.
     # This prevents collinear overlap which triggers MergeOverlap (false connections).
@@ -252,7 +259,6 @@ try:
     h_wire_cells = set()
     v_wire_cells = set()
     try:
-        _grid = 1.27
         for w in sch.wiring.get_wires():
             wx0 = w.start.x / 1_000_000
             wy0 = w.start.y / 1_000_000
@@ -353,6 +359,11 @@ try:
                 if (nx, ny) != goal and (nx, ny) != (gx0, gy0):
                     if _cell_blocked(nx * grid, ny * grid, grid):
                         continue
+                    # Block movement into pin-tip cells of other components.
+                    # Pin tips are outside their component's bbox (due to shrinking)
+                    # but wires touching them create MergeOverlap connections.
+                    if (nx, ny) in pin_cells:
+                        continue
                     # Block parallel movement along existing wires (prevents MergeOverlap).
                     # Skip when leaving the start cell — arrival wires from previous
                     # chain segments form junctions at the pin, not illegal overlaps.
@@ -403,6 +414,8 @@ try:
                     cx, cy = gx0 * grid, gy * grid
                     if _cell_blocked(cx, cy, grid):
                         return True, f'({cx:.2f}, {cy:.2f})'
+                    if (gx0, gy) in pin_cells:
+                        return True, f'pin at ({cx:.2f}, {cy:.2f})'
                     if (gx0, gy) not in _ep_adj and (gx0, gy) in v_wire_cells:
                         return True, f'wire overlap at ({cx:.2f}, {cy:.2f})'
             else:  # horizontal segment
@@ -412,6 +425,8 @@ try:
                     cx, cy = gx * grid, gy0 * grid
                     if _cell_blocked(cx, cy, grid):
                         return True, f'({cx:.2f}, {cy:.2f})'
+                    if (gx, gy0) in pin_cells:
+                        return True, f'pin at ({cx:.2f}, {cy:.2f})'
                     if (gx, gy0) not in _ep_adj and (gx, gy0) in h_wire_cells:
                         return True, f'wire overlap at ({cx:.2f}, {cy:.2f})'
         return False, None
@@ -516,7 +531,7 @@ try:
                     if obs['min_x'] <= trunk_val <= obs['max_x']:
                         if obs['max_y'] > t_min and obs['min_y'] < t_max:
                             return True
-            # Check wire overlap along the trunk line
+            # Check wire overlap and pin crossings along the trunk line
             _tg = 1.27
             g_trunk = round(trunk_val / _tg)
             g_min = round(t_min / _tg)
@@ -525,9 +540,13 @@ try:
                 for gx in range(g_min, g_max + 1):
                     if (gx, g_trunk) in h_wire_cells:
                         return True
+                    if (gx, g_trunk) in pin_cells:
+                        return True
             else:
                 for gy in range(g_min, g_max + 1):
                     if (g_trunk, gy) in v_wire_cells:
+                        return True
+                    if (g_trunk, gy) in pin_cells:
                         return True
             return False
 

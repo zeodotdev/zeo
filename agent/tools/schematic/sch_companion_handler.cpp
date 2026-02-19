@@ -120,6 +120,7 @@ std::string SCH_COMPANION_HANDLER::GeneratePlaceCompanionsCode( const nlohmann::
     code << "MAX_OFFSET_GRIDS = 10  # Start far out (12.7mm)\n";
     code << "MIN_OFFSET_GRIDS = 5  # Minimum offset (6.35mm) - ensures wire stub\n";
     code << "COMP_HALF_LEN = 3.81  # Half-length of 2-pin passive (center to pin)\n";
+    code << "TERMINAL_EXTENSION = 5.08  # Extra space for power symbols/labels at pin 1 (away from IC)\n";
     code << "\n";
 
     // Snap to grid function
@@ -156,13 +157,21 @@ std::string SCH_COMPANION_HANDLER::GeneratePlaceCompanionsCode( const nlohmann::
     code << "            a['min_y'] < b['max_y'] and a['max_y'] > b['min_y'])\n";
     code << "\n";
     code << "def _calc_companion_bbox(cx, cy, escape_dir):\n";
-    code << "    \"\"\"Calculate companion bbox given center and escape direction.\"\"\"\n";
-    code << "    # 2-pin passive: ~7.62mm long, ~2mm wide\n";
-    code << "    if escape_dir in ('left', 'right'):  # Horizontal\n";
-    code << "        half_w, half_h = COMP_HALF_LEN + BBOX_MARGIN, 1.5 + BBOX_MARGIN\n";
-    code << "    else:  # Vertical\n";
-    code << "        half_w, half_h = 1.5 + BBOX_MARGIN, COMP_HALF_LEN + BBOX_MARGIN\n";
-    code << "    return {'min_x': cx - half_w, 'max_x': cx + half_w, 'min_y': cy - half_h, 'max_y': cy + half_h}\n";
+    code << "    \"\"\"Calculate companion bbox given center and escape direction.\n";
+    code << "    Bbox is asymmetric: larger on pin1 side (away from IC) to include power symbols/labels.\n";
+    code << "    \"\"\"\n";
+    code << "    body_half = COMP_HALF_LEN + BBOX_MARGIN  # Body extent toward IC (pin 2 side)\n";
+    code << "    term_half = COMP_HALF_LEN + TERMINAL_EXTENSION + BBOX_MARGIN  # Terminal extent away from IC (pin 1 side)\n";
+    code << "    width_half = 1.5 + BBOX_MARGIN  # Width perpendicular to component axis\n";
+    code << "    \n";
+    code << "    if escape_dir == 'left':  # Component extends left, pin1 at far left\n";
+    code << "        return {'min_x': cx - term_half, 'max_x': cx + body_half, 'min_y': cy - width_half, 'max_y': cy + width_half}\n";
+    code << "    elif escape_dir == 'right':  # Component extends right, pin1 at far right\n";
+    code << "        return {'min_x': cx - body_half, 'max_x': cx + term_half, 'min_y': cy - width_half, 'max_y': cy + width_half}\n";
+    code << "    elif escape_dir == 'up':  # Component extends up, pin1 at top\n";
+    code << "        return {'min_x': cx - width_half, 'max_x': cx + width_half, 'min_y': cy - term_half, 'max_y': cy + body_half}\n";
+    code << "    else:  # down - Component extends down, pin1 at bottom\n";
+    code << "        return {'min_x': cx - width_half, 'max_x': cx + width_half, 'min_y': cy - body_half, 'max_y': cy + term_half}\n";
     code << "\n";
     code << "def _calc_center_from_offset(px, py, offset_mm, escape_dir, perp_offset=0):\n";
     code << "    \"\"\"Calculate companion center given IC pin pos, offset, escape direction, and perpendicular offset.\"\"\"\n";

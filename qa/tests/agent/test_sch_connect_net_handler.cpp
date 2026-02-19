@@ -510,256 +510,52 @@ BOOST_AUTO_TEST_CASE( TrunkHitsObstacleChecksPinCells )
 }
 
 
-// --- sch_connect_to_power: handler identity ---
+// --- sch_connect_net: auto-flip power symbol ---
 
-BOOST_AUTO_TEST_CASE( CanHandleConnectToPower )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    BOOST_CHECK( handler.CanHandle( "sch_connect_to_power" ) );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerRequiresIPC )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    BOOST_CHECK( handler.RequiresIPC( "sch_connect_to_power" ) );
-}
-
-
-// --- sch_connect_to_power: input validation ---
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerErrorOnMissingPins )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = { { "power", "GND" } };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    BOOST_CHECK( cmd.find( "error" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerErrorOnMissingPower )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = { { "pins", nlohmann::json::array( { "U1:1" } ) } };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    BOOST_CHECK( cmd.find( "error" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "power" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerErrorOnLabelSpec )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    // Label specs (no colon) should be rejected for connect_to_power
-    nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "VCC" } ) },
-        { "power", "VCC" }
-    };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    BOOST_CHECK( cmd.find( "error" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "REF:PIN" ) != std::string::npos );
-}
-
-
-// --- sch_connect_to_power: GetDescription ---
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerDescriptionSinglePin )
+BOOST_AUTO_TEST_CASE( ConnectNetHasAutoFlipPowerHelper )
 {
     SCH_CONNECT_NET_HANDLER handler;
     nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "U1:VCC" } ) },
-        { "power", "VCC" }
+        { "pins", nlohmann::json::array( { "R1:1", "#PWR01:1" } ) }
     };
-    std::string desc = handler.GetDescription( "sch_connect_to_power", input );
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
-    BOOST_CHECK_EQUAL( desc, "Connecting U1:VCC to VCC" );
+    // Auto-flip infrastructure must be present
+    BOOST_CHECK( cmd.find( "_try_auto_flip_power" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_path_length" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_resolve_pin_escape" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "set_angle" ) != std::string::npos );
 }
 
 
-BOOST_AUTO_TEST_CASE( ConnectToPowerDescriptionMultiPins )
+BOOST_AUTO_TEST_CASE( ConnectNetAutoFlipAlwaysTriesBothOrientations )
 {
     SCH_CONNECT_NET_HANDLER handler;
     nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "U1:VCC", "U2:14", "R1:1" } ) },
-        { "power", "GND" }
+        { "pins", nlohmann::json::array( { "U1:1", "#PWR01:1" } ) }
     };
-    std::string desc = handler.GetDescription( "sch_connect_to_power", input );
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
-    BOOST_CHECK_EQUAL( desc, "Connecting 3 pins to GND" );
+    // Must check for #PWR prefix to identify power symbols
+    BOOST_CHECK( cmd.find( "#PWR" ) != std::string::npos );
+    // Must compare path lengths to decide which orientation wins
+    BOOST_CHECK( cmd.find( "_path_length" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "new_plen < plen" ) != std::string::npos );
 }
 
 
-// --- sch_connect_to_power: Python code generation ---
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerIPCCommandStartsWithRunShell )
+BOOST_AUTO_TEST_CASE( ConnectNetAutoFlipPrefersConventionalOrientation )
 {
     SCH_CONNECT_NET_HANDLER handler;
     nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "U1:1" } ) },
-        { "power", "VCC" }
+        { "pins", nlohmann::json::array( { "R1:1", "#PWR01:1" } ) }
     };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
-    BOOST_CHECK( cmd.find( "run_shell sch " ) == 0 );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerGeneratesAddPower )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "U1:VCC" } ) },
-        { "power", "VCC" }
-    };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    BOOST_CHECK( cmd.find( "add_power" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "power_name = 'VCC'" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerAutoNumbersPWR )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "U1:1" } ) },
-        { "power", "GND" }
-    };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    BOOST_CHECK( cmd.find( "used_refs" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "def next_ref(prefix):" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "next_ref('#PWR')" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerSetsRefViaProtoFields )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "U1:1" } ) },
-        { "power", "GND" }
-    };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    BOOST_CHECK( cmd.find( "power_sym._proto.fields" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_f.text = _pwr_ref" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "crud.update_items(power_sym)" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerUsesAutoRouting )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "U1:1" } ) },
-        { "power", "VCC" }
-    };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    // Must use A* routing, not simple offset wiring
-    BOOST_CHECK( cmd.find( "_astar(" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "obstacles" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_place_path(" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerDefaultOffset )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "U1:1" } ) },
-        { "power", "VCC" }
-    };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    BOOST_CHECK( cmd.find( "pwr_offset = 5.08" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerCustomOffset )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "U1:1" } ) },
-        { "power", "GND" },
-        { "offset", 10.0 }
-    };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    BOOST_CHECK( cmd.find( "pwr_offset = 10" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerAutoRotateByDefault )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "U1:1" } ) },
-        { "power", "VCC" }
-    };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    // No forced angle → auto-rotate
-    BOOST_CHECK( cmd.find( "force_angle = None" ) != std::string::npos );
-    // Auto-rotation logic should be present
-    BOOST_CHECK( cmd.find( "power_angle" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "is_gnd" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerForcedAngle )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "U1:1" } ) },
-        { "power", "GND" },
-        { "angle", 180 }
-    };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    BOOST_CHECK( cmd.find( "force_angle = 180" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerMultiplePinSpecs )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "U1:VCC", "U2:14", "R1:1" } ) },
-        { "power", "+3V3" }
-    };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    BOOST_CHECK( cmd.find( "pin_specs = [" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "('U1', 'VCC')" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "('U2', '14')" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "('R1', '1')" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "power_name = '+3V3'" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ConnectToPowerHasOverlapDetection )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = {
-        { "pins", nlohmann::json::array( { "U1:1" } ) },
-        { "power", "VCC" }
-    };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_to_power", input );
-
-    // Must have overlap detection infrastructure
-    BOOST_CHECK( cmd.find( "placed_bboxes" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_bboxes_overlap" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_slide_off" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_BBOX_MARGIN" ) != std::string::npos );
-    // Must check overlap after placing and slide or reject
-    BOOST_CHECK( cmd.find( "_has_conflict" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_rejected" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "remove_items" ) != std::string::npos );
+    // When paths are equal length, prefer 0 degrees (conventional orientation)
+    BOOST_CHECK( cmd.find( "new_angle == 0" ) != std::string::npos );
+    // Must use a tolerance for floating-point path length comparison
+    BOOST_CHECK( cmd.find( "abs(new_plen - plen)" ) != std::string::npos );
 }
 
 

@@ -4,8 +4,7 @@
 
 bool SCH_CONNECT_NET_HANDLER::CanHandle( const std::string& aToolName ) const
 {
-    return aToolName == "sch_connect_net" ||
-           aToolName == "sch_connect_to_power";
+    return aToolName == "sch_connect_net";
 }
 
 
@@ -19,19 +18,6 @@ std::string SCH_CONNECT_NET_HANDLER::Execute( const std::string& aToolName,
 std::string SCH_CONNECT_NET_HANDLER::GetDescription( const std::string& aToolName,
                                                       const nlohmann::json& aInput ) const
 {
-    if( aToolName == "sch_connect_to_power" )
-    {
-        std::string power = aInput.value( "power", "" );
-        if( aInput.contains( "pins" ) && aInput["pins"].is_array() )
-        {
-            size_t count = aInput["pins"].size();
-            if( count == 1 )
-                return "Connecting " + aInput["pins"][0].get<std::string>() + " to " + power;
-            return "Connecting " + std::to_string( count ) + " pins to " + power;
-        }
-        return "Connecting to " + power;
-    }
-
     if( aInput.contains( "pins" ) && aInput["pins"].is_array() )
     {
         size_t count = aInput["pins"].size();
@@ -60,9 +46,6 @@ bool SCH_CONNECT_NET_HANDLER::RequiresIPC( const std::string& aToolName ) const
 std::string SCH_CONNECT_NET_HANDLER::GetIPCCommand( const std::string& aToolName,
                                                      const nlohmann::json& aInput ) const
 {
-    if( aToolName == "sch_connect_to_power" )
-        return "run_shell sch " + GenerateConnectToPowerCode( aInput );
-
     return "run_shell sch " + GenerateConnectNetCode( aInput );
 }
 
@@ -111,7 +94,7 @@ def snap_to_grid(val, grid=1.27):
 
 // Pin resolution helper: resolves a symbol pin's position and escape direction.
 // Expects `ref` and `pin_id` to be set, appends result to `pin_positions`.
-// Used inline within both sch_connect_net and sch_connect_to_power.
+// Used inline within sch_connect_net pin resolution.
 static const char* PIN_RESOLVE_CODE = R"py(
             ref = name
             sym = sch.symbols.get_by_ref(ref)
@@ -202,7 +185,7 @@ try:
 
 
 // Obstacle map building, A* pathfinder, and wire placement helpers.
-// Shared by sch_connect_net and sch_connect_to_power.
+// Used by sch_connect_net for all routing modes.
 // Continues inside try: block at 4-space indent.
 static const char* ROUTING_INFRASTRUCTURE = R"py(
     wire_count = 0
@@ -511,8 +494,8 @@ static const char* ROUTING_INFRASTRUCTURE = R"py(
         print(f'[route] A* {p0["ref"]}:{p0["pin"]} -> {p1["ref"]}:{p1["pin"]}  start_dir={_dn.get(sd)} end_dir={_dn.get(ed)}', file=sys.stderr)
         # Try progressively wider search margins
         wp = None
-        for a_margin, a_label in [(15, 'default'), (30, 'wider margin'), (50, 'max margin')]:
-            wp = _astar(x0, y0, x1, y1, start_dir=sd, end_dir=ed, margin=a_margin)
+        for a_margin, a_label, a_xcost in [(15, 'default', 2), (30, 'wider', 2), (50, 'wide', 2), (100, 'max (relaxed)', 0)]:
+            wp = _astar(x0, y0, x1, y1, start_dir=sd, end_dir=ed, margin=a_margin, cross_cost=a_xcost)
             if wp is not None:
                 if a_label != 'default':
                     print(f'[route]   found path with retry: {a_label}', file=sys.stderr)
@@ -522,6 +505,96 @@ static const char* ROUTING_INFRASTRUCTURE = R"py(
             raise ValueError(f'No path found from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]}. Try repositioning components to clear the path.')
         print(f'[route]   path: {[(round(x,2),round(y,2)) for x,y in wp]}', file=sys.stderr)
         return wp
+
+    def _path_length(waypoints):
+        return sum(abs(waypoints[i+1][0]-waypoints[i][0]) + abs(waypoints[i+1][1]-waypoints[i][1])
+                   for i in range(len(waypoints)-1))
+
+    def _resolve_pin_escape(sym, pin_id):
+        """Re-resolve a pin's position and escape direction after symbol rotation."""
+        pr = sch.symbols.get_transformed_pin_position(sym, pin_id)
+        if not pr:
+            return None
+        px = pr['position'].x / 1_000_000
+        py = pr['position'].y / 1_000_000
+        po = pr.get('orientation', None)
+        if po is not None:
+            _r90 = {0: 2, 1: 3, 2: 1, 3: 0}
+            for _ in range(round(getattr(sym, 'angle', 0) / 90) % 4):
+                po = _r90.get(po, po)
+        if   po == 1: odx, ody, pd = 1.27, 0, 'h'
+        elif po == 0: odx, ody, pd = -1.27, 0, 'h'
+        elif po == 2: odx, ody, pd = 0, 1.27, 'v'
+        elif po == 3: odx, ody, pd = 0, -1.27, 'v'
+        else:         odx, ody, pd = 1.27, 0, 'h'
+        return {'x': snap_to_grid(px), 'y': snap_to_grid(py),
+                'raw_x': px, 'raw_y': py,
+                'esc_x': snap_to_grid(px + odx), 'esc_y': snap_to_grid(py + ody),
+                'dir': pd, 'out_dx': odx, 'out_dy': ody}
+
+    def _try_auto_flip_power(p0, p1, waypoints):
+        """If one endpoint is a #PWR symbol, try flipping it 180 degrees and
+        re-routing. Keep whichever orientation produces the shorter path.
+
+        Power symbols are electrically symmetric so flipping is always safe.
+        The cost is one extra A* run per power-symbol connection.
+        Returns (waypoints, p0, p1) — possibly updated."""
+        if len(waypoints) < 2:
+            return waypoints, p0, p1
+
+        # Which endpoint is a power symbol?
+        flip_p, other_p, is_p1 = None, None, False
+        if p1['ref'].startswith('#PWR'):
+            flip_p, other_p, is_p1 = p1, p0, True
+        elif p0['ref'].startswith('#PWR'):
+            flip_p, other_p, is_p1 = p0, p1, False
+        if not flip_p:
+            return waypoints, p0, p1
+
+        sym = sch.symbols.get_by_ref(flip_p['ref'])
+        if not sym:
+            return waypoints, p0, p1
+
+        old_angle = round(getattr(sym, 'angle', 0))
+        new_angle = old_angle + 180 if old_angle < 180 else old_angle - 180
+        plen = _path_length(waypoints)
+        print(f'[route] {flip_p["ref"]} is power symbol — trying 180° flip '
+              f'to find shorter path (current {plen:.1f}mm)', file=sys.stderr)
+
+        try:
+            sch.symbols.set_angle(sym, new_angle)
+            resolved = _resolve_pin_escape(sym, flip_p['pin'])
+            if not resolved:
+                sch.symbols.set_angle(sym, old_angle)
+                return waypoints, p0, p1
+
+            new_pin = {**flip_p, **resolved}
+            np0, np1 = (new_pin, other_p) if not is_p1 else (other_p, new_pin)
+            new_wp = _route_pins(np0, np1)
+            new_plen = _path_length(new_wp)
+
+            keep_flip = False
+            if new_plen < plen:
+                keep_flip = True
+                print(f'[route] flip improved: {plen:.1f}mm -> {new_plen:.1f}mm', file=sys.stderr)
+            elif abs(new_plen - plen) < 0.1 and new_angle == 0:
+                keep_flip = True
+                print(f'[route] equal path length — preferring conventional orientation ({new_angle}° over {old_angle}°)', file=sys.stderr)
+            else:
+                print(f'[route] flip did not help ({new_plen:.1f}mm >= {plen:.1f}mm), reverting', file=sys.stderr)
+
+            if keep_flip:
+                return new_wp, np0, np1
+            else:
+                sch.symbols.set_angle(sym, old_angle)
+                return waypoints, p0, p1
+        except Exception as _fe:
+            print(f'[route] flip failed: {_fe}, reverting', file=sys.stderr)
+            try:
+                sch.symbols.set_angle(sym, old_angle)
+            except:
+                pass
+            return waypoints, p0, p1
 
 )py";
 
@@ -537,6 +610,8 @@ static const char* CONNECT_NET_ROUTING = R"py(
         for ci in range(len(pin_positions) - 1):
             p0, p1 = pin_positions[ci], pin_positions[ci + 1]
             waypoints = _route_pins(p0, p1)
+            waypoints, p0, p1 = _try_auto_flip_power(p0, p1, waypoints)
+            pin_positions[ci], pin_positions[ci + 1] = p0, p1
             hit, loc = _path_hits_obstacle(waypoints)
             if hit:
                 raise ValueError(f'Wire from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
@@ -551,6 +626,8 @@ static const char* CONNECT_NET_ROUTING = R"py(
         # 2-pin: direct A* route
         p0, p1 = pin_positions[0], pin_positions[1]
         waypoints = _route_pins(p0, p1)
+        waypoints, p0, p1 = _try_auto_flip_power(p0, p1, waypoints)
+        pin_positions[0], pin_positions[1] = p0, p1
         hit, loc = _path_hits_obstacle(waypoints)
         if hit:
             raise ValueError(f'Wire from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
@@ -822,297 +899,6 @@ print(json.dumps(result, indent=2))
 )py";
 
 
-// sch_connect_to_power: pin resolution.
-// Expects `pin_specs` list (pin-only, no labels). Opens try: block.
-static const char* CONNECT_TO_POWER_RESOLVE = R"py(
-try:
-    # Phase 1: Resolve pin positions and escape directions
-    pin_positions = []
-    for name, pin_id in pin_specs:
-)py";
-
-
-// sch_connect_to_power: power symbol placement and auto-routed wiring.
-// Expects `power_name`, `pwr_offset`, `force_angle` to be set.
-// Continues inside try: block. Closes with except handler.
-static const char* CONNECT_TO_POWER_ROUTING = R"py(
-    import math
-
-    # Build map of used #PWR references for auto-numbering
-    used_refs = {}
-    for _s in sch.symbols.get_all():
-        _r = getattr(_s, 'reference', '')
-        _m = re.match(r'^([A-Za-z#]+)(\d+)$', _r)
-        if _m:
-            used_refs.setdefault(_m.group(1), set()).add(int(_m.group(2)))
-
-    def next_ref(prefix):
-        nums = used_refs.get(prefix, set())
-        n = 1
-        while n in nums:
-            n += 1
-        used_refs.setdefault(prefix, set()).add(n)
-        return f'{prefix}{n}'
-
-    # --- Overlap detection for placed power symbols ---
-    _BBOX_MARGIN = 1.0
-    placed_bboxes = []
-    try:
-        for _esym in sch.symbols.get_all():
-            try:
-                _ebb = sch.transform.get_bounding_box(_esym, units='mm', include_text=False)
-            except:
-                continue
-            if _ebb:
-                placed_bboxes.append({'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})
-    except:
-        pass
-    try:
-        for _elbl in sch.labels.get_all():
-            try:
-                _ebb = sch.transform.get_bounding_box(_elbl, units='mm')
-            except:
-                continue
-            if _ebb:
-                placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})
-    except:
-        pass
-
-    def _bboxes_overlap(a, b):
-        return a['min_x'] < b['max_x'] and a['max_x'] > b['min_x'] and a['min_y'] < b['max_y'] and a['max_y'] > b['min_y']
-
-    def _find_crossing_wire(bbox):
-        """Return AABB dict of the first wire segment crossing bbox, or None."""
-        for _w in sch.crud.get_wires():
-            _sx, _sy = round(_w.start.x/1e6, 2), round(_w.start.y/1e6, 2)
-            _ex, _ey = round(_w.end.x/1e6, 2), round(_w.end.y/1e6, 2)
-            _wbb = {'min_x': min(_sx,_ex), 'max_x': max(_sx,_ex), 'min_y': min(_sy,_ey), 'max_y': max(_sy,_ey)}
-            if _wbb['min_x'] == _wbb['max_x']:
-                _wbb['min_x'] -= 0.01
-                _wbb['max_x'] += 0.01
-            if _wbb['min_y'] == _wbb['max_y']:
-                _wbb['min_y'] -= 0.01
-                _wbb['max_y'] += 0.01
-            if _wbb['max_x'] > bbox['min_x'] and _wbb['min_x'] < bbox['max_x'] and _wbb['max_y'] > bbox['min_y'] and _wbb['min_y'] < bbox['max_y']:
-                return _wbb
-        return None
-
-    def _overlap_info(new_bb):
-        """Find first overlap and return descriptive string with overlap amounts."""
-        for _pb in placed_bboxes:
-            if _bboxes_overlap(new_bb, _pb):
-                ox = min(new_bb['max_x'], _pb['max_x']) - max(new_bb['min_x'], _pb['min_x'])
-                oy = min(new_bb['max_y'], _pb['max_y']) - max(new_bb['min_y'], _pb['min_y'])
-                ref = _pb.get('ref', '?')
-                return f"Overlaps '{ref}' by {ox:.1f}mm horizontal, {oy:.1f}mm vertical"
-        _wcross = _find_crossing_wire(new_bb)
-        if _wcross:
-            return 'Overlaps a wire segment'
-        return 'Overlaps existing element(s)'
-
-    _SLIDE_GRID = 1.27
-    _SLIDE_MAX_ITER = 5
-    _SLIDE_MAX_MM = 30.0
-
-    def _snap_slide(v, grid=_SLIDE_GRID):
-        return round(round(v / grid) * grid, 4)
-
-    def _slide_off(item, raw_bb, margined_bb):
-        """Slide item to clear position via repulsion. Returns (ok, dx, dy)."""
-        total_dx, total_dy = 0.0, 0.0
-        r_bb = dict(raw_bb)
-        m_bb = dict(margined_bb)
-        for _iter in range(_SLIDE_MAX_ITER):
-            obstacle = None
-            use_margin = True
-            for _pb in placed_bboxes:
-                if _bboxes_overlap(m_bb, _pb):
-                    obstacle = _pb
-                    break
-            if obstacle is None:
-                _wcross = _find_crossing_wire(r_bb)
-                if _wcross:
-                    obstacle = _wcross
-                    use_margin = False
-            if obstacle is None:
-                return (True, total_dx, total_dy)
-            comp_cx = (r_bb['min_x'] + r_bb['max_x']) / 2
-            comp_cy = (r_bb['min_y'] + r_bb['max_y']) / 2
-            obs_cx = (obstacle['min_x'] + obstacle['max_x']) / 2
-            obs_cy = (obstacle['min_y'] + obstacle['max_y']) / 2
-            dir_x = comp_cx - obs_cx
-            dir_y = comp_cy - obs_cy
-            mag = math.sqrt(dir_x * dir_x + dir_y * dir_y)
-            if mag < 1e-6:
-                dir_x, dir_y, mag = 1.0, 0.0, 1.0
-            dir_x /= mag
-            dir_y /= mag
-            if use_margin:
-                hw_c = (m_bb['max_x'] - m_bb['min_x']) / 2
-                hh_c = (m_bb['max_y'] - m_bb['min_y']) / 2
-            else:
-                hw_c = (r_bb['max_x'] - r_bb['min_x']) / 2
-                hh_c = (r_bb['max_y'] - r_bb['min_y']) / 2
-            hw_o = (obstacle['max_x'] - obstacle['min_x']) / 2
-            hh_o = (obstacle['max_y'] - obstacle['min_y']) / 2
-            candidates = []
-            if abs(dir_x) > 1e-9:
-                candidates.append((hw_c + hw_o) / abs(dir_x))
-            if abs(dir_y) > 1e-9:
-                candidates.append((hh_c + hh_o) / abs(dir_y))
-            if not candidates:
-                return (False, total_dx, total_dy)
-            t = min(candidates)
-            new_cx = obs_cx + dir_x * t
-            new_cy = obs_cy + dir_y * t
-            dx = _snap_slide(new_cx - comp_cx)
-            dy = _snap_slide(new_cy - comp_cy)
-            if abs(dx) < 1e-6 and abs(dy) < 1e-6:
-                if abs(dir_x) >= abs(dir_y):
-                    dx = _SLIDE_GRID if dir_x >= 0 else -_SLIDE_GRID
-                else:
-                    dy = _SLIDE_GRID if dir_y >= 0 else -_SLIDE_GRID
-            total_dx += dx
-            total_dy += dy
-            if abs(total_dx) > _SLIDE_MAX_MM or abs(total_dy) > _SLIDE_MAX_MM:
-                return (False, total_dx, total_dy)
-            r_bb = {'min_x': r_bb['min_x']+dx, 'max_x': r_bb['max_x']+dx, 'min_y': r_bb['min_y']+dy, 'max_y': r_bb['max_y']+dy}
-            m_bb = {'min_x': m_bb['min_x']+dx, 'max_x': m_bb['max_x']+dx, 'min_y': m_bb['min_y']+dy, 'max_y': m_bb['max_y']+dy}
-        return (False, total_dx, total_dy)
-
-    is_gnd = 'gnd' in power_name.lower() or 'vss' in power_name.lower()
-
-    placed_powers = []
-    _all_wires = []
-
-    for p in pin_positions:
-        px, py = p['raw_x'], p['raw_y']
-        esc_dx, esc_dy = p['out_dx'], p['out_dy']
-
-        # Normalize escape direction to unit vector
-        esc_len = (esc_dx**2 + esc_dy**2)**0.5
-        if esc_len > 0.001:
-            unit_dx = esc_dx / esc_len
-            unit_dy = esc_dy / esc_len
-        else:
-            unit_dx, unit_dy = 0, -1  # Default: place above
-
-        # Compute power symbol position
-        power_x = snap_to_grid(px + unit_dx * pwr_offset)
-        power_y = snap_to_grid(py + unit_dy * pwr_offset)
-
-        # Auto-rotate power symbol based on pin escape direction.
-        # GND at 0deg: stem faces UP.  VCC at 0deg: stem faces DOWN.
-        # We orient the stem to face the incoming wire (from pin side).
-        if force_angle is not None:
-            power_angle = force_angle
-        elif abs(pwr_offset) < 0.01:
-            power_angle = 0  # No wire, use default orientation
-        elif abs(unit_dy) > abs(unit_dx):
-            # Vertical escape (up or down)
-            if is_gnd:
-                power_angle = 0 if unit_dy > 0 else 180
-            else:
-                power_angle = 180 if unit_dy > 0 else 0
-        else:
-            # Horizontal escape (left or right)
-            if is_gnd:
-                power_angle = 90 if unit_dx > 0 else 270
-            else:
-                power_angle = 270 if unit_dx > 0 else 90
-
-        print(f'[power] {p["ref"]}:{p["pin"]} -> {power_name} at ({power_x:.2f},{power_y:.2f}) angle={power_angle}', file=sys.stderr)
-
-        # Place the power symbol
-        power_pos = Vector2.from_xy_mm(power_x, power_y)
-        power_sym = sch.labels.add_power(power_name, power_pos, angle=power_angle)
-
-        # --- Overlap detection + slide-off ---
-        _shifted = False
-        _rejected = False
-        try:
-            _bb = sch.transform.get_bounding_box(power_sym, units='mm', include_text=False)
-            if _bb:
-                _raw_bb = dict(_bb)
-                _margined_bb = {'min_x': _bb['min_x'] - _BBOX_MARGIN, 'max_x': _bb['max_x'] + _BBOX_MARGIN, 'min_y': _bb['min_y'] - _BBOX_MARGIN, 'max_y': _bb['max_y'] + _BBOX_MARGIN}
-                _has_conflict = any(_bboxes_overlap(_margined_bb, _pb) for _pb in placed_bboxes) or (_find_crossing_wire(_raw_bb) is not None)
-                if _has_conflict:
-                    _sok, _sdx, _sdy = _slide_off(power_sym, _raw_bb, _margined_bb)
-                    if _sok and (abs(_sdx) > 1e-6 or abs(_sdy) > 1e-6):
-                        sch.transform.move(power_sym, delta_x_mm=_sdx, delta_y_mm=_sdy)
-                        power_x = snap_to_grid(power_x + _sdx)
-                        power_y = snap_to_grid(power_y + _sdy)
-                        _bb = sch.transform.get_bounding_box(power_sym, units='mm', include_text=False)
-                        if _bb:
-                            _margined_bb = {'min_x': _bb['min_x'] - _BBOX_MARGIN, 'max_x': _bb['max_x'] + _BBOX_MARGIN, 'min_y': _bb['min_y'] - _BBOX_MARGIN, 'max_y': _bb['max_y'] + _BBOX_MARGIN}
-                        _shifted = True
-                        print(f'[power] slid {power_name} by ({_sdx:.2f},{_sdy:.2f}) to ({power_x:.2f},{power_y:.2f})', file=sys.stderr)
-                    elif not _sok:
-                        _rejected = True
-        except:
-            pass
-
-        if _rejected:
-            sch.crud.remove_items([power_sym])
-            raise ValueError(f'Power symbol {power_name} for {p["ref"]}:{p["pin"]}: {_overlap_info(_margined_bb)}. Could not auto-slide to clear position.')
-
-        # Set #PWR reference
-        _pwr_ref = next_ref('#PWR')
-        for _f in power_sym._proto.fields:
-            if _f.name == 'Reference':
-                _f.text = _pwr_ref
-                break
-        sch.crud.update_items(power_sym)
-
-        # Track placed bbox for subsequent power symbols in the same batch
-        if _bb:
-            placed_bboxes.append({'ref': _pwr_ref, **_margined_bb})
-
-        _pwr_result = {'ref': _pwr_ref, 'position': [power_x, power_y], 'angle': power_angle}
-        if _shifted:
-            _pwr_result['shifted'] = True
-        placed_powers.append(_pwr_result)
-
-        # Route wire from pin to power symbol using A*
-        if abs(pwr_offset) >= 0.01 or _shifted:
-            sd = _dir_index(esc_dx, esc_dy)
-            # end_dir: wire approaches power symbol from opposite of escape direction
-            ed = sd ^ 1 if sd >= 0 else -1
-            print(f'[power] routing {p["ref"]}:{p["pin"]} -> power at ({power_x:.2f},{power_y:.2f})', file=sys.stderr)
-            wp = None
-            for a_margin in [15, 30, 50]:
-                wp = _astar(px, py, power_x, power_y, start_dir=sd, end_dir=ed, margin=a_margin)
-                if wp is not None:
-                    break
-            if wp is None:
-                raise ValueError(f'No path found from {p["ref"]}:{p["pin"]} to {power_name}. Try repositioning components or increasing offset.')
-            hit, loc = _path_hits_obstacle(wp)
-            if hit:
-                raise ValueError(f'Wire from {p["ref"]}:{p["pin"]} to {power_name} would pass through a component at {loc}. Try repositioning components.')
-            _n, _ws = _place_path(wp)
-            wire_count += _n
-            _all_wires.extend(_ws)
-            _add_waypoints_to_wire_sets(wp)
-
-    junction_count = _place_needed_junctions(_all_wires)
-
-    result = {
-        'status': 'success',
-        'source': 'ipc',
-        'power': power_name,
-        'connections': len(pin_positions),
-        'wire_count': wire_count,
-        'junction_count': junction_count,
-        'placed_powers': placed_powers
-    }
-
-except Exception as e:
-    result = {'status': 'error', 'message': str(e)}
-
-print(json.dumps(result, indent=2))
-)py";
-
-
 std::string SCH_CONNECT_NET_HANDLER::GenerateConnectNetCode( const nlohmann::json& aInput ) const
 {
     if( !aInput.contains( "pins" ) || !aInput["pins"].is_array() ||
@@ -1160,69 +946,4 @@ std::string SCH_CONNECT_NET_HANDLER::GenerateConnectNetCode( const nlohmann::jso
            + std::string( PIN_RESOLVE_CODE )
            + std::string( ROUTING_INFRASTRUCTURE )
            + std::string( CONNECT_NET_ROUTING );
-}
-
-
-std::string SCH_CONNECT_NET_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& aInput ) const
-{
-    if( !aInput.contains( "pins" ) || !aInput["pins"].is_array() ||
-        aInput["pins"].empty() )
-    {
-        return "import json\n"
-               "print(json.dumps({'status': 'error', 'message': "
-               "'pins array with at least 1 entry is required'}))\n";
-    }
-
-    std::string power = aInput.value( "power", "" );
-    if( power.empty() )
-    {
-        return "import json\n"
-               "print(json.dumps({'status': 'error', 'message': "
-               "'power parameter is required'}))\n";
-    }
-
-    auto pins = aInput["pins"];
-    double offset = aInput.value( "offset", 5.08 );
-    bool hasAngle = aInput.contains( "angle" );
-    double angle = aInput.value( "angle", 0.0 );
-
-    // Parse pin specifiers (pin-only, no labels - all must have REF:PIN format)
-    struct PinSpec { std::string ref; std::string pin; };
-    std::vector<PinSpec> pinSpecs;
-    for( size_t i = 0; i < pins.size(); ++i )
-    {
-        std::string spec = pins[i].get<std::string>();
-        size_t colonPos = spec.find( ':' );
-        if( colonPos == std::string::npos )
-        {
-            return "import json\n"
-                   "print(json.dumps({'status': 'error', 'message': "
-                   "'Pin specifier must be REF:PIN format (e.g. U1:VCC), got: "
-                   + spec + "'}))\n";
-        }
-        pinSpecs.push_back( { spec.substr( 0, colonPos ), spec.substr( colonPos + 1 ) } );
-    }
-
-    // Build dynamic Python variables
-    std::ostringstream code;
-    code << "pin_specs = [\n";
-    for( const auto& ps : pinSpecs )
-    {
-        code << "    ('" << EscapePythonString( ps.ref )
-             << "', '" << EscapePythonString( ps.pin ) << "'),\n";
-    }
-    code << "]\n";
-    code << "power_name = '" << EscapePythonString( power ) << "'\n";
-    code << "pwr_offset = " << offset << "\n";
-    if( hasAngle )
-        code << "force_angle = " << angle << "\n";
-    else
-        code << "force_angle = None\n";
-
-    // Concatenate: preamble + dynamic vars + resolve + infrastructure + power routing
-    return std::string( ROUTING_PREAMBLE ) + code.str()
-           + std::string( CONNECT_TO_POWER_RESOLVE )
-           + std::string( PIN_RESOLVE_CODE )
-           + std::string( ROUTING_INFRASTRUCTURE )
-           + std::string( CONNECT_TO_POWER_ROUTING );
 }

@@ -116,6 +116,28 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "v_align_override = " << ( vAlignOverride.empty() ? "None" : ( "'" + vAlignOverride + "'" ) ) << "\n";
     code << "\n";
 
+    // Overlap detection preamble — collect existing label bounding boxes (0 margin)
+    code << "# Collect existing label bounding boxes for overlap detection\n";
+    code << "placed_bboxes = []\n";
+    code << "try:\n";
+    code << "    for _elbl in sch.labels.get_all():\n";
+    code << "        try:\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm', include_text=False)\n";
+    code << "        except:\n";
+    code << "            continue\n";
+    code << "        if _ebb:\n";
+    code << "            placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'], 'max_x': _ebb['max_x'], 'min_y': _ebb['min_y'], 'max_y': _ebb['max_y']})\n";
+    code << "except:\n";
+    code << "    pass\n";
+    code << "\n";
+    code << "def _bboxes_overlap(a, b):\n";
+    code << "    return a['min_x'] < b['max_x'] and a['max_x'] > b['min_x'] and a['min_y'] < b['max_y'] and a['max_y'] > b['min_y']\n";
+    code << "\n";
+    code << "def _point_in_bbox(px, py, bb):\n";
+    code << "    \"\"\"Check if a point is inside a bounding box (for pin-on-pin exclusion).\"\"\"\n";
+    code << "    return bb['min_x'] <= px <= bb['max_x'] and bb['min_y'] <= py <= bb['max_y']\n";
+    code << "\n";
+
     code << "results = []\n";
     code << "try:\n";
     code << "    sym = sch.symbols.get_by_ref(ref)\n";
@@ -214,10 +236,32 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "                v_align = VA_TOP if v_align_override == 'top' else VA_BOTTOM\n";
     code << "\n";
 
-    // Place label at pin tip
+    // Place label at pin tip, then check for overlap
     code << "            label_pos = Vector2.from_xy_mm(px, py)\n";
-    code << "            create_label(label_text, label_pos, h_align, v_align)\n";
-    code << "            results.append({'pin': pin_id, 'label': label_text, 'position': [round(px, 2), round(py, 2)], 'direction': direction})\n";
+    code << "            _lbl = create_label(label_text, label_pos, h_align, v_align)\n";
+    code << "\n";
+    code << "            # Overlap detection (skip bboxes whose pin point coincides with ours)\n";
+    code << "            _rejected = False\n";
+    code << "            try:\n";
+    code << "                _bb = sch.transform.get_bounding_box(_lbl, units='mm', include_text=False)\n";
+    code << "                if _bb:\n";
+    code << "                    _new_bbox = {'min_x': _bb['min_x'], 'max_x': _bb['max_x'], 'min_y': _bb['min_y'], 'max_y': _bb['max_y']}\n";
+    code << "                    for _pb in placed_bboxes:\n";
+    code << "                        if _bboxes_overlap(_new_bbox, _pb):\n";
+    code << "                            # Allow overlap if the existing label's bbox contains our pin tip\n";
+    code << "                            # (pin-on-pin connection is intentional)\n";
+    code << "                            if _point_in_bbox(px, py, _pb):\n";
+    code << "                                continue\n";
+    code << "                            sch.crud.remove_items([_lbl])\n";
+    code << "                            results.append({'pin': pin_id, 'label': label_text, 'error': f\"Placement rejected: overlaps existing label '{_pb.get(\\\"ref\\\", \\\"?\\\")}'\" })\n";
+    code << "                            _rejected = True\n";
+    code << "                            break\n";
+    code << "                    if not _rejected:\n";
+    code << "                        placed_bboxes.append({'ref': label_text, **_new_bbox})\n";
+    code << "            except:\n";
+    code << "                pass\n";
+    code << "            if not _rejected:\n";
+    code << "                results.append({'pin': pin_id, 'label': label_text, 'position': [round(px, 2), round(py, 2)], 'direction': direction})\n";
     code << "\n";
     code << "        except Exception as e:\n";
     code << "            results.append({'pin': pin_id, 'label': label_text, 'error': str(e)})\n";

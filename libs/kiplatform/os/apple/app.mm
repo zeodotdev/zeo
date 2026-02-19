@@ -27,33 +27,55 @@
 #include <wx/log.h>
 #include <wx/string.h>
 #include <wx/sysopt.h>
+#include <wx/tokenzr.h>
 #include <wx/utils.h>
 
 // Global log file - must persist for lifetime of app
 static wxFFile* s_logFile = nullptr;
 
-// Custom log target that writes to both file and stderr
-class wxLogDual : public wxLog
+// Custom log target that timestamps every line (not just the first) and writes
+// to file, stderr, or both.  Overrides DoLogRecord to bypass wxLog's default
+// single-line timestamp formatting.
+class wxLogTimestamped : public wxLog
 {
 public:
-    wxLogDual( FILE* logFile ) : m_logFile( logFile ) {}
+    wxLogTimestamped( FILE* logFile, bool alsoStderr )
+        : m_logFile( logFile ), m_alsoStderr( alsoStderr ) {}
 
 protected:
-    void DoLogText( const wxString& msg ) override
+    void DoLogRecord( wxLogLevel level, const wxString& msg,
+                      const wxLogRecordInfo& info ) override
     {
-        const wxScopedCharBuffer utf8 = msg.utf8_str();
+        // Build HH:MM:SS.mmm timestamp from the record's epoch time
+        wxDateTime dt( (time_t) info.timestamp );
+        wxDateTime now = wxDateTime::UNow();
+        int ms = now.GetMillisecond();
+        wxString ts = dt.Format( wxS( "%H:%M:%S" ) )
+                    + wxString::Format( wxS( ".%03d" ), ms );
+        const wxScopedCharBuffer tsUtf8 = ts.utf8_str();
 
-        if( m_logFile )
+        // Split message into lines — every line gets the timestamp
+        wxStringTokenizer tokenizer( msg, wxS( "\n" ), wxTOKEN_RET_EMPTY );
+
+        while( tokenizer.HasMoreTokens() )
         {
-            fprintf( m_logFile, "%s\n", utf8.data() );
-            fflush( m_logFile );
+            wxString line = tokenizer.GetNextToken();
+            const wxScopedCharBuffer lineUtf8 = line.utf8_str();
+
+            if( m_logFile )
+                fprintf( m_logFile, "%s %s\n", tsUtf8.data(), lineUtf8.data() );
+
+            if( m_alsoStderr )
+                fprintf( stderr, "%s %s\n", tsUtf8.data(), lineUtf8.data() );
         }
 
-        fprintf( stderr, "%s\n", utf8.data() );
+        if( m_logFile )
+            fflush( m_logFile );
     }
 
 private:
     FILE* m_logFile;
+    bool  m_alsoStderr;
 };
 
 
@@ -81,15 +103,9 @@ bool KIPLATFORM::APP::Init()
     wxString traceVars;
     bool useStderr = wxGetEnv( wxS( "WXTRACE" ), &traceVars ) && !traceVars.empty();
 
-    if( useStderr && s_logFile->IsOpened() )
+    if( s_logFile->IsOpened() )
     {
-        // Log to both file and stderr
-        wxLog::SetActiveTarget( new wxLogDual( s_logFile->fp() ) );
-    }
-    else if( s_logFile->IsOpened() )
-    {
-        // Log to file only
-        wxLog::SetActiveTarget( new wxLogStderr( s_logFile->fp() ) );
+        wxLog::SetActiveTarget( new wxLogTimestamped( s_logFile->fp(), useStderr ) );
     }
 
     // Enable the "Agent" trace mask so wxLogTrace("Agent", ...) calls produce output

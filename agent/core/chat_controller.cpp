@@ -535,7 +535,8 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - THINKING_START" );
         break;
     case LLMChunkType::THINKING_DONE:
-        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - THINKING_DONE" );
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - THINKING_DONE (%zu chars):\n%s",
+                   aChunk.thinking_text.size(), aChunk.thinking_text.c_str() );
         break;
     case LLMChunkType::TOOL_USE_START:
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - TOOL_USE_START: %s", aChunk.tool_name.c_str() );

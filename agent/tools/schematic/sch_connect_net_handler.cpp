@@ -4,7 +4,8 @@
 
 bool SCH_CONNECT_NET_HANDLER::CanHandle( const std::string& aToolName ) const
 {
-    return aToolName == "sch_connect_net";
+    return aToolName == "sch_connect_net" ||
+           aToolName == "sch_connect_to_power";
 }
 
 
@@ -18,6 +19,19 @@ std::string SCH_CONNECT_NET_HANDLER::Execute( const std::string& aToolName,
 std::string SCH_CONNECT_NET_HANDLER::GetDescription( const std::string& aToolName,
                                                       const nlohmann::json& aInput ) const
 {
+    if( aToolName == "sch_connect_to_power" )
+    {
+        std::string power = aInput.value( "power", "" );
+        if( aInput.contains( "pins" ) && aInput["pins"].is_array() )
+        {
+            size_t count = aInput["pins"].size();
+            if( count == 1 )
+                return "Connecting " + aInput["pins"][0].get<std::string>() + " to " + power;
+            return "Connecting " + std::to_string( count ) + " pins to " + power;
+        }
+        return "Connecting to " + power;
+    }
+
     if( aInput.contains( "pins" ) && aInput["pins"].is_array() )
     {
         size_t count = aInput["pins"].size();
@@ -46,6 +60,9 @@ bool SCH_CONNECT_NET_HANDLER::RequiresIPC( const std::string& aToolName ) const
 std::string SCH_CONNECT_NET_HANDLER::GetIPCCommand( const std::string& aToolName,
                                                      const nlohmann::json& aInput ) const
 {
+    if( aToolName == "sch_connect_to_power" )
+        return "run_shell sch " + GenerateConnectToPowerCode( aInput );
+
     return "run_shell sch " + GenerateConnectNetCode( aInput );
 }
 
@@ -77,8 +94,8 @@ std::string SCH_CONNECT_NET_HANDLER::EscapePythonString( const std::string& aStr
 // Python script templates as raw string literals
 // ---------------------------------------------------------------------------
 
-// Preamble: imports, document refresh, snap helper
-static const char* CONNECT_NET_PREAMBLE = R"py(import json, sys
+// Preamble: imports, document refresh, snap helper (shared by all routing tools)
+static const char* ROUTING_PREAMBLE = R"py(import json, sys, re
 from kipy.geometry import Vector2
 
 # Refresh document to handle close/reopen cycles
@@ -91,28 +108,11 @@ def snap_to_grid(val, grid=1.27):
 
 )py";
 
-// Body: pin resolution, routing algorithm, wire/junction placement.
-// Expects `pin_specs` list to be defined before this code runs.
-static const char* CONNECT_NET_BODY = R"py(
-try:
-    # Phase 1: Resolve pin/label positions
-    pin_positions = []
-    for spec_type, name, pin_id in pin_specs:
-        if spec_type == 'label':
-            # Label spec: find existing label by text
-            ref = name
-            all_labels = sch.labels.get_all()
-            matches = [l for l in all_labels if hasattr(l, 'text') and l.text == name]
-            if not matches:
-                raise ValueError(f'Label not found: {name}')
-            lbl = matches[0]
-            px = lbl.position.x / 1_000_000
-            py = lbl.position.y / 1_000_000
-            out_dx, out_dy = 0, 0
-            pin_dir = 'h'
-            print(f'[route] label:{name} pos=({px:.2f},{py:.2f})', file=sys.stderr)
-        else:
-            # Pin spec: existing symbol pin logic
+
+// Pin resolution helper: resolves a symbol pin's position and escape direction.
+// Expects `ref` and `pin_id` to be set, appends result to `pin_positions`.
+// Used inline within both sch_connect_net and sch_connect_to_power.
+static const char* PIN_RESOLVE_CODE = R"py(
             ref = name
             sym = sch.symbols.get_by_ref(ref)
             if not sym:
@@ -131,7 +131,7 @@ try:
                 pin_orientation = pin_result.get('orientation', None)
             # The API returns library-level pin orientation, not transformed
             # by symbol rotation.  Apply the symbol's rotation manually.
-            # Each 90° CCW step in schematic coords (Y-down) maps:
+            # Each 90 CCW step in schematic coords (Y-down) maps:
             #   RIGHT(0)->UP(2), LEFT(1)->DOWN(3), UP(2)->LEFT(1), DOWN(3)->RIGHT(0)
             if pin_orientation is not None:
                 _rot90 = {0: 2, 1: 3, 2: 1, 3: 0}
@@ -173,8 +173,38 @@ try:
                     pin_dir = 'v'
             _dir_name = {(1.27,0):'RIGHT', (-1.27,0):'LEFT', (0,-1.27):'UP', (0,1.27):'DOWN'}.get((out_dx,out_dy), '?')
             print(f'[route] {ref}:{pin_id} pos=({px:.2f},{py:.2f}) orient={pin_orientation} ang={getattr(sym, "angle", 0)} -> {_dir_name} ({out_dx},{out_dy})', file=sys.stderr)
-        pin_positions.append({'ref': ref, 'pin': pin_id, 'x': snap_to_grid(px), 'y': snap_to_grid(py), 'raw_x': px, 'raw_y': py, 'esc_x': snap_to_grid(px + out_dx), 'esc_y': snap_to_grid(py + out_dy), 'dir': pin_dir, 'out_dx': out_dx, 'out_dy': out_dy})
+            pin_positions.append({'ref': ref, 'pin': pin_id, 'x': snap_to_grid(px), 'y': snap_to_grid(py), 'raw_x': px, 'raw_y': py, 'esc_x': snap_to_grid(px + out_dx), 'esc_y': snap_to_grid(py + out_dy), 'dir': pin_dir, 'out_dx': out_dx, 'out_dy': out_dy})
+)py";
 
+
+// sch_connect_net Phase 1: pin/label resolution.
+// Expects `pin_specs` list to be defined. Opens try: block.
+static const char* CONNECT_NET_RESOLVE = R"py(
+try:
+    # Phase 1: Resolve pin/label positions
+    pin_positions = []
+    for spec_type, name, pin_id in pin_specs:
+        if spec_type == 'label':
+            # Label spec: find existing label by text
+            ref = name
+            all_labels = sch.labels.get_all()
+            matches = [l for l in all_labels if hasattr(l, 'text') and l.text == name]
+            if not matches:
+                raise ValueError(f'Label not found: {name}')
+            lbl = matches[0]
+            px = lbl.position.x / 1_000_000
+            py = lbl.position.y / 1_000_000
+            out_dx, out_dy = 0, 0
+            pin_dir = 'h'
+            print(f'[route] label:{name} pos=({px:.2f},{py:.2f})', file=sys.stderr)
+        else:
+)py";
+
+
+// Obstacle map building, A* pathfinder, and wire placement helpers.
+// Shared by sch_connect_net and sch_connect_to_power.
+// Continues inside try: block at 4-space indent.
+static const char* ROUTING_INFRASTRUCTURE = R"py(
     wire_count = 0
     junction_count = 0
 
@@ -484,6 +514,12 @@ try:
         print(f'[route]   path: {[(round(x,2),round(y,2)) for x,y in wp]}', file=sys.stderr)
         return wp
 
+)py";
+
+
+// sch_connect_net routing modes: chain and star topology.
+// Continues inside try: block. Closes with except handler.
+static const char* CONNECT_NET_ROUTING = R"py(
     print(f'[route] MODE={routing_mode} pins={len(pin_positions)}', file=sys.stderr)
 
     if routing_mode == 'chain':
@@ -777,6 +813,130 @@ print(json.dumps(result, indent=2))
 )py";
 
 
+// sch_connect_to_power: pin resolution.
+// Expects `pin_specs` list (pin-only, no labels). Opens try: block.
+static const char* CONNECT_TO_POWER_RESOLVE = R"py(
+try:
+    # Phase 1: Resolve pin positions and escape directions
+    pin_positions = []
+    for name, pin_id in pin_specs:
+)py";
+
+
+// sch_connect_to_power: power symbol placement and auto-routed wiring.
+// Expects `power_name`, `pwr_offset`, `force_angle` to be set.
+// Continues inside try: block. Closes with except handler.
+static const char* CONNECT_TO_POWER_ROUTING = R"py(
+    # Build map of used #PWR references for auto-numbering
+    used_refs = {}
+    for _s in sch.symbols.get_all():
+        _r = getattr(_s, 'reference', '')
+        _m = re.match(r'^([A-Za-z#]+)(\d+)$', _r)
+        if _m:
+            used_refs.setdefault(_m.group(1), set()).add(int(_m.group(2)))
+
+    def next_ref(prefix):
+        nums = used_refs.get(prefix, set())
+        n = 1
+        while n in nums:
+            n += 1
+        used_refs.setdefault(prefix, set()).add(n)
+        return f'{prefix}{n}'
+
+    is_gnd = 'gnd' in power_name.lower() or 'vss' in power_name.lower()
+
+    placed_powers = []
+    _all_wires = []
+
+    for p in pin_positions:
+        px, py = p['raw_x'], p['raw_y']
+        esc_dx, esc_dy = p['out_dx'], p['out_dy']
+
+        # Normalize escape direction to unit vector
+        esc_len = (esc_dx**2 + esc_dy**2)**0.5
+        if esc_len > 0.001:
+            unit_dx = esc_dx / esc_len
+            unit_dy = esc_dy / esc_len
+        else:
+            unit_dx, unit_dy = 0, -1  # Default: place above
+
+        # Compute power symbol position
+        power_x = snap_to_grid(px + unit_dx * pwr_offset)
+        power_y = snap_to_grid(py + unit_dy * pwr_offset)
+
+        # Auto-rotate power symbol based on pin escape direction.
+        # GND at 0deg: stem faces UP.  VCC at 0deg: stem faces DOWN.
+        # We orient the stem to face the incoming wire (from pin side).
+        if force_angle is not None:
+            power_angle = force_angle
+        elif abs(pwr_offset) < 0.01:
+            power_angle = 0  # No wire, use default orientation
+        elif abs(unit_dy) > abs(unit_dx):
+            # Vertical escape (up or down)
+            if is_gnd:
+                power_angle = 0 if unit_dy > 0 else 180
+            else:
+                power_angle = 180 if unit_dy > 0 else 0
+        else:
+            # Horizontal escape (left or right)
+            if is_gnd:
+                power_angle = 90 if unit_dx > 0 else 270
+            else:
+                power_angle = 270 if unit_dx > 0 else 90
+
+        print(f'[power] {p["ref"]}:{p["pin"]} -> {power_name} at ({power_x:.2f},{power_y:.2f}) angle={power_angle}', file=sys.stderr)
+
+        # Place the power symbol
+        power_pos = Vector2.from_xy_mm(power_x, power_y)
+        power_sym = sch.labels.add_power(power_name, power_pos, angle=power_angle)
+        _pwr_ref = next_ref('#PWR')
+        for _f in power_sym._proto.fields:
+            if _f.name == 'Reference':
+                _f.text = _pwr_ref
+                break
+        sch.crud.update_items(power_sym)
+        placed_powers.append({'ref': _pwr_ref, 'position': [power_x, power_y], 'angle': power_angle})
+
+        # Route wire from pin to power symbol using A*
+        if abs(pwr_offset) >= 0.01:
+            sd = _dir_index(esc_dx, esc_dy)
+            # end_dir: wire approaches power symbol from opposite of escape direction
+            ed = sd ^ 1 if sd >= 0 else -1
+            print(f'[power] routing {p["ref"]}:{p["pin"]} -> power at ({power_x:.2f},{power_y:.2f})', file=sys.stderr)
+            wp = None
+            for a_margin in [15, 30, 50]:
+                wp = _astar(px, py, power_x, power_y, start_dir=sd, end_dir=ed, margin=a_margin)
+                if wp is not None:
+                    break
+            if wp is None:
+                raise ValueError(f'No path found from {p["ref"]}:{p["pin"]} to {power_name}. Try repositioning components or increasing offset.')
+            hit, loc = _path_hits_obstacle(wp)
+            if hit:
+                raise ValueError(f'Wire from {p["ref"]}:{p["pin"]} to {power_name} would pass through a component at {loc}. Try repositioning components.')
+            _n, _ws = _place_path(wp)
+            wire_count += _n
+            _all_wires.extend(_ws)
+            _add_waypoints_to_wire_sets(wp)
+
+    junction_count = _place_needed_junctions(_all_wires)
+
+    result = {
+        'status': 'success',
+        'source': 'ipc',
+        'power': power_name,
+        'connections': len(pin_positions),
+        'wire_count': wire_count,
+        'junction_count': junction_count,
+        'placed_powers': placed_powers
+    }
+
+except Exception as e:
+    result = {'status': 'error', 'message': str(e)}
+
+print(json.dumps(result, indent=2))
+)py";
+
+
 std::string SCH_CONNECT_NET_HANDLER::GenerateConnectNetCode( const nlohmann::json& aInput ) const
 {
     if( !aInput.contains( "pins" ) || !aInput["pins"].is_array() ||
@@ -818,7 +978,75 @@ std::string SCH_CONNECT_NET_HANDLER::GenerateConnectNetCode( const nlohmann::jso
     pinSpecCode << "]\n";
     pinSpecCode << "routing_mode = '" << EscapePythonString( mode ) << "'\n";
 
-    // Concatenate: preamble + dynamic pin_specs + static body
-    return std::string( CONNECT_NET_PREAMBLE ) + pinSpecCode.str()
-           + std::string( CONNECT_NET_BODY );
+    // Concatenate: preamble + dynamic pin_specs + resolve + infrastructure + routing
+    return std::string( ROUTING_PREAMBLE ) + pinSpecCode.str()
+           + std::string( CONNECT_NET_RESOLVE )
+           + std::string( PIN_RESOLVE_CODE )
+           + std::string( ROUTING_INFRASTRUCTURE )
+           + std::string( CONNECT_NET_ROUTING );
+}
+
+
+std::string SCH_CONNECT_NET_HANDLER::GenerateConnectToPowerCode( const nlohmann::json& aInput ) const
+{
+    if( !aInput.contains( "pins" ) || !aInput["pins"].is_array() ||
+        aInput["pins"].empty() )
+    {
+        return "import json\n"
+               "print(json.dumps({'status': 'error', 'message': "
+               "'pins array with at least 1 entry is required'}))\n";
+    }
+
+    std::string power = aInput.value( "power", "" );
+    if( power.empty() )
+    {
+        return "import json\n"
+               "print(json.dumps({'status': 'error', 'message': "
+               "'power parameter is required'}))\n";
+    }
+
+    auto pins = aInput["pins"];
+    double offset = aInput.value( "offset", 5.08 );
+    bool hasAngle = aInput.contains( "angle" );
+    double angle = aInput.value( "angle", 0.0 );
+
+    // Parse pin specifiers (pin-only, no labels - all must have REF:PIN format)
+    struct PinSpec { std::string ref; std::string pin; };
+    std::vector<PinSpec> pinSpecs;
+    for( size_t i = 0; i < pins.size(); ++i )
+    {
+        std::string spec = pins[i].get<std::string>();
+        size_t colonPos = spec.find( ':' );
+        if( colonPos == std::string::npos )
+        {
+            return "import json\n"
+                   "print(json.dumps({'status': 'error', 'message': "
+                   "'Pin specifier must be REF:PIN format (e.g. U1:VCC), got: "
+                   + spec + "'}))\n";
+        }
+        pinSpecs.push_back( { spec.substr( 0, colonPos ), spec.substr( colonPos + 1 ) } );
+    }
+
+    // Build dynamic Python variables
+    std::ostringstream code;
+    code << "pin_specs = [\n";
+    for( const auto& ps : pinSpecs )
+    {
+        code << "    ('" << EscapePythonString( ps.ref )
+             << "', '" << EscapePythonString( ps.pin ) << "'),\n";
+    }
+    code << "]\n";
+    code << "power_name = '" << EscapePythonString( power ) << "'\n";
+    code << "pwr_offset = " << offset << "\n";
+    if( hasAngle )
+        code << "force_angle = " << angle << "\n";
+    else
+        code << "force_angle = None\n";
+
+    // Concatenate: preamble + dynamic vars + resolve + infrastructure + power routing
+    return std::string( ROUTING_PREAMBLE ) + code.str()
+           + std::string( CONNECT_TO_POWER_RESOLVE )
+           + std::string( PIN_RESOLVE_CODE )
+           + std::string( ROUTING_INFRASTRUCTURE )
+           + std::string( CONNECT_TO_POWER_ROUTING );
 }

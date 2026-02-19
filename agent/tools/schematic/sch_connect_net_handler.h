@@ -4,11 +4,13 @@
 #include "../tool_handler.h"
 
 /**
- * Handler for sch_connect_net — connects multiple component pins on the same net
+ * Handler for sch_connect_net and sch_connect_to_power — auto-routed wiring tools.
+ *
+ * sch_connect_net: connects multiple component pins on the same net
  * with trunk-and-branch wiring and automatic junctions.
  *
- * For 2 pins: midpoint-bend step route following pin direction.
- * For 3+ pins: trunk-and-branch layout with obstacle avoidance.
+ * sch_connect_to_power: connects one or more pins to a power rail,
+ * placing power symbols with auto-rotation and auto-routed wires.
  */
 class SCH_CONNECT_NET_HANDLER : public TOOL_HANDLER
 {
@@ -30,6 +32,12 @@ private:
      * Generate Python code for sch_connect_net operation.
      */
     std::string GenerateConnectNetCode( const nlohmann::json& aInput ) const;
+
+    /**
+     * Generate Python code for sch_connect_to_power operation.
+     * Places power symbols and auto-routes wires from pins to power.
+     */
+    std::string GenerateConnectToPowerCode( const nlohmann::json& aInput ) const;
 
     /**
      * Helper to escape strings for Python code generation.

@@ -253,7 +253,8 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "                            if _point_in_bbox(px, py, _pb):\n";
     code << "                                continue\n";
     code << "                            sch.crud.remove_items([_lbl])\n";
-    code << "                            results.append({'pin': pin_id, 'label': label_text, 'error': f\"Placement rejected: overlaps existing label '{_pb.get(\\\"ref\\\", \\\"?\\\")}'\" })\n";
+    code << "                            _existing_ref = _pb.get('ref', '?')\n";
+    code << "                            results.append({'pin': pin_id, 'label': label_text, 'error': f\"Placement rejected: overlaps existing label '{_existing_ref}'\" })\n";
     code << "                            _rejected = True\n";
     code << "                            break\n";
     code << "                    if not _rejected:\n";

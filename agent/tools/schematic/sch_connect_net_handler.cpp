@@ -329,9 +329,11 @@ static const char* ROUTING_INFRASTRUCTURE = R"py(
         return False
 
     import heapq
-    def _astar(x0, y0, x1, y1, grid=1.27, bend_cost=3, start_dir=-1, end_dir=-1, margin=15):
+    def _astar(x0, y0, x1, y1, grid=1.27, bend_cost=3, cross_cost=2, start_dir=-1, end_dir=-1, margin=15):
         """A* pathfinding on the schematic grid. Returns list of (x,y) waypoints,
         or None if no path found within the search bounds.
+        bend_cost: extra cost for changing direction (default 3).
+        cross_cost: extra cost for crossing an existing wire perpendicularly (default 2).
         start_dir: if >= 0, preferred first-step direction (0=right, 1=left, 2=down, 3=up).
                    Deviating costs an extra bend penalty (soft constraint).
         end_dir: if >= 0, preferred approach direction into the goal cell.
@@ -405,6 +407,13 @@ static const char* ROUTING_INFRASTRUCTURE = R"py(
                 move_cost = 1
                 if prev_d >= 0 and di != prev_d:
                     move_cost += bend_cost
+                # Soft penalty for crossing an existing wire perpendicularly.
+                # Parallel overlap is hard-blocked above; perpendicular crossings
+                # are allowed but discouraged so the router prefers clean paths.
+                if dy == 0 and (nx, ny) in v_wire_cells:
+                    move_cost += cross_cost
+                elif dx == 0 and (nx, ny) in h_wire_cells:
+                    move_cost += cross_cost
                 # Soft penalty for arriving at goal from a direction that
                 # doesn't match the destination pin's escape direction.
                 if (nx, ny) == goal and end_dir >= 0 and di != end_dir:

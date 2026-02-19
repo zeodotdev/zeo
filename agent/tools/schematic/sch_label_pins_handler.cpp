@@ -75,6 +75,7 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     std::string labelType = aInput.value( "label_type", "local" );
     std::string hAlignOverride = aInput.value( "h_align", "" );
     std::string vAlignOverride = aInput.value( "v_align", "" );
+    double offset = aInput.value( "offset", 0.0 );
 
     // Build the pin->label map as a Python dict literal
     std::ostringstream labelsDict;
@@ -114,6 +115,10 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "pin_labels = " << labelsDict.str() << "\n";
     code << "h_align_override = " << ( hAlignOverride.empty() ? "None" : ( "'" + hAlignOverride + "'" ) ) << "\n";
     code << "v_align_override = " << ( vAlignOverride.empty() ? "None" : ( "'" + vAlignOverride + "'" ) ) << "\n";
+    code << "label_offset = " << offset << "\n";
+    code << "\n";
+    code << "def snap_to_grid(val, grid=1.27):\n";
+    code << "    return round(val / grid) * grid\n";
     code << "\n";
 
     // Overlap detection preamble — collect existing label bounding boxes (0 margin)
@@ -198,24 +203,30 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
 
     // Determine escape direction and justification
     code << "            # Transform orientation and compute escape direction\n";
+    code << "            out_dx, out_dy = 0, 0\n";
     code << "            if orient is not None:\n";
     code << "                orient = transform_orientation(orient)\n";
     code << "                # orient 0=PIN_RIGHT(body), 1=PIN_LEFT(body), 2=PIN_UP(body), 3=PIN_DOWN(body)\n";
     code << "                if orient == 0:    # escape left\n";
     code << "                    h_align, v_align = HA_RIGHT, VA_BOTTOM\n";
     code << "                    direction = 'left'\n";
+    code << "                    out_dx, out_dy = -1, 0\n";
     code << "                elif orient == 1:  # escape right\n";
     code << "                    h_align, v_align = HA_LEFT, VA_BOTTOM\n";
     code << "                    direction = 'right'\n";
+    code << "                    out_dx, out_dy = 1, 0\n";
     code << "                elif orient == 2:  # escape down\n";
     code << "                    h_align, v_align = HA_LEFT, VA_TOP\n";
     code << "                    direction = 'down'\n";
+    code << "                    out_dx, out_dy = 0, 1\n";
     code << "                elif orient == 3:  # escape up\n";
     code << "                    h_align, v_align = HA_LEFT, VA_BOTTOM\n";
     code << "                    direction = 'up'\n";
+    code << "                    out_dx, out_dy = 0, -1\n";
     code << "                else:\n";
     code << "                    h_align, v_align = HA_LEFT, VA_BOTTOM\n";
     code << "                    direction = 'right'\n";
+    code << "                    out_dx, out_dy = 1, 0\n";
     code << "            else:\n";
     code << "                # Fallback: guess from symbol center\n";
     code << "                sym_cx = sym.position.x / 1_000_000\n";
@@ -223,9 +234,11 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "                if px > sym_cx:\n";
     code << "                    h_align, v_align = HA_LEFT, VA_BOTTOM\n";
     code << "                    direction = 'right'\n";
+    code << "                    out_dx, out_dy = 1, 0\n";
     code << "                else:\n";
     code << "                    h_align, v_align = HA_RIGHT, VA_BOTTOM\n";
     code << "                    direction = 'left'\n";
+    code << "                    out_dx, out_dy = -1, 0\n";
     code << "\n";
 
     // Apply alignment overrides if specified
@@ -236,8 +249,13 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "                v_align = VA_TOP if v_align_override == 'top' else VA_BOTTOM\n";
     code << "\n";
 
-    // Place label at pin tip, then check for overlap
-    code << "            label_pos = Vector2.from_xy_mm(px, py)\n";
+    // Place label at pin tip (or offset along escape direction with a wire)
+    code << "            if label_offset > 0.01 and (abs(out_dx) > 0.001 or abs(out_dy) > 0.001):\n";
+    code << "                lbl_x = snap_to_grid(px + out_dx * label_offset)\n";
+    code << "                lbl_y = snap_to_grid(py + out_dy * label_offset)\n";
+    code << "            else:\n";
+    code << "                lbl_x, lbl_y = px, py\n";
+    code << "            label_pos = Vector2.from_xy_mm(lbl_x, lbl_y)\n";
     code << "            _lbl = create_label(label_text, label_pos, h_align, v_align)\n";
     code << "\n";
     code << "            # Overlap detection (skip bboxes whose pin point coincides with ours)\n";
@@ -262,7 +280,10 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "            except:\n";
     code << "                pass\n";
     code << "            if not _rejected:\n";
-    code << "                results.append({'pin': pin_id, 'label': label_text, 'position': [round(px, 2), round(py, 2)], 'direction': direction})\n";
+    code << "                # Draw wire from pin tip to label when offset displaces the label\n";
+    code << "                if abs(lbl_x - px) > 0.01 or abs(lbl_y - py) > 0.01:\n";
+    code << "                    sch.wiring.add_wire(Vector2.from_xy_mm(px, py), Vector2.from_xy_mm(lbl_x, lbl_y))\n";
+    code << "                results.append({'pin': pin_id, 'label': label_text, 'position': [round(lbl_x, 2), round(lbl_y, 2)], 'direction': direction})\n";
     code << "\n";
     code << "        except Exception as e:\n";
     code << "            results.append({'pin': pin_id, 'label': label_text, 'error': str(e)})\n";

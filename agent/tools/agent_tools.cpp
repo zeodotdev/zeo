@@ -535,9 +535,8 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     LLM_TOOL schLabelPins;
     schLabelPins.name = "sch_label_pins";
     schLabelPins.description =
-        "Batch-label pins on a symbol. Places labels directly at pin tips with auto-justified "
-        "text based on pin orientation (text reads away from the symbol body). No wires are drawn — "
-        "labels at pin tips connect to the net automatically. "
+        "Batch-label pins on a symbol. Places labels at pin tips (or offset away with a connecting wire) "
+        "with auto-justified text based on pin orientation (text reads away from the symbol body). "
         "Use this instead of placing labels one by one with sch_add. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schLabelPins.input_schema = {
@@ -573,6 +572,12 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                 { "description", "Vertical alignment of the label connection point. "
                                  "'top' places the pin on the top, 'bottom' on the bottom. "
                                  "Overrides auto-justification when set." }
+            }},
+            { "offset", {
+                { "type", "number" },
+                { "description", "Distance in mm from pin tip to label along the pin's escape direction. "
+                                 "Default 0 (place directly at pin tip). When > 0, a wire is drawn from "
+                                 "pin to label. Use 2.54 or 5.08 to avoid label overlap on dense ICs." }
             }}
         }},
         { "required", json::array( { "ref", "labels" } ) }

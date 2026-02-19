@@ -520,7 +520,7 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                 else if( deltaType == "compaction_delta" )
                 {
                     // Accumulate compaction content
-                    std::string compaction = delta.value( "compaction", "" );
+                    std::string compaction = delta.value( "content", "" );
                     ctx->currentCompaction += compaction;
                 }
             }

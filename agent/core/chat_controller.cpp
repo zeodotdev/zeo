@@ -1,6 +1,6 @@
 #include "chat_controller.h"
 #include "chat_events.h"
-#include "../tools/agent_tools.h"
+#include "../tools/tool_schemas.h"
 #include "../tools/tool_registry.h"
 #include "view/file_attach.h"
 #include "agent_llm_client.h"
@@ -49,7 +49,7 @@ CHAT_CONTROLLER::CHAT_CONTROLLER( wxEvtHandler* aEventSink )
       m_agentMode( AgentMode::EXECUTE )
 {
     // Initialize tool definitions
-    m_tools = AgentTools::GetToolDefinitions();
+    m_tools = ToolSchemas::GetToolDefinitions();
 
     // Initialize chat history as empty array
     m_chatHistory = nlohmann::json::array();
@@ -1003,11 +1003,11 @@ void CHAT_CONTROLLER::ExecuteNextTool()
                                                               static_cast<int>( m_ctx.GetState() ) ) );
 
     // Get tool description
-    wxString desc = AgentTools::GetToolDescription( tool->tool_name, tool->tool_input );
+    std::string desc = TOOL_REGISTRY::Instance().GetDescription( tool->tool_name, tool->tool_input );
 
     // Emit tool start event
     EmitEvent( EVT_CHAT_TOOL_START, ChatToolStartData( tool->tool_use_id, tool->tool_name,
-                                                        desc.ToStdString(), tool->tool_input ) );
+                                                        desc, tool->tool_input ) );
 
     // Handle frame-managed tools specially - they are processed by AGENT_FRAME in OnChatToolStart
     // and call HandleToolResult() when done
@@ -1017,12 +1017,6 @@ void CHAT_CONTROLLER::ExecuteNextTool()
     {
         // Don't execute synchronously - wait for frame to handle via HandleToolResult
         return;
-    }
-
-    // Set project path on tool registry for path validation
-    if( m_getProjectPathFn )
-    {
-        TOOL_REGISTRY::Instance().SetProjectPath( m_getProjectPathFn() );
     }
 
     // Sync editor state to TOOL_REGISTRY before tool execution
@@ -1058,8 +1052,7 @@ void CHAT_CONTROLLER::ExecuteNextTool()
 
     try
     {
-        // Execute tool - route through TOOL_REGISTRY for file tools, KIWAY for terminal tools
-        result = AgentTools::ExecuteToolSync( tool->tool_name, tool->tool_input, m_sendRequestFn );
+        result = TOOL_REGISTRY::Instance().ExecuteToolSync( tool->tool_name, tool->tool_input );
         success = !result.empty() && result.find( "Error:" ) != 0;
     }
     catch( const std::exception& e )

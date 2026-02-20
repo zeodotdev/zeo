@@ -21,23 +21,22 @@
  * Unit tests for the sch_find_symbol tool handler
  */
 
+#include <algorithm>
 #include <boost/test/unit_test.hpp>
 #include <nlohmann/json.hpp>
-#include <tools/schematic/sch_lib_symbol_handler.h>
+#include <tools/handlers/python_tool_handler.h>
 
 BOOST_AUTO_TEST_SUITE( SchLibSymbolHandler )
 
 
 /**
- * Test that the handler correctly identifies its tool name
+ * Test that the handler registers the sch_find_symbol tool
  */
-BOOST_AUTO_TEST_CASE( CanHandleCorrectTool )
+BOOST_AUTO_TEST_CASE( RegistersCorrectTool )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
-    BOOST_CHECK( handler.CanHandle( "sch_find_symbol" ) );
-    BOOST_CHECK( !handler.CanHandle( "sch_get_summary" ) );
-    BOOST_CHECK( !handler.CanHandle( "sch_run_erc" ) );
-    BOOST_CHECK( !handler.CanHandle( "other_tool" ) );
+    PYTHON_TOOL_HANDLER handler;
+    auto names = handler.GetToolNames();
+    BOOST_CHECK( std::find( names.begin(), names.end(), "sch_find_symbol" ) != names.end() );
 }
 
 
@@ -46,9 +45,9 @@ BOOST_AUTO_TEST_CASE( CanHandleCorrectTool )
  */
 BOOST_AUTO_TEST_CASE( RequiresIPC )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     BOOST_CHECK( handler.RequiresIPC( "sch_find_symbol" ) );
-    BOOST_CHECK( !handler.RequiresIPC( "other_tool" ) );
+    BOOST_CHECK( !handler.RequiresIPC( "nonexistent_tool" ) );
 }
 
 
@@ -57,7 +56,7 @@ BOOST_AUTO_TEST_CASE( RequiresIPC )
  */
 BOOST_AUTO_TEST_CASE( GetIPCCommandExactMatch )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:R" } };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
@@ -70,8 +69,8 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandExactMatch )
     // Should reference get_symbol_info for exact lookup
     BOOST_CHECK( cmd.find( "get_symbol_info" ) != std::string::npos );
 
-    // Should have default include_pins = True
-    BOOST_CHECK( cmd.find( "include_pins = True" ) != std::string::npos );
+    // Should read include_pins from TOOL_ARGS
+    BOOST_CHECK( cmd.find( "include_pins = TOOL_ARGS.get" ) != std::string::npos );
 }
 
 
@@ -80,7 +79,7 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandExactMatch )
  */
 BOOST_AUTO_TEST_CASE( GetIPCCommandWildcard )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Connector:Conn_01x*" } };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
@@ -100,7 +99,7 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandWildcard )
  */
 BOOST_AUTO_TEST_CASE( GetIPCCommandRegex )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:R_[0-9]{4}" } };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
@@ -121,7 +120,7 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandRegex )
  */
 BOOST_AUTO_TEST_CASE( GetIPCCommandWithOptions )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "lib_id", "Device:R" },
         { "include_pins", false },
@@ -129,11 +128,13 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandWithOptions )
     };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
-    // Should have include_pins = False
-    BOOST_CHECK( cmd.find( "include_pins = False" ) != std::string::npos );
+    // JSON args should contain include_pins:false
+    BOOST_CHECK( cmd.find( "\"include_pins\":false" ) != std::string::npos
+                 || cmd.find( "\"include_pins\": false" ) != std::string::npos );
 
-    // Should have max_suggestions = 5
-    BOOST_CHECK( cmd.find( "max_suggestions = 5" ) != std::string::npos );
+    // JSON args should contain max_suggestions:5
+    BOOST_CHECK( cmd.find( "\"max_suggestions\":5" ) != std::string::npos
+                 || cmd.find( "\"max_suggestions\": 5" ) != std::string::npos );
 }
 
 
@@ -142,15 +143,16 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandWithOptions )
  */
 BOOST_AUTO_TEST_CASE( GetIPCCommandExplicitPatternType )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "lib_id", "Device:R" },
         { "pattern_type", "wildcard" }
     };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
-    // Should pass the explicit pattern type
-    BOOST_CHECK( cmd.find( "pattern_type = \"wildcard\"" ) != std::string::npos );
+    // JSON args should contain the explicit pattern type
+    BOOST_CHECK( cmd.find( "\"pattern_type\":\"wildcard\"" ) != std::string::npos
+                 || cmd.find( "\"pattern_type\": \"wildcard\"" ) != std::string::npos );
 }
 
 
@@ -159,7 +161,7 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandExplicitPatternType )
  */
 BOOST_AUTO_TEST_CASE( GetIPCCommandBareSymbolName )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "R" } };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
@@ -185,7 +187,7 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandBareSymbolName )
  */
 BOOST_AUTO_TEST_CASE( GetDescriptionBareSymbolName )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "R" } };
     std::string desc = handler.GetDescription( "sch_find_symbol", input );
 
@@ -200,7 +202,7 @@ BOOST_AUTO_TEST_CASE( GetDescriptionBareSymbolName )
  */
 BOOST_AUTO_TEST_CASE( GetDescriptionExactMatch )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:R" } };
     std::string desc = handler.GetDescription( "sch_find_symbol", input );
 
@@ -215,7 +217,7 @@ BOOST_AUTO_TEST_CASE( GetDescriptionExactMatch )
  */
 BOOST_AUTO_TEST_CASE( GetDescriptionWildcard )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Connector:Conn_*" } };
     std::string desc = handler.GetDescription( "sch_find_symbol", input );
 
@@ -229,7 +231,7 @@ BOOST_AUTO_TEST_CASE( GetDescriptionWildcard )
  */
 BOOST_AUTO_TEST_CASE( GetDescriptionRegex )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:C_[0-9]+" } };
     std::string desc = handler.GetDescription( "sch_find_symbol", input );
 
@@ -243,7 +245,7 @@ BOOST_AUTO_TEST_CASE( GetDescriptionRegex )
  */
 BOOST_AUTO_TEST_CASE( GetDescriptionEmpty )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {};
     std::string desc = handler.GetDescription( "sch_find_symbol", input );
 
@@ -259,7 +261,7 @@ BOOST_AUTO_TEST_CASE( GetDescriptionEmpty )
  */
 BOOST_AUTO_TEST_CASE( GetIPCCommandExactMatchFallback )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:L" } };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
@@ -277,7 +279,7 @@ BOOST_AUTO_TEST_CASE( GetIPCCommandExactMatchFallback )
  */
 BOOST_AUTO_TEST_CASE( GeneratedCodeAccessesPinDataDirectly )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:R" }, { "include_pins", true } };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
@@ -303,7 +305,7 @@ BOOST_AUTO_TEST_CASE( GeneratedCodeAccessesPinDataDirectly )
  */
 BOOST_AUTO_TEST_CASE( GeneratedCodeExtractsPinPositions )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:R" }, { "include_pins", true } };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
@@ -320,12 +322,13 @@ BOOST_AUTO_TEST_CASE( GeneratedCodeExtractsPinPositions )
  */
 BOOST_AUTO_TEST_CASE( PinsSkippedWhenNotRequested )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:R" }, { "include_pins", false } };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
-    // When include_pins=false, the flag should be set correctly
-    BOOST_CHECK( cmd.find( "include_pins = False" ) != std::string::npos );
+    // JSON args should contain include_pins:false
+    BOOST_CHECK( cmd.find( "\"include_pins\":false" ) != std::string::npos
+                 || cmd.find( "\"include_pins\": false" ) != std::string::npos );
 }
 
 
@@ -337,7 +340,7 @@ BOOST_AUTO_TEST_CASE( PinsSkippedWhenNotRequested )
  */
 BOOST_AUTO_TEST_CASE( BareWildcardMatchesSymbolName )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "ESP32*" } };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
@@ -356,7 +359,7 @@ BOOST_AUTO_TEST_CASE( BareWildcardMatchesSymbolName )
  */
 BOOST_AUTO_TEST_CASE( PrefixedWildcardMatchesLibIdOnly )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "RF_Module:ESP32*" } };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
@@ -371,7 +374,7 @@ BOOST_AUTO_TEST_CASE( PrefixedWildcardMatchesLibIdOnly )
  */
 BOOST_AUTO_TEST_CASE( BareRegexMatchesSymbolName )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "ESP32[_-]C3.*" } };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 
@@ -386,7 +389,7 @@ BOOST_AUTO_TEST_CASE( BareRegexMatchesSymbolName )
  */
 BOOST_AUTO_TEST_CASE( ExecuteReturnsError )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:R" } };
     std::string result = handler.Execute( "sch_find_symbol", input );
 
@@ -400,7 +403,7 @@ BOOST_AUTO_TEST_CASE( ExecuteReturnsError )
  */
 BOOST_AUTO_TEST_CASE( GeneratedCodeExtractsBoundingBox )
 {
-    SCH_LIB_SYMBOL_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "lib_id", "Device:R" } };
     std::string cmd = handler.GetIPCCommand( "sch_find_symbol", input );
 

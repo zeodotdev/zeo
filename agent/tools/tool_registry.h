@@ -4,6 +4,7 @@
 #include <functional>
 #include <string>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 #include <nlohmann/json.hpp>
 
@@ -11,117 +12,70 @@ class TOOL_HANDLER;
 class wxEvtHandler;
 
 /**
- * Registry for direct file tools (sch_*, pcb_*).
- * This factory creates and manages tool handlers for direct KiCad file manipulation.
+ * Singleton registry that owns all TOOL_HANDLER instances and dispatches
+ * tool calls to the appropriate handler via a tool-name → handler map.
+ *
+ * Also holds shared state (editor open flags, IPC send function)
+ * that individual handlers can read via the singleton when executing.
  */
 class TOOL_REGISTRY
 {
 public:
-    /**
-     * Get the singleton instance.
-     */
+    using SendRequestFn = std::function<std::string( int, const std::string& )>;
+
     static TOOL_REGISTRY& Instance();
 
-    /**
-     * Check if the given tool name is handled by a registered direct tool handler.
-     * @param aToolName The name of the tool to check.
-     * @return true if a handler exists for this tool.
-     */
-    bool HasHandler( const std::string& aToolName ) const;
+    // --- Tool dispatch ---
 
-    /**
-     * Execute a direct tool.
-     * @param aToolName The name of the tool to execute.
-     * @param aInput The JSON input parameters for the tool.
-     * @return The result string from tool execution, or error string starting with "Error:".
-     */
+    bool        HasHandler( const std::string& aToolName ) const;
     std::string Execute( const std::string& aToolName, const nlohmann::json& aInput );
-
-    /**
-     * Generate a human-readable description for a tool call.
-     * @param aToolName The name of the tool.
-     * @param aInput The tool input parameters as JSON.
-     * @return A human-readable description string.
-     */
     std::string GetDescription( const std::string& aToolName, const nlohmann::json& aInput ) const;
-
-    /**
-     * Set the project path for path validation in all handlers.
-     * @param aPath The absolute path to the project directory.
-     */
-    void SetProjectPath( const std::string& aPath );
-
-    /**
-     * Check if a tool requires IPC (run_shell) execution.
-     * @param aToolName The name of the tool to check.
-     * @return true if the tool requires IPC execution.
-     */
-    bool RequiresIPC( const std::string& aToolName ) const;
-
-    /**
-     * Check if a tool executes asynchronously.
-     * @param aToolName The name of the tool to check.
-     * @return true if the tool executes asynchronously.
-     */
-    bool IsAsync( const std::string& aToolName ) const;
-
-    /**
-     * Start asynchronous execution of a tool.
-     * @param aToolName The name of the tool to execute.
-     * @param aInput The JSON input parameters for the tool.
-     * @param aToolUseId The unique ID for this tool call.
-     * @param aEventHandler The event handler to post results to.
-     */
-    void ExecuteAsync( const std::string& aToolName, const nlohmann::json& aInput,
-                       const std::string& aToolUseId, wxEvtHandler* aEventHandler );
-
-    /**
-     * Get the IPC command string for a tool.
-     * @param aToolName The name of the tool.
-     * @param aInput The tool input parameters as JSON.
-     * @return The command string to execute via run_shell.
-     */
+    bool        RequiresIPC( const std::string& aToolName ) const;
     std::string GetIPCCommand( const std::string& aToolName, const nlohmann::json& aInput ) const;
+    bool        IsAsync( const std::string& aToolName ) const;
+    void        ExecuteAsync( const std::string& aToolName, const nlohmann::json& aInput,
+                              const std::string& aToolUseId, wxEvtHandler* aEventHandler );
 
     /**
-     * Set whether the schematic editor is currently open.
-     * When open, file-based write operations are blocked to prevent data conflicts.
-     * @param aOpen true if the schematic editor is open.
+     * Execute a tool synchronously.  Routes IPC tools through the terminal frame
+     * via m_sendRequestFn, and dispatches direct tools to the handler.
+     * Also handles the built-in run_terminal tool.
+     * Caller must call SetSendRequestFn() before invoking this.
      */
-    void SetSchematicEditorOpen( bool aOpen );
+    std::string ExecuteToolSync( const std::string& aToolName, const nlohmann::json& aInput );
 
-    /**
-     * Set whether the PCB editor is currently open.
-     * When open, file-based write operations are blocked to prevent data conflicts.
-     * @param aOpen true if the PCB editor is open.
-     */
-    void SetPcbEditorOpen( bool aOpen );
+    // --- Shared state (set by chat_controller / agent_frame, read by handlers) ---
 
-    /**
-     * Check if the schematic editor is currently open.
-     */
-    bool IsSchematicEditorOpen() const;
+    void SetSchematicEditorOpen( bool aOpen )             { m_schematicEditorOpen = aOpen; }
+    bool IsSchematicEditorOpen() const                    { return m_schematicEditorOpen; }
 
-    /**
-     * Check if the PCB editor is currently open.
-     */
-    bool IsPcbEditorOpen() const;
+    void SetPcbEditorOpen( bool aOpen )                   { m_pcbEditorOpen = aOpen; }
+    bool IsPcbEditorOpen() const                          { return m_pcbEditorOpen; }
 
-    /**
-     * Provide an IPC send function to all handlers so they can communicate with editor frames.
-     * Called before Execute() by ExecuteToolSync.
-     */
-    void SetSendRequestFn( std::function<std::string( int, const std::string& )> aFn );
+    void SetSendRequestFn( SendRequestFn aFn )            { m_sendRequestFn = std::move( aFn ); }
+    const SendRequestFn& GetSendRequestFn() const         { return m_sendRequestFn; }
 
 private:
     TOOL_REGISTRY();
     ~TOOL_REGISTRY() = default;
 
-    // Delete copy and move constructors
     TOOL_REGISTRY( const TOOL_REGISTRY& ) = delete;
     TOOL_REGISTRY& operator=( const TOOL_REGISTRY& ) = delete;
 
-    std::vector<std::unique_ptr<TOOL_HANDLER>> m_handlers;
+    /**
+     * Register a handler: queries GetToolNames() and maps each name to the handler.
+     */
+    void Register( std::unique_ptr<TOOL_HANDLER> aHandler );
+
+    TOOL_HANDLER* FindHandler( const std::string& aToolName ) const;
+
+    std::vector<std::unique_ptr<TOOL_HANDLER>>       m_handlers;  // owns the handlers
+    std::unordered_map<std::string, TOOL_HANDLER*>   m_toolMap;   // tool name → handler (non-owning)
+
+    // Shared state
+    bool          m_schematicEditorOpen = false;
+    bool          m_pcbEditorOpen = false;
+    SendRequestFn m_sendRequestFn;
 };
 
 #endif // TOOL_REGISTRY_H

@@ -22,8 +22,8 @@
  */
 
 #include <boost/test/unit_test.hpp>
-#include <tools/schematic/sch_parser.h>
-#include <tools/kicad_file/file_writer.h>
+#include <tools/util/sch_parser.h>
+#include <tools/util/file_writer.h>
 #include <cmath>
 #include <fstream>
 

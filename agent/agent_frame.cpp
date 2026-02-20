@@ -4,12 +4,12 @@
 #include "bridge/webview_bridge.h"
 #include "view/agent_markdown.h"
 #include "view/unified_html_template.h"
-#include "tools/agent_tools.h"
+#include "tools/tool_schemas.h"
 #include "core/chat_controller.h"
 #include "core/chat_events.h"
 #include "tools/tool_registry.h"
-#include "tools/kicad_file/file_writer.h"
-#include "tools/schematic/sch_parser.h"
+#include "tools/util/file_writer.h"
+#include "tools/util/sch_parser.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -2117,7 +2117,7 @@ void AGENT_FRAME::OnPopupClick( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::InitializeTools()
 {
-    m_tools = AgentTools::GetToolDefinitions();
+    m_tools = ToolSchemas::GetToolDefinitions();
 }
 
 // NOTE: ExecuteTool was removed - tools are now executed via CHAT_CONTROLLER::ExecuteNextTool()
@@ -2603,7 +2603,7 @@ void AGENT_FRAME::RenderChatHistory()
                     std::string toolName = block.value( "name", "unknown" );
                     std::string toolId = block.value( "id", "" );
                     nlohmann::json toolInput = block.value( "input", nlohmann::json::object() );
-                    wxString desc = AgentTools::GetToolDescription( toolName, toolInput );
+                    wxString desc = TOOL_REGISTRY::Instance().GetDescription( toolName, toolInput );
 
                     // Store in map keyed by tool_use id for pairing with tool_result
                     if( !toolId.empty() )

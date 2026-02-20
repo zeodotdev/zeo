@@ -9,13 +9,11 @@
 namespace AgentTools
 {
 
-std::vector<LLM_TOOL> GetToolDefinitions()
+using json = nlohmann::json;
+
+
+static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
 {
-    wxLogInfo( "AgentTools::GetToolDefinitions called" );
-    using json = nlohmann::json;
-
-    std::vector<LLM_TOOL> tools;
-
     // run_terminal - Execute bash/shell commands
     LLM_TOOL runTerminal;
     runTerminal.name = "run_terminal";
@@ -91,8 +89,35 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( createProject );
 
-    // ===== Direct File Tools (sch_*, pcb_*) =====
+    // screenshot - Export a visual render of a schematic or PCB
+    LLM_TOOL screenshot;
+    screenshot.name = "screenshot";
+    screenshot.description =
+        "Export a visual screenshot (PNG render) of a schematic or PCB file. "
+        "Returns the image for visual inspection. Use this to verify layout, "
+        "check component placement, review wiring, or confirm design changes. "
+        "If file_path is omitted, screenshots the currently open sheet or PCB — "
+        "this is the preferred default. Only pass file_path when you need to "
+        "screenshot a specific sub-sheet that is NOT currently open.";
+    screenshot.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to a .kicad_sch or .kicad_pcb file. "
+                                 "If omitted, screenshots the currently open/visible sheet or PCB. "
+                                 "Only needed to screenshot a specific sub-sheet that isn't currently visible." }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    screenshot.read_only = true;
+    tools.push_back( screenshot );
+}
 
+
+static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
+{
     // sch_get_summary - Get high-level overview of schematic via IPC
     LLM_TOOL schGetSummary;
     schGetSummary.name = "sch_get_summary";
@@ -134,46 +159,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schReadSection.read_only = true;
     tools.push_back( schReadSection );
 
-    // sch_modify - DISABLED: Use sch_add/sch_update/sch_delete instead
-    // This tool allowed raw S-expression manipulation which is error-prone.
-    // The IPC-based CRUD tools provide a safer, structured interface.
-    /*
-    LLM_TOOL schModify;
-    schModify.name = "sch_modify";
-    schModify.description = "Modify a .kicad_sch file by adding, updating, or deleting elements. "
-                            "Elements must be provided as raw S-expressions matching the KiCad file format. "
-                            "The file is validated after modification to prevent corruption.";
-    schModify.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Absolute path to the .kicad_sch file" }
-            }},
-            { "operation", {
-                { "type", "string" },
-                { "enum", json::array( { "add", "update", "delete" } ) },
-                { "description", "Operation to perform" }
-            }},
-            { "element_type", {
-                { "type", "string" },
-                { "enum", json::array( { "symbol", "wire", "junction", "label", "text" } ) },
-                { "description", "Type of element to modify" }
-            }},
-            { "data", {
-                { "type", "string" },
-                { "description", "S-expression for the element (required for add/update)" }
-            }},
-            { "target", {
-                { "type", "string" },
-                { "description", "UUID or reference designator to update/delete (required for update/delete)" }
-            }}
-        }},
-        { "required", json::array( { "file_path", "operation", "element_type" } ) }
-    };
-    tools.push_back( schModify );
-    */
-
     // sch_run_erc - Run ERC on open schematic
     LLM_TOOL schRunErc;
     schRunErc.name = "sch_run_erc";
@@ -199,6 +184,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array() }
     };
+    schRunErc.read_only = true;
     tools.push_back( schRunErc );
 
     // sch_run_simulation - Run SPICE simulation on open schematic
@@ -597,6 +583,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array() }
     };
+    schSwitchSheet.read_only = true;
     tools.push_back( schSwitchSheet );
 
     // sch_connect_net - Connect multiple pins on the same net in one call
@@ -1099,9 +1086,11 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "required", json::array( { "action" } ) }
     };
     tools.push_back( schSetup );
+}
 
-    // ===== PCB Tools =====
 
+static void AddPcbTools( std::vector<LLM_TOOL>& tools )
+{
     // pcb_get_summary - Get high-level overview of PCB
     LLM_TOOL pcbGetSummary;
     pcbGetSummary.name = "pcb_get_summary";
@@ -1165,6 +1154,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array() }
     };
+    pcbRunDrc.read_only = true;
     tools.push_back( pcbRunDrc );
 
     // pcb_set_outline - Set board outline/shape
@@ -2449,32 +2439,17 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "required", json::array( { "action" } ) }
     };
     tools.push_back( pcbSetup );
+}
 
-    // screenshot - Export a visual render of a schematic or PCB
-    LLM_TOOL screenshot;
-    screenshot.name = "screenshot";
-    screenshot.description =
-        "Export a visual screenshot (PNG render) of a schematic or PCB file. "
-        "Returns the image for visual inspection. Use this to verify layout, "
-        "check component placement, review wiring, or confirm design changes. "
-        "If file_path is omitted, screenshots the currently open sheet or PCB — "
-        "this is the preferred default. Only pass file_path when you need to "
-        "screenshot a specific sub-sheet that is NOT currently open.";
-    screenshot.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Absolute path to a .kicad_sch or .kicad_pcb file. "
-                                 "If omitted, screenshots the currently open/visible sheet or PCB. "
-                                 "Only needed to screenshot a specific sub-sheet that isn't currently visible." }
-            }}
-        }},
-        { "required", json::array() }
-    };
-    screenshot.read_only = true;
-    tools.push_back( screenshot );
 
+std::vector<LLM_TOOL> GetToolDefinitions()
+{
+    wxLogInfo( "AgentTools::GetToolDefinitions called" );
+
+    std::vector<LLM_TOOL> tools;
+    AddGeneralTools( tools );
+    AddSchematicTools( tools );
+    AddPcbTools( tools );
     return tools;
 }
 
@@ -2560,10 +2535,6 @@ wxString GetToolDescription( const std::string& aToolName, const nlohmann::json&
     else if( aToolName == "check_status" )
     {
         return "Check Project Status";
-    }
-    else if( aToolName == "save" )
-    {
-        return "Save";
     }
     else if( aToolName == "create_project" )
     {

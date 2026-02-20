@@ -114,6 +114,7 @@ public:
     void OnChatTitleDelta( wxThreadEvent& aEvent );
     void OnChatTitleGenerated( wxThreadEvent& aEvent );
     void OnChatHistoryLoaded( wxThreadEvent& aEvent );
+    void OnChatCompaction( wxThreadEvent& aEvent );
 
     // Async tool execution completion (for background tools like autorouter)
     void OnAsyncToolComplete( wxCommandEvent& aEvent );

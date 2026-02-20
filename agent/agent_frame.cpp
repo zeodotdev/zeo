@@ -640,6 +640,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( EVT_CHAT_TITLE_DELTA, &AGENT_FRAME::OnChatTitleDelta, this );
     Bind( EVT_CHAT_TITLE_GENERATED, &AGENT_FRAME::OnChatTitleGenerated, this );
     Bind( EVT_CHAT_HISTORY_LOADED, &AGENT_FRAME::OnChatHistoryLoaded, this );
+    Bind( EVT_CHAT_COMPACTION, &AGENT_FRAME::OnChatCompaction, this );
 
     // Bind async tool execution completion event (for background tools like autorouter)
     Bind( EVT_TOOL_EXECUTION_COMPLETE, &AGENT_FRAME::OnAsyncToolComplete, this );
@@ -2436,6 +2437,18 @@ void AGENT_FRAME::RenderChatHistory()
         if( !msg.contains( "role" ) || !msg.contains( "content" ) )
             continue;
 
+        // Render a divider for compaction markers (not shown as a chat message)
+        if( msg.contains( "_compaction" ) && msg["_compaction"] == true )
+        {
+            m_fullHtmlContent +=
+                "<div class=\"flex items-center my-4\">"
+                "<div class=\"flex-1 border-t border-[#404040]\"></div>"
+                "<span class=\"mx-3 text-text-muted text-xs\">Context compacted</span>"
+                "<div class=\"flex-1 border-t border-[#404040]\"></div>"
+                "</div>";
+            continue;
+        }
+
         std::string role = msg["role"];
 
         // Content can be string or array (tool use)
@@ -3067,8 +3080,9 @@ void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
     if( !data )
         return;
 
-    // Markdown text is now streaming - hide the waiting dots
+    // Markdown text is now streaming - hide the waiting dots and compacting indicator
     m_isStreamingMarkdown = true;
+    m_isCompacting = false;
 
     // Controller owns the response - UpdateAgentResponse reads from controller
 
@@ -3095,8 +3109,9 @@ void AGENT_FRAME::OnChatThinkingStart( wxThreadEvent& aEvent )
             m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
     }
 
-    // Initialize thinking state for new block
+    // Initialize thinking state for new block — compaction is done
     m_isThinking = true;
+    m_isCompacting = false;
     m_thinkingContent = "";
     m_thinkingExpanded = false;
 
@@ -4136,6 +4151,23 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
     m_userScrolledUp = false;
 
     delete data;
+}
+
+
+void AGENT_FRAME::OnChatCompaction( wxThreadEvent& aEvent )
+{
+    wxLogInfo( "AGENT_FRAME::OnChatCompaction - context compacted, showing indicator" );
+    m_isCompacting = true;
+
+    // Start the generating animation timer if not already running,
+    // so the "Compacting..." dots animate
+    if( !m_generatingTimer.IsRunning() )
+    {
+        m_generatingDots = 1;
+        m_generatingTimer.Start( 400 );
+    }
+
+    UpdateAgentResponse();
 }
 
 

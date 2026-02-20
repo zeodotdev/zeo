@@ -180,6 +180,9 @@ void* LLM_REQUEST_THREAD::Entry()
 
     std::string requestBodyStr = requestBody.dump();
 
+    wxLogInfo( "LLM_REQUEST: model=%s, messages=%zu, tools=%zu, body_size=%zu bytes",
+               apiModel.c_str(), m_messages.size(), m_tools.size(), requestBodyStr.size() );
+
     // Get access token from auth manager
     std::string accessToken;
     if( m_client && m_client->m_auth )
@@ -440,6 +443,11 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     // Start accumulating compaction content
                     ctx->currentCompaction = "";
                     ctx->inCompaction = true;
+
+                    // Post COMPACTION_START so UI shows "Compacting..." immediately
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::COMPACTION_START;
+                    PostLLMChunk( ctx->handler, chunk );
                 }
                 else if( blockType == "server_tool_use" )
                 {

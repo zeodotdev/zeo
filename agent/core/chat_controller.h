@@ -148,17 +148,15 @@ public:
     const std::string& GetCurrentResponse() const { return m_currentResponse; }
     const wxString& GetThinkingContent() const { return m_thinkingContent; }
     const nlohmann::json& GetChatHistory() const { return m_chatHistory; }
-    const nlohmann::json& GetApiContext() const { return m_apiContext; }
+    nlohmann::json GetApiContext() const { return BuildApiContext(); }
 
     /**
-     * Set the chat history (for syncing from frame or loading from disk).
-     * Also syncs the API context.
+     * Set the chat history (for syncing from frame).
      * @param aHistory The chat history to set
      */
     void SetHistory( const nlohmann::json& aHistory )
     {
         m_chatHistory = aHistory;
-        m_apiContext = aHistory;
     }
 
     /**
@@ -170,7 +168,6 @@ public:
         m_currentResponse.clear();
         m_thinkingContent.clear();
         m_thinkingSignature.clear();
-        m_compactionContent.clear();
     }
 
     /**
@@ -181,7 +178,6 @@ public:
     {
         nlohmann::json userMsg = { { "role", "user" }, { "content", aText } };
         m_chatHistory.push_back( userMsg );
-        m_apiContext.push_back( userMsg );
     }
     const std::string& GetCurrentModel() const { return m_currentModel; }
     const std::string& GetChatId() const { return m_chatId; }
@@ -277,11 +273,9 @@ private:
     // Chat state
     // -------------------------------------------------------------------------
     nlohmann::json m_chatHistory;      ///< Full message history for display/persistence
-    nlohmann::json m_apiContext;       ///< Context sent to API (may be compacted)
     std::string    m_currentResponse;  ///< Accumulated streaming text
     wxString       m_thinkingContent;  ///< Accumulated thinking block text
     std::string    m_thinkingSignature; ///< Thinking block signature for API
-    std::string    m_compactionContent; ///< Compaction block content (replaces old context)
     std::string    m_currentModel;     ///< Selected model name
     std::string    m_chatId;           ///< Current chat ID
 
@@ -347,7 +341,7 @@ private:
     void ProcessToolResult( const std::string& aToolId, const std::string& aResult, bool aSuccess );
 
     /**
-     * Add a message to history arrays.
+     * Add a message to chat history.
      */
     void AddToHistory( const nlohmann::json& aMessage );
 
@@ -378,10 +372,17 @@ private:
     void DoSendMessage( const std::string& aText, const nlohmann::json& aContent );
 
     /**
-     * Sanitize API context before sending to ensure valid message format.
+     * Build the API context from m_chatHistory.
+     * Finds the last _compaction marker message and returns everything from
+     * that point onward. If no compaction has occurred, returns full history.
+     */
+    nlohmann::json BuildApiContext() const;
+
+    /**
+     * Sanitize a message array before sending to ensure valid message format.
      * Fixes issues like consecutive user messages that can occur after errors.
      */
-    void SanitizeApiContext();
+    static void SanitizeMessages( nlohmann::json& aMessages );
 
     /**
      * Start an async LLM request with current context.

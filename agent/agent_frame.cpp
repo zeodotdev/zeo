@@ -2006,12 +2006,13 @@ void AGENT_FRAME::DoSignIn()
 
 bool AGENT_FRAME::canCloseWindow( wxCloseEvent& aEvent )
 {
-    // Hide the agent window instead of destroying it. This preserves:
+    // When the user clicks the X button, hide instead of destroying. This preserves:
     //   - Shared auth pointer from the launcher (MAIL_AUTH_POINTER is only sent once at startup)
     //   - Loaded webview and chat state
     //   - Conversation history in memory
     // The window is re-shown by ShowPlayer/ShowAgent when the user reopens it.
-    if( aEvent.CanVeto() )
+    // Allow programmatic closes (NonUserClose from PlayersClose during app quit) through.
+    if( !m_isNonUserClose && aEvent.CanVeto() )
     {
         wxLogTrace( "Agent", "Agent window hidden (close vetoed to preserve auth state)" );
         Hide();

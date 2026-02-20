@@ -493,25 +493,29 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schDelete );
 
-    // sch_label_pins - Batch label pins on a symbol
+    // sch_label_pins - Batch label pins on a symbol or sheet
     LLM_TOOL schLabelPins;
     schLabelPins.name = "sch_label_pins";
     schLabelPins.description =
-        "Batch-label pins on a symbol. Places labels at pin tips (or offset away with a connecting wire) "
-        "with auto-justified text based on pin orientation (text reads away from the symbol body). "
+        "Batch-label pins on a symbol or hierarchical sheet. Places labels directly at pin tips "
+        "with auto-justified text based on pin orientation (text reads away from the component). "
+        "If overlap is detected, tries flipping the label to the other side of the pin. "
         "Use this instead of placing labels one by one with sch_add. "
+        "For sheets, pass the sheet name as ref and use sheet pin names as label keys. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schLabelPins.input_schema = {
         { "type", "object" },
         { "properties", {
             { "ref", {
                 { "type", "string" },
-                { "description", "Reference designator of the symbol (e.g., 'U1', 'R3')" }
+                { "description", "Reference designator of the symbol (e.g., 'U1') "
+                                 "or name of a hierarchical sheet (e.g., 'Power Supply')" }
             }},
             { "labels", {
                 { "type", "object" },
                 { "description", "Map of pin number/name to label text. "
-                                 "Example: {\"2\": \"EN\", \"18\": \"SPI_CS\", \"23\": \"I2C_SDA\"}" },
+                                 "For symbols: {\"2\": \"EN\", \"18\": \"SPI_CS\"}. "
+                                 "For sheets: keys are sheet pin names." },
                 { "additionalProperties", { { "type", "string" } } }
             }},
             { "label_type", {
@@ -535,12 +539,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                                  "'top' places the pin on the top, 'bottom' on the bottom. "
                                  "Overrides auto-justification when set." }
             }},
-            { "offset", {
-                { "type", "number" },
-                { "description", "Distance in mm from pin tip to label along the pin's escape direction. "
-                                 "Default 0 (place directly at pin tip). When > 0, a wire is drawn from "
-                                 "pin to label. Use 2.54 or 5.08 to avoid label overlap on dense ICs." }
-            }}
         }},
         { "required", json::array( { "ref", "labels" } ) }
     };

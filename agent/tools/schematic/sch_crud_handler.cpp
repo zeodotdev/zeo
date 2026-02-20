@@ -1769,46 +1769,26 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 code << "        sch.crud.update_items([lbl_" << i << "])\n";
             }
 
-            // --- Overlap check + slide-off for label ---
-            code << "        _shifted_" << i << " = False\n";
-            code << "        _shift_dx_" << i << " = 0\n";
-            code << "        _shift_dy_" << i << " = 0\n";
+            // --- Overlap check for label (no slide-off — moving labels disconnects them) ---
             code << "        _rejected_" << i << " = False\n";
-            code << "        _conflict_desc_" << i << " = ''\n";
             code << "        try:\n";
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(lbl_" << i << ", units='mm')\n";
             code << "            if _bb_" << i << ":\n";
-            code << "                _raw_bb_" << i << " = dict(_bb_" << i << ")\n";
             code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] + _LABEL_SHRINK, 'max_x': _bb_" << i << "['max_x'] - _LABEL_SHRINK, 'min_y': _bb_" << i << "['min_y'] + _LABEL_SHRINK, 'max_y': _bb_" << i << "['max_y'] - _LABEL_SHRINK}\n";
-            code << "                _has_conflict_" << i << " = any(_bboxes_overlap(_new_bbox_" << i << ", _pb) for _pb in placed_bboxes) or (_find_crossing_wire(_raw_bb_" << i << ") is not None)\n";
+            code << "                _has_conflict_" << i << " = any(_bboxes_overlap(_new_bbox_" << i << ", _pb) for _pb in placed_bboxes) or (_find_crossing_wire(_bb_" << i << ") is not None)\n";
             code << "                if _has_conflict_" << i << ":\n";
-            code << "                    _conflict_desc_" << i << " = _overlap_info(_new_bbox_" << i << ")\n";
-            code << "                    _sok_" << i << ", _sdx_" << i << ", _sdy_" << i << " = _slide_off(lbl_" << i << ", _raw_bb_" << i << ", _new_bbox_" << i << ")\n";
-            code << "                    if _sok_" << i << " and (abs(_sdx_" << i << ") > 1e-6 or abs(_sdy_" << i << ") > 1e-6):\n";
-            code << "                        sch.transform.move(lbl_" << i << ", delta_x_mm=_sdx_" << i << ", delta_y_mm=_sdy_" << i << ")\n";
-            code << "                        _bb_" << i << " = sch.transform.get_bounding_box(lbl_" << i << ", units='mm')\n";
-            code << "                        if _bb_" << i << ":\n";
-            code << "                            _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] + _LABEL_SHRINK, 'max_x': _bb_" << i << "['max_x'] - _LABEL_SHRINK, 'min_y': _bb_" << i << "['min_y'] + _LABEL_SHRINK, 'max_y': _bb_" << i << "['max_y'] - _LABEL_SHRINK}\n";
-            code << "                        _shifted_" << i << " = True\n";
-            code << "                        _shift_dx_" << i << " = _sdx_" << i << "\n";
-            code << "                        _shift_dy_" << i << " = _sdy_" << i << "\n";
-            code << "                    elif not _sok_" << i << ":\n";
-            code << "                        _rejected_" << i << " = True\n";
+            code << "                    _rejected_" << i << " = True\n";
             code << "        except:\n";
             code << "            pass\n";
             code << "        if _rejected_" << i << ":\n";
             code << "            sch.crud.remove_items([lbl_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: {_overlap_info(_new_bbox_" << i << ")}. Could not auto-slide to clear position.'})\n";
+            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: {_overlap_info(_new_bbox_" << i << ")}. Moving labels would disconnect them — place the label at a clear position.'})\n";
             code << "        else:\n";
             code << "            if _bb_" << i << ":\n";
             code << "                placed_bboxes.append({'ref': '" << EscapePythonString( elem.value( "text", "label" ) ) << "', **_new_bbox_" << i << "})\n";
             code << "            _res_" << i << " = {'index': " << i << ", 'element_type': 'label'}\n";
             code << "            if _bb_" << i << ":\n";
             code << "                _res_" << i << "['bbox_mm'] = {'min_x': round(_new_bbox_" << i << "['min_x'], 2), 'max_x': round(_new_bbox_" << i << "['max_x'], 2), 'min_y': round(_new_bbox_" << i << "['min_y'], 2), 'max_y': round(_new_bbox_" << i << "['max_y'], 2)}\n";
-            code << "            if _shifted_" << i << ":\n";
-            code << "                _res_" << i << "['shifted'] = True\n";
-            code << "                _res_" << i << "['shift_mm'] = [round(_shift_dx_" << i << ", 2), round(_shift_dy_" << i << ", 2)]\n";
-            code << "                _res_" << i << "['overlap'] = _conflict_desc_" << i << "\n";
             code << "            results.append(_res_" << i << ")\n";
         }
         else if( elementType == "wire" )

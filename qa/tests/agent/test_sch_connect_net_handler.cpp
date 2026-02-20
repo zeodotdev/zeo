@@ -523,7 +523,7 @@ BOOST_AUTO_TEST_CASE( ConnectNetHasAutoFlipPowerHelper )
     // Auto-flip infrastructure must be present
     BOOST_CHECK( cmd.find( "_try_auto_flip_power" ) != std::string::npos );
     BOOST_CHECK( cmd.find( "_path_length" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_resolve_pin_escape" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_compute_sym_obstacle" ) != std::string::npos );
     BOOST_CHECK( cmd.find( "set_angle" ) != std::string::npos );
 }
 
@@ -556,6 +556,29 @@ BOOST_AUTO_TEST_CASE( ConnectNetAutoFlipPrefersConventionalOrientation )
     BOOST_CHECK( cmd.find( "new_angle == 0" ) != std::string::npos );
     // Must use a tolerance for floating-point path length comparison
     BOOST_CHECK( cmd.find( "abs(new_plen - plen)" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( ConnectNetAutoFlipUsesHypotheticalTest )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = {
+        { "pins", nlohmann::json::array( { "R1:1", "#PWR01:1" } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // Flip test computes hypothetical pin state by negating escape direction
+    // rather than actually flipping the symbol (avoids UI flicker).
+    BOOST_CHECK( cmd.find( "-flip_p['out_dx']" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "-flip_p['out_dy']" ) != std::string::npos );
+    // Old bbox must be removed from obstacles before the hypothetical A* run
+    BOOST_CHECK( cmd.find( "obstacles.remove(old_bbox)" ) != std::string::npos );
+    // set_angle is only called on commit (when flip wins), not during the test
+    // Verify set_angle appears after keep_flip check, not before A*
+    size_t keep_flip_pos = cmd.find( "if keep_flip:" );
+    BOOST_REQUIRE( keep_flip_pos != std::string::npos );
+    size_t set_angle_pos = cmd.find( "set_angle(sym, new_angle)", keep_flip_pos );
+    BOOST_CHECK( set_angle_pos != std::string::npos );
 }
 
 

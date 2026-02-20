@@ -33,6 +33,13 @@ public:
 
 private:
     std::string GeneratePlaceCompanionsCode( const nlohmann::json& aInput ) const;
+    void GenerateChainCode( std::ostringstream& aCode,
+                            const nlohmann::json& aChainItems,
+                            const std::string& aParentSymVar,
+                            const std::string& aEscapeDirVar,
+                            const std::string& aPrefix,
+                            int& aGlobalIndex,
+                            bool aParentReversed ) const;
     std::string EscapePythonString( const std::string& aStr ) const;
     static double SnapToGrid( double aMm, double aGrid = 1.27 );
 };

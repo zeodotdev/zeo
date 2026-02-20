@@ -563,7 +563,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                     { "properties", {
                         { "lib_id", {
                             { "type", "string" },
-                            { "description", "Library ID (e.g., 'Device:C', 'Device:R')" }
+                            { "description", "Library ID. Use 'Device:C', 'Device:R' for passives. Use 'power:GND', 'power:VCC' to place a power symbol directly at the pin (no component)." }
                         }},
                         { "ic_pin", {
                             { "type", "string" },
@@ -587,6 +587,20 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                             { "type", "object" },
                             { "description", "Power symbols at pin 1 (the terminal away from IC). Pin 2 connects to IC pin. Use {\"1\": \"GND\"} or {\"1\": \"VCC\"}" },
                             { "additionalProperties", { { "type", "string" } } }
+                        }},
+                        { "reverse", {
+                            { "type", "boolean" },
+                            { "description", "Swap pin orientation. When true, pin 1 faces IC (default: pin 2 faces IC). Use for polarized components like LEDs where you need opposite polarity." }
+                        }},
+                        { "chain", {
+                            { "type", "array" },
+                            { "description", "Chain of components extending from this companion's 'away' terminal. "
+                                            "Each chain item has: lib_id, properties, terminal_power, terminal_labels, reverse, offset_grids. "
+                                            "No ic_pin needed - chain items connect to parent's away terminal. "
+                                            "The 'away' terminal is pin 1 normally, or pin 2 if parent has reverse:true. "
+                                            "Chain items can have their own nested 'chain' for multi-component series (R→C→LED). "
+                                            "Multiple items = branches (staggered perpendicular): [{LED1}, {LED2}] places two LEDs side-by-side. "
+                                            "Example: {\"lib_id\": \"Device:R\", \"ic_pin\": \"PA0\", \"chain\": [{\"lib_id\": \"Device:LED\", \"reverse\": true, \"terminal_power\": {\"1\": \"GND\"}}]}" }
                         }}
                     }},
                     { "required", json::array( { "lib_id", "ic_pin" } ) }

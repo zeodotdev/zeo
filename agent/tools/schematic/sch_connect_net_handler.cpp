@@ -184,6 +184,212 @@ try:
 )py";
 
 
+// Phase 1.5: Connectivity pre-check.
+// After pin resolution, queries each pin's net membership to detect pins
+// that are already connected.  Groups them by shared net, and if some are
+// already wired together, finds wire tap points on existing wires and
+// replaces multi-pin groups with a single tap entry so the router only
+// draws the minimum new wires (with T-junctions on wires, not at pins).
+static const char* CONNECT_NET_PRECHECK = R"py(
+    # Phase 1.5: Connectivity pre-check — avoid drawing wires on existing nets.
+    # Query each pin's net membership and group pins sharing the same net.
+    _pin_nets = []
+    _n_components = len(pin_positions)
+    _original_pin_count = len(pin_positions)
+    for _pi, p in enumerate(pin_positions):
+        _net = None
+        try:
+            if p.get('pin'):  # pin spec (not label)
+                _sym = sch.symbols.get_by_ref(p['ref'])
+                if _sym:
+                    _net = sch.labels.get_pin_net(_sym, p['pin'])
+                    if _net and 'unconnected' in _net.lower():
+                        _net = None
+            else:
+                # Label spec: the label text itself is the net name
+                _net = p.get('ref')
+        except Exception:
+            pass
+        _pin_nets.append(_net)
+        print(f'[route] pre-check {p["ref"]}:{p.get("pin","")} -> net={_net}', file=sys.stderr)
+
+    # Assign each pin to a connected-component group.
+    # Pins that share a net name are in the same group; unknown pins get their own.
+    _net_to_group = {}
+    _pin_group = []
+    _next_group = 0
+    for _pi, _net in enumerate(_pin_nets):
+        if _net is not None and _net in _net_to_group:
+            _pin_group.append(_net_to_group[_net])
+        else:
+            _pin_group.append(_next_group)
+            if _net is not None:
+                _net_to_group[_net] = _next_group
+            _next_group += 1
+
+    _n_components = len(set(_pin_group))
+    print(f'[route] pre-check: {_n_components} disconnected component(s) among {len(pin_positions)} pins', file=sys.stderr)
+
+    if _n_components < len(pin_positions) and _n_components > 1:
+        # Some pins already connected — replace each multi-pin group with a
+        # wire tap point on the group's existing wires.
+        _groups = {}
+        _group_nets = {}
+        for _pi, _gi in enumerate(_pin_group):
+            _groups.setdefault(_gi, []).append(_pi)
+            if _pin_nets[_pi] is not None:
+                _group_nets[_gi] = _pin_nets[_pi]
+
+        # Collect wire geometry for each existing net
+        _all_wires_list = sch.wiring.get_wires()
+        _wire_by_id = {}
+        for _w in _all_wires_list:
+            if hasattr(_w, 'id') and hasattr(_w.id, 'value'):
+                _wire_by_id[_w.id.value] = _w
+        _net_wire_segs = {}  # net_name -> [(sx, sy, ex, ey), ...]
+        _grid = 1.27
+        for _net_name in set(_group_nets.values()):
+            try:
+                _ni = sch.connectivity.get_net_items(_net_name)
+                _segs = []
+                for _iid in _ni.item_ids:
+                    if _iid.value in _wire_by_id:
+                        _w = _wire_by_id[_iid.value]
+                        _segs.append((_w.start.x / 1_000_000, _w.start.y / 1_000_000,
+                                      _w.end.x / 1_000_000, _w.end.y / 1_000_000))
+                _net_wire_segs[_net_name] = _segs
+                print(f'[route] pre-check: net {_net_name} has {len(_segs)} wire segment(s)', file=sys.stderr)
+            except Exception as _e:
+                print(f'[route] pre-check: failed to get wires for {_net_name}: {_e}', file=sys.stderr)
+                _net_wire_segs[_net_name] = []
+
+        # Build set of resolved pin grid cells to avoid tapping at a pin
+        _pin_avoid = set()
+        for p in pin_positions:
+            _pin_avoid.add((round(p['raw_x'] / _grid), round(p['raw_y'] / _grid)))
+
+        def _find_wire_tap(wires, target_x, target_y, avoid_cells, grid=1.27):
+            """Find closest grid-snapped point on any wire to (target_x, target_y),
+            skipping grid cells in avoid_cells. Returns (tap_x, tap_y, wire_dir) or None."""
+            best_dist = float('inf')
+            best = None
+            for sx, sy, ex, ey in wires:
+                is_h = abs(sy - ey) < 0.01
+                is_v = abs(sx - ex) < 0.01
+                if not is_h and not is_v:
+                    continue
+                if is_h:
+                    cx = max(min(target_x, max(sx, ex)), min(sx, ex))
+                    cx = round(cx / grid) * grid
+                    cx = max(min(cx, max(sx, ex)), min(sx, ex))
+                    cy = round(sy / grid) * grid
+                    wdir = 'h'
+                else:
+                    cx = round(sx / grid) * grid
+                    cy = max(min(target_y, max(sy, ey)), min(sy, ey))
+                    cy = round(cy / grid) * grid
+                    cy = max(min(cy, max(sy, ey)), min(sy, ey))
+                    wdir = 'v'
+                gcell = (round(cx / grid), round(cy / grid))
+                if gcell in avoid_cells:
+                    # Try offsetting along the wire by 1-2 grid cells
+                    found_alt = False
+                    for off in [1, -1, 2, -2]:
+                        if is_h:
+                            alt = round((cx + off * grid) / grid) * grid
+                            if min(sx, ex) <= alt <= max(sx, ex):
+                                ag = (round(alt / grid), gcell[1])
+                                if ag not in avoid_cells:
+                                    cx = alt
+                                    gcell = ag
+                                    found_alt = True
+                                    break
+                        else:
+                            alt = round((cy + off * grid) / grid) * grid
+                            if min(sy, ey) <= alt <= max(sy, ey):
+                                ag = (gcell[0], round(alt / grid))
+                                if ag not in avoid_cells:
+                                    cy = alt
+                                    gcell = ag
+                                    found_alt = True
+                                    break
+                    if not found_alt:
+                        continue
+                dist = abs(target_x - cx) + abs(target_y - cy)
+                if dist < best_dist:
+                    best_dist = dist
+                    best = (cx, cy, wdir)
+            return best
+
+        # Compute centroid of all OTHER groups' pins for each group
+        _all_cx = sum(p['raw_x'] for p in pin_positions) / len(pin_positions)
+        _all_cy = sum(p['raw_y'] for p in pin_positions) / len(pin_positions)
+
+        _new_positions = []
+        for _gi in sorted(_groups.keys()):
+            members = _groups[_gi]
+            _gnet = _group_nets.get(_gi)
+            if len(members) > 1 and _gnet and _gnet in _net_wire_segs and _net_wire_segs[_gnet]:
+                # Multi-pin group with existing wires — find a wire tap point.
+                # Target: centroid of all pins NOT in this group.
+                _other = [pin_positions[i] for i in range(len(pin_positions)) if _pin_group[i] != _gi]
+                if _other:
+                    _tcx = sum(p['raw_x'] for p in _other) / len(_other)
+                    _tcy = sum(p['raw_y'] for p in _other) / len(_other)
+                else:
+                    _tcx, _tcy = _all_cx, _all_cy
+                tap = _find_wire_tap(_net_wire_segs[_gnet], _tcx, _tcy, _pin_avoid)
+                if tap:
+                    tx, ty, twdir = tap
+                    # Escape direction: perpendicular to wire, toward target centroid
+                    if twdir == 'h':
+                        _esc_dy = _grid if _tcy > ty else -_grid
+                        _tap_entry = {
+                            'ref': _gnet, 'pin': '',
+                            'x': snap_to_grid(tx), 'y': snap_to_grid(ty),
+                            'raw_x': tx, 'raw_y': ty,
+                            'esc_x': snap_to_grid(tx), 'esc_y': snap_to_grid(ty + _esc_dy),
+                            'dir': 'v', 'out_dx': 0, 'out_dy': _esc_dy
+                        }
+                    else:
+                        _esc_dx = _grid if _tcx > tx else -_grid
+                        _tap_entry = {
+                            'ref': _gnet, 'pin': '',
+                            'x': snap_to_grid(tx), 'y': snap_to_grid(ty),
+                            'raw_x': tx, 'raw_y': ty,
+                            'esc_x': snap_to_grid(tx + _esc_dx), 'esc_y': snap_to_grid(ty),
+                            'dir': 'h', 'out_dx': _esc_dx, 'out_dy': 0
+                        }
+                    _new_positions.append(_tap_entry)
+                    print(f'[route] Pre-check: group {_gi} ({_gnet}, {len(members)} pins) -> wire tap at ({tx:.2f}, {ty:.2f})', file=sys.stderr)
+                else:
+                    # Fallback: pick closest member pin to other groups' centroid
+                    best = min(members, key=lambda i: abs(pin_positions[i]['raw_x'] - _tcx) + abs(pin_positions[i]['raw_y'] - _tcy))
+                    _new_positions.append(pin_positions[best])
+                    print(f'[route] Pre-check: group {_gi} ({_gnet}) no tap found, using pin {pin_positions[best]["ref"]}:{pin_positions[best]["pin"]}', file=sys.stderr)
+            else:
+                # Single-pin group or no existing wires — keep the pin.
+                if len(members) == 1:
+                    _new_positions.append(pin_positions[members[0]])
+                else:
+                    # Multi-pin group but no wires found — pick closest to other centroid
+                    _other = [pin_positions[i] for i in range(len(pin_positions)) if _pin_group[i] != _gi]
+                    if _other:
+                        _tcx = sum(p['raw_x'] for p in _other) / len(_other)
+                        _tcy = sum(p['raw_y'] for p in _other) / len(_other)
+                    else:
+                        _tcx, _tcy = _all_cx, _all_cy
+                    best = min(members, key=lambda i: abs(pin_positions[i]['raw_x'] - _tcx) + abs(pin_positions[i]['raw_y'] - _tcy))
+                    _new_positions.append(pin_positions[best])
+
+        _skipped = len(pin_positions) - len(_new_positions)
+        print(f'[route] Pre-check: reduced {len(pin_positions)} pins to {len(_new_positions)} '
+              f'targets (skipped {_skipped} already-connected)', file=sys.stderr)
+        pin_positions = _new_positions
+
+)py";
+
+
 // Obstacle map building, A* pathfinder, and wire placement helpers.
 // Used by sch_connect_net for all routing modes.
 // Continues inside try: block at 4-space indent.
@@ -618,7 +824,11 @@ static const char* ROUTING_INFRASTRUCTURE = R"py(
 static const char* CONNECT_NET_ROUTING = R"py(
     print(f'[route] MODE={routing_mode} pins={len(pin_positions)}', file=sys.stderr)
 
-    if routing_mode == 'chain':
+    if _n_components == 1:
+        # All pins already on the same net — no wiring needed
+        print('[route] All pins already connected on same net — skipping routing', file=sys.stderr)
+
+    elif routing_mode == 'chain':
         # Chain mode: A* route each consecutive pin pair
         _all_wires = []
         for ci in range(len(pin_positions) - 1):
@@ -903,7 +1113,11 @@ static const char* CONNECT_NET_ROUTING = R"py(
         'wire_count': wire_count,
         'junction_count': junction_count
     }
-    if wire_span > 50.0:
+    if _n_components == 1:
+        result['message'] = 'All specified pins are already connected on the same net — no wiring needed.'
+    elif _n_components < _original_pin_count:
+        result['message'] = f'Skipped {_original_pin_count - _n_components} already-connected pin(s) — tapped into existing wire.'
+    if wire_span > 50.0 and wire_count > 0:
         result['warning'] = f'Long wire path ({wire_span:.1f}mm). Verify pins are on the correct sheet section.'
 
 except Exception as e:
@@ -954,10 +1168,11 @@ std::string SCH_CONNECT_NET_HANDLER::GenerateConnectNetCode( const nlohmann::jso
     pinSpecCode << "]\n";
     pinSpecCode << "routing_mode = '" << EscapePythonString( mode ) << "'\n";
 
-    // Concatenate: preamble + dynamic pin_specs + resolve + infrastructure + routing
+    // Concatenate: preamble + dynamic pin_specs + resolve + precheck + infrastructure + routing
     return std::string( ROUTING_PREAMBLE ) + pinSpecCode.str()
            + std::string( CONNECT_NET_RESOLVE )
            + std::string( PIN_RESOLVE_CODE )
+           + std::string( CONNECT_NET_PRECHECK )
            + std::string( ROUTING_INFRASTRUCTURE )
            + std::string( CONNECT_NET_ROUTING );
 }

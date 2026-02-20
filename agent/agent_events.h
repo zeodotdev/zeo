@@ -103,7 +103,8 @@ enum class LLMChunkType
     TOOL_USE_START,    // Tool use block started (show tool name while generating)
     TOOL_USE,          // Tool call with id, name, input
     TOOL_USE_DONE,     // All tool calls parsed, ready to execute
-    COMPACTION,        // Compaction block (context was compacted by API)
+    COMPACTION_START,  // Compaction block started (show "Compacting..." indicator)
+    COMPACTION,        // Compaction block complete (context was compacted by API)
     END_TURN,          // Model finished (stop_reason: end_turn)
     MAX_TOKENS,        // Response truncated (stop_reason: max_tokens) - needs continuation
     PAUSE_TURN,        // Server tool paused (stop_reason: pause_turn) - stream continues

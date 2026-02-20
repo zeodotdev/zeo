@@ -58,6 +58,8 @@
 
 #include "widgets/filedlg_new_project.h"
 #include "dialogs/dialog_ai_assistant.h"
+#include <mail_type.h>
+#include "../session_manager.h"
 
 KICAD_MANAGER_CONTROL::KICAD_MANAGER_CONTROL() :
         TOOL_INTERACTIVE( "kicad.Control" ),
@@ -720,6 +722,22 @@ int KICAD_MANAGER_CONTROL::ShowPlayer( const TOOL_EVENT& aEvent )
     {
         wxLogError( _( "Application cannot start." ) );
         return -1;
+    }
+
+    // Re-send the shared auth pointer to the agent frame. Handles the case where the
+    // frame was destroyed and recreated (e.g., force-close) after the initial startup
+    // dispatch in KICAD_MANAGER_FRAME::onReady.
+    if( playerType == FRAME_AGENT )
+    {
+        KICAD_MANAGER_FRAME* kmf = static_cast<KICAD_MANAGER_FRAME*>( m_frame );
+        SESSION_MANAGER*     sm = kmf->GetSessionManager();
+
+        if( sm && sm->GetAuth() )
+        {
+            std::string authPtr = std::to_string(
+                    reinterpret_cast<uintptr_t>( sm->GetAuth() ) );
+            m_frame->Kiway().ExpressMail( FRAME_AGENT, MAIL_AUTH_POINTER, authPtr, m_frame );
+        }
     }
 
     if( !player->IsVisible() ) // A hidden frame might not have the document loaded.

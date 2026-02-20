@@ -765,7 +765,7 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "                    matched.append(w)\n";
     code << "\n";
     code << "        elif q_type in ('label', 'global_label', 'hierarchical_label'):\n";
-    code << "            type_map = {'label': 'NetLabel', 'global_label': 'GlobalLabel', 'hierarchical_label': 'HierLabel'}\n";
+    code << "            type_map = {'label': 'NetLabel', 'global_label': 'GlobalLabel', 'hierarchical_label': 'HierarchicalLabel'}\n";
     code << "            expected_class = type_map.get(q_type, '')\n";
     code << "            for lbl in sch.labels.get_all():\n";
     code << "                ok = True\n";
@@ -878,7 +878,7 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "        for item in items_to_delete:\n";
     code << "            for p in _get_points(item):\n";
     code << "                queue.append(p)\n";
-    code << "        deletable_types = ('Wire', 'Junction', 'NetLabel', 'GlobalLabel', 'HierLabel', 'NoConnect')\n";
+    code << "        deletable_types = ('Wire', 'Junction', 'NetLabel', 'GlobalLabel', 'HierarchicalLabel', 'NoConnect')\n";
     code << "        while queue:\n";
     code << "            pt = queue.popleft()\n";
     code << "            if pt in pin_positions:\n";
@@ -1144,7 +1144,7 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "    \n";
     code << "    # Build lookup dictionaries\n";
     code << "    hierarchy = []\n";
-    code << "    sheet_by_name = {}\n";
+    code << "    sheet_by_name = {}   # name -> list of (node, info)\n";
     code << "    sheet_by_file = {}\n";
     code << "    sheet_by_uuid = {}\n";
     code << "    \n";
@@ -1154,7 +1154,7 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "        info = {'name': name, 'file': filename, 'uuid': uuid, 'path': path_str}\n";
     code << "        hierarchy.append(info)\n";
     code << "        if name:\n";
-    code << "            sheet_by_name[name] = (node, info)\n";
+    code << "            sheet_by_name.setdefault(name, []).append((node, info))\n";
     code << "        if filename:\n";
     code << "            sheet_by_file[filename] = (node, info)\n";
     code << "        if uuid:\n";
@@ -1169,7 +1169,7 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "            info = {'name': name, 'file': filename, 'uuid': uuid}\n";
     code << "            hierarchy.append(info)\n";
     code << "            if name:\n";
-    code << "                sheet_by_name[name] = (sheet, info)\n";
+    code << "                sheet_by_name.setdefault(name, []).append((sheet, info))\n";
     code << "            if filename:\n";
     code << "                sheet_by_file[filename] = (sheet, info)\n";
     code << "            sheet_by_uuid[uuid] = (sheet, info)\n";
@@ -1204,7 +1204,13 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "                    target_sheet, target_info = sheet_by_uuid[last_part]\n";
     code << "                # Try as sheet name (e.g., '/Power/')\n";
     code << "                elif last_part in sheet_by_name:\n";
-    code << "                    target_sheet, target_info = sheet_by_name[last_part]\n";
+    code << "                    matches = sheet_by_name[last_part]\n";
+    code << "                    if len(matches) > 1:\n";
+    code << "                        dupes = [m[1] for m in matches]\n";
+    code << "                        result = {'status': 'error', 'message': f\"Ambiguous sheet name '{last_part}' matches {len(matches)} sheets. Use UUID to disambiguate.\", 'matches': dupes, 'available_sheets': hierarchy}\n";
+    code << "                        print(json.dumps(result, indent=2))\n";
+    code << "                        sys.exit(0)\n";
+    code << "                    target_sheet, target_info = matches[0]\n";
     code << "                # Try as filename (e.g., '/Power.kicad_sch/')\n";
     code << "                elif last_part in sheet_by_file:\n";
     code << "                    target_sheet, target_info = sheet_by_file[last_part]\n";
@@ -1214,7 +1220,13 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "        else:\n";
     code << "            # Try as sheet name first\n";
     code << "            if sheet_path in sheet_by_name:\n";
-    code << "                target_sheet, target_info = sheet_by_name[sheet_path]\n";
+    code << "                matches = sheet_by_name[sheet_path]\n";
+    code << "                if len(matches) > 1:\n";
+    code << "                    dupes = [m[1] for m in matches]\n";
+    code << "                    result = {'status': 'error', 'message': f\"Ambiguous sheet name '{sheet_path}' matches {len(matches)} sheets. Use UUID to disambiguate.\", 'matches': dupes, 'available_sheets': hierarchy}\n";
+    code << "                    print(json.dumps(result, indent=2))\n";
+    code << "                    sys.exit(0)\n";
+    code << "                target_sheet, target_info = matches[0]\n";
     code << "            # Try as UUID\n";
     code << "            elif sheet_path in sheet_by_uuid:\n";
     code << "                target_sheet, target_info = sheet_by_uuid[sheet_path]\n";
@@ -1413,6 +1425,16 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "            continue\n";
     code << "        if _ebb:\n";
     code << "            placed_bboxes.append({'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
+    code << "except:\n";
+    code << "    pass\n";
+    code << "try:\n";
+    code << "    for _esht in sch.crud.get_sheets():\n";
+    code << "        try:\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_esht, units='mm')\n";
+    code << "        except:\n";
+    code << "            continue\n";
+    code << "        if _ebb:\n";
+    code << "            placed_bboxes.append({'ref': getattr(_esht, 'name', 'sheet'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
     code << "except:\n";
     code << "    pass\n";
     code << "try:\n";
@@ -1734,35 +1756,20 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             else
                 code << "        lbl_" << i << " = sch.labels.add_local('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
 
-            // Map angle to label connection point alignment (rotate the pin, not the text)
-            // 0° → pin left (default), 90° → pin bottom, 180° → pin right, 270° → pin top
+            // Map angle to label alignment:
+            // 0°=default (text right), 90°=v_align top, 180°=text left, 270°=text left + v_align top
             int angle = static_cast<int>( elem.value( "angle", 0.0 ) ) % 360;
 
             if( angle != 0 )
             {
-                if( angle == 90 )
-                {
-                    code << "        lbl_" << i << "._proto.text.attributes.horizontal_alignment = HA_LEFT\n";
-                    code << "        lbl_" << i << "._proto.text.attributes.vertical_alignment = VA_BOTTOM\n";
-                }
-                else if( angle == 180 )
-                {
+                if( angle == 180 || angle == 270 )
                     code << "        lbl_" << i << "._proto.text.attributes.horizontal_alignment = HA_RIGHT\n";
-                    code << "        lbl_" << i << "._proto.text.attributes.vertical_alignment = VA_BOTTOM\n";
-                }
-                else if( angle == 270 )
-                {
-                    code << "        lbl_" << i << "._proto.text.attributes.horizontal_alignment = HA_LEFT\n";
+                if( angle == 90 || angle == 270 )
                     code << "        lbl_" << i << "._proto.text.attributes.vertical_alignment = VA_TOP\n";
-                }
-
                 code << "        sch.crud.update_items([lbl_" << i << "])\n";
             }
 
-            // --- Overlap check + slide-off for label ---
-            code << "        _shifted_" << i << " = False\n";
-            code << "        _shift_dx_" << i << " = 0\n";
-            code << "        _shift_dy_" << i << " = 0\n";
+            // --- Overlap check for label (no slide-off — moving labels disconnects them) ---
             code << "        _rejected_" << i << " = False\n";
             code << "        _conflict_desc_" << i << " = ''\n";
             code << "        try:\n";
@@ -1790,7 +1797,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "            pass\n";
             code << "        if _rejected_" << i << ":\n";
             code << "            sch.crud.remove_items([lbl_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: {_overlap_info(_new_bbox_" << i << ")}. Could not auto-slide to clear position.'})\n";
+            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: {_overlap_info(_new_bbox_" << i << ")}. Moving labels would disconnect them — place the label at a clear position.'})\n";
             code << "        else:\n";
             code << "            if _bb_" << i << ":\n";
             code << "                placed_bboxes.append({'ref': '" << EscapePythonString( elem.value( "text", "label" ) ) << "', **_new_bbox_" << i << "})\n";

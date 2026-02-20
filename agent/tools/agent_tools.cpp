@@ -9,13 +9,11 @@
 namespace AgentTools
 {
 
-std::vector<LLM_TOOL> GetToolDefinitions()
+using json = nlohmann::json;
+
+
+static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
 {
-    wxLogInfo( "AgentTools::GetToolDefinitions called" );
-    using json = nlohmann::json;
-
-    std::vector<LLM_TOOL> tools;
-
     // run_terminal - Execute bash/shell commands
     LLM_TOOL runTerminal;
     runTerminal.name = "run_terminal";
@@ -91,8 +89,35 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( createProject );
 
-    // ===== Direct File Tools (sch_*, pcb_*) =====
+    // screenshot - Export a visual render of a schematic or PCB
+    LLM_TOOL screenshot;
+    screenshot.name = "screenshot";
+    screenshot.description =
+        "Export a visual screenshot (PNG render) of a schematic or PCB file. "
+        "Returns the image for visual inspection. Use this to verify layout, "
+        "check component placement, review wiring, or confirm design changes. "
+        "If file_path is omitted, screenshots the currently open sheet or PCB — "
+        "this is the preferred default. Only pass file_path when you need to "
+        "screenshot a specific sub-sheet that is NOT currently open.";
+    screenshot.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to a .kicad_sch or .kicad_pcb file. "
+                                 "If omitted, screenshots the currently open/visible sheet or PCB. "
+                                 "Only needed to screenshot a specific sub-sheet that isn't currently visible." }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    screenshot.read_only = true;
+    tools.push_back( screenshot );
+}
 
+
+static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
+{
     // sch_get_summary - Get high-level overview of schematic via IPC
     LLM_TOOL schGetSummary;
     schGetSummary.name = "sch_get_summary";
@@ -134,46 +159,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     schReadSection.read_only = true;
     tools.push_back( schReadSection );
 
-    // sch_modify - DISABLED: Use sch_add/sch_update/sch_delete instead
-    // This tool allowed raw S-expression manipulation which is error-prone.
-    // The IPC-based CRUD tools provide a safer, structured interface.
-    /*
-    LLM_TOOL schModify;
-    schModify.name = "sch_modify";
-    schModify.description = "Modify a .kicad_sch file by adding, updating, or deleting elements. "
-                            "Elements must be provided as raw S-expressions matching the KiCad file format. "
-                            "The file is validated after modification to prevent corruption.";
-    schModify.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Absolute path to the .kicad_sch file" }
-            }},
-            { "operation", {
-                { "type", "string" },
-                { "enum", json::array( { "add", "update", "delete" } ) },
-                { "description", "Operation to perform" }
-            }},
-            { "element_type", {
-                { "type", "string" },
-                { "enum", json::array( { "symbol", "wire", "junction", "label", "text" } ) },
-                { "description", "Type of element to modify" }
-            }},
-            { "data", {
-                { "type", "string" },
-                { "description", "S-expression for the element (required for add/update)" }
-            }},
-            { "target", {
-                { "type", "string" },
-                { "description", "UUID or reference designator to update/delete (required for update/delete)" }
-            }}
-        }},
-        { "required", json::array( { "file_path", "operation", "element_type" } ) }
-    };
-    tools.push_back( schModify );
-    */
-
     // sch_run_erc - Run ERC on open schematic
     LLM_TOOL schRunErc;
     schRunErc.name = "sch_run_erc";
@@ -199,6 +184,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array() }
     };
+    schRunErc.read_only = true;
     tools.push_back( schRunErc );
 
     // sch_run_simulation - Run SPICE simulation on open schematic
@@ -329,7 +315,11 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         { "angle", {
                             { "type", "number" },
                             { "description", "CCW rotation degrees (0, 90, 180, 270). "
-                                            "Passives: 0=vertical, 90=horizontal. "
+                                            "Passives (R, C, L): "
+                                            "0°=vertical (pin1 top, pin2 bottom), "
+                                            "90°=horizontal (pin1 left, pin2 right), "
+                                            "180°=vertical (pin1 bottom, pin2 top), "
+                                            "270°=horizontal (pin1 right, pin2 left). "
                                             "Power symbols: see system prompt for wire-exit direction table." }
                         }},
                         { "mirror", {
@@ -489,67 +479,29 @@ std::vector<LLM_TOOL> GetToolDefinitions()
     };
     tools.push_back( schDelete );
 
-    // sch_connect_to_power - Connect pins to a power rail with auto-routed wires
-    LLM_TOOL schConnectToPower;
-    schConnectToPower.name = "sch_connect_to_power";
-    schConnectToPower.description =
-        "Connect one or more component pins to a power rail (GND, VCC, +3V3, etc.) in a single call. "
-        "For each pin, places a power symbol and draws an auto-routed wire. "
-        "Power symbols auto-rotate to face the incoming wire based on pin direction. "
-        "This replaces multiple sch_add + sch_connect_net calls for power connections. "
-        "REQUIRES: Schematic editor must be open with a document loaded.";
-    schConnectToPower.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "pins", {
-                { "type", "array" },
-                { "items", {
-                    { "type", "string" },
-                    { "description", "Pin specifier as 'REF:PIN' (e.g., 'U1:VCC', 'R3:1', 'U2:14')" }
-                }},
-                { "minItems", 1 },
-                { "description", "Array of pin specifiers to connect to power. "
-                                "Each pin gets its own power symbol and wire. "
-                                "Example: ['U1:VCC', 'U2:14', 'R1:1']" }
-            }},
-            { "power", {
-                { "type", "string" },
-                { "description", "Power symbol name: 'GND', 'VCC', '+3V3', '+5V', '+3.3V', 'VBUS', 'VBAT', etc." }
-            }},
-            { "offset", {
-                { "type", "number" },
-                { "description", "Distance in mm from pin to power symbol along the pin's escape direction. "
-                                "Default 5.08 (4 grid units). Use 0 to place directly at pin (no wire)." }
-            }},
-            { "angle", {
-                { "type", "number" },
-                { "description", "Force power symbol rotation angle (0, 90, 180, 270 degrees). "
-                                "If omitted, auto-rotates based on pin direction." }
-            }}
-        }},
-        { "required", json::array( { "pins", "power" } ) }
-    };
-    tools.push_back( schConnectToPower );
-
-    // sch_label_pins - Batch label pins on a symbol
+    // sch_label_pins - Batch label pins on a symbol or sheet
     LLM_TOOL schLabelPins;
     schLabelPins.name = "sch_label_pins";
     schLabelPins.description =
-        "Batch-label pins on a symbol. Places labels at pin tips (or offset away with a connecting wire) "
-        "with auto-justified text based on pin orientation (text reads away from the symbol body). "
+        "Batch-label pins on a symbol or hierarchical sheet. Places labels directly at pin tips "
+        "with auto-justified text based on pin orientation (text reads away from the component). "
+        "If overlap is detected, tries flipping the label to the other side of the pin. "
         "Use this instead of placing labels one by one with sch_add. "
+        "For sheets, pass the sheet name as ref and use sheet pin names as label keys. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schLabelPins.input_schema = {
         { "type", "object" },
         { "properties", {
             { "ref", {
                 { "type", "string" },
-                { "description", "Reference designator of the symbol (e.g., 'U1', 'R3')" }
+                { "description", "Reference designator of the symbol (e.g., 'U1') "
+                                 "or name of a hierarchical sheet (e.g., 'Power Supply')" }
             }},
             { "labels", {
                 { "type", "object" },
                 { "description", "Map of pin number/name to label text. "
-                                 "Example: {\"2\": \"EN\", \"18\": \"SPI_CS\", \"23\": \"I2C_SDA\"}" },
+                                 "For symbols: {\"2\": \"EN\", \"18\": \"SPI_CS\"}. "
+                                 "For sheets: keys are sheet pin names." },
                 { "additionalProperties", { { "type", "string" } } }
             }},
             { "label_type", {
@@ -573,12 +525,6 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                                  "'top' places the pin on the top, 'bottom' on the bottom. "
                                  "Overrides auto-justification when set." }
             }},
-            { "offset", {
-                { "type", "number" },
-                { "description", "Distance in mm from pin tip to label along the pin's escape direction. "
-                                 "Default 0 (place directly at pin tip). When > 0, a wire is drawn from "
-                                 "pin to label. Use 2.54 or 5.08 to avoid label overlap on dense ICs." }
-            }}
         }},
         { "required", json::array( { "ref", "labels" } ) }
     };
@@ -624,6 +570,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         "Use the human-readable sheet name or path (e.g., 'Power Supply' or '/Power Supply/'). "
         "Use '/' to navigate back to the root sheet. "
         "Call with no arguments to list available sheets. "
+        "If multiple sheets share the same name, you must use the UUID instead to disambiguate. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schSwitchSheet.input_schema = {
         { "type", "object" },
@@ -636,6 +583,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array() }
     };
+    schSwitchSheet.read_only = true;
     tools.push_back( schSwitchSheet );
 
     // sch_connect_net - Connect multiple pins on the same net in one call
@@ -1138,9 +1086,11 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "required", json::array( { "action" } ) }
     };
     tools.push_back( schSetup );
+}
 
-    // ===== PCB Tools =====
 
+static void AddPcbTools( std::vector<LLM_TOOL>& tools )
+{
     // pcb_get_summary - Get high-level overview of PCB
     LLM_TOOL pcbGetSummary;
     pcbGetSummary.name = "pcb_get_summary";
@@ -1204,6 +1154,7 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         }},
         { "required", json::array() }
     };
+    pcbRunDrc.read_only = true;
     tools.push_back( pcbRunDrc );
 
     // pcb_set_outline - Set board outline/shape
@@ -2488,32 +2439,17 @@ std::vector<LLM_TOOL> GetToolDefinitions()
         { "required", json::array( { "action" } ) }
     };
     tools.push_back( pcbSetup );
+}
 
-    // screenshot - Export a visual render of a schematic or PCB
-    LLM_TOOL screenshot;
-    screenshot.name = "screenshot";
-    screenshot.description =
-        "Export a visual screenshot (PNG render) of a schematic or PCB file. "
-        "Returns the image for visual inspection. Use this to verify layout, "
-        "check component placement, review wiring, or confirm design changes. "
-        "If file_path is omitted, screenshots the currently open sheet or PCB — "
-        "this is the preferred default. Only pass file_path when you need to "
-        "screenshot a specific sub-sheet that is NOT currently open.";
-    screenshot.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "file_path", {
-                { "type", "string" },
-                { "description", "Absolute path to a .kicad_sch or .kicad_pcb file. "
-                                 "If omitted, screenshots the currently open/visible sheet or PCB. "
-                                 "Only needed to screenshot a specific sub-sheet that isn't currently visible." }
-            }}
-        }},
-        { "required", json::array() }
-    };
-    screenshot.read_only = true;
-    tools.push_back( screenshot );
 
+std::vector<LLM_TOOL> GetToolDefinitions()
+{
+    wxLogInfo( "AgentTools::GetToolDefinitions called" );
+
+    std::vector<LLM_TOOL> tools;
+    AddGeneralTools( tools );
+    AddSchematicTools( tools );
+    AddPcbTools( tools );
     return tools;
 }
 
@@ -2599,10 +2535,6 @@ wxString GetToolDescription( const std::string& aToolName, const nlohmann::json&
     else if( aToolName == "check_status" )
     {
         return "Check Project Status";
-    }
-    else if( aToolName == "save" )
-    {
-        return "Save";
     }
     else if( aToolName == "create_project" )
     {

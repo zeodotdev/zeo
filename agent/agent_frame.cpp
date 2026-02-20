@@ -640,6 +640,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( EVT_CHAT_TITLE_DELTA, &AGENT_FRAME::OnChatTitleDelta, this );
     Bind( EVT_CHAT_TITLE_GENERATED, &AGENT_FRAME::OnChatTitleGenerated, this );
     Bind( EVT_CHAT_HISTORY_LOADED, &AGENT_FRAME::OnChatHistoryLoaded, this );
+    Bind( EVT_CHAT_COMPACTION, &AGENT_FRAME::OnChatCompaction, this );
 
     // Bind async tool execution completion event (for background tools like autorouter)
     Bind( EVT_TOOL_EXECUTION_COMPLETE, &AGENT_FRAME::OnAsyncToolComplete, this );
@@ -659,7 +660,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         UpdateAuthUI();
 
         // Push model list
-        std::vector<std::string> models = { "Claude 4.6 Opus", "Gemini 3 Pro" };
+        std::vector<std::string> models = { "Claude 4.6 Opus", "Gemini 3.1 Pro" };
         m_bridge->PushModelList( models, m_currentModel );
 
         // Push initial title
@@ -2004,9 +2005,27 @@ void AGENT_FRAME::DoSignIn()
         m_auth->StartOAuthFlow( "agent" );
 }
 
+bool AGENT_FRAME::canCloseWindow( wxCloseEvent& aEvent )
+{
+    // When the user clicks the X button, hide instead of destroying. This preserves:
+    //   - Shared auth pointer from the launcher (MAIL_AUTH_POINTER is only sent once at startup)
+    //   - Loaded webview and chat state
+    //   - Conversation history in memory
+    // The window is re-shown by ShowPlayer/ShowAgent when the user reopens it.
+    // Allow programmatic closes (NonUserClose from PlayersClose during app quit) through.
+    if( !m_isNonUserClose && aEvent.CanVeto() )
+    {
+        wxLogTrace( "Agent", "Agent window hidden (close vetoed to preserve auth state)" );
+        Hide();
+        return false;
+    }
+
+    return true;
+}
+
 void AGENT_FRAME::OnExit( wxCommandEvent& event )
 {
-    Close( true );
+    Hide();
 }
 
 std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayload )
@@ -2417,6 +2436,18 @@ void AGENT_FRAME::RenderChatHistory()
     {
         if( !msg.contains( "role" ) || !msg.contains( "content" ) )
             continue;
+
+        // Render a divider for compaction markers (not shown as a chat message)
+        if( msg.contains( "_compaction" ) && msg["_compaction"] == true )
+        {
+            m_fullHtmlContent +=
+                "<div class=\"flex items-center my-4\">"
+                "<div class=\"flex-1 border-t border-[#404040]\"></div>"
+                "<span class=\"mx-3 text-text-muted text-xs\">Context compacted</span>"
+                "<div class=\"flex-1 border-t border-[#404040]\"></div>"
+                "</div>";
+            continue;
+        }
 
         std::string role = msg["role"];
 
@@ -3049,8 +3080,9 @@ void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
     if( !data )
         return;
 
-    // Markdown text is now streaming - hide the waiting dots
+    // Markdown text is now streaming - hide the waiting dots and compacting indicator
     m_isStreamingMarkdown = true;
+    m_isCompacting = false;
 
     // Controller owns the response - UpdateAgentResponse reads from controller
 
@@ -3077,8 +3109,9 @@ void AGENT_FRAME::OnChatThinkingStart( wxThreadEvent& aEvent )
             m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
     }
 
-    // Initialize thinking state for new block
+    // Initialize thinking state for new block — compaction is done
     m_isThinking = true;
+    m_isCompacting = false;
     m_thinkingContent = "";
     m_thinkingExpanded = false;
 
@@ -3486,9 +3519,6 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
                 arr.push_back( f.ToStdString() );
             status["open_editor_files"] = arr;
         }
-
-        // Get current sheet if schematic is open (via IPC would be more accurate, but this is fast)
-        status["current_sheet"] = ""; // Would need IPC call for sch.sheets.get_current()
 
         if( m_chatController )
             m_chatController->HandleToolResult( data->toolId, status.dump( 2 ), true );
@@ -4121,6 +4151,23 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
     m_userScrolledUp = false;
 
     delete data;
+}
+
+
+void AGENT_FRAME::OnChatCompaction( wxThreadEvent& aEvent )
+{
+    wxLogInfo( "AGENT_FRAME::OnChatCompaction - context compacted, showing indicator" );
+    m_isCompacting = true;
+
+    // Start the generating animation timer if not already running,
+    // so the "Compacting..." dots animate
+    if( !m_generatingTimer.IsRunning() )
+    {
+        m_generatingDots = 1;
+        m_generatingTimer.Start( 400 );
+    }
+
+    UpdateAgentResponse();
 }
 
 

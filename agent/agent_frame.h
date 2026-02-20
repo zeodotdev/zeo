@@ -114,12 +114,16 @@ public:
     void OnChatTitleDelta( wxThreadEvent& aEvent );
     void OnChatTitleGenerated( wxThreadEvent& aEvent );
     void OnChatHistoryLoaded( wxThreadEvent& aEvent );
+    void OnChatCompaction( wxThreadEvent& aEvent );
 
     // Async tool execution completion (for background tools like autorouter)
     void OnAsyncToolComplete( wxCommandEvent& aEvent );
 
     // Override CommonSettingsChanged to avoid toolbar recreation (AGENT_FRAME has no toolbars)
     void CommonSettingsChanged( int aFlags ) override;
+
+    // Hide on close instead of destroying — preserves auth state, webview, and chat history
+    bool canCloseWindow( wxCloseEvent& aEvent ) override;
 
     // Tool call helper (synchronous)
     std::string SendRequest( int aDest, const std::string& aPayload );

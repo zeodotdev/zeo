@@ -99,7 +99,7 @@ def cmd_tool(args):
             ("sch_delete", "Delete schematic elements"),
             ("sch_switch_sheet", "Switch to a different sheet"),
             ("sch_add_sheet", "Add a new hierarchical sheet"),
-            ("sch_connect_to_power", "Connect pin to power symbol"),
+            ("sch_connect_net", "Auto-route wires between pins"),
             ("sch_run_erc", "Run electrical rules check"),
             ("sch_setup", "Get/set schematic settings"),
             ("pcb_get_summary", "Get high-level overview of PCB"),

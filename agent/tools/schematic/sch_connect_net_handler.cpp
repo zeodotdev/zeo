@@ -583,6 +583,20 @@ static const char* ROUTING_INFRASTRUCTURE = R"py(
             else:
                 print(f'[route] flip did not help ({new_plen:.1f}mm >= {plen:.1f}mm), reverting', file=sys.stderr)
 
+            # ── Body-overlap guard ──────────────────────────────────
+            # Reject the flip if the wire enters the pin from the body
+            # side (opposite of the escape direction).
+            if keep_flip and len(new_wp) >= 2:
+                if not is_p1:  # flipped pin is at start of path
+                    _awx = new_wp[1][0] - new_wp[0][0]
+                    _awy = new_wp[1][1] - new_wp[0][1]
+                else:          # flipped pin is at end of path
+                    _awx = new_wp[-2][0] - new_wp[-1][0]
+                    _awy = new_wp[-2][1] - new_wp[-1][1]
+                if _awx * new_pin['out_dx'] + _awy * new_pin['out_dy'] < 0:
+                    keep_flip = False
+                    print(f'[route] flip rejected: wire enters pin from body side', file=sys.stderr)
+
             if keep_flip:
                 return new_wp, np0, np1
             else:

@@ -116,11 +116,11 @@ std::string SCH_COMPANION_HANDLER::GeneratePlaceCompanionsCode( const nlohmann::
 
     // Constants
     code << "GRID_MM = 1.27  # 50 mil grid\n";
-    code << "BBOX_MARGIN = 1.5  # Margin around components for spacing\n";
-    code << "MAX_OFFSET_GRIDS = 10  # Start far out (12.7mm)\n";
-    code << "MIN_OFFSET_GRIDS = 5  # Minimum offset (6.35mm) - ensures wire stub\n";
+    code << "BBOX_MARGIN = 0.5  # Margin around components for spacing (tighter)\n";
+    code << "MAX_OFFSET_GRIDS = 15  # More room to push out if needed\n";
+    code << "MIN_OFFSET_GRIDS = 3  # Closer to IC (3.81mm)\n";
     code << "COMP_HALF_LEN = 3.81  # Half-length of 2-pin passive (center to pin)\n";
-    code << "TERMINAL_EXTENSION = 5.08  # Extra space for power symbols/labels at pin 1 (away from IC)\n";
+    code << "TERMINAL_EXTENSION = 5.08  # Smaller terminal area for power symbols/labels\n";
     code << "\n";
 
     // Snap to grid function
@@ -229,21 +229,6 @@ std::string SCH_COMPANION_HANDLER::GeneratePlaceCompanionsCode( const nlohmann::
     code << "    cx, cy = _calc_center_from_offset(px, py, MAX_OFFSET_GRIDS * GRID_MM, escape_dir, 0)\n";
     code << "    return cx, cy, MAX_OFFSET_GRIDS * GRID_MM, 0\n";
     code << "\n";
-    code << "# Debug: draw bbox rectangle (as 4 wire segments)\n";
-    code << "def _draw_debug_bbox(bbox, label=''):\n";
-    code << "    \"\"\"Draw a debug rectangle around a bounding box.\"\"\"\n";
-    code << "    try:\n";
-    code << "        x0, y0 = bbox['min_x'], bbox['min_y']\n";
-    code << "        x1, y1 = bbox['max_x'], bbox['max_y']\n";
-    code << "        # Draw 4 sides as wires\n";
-    code << "        sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), Vector2.from_xy_mm(x1, y0))  # bottom\n";
-    code << "        sch.wiring.add_wire(Vector2.from_xy_mm(x1, y0), Vector2.from_xy_mm(x1, y1))  # right\n";
-    code << "        sch.wiring.add_wire(Vector2.from_xy_mm(x1, y1), Vector2.from_xy_mm(x0, y1))  # top\n";
-    code << "        sch.wiring.add_wire(Vector2.from_xy_mm(x0, y1), Vector2.from_xy_mm(x0, y0))  # left\n";
-    code << "    except:\n";
-    code << "        pass\n";
-    code << "\n";
-
     // Reference counter for auto-generating refdes
     code << "# Track reference counters for auto-generation\n";
     code << "ref_counters = {}\n";
@@ -281,9 +266,6 @@ std::string SCH_COMPANION_HANDLER::GeneratePlaceCompanionsCode( const nlohmann::
     code << "            if o == 2: o = 3\n";
     code << "            elif o == 3: o = 2\n";
     code << "        return o\n";
-    code << "\n";
-    code << "    # DEBUG: Draw IC expanded bbox\n";
-    code << "    _draw_debug_bbox(ic_bbox_expanded, ic_ref)\n";
     code << "\n";
 
     // Process each companion in the array
@@ -424,8 +406,8 @@ std::string SCH_COMPANION_HANDLER::GeneratePlaceCompanionsCode( const nlohmann::
         code << "            cp2y_" << i << " = cy_" << i << "\n";
         code << "\n";
 
-        // Draw wire stub from IC pin to companion pin 2 (ALWAYS draw, no pin-to-pin)
-        code << "        # Draw wire stub from IC pin to companion pin 2\n";
+        // Draw L-shaped wire stub from IC pin to companion pin 2 (orthogonal routing)
+        code << "        # Draw L-shaped wire stub from IC pin to companion pin 2\n";
         code << "        _w" << i << "_x0 = snap_to_grid(px_" << i << ")\n";
         code << "        _w" << i << "_y0 = snap_to_grid(py_" << i << ")\n";
         code << "        _w" << i << "_x1 = snap_to_grid(cp2x_" << i << ")\n";
@@ -433,9 +415,27 @@ std::string SCH_COMPANION_HANDLER::GeneratePlaceCompanionsCode( const nlohmann::
         code << "        _w" << i << "_len = (((_w" << i << "_x1 - _w" << i << "_x0)**2 + (_w" << i << "_y1 - _w" << i << "_y0)**2)**0.5)\n";
         code << "        _debug.append(f'Comp" << i << " wire stub: ({_w" << i << "_x0:.2f},{_w" << i << "_y0:.2f}) to ({_w" << i << "_x1:.2f},{_w" << i << "_y1:.2f}) len={_w" << i << "_len:.2f}')\n";
         code << "        if _w" << i << "_len >= 0.1:  # Only draw if non-zero length\n";
-        code << "            wire_start_" << i << " = Vector2.from_xy_mm(_w" << i << "_x0, _w" << i << "_y0)\n";
-        code << "            wire_end_" << i << " = Vector2.from_xy_mm(_w" << i << "_x1, _w" << i << "_y1)\n";
-        code << "            sch.wiring.add_wire(wire_start_" << i << ", wire_end_" << i << ")\n";
+        code << "            # L-shaped orthogonal routing based on escape direction\n";
+        code << "            if escape_dir_" << i << " in ('left', 'right'):\n";
+        code << "                # Horizontal escape: go horizontal first, then vertical\n";
+        code << "                if abs(_w" << i << "_y0 - _w" << i << "_y1) < 0.01:\n";
+        code << "                    # Already aligned, single horizontal wire\n";
+        code << "                    sch.wiring.add_wire(Vector2.from_xy_mm(_w" << i << "_x0, _w" << i << "_y0), Vector2.from_xy_mm(_w" << i << "_x1, _w" << i << "_y1))\n";
+        code << "                else:\n";
+        code << "                    # L-shape: horizontal to companion's X, then vertical\n";
+        code << "                    _mid_x_" << i << " = _w" << i << "_x1\n";
+        code << "                    sch.wiring.add_wire(Vector2.from_xy_mm(_w" << i << "_x0, _w" << i << "_y0), Vector2.from_xy_mm(_mid_x_" << i << ", _w" << i << "_y0))\n";
+        code << "                    sch.wiring.add_wire(Vector2.from_xy_mm(_mid_x_" << i << ", _w" << i << "_y0), Vector2.from_xy_mm(_w" << i << "_x1, _w" << i << "_y1))\n";
+        code << "            else:\n";
+        code << "                # Vertical escape (up/down): go vertical first, then horizontal\n";
+        code << "                if abs(_w" << i << "_x0 - _w" << i << "_x1) < 0.01:\n";
+        code << "                    # Already aligned, single vertical wire\n";
+        code << "                    sch.wiring.add_wire(Vector2.from_xy_mm(_w" << i << "_x0, _w" << i << "_y0), Vector2.from_xy_mm(_w" << i << "_x1, _w" << i << "_y1))\n";
+        code << "                else:\n";
+        code << "                    # L-shape: vertical to companion's Y, then horizontal\n";
+        code << "                    _mid_y_" << i << " = _w" << i << "_y1\n";
+        code << "                    sch.wiring.add_wire(Vector2.from_xy_mm(_w" << i << "_x0, _w" << i << "_y0), Vector2.from_xy_mm(_w" << i << "_x0, _mid_y_" << i << "))\n";
+        code << "                    sch.wiring.add_wire(Vector2.from_xy_mm(_w" << i << "_x0, _mid_y_" << i << "), Vector2.from_xy_mm(_w" << i << "_x1, _w" << i << "_y1))\n";
         code << "\n";
 
         // Handle terminal_power - place power symbols
@@ -546,10 +546,6 @@ std::string SCH_COMPANION_HANDLER::GeneratePlaceCompanionsCode( const nlohmann::
         code << "            'position': [round(cx_" << i << ", 2), round(cy_" << i << ", 2)],\n";
         code << "            'escape_dir': escape_dir_" << i << "\n";
         code << "        })\n";
-        code << "\n";
-        code << "        # DEBUG: Draw bbox rectangle around companion\n";
-        code << "        _debug_bbox_" << i << " = _calc_companion_bbox(cx_" << i << ", cy_" << i << ", escape_dir_" << i << ")\n";
-        code << "        _draw_debug_bbox(_debug_bbox_" << i << ", comp_sym_" << i << ".reference)\n";
         code << "\n";
 
         code << "    except Exception as e_" << i << ":\n";

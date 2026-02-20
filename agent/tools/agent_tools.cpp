@@ -580,12 +580,12 @@ std::vector<LLM_TOOL> GetToolDefinitions()
                         }},
                         { "terminal_labels", {
                             { "type", "object" },
-                            { "description", "Text labels for companion terminals. Map pin number to label text: {\"2\": \"SPI_CLK\"}" },
+                            { "description", "Net labels at companion terminals. Map pin number to label: {\"1\": \"OUT\"} for pin 1 (away from IC) or {\"2\": \"IN\"} for pin 2 (toward IC)" },
                             { "additionalProperties", { { "type", "string" } } }
                         }},
                         { "terminal_power", {
                             { "type", "object" },
-                            { "description", "Power symbols for companion terminals. Map pin number to power symbol: {\"2\": \"GND\"} or {\"1\": \"VCC\"}" },
+                            { "description", "Power symbols at pin 1 (the terminal away from IC). Pin 2 connects to IC pin. Use {\"1\": \"GND\"} or {\"1\": \"VCC\"}" },
                             { "additionalProperties", { { "type", "string" } } }
                         }}
                     }},

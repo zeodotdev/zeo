@@ -457,6 +457,7 @@ static const char* ROUTING_INFRASTRUCTURE = R"py(
         for obs_sym in all_symbols:
             obs_bbox, obs_pins = _compute_sym_obstacle(obs_sym)
             if obs_bbox:
+                obs_bbox['_ref'] = getattr(obs_sym, 'reference', '')
                 obstacles.append(obs_bbox)
             pin_cells.update(obs_pins)
     except:
@@ -778,14 +779,15 @@ static const char* ROUTING_INFRASTRUCTURE = R"py(
             # the power symbol's old bbox so A* sees the cleared path.
             # This avoids the flip/unflip flicker in the editor.
 
-            # Remove old bbox for this symbol from obstacle map.
-            old_bbox, old_pcells = _compute_sym_obstacle(sym)
-            if old_bbox:
-                try:
-                    obstacles.remove(old_bbox)
-                except ValueError:
-                    old_bbox = None
-            pin_cells.difference_update(old_pcells)
+            # Remove old bbox for this symbol from obstacle map (by _ref tag).
+            _pwr_ref = flip_p['ref']
+            old_bbox = None
+            for _oi, _obs in enumerate(obstacles):
+                if _obs.get('_ref') == _pwr_ref:
+                    old_bbox = obstacles.pop(_oi)
+                    break
+            # Remove the symbol's pin cells too.
+            old_pcells = {(round(flip_p['raw_x'] / _grid), round(flip_p['raw_y'] / _grid))}
 
             # Compute hypothetical flipped pin: 180° rotation around
             # symbol center reverses escape direction.  Pin position
@@ -841,6 +843,7 @@ static const char* ROUTING_INFRASTRUCTURE = R"py(
                     np0, np1 = (new_pin, other_p) if not is_p1 else (other_p, new_pin)
                 new_bbox, new_pcells = _compute_sym_obstacle(sym)
                 if new_bbox:
+                    new_bbox['_ref'] = _pwr_ref
                     obstacles.append(new_bbox)
                 pin_cells.update(new_pcells)
                 return new_wp, np0, np1

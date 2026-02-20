@@ -571,8 +571,8 @@ BOOST_AUTO_TEST_CASE( ConnectNetAutoFlipUsesHypotheticalTest )
     // rather than actually flipping the symbol (avoids UI flicker).
     BOOST_CHECK( cmd.find( "-flip_p['out_dx']" ) != std::string::npos );
     BOOST_CHECK( cmd.find( "-flip_p['out_dy']" ) != std::string::npos );
-    // Old bbox must be removed from obstacles before the hypothetical A* run
-    BOOST_CHECK( cmd.find( "obstacles.remove(old_bbox)" ) != std::string::npos );
+    // Old bbox must be removed from obstacles by _ref tag before the hypothetical A* run
+    BOOST_CHECK( cmd.find( "obstacles.pop(_oi)" ) != std::string::npos );
     // set_angle is only called on commit (when flip wins), not during the test
     // Verify set_angle appears after keep_flip check, not before A*
     size_t keep_flip_pos = cmd.find( "if keep_flip:" );

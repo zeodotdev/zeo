@@ -51,6 +51,7 @@ std::string SCH_LIB_SYMBOL_HANDLER::GetIPCCommand( const std::string& aToolName,
 {
     std::string libId;
     bool includePins = true;
+    bool includeDatasheet = false;
     int maxSuggestions = 10;
     std::string patternType;
 
@@ -58,6 +59,7 @@ std::string SCH_LIB_SYMBOL_HANDLER::GetIPCCommand( const std::string& aToolName,
     {
         libId = aInput.value( "lib_id", "" );
         includePins = aInput.value( "include_pins", true );
+        includeDatasheet = aInput.value( "include_datasheet", false );
         maxSuggestions = aInput.value( "max_suggestions", 10 );
         patternType = aInput.value( "pattern_type", "" );
     }
@@ -68,6 +70,7 @@ std::string SCH_LIB_SYMBOL_HANDLER::GetIPCCommand( const std::string& aToolName,
          << "\n"
          << "lib_id = " << nlohmann::json( libId ).dump() << "\n"
          << "include_pins = " << ( includePins ? "True" : "False" ) << "\n"
+         << "include_datasheet = " << ( includeDatasheet ? "True" : "False" ) << "\n"
          << "max_suggestions = " << maxSuggestions << "\n"
          << "pattern_type = " << nlohmann::json( patternType ).dump() << "\n"
          << "\n"
@@ -99,7 +102,12 @@ std::string SCH_LIB_SYMBOL_HANDLER::GetIPCCommand( const std::string& aToolName,
          << "        'unit_count': getattr(info, 'unit_count', 1),\n"
          << "        'is_power': getattr(info, 'is_power', False),\n"
          << "        'pin_count': getattr(info, 'pin_count', 0),\n"
+         << "        'footprint_filters': getattr(info, 'footprint_filters', []),\n"
          << "    }\n"
+         << "    if include_datasheet:\n"
+         << "        ds = getattr(info, 'datasheet', '')\n"
+         << "        if ds:\n"
+         << "            result['datasheet'] = ds\n"
          << "    # Bounding box (body + pins) in mm\n"
          << "    bbox_min_x = getattr(info, 'body_bbox_min_x_nm', 0)\n"
          << "    bbox_min_y = getattr(info, 'body_bbox_min_y_nm', 0)\n"

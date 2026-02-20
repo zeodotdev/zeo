@@ -225,7 +225,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         "Accepts a symbol name ('R') or full Library:Symbol identifier ('Device:R'). "
         "If just a name is given, searches all libraries. "
         "Supports wildcards ('Connector:Conn_01x*') and regex ('Device:R_[0-9]{4}'). "
-        "Returns pin positions relative to symbol origin and body_size (width/height in mm). "
+        "Returns pin positions relative to symbol origin, body_size (width/height in mm), and footprint_filters. "
         "Use this before placing/wiring to get accurate pin locations and symbol dimensions. "
         "REQUIRES: Schematic editor must be open.";
     schGetLibSymbol.input_schema = {
@@ -239,6 +239,10 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
             { "include_pins", {
                 { "type", "boolean" },
                 { "description", "Include full pin details with positions (default: true)" }
+            }},
+            { "include_datasheet", {
+                { "type", "boolean" },
+                { "description", "Include datasheet URL if available (default: false)" }
             }},
             { "max_suggestions", {
                 { "type", "integer" },

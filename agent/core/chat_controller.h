@@ -123,6 +123,12 @@ public:
      */
     void RepairHistory();
 
+    /**
+     * Repair structural issues in a message array (static helper).
+     * Returns true if the array was modified.
+     */
+    static bool RepairMessageArray( nlohmann::json& aMessages );
+
     // =========================================================================
     // Queries (read-only) - These return state without side effects
     // =========================================================================

@@ -1353,24 +1353,24 @@ void CHAT_CONTROLLER::AddAllToolResultsToHistory()
 }
 
 
-void CHAT_CONTROLLER::RepairHistory()
+bool CHAT_CONTROLLER::RepairMessageArray( nlohmann::json& messages )
 {
-    // Repair history to fix orphaned tool_use/tool_result blocks.
+    // Repair a message array to fix orphaned tool_use/tool_result blocks.
     // The Anthropic API requires:
     // 1. Every tool_use must have a corresponding tool_result in the NEXT message
     // 2. Every tool_result must reference a tool_use in the PREVIOUS message
 
-    if( m_chatHistory.empty() )
-        return;
+    if( messages.empty() )
+        return false;
 
     using json = nlohmann::json;
-    bool historyModified = false;
+    bool modified = false;
 
     // PASS 1: Remove orphaned tool_result blocks
     // These are tool_results that don't have a matching tool_use in the previous message
-    for( size_t i = 1; i < m_chatHistory.size(); i++ )
+    for( size_t i = 1; i < messages.size(); i++ )
     {
-        auto& msg = m_chatHistory[i];
+        auto& msg = messages[i];
 
         // Only check user messages with array content
         if( !msg.contains( "role" ) || msg["role"] != "user" )
@@ -1380,7 +1380,7 @@ void CHAT_CONTROLLER::RepairHistory()
 
         // Get valid tool_use IDs from the previous message (if it's an assistant message)
         std::set<std::string> validToolUseIds;
-        const auto& prevMsg = m_chatHistory[i - 1];
+        const auto& prevMsg = messages[i - 1];
         if( prevMsg.contains( "role" ) && prevMsg["role"] == "assistant" &&
             prevMsg.contains( "content" ) && prevMsg["content"].is_array() )
         {
@@ -1428,22 +1428,22 @@ void CHAT_CONTROLLER::RepairHistory()
             {
                 msg["content"] = newContent;
             }
-            historyModified = true;
+            modified = true;
         }
     }
 
     // Remove messages marked for removal
-    m_chatHistory.erase(
-        std::remove_if( m_chatHistory.begin(), m_chatHistory.end(),
+    messages.erase(
+        std::remove_if( messages.begin(), messages.end(),
             []( const json& msg ) {
                 return msg.contains( "_remove" ) && msg["_remove"] == true;
             }),
-        m_chatHistory.end() );
+        messages.end() );
 
     // PASS 2: Add missing tool_result blocks for orphaned tool_uses
-    for( size_t i = 0; i < m_chatHistory.size(); i++ )
+    for( size_t i = 0; i < messages.size(); i++ )
     {
-        const auto& msg = m_chatHistory[i];
+        const auto& msg = messages[i];
 
         // Only check assistant messages
         if( !msg.contains( "role" ) || msg["role"] != "assistant" )
@@ -1470,9 +1470,9 @@ void CHAT_CONTROLLER::RepairHistory()
         bool nextMsgIsToolResultUser = false;
         size_t nextMsgIdx = i + 1;
 
-        if( nextMsgIdx < m_chatHistory.size() )
+        if( nextMsgIdx < messages.size() )
         {
-            const auto& nextMsg = m_chatHistory[nextMsgIdx];
+            const auto& nextMsg = messages[nextMsgIdx];
             if( nextMsg.contains( "role" ) && nextMsg["role"] == "user" &&
                 nextMsg.contains( "content" ) && nextMsg["content"].is_array() )
             {
@@ -1503,18 +1503,18 @@ void CHAT_CONTROLLER::RepairHistory()
 
         // If the next message already has tool_results, add the missing ones to it
         // Otherwise, insert a new message
-        if( nextMsgIsToolResultUser && nextMsgIdx < m_chatHistory.size() )
+        if( nextMsgIsToolResultUser && nextMsgIdx < messages.size() )
         {
             for( const auto& toolId : missingIds )
             {
-                m_chatHistory[nextMsgIdx]["content"].push_back( {
+                messages[nextMsgIdx]["content"].push_back( {
                     { "type", "tool_result" },
                     { "tool_use_id", toolId },
                     { "content", "Tool execution was interrupted. No result available." },
                     { "is_error", true }
                 });
             }
-            historyModified = true;
+            modified = true;
         }
         else
         {
@@ -1533,8 +1533,8 @@ void CHAT_CONTROLLER::RepairHistory()
             }
 
             toolResultMsg["content"] = content;
-            m_chatHistory.insert( m_chatHistory.begin() + i + 1, toolResultMsg );
-            historyModified = true;
+            messages.insert( messages.begin() + i + 1, toolResultMsg );
+            modified = true;
 
             i++; // Skip the message we just inserted
         }
@@ -1545,10 +1545,10 @@ void CHAT_CONTROLLER::RepairHistory()
     // Consecutive user messages can accumulate when HandleLLMError removes orphaned
     // messages but doesn't persist the removal, or when the app crashes mid-conversation.
     // We merge them into one message by combining their content arrays.
-    for( size_t i = 1; i < m_chatHistory.size(); /* no increment */ )
+    for( size_t i = 1; i < messages.size(); /* no increment */ )
     {
-        auto& prev = m_chatHistory[i - 1];
-        auto& curr = m_chatHistory[i];
+        auto& prev = messages[i - 1];
+        auto& curr = messages[i];
 
         if( !prev.contains( "role" ) || !curr.contains( "role" ) ||
             prev["role"] != "user" || curr["role"] != "user" )
@@ -1578,22 +1578,41 @@ void CHAT_CONTROLLER::RepairHistory()
         }
 
         prev["content"] = prevContent;
-        m_chatHistory.erase( m_chatHistory.begin() + i );
-        historyModified = true;
-        wxLogInfo( "CHAT_CONTROLLER::RepairHistory - merged consecutive user messages at index %zu", i );
+        messages.erase( messages.begin() + i );
+        modified = true;
+        wxLogInfo( "CHAT_CONTROLLER::RepairMessageArray - merged consecutive user messages at index %zu", i );
         // Don't increment — check the new element at position i
     }
 
-    if( historyModified )
+    return modified;
+}
+
+
+void CHAT_CONTROLLER::RepairHistory()
+{
+    // Repair both m_chatHistory and m_apiContext independently.
+    // These arrays may have diverged due to compaction (m_apiContext gets replaced
+    // with a compact summary while m_chatHistory retains all messages).
+    // We must NOT sync m_apiContext = m_chatHistory here, as that would wipe out
+    // the compaction block and force the API to re-compact on every turn.
+
+    bool chatModified = RepairMessageArray( m_chatHistory );
+    bool apiModified = RepairMessageArray( m_apiContext );
+
+    if( chatModified )
     {
-        // Sync API context after fix
-        m_apiContext = m_chatHistory;
+        wxLogInfo( "CHAT_CONTROLLER::RepairHistory - chat history was repaired" );
 
         // Save repaired history (chat history DB maintains its own conversation ID)
         if( m_chatHistoryDb )
         {
             m_chatHistoryDb->Save( m_chatHistory );
         }
+    }
+
+    if( apiModified )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::RepairHistory - API context was repaired" );
     }
 }
 

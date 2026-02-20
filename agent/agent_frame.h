@@ -121,6 +121,9 @@ public:
     // Override CommonSettingsChanged to avoid toolbar recreation (AGENT_FRAME has no toolbars)
     void CommonSettingsChanged( int aFlags ) override;
 
+    // Hide on close instead of destroying — preserves auth state, webview, and chat history
+    bool canCloseWindow( wxCloseEvent& aEvent ) override;
+
     // Tool call helper (synchronous)
     std::string SendRequest( int aDest, const std::string& aPayload );
 

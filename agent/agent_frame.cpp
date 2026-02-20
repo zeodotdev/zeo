@@ -2004,9 +2004,26 @@ void AGENT_FRAME::DoSignIn()
         m_auth->StartOAuthFlow( "agent" );
 }
 
+bool AGENT_FRAME::canCloseWindow( wxCloseEvent& aEvent )
+{
+    // Hide the agent window instead of destroying it. This preserves:
+    //   - Shared auth pointer from the launcher (MAIL_AUTH_POINTER is only sent once at startup)
+    //   - Loaded webview and chat state
+    //   - Conversation history in memory
+    // The window is re-shown by ShowPlayer/ShowAgent when the user reopens it.
+    if( aEvent.CanVeto() )
+    {
+        wxLogTrace( "Agent", "Agent window hidden (close vetoed to preserve auth state)" );
+        Hide();
+        return false;
+    }
+
+    return true;
+}
+
 void AGENT_FRAME::OnExit( wxCommandEvent& event )
 {
-    Close( true );
+    Hide();
 }
 
 std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayload )

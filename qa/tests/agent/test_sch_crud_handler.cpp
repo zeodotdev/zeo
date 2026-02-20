@@ -325,7 +325,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryHierLabelUsesClass )
     };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
 
-    BOOST_CHECK( cmd.find( "HierLabel" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "HierarchicalLabel" ) != std::string::npos );
 }
 
 
@@ -739,8 +739,8 @@ BOOST_AUTO_TEST_CASE( AddOverlapErrorIdentifiesObstacle )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    // Overlap error should identify the obstacle by reference
-    BOOST_CHECK( cmd.find( "_obstacle_ref_0" ) != std::string::npos );
+    // Overlap error should identify the obstacle by reference via _overlap_info
+    BOOST_CHECK( cmd.find( "_overlap_info" ) != std::string::npos );
     BOOST_CHECK( cmd.find( "_pb.get('ref', '?')" ) != std::string::npos );
 }
 
@@ -773,7 +773,7 @@ BOOST_AUTO_TEST_CASE( AddSymbolOverlapErrorMessage )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    BOOST_CHECK( cmd.find( "Placement rejected: overlaps {_obstacle_ref_0}" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "Placement rejected: {_overlap_info(_new_bbox_0)}" ) != std::string::npos );
 }
 
 

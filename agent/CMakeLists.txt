@@ -55,6 +55,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/bridge
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc
     ${CMAKE_CURRENT_SOURCE_DIR}/auth
+    ${CMAKE_CURRENT_SOURCE_DIR}/cloud
     ${CMAKE_CURRENT_SOURCE_DIR}/tools
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/util
     ${CMAKE_CURRENT_SOURCE_DIR}/platform
@@ -91,6 +92,9 @@ set( AGENT_SRCS
 
     # Authentication
     auth/agent_auth.cpp
+
+    # Cloud sync (chat + log uploads to Supabase Storage)
+    cloud/agent_cloud_sync.cpp
 
     # Tool infrastructure
     tools/tool_registry.cpp

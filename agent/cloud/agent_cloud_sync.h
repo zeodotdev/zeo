@@ -1,0 +1,122 @@
+#ifndef AGENT_CLOUD_SYNC_H
+#define AGENT_CLOUD_SYNC_H
+
+#include <string>
+#include <mutex>
+#include <atomic>
+#include <nlohmann/json.hpp>
+
+class AGENT_AUTH;
+
+/**
+ * Uploads chat logs and application log files to Supabase Storage.
+ *
+ * Storage layout:
+ *   user-data/{email}/chats/{conversation_id}.json
+ *   user-data/{email}/logs/{log_filename}.log
+ *
+ * All uploads are fire-and-forget on a background thread.
+ * Local files remain the source of truth; cloud is best-effort.
+ */
+class AGENT_CLOUD_SYNC
+{
+public:
+    AGENT_CLOUD_SYNC();
+    ~AGENT_CLOUD_SYNC();
+
+    /**
+     * Configure the Supabase connection for storage uploads.
+     * @param aSupabaseUrl  Supabase project URL (e.g., https://xxxxx.supabase.co)
+     * @param aAnonKey      Supabase anon/public key
+     */
+    void Configure( const std::string& aSupabaseUrl, const std::string& aAnonKey );
+
+    /**
+     * Set the auth provider (for access tokens and user email).
+     */
+    void SetAuth( AGENT_AUTH* aAuth );
+
+    /**
+     * Upload a single chat conversation to cloud storage (async, background thread).
+     * @param aConversationId  The conversation ID (used as filename)
+     * @param aJsonContent     The full chat JSON content to upload
+     */
+    void UploadChat( const std::string& aConversationId, const std::string& aJsonContent );
+
+    /**
+     * Upload a single log file to cloud storage (async, background thread).
+     * @param aLogFilePath  Full local path to the log file
+     */
+    void UploadLog( const std::string& aLogFilePath );
+
+    /**
+     * Upload all unsynced chats and recent log files.
+     * Runs on a background thread. Safe to call from any thread.
+     */
+    void SyncAll();
+
+private:
+    /**
+     * Upload content to Supabase Storage (blocking, runs on calling thread).
+     * @param aStoragePath  Path within the bucket (e.g., "email/chats/id.json")
+     * @param aContent      File content to upload
+     * @return true on success
+     */
+    bool UploadToStorage( const std::string& aStoragePath, const std::string& aContent );
+
+    /**
+     * Build the storage path prefix for the current user.
+     * @return "{email}" or empty string if not authenticated
+     */
+    std::string GetUserPrefix();
+
+    /**
+     * Check if a file has already been uploaded (same size).
+     */
+    bool IsAlreadyUploaded( const std::string& aKey, size_t aSize );
+
+    /**
+     * Mark a file as uploaded in the local sync state.
+     */
+    void MarkUploaded( const std::string& aKey, size_t aSize );
+
+    /**
+     * Load sync state from disk.
+     */
+    void LoadSyncState();
+
+    /**
+     * Save sync state to disk.
+     */
+    void SaveSyncState();
+
+    /**
+     * Get the path to the sync state file.
+     */
+    std::string GetSyncStatePath();
+
+    /**
+     * Get the log directory path (~/Library/Logs/Zeo/).
+     */
+    std::string GetLogDir();
+
+    /**
+     * Get the chat history directory path.
+     */
+    std::string GetChatDir();
+
+    /**
+     * Read a file's contents into a string.
+     */
+    bool ReadFile( const std::string& aPath, std::string& aContent );
+
+    AGENT_AUTH*        m_auth;
+    std::string        m_supabaseUrl;
+    std::string        m_anonKey;
+
+    nlohmann::json     m_syncState;      // Tracks uploaded files { "chats": {}, "logs": {} }
+    std::mutex         m_syncStateMutex; // Protects m_syncState reads/writes
+    std::atomic<bool>  m_configured;
+};
+
+#endif // AGENT_CLOUD_SYNC_H

@@ -1,6 +1,7 @@
 #include "agent_frame.h"
 #include "agent_chat_history.h"
 #include "auth/agent_auth.h"
+#include "cloud/agent_cloud_sync.h"
 #include "bridge/webview_bridge.h"
 #include "view/agent_markdown.h"
 #include "view/unified_html_template.h"
@@ -392,6 +393,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Wire auth to LLM client (nullptr for now, updated when auth pointer arrives)
     m_llmClient->SetAuth( nullptr );
+
+    // Cloud sync (configured when auth pointer arrives)
+    m_cloudSync = std::make_unique<AGENT_CLOUD_SYNC>();
 
     // Create chat controller
     m_chatController = std::make_unique<CHAT_CONTROLLER>( this );
@@ -952,6 +956,9 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
                 if( m_chatController )
                     m_chatController->SetAuth( m_auth );
 
+                // Wire auth to cloud sync and start initial sync
+                ConfigureCloudSync();
+
                 UpdateAuthUI();
                 wxLogTrace( "Agent", "Using shared auth from launcher" );
             }
@@ -1157,6 +1164,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
         m_chatHistoryDb.Save( m_chatHistory );
+        UploadCurrentChat();
     }
     else
     {
@@ -1209,6 +1217,7 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
         m_chatHistoryDb.Save( m_chatHistory );
+        UploadCurrentChat();
     }
 
     // Clear uncommitted tool calls (haven't been added to history yet)
@@ -1416,6 +1425,7 @@ void AGENT_FRAME::SendQueuedMessage()
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
         m_chatHistoryDb.Save( m_chatHistory );
+        UploadCurrentChat();
     }
 }
 
@@ -2666,6 +2676,9 @@ void AGENT_FRAME::EnsureAuth()
     if( m_chatController )
         m_chatController->SetAuth( m_auth );
 
+    // Wire auth to cloud sync
+    ConfigureCloudSync();
+
     UpdateAuthUI();
 }
 
@@ -3460,6 +3473,7 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
         if( !continuing )
         {
             m_chatHistoryDb.Save( m_chatHistory );
+            UploadCurrentChat();
         }
     }
 
@@ -3689,7 +3703,9 @@ void AGENT_FRAME::OnChatTitleGenerated( wxThreadEvent& aEvent )
 
     if( m_chatController )
     {
-        m_chatHistoryDb.Save( m_chatController->GetChatHistory() );
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_chatHistoryDb.Save( m_chatHistory );
+        UploadCurrentChat();
     }
 
     delete data;
@@ -3977,4 +3993,67 @@ std::string AGENT_FRAME::LoadModelPreference()
     }
 
     return "Claude 4.6 Opus";
+}
+
+
+// ============================================================================
+// Cloud Sync
+// ============================================================================
+
+void AGENT_FRAME::ConfigureCloudSync()
+{
+    if( !m_cloudSync || !m_auth )
+        return;
+
+    // Load Supabase configuration
+    std::string supabaseUrl, supabaseKey;
+
+    wxFileName configPath( __FILE__ );
+    configPath.SetFullName( "supabase_config.json" );
+
+    if( wxFileExists( configPath.GetFullPath() ) )
+    {
+        std::ifstream configFile( configPath.GetFullPath().ToStdString() );
+
+        if( configFile.is_open() )
+        {
+            try
+            {
+                json config = json::parse( configFile );
+                supabaseUrl = config.value( "project_url", "" );
+                supabaseKey = config.value( "publishable_key", "" );
+            }
+            catch( ... ) {}
+            configFile.close();
+        }
+    }
+
+    if( supabaseUrl.empty() || supabaseKey.empty() )
+        return;
+
+    m_cloudSync->SetAuth( m_auth );
+    m_cloudSync->Configure( supabaseUrl, supabaseKey );
+
+    // Run initial sync to upload any missed chats/logs from previous sessions
+    m_cloudSync->SyncAll();
+}
+
+
+void AGENT_FRAME::UploadCurrentChat()
+{
+    if( !m_cloudSync )
+        return;
+
+    std::string convId = m_chatHistoryDb.GetConversationId();
+
+    if( convId.empty() )
+        return;
+
+    // Build the JSON content (same format as what Save() writes to disk)
+    json wrapper;
+    wrapper["id"] = convId;
+    wrapper["title"] = m_chatHistoryDb.GetTitle();
+    wrapper["messages"] = m_chatHistory;
+
+    m_cloudSync->UploadChat( convId, wrapper.dump() );
 }

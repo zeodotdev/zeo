@@ -2,7 +2,6 @@ import json, re, fnmatch, sys
 
 lib_id = TOOL_ARGS.get("lib_id", "")
 include_pins = TOOL_ARGS.get("include_pins", True)
-include_datasheet = TOOL_ARGS.get("include_datasheet", False)
 max_suggestions = TOOL_ARGS.get("max_suggestions", 10)
 pattern_type = TOOL_ARGS.get("pattern_type", "")
 
@@ -36,10 +35,9 @@ def format_symbol(info):
         'pin_count': getattr(info, 'pin_count', 0),
         'footprint_filters': getattr(info, 'footprint_filters', []),
     }
-    if include_datasheet:
-        ds = getattr(info, 'datasheet', '')
-        if ds:
-            result['datasheet'] = ds
+    ds = getattr(info, 'datasheet', '')
+    if ds:
+        result['datasheet'] = ds
     # Bounding box (body + pins) in mm
     bbox_min_x = getattr(info, 'body_bbox_min_x_nm', 0)
     bbox_min_y = getattr(info, 'body_bbox_min_y_nm', 0)

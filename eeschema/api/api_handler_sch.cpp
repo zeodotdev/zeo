@@ -1963,16 +1963,17 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleNavigateToSheet(
         return tl::unexpected( e );
     }
 
-    // Navigate to the sheet
-    m_frame->SetCurrentSheet( targetPath );
-    m_frame->DisplayCurrentSheet();
-
-    // Update the agent target sheet so subsequent API operations (CreateItems, etc.)
-    // affect the navigated-to sheet, not the original sheet. This is intentional agent
-    // navigation, distinct from user navigation which should NOT affect the agent target.
     if( m_frame->IsAgentTransactionActive() && targetPath.size() > 0 )
     {
+        // During agent transactions, only update the target sheet for API operations
+        // without changing the user's visible view
         m_frame->SetAgentTargetSheet( targetPath.Last()->m_Uuid );
+    }
+    else
+    {
+        // User-initiated or non-transaction navigation — change the visible view
+        m_frame->SetCurrentSheet( targetPath );
+        m_frame->DisplayCurrentSheet();
     }
 
     return Empty();

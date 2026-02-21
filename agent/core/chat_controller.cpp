@@ -1559,8 +1559,19 @@ bool CHAT_CONTROLLER::RepairMessageArray( nlohmann::json& messages )
 
         // Preserve _compaction flag if curr is a compaction marker.
         // BuildApiContext() relies on this flag to slice the history.
+        // When merging into a compaction marker, drop pre-compaction content
+        // (e.g. tool_result blocks whose matching tool_use was compacted away).
+        // The compaction summary already encompasses everything before it.
         if( curr.contains( "_compaction" ) && curr["_compaction"] == true )
+        {
             prev["_compaction"] = true;
+
+            // Keep only the compaction marker's own content blocks.
+            // Pre-compaction tool_result blocks would reference tool_use IDs
+            // that no longer exist in the post-compaction API context.
+            if( curr.contains( "content" ) && curr["content"].is_array() )
+                prev["content"] = curr["content"];
+        }
 
         messages.erase( messages.begin() + i );
         modified = true;

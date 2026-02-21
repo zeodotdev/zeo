@@ -3782,9 +3782,13 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetGridSettings(
 
     if( aCtx.Request.has_grid_size_x_nm() || aCtx.Request.has_grid_size_y_nm() )
     {
+        // API values are in nanometers; GAL grid size is in schematic IU (1 IU = 100nm)
+        constexpr double NM_TO_SCH_IU = 1.0 / 100.0;
         VECTOR2D currentGrid = gal->GetGridSize();
-        double newX = aCtx.Request.has_grid_size_x_nm() ? aCtx.Request.grid_size_x_nm() : currentGrid.x;
-        double newY = aCtx.Request.has_grid_size_y_nm() ? aCtx.Request.grid_size_y_nm() : currentGrid.y;
+        double newX = aCtx.Request.has_grid_size_x_nm()
+                          ? aCtx.Request.grid_size_x_nm() * NM_TO_SCH_IU : currentGrid.x;
+        double newY = aCtx.Request.has_grid_size_y_nm()
+                          ? aCtx.Request.grid_size_y_nm() * NM_TO_SCH_IU : currentGrid.y;
         gal->SetGridSize( VECTOR2D( newX, newY ) );
     }
 

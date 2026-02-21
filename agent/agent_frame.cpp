@@ -1010,7 +1010,7 @@ void AGENT_FRAME::DoSelectionPillClick()
 
         // Append @{Label} to input via bridge
         // Build the text to append and let JS handle cursor placement
-        m_bridge->PushInputSetText( "@{" + label + "} " );
+        m_bridge->PushInputAppendText( "@{" + label + "} " );
     }
 }
 

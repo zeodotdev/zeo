@@ -3,6 +3,8 @@
 #include "handlers/python_tool_handler.h"
 #include "handlers/pcb_autoroute_handler.h"
 #include "handlers/screenshot_handler.h"
+#include "handlers/check_status_handler.h"
+#include "handlers/create_project_handler.h"
 
 #include <frame_type.h>
 #include <wx/log.h>
@@ -31,6 +33,8 @@ TOOL_REGISTRY::TOOL_REGISTRY()
     Register( std::make_unique<PYTHON_TOOL_HANDLER>() );
     Register( std::make_unique<PCB_AUTOROUTE_HANDLER>() );
     Register( std::make_unique<SCREENSHOT_HANDLER>() );
+    Register( std::make_unique<CHECK_STATUS_HANDLER>() );
+    Register( std::make_unique<CREATE_PROJECT_HANDLER>() );
 
     wxLogInfo( "TOOL_REGISTRY: %zu tools registered", m_toolMap.size() );
 }
@@ -84,15 +88,6 @@ std::string TOOL_REGISTRY::GetDescription( const std::string& aToolName,
         std::string label = ( editorType == "sch" ) ? "Schematic" : "PCB";
         return "Open " + label + " Editor";
     }
-    else if( aToolName == "check_status" )
-    {
-        return "Check Project Status";
-    }
-    else if( aToolName == "create_project" )
-    {
-        return "Create Project";
-    }
-
     return "Executing " + aToolName;
 }
 

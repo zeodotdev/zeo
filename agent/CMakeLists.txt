@@ -99,6 +99,9 @@ set( AGENT_SRCS
     tools/handlers/python_tool_handler.cpp
     tools/handlers/pcb_autoroute_handler.cpp
     tools/handlers/screenshot_handler.cpp
+    tools/handlers/check_status_handler.cpp
+    tools/handlers/create_project_handler.cpp
+    tools/handlers/open_editor_handler.cpp
 
 )
 

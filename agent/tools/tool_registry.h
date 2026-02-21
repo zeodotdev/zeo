@@ -52,6 +52,15 @@ public:
     void SetPcbEditorOpen( bool aOpen )                   { m_pcbEditorOpen = aOpen; }
     bool IsPcbEditorOpen() const                          { return m_pcbEditorOpen; }
 
+    void SetProjectPath( const std::string& aPath )       { m_projectPath = aPath; }
+    const std::string& GetProjectPath() const             { return m_projectPath; }
+
+    void SetProjectName( const std::string& aName )       { m_projectName = aName; }
+    const std::string& GetProjectName() const             { return m_projectName; }
+
+    void SetOpenEditorFiles( std::vector<std::string> aF ) { m_openEditorFiles = std::move( aF ); }
+    const std::vector<std::string>& GetOpenEditorFiles() const { return m_openEditorFiles; }
+
     void SetSendRequestFn( SendRequestFn aFn )            { m_sendRequestFn = std::move( aFn ); }
     const SendRequestFn& GetSendRequestFn() const         { return m_sendRequestFn; }
 
@@ -75,6 +84,9 @@ private:
     // Shared state
     bool          m_schematicEditorOpen = false;
     bool          m_pcbEditorOpen = false;
+    std::string   m_projectPath;
+    std::string   m_projectName;
+    std::vector<std::string> m_openEditorFiles;
     SendRequestFn m_sendRequestFn;
 };
 

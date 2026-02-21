@@ -1009,13 +1009,10 @@ void CHAT_CONTROLLER::ExecuteNextTool()
     EmitEvent( EVT_CHAT_TOOL_START, ChatToolStartData( tool->tool_use_id, tool->tool_name,
                                                         desc, tool->tool_input ) );
 
-    // Handle frame-managed tools specially - they are processed by AGENT_FRAME in OnChatToolStart
-    // and call HandleToolResult() when done
-    if( tool->tool_name == "open_editor" ||
-        tool->tool_name == "check_status" ||
-        tool->tool_name == "create_project" )
+    // open_editor is frame-managed: it has a deferred approval flow that can't
+    // fit the synchronous Execute() interface. AGENT_FRAME handles it directly.
+    if( tool->tool_name == "open_editor" )
     {
-        // Don't execute synchronously - wait for frame to handle via HandleToolResult
         return;
     }
 

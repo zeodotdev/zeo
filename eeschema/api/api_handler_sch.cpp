@@ -5227,6 +5227,15 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
         info->set_unit_count( match.symbol->GetUnitCount() );
         info->set_is_power( match.symbol->IsPower() );
 
+        // Add footprint filters
+        for( const wxString& filter : match.symbol->GetFPFilters() )
+            info->add_footprint_filters( filter.ToStdString() );
+
+        // Add datasheet
+        wxString ds = match.symbol->GetDatasheetProp();
+        if( !ds.empty() )
+            info->set_datasheet( ds.ToStdString() );
+
         // Populate pin information
         for( SCH_PIN* pin : match.symbol->GetPins() )
         {
@@ -5298,6 +5307,11 @@ API_HANDLER_SCH::handleGetSymbolInfo(
         {
             info->add_footprint_filters( filter.ToStdString() );
         }
+
+        // Add datasheet
+        wxString ds = symbol->GetDatasheetProp();
+        if( !ds.empty() )
+            info->set_datasheet( ds.ToStdString() );
 
         // Add pin information
         for( SCH_PIN* pin : symbol->GetPins() )

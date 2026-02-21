@@ -8,8 +8,7 @@
 #include "core/chat_controller.h"
 #include "core/chat_events.h"
 #include "tools/tool_registry.h"
-#include "tools/util/file_writer.h"
-#include "tools/util/sch_parser.h"
+#include <filesystem>
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -19,10 +18,7 @@
 #include <frame_type.h>
 #include <sstream>
 #include <fstream>
-#include <cstdint>
-#include <thread>
 #include <set>
-#include <algorithm>
 #include <wx/sizer.h>
 #include <wx/msgdlg.h>
 #include <wx/utils.h>
@@ -55,6 +51,68 @@
 #endif
 
 using json = nlohmann::json;
+
+
+namespace
+{
+
+struct PathValidationResult
+{
+    bool        valid;
+    std::string error;
+    std::string resolvedPath;
+
+    PathValidationResult() : valid( true ) {}
+    PathValidationResult( const std::string& aError ) : valid( false ), error( aError ) {}
+
+    static PathValidationResult Success( const std::string& aResolvedPath )
+    {
+        PathValidationResult r;
+        r.resolvedPath = aResolvedPath;
+        return r;
+    }
+};
+
+
+PathValidationResult ValidatePathInProject( const std::string& aFilePath,
+                                            const std::string& aProjectPath )
+{
+    if( aProjectPath.empty() )
+        return PathValidationResult::Success( aFilePath );
+
+    try
+    {
+        std::filesystem::path fsPath( aFilePath );
+        std::filesystem::path projectPath( aProjectPath );
+
+        if( fsPath.is_relative() )
+            fsPath = projectPath / fsPath;
+
+        auto canonicalProject = std::filesystem::canonical( projectPath );
+        auto canonicalFile = std::filesystem::weakly_canonical( fsPath );
+
+        auto projectStr = canonicalProject.string();
+        auto fileStr = canonicalFile.string();
+
+        if( !projectStr.empty() && projectStr.back() != '/' )
+            projectStr += '/';
+
+        if( fileStr.find( projectStr ) != 0 && fileStr != canonicalProject.string() )
+        {
+            return PathValidationResult( "File path must be within project directory: " +
+                                         aProjectPath + " (resolved path: " + fileStr + ")" );
+        }
+
+        return PathValidationResult::Success( canonicalFile.string() );
+    }
+    catch( const std::filesystem::filesystem_error& e )
+    {
+        return PathValidationResult( "Invalid file path: " + std::string( e.what() ) );
+    }
+}
+
+} // anonymous namespace
+
 
 // Helper function to extract the error line from a Python traceback.
 // Python tracebacks end with the actual error on the last non-empty line.
@@ -410,156 +468,33 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             if( projectPath.IsEmpty() )
                 return "";
 
-            // Build JSON with project path, PCB file, and schematic hierarchy
-            nlohmann::json projectContext;
-            projectContext["path"] = projectPath.ToStdString();
+            // Lightweight project context — same info as check_status.
+            // Detailed schematic/PCB state is available via sch_get_summary / pcb_get_summary tools.
+            nlohmann::json ctx;
+            ctx["project_path"] = projectPath.ToStdString();
 
-            // Get project name for conventional file detection
-            wxFileName projDir( projectPath, "" );
-            wxString projName = projDir.GetDirs().IsEmpty() ? wxString() : projDir.GetDirs().Last();
-
-            // Find PCB file - try projectName.kicad_pcb first, then scan directory
-            wxDir dir( projectPath );
-            if( !projName.IsEmpty() )
+            wxString prjName = Kiway().Prj().GetProjectName();
+            if( !prjName.IsEmpty() )
             {
-                wxString expectedPcb = projectPath + projName + ".kicad_pcb";
-                if( wxFileExists( expectedPcb ) )
-                {
-                    projectContext["pcb_file"] = ( projName + ".kicad_pcb" ).ToStdString();
-                }
+                ctx["schematic_file"] = ( projectPath + prjName + ".kicad_sch" ).ToStdString();
+                ctx["pcb_file"] = ( projectPath + prjName + ".kicad_pcb" ).ToStdString();
             }
 
-            // Fallback: scan for all PCB files if expected one not found
-            if( !projectContext.contains( "pcb_file" ) && dir.IsOpened() )
-            {
-                nlohmann::json pcbFiles = nlohmann::json::array();
-                wxString filename;
-                bool cont = dir.GetFirst( &filename, "*.kicad_pcb", wxDIR_FILES );
-                while( cont )
-                {
-                    pcbFiles.push_back( filename.ToStdString() );
-                    cont = dir.GetNext( &filename );
-                }
-                if( !pcbFiles.empty() )
-                    projectContext["pcb_files"] = pcbFiles;
-            }
+            KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
+            KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
+            ctx["schematic_editor_open"] = schEditor && schEditor->IsShown();
+            ctx["pcb_editor_open"] = pcbEditor && pcbEditor->IsShown();
 
-            // Build schematic hierarchy from root sheet(s)
-            // Define recursive hierarchy builder
-            std::function<nlohmann::json( const std::string&, std::set<std::string>& )> buildHierarchy;
-            buildHierarchy = [&]( const std::string& schPath,
-                                  std::set<std::string>& visited ) -> nlohmann::json {
-                nlohmann::json node;
-
-                // Avoid infinite loops from circular references
-                if( visited.count( schPath ) )
-                    return node;
-                visited.insert( schPath );
-
-                auto summary = SchParser::GetSummary( schPath );
-                node["file"] = summary.file;
-                node["uuid"] = summary.uuid;
-
-                // Recursively process child sheets
-                if( !summary.sheets.empty() )
-                {
-                    nlohmann::json children = nlohmann::json::array();
-                    for( const auto& sheet : summary.sheets )
-                    {
-                        // Resolve child sheet path relative to parent
-                        wxFileName childPath( schPath );
-                        childPath.SetFullName( sheet.filename );
-                        std::string childFullPath = childPath.GetFullPath().ToStdString();
-
-                        nlohmann::json childNode = buildHierarchy( childFullPath, visited );
-                        if( !childNode.empty() )
-                        {
-                            childNode["name"] = sheet.name;  // Display name from parent
-                            children.push_back( childNode );
-                        }
-                    }
-                    if( !children.empty() )
-                        node["children"] = children;
-                }
-
-                return node;
-            };
-
-            // Find root schematic(s) - check .kicad_pro for top_level_sheets
-            std::vector<std::string> rootSchFiles;
-
-            // Try to read top-level sheets from project file
-            if( !projName.IsEmpty() )
-            {
-                wxString proFile = projectPath + projName + ".kicad_pro";
-                if( wxFileExists( proFile ) )
-                {
-                    std::ifstream ifs( proFile.ToStdString() );
-                    if( ifs.good() )
-                    {
-                        try
-                        {
-                            nlohmann::json projJson = nlohmann::json::parse( ifs );
-                            if( projJson.contains( "schematic" ) &&
-                                projJson["schematic"].contains( "top_level_sheets" ) )
-                            {
-                                for( const auto& sheet : projJson["schematic"]["top_level_sheets"] )
-                                {
-                                    if( sheet.contains( "filename" ) )
-                                    {
-                                        wxString schFile = projectPath +
-                                            wxString::FromUTF8( sheet["filename"].get<std::string>() );
-                                        if( wxFileExists( schFile ) )
-                                            rootSchFiles.push_back( schFile.ToStdString() );
-                                    }
-                                }
-                            }
-                        }
-                        catch( ... )
-                        {
-                            // JSON parse error - fall back to heuristics
-                        }
-                    }
-                }
-            }
-
-            // Fall back to project-name.kicad_sch if no top-level sheets defined
-            if( rootSchFiles.empty() && !projName.IsEmpty() )
-            {
-                wxString rootCandidate = projectPath + projName + ".kicad_sch";
-                if( wxFileExists( rootCandidate ) )
-                    rootSchFiles.push_back( rootCandidate.ToStdString() );
-            }
-
-            // Build hierarchy for each root
-            if( !rootSchFiles.empty() )
-            {
-                nlohmann::json hierarchyArray = nlohmann::json::array();
-                std::set<std::string> visited;
-
-                for( const auto& rootFile : rootSchFiles )
-                {
-                    nlohmann::json rootNode = buildHierarchy( rootFile, visited );
-                    if( !rootNode.empty() )
-                        hierarchyArray.push_back( rootNode );
-                }
-
-                projectContext["hierarchy"] = hierarchyArray;
-            }
-
-            // Add files currently open in editors
             auto openFiles = GetOpenEditorFiles();
             if( !openFiles.empty() )
             {
                 nlohmann::json arr = nlohmann::json::array();
                 for( const auto& f : openFiles )
                     arr.push_back( f.ToStdString() );
-                projectContext["open_editor_files"] = arr;
-                wxLogInfo( "AGENT: Injecting %zu open editor file(s) into project context",
-                           openFiles.size() );
+                ctx["open_editor_files"] = arr;
             }
 
-            return projectContext.dump( 2 );
+            return ctx.dump( 2 );
         } );
 
     // Schematic summary callback for user edit detection between turns.
@@ -3299,7 +3234,7 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         {
             auto allowedPaths = GetAllowedPaths();
             bool pathValid = false;
-            FileWriter::PathValidationResult pathResult;
+            PathValidationResult pathResult;
 
             if( allowedPaths.empty() )
             {
@@ -3313,8 +3248,8 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
 
             for( const auto& allowed : allowedPaths )
             {
-                pathResult = FileWriter::ValidatePathInProject( filePath,
-                                                                 allowed.ToStdString() );
+                pathResult = ValidatePathInProject( filePath,
+                                                     allowed.ToStdString() );
                 if( pathResult.valid )
                 {
                     pathValid = true;

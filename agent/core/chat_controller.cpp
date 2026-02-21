@@ -1040,12 +1040,6 @@ void CHAT_CONTROLLER::ExecuteNextTool()
         return;
     }
 
-    // Log project path being used for debugging
-    if( m_getProjectPathFn )
-    {
-        wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - project path: %s", m_getProjectPathFn().c_str() );
-    }
-
     // Execute tool with exception handling to prevent stuck state
     std::string result;
     bool success = false;

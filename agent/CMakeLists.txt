@@ -100,10 +100,6 @@ set( AGENT_SRCS
     tools/handlers/pcb_autoroute_handler.cpp
     tools/handlers/screenshot_handler.cpp
 
-    # Tool utilities
-    tools/util/sexpr_util.cpp
-    tools/util/file_writer.cpp
-    tools/util/sch_parser.cpp
 )
 
 # Platform-specific sources

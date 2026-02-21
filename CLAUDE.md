@@ -28,7 +28,7 @@ agent/                  # AI Agent UI and LLM integration
 │   │   ├── common/              # Shared utilities (preamble.py, bbox.py)
 │   │   ├── schematic/           # sch_*.py (add, update, delete, connect_net, etc.)
 │   │   └── pcb/                 # pcb_*.py (add, route, place, export, etc.)
-│   └── util/                    # C++ helpers (file_writer, sch_parser, sexpr_util)
+│   └── util/                    # C++ helpers (kicad_cli_util)
 ├── auth/               # Supabase auth + keychain storage
 ├── bridge/             # JS↔C++ webview message router
 └── view/               # Markdown→HTML, templates, file attachments

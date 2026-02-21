@@ -26,9 +26,6 @@ set( QA_AGENT_SRCS
     # Test module entry point
     test_module.cpp
 
-    # Parser tests
-    test_sch_parser.cpp
-
     # Library symbol handler tests
     test_sch_lib_symbol_handler.cpp
 
@@ -40,9 +37,6 @@ set( QA_AGENT_SRCS
 
     # Agent source files needed for tests
     ${CMAKE_SOURCE_DIR}/agent/tools/handlers/python_tool_handler.cpp
-    ${CMAKE_SOURCE_DIR}/agent/tools/util/sch_parser.cpp
-    ${CMAKE_SOURCE_DIR}/agent/tools/util/sexpr_util.cpp
-    ${CMAKE_SOURCE_DIR}/agent/tools/util/file_writer.cpp
 )
 
 add_executable( qa_agent
@@ -54,9 +48,7 @@ target_include_directories( qa_agent PRIVATE
     ${CMAKE_SOURCE_DIR}/common
     ${CMAKE_SOURCE_DIR}/agent
     ${CMAKE_SOURCE_DIR}/agent/tools
-    ${CMAKE_SOURCE_DIR}/agent/tools/util
     ${CMAKE_SOURCE_DIR}/eeschema
-    ${CMAKE_SOURCE_DIR}/libs/sexpr/include
     ${CMAKE_SOURCE_DIR}/thirdparty/nlohmann_json
     ${Boost_INCLUDE_DIRS}
 )
@@ -64,7 +56,6 @@ target_include_directories( qa_agent PRIVATE
 target_link_libraries( qa_agent PRIVATE
     ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
     ${wxWidgets_LIBRARIES}
-    sexpr
     kicommon
 )
 

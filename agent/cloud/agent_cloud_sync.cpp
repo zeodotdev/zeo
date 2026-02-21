@@ -244,6 +244,9 @@ void AGENT_CLOUD_SYNC::SyncAll()
             }
         }
 
+        // 3. Download remote-only chats to local storage
+        DownloadChats();
+
         wxLogTrace( "Agent", "CLOUD_SYNC: Full sync complete" );
     } ).detach();
 }
@@ -435,4 +438,213 @@ bool AGENT_CLOUD_SYNC::ReadFile( const std::string& aPath, std::string& aContent
     file.read( &aContent[0], size );
 
     return !file.fail();
+}
+
+
+// ============================================================================
+// Supabase Storage Download
+// ============================================================================
+
+void AGENT_CLOUD_SYNC::DownloadChats()
+{
+    if( !m_configured || !m_auth || !m_auth->IsAuthenticated() )
+        return;
+
+    std::string prefix = GetUserPrefix();
+
+    if( prefix.empty() )
+        return;
+
+    wxLogTrace( "Agent", "CLOUD_SYNC: Checking for remote-only chats" );
+
+    // 1. List remote chat files
+    json remoteFiles = ListRemoteChats();
+
+    if( remoteFiles.empty() || !remoteFiles.is_array() )
+        return;
+
+    // 2. Build set of local chat files with their sizes
+    std::string chatDir = GetChatDir();
+
+    // Ensure local chat directory exists
+    wxString wxChatDir = wxString::FromUTF8( chatDir );
+
+    if( !wxFileName::DirExists( wxChatDir ) )
+    {
+        wxFileName::Mkdir( wxChatDir, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
+    }
+
+    std::map<std::string, size_t> localFiles;
+    wxDir dir( wxChatDir );
+
+    if( dir.IsOpened() )
+    {
+        wxString filename;
+        bool cont = dir.GetFirst( &filename, "*.json", wxDIR_FILES );
+
+        while( cont )
+        {
+            wxString fullPath = wxChatDir + wxFileName::GetPathSeparator() + filename;
+            wxFileName fn( fullPath );
+            localFiles[filename.ToStdString()] = static_cast<size_t>( fn.GetSize().GetValue() );
+            cont = dir.GetNext( &filename );
+        }
+    }
+
+    // 3. Download missing or newer remote chats
+    int downloaded = 0;
+
+    for( const auto& entry : remoteFiles )
+    {
+        if( !entry.contains( "name" ) )
+            continue;
+
+        std::string remoteName = entry["name"].get<std::string>();
+
+        // Skip non-JSON files
+        if( remoteName.size() < 5
+            || remoteName.substr( remoteName.size() - 5 ) != ".json" )
+            continue;
+
+        size_t remoteSize = 0;
+
+        if( entry.contains( "metadata" ) && entry["metadata"].contains( "size" ) )
+            remoteSize = entry["metadata"]["size"].get<size_t>();
+
+        auto it = localFiles.find( remoteName );
+
+        if( it != localFiles.end() && it->second >= remoteSize )
+            continue;  // Local copy exists and is same size or larger
+
+        // Download this chat
+        std::string storagePath = prefix + "/chats/" + remoteName;
+        std::string content;
+
+        if( DownloadFromStorage( storagePath, content ) && !content.empty() )
+        {
+            std::string localPath = chatDir + "/" + remoteName;
+            std::ofstream outFile( localPath, std::ios::binary );
+
+            if( outFile.is_open() )
+            {
+                outFile.write( content.data(), content.size() );
+                outFile.close();
+                downloaded++;
+
+                wxLogTrace( "Agent", "CLOUD_SYNC: Downloaded chat %s (%zu bytes)",
+                            remoteName.c_str(), content.size() );
+            }
+        }
+    }
+
+    if( downloaded > 0 )
+    {
+        wxLogTrace( "Agent", "CLOUD_SYNC: Downloaded %d remote chats", downloaded );
+    }
+    else
+    {
+        wxLogTrace( "Agent", "CLOUD_SYNC: No new remote chats to download" );
+    }
+}
+
+
+json AGENT_CLOUD_SYNC::ListRemoteChats()
+{
+    if( !m_auth )
+        return json::array();
+
+    std::string accessToken = m_auth->GetAccessToken();
+
+    if( accessToken.empty() )
+        return json::array();
+
+    std::string prefix = GetUserPrefix();
+
+    if( prefix.empty() )
+        return json::array();
+
+    // Supabase Storage list API:
+    // POST /storage/v1/object/list/{bucket}
+    std::string url = m_supabaseUrl + "/storage/v1/object/list/" + BUCKET_NAME;
+
+    json body;
+    body["prefix"] = prefix + "/chats/";
+    body["limit"] = 1000;
+
+    try
+    {
+        KICAD_CURL_EASY curl;
+        curl.SetURL( url );
+        curl.SetFollowRedirects( true );
+        curl.SetHeader( "Authorization", "Bearer " + accessToken );
+        curl.SetHeader( "apikey", m_anonKey );
+        curl.SetHeader( "Content-Type", "application/json" );
+        curl.SetPostFields( body.dump() );
+        curl.Perform();
+
+        long httpCode = curl.GetResponseStatusCode();
+
+        if( httpCode >= 200 && httpCode < 300 )
+        {
+            return json::parse( curl.GetBuffer() );
+        }
+        else
+        {
+            wxLogTrace( "Agent", "CLOUD_SYNC: List remote chats failed with HTTP %ld: %s",
+                        httpCode, curl.GetBuffer().c_str() );
+        }
+    }
+    catch( const std::exception& e )
+    {
+        wxLogTrace( "Agent", "CLOUD_SYNC: List remote chats exception: %s", e.what() );
+    }
+
+    return json::array();
+}
+
+
+bool AGENT_CLOUD_SYNC::DownloadFromStorage( const std::string& aStoragePath,
+                                             std::string& aContent )
+{
+    if( !m_auth )
+        return false;
+
+    std::string accessToken = m_auth->GetAccessToken();
+
+    if( accessToken.empty() )
+        return false;
+
+    // Supabase Storage download:
+    // GET /storage/v1/object/{bucket}/{path}
+    std::string url = m_supabaseUrl + "/storage/v1/object/" + BUCKET_NAME + "/" + aStoragePath;
+
+    try
+    {
+        KICAD_CURL_EASY curl;
+        curl.SetURL( url );
+        curl.SetFollowRedirects( true );
+        curl.SetHeader( "Authorization", "Bearer " + accessToken );
+        curl.SetHeader( "apikey", m_anonKey );
+        curl.Perform();
+
+        long httpCode = curl.GetResponseStatusCode();
+
+        if( httpCode >= 200 && httpCode < 300 )
+        {
+            aContent = curl.GetBuffer();
+            return true;
+        }
+        else
+        {
+            wxLogTrace( "Agent", "CLOUD_SYNC: Download failed with HTTP %ld for %s",
+                        httpCode, aStoragePath.c_str() );
+            return false;
+        }
+    }
+    catch( const std::exception& e )
+    {
+        wxLogTrace( "Agent", "CLOUD_SYNC: Download exception for %s: %s",
+                    aStoragePath.c_str(), e.what() );
+        return false;
+    }
 }

@@ -9,14 +9,14 @@
 class AGENT_AUTH;
 
 /**
- * Uploads chat logs and application log files to Supabase Storage.
+ * Syncs chat logs and application log files with Supabase Storage.
  *
  * Storage layout:
  *   user-data/{email}/chats/{conversation_id}.json
  *   user-data/{email}/logs/{log_filename}.log
  *
- * All uploads are fire-and-forget on a background thread.
- * Local files remain the source of truth; cloud is best-effort.
+ * Uploads are fire-and-forget on a background thread.
+ * Downloads pull remote-only chats to local storage on startup.
  */
 class AGENT_CLOUD_SYNC
 {
@@ -50,10 +50,17 @@ public:
     void UploadLog( const std::string& aLogFilePath );
 
     /**
-     * Upload all unsynced chats and recent log files.
+     * Upload all unsynced chats and recent log files, then download
+     * any remote-only chats to local storage.
      * Runs on a background thread. Safe to call from any thread.
      */
     void SyncAll();
+
+    /**
+     * Download chats from cloud that are missing locally or larger in the cloud.
+     * Runs synchronously on the calling thread.
+     */
+    void DownloadChats();
 
 private:
     /**
@@ -109,6 +116,20 @@ private:
      * Read a file's contents into a string.
      */
     bool ReadFile( const std::string& aPath, std::string& aContent );
+
+    /**
+     * List remote chat files in the user's cloud storage folder.
+     * @return JSON array of file objects from Supabase Storage list API.
+     */
+    nlohmann::json ListRemoteChats();
+
+    /**
+     * Download a file from Supabase Storage (blocking).
+     * @param aStoragePath  Path within the bucket
+     * @param aContent      Output: downloaded file content
+     * @return true on success
+     */
+    bool DownloadFromStorage( const std::string& aStoragePath, std::string& aContent );
 
     AGENT_AUTH*        m_auth;
     std::string        m_supabaseUrl;

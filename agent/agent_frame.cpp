@@ -4053,6 +4053,8 @@ void AGENT_FRAME::UploadCurrentChat()
     json wrapper;
     wrapper["id"] = convId;
     wrapper["title"] = m_chatHistoryDb.GetTitle();
+    wrapper["created_at"] = m_chatHistoryDb.GetCreatedAt();
+    wrapper["last_updated"] = m_chatHistoryDb.GetLastUpdated();
     wrapper["messages"] = m_chatHistory;
 
     m_cloudSync->UploadChat( convId, wrapper.dump() );

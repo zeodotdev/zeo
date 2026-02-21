@@ -61,16 +61,12 @@ target_link_libraries( qa_agent PRIVATE
 
 target_compile_definitions( qa_agent PRIVATE
     BOOST_TEST_DYN_LINK
+    QA_AGENT_PYTHON_DIR="${CMAKE_SOURCE_DIR}/agent/tools/python"
 )
 
 # Register with CTest
 add_test( NAME qa_agent
     COMMAND qa_agent
-)
-
-# Point tests at the source-tree Python scripts
-set_tests_properties( qa_agent PROPERTIES
-    ENVIRONMENT "AGENT_PYTHON_DIR=${CMAKE_SOURCE_DIR}/agent/tools/python"
 )
 
 setup_qa_env( qa_agent )

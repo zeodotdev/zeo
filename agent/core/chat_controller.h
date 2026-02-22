@@ -15,6 +15,7 @@
 
 class AGENT_LLM_CLIENT;
 class AGENT_CHAT_HISTORY;
+class AGENT_CLOUD_SYNC;
 struct LLM_TOOL;
 
 /**
@@ -191,6 +192,7 @@ public:
     void SetLLMClient( AGENT_LLM_CLIENT* aClient ) { m_llmClient = aClient; }
     void SetChatHistoryDb( AGENT_CHAT_HISTORY* aDb ) { m_chatHistoryDb = aDb; }
     void SetAuth( class AGENT_AUTH* aAuth ) { m_auth = aAuth; }
+    void SetCloudSync( AGENT_CLOUD_SYNC* aCloudSync ) { m_cloudSync = aCloudSync; }
 
     /**
      * Set the function used to send KIWAY requests for tool execution.
@@ -294,6 +296,7 @@ private:
     AGENT_LLM_CLIENT*  m_llmClient;      ///< LLM API client
     AGENT_CHAT_HISTORY* m_chatHistoryDb;  ///< Persistence layer
     class AGENT_AUTH*   m_auth;          ///< Authentication manager
+    AGENT_CLOUD_SYNC*  m_cloudSync = nullptr;  ///< Cloud sync (for log filename access)
     std::function<std::string( int, const std::string& )> m_sendRequestFn;
     std::function<std::string()> m_getProjectPathFn;  ///< Get project path for context injection
     std::function<std::string()> m_getSchematicSummaryFn;  ///< Get schematic snapshot for edit detection

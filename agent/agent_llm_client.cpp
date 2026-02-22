@@ -69,7 +69,8 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
 
     // Create and start the background thread
     LLM_REQUEST_THREAD* thread = new LLM_REQUEST_THREAD(
-        this, aHandler, m_modelName, aMessages, aTools, m_agentMode );
+        this, aHandler, m_modelName, aMessages, aTools, m_agentMode,
+        m_chatId, m_chatTitle, m_chatStoragePath, m_logStoragePath );
 
     // wxThread requires Create() before Run()
     if( thread->Create() != wxTHREAD_NO_ERROR )
@@ -102,7 +103,11 @@ LLM_REQUEST_THREAD::LLM_REQUEST_THREAD( AGENT_LLM_CLIENT* aClient,
                                          const std::string& aModel,
                                          const nlohmann::json& aMessages,
                                          const std::vector<LLM_TOOL>& aTools,
-                                         AgentMode aAgentMode ) :
+                                         AgentMode aAgentMode,
+                                         const std::string& aChatId,
+                                         const std::string& aChatTitle,
+                                         const std::string& aChatStoragePath,
+                                         const std::string& aLogStoragePath ) :
         wxThread( wxTHREAD_DETACHED ),
         m_client( aClient ),
         m_handler( aHandler ),
@@ -110,7 +115,11 @@ LLM_REQUEST_THREAD::LLM_REQUEST_THREAD( AGENT_LLM_CLIENT* aClient,
         m_messages( aMessages ),
         m_tools( aTools ),
         m_agentMode( aAgentMode ),
-        m_cancelFlag( nullptr )
+        m_cancelFlag( nullptr ),
+        m_chatId( aChatId ),
+        m_chatTitle( aChatTitle ),
+        m_chatStoragePath( aChatStoragePath ),
+        m_logStoragePath( aLogStoragePath )
 {
 }
 
@@ -159,10 +168,25 @@ void* LLM_REQUEST_THREAD::Entry()
             requestBody["max_tokens"] = 131072;
     }
 
-    // Signal agent mode to server for system prompt selection (proxy strips before forwarding)
-    requestBody["metadata"] = {
+    // Signal agent mode and conversation metadata to server
+    // (proxy strips these before forwarding to LLM provider)
+    json metadataObj = {
         { "agent_mode", ( m_agentMode == AgentMode::PLAN ) ? "plan" : "execute" }
     };
+
+    if( !m_chatId.empty() )
+        metadataObj["conversation_id"] = m_chatId;
+
+    if( !m_chatTitle.empty() )
+        metadataObj["conversation_title"] = m_chatTitle;
+
+    if( !m_chatStoragePath.empty() )
+        metadataObj["chat_storage_path"] = m_chatStoragePath;
+
+    if( !m_logStoragePath.empty() )
+        metadataObj["log_storage_path"] = m_logStoragePath;
+
+    requestBody["metadata"] = metadataObj;
 
     // Add tools
     if( !m_tools.empty() )

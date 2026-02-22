@@ -62,6 +62,18 @@ public:
      */
     void DownloadChats();
 
+    /**
+     * Get the filename of the most recently modified agent log file.
+     * @return Log filename (e.g., "agent-2024-01-15T10-30-00.log") or empty string
+     */
+    std::string GetCurrentLogFilename();
+
+    /**
+     * Get the storage path prefix for the current user (the user's email).
+     * @return User email or empty string if not authenticated
+     */
+    std::string GetUserEmail();
+
 private:
     /**
      * Upload content to Supabase Storage (blocking, runs on calling thread).

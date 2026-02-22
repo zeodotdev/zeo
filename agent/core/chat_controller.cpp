@@ -6,6 +6,7 @@
 #include "agent_llm_client.h"
 #include "agent_chat_history.h"
 #include "auth/agent_auth.h"
+#include "../cloud/agent_cloud_sync.h"
 
 #include <algorithm>
 #include <chrono>
@@ -1866,6 +1867,34 @@ void CHAT_CONTROLLER::StartLLMRequest()
 
     // Repair structural issues (orphaned tool_use/tool_result) before sanitizing.
     RepairHistory();
+
+    // Set conversation metadata on LLM client for usage tracking
+    if( !m_chatId.empty() )
+    {
+        std::string title;
+        std::string chatStoragePath;
+        std::string logStoragePath;
+
+        if( m_chatHistoryDb )
+            title = m_chatHistoryDb->GetTitle();
+
+        if( m_cloudSync )
+        {
+            std::string email = m_cloudSync->GetUserEmail();
+
+            if( !email.empty() )
+            {
+                chatStoragePath = email + "/chats/" + m_chatId + ".json";
+
+                std::string logFilename = m_cloudSync->GetCurrentLogFilename();
+
+                if( !logFilename.empty() )
+                    logStoragePath = email + "/logs/" + logFilename;
+            }
+        }
+
+        m_llmClient->SetConversationMetadata( m_chatId, title, chatStoragePath, logStoragePath );
+    }
 
     // Build the API context (handles compaction — only sends post-compaction messages)
     nlohmann::json apiContext = BuildApiContext();

@@ -421,6 +421,46 @@ std::string AGENT_CLOUD_SYNC::GetChatDir()
 }
 
 
+std::string AGENT_CLOUD_SYNC::GetCurrentLogFilename()
+{
+    std::string logDir = GetLogDir();
+    wxDir dir( wxString::FromUTF8( logDir ) );
+
+    if( !dir.IsOpened() )
+        return "";
+
+    // Find the most recently modified agent-*.log file
+    wxString bestFile;
+    wxDateTime bestTime;
+
+    wxString filename;
+    bool cont = dir.GetFirst( &filename, "agent-*.log", wxDIR_FILES );
+
+    while( cont )
+    {
+        wxString fullPath = wxString::FromUTF8( logDir ) + wxFileName::GetPathSeparator() + filename;
+        wxFileName fn( fullPath );
+        wxDateTime modTime = fn.GetModificationTime();
+
+        if( !bestTime.IsValid() || modTime.IsLaterThan( bestTime ) )
+        {
+            bestTime = modTime;
+            bestFile = filename;
+        }
+
+        cont = dir.GetNext( &filename );
+    }
+
+    return bestFile.ToStdString();
+}
+
+
+std::string AGENT_CLOUD_SYNC::GetUserEmail()
+{
+    return GetUserPrefix();
+}
+
+
 bool AGENT_CLOUD_SYNC::ReadFile( const std::string& aPath, std::string& aContent )
 {
     std::ifstream file( aPath, std::ios::binary | std::ios::ate );

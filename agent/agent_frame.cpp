@@ -402,6 +402,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_chatController->SetLLMClient( m_llmClient.get() );
     m_chatController->SetChatHistoryDb( &m_chatHistoryDb );
     m_chatController->SetAuth( nullptr );
+    m_chatController->SetCloudSync( m_cloudSync.get() );
     m_chatController->SetKiwayRequestFn(
         [this]( int aFrameType, const std::string& aPayload ) -> std::string {
             return SendRequest( aFrameType, aPayload );

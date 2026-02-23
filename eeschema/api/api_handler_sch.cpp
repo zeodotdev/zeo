@@ -3968,6 +3968,15 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleAssignNetToClass(
 }
 
 
+void API_HANDLER_SCH::refreshNetclasses()
+{
+    m_frame->Prj().IncrementNetclassesTicker();
+    m_frame->OnModify();
+    m_frame->GetCanvas()->GetView()->UpdateAllItems( KIGFX::REPAINT );
+    m_frame->GetCanvas()->Refresh();
+}
+
+
 HANDLER_RESULT<schematic::commands::GetNetClassesResponse>
 API_HANDLER_SCH::handleGetNetClasses(
         const HANDLER_CONTEXT<schematic::commands::GetNetClasses>& aCtx )
@@ -3999,10 +4008,10 @@ API_HANDLER_SCH::handleGetNetClasses(
             data->set_description( nc->GetDescription().ToStdString() );
 
         if( nc->HasWireWidth() )
-            data->set_wire_width_mils( nc->GetWireWidth() / 2540 );  // nm to mils
+            data->set_wire_width_mils( schIUScale.IUToMils( nc->GetWireWidth() ) );
 
         if( nc->HasBusWidth() )
-            data->set_bus_width_mils( nc->GetBusWidth() / 2540 );  // nm to mils
+            data->set_bus_width_mils( schIUScale.IUToMils( nc->GetBusWidth() ) );
 
         COLOR4D color = nc->GetSchematicColor();
         if( color != COLOR4D::UNSPECIFIED )
@@ -4106,10 +4115,10 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetNetClass(
         nc->SetDescription( wxString::FromUTF8( ncData.description() ) );
 
     if( ncData.has_wire_width_mils() )
-        nc->SetWireWidth( ncData.wire_width_mils() * 2540 );  // mils to nm
+        nc->SetWireWidth( schIUScale.MilsToIU( ncData.wire_width_mils() ) );
 
     if( ncData.has_bus_width_mils() )
-        nc->SetBusWidth( ncData.bus_width_mils() * 2540 );  // mils to nm
+        nc->SetBusWidth( schIUScale.MilsToIU( ncData.bus_width_mils() ) );
 
     if( ncData.has_color() )
     {
@@ -4151,7 +4160,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetNetClass(
     }
 
     netSettings->RecomputeEffectiveNetclasses();
-    m_frame->OnModify();
+    refreshNetclasses();
 
     return Empty();
 }
@@ -4201,7 +4210,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleDeleteNetClass(
     netclasses.erase( name );
     netSettings->SetNetclasses( netclasses );
 
-    m_frame->OnModify();
+    refreshNetclasses();
 
     return Empty();
 }
@@ -4274,7 +4283,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetNetClassAssignments(
     }
 
     netSettings->ClearAllCaches();
-    m_frame->OnModify();
+    refreshNetclasses();
 
     return Empty();
 }
@@ -4307,7 +4316,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleAddNetClassAssignment(
 
     netSettings->SetNetclassPatternAssignment( pattern, netclass );
     netSettings->ClearAllCaches();
-    m_frame->OnModify();
+    refreshNetclasses();
 
     return Empty();
 }
@@ -4352,7 +4361,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleRemoveNetClassAssignment(
 
     netSettings->SetNetclassPatternAssignments( std::move( newAssignments ) );
     netSettings->ClearAllCaches();
-    m_frame->OnModify();
+    refreshNetclasses();
 
     return Empty();
 }

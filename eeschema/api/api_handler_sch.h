@@ -576,6 +576,9 @@ private:
     // Helper to find sheet by KIID
     SCH_SHEET* findSheetById( const KIID& aId );
 
+    // Mark netclasses dirty and repaint the canvas
+    void refreshNetclasses();
+
     SCH_EDIT_FRAME* m_frame;
 };
 

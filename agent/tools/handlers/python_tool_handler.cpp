@@ -465,6 +465,17 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
         return "Adding sheet: " + a.value( "sheet_name", "sheet" );
     } );
 
+    Register( "sch_place_companions", "sch", "schematic/sch_place_companions.py",
+              []( const nlohmann::json& a ) {
+                  std::string icRef = a.value( "ic_ref", "?" );
+                  int         count = 0;
+                  if( a.contains( "companions" ) && a["companions"].is_array() )
+                      count = static_cast<int>( a["companions"].size() );
+                  if( count > 0 )
+                      return "Placing " + std::to_string( count ) + " companions for " + icRef;
+                  return "Placing companions for " + icRef;
+              } );
+
     // --- PCB tools ---
 
     Register( "pcb_get_summary", "pcb", "pcb/pcb_get_summary.py", []( const nlohmann::json& ) {

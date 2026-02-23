@@ -80,7 +80,6 @@
 #include <view/view.h>
 #include <view/view_controls.h>
 #include <wx/log.h>
-#include <kiway_express.h>
 #include <mail_type.h>
 #include <diff_manager.h>
 

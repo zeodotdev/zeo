@@ -1,6 +1,6 @@
 #include "agent_frame.h"
 #include "agent_chat_history.h"
-#include "auth/agent_auth.h"
+#include <zeo/agent_auth.h>
 #include "cloud/agent_cloud_sync.h"
 #include "bridge/webview_bridge.h"
 #include "view/agent_markdown.h"

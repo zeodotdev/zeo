@@ -81,6 +81,16 @@ public:
      */
     bool StartOAuthFlow( const std::string& aSource = "" );
 
+    /**
+     * Read the access token directly from the session file on disk.
+     * Returns empty string if no session, token expired, or file unreadable.
+     * Does NOT attempt token refresh — caller should prompt user to sign in if empty.
+     *
+     * This is a lightweight static method that can be called from anywhere without
+     * needing a configured AGENT_AUTH instance.
+     */
+    static std::string ReadAccessTokenFromDisk();
+
 private:
     std::string m_projectUrl;
     std::string m_anonKey;
@@ -100,9 +110,9 @@ private:
     bool TryReloadSession();
 
     // Secure file I/O (0600 permissions, atomic write)
-    std::string GetSessionFilePath();
-    bool        WriteSessionFile( const std::string& aData );
-    bool        ReadSessionFile( std::string& aData );
+    static std::string GetSessionFilePath();
+    bool               WriteSessionFile( const std::string& aData );
+    static bool        ReadSessionFile( std::string& aData );
 
     // Check if access token is expired (includes 5-minute proactive refresh buffer)
     bool IsTokenExpired();

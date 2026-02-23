@@ -3967,6 +3967,15 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleAssignNetToClass(
 }
 
 
+void API_HANDLER_SCH::refreshNetclasses()
+{
+    m_frame->Prj().IncrementNetclassesTicker();
+    m_frame->OnModify();
+    m_frame->GetCanvas()->GetView()->UpdateAllItems( KIGFX::REPAINT );
+    m_frame->GetCanvas()->Refresh();
+}
+
+
 HANDLER_RESULT<schematic::commands::GetNetClassesResponse>
 API_HANDLER_SCH::handleGetNetClasses(
         const HANDLER_CONTEXT<schematic::commands::GetNetClasses>& aCtx )
@@ -4150,7 +4159,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetNetClass(
     }
 
     netSettings->RecomputeEffectiveNetclasses();
-    m_frame->OnModify();
+    refreshNetclasses();
 
     return Empty();
 }
@@ -4200,7 +4209,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleDeleteNetClass(
     netclasses.erase( name );
     netSettings->SetNetclasses( netclasses );
 
-    m_frame->OnModify();
+    refreshNetclasses();
 
     return Empty();
 }
@@ -4273,7 +4282,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetNetClassAssignments(
     }
 
     netSettings->ClearAllCaches();
-    m_frame->OnModify();
+    refreshNetclasses();
 
     return Empty();
 }
@@ -4306,7 +4315,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleAddNetClassAssignment(
 
     netSettings->SetNetclassPatternAssignment( pattern, netclass );
     netSettings->ClearAllCaches();
-    m_frame->OnModify();
+    refreshNetclasses();
 
     return Empty();
 }
@@ -4351,7 +4360,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleRemoveNetClassAssignment(
 
     netSettings->SetNetclassPatternAssignments( std::move( newAssignments ) );
     netSettings->ClearAllCaches();
-    m_frame->OnModify();
+    refreshNetclasses();
 
     return Empty();
 }

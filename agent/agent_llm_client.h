@@ -109,11 +109,33 @@ public:
      */
     void SetAgentMode( AgentMode aMode ) { m_agentMode = aMode; }
 
+    /**
+     * Set conversation metadata for usage tracking.
+     * These are sent in the request metadata and used by the proxy to link api_usage
+     * rows to a conversation record.
+     */
+    void SetConversationMetadata( const std::string& aChatId,
+                                   const std::string& aTitle,
+                                   const std::string& aChatStoragePath,
+                                   const std::string& aLogStoragePath )
+    {
+        m_chatId = aChatId;
+        m_chatTitle = aTitle;
+        m_chatStoragePath = aChatStoragePath;
+        m_logStoragePath = aLogStoragePath;
+    }
+
 private:
     AGENT_FRAME* m_parent;
     AGENT_AUTH*  m_auth = nullptr;
     std::string  m_modelName;
     AgentMode    m_agentMode = AgentMode::EXECUTE;
+
+    // Conversation metadata for usage tracking
+    std::string  m_chatId;
+    std::string  m_chatTitle;
+    std::string  m_chatStoragePath;
+    std::string  m_logStoragePath;
 
     // Async request state
     std::atomic<bool> m_requestInProgress;
@@ -133,7 +155,11 @@ public:
                         const std::string& aModel,
                         const nlohmann::json& aMessages,
                         const std::vector<LLM_TOOL>& aTools,
-                        AgentMode aAgentMode );
+                        AgentMode aAgentMode,
+                        const std::string& aChatId,
+                        const std::string& aChatTitle,
+                        const std::string& aChatStoragePath,
+                        const std::string& aLogStoragePath );
 
     virtual ~LLM_REQUEST_THREAD();
 
@@ -147,6 +173,12 @@ private:
     nlohmann::json        m_messages;
     std::vector<LLM_TOOL> m_tools;
     AgentMode             m_agentMode;
+
+    // Conversation metadata for usage tracking
+    std::string           m_chatId;
+    std::string           m_chatTitle;
+    std::string           m_chatStoragePath;
+    std::string           m_logStoragePath;
 
     // Flag to check if cancellation was requested
     std::atomic<bool>* m_cancelFlag;

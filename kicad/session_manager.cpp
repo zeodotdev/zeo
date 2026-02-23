@@ -86,13 +86,24 @@ public:
         wxStaticText* emailText = new wxStaticText( panel, wxID_ANY, aManager->GetAuth()->GetUserEmail() );
         contentSizer->Add( emailText, 0, wxLEFT | wxRIGHT | wxBOTTOM, 10 );
 
-        // Sign out link
+        // Dashboard and Sign out links
+        wxBoxSizer* linksSizer = new wxBoxSizer( wxHORIZONTAL );
+
+        wxHyperlinkCtrl* dashboardLink = new wxHyperlinkCtrl( panel, wxID_ANY, _( "Dashboard" ), "" );
+        dashboardLink->SetNormalColour( fg );
+        dashboardLink->SetVisitedColour( fg );
+        dashboardLink->SetHoverColour( fg );
+        dashboardLink->Bind( wxEVT_HYPERLINK, &SESSION_DROPDOWN::onDashboard, this );
+        linksSizer->Add( dashboardLink, 0, wxRIGHT, 10 );
+
         wxHyperlinkCtrl* signOutLink = new wxHyperlinkCtrl( panel, wxID_ANY, _( "Sign out" ), "" );
         signOutLink->SetNormalColour( fg );
         signOutLink->SetVisitedColour( fg );
         signOutLink->SetHoverColour( fg );
         signOutLink->Bind( wxEVT_HYPERLINK, &SESSION_DROPDOWN::onSignOut, this );
-        contentSizer->Add( signOutLink, 0, wxALIGN_RIGHT | wxRIGHT | wxBOTTOM, 10 );
+        linksSizer->Add( signOutLink, 0 );
+
+        contentSizer->Add( linksSizer, 0, wxALIGN_RIGHT | wxRIGHT | wxBOTTOM, 10 );
 
         panel->SetSizer( contentSizer );
         contentSizer->Fit( panel );
@@ -108,6 +119,12 @@ public:
     }
 
 private:
+    void onDashboard( wxHyperlinkEvent& aEvent )
+    {
+        wxLaunchDefaultBrowser( "https://zeo.dev/dashboard" );
+        Close( true );
+    }
+
     void onSignOut( wxHyperlinkEvent& aEvent )
     {
         m_manager->SignOut();

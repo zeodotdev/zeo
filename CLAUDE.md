@@ -17,12 +17,18 @@ agent/                  # AI Agent UI and LLM integration
 ├── core/
 │   └── chat_controller.cpp  # Chat state machine
 ├── tools/
-│   ├── agent_tools.cpp      # Tool definitions (JSON schemas for LLM)
-│   ├── tool_registry.cpp    # Handler registration
-│   └── schematic/           # Schematic tool handlers
-│       ├── sch_setup_handler.cpp   # sch_setup tool
-│       ├── sch_crud_handler.cpp    # CRUD operations
-│       └── ...
+│   ├── tool_schemas.cpp         # Tool definitions (JSON schemas sent to LLM)
+│   ├── tool_registry.cpp        # Singleton dispatcher (tool name → handler map)
+│   ├── tool_handler.h           # Base interface for all tool handlers
+│   ├── handlers/                # Tool handler implementations
+│   │   ├── python_tool_handler.cpp  # Loads .py scripts, builds IPC commands (30 tools)
+│   │   ├── pcb_autoroute_handler.cpp # Async Freerouting integration
+│   │   └── screenshot_handler.cpp   # CLI screenshot capture
+│   ├── python/                  # Python scripts (loaded at runtime)
+│   │   ├── common/              # Shared utilities (preamble.py, bbox.py)
+│   │   ├── schematic/           # sch_*.py (add, update, delete, connect_net, etc.)
+│   │   └── pcb/                 # pcb_*.py (add, route, place, export, etc.)
+│   └── util/                    # C++ helpers (kicad_cli_util)
 ├── auth/               # Supabase auth + keychain storage
 ├── bridge/             # JS↔C++ webview message router
 └── view/               # Markdown→HTML, templates, file attachments
@@ -44,10 +50,11 @@ common/                 # Shared libraries
 ## Agent Tools Architecture
 
 Tools follow a layered architecture:
-1. **Tool Definition** (`agent_tools.cpp`) - JSON schema for LLM
-2. **Tool Handler** (`sch_*_handler.cpp`) - Generates Python code
-3. **IPC API** (`api_handler_sch.cpp`) - Handles protobuf commands
-4. **Kipy** (`zeo-python/kipy/`) - Python bindings for IPC
+1. **Tool Schema** (`tool_schemas.cpp`) - JSON definitions sent to LLM
+2. **Tool Registry** (`tool_registry.cpp`) - Dispatches tool calls to handlers via name → handler map
+3. **Tool Handler** (`python_tool_handler.cpp`) - Loads `.py` scripts and builds IPC commands
+4. **IPC API** (`api_handler_sch.cpp`) - Handles protobuf commands
+5. **Kipy** (`zeo-python/kipy/`) - Python bindings for IPC
 
 For detailed process on adding/updating tools, see `/zeo-python/CLAUDE.md`
 

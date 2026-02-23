@@ -23,6 +23,24 @@ add_custom_command(
 
 add_custom_target( unified_html_template DEPENDS "${UNIFIED_TEMPLATE_OUTPUT}" )
 
+# ---------------------------------------------------------------------------
+# Python tool scripts — installed into the app bundle at build time
+# ---------------------------------------------------------------------------
+set( AGENT_PYTHON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tools/python" )
+
+# Copy python/ directory into the app bundle so scripts are available at runtime.
+# On macOS: Zeo.app/Contents/SharedSupport/agent/python/
+if( APPLE )
+    set( AGENT_PYTHON_INSTALL_DIR "${OSX_BUNDLE_BUILD_DIR}/${OSX_BUNDLE_SUP_DIR}/agent/python" )
+
+    add_custom_target( install_python_scripts ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${AGENT_PYTHON_DIR}"
+            "${AGENT_PYTHON_INSTALL_DIR}"
+        COMMENT "Installing Python tool scripts into app bundle"
+    )
+endif()
+
 include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
     ${CMAKE_SOURCE_DIR}/common
@@ -37,11 +55,9 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/bridge
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc
     ${CMAKE_CURRENT_SOURCE_DIR}/auth
+    ${CMAKE_CURRENT_SOURCE_DIR}/cloud
     ${CMAKE_CURRENT_SOURCE_DIR}/tools
-    ${CMAKE_CURRENT_SOURCE_DIR}/tools/kicad_file
-    ${CMAKE_CURRENT_SOURCE_DIR}/tools/schematic
-    ${CMAKE_CURRENT_SOURCE_DIR}/tools/pcb
-    ${CMAKE_CURRENT_SOURCE_DIR}/tools/screenshot
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/util
     ${CMAKE_CURRENT_SOURCE_DIR}/platform
     ${CMAKE_CURRENT_BINARY_DIR}  # For generated unified_template_embedded.h
     ${INC_AFTER}
@@ -63,8 +79,8 @@ set( AGENT_SRCS
     # Core logic modules
     core/chat_controller.cpp
 
-    # Tool definitions and routing
-    tools/agent_tools.cpp
+    # Tool schemas (JSON definitions sent to LLM)
+    tools/tool_schemas.cpp
 
     # Bridge (JS↔C++ message routing)
     bridge/webview_bridge.cpp
@@ -77,29 +93,20 @@ set( AGENT_SRCS
     # Authentication
     auth/agent_auth.cpp
 
-    # Direct file tools (sch_*, pcb_*)
+    # Cloud sync (chat + log uploads to Supabase Storage)
+    cloud/agent_cloud_sync.cpp
+
+    # Tool infrastructure
     tools/tool_registry.cpp
-    tools/kicad_file/sexpr_util.cpp
-    tools/kicad_file/file_writer.cpp
-    tools/kicad_file/uuid_util.cpp
-    tools/schematic/sch_parser.cpp
-    tools/schematic/sch_tool_handler.cpp
-    tools/schematic/sch_erc_handler.cpp
-    tools/schematic/sch_lib_symbol_handler.cpp
-    tools/schematic/sch_crud_handler.cpp
-    tools/schematic/sch_connect_net_handler.cpp
-    tools/schematic/sch_util_handler.cpp
-    tools/schematic/sch_sim_handler.cpp
-    tools/schematic/sch_setup_handler.cpp
-    tools/schematic/sch_label_pins_handler.cpp
-    tools/schematic/sch_companion_handler.cpp
-    tools/pcb/pcb_parser.cpp
-    tools/pcb/pcb_validator.cpp
-    tools/pcb/pcb_tool_handler.cpp
-    tools/pcb/pcb_crud_handler.cpp
-    tools/pcb/pcb_autoroute_handler.cpp
-    tools/pcb/pcb_setup_handler.cpp
-    tools/screenshot/screenshot_handler.cpp
+
+    # Tool handlers
+    tools/handlers/python_tool_handler.cpp
+    tools/handlers/pcb_autoroute_handler.cpp
+    tools/handlers/screenshot_handler.cpp
+    tools/handlers/check_status_handler.cpp
+    tools/handlers/create_project_handler.cpp
+    tools/handlers/open_editor_handler.cpp
+
 )
 
 # Platform-specific sources
@@ -197,8 +204,8 @@ target_link_libraries( agent
     # ${wxWidgets_LIBRARIES} # common/single_top.cpp doesn't need much, but let's be safe if needed
 )
 
-# Ensure HTML template is generated before compiling
-add_dependencies( agent_kiface unified_html_template )
+# Ensure HTML template and Python scripts are generated before compiling
+add_dependencies( agent_kiface unified_html_template install_python_scripts )
 add_dependencies( agent agent_kiface )
 
 # Installation rules

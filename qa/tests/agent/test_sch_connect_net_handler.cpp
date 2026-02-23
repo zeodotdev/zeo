@@ -21,91 +21,66 @@
  * Unit tests for the sch_connect_net tool handler
  */
 
+#include <algorithm>
 #include <boost/test/unit_test.hpp>
 #include <nlohmann/json.hpp>
-#include <tools/schematic/sch_connect_net_handler.h>
+#include <tools/handlers/python_tool_handler.h>
 
 BOOST_AUTO_TEST_SUITE( SchConnectNetHandler )
 
 
 // --- Handler identity ---
 
-BOOST_AUTO_TEST_CASE( CanHandleCorrectTool )
+BOOST_AUTO_TEST_CASE( RegistersCorrectTool )
 {
-    SCH_CONNECT_NET_HANDLER handler;
-    BOOST_CHECK( handler.CanHandle( "sch_connect_net" ) );
-}
-
-
-BOOST_AUTO_TEST_CASE( CanHandleRejectsOtherTools )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    BOOST_CHECK( !handler.CanHandle( "sch_add" ) );
-    BOOST_CHECK( !handler.CanHandle( "other_tool" ) );
+    PYTHON_TOOL_HANDLER handler;
+    auto names = handler.GetToolNames();
+    BOOST_CHECK( std::find( names.begin(), names.end(), "sch_connect_net" ) != names.end() );
 }
 
 
 BOOST_AUTO_TEST_CASE( RequiresIPC )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     BOOST_CHECK( handler.RequiresIPC( "sch_connect_net" ) );
 }
 
 
 // --- Input validation ---
 
-BOOST_AUTO_TEST_CASE( ErrorOnMissingPinsKey )
+BOOST_AUTO_TEST_CASE( MissingPinsKeyStillGeneratesCommand )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "other", "value" } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
-    BOOST_CHECK( cmd.find( "error" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "pins array" ) != std::string::npos );
+    // Validation now happens in the Python script at runtime
+    BOOST_CHECK( cmd.find( "run_shell sch" ) == 0 );
 }
 
 
-BOOST_AUTO_TEST_CASE( ErrorOnNonArrayPins )
+BOOST_AUTO_TEST_CASE( SinglePinStillGeneratesCommand )
 {
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = { { "pins", "not_an_array" } };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
-
-    BOOST_CHECK( cmd.find( "error" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ErrorOnSinglePin )
-{
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
-    BOOST_CHECK( cmd.find( "error" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "at least 2" ) != std::string::npos );
-}
-
-
-BOOST_AUTO_TEST_CASE( ErrorOnEmptyPinsArray )
-{
-    SCH_CONNECT_NET_HANDLER handler;
-    nlohmann::json input = { { "pins", nlohmann::json::array() } };
-    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
-
-    BOOST_CHECK( cmd.find( "error" ) != std::string::npos );
+    // Validation now happens in the Python script at runtime
+    BOOST_CHECK( cmd.find( "run_shell sch" ) == 0 );
+    BOOST_CHECK( cmd.find( "R1:1" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( LabelSpecWithoutColonIsAccepted )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "VCC", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
-    // Label specs (no colon) should produce ('label', 'VCC', '') tuples, not a validation error
-    BOOST_CHECK( cmd.find( "pin_specs = [" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "('label', 'VCC', '')" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "('pin', 'R2', '2')" ) != std::string::npos );
+    // Input pins should appear in the JSON args, and script should parse them
+    BOOST_CHECK( cmd.find( "pin_specs" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "VCC" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "R2:2" ) != std::string::npos );
 }
 
 
@@ -113,7 +88,7 @@ BOOST_AUTO_TEST_CASE( LabelSpecWithoutColonIsAccepted )
 
 BOOST_AUTO_TEST_CASE( DescriptionListsTwoPins )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string desc = handler.GetDescription( "sch_connect_net", input );
 
@@ -123,7 +98,7 @@ BOOST_AUTO_TEST_CASE( DescriptionListsTwoPins )
 
 BOOST_AUTO_TEST_CASE( DescriptionListsThreePins )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "U1:7", "R3:1", "R4:2" } ) } };
     std::string desc = handler.GetDescription( "sch_connect_net", input );
 
@@ -133,7 +108,7 @@ BOOST_AUTO_TEST_CASE( DescriptionListsThreePins )
 
 BOOST_AUTO_TEST_CASE( DescriptionShowsCountForManyPins )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "pins", nlohmann::json::array( { "R1:1", "R2:1", "R3:1", "R4:1" } ) }
     };
@@ -145,7 +120,7 @@ BOOST_AUTO_TEST_CASE( DescriptionShowsCountForManyPins )
 
 BOOST_AUTO_TEST_CASE( DescriptionFallbackWhenNoPins )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = nlohmann::json::object();
     std::string desc = handler.GetDescription( "sch_connect_net", input );
 
@@ -157,7 +132,7 @@ BOOST_AUTO_TEST_CASE( DescriptionFallbackWhenNoPins )
 
 BOOST_AUTO_TEST_CASE( IPCCommandStartsWithRunShell )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -167,7 +142,7 @@ BOOST_AUTO_TEST_CASE( IPCCommandStartsWithRunShell )
 
 BOOST_AUTO_TEST_CASE( GeneratedCodeContainsImports )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -178,7 +153,7 @@ BOOST_AUTO_TEST_CASE( GeneratedCodeContainsImports )
 
 BOOST_AUTO_TEST_CASE( GeneratedCodeContainsSnapHelper )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -188,7 +163,7 @@ BOOST_AUTO_TEST_CASE( GeneratedCodeContainsSnapHelper )
 
 BOOST_AUTO_TEST_CASE( GeneratedCodeContainsRefreshPreamble )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -198,28 +173,28 @@ BOOST_AUTO_TEST_CASE( GeneratedCodeContainsRefreshPreamble )
 
 BOOST_AUTO_TEST_CASE( GeneratedCodeContainsPinSpecs )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
-    BOOST_CHECK( cmd.find( "pin_specs = [" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "('pin', 'R1', '1')" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "('pin', 'R2', '2')" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "pin_specs" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "R1:1" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "R2:2" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( PinOrderIsPreserved )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "pins", nlohmann::json::array( { "U3:7", "R8:2", "R9:1" } ) }
     };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
-    // U3 should appear before R8, R8 before R9
-    size_t posU3 = cmd.find( "('pin', 'U3', '7')" );
-    size_t posR8 = cmd.find( "('pin', 'R8', '2')" );
-    size_t posR9 = cmd.find( "('pin', 'R9', '1')" );
+    // Pins should appear in order in the JSON args
+    size_t posU3 = cmd.find( "U3:7" );
+    size_t posR8 = cmd.find( "R8:2" );
+    size_t posR9 = cmd.find( "R9:1" );
 
     BOOST_REQUIRE( posU3 != std::string::npos );
     BOOST_REQUIRE( posR8 != std::string::npos );
@@ -231,7 +206,7 @@ BOOST_AUTO_TEST_CASE( PinOrderIsPreserved )
 
 BOOST_AUTO_TEST_CASE( SpecialCharsInRefAreEscaped )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "pins", nlohmann::json::array( { "R1'x:1", "R2:2" } ) }
     };
@@ -244,7 +219,7 @@ BOOST_AUTO_TEST_CASE( SpecialCharsInRefAreEscaped )
 
 BOOST_AUTO_TEST_CASE( GeneratedCodeContainsErrorHandling )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -256,7 +231,7 @@ BOOST_AUTO_TEST_CASE( GeneratedCodeContainsErrorHandling )
 
 BOOST_AUTO_TEST_CASE( GeneratedCodeContainsRoutingLogic )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -269,7 +244,7 @@ BOOST_AUTO_TEST_CASE( GeneratedCodeContainsRoutingLogic )
 
 BOOST_AUTO_TEST_CASE( GeneratedCodeContainsTrunkLogicForThreePlusPins )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "pins", nlohmann::json::array( { "R1:1", "R2:2", "R3:1" } ) }
     };
@@ -286,7 +261,7 @@ BOOST_AUTO_TEST_CASE( GeneratedCodeContainsTrunkLogicForThreePlusPins )
 
 BOOST_AUTO_TEST_CASE( OrientationUsesEnumNotDegrees )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -305,7 +280,7 @@ BOOST_AUTO_TEST_CASE( OrientationUsesEnumNotDegrees )
 
 BOOST_AUTO_TEST_CASE( PinRightEscapesLeft )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -320,7 +295,7 @@ BOOST_AUTO_TEST_CASE( PinRightEscapesLeft )
 
 BOOST_AUTO_TEST_CASE( PinLeftEscapesRight )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -335,7 +310,7 @@ BOOST_AUTO_TEST_CASE( PinLeftEscapesRight )
 
 BOOST_AUTO_TEST_CASE( PinUpEscapesDown )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -350,7 +325,7 @@ BOOST_AUTO_TEST_CASE( PinUpEscapesDown )
 
 BOOST_AUTO_TEST_CASE( PinDownEscapesUp )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -365,7 +340,7 @@ BOOST_AUTO_TEST_CASE( PinDownEscapesUp )
 
 BOOST_AUTO_TEST_CASE( AllOrientationsMustNotMapToSameDirection )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -409,7 +384,7 @@ BOOST_AUTO_TEST_CASE( AllOrientationsMustNotMapToSameDirection )
 
 BOOST_AUTO_TEST_CASE( AStarSkipsWireOverlapAtStartCell )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -422,7 +397,7 @@ BOOST_AUTO_TEST_CASE( AStarSkipsWireOverlapAtStartCell )
 
 BOOST_AUTO_TEST_CASE( PathHitsObstacleBuildsEndpointAdjacencySet )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -434,7 +409,7 @@ BOOST_AUTO_TEST_CASE( PathHitsObstacleBuildsEndpointAdjacencySet )
 
 BOOST_AUTO_TEST_CASE( PathHitsObstacleExemptsEndpointNeighborsFromWireOverlap )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -454,7 +429,7 @@ BOOST_AUTO_TEST_CASE( PathHitsObstacleExemptsEndpointNeighborsFromWireOverlap )
 
 BOOST_AUTO_TEST_CASE( BuildsPinCellsSetFromAllSymbols )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -466,7 +441,7 @@ BOOST_AUTO_TEST_CASE( BuildsPinCellsSetFromAllSymbols )
 
 BOOST_AUTO_TEST_CASE( AStarBlocksPinCells )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -477,7 +452,7 @@ BOOST_AUTO_TEST_CASE( AStarBlocksPinCells )
 
 BOOST_AUTO_TEST_CASE( PathHitsObstacleChecksPinCells )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
 
@@ -495,7 +470,7 @@ BOOST_AUTO_TEST_CASE( PathHitsObstacleChecksPinCells )
 
 BOOST_AUTO_TEST_CASE( TrunkHitsObstacleChecksPinCells )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     // 3+ pins to trigger trunk-and-branch mode
     nlohmann::json input = { { "pins", nlohmann::json::array( { "R1:1", "R2:2", "R3:1" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
@@ -514,7 +489,7 @@ BOOST_AUTO_TEST_CASE( TrunkHitsObstacleChecksPinCells )
 
 BOOST_AUTO_TEST_CASE( ConnectNetHasAutoFlipPowerHelper )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "pins", nlohmann::json::array( { "R1:1", "#PWR01:1" } ) }
     };
@@ -523,14 +498,14 @@ BOOST_AUTO_TEST_CASE( ConnectNetHasAutoFlipPowerHelper )
     // Auto-flip infrastructure must be present
     BOOST_CHECK( cmd.find( "_try_auto_flip_power" ) != std::string::npos );
     BOOST_CHECK( cmd.find( "_path_length" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_resolve_pin_escape" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_compute_sym_obstacle" ) != std::string::npos );
     BOOST_CHECK( cmd.find( "set_angle" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( ConnectNetAutoFlipAlwaysTriesBothOrientations )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "pins", nlohmann::json::array( { "U1:1", "#PWR01:1" } ) }
     };
@@ -546,7 +521,7 @@ BOOST_AUTO_TEST_CASE( ConnectNetAutoFlipAlwaysTriesBothOrientations )
 
 BOOST_AUTO_TEST_CASE( ConnectNetAutoFlipPrefersConventionalOrientation )
 {
-    SCH_CONNECT_NET_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "pins", nlohmann::json::array( { "R1:1", "#PWR01:1" } ) }
     };
@@ -556,6 +531,29 @@ BOOST_AUTO_TEST_CASE( ConnectNetAutoFlipPrefersConventionalOrientation )
     BOOST_CHECK( cmd.find( "new_angle == 0" ) != std::string::npos );
     // Must use a tolerance for floating-point path length comparison
     BOOST_CHECK( cmd.find( "abs(new_plen - plen)" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( ConnectNetAutoFlipUsesHypotheticalTest )
+{
+    PYTHON_TOOL_HANDLER handler;
+    nlohmann::json input = {
+        { "pins", nlohmann::json::array( { "R1:1", "#PWR01:1" } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // Flip test computes hypothetical pin state by negating escape direction
+    // rather than actually flipping the symbol (avoids UI flicker).
+    BOOST_CHECK( cmd.find( "-flip_p['out_dx']" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "-flip_p['out_dy']" ) != std::string::npos );
+    // Old bbox must be removed from obstacles by _ref tag before the hypothetical A* run
+    BOOST_CHECK( cmd.find( "obstacles.pop(_oi)" ) != std::string::npos );
+    // set_angle is only called on commit (when flip wins), not during the test
+    // Verify set_angle appears after keep_flip check, not before A*
+    size_t keep_flip_pos = cmd.find( "if keep_flip:" );
+    BOOST_REQUIRE( keep_flip_pos != std::string::npos );
+    size_t set_angle_pos = cmd.find( "set_angle(sym, new_angle)", keep_flip_pos );
+    BOOST_CHECK( set_angle_pos != std::string::npos );
 }
 
 

@@ -36,6 +36,8 @@ public:
      * Get the current chat title.
      */
     std::string GetTitle() const { return m_title; }
+    std::string GetCreatedAt() const { return m_createdAt; }
+    std::string GetLastUpdated() const { return m_lastUpdated; }
 
     /**
      * Save the current chat history to disk.

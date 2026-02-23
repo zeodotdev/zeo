@@ -1,11 +1,12 @@
 #include "chat_controller.h"
 #include "chat_events.h"
-#include "../tools/agent_tools.h"
+#include "../tools/tool_schemas.h"
 #include "../tools/tool_registry.h"
 #include "view/file_attach.h"
 #include "agent_llm_client.h"
 #include "agent_chat_history.h"
 #include "auth/agent_auth.h"
+#include "../cloud/agent_cloud_sync.h"
 
 #include <algorithm>
 #include <chrono>
@@ -49,7 +50,7 @@ CHAT_CONTROLLER::CHAT_CONTROLLER( wxEvtHandler* aEventSink )
       m_agentMode( AgentMode::EXECUTE )
 {
     // Initialize tool definitions
-    m_tools = AgentTools::GetToolDefinitions();
+    m_tools = ToolSchemas::GetToolDefinitions();
 
     // Initialize chat history as empty array
     m_chatHistory = nlohmann::json::array();
@@ -1003,26 +1004,17 @@ void CHAT_CONTROLLER::ExecuteNextTool()
                                                               static_cast<int>( m_ctx.GetState() ) ) );
 
     // Get tool description
-    wxString desc = AgentTools::GetToolDescription( tool->tool_name, tool->tool_input );
+    std::string desc = TOOL_REGISTRY::Instance().GetDescription( tool->tool_name, tool->tool_input );
 
     // Emit tool start event
     EmitEvent( EVT_CHAT_TOOL_START, ChatToolStartData( tool->tool_use_id, tool->tool_name,
-                                                        desc.ToStdString(), tool->tool_input ) );
+                                                        desc, tool->tool_input ) );
 
-    // Handle frame-managed tools specially - they are processed by AGENT_FRAME in OnChatToolStart
-    // and call HandleToolResult() when done
-    if( tool->tool_name == "open_editor" ||
-        tool->tool_name == "check_status" ||
-        tool->tool_name == "create_project" )
+    // open_editor is frame-managed: it has a deferred approval flow that can't
+    // fit the synchronous Execute() interface. AGENT_FRAME handles it directly.
+    if( tool->tool_name == "open_editor" )
     {
-        // Don't execute synchronously - wait for frame to handle via HandleToolResult
         return;
-    }
-
-    // Set project path on tool registry for path validation
-    if( m_getProjectPathFn )
-    {
-        TOOL_REGISTRY::Instance().SetProjectPath( m_getProjectPathFn() );
     }
 
     // Sync editor state to TOOL_REGISTRY before tool execution
@@ -1046,20 +1038,13 @@ void CHAT_CONTROLLER::ExecuteNextTool()
         return;
     }
 
-    // Log project path being used for debugging
-    if( m_getProjectPathFn )
-    {
-        wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - project path: %s", m_getProjectPathFn().c_str() );
-    }
-
     // Execute tool with exception handling to prevent stuck state
     std::string result;
     bool success = false;
 
     try
     {
-        // Execute tool - route through TOOL_REGISTRY for file tools, KIWAY for terminal tools
-        result = AgentTools::ExecuteToolSync( tool->tool_name, tool->tool_input, m_sendRequestFn );
+        result = TOOL_REGISTRY::Instance().ExecuteToolSync( tool->tool_name, tool->tool_input );
         success = !result.empty() && result.find( "Error:" ) != 0;
     }
     catch( const std::exception& e )
@@ -1575,8 +1560,19 @@ bool CHAT_CONTROLLER::RepairMessageArray( nlohmann::json& messages )
 
         // Preserve _compaction flag if curr is a compaction marker.
         // BuildApiContext() relies on this flag to slice the history.
+        // When merging into a compaction marker, drop pre-compaction content
+        // (e.g. tool_result blocks whose matching tool_use was compacted away).
+        // The compaction summary already encompasses everything before it.
         if( curr.contains( "_compaction" ) && curr["_compaction"] == true )
+        {
             prev["_compaction"] = true;
+
+            // Keep only the compaction marker's own content blocks.
+            // Pre-compaction tool_result blocks would reference tool_use IDs
+            // that no longer exist in the post-compaction API context.
+            if( curr.contains( "content" ) && curr["content"].is_array() )
+                prev["content"] = curr["content"];
+        }
 
         messages.erase( messages.begin() + i );
         modified = true;
@@ -1871,6 +1867,34 @@ void CHAT_CONTROLLER::StartLLMRequest()
 
     // Repair structural issues (orphaned tool_use/tool_result) before sanitizing.
     RepairHistory();
+
+    // Set conversation metadata on LLM client for usage tracking
+    if( !m_chatId.empty() )
+    {
+        std::string title;
+        std::string chatStoragePath;
+        std::string logStoragePath;
+
+        if( m_chatHistoryDb )
+            title = m_chatHistoryDb->GetTitle();
+
+        if( m_cloudSync )
+        {
+            std::string email = m_cloudSync->GetUserEmail();
+
+            if( !email.empty() )
+            {
+                chatStoragePath = email + "/chats/" + m_chatId + ".json";
+
+                std::string logFilename = m_cloudSync->GetCurrentLogFilename();
+
+                if( !logFilename.empty() )
+                    logStoragePath = email + "/logs/" + logFilename;
+            }
+        }
+
+        m_llmClient->SetConversationMetadata( m_chatId, title, chatStoragePath, logStoragePath );
+    }
 
     // Build the API context (handles compaction — only sends post-compaction messages)
     nlohmann::json apiContext = BuildApiContext();

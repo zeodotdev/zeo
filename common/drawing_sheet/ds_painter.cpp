@@ -41,7 +41,7 @@
 
 using namespace KIGFX;
 
-static const wxString productName = wxT( "KiCad E.D.A." );
+static const wxString productName = wxT( "Zeo" );
 
 DS_RENDER_SETTINGS::DS_RENDER_SETTINGS()
 {
@@ -120,7 +120,8 @@ wxString DS_DRAW_ITEM_LIST::BuildFullText( const wxString& aTextbase )
 
                 if( token->IsSameAs( wxT( "KICAD_VERSION" ) ) && PgmOrNull() )
                 {
-                    *token = wxString::Format( wxT( "%s %s" ), productName, GetBaseVersion() );
+                    *token = wxString::Format( wxT( "%s %s (KiCad %s)" ), productName,
+                                                   GetZeoVersion(), GetBaseVersion() );
                     tokenUpdated = true;
                 }
                 else if( token->IsSameAs( wxT( "#" ) ) )

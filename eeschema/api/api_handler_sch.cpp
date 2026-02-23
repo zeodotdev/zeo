@@ -1963,16 +1963,17 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleNavigateToSheet(
         return tl::unexpected( e );
     }
 
-    // Navigate to the sheet
-    m_frame->SetCurrentSheet( targetPath );
-    m_frame->DisplayCurrentSheet();
-
-    // Update the agent target sheet so subsequent API operations (CreateItems, etc.)
-    // affect the navigated-to sheet, not the original sheet. This is intentional agent
-    // navigation, distinct from user navigation which should NOT affect the agent target.
     if( m_frame->IsAgentTransactionActive() && targetPath.size() > 0 )
     {
+        // During agent transactions, only update the target sheet for API operations
+        // without changing the user's visible view
         m_frame->SetAgentTargetSheet( targetPath.Last()->m_Uuid );
+    }
+    else
+    {
+        // User-initiated or non-transaction navigation — change the visible view
+        m_frame->SetCurrentSheet( targetPath );
+        m_frame->DisplayCurrentSheet();
     }
 
     return Empty();
@@ -3782,9 +3783,13 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetGridSettings(
 
     if( aCtx.Request.has_grid_size_x_nm() || aCtx.Request.has_grid_size_y_nm() )
     {
+        // API values are in nanometers; GAL grid size is in schematic IU (1 IU = 100nm)
+        constexpr double NM_TO_SCH_IU = 1.0 / 100.0;
         VECTOR2D currentGrid = gal->GetGridSize();
-        double newX = aCtx.Request.has_grid_size_x_nm() ? aCtx.Request.grid_size_x_nm() : currentGrid.x;
-        double newY = aCtx.Request.has_grid_size_y_nm() ? aCtx.Request.grid_size_y_nm() : currentGrid.y;
+        double newX = aCtx.Request.has_grid_size_x_nm()
+                          ? aCtx.Request.grid_size_x_nm() * NM_TO_SCH_IU : currentGrid.x;
+        double newY = aCtx.Request.has_grid_size_y_nm()
+                          ? aCtx.Request.grid_size_y_nm() * NM_TO_SCH_IU : currentGrid.y;
         gal->SetGridSize( VECTOR2D( newX, newY ) );
     }
 
@@ -5227,6 +5232,15 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
         info->set_unit_count( match.symbol->GetUnitCount() );
         info->set_is_power( match.symbol->IsPower() );
 
+        // Add footprint filters
+        for( const wxString& filter : match.symbol->GetFPFilters() )
+            info->add_footprint_filters( filter.ToStdString() );
+
+        // Add datasheet
+        wxString ds = match.symbol->GetDatasheetProp();
+        if( !ds.empty() )
+            info->set_datasheet( ds.ToStdString() );
+
         // Populate pin information
         for( SCH_PIN* pin : match.symbol->GetPins() )
         {
@@ -5298,6 +5312,11 @@ API_HANDLER_SCH::handleGetSymbolInfo(
         {
             info->add_footprint_filters( filter.ToStdString() );
         }
+
+        // Add datasheet
+        wxString ds = symbol->GetDatasheetProp();
+        if( !ds.empty() )
+            info->set_datasheet( ds.ToStdString() );
 
         // Add pin information
         for( SCH_PIN* pin : symbol->GetPins() )

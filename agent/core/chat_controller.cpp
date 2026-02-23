@@ -32,6 +32,7 @@ wxDEFINE_EVENT( EVT_CHAT_STATE_CHANGED, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_TITLE_DELTA, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_TITLE_GENERATED, wxThreadEvent );
 wxDEFINE_EVENT( EVT_CHAT_HISTORY_LOADED, wxThreadEvent );
+wxDEFINE_EVENT( EVT_CHAT_COMPACTION, wxThreadEvent );
 
 
 // ============================================================================
@@ -52,7 +53,6 @@ CHAT_CONTROLLER::CHAT_CONTROLLER( wxEvtHandler* aEventSink )
 
     // Initialize chat history as empty array
     m_chatHistory = nlohmann::json::array();
-    m_apiContext = nlohmann::json::array();
     m_serverToolBlocks = nlohmann::json::array();
 }
 
@@ -361,10 +361,8 @@ void CHAT_CONTROLLER::NewChat()
 
     // Clear all chat state
     m_chatHistory = nlohmann::json::array();
-    m_apiContext = nlohmann::json::array();
     m_currentResponse.clear();
     m_thinkingContent.clear();
-    m_compactionContent.clear();
     m_chatId.clear();
     m_firstUserMessage.clear();
     m_pendingToolCalls = nlohmann::json::array();
@@ -404,7 +402,6 @@ void CHAT_CONTROLLER::LoadChat( const std::string& aChatId )
     m_currentResponse.clear();
     m_thinkingContent.clear();
     m_thinkingSignature.clear();
-    m_compactionContent.clear();
     m_pendingToolCalls = nlohmann::json::array();
     m_serverToolBlocks = nlohmann::json::array();
 
@@ -419,7 +416,6 @@ void CHAT_CONTROLLER::LoadChat( const std::string& aChatId )
 
     m_chatId = aChatId;
     m_chatHistory = messages;
-    m_apiContext = m_chatHistory;  // For now, use same as chat history
 
     // Repair any structural issues in loaded history (e.g., orphaned tool_use
     // blocks from previous errors). This fixes corrupted chats on load.
@@ -562,6 +558,9 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         break;
     case LLMChunkType::SERVER_TOOL_RESULT:
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - SERVER_TOOL_RESULT" );
+        break;
+    case LLMChunkType::COMPACTION_START:
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - COMPACTION_START" );
         break;
     case LLMChunkType::COMPACTION:
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - COMPACTION (context compacted)" );
@@ -755,12 +754,12 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
             AddToHistory( assistantMsg );
         }
 
-        // Add "Please continue" user message to API context only (not display history)
+        // Add "Please continue" user message to history
         nlohmann::json continueMsg = {
             { "role", "user" },
             { "content", "Please continue." }
         };
-        m_apiContext.push_back( continueMsg );  // API only, not m_chatHistory
+        AddToHistory( continueMsg );
 
         // Emit turn complete with continuing=true so UI finalizes current content
         EmitEvent( EVT_CHAT_TURN_COMPLETE, ChatTurnCompleteData( false, true ) );
@@ -817,26 +816,32 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         break;
     }
 
+    case LLMChunkType::COMPACTION_START:
+    {
+        // Compaction block started — notify UI immediately so it shows
+        // "Compacting..." while the content streams in.
+        EmitEvent( EVT_CHAT_COMPACTION );
+        break;
+    }
+
     case LLMChunkType::COMPACTION:
     {
-        // Context was compacted by the API - store the compaction content
-        // and replace old messages in API context
-        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - COMPACTION received" );
+        // Context was compacted by the API. Insert a marker message into
+        // m_chatHistory so that BuildApiContext() knows to skip everything
+        // before it. The marker doubles as the API's replacement context.
+        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - COMPACTION received, "
+                   "inserting marker at index %zu", m_chatHistory.size() );
 
-        m_compactionContent = aChunk.compaction_content;
-
-        // Clear all previous messages from API context and replace with compaction
-        // The compaction block summarizes the earlier conversation
-        m_apiContext = nlohmann::json::array();
-        m_apiContext.push_back( {
+        nlohmann::json compactionMsg = {
             { "role", "user" },
-            { "content", {
-                {
-                    { "type", "compaction" },
-                    { "content", m_compactionContent }
-                }
-            } }
-        } );
+            { "content", nlohmann::json::array( {
+                { { "type", "text" },
+                  { "text", aChunk.compaction_content },
+                  { "cache_control", { { "type", "ephemeral" } } } }
+            } ) },
+            { "_compaction", true }
+        };
+        m_chatHistory.push_back( compactionMsg );
         break;
     }
 
@@ -935,16 +940,6 @@ void CHAT_CONTROLLER::HandleLLMError( const std::string& aError )
             {
                 wxLogInfo( "CHAT_CONTROLLER::HandleLLMError - removing orphaned user message" );
                 m_chatHistory.erase( m_chatHistory.end() - 1 );
-
-                // Also remove from API context
-                if( !m_apiContext.empty() )
-                {
-                    auto& lastApiMsg = m_apiContext.back();
-                    if( lastApiMsg.contains( "role" ) && lastApiMsg["role"] == "user" )
-                    {
-                        m_apiContext.erase( m_apiContext.end() - 1 );
-                    }
-                }
 
                 // Persist the removal — the frame already saved to disk before the
                 // API response arrived, so without this the orphaned message reappears
@@ -1255,7 +1250,6 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
 void CHAT_CONTROLLER::AddToHistory( const nlohmann::json& aMessage )
 {
     m_chatHistory.push_back( aMessage );
-    m_apiContext.push_back( aMessage );
 }
 
 
@@ -1353,24 +1347,24 @@ void CHAT_CONTROLLER::AddAllToolResultsToHistory()
 }
 
 
-void CHAT_CONTROLLER::RepairHistory()
+bool CHAT_CONTROLLER::RepairMessageArray( nlohmann::json& messages )
 {
-    // Repair history to fix orphaned tool_use/tool_result blocks.
+    // Repair a message array to fix orphaned tool_use/tool_result blocks.
     // The Anthropic API requires:
     // 1. Every tool_use must have a corresponding tool_result in the NEXT message
     // 2. Every tool_result must reference a tool_use in the PREVIOUS message
 
-    if( m_chatHistory.empty() )
-        return;
+    if( messages.empty() )
+        return false;
 
     using json = nlohmann::json;
-    bool historyModified = false;
+    bool modified = false;
 
     // PASS 1: Remove orphaned tool_result blocks
     // These are tool_results that don't have a matching tool_use in the previous message
-    for( size_t i = 1; i < m_chatHistory.size(); i++ )
+    for( size_t i = 1; i < messages.size(); i++ )
     {
-        auto& msg = m_chatHistory[i];
+        auto& msg = messages[i];
 
         // Only check user messages with array content
         if( !msg.contains( "role" ) || msg["role"] != "user" )
@@ -1380,7 +1374,7 @@ void CHAT_CONTROLLER::RepairHistory()
 
         // Get valid tool_use IDs from the previous message (if it's an assistant message)
         std::set<std::string> validToolUseIds;
-        const auto& prevMsg = m_chatHistory[i - 1];
+        const auto& prevMsg = messages[i - 1];
         if( prevMsg.contains( "role" ) && prevMsg["role"] == "assistant" &&
             prevMsg.contains( "content" ) && prevMsg["content"].is_array() )
         {
@@ -1428,22 +1422,22 @@ void CHAT_CONTROLLER::RepairHistory()
             {
                 msg["content"] = newContent;
             }
-            historyModified = true;
+            modified = true;
         }
     }
 
     // Remove messages marked for removal
-    m_chatHistory.erase(
-        std::remove_if( m_chatHistory.begin(), m_chatHistory.end(),
+    messages.erase(
+        std::remove_if( messages.begin(), messages.end(),
             []( const json& msg ) {
                 return msg.contains( "_remove" ) && msg["_remove"] == true;
             }),
-        m_chatHistory.end() );
+        messages.end() );
 
     // PASS 2: Add missing tool_result blocks for orphaned tool_uses
-    for( size_t i = 0; i < m_chatHistory.size(); i++ )
+    for( size_t i = 0; i < messages.size(); i++ )
     {
-        const auto& msg = m_chatHistory[i];
+        const auto& msg = messages[i];
 
         // Only check assistant messages
         if( !msg.contains( "role" ) || msg["role"] != "assistant" )
@@ -1470,9 +1464,9 @@ void CHAT_CONTROLLER::RepairHistory()
         bool nextMsgIsToolResultUser = false;
         size_t nextMsgIdx = i + 1;
 
-        if( nextMsgIdx < m_chatHistory.size() )
+        if( nextMsgIdx < messages.size() )
         {
-            const auto& nextMsg = m_chatHistory[nextMsgIdx];
+            const auto& nextMsg = messages[nextMsgIdx];
             if( nextMsg.contains( "role" ) && nextMsg["role"] == "user" &&
                 nextMsg.contains( "content" ) && nextMsg["content"].is_array() )
             {
@@ -1503,18 +1497,18 @@ void CHAT_CONTROLLER::RepairHistory()
 
         // If the next message already has tool_results, add the missing ones to it
         // Otherwise, insert a new message
-        if( nextMsgIsToolResultUser && nextMsgIdx < m_chatHistory.size() )
+        if( nextMsgIsToolResultUser && nextMsgIdx < messages.size() )
         {
             for( const auto& toolId : missingIds )
             {
-                m_chatHistory[nextMsgIdx]["content"].push_back( {
+                messages[nextMsgIdx]["content"].push_back( {
                     { "type", "tool_result" },
                     { "tool_use_id", toolId },
                     { "content", "Tool execution was interrupted. No result available." },
                     { "is_error", true }
                 });
             }
-            historyModified = true;
+            modified = true;
         }
         else
         {
@@ -1533,8 +1527,8 @@ void CHAT_CONTROLLER::RepairHistory()
             }
 
             toolResultMsg["content"] = content;
-            m_chatHistory.insert( m_chatHistory.begin() + i + 1, toolResultMsg );
-            historyModified = true;
+            messages.insert( messages.begin() + i + 1, toolResultMsg );
+            modified = true;
 
             i++; // Skip the message we just inserted
         }
@@ -1545,10 +1539,10 @@ void CHAT_CONTROLLER::RepairHistory()
     // Consecutive user messages can accumulate when HandleLLMError removes orphaned
     // messages but doesn't persist the removal, or when the app crashes mid-conversation.
     // We merge them into one message by combining their content arrays.
-    for( size_t i = 1; i < m_chatHistory.size(); /* no increment */ )
+    for( size_t i = 1; i < messages.size(); /* no increment */ )
     {
-        auto& prev = m_chatHistory[i - 1];
-        auto& curr = m_chatHistory[i];
+        auto& prev = messages[i - 1];
+        auto& curr = messages[i];
 
         if( !prev.contains( "role" ) || !curr.contains( "role" ) ||
             prev["role"] != "user" || curr["role"] != "user" )
@@ -1557,7 +1551,7 @@ void CHAT_CONTROLLER::RepairHistory()
             continue;
         }
 
-        // Merge curr's content into prev, combining content arrays
+        // Merge curr's content into prev, combining content arrays.
         json prevContent;
 
         if( prev.contains( "content" ) && prev["content"].is_array() )
@@ -1578,16 +1572,29 @@ void CHAT_CONTROLLER::RepairHistory()
         }
 
         prev["content"] = prevContent;
-        m_chatHistory.erase( m_chatHistory.begin() + i );
-        historyModified = true;
-        wxLogInfo( "CHAT_CONTROLLER::RepairHistory - merged consecutive user messages at index %zu", i );
+
+        // Preserve _compaction flag if curr is a compaction marker.
+        // BuildApiContext() relies on this flag to slice the history.
+        if( curr.contains( "_compaction" ) && curr["_compaction"] == true )
+            prev["_compaction"] = true;
+
+        messages.erase( messages.begin() + i );
+        modified = true;
+        wxLogInfo( "CHAT_CONTROLLER::RepairMessageArray - merged consecutive user messages at index %zu", i );
         // Don't increment — check the new element at position i
     }
 
-    if( historyModified )
+    return modified;
+}
+
+
+void CHAT_CONTROLLER::RepairHistory()
+{
+    bool modified = RepairMessageArray( m_chatHistory );
+
+    if( modified )
     {
-        // Sync API context after fix
-        m_apiContext = m_chatHistory;
+        wxLogInfo( "CHAT_CONTROLLER::RepairHistory - chat history was repaired" );
 
         // Save repaired history (chat history DB maintains its own conversation ID)
         if( m_chatHistoryDb )
@@ -1643,17 +1650,17 @@ void CHAT_CONTROLLER::AddAssistantToolUseToHistory( const nlohmann::json& aToolU
 }
 
 
-void CHAT_CONTROLLER::SanitizeApiContext()
+void CHAT_CONTROLLER::SanitizeMessages( nlohmann::json& aMessages )
 {
-    // Sanitize API context to ensure valid message format for the Anthropic API.
+    // Sanitize message array to ensure valid format for the Anthropic API.
     // This fixes issues like consecutive user messages that can occur after errors.
-    if( m_apiContext.empty() )
+    if( aMessages.empty() )
         return;
 
     nlohmann::json sanitized = nlohmann::json::array();
     std::string lastRole;
 
-    for( const auto& msg : m_apiContext )
+    for( const auto& msg : aMessages )
     {
         if( !msg.contains( "role" ) )
             continue;
@@ -1689,7 +1696,7 @@ void CHAT_CONTROLLER::SanitizeApiContext()
                 {
                     // Merge current message's content into the tool_result message
                     // to maintain role alternation while preserving the tool_result.
-                    wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - merging into tool_result "
+                    wxLogInfo( "CHAT_CONTROLLER::SanitizeMessages - merging into tool_result "
                                "user message" );
                     auto& prevSanitized = sanitized.back();
 
@@ -1725,7 +1732,7 @@ void CHAT_CONTROLLER::SanitizeApiContext()
                 else
                 {
                     // For consecutive user messages, replace the previous one
-                    wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - removing duplicate user message" );
+                    wxLogInfo( "CHAT_CONTROLLER::SanitizeMessages - removing duplicate user message" );
                     if( !sanitized.empty() )
                         sanitized.erase( sanitized.end() - 1 );
                 }
@@ -1734,7 +1741,7 @@ void CHAT_CONTROLLER::SanitizeApiContext()
             {
                 // For consecutive assistant messages, keep both (could be continuation)
                 // but this shouldn't normally happen
-                wxLogWarning( "CHAT_CONTROLLER::SanitizeApiContext - consecutive assistant messages" );
+                wxLogWarning( "CHAT_CONTROLLER::SanitizeMessages - consecutive assistant messages" );
             }
         }
 
@@ -1793,11 +1800,48 @@ void CHAT_CONTROLLER::SanitizeApiContext()
     // Ensure conversation doesn't end with orphaned assistant tool_use without tool_result
     // (This is handled by RepairHistory, but double-check here)
 
-    if( sanitized != m_apiContext )
+    if( sanitized != aMessages )
     {
-        wxLogInfo( "CHAT_CONTROLLER::SanitizeApiContext - context was sanitized" );
-        m_apiContext = sanitized;
+        wxLogInfo( "CHAT_CONTROLLER::SanitizeMessages - context was sanitized" );
+        aMessages = sanitized;
     }
+}
+
+
+nlohmann::json CHAT_CONTROLLER::BuildApiContext() const
+{
+    // Find the last compaction marker in m_chatHistory.
+    // Everything from that marker onward is the API context.
+    int compactionIdx = -1;
+
+    for( int i = static_cast<int>( m_chatHistory.size() ) - 1; i >= 0; --i )
+    {
+        if( m_chatHistory[i].contains( "_compaction" ) && m_chatHistory[i]["_compaction"] == true )
+        {
+            compactionIdx = i;
+            break;
+        }
+    }
+
+    if( compactionIdx < 0 )
+        return m_chatHistory;  // No compaction — send full history
+
+    // Return [compaction_marker] + all messages after it
+    nlohmann::json context = nlohmann::json::array();
+
+    for( size_t i = static_cast<size_t>( compactionIdx ); i < m_chatHistory.size(); ++i )
+    {
+        // Strip the internal _compaction flag before sending to API
+        nlohmann::json msg = m_chatHistory[i];
+        msg.erase( "_compaction" );
+        context.push_back( msg );
+    }
+
+    wxLogInfo( "CHAT_CONTROLLER::BuildApiContext - compaction at index %d, "
+               "sending %zu of %zu messages",
+               compactionIdx, context.size(), m_chatHistory.size() );
+
+    return context;
 }
 
 
@@ -1828,13 +1872,19 @@ void CHAT_CONTROLLER::StartLLMRequest()
     // Repair structural issues (orphaned tool_use/tool_result) before sanitizing.
     RepairHistory();
 
-    // Sanitize context before sending to ensure valid message format
-    SanitizeApiContext();
+    // Build the API context (handles compaction — only sends post-compaction messages)
+    nlohmann::json apiContext = BuildApiContext();
 
-    // System prompt now handled server-side
+    // Repair the sliced context. After compaction, the sliced context may have orphaned
+    // tool_results (where the corresponding tool_use was before the compaction marker).
+    // RepairMessageArray will remove these orphaned blocks.
+    RepairMessageArray( apiContext );
+
+    // Sanitize context before sending to ensure valid message format
+    SanitizeMessages( apiContext );
+
     // Start async request - events will be forwarded to HandleLLMChunk
-    // In plan mode, only read-only tools are sent to the LLM
-    bool started = m_llmClient->AskStreamWithToolsAsync( m_apiContext, GetFilteredTools(), m_eventSink );
+    bool started = m_llmClient->AskStreamWithToolsAsync( apiContext, GetFilteredTools(), m_eventSink );
     if( !started )
     {
         HandleLLMError( "Failed to start LLM request" );

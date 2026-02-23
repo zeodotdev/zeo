@@ -118,10 +118,8 @@ std::string SCH_UTIL_HANDLER::GenerateAnnotateCode( const nlohmann::json& aInput
     code << "        'scope': '" << scope << "',\n";
     code << "        'sort_by': '" << sortBy << "',\n";
     code << "        'symbols_annotated': count,\n";
-    code << "        'changes': annotated[:50]  # Limit to first 50 changes\n";
+    code << "        'changes': annotated\n";
     code << "    }\n";
-    code << "    if len(annotated) > 50:\n";
-    code << "        result['note'] = f'Showing first 50 of {len(annotated)} changes'\n";
     code << "    print(json.dumps(result, indent=2))\n";
     code << "\n";
     code << "except Exception as e:\n";

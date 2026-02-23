@@ -96,7 +96,7 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
 
     labelsDict << "}";
 
-    code << "import json, sys\n";
+    code << "import json\n";
     code << "from kipy.geometry import Vector2\n";
     code << "from kipy.proto.common.types.enums_pb2 import HA_LEFT, HA_RIGHT, VA_TOP, VA_BOTTOM\n";
     code << "from kipy.schematic_types import LocalLabel, GlobalLabel, HierarchicalLabel\n";
@@ -115,18 +115,44 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "h_align_override = " << ( hAlignOverride.empty() ? "None" : ( "'" + hAlignOverride + "'" ) ) << "\n";
     code << "v_align_override = " << ( vAlignOverride.empty() ? "None" : ( "'" + vAlignOverride + "'" ) ) << "\n";
     code << "\n";
+    code << "def snap_to_grid(val, grid=1.27):\n";
+    code << "    return round(val / grid) * grid\n";
+    code << "\n";
+    code << "_LABEL_SHRINK = 0.4  # Shrink label bboxes to allow stacking at 2.54mm pitch\n";
+    code << "\n";
 
-    // Overlap detection preamble — collect existing label bounding boxes (0 margin)
-    code << "# Collect existing label bounding boxes for overlap detection\n";
+    // Overlap detection preamble — collect existing symbol, sheet, and label bboxes
+    code << "# Collect bounding boxes of existing elements for overlap detection\n";
+    code << "_BBOX_MARGIN = 1.0\n";
     code << "placed_bboxes = []\n";
     code << "try:\n";
-    code << "    for _elbl in sch.labels.get_all():\n";
+    code << "    for _esym in sch.symbols.get_all():\n";
     code << "        try:\n";
-    code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm', include_text=False)\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_esym, units='mm', include_text=False)\n";
     code << "        except:\n";
     code << "            continue\n";
     code << "        if _ebb:\n";
-    code << "            placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'], 'max_x': _ebb['max_x'], 'min_y': _ebb['min_y'], 'max_y': _ebb['max_y']})\n";
+    code << "            placed_bboxes.append({'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
+    code << "except:\n";
+    code << "    pass\n";
+    code << "try:\n";
+    code << "    for _esht in sch.crud.get_sheets():\n";
+    code << "        try:\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_esht, units='mm')\n";
+    code << "        except:\n";
+    code << "            continue\n";
+    code << "        if _ebb:\n";
+    code << "            placed_bboxes.append({'ref': getattr(_esht, 'name', 'sheet'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})\n";
+    code << "except:\n";
+    code << "    pass\n";
+    code << "try:\n";
+    code << "    for _elbl in sch.labels.get_all():\n";
+    code << "        try:\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm')\n";
+    code << "        except:\n";
+    code << "            continue\n";
+    code << "        if _ebb:\n";
+    code << "            placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] + _LABEL_SHRINK, 'max_x': _ebb['max_x'] - _LABEL_SHRINK, 'min_y': _ebb['min_y'] + _LABEL_SHRINK, 'max_y': _ebb['max_y'] - _LABEL_SHRINK})\n";
     code << "except:\n";
     code << "    pass\n";
     code << "\n";
@@ -138,12 +164,119 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "    return bb['min_x'] <= px <= bb['max_x'] and bb['min_y'] <= py <= bb['max_y']\n";
     code << "\n";
 
+    // Shared label creation function
+    code << "def create_label(text, position, h_align, v_align):\n";
+    code << "    if label_type == 'global':\n";
+    code << "        lbl = GlobalLabel.create(position, text)\n";
+    code << "    elif label_type == 'hierarchical':\n";
+    code << "        lbl = HierarchicalLabel.create(position, text)\n";
+    code << "    else:\n";
+    code << "        lbl = LocalLabel.create(position, text)\n";
+    code << "    lbl._proto.text.attributes.horizontal_alignment = h_align\n";
+    code << "    lbl._proto.text.attributes.vertical_alignment = v_align\n";
+    code << "    created = sch.crud.create_items(lbl)\n";
+    code << "    return created[0] if created else lbl\n";
+    code << "\n";
+
+    // Resolve ref as symbol or sheet
+    code << "# Resolve ref as symbol or sheet\n";
     code << "results = []\n";
+    code << "_is_sheet = False\n";
+    code << "sym = None\n";
+    code << "sheet = None\n";
     code << "try:\n";
     code << "    sym = sch.symbols.get_by_ref(ref)\n";
     code << "    if not sym:\n";
-    code << "        raise ValueError(f'Symbol not found: {ref}')\n";
+    code << "        raise ValueError('not found')\n";
+    code << "except:\n";
+    code << "    sym = None\n";
     code << "\n";
+    code << "if not sym:\n";
+    code << "    for _s in sch.crud.get_sheets():\n";
+    code << "        if _s.name == ref:\n";
+    code << "            sheet = _s\n";
+    code << "            _is_sheet = True\n";
+    code << "            break\n";
+    code << "\n";
+    code << "if not sym and not sheet:\n";
+    code << "    results = [{'error': f'No symbol or sheet found matching: {ref}'}]\n";
+    code << "\n";
+
+    // Sheet pin labeling path
+    code << "elif _is_sheet:\n";
+    code << "    _pin_by_name = {p.name: p for p in sheet.pins}\n";
+    code << "\n";
+    code << "    for pin_id, label_text in pin_labels.items():\n";
+    code << "        try:\n";
+    code << "            _pin = _pin_by_name.get(pin_id)\n";
+    code << "            if not _pin:\n";
+    code << "                results.append({'pin': pin_id, 'label': label_text, 'error': f'Sheet pin not found: {pin_id}'})\n";
+    code << "                continue\n";
+    code << "\n";
+    code << "            px = _pin.position.x / 1_000_000\n";
+    code << "            py = _pin.position.y / 1_000_000\n";
+    code << "            _side = _pin.side\n";
+    code << "\n";
+    code << "            # Sheet pin side → label alignment (already world-space)\n";
+    code << "            # SPS_LEFT=1: label extends left; SPS_RIGHT=2: label extends right\n";
+    code << "            # SPS_TOP=3: horizontal above; SPS_BOTTOM=4: horizontal below\n";
+    code << "            if _side == 1:\n";
+    code << "                h_align, v_align = HA_RIGHT, VA_BOTTOM\n";
+    code << "                direction = 'left'\n";
+    code << "            elif _side == 2:\n";
+    code << "                h_align, v_align = HA_LEFT, VA_BOTTOM\n";
+    code << "                direction = 'right'\n";
+    code << "            elif _side == 3:\n";
+    code << "                h_align, v_align = HA_LEFT, VA_BOTTOM\n";
+    code << "                direction = 'up'\n";
+    code << "            elif _side == 4:\n";
+    code << "                h_align, v_align = HA_LEFT, VA_TOP\n";
+    code << "                direction = 'down'\n";
+    code << "            else:\n";
+    code << "                h_align, v_align = HA_LEFT, VA_BOTTOM\n";
+    code << "                direction = 'right'\n";
+    code << "\n";
+    code << "            # Apply alignment overrides\n";
+    code << "            if h_align_override is not None:\n";
+    code << "                h_align = HA_LEFT if h_align_override == 'left' else HA_RIGHT\n";
+    code << "            if v_align_override is not None:\n";
+    code << "                v_align = VA_TOP if v_align_override == 'top' else VA_BOTTOM\n";
+    code << "\n";
+    code << "            lbl_x, lbl_y = px, py\n";
+    code << "            label_pos = Vector2.from_xy_mm(lbl_x, lbl_y)\n";
+    code << "            _lbl = create_label(label_text, label_pos, h_align, v_align)\n";
+    code << "\n";
+    code << "            # Overlap detection — reject if label overlaps any existing element\n";
+    code << "            _rejected = False\n";
+    code << "            try:\n";
+    code << "                _bb = sch.transform.get_bounding_box(_lbl, units='mm')\n";
+    code << "                if _bb:\n";
+    code << "                    _new_bbox = {'min_x': _bb['min_x'] + _LABEL_SHRINK, 'max_x': _bb['max_x'] - _LABEL_SHRINK, 'min_y': _bb['min_y'] + _LABEL_SHRINK, 'max_y': _bb['max_y'] - _LABEL_SHRINK}\n";
+    code << "                    _conflict = None\n";
+    code << "                    for _pb in placed_bboxes:\n";
+    code << "                        if _bboxes_overlap(_new_bbox, _pb) and not _point_in_bbox(px, py, _pb):\n";
+    code << "                            _conflict = _pb\n";
+    code << "                            break\n";
+    code << "                    if _conflict:\n";
+    code << "                        sch.crud.remove_items([_lbl])\n";
+    code << "                        _cr = _conflict.get('ref', '?')\n";
+    code << "                        _ox = min(_new_bbox['max_x'], _conflict['max_x']) - max(_new_bbox['min_x'], _conflict['min_x'])\n";
+    code << "                        _oy = min(_new_bbox['max_y'], _conflict['max_y']) - max(_new_bbox['min_y'], _conflict['min_y'])\n";
+    code << "                        results.append({'pin': pin_id, 'label': label_text, 'error': f\"Placement rejected: overlaps '{_cr}' by {_ox:.1f}mm horizontal, {_oy:.1f}mm vertical\"})\n";
+    code << "                        _rejected = True\n";
+    code << "                    else:\n";
+    code << "                        placed_bboxes.append({'ref': label_text, **_new_bbox})\n";
+    code << "            except:\n";
+    code << "                pass\n";
+    code << "            if not _rejected:\n";
+    code << "                results.append({'pin': pin_id, 'label': label_text, 'position': [round(lbl_x, 2), round(lbl_y, 2)], 'direction': direction})\n";
+    code << "\n";
+    code << "        except Exception as e:\n";
+    code << "            results.append({'pin': pin_id, 'label': label_text, 'error': str(e)})\n";
+    code << "\n";
+
+    // Symbol pin labeling path (existing logic)
+    code << "else:\n";
 
     // Rotation and mirroring transform for pin orientation
     code << "    # Orientation transform: apply symbol rotation and mirroring\n";
@@ -162,20 +295,6 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "            if o == 2: o = 3\n";
     code << "            elif o == 3: o = 2\n";
     code << "        return o\n";
-    code << "\n";
-
-    // Label creation function
-    code << "    def create_label(text, position, h_align, v_align):\n";
-    code << "        if label_type == 'global':\n";
-    code << "            lbl = GlobalLabel.create(position, text)\n";
-    code << "        elif label_type == 'hierarchical':\n";
-    code << "            lbl = HierarchicalLabel.create(position, text)\n";
-    code << "        else:\n";
-    code << "            lbl = LocalLabel.create(position, text)\n";
-    code << "        lbl._proto.text.attributes.horizontal_alignment = h_align\n";
-    code << "        lbl._proto.text.attributes.vertical_alignment = v_align\n";
-    code << "        created = sch.crud.create_items(lbl)\n";
-    code << "        return created[0] if created else lbl\n";
     code << "\n";
 
     // Process each pin
@@ -198,24 +317,30 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
 
     // Determine escape direction and justification
     code << "            # Transform orientation and compute escape direction\n";
+    code << "            out_dx, out_dy = 0, 0\n";
     code << "            if orient is not None:\n";
     code << "                orient = transform_orientation(orient)\n";
     code << "                # orient 0=PIN_RIGHT(body), 1=PIN_LEFT(body), 2=PIN_UP(body), 3=PIN_DOWN(body)\n";
     code << "                if orient == 0:    # escape left\n";
     code << "                    h_align, v_align = HA_RIGHT, VA_BOTTOM\n";
     code << "                    direction = 'left'\n";
+    code << "                    out_dx, out_dy = -1, 0\n";
     code << "                elif orient == 1:  # escape right\n";
     code << "                    h_align, v_align = HA_LEFT, VA_BOTTOM\n";
     code << "                    direction = 'right'\n";
+    code << "                    out_dx, out_dy = 1, 0\n";
     code << "                elif orient == 2:  # escape down\n";
     code << "                    h_align, v_align = HA_LEFT, VA_TOP\n";
     code << "                    direction = 'down'\n";
+    code << "                    out_dx, out_dy = 0, 1\n";
     code << "                elif orient == 3:  # escape up\n";
     code << "                    h_align, v_align = HA_LEFT, VA_BOTTOM\n";
     code << "                    direction = 'up'\n";
+    code << "                    out_dx, out_dy = 0, -1\n";
     code << "                else:\n";
     code << "                    h_align, v_align = HA_LEFT, VA_BOTTOM\n";
     code << "                    direction = 'right'\n";
+    code << "                    out_dx, out_dy = 1, 0\n";
     code << "            else:\n";
     code << "                # Fallback: guess from symbol center\n";
     code << "                sym_cx = sym.position.x / 1_000_000\n";
@@ -223,9 +348,11 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "                if px > sym_cx:\n";
     code << "                    h_align, v_align = HA_LEFT, VA_BOTTOM\n";
     code << "                    direction = 'right'\n";
+    code << "                    out_dx, out_dy = 1, 0\n";
     code << "                else:\n";
     code << "                    h_align, v_align = HA_RIGHT, VA_BOTTOM\n";
     code << "                    direction = 'left'\n";
+    code << "                    out_dx, out_dy = -1, 0\n";
     code << "\n";
 
     // Apply alignment overrides if specified
@@ -236,40 +363,38 @@ std::string SCH_LABEL_PINS_HANDLER::GenerateLabelPinsCode( const nlohmann::json&
     code << "                v_align = VA_TOP if v_align_override == 'top' else VA_BOTTOM\n";
     code << "\n";
 
-    // Place label at pin tip, then check for overlap
-    code << "            label_pos = Vector2.from_xy_mm(px, py)\n";
+    // Place label directly at pin tip
+    code << "            lbl_x, lbl_y = px, py\n";
+    code << "            label_pos = Vector2.from_xy_mm(lbl_x, lbl_y)\n";
     code << "            _lbl = create_label(label_text, label_pos, h_align, v_align)\n";
     code << "\n";
-    code << "            # Overlap detection (skip bboxes whose pin point coincides with ours)\n";
+    code << "            # Overlap detection — reject if label overlaps any existing element\n";
     code << "            _rejected = False\n";
     code << "            try:\n";
-    code << "                _bb = sch.transform.get_bounding_box(_lbl, units='mm', include_text=False)\n";
+    code << "                _bb = sch.transform.get_bounding_box(_lbl, units='mm')\n";
     code << "                if _bb:\n";
-    code << "                    _new_bbox = {'min_x': _bb['min_x'], 'max_x': _bb['max_x'], 'min_y': _bb['min_y'], 'max_y': _bb['max_y']}\n";
+    code << "                    _new_bbox = {'min_x': _bb['min_x'] + _LABEL_SHRINK, 'max_x': _bb['max_x'] - _LABEL_SHRINK, 'min_y': _bb['min_y'] + _LABEL_SHRINK, 'max_y': _bb['max_y'] - _LABEL_SHRINK}\n";
+    code << "                    _conflict = None\n";
     code << "                    for _pb in placed_bboxes:\n";
-    code << "                        if _bboxes_overlap(_new_bbox, _pb):\n";
-    code << "                            # Allow overlap if the existing label's bbox contains our pin tip\n";
-    code << "                            # (pin-on-pin connection is intentional)\n";
-    code << "                            if _point_in_bbox(px, py, _pb):\n";
-    code << "                                continue\n";
-    code << "                            sch.crud.remove_items([_lbl])\n";
-    code << "                            _existing_ref = _pb.get('ref', '?')\n";
-    code << "                            results.append({'pin': pin_id, 'label': label_text, 'error': f\"Placement rejected: overlaps existing label '{_existing_ref}'\"})\n";
-    code << "                            _rejected = True\n";
+    code << "                        if _bboxes_overlap(_new_bbox, _pb) and not _point_in_bbox(px, py, _pb):\n";
+    code << "                            _conflict = _pb\n";
     code << "                            break\n";
-    code << "                    if not _rejected:\n";
+    code << "                    if _conflict:\n";
+    code << "                        sch.crud.remove_items([_lbl])\n";
+    code << "                        _cr = _conflict.get('ref', '?')\n";
+    code << "                        _ox = min(_new_bbox['max_x'], _conflict['max_x']) - max(_new_bbox['min_x'], _conflict['min_x'])\n";
+    code << "                        _oy = min(_new_bbox['max_y'], _conflict['max_y']) - max(_new_bbox['min_y'], _conflict['min_y'])\n";
+    code << "                        results.append({'pin': pin_id, 'label': label_text, 'error': f\"Placement rejected: overlaps '{_cr}' by {_ox:.1f}mm horizontal, {_oy:.1f}mm vertical\"})\n";
+    code << "                        _rejected = True\n";
+    code << "                    else:\n";
     code << "                        placed_bboxes.append({'ref': label_text, **_new_bbox})\n";
     code << "            except:\n";
     code << "                pass\n";
     code << "            if not _rejected:\n";
-    code << "                results.append({'pin': pin_id, 'label': label_text, 'position': [round(px, 2), round(py, 2)], 'direction': direction})\n";
+    code << "                results.append({'pin': pin_id, 'label': label_text, 'position': [round(lbl_x, 2), round(lbl_y, 2)], 'direction': direction})\n";
     code << "\n";
     code << "        except Exception as e:\n";
     code << "            results.append({'pin': pin_id, 'label': label_text, 'error': str(e)})\n";
-    code << "\n";
-
-    code << "except Exception as e:\n";
-    code << "    results = [{'error': str(e)}]\n";
     code << "\n";
 
     // Auto-sync sheet pins when placing hierarchical labels

@@ -510,4 +510,53 @@ BOOST_AUTO_TEST_CASE( TrunkHitsObstacleChecksPinCells )
 }
 
 
+// --- sch_connect_net: auto-flip power symbol ---
+
+BOOST_AUTO_TEST_CASE( ConnectNetHasAutoFlipPowerHelper )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = {
+        { "pins", nlohmann::json::array( { "R1:1", "#PWR01:1" } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // Auto-flip infrastructure must be present
+    BOOST_CHECK( cmd.find( "_try_auto_flip_power" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_path_length" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_resolve_pin_escape" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "set_angle" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( ConnectNetAutoFlipAlwaysTriesBothOrientations )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = {
+        { "pins", nlohmann::json::array( { "U1:1", "#PWR01:1" } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // Must check for #PWR prefix to identify power symbols
+    BOOST_CHECK( cmd.find( "#PWR" ) != std::string::npos );
+    // Must compare path lengths to decide which orientation wins
+    BOOST_CHECK( cmd.find( "_path_length" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "new_plen < plen" ) != std::string::npos );
+}
+
+
+BOOST_AUTO_TEST_CASE( ConnectNetAutoFlipPrefersConventionalOrientation )
+{
+    SCH_CONNECT_NET_HANDLER handler;
+    nlohmann::json input = {
+        { "pins", nlohmann::json::array( { "R1:1", "#PWR01:1" } ) }
+    };
+    std::string cmd = handler.GetIPCCommand( "sch_connect_net", input );
+
+    // When paths are equal length, prefer 0 degrees (conventional orientation)
+    BOOST_CHECK( cmd.find( "new_angle == 0" ) != std::string::npos );
+    // Must use a tolerance for floating-point path length comparison
+    BOOST_CHECK( cmd.find( "abs(new_plen - plen)" ) != std::string::npos );
+}
+
+
 BOOST_AUTO_TEST_SUITE_END()

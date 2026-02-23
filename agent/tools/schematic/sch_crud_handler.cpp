@@ -326,6 +326,7 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
         code << "# Margin constants: ICs (>6 pins, MCUs) get larger margin for companion circuits\n";
         code << "_BBOX_MARGIN_DEFAULT = " << BBOX_MARGIN_MM << "\n";
         code << "_BBOX_MARGIN_IC = " << IC_BBOX_MARGIN_MM << "\n";
+        code << "_LABEL_SHRINK = 0.4  # Shrink label bboxes to allow stacking at 2.54mm pitch\n";
         code << "\n";
         code << "def _get_bbox_margin(sym):\n";
         code << "    \"\"\"Return appropriate margin based on symbol type/pin count.\"\"\"\n";
@@ -356,7 +357,7 @@ std::string SCH_CRUD_HANDLER::GenerateUpdateBatchCode( const nlohmann::json& aIn
         code << "try:\n";
         code << "    for _elbl in sch.labels.get_all():\n";
         code << "        try:\n";
-        code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm', include_text=False)\n";
+        code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm')\n";
         code << "        except:\n";
         code << "            continue\n";
         code << "        if _ebb:\n";
@@ -786,7 +787,7 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "                    matched.append(w)\n";
     code << "\n";
     code << "        elif q_type in ('label', 'global_label', 'hierarchical_label'):\n";
-    code << "            type_map = {'label': 'NetLabel', 'global_label': 'GlobalLabel', 'hierarchical_label': 'HierLabel'}\n";
+    code << "            type_map = {'label': 'NetLabel', 'global_label': 'GlobalLabel', 'hierarchical_label': 'HierarchicalLabel'}\n";
     code << "            expected_class = type_map.get(q_type, '')\n";
     code << "            for lbl in sch.labels.get_all():\n";
     code << "                ok = True\n";
@@ -899,7 +900,7 @@ std::string SCH_CRUD_HANDLER::GenerateBatchDeleteCode( const nlohmann::json& aIn
     code << "        for item in items_to_delete:\n";
     code << "            for p in _get_points(item):\n";
     code << "                queue.append(p)\n";
-    code << "        deletable_types = ('Wire', 'Junction', 'NetLabel', 'GlobalLabel', 'HierLabel', 'NoConnect')\n";
+    code << "        deletable_types = ('Wire', 'Junction', 'NetLabel', 'GlobalLabel', 'HierarchicalLabel', 'NoConnect')\n";
     code << "        while queue:\n";
     code << "            pt = queue.popleft()\n";
     code << "            if pt in pin_positions:\n";
@@ -1165,7 +1166,7 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "    \n";
     code << "    # Build lookup dictionaries\n";
     code << "    hierarchy = []\n";
-    code << "    sheet_by_name = {}\n";
+    code << "    sheet_by_name = {}   # name -> list of (node, info)\n";
     code << "    sheet_by_file = {}\n";
     code << "    sheet_by_uuid = {}\n";
     code << "    \n";
@@ -1175,7 +1176,7 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "        info = {'name': name, 'file': filename, 'uuid': uuid, 'path': path_str}\n";
     code << "        hierarchy.append(info)\n";
     code << "        if name:\n";
-    code << "            sheet_by_name[name] = (node, info)\n";
+    code << "            sheet_by_name.setdefault(name, []).append((node, info))\n";
     code << "        if filename:\n";
     code << "            sheet_by_file[filename] = (node, info)\n";
     code << "        if uuid:\n";
@@ -1190,7 +1191,7 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "            info = {'name': name, 'file': filename, 'uuid': uuid}\n";
     code << "            hierarchy.append(info)\n";
     code << "            if name:\n";
-    code << "                sheet_by_name[name] = (sheet, info)\n";
+    code << "                sheet_by_name.setdefault(name, []).append((sheet, info))\n";
     code << "            if filename:\n";
     code << "                sheet_by_file[filename] = (sheet, info)\n";
     code << "            sheet_by_uuid[uuid] = (sheet, info)\n";
@@ -1225,7 +1226,13 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "                    target_sheet, target_info = sheet_by_uuid[last_part]\n";
     code << "                # Try as sheet name (e.g., '/Power/')\n";
     code << "                elif last_part in sheet_by_name:\n";
-    code << "                    target_sheet, target_info = sheet_by_name[last_part]\n";
+    code << "                    matches = sheet_by_name[last_part]\n";
+    code << "                    if len(matches) > 1:\n";
+    code << "                        dupes = [m[1] for m in matches]\n";
+    code << "                        result = {'status': 'error', 'message': f\"Ambiguous sheet name '{last_part}' matches {len(matches)} sheets. Use UUID to disambiguate.\", 'matches': dupes, 'available_sheets': hierarchy}\n";
+    code << "                        print(json.dumps(result, indent=2))\n";
+    code << "                        sys.exit(0)\n";
+    code << "                    target_sheet, target_info = matches[0]\n";
     code << "                # Try as filename (e.g., '/Power.kicad_sch/')\n";
     code << "                elif last_part in sheet_by_file:\n";
     code << "                    target_sheet, target_info = sheet_by_file[last_part]\n";
@@ -1235,7 +1242,13 @@ std::string SCH_CRUD_HANDLER::GenerateSwitchSheetCode( const nlohmann::json& aIn
     code << "        else:\n";
     code << "            # Try as sheet name first\n";
     code << "            if sheet_path in sheet_by_name:\n";
-    code << "                target_sheet, target_info = sheet_by_name[sheet_path]\n";
+    code << "                matches = sheet_by_name[sheet_path]\n";
+    code << "                if len(matches) > 1:\n";
+    code << "                    dupes = [m[1] for m in matches]\n";
+    code << "                    result = {'status': 'error', 'message': f\"Ambiguous sheet name '{sheet_path}' matches {len(matches)} sheets. Use UUID to disambiguate.\", 'matches': dupes, 'available_sheets': hierarchy}\n";
+    code << "                    print(json.dumps(result, indent=2))\n";
+    code << "                    sys.exit(0)\n";
+    code << "                target_sheet, target_info = matches[0]\n";
     code << "            # Try as UUID\n";
     code << "            elif sheet_path in sheet_by_uuid:\n";
     code << "                target_sheet, target_info = sheet_by_uuid[sheet_path]\n";
@@ -1393,7 +1406,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
 
     auto elements = aInput["elements"];
 
-    code << "import json, sys, re\n";
+    code << "import json, sys, re, math\n";
     code << "from kipy.geometry import Vector2\n";
     code << "from kipy.proto.common.types.enums_pb2 import HA_LEFT, HA_RIGHT, VA_TOP, VA_BOTTOM\n";
     code << "\n";
@@ -1424,6 +1437,7 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "# Margin constants: ICs (>6 pins, MCUs) get larger margin for companion circuits\n";
     code << "_BBOX_MARGIN_DEFAULT = " << BBOX_MARGIN_MM << "\n";
     code << "_BBOX_MARGIN_IC = " << IC_BBOX_MARGIN_MM << "\n";
+    code << "_LABEL_SHRINK = 0.4  # Shrink label bboxes to allow stacking at 2.54mm pitch\n";
     code << "\n";
     code << "def _get_bbox_margin(sym):\n";
     code << "    \"\"\"Return appropriate margin based on symbol type/pin count.\"\"\"\n";
@@ -1452,27 +1466,57 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "except:\n";
     code << "    pass\n";
     code << "try:\n";
-    code << "    for _elbl in sch.labels.get_all():\n";
+    code << "    for _esht in sch.crud.get_sheets():\n";
     code << "        try:\n";
-    code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm', include_text=False)\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_esht, units='mm')\n";
     code << "        except:\n";
     code << "            continue\n";
     code << "        if _ebb:\n";
-    code << "            placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN_DEFAULT, 'max_x': _ebb['max_x'] + _BBOX_MARGIN_DEFAULT, 'min_y': _ebb['min_y'] - _BBOX_MARGIN_DEFAULT, 'max_y': _ebb['max_y'] + _BBOX_MARGIN_DEFAULT})\n";
+    code << "            placed_bboxes.append({'ref': getattr(_esht, 'name', 'sheet'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN_DEFAULT, 'max_x': _ebb['max_x'] + _BBOX_MARGIN_DEFAULT, 'min_y': _ebb['min_y'] - _BBOX_MARGIN_DEFAULT, 'max_y': _ebb['max_y'] + _BBOX_MARGIN_DEFAULT})\n";
+    code << "except:\n";
+    code << "    pass\n";
+    code << "try:\n";
+    code << "    for _elbl in sch.labels.get_all():\n";
+    code << "        try:\n";
+    code << "            _ebb = sch.transform.get_bounding_box(_elbl, units='mm')\n";
+    code << "        except:\n";
+    code << "            continue\n";
+    code << "        if _ebb:\n";
+    code << "            placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] + _LABEL_SHRINK, 'max_x': _ebb['max_x'] - _LABEL_SHRINK, 'min_y': _ebb['min_y'] + _LABEL_SHRINK, 'max_y': _ebb['max_y'] - _LABEL_SHRINK})\n";
     code << "except:\n";
     code << "    pass\n";
     code << "\n";
     code << "def _bboxes_overlap(a, b):\n";
     code << "    return a['min_x'] < b['max_x'] and a['max_x'] > b['min_x'] and a['min_y'] < b['max_y'] and a['max_y'] > b['min_y']\n";
     code << "\n";
-    code << "def _any_wire_in_bbox(bbox):\n";
-    code << "    \"\"\"Check if any existing wire segment overlaps a bounding box.\"\"\"\n";
+    code << "def _find_crossing_wire(bbox):\n";
+    code << "    \"\"\"Return AABB dict of the first wire segment crossing bbox, or None.\"\"\"\n";
     code << "    for _w in sch.crud.get_wires():\n";
     code << "        _sx, _sy = round(_w.start.x/1e6, 2), round(_w.start.y/1e6, 2)\n";
     code << "        _ex, _ey = round(_w.end.x/1e6, 2), round(_w.end.y/1e6, 2)\n";
-    code << "        if max(_sx,_ex) > bbox['min_x'] and min(_sx,_ex) < bbox['max_x'] and max(_sy,_ey) > bbox['min_y'] and min(_sy,_ey) < bbox['max_y']:\n";
-    code << "            return True\n";
-    code << "    return False\n";
+    code << "        _wbb = {'min_x': min(_sx,_ex), 'max_x': max(_sx,_ex), 'min_y': min(_sy,_ey), 'max_y': max(_sy,_ey)}\n";
+    code << "        if _wbb['min_x'] == _wbb['max_x']:\n";
+    code << "            _wbb['min_x'] -= 0.01\n";
+    code << "            _wbb['max_x'] += 0.01\n";
+    code << "        if _wbb['min_y'] == _wbb['max_y']:\n";
+    code << "            _wbb['min_y'] -= 0.01\n";
+    code << "            _wbb['max_y'] += 0.01\n";
+    code << "        if _wbb['max_x'] > bbox['min_x'] and _wbb['min_x'] < bbox['max_x'] and _wbb['max_y'] > bbox['min_y'] and _wbb['min_y'] < bbox['max_y']:\n";
+    code << "            return _wbb\n";
+    code << "    return None\n";
+    code << "\n";
+    code << "def _overlap_info(new_bb):\n";
+    code << "    \"\"\"Find first overlap and return descriptive string with overlap amounts.\"\"\"\n";
+    code << "    for _pb in placed_bboxes:\n";
+    code << "        if _bboxes_overlap(new_bb, _pb):\n";
+    code << "            ox = min(new_bb['max_x'], _pb['max_x']) - max(new_bb['min_x'], _pb['min_x'])\n";
+    code << "            oy = min(new_bb['max_y'], _pb['max_y']) - max(new_bb['min_y'], _pb['min_y'])\n";
+    code << "            ref = _pb.get('ref', '?')\n";
+    code << "            return f\"Overlaps '{ref}' by {ox:.1f}mm horizontal, {oy:.1f}mm vertical\"\n";
+    code << "    _wcross = _find_crossing_wire(new_bb)\n";
+    code << "    if _wcross:\n";
+    code << "        return 'Overlaps a wire segment'\n";
+    code << "    return 'Overlaps existing element(s)'\n";
     code << "\n";
 
     // Wire-through-component detection: build body-only obstacles (excluding pins)
@@ -1570,6 +1614,80 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
     code << "        raise _OOB()\n";
     code << "\n";
 
+    // --- Slide-off helper ---
+    code << "_SLIDE_GRID = 1.27\n";
+    code << "_SLIDE_MAX_ITER = 5\n";
+    code << "_SLIDE_MAX_MM = 30.0\n";
+    code << "\n";
+    code << "def _snap_grid(v, grid=_SLIDE_GRID):\n";
+    code << "    return round(round(v / grid) * grid, 4)\n";
+    code << "\n";
+    code << "def _slide_off(item, raw_bb, margined_bb):\n";
+    code << "    \"\"\"Slide item to clear position via repulsion. Returns (ok, dx, dy).\"\"\"\n";
+    code << "    total_dx, total_dy = 0.0, 0.0\n";
+    code << "    r_bb = dict(raw_bb)\n";
+    code << "    m_bb = dict(margined_bb)\n";
+    code << "    for _iter in range(_SLIDE_MAX_ITER):\n";
+    code << "        obstacle = None\n";
+    code << "        use_margin = True\n";
+    code << "        for _pb in placed_bboxes:\n";
+    code << "            if _bboxes_overlap(m_bb, _pb):\n";
+    code << "                obstacle = _pb\n";
+    code << "                break\n";
+    code << "        if obstacle is None:\n";
+    code << "            _wcross = _find_crossing_wire(r_bb)\n";
+    code << "            if _wcross:\n";
+    code << "                obstacle = _wcross\n";
+    code << "                use_margin = False\n";
+    code << "        if obstacle is None:\n";
+    code << "            return (True, total_dx, total_dy)\n";
+    code << "        comp_cx = (r_bb['min_x'] + r_bb['max_x']) / 2\n";
+    code << "        comp_cy = (r_bb['min_y'] + r_bb['max_y']) / 2\n";
+    code << "        obs_cx = (obstacle['min_x'] + obstacle['max_x']) / 2\n";
+    code << "        obs_cy = (obstacle['min_y'] + obstacle['max_y']) / 2\n";
+    code << "        dir_x = comp_cx - obs_cx\n";
+    code << "        dir_y = comp_cy - obs_cy\n";
+    code << "        mag = math.sqrt(dir_x * dir_x + dir_y * dir_y)\n";
+    code << "        if mag < 1e-6:\n";
+    code << "            dir_x, dir_y, mag = 1.0, 0.0, 1.0\n";
+    code << "        dir_x /= mag\n";
+    code << "        dir_y /= mag\n";
+    code << "        if use_margin:\n";
+    code << "            hw_c = (m_bb['max_x'] - m_bb['min_x']) / 2\n";
+    code << "            hh_c = (m_bb['max_y'] - m_bb['min_y']) / 2\n";
+    code << "        else:\n";
+    code << "            hw_c = (r_bb['max_x'] - r_bb['min_x']) / 2\n";
+    code << "            hh_c = (r_bb['max_y'] - r_bb['min_y']) / 2\n";
+    code << "        hw_o = (obstacle['max_x'] - obstacle['min_x']) / 2\n";
+    code << "        hh_o = (obstacle['max_y'] - obstacle['min_y']) / 2\n";
+    code << "        candidates = []\n";
+    code << "        if abs(dir_x) > 1e-9:\n";
+    code << "            candidates.append((hw_c + hw_o) / abs(dir_x))\n";
+    code << "        if abs(dir_y) > 1e-9:\n";
+    code << "            candidates.append((hh_c + hh_o) / abs(dir_y))\n";
+    code << "        if not candidates:\n";
+    code << "            return (False, total_dx, total_dy)\n";
+    code << "        t = min(candidates)\n";
+    code << "        new_cx = obs_cx + dir_x * t\n";
+    code << "        new_cy = obs_cy + dir_y * t\n";
+    code << "        dx = _snap_grid(new_cx - comp_cx)\n";
+    code << "        dy = _snap_grid(new_cy - comp_cy)\n";
+    code << "        if abs(dx) < 1e-6 and abs(dy) < 1e-6:\n";
+    code << "            if abs(dir_x) >= abs(dir_y):\n";
+    code << "                dx = _SLIDE_GRID if dir_x >= 0 else -_SLIDE_GRID\n";
+    code << "            else:\n";
+    code << "                dy = _SLIDE_GRID if dir_y >= 0 else -_SLIDE_GRID\n";
+    code << "        total_dx += dx\n";
+    code << "        total_dy += dy\n";
+    code << "        if abs(total_dx) > _SLIDE_MAX_MM or abs(total_dy) > _SLIDE_MAX_MM:\n";
+    code << "            return (False, total_dx, total_dy)\n";
+    code << "        r_bb = {'min_x': r_bb['min_x']+dx, 'max_x': r_bb['max_x']+dx, 'min_y': r_bb['min_y']+dy, 'max_y': r_bb['max_y']+dy}\n";
+    code << "        m_bb = {'min_x': m_bb['min_x']+dx, 'max_x': m_bb['max_x']+dx, 'min_y': m_bb['min_y']+dy, 'max_y': m_bb['max_y']+dy}\n";
+    code << "        if r_bb['min_x'] < 0 or r_bb['max_x'] > _sheet_w or r_bb['min_y'] < 0 or r_bb['max_y'] > _sheet_h:\n";
+    code << "            return (False, total_dx, total_dy)\n";
+    code << "    return (False, total_dx, total_dy)\n";
+    code << "\n";
+
     code << "try:\n";
 
     // Process each element in the batch
@@ -1618,9 +1736,11 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
                 code << "            sch.symbols.set_footprint(sym_" << i << ", props_" << i << "['Footprint'])\n";
             }
 
-            // --- Overlap check for symbol (vs other symbols/labels AND existing wires) ---
-            code << "        _overlap_" << i << " = False\n";
-            code << "        _wire_cross_" << i << " = False\n";
+            // --- Overlap check + slide-off for symbol ---
+            code << "        _shifted_" << i << " = False\n";
+            code << "        _shift_dx_" << i << " = 0\n";
+            code << "        _shift_dy_" << i << " = 0\n";
+            code << "        _rejected_" << i << " = False\n";
             code << "        try:\n";
             code << "            _bb_" << i << " = sch.transform.get_bounding_box(sym_" << i << ", units='mm', include_text=False)\n";
             code << "            if _bb_" << i << ":\n";
@@ -1636,12 +1756,9 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                    _wire_cross_" << i << " = _any_wire_in_bbox(_bb_" << i << ")\n";
             code << "        except:\n";
             code << "            pass\n";
-            code << "        if _overlap_" << i << ":\n";
+            code << "        if _rejected_" << i << ":\n";
             code << "            sch.crud.remove_items([sym_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: overlaps {_obstacle_ref_" << i << "}'})\n";
-            code << "        elif _wire_cross_" << i << ":\n";
-            code << "            sch.crud.remove_items([sym_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: component body crosses existing wire(s). Reposition with more clearance.'})\n";
+            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: {_overlap_info(_new_bbox_" << i << ")}. Could not auto-slide to clear position.'})\n";
             code << "        else:\n";
             code << "            _prefix_" << i << " = re.match(r'^([A-Za-z#]+)', getattr(sym_" << i << ", 'reference', 'X')).group(1)\n";
             code << "            _new_ref_" << i << " = next_ref(_prefix_" << i << ")\n";
@@ -1667,7 +1784,13 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                if _bbx0_" << i << " < _bbx1_" << i << " and _bby0_" << i << " < _bby1_" << i << ":\n";
             code << "                    _body_bboxes.append({'ref': _new_ref_" << i << ", 'min_x': _bbx0_" << i << ", 'max_x': _bbx1_" << i << ", 'min_y': _bby0_" << i << ", 'max_y': _bby1_" << i << "})\n";
             code << "            _placed_syms[" << i << "] = sym_" << i << "\n";
-            code << "            results.append({'index': " << i << ", 'element_type': 'symbol', 'reference': _new_ref_" << i << "})\n";
+            code << "            _res_" << i << " = {'index': " << i << ", 'element_type': 'symbol', 'reference': _new_ref_" << i << "}\n";
+            code << "            if _bb_" << i << ":\n";
+            code << "                _res_" << i << "['bbox_mm'] = {'min_x': round(_new_bbox_" << i << "['min_x'], 2), 'max_x': round(_new_bbox_" << i << "['max_x'], 2), 'min_y': round(_new_bbox_" << i << "['min_y'], 2), 'max_y': round(_new_bbox_" << i << "['max_y'], 2)}\n";
+            code << "            if _shifted_" << i << ":\n";
+            code << "                _res_" << i << "['shifted'] = True\n";
+            code << "                _res_" << i << "['shift_mm'] = [round(_shift_dx_" << i << ", 2), round(_shift_dy_" << i << ", 2)]\n";
+            code << "            results.append(_res_" << i << ")\n";
         }
         else if( elementType == "power" )
         {
@@ -1708,12 +1831,9 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "                    _wire_cross_" << i << " = _any_wire_in_bbox(_bb_" << i << ")\n";
             code << "        except:\n";
             code << "            pass\n";
-            code << "        if _overlap_" << i << ":\n";
+            code << "        if _rejected_" << i << ":\n";
             code << "            sch.crud.remove_items([pwr_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: overlaps {_obstacle_ref_" << i << "}'})\n";
-            code << "        elif _wire_cross_" << i << ":\n";
-            code << "            sch.crud.remove_items([pwr_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: power symbol body crosses existing wire(s). Rotate to match the target pin direction or increase spacing.'})\n";
+            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: {_overlap_info(_new_bbox_" << i << ")}. Could not auto-slide to clear position.'})\n";
             code << "        else:\n";
             code << "            _pwr_ref_" << i << " = next_ref('#PWR')\n";
             code << "            for _f in pwr_" << i << "._proto.fields:\n";
@@ -1723,7 +1843,13 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             code << "            sch.crud.update_items(pwr_" << i << ")\n";
             code << "            if _bb_" << i << ":\n";
             code << "                placed_bboxes.append({'ref': _pwr_ref_" << i << ", **_new_bbox_" << i << "})\n";
-            code << "            results.append({'index': " << i << ", 'element_type': 'power', 'reference': _pwr_ref_" << i << "})\n";
+            code << "            _res_" << i << " = {'index': " << i << ", 'element_type': 'power', 'reference': _pwr_ref_" << i << "}\n";
+            code << "            if _bb_" << i << ":\n";
+            code << "                _res_" << i << "['bbox_mm'] = {'min_x': round(_new_bbox_" << i << "['min_x'], 2), 'max_x': round(_new_bbox_" << i << "['max_x'], 2), 'min_y': round(_new_bbox_" << i << "['min_y'], 2), 'max_y': round(_new_bbox_" << i << "['max_y'], 2)}\n";
+            code << "            if _shifted_" << i << ":\n";
+            code << "                _res_" << i << "['shifted'] = True\n";
+            code << "                _res_" << i << "['shift_mm'] = [round(_shift_dx_" << i << ", 2), round(_shift_dy_" << i << ", 2)]\n";
+            code << "            results.append(_res_" << i << ")\n";
         }
         else if( elementType == "label" )
         {
@@ -1748,59 +1874,40 @@ std::string SCH_CRUD_HANDLER::GenerateAddBatchCode( const nlohmann::json& aInput
             else
                 code << "        lbl_" << i << " = sch.labels.add_local('" << EscapePythonString( text ) << "', pos_" << i << ")\n";
 
-            // Map angle to label connection point alignment (rotate the pin, not the text)
-            // 0° → pin left (default), 90° → pin bottom, 180° → pin right, 270° → pin top
+            // Map angle to label alignment:
+            // 0°=default (text right), 90°=v_align top, 180°=text left, 270°=text left + v_align top
             int angle = static_cast<int>( elem.value( "angle", 0.0 ) ) % 360;
 
             if( angle != 0 )
             {
-                if( angle == 90 )
-                {
-                    code << "        lbl_" << i << "._proto.text.attributes.horizontal_alignment = HA_LEFT\n";
-                    code << "        lbl_" << i << "._proto.text.attributes.vertical_alignment = VA_BOTTOM\n";
-                }
-                else if( angle == 180 )
-                {
+                if( angle == 180 || angle == 270 )
                     code << "        lbl_" << i << "._proto.text.attributes.horizontal_alignment = HA_RIGHT\n";
-                    code << "        lbl_" << i << "._proto.text.attributes.vertical_alignment = VA_BOTTOM\n";
-                }
-                else if( angle == 270 )
-                {
-                    code << "        lbl_" << i << "._proto.text.attributes.horizontal_alignment = HA_LEFT\n";
+                if( angle == 90 || angle == 270 )
                     code << "        lbl_" << i << "._proto.text.attributes.vertical_alignment = VA_TOP\n";
-                }
-
                 code << "        sch.crud.update_items([lbl_" << i << "])\n";
             }
 
-            // --- Overlap check for label (vs other symbols/labels AND existing wires) ---
-            // Labels use default margin (they're small elements)
-            code << "        _overlap_" << i << " = False\n";
-            code << "        _wire_cross_" << i << " = False\n";
+            // --- Overlap check for label (no slide-off — moving labels disconnects them) ---
+            code << "        _rejected_" << i << " = False\n";
             code << "        try:\n";
-            code << "            _bb_" << i << " = sch.transform.get_bounding_box(lbl_" << i << ", units='mm', include_text=False)\n";
+            code << "            _bb_" << i << " = sch.transform.get_bounding_box(lbl_" << i << ", units='mm')\n";
             code << "            if _bb_" << i << ":\n";
-            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] - _BBOX_MARGIN_DEFAULT, 'max_x': _bb_" << i << "['max_x'] + _BBOX_MARGIN_DEFAULT, 'min_y': _bb_" << i << "['min_y'] - _BBOX_MARGIN_DEFAULT, 'max_y': _bb_" << i << "['max_y'] + _BBOX_MARGIN_DEFAULT}\n";
-            code << "                _obstacle_ref_" << i << " = '?'\n";
-            code << "                for _pb in placed_bboxes:\n";
-            code << "                    if _bboxes_overlap(_new_bbox_" << i << ", _pb):\n";
-            code << "                        _overlap_" << i << " = True\n";
-            code << "                        _obstacle_ref_" << i << " = _pb.get('ref', '?')\n";
-            code << "                        break\n";
-            code << "                if not _overlap_" << i << ":\n";
-            code << "                    _wire_cross_" << i << " = _any_wire_in_bbox(_bb_" << i << ")\n";
+            code << "                _new_bbox_" << i << " = {'min_x': _bb_" << i << "['min_x'] + _LABEL_SHRINK, 'max_x': _bb_" << i << "['max_x'] - _LABEL_SHRINK, 'min_y': _bb_" << i << "['min_y'] + _LABEL_SHRINK, 'max_y': _bb_" << i << "['max_y'] - _LABEL_SHRINK}\n";
+            code << "                _has_conflict_" << i << " = any(_bboxes_overlap(_new_bbox_" << i << ", _pb) for _pb in placed_bboxes) or (_find_crossing_wire(_bb_" << i << ") is not None)\n";
+            code << "                if _has_conflict_" << i << ":\n";
+            code << "                    _rejected_" << i << " = True\n";
             code << "        except:\n";
             code << "            pass\n";
-            code << "        if _overlap_" << i << ":\n";
+            code << "        if _rejected_" << i << ":\n";
             code << "            sch.crud.remove_items([lbl_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: overlaps {_obstacle_ref_" << i << "}'})\n";
-            code << "        elif _wire_cross_" << i << ":\n";
-            code << "            sch.crud.remove_items([lbl_" << i << "])\n";
-            code << "            results.append({'index': " << i << ", 'error': 'Placement rejected: label crosses existing wire(s). Reposition with more clearance.'})\n";
+            code << "            results.append({'index': " << i << ", 'error': f'Placement rejected: {_overlap_info(_new_bbox_" << i << ")}. Moving labels would disconnect them — place the label at a clear position.'})\n";
             code << "        else:\n";
             code << "            if _bb_" << i << ":\n";
             code << "                placed_bboxes.append({'ref': '" << EscapePythonString( elem.value( "text", "label" ) ) << "', **_new_bbox_" << i << "})\n";
-            code << "            results.append({'index': " << i << ", 'element_type': 'label'})\n";
+            code << "            _res_" << i << " = {'index': " << i << ", 'element_type': 'label'}\n";
+            code << "            if _bb_" << i << ":\n";
+            code << "                _res_" << i << "['bbox_mm'] = {'min_x': round(_new_bbox_" << i << "['min_x'], 2), 'max_x': round(_new_bbox_" << i << "['max_x'], 2), 'min_y': round(_new_bbox_" << i << "['min_y'], 2), 'max_y': round(_new_bbox_" << i << "['max_y'], 2)}\n";
+            code << "            results.append(_res_" << i << ")\n";
         }
         else if( elementType == "wire" )
         {

@@ -37,6 +37,25 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
                                                  const std::vector<LLM_TOOL>& aTools,
                                                  wxEvtHandler* aHandler )
 {
+    // If a previous request was cancelled but the thread hasn't finished yet, wait for it.
+    // This is common with Gemini where thinking pauses mean curl's cancel callbacks fire
+    // less frequently, so the abort takes longer to take effect.
+    if( m_requestInProgress.load() && m_cancelRequested.load() )
+    {
+        const int maxWaitMs = 3000;
+        const int sleepMs = 10;
+        int waited = 0;
+
+        while( m_requestInProgress.load() && waited < maxWaitMs )
+        {
+            std::this_thread::sleep_for( std::chrono::milliseconds( sleepMs ) );
+            waited += sleepMs;
+        }
+
+        if( m_requestInProgress.load() )
+            wxLogWarning( "Cancelled LLM request did not finish within %dms", maxWaitMs );
+    }
+
     // Check if a request is already in progress
     if( m_requestInProgress.load() )
     {
@@ -121,8 +140,8 @@ void* LLM_REQUEST_THREAD::Entry()
 
     // Map display name to API model ID
     std::string apiModel;
-    if( m_model == "Gemini 3 Pro" )
-        apiModel = "gemini-3-pro-preview";
+    if( m_model == "Gemini 3.1 Pro" )
+        apiModel = "gemini-3.1-pro-preview";
     else
         apiModel = "claude-opus-4-6";
 
@@ -160,6 +179,9 @@ void* LLM_REQUEST_THREAD::Entry()
     }
 
     std::string requestBodyStr = requestBody.dump();
+
+    wxLogInfo( "LLM_REQUEST: model=%s, messages=%zu, tools=%zu, body_size=%zu bytes",
+               apiModel.c_str(), m_messages.size(), m_tools.size(), requestBodyStr.size() );
 
     // Get access token from auth manager
     std::string accessToken;
@@ -421,6 +443,11 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     // Start accumulating compaction content
                     ctx->currentCompaction = "";
                     ctx->inCompaction = true;
+
+                    // Post COMPACTION_START so UI shows "Compacting..." immediately
+                    LLMStreamChunk chunk;
+                    chunk.type = LLMChunkType::COMPACTION_START;
+                    PostLLMChunk( ctx->handler, chunk );
                 }
                 else if( blockType == "server_tool_use" )
                 {
@@ -501,7 +528,7 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                 else if( deltaType == "compaction_delta" )
                 {
                     // Accumulate compaction content
-                    std::string compaction = delta.value( "compaction", "" );
+                    std::string compaction = delta.value( "content", "" );
                     ctx->currentCompaction += compaction;
                 }
             }

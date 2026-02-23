@@ -24,6 +24,7 @@ wxDECLARE_EVENT( EVT_CHAT_STATE_CHANGED, wxThreadEvent );   ///< State machine c
 wxDECLARE_EVENT( EVT_CHAT_TITLE_DELTA, wxThreadEvent );     ///< Title chunk arrived (streaming)
 wxDECLARE_EVENT( EVT_CHAT_TITLE_GENERATED, wxThreadEvent ); ///< Title complete
 wxDECLARE_EVENT( EVT_CHAT_HISTORY_LOADED, wxThreadEvent );  ///< Chat loaded from history
+wxDECLARE_EVENT( EVT_CHAT_COMPACTION, wxThreadEvent );     ///< Context was compacted by API
 
 // ============================================================================
 // Event payload structures

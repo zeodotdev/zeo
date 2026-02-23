@@ -231,6 +231,7 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
     registerHandler<SearchLibrarySymbols, SearchLibrarySymbolsResponse>( &API_HANDLER_SCH::handleSearchLibrarySymbols );
     registerHandler<GetSymbolInfo, GetSymbolInfoResponse>( &API_HANDLER_SCH::handleGetSymbolInfo );
     registerHandler<GetTransformedPinPosition, GetTransformedPinPositionResponse>( &API_HANDLER_SCH::handleGetTransformedPinPosition );
+    registerHandler<GetAllTransformedPinPositions, GetAllTransformedPinPositionsResponse>( &API_HANDLER_SCH::handleGetAllTransformedPinPositions );
     registerHandler<GetNeededJunctions, GetNeededJunctionsResponse>( &API_HANDLER_SCH::handleGetNeededJunctions );
 
     // Simulation handlers
@@ -5403,6 +5404,57 @@ API_HANDLER_SCH::handleGetTransformedPinPosition(
     VECTOR2I worldPos = pin->GetPosition();
     kiapi::common::PackVector2Sch( *response.mutable_position(), worldPos );
     response.set_orientation( static_cast<int>( pin->GetOrientation() ) );
+
+    return response;
+}
+
+
+HANDLER_RESULT<schematic::commands::GetAllTransformedPinPositionsResponse>
+API_HANDLER_SCH::handleGetAllTransformedPinPositions(
+        const HANDLER_CONTEXT<schematic::commands::GetAllTransformedPinPositions>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.document() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    schematic::commands::GetAllTransformedPinPositionsResponse response;
+
+    KIID symbolId( aCtx.Request.symbol_id().value() );
+    std::optional<SCH_ITEM*> itemOpt = getItemById( symbolId );
+
+    if( !itemOpt || !*itemOpt )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Symbol not found" );
+        return tl::unexpected( e );
+    }
+
+    SCH_SYMBOL* symbol = dynamic_cast<SCH_SYMBOL*>( *itemOpt );
+
+    if( !symbol )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Item is not a symbol" );
+        return tl::unexpected( e );
+    }
+
+    // Get all pins and their transformed positions in a single pass
+    for( SCH_PIN* pin : symbol->GetPins() )
+    {
+        if( !pin )
+            continue;
+
+        schematic::commands::TransformedPinInfo* pinInfo = response.add_pins();
+        pinInfo->set_pin_number( pin->GetNumber().ToStdString() );
+        pinInfo->set_pin_name( pin->GetName().ToStdString() );
+
+        VECTOR2I worldPos = pin->GetPosition();
+        kiapi::common::PackVector2Sch( *pinInfo->mutable_position(), worldPos );
+        pinInfo->set_orientation( static_cast<int>( pin->GetOrientation() ) );
+    }
 
     return response;
 }

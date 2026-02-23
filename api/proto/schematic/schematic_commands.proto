@@ -990,6 +990,28 @@ message GetTransformedPinPositionResponse
   int32 orientation = 2;                     // World orientation in degrees
 }
 
+/// Gets the transformed positions of ALL pins on a placed symbol in a single call.
+/// This is much more efficient than calling GetTransformedPinPosition for each pin,
+/// especially for symbols with many pins (e.g., 600+ pin BGA packages).
+message GetAllTransformedPinPositions
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID symbol_id = 2;
+}
+
+message TransformedPinInfo
+{
+  string pin_number = 1;
+  string pin_name = 2;
+  kiapi.common.types.Vector2 position = 3;  // World position in nm
+  int32 orientation = 4;                     // Pin orientation enum
+}
+
+message GetAllTransformedPinPositionsResponse
+{
+  repeated TransformedPinInfo pins = 1;
+}
+
 
 /// Returns positions where explicit junction dots are needed for the given items.
 /// Items must already be placed on the schematic.  Analyzes each item's connection

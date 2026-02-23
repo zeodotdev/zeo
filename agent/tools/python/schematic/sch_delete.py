@@ -159,16 +159,15 @@ try:
         except:
             pass
 
-        # Collect symbol pin positions as BFS stop points
+        # Collect symbol pin positions as BFS stop points (batch API for efficiency)
         pin_positions = set()
         for sym in sch.symbols.get_all():
-            for p in sym.pins:
-                try:
-                    tp = sch.symbols.get_transformed_pin_position(sym, p.number)
-                    if tp:
-                        pin_positions.add((tp['position'].x, tp['position'].y))
-                except:
-                    pass
+            try:
+                all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
+                for tp in all_pins:
+                    pin_positions.add((tp['position'].x, tp['position'].y))
+            except:
+                pass
 
         # BFS flood-fill from initial items
         visited = set()
@@ -201,15 +200,15 @@ try:
     if cleanup_wires:
         for item in items_to_delete:
             if hasattr(item, 'pins'):
-                for p in item.pins:
-                    try:
-                        tp = sch.symbols.get_transformed_pin_position(item, p.number)
-                        if tp:
-                            dpx = round(tp['position'].x / 1_000_000, 4)
-                            dpy = round(tp['position'].y / 1_000_000, 4)
-                            deleted_pin_positions.append((dpx, dpy))
-                    except:
-                        pass
+                # Use batch API for efficiency
+                try:
+                    all_pins = sch.symbols.get_all_transformed_pin_positions(item)
+                    for tp in all_pins:
+                        dpx = round(tp['position'].x / 1_000_000, 4)
+                        dpy = round(tp['position'].y / 1_000_000, 4)
+                        deleted_pin_positions.append((dpx, dpy))
+                except:
+                    pass
 
     if items_to_delete:
         sch.crud.remove_items(items_to_delete)
@@ -224,16 +223,15 @@ try:
             def wire_ep(w):
                 return (rnd(w.start.x/1e6), rnd(w.start.y/1e6)), (rnd(w.end.x/1e6), rnd(w.end.y/1e6))
 
-            # Collect all remaining connection points (symbol pins + labels)
+            # Collect all remaining connection points (symbol pins + labels) - batch API for efficiency
             conn_pts = set()
             for sym in sch.symbols.get_all():
-                for p in sym.pins:
-                    try:
-                        tp = sch.symbols.get_transformed_pin_position(sym, p.number)
-                        if tp:
-                            conn_pts.add((rnd(tp['position'].x/1e6), rnd(tp['position'].y/1e6)))
-                    except:
-                        pass
+                try:
+                    all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
+                    for tp in all_pins:
+                        conn_pts.add((rnd(tp['position'].x/1e6), rnd(tp['position'].y/1e6)))
+                except:
+                    pass
             for lbl in sch.labels.get_all():
                 try:
                     conn_pts.add((rnd(lbl.position.x/1e6), rnd(lbl.position.y/1e6)))
@@ -315,16 +313,16 @@ try:
                     if not sym.reference.startswith('#PWR'):
                         continue
                     connected = False
-                    for p in sym.pins:
-                        try:
-                            tp = sch.symbols.get_transformed_pin_position(sym, p.number)
-                            if tp:
-                                pp = (rnd(tp['position'].x/1e6), rnd(tp['position'].y/1e6))
-                                if pp in wire_pts:
-                                    connected = True
-                                    break
-                        except:
-                            pass
+                    # Use batch API for efficiency
+                    try:
+                        all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
+                        for tp in all_pins:
+                            pp = (rnd(tp['position'].x/1e6), rnd(tp['position'].y/1e6))
+                            if pp in wire_pts:
+                                connected = True
+                                break
+                    except:
+                        pass
                     if not connected:
                         orphaned_power.append({'ref': sym.reference, 'uuid': str(sym.id.value) if hasattr(sym, 'id') else ''})
                 except:

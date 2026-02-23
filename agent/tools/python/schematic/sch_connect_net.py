@@ -328,11 +328,13 @@ try:
         _rot90 = {0: 2, 1: 3, 2: 1, 3: 0}
         _rot_steps = round(getattr(obs_sym, 'angle', 0) / 90) % 4
         _sym_pin_cells = set()
-        for sp in obs_sym.pins:
+        # Use batch API to get all pin positions in a single IPC call
+        try:
+            all_pins = sch.symbols.get_all_transformed_pin_positions(obs_sym)
+        except:
+            all_pins = []
+        for tp in all_pins:
             try:
-                tp = sch.symbols.get_transformed_pin_position(obs_sym, sp.number)
-                if not tp:
-                    continue
                 po = tp.get('orientation', None)
                 if po is None:
                     continue

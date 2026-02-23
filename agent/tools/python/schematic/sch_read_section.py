@@ -32,16 +32,19 @@ try:
             lib_id_str = get_lib_id_str(sym)
             pins = []
             if hasattr(sym, 'pins'):
+                # Use batch API for efficiency
+                pin_map = {}
+                if hasattr(sch.symbols, 'get_all_transformed_pin_positions'):
+                    try:
+                        all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
+                        for p in all_pins:
+                            pin_map[p['pin_number']] = get_pos(p)
+                    except:
+                        pass
+
                 for pin in sym.pins:
                     try:
-                        abs_pos = None
-                        if hasattr(sch.symbols, 'get_transformed_pin_position'):
-                            try:
-                                pin_pos = sch.symbols.get_transformed_pin_position(sym, pin.number)
-                                if pin_pos:
-                                    abs_pos = get_pos(pin_pos)
-                            except:
-                                pass
+                        abs_pos = pin_map.get(pin.number)
                         if not abs_pos or (abs_pos[0] == 0 and abs_pos[1] == 0):
                             pin_pos = get_pos(getattr(pin, 'position', None))
                             if pin_pos and (pin_pos[0] != 0 or pin_pos[1] != 0):

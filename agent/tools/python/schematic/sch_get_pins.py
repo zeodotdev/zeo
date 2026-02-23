@@ -16,23 +16,30 @@ try:
             'available': available
         }))
     else:
-        # Build pin list using IPC for exact transformed positions
+        # Build pin list using batch IPC for exact transformed positions (single call)
         pins = []
         if hasattr(sym, 'pins'):
+            # Use batch API for efficiency
+            pin_map = {}
+            if hasattr(sch.symbols, 'get_all_transformed_pin_positions'):
+                try:
+                    all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
+                    for p in all_pins:
+                        pin_map[p['pin_number']] = {
+                            'position': get_pos(p),
+                            'orientation': p.get('orientation', 0)
+                        }
+                except:
+                    pass
+
             for pin in sym.pins:
                 pin_info = {
                     'number': pin.number,
                     'name': getattr(pin, 'name', '')
                 }
-                # Get exact transformed position via IPC
-                if hasattr(sch.symbols, 'get_transformed_pin_position'):
-                    try:
-                        result = sch.symbols.get_transformed_pin_position(sym, pin.number)
-                        if result:
-                            pin_info['position'] = get_pos(result['position'])
-                            pin_info['orientation'] = result.get('orientation', 0)
-                    except:
-                        pin_info['position'] = get_pos(getattr(pin, 'position', None))
+                if pin.number in pin_map:
+                    pin_info['position'] = pin_map[pin.number]['position']
+                    pin_info['orientation'] = pin_map[pin.number]['orientation']
                 else:
                     pin_info['position'] = get_pos(getattr(pin, 'position', None))
                 pins.append(pin_info)

@@ -424,19 +424,24 @@ try:
         except Exception as e:
             results.append({'index': i, 'error': str(e)})
 
-    # --- Collect pin positions for placed symbols (best-effort) ---
+    # --- Collect pin positions for placed symbols (batch API for efficiency) ---
     for _idx, _sym in _placed_syms.items():
         try:
             _pins = []
             if hasattr(_sym, 'pins'):
+                # Use batch API for efficiency
+                _pin_map = {}
+                try:
+                    _all_pins = sch.symbols.get_all_transformed_pin_positions(_sym)
+                    for _ap in _all_pins:
+                        _pin_map[_ap['pin_number']] = [round(_ap['position'].x / 1_000_000, 4), round(_ap['position'].y / 1_000_000, 4)]
+                except:
+                    pass
+
                 for _p in _sym.pins:
                     _pin_info = {'number': _p.number, 'name': getattr(_p, 'name', '')}
-                    try:
-                        _tr = sch.symbols.get_transformed_pin_position(_sym, _p.number)
-                        if _tr:
-                            _pin_info['position'] = [round(_tr['position'].x / 1_000_000, 4), round(_tr['position'].y / 1_000_000, 4)]
-                    except:
-                        pass
+                    if _p.number in _pin_map:
+                        _pin_info['position'] = _pin_map[_p.number]
                     _pins.append(_pin_info)
             for _r in results:
                 if _r.get('index') == _idx and 'error' not in _r:

@@ -47,12 +47,12 @@ try:
                 _old_sym_x = round(item.position.x / 1e6, 2)
                 _old_sym_y = round(item.position.y / 1e6, 2)
                 _old_pins = []
-                for _pin in item.pins:
-                    try:
-                        _tp = sch.symbols.get_transformed_pin_position(item, _pin.number)
-                        if _tp:
-                            _old_pins.append((round(_tp['position'].x / 1e6, 2), round(_tp['position'].y / 1e6, 2)))
-                    except: pass
+                # Use batch API for efficiency
+                try:
+                    _all_pins = sch.symbols.get_all_transformed_pin_positions(item)
+                    for _tp in _all_pins:
+                        _old_pins.append((round(_tp['position'].x / 1e6, 2), round(_tp['position'].y / 1e6, 2)))
+                except: pass
 
                 # Move the symbol
                 new_pos = Vector2.from_xy_mm(pos_x, pos_y)

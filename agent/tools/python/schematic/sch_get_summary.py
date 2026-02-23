@@ -79,20 +79,21 @@ try:
             'unit': sym.unit if hasattr(sym, 'unit') else 1,
             'pins': []
         }
-        # Get pin positions - for placed symbols, pin.position is already absolute
+        # Get pin positions using batch API for efficiency (single IPC call per symbol)
         if hasattr(sym, 'pins'):
+            # Use batch API if available
+            pin_map = {}
+            if hasattr(sch.symbols, 'get_all_transformed_pin_positions'):
+                try:
+                    all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
+                    for p in all_pins:
+                        pin_map[p['pin_number']] = get_pos(p)
+                except:
+                    pass
+
             for pin in sym.pins:
                 try:
-                    abs_pos = None
-
-                    # First try the IPC method for transformed position
-                    if hasattr(sch.symbols, 'get_transformed_pin_position'):
-                        try:
-                            pin_pos = sch.symbols.get_transformed_pin_position(sym, pin.number)
-                            if pin_pos:
-                                abs_pos = get_pos(pin_pos)
-                        except:
-                            pass
+                    abs_pos = pin_map.get(pin.number)
 
                     # Fallback: pin.position on placed symbols is already absolute (transformed)
                     # Do NOT add sym_pos - it's already included in the position
@@ -202,16 +203,16 @@ try:
             pass
 
     # Collect all symbol pin positions (for label/junction connectivity)
+    # Use batch API to get all pin positions in a single IPC call per symbol
     all_pin_pts = set()
     for sym in symbols:
         if hasattr(sym, 'pins'):
-            for p in sym.pins:
-                try:
-                    tp = sch.symbols.get_transformed_pin_position(sym, p.number)
-                    if tp:
-                        all_pin_pts.add((rnd(tp['position'].x/1e6), rnd(tp['position'].y/1e6)))
-                except:
-                    pass
+            try:
+                all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
+                for tp in all_pins:
+                    all_pin_pts.add((rnd(tp['position'].x/1e6), rnd(tp['position'].y/1e6)))
+            except:
+                pass
 
     conn_pts = wire_pts | all_pin_pts
 
@@ -221,16 +222,16 @@ try:
             if not hasattr(sym, 'reference') or not sym.reference.startswith('#PWR'):
                 continue
             connected = False
-            for p in sym.pins:
-                try:
-                    tp = sch.symbols.get_transformed_pin_position(sym, p.number)
-                    if tp:
-                        pp = (rnd(tp['position'].x/1e6), rnd(tp['position'].y/1e6))
-                        if pp in wire_pts:
-                            connected = True
-                            break
-                except:
-                    pass
+            # Use batch API for efficiency
+            try:
+                all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
+                for tp in all_pins:
+                    pp = (rnd(tp['position'].x/1e6), rnd(tp['position'].y/1e6))
+                    if pp in wire_pts:
+                        connected = True
+                        break
+            except:
+                pass
             if not connected:
                 orphaned_power.append(sym.reference)
         except:

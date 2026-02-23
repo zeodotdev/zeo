@@ -302,8 +302,8 @@ try:
     junction_count = 0
 
     # Build obstacle map from graphical bounding boxes of ALL symbols and labels.
-    # Shrink bbox edges that have pins so wires can reach pin tips
-    # without the body registering as an obstacle.
+    # For ICs (>4 pins), shrink bbox edges that have pins so wires can reach pin tips.
+    # For passives (2-4 pins), use full body bbox to prevent wires crossing through.
     # Also collect all pin-tip grid cells so the router won't cross
     # intermediate pins on multi-pin components (prevents MergeOverlap shorts).
     obstacles = []
@@ -366,6 +366,7 @@ try:
             pin_cells.update(obs_pins)
     except:
         pass
+    _sym_obstacle_count = len(obstacles)
     try:
         for obs_lbl in sch.labels.get_all():
             try:
@@ -374,10 +375,11 @@ try:
                 continue
             if not bbox:
                 continue
-            obstacles.append({'min_x': bbox['min_x'], 'max_x': bbox['max_x'], 'min_y': bbox['min_y'], 'max_y': bbox['max_y']})
-    except:
-        pass
+            obstacles.append({'min_x': bbox['min_x'], 'max_x': bbox['max_x'], 'min_y': bbox['min_y'], 'max_y': bbox['max_y'], 'ref': getattr(obs_lbl, 'text', 'label')})
+    except Exception as e:
+        print(f'[route] label obstacle error: {e}', file=sys.stderr)
 
+    print(f'[route] Symbol obstacles: {_sym_obstacle_count}, Label obstacles: {len(obstacles) - _sym_obstacle_count}', file=sys.stderr)
     print(f'[route] Pin obstacle cells: {len(pin_cells)}', file=sys.stderr)
 
     # Build directional wire obstacle sets.
@@ -418,12 +420,17 @@ try:
                 for gy in range(min(gy0, gy1), max(gy0, gy1) + 1):
                     v_wire_cells.add((gx0, gy))
 
-    def _cell_blocked(cx, cy, grid=1.27):
-        """Check if a grid cell center is inside any obstacle."""
+    def _cell_blocked(cx, cy, grid=1.27, return_ref=False):
+        """Check if a grid cell center is inside any obstacle.
+        If return_ref=True, returns (blocked, ref) tuple."""
         half = grid / 2 - 0.01
         for obs in obstacles:
             if cx + half > obs['min_x'] and cx - half < obs['max_x'] and cy + half > obs['min_y'] and cy - half < obs['max_y']:
+                if return_ref:
+                    return True, obs.get('ref', '?')
                 return True
+        if return_ref:
+            return False, None
         return False
 
     import heapq

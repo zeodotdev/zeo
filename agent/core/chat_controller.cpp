@@ -1899,6 +1899,11 @@ void CHAT_CONTROLLER::StartLLMRequest()
     // Build the API context (handles compaction — only sends post-compaction messages)
     nlohmann::json apiContext = BuildApiContext();
 
+    // Repair the sliced context. After compaction, the sliced context may have orphaned
+    // tool_results (where the corresponding tool_use was before the compaction marker).
+    // RepairMessageArray will remove these orphaned blocks.
+    RepairMessageArray( apiContext );
+
     // Sanitize context before sending to ensure valid message format
     SanitizeMessages( apiContext );
 

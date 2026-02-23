@@ -527,6 +527,81 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
     };
     tools.push_back( schLabelPins );
 
+    // sch_place_companions - Place companion components adjacent to IC pins
+    LLM_TOOL schPlaceCompanions;
+    schPlaceCompanions.name = "sch_place_companions";
+    schPlaceCompanions.description =
+        "Place companion components adjacent to an IC's pins. Companion circuits are small "
+        "supporting parts (decoupling caps, pull-up/down resistors, termination resistors, "
+        "filter caps, LED indicators) that wire directly to specific IC pins.\n\n"
+        "The tool calculates optimal positions based on IC geometry and pin locations. "
+        "Components are placed adjacent to pins with short wire stubs. "
+        "Other connections use labels instead of long wires.\n\n"
+        "Use this for IC support circuitry AFTER placing the IC with sch_add. "
+        "REQUIRES: Schematic editor must be open with a document loaded.";
+    schPlaceCompanions.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "ic_ref", {
+                { "type", "string" },
+                { "description", "Reference designator of anchor IC (e.g., 'U1')" }
+            }},
+            { "companions", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "object" },
+                    { "properties", {
+                        { "lib_id", {
+                            { "type", "string" },
+                            { "description", "Library ID. Use 'Device:C', 'Device:R' for passives. Use 'power:GND', 'power:VCC' to place a power symbol directly at the pin (no component)." }
+                        }},
+                        { "ic_pin", {
+                            { "type", "string" },
+                            { "description", "IC pin number or name to place adjacent to" }
+                        }},
+                        { "offset_grids", {
+                            { "type", "integer" },
+                            { "description", "Distance in grid units (1.27mm each). Default: 3" }
+                        }},
+                        { "properties", {
+                            { "type", "object" },
+                            { "description", "Symbol properties like {\"Value\": \"100nF\", \"Footprint\": \"...\"}" },
+                            { "additionalProperties", { { "type", "string" } } }
+                        }},
+                        { "terminal_labels", {
+                            { "type", "object" },
+                            { "description", "Net labels at companion terminals. Map pin number to label: {\"1\": \"OUT\"} for pin 1 (away from IC) or {\"2\": \"IN\"} for pin 2 (toward IC)" },
+                            { "additionalProperties", { { "type", "string" } } }
+                        }},
+                        { "terminal_power", {
+                            { "type", "object" },
+                            { "description", "Power symbols at pin 1 (the terminal away from IC). Pin 2 connects to IC pin. Use {\"1\": \"GND\"} or {\"1\": \"VCC\"}" },
+                            { "additionalProperties", { { "type", "string" } } }
+                        }},
+                        { "reverse", {
+                            { "type", "boolean" },
+                            { "description", "Swap pin orientation. When true, pin 1 faces IC (default: pin 2 faces IC). Use for polarized components like LEDs where you need opposite polarity." }
+                        }},
+                        { "chain", {
+                            { "type", "array" },
+                            { "description", "Chain of components extending from this companion's 'away' terminal. "
+                                            "Each chain item has: lib_id, properties, terminal_power, terminal_labels, reverse, offset_grids. "
+                                            "No ic_pin needed - chain items connect to parent's away terminal. "
+                                            "The 'away' terminal is pin 1 normally, or pin 2 if parent has reverse:true. "
+                                            "Chain items can have their own nested 'chain' for multi-component series (R→C→LED). "
+                                            "Multiple items = branches (staggered perpendicular): [{LED1}, {LED2}] places two LEDs side-by-side. "
+                                            "Example: {\"lib_id\": \"Device:R\", \"ic_pin\": \"PA0\", \"chain\": [{\"lib_id\": \"Device:LED\", \"reverse\": true, \"terminal_power\": {\"1\": \"GND\"}}]}" }
+                        }}
+                    }},
+                    { "required", json::array( { "lib_id", "ic_pin" } ) }
+                }},
+                { "description", "Array of companion components to place" }
+            }}
+        }},
+        { "required", json::array( { "ic_ref", "companions" } ) }
+    };
+    tools.push_back( schPlaceCompanions );
+
     // sch_add_sheet - Add a hierarchical sheet
     LLM_TOOL schAddSheet;
     schAddSheet.name = "sch_add_sheet";

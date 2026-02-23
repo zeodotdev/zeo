@@ -3379,31 +3379,32 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
             EDA_ITEM* item = undoCommand->GetPickedItem( j );
             UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
 
-            // Log the undo operation type
-            wxString statusStr;
-            switch( status )
+            // Skip if no valid item pointer
+            if( !item )
+                continue;
+
+            // Validate pointer looks reasonable (not obviously garbage)
+            // Valid heap pointers on macOS arm64 are typically in ranges starting with 0x0000000
+            uintptr_t ptrVal = reinterpret_cast<uintptr_t>( item );
+            if( ptrVal < 0x100000000ULL || ptrVal > 0x800000000000ULL )
             {
-            case UNDO_REDO::CHANGED: statusStr = "CHANGED"; break;
-            case UNDO_REDO::NEWITEM: statusStr = "NEWITEM"; break;
-            case UNDO_REDO::DELETED: statusStr = "DELETED"; break;
-            case UNDO_REDO::LIBEDIT: statusStr = "LIBEDIT"; break;
-            case UNDO_REDO::LIB_RENAME: statusStr = "LIB_RENAME"; break;
-            case UNDO_REDO::PAGESETTINGS: statusStr = "PAGESETTINGS"; break;
-            default: statusStr = wxString::Format( "OTHER(%d)", static_cast<int>( status ) ); break;
+                wxLogWarning( "SCH: Skipping invalid item pointer %p in undo command", item );
+                continue;
             }
 
-            if( item )
+            // Track the item by KIID with its actual sheet path and change type
+            // Use try-catch to protect against any remaining invalid pointers
+            try
             {
-                // Get the item's actual screen and find its sheet path
                 SCH_SCREEN*    screen = dynamic_cast<SCH_SCREEN*>( undoCommand->GetScreenForItem( j ) );
                 SCH_SHEET_PATH itemSheet = sheets.FindSheetForScreen( screen );
                 wxString       sheetPath = itemSheet.PathHumanReadable( false );
 
-                wxLogInfo( "SCH: Tracking item %s (type=%s, status=%s) on sheet '%s'",
-                           item->m_Uuid.AsString(), item->GetClass(), statusStr, sheetPath );
-
-                // Track the item by KIID with its actual sheet path and change type
                 m_agentChangeTracker->TrackItem( item->m_Uuid, sheetPath, status );
+            }
+            catch( ... )
+            {
+                wxLogWarning( "SCH: Exception accessing item in undo command, skipping" );
             }
         }
     }

@@ -2769,7 +2769,7 @@ API_HANDLER_SCH::handleAnnotateSymbols(
     SCH_COMMIT commit( m_frame );
     m_frame->AnnotateSymbols( &commit, scope, order, algo, aCtx.Request.recursive(),
                               startNumber, aCtx.Request.reset_existing(),
-                              aCtx.Request.repair_timestamps(), reporter );
+                              false, aCtx.Request.repair_timestamps(), reporter );
     commit.Push( _( "API: Annotate Symbols" ) );
 
     response.set_symbols_annotated( reporter.m_messages.size() );
@@ -4444,7 +4444,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetBusAlias(
 
     for( const auto& member : aliasData.members() )
     {
-        newAlias->Members().push_back( wxString::FromUTF8( member ) );
+        newAlias->AddMember( wxString::FromUTF8( member ) );
     }
 
     currentAliases.push_back( newAlias );
@@ -4536,7 +4536,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetBusAliases(
 
         for( const auto& member : aliasData.members() )
         {
-            alias->Members().push_back( wxString::FromUTF8( member ) );
+            alias->AddMember( wxString::FromUTF8( member ) );
         }
 
         newAliases.push_back( alias );
@@ -5579,7 +5579,7 @@ API_HANDLER_SCH::handleRunSimulation(
         SCH_COMMIT    commit( m_frame );
 
         m_frame->AnnotateSymbols( &commit, ANNOTATE_ALL, SORT_BY_X_POSITION,
-                                  INCREMENTAL_BY_REF, true, 1, false, false, reporter );
+                                  INCREMENTAL_BY_REF, true, 1, false, false, false, reporter );
         commit.Push( _( "API: Auto-annotate for simulation" ) );
 
         // Verify annotation succeeded

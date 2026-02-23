@@ -75,7 +75,6 @@ using namespace std::placeholders;
 #include <kiway.h>
 #include <frame_type.h>
 
-#include <kiway_express.h>
 #include <nlohmann/json.hpp>
 #include <mail_type.h>
 #include <wx/log.h>

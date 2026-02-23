@@ -1576,6 +1576,13 @@ TOOL_ACTION PCB_ACTIONS::showEeschema( TOOL_ACTION_ARGS()
         .Tooltip( _( "Open schematic in schematic editor" ) )
         .Icon( BITMAPS::icon_eeschema_24 ) );
 
+TOOL_ACTION PCB_ACTIONS::showAgent( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.EditorControl.showAgent" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Zeo Agent" ) )
+        .Tooltip( _( "Open the Zeo AI Agent" ) )
+        .Icon( BITMAPS::net_highlight ) );  // TODO: Add agent icon
+
 // DESIGN RULE EDITOR
 TOOL_ACTION PCB_ACTIONS::drcRuleEditor( TOOL_ACTION_ARGS()
         .Name( "pcbnew.DRETool.drcRuleEditor" )

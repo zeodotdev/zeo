@@ -35,6 +35,7 @@
 class wxGauge;
 class wxButton;
 class wxStaticText;
+class wxStaticBitmap;
 class BITMAP_BUTTON;
 
 /**
@@ -65,6 +66,7 @@ public:
         NOTIFICATION_ICON = 0x01,
         CANCEL_BUTTON     = 0x02,
         WARNING_ICON      = 0x04,
+        LABEL_BUTTON      = 0x08,
     };
 
     static constexpr auto DEFAULT_STYLE =
@@ -129,6 +131,26 @@ public:
      */
     size_t GetLoadWarningCount() const;
 
+    /**
+     * Get the label button widget (Zeo session management).
+     */
+    wxButton* GetLabelButton() { return m_labelButton; }
+
+    /**
+     * Get the profile bitmap widget (Zeo session management).
+     */
+    wxStaticBitmap* GetProfileBitmap() { return m_profileBitmap; }
+
+    /**
+     * Set the profile bitmap (Zeo session management).
+     */
+    void SetProfileBitmap( const wxBitmap& aBitmap );
+
+    /**
+     * Set the label button text (Zeo session management).
+     */
+    void SetLabelButtonText( const wxString& aText );
+
 private:
     void onSize( wxSizeEvent& aEvent );
     void onBackgroundProgressClick( wxMouseEvent& aEvent );
@@ -142,17 +164,20 @@ private:
         BGJOB_GAUGE,
         BGJOB_CANCEL,
         WARNING,
-        NOTIFICATION
+        NOTIFICATION,
+        LABEL
     };
 
     std::optional<int> fieldIndex( FIELD aField ) const;
 
 private:
-    wxGauge*       m_backgroundProgressBar;
-    wxButton*      m_backgroundStopButton;
-    wxStaticText*  m_backgroundTxt;
-    BITMAP_BUTTON* m_notificationsButton;
-    BITMAP_BUTTON* m_warningButton;
+    wxGauge*        m_backgroundProgressBar;
+    wxButton*       m_backgroundStopButton;
+    wxStaticText*   m_backgroundTxt;
+    BITMAP_BUTTON*  m_notificationsButton;
+    BITMAP_BUTTON*  m_warningButton;
+    wxButton*       m_labelButton;       ///< Zeo session label button
+    wxStaticBitmap* m_profileBitmap;     ///< Zeo session profile avatar
     mutable std::mutex m_loadWarningMutex;  ///< Protects m_loadWarningMessages
     std::vector<LOAD_MESSAGE> m_loadWarningMessages;
     int            m_normalFieldsCount;

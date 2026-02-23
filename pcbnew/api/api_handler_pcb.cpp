@@ -3609,22 +3609,8 @@ HANDLER_RESULT<GetLibraryFootprintsResponse> API_HANDLER_PCB::handleGetLibraryFo
             info->set_name( fpName.ToUTF8().data() );
             info->set_lib_id( fmt::format( "{}:{}", aCtx.Request.library_name(),
                                            fpName.ToUTF8().data() ) );
-
-            // Try to get extended info from FOOTPRINT_LIST if available
-            FOOTPRINT_LIST* fpList = FOOTPRINT_LIST::GetInstance( frame()->Kiway() );
-
-            if( fpList )
-            {
-                FOOTPRINT_INFO* fpInfo = fpList->GetFootprintInfo( libName, fpName );
-
-                if( fpInfo )
-                {
-                    info->set_description( fpInfo->GetDesc().ToUTF8().data() );
-                    info->set_keywords( fpInfo->GetKeywords().ToUTF8().data() );
-                    info->set_pad_count( fpInfo->GetPadCount() );
-                    info->set_unique_pad_count( fpInfo->GetUniquePadCount() );
-                }
-            }
+            // Note: Extended footprint info (description, keywords, pad counts) requires
+            // loading the full footprint, which is expensive. Omitted for list operations.
         }
     }
     catch( const IO_ERROR& e )
@@ -3642,67 +3628,12 @@ HANDLER_RESULT<GetLibraryFootprintsResponse> API_HANDLER_PCB::handleGetLibraryFo
 HANDLER_RESULT<SearchLibraryFootprintsResponse> API_HANDLER_PCB::handleSearchLibraryFootprints(
         const HANDLER_CONTEXT<SearchLibraryFootprints>& aCtx )
 {
-    SearchLibraryFootprintsResponse response;
-
-    wxString query = wxString::FromUTF8( aCtx.Request.query() ).Lower();
-    int maxResults = aCtx.Request.max_results() > 0 ? aCtx.Request.max_results() : INT_MAX;
-
-    // Get footprint list (cached, includes all libraries)
-    FOOTPRINT_LIST* fpList = FOOTPRINT_LIST::GetInstance( frame()->Kiway() );
-
-    if( !fpList )
-    {
-        ApiResponseStatus e;
-        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-        e.set_error_message( "No footprint list available" );
-        return tl::unexpected( e );
-    }
-
-    // Build set of libraries to search
-    std::set<wxString> targetLibs;
-
-    for( const auto& lib : aCtx.Request.libraries() )
-        targetLibs.insert( wxString::FromUTF8( lib ) );
-
-    bool searchAllLibs = targetLibs.empty();
-    int count = 0;
-
-    // Search through footprint list
-    for( const std::unique_ptr<FOOTPRINT_INFO>& fpInfoPtr : fpList->GetList() )
-    {
-        FOOTPRINT_INFO& fpInfo = *fpInfoPtr;
-
-        if( count >= maxResults )
-            break;
-
-        // Filter by library if specified
-        if( !searchAllLibs &&
-            targetLibs.find( fpInfo.GetLibNickname() ) == targetLibs.end() )
-            continue;
-
-        // Match against name, description, keywords
-        wxString name = fpInfo.GetFootprintName().Lower();
-        wxString desc = fpInfo.GetDesc().Lower();
-        wxString keywords = fpInfo.GetKeywords().Lower();
-
-        if( name.Contains( query ) || desc.Contains( query ) || keywords.Contains( query ) )
-        {
-            FootprintInfo* info = response.add_results();
-
-            info->set_name( fpInfo.GetFootprintName().ToUTF8().data() );
-            info->set_lib_id( fmt::format( "{}:{}",
-                fpInfo.GetLibNickname().ToUTF8().data(),
-                fpInfo.GetFootprintName().ToUTF8().data() ) );
-            info->set_description( fpInfo.GetDesc().ToUTF8().data() );
-            info->set_keywords( fpInfo.GetKeywords().ToUTF8().data() );
-            info->set_pad_count( fpInfo.GetPadCount() );
-            info->set_unique_pad_count( fpInfo.GetUniquePadCount() );
-
-            count++;
-        }
-    }
-
-    return response;
+    // TODO: Implement footprint search using FP_LIB_TABLE directly
+    // The FOOTPRINT_LIST singleton pattern was removed in KiCad 10
+    ApiResponseStatus e;
+    e.set_status( ApiStatusCode::AS_UNIMPLEMENTED );
+    e.set_error_message( "SearchLibraryFootprints is not yet implemented" );
+    return tl::unexpected( e );
 }
 
 
@@ -5578,12 +5509,12 @@ HANDLER_RESULT<ComponentClassSettingsResponse> API_HANDLER_PCB::handleGetCompone
             }
 
             // Add conditions
-            for( const auto& [condType, condData] : assignment.GetConditions() )
+            for( const auto& [condType, primaryData, secondaryData] : assignment.GetConditions() )
             {
                 ComponentClassCondition* condition = protoAssignment->add_conditions();
                 condition->set_type( toProtoConditionType( condType ) );
-                condition->set_primary_data( condData.first.ToStdString() );
-                condition->set_secondary_data( condData.second.ToStdString() );
+                condition->set_primary_data( primaryData.ToStdString() );
+                condition->set_secondary_data( secondaryData.ToStdString() );
             }
         }
     }
@@ -5643,7 +5574,7 @@ HANDLER_RESULT<ComponentClassSettingsResponse> API_HANDLER_PCB::handleSetCompone
         // Add conditions
         for( const auto& protoCondition : protoAssignment.conditions() )
         {
-            assignment.SetCondition(
+            assignment.AddCondition(
                     fromProtoConditionType( protoCondition.type() ),
                     wxString::FromUTF8( protoCondition.primary_data() ),
                     wxString::FromUTF8( protoCondition.secondary_data() ) );

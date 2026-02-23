@@ -40,7 +40,7 @@ public:
     // KIWAY_PLAYER virtual overrides
     bool OpenProjectFiles( const std::vector<wxString>& aFileSet, int aCtl = 0 ) override { return true; }
     void ShowChangedLanguage() override;
-    void KiwayMailIn( KIWAY_EXPRESS& aEvent ) override;
+    void KiwayMailIn( KIWAY_MAIL_EVENT& aEvent ) override;
 
     wxWindow* GetToolCanvas() const override { return (wxWindow*) this; }
 

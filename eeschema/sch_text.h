@@ -170,9 +170,6 @@ public:
 
     bool operator==( const SCH_ITEM& aItem ) const override;
 
-    void Serialize( google::protobuf::Any& aContainer ) const override;
-    bool Deserialize( const google::protobuf::Any& aContainer ) override;
-
 #if defined(DEBUG)
     void Show( int nestLevel, std::ostream& os ) const override;
 #endif

@@ -486,6 +486,18 @@ int SCH_EDITOR_CONTROL::Revert( const TOOL_EVENT& aEvent )
 }
 
 
+int SCH_EDITOR_CONTROL::Quit( const TOOL_EVENT& aEvent )
+{
+    m_frame->CallAfter(
+            [this]()
+            {
+                m_frame->Kiway().OnKiCadExit();
+            } );
+
+    return 0;
+}
+
+
 int SCH_EDITOR_CONTROL::ShowSchematicSetup( const TOOL_EVENT& aEvent )
 {
     m_frame->ShowSchematicSetupDialog();

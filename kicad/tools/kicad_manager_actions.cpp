@@ -268,5 +268,5 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::showTerminal( TOOL_ACTION_ARGS()
                                                          .Scope( AS_GLOBAL )
                                                          .FriendlyName( _( "Terminal" ) )
                                                          .Tooltip( _( "Show Terminal" ) )
-                                                         .Icon( BITMAPS::py_script_24 )
+                                                         .Icon( BITMAPS::py_script )
                                                          .Parameter( FRAME_TERMINAL ) );

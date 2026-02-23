@@ -26,6 +26,7 @@
 #include <widgets/kistatusbar.h>
 #include <kiway.h>
 #include <mail_type.h>
+#include <wx/button.h>
 #include <wx/msgdlg.h>
 #include <wx/menu.h>
 #include <wx/utils.h>

@@ -26,6 +26,7 @@
 #include <wx/statusbr.h>
 #include <wx/gauge.h>
 #include <wx/stattext.h>
+#include <wx/statbmp.h>
 #include <wx/tokenzr.h>
 #include <fmt/format.h>
 #include <array>
@@ -48,6 +49,8 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
         m_backgroundStopButton( nullptr ),
         m_notificationsButton( nullptr ),
         m_warningButton( nullptr ),
+        m_labelButton( nullptr ),
+        m_profileBitmap( nullptr ),
         m_normalFieldsCount( aNumberFields ),
         m_styleFlags( aFlags )
 {
@@ -63,6 +66,7 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
     bool showNotification = ( m_styleFlags & NOTIFICATION_ICON );
     bool showCancel = ( m_styleFlags & CANCEL_BUTTON );
     bool showWarning = ( m_styleFlags & WARNING_ICON );
+    bool showLabel = ( m_styleFlags & LABEL_BUTTON );
 
     if( showCancel )
         extraFields++;
@@ -71,6 +75,9 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
         extraFields++;
 
     if( showNotification )
+        extraFields++;
+
+    if( showLabel )
         extraFields++;
 
     SetFieldsCount( aNumberFields + extraFields );
@@ -94,6 +101,9 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
 
     if( std::optional<int> idx = fieldIndex( FIELD::NOTIFICATION ) )
         widths[aNumberFields + *idx] = 20;  // notifications button
+
+    if( std::optional<int> idx = fieldIndex( FIELD::LABEL ) )
+        widths[aNumberFields + *idx] = 100;  // Zeo session label button
 
 #ifdef __WXOSX__
     // offset from the right edge
@@ -147,6 +157,15 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
         m_warningButton->Hide();
 
         m_warningButton->Bind( wxEVT_BUTTON, &KISTATUSBAR::onLoadWarningsIconClick, this );
+    }
+
+    if( showLabel )
+    {
+        m_labelButton = new wxButton( this, wxID_ANY, _( "Sign In" ), wxDefaultPosition,
+                                      wxDefaultSize, wxBU_EXACTFIT | wxBORDER_NONE );
+
+        m_profileBitmap = new wxStaticBitmap( this, wxID_ANY, wxNullBitmap );
+        m_profileBitmap->Hide();
     }
 
     Bind( wxEVT_SIZE, &KISTATUSBAR::onSize, this );
@@ -255,6 +274,30 @@ void KISTATUSBAR::onSize( wxSizeEvent& aEvent )
         buttonSize = m_warningButton->GetEffectiveMinSize();
         m_warningButton->SetPosition( { x, y } );
         m_warningButton->SetSize( buttonSize.GetWidth() + 6, h );
+    }
+
+    if( m_labelButton || m_profileBitmap )
+    {
+        GetFieldRect( m_normalFieldsCount + *fieldIndex( FIELD::LABEL ), r );
+        x = r.GetLeft();
+        y = r.GetTop();
+        w = r.GetWidth();
+        h = r.GetHeight();
+
+        if( m_labelButton )
+        {
+            m_labelButton->SetPosition( { x, y } );
+            m_labelButton->SetSize( w, h );
+        }
+
+        if( m_profileBitmap )
+        {
+            // Center the profile bitmap in the field
+            wxSize bmpSize = m_profileBitmap->GetSize();
+            int bmpX = x + ( w - bmpSize.GetWidth() ) / 2;
+            int bmpY = y + ( h - bmpSize.GetHeight() ) / 2;
+            m_profileBitmap->SetPosition( { bmpX, bmpY } );
+        }
     }
 }
 
@@ -532,7 +575,41 @@ std::optional<int> KISTATUSBAR::fieldIndex( FIELD aField ) const
 
         break;
     }
+    case FIELD::LABEL:
+    {
+        if( m_styleFlags & LABEL_BUTTON )
+        {
+            int offset = 2;
+
+            if( m_styleFlags & CANCEL_BUTTON )
+                offset++;
+
+            if( m_styleFlags & WARNING_ICON )
+                offset++;
+
+            if( m_styleFlags & NOTIFICATION_ICON )
+                offset++;
+
+            return offset;
+        }
+
+        break;
+    }
     }
 
     return std::nullopt;
+}
+
+
+void KISTATUSBAR::SetProfileBitmap( const wxBitmap& aBitmap )
+{
+    if( m_profileBitmap )
+        m_profileBitmap->SetBitmap( aBitmap );
+}
+
+
+void KISTATUSBAR::SetLabelButtonText( const wxString& aText )
+{
+    if( m_labelButton )
+        m_labelButton->SetLabel( aText );
 }

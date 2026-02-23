@@ -11,7 +11,7 @@
 #include "tools/tool_registry.h"
 #include "tools/handlers/check_status_handler.h"
 #include "tools/handlers/open_editor_handler.h"
-#include <kiway_express.h>
+#include <kiway_mail.h>
 #include <mail_type.h>
 #include <wx/log.h>
 #include <kiway.h>
@@ -829,7 +829,7 @@ void AGENT_FRAME::OnChatScroll( wxScrollWinEvent& aEvent )
     aEvent.Skip();
 }
 
-void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
+void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
 {
     if( aEvent.Command() == MAIL_AGENT_RESPONSE )
     {

@@ -150,7 +150,8 @@ void CHAT_CONTROLLER::DoSendMessage( const std::string& aText, const nlohmann::j
                           + editsSummary
                           + "</schematic_changes_by_user>\n\n" + messageText;
 
-            wxLogInfo( "CHAT: Injecting user edits context into message" );
+            wxLogInfo( "CHAT: Injecting user edits context into message:\n%s",
+                       messageText.c_str() );
         }
     }
 
@@ -1234,6 +1235,8 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
 
 void CHAT_CONTROLLER::AddToHistory( const nlohmann::json& aMessage )
 {
+    wxLogInfo( "CHAT_CONTROLLER::AddToHistory [%zu] %s",
+               m_chatHistory.size(), aMessage.dump().c_str() );
     m_chatHistory.push_back( aMessage );
 }
 
@@ -2042,6 +2045,26 @@ std::string CHAT_CONTROLLER::GetUserEditsSummary()
     }
     catch( ... )
     {
+        return "";
+    }
+
+    // Guard against false "cleared schematic" detection.
+    // If the current read returns a completely empty state but the previous snapshot
+    // had content, this likely means the API couldn't read the schematic (e.g. a
+    // modal dialog like schematic settings was open). Skip injection and keep the
+    // old snapshot so the next successful read can diff against it.
+    bool beforeHasContent = !before.value( "symbols", nlohmann::json::object() ).empty()
+                            || !before.value( "labels", nlohmann::json::object() ).empty()
+                            || before.value( "wire_count", 0 ) > 0;
+    bool afterIsEmpty = after.value( "symbols", nlohmann::json::object() ).empty()
+                        && after.value( "labels", nlohmann::json::object() ).empty()
+                        && after.value( "wire_count", 0 ) == 0;
+
+    if( beforeHasContent && afterIsEmpty )
+    {
+        wxLogWarning( "CHAT_CONTROLLER::GetUserEditsSummary - current snapshot is empty but "
+                      "previous had content; likely API read failure (dialog open?). "
+                      "Skipping edit injection and keeping old snapshot." );
         return "";
     }
 

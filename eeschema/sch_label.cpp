@@ -53,9 +53,9 @@
 #include <sch_rule_area.h>
 #include <magic_enum.hpp>
 #include <api/api_utils.h>
-#include <api/api_enums.h>
 #include <api/schematic/schematic_types.pb.h>
-#include <font/font.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 
 /* Coding polygons for global symbol graphic shapes.
@@ -1451,8 +1451,8 @@ void SCH_LABEL_BASE::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_O
     if( aPlotter->GetColorMode() && GetLabelColor() != COLOR4D::UNSPECIFIED )
         color = GetLabelColor();
 
-    if( color.m_text.has_value() && Schematic() )
-        color = COLOR4D( ResolveText( color.m_text.value(), &Schematic()->CurrentSheet() ) );
+    if( color.m_text && Schematic() )
+        color = COLOR4D( ResolveText( *color.m_text, &Schematic()->CurrentSheet() ) );
 
     penWidth = std::max( penWidth, settings->GetMinPenWidth() );
     aPlotter->SetCurrentLineWidth( penWidth );
@@ -1589,37 +1589,10 @@ SCH_LABEL::SCH_LABEL( const VECTOR2I& pos, const wxString& text ) :
 
 void SCH_LABEL::Serialize( google::protobuf::Any& aContainer ) const
 {
-    using namespace kiapi::common;
     kiapi::schematic::types::LocalLabel label;
 
     label.mutable_id()->set_value( m_Uuid.AsStdString() );
-    PackVector2Sch( *label.mutable_position(), GetPosition() );
-
-    // Serialize text content
-    label.mutable_text()->set_text( GetText().ToStdString() );
-    label.mutable_text()->set_hyperlink( GetHyperlink().ToStdString() );
-    PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
-
-    // Serialize text attributes (must match what Deserialize reads for round-trip fidelity)
-    auto* attrs = label.mutable_text()->mutable_attributes();
-    attrs->set_bold( IsBold() );
-    attrs->set_italic( IsItalic() );
-    attrs->set_underlined( GetAttributes().m_Underlined );
-    attrs->set_mirrored( IsMirrored() );
-    attrs->set_multiline( IsMultilineAllowed() );
-    attrs->set_keep_upright( GetAttributes().m_KeepUpright );
-    PackVector2Sch( *attrs->mutable_size(), GetTextSize() );
-
-    if( GetFont() )
-        attrs->set_font_name( GetFont()->GetName().ToStdString() );
-
-    attrs->mutable_angle()->set_value_degrees( GetTextAngleDegrees() );
-    attrs->set_line_spacing( GetLineSpacing() );
-    attrs->mutable_stroke_width()->set_value_nm( GetTextThickness() * 100 );
-    attrs->set_horizontal_alignment(
-            ToProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>( GetHorizJustify() ) );
-    attrs->set_vertical_alignment(
-            ToProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>( GetVertJustify() ) );
+    kiapi::common::PackVector2( *label.mutable_position(), GetPosition() );
 
     aContainer.PackFrom( label );
 }
@@ -1627,68 +1600,13 @@ void SCH_LABEL::Serialize( google::protobuf::Any& aContainer ) const
 
 bool SCH_LABEL::Deserialize( const google::protobuf::Any& aContainer )
 {
-    using namespace kiapi::common;
     kiapi::schematic::types::LocalLabel label;
 
     if( !aContainer.UnpackTo( &label ) )
         return false;
 
-    // Only overwrite UUID if a valid ID is provided in the proto
-    if( !label.id().value().empty() )
-        const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
-
-    // Deserialize text content
-    // NOTE: We do NOT call EDA_TEXT::Deserialize here because it uses PCB unit conversion
-    // which is 100x different from schematic units. Instead, we extract text attributes
-    // manually with correct schematic unit conversion.
-    if( label.has_text() )
-    {
-        const auto& text = label.text();
-
-        SetText( wxString( text.text().c_str(), wxConvUTF8 ) );
-        SetHyperlink( wxString( text.hyperlink().c_str(), wxConvUTF8 ) );
-
-        if( text.has_attributes() )
-        {
-            TEXT_ATTRIBUTES attrs = GetAttributes();
-            const auto& textAttrs = text.attributes();
-
-            attrs.m_Bold = textAttrs.bold();
-            attrs.m_Italic = textAttrs.italic();
-            attrs.m_Underlined = textAttrs.underlined();
-            attrs.m_Mirrored = textAttrs.mirrored();
-            attrs.m_Multiline = textAttrs.multiline();
-            attrs.m_KeepUpright = textAttrs.keep_upright();
-
-            // Text size needs schematic unit conversion (nm to schematic IU)
-            attrs.m_Size = UnpackVector2Sch( textAttrs.size() );
-
-            if( !textAttrs.font_name().empty() )
-            {
-                attrs.m_Font = KIFONT::FONT::GetFont(
-                        wxString( textAttrs.font_name().c_str(), wxConvUTF8 ),
-                        attrs.m_Bold, attrs.m_Italic );
-            }
-
-            attrs.m_Angle = EDA_ANGLE( textAttrs.angle().value_degrees(), DEGREES_T );
-            attrs.m_LineSpacing = textAttrs.line_spacing();
-
-            // Stroke width needs schematic unit conversion (nm to schematic IU)
-            attrs.m_StrokeWidth = textAttrs.stroke_width().value_nm() / 100;
-
-            attrs.m_Halign = FromProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>(
-                    textAttrs.horizontal_alignment() );
-            attrs.m_Valign = FromProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>(
-                    textAttrs.vertical_alignment() );
-
-            SetAttributes( attrs );
-        }
-    }
-
-    // Set position from the top-level position field (NOT text.position)
-    // using schematic unit conversion
-    if( label.has_position() )
-        SetPosition( UnpackVector2Sch( label.position() ) );
+    const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
+    SetPosition( kiapi::common::UnpackVector2( label.position() ) );
 
     return true;
 }
@@ -1765,80 +1683,23 @@ SCH_DIRECTIVE_LABEL::SCH_DIRECTIVE_LABEL( const SCH_DIRECTIVE_LABEL& aClassLabel
 }
 
 
+SCH_DIRECTIVE_LABEL::~SCH_DIRECTIVE_LABEL()
+{
+    for( SCH_RULE_AREA* ruleArea : m_connected_rule_areas )
+        ruleArea->RemoveDirective( this );
+}
+
+
 void SCH_DIRECTIVE_LABEL::Serialize( google::protobuf::Any& aContainer ) const
 {
-    kiapi::schematic::types::DirectiveLabel label;
-
-    label.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2Sch( *label.mutable_position(), GetPosition() );
-
-    // Serialize text content and attributes
-    label.mutable_text()->set_text( GetText().ToStdString() );
-    kiapi::common::PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
-
-    aContainer.PackFrom( label );
+    UNIMPLEMENTED_FOR( GetClass() );
 }
 
 
 bool SCH_DIRECTIVE_LABEL::Deserialize( const google::protobuf::Any& aContainer )
 {
-    using namespace kiapi::common;
-    kiapi::schematic::types::DirectiveLabel label;
-
-    if( !aContainer.UnpackTo( &label ) )
-        return false;
-
-    // Only overwrite UUID if a valid ID is provided in the proto
-    if( !label.id().value().empty() )
-        const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
-
-    // Deserialize text content
-    // NOTE: We do NOT call EDA_TEXT::Deserialize here because it uses PCB unit conversion
-    // which is 100x different from schematic units.
-    if( label.has_text() )
-    {
-        const auto& text = label.text();
-
-        SetText( wxString( text.text().c_str(), wxConvUTF8 ) );
-        SetHyperlink( wxString( text.hyperlink().c_str(), wxConvUTF8 ) );
-
-        if( text.has_attributes() )
-        {
-            TEXT_ATTRIBUTES attrs = GetAttributes();
-            const auto& textAttrs = text.attributes();
-
-            attrs.m_Bold = textAttrs.bold();
-            attrs.m_Italic = textAttrs.italic();
-            attrs.m_Underlined = textAttrs.underlined();
-            attrs.m_Mirrored = textAttrs.mirrored();
-            attrs.m_Multiline = textAttrs.multiline();
-            attrs.m_KeepUpright = textAttrs.keep_upright();
-            attrs.m_Size = UnpackVector2Sch( textAttrs.size() );
-
-            if( !textAttrs.font_name().empty() )
-            {
-                attrs.m_Font = KIFONT::FONT::GetFont(
-                        wxString( textAttrs.font_name().c_str(), wxConvUTF8 ),
-                        attrs.m_Bold, attrs.m_Italic );
-            }
-
-            attrs.m_Angle = EDA_ANGLE( textAttrs.angle().value_degrees(), DEGREES_T );
-            attrs.m_LineSpacing = textAttrs.line_spacing();
-            attrs.m_StrokeWidth = textAttrs.stroke_width().value_nm() / 100;
-            attrs.m_Halign = FromProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>(
-                    textAttrs.horizontal_alignment() );
-            attrs.m_Valign = FromProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>(
-                    textAttrs.vertical_alignment() );
-
-            SetAttributes( attrs );
-        }
-    }
-
-    // Set position from the top-level position field using schematic unit conversion
-    if( label.has_position() )
-        SetPosition( UnpackVector2Sch( label.position() ) );
-
-    return true;
+    UNIMPLEMENTED_FOR( GetClass() );
+    return false;
 }
 
 
@@ -2133,101 +1994,14 @@ SCH_GLOBALLABEL::SCH_GLOBALLABEL( const SCH_GLOBALLABEL& aGlobalLabel ) :
 
 void SCH_GLOBALLABEL::Serialize( google::protobuf::Any& aContainer ) const
 {
-    using namespace kiapi::common;
-    kiapi::schematic::types::GlobalLabel label;
-
-    label.mutable_id()->set_value( m_Uuid.AsStdString() );
-    PackVector2Sch( *label.mutable_position(), GetPosition() );
-
-    // Serialize text content
-    label.mutable_text()->set_text( GetText().ToStdString() );
-    label.mutable_text()->set_hyperlink( GetHyperlink().ToStdString() );
-    PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
-
-    // Serialize text attributes (must match what Deserialize reads for round-trip fidelity)
-    auto* attrs = label.mutable_text()->mutable_attributes();
-    attrs->set_bold( IsBold() );
-    attrs->set_italic( IsItalic() );
-    attrs->set_underlined( GetAttributes().m_Underlined );
-    attrs->set_mirrored( IsMirrored() );
-    attrs->set_multiline( IsMultilineAllowed() );
-    attrs->set_keep_upright( GetAttributes().m_KeepUpright );
-    PackVector2Sch( *attrs->mutable_size(), GetTextSize() );
-
-    if( GetFont() )
-        attrs->set_font_name( GetFont()->GetName().ToStdString() );
-
-    attrs->mutable_angle()->set_value_degrees( GetTextAngleDegrees() );
-    attrs->set_line_spacing( GetLineSpacing() );
-    attrs->mutable_stroke_width()->set_value_nm( GetTextThickness() * 100 );
-    attrs->set_horizontal_alignment(
-            ToProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>( GetHorizJustify() ) );
-    attrs->set_vertical_alignment(
-            ToProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>( GetVertJustify() ) );
-
-    aContainer.PackFrom( label );
+    UNIMPLEMENTED_FOR( GetClass() );
 }
 
 
 bool SCH_GLOBALLABEL::Deserialize( const google::protobuf::Any& aContainer )
 {
-    using namespace kiapi::common;
-    kiapi::schematic::types::GlobalLabel label;
-
-    if( !aContainer.UnpackTo( &label ) )
-        return false;
-
-    // Only overwrite UUID if a valid ID is provided in the proto
-    if( !label.id().value().empty() )
-        const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
-
-    // Deserialize text content
-    // NOTE: We do NOT call EDA_TEXT::Deserialize here because it uses PCB unit conversion
-    // which is 100x different from schematic units.
-    if( label.has_text() )
-    {
-        const auto& text = label.text();
-
-        SetText( wxString( text.text().c_str(), wxConvUTF8 ) );
-        SetHyperlink( wxString( text.hyperlink().c_str(), wxConvUTF8 ) );
-
-        if( text.has_attributes() )
-        {
-            TEXT_ATTRIBUTES attrs = GetAttributes();
-            const auto& textAttrs = text.attributes();
-
-            attrs.m_Bold = textAttrs.bold();
-            attrs.m_Italic = textAttrs.italic();
-            attrs.m_Underlined = textAttrs.underlined();
-            attrs.m_Mirrored = textAttrs.mirrored();
-            attrs.m_Multiline = textAttrs.multiline();
-            attrs.m_KeepUpright = textAttrs.keep_upright();
-            attrs.m_Size = UnpackVector2Sch( textAttrs.size() );
-
-            if( !textAttrs.font_name().empty() )
-            {
-                attrs.m_Font = KIFONT::FONT::GetFont(
-                        wxString( textAttrs.font_name().c_str(), wxConvUTF8 ),
-                        attrs.m_Bold, attrs.m_Italic );
-            }
-
-            attrs.m_Angle = EDA_ANGLE( textAttrs.angle().value_degrees(), DEGREES_T );
-            attrs.m_LineSpacing = textAttrs.line_spacing();
-            attrs.m_StrokeWidth = textAttrs.stroke_width().value_nm() / 100;
-            attrs.m_Halign = FromProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>(
-                    textAttrs.horizontal_alignment() );
-            attrs.m_Valign = FromProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>(
-                    textAttrs.vertical_alignment() );
-
-            SetAttributes( attrs );
-        }
-    }
-
-    // Set position from the top-level position field using schematic unit conversion
-    if( label.has_position() )
-        SetPosition( UnpackVector2Sch( label.position() ) );
-
-    return true;
+    UNIMPLEMENTED_FOR( GetClass() );
+    return false;
 }
 
 
@@ -2437,101 +2211,14 @@ SCH_HIERLABEL::SCH_HIERLABEL( const VECTOR2I& pos, const wxString& text, KICAD_T
 
 void SCH_HIERLABEL::Serialize( google::protobuf::Any& aContainer ) const
 {
-    using namespace kiapi::common;
-    kiapi::schematic::types::HierarchicalLabel label;
-
-    label.mutable_id()->set_value( m_Uuid.AsStdString() );
-    PackVector2Sch( *label.mutable_position(), GetPosition() );
-
-    // Serialize text content
-    label.mutable_text()->set_text( GetText().ToStdString() );
-    label.mutable_text()->set_hyperlink( GetHyperlink().ToStdString() );
-    PackVector2Sch( *label.mutable_text()->mutable_position(), GetTextPos() );
-
-    // Serialize text attributes (must match what Deserialize reads for round-trip fidelity)
-    auto* attrs = label.mutable_text()->mutable_attributes();
-    attrs->set_bold( IsBold() );
-    attrs->set_italic( IsItalic() );
-    attrs->set_underlined( GetAttributes().m_Underlined );
-    attrs->set_mirrored( IsMirrored() );
-    attrs->set_multiline( IsMultilineAllowed() );
-    attrs->set_keep_upright( GetAttributes().m_KeepUpright );
-    PackVector2Sch( *attrs->mutable_size(), GetTextSize() );
-
-    if( GetFont() )
-        attrs->set_font_name( GetFont()->GetName().ToStdString() );
-
-    attrs->mutable_angle()->set_value_degrees( GetTextAngleDegrees() );
-    attrs->set_line_spacing( GetLineSpacing() );
-    attrs->mutable_stroke_width()->set_value_nm( GetTextThickness() * 100 );
-    attrs->set_horizontal_alignment(
-            ToProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>( GetHorizJustify() ) );
-    attrs->set_vertical_alignment(
-            ToProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>( GetVertJustify() ) );
-
-    aContainer.PackFrom( label );
+    UNIMPLEMENTED_FOR( GetClass() );
 }
 
 
 bool SCH_HIERLABEL::Deserialize( const google::protobuf::Any& aContainer )
 {
-    using namespace kiapi::common;
-    kiapi::schematic::types::HierarchicalLabel label;
-
-    if( !aContainer.UnpackTo( &label ) )
-        return false;
-
-    // Only overwrite UUID if a valid ID is provided in the proto
-    if( !label.id().value().empty() )
-        const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
-
-    // Deserialize text content
-    // NOTE: We do NOT call EDA_TEXT::Deserialize here because it uses PCB unit conversion
-    // which is 100x different from schematic units.
-    if( label.has_text() )
-    {
-        const auto& text = label.text();
-
-        SetText( wxString( text.text().c_str(), wxConvUTF8 ) );
-        SetHyperlink( wxString( text.hyperlink().c_str(), wxConvUTF8 ) );
-
-        if( text.has_attributes() )
-        {
-            TEXT_ATTRIBUTES attrs = GetAttributes();
-            const auto& textAttrs = text.attributes();
-
-            attrs.m_Bold = textAttrs.bold();
-            attrs.m_Italic = textAttrs.italic();
-            attrs.m_Underlined = textAttrs.underlined();
-            attrs.m_Mirrored = textAttrs.mirrored();
-            attrs.m_Multiline = textAttrs.multiline();
-            attrs.m_KeepUpright = textAttrs.keep_upright();
-            attrs.m_Size = UnpackVector2Sch( textAttrs.size() );
-
-            if( !textAttrs.font_name().empty() )
-            {
-                attrs.m_Font = KIFONT::FONT::GetFont(
-                        wxString( textAttrs.font_name().c_str(), wxConvUTF8 ),
-                        attrs.m_Bold, attrs.m_Italic );
-            }
-
-            attrs.m_Angle = EDA_ANGLE( textAttrs.angle().value_degrees(), DEGREES_T );
-            attrs.m_LineSpacing = textAttrs.line_spacing();
-            attrs.m_StrokeWidth = textAttrs.stroke_width().value_nm() / 100;
-            attrs.m_Halign = FromProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>(
-                    textAttrs.horizontal_alignment() );
-            attrs.m_Valign = FromProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>(
-                    textAttrs.vertical_alignment() );
-
-            SetAttributes( attrs );
-        }
-    }
-
-    // Set position from the top-level position field using schematic unit conversion
-    if( label.has_position() )
-        SetPosition( UnpackVector2Sch( label.position() ) );
-
-    return true;
+    UNIMPLEMENTED_FOR( GetClass() );
+    return false;
 }
 
 

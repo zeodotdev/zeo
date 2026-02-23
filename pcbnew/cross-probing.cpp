@@ -31,6 +31,7 @@
  * Note: these ports must be enabled for firewall protection
  */
 
+#include <wx/tokenzr.h>
 #include <board.h>
 #include <board_design_settings.h>
 #include <fmt.h>
@@ -43,7 +44,7 @@
 #include <collectors.h>
 #include <eda_dde.h>
 #include <kiface_base.h>
-#include <kiway_express.h>
+#include <kiway_mail.h>
 #include <string_utils.h>
 #include <netlist_reader/pcb_netlist.h>
 #include <netlist_reader/board_netlist_updater.h>
@@ -58,6 +59,9 @@
 #include <trace_helpers.h>
 #include <netlist_reader/netlist_reader.h>
 #include <widgets/pcb_design_block_pane.h>
+#include <widgets/kistatusbar.h>
+#include <project_pcb.h>
+#include <footprint_library_adapter.h>
 #include <wx/log.h>
 #include <nlohmann/json.hpp>
 #include <id.h>
@@ -526,7 +530,7 @@ std::vector<BOARD_ITEM*> PCB_EDIT_FRAME::FindItemsFromSyncSelection( std::string
 }
 
 
-void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
+void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 {
     std::string& payload = mail.GetPayload();
 
@@ -556,8 +560,13 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
             }
 
             nlohmann::ordered_map<wxString, wxString> fields;
+
             for( PCB_FIELD* field : footprint->GetFields() )
+            {
+                wxCHECK2( field, continue );
+
                 fields[field->GetCanonicalName()] = field->GetText();
+            }
 
             component->SetFields( fields );
 
@@ -1274,7 +1283,7 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
             std::vector<BOARD_ITEM*> items = FindItemsFromSyncSelection( paramStr.substr( modeEnd + 1 ) );
 
-            m_probingSchToPcb = true; // recursion guard
+            m_ProbingSchToPcb = true; // recursion guard
 
             if( selectConnections )
                 GetToolManager()->RunAction( PCB_ACTIONS::syncSelectionWithNets, &items );
@@ -1284,7 +1293,7 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
             // Update 3D viewer highlighting
             Update3DView( false, GetPcbNewSettings()->m_Display.m_Live3DRefresh );
 
-            m_probingSchToPcb = false;
+            m_ProbingSchToPcb = false;
 
             if( GetPcbNewSettings()->m_CrossProbing.flash_selection )
             {
@@ -1361,7 +1370,22 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
     case MAIL_RELOAD_PLUGINS: GetToolManager()->RunAction( ACTIONS::pluginsReload ); break;
 
-    case MAIL_RELOAD_LIB: m_designBlocksPane->RefreshLibs(); break;
+    case MAIL_RELOAD_LIB:
+    {
+        m_designBlocksPane->RefreshLibs();
+
+        // Show any footprint library load errors in the status bar
+        if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
+        {
+            FOOTPRINT_LIBRARY_ADAPTER* adapter = PROJECT_PCB::FootprintLibAdapter( &Prj() );
+            wxString errors = adapter->GetLibraryLoadErrors();
+
+            if( !errors.IsEmpty() )
+                statusBar->SetLoadWarningMessages( errors );
+        }
+
+        break;
+    }
 
     // Concurrent editing support - agent transaction management
     case MAIL_AGENT_BEGIN_TRANSACTION:

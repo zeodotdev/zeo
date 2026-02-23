@@ -68,6 +68,7 @@
 #include <wx/filename.h>
 #include <wx/wfstream.h>
 #include <wx/txtstrm.h>
+#include <wx/tokenzr.h>
 #include <boost/ptr_container/ptr_map.hpp>
 
 #include <string_utils.h>
@@ -77,6 +78,7 @@
 
 #include <board.h>
 #include <board_design_settings.h>
+#include <project/net_settings.h>
 #include <footprint.h>
 #include <core/ignore.h>
 #include <pad.h>

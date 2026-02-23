@@ -64,6 +64,9 @@ set( EESCHEMA_SCH_IO
     # Database IO plugin
     sch_io/database/sch_io_database.cpp
 
+    # gEDA IO plugin
+    sch_io/geda/sch_io_geda.cpp
+
     # Eagle IO plugin
     sch_io/eagle/sch_io_eagle.cpp
 
@@ -88,6 +91,12 @@ set( EESCHEMA_SCH_IO
     # EasyEDA Pro IO plugin
     sch_io/easyedapro/sch_easyedapro_parser.cpp
     sch_io/easyedapro/sch_io_easyedapro.cpp
+
+    # PADS Logic IO plugin
+    sch_io/pads/sch_io_pads.cpp
+    sch_io/pads/pads_sch_parser.cpp
+    sch_io/pads/pads_sch_symbol_builder.cpp
+    sch_io/pads/pads_sch_schematic_builder.cpp
     )
 
 set( EESCHEMA_DLGS
@@ -115,6 +124,8 @@ set( EESCHEMA_DLGS
     dialogs/dialog_image_properties.cpp
     dialogs/dialog_image_properties_base.cpp
     dialogs/dialog_increment_annotations_base.cpp
+    dialogs/dialog_import_symbol_select.cpp
+    dialogs/dialog_import_symbol_select_base.cpp
     dialogs/dialog_junction_props.cpp
     dialogs/dialog_junction_props_base.cpp
     dialogs/dialog_label_properties.cpp
@@ -390,6 +401,7 @@ set( EESCHEMA_SRCS
     sch_field.cpp
     sch_group.cpp
     sch_item.cpp
+    sch_item_alignment.cpp
     sch_junction.cpp
     sch_label.cpp
     sch_line.cpp
@@ -421,6 +433,7 @@ set( EESCHEMA_SRCS
     symbol.cpp
     symbol_checker.cpp
     symbol_chooser_frame.cpp
+    symbol_import_manager.cpp
 
     symbol_library_manager.cpp
     symbol_tree_model_adapter.cpp
@@ -605,6 +618,7 @@ target_include_directories( eeschema_kiface_objects
 target_link_libraries( eeschema_kiface_objects
     PUBLIC
         common
+        pads_common
         pcm )
 
 # Since we're not using target_link_libraries, we need to explicitly
@@ -626,6 +640,7 @@ target_link_libraries( eeschema_kiface
     PRIVATE
         common
         eeschema_kiface_objects
+        pads_common
         pcm
         markdown_lib
         scripting

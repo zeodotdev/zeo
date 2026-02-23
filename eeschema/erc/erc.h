@@ -79,6 +79,12 @@ public:
     void TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet );
 
     /**
+     * Check for field names with leading or trailing whitespace.
+     * @return warning count
+     */
+    int TestFieldNameWhitespace();
+
+    /**
      * Test if all units of each multiunit symbol have the same footprint assigned.
      * @return The error count.
      */
@@ -102,6 +108,14 @@ public:
      * @return the error count
      */
     int TestMultUnitPinConflicts();
+
+    /**
+     * Checks if duplicate pin numbers within a symbol are connected to different nets.
+     * Symbols may have multiple pins with the same number if they are all connected to
+     * the same net. If duplicate pins are on different nets, an error is reported.
+     * @return the error count
+     */
+    int TestDuplicatePinNets();
 
     /**
      * Checks for ground-labeled pins not on a ground net while another pin is.

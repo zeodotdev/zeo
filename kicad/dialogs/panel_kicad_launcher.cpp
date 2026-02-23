@@ -30,6 +30,7 @@
 
 #include "panel_kicad_launcher.h"
 
+
 PANEL_KICAD_LAUNCHER::PANEL_KICAD_LAUNCHER( wxWindow* aParent ) :
         PANEL_KICAD_LAUNCHER_BASE( aParent ),
         m_frame( static_cast<KICAD_MANAGER_FRAME*>( aParent->GetParent() ) )
@@ -102,61 +103,61 @@ void PANEL_KICAD_LAUNCHER::CreateLaunchers()
 
     auto addLauncher =
             [&]( const TOOL_ACTION& aAction, BITMAPS aBitmaps, const wxString& aHelpText, bool enabled = true )
-    {
-        BITMAP_BUTTON* btn = new BITMAP_BUTTON( m_scrolledWindow, wxID_ANY );
-        btn->SetBitmap( KiBitmapBundle( aBitmaps ) );
-        btn->SetDisabledBitmap( KiDisabledBitmapBundle( aBitmaps ) );
-        btn->SetPadding( FromDIP( 4 ) );
-        btn->SetToolTip( aAction.GetTooltip() );
+            {
+                BITMAP_BUTTON* btn = new BITMAP_BUTTON( m_scrolledWindow, wxID_ANY );
+                btn->SetBitmap( KiBitmapBundle( aBitmaps ) );
+                btn->SetDisabledBitmap( KiDisabledBitmapBundle( aBitmaps ) );
+                btn->SetPadding( 4 );
+                btn->SetToolTip( aAction.GetTooltip() );
 
-        m_scrolledWindow->SetFont( titleFont ); // Use font inheritance to avoid extra SetFont call.
-        wxStaticText* label = new wxStaticText( m_scrolledWindow, wxID_ANY, aAction.GetFriendlyName() );
-        label->SetToolTip( aAction.GetTooltip() );
+                m_scrolledWindow->SetFont( titleFont ); // Use font inheritance to avoid extra SetFont call.
+                wxStaticText* label = new wxStaticText( m_scrolledWindow, wxID_ANY, aAction.GetFriendlyName() );
+                label->SetToolTip( aAction.GetTooltip() );
 
-        m_scrolledWindow->SetFont( helpFont ); // Use font inheritance to avoid extra SetFont call.
-        wxStaticText* help = new wxStaticText( m_scrolledWindow, wxID_ANY, aHelpText );
+                m_scrolledWindow->SetFont( helpFont ); // Use font inheritance to avoid extra SetFont call.
+                wxStaticText* help = new wxStaticText( m_scrolledWindow, wxID_ANY, aHelpText );
 
-        btn->Bind( wxEVT_BUTTON, &PANEL_KICAD_LAUNCHER::onLauncherButtonClick, this );
-        btn->SetClientData( (void*) &aAction );
+                btn->Bind( wxEVT_BUTTON, &PANEL_KICAD_LAUNCHER::onLauncherButtonClick, this );
+                btn->SetClientData( (void*) &aAction );
 
-        // The bug fix below makes this handler active for the entire window width.  Without any visual
-        // feedback that's a bit odd.  Disabling for now.
-        // label->Bind( wxEVT_LEFT_UP, handler );
+                // The bug fix below makes this handler active for the entire window width.  Without any visual
+                // feedback that's a bit odd.  Disabling for now.
+                // label->Bind( wxEVT_LEFT_UP, handler );
 
-        m_toolsSizer->Add( btn, 1, wxALIGN_CENTER_VERTICAL );
+                m_toolsSizer->Add( btn, 1, wxALIGN_CENTER_VERTICAL );
 
-        wxBoxSizer* textSizer = new wxBoxSizer( wxVERTICAL );
+                wxBoxSizer* textSizer = new wxBoxSizer( wxVERTICAL );
 
-        textSizer->Add( label );
-        textSizer->Add( help );
+                textSizer->Add( label );
+                textSizer->Add( help );
 
-        m_toolsSizer->Add( textSizer, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL );
+                m_toolsSizer->Add( textSizer, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL );
 
-        btn->Enable( enabled );
+                btn->Enable( enabled );
 
-        if( !enabled )
-        {
-            help->Disable();
-            label->Disable();
-        }
+                if( !enabled )
+                {
+                    help->Disable();
+                    label->Disable();
+                }
 
-        return btn;
-    };
+                return btn;
+            };
 
-    addLauncher( KICAD_MANAGER_ACTIONS::showAiAssistant, BITMAPS::icon_kicad,
-                 _( "Edit the project with an AI assistant" ) );
-
-    addLauncher( KICAD_MANAGER_ACTIONS::editSchematic, BITMAPS::icon_eeschema, _( "Edit the project schematic" ) );
+    addLauncher( KICAD_MANAGER_ACTIONS::editSchematic, BITMAPS::icon_eeschema,
+                 _( "Edit the project schematic" ) );
 
     addLauncher( KICAD_MANAGER_ACTIONS::editSymbols, BITMAPS::icon_libedit,
                  _( "Edit global and/or project schematic symbol libraries" ) );
 
-    addLauncher( KICAD_MANAGER_ACTIONS::editPCB, BITMAPS::icon_pcbnew, _( "Edit the project PCB design" ) );
+    addLauncher( KICAD_MANAGER_ACTIONS::editPCB, BITMAPS::icon_pcbnew,
+                 _( "Edit the project PCB design" ) );
 
     addLauncher( KICAD_MANAGER_ACTIONS::editFootprints, BITMAPS::icon_modedit,
                  _( "Edit global and/or project PCB footprint libraries" ) );
 
-    addLauncher( KICAD_MANAGER_ACTIONS::viewGerbers, BITMAPS::icon_gerbview, _( "Preview Gerber files" ) );
+    addLauncher( KICAD_MANAGER_ACTIONS::viewGerbers, BITMAPS::icon_gerbview,
+                 _( "Preview Gerber files" ) );
 
     addLauncher( KICAD_MANAGER_ACTIONS::convertImage, BITMAPS::icon_bitmap2component,
                  _( "Convert bitmap images to schematic symbols or PCB footprints" ) );
@@ -167,10 +168,10 @@ void PANEL_KICAD_LAUNCHER::CreateLaunchers()
     addLauncher( KICAD_MANAGER_ACTIONS::editDrawingSheet, BITMAPS::icon_pagelayout_editor,
                  _( "Edit drawing sheet borders and title blocks for use in schematics and PCB designs" ) );
 
-    BITMAP_BUTTON* bb =
-            addLauncher( KICAD_MANAGER_ACTIONS::showPluginManager, BITMAPS::icon_pcm,
-                         _( "Manage downloadable packages from KiCad and 3rd party repositories" ),
-                         KIPLATFORM::POLICY::GetPolicyBool( POLICY_KEY_PCM ) != KIPLATFORM::POLICY::PBOOL::DISABLED );
+    BITMAP_BUTTON* bb = addLauncher( KICAD_MANAGER_ACTIONS::showPluginManager, BITMAPS::icon_pcm,
+                                     _( "Manage downloadable packages from KiCad and 3rd party repositories" ),
+                                     KIPLATFORM::POLICY::GetPolicyBool( POLICY_KEY_PCM )
+                                            != KIPLATFORM::POLICY::PBOOL::DISABLED );
 
     m_frame->SetPcmButton( bb );
 

@@ -22,6 +22,7 @@
  */
 
 #include <bitmaps.h>
+#include <common.h>
 #include <confirm.h>
 #include <widgets/std_bitmap_button.h>
 #include <widgets/paged_dialog.h>
@@ -29,6 +30,9 @@
 #include <pcbexpr_evaluator.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <drc/drc_engine.h>
+#include <project/net_settings.h>
+#include <settings/common_settings.h>
 #include <project.h>
 #include <string_utils.h>
 #include <tool/tool_manager.h>
@@ -43,6 +47,8 @@
 #include <wildcards_and_files_ext.h>
 #include <regex>
 #include <unordered_map>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 PANEL_SETUP_RULES::PANEL_SETUP_RULES( wxWindow* aParentWindow, PCB_EDIT_FRAME* aFrame ) :
         PANEL_SETUP_RULES_BASE( aParentWindow ),
@@ -95,6 +101,7 @@ PANEL_SETUP_RULES::~PANEL_SETUP_RULES( )
     Pgm().GetCommonSettings()->m_Appearance.text_editor_zoom = m_textEditor->GetZoom();
 
     delete m_scintillaTricks;
+    m_scintillaTricks = nullptr;
 
     if( m_helpWindow )
         m_helpWindow->Destroy();
@@ -754,7 +761,7 @@ void PANEL_SETUP_RULES::checkPlausibility( const std::vector<std::shared_ptr<DRC
     LSET                   enabledLayers = board->GetEnabledLayers();
 
     std::unordered_map<wxString, wxString> seenConditions;
-    std::regex                             netclassPattern( "NetClass\\s*[!=]=\\s*\"?([^\"\\s]+)\"?" );
+    std::regex netclassPattern( "NetClass\\s*[!=]=\\s*'\"?([^\"\\s]+)'\"?" );
 
     for( const auto& rule : aRules )
     {

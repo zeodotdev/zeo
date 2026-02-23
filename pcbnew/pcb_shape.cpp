@@ -38,6 +38,7 @@
 #include <lset.h>
 #include <pad.h>
 #include <base_units.h>
+#include <drc/drc_engine.h>
 #include <geometry/shape_circle.h>
 #include <geometry/shape_compound.h>
 #include <geometry/point_types.h>
@@ -46,6 +47,8 @@
 #include <api/board/board_types.pb.h>
 #include <api/api_enums.h>
 #include <api/api_utils.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 
 PCB_SHAPE::PCB_SHAPE( BOARD_ITEM* aParent, KICAD_T aItemType, SHAPE_T aShapeType ) :
@@ -186,7 +189,9 @@ int PCB_SHAPE::GetSolderMaskExpansion() const
 {
     int margin = 0;
 
-    if( GetBoard() && GetBoard()->GetDesignSettings().m_DRCEngine )
+    if( GetBoard() && GetBoard()->GetDesignSettings().m_DRCEngine
+        && GetBoard()->GetDesignSettings().m_DRCEngine->HasRulesForConstraintType(
+                   SOLDER_MASK_EXPANSION_CONSTRAINT ) )
     {
         DRC_CONSTRAINT              constraint;
         std::shared_ptr<DRC_ENGINE> drcEngine = GetBoard()->GetDesignSettings().m_DRCEngine;
@@ -199,6 +204,10 @@ int PCB_SHAPE::GetSolderMaskExpansion() const
     else if( m_solderMaskMargin.has_value() )
     {
         margin = m_solderMaskMargin.value();
+    }
+    else if( const BOARD* board = GetBoard() )
+    {
+        margin = board->GetDesignSettings().m_SolderMaskExpansion;
     }
 
     // Ensure the resulting mask opening has a non-negative size

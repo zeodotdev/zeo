@@ -63,7 +63,7 @@ void COLOR_SWATCH::RenderToDC( wxDC* aDC, const KIGFX::COLOR4D& aColor, const KI
                                const wxRect& aRect, const wxSize& aCheckerboardSize,
                                const KIGFX::COLOR4D& aCheckerboardBackground, const std::vector<int>& aMargins )
 {
-    wxColor fg = aColor.m_text.has_value() ? COLOR4D::UNSPECIFIED.ToColour() : aColor.ToColour();
+    wxColor fg = aColor.m_text ? COLOR4D::UNSPECIFIED.ToColour() : aColor.ToColour();
 
     wxBrush brush;
     brush.SetStyle( wxBRUSHSTYLE_SOLID );
@@ -75,7 +75,7 @@ void COLOR_SWATCH::RenderToDC( wxDC* aDC, const KIGFX::COLOR4D& aColor, const KI
     COLOR4D black;
     bool    rowCycle;
 
-    if( aColor.m_text.has_value() || aColor == COLOR4D::UNSPECIFIED )
+    if( aColor.m_text || aColor == COLOR4D::UNSPECIFIED )
     {
         if( aCheckerboardBackground.GetBrightness() > 0.4 )
         {
@@ -220,11 +220,7 @@ void COLOR_SWATCH::setupEvents( bool aTriggerWithSingleClick )
 {
     if( dynamic_cast<DIALOG_SHIM*>( wxGetTopLevelParent( this ) ) )
     {
-        m_swatch->Bind( wxEVT_LEFT_DOWN,
-                        [this] ( wxMouseEvent& aEvt )
-                        {
-                            GetNewSwatchColor();
-                        } );
+        m_swatch->Bind( wxEVT_LEFT_DOWN, &COLOR_SWATCH::onMouseEvent, this );
     }
     else
     {
@@ -232,27 +228,15 @@ void COLOR_SWATCH::setupEvents( bool aTriggerWithSingleClick )
         m_swatch->Bind( wxEVT_LEFT_DOWN, &COLOR_SWATCH::rePostEvent, this );
 
         // bind the events that trigger the dialog
-        m_swatch->Bind( wxEVT_LEFT_DCLICK,
-                        [this] ( wxMouseEvent& aEvt )
-                        {
-                            GetNewSwatchColor();
-                        } );
+        m_swatch->Bind( wxEVT_LEFT_DCLICK, &COLOR_SWATCH::onMouseEvent, this );
 
         if( aTriggerWithSingleClick )
         {
-            m_swatch->Bind( wxEVT_LEFT_UP,
-                        [this] ( wxMouseEvent& aEvt )
-                        {
-                            GetNewSwatchColor();
-                        } );
+            m_swatch->Bind( wxEVT_LEFT_UP, &COLOR_SWATCH::onMouseEvent, this );
         }
     }
 
-    m_swatch->Bind( wxEVT_MIDDLE_DOWN,
-                    [this] ( wxMouseEvent& aEvt )
-                    {
-                        GetNewSwatchColor();
-                    } );
+    m_swatch->Bind( wxEVT_MIDDLE_DOWN, &COLOR_SWATCH::onMouseEvent, this );
 
     m_swatch->Bind( wxEVT_RIGHT_DOWN, &COLOR_SWATCH::rePostEvent, this );
 }
@@ -261,6 +245,12 @@ void COLOR_SWATCH::setupEvents( bool aTriggerWithSingleClick )
 void COLOR_SWATCH::rePostEvent( wxEvent& aEvent )
 {
     wxPostEvent( this, aEvent );
+}
+
+
+void COLOR_SWATCH::onMouseEvent( wxEvent& )
+{
+    GetNewSwatchColor();
 }
 
 

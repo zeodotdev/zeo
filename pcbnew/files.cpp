@@ -30,8 +30,8 @@
 #include <confirm.h>
 #include <kidialog.h>
 #include <core/arraydim.h>
+#include <core/profile.h>
 #include <thread_pool.h>
-#include <dialog_HTML_reporter_base.h>
 #include <gestfich.h>
 #include <reporter.h>
 #include <launch_ext.h>
@@ -52,7 +52,10 @@
 #include <wildcards_and_files_ext.h>
 #include <tool/tool_manager.h>
 #include <board.h>
+#include <collectors.h>
+#include <component_classes/component_class_manager.h>
 #include <kiplatform/app.h>
+#include <kiplatform/ui.h>
 #include <widgets/appearance_controls.h>
 #include <widgets/wx_infobar.h>
 #include <widgets/wx_progress_reporters.h>
@@ -74,10 +77,11 @@
 #include <dialogs/dialog_import_choose_project.h>
 #include <tools/pcb_actions.h>
 #include <tools/board_editor_control.h>
-#include "footprint_info_impl.h"
 #include <board_commit.h>
+#include <reporter.h>
 #include <zone_filler.h>
 #include <widgets/filedlg_import_non_kicad.h>
+#include <widgets/kistatusbar.h>
 #include <widgets/wx_html_report_box.h>
 #include <wx_filename.h>  // For ::ResolvePossibleSymlinks()
 #include <kiplatform/io.h>
@@ -94,6 +98,8 @@
 
 //#define     USE_INSTRUMENTATION     1
 #define     USE_INSTRUMENTATION     0
+
+static const wxChar* const traceAllegroPerf = wxT( "KICAD_ALLEGRO_PERF" );
 
 
 /**
@@ -191,6 +197,8 @@ bool AskLoadBoardFileName( PCB_EDIT_FRAME* aParent, wxString* aFileName, int aCt
     if( !kicadFormat )
         dlg.SetCustomizeHook( importOptions );
 
+    KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
+
     if( dlg.ShowModal() == wxID_OK )
     {
         *aFileName = dlg.GetPath();
@@ -233,6 +241,8 @@ bool AskSaveBoardFileName( PCB_EDIT_FRAME* aParent, wxString* aFileName, bool* a
     if( Kiface().IsSingle() && aParent->Prj().IsNullProject() )
         dlg.SetCustomizeHook( newProjectHook );
 
+    KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
+
     if( dlg.ShowModal() != wxID_OK )
         return false;
 
@@ -250,17 +260,17 @@ bool AskSaveBoardFileName( PCB_EDIT_FRAME* aParent, wxString* aFileName, bool* a
 
 void PCB_EDIT_FRAME::OnFileHistory( wxCommandEvent& event )
 {
-    wxString fn = GetFileFromHistory( event.GetId(), _( "Printed circuit board" ) );
+    wxString filename = GetFileFromHistory( event.GetId(), _( "Printed circuit board" ) );
 
-    if( !!fn )
+    if( !filename.IsEmpty() )
     {
-        if( !wxFileName::IsFileReadable( fn ) )
+        if( !wxFileName::IsFileReadable( filename ) )
         {
-            if( !AskLoadBoardFileName( this, &fn, KICTL_KICAD_ONLY ) )
+            if( !AskLoadBoardFileName( this, &filename, KICTL_KICAD_ONLY ) )
                 return;
         }
 
-        OpenProjectFiles( std::vector<wxString>( 1, fn ), KICTL_KICAD_ONLY );
+        OpenProjectFiles( std::vector<wxString>( 1, filename ), KICTL_KICAD_ONLY );
     }
 }
 
@@ -496,15 +506,23 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
 
     if( !lock->Valid() )
     {
-        msg.Printf( _( "PCB '%s' is already open by '%s' at '%s'." ),
-                    wx_filename.GetFullName(),
-                    lock->GetUsername(),
-                    lock->GetHostname() );
+        // If project-level lock override was already granted, silently override this file's lock
+        if( Prj().IsLockOverrideGranted() )
+        {
+            lock->OverrideLock();
+        }
+        else
+        {
+            msg.Printf( _( "PCB '%s' is already open by '%s' at '%s'." ),
+                        wx_filename.GetFullName(),
+                        lock->GetUsername(),
+                        lock->GetHostname() );
 
-        if( !AskOverrideLock( this, msg ) )
-            return false;
+            if( !AskOverrideLock( this, msg ) )
+                return false;
 
-        lock->OverrideLock();
+            lock->OverrideLock();
+        }
     }
 
     if( IsContentModified() )
@@ -539,8 +557,13 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
     // Get rid of any existing warnings about the old board
     GetInfoBar()->Dismiss();
 
+    if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
+        statusBar->ClearLoadWarningMessages();
+
     WX_PROGRESS_REPORTER progressReporter( this, is_new ? _( "Create PCB" ) : _( "Load PCB" ), 1,
                                            PR_CAN_ABORT );
+    WX_STRING_REPORTER loadReporter;
+    LOAD_INFO_REPORTER_SCOPE loadReporterScope( &loadReporter );
 
     // No save prompt (we already prompted above), and only reset to a new blank board if new
     Clear_Pcb( false, !is_new );
@@ -589,9 +612,6 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
         Prj().SetReadOnly( !pro.Exists() && !converted );
     }
 
-    // Clear the cache footprint list which may be project specific
-    GFootprintList.Clear();
-
     if( is_new )
     {
         // Link the existing blank board to the new project
@@ -619,7 +639,6 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
                                                      std::placeholders::_1 ) );
         }
 
-        DIALOG_HTML_REPORTER errorReporter( this );
         bool failedLoad = false;
 
         try
@@ -656,8 +675,10 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
             // measure the time to load a BOARD.
             int64_t startTime = GetRunningMicroSecs();
 #endif
+            // Use loadReporter for import issues - they will be shown in the status bar
+            // warning icon instead of a modal dialog
             if( config()->m_System.show_import_issues )
-                pi->SetReporter( errorReporter.m_Reporter );
+                pi->SetReporter( &loadReporter );
             else
                 pi->SetReporter( &NULL_REPORTER::GetInstance() );
 
@@ -702,6 +723,10 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
             // We didn't create a new blank board above, so do that now
             Clear_Pcb( false );
 
+            // Show any messages collected before the failure
+            if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
+                statusBar->SetLoadWarningMessages( loadReporter.GetMessages() );
+
             return false;
         }
 
@@ -710,17 +735,15 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
         // compiled.
         Raise();
 
-        if( errorReporter.m_Reporter->HasMessage() )
-        {
-            errorReporter.m_Reporter->Flush(); // Build HTML messages
-            errorReporter.ShowModal();
-        }
-
         // Skip (possibly expensive) connectivity build here; we build it below after load
-        SetBoard( loadedBoard, false, &progressReporter );
+        progressReporter.AddPhases( 1 );
+        progressReporter.AdvancePhase( _( "Finalizing board" ) );
+        progressReporter.KeepRefreshing();
 
-        if( GFootprintList.GetCount() == 0 )
-            GFootprintList.ReadCacheFromFile( Prj().GetProjectPath() + wxT( "fp-info-cache" ) );
+        PROF_TIMER postLoadTimer;
+        SetBoard( loadedBoard, false, &progressReporter );
+        wxLogTrace( traceAllegroPerf, wxT( "Post-load SetBoard: %.3f ms" ),
+                    postLoadTimer.msecs( true ) );
 
         if( loadedBoard->m_LegacyDesignSettingsLoaded )
         {
@@ -765,8 +788,22 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
 
         // we should not ask PCB_IOs to do these items:
         loadedBoard->BuildListOfNets();
+        wxLogTrace( traceAllegroPerf, wxT( "Post-load BuildListOfNets: %.3f ms" ),
+                    postLoadTimer.msecs( true ) );
+
+        progressReporter.KeepRefreshing();
+
         m_toolManager->RunAction( PCB_ACTIONS::repairBoard, true);
+        wxLogTrace( traceAllegroPerf, wxT( "Post-load repairBoard: %.3f ms" ),
+                    postLoadTimer.msecs( true ) );
+
+        progressReporter.KeepRefreshing();
+
         m_toolManager->RunAction( PCB_ACTIONS::rehatchShapes );
+        wxLogTrace( traceAllegroPerf, wxT( "Post-load rehatchShapes: %.3f ms" ),
+                    postLoadTimer.msecs( true ) );
+
+        progressReporter.KeepRefreshing();
 
         if( loadedBoard->IsModified() )
             OnModify();
@@ -966,11 +1003,16 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
     std::vector<ZONE*> toFill;
 
     // Rebuild list of nets (full ratsnest rebuild)
+    PROF_TIMER connectivityTimer;
     GetBoard()->BuildConnectivity( &progressReporter );
+    wxLogTrace( traceAllegroPerf, wxT( "Post-load BuildConnectivity: %.3f ms" ),
+                connectivityTimer.msecs( true ) );
 
     // Load project settings after setting up board; some of them depend on the nets list
     LoadProjectSettings();
     LoadDrawingSheet();
+    wxLogTrace( traceAllegroPerf, wxT( "Post-load LoadProjectSettings+DrawingSheet: %.3f ms" ),
+                connectivityTimer.msecs( true ) );
 
     // Resolve DRC exclusions after project settings are loaded
     ResolveDRCExclusions( true );
@@ -980,9 +1022,15 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
 
     // Initialise time domain tuning caches
     GetBoard()->GetLengthCalculation()->SynchronizeTuningProfileProperties();
+    wxLogTrace( traceAllegroPerf, wxT( "Post-load DRC+ComponentClass+Tuning caches: %.3f ms" ),
+                connectivityTimer.msecs( true ) );
 
     // Syncs the UI (appearance panel, etc) with the loaded board and project
     OnBoardLoaded();
+    wxLogTrace( traceAllegroPerf, wxT( "Post-load OnBoardLoaded: %.3f ms" ),
+                connectivityTimer.msecs( true ) );
+    wxLogTrace( traceAllegroPerf, wxT( "=== Post-load pipeline total: %.3f ms ===" ),
+                connectivityTimer.msecs() );
 
     // Refresh the 3D view, if any
     EDA_3D_VIEWER_FRAME* draw3DFrame = Get3DViewerFrame();
@@ -1007,6 +1055,18 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
         SetFocus();
         GetCanvas()->SetFocus();
     }
+
+    if( !setProject )
+    {
+        // If we didn't reload the project, we still need to call ProjectChanged() to ensure
+        // frame-specific initialization happens (like registering the autosave saver).
+        // When running under the project manager, KIWAY::ProjectChanged() was called before
+        // this frame existed, so we need to call our own ProjectChanged() now.
+        ProjectChanged();
+    }
+
+    if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
+        statusBar->SetLoadWarningMessages( loadReporter.GetMessages() );
 
     return true;
 }
@@ -1074,6 +1134,11 @@ bool PCB_EDIT_FRAME::SavePcbFile( const wxString& aFileName, bool addToHistory,
 
     wxString   upperTxt;
     wxString   lowerTxt;
+
+    // On Windows, ensure the target file is writeable by clearing problematic attributes like
+    // hidden or read-only. This can happen when files are synced via cloud services.
+    if( pcbFileName.FileExists() )
+        KIPLATFORM::IO::MakeWriteable( pcbFileName.GetFullPath() );
 
     try
     {
@@ -1157,6 +1222,11 @@ bool PCB_EDIT_FRAME::SavePcbCopy( const wxString& aFileName, bool aCreateProject
 
     GetBoard()->SynchronizeNetsAndNetClasses( false );
 
+    // On Windows, ensure the target file is writeable by clearing problematic attributes like
+    // hidden or read-only. This can happen when files are synced via cloud services.
+    if( pcbFileName.FileExists() )
+        KIPLATFORM::IO::MakeWriteable( pcbFileName.GetFullPath() );
+
     try
     {
         IO_RELEASER<PCB_IO> pi( PCB_IO_MGR::FindPlugin( PCB_IO_MGR::KICAD_SEXP ) );
@@ -1215,12 +1285,14 @@ bool PCB_EDIT_FRAME::importFile( const wxString& aFileName, int aFileType,
     case PCB_IO_MGR::EAGLE:
     case PCB_IO_MGR::EASYEDA:
     case PCB_IO_MGR::EASYEDAPRO:
+    case PCB_IO_MGR::GEDA_PCB:
         return OpenProjectFiles( std::vector<wxString>( 1, aFileName ), KICTL_NONKICAD_ONLY | KICTL_IMPORT_LIB );
 
     case PCB_IO_MGR::ALTIUM_DESIGNER:
     case PCB_IO_MGR::ALTIUM_CIRCUIT_MAKER:
     case PCB_IO_MGR::ALTIUM_CIRCUIT_STUDIO:
     case PCB_IO_MGR::SOLIDWORKS_PCB:
+    case PCB_IO_MGR::PADS:
         return OpenProjectFiles( std::vector<wxString>( 1, aFileName ), KICTL_NONKICAD_ONLY );
 
     default:

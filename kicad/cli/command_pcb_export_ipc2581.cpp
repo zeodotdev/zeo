@@ -97,6 +97,7 @@ CLI::PCB_EXPORT_IPC2581_COMMAND::PCB_EXPORT_IPC2581_COMMAND() :
                                 "Material Distributor Column" ) )
             .metavar( "FIELD_NAME" );
 
+    addVariantsArg();
 }
 
 
@@ -108,6 +109,9 @@ int CLI::PCB_EXPORT_IPC2581_COMMAND::doPerform( KIWAY& aKiway )
     ipc2581Job->SetConfiguredOutputPath( m_argOutput );
     ipc2581Job->m_drawingSheet = m_argDrawingSheet;
     ipc2581Job->SetVarOverrides( m_argDefineVars );
+
+    if( !m_argVariantNames.empty() )
+        ipc2581Job->m_variant = m_argVariantNames.front();
 
     if( !wxFile::Exists( ipc2581Job->m_filename ) )
     {

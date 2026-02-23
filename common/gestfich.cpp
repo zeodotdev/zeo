@@ -46,13 +46,14 @@
 #include <wx/zipstrm.h>
 
 #include <filesystem>
+#include <core/kicad_algo.h>
 
 void QuoteString( wxString& string )
 {
     if( !string.StartsWith( wxT( "\"" ) ) )
     {
-        string.Prepend( wxT( "\"" ) );
-        string.Append( wxT( "\"" ) );
+        string.Prepend ( wxT( "\"" ) );
+        string.Append ( wxT( "\"" ) );
     }
 }
 
@@ -115,8 +116,6 @@ wxString FindKicadFile( const wxString& shortname )
         wxT( "Contents/Applications/bitmap2component.app/Contents/MacOS/" ),
         wxT( "Contents/Applications/pcb_calculator.app/Contents/MacOS/" ),
         wxT( "Contents/Applications/pl_editor.app/Contents/MacOS/" ),
-        wxT( "Contents/Applications/Agent.app/Contents/MacOS/" ),
-        wxT( "../../Applications/Agent.app/Contents/MacOS/" ),
 #else
         wxT( "/usr/bin/" ),
         wxT( "/usr/local/bin/" ),
@@ -125,7 +124,7 @@ wxString FindKicadFile( const wxString& shortname )
     };
 
     // find binary file from possibilities list:
-    for( unsigned i = 0; i < arrayDim( possibilities ); ++i )
+    for( unsigned i=0;  i<arrayDim(possibilities);  ++i )
     {
 #ifndef __WXMAC__
         fullFileName = possibilities[i] + shortname;
@@ -133,7 +132,6 @@ wxString FindKicadFile( const wxString& shortname )
         // make relative paths absolute
         fullFileName = Pgm().GetExecutablePath() + possibilities[i] + shortname;
 #endif
-        printf( "DEBUG: FindKicadFile checking: %s\n", (const char*) fullFileName.c_str() );
 
         if( wxFileExists( fullFileName ) )
             return fullFileName;
@@ -145,7 +143,8 @@ wxString FindKicadFile( const wxString& shortname )
 }
 
 
-int ExecuteFile( const wxString& aEditorName, const wxString& aFileName, wxProcess* aCallback, bool aFileForKicad )
+int ExecuteFile( const wxString& aEditorName, const wxString& aFileName, wxProcess* aCallback,
+                 bool aFileForKicad )
 {
     wxString              fullEditorName;
     std::vector<wxString> params;
@@ -155,14 +154,15 @@ int ExecuteFile( const wxString& aEditorName, const wxString& aFileName, wxProce
     bool     inSingleQuotes = false;
     bool     inDoubleQuotes = false;
 
-    auto pushParam = [&]()
-    {
-        if( !param.IsEmpty() )
-        {
-            params.push_back( param );
-            param.clear();
-        }
-    };
+    auto pushParam =
+            [&]()
+            {
+                if( !param.IsEmpty() )
+                {
+                    params.push_back( param );
+                    param.clear();
+                }
+            };
 
     for( wxUniChar ch : aEditorName )
     {
@@ -318,40 +318,40 @@ static void traverseSEXPR( SEXPR::SEXPR* aNode, const std::function<void( SEXPR:
 
 
 void CopySexprFile( const wxString& aSrcPath, const wxString& aDestPath,
-                    std::function<bool( const std::string& token, wxString& value )> aCallback, wxString& aErrors )
+                    std::function<bool( const std::string& token, wxString& value )> aCallback,
+                    wxString& aErrors )
 {
     bool success = false;
 
     try
     {
-        SEXPR::PARSER                 parser;
+        SEXPR::PARSER parser;
         std::unique_ptr<SEXPR::SEXPR> sexpr( parser.ParseFromFile( TO_UTF8( aSrcPath ) ) );
 
         traverseSEXPR( sexpr.get(),
-                       [&]( SEXPR::SEXPR* node )
-                       {
-                           if( node->IsList() && node->GetNumberOfChildren() > 1 && node->GetChild( 0 )->IsSymbol() )
-                           {
-                               std::string          token = node->GetChild( 0 )->GetSymbol();
-                               SEXPR::SEXPR_STRING* pathNode =
-                                       dynamic_cast<SEXPR::SEXPR_STRING*>( node->GetChild( 1 ) );
-                               SEXPR::SEXPR_SYMBOL* symNode = dynamic_cast<SEXPR::SEXPR_SYMBOL*>( node->GetChild( 1 ) );
-                               wxString             path;
+                [&]( SEXPR::SEXPR* node )
+                {
+                    if( node->IsList() && node->GetNumberOfChildren() > 1 && node->GetChild( 0 )->IsSymbol() )
+                    {
+                        std::string          token = node->GetChild( 0 )->GetSymbol();
+                        SEXPR::SEXPR_STRING* pathNode = dynamic_cast<SEXPR::SEXPR_STRING*>( node->GetChild( 1 ) );
+                        SEXPR::SEXPR_SYMBOL* symNode = dynamic_cast<SEXPR::SEXPR_SYMBOL*>( node->GetChild( 1 ) );
+                        wxString             path;
 
-                               if( pathNode )
-                                   path = pathNode->m_value;
-                               else if( symNode )
-                                   path = symNode->m_value;
+                        if( pathNode )
+                            path = pathNode->m_value;
+                        else if( symNode )
+                            path = symNode->m_value;
 
-                               if( aCallback( token, path ) )
-                               {
-                                   if( pathNode )
-                                       pathNode->m_value = path;
-                                   else if( symNode )
-                                       symNode->m_value = path;
-                               }
-                           }
-                       } );
+                        if( aCallback( token, path ) )
+                        {
+                            if( pathNode )
+                                pathNode->m_value = path;
+                            else if( symNode )
+                                symNode->m_value = path;
+                        }
+                    }
+                } );
 
         wxFFile destFile( aDestPath, "wb" );
 
@@ -432,7 +432,8 @@ bool RmDirRecursive( const wxString& aFileName, wxString* aErrors )
 }
 
 
-bool CopyDirectory( const wxString& aSourceDir, const wxString& aDestDir, wxString& aErrors )
+bool CopyDirectory( const wxString& aSourceDir, const wxString& aDestDir,
+                    const std::vector<wxString>& aPathsWithOverwriteDisallowed, wxString& aErrors )
 {
     wxDir dir( aSourceDir );
 
@@ -455,19 +456,23 @@ bool CopyDirectory( const wxString& aSourceDir, const wxString& aDestDir, wxStri
 
     while( cont )
     {
-        wxString sourcePath = aSourceDir + wxFileName::GetPathSeparator() + filename;
+        wxString sourcePath = dir.GetNameWithSep() + filename;
         wxString destPath = aDestDir + wxFileName::GetPathSeparator() + filename;
 
         if( wxFileName::DirExists( sourcePath ) )
         {
             // Recursively copy subdirectories
-            if( !CopyDirectory( sourcePath, destPath, aErrors ) )
+            if( !CopyDirectory( sourcePath, destPath, aPathsWithOverwriteDisallowed, aErrors ) )
                 return false;
         }
         else
         {
             // Copy files
-            if( !wxCopyFile( sourcePath, destPath ) )
+            if( alg::contains( aPathsWithOverwriteDisallowed, sourcePath ) && wxFileExists( destPath ) )
+            {
+                // Presumably user does not want an error on a no-overwrite condition....
+            }
+            else if( !wxCopyFile( sourcePath, destPath ) )
             {
                 aErrors += wxString::Format( _( "Could not copy file: %s to %s" ), sourcePath, destPath );
                 return false;
@@ -481,8 +486,8 @@ bool CopyDirectory( const wxString& aSourceDir, const wxString& aDestDir, wxStri
 }
 
 
-bool CopyFilesOrDirectory( const wxString& aSourcePath, const wxString& aDestDir, wxString& aErrors,
-                           int& aFileCopiedCount, const std::vector<wxString>& aExclusions )
+bool CopyFilesOrDirectory( const wxString& aSourcePath, const wxString& aDestDir, bool aAllowOverwrites,
+                           wxString& aErrors, std::vector<wxString>& aPathsWritten )
 {
     // Parse source path and determine if it's a directory
     wxFileName sourceFn( aSourcePath );
@@ -490,81 +495,72 @@ bool CopyFilesOrDirectory( const wxString& aSourcePath, const wxString& aDestDir
     bool       isSourceDirectory = wxFileName::DirExists( sourcePath );
     wxString   baseDestDir = aDestDir;
 
-    auto performCopy = [&]( const wxString& src, const wxString& dest ) -> bool
-    {
-        if( wxCopyFile( src, dest ) )
-        {
-            aFileCopiedCount++;
-            return true;
-        }
-
-        aErrors += wxString::Format( _( "Could not copy file: %s to %s" ), src, dest );
-        aErrors += wxT( "\n" );
-        return false;
-    };
-
-    auto processEntries = [&]( const wxString& srcDir, const wxString& pattern, const wxString& destDir ) -> bool
-    {
-        wxDir dir( srcDir );
-
-        if( !dir.IsOpened() )
-        {
-            aErrors += wxString::Format( _( "Could not open source directory: %s" ), srcDir );
-            aErrors += wxT( "\n" );
-            return false;
-        }
-
-        wxString filename;
-        bool     success = true;
-
-        // Find all entries matching pattern (files + directories + hidden items)
-        bool cont = dir.GetFirst( &filename, pattern, wxDIR_FILES | wxDIR_DIRS | wxDIR_HIDDEN );
-
-        while( cont )
-        {
-            const wxString entrySrc = srcDir + wxFileName::GetPathSeparator() + filename;
-            const wxString entryDest = destDir + wxFileName::GetPathSeparator() + filename;
-
-            // Apply exclusion filters
-            bool exclude = filename.Matches( wxT( "~*.lck" ) ) || filename.Matches( wxT( "*.lck" ) );
-
-            for( const auto& exclusion : aExclusions )
+    auto performCopy =
+            [&]( const wxString& src, const wxString& dest ) -> bool
             {
-                if( entrySrc.Matches( exclusion ) )
+                if( wxCopyFile( src, dest, aAllowOverwrites ) )
                 {
-                    exclude = true;
-                    break;
+                    aPathsWritten.push_back( dest );
+                    return true;
                 }
-            }
 
-            if( !exclude )
+                aErrors += wxString::Format( _( "Could not copy file: %s to %s" ), src, dest );
+                aErrors += wxT( "\n" );
+                return false;
+            };
+
+    auto processEntries =
+            [&]( const wxString& srcDir, const wxString& pattern, const wxString& destDir ) -> bool
             {
-                if( wxFileName::DirExists( entrySrc ) )
+                wxDir dir( srcDir );
+
+                if( !dir.IsOpened() )
                 {
-                    // Recursively process subdirectories
-                    if( !CopyFilesOrDirectory( entrySrc, destDir, aErrors, aFileCopiedCount, aExclusions ) )
-                    {
-                        aErrors += wxString::Format( _( "Could not copy directory: %s to %s" ), entrySrc, entryDest );
-                        aErrors += wxT( "\n" );
-
-                        success = false;
-                    }
+                    aErrors += wxString::Format( _( "Could not open source directory: %s" ), srcDir );
+                    aErrors += wxT( "\n" );
+                    return false;
                 }
-                else
+
+                wxString filename;
+                bool     success = true;
+
+                // Find all entries matching pattern (files + directories + hidden items)
+                bool cont = dir.GetFirst( &filename, pattern, wxDIR_FILES | wxDIR_DIRS | wxDIR_HIDDEN );
+
+                while( cont )
                 {
-                    // Copy individual files
-                    if( !performCopy( entrySrc, entryDest ) )
+                    const wxString entrySrc = srcDir + wxFileName::GetPathSeparator() + filename;
+                    const wxString entryDest = destDir + wxFileName::GetPathSeparator() + filename;
+
+                    if( !filename.Matches( wxT( "~*.lck" ) ) && !filename.Matches( wxT( "*.lck" ) ) )
                     {
-                        success = false;
+                        if( wxFileName::DirExists( entrySrc ) )
+                        {
+                            // Recursively process subdirectories
+                            if( !CopyFilesOrDirectory( entrySrc, destDir, aAllowOverwrites, aErrors, aPathsWritten ) )
+                            {
+                                aErrors += wxString::Format( _( "Could not copy directory: %s to %s" ),
+                                                             entrySrc, entryDest );
+                                aErrors += wxT( "\n" );
+
+                                success = false;
+                            }
+                        }
+                        else
+                        {
+                            // Copy individual files
+                            if( !performCopy( entrySrc, entryDest ) )
+                            {
+                                success = false;
+                            }
+                        }
                     }
+
+                    cont = dir.GetNext( &filename );
                 }
-            }
 
-            cont = dir.GetNext( &filename );
-        }
-
-        return success;
-    };
+                return success;
+            };
 
     // If copying a directory, append its name to destination path
     if( isSourceDirectory )
@@ -599,6 +595,7 @@ bool CopyFilesOrDirectory( const wxString& aSourcePath, const wxString& aDestDir
 
                 return false;
             }
+
             // Process all matching files in source directory
             return processEntries( dirPath, fileName, baseDestDir );
         }

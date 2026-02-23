@@ -38,6 +38,7 @@
 #include <wx/treectrl.h>
 #include <wx/utils.h>
 #include <wx/filename.h>
+#include <wx/generic/treectlg.h>
 
 #include <core/typeinfo.h>
 #include <eda_base_frame.h>
@@ -79,6 +80,7 @@ class API_HANDLER_COMMON;
 class DIALOG_SCHEMATIC_SETUP;
 class PROGRESS_REPORTER;
 class wxSearchCtrl;
+class wxGenericTreeCtrl;
 class BITMAP_BUTTON;
 
 
@@ -249,7 +251,7 @@ public:
      */
     void ExecuteRemoteCommand( const char* cmdline ) override;
 
-    void KiwayMailIn( KIWAY_EXPRESS& aEvent ) override;
+    void KiwayMailIn( KIWAY_MAIL_EVENT& aEvent ) override;
 
     /**
      * Refresh the display of any operating points.  Called after a .op simulation completes.
@@ -299,6 +301,13 @@ public:
     void UpdateVariantSelectionCtrl( const wxArrayString& aVariantNames );
 
     void SetCurrentVariant( const wxString& aVariantName );
+
+    /**
+     * Show a dialog to create a new variant with name and description.
+     *
+     * @return true if a variant was created, false if cancelled or invalid input
+     */
+    bool ShowAddVariantDialog();
 
     void onVariantSelected( wxCommandEvent& aEvent );
 
@@ -406,9 +415,10 @@ public:
      * number * 100.  In other words the first sheet uses 100 to 199, the second sheet uses
      * 200 to 299, and so on.
      */
-    void AnnotateSymbols( SCH_COMMIT* aCommit, ANNOTATE_SCOPE_T aAnnotateScope, ANNOTATE_ORDER_T aSortOption,
-                          ANNOTATE_ALGO_T aAlgoOption, bool aRecursive, int aStartNumber, bool aResetAnnotation,
-                          bool aRepairTimestamps, REPORTER& aReporter );
+    void AnnotateSymbols( SCH_COMMIT* aCommit, ANNOTATE_SCOPE_T aAnnotateScope,
+                          ANNOTATE_ORDER_T aSortOption, ANNOTATE_ALGO_T aAlgoOption,
+                          bool aRecursive, int aStartNumber, bool aResetAnnotation,
+                          bool aRegroupUnits, bool aRepairTimestamps, REPORTER& aReporter );
 
     /**
      * Check for annotation errors.
@@ -584,6 +594,28 @@ public:
                               wxString* aSourceSheetFilename = nullptr );
 
     void InitSheet( SCH_SHEET* aSheet, const wxString& aNewFilename );
+
+    /**
+     * Change the file backing a schematic sheet.
+     *
+     * Handles path normalization, case-clash checks, hierarchy search for existing screens,
+     * file-exists checks, user confirmation prompts, file saving/copying, recursion checks,
+     * screen linking, instance creation, LoadSheetFromFile with error recovery, and
+     * RecalculateConnections + BuildSheetList repair.
+     *
+     * @param aSheet the sheet whose backing file is being changed
+     * @param aNewFilename new relative filename (unix separators, extension already ensured)
+     * @param aClearAnnotationNewItems if non-null, set true when loaded content needs
+     *                                 annotation clearing
+     * @param aIsUndoable if non-null, set false when the operation is not reversible
+     * @param aSourceSheetFilename if non-null and non-empty, source file to copy from
+     *                             (design-block import)
+     * @return true on success
+     */
+    bool ChangeSheetFile( SCH_SHEET* aSheet, const wxString& aNewFilename,
+                          bool* aClearAnnotationNewItems = nullptr,
+                          bool* aIsUndoable = nullptr,
+                          const wxString* aSourceSheetFilename = nullptr );
 
     /**
      * Load a the KiCad schematic file \a aFileName into the sheet \a aSheet.
@@ -844,7 +876,7 @@ public:
 
     DIALOG_SYMBOL_FIELDS_TABLE* GetSymbolFieldsTableDialog();
 
-    wxTreeCtrl* GetNetNavigator() { return m_netNavigator; }
+    wxGenericTreeCtrl* GetNetNavigator();
 
     const SCH_ITEM* GetSelectedNetNavigatorItem() const;
 
@@ -978,6 +1010,8 @@ public:
      * Handle file edit session abort message from agent.
      */
     void OnAgentFileEditAbort();
+
+    void ClearToolbarControl( int aId ) override;
 
     DECLARE_EVENT_TABLE()
 
@@ -1139,11 +1173,11 @@ private:
     DIALOG_SCHEMATIC_SETUP*     m_schematicSetupDialog;
 
 
-    wxTreeCtrl*    m_netNavigator;
-    wxSearchCtrl*  m_netNavigatorFilter;
-    BITMAP_BUTTON* m_netNavigatorMenuButton;
-    wxString       m_netNavigatorFilterValue;
-    wxString       m_netNavigatorMenuNetName;
+    wxGenericTreeCtrl*          m_netNavigator;
+    wxSearchCtrl*               m_netNavigatorFilter;
+    BITMAP_BUTTON*              m_netNavigatorMenuButton;
+    wxString                    m_netNavigatorFilterValue;
+    wxString                    m_netNavigatorMenuNetName;
 
     bool m_syncingPcbToSchSelection; // Recursion guard when synchronizing selection from PCB
     // Cross-probe flashing support

@@ -24,10 +24,12 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <3d_rendering/opengl/render_3d_opengl.h> // Must be included before any GL header
+
 #include "panel_preview_3d_model.h"
 #include <dialogs/dialog_unit_entry.h>
+#include <libeval/numeric_evaluator.h>
 #include <3d_canvas/eda_3d_canvas.h>
-#include <3d_rendering/opengl/render_3d_opengl.h>
 #include <tool/tool_manager.h>
 #include <tool/tool_dispatcher.h>
 #include <tools/eda_3d_actions.h>
@@ -47,10 +49,10 @@
 #include <eda_3d_viewer_settings.h>
 #include <board_design_settings.h>
 
-#ifndef __linux__
-#include <3d_navlib/nl_footprint_properties_plugin.h>
-#else
+#if defined(__linux__) || defined(__FreeBSD__)
 #include <3d_spacenav/spnav_viewer_plugin.h>
+#else
+#include <3d_navlib/nl_footprint_properties_plugin.h>
 #endif
 
 PANEL_PREVIEW_3D_MODEL::PANEL_PREVIEW_3D_MODEL( wxWindow* aParent, PCB_BASE_FRAME* aFrame,
@@ -136,10 +138,10 @@ PANEL_PREVIEW_3D_MODEL::PANEL_PREVIEW_3D_MODEL( wxWindow* aParent, PCB_BASE_FRAM
 
     try
     {
-#ifndef __linux__
-        m_spaceMouse = std::make_unique<NL_FOOTPRINT_PROPERTIES_PLUGIN>( m_previewPane );
-#else
+#if defined(__linux__) || defined(__FreeBSD__)
         m_spaceMouse = std::make_unique<SPNAV_VIEWER_PLUGIN>( m_previewPane );
+#else
+        m_spaceMouse = std::make_unique<NL_FOOTPRINT_PROPERTIES_PLUGIN>( m_previewPane );
 #endif
         m_spaceMouse->SetFocus( true );
     }
@@ -342,6 +344,26 @@ void PANEL_PREVIEW_3D_MODEL::SetSelectedModel( int idx )
 }
 
 
+static wxString evaluateTextCtrlFormula( const wxString& aValue )
+{
+    // NUMERIC_EVALUATOR doesn't handle UTF-8 multi-byte characters properly,
+    // so skip evaluation if the string contains non-ASCII characters (e.g., degree symbols)
+    for( wxUniChar c : aValue )
+    {
+        if( !c.IsAscii() )
+            return aValue;
+    }
+
+    // Attempt to evaluate formula; if successful return result, otherwise return original
+    NUMERIC_EVALUATOR eval( EDA_UNITS::UNSCALED );
+
+    if( eval.Process( aValue ) )
+        return eval.Result();
+
+    return aValue;
+}
+
+
 void PANEL_PREVIEW_3D_MODEL::updateOrientation( wxCommandEvent &event )
 {
     if( m_parentModelList && m_selected >= 0 && m_selected < (int) m_parentModelList->size() )
@@ -350,26 +372,26 @@ void PANEL_PREVIEW_3D_MODEL::updateOrientation( wxCommandEvent &event )
         FP_3DMODEL* modelInfo = &m_parentModelList->at( (unsigned) m_selected );
 
         modelInfo->m_Scale.x = EDA_UNIT_UTILS::UI::DoubleValueFromString(
-                pcbIUScale, EDA_UNITS::UNSCALED, xscale->GetValue() );
+                pcbIUScale, EDA_UNITS::UNSCALED, evaluateTextCtrlFormula( xscale->GetValue() ) );
         modelInfo->m_Scale.y = EDA_UNIT_UTILS::UI::DoubleValueFromString(
-                pcbIUScale, EDA_UNITS::UNSCALED, yscale->GetValue() );
+                pcbIUScale, EDA_UNITS::UNSCALED, evaluateTextCtrlFormula( yscale->GetValue() ) );
         modelInfo->m_Scale.z = EDA_UNIT_UTILS::UI::DoubleValueFromString(
-                pcbIUScale, EDA_UNITS::UNSCALED, zscale->GetValue() );
+                pcbIUScale, EDA_UNITS::UNSCALED, evaluateTextCtrlFormula( zscale->GetValue() ) );
 
         // Rotation is stored in the file as positive-is-CW, but we use positive-is-CCW in the GUI
         // to match the rest of KiCad
-        modelInfo->m_Rotation.x = -rotationFromString( xrot->GetValue() );
-        modelInfo->m_Rotation.y = -rotationFromString( yrot->GetValue() );
-        modelInfo->m_Rotation.z = -rotationFromString( zrot->GetValue() );
+        modelInfo->m_Rotation.x = -rotationFromString( evaluateTextCtrlFormula( xrot->GetValue() ) );
+        modelInfo->m_Rotation.y = -rotationFromString( evaluateTextCtrlFormula( yrot->GetValue() ) );
+        modelInfo->m_Rotation.z = -rotationFromString( evaluateTextCtrlFormula( zrot->GetValue() ) );
 
         modelInfo->m_Offset.x = EDA_UNIT_UTILS::UI::DoubleValueFromString( pcbIUScale, m_userUnits,
-                                                                           xoff->GetValue() )
+                                                                           evaluateTextCtrlFormula( xoff->GetValue() ) )
                                 / pcbIUScale.IU_PER_MM;
         modelInfo->m_Offset.y = EDA_UNIT_UTILS::UI::DoubleValueFromString( pcbIUScale, m_userUnits,
-                                                                           yoff->GetValue() )
+                                                                           evaluateTextCtrlFormula( yoff->GetValue() ) )
                                 / pcbIUScale.IU_PER_MM;
         modelInfo->m_Offset.z = EDA_UNIT_UTILS::UI::DoubleValueFromString( pcbIUScale, m_userUnits,
-                                                                           zoff->GetValue() )
+                                                                           evaluateTextCtrlFormula( zoff->GetValue() ) )
                                 / pcbIUScale.IU_PER_MM;
 
         // Update the dummy footprint for the preview

@@ -436,7 +436,7 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
 {
     m_frame->GetCanvas()->SetCurrentCursor( KICURSOR::ARROW );
 
-    KIID           lastRolloverItem = niluuid;
+    KIID lastRolloverItemId = niluuid;
     EE_GRID_HELPER grid( m_toolMgr );
 
     auto pinOrientation = []( EDA_ITEM* aItem )
@@ -481,7 +481,7 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
         bool displayWireCursor = false;
         bool displayBusCursor = false;
         bool displayLineCursor = false;
-        KIID rolloverItem = lastRolloverItem;
+        KIID rolloverItemId = lastRolloverItemId;
 
         // on left click, a selection is made, depending on modifiers ALT, SHIFT, CTRL:
         setModifiersState( evt->Modifier( MD_SHIFT ), evt->Modifier( MD_CTRL ), evt->Modifier( MD_ALT ) );
@@ -564,10 +564,9 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
 
                 if( m_previous_first_cell && clickedCell && allCellsFromSameTable )
                 {
-                    for( auto selection : m_selection )
-                    {
+                    for( EDA_ITEM* selection : m_selection )
                         selection->ClearSelected();
-                    }
+
                     m_selection.Clear();
                     SCH_TABLE* parentTable = dynamic_cast<SCH_TABLE*>( m_previous_first_cell->GetParent() );
 
@@ -602,9 +601,9 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
 
                     selCancelled = true;
                 }
-                else if( collector[0]->IsHypertext() )
+                else if( collector[0]->HasHoveredHypertext() )
                 {
-                    collector[0]->DoHypertextAction( m_frame );
+                    collector[ 0 ]->DoHypertextAction( m_frame, evt->Position() );
                     selCancelled = true;
                 }
                 else if( collector[0]->IsBrightened() )
@@ -719,7 +718,8 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
 
             SCH_COLLECTOR collector;
 
-            if( m_selection.GetSize() == 1 && dynamic_cast<SCH_TABLE*>( m_selection.GetItem( 0 ) ) )
+            if( m_selection.GetSize() == 1 && dynamic_cast<SCH_TABLE*>( m_selection.GetItem( 0 ) )
+                    && evt->HasPosition() && selectionContains( evt->DragOrigin() ) )
             {
                 m_toolMgr->RunAction( SCH_ACTIONS::move );
             }
@@ -1081,7 +1081,7 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
         else if( evt->IsMotion() && !m_isSymbolEditor && evt->FirstResponder() == this )
         {
             // Update cursor and rollover item
-            rolloverItem = niluuid;
+            rolloverItemId = niluuid;
             SCH_COLLECTOR collector;
 
             getViewControls()->ForceCursorPosition( false );
@@ -1103,9 +1103,9 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
                         else if( autostartEvt->Matches( SCH_ACTIONS::drawLines.MakeEvent() ) )
                             displayLineCursor = true;
                     }
-                    else if( collector[0]->IsHypertext() && !collector[0]->IsSelected() )
+                    else if( collector[0]->HasHypertext() && !collector[0]->IsSelected() )
                     {
-                        rolloverItem = collector[0]->m_Uuid;
+                        rolloverItemId = collector[0]->m_Uuid;
                     }
                 }
             }
@@ -1115,37 +1115,33 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
             evt->SetPassEvent();
         }
 
-        if( lastRolloverItem != niluuid && lastRolloverItem != rolloverItem )
+        if( lastRolloverItemId != niluuid && lastRolloverItemId != rolloverItemId )
         {
-            EDA_ITEM* item = m_frame->ResolveItem( lastRolloverItem );
+            EDA_ITEM* item = m_frame->ResolveItem( lastRolloverItemId );
 
-            if( item->IsRollover() )
-            {
-                item->SetIsRollover( false );
+            item->SetIsRollover( false, { 0, 0 } );
 
-                if( item->Type() == SCH_FIELD_T || item->Type() == SCH_TABLECELL_T )
-                    m_frame->GetCanvas()->GetView()->Update( item->GetParent() );
-                else
-                    m_frame->GetCanvas()->GetView()->Update( item );
-            }
+            if( item->Type() == SCH_FIELD_T || item->Type() == SCH_TABLECELL_T )
+                m_frame->GetCanvas()->GetView()->Update( item->GetParent() );
+            else
+                m_frame->GetCanvas()->GetView()->Update( item );
         }
 
-        if( rolloverItem != niluuid )
+        SCH_ITEM* rolloverItem = nullptr;
+
+        if( rolloverItemId != niluuid )
         {
-            EDA_ITEM* item = m_frame->ResolveItem( rolloverItem );
+            rolloverItem = static_cast<SCH_ITEM*>( m_frame->ResolveItem( rolloverItemId ) );
 
-            if( !item->IsRollover() )
-            {
-                item->SetIsRollover( true );
+            rolloverItem->SetIsRollover( true, getViewControls()->GetMousePosition() );
 
-                if( item->Type() == SCH_FIELD_T || item->Type() == SCH_TABLECELL_T )
-                    m_frame->GetCanvas()->GetView()->Update( item->GetParent() );
-                else
-                    m_frame->GetCanvas()->GetView()->Update( item );
-            }
+            if( rolloverItem->Type() == SCH_FIELD_T || rolloverItem->Type() == SCH_TABLECELL_T )
+                m_frame->GetCanvas()->GetView()->Update( rolloverItem->GetParent() );
+            else
+                m_frame->GetCanvas()->GetView()->Update( rolloverItem );
         }
 
-        lastRolloverItem = rolloverItem;
+        lastRolloverItemId = rolloverItemId;
 
         if( m_frame->ToolStackIsEmpty() )
         {
@@ -1161,7 +1157,7 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
             {
                 m_nonModifiedCursor = KICURSOR::LINE_GRAPHIC;
             }
-            else if( rolloverItem != niluuid )
+            else if( rolloverItem && rolloverItem->HasHoveredHypertext() )
             {
                 m_nonModifiedCursor = KICURSOR::HAND;
             }
@@ -2463,7 +2459,7 @@ void SCH_SELECTION_TOOL::SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, 
                     continue;
 
                 if( Selectable( static_cast<SCH_ITEM*>( group_item ) ) )
-                    collector.Append( *newset.begin() );
+                    collector.Append( group_item );
             }
         }
 
@@ -2594,6 +2590,17 @@ void SCH_SELECTION_TOOL::SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, 
     {
         if( m_frame->GetRenderSettings()->m_ShowPinsElectricalType )
             item->SetFlags( SHOW_ELEC_TYPE );
+
+        // If the pin lives inside a group that is already being selected, don't also select the pin.
+        if( EDA_GROUP* group =
+                    SCH_GROUP::TopLevelGroup( static_cast<SCH_ITEM*>( item ), m_enteredGroup, m_isSymbolEditor ) )
+        {
+            if( collector.HasItem( group->AsEdaItem() ) )
+            {
+                item->ClearFlags( SHOW_ELEC_TYPE );
+                continue;
+            }
+        }
 
         if( Selectable( item ) && itemPassesFilter( item, nullptr )
             && !item->GetParent()->HasFlag( SELECTION_CANDIDATE ) && hitTest( static_cast<SCH_ITEM*>( item ) ) )
@@ -3269,10 +3276,33 @@ void SCH_SELECTION_TOOL::SyncSelection( const std::optional<SCH_SHEET_PATH>& tar
     if( !editFrame )
         return;
 
-    if( targetSheetPath && targetSheetPath != editFrame->Schematic().CurrentSheet() )
+    double targetZoom = 0.0;
+    VECTOR2D targetCenter;
+    bool targetZoomValid = false;
+    bool changedSheet = false;
+
+    if( targetSheetPath )
     {
         SCH_SHEET_PATH path = targetSheetPath.value();
-        m_frame->GetToolManager()->RunAction<SCH_SHEET_PATH*>( SCH_ACTIONS::changeSheet, &path );
+
+        if( SCH_SCREEN* screen = path.LastScreen() )
+        {
+            targetZoom = screen->m_LastZoomLevel;
+            targetCenter = screen->m_ScrollCenter;
+            targetZoomValid = screen->IsZoomInitialized();
+        }
+
+        if( path != editFrame->Schematic().CurrentSheet() )
+        {
+            m_frame->GetToolManager()->RunAction<SCH_SHEET_PATH*>( SCH_ACTIONS::changeSheet, &path );
+            changedSheet = true;
+        }
+    }
+
+    if( changedSheet && targetZoomValid && !m_frame->eeconfig()->m_CrossProbing.zoom_to_fit )
+    {
+        getView()->SetScale( targetZoom );
+        getView()->SetCenter( targetCenter );
     }
 
     ClearSelection( items.size() > 0 ? true /*quiet mode*/ : false );

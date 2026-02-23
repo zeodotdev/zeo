@@ -308,4 +308,115 @@ BOOST_AUTO_TEST_CASE( SnapPointManagement )
     BOOST_CHECK( !snappedPoint.has_value() );
 }
 
+
+BOOST_AUTO_TEST_CASE( AlignGridWithNonPageOrigin )
+{
+    // Issue #21800: Grid snapping should produce positions that are exact multiples
+    // of the grid size relative to the grid origin, regardless of display origin setting.
+    // When grid sizes go through VECTOR2D, floating-point imprecision in the
+    // VECTOR2D -> VECTOR2I truncation could produce incorrect grid positions.
+
+    GRID_HELPER helper;
+    helper.SetGridSnapping( true );
+
+    // PCB IU_PER_MM = 1000000 (nanometers)
+    constexpr int IU_PER_MM = 1000000;
+
+    struct TestCase
+    {
+        const char* name;
+        double      gridSizeMM;
+        int         gridOriginX;
+        int         gridOriginY;
+        int         pointX;
+        int         pointY;
+        int         expectedX;
+        int         expectedY;
+    };
+
+    // Test various grid sizes, including ones that don't convert exactly from mm to nm
+    std::vector<TestCase> cases = {
+        // 1mm grid with non-zero origin
+        { "1mm grid, origin at 47.3mm",
+          1.0, 47300000, 25300000,
+          127400000, 95400000,
+          0, 0 },
+
+        // 0.5mm grid
+        { "0.5mm grid, origin at 47.3mm",
+          0.5, 47300000, 25300000,
+          127400000, 95400000,
+          0, 0 },
+
+        // 0.1mm grid (0.1 is NOT exact in IEEE 754 double)
+        { "0.1mm grid, origin at 47.3mm",
+          0.1, 47300000, 25300000,
+          127340000, 95340000,
+          0, 0 },
+
+        // 25 mil = 0.635mm (0.635 is NOT exact in IEEE 754 double)
+        { "25mil grid, origin at 47.625mm",
+          0.635, 47625000, 25400000,
+          127960000, 95250000,
+          0, 0 },
+
+        // 10 mil = 0.254mm (0.254 is NOT exact in IEEE 754 double)
+        { "10mil grid, origin at 47.752mm",
+          0.254, 47752000, 25400000,
+          127960000, 95250000,
+          0, 0 },
+
+        // 50 mil = 1.27mm
+        { "50mil grid, origin at 47.625mm",
+          1.27, 47625000, 25400000,
+          127960000, 95250000,
+          0, 0 },
+    };
+
+    // Compute all expected values using integer grid size (the ground truth)
+    for( auto& tc : cases )
+    {
+        int gridSizeIU = KiROUND( tc.gridSizeMM * IU_PER_MM );
+
+        tc.expectedX = KiROUND( double( tc.pointX - tc.gridOriginX ) / gridSizeIU )
+                       * gridSizeIU + tc.gridOriginX;
+        tc.expectedY = KiROUND( double( tc.pointY - tc.gridOriginY ) / gridSizeIU )
+                       * gridSizeIU + tc.gridOriginY;
+    }
+
+    for( const auto& tc : cases )
+    {
+        BOOST_TEST_CONTEXT( tc.name )
+        {
+            int gridSizeIU = KiROUND( tc.gridSizeMM * IU_PER_MM );
+
+            // Simulate the grid size coming through VECTOR2D (as it does from GAL)
+            VECTOR2D gridD( tc.gridSizeMM * IU_PER_MM, tc.gridSizeMM * IU_PER_MM );
+            VECTOR2D offsetD( tc.gridOriginX, tc.gridOriginY );
+
+            helper.SetGridSize( gridD );
+            helper.SetOrigin( VECTOR2I( tc.gridOriginX, tc.gridOriginY ) );
+
+            VECTOR2I point( tc.pointX, tc.pointY );
+
+            // Test AlignGrid with VECTOR2D parameters (the path that goes through
+            // implicit VECTOR2D -> VECTOR2I truncation in computeNearest)
+            VECTOR2I resultD = helper.AlignGrid( point, gridD, offsetD );
+
+            // Test AlignGrid with no parameters (uses GetGrid() which rounds properly)
+            VECTOR2I resultI = helper.AlignGrid( point );
+
+            BOOST_CHECK_EQUAL( resultD.x, tc.expectedX );
+            BOOST_CHECK_EQUAL( resultD.y, tc.expectedY );
+            BOOST_CHECK_EQUAL( resultI.x, tc.expectedX );
+            BOOST_CHECK_EQUAL( resultI.y, tc.expectedY );
+
+            // Verify that the result is on-grid
+            BOOST_CHECK_EQUAL( ( resultD.x - tc.gridOriginX ) % gridSizeIU, 0 );
+            BOOST_CHECK_EQUAL( ( resultD.y - tc.gridOriginY ) % gridSizeIU, 0 );
+        }
+    }
+}
+
+
 BOOST_AUTO_TEST_SUITE_END()

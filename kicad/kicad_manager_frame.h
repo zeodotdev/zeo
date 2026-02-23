@@ -81,10 +81,7 @@ public:
      */
     void HideTabsIfNeeded();
 
-    wxString GetCurrentFileName() const override
-    {
-        return GetProjectFileName();
-    }
+    wxString GetCurrentFileName() const override;
 
     /**
      * @brief Creates a project and imports a non-KiCad Schematic and PCB
@@ -127,6 +124,16 @@ public:
     void OnImportEasyEdaProFiles( wxCommandEvent& event );
 
     /**
+     *  Open dialog to import PADS Logic schematic and PCB files.
+     */
+    void OnImportPadsProjectFiles( wxCommandEvent& event );
+
+    /**
+     *  Open dialog to import gEDA/gaf schematic and PCB files.
+     */
+    void OnImportGedaFiles( wxCommandEvent& event );
+
+    /**
      * Prints the current working directory name and the project name on the text panel.
      */
     void PrintPrjInfo();
@@ -150,7 +157,13 @@ public:
      * Closes the project, and saves it if aSave is true;
      */
     bool CloseProject( bool aSave );
-    void LoadProject( const wxFileName& aProjectFileName );
+
+    /**
+     * Loads a new project
+     * @param aProjectFileName is the path to the project to load
+     * @return true if the project was successfully loaded
+     */
+    bool LoadProject( const wxFileName& aProjectFileName );
 
     PANEL_KICAD_LAUNCHER* GetLauncherPanel() const { return m_launcher; }
 
@@ -165,6 +178,8 @@ public:
     void ShowChangedLanguage() override;
     void CommonSettingsChanged( int aFlags ) override;
     void ProjectChanged() override;
+
+    void PreloadAllLibraries();
 
     /**
      * Called by sending a event with id = ID_INIT_WATCHED_PATHS
@@ -230,17 +245,16 @@ private:
 
     wxString help_name() override;
 
-    void language_change( wxCommandEvent& event );
-
     void updatePcmButtonBadge();
 
 private:
     bool                  m_openSavedWindows;
+    bool                  m_restoredFromHistory;  ///< Set after restore to mark editors dirty
     int                   m_leftWinWidth;
     bool                  m_active_project;
     bool                  m_showHistoryPanel;
 
-    PROJECT_TREE_PANE*    m_leftWin;
+    PROJECT_TREE_PANE*    m_projectTreePane;
     LOCAL_HISTORY_PANE*   m_historyPane;
     wxAuiNotebook*        m_notebook;
     PANEL_KICAD_LAUNCHER* m_launcher;

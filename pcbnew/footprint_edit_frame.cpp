@@ -38,15 +38,17 @@
 #include <3d_viewer/eda_3d_viewer_frame.h>
 #include <bitmaps.h>
 #include <board.h>
+#include <project/net_settings.h>
+#include <widgets/wx_infobar.h>
 #include <footprint.h>
 #include <confirm.h>
 #include <footprint_edit_frame.h>
 #include <footprint_editor_settings.h>
-#include <footprint_info_impl.h>
 #include <footprint_library_adapter.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <kiface_base.h>
 #include <kiplatform/app.h>
+#include <kiplatform/ui.h>
 #include <kiway.h>
 #include <macros.h>
 #include <pcbnew_id.h>
@@ -73,7 +75,6 @@
 #include <widgets/lib_tree.h>
 #include <widgets/panel_selection_filter.h>
 #include <widgets/pcb_properties_panel.h>
-#include <widgets/wx_progress_reporters.h>
 #include <wildcards_and_files_ext.h>
 #include <widgets/wx_aui_utils.h>
 #include <toolbars_footprint_editor.h>
@@ -227,7 +228,9 @@ FOOTPRINT_EDIT_FRAME::FOOTPRINT_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_auimgr.AddPane( m_treePane, EDA_PANE().Palette().Name( "Footprints" )
                       .Left().Layer( 4 )
                       .Caption( _( "Libraries" ) )
-                      .MinSize( FromDIP( 250 ), -1 ).BestSize( FromDIP( 250 ), -1 ) );
+                      // Don't use -1 for don't-change-height on a growable panel; it has side-effects.
+                      .MinSize( FromDIP( 250 ), FromDIP( 80 ) )
+                      .BestSize( FromDIP( 250 ), -1 ) );
     m_auimgr.AddPane( m_propertiesPanel, EDA_PANE().Name( PropertiesPaneName() )
                       .Left().Layer( 3 )
                       .Caption( _( "Properties" ) ).PaneBorder( false )
@@ -240,11 +243,15 @@ FOOTPRINT_EDIT_FRAME::FOOTPRINT_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_auimgr.AddPane( m_appearancePanel, EDA_PANE().Name( "LayersManager" )
                       .Right().Layer( 3 )
                       .Caption( _( "Appearance" ) ).PaneBorder( false )
-                      .MinSize( FromDIP( 180 ), -1 ).BestSize( FromDIP( 180 ), -1 ) );
+                      // Don't use -1 for don't-change-height on a growable panel; it has side-effects.
+                      .MinSize( FromDIP( 180 ), FromDIP( 80 ) )
+                      .BestSize( FromDIP( 180 ), -1 ) );
     m_auimgr.AddPane( m_selectionFilterPanel, EDA_PANE().Palette().Name( "SelectionFilter" )
                       .Right().Layer( 3 ).Position( 2 )
                       .Caption( _( "Selection Filter" ) ).PaneBorder( false )
-                      .MinSize( FromDIP( 180 ), -1 ).BestSize( FromDIP( 180 ), -1 ) );
+                      // Fixed-size pane; -1 for MinSize height is required
+                      .MinSize( FromDIP( 180 ), -1 )
+                      .BestSize( FromDIP( 180 ), -1 ) );
 
     // Center
     m_auimgr.AddPane( GetCanvas(), EDA_PANE().Canvas().Name( "DrawFrame" )
@@ -550,7 +557,6 @@ void FOOTPRINT_EDIT_FRAME::updateEnabledLayers()
                 case FOOTPRINT_STACKUP::EXPAND_INNER_LAYERS:
                 {
                     enabledLayers |= LSET{ F_Cu, In1_Cu, B_Cu };
-                    enabledLayers |= LSET::UserDefinedLayersMask( 4 );
                     board.SetLayerName( In1_Cu, _( "Inner layers" ) );
                     break;
                 }
@@ -592,9 +598,12 @@ void FOOTPRINT_EDIT_FRAME::updateEnabledLayers()
             RECURSE_MODE::RECURSE );
     }
 
-    // Enable any layers that the user has gone to the trouble to name
+    // Enable the user-configured number of user layers, plus any specifically named layers
     if( FOOTPRINT_EDITOR_SETTINGS* cfg = GetAppSettings<FOOTPRINT_EDITOR_SETTINGS>( "fpedit" ) )
     {
+        int userLayerCount = cfg->m_DesignSettings.GetUserDefinedLayerCount();
+        enabledLayers |= LSET::UserDefinedLayersMask( userLayerCount );
+
         for( const PCB_LAYER_ID& user : LSET::UserDefinedLayersMask() )
         {
             if( cfg->m_DesignSettings.m_UserLayerNames.contains( LSET::Name( user ).ToStdString() ) )
@@ -676,10 +685,10 @@ void FOOTPRINT_EDIT_FRAME::ReloadFootprint( FOOTPRINT* aFootprint )
                                     ClearModify();
 
                                     // Get rid of the save-will-update-board-only (or any other dismissable warning)
-                                    WX_INFOBAR* infobar = GetInfoBar();
+                                    WX_INFOBAR* loc_infobar = GetInfoBar();
 
-                                    if( infobar->IsShownOnScreen() && infobar->HasCloseButton() )
-                                        infobar->Dismiss();
+                                    if( loc_infobar->IsShownOnScreen() && loc_infobar->HasCloseButton() )
+                                        loc_infobar->Dismiss();
 
                                     GetCanvas()->ForceRefresh();
                                     SyncLibraryTree( true );
@@ -822,7 +831,12 @@ void FOOTPRINT_EDIT_FRAME::SaveSettings( APP_SETTINGS_BASE* aCfg )
         cfg->m_DesignSettings  = GetDesignSettings();
         cfg->m_Display         = m_displayOptions;
         cfg->m_LibWidth        = m_treePane->GetSize().x;
-        cfg->m_SelectionFilter = GetToolManager()->GetTool<PCB_SELECTION_TOOL>()->GetFilter();
+
+        if( TOOL_MANAGER* toolMgr = GetToolManager() )
+        {
+            if( PCB_SELECTION_TOOL* selTool = toolMgr->GetTool<PCB_SELECTION_TOOL>() )
+                cfg->m_SelectionFilter = selTool->GetFilter();
+        }
 
         cfg->m_AuiPanels.show_layer_manager = m_show_layer_manager_tools;
 
@@ -996,13 +1010,6 @@ void FOOTPRINT_EDIT_FRAME::doCloseWindow()
     m_auimgr.GetPane( wxT( "SelectionFilter" ) ).Show( false );
 
     Clear_Pcb( false );
-
-    SETTINGS_MANAGER* mgr = GetSettingsManager();
-
-    if( mgr->IsProjectOpen() && wxFileName::IsDirWritable( Prj().GetProjectPath() ) )
-    {
-        GFootprintList.WriteCacheToFile( Prj().GetProjectPath() + wxT( "fp-info-cache" ) );
-    }
 }
 
 
@@ -1142,17 +1149,6 @@ void FOOTPRINT_EDIT_FRAME::initLibraryTree()
 {
     FOOTPRINT_LIBRARY_ADAPTER* footprints = PROJECT_PCB::FootprintLibAdapter( &Prj() );
 
-    WX_PROGRESS_REPORTER progressReporter( this, _( "Load Footprint Libraries" ), 1, PR_CAN_ABORT );
-
-    if( GFootprintList.GetCount() == 0 )
-        GFootprintList.ReadCacheFromFile( Prj().GetProjectPath() + wxT( "fp-info-cache" ) );
-
-    GFootprintList.ReadFootprintFiles( footprints, nullptr, &progressReporter );
-    progressReporter.Show( false );
-
-    if( GFootprintList.GetErrorCount() )
-        GFootprintList.DisplayErrors( this );
-
     m_adapter = FP_TREE_SYNCHRONIZING_ADAPTER::Create( this, footprints );
     auto adapter = static_cast<FP_TREE_SYNCHRONIZING_ADAPTER*>( m_adapter.get() );
 
@@ -1160,24 +1156,12 @@ void FOOTPRINT_EDIT_FRAME::initLibraryTree()
 }
 
 
-void FOOTPRINT_EDIT_FRAME::SyncLibraryTree( bool aProgress )
+void FOOTPRINT_EDIT_FRAME::SyncLibraryTree( [[maybe_unused]] bool aProgress )
 {
     FOOTPRINT_LIBRARY_ADAPTER* footprints = PROJECT_PCB::FootprintLibAdapter( &Prj() );
     auto          adapter = static_cast<FP_TREE_SYNCHRONIZING_ADAPTER*>( m_adapter.get() );
     LIB_ID        target = GetTargetFPID();
     bool          targetSelected = ( target == GetLibTree()->GetSelectedLibId() );
-
-    // Sync FOOTPRINT_INFO list to the libraries on disk
-    if( aProgress )
-    {
-        WX_PROGRESS_REPORTER progressReporter( this, _( "Update Footprint Libraries" ), 1, PR_CAN_ABORT );
-        GFootprintList.ReadFootprintFiles( footprints, nullptr, &progressReporter );
-        progressReporter.Show( false );
-    }
-    else
-    {
-        GFootprintList.ReadFootprintFiles( footprints, nullptr, nullptr );
-    }
 
     // Unselect before syncing to avoid null reference in the adapter
     // if a selected item is removed during the sync
@@ -1384,7 +1368,7 @@ void FOOTPRINT_EDIT_FRAME::setupUIConditions()
     mgr->SetConditions( PCB_ACTIONS::rotateCcw,          ENABLE( cond.HasItems() ) );
     mgr->SetConditions( PCB_ACTIONS::mirrorH,            ENABLE( cond.HasItems() ) );
     mgr->SetConditions( PCB_ACTIONS::mirrorV,            ENABLE( cond.HasItems() ) );
-    mgr->SetConditions( ACTIONS::group,                  ENABLE( SELECTION_CONDITIONS::NotEmpty ) );
+    mgr->SetConditions( ACTIONS::group,                  ENABLE( SELECTION_CONDITIONS::MoreThan( 1 ) ) );
     mgr->SetConditions( ACTIONS::ungroup,                ENABLE( SELECTION_CONDITIONS::HasType( PCB_GROUP_T ) ) );
 
     mgr->SetConditions( PCB_ACTIONS::padDisplayMode,     CHECK( !cond.PadFillDisplay() ) );
@@ -1568,6 +1552,8 @@ void FOOTPRINT_EDIT_FRAME::OnSaveFootprintAsPng( wxCommandEvent& event )
 
     wxFileDialog dlg( this, _( "Export View as PNG" ), projectPath, fn.GetFullName(),
                       FILEEXT::PngFileWildcard(), wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
+
+    KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
 
     if( dlg.ShowModal() == wxID_CANCEL || dlg.GetPath().IsEmpty() )
         return;

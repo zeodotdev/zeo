@@ -55,6 +55,17 @@ set( GAL_SRCS
 
 add_library( gal SHARED ${GAL_SRCS} )
 
+if( KICAD_USE_PCH )
+    target_precompile_headers( gal
+        PRIVATE
+            <kicommon.h>
+            <gal/graphics_abstraction_layer.h>
+            <kiid.h>
+            <pgm_base.h>
+            <wx/wx.h>
+             )
+endif()
+
 if( WIN32 )
     # we need the gdiplus library for cairo printing on windows
     set( GDI_PLUS_LIBRARIES gdiplus )
@@ -65,7 +76,6 @@ target_link_libraries( gal
     kimath
     kiplatform
     nlohmann_json
-    ${GLEW_LIBRARIES}
     ${CAIRO_LIBRARIES}
     ${PIXMAN_LIBRARIES}
     ${OPENGL_LIBRARIES}
@@ -144,3 +154,5 @@ add_shader( gal smaa_pass_2_frag.glsl glsl_smaa_pass_2_frag )
 add_shader( gal smaa_pass_2_vert.glsl glsl_smaa_pass_2_vert )
 add_shader( gal smaa_pass_3_frag.glsl glsl_smaa_pass_3_frag )
 add_shader( gal smaa_pass_3_vert.glsl glsl_smaa_pass_3_vert )
+add_shader( gal xor_diff_frag.glsl glsl_xor_diff_frag )
+add_shader( gal xor_diff_vert.glsl glsl_xor_diff_vert )

@@ -31,7 +31,7 @@
  * The set of mail types sendable via #KIWAY::ExpressMail() and supplied as
  * the @a aCommand parameter to that function.
  *
- * Such mail will be received in KIWAY_PLAYER::KiwayMailIn( KIWAY_EXPRESS& aEvent ) and
+ * Such mail will be received in KIWAY_PLAYER::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent ) and
  * aEvent.Command() will match aCommand to KIWAY::ExpressMail().
  */
 enum MAIL_T
@@ -54,9 +54,12 @@ enum MAIL_T
     MAIL_ADD_LOCAL_LIB,     // Add a local library to the project library table
     MAIL_LIB_EDIT,
     MAIL_FP_EDIT,
-    MAIL_RELOAD_LIB,     // Reload Library List if one was added
-    MAIL_RELOAD_PLUGINS, // Reload python plugins
-    MAIL_REFRESH_SYMBOL, // Refresh symbol in symbol viewer
+    MAIL_RELOAD_LIB,               // Reload Library List if one was added
+    MAIL_RELOAD_PLUGINS,           // Reload python plugins
+    MAIL_REFRESH_SYMBOL,           // Refresh symbol in symbol viewer
+    MAIL_SCH_NAVIGATE_TO_SHEET,    // Navigate to sheet by filename if in hierarchy
+
+    // Zeo Agent communication
     MAIL_AGENT_REQUEST,       // Agent -> Editor request (JSON payload)
     MAIL_AGENT_RESPONSE,      // Editor -> Agent response (JSON payload)
     MAIL_SHOW_DIFF,           // Agent -> Editor: Show diff overlay (JSON payload)

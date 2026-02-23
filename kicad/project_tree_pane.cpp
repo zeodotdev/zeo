@@ -35,6 +35,7 @@
 #include <wx/wupdlock.h>
 #include <wx/log.h>
 
+#include <settings/common_settings.h>
 #include <advanced_config.h>
 #include <bitmaps.h>
 #include <bitmap_store.h>
@@ -172,7 +173,7 @@ enum project_tree_ids
     ID_GIT_RESOLVE_CONFLICT,    // Present the user with a resolve conflicts dialog (ours/theirs/merge)
     ID_GIT_REVERT_LOCAL,        // Revert the local repository to the last commit
     ID_GIT_COMPARE,             // Compare the current project to a different branch or commit in the git repository
-    ID_GIT_REMOVE_VCS,          // Remove the git repository data from the project directory (rm .git)
+    ID_GIT_REMOVE_VCS,          // Toggle Git integration for this project (preference in kicad_prl)
     ID_GIT_ADD_TO_INDEX,        // Add a file to the git index
     ID_GIT_REMOVE_FROM_INDEX,   // Remove a file from the git index
     ID_GIT_SWITCH_BRANCH,       // Switch the local repository to a different branch
@@ -269,6 +270,12 @@ PROJECT_TREE_PANE::~PROJECT_TREE_PANE()
     Unbind( wxEVT_TIMER, wxTimerEventHandler( PROJECT_TREE_PANE::onGitSyncTimer ), this, m_gitSyncTimer.GetId() );
     Unbind( wxEVT_TIMER, wxTimerEventHandler( PROJECT_TREE_PANE::onGitStatusTimer ), this, m_gitStatusTimer.GetId() );
     shutdownFileWatcher();
+
+    if( m_gitSyncTask.valid() )
+        m_gitSyncTask.wait();
+
+    if( m_gitStatusIconTask.valid() )
+        m_gitStatusIconTask.wait();
 }
 
 
@@ -380,6 +387,7 @@ wxString PROJECT_TREE_PANE::GetFileExt( TREE_FILE_TYPE type )
     case TREE_FILE_TYPE::DRILL_NC:              return "nc";
     case TREE_FILE_TYPE::DRILL_XNC:             return "xnc";
     case TREE_FILE_TYPE::SVG:                   return FILEEXT::SVGFileExtension;
+    case TREE_FILE_TYPE::CSV:                   return FILEEXT::CsvFileExtension;
     case TREE_FILE_TYPE::DRAWING_SHEET:         return FILEEXT::DrawingSheetFileExtension;
     case TREE_FILE_TYPE::FOOTPRINT_FILE:        return FILEEXT::KiCadFootprintFileExtension;
     case TREE_FILE_TYPE::SCHEMATIC_LIBFILE:     return FILEEXT::LegacySymbolLibFileExtension;
@@ -497,7 +505,11 @@ wxTreeItemId PROJECT_TREE_PANE::addItemToProjectTree( const wxString& aName,
         }
         else
         {
-            PROJECT_TREE_ITEM*    parentTreeItem = GetItemIdData( aParent );
+            PROJECT_TREE_ITEM* parentTreeItem = GetItemIdData( aParent );
+
+            if( !parentTreeItem )
+                return wxTreeItemId();
+
             wxDir                 parentDir( parentTreeItem->GetDir() );
             std::vector<wxString> projects = getProjects( parentDir );
 
@@ -681,13 +693,23 @@ void PROJECT_TREE_PANE::ReCreateTreePrj()
 
     bool prjOpened = fn.FileExists();
 
-    // Bind the git repository to the project tree (if it exists)
-    if( Pgm().GetCommonSettings()->m_Git.enableGit )
+    // Bind the git repository to the project tree (if it exists and not disabled for this project)
+    if( Pgm().GetCommonSettings()->m_Git.enableGit
+        && !Prj().GetLocalSettings().m_GitIntegrationDisabled )
     {
         m_TreeProject->SetGitRepo( KIGIT::PROJECT_GIT_UTILS::GetRepositoryForFile( fn.GetPath().c_str() ) );
 
         if( m_TreeProject->GetGitRepo() )
         {
+            const char* canonicalWorkDir = git_repository_workdir( m_TreeProject->GetGitRepo() );
+
+            if( canonicalWorkDir )
+            {
+                wxString symlinkWorkDir = KIGIT::PROJECT_GIT_UTILS::ComputeSymlinkPreservingWorkDir(
+                        fn.GetPath(), wxString::FromUTF8( canonicalWorkDir ) );
+                m_TreeProject->GitCommon()->SetProjectDir( symlinkWorkDir );
+            }
+
             m_TreeProject->GitCommon()->SetUsername( Prj().GetLocalSettings().m_GitRepoUsername );
             m_TreeProject->GitCommon()->SetSSHKey( Prj().GetLocalSettings().m_GitSSHKey );
             m_TreeProject->GitCommon()->UpdateCurrentBranchInfo();
@@ -802,7 +824,9 @@ void PROJECT_TREE_PANE::onRight( wxTreeEvent& Event )
     bool vcs_has_repo    = m_TreeProject->GetGitRepo() != nullptr;
     bool vcs_can_commit  = hasChangedFiles();
     bool vcs_can_init    = !vcs_has_repo;
-    bool vcs_can_remove = vcs_has_repo && git_name.StartsWith( prj_name ); // This means the .git is a subdirectory of the project
+    bool gitIntegrationDisabled = Prj().GetLocalSettings().m_GitIntegrationDisabled;
+    // Allow toggling if: repo exists in project, OR integration is disabled (to re-enable it)
+    bool vcs_can_remove = ( vcs_has_repo && git_name.StartsWith( prj_name ) ) || gitIntegrationDisabled;
     bool vcs_can_fetch   = vcs_has_repo && git->HasPushAndPullRemote();
     bool vcs_can_push    = vcs_can_fetch && git->HasLocalCommits();
     bool vcs_can_pull    = vcs_can_fetch;
@@ -1045,8 +1069,17 @@ void PROJECT_TREE_PANE::onRight( wxTreeEvent& Event )
 
         vcs_submenu->AppendSeparator();
 
-        vcs_menuitem = vcs_submenu->Append( ID_GIT_REMOVE_VCS, _( "Remove Version Control" ),
-                             _( "Delete all version control files from the project directory." ) );
+        if( gitIntegrationDisabled )
+        {
+            vcs_menuitem = vcs_submenu->Append( ID_GIT_REMOVE_VCS, _( "Enable Git Integration" ),
+                                 _( "Re-enable Git integration for this project" ) );
+        }
+        else
+        {
+            vcs_menuitem = vcs_submenu->Append( ID_GIT_REMOVE_VCS, _( "Disable Git Integration" ),
+                                 _( "Disable Git integration for this project" ) );
+        }
+
         vcs_menuitem->Enable( vcs_can_remove );
 
         popup_menu.AppendSeparator();
@@ -1337,6 +1370,11 @@ void PROJECT_TREE_PANE::onFileSystemEvent( wxFileSystemWatcherEvent& event )
     }
 
     const wxFileName& pathModified = event.GetPath();
+
+    // Ignore events from .history directory (local backup)
+    if( pathModified.GetFullPath().Contains( wxS( ".history" ) ) )
+        return;
+
     wxString subdir = pathModified.GetPath();
     wxString fn = pathModified.GetFullPath();
 
@@ -1587,6 +1625,13 @@ void PROJECT_TREE_PANE::FileWatcherReset()
             // we can see wxString under a debugger, not a wxFileName
             const wxString& path = itemData->GetFileName();
 
+            // Skip .history directory and its descendants (local backup)
+            if( path.Contains( wxS( ".history" ) ) )
+            {
+                kid = m_TreeProject->GetNextChild( root_id, cookie );
+                continue;
+            }
+
             wxLogTrace( tracePathsAndFiles, "%s: add '%s'\n", __func__, TO_UTF8( path ) );
 
             if( wxFileName::IsDirReadable( path ) )   // linux whines about watching protected dir
@@ -1688,7 +1733,7 @@ void PROJECT_TREE_PANE::onPaint( wxPaintEvent& event )
 
 void KICAD_MANAGER_FRAME::OnChangeWatchedPaths( wxCommandEvent& aEvent )
 {
-    m_leftWin->FileWatcherReset();
+    m_projectTreePane->FileWatcherReset();
 }
 
 
@@ -1858,48 +1903,65 @@ void PROJECT_TREE_PANE::onGitSwitchBranch( wxCommandEvent& aEvent )
 
 void PROJECT_TREE_PANE::onGitRemoveVCS( wxCommandEvent& aEvent )
 {
-    git_repository* repo = m_TreeProject->GetGitRepo();
+    PROJECT_LOCAL_SETTINGS& localSettings = Prj().GetLocalSettings();
 
-    if( !repo
-      || !IsOK( wxGetTopLevelParent( this ),
-                _( "Are you sure you want to remove Git tracking from this project?" ) ) )
+    // Toggle the Git integration disabled preference
+    localSettings.m_GitIntegrationDisabled = !localSettings.m_GitIntegrationDisabled;
+
+    wxLogTrace( traceGit, wxS( "onGitRemoveVCS: Git integration %s" ),
+                localSettings.m_GitIntegrationDisabled ? wxS( "disabled" ) : wxS( "enabled" ) );
+
+    if( localSettings.m_GitIntegrationDisabled )
     {
-        return;
-    }
+        // Disabling Git integration - clear the repo reference and item states
+        m_TreeProject->SetGitRepo( nullptr );
+        m_gitIconsInitialized = false;
 
-    // Fully delete the git repository on disk
-    wxLogTrace( traceGit, wxS( "onGitRemoveVCS: Removing VCS from project" ) );
-    wxString errors;
+        // Clear all item states to remove git status icons
+        std::stack<wxTreeItemId> items;
+        items.push( m_TreeProject->GetRootItem() );
 
-    if( !KIGIT::PROJECT_GIT_UTILS::RemoveVCS( repo, Prj().GetProjectPath(), true, &errors ) )
-    {
-        DisplayErrorMessage( m_parent, _( "Failed to remove VCS" ), errors );
-        return;
-    }
-
-    m_TreeProject->SetGitRepo( nullptr );
-
-    // Clear all item states
-    std::stack<wxTreeItemId> items;
-    items.push( m_TreeProject->GetRootItem() );
-
-    while( !items.empty() )
-    {
-        wxTreeItemId current = items.top();
-        items.pop();
-
-        // Process the current item
-        m_TreeProject->SetItemState( current, wxTREE_ITEMSTATE_NONE );
-
-        wxTreeItemIdValue cookie;
-        wxTreeItemId      child = m_TreeProject->GetFirstChild( current, cookie );
-
-        while( child.IsOk() )
+        while( !items.empty() )
         {
-            items.push( child );
-            child = m_TreeProject->GetNextChild( current, cookie );
+            wxTreeItemId current = items.top();
+            items.pop();
+
+            m_TreeProject->SetItemState( current, wxTREE_ITEMSTATE_NONE );
+
+            wxTreeItemIdValue cookie;
+            wxTreeItemId      child = m_TreeProject->GetFirstChild( current, cookie );
+
+            while( child.IsOk() )
+            {
+                items.push( child );
+                child = m_TreeProject->GetNextChild( current, cookie );
+            }
         }
     }
+    else
+    {
+        // Re-enabling Git integration - try to find and connect to the repository
+        wxFileName fn( Prj().GetProjectPath() );
+        m_TreeProject->SetGitRepo( KIGIT::PROJECT_GIT_UTILS::GetRepositoryForFile( fn.GetPath().c_str() ) );
+
+        if( m_TreeProject->GetGitRepo() )
+        {
+            const char* canonicalWorkDir = git_repository_workdir( m_TreeProject->GetGitRepo() );
+
+            if( canonicalWorkDir )
+            {
+                wxString symlinkWorkDir = KIGIT::PROJECT_GIT_UTILS::ComputeSymlinkPreservingWorkDir(
+                        fn.GetPath(), wxString::FromUTF8( canonicalWorkDir ) );
+                m_TreeProject->GitCommon()->SetProjectDir( symlinkWorkDir );
+            }
+
+            m_TreeProject->GitCommon()->SetUsername( localSettings.m_GitRepoUsername );
+            m_TreeProject->GitCommon()->SetSSHKey( localSettings.m_GitSSHKey );
+        }
+    }
+
+    // Save the preference to the project local settings file
+    localSettings.SaveToFile( Prj().GetProjectPath() );
 }
 
 
@@ -1948,13 +2010,17 @@ void PROJECT_TREE_PANE::updateGitStatusIcons()
         }
     }
 
-    if (!m_gitCurrentBranchName.empty())
+    if( !m_gitCurrentBranchName.empty() )
     {
         wxTreeItemId kid = m_TreeProject->GetRootItem();
         PROJECT_TREE_ITEM* rootItem = GetItemIdData( kid );
-        wxString filename = wxFileNameFromPath( rootItem->GetFileName() );
-        m_TreeProject->SetItemText( kid, filename + " [" + m_gitCurrentBranchName + "]" );
-        m_gitIconsInitialized = true;
+
+        if( rootItem )
+        {
+            wxString filename = wxFileNameFromPath( rootItem->GetFileName() );
+            m_TreeProject->SetItemText( kid, filename + " [" + m_gitCurrentBranchName + "]" );
+            m_gitIconsInitialized = true;
+        }
     }
 
     wxLogTrace( traceGit, wxS( "updateGitStatusIcons: Git status icons updated" ) );
@@ -2052,6 +2118,23 @@ void PROJECT_TREE_PANE::updateGitStatusIconMap()
     if( !m_TreeProject->GetGitRepo() )
     {
         wxLogTrace( traceGit, wxS( "updateGitStatusIconMap: No git repository found" ) );
+        return;
+    }
+
+    // Acquire the git action mutex to synchronize with EmptyTreePrj() shutdown.
+    // This ensures the repository isn't freed while we're using it.
+    std::unique_lock<std::mutex> gitLock( m_TreeProject->GitCommon()->m_gitActionMutex, std::try_to_lock );
+
+    if( !gitLock.owns_lock() )
+    {
+        wxLogTrace( traceGit, wxS( "updateGitStatusIconMap: Failed to acquire git action mutex" ) );
+        return;
+    }
+
+    // Check if cancellation was requested (e.g., during shutdown)
+    if( m_TreeProject->GitCommon()->IsCancelled() )
+    {
+        wxLogTrace( traceGit, wxS( "updateGitStatusIconMap: Cancelled" ) );
         return;
     }
 
@@ -2341,7 +2424,7 @@ void PROJECT_TREE_PANE::onGitSyncTimer( wxTimerEvent& aEvent )
 
     thread_pool& tp = GetKiCadThreadPool();
 
-    tp.detach_task( [this]()
+    m_gitSyncTask = tp.submit_task( [this]()
     {
         KIGIT_COMMON* gitCommon = m_TreeProject->GitCommon();
 
@@ -2351,10 +2434,19 @@ void PROJECT_TREE_PANE::onGitSyncTimer( wxTimerEvent& aEvent )
             return;
         }
 
+        // Check if cancellation was requested (e.g., during shutdown)
+        if( gitCommon->IsCancelled() )
+        {
+            wxLogTrace( traceGit, "onGitSyncTimer: Cancelled" );
+            return;
+        }
+
         GIT_PULL_HANDLER handler( gitCommon );
         handler.PerformFetch();
 
-        CallAfter( [this]() { gitStatusTimerHandler(); } );
+        // Only schedule the follow-up work if not cancelled
+        if( !gitCommon->IsCancelled() )
+            CallAfter( [this]() { gitStatusTimerHandler(); } );
     } );
 
     if( gitSettings.updatInterval > 0 )
@@ -2368,10 +2460,16 @@ void PROJECT_TREE_PANE::onGitSyncTimer( wxTimerEvent& aEvent )
 
 void PROJECT_TREE_PANE::gitStatusTimerHandler()
 {
+    // Check if git is still available and not cancelled before spawning background work
+    KIGIT_COMMON* gitCommon = m_TreeProject ? m_TreeProject->GitCommon() : nullptr;
+
+    if( !gitCommon || gitCommon->IsCancelled() )
+        return;
+
     updateTreeCache();
     thread_pool& tp = GetKiCadThreadPool();
 
-    tp.detach_task( [this]() { updateGitStatusIconMap(); } );
+    m_gitStatusIconTask = tp.submit_task( [this]() { updateGitStatusIconMap(); } );
 }
 
 void PROJECT_TREE_PANE::onGitStatusTimer( wxTimerEvent& aEvent )

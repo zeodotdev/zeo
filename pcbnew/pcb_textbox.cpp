@@ -22,6 +22,7 @@
  */
 
 #include <advanced_config.h>
+#include <common.h>
 #include <pcb_edit_frame.h>
 #include <base_units.h>
 #include <bitmaps.h>
@@ -42,6 +43,8 @@
 #include <api/api_enums.h>
 #include <api/api_utils.h>
 #include <api/board/board_types.pb.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 
 PCB_TEXTBOX::PCB_TEXTBOX( BOARD_ITEM* aParent, KICAD_T aType ) :
@@ -190,6 +193,33 @@ void PCB_TEXTBOX::StyleFromSettings( const BOARD_DESIGN_SETTINGS& settings, bool
 int PCB_TEXTBOX::GetLegacyTextMargin() const
 {
     return KiROUND( GetStroke().GetWidth() / 2.0 ) + KiROUND( GetTextSize().y * 0.75 );
+}
+
+
+VECTOR2I PCB_TEXTBOX::GetMinSize() const
+{
+    if( GetText().IsEmpty() )
+        return VECTOR2I( 0, 0 );
+
+    BOX2I textBox = GetTextBox( nullptr );
+
+    int textHeight = std::abs( textBox.GetHeight() );
+
+    if( GetTextAngle().IsHorizontal() )
+        textHeight += GetMarginTop() + GetMarginBottom();
+    else
+        textHeight += GetMarginLeft() + GetMarginRight();
+
+    // Only enforce minimum height. Width returns 0 so the user can freely shrink width
+    // (text rewraps) while height is constrained to fit the wrapped text content.
+    // GetTextBox returns dimensions in text-local coordinates. For 90/270 degree rotations,
+    // the text's natural height maps to screen x-axis.
+    EDA_ANGLE rotation = GetDrawRotation();
+
+    if( rotation == ANGLE_90 || rotation == ANGLE_270 )
+        return VECTOR2I( textHeight, 0 );
+
+    return VECTOR2I( 0, textHeight );
 }
 
 

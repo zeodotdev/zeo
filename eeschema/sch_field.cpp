@@ -40,6 +40,8 @@
 #include <tools/sch_navigate_tool.h>
 #include <font/outline_font.h>
 #include "sim/sim_lib_mgr.h"
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 static const std::vector<KICAD_T> labelTypes = { SCH_LABEL_LOCATE_ANY_T };
 
@@ -188,23 +190,16 @@ wxString SCH_FIELD::GetShownName() const
 }
 
 
-wxString SCH_FIELD::GetShownText( const SCH_SHEET_PATH* aPath, bool aAllowExtraText, int aDepth ) const
+wxString SCH_FIELD::GetShownText( const SCH_SHEET_PATH* aPath, bool aAllowExtraText, int aDepth,
+                                  const wxString& aVariantName ) const
 {
-    // Use local depth counter so each text element starts fresh
-    int depth = 0;
-
-    wxString variantName;
-
-    if( SCHEMATIC* schematic = Schematic() )
-        variantName = schematic->GetCurrentVariant();
-
-    wxString text = getUnescapedText( aPath, variantName );
+    wxString text = getUnescapedText( aPath, aVariantName );
 
     if( IsNameShown() && aAllowExtraText )
         text = GetShownName() << wxS( ": " ) << text;
 
     if( HasTextVars() )
-        text = ResolveText( text, aPath, depth );
+        text = ResolveText( text, aPath, aDepth );
 
     if( m_id == FIELD_T::SHEET_FILENAME && aAllowExtraText && !IsNameShown() )
         text = _( "File:" ) + wxS( " " ) + text;
@@ -222,10 +217,13 @@ wxString SCH_FIELD::GetShownText( bool aAllowExtraText, int aDepth ) const
     if( SCHEMATIC* schematic = Schematic() )
     {
         const SCH_SHEET_PATH& currentSheet = schematic->CurrentSheet();
+        wxString variantName = schematic->GetCurrentVariant();
+
         wxLogTrace( traceSchFieldRendering,
-                    "GetShownText (no path arg): field=%s, current sheet path='%s', size=%zu, empty=%d", GetName(),
-                    currentSheet.Path().AsString(), currentSheet.size(), currentSheet.empty() ? 1 : 0 );
-        return GetShownText( &currentSheet, aAllowExtraText, aDepth );
+                    "GetShownText (no path arg): field=%s, current sheet path='%s', variant='%s', size=%zu, empty=%d",
+                    GetName(), currentSheet.Path().AsString(), variantName, currentSheet.size(),
+                    currentSheet.empty() ? 1 : 0 );
+        return GetShownText( &currentSheet, aAllowExtraText, aDepth, variantName );
     }
     else
         return GetShownText( nullptr, aAllowExtraText, aDepth );
@@ -643,10 +641,11 @@ void SCH_FIELD::OnScintillaCharAdded( SCINTILLA_TRICKS* aScintillaTricks, wxStyl
         return;
     }
 
-    auto textVarRef = [&]( int pt )
-    {
-        return pt >= 2 && scintilla->GetCharAt( pt - 2 ) == '$' && scintilla->GetCharAt( pt - 1 ) == '{';
-    };
+    auto textVarRef =
+            [&]( int pt )
+            {
+                return pt >= 2 && scintilla->GetCharAt( pt - 2 ) == '$' && scintilla->GetCharAt( pt - 1 ) == '{';
+            };
 
     // Check for cross-reference
     if( start > 1 && scintilla->GetCharAt( start - 1 ) == ':' )
@@ -666,6 +665,7 @@ void SCH_FIELD::OnScintillaCharAdded( SCINTILLA_TRICKS* aScintillaTricks, wxStyl
                 {
                     NULL_REPORTER   devnull;
                     SCH_SHEET_PATH& sheet = schematic->CurrentSheet();
+                    wxString        variant = schematic->GetCurrentVariant();
                     SIM_LIB_MGR     mgr( &schematic->Project() );
 
                     std::vector<EMBEDDED_FILES*> embeddedFilesStack;
@@ -679,7 +679,7 @@ void SCH_FIELD::OnScintillaCharAdded( SCINTILLA_TRICKS* aScintillaTricks, wxStyl
 
                     mgr.SetFilesStack( std::move( embeddedFilesStack ) );
 
-                    SIM_MODEL& model = mgr.CreateModel( &sheet, *symbol, true, 0, devnull ).model;
+                    SIM_MODEL& model = mgr.CreateModel( &sheet, *symbol, true, 0, variant, devnull ).model;
 
                     for( wxString pin : model.GetPinNames() )
                     {
@@ -954,7 +954,7 @@ void SCH_FIELD::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_I
 }
 
 
-bool SCH_FIELD::IsHypertext() const
+bool SCH_FIELD::HasHypertext() const
 {
     if( m_id == FIELD_T::INTERSHEET_REFS )
         return true;
@@ -966,50 +966,47 @@ bool SCH_FIELD::IsHypertext() const
 }
 
 
-void SCH_FIELD::DoHypertextAction( EDA_DRAW_FRAME* aFrame ) const
+void SCH_FIELD::DoHypertextAction( EDA_DRAW_FRAME* aFrame, const VECTOR2I& aMousePos ) const
 {
     constexpr int START_ID = 1;
 
-    if( IsHypertext() )
+    wxString href;
+
+    if( m_id == FIELD_T::INTERSHEET_REFS )
     {
-        wxString href;
+        SCH_LABEL_BASE* label = static_cast<SCH_LABEL_BASE*>( m_parent );
+        SCH_SHEET_PATH* sheet = &label->Schematic()->CurrentSheet();
+        wxMenu          menu;
 
-        if( m_id == FIELD_T::INTERSHEET_REFS )
+        std::vector<std::pair<wxString, wxString>> pages;
+
+        label->GetIntersheetRefs( sheet, &pages );
+
+        for( int i = 0; i < (int) pages.size(); ++i )
         {
-            SCH_LABEL_BASE* label = static_cast<SCH_LABEL_BASE*>( m_parent );
-            SCH_SHEET_PATH* sheet = &label->Schematic()->CurrentSheet();
-            wxMenu          menu;
-
-            std::vector<std::pair<wxString, wxString>> pages;
-
-            label->GetIntersheetRefs( sheet, &pages );
-
-            for( int i = 0; i < (int) pages.size(); ++i )
-            {
-                menu.Append( i + START_ID,
-                             wxString::Format( _( "Go to Page %s (%s)" ), pages[i].first, pages[i].second ) );
-            }
-
-            menu.AppendSeparator();
-            menu.Append( 999 + START_ID, _( "Back to Previous Selected Sheet" ) );
-
-            int sel = aFrame->GetPopupMenuSelectionFromUser( menu ) - START_ID;
-
-            if( sel >= 0 && sel < (int) pages.size() )
-                href = wxT( "#" ) + pages[sel].first;
-            else if( sel == 999 )
-                href = SCH_NAVIGATE_TOOL::g_BackLink;
-        }
-        else if( IsURL( GetShownText( false ) ) || m_name == SIM_LIBRARY::LIBRARY_FIELD )
-        {
-            href = GetShownText( false );
+            menu.Append( i + START_ID,
+                         wxString::Format( _( "Go to Page %s (%s)" ), pages[i].first, pages[i].second ) );
         }
 
-        if( !href.IsEmpty() )
-        {
-            SCH_NAVIGATE_TOOL* navTool = aFrame->GetToolManager()->GetTool<SCH_NAVIGATE_TOOL>();
-            navTool->HypertextCommand( href );
-        }
+        menu.AppendSeparator();
+        menu.Append( 999 + START_ID, _( "Back to Previous Selected Sheet" ) );
+
+        int sel = aFrame->GetPopupMenuSelectionFromUser( menu ) - START_ID;
+
+        if( sel >= 0 && sel < (int) pages.size() )
+            href = wxT( "#" ) + pages[sel].first;
+        else if( sel == 999 )
+            href = SCH_NAVIGATE_TOOL::g_BackLink;
+    }
+    else if( IsURL( GetShownText( false ) ) || m_name == SIM_LIBRARY::LIBRARY_FIELD )
+    {
+        href = GetShownText( false );
+    }
+
+    if( !href.IsEmpty() )
+    {
+        SCH_NAVIGATE_TOOL* navTool = aFrame->GetToolManager()->GetTool<SCH_NAVIGATE_TOOL>();
+        navTool->HypertextCommand( href );
     }
 }
 
@@ -1035,6 +1032,76 @@ void SCH_FIELD::SetText( const wxString& aText )
         EDA_TEXT::SetText( aText.Strip( wxString::both ) );
     else
         EDA_TEXT::SetText( aText );
+}
+
+
+void SCH_FIELD::SetText( const wxString& aText, const SCH_SHEET_PATH* aPath, const wxString& aVariantName )
+{
+    wxCHECK( m_parent, /* void */ );
+
+    if( m_isGeneratedField )
+        return;
+
+    wxString tmp = aText;
+
+    if( IsMandatory() )
+        tmp = aText.Strip( wxString::both ) ;
+
+    switch( m_parent->Type() )
+    {
+    case SCH_SYMBOL_T:
+    {
+        SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( m_parent );
+        wxCHECK( symbol, /* void */ );
+        symbol->SetFieldText( GetName(), aText, aPath, aVariantName );
+        break;
+    }
+
+    case SCH_SHEET_T:
+    {
+        SCH_SHEET* sheet = static_cast<SCH_SHEET*>( m_parent );
+        wxCHECK( sheet, /* void */ );
+        sheet->SetFieldText( GetName(), aText, aPath, aVariantName );
+        break;
+    }
+
+    default:
+        SCH_FIELD::SetText( aText );
+        break;
+    }
+}
+
+
+wxString SCH_FIELD::GetText( const SCH_SHEET_PATH* aPath, const wxString& aVariantName ) const
+{
+    wxString retv;
+
+    wxCHECK( aPath && m_parent, retv );
+
+    switch( m_parent->Type() )
+    {
+    case SCH_SYMBOL_T:
+    {
+        SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( m_parent );
+        wxCHECK( symbol, retv );
+        retv = symbol->GetFieldText( GetName(), aPath, aVariantName );
+        break;
+    }
+
+    case SCH_SHEET_T:
+    {
+        SCH_SHEET* sheet = static_cast<SCH_SHEET*>( m_parent );
+        wxCHECK( sheet, retv );
+        retv = sheet->GetFieldText( GetName(), aPath, aVariantName );
+        break;
+    }
+
+    default:
+        retv = GetText();
+        break;
+    }
+
+    return retv;
 }
 
 
@@ -1163,7 +1230,7 @@ void SCH_FIELD::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& 
     wxString text;
 
     if( Schematic() )
-        text = GetShownText( &Schematic()->CurrentSheet(), true );
+        text = GetShownText( &Schematic()->CurrentSheet(), true, 0, Schematic()->GetCurrentVariant() );
     else
         text = GetShownText( true );
 
@@ -1182,8 +1249,8 @@ void SCH_FIELD::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& 
     if( aPlotter->GetColorMode() && GetTextColor() != COLOR4D::UNSPECIFIED )
         color = GetTextColor();
 
-    if( color.m_text.has_value() && Schematic() )
-        color = COLOR4D( ResolveText( color.m_text.value(), &Schematic()->CurrentSheet() ) );
+    if( color.m_text && Schematic() )
+        color = COLOR4D( ResolveText( *color.m_text, &Schematic()->CurrentSheet() ) );
 
     if( aDimmed )
     {
@@ -1524,10 +1591,6 @@ wxString SCH_FIELD::getUnescapedText( const SCH_SHEET_PATH* aPath, const wxStrin
 {
     // This is the default variant field text for all fields except the reference field.
     wxString retv = EDA_TEXT::GetShownText( false );
-
-    wxLogTrace( traceSchFieldRendering,
-                "getUnescapedText: field=%s, parent=%p, aPath=%p, path_empty=%d, initial_text='%s'", GetName(),
-                m_parent, aPath, aPath ? ( aPath->empty() ? 1 : 0 ) : -1, retv );
 
     // Special handling for parent object field instance and variant information.
     // Only use the path if it's non-empty; an empty path can't match any instances

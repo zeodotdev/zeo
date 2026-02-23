@@ -63,6 +63,11 @@ public:
     wxPoint m_TemplateWindowPos;
     // Last size of the template window
     wxSize m_TemplateWindowSize;
+    // Last used project template path (for pre-selection in dialog)
+    wxString m_LastUsedTemplate;
+
+    std::vector<wxString> m_RecentTemplates;
+    int                   m_TemplateFilterChoice = 0;
 
 protected:
     virtual std::string getLegacyFrameName() const override { return "KicadFrame"; }

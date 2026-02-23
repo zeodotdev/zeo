@@ -362,6 +362,8 @@ bool PGM_KICAD::OnPgmInit()
             }
         }
 
+        bool loaded = false;
+
         // Do not attempt to load a non-existent project file.
         if( !projToLoad.empty() )
         {
@@ -374,9 +376,12 @@ bool PGM_KICAD::OnPgmInit()
                 fn.MakeAbsolute();
 
                 if( appType == KICAD_MAIN_FRAME_T )
-                    managerFrame->LoadProject( fn );
+                    loaded = managerFrame->LoadProject( fn );
             }
         }
+
+        if( !loaded && appType == KICAD_MAIN_FRAME_T )
+            managerFrame->PreloadAllLibraries();
     }
 
     frame->Show( true );
@@ -530,6 +535,13 @@ struct APP_KICAD : public wxApp
 
         return -1;
     }
+
+
+    void OnUnhandledException() override
+    {
+        Pgm().HandleException( std::current_exception(), true );
+    }
+
 
     int FilterEvent( wxEvent& aEvent ) override
     {

@@ -180,10 +180,52 @@ static wxString getBuildDirectoryRoot()
         fn.RemoveLastDir();
     }
 
-    wxASSERT_MSG( fn.GetDirCount() > 0,
-                  wxString::Format( wxT( "Could not find build root directory above %s" ), execPath ) );
+    wxASSERT_MSG(
+            fn.GetDirCount() > 0,
+            wxString::Format( wxT( "Could not find build root directory above %s" ), execPath ) );
 
     return fn.GetPath();
+}
+#elif defined( __WXMAC__ )
+/**
+ * Get the main .app bundle root with symlinks resolved.
+ * Handles both main KiCad binaries and aux binaries inside the bundle.
+ * This is the single source of truth for bundle root resolution on macOS.
+ */
+static wxString getOSXBundleRoot()
+{
+    static wxString bundleRoot;
+
+    if( bundleRoot.empty() )
+    {
+        wxFileName fn( wxStandardPaths::Get().GetExecutablePath() );
+        WX_FILENAME::ResolvePossibleSymlinks( fn );
+        fn.SetFullName( wxEmptyString ); // Remove binary name
+
+        // Navigate from .../Contents/MacOS/ up to the .app bundle root
+        // e.g., /Applications/KiCad/KiCad.app/Contents/MacOS -> /Applications/KiCad/KiCad.app
+        if( fn.GetDirCount() >= 2 && fn.GetDirs().Last() == wxT( "MacOS" ) )
+        {
+            fn.RemoveLastDir(); // MacOS
+            fn.RemoveLastDir(); // Contents
+        }
+
+        // Handle aux binaries inside main bundle
+        // From: .../main.app/Contents/Applications/standalone.app
+        // To:   .../main.app
+        const wxArrayString dirs = fn.GetDirs();
+        if( dirs.GetCount() >= 4 && dirs[dirs.GetCount() - 2] == wxT( "Applications" )
+            && dirs[dirs.GetCount() - 4].Lower().EndsWith( wxT( "app" ) ) )
+        {
+            fn.RemoveLastDir(); // standalone.app
+            fn.RemoveLastDir(); // Applications
+            fn.RemoveLastDir(); // Contents
+        }
+
+        bundleRoot = fn.GetPath();
+    }
+
+    return bundleRoot;
 }
 #endif
 
@@ -196,12 +238,10 @@ wxString PATHS::GetStockDataPath( bool aRespectRunFromBuildDir )
     {
         // Allow debugging from build dir by placing relevant files/folders in the build root
 #if defined( __WXMAC__ )
-        wxFileName fn = wxStandardPaths::Get().GetExecutablePath();
-
-        fn.RemoveLastDir();
-        fn.RemoveLastDir();
-        fn.RemoveLastDir();
-        fn.RemoveLastDir();
+        wxFileName fn;
+        fn.AssignDir( getOSXBundleRoot() );
+        fn.RemoveLastDir(); // Above the .app bundle
+        fn.RemoveLastDir(); // Above the target subdirectory to build root
         path = fn.GetPath();
 #elif defined( __WXMSW__ )
         path = getWindowsKiCadRoot();
@@ -256,71 +296,78 @@ wxString PATHS::GetStockEDALibraryPath()
 
 wxString PATHS::GetStockSymbolsPath()
 {
-    wxString path;
+    wxFileName fn;
+    
+    fn.AssignDir( GetStockEDALibraryPath() );
+    fn.AppendDir( "symbols" );
 
-    path = GetStockEDALibraryPath() + wxT( "/symbols" );
-
-    return path;
+    return fn.GetPathWithSep();
 }
 
 
 wxString PATHS::GetStockFootprintsPath()
 {
-    wxString path;
+    wxFileName fn;
+    
+    fn.AssignDir( GetStockEDALibraryPath() );
+    fn.AppendDir( "footprints" );
 
-    path = GetStockEDALibraryPath() + wxT( "/footprints" );
-
-    return path;
+    return fn.GetPathWithSep();
 }
 
 
 wxString PATHS::GetStockDesignBlocksPath()
 {
-    wxString path;
+    wxFileName fn;
+    
+    fn.AssignDir( GetStockEDALibraryPath() );
+    fn.AppendDir( "blocks" );
 
-    path = GetStockEDALibraryPath() + wxT( "/blocks" );
-
-    return path;
+    return fn.GetPathWithSep();
 }
 
 
 wxString PATHS::GetStock3dmodelsPath()
 {
-    wxString path;
+    wxFileName fn;
+    
+    fn.AssignDir( GetStockEDALibraryPath() );
+    fn.AppendDir( "3dmodels" );
 
-    path = GetStockEDALibraryPath() + wxT( "/3dmodels" );
-
-    return path;
+    return fn.GetPathWithSep();
 }
 
 
 wxString PATHS::GetStockScriptingPath()
 {
-    wxString path;
+    wxFileName fn;
+    
+    fn.AssignDir( GetStockDataPath() );
+    fn.AppendDir( "scripting" );
 
-    path = GetStockDataPath() + wxT( "/scripting" );
-
-    return path;
+    return fn.GetPathWithSep();
 }
 
 
 wxString PATHS::GetStockTemplatesPath()
 {
-    wxString path;
+    wxFileName fn;
+    
+    fn.AssignDir( GetStockEDALibraryPath() );
+    fn.AppendDir( "template" );
 
-    path = GetStockEDALibraryPath() + wxT( "/template" );
-
-    return path;
+    return fn.GetPathWithSep();
 }
 
 
 wxString PATHS::GetLocaleDataPath()
 {
-    wxString path;
+    wxFileName fn;
+    
+    fn.AssignDir( GetStockDataPath() );
+    fn.AppendDir( "internat" );
 
-    path = GetStockDataPath() + wxT( "/internat" );
-
-    return path;
+    return fn.GetPathWithSep();
 }
 
 
@@ -356,35 +403,28 @@ wxString PATHS::GetStockPlugins3DPath()
 
     fn.AppendDir( wxT( "plugins" ) );
 #elif defined( __WXMAC__ )
-    fn.Assign( wxStandardPaths::Get().GetPluginsDir(), wxEmptyString );
-
-    // This must be mapped to main bundle for everything but kicad.app
-    const wxArrayString dirs = fn.GetDirs();
-
-    // Check if we are the main kicad binary.  in this case, the path will be
-    //     /path/to/bundlename.app/Contents/PlugIns
-    // If we are an aux binary, the path will be something like
-    //     /path/to/bundlename.app/Contents/Applications/<standalone>.app/Contents/PlugIns
-    if( dirs.GetCount() >= 6 && dirs[dirs.GetCount() - 4] == wxT( "Applications" )
-        && dirs[dirs.GetCount() - 6].Lower().EndsWith( wxT( "app" ) ) )
-    {
-        fn.RemoveLastDir();
-        fn.RemoveLastDir();
-        fn.RemoveLastDir();
-        fn.RemoveLastDir();
-        fn.AppendDir( wxT( "PlugIns" ) );
-    }
+    fn.AssignDir( getOSXBundleRoot() );
+    fn.AppendDir( wxT( "Contents" ) );
+    fn.AppendDir( wxT( "PlugIns" ) );
 #else
     wxString envPath;
 
-    // AppImages have a different path to the plugins, otherwise we end up with host sytem
+    if( wxGetEnv( wxT( "KICAD_RUN_FROM_BUILD_DIR" ), nullptr ) )
+    {
+        fn.Assign( wxStandardPaths::Get().GetExecutablePath() );
+        fn.AppendDir( wxT( ".." ) );
+        fn.AppendDir( wxT( "plugins" ) );
+    }
+    // AppImages have a different path to the plugins, otherwise we end up with host system
     // plugins being loaded.
-    if( wxGetEnv( wxT( "APPDIR" ), &envPath ) )
+    else if( wxGetEnv( wxT( "APPDIR" ), &envPath ) )
     {
         fn.Assign( envPath, wxEmptyString );
         fn.AppendDir( wxT( "usr" ) );
         fn.AppendDir( wxT( "lib" ) );
         fn.AppendDir( wxT( "x86_64-linux-gnu" ) );
+        fn.AppendDir( wxT( "kicad" ) );
+        fn.AppendDir( wxT( "plugins" ) );
     }
     else
     {
@@ -392,10 +432,9 @@ wxString PATHS::GetStockPlugins3DPath()
         // corresponding to the install path used for constructing KICAD_USER_PLUGIN
         wxString tfname = wxString::FromUTF8Unchecked( KICAD_PLUGINDIR );
         fn.Assign( tfname, "" );
+        fn.AppendDir( wxT( "kicad" ) );
+        fn.AppendDir( wxT( "plugins" ) );
     }
-
-    fn.AppendDir( wxT( "kicad" ) );
-    fn.AppendDir( wxT( "plugins" ) );
 #endif
 
     fn.AppendDir( wxT( "3d" ) );
@@ -475,7 +514,7 @@ wxString PATHS::GetLogsPath()
 
 bool PATHS::EnsurePathExists( const wxString& aPath, bool aPathToFile )
 {
-    wxString pathString = aPath;
+    wxString   pathString = aPath;
     if( !aPathToFile )
     {
         // ensures the path is treated fully as directory
@@ -519,13 +558,13 @@ void PATHS::EnsureUserPathsExist()
 
     if( !tmp.DirExists() )
     {
-        wxString msg =
-                wxString::Format( _( "KiCad was unable to use '%s'.\n"
-                                     "\n"
-                                     "1. Disable 'Controlled folder access' in Windows settings or Group Policy\n"
-                                     "2. Make sure no other antivirus software interferes with KiCad\n"
-                                     "3. Make sure you have correct permissions set up" ),
-                                  tmp.GetPath() );
+        wxString msg = wxString::Format(
+                _( "KiCad was unable to use '%s'.\n"
+                   "\n"
+                   "1. Disable 'Controlled folder access' in Windows settings or Group Policy\n"
+                   "2. Make sure no other antivirus software interferes with KiCad\n"
+                   "3. Make sure you have correct permissions set up" ),
+                tmp.GetPath() );
 
         wxMessageBox( msg, _( "Warning" ), wxICON_WARNING );
     }
@@ -543,7 +582,7 @@ wxString PATHS::GetOSXKicadUserDataDir()
     // Since appname is different if started via launcher or standalone binary
     // map all to "kicad" here
     udir.RemoveLastDir();
-    udir.AppendDir( wxT( "kicad" ) );
+    udir.AppendDir(  wxT( "kicad" ) );
 
     return udir.GetPath();
 }
@@ -558,27 +597,10 @@ wxString PATHS::GetOSXKicadMachineDataDir()
 
 wxString PATHS::GetOSXKicadDataDir()
 {
-    // According to wxWidgets documentation for GetDataDir:
-    // Mac: appname.app/Contents/SharedSupport bundle subdirectory
-    wxFileName ddir( wxStandardPaths::Get().GetDataDir(), wxEmptyString );
-
-    // This must be mapped to main bundle for everything but kicad.app
-    const wxArrayString dirs = ddir.GetDirs();
-
-    // Check if we are the main kicad binary.  in this case, the path will be
-    //     /path/to/bundlename.app/Contents/SharedSupport
-    // If we are an aux binary, the path will be something like
-    //     /path/to/bundlename.app/Contents/Applications/<standalone>.app/Contents/SharedSupport
-    if( dirs.GetCount() >= 6 && dirs[dirs.GetCount() - 4] == wxT( "Applications" )
-        && dirs[dirs.GetCount() - 6].Lower().EndsWith( wxT( "app" ) ) )
-    {
-        ddir.RemoveLastDir();
-        ddir.RemoveLastDir();
-        ddir.RemoveLastDir();
-        ddir.RemoveLastDir();
-        ddir.AppendDir( wxT( "SharedSupport" ) );
-    }
-
+    wxFileName ddir;
+    ddir.AssignDir( getOSXBundleRoot() );
+    ddir.AppendDir( wxT( "Contents" ) );
+    ddir.AppendDir( wxT( "SharedSupport" ) );
     return ddir.GetPath();
 }
 #endif
@@ -598,7 +620,7 @@ wxString PATHS::GetWindowsFontConfigDir()
 
 wxString PATHS::getWindowsKiCadRoot()
 {
-    wxFileName root( GetExecutablePath() + wxT( "/../" ) );
+    wxFileName root( GetExecutablePath() +  wxT( "/../" ) );
     root.MakeAbsolute();
 
     return root.GetPathWithSep();
@@ -649,43 +671,40 @@ const wxString& PATHS::GetExecutablePath()
 
     if( exe_path.empty() )
     {
-        wxString bin_dir = wxStandardPaths::Get().GetExecutablePath();
-
 #ifdef __WXMAC__
-        // On OSX GetExecutablePath() will always point to main
-        // bundle directory, e.g., /Applications/kicad.app/
+        // Use bundle root helper which handles symlink resolution and aux binaries
+        exe_path = getOSXBundleRoot() + wxT( "/" );
+#else
+        wxString envPath;
 
-        wxFileName fn( bin_dir );
-        WX_FILENAME::ResolvePossibleSymlinks( fn );
-
-        if( fn.GetName() == wxT( "kicad" ) || fn.GetName() == wxT( "kicad-cli" ) || fn.GetName() == wxT( "Zeo" ) )
+        // When running inside an AppImage, the bundled ld-linux is invoked as a wrapper
+        // which causes /proc/self/exe to resolve to the dynamic linker rather than the
+        // actual binary. Use APPDIR to construct the correct executable path.
+        if( wxGetEnv( wxT( "APPDIR" ), &envPath ) )
         {
-            // kicad launcher, so just remove the Contents/MacOS part
-            fn.RemoveLastDir();
-            fn.RemoveLastDir();
+            envPath.Replace( WIN_STRING_DIR_SEP, UNIX_STRING_DIR_SEP );
+
+            if( !envPath.EndsWith( wxT( "/" ) ) )
+                envPath += wxT( "/" );
+
+            exe_path = envPath + wxT( "usr/bin/" );
         }
         else
         {
-            // standalone binaries live in Contents/Applications/<standalone>.app/Contents/MacOS
-            fn.RemoveLastDir();
-            fn.RemoveLastDir();
-            fn.RemoveLastDir();
-            fn.RemoveLastDir();
-            fn.RemoveLastDir();
+            wxString bin_dir = wxStandardPaths::Get().GetExecutablePath();
+
+            // Use unix notation for paths. I am not sure this is a good idea,
+            // but it simplifies compatibility between Windows and Unices.
+            // However it is a potential problem in path handling under Windows.
+            bin_dir.Replace( WIN_STRING_DIR_SEP, UNIX_STRING_DIR_SEP );
+
+            // Remove file name form command line:
+            while( bin_dir.Last() != '/' && !bin_dir.IsEmpty() )
+                bin_dir.RemoveLast();
+
+            exe_path = bin_dir;
         }
-
-        bin_dir = fn.GetPath() + wxT( "/" );
-#else
-        // Use unix notation for paths. I am not sure this is a good idea,
-        // but it simplifies compatibility between Windows and Unices.
-        // However it is a potential problem in path handling under Windows.
-        bin_dir.Replace( WIN_STRING_DIR_SEP, UNIX_STRING_DIR_SEP );
-
-        // Remove file name form command line:
-        while( bin_dir.Last() != '/' && !bin_dir.IsEmpty() )
-            bin_dir.RemoveLast();
 #endif
-        exe_path = bin_dir;
     }
 
     return exe_path;

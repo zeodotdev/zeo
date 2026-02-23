@@ -27,8 +27,10 @@ add_subdirectory( gal )
 # Get the netlist reader library
 add_subdirectory( netlist_reader )
 
-# Only for win32 cross compilation using MXE
-add_compile_definitions( $<$<AND:$<BOOL:${WIN32}>,$<BOOL:${MSYS}>>:GLEW_STATIC> )
+# Get the shared PADS format support library
+add_subdirectory( io/pads )
+
+
 
 
 # The build version string defaults to the value in the KiCadVersion.cmake file.
@@ -72,7 +74,10 @@ set( KICOMMON_SRCS
 
     # Gal
     gal/color4d.cpp
-    gal/opengl/gl_context_mgr.cpp
+
+    # KiCad GL
+    kicad_gl/gl_utils.cpp
+    kicad_gl/gl_context_mgr.cpp
 
     # Git
     git/git_add_to_index_handler.cpp
@@ -128,6 +133,7 @@ set( KICOMMON_SRCS
     jobs/jobset.cpp
     jobs/job_fp_export_svg.cpp
     jobs/job_fp_upgrade.cpp
+    jobs/job_pcb_import.cpp
     jobs/job_pcb_render.cpp
     jobs/job_pcb_drc.cpp
     jobs/job_rc.cpp
@@ -170,12 +176,15 @@ set( KICOMMON_SRCS
 
     text_eval/text_eval_wrapper.cpp
     text_eval/text_eval_parser.cpp
+    text_eval/text_eval_vcs.cpp
 
     # This is basically a settings object, but for the toolbar
     tool/ui/toolbar_configuration.cpp
+    tool/ui/toolbar_context_menu_registry.cpp
 
     dialogs/dialog_rc_job.cpp
     dialogs/dialog_rc_job_base.cpp
+    dialogs/dialog_HTML_reporter_base.cpp
     dialogs/panel_startwizard_libraries_base.cpp
     dialogs/panel_startwizard_privacy_base.cpp
     dialogs/panel_startwizard_settings_base.cpp
@@ -183,6 +192,7 @@ set( KICOMMON_SRCS
     grid_tricks.cpp
     widgets/aui_json_serializer.cpp
     widgets/bitmap_button.cpp
+    widgets/grid_combobox.cpp
     widgets/grid_icon_text_helpers.cpp
     widgets/grid_text_button_helpers.cpp
     widgets/grid_text_helpers.cpp
@@ -194,9 +204,11 @@ set( KICOMMON_SRCS
     widgets/report_severity.cpp
     widgets/std_bitmap_button.cpp
     widgets/ui_common.cpp
+    widgets/up_down_tree.cpp
     widgets/wx_grid.cpp
     widgets/wx_html_report_panel.cpp
     widgets/wx_html_report_panel_base.cpp
+    widgets/wx_html_report_box.cpp
 
     database/database_lib_settings.cpp
 
@@ -236,7 +248,7 @@ set( KICOMMON_SRCS
     kidialog.cpp
     kiid.cpp
     kiway.cpp
-    kiway_express.cpp
+    kiway_mail.cpp
     kiway_holder.cpp
     launch_ext.cpp
     layer_id.cpp
@@ -316,6 +328,8 @@ if( KICAD_USE_PCH )
             <set>
             <string>
             <vector>
+            <kiid.h>
+            <pgm_base.h>
             <wx/wx.h>
              )
 endif()
@@ -335,6 +349,7 @@ target_link_libraries( kicommon
     picosha2
     rapidcsv
     sexpr
+    glad
     ${ZSTD_LIBRARY}
     ${wxWidgets_LIBRARIES}
     ${LIBGIT2_LIBRARIES}
@@ -458,7 +473,6 @@ set( COMMON_DLG_SRCS
     dialogs/dialog_group_properties.cpp
     dialogs/dialog_group_properties_base.cpp
     dialogs/dialog_hotkey_list.cpp
-    dialogs/dialog_HTML_reporter_base.cpp
     dialogs/dialog_import_choose_project.cpp
     dialogs/dialog_import_choose_project_base.cpp
     dialogs/dialog_multi_unit_entry.cpp
@@ -520,6 +534,8 @@ set( COMMON_DLG_SRCS
     dialogs/panel_toolbar_customization.cpp
     dialogs/panel_toolbar_customization_base.cpp
 
+    dialogs/rule_editor_dialog_base.cpp
+
     libraries/lib_table_grid_data_model.cpp
     )
 
@@ -547,7 +563,6 @@ set( COMMON_WIDGET_SRCS
     widgets/grid_button.cpp
     widgets/grid_checkbox.cpp
     widgets/grid_color_swatch_helpers.cpp
-    widgets/grid_combobox.cpp
     widgets/wx_infobar.cpp
     widgets/layer_box_selector.cpp
     widgets/layer_presentation.cpp
@@ -564,6 +579,7 @@ set( COMMON_WIDGET_SRCS
     widgets/split_button.cpp
     widgets/stepped_slider.cpp
     widgets/text_ctrl_eval.cpp
+    widgets/margin_offset_binder.cpp
     widgets/unit_binder.cpp
     widgets/widget_save_restore.cpp
     widgets/widget_hotkey_list.cpp
@@ -574,7 +590,6 @@ set( COMMON_WIDGET_SRCS
     widgets/wx_combobox.cpp
     widgets/wx_dataviewctrl.cpp
     widgets/wx_ellipsized_static_text.cpp
-    widgets/wx_html_report_box.cpp
     widgets/wx_listbox.cpp
     widgets/wx_panel.cpp
     widgets/wx_progress_reporters.cpp
@@ -711,6 +726,7 @@ set( COMMON_SRCS
     gr_basic.cpp
     hotkey_store.cpp
     hotkeys_basic.cpp
+    inspectable.cpp
     kiface_base.cpp
     kiway_player.cpp
     lib_table_grid_tricks.cpp
@@ -825,7 +841,7 @@ add_library( common STATIC
     )
 
 if( KICAD_USE_PCH )
-    target_precompile_headers( kicommon
+    target_precompile_headers( common
         PRIVATE
             <kicommon.h>
             <algorithm>
@@ -835,6 +851,10 @@ if( KICAD_USE_PCH )
             <set>
             <string>
             <vector>
+            <clipper2/clipper.h>
+            <eda_draw_frame.h>
+            <kiid.h>
+            <pgm_base.h>            
             <wx/wx.h>
              )
 endif()
@@ -998,6 +1018,8 @@ set( PCB_COMMON_SRCS
     ${CMAKE_SOURCE_DIR}/pcbnew/length_delay_calculation/tuning_profile_parameters_user_defined.cpp
 
     widgets/net_selector.cpp
+    widgets/netclass_selector.cpp
+    widgets/area_selector.cpp
 )
 
 set( PCB_COMMON_SRCS

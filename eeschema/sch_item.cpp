@@ -36,6 +36,8 @@
 #include <project/project_file.h>
 #include <project/net_settings.h>
 #include <font/kicad_font_name.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 
 // Rendering fonts is expensive (particularly when using outline fonts).  At small effective
@@ -92,6 +94,10 @@ SCH_ITEM::~SCH_ITEM()
 {
     for( const auto& it : m_connection_map )
         delete it.second;
+
+    // Remove this item from any rule areas that contain it
+    for( SCH_RULE_AREA* ruleArea : m_rule_areas_cache )
+        ruleArea->RemoveItem( this );
 
     // Do not try to modify SCHEMATIC::ConnectionGraph()
     // if the schematic does not exist
@@ -188,6 +194,7 @@ wxString SCH_ITEM::GetBodyStyleDescription( int aBodyStyle, bool aLabel ) const
 
     return wxEmptyString;
 }
+
 
 void SCH_ITEM::SetUnitString( const wxString& aUnit )
 {
@@ -306,14 +313,31 @@ bool SCH_ITEM::ResolveExcludedFromBOM( const SCH_SHEET_PATH* aInstance,
 }
 
 
-bool SCH_ITEM::ResolveExcludedFromBoard() const
+bool SCH_ITEM::ResolveExcludedFromBoard( const SCH_SHEET_PATH* aInstance,
+                                         const wxString& aVariantName ) const
 {
-    if( GetExcludedFromBoard() )
+    if( GetExcludedFromBoard( aInstance, aVariantName ) )
         return true;
 
     for( SCH_RULE_AREA* area : m_rule_areas_cache )
     {
-        if( area->GetExcludedFromBoard() )
+        if( area->GetExcludedFromBoard( aInstance, aVariantName ) )
+            return true;
+    }
+
+    return false;
+}
+
+
+bool SCH_ITEM::ResolveExcludedFromPosFiles( const SCH_SHEET_PATH* aInstance,
+                                            const wxString& aVariantName ) const
+{
+    if( GetExcludedFromPosFiles( aInstance, aVariantName ) )
+        return true;
+
+    for( SCH_RULE_AREA* area : m_rule_areas_cache )
+    {
+        if( area->GetExcludedFromPosFiles( aInstance, aVariantName ) )
             return true;
     }
 
@@ -338,8 +362,8 @@ bool SCH_ITEM::ResolveDNP( const SCH_SHEET_PATH* aInstance, const wxString& aVar
 
 wxString SCH_ITEM::ResolveText( const wxString& aText, const SCH_SHEET_PATH* aPath, int aDepth ) const
 {
-    // Use local depth counter so each text element starts fresh
-    int depth = 0;
+    // Use aDepth to track recursion across nested GetShownText/ResolveText calls
+    int depth = aDepth;
 
     std::function<bool( wxString* )> libSymbolResolver =
             [&]( wxString* token ) -> bool
@@ -766,7 +790,7 @@ int SCH_ITEM::GetEffectivePenWidth( const SCH_RENDER_SETTINGS* aSettings ) const
 
 bool SCH_ITEM::RenderAsBitmap( double aWorldScale ) const
 {
-    if( IsHypertext() )
+    if( HasHypertext() )
         return false;
 
     if( const EDA_TEXT* text = dynamic_cast<const EDA_TEXT*>( this ) )
@@ -778,8 +802,6 @@ bool SCH_ITEM::RenderAsBitmap( double aWorldScale ) const
 
 void SCH_ITEM::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_ITEM>& aList )
 {
-    wxString msg;
-
     if( SYMBOL* symbol = GetParentSymbol() )
     {
         if( symbol->IsMultiUnit() )

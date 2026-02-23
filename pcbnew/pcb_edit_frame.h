@@ -150,7 +150,7 @@ public:
      */
     void ExecuteRemoteCommand( const char* cmdline ) override;
 
-    void KiwayMailIn( KIWAY_EXPRESS& aEvent ) override;
+    void KiwayMailIn( KIWAY_MAIL_EVENT& aEvent ) override;
 
     /**
      * Used to find items by selection synchronization spec string.
@@ -182,6 +182,19 @@ public:
     void UpdateTrackWidthSelectBox( wxChoice* aTrackWidthSelectBox, bool aShowNetclass,
                                     bool aShowEdit );
     void UpdateViaSizeSelectBox( wxChoice* aViaSizeSelectBox, bool aShowNetclass, bool aShowEdit );
+
+    /**
+     * Update the variant selection dropdown with the current board's variant names.
+     *
+     * If the currently selected variant is no longer available, the default (no variant)
+     * will be selected.
+     */
+    void UpdateVariantSelectionCtrl();
+
+    /**
+     * Event handler for variant selection changes in the toolbar.
+     */
+    void onVariantSelected( wxCommandEvent& aEvent );
 
     /**
      * Return the angle used for rotate operations.
@@ -706,6 +719,8 @@ public:
      */
     bool DoAutoSave();
 
+    void ClearToolbarControl( int aId ) override;
+
     DECLARE_EVENT_TABLE()
 
 protected:
@@ -714,13 +729,13 @@ protected:
      */
     struct LAYER_TOOLBAR_ICON_VALUES
     {
-        int     previous_requested_scale;
+        int     previous_icon_size;
         COLOR4D previous_Route_Layer_TOP_color;
         COLOR4D previous_Route_Layer_BOTTOM_color;
         COLOR4D previous_background_color;
 
         LAYER_TOOLBAR_ICON_VALUES()
-                : previous_requested_scale( 0 ),
+                : previous_icon_size( 0 ),
                   previous_Route_Layer_TOP_color( COLOR4D::UNSPECIFIED ),
                   previous_Route_Layer_BOTTOM_color( COLOR4D::UNSPECIFIED ),
                   previous_background_color( COLOR4D::UNSPECIFIED )
@@ -832,20 +847,15 @@ protected:
 public:
     wxChoice* m_SelTrackWidthBox;        // a choice box to display and select current track width
     wxChoice* m_SelViaSizeBox;           // a choice box to display and select current via diameter
+    wxChoice* m_CurrentVariantCtrl;      // a choice box to display and select current variant
 
-    bool m_show_layer_manager_tools;
-    bool m_show_search;
-    bool m_show_net_inspector;
+    bool      m_ShowLayerManagerTools;
+    bool      m_ShowSearch;
+    bool      m_ShowNetInspector;
 
-    bool m_ZoneFillsDirty;          // Board has been modified since last zone fill.
+    bool      m_ZoneFillsDirty;          // Board has been modified since last zone fill.
 
-    bool m_probingSchToPcb;         // Recursion guard when synchronizing selection from schematic
-
-    // Cross-probe flashing support
-    wxTimer        m_crossProbeFlashTimer;   ///< Timer to toggle selection visibility for flash
-    int            m_crossProbeFlashPhase = 0; ///< Phase counter
-    std::vector<KIID> m_crossProbeFlashItems;  ///< Items to flash (by UUID)
-    bool           m_crossProbeFlashing = false; ///< Currently flashing guard
+    bool      m_ProbingSchToPcb;         // Recursion guard when synchronizing selection from schematic
 
     void StartCrossProbeFlash( const std::vector<BOARD_ITEM*>& aItems );
     void OnCrossProbeFlashTimer( wxTimerEvent& aEvent );
@@ -861,14 +871,14 @@ private:
      * the list of assignable hot keys since it's only available as an advanced configuration
      * option.
      */
-    TOOL_ACTION* m_exportNetlistAction;
+    TOOL_ACTION*           m_exportNetlistAction;
 
-    DIALOG_FIND* m_findDialog;
-    DIALOG_BOOK_REPORTER* m_inspectDrcErrorDlg;
-    DIALOG_BOOK_REPORTER* m_inspectClearanceDlg;
-    DIALOG_BOOK_REPORTER* m_inspectConstraintsDlg;
-    DIALOG_BOOK_REPORTER* m_footprintDiffDlg;
-    DIALOG_BOARD_SETUP*   m_boardSetupDlg;
+    DIALOG_FIND*           m_findDialog;
+    DIALOG_BOOK_REPORTER*  m_inspectDrcErrorDlg;
+    DIALOG_BOOK_REPORTER*  m_inspectClearanceDlg;
+    DIALOG_BOOK_REPORTER*  m_inspectConstraintsDlg;
+    DIALOG_BOOK_REPORTER*  m_footprintDiffDlg;
+    DIALOG_BOARD_SETUP*    m_boardSetupDlg;
 
     std::vector<LIB_ID>    m_designBlockHistoryList;
     PCB_DESIGN_BLOCK_PANE* m_designBlocksPane;
@@ -878,12 +888,18 @@ private:
     /**
      * Keep track of viewport so that track net labels can be adjusted when it changes.
      */
-    BOX2D        m_lastNetnamesViewport;
+    BOX2D             m_lastNetnamesViewport;
 
-    wxTimer*     m_eventCounterTimer;
+    wxTimer*          m_eventCounterTimer;
+
+    // Cross-probe flashing support
+    wxTimer           m_crossProbeFlashTimer;          ///< Timer to toggle selection visibility for flash
+    int               m_crossProbeFlashPhase = 0;      ///< Phase counter
+    std::vector<KIID> m_crossProbeFlashItems;          ///< Items to flash (by UUID)
+    bool              m_crossProbeFlashing = false;    ///< Currently flashing guard
 
 #ifdef KICAD_IPC_API
-    std::unique_ptr<API_HANDLER_PCB> m_apiHandler;
+    std::unique_ptr<API_HANDLER_PCB>    m_apiHandler;
     std::unique_ptr<API_HANDLER_COMMON> m_apiHandlerCommon;
 #endif
 

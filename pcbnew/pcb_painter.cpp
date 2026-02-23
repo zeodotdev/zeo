@@ -229,12 +229,17 @@ COLOR4D PCB_RENDER_SETTINGS::GetColor( const BOARD_ITEM* aItem, int aLayer ) con
         int            holeLayer = aLayer;
         int            annularRingLayer = UNDEFINED_LAYER;
 
-        // TODO(JE) padstacks -- this won't work, we don't know what the annular ring layer is
-        // Inserting F_Cu here for now.
         if( pad && pad->GetAttribute() == PAD_ATTRIB::PTH )
-            annularRingLayer = F_Cu;
+        {
+            LSET copperLayers = pad->GetLayerSet() & LSET::AllCuMask();
+
+            if( !copperLayers.empty() )
+                annularRingLayer = copperLayers.Seq().front();
+        }
         else if( via )
+        {
             annularRingLayer = F_Cu;
+        }
 
         if( annularRingLayer != UNDEFINED_LAYER )
         {
@@ -252,6 +257,10 @@ COLOR4D PCB_RENDER_SETTINGS::GetColor( const BOARD_ITEM* aItem, int aLayer ) con
         if( IsZoneFillLayer( aLayer ) )
             aLayer = aLayer - LAYER_ZONE_START;
     }
+
+    // Points use the LAYER_POINTS color for their virtual per-layer layers
+    if( IsPointsLayer( aLayer ) )
+        aLayer = LAYER_POINTS;
 
     // Pad and via copper and clearance outlines take their color from the copper layer
     if( IsPadCopperLayer( aLayer ) )
@@ -409,7 +418,6 @@ COLOR4D PCB_RENDER_SETTINGS::GetColor( const BOARD_ITEM* aItem, int aLayer ) con
 
         switch( originalLayer )
         {
-        // TODO(JE) not sure if this is needed
         case LAYER_PADS:
         {
             const PAD* pad = static_cast<const PAD*>( aItem );
@@ -1180,7 +1188,19 @@ void PCB_PAINTER::draw( const PCB_VIA* aVia, int aLayer )
     {
         double thickness =
             m_holePlatingThickness * ADVANCED_CFG::GetCfg().m_HoleWallPaintingMultiplier;
-        double radius = ( getViaDrillSize( aVia ) / 2.0 ) + thickness;
+        double drillRadius = getViaDrillSize( aVia ) / 2.0;
+        double maxRadius = aVia->GetWidth( layerTop ) / 2.0;
+        double radius = drillRadius + thickness;
+
+        // Clamp the hole wall so it doesn't extend beyond the via's copper
+        if( radius > maxRadius )
+        {
+            radius = maxRadius;
+            thickness = radius - drillRadius;
+        }
+
+        if( thickness <= 0 )
+            return;
 
         if( !outline_mode )
         {
@@ -2326,9 +2346,13 @@ void PCB_PAINTER::draw( const PCB_SHAPE* aShape, int aLayer )
 
     if( isHatchedFill )
     {
-        m_gal->SetIsStroke( false );
-        m_gal->SetIsFill( true );
-        m_gal->DrawPolygon( aShape->GetHatching() );
+        aShape->UpdateHatching();
+        m_gal->SetIsFill( false );
+        m_gal->SetIsStroke( true );
+        m_gal->SetLineWidth( aShape->GetHatchLineWidth() );
+
+        for( const SEG& seg : aShape->GetHatchLines() )
+            m_gal->DrawLine( seg.A, seg.B );
     }
 }
 
@@ -2378,6 +2402,8 @@ void PCB_PAINTER::draw( const PCB_REFERENCE_IMAGE* aBitmap, int aLayer )
     if( img_scale != 1.0 )
         m_gal->Scale( VECTOR2D( img_scale, img_scale ) );
 
+    const double imgAlpha = m_pcbSettings.GetColor( aBitmap, aBitmap->GetLayer() ).a;
+
     if( aBitmap->IsSelected() || aBitmap->IsBrightened() )
     {
         COLOR4D color = m_pcbSettings.GetColor( aBitmap, LAYER_ANCHOR );
@@ -2398,14 +2424,13 @@ void PCB_PAINTER::draw( const PCB_REFERENCE_IMAGE* aBitmap, int aLayer )
 
         m_gal->DrawRectangle( origin, end );
 
-        // Hard code reference images as opaque when selected. Otherwise cached layers will
-        // not be rendered under the selected image because cached layers are rendered after
-        // non-cached layers (e.g. bitmaps), which will have a closer Z order.
-        m_gal->DrawBitmap( refImg.GetImage(), 1.0 );
+        // Keep reference images opaque when selected (and not moving). Otherwise cached layers
+        // will not be rendered under the selected image because cached layers are rendered
+        // after non-cached layers (e.g. bitmaps), which will have a closer Z order.
+        m_gal->DrawBitmap( refImg.GetImage(), aBitmap->IsMoving() ? imgAlpha : 1.0 );
     }
     else
-        m_gal->DrawBitmap( refImg.GetImage(),
-                           m_pcbSettings.GetColor( aBitmap, aBitmap->GetLayer() ).a );
+        m_gal->DrawBitmap( refImg.GetImage(), imgAlpha );
 
     m_gal->Restore();
 }
@@ -3101,10 +3126,10 @@ void PCB_PAINTER::draw( const PCB_TARGET* aTarget )
 
 void PCB_PAINTER::draw( const PCB_POINT* aPoint, int aLayer )
 {
-    // aLayer will be the virtual zone layer (LAYER_ZONE_START, ... in GAL_LAYER_ID)
+    // aLayer will be the virtual point layer (LAYER_POINT_START, ... in GAL_LAYER_ID).
     // This is used for draw ordering in the GAL.
-    // The color for the point comes from the associated copper layer ( aLayer - LAYER_POINT_START )
-    // and the visibility comes from the combination of that copper layer and LAYER_POINT
+    // The cross color comes from LAYER_POINTS and the ring color follows the point's board layer.
+    // Visibility comes from the combination of that board layer and LAYER_POINTS.
 
     double size = (double)aPoint->GetSize() / 2;
 

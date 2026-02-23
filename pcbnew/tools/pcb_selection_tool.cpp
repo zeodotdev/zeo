@@ -2374,6 +2374,14 @@ void PCB_SELECTION_TOOL::doSyncSelection( const std::vector<BOARD_ITEM*>& aItems
     if( m_selection.Front() && m_selection.Front()->IsMoving() )
         return;
 
+    // Also check the incoming items. If the cross-probe flash timer cleared the selection
+    // during a move, Front() would be null but the items are still being actively moved.
+    for( const BOARD_ITEM* item : aItems )
+    {
+        if( item->IsMoving() )
+            return;
+    }
+
     ClearSelection( true /*quiet mode*/ );
 
     // Perform individual selection of each item before processing the event.
@@ -3118,15 +3126,6 @@ bool PCB_SELECTION_TOOL::Selectable( const BOARD_ITEM* aItem, bool checkVisibili
         // In footprint editor, we do not want to select the footprint itself.
         if( m_isFootprintEditor )
             return false;
-
-        // Allow selection of footprints if some part of the footprint is visible.
-        if( footprint->GetSide() != UNDEFINED_LAYER && !m_skip_heuristics )
-        {
-            LSET boardSide = footprint->IsFlipped() ? LSET::BackMask() : LSET::FrontMask();
-
-            if( !( visibleLayers() & boardSide ).any() )
-                return false;
-        }
 
         // If the footprint has no items except the reference and value fields, include the
         // footprint in the selections.

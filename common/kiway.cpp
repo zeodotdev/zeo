@@ -29,10 +29,9 @@
 #include <macros.h>
 #include <kiway.h>
 #include <kiway_player.h>
-#include <kiway_express.h>
+#include <kiway_mail.h>
 #include <pgm_base.h>
 #include <config.h>
-#include <core/arraydim.h>
 #include <id.h>
 #include <kiplatform/app.h>
 #include <kiplatform/environment.h>
@@ -47,8 +46,8 @@
 #include <wx/utils.h>
 #include <confirm.h>
 
-KIFACE* KIWAY::m_kiface[KIWAY_FACE_COUNT];
-int     KIWAY::m_kiface_version[KIWAY_FACE_COUNT];
+std::array<KIFACE*, KIWAY::FACE_T::KIWAY_FACE_COUNT> KIWAY::m_kiface;
+std::array<int, KIWAY::FACE_T::KIWAY_FACE_COUNT>     KIWAY::m_kiface_version;
 
 
 KIWAY::KIWAY( int aCtlBits, wxFrame* aTop ) :
@@ -141,7 +140,15 @@ const wxString KIWAY::dso_search_path( FACE_T aFaceId )
     {
         // The 2 *.cpp program launchers: single_top.cpp and kicad.cpp expect
         // the *.kiface's to reside in same directory as their binaries do.
-        path = wxStandardPaths::Get().GetExecutablePath();
+        wxString appDir;
+
+        // When running inside an AppImage, the bundled ld-linux is invoked as a wrapper
+        // which causes /proc/self/exe to resolve to the dynamic linker rather than the
+        // actual binary. Use APPDIR to construct the correct executable path.
+        if( wxGetEnv( wxT( "APPDIR" ), &appDir ) )
+            path = appDir + wxT( "/usr/bin/kicad" );
+        else
+            path = wxStandardPaths::Get().GetExecutablePath();
     }
 
     wxFileName fn = path;
@@ -211,11 +218,8 @@ KIFACE* KIWAY::KiFACE( FACE_T aFaceId, bool doLoad )
 {
     // Since this will be called from python, cannot assume that code will
     // not pass a bad aFaceId.
-    if( (unsigned) aFaceId >= arrayDim( m_kiface ) )
+    if( (unsigned) aFaceId >= m_kiface.size() )
     {
-        // @todo : throw an exception here for python's benefit, at least that
-        // way it gets some explanatory text.
-
         wxASSERT_MSG( 0, wxT( "caller has a bug, passed a bad aFaceId" ) );
         return nullptr;
     }
@@ -403,9 +407,6 @@ KIWAY_PLAYER* KIWAY::Player( FRAME_T aFrameType, bool doCreate, wxTopLevelWindow
     // not pass a bad aFrameType.
     if( (unsigned) aFrameType >= KIWAY_PLAYER_COUNT )
     {
-        // @todo : throw an exception here for python's benefit, at least that
-        // way it gets some explanatory text.
-
         wxASSERT_MSG( 0, wxT( "caller has a bug, passed a bad aFrameType" ) );
         return nullptr;
     }
@@ -457,9 +458,6 @@ bool KIWAY::PlayerClose( FRAME_T aFrameType, bool doForce )
     // not pass a bad aFrameType.
     if( (unsigned) aFrameType >= KIWAY_PLAYER_COUNT )
     {
-        // @todo : throw an exception here for python's benefit, at least that
-        // way it gets some explanatory text.
-
         wxASSERT_MSG( 0, wxT( "caller has a bug, passed a bad aFrameType" ) );
         return false;
     }
@@ -502,7 +500,8 @@ void KIWAY::PlayerDidClose( FRAME_T aFrameType )
 void KIWAY::ExpressMail( FRAME_T aDestination, MAIL_T aCommand, std::string& aPayload, wxWindow* aSource,
                          bool aFromOtherThread )
 {
-    std::unique_ptr<KIWAY_EXPRESS> mail = std::make_unique<KIWAY_EXPRESS>( aDestination, aCommand, aPayload, aSource );
+    std::unique_ptr<KIWAY_MAIL_EVENT> mail =
+            std::make_unique<KIWAY_MAIL_EVENT>( aDestination, aCommand, aPayload, aSource );
 
     if( aFromOtherThread )
         QueueEvent( mail.release() );
@@ -638,6 +637,11 @@ void KIWAY::ClearFileHistory()
 
 void KIWAY::ProjectChanged()
 {
+    // Skip project change notifications during application shutdown to avoid
+    // clearing savers and re-registering them unnecessarily
+    if( PgmOrNull() && Pgm().m_Quitting )
+        return;
+
     APP_MONITOR::AddNavigationBreadcrumb( "Changing project", "kiway.projectchanged" );
 
     LocalHistory().ClearAllSavers();
@@ -687,7 +691,7 @@ void KIWAY::SetBlockingDialog( wxWindow* aWin )
 
 bool KIWAY::ProcessEvent( wxEvent& aEvent )
 {
-    KIWAY_EXPRESS* mail = dynamic_cast<KIWAY_EXPRESS*>( &aEvent );
+    KIWAY_MAIL_EVENT* mail = dynamic_cast<KIWAY_MAIL_EVENT*>( &aEvent );
 
     if( mail )
     {
@@ -713,7 +717,7 @@ bool KIWAY::ProcessEvent( wxEvent& aEvent )
 
 void KIWAY::QueueEvent( wxEvent* aEvent )
 {
-    KIWAY_EXPRESS* mail = dynamic_cast<KIWAY_EXPRESS*>( aEvent );
+    KIWAY_MAIL_EVENT* mail = dynamic_cast<KIWAY_MAIL_EVENT*>( aEvent );
 
     if( mail )
     {

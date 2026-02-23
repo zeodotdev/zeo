@@ -136,14 +136,9 @@ option( KICAD_UPDATE_CHECK
     "Build in update check"
     ON )
 
-cmake_dependent_option( KICAD_USE_BUNDLED_GLEW
-    "Use the bundled version of GLEW - only available when KICAD_USE_EGL is set"
-    ON "KICAD_USE_EGL"
-    OFF )
-
 cmake_dependent_option( KICAD_WAYLAND
     "Support Wayland features"
-    ON "KICAD_USE_EGL"
+    ON "UNIX_NOT_APPLE"
     OFF )
 
 # Options to build with flatpak platform defaults (only on Linux)
@@ -229,6 +224,18 @@ option( KICAD_USE_VALGRIND
 option( KICAD_STDLIB_DEBUG
     "Build KiCad with libstdc++ debug flags enabled."
     OFF )
+
+# KICAD_STDLIB_DEBUG enables _GLIBCXX_DEBUG which changes the ABI of standard library
+# containers. System Boost libraries are typically built without this flag, causing
+# crashes in QA tests that link to Boost::unit_test_framework due to ABI mismatch.
+if( KICAD_STDLIB_DEBUG AND KICAD_BUILD_QA_TESTS )
+    message( WARNING
+        "KICAD_STDLIB_DEBUG is enabled with KICAD_BUILD_QA_TESTS.\n"
+        "_GLIBCXX_DEBUG changes the ABI of standard library containers, which causes "
+        "crashes when linking against system Boost libraries that were built without "
+        "this flag. QA tests will likely crash at runtime.\n"
+        "Either disable KICAD_STDLIB_DEBUG or set KICAD_BUILD_QA_TESTS=OFF." )
+endif()
 
 option( KICAD_STDLIB_LIGHT_DEBUG
     "Build KiCad with libstdc++ with -Wp,-D_GLIBCXX_ASSERTIONS flag enabled. Not as intrusive as KICAD_STDLIB_DEBUG"
@@ -1030,7 +1037,7 @@ set( INC_AFTER ${INC_AFTER} ${PYTHON_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/s
 
 if( KICAD_SCRIPTING_WXPYTHON )
     # Find the wxPython installation
-    if( NOT VCPKG_TOOLCHAIN AND NOT KICAD_BUILD_ARCH_ARM64 )
+    if( NOT VCPKG_TOOLCHAIN )
         find_package( wxPython REQUIRED )
 
         if( WXPYTHON_VERSION VERSION_LESS 4.0.0 )
@@ -1112,8 +1119,6 @@ else()
     message( FATAL_ERROR "Unable to detect wxWidgets port")
 endif()
 
-message(STATUS "wxUSE_GLCANVAS_EGL=${wxWidgets_GLCANVAS_EGL}")
-
 if( NOT MSVC )
     if( ${wxWidgets_VERSION_STRING} VERSION_LESS 3.2 )
         message( FATAL_ERROR "wxWidgets 3.2.0 or greater is required" )
@@ -1130,53 +1135,16 @@ if( MINGW )
     endif()
 endif()
 
-#
-# Find OpenGL library, required
-#
-if( wxWidgets_GLCANVAS_EGL EQUAL 1 )
-    set( KICAD_USE_EGL ON )
-    find_package( OpenGL REQUIRED COMPONENTS OpenGL EGL )
-else()
-    set( KICAD_USE_EGL OFF )
-    set( OpenGL_GL_PREFERENCE "LEGACY" )     # CMake 3.11+ setting; see 'cmake --help-policy CMP0072'
-    find_package( OpenGL REQUIRED )
-endif()
+message(STATUS "wxUSE_GLCANVAS_EGL=${wxWidgets_GLCANVAS_EGL}")
+message(STATUS "wxHAS_GLX=${wxWidgets_HAS_GLX}")
+message(STATUS "wxHAS_EGL=${wxWidgets_HAS_EGL}")
 
-if( KICAD_USE_EGL )
-    message( STATUS "Configuring KiCad for the wxGLCanvas EGL backend" )
-    add_compile_definitions( KICAD_USE_EGL )
-endif()
+# Find OpenGL with GLU
+find_package( OpenGL REQUIRED )
 
 if( KICAD_WAYLAND )
     message( STATUS "Configuring KiCad to support Wayland features" )
     add_compile_definitions( KICAD_WAYLAND )
-endif()
-
-#
-# Find GLEW library, required
-#
-# The EGL canvas on GTK requires the use of a GLEW version compiled with an EGL flag.
-# The one built in the thirdparty directory has the flag for EGL set, so we use it unless told
-# otherwise. Then we search for the system GLEW version and use that instead.
-#
-if( KICAD_USE_EGL AND KICAD_USE_BUNDLED_GLEW )
-    if( OpenGL_EGL_FOUND )
-        message( STATUS "Found OpenGL EGL library: ${OPENGL_egl_LIBRARY}" )
-    else()
-        message( FATAL_ERROR "OpenGL EGL library not found" )
-    endif()
-
-    # Add the custom GLEW target
-    add_subdirectory( thirdparty/glew )
-
-    # Set the standard package variables to point to our custom target to mimic the system version.
-    set( GLEW_LIBRARIES glew )
-    set( GLEW_FOUND TRUE )
-    include_directories( SYSTEM $<TARGET_PROPERTY:glew,INCLUDE_DIRECTORIES> )
-else()
-    find_package( GLEW REQUIRED )
-    check_find_package_result( GLEW_FOUND "GLEW" )
-    include_directories( SYSTEM ${GLEW_INCLUDE_DIR} )
 endif()
 
 if( APPLE )

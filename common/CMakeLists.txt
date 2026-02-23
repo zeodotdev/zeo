@@ -521,6 +521,8 @@ set( COMMON_DLG_SRCS
     dialogs/panel_toolbar_customization_base.cpp
 
     libraries/lib_table_grid_data_model.cpp
+
+    zeo/agent_auth.cpp
     )
 
 if( KICAD_USE_SENTRY )

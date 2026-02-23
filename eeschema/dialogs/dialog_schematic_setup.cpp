@@ -37,6 +37,8 @@
 #include <sch_io/sch_io.h>
 #include <settings/settings_manager.h>
 #include <widgets/wx_progress_reporters.h>
+#include <sch_reference_list.h>
+#include <nlohmann/json.hpp>
 #include "dialog_schematic_setup.h"
 #include "panel_template_fieldnames.h"
 
@@ -112,9 +114,49 @@ DIALOG_SCHEMATIC_SETUP::DIALOG_SCHEMATIC_SETUP( SCH_EDIT_FRAME* aFrame ) :
             [this]( wxWindow* aParent ) -> wxWindow*
             {
                 SCHEMATIC& schematic = m_frame->Schematic();
-                return new PANEL_SETUP_NETCLASSES( aParent, m_frame,
+                auto* panel = new PANEL_SETUP_NETCLASSES( aParent, m_frame,
                                                    m_frame->Prj().GetProjectFile().NetSettings(),
                                                    schematic.GetNetClassAssignmentCandidates(), true );
+
+                // Provide design context for AI-powered net class generation
+                panel->SetAutoGenerateContext( "schematic",
+                        [this]() -> nlohmann::json
+                        {
+                            nlohmann::json context;
+                            SCHEMATIC& sch = m_frame->Schematic();
+
+                            // Sheet hierarchy
+                            nlohmann::json sheets = nlohmann::json::array();
+                            for( const SCH_SHEET_PATH& path : sch.Hierarchy() )
+                                sheets.push_back( path.PathHumanReadable().ToStdString() );
+                            context["sheets"] = sheets;
+
+                            // Component summary (ref + value, grouped with counts)
+                            SCH_REFERENCE_LIST refs;
+                            sch.Hierarchy().GetSymbols( refs, false );
+
+                            std::map<std::string, int> componentCounts;
+                            for( unsigned i = 0; i < refs.GetCount(); i++ )
+                            {
+                                std::string key = refs[i].GetRef().ToStdString() + " ("
+                                                  + refs[i].GetValue().ToStdString() + ")";
+                                componentCounts[key]++;
+                            }
+
+                            nlohmann::json components = nlohmann::json::array();
+                            for( const auto& [key, count] : componentCounts )
+                            {
+                                if( count > 1 )
+                                    components.push_back( key + " x" + std::to_string( count ) );
+                                else
+                                    components.push_back( key );
+                            }
+                            context["components"] = components;
+
+                            return context;
+                        } );
+
+                return panel;
             }, _( "Net Classes" ) );
 
     m_busesPage = m_treebook->GetPageCount();

@@ -54,7 +54,6 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/view
     ${CMAKE_CURRENT_SOURCE_DIR}/bridge
     ${CMAKE_CURRENT_SOURCE_DIR}/ipc
-    ${CMAKE_CURRENT_SOURCE_DIR}/auth
     ${CMAKE_CURRENT_SOURCE_DIR}/cloud
     ${CMAKE_CURRENT_SOURCE_DIR}/tools
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/util
@@ -90,8 +89,7 @@ set( AGENT_SRCS
     view/unified_html_template.cpp
     view/file_attach.cpp
 
-    # Authentication
-    auth/agent_auth.cpp
+    # Authentication (AGENT_AUTH lives in common/zeo/)
 
     # Cloud sync (chat + log uploads to Supabase Storage)
     cloud/agent_cloud_sync.cpp

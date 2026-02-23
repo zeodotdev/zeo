@@ -27,7 +27,7 @@
 #include <wx/string.h>
 #include <wx/event.h>
 #include <memory>
-#include "agent_auth.h"
+#include <zeo/agent_auth.h>
 
 class KICAD_MANAGER_FRAME;
 

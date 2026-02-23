@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <thread>
 #include <wx/wupdlock.h>
 #include <pgm_base.h>
 #include <eda_draw_frame.h>
@@ -45,6 +46,13 @@
 #include <widgets/std_bitmap_button.h>
 #include <project/net_settings.h>
 #include <confirm.h>
+#include <wx/msgdlg.h>
+#include <wx/app.h>
+#include <zeo/agent_auth.h>
+#include <zeo/zeo_constants.h>
+#include <kicad_curl/kicad_curl_easy.h>
+#include <kicad_curl/kicad_curl.h>
+#include <nlohmann/json.hpp>
 
 
 // columns of netclasses grid
@@ -89,7 +97,9 @@ PANEL_SETUP_NETCLASSES::PANEL_SETUP_NETCLASSES( wxWindow* aParentWindow, EDA_DRA
         m_hoveredCol( -1 ),
         m_lastNetclassGridWidth( -1 ),
         m_sortAsc( false ),
-        m_sortCol( 0 )
+        m_sortCol( 0 ),
+        m_autoGenerateButton( nullptr ),
+        m_autoGenerateCancelled( std::make_shared<std::atomic<bool>>( false ) )
 {
     // Clear and re-load each time.  Language (or darkmode) might have changed.
     g_lineStyleIcons.clear();
@@ -172,15 +182,24 @@ PANEL_SETUP_NETCLASSES::PANEL_SETUP_NETCLASSES( wxWindow* aParentWindow, EDA_DRA
     attr->SetEditor( new GRID_CELL_ICON_TEXT_POPUP( g_lineStyleIcons, g_lineStyleNames ) );
     m_netclassGrid->SetColAttr( GRID_LINESTYLE, attr );
 
+    m_colorDefaultHelpText->Hide();
+
     if( m_isEEschema )
     {
         m_importColorsButton->Hide();
     }
-    else
-    {
-        m_colorDefaultHelpText->SetLabel( _( "Set color to transparent to use layer default color." ) );
-        m_colorDefaultHelpText->GetParent()->Layout();
-    }
+
+    // Create the Auto-generate button (hidden until SetAutoGenerateContext is called)
+    m_autoGenerateButton = new wxButton( m_netclassesPane, wxID_ANY, _( "Auto-generate" ) );
+    m_autoGenerateButton->Hide();
+    m_autoGenerateButton->Bind( wxEVT_BUTTON, &PANEL_SETUP_NETCLASSES::OnAutoGenerateClick, this );
+
+    // Insert into the button sizer after the import colors button
+    wxSizer* buttonSizer = m_importColorsButton->GetContainingSizer();
+
+    if( buttonSizer )
+        buttonSizer->Add( m_autoGenerateButton, 0, wxALIGN_CENTER_VERTICAL | wxBOTTOM | wxLEFT, 5 );
+        buttonSizer->Add( 10, 0 );  // Extra right padding to align with OK button
 
     m_colorDefaultHelpText->SetFont( KIUI::GetInfoFont( this ).Italic() );
 
@@ -253,6 +272,9 @@ PANEL_SETUP_NETCLASSES::PANEL_SETUP_NETCLASSES( wxWindow* aParentWindow, EDA_DRA
 
 PANEL_SETUP_NETCLASSES::~PANEL_SETUP_NETCLASSES()
 {
+    // Signal any in-flight auto-generate request to not touch this panel
+    m_autoGenerateCancelled->store( true );
+
     // Delete the GRID_TRICKS.
     m_netclassGrid->PopEventHandler( true );
     m_assignmentGrid->PopEventHandler( true );
@@ -709,9 +731,9 @@ void PANEL_SETUP_NETCLASSES::OnNetclassGridMouseEvent( wxMouseEvent& aEvent )
         case GRID_DIFF_PAIR_GAP:    tip = _( "Differential pair gap" );         break;
         case GRID_WIREWIDTH:        tip = _( "Schematic wire thickness" );      break;
         case GRID_BUSWIDTH:         tip = _( "Bus wire thickness" );            break;
-        case GRID_SCHEMATIC_COLOR:  tip = _( "Schematic wire color" );          break;
+        case GRID_SCHEMATIC_COLOR:  tip = _( "Schematic wire color (set to transparent for default)" ); break;
         case GRID_LINESTYLE:        tip = _( "Schematic wire line style" );     break;
-        case GRID_PCB_COLOR:        tip = _( "PCB netclass color" );            break;
+        case GRID_PCB_COLOR:        tip = _( "PCB netclass color (set to transparent for layer default)" ); break;
         }
 
         m_netclassGrid->GetGridColLabelWindow()->UnsetToolTip();
@@ -1011,4 +1033,377 @@ void PANEL_SETUP_NETCLASSES::UpdateDelayProfileNames( const std::vector<wxString
     wxGridCellAttr* attr = new wxGridCellAttr;
     attr->SetEditor( new wxGridCellChoiceEditor( profileNames, false ) );
     m_netclassGrid->SetColAttr( GRID_DELAY_PROFILE, attr );
+}
+
+
+// ============================================================================
+// Auto-generate Net Classes
+// ============================================================================
+
+void PANEL_SETUP_NETCLASSES::SetAutoGenerateContext( const std::string& aEditorType,
+                                                       std::function<nlohmann::json()> aContextFn )
+{
+    m_editorType = aEditorType;
+    m_getDesignContextFn = std::move( aContextFn );
+
+    if( m_autoGenerateButton )
+    {
+        m_autoGenerateButton->Show();
+        m_autoGenerateButton->GetParent()->Layout();
+    }
+}
+
+
+void PANEL_SETUP_NETCLASSES::OnAutoGenerateClick( wxCommandEvent& event )
+{
+    // Read token from disk (no Supabase config needed)
+    std::string accessToken = AGENT_AUTH::ReadAccessTokenFromDisk();
+
+    if( accessToken.empty() )
+    {
+        wxMessageBox( _( "Please sign in to Zeo to use AI features." ),
+                      _( "Sign In Required" ), wxOK | wxICON_INFORMATION );
+        return;
+    }
+
+    // Commit any pending grid edits
+    m_netclassGrid->CommitPendingChanges( true );
+    m_assignmentGrid->CommitPendingChanges( true );
+
+    // Build the request JSON
+    nlohmann::json requestBody;
+
+    // Net names
+    nlohmann::json netNames = nlohmann::json::array();
+    for( const wxString& name : m_netNames )
+        netNames.push_back( name.ToStdString() );
+    requestBody["net_names"] = netNames;
+
+    // Existing net classes from the grid
+    nlohmann::json existingNetclasses = nlohmann::json::array();
+    for( int row = 0; row < m_netclassGrid->GetNumberRows(); row++ )
+    {
+        nlohmann::json nc;
+        nc["name"] = m_netclassGrid->GetCellValue( row, GRID_NAME ).ToStdString();
+
+        if( m_isEEschema )
+        {
+            wxString wireWidth = m_netclassGrid->GetCellValue( row, GRID_WIREWIDTH );
+            wxString busWidth = m_netclassGrid->GetCellValue( row, GRID_BUSWIDTH );
+
+            if( !wireWidth.IsEmpty() )
+                nc["wire_width"] = wireWidth.ToStdString();
+
+            if( !busWidth.IsEmpty() )
+                nc["bus_width"] = busWidth.ToStdString();
+        }
+        else
+        {
+            auto addField = [&]( int gridCol, const char* jsonKey )
+            {
+                wxString val = m_netclassGrid->GetCellValue( row, gridCol );
+
+                if( !val.IsEmpty() )
+                    nc[jsonKey] = val.ToStdString();
+            };
+
+            addField( GRID_CLEARANCE,       "clearance" );
+            addField( GRID_TRACKSIZE,       "track_width" );
+            addField( GRID_VIASIZE,         "via_diameter" );
+            addField( GRID_VIADRILL,        "via_drill" );
+            addField( GRID_uVIASIZE,        "uvia_diameter" );
+            addField( GRID_uVIADRILL,       "uvia_drill" );
+            addField( GRID_DIFF_PAIR_WIDTH, "diff_pair_width" );
+            addField( GRID_DIFF_PAIR_GAP,   "diff_pair_gap" );
+        }
+
+        existingNetclasses.push_back( nc );
+    }
+    requestBody["existing_netclasses"] = existingNetclasses;
+
+    // Existing assignments from the grid
+    nlohmann::json existingAssignments = nlohmann::json::array();
+    for( int row = 0; row < m_assignmentGrid->GetNumberRows(); row++ )
+    {
+        nlohmann::json assignment;
+        assignment["pattern"] = m_assignmentGrid->GetCellValue( row, 0 ).ToStdString();
+        assignment["netclass"] = m_assignmentGrid->GetCellValue( row, 1 ).ToStdString();
+        existingAssignments.push_back( assignment );
+    }
+    requestBody["existing_assignments"] = existingAssignments;
+
+    // Design context from callback
+    if( m_getDesignContextFn )
+    {
+        nlohmann::json context = m_getDesignContextFn();
+        requestBody["design_context"] = context.dump();
+    }
+    else
+    {
+        requestBody["design_context"] = "";
+    }
+
+    requestBody["editor_type"] = m_editorType;
+
+    // Disable button and update label
+    m_autoGenerateButton->SetLabel( _( "Generating..." ) );
+    m_autoGenerateButton->Disable();
+
+    // Capture what we need for the background thread
+    std::string requestStr = requestBody.dump();
+    wxLogInfo( "NETCLASS_AUTOGEN: Request: %s", requestStr.c_str() );
+    std::string url = ZEO_BASE_URL + "/api/llm/netclasses";
+    std::shared_ptr<std::atomic<bool>> cancelled = m_autoGenerateCancelled;
+
+    std::thread( [this, url, accessToken, requestStr, cancelled]()
+    {
+        std::string responseStr;
+        std::string errorStr;
+        bool success = false;
+
+        try
+        {
+            KICAD_CURL_EASY curl;
+            curl.SetURL( url );
+            curl.SetHeader( "Content-Type", "application/json" );
+            curl.SetHeader( "Authorization", "Bearer " + accessToken );
+            curl.SetPostFields( requestStr );
+            curl_easy_setopt( curl.GetCurl(), CURLOPT_TIMEOUT, 120L );  // 2 minute timeout
+            curl.Perform();
+
+            long httpCode = curl.GetResponseStatusCode();
+
+            if( httpCode == 200 )
+            {
+                responseStr = curl.GetBuffer();
+                success = true;
+                wxLogInfo( "NETCLASS_AUTOGEN: Response (HTTP %ld): %s",
+                           httpCode, responseStr.c_str() );
+            }
+            else if( httpCode == 401 )
+            {
+                errorStr = "Authentication expired. Please sign in to Zeo again.";
+                wxLogInfo( "NETCLASS_AUTOGEN: Auth error (HTTP 401)" );
+            }
+            else
+            {
+                errorStr = "Server error (HTTP " + std::to_string( httpCode ) + ")";
+                wxLogInfo( "NETCLASS_AUTOGEN: Error (HTTP %ld): %s",
+                           httpCode, curl.GetBuffer().c_str() );
+            }
+        }
+        catch( const std::exception& e )
+        {
+            errorStr = std::string( "Network error: " ) + e.what();
+            wxLogInfo( "NETCLASS_AUTOGEN: Network error: %s", e.what() );
+        }
+
+        // Post result back to main thread
+        wxTheApp->CallAfter( [this, success, responseStr, errorStr, cancelled]()
+        {
+            if( cancelled->load() )
+                return;
+
+            OnAutoGenerateComplete( success, responseStr, errorStr );
+        } );
+    } ).detach();
+}
+
+
+void PANEL_SETUP_NETCLASSES::OnAutoGenerateComplete( bool aSuccess, const std::string& aResponse,
+                                                       const std::string& aError )
+{
+    // Re-enable button
+    m_autoGenerateButton->SetLabel( _( "Auto-generate" ) );
+    m_autoGenerateButton->Enable();
+
+    if( !aSuccess )
+    {
+        wxMessageBox( wxString::FromUTF8( aError ), _( "Auto-generate Failed" ),
+                      wxOK | wxICON_ERROR );
+        return;
+    }
+
+    // Parse response
+    nlohmann::json response;
+
+    try
+    {
+        response = nlohmann::json::parse( aResponse );
+    }
+    catch( const std::exception& e )
+    {
+        wxMessageBox( _( "Failed to parse AI response." ), _( "Auto-generate Failed" ),
+                      wxOK | wxICON_ERROR );
+        return;
+    }
+
+    // Map existing netclass names to their grid row so we can update them
+    std::map<wxString, int> nameToRow;
+
+    for( int row = 0; row < m_netclassGrid->GetNumberRows(); row++ )
+        nameToRow[m_netclassGrid->GetCellValue( row, GRID_NAME )] = row;
+
+    // The Default row is always last — used as fallback for unset fields
+    int defaultRow = m_netclassGrid->GetNumberRows() - 1;
+
+    // Add or update net classes
+    if( response.contains( "netclasses" ) && response["netclasses"].is_array() )
+    {
+        for( const auto& nc : response["netclasses"] )
+        {
+            if( !nc.contains( "name" ) )
+                continue;
+
+            wxString name = wxString::FromUTF8( nc["name"].get<std::string>() );
+
+            // Skip the Default netclass — don't overwrite it
+            if( name == "Default" )
+                continue;
+
+            int targetRow;
+            auto it = nameToRow.find( name );
+
+            if( it != nameToRow.end() )
+            {
+                // Update existing row
+                targetRow = it->second;
+            }
+            else
+            {
+                // Insert new row before the Default row
+                targetRow = std::max( 0, m_netclassGrid->GetNumberRows() - 1 );
+                m_netclassGrid->InsertRows( targetRow );
+                m_netclassGrid->SetCellValue( targetRow, GRID_NAME, name );
+
+                // Initialize defaults for the new row
+                wxString unspecified = KIGFX::COLOR4D::UNSPECIFIED.ToCSSString();
+                m_netclassGrid->SetCellValue( targetRow, GRID_PCB_COLOR, unspecified );
+                m_netclassGrid->SetCellValue( targetRow, GRID_SCHEMATIC_COLOR, unspecified );
+                m_netclassGrid->SetCellValue( targetRow, GRID_LINESTYLE, g_lineStyleNames[0] );
+                setNetclassRowNullableEditors( targetRow, false );
+
+                // Default row shifted down by one
+                defaultRow = m_netclassGrid->GetNumberRows() - 1;
+
+                // Update the map — existing rows at or after targetRow shifted down
+                for( auto& [n, r] : nameToRow )
+                {
+                    if( r >= targetRow )
+                        r++;
+                }
+
+                nameToRow[name] = targetRow;
+            }
+
+            // Set color from response
+            if( nc.contains( "color" ) && nc["color"].is_string() )
+            {
+                wxString colorHex = wxString::FromUTF8( nc["color"].get<std::string>() );
+                KIGFX::COLOR4D parsed( colorHex );
+
+                if( parsed != KIGFX::COLOR4D::UNSPECIFIED )
+                {
+                    wxString colorAsString = parsed.ToCSSString();
+                    m_netclassGrid->SetCellValue( targetRow, GRID_PCB_COLOR, colorAsString );
+                    m_netclassGrid->SetCellValue( targetRow, GRID_SCHEMATIC_COLOR, colorAsString );
+                }
+            }
+
+            // Set line style from response
+            if( nc.contains( "line_style" ) && nc["line_style"].is_string() )
+            {
+                wxString style = wxString::FromUTF8( nc["line_style"].get<std::string>() );
+                int idx = g_lineStyleNames.Index( style );
+
+                if( idx != wxNOT_FOUND )
+                    m_netclassGrid->SetCellValue( targetRow, GRID_LINESTYLE, g_lineStyleNames[idx] );
+            }
+
+            // Set schematic fields
+            if( m_isEEschema )
+            {
+                if( m_netclassGrid->GetCellValue( targetRow, GRID_WIREWIDTH ).IsEmpty() )
+                    m_netclassGrid->SetCellValue( targetRow, GRID_WIREWIDTH, "6 mils" );
+
+                if( m_netclassGrid->GetCellValue( targetRow, GRID_BUSWIDTH ).IsEmpty() )
+                    m_netclassGrid->SetCellValue( targetRow, GRID_BUSWIDTH, "12 mils" );
+            }
+            else
+            {
+                // Set PCB-specific fields from response (values in mm),
+                // falling back to the Default row's values when not provided
+                auto setMmField = [&]( const char* jsonKey, int gridCol )
+                {
+                    if( nc.contains( jsonKey ) && nc[jsonKey].is_number() )
+                    {
+                        double val = nc[jsonKey].get<double>();
+                        wxString str = wxString::Format( "%.4g mm", val );
+                        m_netclassGrid->SetCellValue( targetRow, gridCol, str );
+                    }
+                    else if( m_netclassGrid->GetCellValue( targetRow, gridCol ).IsEmpty() )
+                    {
+                        wxString defaultVal = m_netclassGrid->GetCellValue( defaultRow, gridCol );
+
+                        if( !defaultVal.IsEmpty() )
+                            m_netclassGrid->SetCellValue( targetRow, gridCol, defaultVal );
+                    }
+                };
+
+                setMmField( "clearance_mm",       GRID_CLEARANCE );
+                setMmField( "track_width_mm",      GRID_TRACKSIZE );
+                setMmField( "via_diameter_mm",     GRID_VIASIZE );
+                setMmField( "via_drill_mm",        GRID_VIADRILL );
+                setMmField( "uvia_diameter_mm",    GRID_uVIASIZE );
+                setMmField( "uvia_drill_mm",       GRID_uVIADRILL );
+                setMmField( "diff_pair_width_mm",  GRID_DIFF_PAIR_WIDTH );
+                setMmField( "diff_pair_gap_mm",    GRID_DIFF_PAIR_GAP );
+            }
+        }
+    }
+
+    // Rebuild dropdowns so new netclass names appear in assignment column
+    m_netclassesDirty = true;
+    rebuildNetclassDropdowns();
+
+    // Map existing patterns to their grid row so we can update them
+    std::map<wxString, int> patternToRow;
+
+    for( int row = 0; row < m_assignmentGrid->GetNumberRows(); row++ )
+        patternToRow[m_assignmentGrid->GetCellValue( row, 0 )] = row;
+
+    // Add or update assignments
+    if( response.contains( "assignments" ) && response["assignments"].is_array() )
+    {
+        for( const auto& assignment : response["assignments"] )
+        {
+            if( !assignment.contains( "pattern" ) || !assignment.contains( "netclass" ) )
+                continue;
+
+            wxString pattern = wxString::FromUTF8( assignment["pattern"].get<std::string>() );
+            wxString netclass = wxString::FromUTF8( assignment["netclass"].get<std::string>() );
+
+            // Validate that the target netclass exists (nameToRow has all non-Default rows,
+            // and "Default" is always valid)
+            if( netclass != wxT( "Default" ) && !nameToRow.count( netclass ) )
+                continue;
+
+            auto it = patternToRow.find( pattern );
+
+            if( it != patternToRow.end() )
+            {
+                // Update existing assignment's netclass
+                m_assignmentGrid->SetCellValue( it->second, 1, netclass );
+            }
+            else
+            {
+                // Add new assignment
+                int row = m_assignmentGrid->GetNumberRows();
+                m_assignmentGrid->AppendRows();
+                m_assignmentGrid->SetCellValue( row, 0, pattern );
+                m_assignmentGrid->SetCellValue( row, 1, netclass );
+                patternToRow[pattern] = row;
+            }
+        }
+    }
 }

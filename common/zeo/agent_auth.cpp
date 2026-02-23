@@ -1,5 +1,5 @@
-#include "agent_auth.h"
-#include "../agent_llm_client.h"
+#include <zeo/agent_auth.h>
+#include <zeo/zeo_constants.h>
 #include <kicad_curl/kicad_curl_easy.h>
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -311,6 +311,39 @@ bool AGENT_AUTH::IsTokenHardExpired()
 {
     // Token is actually expired and will be rejected by the server
     return wxDateTime::GetTimeNow() >= m_tokenExpiry;
+}
+
+
+// ============================================================================
+// Static Token Reader
+// ============================================================================
+
+std::string AGENT_AUTH::ReadAccessTokenFromDisk()
+{
+    std::string sessionData;
+
+    if( !ReadSessionFile( sessionData ) )
+        return "";
+
+    try
+    {
+        auto session = nlohmann::json::parse( sessionData );
+        std::string token = session.value( "access_token", "" );
+        long long   expiry = session.value( "token_expiry", 0LL );
+
+        if( token.empty() )
+            return "";
+
+        // Check hard expiry only — no refresh attempt
+        if( wxDateTime::GetTimeNow() >= expiry )
+            return "";
+
+        return token;
+    }
+    catch( ... )
+    {
+        return "";
+    }
 }
 
 

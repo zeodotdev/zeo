@@ -5,7 +5,7 @@
 #include "view/file_attach.h"
 #include "agent_llm_client.h"
 #include "agent_chat_history.h"
-#include "auth/agent_auth.h"
+#include <zeo/agent_auth.h>
 #include "../cloud/agent_cloud_sync.h"
 
 #include <algorithm>

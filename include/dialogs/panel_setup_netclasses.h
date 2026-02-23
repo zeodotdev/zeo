@@ -25,9 +25,13 @@
 #ifndef PANEL_SETUP_NETCLASSES_H
 #define PANEL_SETUP_NETCLASSES_H
 
+#include <atomic>
+#include <functional>
+#include <memory>
 #include <widgets/unit_binder.h>
 #include <widgets/paged_dialog.h>
 #include <panel_setup_netclasses_base.h>
+#include <nlohmann/json_fwd.hpp>
 
 class NET_SETTINGS;
 class NETCLASS;
@@ -49,6 +53,17 @@ public:
     void ImportSettingsFrom( const std::shared_ptr<NET_SETTINGS>& aNetSettings );
 
     void UpdateDelayProfileNames( const std::vector<wxString>& aNames ) const;
+
+    /**
+     * Enable the auto-generate button by providing editor context.
+     * The button is hidden by default; calling this shows it and configures the
+     * context callback used to gather design information for the LLM.
+     *
+     * @param aEditorType "schematic" or "pcb" — sent to the endpoint so the prompt adjusts
+     * @param aContextFn  Callback returning design context as a JSON object
+     */
+    void SetAutoGenerateContext( const std::string& aEditorType,
+                                  std::function<nlohmann::json()> aContextFn );
 
 private:
     void OnAddNetclassClick( wxCommandEvent& event ) override;
@@ -80,6 +95,11 @@ private:
 
     void setNetclassRowNullableEditors( int aRowId, bool aIsDefault );
 
+    // Auto-generate support
+    void OnAutoGenerateClick( wxCommandEvent& event );
+    void OnAutoGenerateComplete( bool aSuccess, const std::string& aResponse,
+                                  const std::string& aError );
+
 private:
     EDA_DRAW_FRAME*                 m_frame;
     bool                            m_isEEschema;
@@ -102,6 +122,12 @@ private:
 
     bool                  m_sortAsc;
     int                   m_sortCol;
+
+    // Auto-generate button and state
+    wxButton*                              m_autoGenerateButton;
+    std::string                            m_editorType;
+    std::function<nlohmann::json()>        m_getDesignContextFn;
+    std::shared_ptr<std::atomic<bool>>     m_autoGenerateCancelled;
 };
 
 #endif //PANEL_SETUP_NETCLASSES_H

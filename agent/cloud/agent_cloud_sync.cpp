@@ -1,5 +1,5 @@
 #include "agent_cloud_sync.h"
-#include "auth/agent_auth.h"
+#include <zeo/agent_auth.h>
 #include <kicad_curl/kicad_curl_easy.h>
 #include <wx/log.h>
 #include <wx/filename.h>

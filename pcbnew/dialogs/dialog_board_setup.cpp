@@ -53,6 +53,7 @@
 #include <advanced_config.h>
 #include <dialog_board_setup.h>
 #include <footprint.h>
+#include <nlohmann/json.hpp>
 
 
 #define RESOLVE_PAGE( T, pageIndex ) static_cast<T*>( m_treebook->ResolvePage( pageIndex ) )
@@ -209,10 +210,47 @@ DIALOG_BOARD_SETUP::DIALOG_BOARD_SETUP( PCB_EDIT_FRAME* aFrame, wxWindow* aParen
             [this]( wxWindow* aParent ) -> wxWindow*
             {
                 BOARD* board = m_frame->GetBoard();
-                return new PANEL_SETUP_NETCLASSES( aParent, m_frame,
+                auto* panel = new PANEL_SETUP_NETCLASSES( aParent, m_frame,
                                                    m_frame->Prj().GetProjectFile().NetSettings(),
                                                    board->GetNetClassAssignmentCandidates(),
                                                    false );
+
+                // Provide design context for AI-powered net class generation
+                panel->SetAutoGenerateContext( "pcb",
+                        [this]() -> nlohmann::json
+                        {
+                            nlohmann::json context;
+                            BOARD* board = m_frame->GetBoard();
+
+                            // Copper layer count
+                            context["copper_layers"] = board->GetCopperLayerCount();
+
+                            // Component summary (ref + value, grouped with counts)
+                            std::map<std::string, int> componentCounts;
+
+                            for( FOOTPRINT* fp : board->Footprints() )
+                            {
+                                std::string key = fp->GetReference().ToStdString() + " ("
+                                                  + fp->GetValue().ToStdString() + ")";
+                                componentCounts[key]++;
+                            }
+
+                            nlohmann::json components = nlohmann::json::array();
+
+                            for( const auto& [key, count] : componentCounts )
+                            {
+                                if( count > 1 )
+                                    components.push_back( key + " x" + std::to_string( count ) );
+                                else
+                                    components.push_back( key );
+                            }
+
+                            context["components"] = components;
+
+                            return context;
+                        } );
+
+                return panel;
             }, _( "Net Classes" ) );
 
     m_componentClassesPage = m_treebook->GetPageCount();

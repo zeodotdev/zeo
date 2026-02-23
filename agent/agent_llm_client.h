@@ -8,8 +8,7 @@
 #include <wx/thread.h>
 
 #include "agent_state.h"
-
-static const std::string ZEO_BASE_URL = "https://zeo-staging.vercel.app";
+#include <zeo/zeo_constants.h>
 
 class AGENT_AUTH;
 class AGENT_FRAME;

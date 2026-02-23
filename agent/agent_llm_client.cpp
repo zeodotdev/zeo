@@ -1,5 +1,5 @@
 #include "agent_llm_client.h"
-#include "auth/agent_auth.h"
+#include <zeo/agent_auth.h>
 #include "agent_frame.h"
 #include "agent_events.h"
 #include <id.h>

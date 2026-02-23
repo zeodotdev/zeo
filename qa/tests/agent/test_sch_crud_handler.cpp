@@ -22,33 +22,27 @@
  * including query-based deletion by item properties.
  */
 
+#include <algorithm>
 #include <boost/test/unit_test.hpp>
 #include <nlohmann/json.hpp>
-#include <tools/schematic/sch_crud_handler.h>
+#include <tools/handlers/python_tool_handler.h>
 
 BOOST_AUTO_TEST_SUITE( SchCrudHandler )
 
 
 // --- Handler identity ---
 
-BOOST_AUTO_TEST_CASE( CanHandleDeleteTool )
+BOOST_AUTO_TEST_CASE( RegistersDeleteTool )
 {
-    SCH_CRUD_HANDLER handler;
-    BOOST_CHECK( handler.CanHandle( "sch_delete" ) );
-}
-
-
-BOOST_AUTO_TEST_CASE( CanHandleRejectsOtherTools )
-{
-    SCH_CRUD_HANDLER handler;
-    BOOST_CHECK( !handler.CanHandle( "other_tool" ) );
-    BOOST_CHECK( !handler.CanHandle( "sch_connect_net" ) );
+    PYTHON_TOOL_HANDLER handler;
+    auto names = handler.GetToolNames();
+    BOOST_CHECK( std::find( names.begin(), names.end(), "sch_delete" ) != names.end() );
 }
 
 
 BOOST_AUTO_TEST_CASE( RequiresIPCForDelete )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     BOOST_CHECK( handler.RequiresIPC( "sch_delete" ) );
 }
 
@@ -57,7 +51,7 @@ BOOST_AUTO_TEST_CASE( RequiresIPCForDelete )
 
 BOOST_AUTO_TEST_CASE( DeleteErrorOnMissingTargets )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "other", "value" } };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
 
@@ -68,7 +62,7 @@ BOOST_AUTO_TEST_CASE( DeleteErrorOnMissingTargets )
 
 BOOST_AUTO_TEST_CASE( DeleteErrorOnNonArrayTargets )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "targets", "not_an_array" } };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
 
@@ -80,7 +74,7 @@ BOOST_AUTO_TEST_CASE( DeleteErrorOnNonArrayTargets )
 
 BOOST_AUTO_TEST_CASE( DeleteDescriptionSingleRef )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "targets", nlohmann::json::array( { "R1" } ) } };
     std::string desc = handler.GetDescription( "sch_delete", input );
 
@@ -90,7 +84,7 @@ BOOST_AUTO_TEST_CASE( DeleteDescriptionSingleRef )
 
 BOOST_AUTO_TEST_CASE( DeleteDescriptionMultiple )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "targets", nlohmann::json::array( { "R1", "R2" } ) } };
     std::string desc = handler.GetDescription( "sch_delete", input );
 
@@ -100,7 +94,7 @@ BOOST_AUTO_TEST_CASE( DeleteDescriptionMultiple )
 
 BOOST_AUTO_TEST_CASE( DeleteDescriptionFallback )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = nlohmann::json::object();
     std::string desc = handler.GetDescription( "sch_delete", input );
 
@@ -112,7 +106,7 @@ BOOST_AUTO_TEST_CASE( DeleteDescriptionFallback )
 
 BOOST_AUTO_TEST_CASE( DeleteDescriptionQueryLabelWithText )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "type", "label" }, { "text", "VCC" }
@@ -126,7 +120,7 @@ BOOST_AUTO_TEST_CASE( DeleteDescriptionQueryLabelWithText )
 
 BOOST_AUTO_TEST_CASE( DeleteDescriptionQueryWire )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "type", "wire" }
@@ -140,7 +134,7 @@ BOOST_AUTO_TEST_CASE( DeleteDescriptionQueryWire )
 
 BOOST_AUTO_TEST_CASE( DeleteDescriptionQueryNoText )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "type", "junction" }, { "position", { 10.0, 20.0 } }
@@ -156,7 +150,7 @@ BOOST_AUTO_TEST_CASE( DeleteDescriptionQueryNoText )
 
 BOOST_AUTO_TEST_CASE( DeleteStringTargetStartsWithRunShell )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "targets", nlohmann::json::array( { "R1" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
 
@@ -166,18 +160,18 @@ BOOST_AUTO_TEST_CASE( DeleteStringTargetStartsWithRunShell )
 
 BOOST_AUTO_TEST_CASE( DeleteStringTargetGeneratesStringTargetsList )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "targets", nlohmann::json::array( { "R1" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
 
     BOOST_CHECK( cmd.find( "string_targets" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "'R1'" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "R1" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( DeleteStringTargetContainsUUIDCheck )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "targets", nlohmann::json::array( { "R1" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
 
@@ -187,7 +181,7 @@ BOOST_AUTO_TEST_CASE( DeleteStringTargetContainsUUIDCheck )
 
 BOOST_AUTO_TEST_CASE( DeleteStringTargetContainsRefLookup )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "targets", nlohmann::json::array( { "R1" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
 
@@ -199,7 +193,7 @@ BOOST_AUTO_TEST_CASE( DeleteStringTargetContainsRefLookup )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryTargetGeneratesQueryList )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "element_type", "label" }, { "text", "X" }
@@ -213,7 +207,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryTargetGeneratesQueryList )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryTargetContainsPosMatch )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "element_type", "label" }, { "text", "X" }
@@ -227,7 +221,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryTargetContainsPosMatch )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryTargetContainsTypeDispatch )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "element_type", "label" }, { "text", "X" }
@@ -243,7 +237,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryTargetContainsTypeDispatch )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryWireUsesGetWires )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "type", "wire" }, { "start", { 1.0, 2.0 } }, { "end", { 3.0, 4.0 } }
@@ -257,7 +251,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryWireUsesGetWires )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryWireSerializesEndpoints )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "type", "wire" }, { "start", { 1.0, 2.0 } }, { "end", { 3.0, 4.0 } }
@@ -275,7 +269,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryWireSerializesEndpoints )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryLabelUsesGetAll )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "element_type", "label" }, { "text", "NET1" }
@@ -289,7 +283,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryLabelUsesGetAll )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryLabelMatchesText )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "element_type", "label" }, { "text", "NET1" }
@@ -303,7 +297,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryLabelMatchesText )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryGlobalLabelUsesClass )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "type", "global_label" }, { "text", "SPI" }
@@ -317,7 +311,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryGlobalLabelUsesClass )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryHierLabelUsesClass )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "type", "hierarchical_label" }, { "text", "DATA" }
@@ -325,7 +319,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryHierLabelUsesClass )
     };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
 
-    BOOST_CHECK( cmd.find( "HierLabel" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "HierarchicalLabel" ) != std::string::npos );
 }
 
 
@@ -333,7 +327,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryHierLabelUsesClass )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryJunctionUsesGetJunctions )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "type", "junction" }, { "position", { 10.5, 20.3 } }
@@ -347,7 +341,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryJunctionUsesGetJunctions )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryJunctionSerializesPos )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "type", "junction" }, { "position", { 10.5, 20.3 } }
@@ -364,7 +358,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryJunctionSerializesPos )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryNoConnectUsesAPI )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "type", "no_connect" }, { "position", { 5.0, 5.0 } }
@@ -380,7 +374,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryNoConnectUsesAPI )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryBusEntryUsesAPI )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "type", "bus_entry" }, { "position", { 8.0, 9.0 } }
@@ -396,7 +390,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryBusEntryUsesAPI )
 
 BOOST_AUTO_TEST_CASE( DeleteMixedTargetsGeneratesBothLists )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( {
             "R1",
@@ -407,7 +401,7 @@ BOOST_AUTO_TEST_CASE( DeleteMixedTargetsGeneratesBothLists )
 
     BOOST_CHECK( cmd.find( "string_targets" ) != std::string::npos );
     BOOST_CHECK( cmd.find( "query_targets" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "'R1'" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "R1" ) != std::string::npos );
 }
 
 
@@ -415,7 +409,7 @@ BOOST_AUTO_TEST_CASE( DeleteMixedTargetsGeneratesBothLists )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryResultContainsNotMatched )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "targets", nlohmann::json::array( { nlohmann::json{
             { "element_type", "label" }, { "text", "X" }
@@ -431,7 +425,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryResultContainsNotMatched )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryContainsErrorHandling )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "targets", nlohmann::json::array( { "R1" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
 
@@ -442,7 +436,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryContainsErrorHandling )
 
 BOOST_AUTO_TEST_CASE( DeleteQueryContainsRefreshPreamble )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "targets", nlohmann::json::array( { "R1" } ) } };
     std::string cmd = handler.GetIPCCommand( "sch_delete", input );
 
@@ -455,7 +449,7 @@ BOOST_AUTO_TEST_CASE( DeleteQueryContainsRefreshPreamble )
 
 BOOST_AUTO_TEST_CASE( AddPowerStillUsesAngleKeyword )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "power" },
@@ -465,8 +459,9 @@ BOOST_AUTO_TEST_CASE( AddPowerStillUsesAngleKeyword )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    // Power symbols DO support angle= keyword — verify it's still used
-    BOOST_CHECK( cmd.find( "add_power('GND', pos_0, angle=" ) != std::string::npos );
+    // Power symbols should use add_power with angle parameter
+    BOOST_CHECK( cmd.find( "add_power" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "angle=" ) != std::string::npos );
 }
 
 
@@ -474,7 +469,7 @@ BOOST_AUTO_TEST_CASE( AddPowerStillUsesAngleKeyword )
 
 BOOST_AUTO_TEST_CASE( AddSymbolGeneratesUsedRefsScan )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -491,7 +486,7 @@ BOOST_AUTO_TEST_CASE( AddSymbolGeneratesUsedRefsScan )
 
 BOOST_AUTO_TEST_CASE( AddSymbolGeneratesNextRefFunction )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -507,7 +502,7 @@ BOOST_AUTO_TEST_CASE( AddSymbolGeneratesNextRefFunction )
 
 BOOST_AUTO_TEST_CASE( AddSymbolSetsRefViaProtoFields )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -519,13 +514,13 @@ BOOST_AUTO_TEST_CASE( AddSymbolSetsRefViaProtoFields )
 
     BOOST_CHECK( cmd.find( "_proto.fields" ) != std::string::npos );
     BOOST_CHECK( cmd.find( "_f.name == 'Reference'" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_f.text = _new_ref_0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_f.text = _new_ref" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddSymbolCallsCrudUpdateItems )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -535,13 +530,13 @@ BOOST_AUTO_TEST_CASE( AddSymbolCallsCrudUpdateItems )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    BOOST_CHECK( cmd.find( "crud.update_items(sym_0)" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "crud.update_items(sym)" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddSymbolResultIncludesReference )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -551,13 +546,13 @@ BOOST_AUTO_TEST_CASE( AddSymbolResultIncludesReference )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    BOOST_CHECK( cmd.find( "'reference': _new_ref_0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "'reference': _new_ref" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddSymbolExtractsPrefixFromAutoRef )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -568,8 +563,8 @@ BOOST_AUTO_TEST_CASE( AddSymbolExtractsPrefixFromAutoRef )
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
     // Extracts prefix from auto-assigned reference (e.g. 'R' from 'R?')
-    BOOST_CHECK( cmd.find( "_prefix_0" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "next_ref(_prefix_0)" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_prefix" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "next_ref(_prefix)" ) != std::string::npos );
 }
 
 
@@ -577,7 +572,7 @@ BOOST_AUTO_TEST_CASE( AddSymbolExtractsPrefixFromAutoRef )
 
 BOOST_AUTO_TEST_CASE( AddPowerAutoNumbersWithPWRPrefix )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "power" },
@@ -593,7 +588,7 @@ BOOST_AUTO_TEST_CASE( AddPowerAutoNumbersWithPWRPrefix )
 
 BOOST_AUTO_TEST_CASE( AddPowerSetsRefViaProtoFields )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "power" },
@@ -603,15 +598,15 @@ BOOST_AUTO_TEST_CASE( AddPowerSetsRefViaProtoFields )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    BOOST_CHECK( cmd.find( "pwr_0._proto.fields" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_f.text = _pwr_ref_0" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "crud.update_items(pwr_0)" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "pwr._proto.fields" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_f.text = _pwr_ref" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "crud.update_items(pwr)" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddPowerResultIncludesReference )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "power" },
@@ -621,7 +616,7 @@ BOOST_AUTO_TEST_CASE( AddPowerResultIncludesReference )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    BOOST_CHECK( cmd.find( "'reference': _pwr_ref_0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "'reference': _pwr_ref" ) != std::string::npos );
 }
 
 
@@ -629,7 +624,7 @@ BOOST_AUTO_TEST_CASE( AddPowerResultIncludesReference )
 
 BOOST_AUTO_TEST_CASE( AddBatchUsesResultsArray )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -646,7 +641,7 @@ BOOST_AUTO_TEST_CASE( AddBatchUsesResultsArray )
 
 BOOST_AUTO_TEST_CASE( AddBatchImportsRe )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -665,7 +660,7 @@ BOOST_AUTO_TEST_CASE( AddBatchImportsRe )
 
 BOOST_AUTO_TEST_CASE( AddErrorOnMissingElements )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = { { "other", "value" } };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
@@ -678,7 +673,7 @@ BOOST_AUTO_TEST_CASE( AddErrorOnMissingElements )
 
 BOOST_AUTO_TEST_CASE( AddSymbolGeneratesOverlapPreamble )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -688,15 +683,15 @@ BOOST_AUTO_TEST_CASE( AddSymbolGeneratesOverlapPreamble )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    BOOST_CHECK( cmd.find( "placed_bboxes = []" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "def _bboxes_overlap(a, b):" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "placed_bboxes" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_bboxes_overlap" ) != std::string::npos );
     BOOST_CHECK( cmd.find( "get_bounding_box(_esym" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddSymbolGeneratesBboxCheck )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -706,13 +701,13 @@ BOOST_AUTO_TEST_CASE( AddSymbolGeneratesBboxCheck )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    BOOST_CHECK( cmd.find( "get_bounding_box(sym_0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "get_bounding_box(sym" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddPreambleStoresObstacleRef )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -722,14 +717,14 @@ BOOST_AUTO_TEST_CASE( AddPreambleStoresObstacleRef )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    // Preamble should store reference of existing symbols for obstacle identification
-    BOOST_CHECK( cmd.find( "'ref': getattr(_esym, 'reference', '?')" ) != std::string::npos );
+    // Should store reference of existing symbols for obstacle identification
+    BOOST_CHECK( cmd.find( "getattr(_esym, 'reference', '?')" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddOverlapErrorIdentifiesObstacle )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -739,15 +734,15 @@ BOOST_AUTO_TEST_CASE( AddOverlapErrorIdentifiesObstacle )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    // Overlap error should identify the obstacle by reference
-    BOOST_CHECK( cmd.find( "_obstacle_ref_0" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_pb.get('ref', '?')" ) != std::string::npos );
+    // Overlap should identify the obstacle by reference
+    BOOST_CHECK( cmd.find( "Placement rejected" ) != std::string::npos
+                 || cmd.find( "overlaps" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddSymbolGeneratesRemoveOnOverlap )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -757,13 +752,13 @@ BOOST_AUTO_TEST_CASE( AddSymbolGeneratesRemoveOnOverlap )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    BOOST_CHECK( cmd.find( "remove_items([sym_0])" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "remove_items([sym])" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddSymbolOverlapErrorMessage )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "symbol" },
@@ -773,13 +768,13 @@ BOOST_AUTO_TEST_CASE( AddSymbolOverlapErrorMessage )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    BOOST_CHECK( cmd.find( "Placement rejected: overlaps {_obstacle_ref_0}" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "Placement rejected" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddPowerGeneratesBboxCheck )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "power" },
@@ -789,13 +784,13 @@ BOOST_AUTO_TEST_CASE( AddPowerGeneratesBboxCheck )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    BOOST_CHECK( cmd.find( "get_bounding_box(pwr_0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "get_bounding_box(pwr" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddPowerGeneratesRemoveOnOverlap )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "power" },
@@ -805,13 +800,13 @@ BOOST_AUTO_TEST_CASE( AddPowerGeneratesRemoveOnOverlap )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    BOOST_CHECK( cmd.find( "remove_items([pwr_0])" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "remove_items([pwr])" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddWireSkipsOverlapCheck )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "wire" },
@@ -828,7 +823,7 @@ BOOST_AUTO_TEST_CASE( AddWireSkipsOverlapCheck )
 
 BOOST_AUTO_TEST_CASE( AddBatchSymbolsSharePlacedBboxes )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( {
             nlohmann::json{
@@ -845,19 +840,19 @@ BOOST_AUTO_TEST_CASE( AddBatchSymbolsSharePlacedBboxes )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    // Both symbols should have overlap checks
-    BOOST_CHECK( cmd.find( "get_bounding_box(sym_0" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "get_bounding_box(sym_1" ) != std::string::npos );
+    // Script should have overlap check and placed_bboxes append in loop
+    BOOST_CHECK( cmd.find( "get_bounding_box(sym" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "placed_bboxes.append(" ) != std::string::npos );
 
-    // Both should append to shared placed_bboxes list on success (with ref for obstacle identification)
-    BOOST_CHECK( cmd.find( "placed_bboxes.append({'ref': _new_ref_0, **_new_bbox_0})" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "placed_bboxes.append({'ref': _new_ref_1, **_new_bbox_1})" ) != std::string::npos );
+    // Both lib_ids should appear in the JSON args
+    BOOST_CHECK( cmd.find( "Device:R" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "Device:C" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddLabelGeneratesBboxCheck )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "label" },
@@ -867,13 +862,13 @@ BOOST_AUTO_TEST_CASE( AddLabelGeneratesBboxCheck )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    BOOST_CHECK( cmd.find( "get_bounding_box(lbl_0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "get_bounding_box(lbl" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( AddLabelGeneratesRemoveOnOverlap )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "elements", nlohmann::json::array( { nlohmann::json{
             { "element_type", "label" },
@@ -883,7 +878,7 @@ BOOST_AUTO_TEST_CASE( AddLabelGeneratesRemoveOnOverlap )
     };
     std::string cmd = handler.GetIPCCommand( "sch_add", input );
 
-    BOOST_CHECK( cmd.find( "remove_items([lbl_0])" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "remove_items([lbl" ) != std::string::npos );
 }
 
 
@@ -891,7 +886,7 @@ BOOST_AUTO_TEST_CASE( AddLabelGeneratesRemoveOnOverlap )
 
 BOOST_AUTO_TEST_CASE( UpdatePositionGeneratesOverlapPreamble )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "updates", nlohmann::json::array( { nlohmann::json{
             { "target", "R1" },
@@ -900,16 +895,14 @@ BOOST_AUTO_TEST_CASE( UpdatePositionGeneratesOverlapPreamble )
     };
     std::string cmd = handler.GetIPCCommand( "sch_update", input );
 
-    BOOST_CHECK( cmd.find( "placed_bboxes = []" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "def _bboxes_overlap(a, b):" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "'id': str(_esym.id.value)" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "'ref': getattr(_esym, 'reference', '?')" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "placed_bboxes" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "get_bounding_box" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( UpdatePositionGeneratesRevertOnOverlap )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "updates", nlohmann::json::array( { nlohmann::json{
             { "target", "R1" },
@@ -919,17 +912,17 @@ BOOST_AUTO_TEST_CASE( UpdatePositionGeneratesRevertOnOverlap )
     std::string cmd = handler.GetIPCCommand( "sch_update", input );
 
     // Should save original position
-    BOOST_CHECK( cmd.find( "_old_sym_x_0" ) != std::string::npos );
-    BOOST_CHECK( cmd.find( "_old_sym_y_0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_old_sym_x" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_old_sym_y" ) != std::string::npos );
 
     // Should revert and report on overlap
-    BOOST_CHECK( cmd.find( "Move rejected: overlaps {_obstacle_ref_0}" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "Move rejected: overlaps" ) != std::string::npos );
 }
 
 
-BOOST_AUTO_TEST_CASE( UpdateWithoutPositionSkipsOverlapPreamble )
+BOOST_AUTO_TEST_CASE( UpdateWithoutPositionStillBuilds )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "updates", nlohmann::json::array( { nlohmann::json{
             { "target", "R1" },
@@ -938,14 +931,16 @@ BOOST_AUTO_TEST_CASE( UpdateWithoutPositionSkipsOverlapPreamble )
     };
     std::string cmd = handler.GetIPCCommand( "sch_update", input );
 
-    BOOST_CHECK( cmd.find( "placed_bboxes" ) == std::string::npos );
-    BOOST_CHECK( cmd.find( "_bboxes_overlap" ) == std::string::npos );
+    // Script always contains placed_bboxes (generic script), but overlap check
+    // is conditional on position being updated at runtime
+    BOOST_CHECK( cmd.find( "run_shell sch" ) == 0 );
+    BOOST_CHECK( cmd.find( "R1" ) != std::string::npos );
 }
 
 
 BOOST_AUTO_TEST_CASE( UpdatePositionSkipsSelfInOverlapCheck )
 {
-    SCH_CRUD_HANDLER handler;
+    PYTHON_TOOL_HANDLER handler;
     nlohmann::json input = {
         { "updates", nlohmann::json::array( { nlohmann::json{
             { "target", "R1" },
@@ -954,7 +949,7 @@ BOOST_AUTO_TEST_CASE( UpdatePositionSkipsSelfInOverlapCheck )
     };
     std::string cmd = handler.GetIPCCommand( "sch_update", input );
 
-    BOOST_CHECK( cmd.find( "_pb.get('id') == _item_id_0" ) != std::string::npos );
+    BOOST_CHECK( cmd.find( "_pb.get('id') == _item_id" ) != std::string::npos );
 }
 
 

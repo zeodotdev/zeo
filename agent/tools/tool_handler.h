@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 class wxEvtHandler;
@@ -17,49 +18,36 @@ public:
     virtual ~TOOL_HANDLER() = default;
 
     /**
-     * Check if this handler can process the given tool name.
-     * @param aToolName The name of the tool to check.
-     * @return true if this handler can process the tool.
+     * Return the tool names this handler supports.
+     * Called once at registration time to build the dispatch map.
      */
-    virtual bool CanHandle( const std::string& aToolName ) const = 0;
+    virtual std::vector<std::string> GetToolNames() const = 0;
 
     /**
      * Execute the tool with the given input parameters.
-     * @param aToolName The name of the tool to execute.
-     * @param aInput The JSON input parameters for the tool.
-     * @return The result string from tool execution.
      */
     virtual std::string Execute( const std::string& aToolName, const nlohmann::json& aInput ) = 0;
 
     /**
      * Generate a human-readable description for a tool call.
-     * @param aToolName The name of the tool.
-     * @param aInput The tool input parameters as JSON.
-     * @return A human-readable description string.
      */
     virtual std::string GetDescription( const std::string& aToolName,
                                         const nlohmann::json& aInput ) const = 0;
 
     /**
-     * Set the project path for path validation.
-     * Handlers should validate that file operations stay within this directory.
-     * @param aPath The absolute path to the project directory.
-     */
-    virtual void SetProjectPath( const std::string& aPath ) { /* Default no-op */ }
-
-    /**
      * Check if this tool requires IPC (run_shell) execution rather than direct execution.
-     * Tools that need KiCad's live document state (e.g., ERC) return true.
-     * @param aToolName The name of the tool to check.
-     * @return true if the tool requires IPC execution.
      */
     virtual bool RequiresIPC( const std::string& aToolName ) const { return false; }
 
     /**
+     * Get the IPC command string for tools that require IPC execution.
+     * Only called if RequiresIPC() returns true.
+     */
+    virtual std::string GetIPCCommand( const std::string& aToolName,
+                                        const nlohmann::json& aInput ) const { return ""; }
+
+    /**
      * Check if this tool executes asynchronously.
-     * Async tools run in a background thread and post results via events.
-     * @param aToolName The name of the tool to check.
-     * @return true if the tool executes asynchronously.
      */
     virtual bool IsAsync( const std::string& aToolName ) const { return false; }
 
@@ -67,72 +55,12 @@ public:
      * Start asynchronous execution of the tool.
      * Only called if IsAsync() returns true. The tool should spawn a background
      * thread and post EVT_TOOL_EXECUTION_COMPLETE when finished.
-     * @param aToolName The name of the tool to execute.
-     * @param aInput The JSON input parameters for the tool.
-     * @param aToolUseId The unique ID for this tool call (needed for result posting).
-     * @param aEventHandler The event handler to post results to (typically AGENT_FRAME).
      */
     virtual void ExecuteAsync( const std::string& aToolName, const nlohmann::json& aInput,
                                const std::string& aToolUseId, wxEvtHandler* aEventHandler )
     {
         // Default implementation does nothing - override in async handlers
     }
-
-    /**
-     * Get the IPC command string for tools that require IPC execution.
-     * Only called if RequiresIPC() returns true.
-     * @param aToolName The name of the tool.
-     * @param aInput The tool input parameters as JSON.
-     * @return The command string to execute via run_shell (e.g., "run_shell sch <code>").
-     */
-    virtual std::string GetIPCCommand( const std::string& aToolName,
-                                        const nlohmann::json& aInput ) const { return ""; }
-
-    /**
-     * Set whether the schematic editor is currently open.
-     * When the editor is open, file-based write operations should be blocked
-     * to prevent data conflicts between IPC and direct file access.
-     * @param aOpen true if the schematic editor is open.
-     */
-    virtual void SetSchematicEditorOpen( bool aOpen ) { m_schematicEditorOpen = aOpen; }
-
-    /**
-     * Check if the schematic editor is currently open.
-     * @return true if the schematic editor is open.
-     */
-    virtual bool IsSchematicEditorOpen() const { return m_schematicEditorOpen; }
-
-    /**
-     * Set whether the PCB editor is currently open.
-     * When the editor is open, file-based write operations should be blocked
-     * to prevent data conflicts between IPC and direct file access.
-     * @param aOpen true if the PCB editor is open.
-     */
-    virtual void SetPcbEditorOpen( bool aOpen ) { m_pcbEditorOpen = aOpen; }
-
-    /**
-     * Check if the PCB editor is currently open.
-     * @return true if the PCB editor is open.
-     */
-    virtual bool IsPcbEditorOpen() const { return m_pcbEditorOpen; }
-
-    /**
-     * Function type for sending IPC requests to other KiCad frames.
-     * Parameters: (destination frame type, JSON payload string)
-     * Returns: response string from the target frame.
-     */
-    using SendRequestFn = std::function<std::string( int, const std::string& )>;
-
-    /**
-     * Provide an IPC send function so the handler can communicate with editor frames.
-     * Called before Execute() by ExecuteToolSync.
-     */
-    void SetSendRequestFn( SendRequestFn aFn ) { m_sendRequestFn = std::move( aFn ); }
-
-protected:
-    bool m_schematicEditorOpen = false;
-    bool m_pcbEditorOpen = false;
-    SendRequestFn m_sendRequestFn;
 };
 
 #endif // TOOL_HANDLER_H

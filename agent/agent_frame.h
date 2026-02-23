@@ -20,6 +20,7 @@
 
 // Forward Declarations
 class AGENT_AUTH;
+class AGENT_CLOUD_SYNC;
 class CHAT_CONTROLLER;
 class WEBVIEW_BRIDGE;
 struct CONFLICT_INFO;
@@ -166,6 +167,11 @@ private:
     void UpdateAuthUI();
     bool CheckAuthentication();
     void EnsureAuth();          // Lazy-init fallback auth if no shared pointer received
+
+    // ── Cloud Sync ───────────────────────────────────────────────────────
+    std::unique_ptr<AGENT_CLOUD_SYNC> m_cloudSync;
+    void ConfigureCloudSync();  // Wire auth + supabase config to cloud sync
+    void UploadCurrentChat();   // Upload current conversation (debounced)
 
     // ── Chat State ────────────────────────────────────────────────────────
 

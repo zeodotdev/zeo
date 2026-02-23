@@ -1,15 +1,16 @@
 #include "agent_frame.h"
 #include "agent_chat_history.h"
 #include "auth/agent_auth.h"
+#include "cloud/agent_cloud_sync.h"
 #include "bridge/webview_bridge.h"
 #include "view/agent_markdown.h"
 #include "view/unified_html_template.h"
-#include "tools/agent_tools.h"
+#include "tools/tool_schemas.h"
 #include "core/chat_controller.h"
 #include "core/chat_events.h"
 #include "tools/tool_registry.h"
-#include "tools/kicad_file/file_writer.h"
-#include "tools/schematic/sch_parser.h"
+#include "tools/handlers/check_status_handler.h"
+#include "tools/handlers/open_editor_handler.h"
 #include <kiway_express.h>
 #include <mail_type.h>
 #include <wx/log.h>
@@ -19,10 +20,7 @@
 #include <frame_type.h>
 #include <sstream>
 #include <fstream>
-#include <cstdint>
-#include <thread>
 #include <set>
-#include <algorithm>
 #include <wx/sizer.h>
 #include <wx/msgdlg.h>
 #include <wx/utils.h>
@@ -55,6 +53,7 @@
 #endif
 
 using json = nlohmann::json;
+
 
 // Helper function to extract the error line from a Python traceback.
 // Python tracebacks end with the actual error on the last non-empty line.
@@ -395,11 +394,15 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Wire auth to LLM client (nullptr for now, updated when auth pointer arrives)
     m_llmClient->SetAuth( nullptr );
 
+    // Cloud sync (configured when auth pointer arrives)
+    m_cloudSync = std::make_unique<AGENT_CLOUD_SYNC>();
+
     // Create chat controller
     m_chatController = std::make_unique<CHAT_CONTROLLER>( this );
     m_chatController->SetLLMClient( m_llmClient.get() );
     m_chatController->SetChatHistoryDb( &m_chatHistoryDb );
     m_chatController->SetAuth( nullptr );
+    m_chatController->SetCloudSync( m_cloudSync.get() );
     m_chatController->SetKiwayRequestFn(
         [this]( int aFrameType, const std::string& aPayload ) -> std::string {
             return SendRequest( aFrameType, aPayload );
@@ -410,156 +413,22 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             if( projectPath.IsEmpty() )
                 return "";
 
-            // Build JSON with project path, PCB file, and schematic hierarchy
-            nlohmann::json projectContext;
-            projectContext["path"] = projectPath.ToStdString();
+            // Sync KIWAY state to registry so BuildStatusJson() has fresh data
+            auto& reg = TOOL_REGISTRY::Instance();
+            reg.SetProjectPath( projectPath.ToStdString() );
+            reg.SetProjectName( Kiway().Prj().GetProjectName().ToStdString() );
 
-            // Get project name for conventional file detection
-            wxFileName projDir( projectPath, "" );
-            wxString projName = projDir.GetDirs().IsEmpty() ? wxString() : projDir.GetDirs().Last();
+            KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
+            KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
+            reg.SetSchematicEditorOpen( schEditor && schEditor->IsShown() );
+            reg.SetPcbEditorOpen( pcbEditor && pcbEditor->IsShown() );
 
-            // Find PCB file - try projectName.kicad_pcb first, then scan directory
-            wxDir dir( projectPath );
-            if( !projName.IsEmpty() )
-            {
-                wxString expectedPcb = projectPath + projName + ".kicad_pcb";
-                if( wxFileExists( expectedPcb ) )
-                {
-                    projectContext["pcb_file"] = ( projName + ".kicad_pcb" ).ToStdString();
-                }
-            }
+            std::vector<std::string> openFiles;
+            for( const auto& f : GetOpenEditorFiles() )
+                openFiles.push_back( f.ToStdString() );
+            reg.SetOpenEditorFiles( std::move( openFiles ) );
 
-            // Fallback: scan for all PCB files if expected one not found
-            if( !projectContext.contains( "pcb_file" ) && dir.IsOpened() )
-            {
-                nlohmann::json pcbFiles = nlohmann::json::array();
-                wxString filename;
-                bool cont = dir.GetFirst( &filename, "*.kicad_pcb", wxDIR_FILES );
-                while( cont )
-                {
-                    pcbFiles.push_back( filename.ToStdString() );
-                    cont = dir.GetNext( &filename );
-                }
-                if( !pcbFiles.empty() )
-                    projectContext["pcb_files"] = pcbFiles;
-            }
-
-            // Build schematic hierarchy from root sheet(s)
-            // Define recursive hierarchy builder
-            std::function<nlohmann::json( const std::string&, std::set<std::string>& )> buildHierarchy;
-            buildHierarchy = [&]( const std::string& schPath,
-                                  std::set<std::string>& visited ) -> nlohmann::json {
-                nlohmann::json node;
-
-                // Avoid infinite loops from circular references
-                if( visited.count( schPath ) )
-                    return node;
-                visited.insert( schPath );
-
-                auto summary = SchParser::GetSummary( schPath );
-                node["file"] = summary.file;
-                node["uuid"] = summary.uuid;
-
-                // Recursively process child sheets
-                if( !summary.sheets.empty() )
-                {
-                    nlohmann::json children = nlohmann::json::array();
-                    for( const auto& sheet : summary.sheets )
-                    {
-                        // Resolve child sheet path relative to parent
-                        wxFileName childPath( schPath );
-                        childPath.SetFullName( sheet.filename );
-                        std::string childFullPath = childPath.GetFullPath().ToStdString();
-
-                        nlohmann::json childNode = buildHierarchy( childFullPath, visited );
-                        if( !childNode.empty() )
-                        {
-                            childNode["name"] = sheet.name;  // Display name from parent
-                            children.push_back( childNode );
-                        }
-                    }
-                    if( !children.empty() )
-                        node["children"] = children;
-                }
-
-                return node;
-            };
-
-            // Find root schematic(s) - check .kicad_pro for top_level_sheets
-            std::vector<std::string> rootSchFiles;
-
-            // Try to read top-level sheets from project file
-            if( !projName.IsEmpty() )
-            {
-                wxString proFile = projectPath + projName + ".kicad_pro";
-                if( wxFileExists( proFile ) )
-                {
-                    std::ifstream ifs( proFile.ToStdString() );
-                    if( ifs.good() )
-                    {
-                        try
-                        {
-                            nlohmann::json projJson = nlohmann::json::parse( ifs );
-                            if( projJson.contains( "schematic" ) &&
-                                projJson["schematic"].contains( "top_level_sheets" ) )
-                            {
-                                for( const auto& sheet : projJson["schematic"]["top_level_sheets"] )
-                                {
-                                    if( sheet.contains( "filename" ) )
-                                    {
-                                        wxString schFile = projectPath +
-                                            wxString::FromUTF8( sheet["filename"].get<std::string>() );
-                                        if( wxFileExists( schFile ) )
-                                            rootSchFiles.push_back( schFile.ToStdString() );
-                                    }
-                                }
-                            }
-                        }
-                        catch( ... )
-                        {
-                            // JSON parse error - fall back to heuristics
-                        }
-                    }
-                }
-            }
-
-            // Fall back to project-name.kicad_sch if no top-level sheets defined
-            if( rootSchFiles.empty() && !projName.IsEmpty() )
-            {
-                wxString rootCandidate = projectPath + projName + ".kicad_sch";
-                if( wxFileExists( rootCandidate ) )
-                    rootSchFiles.push_back( rootCandidate.ToStdString() );
-            }
-
-            // Build hierarchy for each root
-            if( !rootSchFiles.empty() )
-            {
-                nlohmann::json hierarchyArray = nlohmann::json::array();
-                std::set<std::string> visited;
-
-                for( const auto& rootFile : rootSchFiles )
-                {
-                    nlohmann::json rootNode = buildHierarchy( rootFile, visited );
-                    if( !rootNode.empty() )
-                        hierarchyArray.push_back( rootNode );
-                }
-
-                projectContext["hierarchy"] = hierarchyArray;
-            }
-
-            // Add files currently open in editors
-            auto openFiles = GetOpenEditorFiles();
-            if( !openFiles.empty() )
-            {
-                nlohmann::json arr = nlohmann::json::array();
-                for( const auto& f : openFiles )
-                    arr.push_back( f.ToStdString() );
-                projectContext["open_editor_files"] = arr;
-                wxLogInfo( "AGENT: Injecting %zu open editor file(s) into project context",
-                           openFiles.size() );
-            }
-
-            return projectContext.dump( 2 );
+            return CHECK_STATUS_HANDLER::BuildStatusJson();
         } );
 
     // Schematic summary callback for user edit detection between turns.
@@ -609,7 +478,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             return result;
         } );
 
-    // Editor state sync callback - ensures TOOL_REGISTRY has accurate editor state before tool execution
+    // Sync editor + project state to TOOL_REGISTRY before each tool execution
     m_chatController->SetEditorStateSyncFn(
         [this]() {
             KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
@@ -618,8 +487,16 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             bool schOpen = schEditor && schEditor->IsShown();
             bool pcbOpen = pcbEditor && pcbEditor->IsShown();
 
-            TOOL_REGISTRY::Instance().SetSchematicEditorOpen( schOpen );
-            TOOL_REGISTRY::Instance().SetPcbEditorOpen( pcbOpen );
+            auto& reg = TOOL_REGISTRY::Instance();
+            reg.SetSchematicEditorOpen( schOpen );
+            reg.SetPcbEditorOpen( pcbOpen );
+            reg.SetProjectPath( Kiway().Prj().GetProjectPath().ToStdString() );
+            reg.SetProjectName( Kiway().Prj().GetProjectName().ToStdString() );
+
+            std::vector<std::string> openFiles;
+            for( const auto& f : GetOpenEditorFiles() )
+                openFiles.push_back( f.ToStdString() );
+            reg.SetOpenEditorFiles( std::move( openFiles ) );
         } );
 
     // Load persisted model preference (default to Claude 4.6 Opus)
@@ -1080,6 +957,9 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
                 if( m_chatController )
                     m_chatController->SetAuth( m_auth );
 
+                // Wire auth to cloud sync and start initial sync
+                ConfigureCloudSync();
+
                 UpdateAuthUI();
                 wxLogTrace( "Agent", "Using shared auth from launcher" );
             }
@@ -1131,7 +1011,7 @@ void AGENT_FRAME::DoSelectionPillClick()
 
         // Append @{Label} to input via bridge
         // Build the text to append and let JS handle cursor placement
-        m_bridge->PushInputSetText( "@{" + label + "} " );
+        m_bridge->PushInputAppendText( "@{" + label + "} " );
     }
 }
 
@@ -1285,6 +1165,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
         m_chatHistoryDb.Save( m_chatHistory );
+        UploadCurrentChat();
     }
     else
     {
@@ -1337,6 +1218,7 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
         m_chatHistoryDb.Save( m_chatHistory );
+        UploadCurrentChat();
     }
 
     // Clear uncommitted tool calls (haven't been added to history yet)
@@ -1544,6 +1426,7 @@ void AGENT_FRAME::SendQueuedMessage()
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
         m_chatHistoryDb.Save( m_chatHistory );
+        UploadCurrentChat();
     }
 }
 
@@ -2117,7 +2000,7 @@ void AGENT_FRAME::OnPopupClick( wxCommandEvent& aEvent )
 
 void AGENT_FRAME::InitializeTools()
 {
-    m_tools = AgentTools::GetToolDefinitions();
+    m_tools = ToolSchemas::GetToolDefinitions();
 }
 
 // NOTE: ExecuteTool was removed - tools are now executed via CHAT_CONTROLLER::ExecuteNextTool()
@@ -2603,7 +2486,7 @@ void AGENT_FRAME::RenderChatHistory()
                     std::string toolName = block.value( "name", "unknown" );
                     std::string toolId = block.value( "id", "" );
                     nlohmann::json toolInput = block.value( "input", nlohmann::json::object() );
-                    wxString desc = AgentTools::GetToolDescription( toolName, toolInput );
+                    wxString desc = TOOL_REGISTRY::Instance().GetDescription( toolName, toolInput );
 
                     // Store in map keyed by tool_use id for pairing with tool_result
                     if( !toolId.empty() )
@@ -2793,6 +2676,9 @@ void AGENT_FRAME::EnsureAuth()
 
     if( m_chatController )
         m_chatController->SetAuth( m_auth );
+
+    // Wire auth to cloud sync
+    ConfigureCloudSync();
 
     UpdateAuthUI();
 }
@@ -3279,373 +3165,89 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         m_htmlBeforeAgentResponse = m_fullHtmlContent;
     }
 
-    // Handle open_editor specially - requires user approval only if not already open
+    // Handle open_editor — requires KIWAY access for player management
     if( data->toolName == "open_editor" )
     {
+        OPEN_EDITOR_HANDLER handler;
+
+        std::vector<std::string> allowedPaths;
+        for( const auto& p : GetAllowedPaths() )
+            allowedPaths.push_back( p.ToStdString() );
+
         std::string editorType = data->input.value( "editor_type", "" );
         FRAME_T frameType = ( editorType == "sch" ) ? FRAME_SCH : FRAME_PCB_EDITOR;
-        wxString editorLabel = ( editorType == "sch" ) ? "Schematic" : "PCB";
 
-        // Capture optional file path
-        std::string filePath = data->input.value( "file_path", "" );
-        m_pendingOpenFilePath.Clear();
-
-        // Validate file path if provided, or auto-detect from project
-        wxString projectPath = Kiway().Prj().GetProjectPath();
-        wxLogInfo( "open_editor: editor_type='%s', file_path='%s', projectPath='%s'",
-                   wxString::FromUTF8( editorType ), wxString::FromUTF8( filePath ), projectPath );
-
-        if( !filePath.empty() )
-        {
-            auto allowedPaths = GetAllowedPaths();
-            bool pathValid = false;
-            FileWriter::PathValidationResult pathResult;
-
-            if( allowedPaths.empty() )
-            {
-                wxLogWarning( "open_editor: No allowed paths available" );
-                if( m_chatController )
-                    m_chatController->HandleToolResult( data->toolId,
-                        "Error: no project or editor is open", false );
-                delete data;
-                return;
-            }
-
-            for( const auto& allowed : allowedPaths )
-            {
-                pathResult = FileWriter::ValidatePathInProject( filePath,
-                                                                 allowed.ToStdString() );
-                if( pathResult.valid )
-                {
-                    pathValid = true;
-                    break;
-                }
-            }
-
-            if( !pathValid )
-            {
-                wxLogWarning( "open_editor: Path validation failed: %s", pathResult.error );
-                if( m_chatController )
-                    m_chatController->HandleToolResult( data->toolId,
-                        "Error: " + pathResult.error, false );
-                delete data;
-                return;
-            }
-
-            m_pendingOpenFilePath = wxString::FromUTF8( pathResult.resolvedPath );
-            wxLogInfo( "open_editor: Validated file_path -> '%s'", m_pendingOpenFilePath );
-        }
-        else
-        {
-            // No file path provided - auto-detect project's default file
-            wxString projectName = Kiway().Prj().GetProjectName();
-            wxLogInfo( "open_editor: Auto-detect - projectPath='%s', projectName='%s'",
-                       projectPath, projectName );
-
-            if( !projectName.IsEmpty() && !projectPath.IsEmpty() )
-            {
-                wxString defaultFile;
-                if( editorType == "sch" )
-                    defaultFile = projectPath + projectName + ".kicad_sch";
-                else
-                    defaultFile = projectPath + projectName + ".kicad_pcb";
-
-                wxLogInfo( "open_editor: Checking for default file: %s", defaultFile );
-
-                if( wxFileExists( defaultFile ) )
-                {
-                    m_pendingOpenFilePath = defaultFile;
-                    wxLogInfo( "open_editor: Auto-detected project file: %s", defaultFile );
-                }
-                else
-                {
-                    wxLogWarning( "open_editor: Default file does not exist: %s", defaultFile );
-                }
-            }
-            else
-            {
-                wxLogWarning( "open_editor: Cannot auto-detect - project info not available" );
-            }
-        }
-
-        // Check if editor is already open (false = don't create if not existing)
         KIWAY_PLAYER* existingPlayer = Kiway().Player( frameType, false );
-        if( existingPlayer && existingPlayer->IsShown() )
+        bool editorShown = existingPlayer && existingPlayer->IsShown();
+        std::string currentFile = editorShown
+                                      ? existingPlayer->GetCurrentFileName().ToStdString()
+                                      : "";
+
+        auto result = handler.Evaluate( data->input,
+                                        Kiway().Prj().GetProjectPath().ToStdString(),
+                                        Kiway().Prj().GetProjectName().ToStdString(),
+                                        allowedPaths, editorShown, currentFile );
+
+        m_pendingOpenFilePath = result.filePath;
+
+        switch( result.action )
         {
-            // Check if we need to load a different file
-            if( !m_pendingOpenFilePath.IsEmpty() )
+        case OpenEditorResult::FOCUS_EXISTING:
+            if( existingPlayer->IsIconized() )
+                existingPlayer->Iconize( false );
+            existingPlayer->Raise();
+
+            if( m_chatController )
+                m_chatController->HandleToolResult( data->toolId, result.resultMessage, true );
+
+            delete data;
+            return;
+
+        case OpenEditorResult::RELOAD_WITH_FILE:
+            existingPlayer->Close( true );
             {
-                // Get current file from the editor
-                wxString currentFile = existingPlayer->GetCurrentFileName();
-                wxFileName currentFn( currentFile );
-                wxFileName requestedFn( m_pendingOpenFilePath );
-
-                // Normalize paths for comparison
-                currentFn.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_LONG );
-                requestedFn.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_LONG );
-
-                wxLogInfo( "open_editor: Current file='%s', Requested file='%s'",
-                           currentFn.GetFullPath(), requestedFn.GetFullPath() );
-
-                // Force close and reload when:
-                // 1. Editor has untitled document (currentFile.IsEmpty()) - need to load the requested file
-                // 2. Editor has different file open (paths don't match)
-                if( currentFile.IsEmpty() || currentFn.GetFullPath() != requestedFn.GetFullPath() )
+                KIWAY_PLAYER* newPlayer = Kiway().Player( frameType, true );
+                if( newPlayer )
                 {
-                    wxLogInfo( "open_editor: %s - closing editor to load '%s'",
-                               currentFile.IsEmpty() ? "Editor has untitled document" : "Different file open",
-                               requestedFn.GetFullPath() );
+                    std::vector<wxString> files;
+                    files.push_back( result.filePath );
+                    newPlayer->OpenProjectFiles( files );
+                    newPlayer->Show( true );
+                    newPlayer->Raise();
 
-                    // Close the editor to force a fresh load
-                    // Note: This will discard any unsaved changes in the old file
-                    // TODO: Consider adding a save-before-close mechanism
-                    existingPlayer->Close( true );
-
-                    // Now reopen the editor with the correct file
-                    // Don't show approval dialog since user already approved opening the editor
-                    KIWAY_PLAYER* newPlayer = Kiway().Player( frameType, true );
-                    if( newPlayer )
-                    {
-                        std::vector<wxString> files;
-                        files.push_back( m_pendingOpenFilePath );
-                        newPlayer->OpenProjectFiles( files );
-                        newPlayer->Show( true );
-                        newPlayer->Raise();
-
-                        wxString openedFile = m_pendingOpenFilePath;
-                        m_pendingOpenFilePath.Clear();
-
-                        if( m_chatController )
-                            m_chatController->HandleToolResult( data->toolId,
-                                editorLabel.ToStdString() + " editor reloaded with file: " + openedFile.ToStdString(), true );
-                    }
-                    else
-                    {
-                        m_pendingOpenFilePath.Clear();
-                        if( m_chatController )
-                            m_chatController->HandleToolResult( data->toolId,
-                                "Error: Failed to reopen " + editorLabel.ToStdString() + " editor", false );
-                    }
-
-                    delete data;
-                    return;
-                }
-                else
-                {
-                    // Same file already open - just focus the editor
-                    wxLogInfo( "open_editor: File '%s' already open, focusing editor",
-                               currentFn.GetFullPath() );
-
-                    if( existingPlayer->IsIconized() )
-                        existingPlayer->Iconize( false );
-                    existingPlayer->Raise();
-
-                    wxString openedFile = m_pendingOpenFilePath;
                     m_pendingOpenFilePath.Clear();
 
                     if( m_chatController )
                         m_chatController->HandleToolResult( data->toolId,
-                            editorLabel.ToStdString() + " editor already has file open: " + openedFile.ToStdString(), true );
+                                                            result.resultMessage, true );
+                }
+                else
+                {
+                    m_pendingOpenFilePath.Clear();
 
-                    delete data;
-                    return;
+                    if( m_chatController )
+                        m_chatController->HandleToolResult( data->toolId,
+                            "Error: Failed to reopen " + result.editorLabel.ToStdString()
+                                + " editor", false );
                 }
             }
-            else
-            {
-                // No file path - just focus existing editor
-                if( existingPlayer->IsIconized() )
-                    existingPlayer->Iconize( false );
-                existingPlayer->Raise();
+            delete data;
+            return;
 
-                if( m_chatController )
-                    m_chatController->HandleToolResult( data->toolId,
-                        editorLabel.ToStdString() + " editor is already open", true );
+        case OpenEditorResult::NEEDS_APPROVAL:
+            m_pendingOpenSch = result.isSch;
+            m_pendingOpenPcb = !result.isSch;
+            m_pendingOpenToolId = data->toolId;
+            ShowOpenEditorApproval( result.editorLabel );
+            delete data;
+            return;
 
-                delete data;
-                return;
-            }
-        }
-
-        // Editor not open - store pending request and show approval dialog
-        m_pendingOpenSch = ( editorType == "sch" );
-        m_pendingOpenPcb = ( editorType == "pcb" );
-        m_pendingOpenToolId = data->toolId;
-
-        ShowOpenEditorApproval( editorLabel );
-
-        delete data;
-        return;
-    }
-
-    // Handle check_status - returns project and editor state
-    if( data->toolName == "check_status" )
-    {
-        nlohmann::json status;
-
-        // Project info
-        wxString projectPath = Kiway().Prj().GetProjectPath();
-        status["project_path"] = projectPath.ToStdString();
-
-        // Check which editors are open
-        KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
-        KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
-
-        bool schOpen = schEditor && schEditor->IsShown();
-        bool pcbOpen = pcbEditor && pcbEditor->IsShown();
-
-        status["schematic_editor_open"] = schOpen;
-        status["pcb_editor_open"] = pcbOpen;
-
-        // Sync editor state to TOOL_REGISTRY so tool handlers know editor status
-        TOOL_REGISTRY::Instance().SetSchematicEditorOpen( schOpen );
-        TOOL_REGISTRY::Instance().SetPcbEditorOpen( pcbOpen );
-
-        // Add project file paths
-        wxString prjPath = Kiway().Prj().GetProjectPath();
-        if( !prjPath.empty() )
-        {
-            wxString prjName = Kiway().Prj().GetProjectName();
-            status["schematic_file"] = ( prjPath + prjName + ".kicad_sch" ).ToStdString();
-            status["pcb_file"] = ( prjPath + prjName + ".kicad_pcb" ).ToStdString();
-        }
-
-        // Add files currently open in editors
-        auto openFiles = GetOpenEditorFiles();
-        if( !openFiles.empty() )
-        {
-            nlohmann::json arr = nlohmann::json::array();
-            for( const auto& f : openFiles )
-                arr.push_back( f.ToStdString() );
-            status["open_editor_files"] = arr;
-        }
-
-        if( m_chatController )
-            m_chatController->HandleToolResult( data->toolId, status.dump( 2 ), true );
-
-        delete data;
-        return;
-    }
-
-    // Handle create_project - create new KiCad project
-    if( data->toolName == "create_project" )
-    {
-        std::string projectName = data->input.value( "project_name", "" );
-        std::string directory = data->input.value( "directory", "" );
-
-        if( projectName.empty() || directory.empty() )
-        {
+        case OpenEditorResult::ERROR:
             if( m_chatController )
-                m_chatController->HandleToolResult( data->toolId,
-                    "Error: project_name and directory are required", false );
+                m_chatController->HandleToolResult( data->toolId, result.errorMessage, false );
             delete data;
             return;
         }
-
-        // Create project directory
-        wxString projDir = wxString::FromUTF8( directory ) + wxFileName::GetPathSeparator() +
-                           wxString::FromUTF8( projectName );
-
-        if( !wxDir::Make( projDir, wxS_DIR_DEFAULT ) && !wxDir::Exists( projDir ) )
-        {
-            if( m_chatController )
-                m_chatController->HandleToolResult( data->toolId,
-                    "Error: Could not create project directory: " + projDir.ToStdString(), false );
-            delete data;
-            return;
-        }
-
-        wxString basePath = projDir + wxFileName::GetPathSeparator() + wxString::FromUTF8( projectName );
-
-        // Create minimal .kicad_pro file
-        wxString proFile = basePath + ".kicad_pro";
-        {
-            wxFile f( proFile, wxFile::write );
-            if( f.IsOpened() )
-            {
-                nlohmann::json proJson = {
-                    { "meta", { { "filename", projectName + ".kicad_pro" }, { "version", 1 } } },
-                    { "schematic", { { "legacy_lib_dir", "" }, { "legacy_lib_list", nlohmann::json::array() } } }
-                };
-                f.Write( wxString::FromUTF8( proJson.dump( 2 ) ) );
-            }
-        }
-
-        // Create minimal .kicad_sch file
-        wxString schFile = basePath + ".kicad_sch";
-        {
-            wxFile f( schFile, wxFile::write );
-            if( f.IsOpened() )
-            {
-                f.Write(
-                    "(kicad_sch\n"
-                    "  (version 20250114)\n"
-                    "  (generator \"zeo_agent\")\n"
-                    "  (generator_version \"1.0\")\n"
-                    "  (uuid \"" + KIID().AsStdString() + "\")\n"
-                    "  (paper \"A4\")\n"
-                    "  (lib_symbols)\n"
-                    "  (sheet_instances\n"
-                    "    (path \"/\" (page \"\"))\n"
-                    "  )\n"
-                    ")\n"
-                );
-            }
-        }
-
-        // Create minimal .kicad_pcb file
-        wxString pcbFile = basePath + ".kicad_pcb";
-        {
-            wxFile f( pcbFile, wxFile::write );
-            if( f.IsOpened() )
-            {
-                f.Write(
-                    "(kicad_pcb\n"
-                    "  (version 20250114)\n"
-                    "  (generator \"zeo_agent\")\n"
-                    "  (generator_version \"1.0\")\n"
-                    "  (general\n"
-                    "    (thickness 1.6)\n"
-                    "    (legacy_teardrops no)\n"
-                    "  )\n"
-                    "  (paper \"A4\")\n"
-                    "  (layers\n"
-                    "    (0 \"F.Cu\" signal)\n"
-                    "    (31 \"B.Cu\" signal)\n"
-                    "    (32 \"B.Adhes\" user \"B.Adhesive\")\n"
-                    "    (33 \"F.Adhes\" user \"F.Adhesive\")\n"
-                    "    (34 \"B.Paste\" user)\n"
-                    "    (35 \"F.Paste\" user)\n"
-                    "    (36 \"B.SilkS\" user \"B.Silkscreen\")\n"
-                    "    (37 \"F.SilkS\" user \"F.Silkscreen\")\n"
-                    "    (38 \"B.Mask\" user)\n"
-                    "    (39 \"F.Mask\" user)\n"
-                    "    (40 \"Dwgs.User\" user \"User.Drawings\")\n"
-                    "    (44 \"Edge.Cuts\" user)\n"
-                    "  )\n"
-                    "  (setup\n"
-                    "    (pad_to_mask_clearance 0)\n"
-                    "  )\n"
-                    ")\n"
-                );
-            }
-        }
-
-        nlohmann::json result = {
-            { "status", "success" },
-            { "project_path", projDir.ToStdString() },
-            { "files_created", {
-                projectName + ".kicad_pro",
-                projectName + ".kicad_sch",
-                projectName + ".kicad_pcb"
-            }}
-        };
-
-        if( m_chatController )
-            m_chatController->HandleToolResult( data->toolId, result.dump( 2 ), true );
-
-        delete data;
-        return;
     }
 
     // Tool result lives outside streaming div - keep m_toolCallHtml clear
@@ -3872,6 +3474,7 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
         if( !continuing )
         {
             m_chatHistoryDb.Save( m_chatHistory );
+            UploadCurrentChat();
         }
     }
 
@@ -4101,7 +3704,9 @@ void AGENT_FRAME::OnChatTitleGenerated( wxThreadEvent& aEvent )
 
     if( m_chatController )
     {
-        m_chatHistoryDb.Save( m_chatController->GetChatHistory() );
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_chatHistoryDb.Save( m_chatHistory );
+        UploadCurrentChat();
     }
 
     delete data;
@@ -4389,4 +3994,69 @@ std::string AGENT_FRAME::LoadModelPreference()
     }
 
     return "Claude 4.6 Opus";
+}
+
+
+// ============================================================================
+// Cloud Sync
+// ============================================================================
+
+void AGENT_FRAME::ConfigureCloudSync()
+{
+    if( !m_cloudSync || !m_auth )
+        return;
+
+    // Load Supabase configuration
+    std::string supabaseUrl, supabaseKey;
+
+    wxFileName configPath( __FILE__ );
+    configPath.SetFullName( "supabase_config.json" );
+
+    if( wxFileExists( configPath.GetFullPath() ) )
+    {
+        std::ifstream configFile( configPath.GetFullPath().ToStdString() );
+
+        if( configFile.is_open() )
+        {
+            try
+            {
+                json config = json::parse( configFile );
+                supabaseUrl = config.value( "project_url", "" );
+                supabaseKey = config.value( "publishable_key", "" );
+            }
+            catch( ... ) {}
+            configFile.close();
+        }
+    }
+
+    if( supabaseUrl.empty() || supabaseKey.empty() )
+        return;
+
+    m_cloudSync->SetAuth( m_auth );
+    m_cloudSync->Configure( supabaseUrl, supabaseKey );
+
+    // Run initial sync to upload any missed chats/logs from previous sessions
+    m_cloudSync->SyncAll();
+}
+
+
+void AGENT_FRAME::UploadCurrentChat()
+{
+    if( !m_cloudSync )
+        return;
+
+    std::string convId = m_chatHistoryDb.GetConversationId();
+
+    if( convId.empty() )
+        return;
+
+    // Build the JSON content (same format as what Save() writes to disk)
+    json wrapper;
+    wrapper["id"] = convId;
+    wrapper["title"] = m_chatHistoryDb.GetTitle();
+    wrapper["created_at"] = m_chatHistoryDb.GetCreatedAt();
+    wrapper["last_updated"] = m_chatHistoryDb.GetLastUpdated();
+    wrapper["messages"] = m_chatHistory;
+
+    m_cloudSync->UploadChat( convId, wrapper.dump() );
 }

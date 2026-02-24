@@ -1,13 +1,33 @@
 #include "datasheet_handler.h"
 #include "tools/tool_registry.h"
+#include "../../agent_events.h"
 #include <zeo/agent_auth.h>
 #include <kicad_curl/kicad_curl_easy.h>
+#include <curl/curl.h>
 #include <nlohmann/json.hpp>
+#include <wx/app.h>
 #include <wx/log.h>
 #include <thread>
 #include <set>
 
 using json = nlohmann::json;
+
+/**
+ * URL-encode a string using libcurl.
+ */
+static std::string UrlEncode( const std::string& s )
+{
+    KICAD_CURL_EASY curlHelper;
+    char* encoded = curl_easy_escape( curlHelper.GetCurl(),
+                                       s.c_str(),
+                                       static_cast<int>( s.size() ) );
+    std::string result = encoded ? encoded : s;
+
+    if( encoded )
+        curl_free( encoded );
+
+    return result;
+}
 
 // Generic KiCad library names that aren't manufacturers
 static const std::set<std::string> GENERIC_LIB_NAMES = {
@@ -23,21 +43,200 @@ static const std::set<std::string> GENERIC_LIB_NAMES = {
 std::string DATASHEET_HANDLER::Execute( const std::string& aToolName,
                                          const nlohmann::json& aInput )
 {
-    std::string partNumber = aInput.value( "part_number", "" );
-    std::string manufacturer = aInput.value( "manufacturer", "" );
+    if( aToolName == "datasheet_query" )
+    {
+        std::string partNumber = aInput.value( "part_number", "" );
+        std::string manufacturer = aInput.value( "manufacturer", "" );
 
-    if( partNumber.empty() )
-        return R"({"error": "part_number is required"})";
+        if( partNumber.empty() )
+            return R"({"error": "part_number is required"})";
 
-    return QueryExtractionData( partNumber, manufacturer );
+        return QueryExtractionData( partNumber, manufacturer );
+    }
+
+    // extract_datasheet is async-only, shouldn't reach here
+    return R"({"error": "extract_datasheet must be called asynchronously"})";
 }
 
 
 std::string DATASHEET_HANDLER::GetDescription( const std::string& aToolName,
                                                 const nlohmann::json& aInput ) const
 {
+    if( aToolName == "extract_datasheet" )
+    {
+        std::string part = aInput.value( "part_number", "" );
+        return "Extracting datasheet data for " + part;
+    }
+
     std::string part = aInput.value( "part_number", "" );
     return "Query datasheet data for " + part;
+}
+
+
+void DATASHEET_HANDLER::ExecuteAsync( const std::string& aToolName,
+                                       const nlohmann::json& aInput,
+                                       const std::string& aToolUseId,
+                                       wxEvtHandler* aEventHandler )
+{
+    if( aToolName != "extract_datasheet" )
+        return;
+
+    std::string partNumber = aInput.value( "part_number", "" );
+    std::string manufacturer = aInput.value( "manufacturer", "" );
+    std::string datasheetUrl = aInput.value( "datasheet_url", "" );
+
+    if( partNumber.empty() || datasheetUrl.empty() )
+    {
+        ToolExecutionResult result;
+        result.tool_use_id = aToolUseId;
+        result.tool_name = aToolName;
+        result.result = R"({"error": "part_number and datasheet_url are required"})";
+        result.success = false;
+        PostToolResult( aEventHandler, result );
+        return;
+    }
+
+    wxLogInfo( "DATASHEET_HANDLER: Starting sync extraction for %s", partNumber.c_str() );
+
+    // Spawn background thread for the synchronous HTTP call (30-60s)
+    std::thread( [=, this]()
+    {
+        std::string extractResult = ExtractDatasheetSync( partNumber, manufacturer, datasheetUrl );
+
+        wxLogInfo( "DATASHEET_HANDLER: Sync extraction complete for %s", partNumber.c_str() );
+
+        // Parse the result to determine success
+        bool success = false;
+        try
+        {
+            auto resultJson = json::parse( extractResult );
+            std::string status = resultJson.value( "extraction_status", "" );
+            success = ( status == "completed" );
+        }
+        catch( ... )
+        {
+            // Parse failed, treat as error
+        }
+
+        // Post result back to main thread
+        wxTheApp->CallAfter( [=]()
+        {
+            ToolExecutionResult result;
+            result.tool_use_id = aToolUseId;
+            result.tool_name = aToolName;
+            result.result = extractResult;
+            result.success = success;
+            PostToolResult( aEventHandler, result );
+        } );
+    } ).detach();
+}
+
+
+std::string DATASHEET_HANDLER::ExtractDatasheetSync( const std::string& aPartNumber,
+                                                      const std::string& aManufacturer,
+                                                      const std::string& aDatasheetUrl )
+{
+    const auto& reg = TOOL_REGISTRY::Instance();
+    AGENT_AUTH* auth = reg.GetAuth();
+    const std::string& supabaseUrl = reg.GetSupabaseUrl();
+    const std::string& anonKey = reg.GetSupabaseAnonKey();
+
+    if( !auth || supabaseUrl.empty() )
+        return R"({"error": "Not configured"})";
+
+    std::string accessToken = auth->GetAccessToken();
+
+    if( accessToken.empty() )
+        return R"({"error": "Not authenticated"})";
+
+    // Build request body with mode=sync
+    json body;
+    body["part_number"] = aPartNumber;
+    body["datasheet_url"] = aDatasheetUrl;
+    body["mode"] = "sync";
+
+    if( !aManufacturer.empty() )
+        body["manufacturer"] = aManufacturer;
+
+    std::string url = supabaseUrl + "/functions/v1/extract-datasheet";
+
+    try
+    {
+        KICAD_CURL_EASY curl;
+        curl.SetURL( url );
+        curl.SetFollowRedirects( true );
+        curl.SetHeader( "Authorization", "Bearer " + accessToken );
+        curl.SetHeader( "apikey", anonKey );
+        curl.SetHeader( "Content-Type", "application/json" );
+        curl.SetPostFields( body.dump() );
+
+        // Sync extraction can take 30-120s for large datasheets
+        curl_easy_setopt( curl.GetCurl(), CURLOPT_TIMEOUT, 180L );
+
+        curl.Perform();
+
+        long httpCode = curl.GetResponseStatusCode();
+        std::string response = curl.GetBuffer();
+
+        wxLogInfo( "DATASHEET_HANDLER: Sync extraction HTTP %ld for %s",
+                    httpCode, aPartNumber.c_str() );
+
+        if( httpCode >= 200 && httpCode < 300 )
+        {
+            // Parse the response and check status
+            auto resultJson = json::parse( response );
+            std::string status = resultJson.value( "extraction_status", "unknown" );
+
+            if( status == "completed" )
+            {
+                // Extraction done — now query the full data
+                wxLogInfo( "DATASHEET_HANDLER: Sync extraction completed, querying data" );
+                std::string queryResult = QueryExtractionData( aPartNumber, aManufacturer );
+
+                try
+                {
+                    auto queryJson = json::parse( queryResult );
+
+                    // If the query itself returned an error, propagate it
+                    if( queryJson.contains( "error" ) )
+                        return queryResult;
+
+                    // Wrap with extraction metadata
+                    queryJson["extraction_message"] = "Datasheet extracted successfully";
+                    queryJson["extraction_input_tokens"] = resultJson.value( "input_tokens", 0 );
+                    queryJson["extraction_output_tokens"] = resultJson.value( "output_tokens", 0 );
+                    return queryJson.dump( 2 );
+                }
+                catch( const json::parse_error& e )
+                {
+                    wxLogTrace( "Agent", "DATASHEET_HANDLER: Failed to parse query result: %s",
+                                e.what() );
+                    return queryResult;
+                }
+            }
+
+            return response;
+        }
+        else
+        {
+            wxLogTrace( "Agent", "DATASHEET_HANDLER: Sync extraction failed HTTP %ld: %s",
+                        httpCode, response.c_str() );
+
+            json errorResult;
+            errorResult["error"] = "Extraction failed with HTTP " + std::to_string( httpCode );
+            errorResult["detail"] = response;
+            return errorResult.dump();
+        }
+    }
+    catch( const std::exception& e )
+    {
+        wxLogTrace( "Agent", "DATASHEET_HANDLER: Sync extraction exception: %s", e.what() );
+
+        json errorResult;
+        errorResult["error"] = "Extraction request failed";
+        errorResult["detail"] = e.what();
+        return errorResult.dump();
+    }
 }
 
 
@@ -68,10 +267,10 @@ std::string DATASHEET_HANDLER::QueryExtractionData( const std::string& aPartNumb
         "component_design_guidelines(*),"
         "component_decoupling_requirements(*),"
         "component_external_parts(*)"
-        "&part_number=eq." + aPartNumber;
+        "&part_number=eq." + UrlEncode( aPartNumber );
 
     if( !aManufacturer.empty() )
-        url += "&manufacturer=eq." + aManufacturer;
+        url += "&manufacturer=eq." + UrlEncode( aManufacturer );
 
     url += "&limit=1";
 

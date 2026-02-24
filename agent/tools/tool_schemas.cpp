@@ -91,6 +91,69 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
     datasheetQuery.read_only = true;
     tools.push_back( datasheetQuery );
 
+    // extract_datasheet - Synchronously extract datasheet data for a component
+    LLM_TOOL extractDatasheet;
+    extractDatasheet.name = "extract_datasheet";
+    extractDatasheet.description =
+        "Extract component data from a PDF datasheet URL. This calls the extraction "
+        "service synchronously and waits for the result (may take 30-60 seconds). "
+        "Use this when you need datasheet data immediately for a component that hasn't "
+        "been extracted yet (datasheet_query returned 'not_found'). The extracted data "
+        "is stored in the database and can be queried later with datasheet_query. "
+        "Returns the full extracted component data including pins, electrical specs, "
+        "and design guidelines.";
+    extractDatasheet.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "part_number", {
+                { "type", "string" },
+                { "description", "Component part number (e.g., 'CP2102N', 'ESP32-C3-WROOM-02')" }
+            }},
+            { "manufacturer", {
+                { "type", "string" },
+                { "description", "Component manufacturer (optional, helps disambiguate)" }
+            }},
+            { "datasheet_url", {
+                { "type", "string" },
+                { "description", "URL to the component's PDF datasheet" }
+            }}
+        }},
+        { "required", json::array( { "part_number", "datasheet_url" } ) }
+    };
+    tools.push_back( extractDatasheet );
+
+    // generate_symbol - Generate a KiCad symbol from extracted datasheet data
+    LLM_TOOL generateSymbol;
+    generateSymbol.name = "generate_symbol";
+    generateSymbol.description =
+        "Generate a KiCad schematic symbol (.kicad_sym) from extracted datasheet data. "
+        "Uses pin definitions (name, number, type, function_group) from the component "
+        "database to create a symbol with pins grouped by function and assigned to "
+        "appropriate sides (power top, ground bottom, inputs left, outputs right). "
+        "The component must have completed datasheet extraction first. "
+        "Writes the symbol to a project-local library file and returns the lib_id "
+        "that can be used with sch_add to place the symbol.";
+    generateSymbol.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "part_number", {
+                { "type", "string" },
+                { "description", "Component part number to generate symbol for" }
+            }},
+            { "manufacturer", {
+                { "type", "string" },
+                { "description", "Component manufacturer (optional)" }
+            }},
+            { "library_name", {
+                { "type", "string" },
+                { "description", "Name for the output library file (without .kicad_sym extension). "
+                                 "Defaults to 'project'. The file is created in the project directory." }
+            }}
+        }},
+        { "required", json::array( { "part_number" } ) }
+    };
+    tools.push_back( generateSymbol );
+
     // create_project - Create a new KiCad project
     LLM_TOOL createProject;
     createProject.name = "create_project";

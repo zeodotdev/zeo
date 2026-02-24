@@ -32,10 +32,17 @@ macro( create_git_version_header _git_src_path )
         set( _Git_SAVED_LC_ALL "$ENV{LC_ALL}" )
         set( ENV{LC_ALL} C )
 
-        # Use `git describe --dirty` to create the KiCad version string.
+        # Use `git describe` to create the KiCad version string.
+        # In release builds (ZEO_RELEASE=ON), omit --dirty so the version
+        # string stays clean even with uncommitted working-tree changes.
+        set( _git_describe_args describe )
+        if( NOT ZEO_RELEASE )
+            list( APPEND _git_describe_args --dirty )
+        endif()
+
         execute_process(
             COMMAND
-            ${GIT_EXECUTABLE} describe --dirty
+            ${GIT_EXECUTABLE} ${_git_describe_args}
             WORKING_DIRECTORY ${_git_src_path}
             OUTPUT_VARIABLE _git_DESCRIBE
             ERROR_VARIABLE _git_describe_error

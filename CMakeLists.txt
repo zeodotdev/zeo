@@ -292,9 +292,17 @@ option( KICAD_IPC_API
     "Enable IPC API"
     ON )
 
+option( ZEO_RELEASE
+    "Build a Zeo release (clean version string, production URLs)"
+    OFF )
+
 option( KICAD_IDF_TOOLS
     "Build additional idf tools"
     ON )
+
+if( ZEO_RELEASE )
+    add_compile_definitions( ZEO_RELEASE_BUILD )
+endif()
 
 # Global setting: exports are explicit
 set( CMAKE_CXX_VISIBILITY_PRESET "hidden" )

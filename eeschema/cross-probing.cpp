@@ -23,11 +23,12 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <wx/tokenzr.h>
 #include <fmt.h>
 #include <wx/log.h>
 #include <kiface_base.h>
 #include <kiway.h>
-#include <kiway_express.h>
+#include <kiway_mail.h>
 #include <eda_dde.h>
 #include <connection_graph.h>
 #include <sch_sheet.h>
@@ -48,6 +49,8 @@
 #include <widgets/sch_design_block_pane.h>
 #include <agent_change_tracker.h>
 #include <settings/settings_manager.h>
+#include <widgets/kistatusbar.h>
+#include <wx/filefn.h>
 #include <wx/log.h>
 #include "sch_plotter.h"
 #include <nlohmann/json.hpp>
@@ -839,7 +842,7 @@ findItemsFromSyncSelection( const SCHEMATIC& aSchematic, const std::string aSync
 }
 
 
-void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
+void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 {
     std::string& payload = mail.GetPayload();
 
@@ -858,6 +861,14 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         wxCHECK_RET( optTable.has_value(), "Could not load symbol lib table." );
         LIBRARY_TABLE* table = optTable.value();
 
+        wxString projectPath = Prj().GetProjectPath();
+
+        // First line of payload is the source project directory.
+        std::string srcProjDir;
+        std::getline( ss, srcProjDir, '\n' );
+
+        std::vector<wxString> toLoad;
+
         while( std::getline( ss, file, '\n' ) )
         {
             if( file.empty() )
@@ -866,7 +877,6 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
             wxFileName             fn( file );
             IO_RELEASER<SCH_IO>    pi;
             SCH_IO_MGR::SCH_FILE_T type = SCH_IO_MGR::GuessPluginTypeFromLibPath( fn.GetFullPath() );
-            bool                   success = true;
 
             if( type == SCH_IO_MGR::SCH_FILE_UNKNOWN )
             {
@@ -876,25 +886,59 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
             pi.reset( SCH_IO_MGR::FindPlugin( type ) );
 
+            wxString libTableUri;
+            bool     isProjectLocal = fn.GetFullPath().StartsWith( wxString( srcProjDir ) );
+
+            if( isProjectLocal )
+            {
+                // Project-local library: copy into the KiCad project directory and use a
+                // project-relative path so the sym-lib-table stays portable.
+                if( !fn.FileExists() )
+                    continue;
+
+                wxFileName projectFn( projectPath, fn.GetFullName() );
+
+                if( fn.GetFullPath() != projectFn.GetFullPath() && !projectFn.FileExists() )
+                    wxCopyFile( fn.GetFullPath(), projectFn.GetFullPath() );
+
+                libTableUri = wxS( "${KIPRJMOD}/" ) + fn.GetFullName();
+            }
+            else
+            {
+                // External library referenced by absolute path. Preserve the original path.
+                libTableUri = fn.GetFullPath();
+            }
+
             if( !table->HasRow( fn.GetName() ) )
             {
                 LIBRARY_TABLE_ROW& row = table->InsertRow();
                 row.SetNickname( fn.GetName() );
-                row.SetURI( fn.GetFullPath() );
+                row.SetURI( libTableUri );
                 row.SetType( SCH_IO_MGR::ShowType( type ) );
+                toLoad.emplace_back( fn.GetName() );
+            }
+        }
 
-                table->Save().map_error(
+        if( !toLoad.empty() )
+        {
+            bool success = true;
+
+            table->Save().map_error(
                         [&]( const LIBRARY_ERROR& aError )
                         {
                             wxLogError( wxT( "Error saving project library table:\n\n" ) + aError.message );
                             success = false;
                         } );
 
-                if( success )
-                {
-                    manager.LoadProjectTables( { LIBRARY_TABLE_TYPE::SYMBOL } );
-                    adapter->LoadOne( fn.GetName() );
-                }
+            if( success )
+            {
+                manager.LoadProjectTables( { LIBRARY_TABLE_TYPE::SYMBOL } );
+
+                std::ranges::for_each( toLoad,
+                                       [adapter]( const wxString& aNick )
+                                       {
+                                           adapter->LoadOne( aNick );
+                                       } );
             }
         }
 
@@ -1564,9 +1608,46 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
     case MAIL_SCH_UPDATE: m_toolManager->RunAction( ACTIONS::updateSchematicFromPcb ); break;
 
     case MAIL_RELOAD_LIB:
-        m_designBlocksPane->RefreshLibs();
-        SyncView();
+    {
+        if( m_designBlocksPane && m_designBlocksPane->IsShown() )
+        {
+            m_designBlocksPane->RefreshLibs();
+            SyncView();
+        }
+
+        // Show any symbol library load errors in the status bar
+        if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
+        {
+            SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &Prj() );
+            wxString errors = adapter->GetLibraryLoadErrors();
+
+            if( !errors.IsEmpty() )
+                statusBar->SetLoadWarningMessages( errors );
+        }
+
         break;
+    }
+
+    case MAIL_SCH_NAVIGATE_TO_SHEET:
+    {
+        wxString targetFile( payload );
+
+        for( SCH_SHEET_PATH& sheetPath : m_schematic->Hierarchy() )
+        {
+            SCH_SCREEN* screen = sheetPath.LastScreen();
+
+            if( screen && screen->GetFileName() == targetFile )
+            {
+                m_toolManager->RunAction<SCH_SHEET_PATH*>( SCH_ACTIONS::changeSheet, &sheetPath );
+                payload = "success";
+                Raise();
+                return;
+            }
+        }
+
+        payload.clear();
+        break;
+    }
 
     //=========================================================================
     // Concurrent editing support - transaction management
@@ -1589,11 +1670,15 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
             if( m_agentTargetSheetUuid != NilUuid() )
             {
                 // Reusing existing target sheet
+                wxLogMessage( "MAIL_AGENT_BEGIN_TRANSACTION: Reusing existing target sheet UUID=%s",
+                              m_agentTargetSheetUuid.AsStdString() );
             }
             else if( !sheetUuid.IsEmpty() )
             {
                 // Explicit sheet UUID provided
                 m_agentTargetSheetUuid = KIID( sheetUuid.ToStdString() );
+                wxLogMessage( "MAIL_AGENT_BEGIN_TRANSACTION: Using explicit sheet UUID=%s",
+                              m_agentTargetSheetUuid.AsStdString() );
             }
             else
             {
@@ -1604,10 +1689,13 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                 if( currentPath.size() > 0 )
                 {
                     m_agentTargetSheetUuid = currentPath.Last()->m_Uuid;
+                    wxLogMessage( "MAIL_AGENT_BEGIN_TRANSACTION: Captured current sheet UUID=%s",
+                                  m_agentTargetSheetUuid.AsStdString() );
                 }
                 else
                 {
                     m_agentTargetSheetUuid = NilUuid();
+                    wxLogMessage( "MAIL_AGENT_BEGIN_TRANSACTION: No current sheet, set to NilUuid" );
                 }
             }
         }
@@ -1640,6 +1728,8 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
     case MAIL_AGENT_RESET_TARGET_SHEET:
     {
         // Reset target sheet for new conversation turn - sent when user sends a new message
+        wxLogMessage( "MAIL_AGENT_RESET_TARGET_SHEET: Clearing target sheet (was %s)",
+                      m_agentTargetSheetUuid.AsStdString() );
         m_agentTargetSheetUuid = NilUuid();
         m_agentTransactionActive = false;
         break;

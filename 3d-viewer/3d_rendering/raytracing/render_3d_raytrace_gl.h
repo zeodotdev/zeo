@@ -26,9 +26,9 @@
 #ifndef RENDER_3D_RAYTRACE_GL_H
 #define RENDER_3D_RAYTRACE_GL_H
 
-#include "../../common_ogl/openGL_includes.h"
 #include "render_3d_raytrace_base.h"
 
+#include <kicad_gl/kiglad.h>
 
 class RENDER_3D_RAYTRACE_GL : public RENDER_3D_RAYTRACE_BASE
 {
@@ -46,6 +46,7 @@ protected:
     void deletePbo() override;
 
     bool   m_openglSupportsVertexBufferObjects;
+    bool   m_useArbPbo;
     GLuint m_pboId;
     GLuint m_pboDataSize;
 };

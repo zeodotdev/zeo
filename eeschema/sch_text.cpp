@@ -23,6 +23,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include "markup_parser.h"
 #include <advanced_config.h>
 #include <base_units.h>
 #include <pgm_base.h>
@@ -46,10 +47,9 @@
 #include <core/kicad_algo.h>
 #include <tools/sch_navigate_tool.h>
 #include <trigo.h>
-#include <api/api_utils.h>
-#include <api/api_enums.h>
-#include <api/schematic/schematic_types.pb.h>
-#include <font/font.h>
+#include <markup_parser.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 
 SCH_TEXT::SCH_TEXT( const VECTOR2I& aPos, const wxString& aText, SCH_LAYER_ID aLayer, KICAD_T aType ) :
@@ -362,12 +362,26 @@ wxString SCH_TEXT::GetShownText( const SCH_SHEET_PATH* aPath, bool aAllowExtraTe
 }
 
 
-void SCH_TEXT::DoHypertextAction( EDA_DRAW_FRAME* aFrame ) const
+bool SCH_TEXT::HasHypertext() const
 {
-    wxCHECK_MSG( IsHypertext(), /* void */, wxT( "Calling a hypertext menu on a SCH_TEXT with no hyperlink?" ) );
+    return HasHyperlink() || containsURL();
+}
 
+
+bool SCH_TEXT::HasHoveredHypertext() const
+{
+    return !m_activeUrl.IsEmpty();
+}
+
+
+void SCH_TEXT::DoHypertextAction( EDA_DRAW_FRAME* aFrame, const VECTOR2I& aMousePos ) const
+{
     SCH_NAVIGATE_TOOL* navTool = aFrame->GetToolManager()->GetTool<SCH_NAVIGATE_TOOL>();
-    navTool->HypertextCommand( m_hyperlink );
+
+    if( HasHyperlink() )
+        navTool->HypertextCommand( m_hyperlink );
+    else if( !m_activeUrl.IsEmpty() )
+        navTool->HypertextCommand( m_activeUrl );
 }
 
 
@@ -439,6 +453,23 @@ std::vector<int> SCH_TEXT::ViewGetLayers() const
 }
 
 
+VECTOR2I SCH_TEXT::GetOffsetToMatchSCH_FIELD( SCH_RENDER_SETTINGS* aRenderSettings ) const
+{
+    if( GetDrawFont( aRenderSettings )->IsOutline() )
+    {
+        BOX2I    firstLineBBox = GetTextBox( aRenderSettings, 0 );
+        int      sizeDiff = firstLineBBox.GetHeight() - GetTextSize().y;
+        int      adjust = KiROUND( sizeDiff * 0.4 );
+        VECTOR2I adjust_offset( 0, -adjust );
+
+        RotatePoint( adjust_offset, GetDrawRotation() );
+        return adjust_offset;
+    }
+
+    return { 0, 0 };
+}
+
+
 void SCH_TEXT::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& aPlotOpts, int aUnit, int aBodyStyle,
                      const VECTOR2I& aOffset, bool aDimmed )
 {
@@ -464,8 +495,8 @@ void SCH_TEXT::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& a
     else if( bg == COLOR4D::UNSPECIFIED || !aPlotter->GetColorMode() )
         bg = COLOR4D::WHITE;
 
-    if( color.m_text.has_value() && Schematic() )
-        color = COLOR4D( ResolveText( color.m_text.value(), &Schematic()->CurrentSheet() ) );
+    if( color.m_text && Schematic() )
+        color = COLOR4D( ResolveText( *color.m_text, &Schematic()->CurrentSheet() ) );
 
     if( aDimmed )
     {
@@ -483,50 +514,90 @@ void SCH_TEXT::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& a
 
     if( m_layer == LAYER_DEVICE )
     {
-        BOX2I bBox = GetBoundingBox();
-
-        /*
-         * Calculate the text justification, according to the symbol orientation/mirror.  This is
-         * a bit complicated due to cumulative calculations:
-         *  - numerous cases (mirrored or not, rotation)
-         *  - the plotter's Text() function will also recalculate H and V justifications according
-         *    to the text orientation
-         *  - when a symbol is mirrored the text is not, and justifications become a nightmare
-         *
-         *  So the easier way is to use no justifications (centered text) and use GetBoundingBox to
-         *  know the text coordinate considered as centered.
-         */
-        VECTOR2I txtpos = bBox.Centre();
-        attrs.m_Halign = GR_TEXT_H_ALIGN_CENTER;
-        attrs.m_Valign = GR_TEXT_V_ALIGN_CENTER;
+        const TRANSFORM& t = renderSettings->m_Transform;
 
         // The text orientation may need to be flipped if the transformation matrix causes xy
         // axes to be flipped.
-        if( ( renderSettings->m_Transform.x1 != 0 ) ^ ( GetTextAngle() != ANGLE_HORIZONTAL ) )
+        if( ( t.x1 != 0 ) ^ ( GetTextAngle() != ANGLE_HORIZONTAL ) )
             attrs.m_Angle = ANGLE_HORIZONTAL;
         else
             attrs.m_Angle = ANGLE_VERTICAL;
 
-        aPlotter->PlotText( renderSettings->TransformCoordinate( txtpos ) + aOffset, color, GetText(), attrs, font,
-                            GetFontMetrics() );
+        bool origHoriz = ( GetTextAngle() == ANGLE_HORIZONTAL );
+        bool screenHoriz = ( attrs.m_Angle == ANGLE_HORIZONTAL );
+
+        // Check if the text reading direction is reversed by the transform
+        // Flip H alignment when reversed
+        bool flipH;
+
+        if( origHoriz )
+            flipH = screenHoriz ? ( t.x1 < 0 ) : ( t.x2 > 0 );
+        else
+            flipH = screenHoriz ? ( t.y1 > 0 ) : ( t.y2 < 0 );
+
+        if( flipH )
+        {
+            if( attrs.m_Halign == GR_TEXT_H_ALIGN_LEFT )
+                attrs.m_Halign = GR_TEXT_H_ALIGN_RIGHT;
+            else if( attrs.m_Halign == GR_TEXT_H_ALIGN_RIGHT )
+                attrs.m_Halign = GR_TEXT_H_ALIGN_LEFT;
+        }
+
+        // For mirrored transforms (det < 0), the multiline stacking direction may be reversed
+        // Flip V alignment to keep lines in the correct visual order
+        int det = t.x1 * t.y2 - t.x2 * t.y1;
+
+        if( det < 0 && ( origHoriz == ( t.x1 > 0 ) ) )
+        {
+            if( attrs.m_Valign == GR_TEXT_V_ALIGN_TOP )
+                attrs.m_Valign = GR_TEXT_V_ALIGN_BOTTOM;
+            else if( attrs.m_Valign == GR_TEXT_V_ALIGN_BOTTOM )
+                attrs.m_Valign = GR_TEXT_V_ALIGN_TOP;
+        }
+
+        // Compute line positions
+        wxArrayString strings_list;
+        wxStringSplit( GetShownText( nullptr, true ), strings_list, '\n' );
+
+        int lineCount = (int) strings_list.Count();
+
+        VECTOR2I linePos = renderSettings->TransformCoordinate( GetDrawPos() ) + aOffset;
+        int      interline = GetInterline( renderSettings );
+
+        if( lineCount > 1 )
+        {
+            int blockShift = 0;
+
+            if( attrs.m_Valign == GR_TEXT_V_ALIGN_CENTER )
+                blockShift = ( lineCount - 1 ) * interline / 2;
+            else if( attrs.m_Valign == GR_TEXT_V_ALIGN_BOTTOM )
+                blockShift = ( lineCount - 1 ) * interline;
+
+            if( screenHoriz )
+                linePos.y -= blockShift;
+            else
+                linePos.x -= blockShift;
+        }
+
+        // Set to false since each line is plotted separately with its own position
+        attrs.m_Multiline = false;
+
+        for( unsigned ii = 0; ii < strings_list.Count(); ii++ )
+        {
+            aPlotter->PlotText( linePos, color, strings_list.Item( ii ), attrs, font, GetFontMetrics() );
+
+            if( screenHoriz )
+                linePos.y += interline;
+            else
+                linePos.x += interline;
+        }
     }
     else
     {
         SCH_SHEET_PATH* sheet = &Schematic()->CurrentSheet();
         VECTOR2I        text_offset = GetSchematicTextOffset( aPlotter->RenderSettings() );
 
-        // Adjust text drawn in an outline font to more closely mimic the positioning of
-        // SCH_FIELD text.
-        if( font->IsOutline() )
-        {
-            BOX2I    firstLineBBox = GetTextBox( renderSettings, 0 );
-            int      sizeDiff = firstLineBBox.GetHeight() - GetTextSize().y;
-            int      adjust = KiROUND( sizeDiff * 0.4 );
-            VECTOR2I adjust_offset( 0, -adjust );
-
-            RotatePoint( adjust_offset, GetDrawRotation() );
-            text_offset += adjust_offset;
-        }
+        text_offset += GetOffsetToMatchSCH_FIELD( renderSettings );
 
         std::vector<VECTOR2I> positions;
         wxArrayString         strings_list;
@@ -669,85 +740,6 @@ int SCH_TEXT::compare( const SCH_ITEM& aOther, int aCompareFlags ) const
         return GetTextHeight() - tmp.GetTextHeight();
 
     return 0;
-}
-
-
-void SCH_TEXT::Serialize( google::protobuf::Any& aContainer ) const
-{
-    using namespace kiapi::common;
-    kiapi::schematic::types::Text schText;
-
-    schText.mutable_id()->set_value( m_Uuid.AsStdString() );
-
-    // Serialize the base EDA_TEXT properties
-    google::protobuf::Any any;
-    EDA_TEXT::Serialize( any );
-    any.UnpackTo( schText.mutable_text() );
-
-    // Ensure position is set (EDA_TEXT::Serialize already does this, but we override for clarity)
-    PackVector2Sch( *schText.mutable_text()->mutable_position(), GetPosition() );
-
-    // Layer mapping - schematic layers are represented differently
-    // For now, we just store the layer as-is since SchematicLayer enum needs expansion
-    // schText.set_layer( ... );
-
-    aContainer.PackFrom( schText );
-}
-
-
-bool SCH_TEXT::Deserialize( const google::protobuf::Any& aContainer )
-{
-    using namespace kiapi::common;
-    kiapi::schematic::types::Text schText;
-
-    if( !aContainer.UnpackTo( &schText ) )
-        return false;
-
-    const_cast<KIID&>( m_Uuid ) = KIID( schText.id().value() );
-
-    // Deserialize text content
-    // NOTE: We do NOT call EDA_TEXT::Deserialize here because it uses PCB unit conversion
-    // which is 100x different from schematic units.
-    const auto& text = schText.text();
-
-    SetText( wxString( text.text().c_str(), wxConvUTF8 ) );
-    SetHyperlink( wxString( text.hyperlink().c_str(), wxConvUTF8 ) );
-
-    if( text.has_attributes() )
-    {
-        TEXT_ATTRIBUTES attrs = GetAttributes();
-        const auto& textAttrs = text.attributes();
-
-        attrs.m_Bold = textAttrs.bold();
-        attrs.m_Italic = textAttrs.italic();
-        attrs.m_Underlined = textAttrs.underlined();
-        attrs.m_Mirrored = textAttrs.mirrored();
-        attrs.m_Multiline = textAttrs.multiline();
-        attrs.m_KeepUpright = textAttrs.keep_upright();
-        attrs.m_Size = UnpackVector2Sch( textAttrs.size() );
-
-        if( !textAttrs.font_name().empty() )
-        {
-            attrs.m_Font = KIFONT::FONT::GetFont(
-                    wxString( textAttrs.font_name().c_str(), wxConvUTF8 ),
-                    attrs.m_Bold, attrs.m_Italic );
-        }
-
-        attrs.m_Angle = EDA_ANGLE( textAttrs.angle().value_degrees(), DEGREES_T );
-        attrs.m_LineSpacing = textAttrs.line_spacing();
-        attrs.m_StrokeWidth = textAttrs.stroke_width().value_nm() / 100;
-        attrs.m_Halign = FromProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>(
-                textAttrs.horizontal_alignment() );
-        attrs.m_Valign = FromProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>(
-                textAttrs.vertical_alignment() );
-
-        SetAttributes( attrs );
-    }
-
-    // Set position from the text message with schematic unit conversion
-    SetPosition( UnpackVector2Sch( text.position() ) );
-
-    return true;
 }
 
 

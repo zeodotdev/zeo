@@ -44,7 +44,7 @@
 // specialized, but we don't translate on initialization and instead do it in the getters.
 
 #undef _
-#define _( s ) s
+#define _(s) s
 
 // clang-format off
 
@@ -163,7 +163,6 @@ TOOL_ACTION PCB_ACTIONS::drawBezier( TOOL_ACTION_ARGS()
 TOOL_ACTION PCB_ACTIONS::placeBarcode( TOOL_ACTION_ARGS()
         .Name( "pcbnew.InteractiveDrawing.barcode" )
         .Scope( AS_GLOBAL )
-        .DefaultHotkey( MD_SHIFT + MD_CTRL + 'B' )
         .LegacyHotkeyName( "Add Barcode" )
         .FriendlyName( _( "Add Barcode" ) )
         .Tooltip( _( "Add a barcode" ) )
@@ -784,8 +783,8 @@ TOOL_ACTION PCB_ACTIONS::simplifyPolygons( TOOL_ACTION_ARGS()
 TOOL_ACTION PCB_ACTIONS::editVertices( TOOL_ACTION_ARGS()
         .Name( "pcbnew.InteractiveEdit.editVertices" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Edit Vertices..." ) )
-        .Tooltip( _( "Edit polygon vertices using a table" ) )
+        .FriendlyName( _( "Edit Corners..." ) )
+        .Tooltip( _( "Edit polygon corners using a table" ) )
         .Icon( BITMAPS::edit ) );
 
 TOOL_ACTION PCB_ACTIONS::healShapes( TOOL_ACTION_ARGS()
@@ -1347,7 +1346,8 @@ TOOL_ACTION PCB_ACTIONS::collect3DModels( TOOL_ACTION_ARGS()
         .Name( "pcbnew.EditorControl.collect3DModels" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Collect And Embed 3D Models" ) )
-        .Tooltip( _( "Collect footprint 3D models and embed them into the board" ) ) );
+        .Tooltip( _( "Collect footprint 3D models and embed them into the board" ) )
+        .Icon( BITMAPS::import3d ) );
 
 
 // Track & via size control
@@ -1579,10 +1579,16 @@ TOOL_ACTION PCB_ACTIONS::showEeschema( TOOL_ACTION_ARGS()
 TOOL_ACTION PCB_ACTIONS::showAgent( TOOL_ACTION_ARGS()
         .Name( "pcbnew.EditorControl.showAgent" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Open Agent" ) )
-        .Tooltip( _( "Open the AI Agent" ) )
-        .Icon( BITMAPS::icon_kicad ) );
+        .FriendlyName( _( "Zeo Agent" ) )
+        .Tooltip( _( "Open the Zeo AI Agent" ) )
+        .Icon( BITMAPS::icon_kicad ) );  // TODO: Add agent icon
 
+// DESIGN RULE EDITOR
+TOOL_ACTION PCB_ACTIONS::drcRuleEditor( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.DRETool.drcRuleEditor" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "DRC Rule Editor" ) )
+        .Tooltip( _( "Open DRC rule editor window" ) ) );
 
 // PCB_CONTROL
 //
@@ -2254,7 +2260,7 @@ TOOL_ACTION PCB_ACTIONS::distributeHorizontallyCenters( TOOL_ACTION_ARGS()
         .Name( "pcbnew.AlignAndDistribute.distributeHorizontallyCenters" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Distribute Horizontally by Centers" ) )
-        .Tooltip( _( "Distributes selected items between the left-most item and the right-most item"
+        .Tooltip( _( "Distributes selected items between the left-most item and the right-most item "
                      "so that the item centers are equally distributed" ) )
         .Icon( BITMAPS::distribute_horizontal_centers ) );
 
@@ -2670,6 +2676,12 @@ TOOL_ACTION PCB_ACTIONS::routerAutorouteSelected( TOOL_ACTION_ARGS()
         .Tooltip( _( "Sequentially attempt to automatically route all selected pads." ) )
         .Flags( AF_ACTIVATE )
         .Parameter( PNS::PNS_MODE_ROUTE_SINGLE ) );
+
+TOOL_ACTION PCB_ACTIONS::cancelCurrentItem( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.InteractiveRouter.CancelCurrentItem" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Cancel Current Item" ) )
+        .Tooltip( _( "Skip current item and route next selected item." ) ) );
 
 TOOL_ACTION PCB_ACTIONS::breakTrack( TOOL_ACTION_ARGS()
         .Name( "pcbnew.InteractiveRouter.BreakTrack" )

@@ -39,6 +39,7 @@
 #include <wx/menu.h>
 #include <wx/wfstream.h>
 #include <wx/wupdlock.h>
+#include <kiplatform/ui.h>
 
 /* ---------- GRID_TRICKS for embedded files grid ---------- */
 
@@ -328,13 +329,40 @@ EMBEDDED_FILES::EMBEDDED_FILE* PANEL_EMBEDDED_FILES::AddEmbeddedFile( const wxSt
 
     if( m_localFiles->HasFile( name ) )
     {
-        wxString msg = wxString::Format( _( "File '%s' already exists." ), name );
+        EMBEDDED_FILES::EMBEDDED_FILE* existingFile = m_localFiles->GetEmbeddedFile( name );
+        std::string newFileHash;
 
-        KIDIALOG errorDlg( m_parent, msg, _( "Confirmation" ), wxOK | wxCANCEL | wxICON_WARNING );
-        errorDlg.SetOKLabel( _( "Overwrite" ) );
-
-        if( errorDlg.ShowModal() != wxID_OK )
+        if( EMBEDDED_FILES::ComputeFileHash( fileName, newFileHash ) != EMBEDDED_FILES::RETURN_CODE::OK )
+        {
+            wxString msg = wxString::Format( _( "Failed to read file '%s'." ), name );
+            KIDIALOG errorDlg( m_parent, msg, _( "Error" ), wxOK | wxICON_ERROR );
+            errorDlg.ShowModal();
             return nullptr;
+        }
+
+        if( existingFile && existingFile->data_hash == newFileHash )
+        {
+            return existingFile;
+        }
+
+        wxString msg = wxString::Format(
+                _( "A file named '%s' is already embedded, but the file on disk has different "
+                   "content.\n\nDo you want to replace the embedded file with the new version?" ),
+                name );
+
+        KIDIALOG dlg( m_parent, msg, _( "Embedded File Conflict" ),
+                      wxYES_NO | wxCANCEL | wxICON_WARNING );
+        dlg.SetYesNoLabels( _( "Replace" ), _( "Reuse Existing" ) );
+
+        int result = dlg.ShowModal();
+
+        if( result == wxID_CANCEL )
+            return nullptr;
+
+        if( result == wxID_NO )
+        {
+            return existingFile;
+        }
 
         for( int ii = 0; ii < m_files_grid->GetNumberRows(); ii++ )
         {
@@ -367,6 +395,8 @@ void PANEL_EMBEDDED_FILES::onAddEmbeddedFiles( wxCommandEvent& event )
     wxFileDialog fileDialog( this, _( "Select a file to embed" ), wxEmptyString, wxEmptyString,
                              _( "All Files" ) + wxT( " (*.*)|*.*" ),
                              wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE );
+
+    KIPLATFORM::UI::AllowNetworkFileSystems( &fileDialog );
 
     if( fileDialog.ShowModal() == wxID_OK )
     {

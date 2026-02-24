@@ -76,11 +76,10 @@ bool MULTI_DRAGGER::Start( const VECTOR2I& aP, ITEM_SET& aPrimitives )
             l.originalLine = m_world->AssembleLine( litem );
             l.originalLeaders.push_back( litem );
             l.isDraggable = true;
+            l.mdragIndex = static_cast<int>( m_mdragLines.size() );
             m_mdragLines.push_back( std::move( l ) );
         }
     }
-
-    int n = 0;
 
     bool anyStrictCornersFound = false;
     bool anyStrictMidSegsFound = false;
@@ -148,19 +147,19 @@ bool MULTI_DRAGGER::Start( const VECTOR2I& aP, ITEM_SET& aPrimitives )
                     if( !aPrimitives.Contains( lseg ) )
                         continue;
 
-                        int d = lseg->Seg().Distance( aP );
+                    int d = lseg->Seg().Distance( aP );
 
-                        l.midSeg = lseg->Seg();
-                        l.isMidSeg = true;
-                        l.leaderSegIndex = lidx;
-                        l.leaderSegDistance = d + thr;
+                    l.midSeg = lseg->Seg();
+                    l.isMidSeg = true;
+                    l.leaderSegIndex = lidx;
+                    l.leaderSegDistance = d + thr;
 
-                        if( d < thr && !l.isStrict )
-                        {
-                            l.isCorner = false;
-                            l.isStrict = true;
-                            l.leaderSegDistance = 0;
-                        }
+                    if( d < thr && !l.isStrict )
+                    {
+                        l.isCorner = false;
+                        l.isStrict = true;
+                        l.leaderSegDistance = 0;
+                    }
                 }
             }
 
@@ -378,7 +377,6 @@ bool MULTI_DRAGGER::FixRoute( bool aForceCommit )
 bool MULTI_DRAGGER::tryWalkaround( NODE* aNode, LINE& aOrig, LINE& aWalk )
 {
     WALKAROUND walkaround( aNode, Router() );
-    bool       ok = false;
     walkaround.SetSolidsOnly( false );
     walkaround.SetDebugDecorator( Dbg() );
     walkaround.SetLogger( Logger() );
@@ -486,7 +484,7 @@ bool MULTI_DRAGGER::multidragWalkaround( std::vector<MDRAG_LINE>& aCompletedLine
         totalLength[attempt] = 0;
         fail = false;
 
-        for( int lidx = 0; lidx < aCompletedLines.size(); lidx++ )
+        for( int lidx = 0; lidx < (int) aCompletedLines.size(); lidx++ )
         {
             MDRAG_LINE& l = aCompletedLines[attempt ? aCompletedLines.size() - 1 - lidx : lidx];
 
@@ -568,19 +566,15 @@ bool MULTI_DRAGGER::multidragMarkObstacles( std::vector<MDRAG_LINE>& aCompletedL
     m_lastNode = m_world->Branch();
 
 
-    int nclipped = 0;
-    for( int l1 = 0; l1 < aCompletedLines.size(); l1++ )
+    for( int l1 = 0; l1 < (int)aCompletedLines.size(); l1++ )
     {
-        for( int l2 = l1 + 1; l2 < aCompletedLines.size(); l2++ )
+        for( int l2 = l1 + 1; l2 < (int)aCompletedLines.size(); l2++ )
         {
             const auto& l1l = aCompletedLines[l1].draggedLine;
             auto l2l        = aCompletedLines[l2].draggedLine;
 
             if( clipToOtherLine( m_lastNode, l1l, l2l ) )
-            {
                 aCompletedLines[l2].draggedLine = l2l;
-                nclipped++;
-            }
         }
     }
 
@@ -642,11 +636,30 @@ bool MULTI_DRAGGER::multidragShove( std::vector<MDRAG_LINE>& aCompletedLines )
 
     m_lastNode = m_shove->CurrentNode()->Branch();
 
+    // Re-add any m_mdragLines that were removed from m_preShoveNode during Start() but
+    // are not part of aCompletedLines. Without this, lines that fail the drag angle check
+    // would be silently deleted from the board.
+    std::set<int> completedIndices;
+
+    for( const auto& cl : aCompletedLines )
+        completedIndices.insert( cl.mdragIndex );
+
+    for( const auto& ml : m_mdragLines )
+    {
+        if( completedIndices.find( ml.mdragIndex ) == completedIndices.end() )
+        {
+            LINE preserved( ml.originalLine );
+            preserved.ClearLinks();
+            m_lastNode->Add( preserved );
+        }
+    }
+
     if( status == SHOVE::SH_OK )
     {
-        for( int i = 0; i < aCompletedLines.size(); i++ )
+        for( int i = 0; i < (int) aCompletedLines.size(); i++ )
         {
             MDRAG_LINE&l = aCompletedLines[i];
+
             if( m_shove->HeadsModified( i ) )
                 l.draggedLine = m_shove->GetModifiedHead( i );
 
@@ -807,6 +820,7 @@ bool MULTI_DRAGGER::Drag( const VECTOR2I& aP )
                         auto leadAngle = primaryDir.Angle( parallelDir );
 
                         if( leadAngle == DIRECTION_45::ANG_OBTUSE
+                            || leadAngle == DIRECTION_45::ANG_RIGHT
                             || leadAngle == DIRECTION_45::ANG_STRAIGHT )
                         {
                             // compute the distance between the primary line and the last point of
@@ -922,7 +936,8 @@ bool MULTI_DRAGGER::Drag( const VECTOR2I& aP )
 
     for( int variant = 0; variant < 3; variant++ )
     {
-        res = tryPosture( 0 );
+        res = tryPosture( variant );
+
         if( res )
             break;
     }

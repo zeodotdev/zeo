@@ -27,6 +27,7 @@
 #include <kiplatform/app.h>
 #include <project.h>
 #include <common.h>
+#include <confirm.h>
 #include <env_vars.h>
 #include <advanced_config.h>
 #include <reporter.h>
@@ -166,6 +167,53 @@ wxString ExpandTextVars( const wxString& aSource, const std::function<bool( wxSt
 
             for( i = i + 2; i < sourceLen; ++i )
             {
+                // Skip over escape markers - don't count their braces
+                // This prevents <<<ESC_DOLLAR:X} from interfering with outer brace counting
+                if( i + 14 <= sourceLen && aSource.Mid( i, 14 ) == wxT( "<<<ESC_DOLLAR:" ) )
+                {
+                    token.append( wxT( "<<<ESC_DOLLAR:" ) );
+                    i += 14;
+
+                    // Copy contents until matching closing brace (tracking nested braces)
+                    int markerBraceCount = 1;
+
+                    while( i < sourceLen && markerBraceCount > 0 )
+                    {
+                        if( aSource[i] == '{' )
+                            markerBraceCount++;
+                        else if( aSource[i] == '}' )
+                            markerBraceCount--;
+
+                        token.append( aSource[i] );
+                        i++;
+                    }
+
+                    i--; // Adjust for outer loop increment
+                    continue;
+                }
+                else if( i + 10 <= sourceLen && aSource.Mid( i, 10 ) == wxT( "<<<ESC_AT:" ) )
+                {
+                    token.append( wxT( "<<<ESC_AT:" ) );
+                    i += 10;
+
+                    // Copy contents until matching closing brace (tracking nested braces)
+                    int markerBraceCount = 1;
+
+                    while( i < sourceLen && markerBraceCount > 0 )
+                    {
+                        if( aSource[i] == '{' )
+                            markerBraceCount++;
+                        else if( aSource[i] == '}' )
+                            markerBraceCount--;
+
+                        token.append( aSource[i] );
+                        i++;
+                    }
+
+                    i--; // Adjust for outer loop increment
+                    continue;
+                }
+
                 if( aSource[i] == '{' )
                 {
                     braceDepth++;
@@ -174,6 +222,7 @@ wxString ExpandTextVars( const wxString& aSource, const std::function<bool( wxSt
                 else if( aSource[i] == '}' )
                 {
                     braceDepth--;
+
                     if( braceDepth == 0 )
                         break; // Found the matching closing brace
                     else
@@ -730,146 +779,15 @@ bool matchWild( const char* pat, const char* text, bool dot_special )
 }
 
 
-/**
- * A copy of ConvertFileTimeToWx() because wxWidgets left it as a static function
- * private to src/common/filename.cpp.
- */
-#if wxUSE_DATETIME && defined( __WIN32__ ) && !defined( __WXMICROWIN__ )
-
-// Convert between wxDateTime and FILETIME which is a 64-bit value representing
-// the number of 100-nanosecond intervals since January 1, 1601 UTC.
-//
-// This is the offset between FILETIME epoch and the Unix/wxDateTime Epoch.
-static wxInt64 EPOCH_OFFSET_IN_MSEC = wxLL( 11644473600000 );
-
-
-static void ConvertFileTimeToWx( wxDateTime* dt, const FILETIME& ft )
-{
-    wxLongLong t( ft.dwHighDateTime, ft.dwLowDateTime );
-    t /= 10000; // Convert hundreds of nanoseconds to milliseconds.
-    t -= EPOCH_OFFSET_IN_MSEC;
-
-    *dt = wxDateTime( t );
-}
-
-#endif // wxUSE_DATETIME && __WIN32__
-
-
-/**
- * This routine offers SIGNIFICANT performance benefits over using wxWidgets to gather
- * timestamps from matching files in a directory.
- *
- * @param aDirPath is the directory to search.
- * @param aFilespec is a (wildcarded) file spec to match against.
- * @return a hash of the last-mod-dates of all matching files in the directory.
- */
-long long TimestampDir( const wxString& aDirPath, const wxString& aFilespec )
-{
-    long long timestamp = 0;
-
-#if defined( __WIN32__ )
-    // Win32 version.
-    // Save time by not searching for each path twice: once in wxDir.GetNext() and once in
-    // wxFileName.GetModificationTime().  Also cuts out wxWidgets' string-matching and case
-    // conversion by staying on the MSW side of things.
-    std::wstring filespec( aDirPath.t_str() );
-    filespec += '\\';
-    filespec += aFilespec.t_str();
-
-    WIN32_FIND_DATA findData;
-    wxDateTime      lastModDate;
-
-    HANDLE fileHandle = ::FindFirstFile( filespec.data(), &findData );
-
-    if( fileHandle != INVALID_HANDLE_VALUE )
-    {
-        do
-        {
-            ConvertFileTimeToWx( &lastModDate, findData.ftLastWriteTime );
-            timestamp += lastModDate.GetValue().GetValue();
-
-            // Get the file size (partial) as well to check for sneaky changes.
-            timestamp += findData.nFileSizeLow;
-        } while( FindNextFile( fileHandle, &findData ) != 0 );
-    }
-
-    FindClose( fileHandle );
-#else
-    // POSIX version.
-    // Save time by not converting between encodings -- do everything on the file-system side.
-    std::string filespec( aFilespec.fn_str() );
-    std::string dir_path( aDirPath.fn_str() );
-
-    DIR* dir = opendir( dir_path.c_str() );
-
-    if( dir )
-    {
-        for( dirent* dir_entry = readdir( dir ); dir_entry; dir_entry = readdir( dir ) )
-        {
-            if( !matchWild( filespec.c_str(), dir_entry->d_name, true ) )
-                continue;
-
-            std::string entry_path = dir_path + '/' + dir_entry->d_name;
-            struct stat entry_stat;
-
-            if( wxCRT_Lstat( entry_path.c_str(), &entry_stat ) == 0 )
-            {
-                // Timestamp the source file, not the symlink
-                if( S_ISLNK( entry_stat.st_mode ) ) // wxFILE_EXISTS_SYMLINK
-                {
-                    char    buffer[PATH_MAX + 1];
-                    ssize_t pathLen = readlink( entry_path.c_str(), buffer, PATH_MAX );
-
-                    if( pathLen > 0 )
-                    {
-                        struct stat linked_stat;
-                        buffer[pathLen] = '\0';
-                        entry_path = dir_path + buffer;
-
-                        if( wxCRT_Lstat( entry_path.c_str(), &linked_stat ) == 0 )
-                        {
-                            entry_stat = linked_stat;
-                        }
-                        else
-                        {
-                            // if we couldn't lstat the linked file we'll have to just use
-                            // the symbolic link info
-                        }
-                    }
-                }
-
-                if( S_ISREG( entry_stat.st_mode ) ) // wxFileExists()
-                {
-                    timestamp += entry_stat.st_mtime * 1000;
-
-                    // Get the file size as well to check for sneaky changes.
-                    timestamp += entry_stat.st_size;
-                }
-            }
-            else
-            {
-                // if we couldn't lstat the file itself all we can do is use the name
-                timestamp += (signed) std::hash<std::string>{}( std::string( dir_entry->d_name ) );
-            }
-        }
-
-        closedir( dir );
-    }
-#endif
-
-    return timestamp;
-}
-
-
 bool WarnUserIfOperatingSystemUnsupported()
 {
     if( !KIPLATFORM::APP::IsOperatingSystemUnsupported() )
         return false;
 
-    wxMessageDialog dialog( nullptr,
-                            _( "This operating system is not supported "
-                               "by KiCad and its dependencies." ),
-                            _( "Unsupported Operating System" ), wxOK | wxICON_EXCLAMATION );
+    KICAD_MESSAGE_DIALOG dialog( nullptr,
+                                 _( "This operating system is not supported "
+                                    "by KiCad and its dependencies." ),
+                                 _( "Unsupported Operating System" ), wxOK | wxICON_EXCLAMATION );
 
     dialog.SetExtendedMessage( _( "Any issues with KiCad on this system cannot "
                                   "be reported to the official bugtracker." ) );

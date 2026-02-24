@@ -33,6 +33,7 @@
 #include <fmt/core.h>
 #include <macros.h>
 #include <string_utils.h>
+#include <widgets/kistatusbar.h>
 #include <wx_filename.h>
 #include <fmt/chrono.h>
 #include <wx/log.h>
@@ -40,6 +41,7 @@
 #include <wx/tokenzr.h>
 #include <libeval/numeric_evaluator.h>
 #include "locale_io.h"
+#include <wx/event.h>
 
 
 /**
@@ -158,7 +160,7 @@ bool ConvertSmartQuotesAndDashes( wxString* aString )
 
     for( wxString::iterator ii = aString->begin(); ii != aString->end(); ++ii )
     {
-        if( *ii == L'\u00B4' || *ii == L'\u2018' || *ii == L'\u2019' )
+        if( *ii == L'\u2018' || *ii == L'\u2019' )
         {
             *ii = '\'';
             retVal = true;
@@ -237,7 +239,7 @@ wxString EscapeString( const wxString& aSource, ESCAPE_CONTEXT aContext )
         }
         else if( aContext == CTX_JS_STR )
         {
-            if( c >= 0x7F || c == '\'' || c == '\\' || c == '(' || c == ')' )
+            if( c >= 0x7F || c == '\'' || c == '"' || c == '\\' || c == '(' || c == ')' )
             {
                 unsigned int code = c;
                 char buffer[16];
@@ -813,15 +815,7 @@ char* GetLine( FILE* File, char* Line, int* LineNum, int SizeLine )
 
 wxString GetISO8601CurrentDateTime()
 {
-    // on msys2 variant mingw64, in fmt::format the %z format
-    // (offset from UTC in the ISO 8601 format, e.g. -0430) does not work,
-    // and is in fact %Z (locale-dependent time zone name or abbreviation) and breaks our date.
-    // However, on msys2 variant ucrt64, it works (this is not the same code in fmt::format)
-#if defined(__MINGW32__) && !defined(_UCRT)
-    return fmt::format( "{:%FT%T}", fmt::localtime( std::time( nullptr ) ) );
-#else
-    return fmt::format( "{:%FT%T%z}", fmt::localtime( std::time( nullptr ) ) );
-#endif
+    return wxDateTime::Now().FormatISOCombined( 'T' );
 }
 
 
@@ -832,7 +826,10 @@ int StrNumCmp( const wxString& aString1, const wxString& aString2, bool aIgnoreC
     auto str1 = aString1.begin();
     auto str2 = aString2.begin();
 
-    while( str1 != aString1.end() && str2 != aString2.end() )
+    const auto str1End = aString1.end();
+    const auto str2End = aString2.end();
+
+    while( str1 != str1End && str2 != str2End )
     {
         wxUniChar c1 = *str1;
         wxUniChar c2 = *str2;
@@ -847,14 +844,14 @@ int StrNumCmp( const wxString& aString1, const wxString& aString2, bool aIgnoreC
                 c1 = *str1;
                 nb1 = nb1 * 10 + (int) c1 - '0';
                 ++str1;
-            } while( str1 != aString1.end() && wxIsdigit( *str1 ) );
+            } while( str1 != str1End && wxIsdigit( *str1 ) );
 
             do
             {
                 c2 = *str2;
                 nb2 = nb2 * 10 + (int) c2 - '0';
                 ++str2;
-            } while( str2 != aString2.end() && wxIsdigit( *str2 ) );
+            } while( str2 != str2End && wxIsdigit( *str2 ) );
 
             if( nb1 < nb2 )
                 return -1;
@@ -862,8 +859,8 @@ int StrNumCmp( const wxString& aString1, const wxString& aString2, bool aIgnoreC
             if( nb1 > nb2 )
                 return 1;
 
-            c1 = ( str1 != aString1.end() ) ? *str1 : wxUniChar( 0 );
-            c2 = ( str2 != aString2.end() ) ? *str2 : wxUniChar( 0 );
+            c1 = ( str1 != str1End ) ? *str1 : wxUniChar( 0 );
+            c2 = ( str2 != str2End ) ? *str2 : wxUniChar( 0 );
         }
 
         // Any numerical comparisons to here are identical.
@@ -887,18 +884,18 @@ int StrNumCmp( const wxString& aString1, const wxString& aString2, bool aIgnoreC
                 return 1;
         }
 
-        if( str1 != aString1.end() )
+        if( str1 != str1End )
             ++str1;
 
-        if( str2 != aString2.end() )
+        if( str2 != str2End )
             ++str2;
     }
 
-    if( str1 == aString1.end() && str2 != aString2.end() )
+    if( str1 == str1End && str2 != str2End )
     {
         return -1;   // Identical to here but aString1 is longer.
     }
-    else if( str1 != aString1.end() && str2 == aString2.end() )
+    else if( str1 != str1End && str2 == str2End )
     {
         return 1;    // Identical to here but aString2 is longer.
     }
@@ -1681,24 +1678,33 @@ std::vector<wxString> ExpandStackedPinNotation( const wxString& aPinName, bool* 
 
 int CountStackedPinNotation( const wxString& aPinName, bool* aValid )
 {
-    if( aValid )
+    size_t len = aPinName.length();
+
+    if( !aValid )
+    {
+        // Fastest path when we're not interested in validity
+        if( len < 3 )
+            return 1;
+    }
+    else
+    {
         *aValid = true;
 
-    // Fast path: if no brackets, it's a single pin
-    const bool hasOpenBracket  = aPinName.Contains( wxT( "[" ) );
-    const bool hasCloseBracket = aPinName.Contains( wxT( "]" ) );
+        // Fast path: if no brackets, it's a single pin
+        const bool hasOpenBracket = aPinName.Contains( wxT( "[" ) );
+        const bool hasCloseBracket = aPinName.Contains( wxT( "]" ) );
 
-    if( hasOpenBracket || hasCloseBracket )
-    {
-        if( !aPinName.StartsWith( wxT( "[" ) ) || !aPinName.EndsWith( wxT( "]" ) ) )
+        if( hasOpenBracket || hasCloseBracket )
         {
-            if( aValid )
+            if( aPinName[0] != '[' || aPinName[len - 1] != ']' )
+            {
                 *aValid = false;
-            return 1;
+                return 1;
+            }
         }
     }
 
-    if( !aPinName.StartsWith( wxT( "[" ) ) || !aPinName.EndsWith( wxT( "]" ) ) )
+    if( aPinName[0] != '[' || aPinName[len - 1] != ']' )
         return 1;
 
     const wxString inner = aPinName.Mid( 1, aPinName.Length() - 2 );
@@ -1779,5 +1785,35 @@ int SortVariantNames( const wxString& aLhs, const wxString& aRhs )
         return 1;
 
     return StrNumCmp( aLhs, aRhs );
+}
+
+
+std::vector<LOAD_MESSAGE> ExtractLibraryLoadErrors( const wxString& aErrorString, int aSeverity )
+{
+    std::vector<LOAD_MESSAGE> messages;
+
+    if( aErrorString.IsEmpty() )
+        return messages;
+
+    // Errors are separated by newlines. We want to keep:
+    // - Lines starting with "Library '" (library-level errors)
+    // - Lines containing "Expecting" (file error location)
+    // And strip:
+    // - Lines starting with "from " (internal code location info)
+    wxStringTokenizer tokenizer( aErrorString, wxS( "\n" ), wxTOKEN_STRTOK );
+
+    while( tokenizer.HasMoreTokens() )
+    {
+        wxString line = tokenizer.GetNextToken();
+
+        // Skip internal code location lines (e.g., "from pcb_io_kicad_sexpr_parser.cpp : ...")
+        if( line.StartsWith( wxS( "from " ) ) )
+            continue;
+
+        if( line.StartsWith( wxS( "Library '" ) ) || line.Contains( wxS( "Expecting" ) ) )
+            messages.push_back( { line, static_cast<SEVERITY>( aSeverity ) } );
+    }
+
+    return messages;
 }
 

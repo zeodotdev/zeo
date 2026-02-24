@@ -27,6 +27,7 @@
 #include <pcb_edit_frame.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <project/net_settings.h>
 #include <pcb_track.h>
 #include <pcb_group.h>
 #include <footprint.h>
@@ -421,11 +422,11 @@ bool DIALOG_GLOBAL_EDIT_TEARDROPS::TransferDataFromWindow()
 
         if( m_removeTeardrops->GetValue() || m_removeAllTeardrops->GetValue() )
         {
-            targetParams->m_Enabled = false;    // JEY TODO: how does this get undone/redone?
+            targetParams->m_Enabled = false;
         }
         else if( m_addTeardrops->GetValue() )
         {
-            targetParams->m_Enabled = true;     // JEY TODO: how does this get undone/redone?
+            targetParams->m_Enabled = true;
             teardropManager.AddTeardropsOnTracks( commit, nullptr, true );
         }
     }

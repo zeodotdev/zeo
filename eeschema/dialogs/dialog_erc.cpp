@@ -28,6 +28,7 @@
 #include <gestfich.h>
 #include <sch_screen.h>
 #include <sch_edit_frame.h>
+#include <widgets/wx_infobar.h>
 #include <project.h>
 #include <kiface_base.h>
 #include <reporter.h>
@@ -46,12 +47,12 @@
 #include <dialogs/dialog_text_entry.h>
 #include <string_utils.h>
 #include <kiplatform/ui.h>
+#include <confirm.h>
 
 #include <wx/ffile.h>
 #include <wx/filedlg.h>
 #include <wx/hyperlink.h>
 #include <wx/msgdlg.h>
-#include <wx/wupdlock.h>
 #include <sch_edit_tool.h>
 
 
@@ -96,6 +97,10 @@ DIALOG_ERC::DIALOG_ERC( SCH_EDIT_FRAME* parent ) :
     m_markerTreeModel = new ERC_TREE_MODEL( parent, m_markerDataView );
     m_markerDataView->AssociateModel( m_markerTreeModel );
     m_markerTreeModel->Update( m_markerProvider, getSeverities() );
+
+    // Prevent RTL locales from mirroring the text in the data views
+    m_markerDataView->SetLayoutDirection( wxLayout_LeftToRight );
+    m_ignoredList->SetLayoutDirection( wxLayout_LeftToRight );
 
     m_ignoredList->InsertColumn( 0, wxEmptyString, wxLIST_FORMAT_LEFT, DEFAULT_SINGLE_COL_WIDTH );
 
@@ -407,8 +412,8 @@ void DIALOG_ERC::OnDeleteAllClick( wxCommandEvent& event )
 
     if( numExcluded > 0 )
     {
-        wxMessageDialog dlg( this, _( "Delete exclusions too?" ), _( "Delete All Markers" ),
-                             wxYES_NO | wxCANCEL | wxCENTER | wxICON_QUESTION );
+        KICAD_MESSAGE_DIALOG dlg( this, _( "Delete exclusions too?" ), _( "Delete All Markers" ),
+                                  wxYES_NO | wxCANCEL | wxCENTER | wxICON_QUESTION );
         dlg.SetYesNoLabels( _( "Errors and Warnings Only" ),
                             _( "Errors, Warnings and Exclusions" ) );
 
@@ -1096,7 +1101,7 @@ void DIALOG_ERC::deleteAllMarkers( bool aIncludeExclusions )
     // Clear current selection list to avoid selection of deleted items
     // Freeze to avoid repainting the dialog, which can cause a RePaint()
     // of the screen as well
-    wxWindowUpdateLocker updateLock( this );
+    Freeze();
 
     m_parent->GetToolManager()->RunAction( ACTIONS::selectionClear );
 
@@ -1104,6 +1109,8 @@ void DIALOG_ERC::deleteAllMarkers( bool aIncludeExclusions )
 
     SCH_SCREENS screens( m_parent->Schematic().Root() );
     screens.DeleteAllMarkers( MARKER_BASE::MARKER_ERC, aIncludeExclusions );
+
+    Thaw();
 }
 
 
@@ -1114,6 +1121,8 @@ void DIALOG_ERC::OnSaveReport( wxCommandEvent& aEvent )
     wxFileDialog dlg( this, _( "Save Report File" ), Prj().GetProjectPath(), fn.GetFullName(),
                       FILEEXT::ReportFileWildcard() + wxS( "|" ) + FILEEXT::JsonFileWildcard(),
                       wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
+
+    KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
 
     if( dlg.ShowModal() != wxID_OK )
         return;

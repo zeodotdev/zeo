@@ -136,6 +136,12 @@ public:
      */
     bool IsValidBoardHeader();
 
+    /**
+     * Return any non-fatal parse warnings that occurred during parsing.
+     * These are errors that were handled gracefully but should be reported to the user.
+     */
+    const std::vector<wxString>& GetParseWarnings() const { return m_parseWarnings; }
+
 private:
 
     // Group membership info refers to other Uuids in the file.
@@ -324,6 +330,9 @@ private:
 
     std::pair<wxString, wxString> parseBoardProperty();
 
+    void parseVariants();
+    void parseFootprintVariant( FOOTPRINT* aFootprint );
+
     /**
      * Parses possible outline points and stores them into \p aPoly.  This accepts points
      * for DRAWSEGMENT polygons, EDGEMODULE polygons and ZONE_CONTAINER polygons.  Points
@@ -449,6 +458,8 @@ private:
     std::vector<GENERATOR_INFO> m_generatorInfos;
 
     std::function<bool( wxString aTitle, int aIcon, wxString aMsg, wxString aAction )> m_queryUserCallback;
+
+    std::vector<wxString>       m_parseWarnings;    ///< Non-fatal warnings collected during parsing
 };
 
 

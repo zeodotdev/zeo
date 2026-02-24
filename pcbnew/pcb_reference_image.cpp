@@ -40,6 +40,8 @@
 #include <trigo.h>
 
 #include <wx/mstream.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 using KIGFX::PCB_PAINTER;
 using KIGFX::PCB_RENDER_SETTINGS;
@@ -171,6 +173,11 @@ void PCB_REFERENCE_IMAGE::Move( const VECTOR2I& aMoveVector )
 void PCB_REFERENCE_IMAGE::Flip( const VECTOR2I& aCentre, FLIP_DIRECTION aFlipDirection )
 {
     m_referenceImage.Flip( aCentre, aFlipDirection );
+
+    if( GetBoard() )
+        SetLayer( GetBoard()->FlipLayer( GetLayer() ) );
+    else
+        SetLayer( FlipLayer( GetLayer() ) );
 }
 
 

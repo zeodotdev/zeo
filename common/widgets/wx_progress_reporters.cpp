@@ -87,13 +87,19 @@ bool WX_PROGRESS_REPORTER::updateUI()
             Fit();
         }
 
-        Raise();
-
         m_messageChanged = false;
     }
 
+    // Allowing interaction with other windows has unintended consequences
+    wxWindowDisabler ed( this );
+
     // Returns false when cancelled (if it's a cancellable dialog)
     bool diag = WX_PROGRESS_REPORTER_BASE::Update( cur, message );
+
+    // Prevent wx from queuing timer events and slowing down
+    // See https://github.com/wxWidgets/wxWidgets/issues/26192
+    if( wxEventLoopBase* loop = wxEventLoopBase::GetActive() )
+        loop->YieldFor( wxEVT_CATEGORY_TIMER );
 
     return diag;
 }
@@ -115,7 +121,9 @@ bool GAUGE_PROGRESS_REPORTER::updateUI()
         cur = 0;
 
     wxGauge::SetValue( cur );
-    wxEventLoopBase::GetActive()->YieldFor( wxEVT_CATEGORY_UI );
+
+    if( wxEventLoopBase* loop = wxEventLoopBase::GetActive() )
+        loop->YieldFor( wxEVT_CATEGORY_UI );
 
     return true;  // No cancel button on a wxGauge
 }

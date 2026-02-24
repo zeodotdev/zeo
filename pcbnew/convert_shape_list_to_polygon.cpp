@@ -293,7 +293,9 @@ static void processShapeSegment( PCB_SHAPE* aShape, SHAPE_LINE_CHAIN& aContour,
 
         if( !close_enough( aPrevPt, pstart, aChainingEpsilon ) )
         {
-            wxASSERT( close_enough( aPrevPt, aShape->GetEnd(), aChainingEpsilon ) );
+            if( !close_enough( aPrevPt, aShape->GetEnd(), aChainingEpsilon ) )
+                return;
+
             std::swap( pstart, pend );
         }
 
@@ -373,6 +375,9 @@ static std::map<int, std::vector<int>> buildContourHierarchy( const std::vector<
 
     for( size_t ii = 0; ii < aContours.size(); ++ii )
     {
+        if( aContours[ii].PointCount() < 1 )  // malformed/empty SHAPE_LINE_CHAIN
+            continue;
+
         VECTOR2I         firstPt = aContours[ii].GetPoint( 0 );
         std::vector<int> parents;
 
@@ -762,7 +767,7 @@ bool doConvertOutlineToPolygon( std::vector<PCB_SHAPE*>& aShapeList, SHAPE_POLY_
                         return;
 
                     const double query_pt[2] = { static_cast<double>( pt.x ), static_cast<double>( pt.y ) };
-                    uint32_t    indices[2];
+                    uint32_t    indices[2] = { 0, 0 };      // make gcc quiet
                     double      dists[2];
 
                     // Find the two closest items to the given point using kdtree

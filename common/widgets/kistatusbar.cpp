@@ -26,15 +26,21 @@
 #include <wx/statusbr.h>
 #include <wx/gauge.h>
 #include <wx/stattext.h>
+#include <wx/statbmp.h>
+#include <wx/tokenzr.h>
 #include <fmt/format.h>
 #include <array>
 #include <widgets/kistatusbar.h>
+#include <widgets/wx_html_report_box.h>
 #include <widgets/bitmap_button.h>
 #include <widgets/ui_common.h>
 #include <pgm_base.h>
 #include <background_jobs_monitor.h>
 #include <notifications_manager.h>
 #include <bitmaps.h>
+#include <reporter.h>
+#include <dialog_HTML_reporter_base.h>
+#include <trace_helpers.h>
 #include <wx/dcclient.h>
 
 
@@ -42,24 +48,36 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
         wxStatusBar( parent, id ),
         m_backgroundStopButton( nullptr ),
         m_notificationsButton( nullptr ),
+        m_warningButton( nullptr ),
         m_labelButton( nullptr ),
         m_profileBitmap( nullptr ),
         m_normalFieldsCount( aNumberFields ),
         m_styleFlags( aFlags )
 {
+#ifdef __WXOSX__
+    // we need +1 extra field on OSX to offset from the rounded corner on the right
+    // OSX doesn't use resize grippers like the other platforms and the statusbar field
+    // includes the rounded part
+    int extraFields = 3;
+#else
     int extraFields = 2;
+#endif
 
     bool showNotification = ( m_styleFlags & NOTIFICATION_ICON );
     bool showCancel = ( m_styleFlags & CANCEL_BUTTON );
-    bool showLabelButton = ( m_styleFlags & LABEL_BUTTON );
+    bool showWarning = ( m_styleFlags & WARNING_ICON );
+    bool showLabel = ( m_styleFlags & LABEL_BUTTON );
 
     if( showCancel )
         extraFields++;
 
-    if( showLabelButton )
+    if( showWarning )
         extraFields++;
 
     if( showNotification )
+        extraFields++;
+
+    if( showLabel )
         extraFields++;
 
     SetFieldsCount( aNumberFields + extraFields );
@@ -78,13 +96,19 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
     if( std::optional<int> idx = fieldIndex( FIELD::BGJOB_CANCEL ) )
         widths[aNumberFields + *idx] = 20;     // background stop button
 
-    if( std::optional<int> idx = fieldIndex( FIELD::LABEL_BUTTON ) )
-        widths[aNumberFields + *idx] = 100;     // label button (variable size but start with default)
+    if( std::optional<int> idx = fieldIndex( FIELD::WARNING ) )
+        widths[aNumberFields + *idx] = 20;  // warning button
 
     if( std::optional<int> idx = fieldIndex( FIELD::NOTIFICATION ) )
         widths[aNumberFields + *idx] = 20;  // notifications button
 
+    if( std::optional<int> idx = fieldIndex( FIELD::LABEL ) )
+        widths[aNumberFields + *idx] = 100;  // Zeo session label button
 
+#ifdef __WXOSX__
+    // offset from the right edge
+    widths[aNumberFields + extraFields - 1] = 10;
+#endif
 
     SetStatusWidths( aNumberFields + extraFields, widths );
     delete[] widths;
@@ -108,23 +132,6 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
                                                wxDefaultSize, wxBU_EXACTFIT );
     }
 
-    if( showLabelButton )
-    {
-        // Use wxStaticText for transparency and centering
-        m_labelButton = new wxStaticText( this, wxID_ANY, "", wxDefaultPosition,
-                                          wxDefaultSize, wxALIGN_CENTRE_HORIZONTAL | wxST_NO_AUTORESIZE );
-            
-        m_labelButton->SetForegroundColour( wxColour( 255, 255, 255 ) );
-        
-        // Indicate clickability
-        m_labelButton->SetCursor( wxCursor( wxCURSOR_HAND ) );
-
-        // Profile Bitmap (Hidden by default)
-        m_profileBitmap = new wxStaticBitmap( this, wxID_ANY, wxNullBitmap );
-        m_profileBitmap->SetCursor( wxCursor( wxCURSOR_HAND ) );
-        m_profileBitmap->Hide();
-    }
-
     if( showNotification )
     {
         m_notificationsButton = new BITMAP_BUTTON( this, wxID_ANY, wxNullBitmap, wxDefaultPosition,
@@ -138,6 +145,29 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
         m_notificationsButton->Bind( wxEVT_BUTTON, &KISTATUSBAR::onNotificationsIconClick, this );
     }
 
+    if( showWarning )
+    {
+        m_warningButton = new BITMAP_BUTTON( this, wxID_ANY, wxNullBitmap, wxDefaultPosition,
+                                             wxDefaultSize, wxBU_EXACTFIT );
+
+        m_warningButton->SetPadding( 0 );
+        m_warningButton->SetBitmap( KiBitmapBundle( BITMAPS::small_warning ) );
+        m_warningButton->SetBitmapCentered( true );
+        m_warningButton->SetToolTip( _( "View load messages" ) );
+        m_warningButton->Hide();
+
+        m_warningButton->Bind( wxEVT_BUTTON, &KISTATUSBAR::onLoadWarningsIconClick, this );
+    }
+
+    if( showLabel )
+    {
+        m_labelButton = new wxButton( this, wxID_ANY, _( "Sign In" ), wxDefaultPosition,
+                                      wxDefaultSize, wxBU_EXACTFIT | wxBORDER_NONE );
+
+        m_profileBitmap = new wxStaticBitmap( this, wxID_ANY, wxNullBitmap );
+        m_profileBitmap->Hide();
+    }
+
     Bind( wxEVT_SIZE, &KISTATUSBAR::onSize, this );
     m_backgroundProgressBar->Bind( wxEVT_LEFT_DOWN, &KISTATUSBAR::onBackgroundProgressClick, this );
 
@@ -145,57 +175,14 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
     Layout();
 }
 
-void KISTATUSBAR::SetProfileBitmap( const wxBitmap& aBitmap )
-{
-    if( m_profileBitmap )
-    {
-        m_profileBitmap->SetBitmap( aBitmap );
-        
-        // Update width similar to SetLabelButtonText
-        if( std::optional<int> idx = fieldIndex( FIELD::LABEL_BUTTON ) )
-        {
-            int newWidth = 100; // Default fallback
-            
-            if( aBitmap.IsOk() )
-                newWidth = aBitmap.GetWidth() + 20; // Right padding from border
-
-            int extraFields = 2;  // BGJOB_LABEL and BGJOB_GAUGE are always present
-            if( m_styleFlags & CANCEL_BUTTON ) extraFields++;
-            if( m_styleFlags & LABEL_BUTTON ) extraFields++;
-            if( m_styleFlags & NOTIFICATION_ICON ) extraFields++;
-
-            int totalFields = m_normalFieldsCount + extraFields;
-            int* widths = new int[totalFields];
-
-            // Reset default widths
-            for( int i = 0; i < m_normalFieldsCount; i++ ) widths[i] = -1;
-            if( std::optional<int> bgIdx = fieldIndex( FIELD::BGJOB_LABEL ) ) widths[m_normalFieldsCount + *bgIdx] = -1;
-            if( std::optional<int> bgIdx = fieldIndex( FIELD::BGJOB_GAUGE ) ) widths[m_normalFieldsCount + *bgIdx] = 75;
-            if( std::optional<int> bgIdx = fieldIndex( FIELD::BGJOB_CANCEL ) ) widths[m_normalFieldsCount + *bgIdx] = 20;
-            if( std::optional<int> notifIdx = fieldIndex( FIELD::NOTIFICATION ) ) widths[m_normalFieldsCount + *notifIdx] = 26;
-
-            // Set our new dynamic width for the label/avatar field
-            widths[m_normalFieldsCount + *idx] = newWidth;
-
-            SetStatusWidths( totalFields, widths );
-            delete[] widths;
-            
-            // Force resize event to update positions
-            wxSizeEvent evt( GetSize(), GetId() );
-            evt.SetEventObject( this );
-            GetEventHandler()->ProcessEvent( evt );
-        }
-        
-        m_profileBitmap->Refresh();
-    }
-}
-
-
 
 KISTATUSBAR::~KISTATUSBAR()
 {
     if( m_notificationsButton )
         m_notificationsButton->Unbind( wxEVT_BUTTON, &KISTATUSBAR::onNotificationsIconClick, this );
+
+    if( m_warningButton )
+        m_warningButton->Unbind( wxEVT_BUTTON, &KISTATUSBAR::onLoadWarningsIconClick, this );
 
     Unbind( wxEVT_SIZE, &KISTATUSBAR::onSize, this );
     m_backgroundProgressBar->Unbind( wxEVT_LEFT_DOWN, &KISTATUSBAR::onBackgroundProgressClick,
@@ -209,8 +196,11 @@ void KISTATUSBAR::onNotificationsIconClick( wxCommandEvent& aEvent )
     wxPoint pos = m_notificationsButton->GetScreenPosition();
 
     wxRect r;
-    GetFieldRect( m_normalFieldsCount + *fieldIndex( FIELD::NOTIFICATION ), r );
-    pos.x += r.GetWidth();
+    if( std::optional<int> idx = fieldIndex( FIELD::NOTIFICATION ) )
+    {
+        GetFieldRect( m_normalFieldsCount + *idx, r );
+        pos.x += r.GetWidth();
+    }
 
     Pgm().GetNotificationsManager().ShowList( this, pos );
 }
@@ -221,8 +211,11 @@ void KISTATUSBAR::onBackgroundProgressClick( wxMouseEvent& aEvent )
     wxPoint pos = m_backgroundProgressBar->GetScreenPosition();
 
     wxRect r;
-    GetFieldRect( m_normalFieldsCount + *fieldIndex( FIELD::BGJOB_GAUGE ), r );
-    pos.x += r.GetWidth();
+    if( std::optional<int> idx = fieldIndex( FIELD::BGJOB_GAUGE ) )
+    {
+        GetFieldRect( m_normalFieldsCount + *idx, r );
+        pos.x += r.GetWidth();
+    }
 
     Pgm().GetBackgroundJobMonitor().ShowList( this, pos );
 }
@@ -261,44 +254,6 @@ void KISTATUSBAR::onSize( wxSizeEvent& aEvent )
     m_backgroundProgressBar->SetPosition( { x + padding, y } );
     m_backgroundProgressBar->SetSize( w - buttonSize.GetWidth() - padding, h );
 
-    if( m_labelButton )
-    {
-        GetFieldRect( m_normalFieldsCount + *fieldIndex( FIELD::LABEL_BUTTON ), r );
-        
-        // Center vertically
-        buttonSize = m_labelButton->GetEffectiveMinSize();
-        int yOffset = ( r.GetHeight() - buttonSize.GetHeight() ) / 2;
-        
-        // Use full field width
-        m_labelButton->SetSize( r.GetLeft(), r.GetTop() + yOffset, r.GetWidth(), buttonSize.GetHeight() );
-    }
-
-    if( m_profileBitmap )
-    {
-        // Use same field as label button (they are mutually exclusive)
-        if( !m_labelButton ) 
-        {
-             GetFieldRect( m_normalFieldsCount + *fieldIndex( FIELD::LABEL_BUTTON ), r );
-        }
-        else 
-        {
-             GetFieldRect( m_normalFieldsCount + *fieldIndex( FIELD::LABEL_BUTTON ), r );
-        }
-
-        wxSize bmpSize = m_profileBitmap->GetSize();
-        
-        // Center horizontally in the field
-        int xCenter = r.GetLeft() + ( r.GetWidth() / 2 );
-        int xPos = xCenter - ( bmpSize.GetWidth() / 2 );
-
-        // Center vertically in the field (using field rect)
-        int yCenter = r.GetTop() + ( r.GetHeight() / 2 );
-        int yPos = yCenter - ( bmpSize.GetHeight() / 2 );
-        
-        m_profileBitmap->SetPosition( { xPos, yPos } );
-        m_profileBitmap->Refresh(); // Ensure repaint
-    }
-
     if( m_notificationsButton )
     {
         GetFieldRect( m_normalFieldsCount + *fieldIndex( FIELD::NOTIFICATION ), r );
@@ -308,6 +263,41 @@ void KISTATUSBAR::onSize( wxSizeEvent& aEvent )
         buttonSize = m_notificationsButton->GetEffectiveMinSize();
         m_notificationsButton->SetPosition( { x, y } );
         m_notificationsButton->SetSize( buttonSize.GetWidth() + 6, h );
+    }
+
+    if( m_warningButton )
+    {
+        GetFieldRect( m_normalFieldsCount + *fieldIndex( FIELD::WARNING ), r );
+        x = r.GetLeft();
+        y = r.GetTop();
+        h = r.GetHeight();
+        buttonSize = m_warningButton->GetEffectiveMinSize();
+        m_warningButton->SetPosition( { x, y } );
+        m_warningButton->SetSize( buttonSize.GetWidth() + 6, h );
+    }
+
+    if( m_labelButton || m_profileBitmap )
+    {
+        GetFieldRect( m_normalFieldsCount + *fieldIndex( FIELD::LABEL ), r );
+        x = r.GetLeft();
+        y = r.GetTop();
+        w = r.GetWidth();
+        h = r.GetHeight();
+
+        if( m_labelButton )
+        {
+            m_labelButton->SetPosition( { x, y } );
+            m_labelButton->SetSize( w, h );
+        }
+
+        if( m_profileBitmap )
+        {
+            // Center the profile bitmap in the field
+            wxSize bmpSize = m_profileBitmap->GetSize();
+            int bmpX = x + ( w - bmpSize.GetWidth() ) / 2;
+            int bmpY = y + ( h - bmpSize.GetHeight() ) / 2;
+            m_profileBitmap->SetPosition( { bmpX, bmpY } );
+        }
     }
 }
 
@@ -332,6 +322,11 @@ void KISTATUSBAR::HideBackgroundProgressBar()
 
 void KISTATUSBAR::SetBackgroundProgress( int aAmount )
 {
+    int range = m_backgroundProgressBar->GetRange();
+
+    if( aAmount > range )
+        aAmount = range;
+
     m_backgroundProgressBar->SetValue( aAmount );
 }
 
@@ -345,6 +340,26 @@ void KISTATUSBAR::SetBackgroundProgressMax( int aAmount )
 void KISTATUSBAR::SetBackgroundStatusText( const wxString& aTxt )
 {
     m_backgroundTxt->SetLabel( aTxt );
+
+    // When there are multiple normal fields, the last normal field (typically used for
+    // file watcher status on Windows) can visually overlap with the background job label
+    // since both have variable width. Save and clear that field when showing background
+    // text, and restore it when the background text is cleared.
+    if( m_normalFieldsCount > 1 )
+    {
+        int adjacentField = m_normalFieldsCount - 1;
+
+        if( !aTxt.empty() )
+        {
+            m_savedStatusText = GetStatusText( adjacentField );
+            SetStatusText( wxEmptyString, adjacentField );
+        }
+        else if( !m_savedStatusText.empty() )
+        {
+            SetStatusText( m_savedStatusText, adjacentField );
+            m_savedStatusText.clear();
+        }
+    }
 }
 
 
@@ -358,55 +373,140 @@ void KISTATUSBAR::SetNotificationCount( int aCount )
 
     m_notificationsButton->SetBadgeText( cnt );
 
+    // force a repaint or it wont until it gets activity
     Refresh();
 }
 
-void KISTATUSBAR::SetLabelButtonText( const wxString& aText )
+
+void KISTATUSBAR::SetLoadWarningMessages( const wxString& aMessages )
 {
-    wxCHECK( m_labelButton, /* void */ );
-    m_labelButton->SetLabel( aText );
+    {
+        std::lock_guard<std::mutex> lock( m_loadWarningMutex );
+        m_loadWarningMessages.clear();
 
-    // Calculate required width using the static text's font
-    wxClientDC dc( m_labelButton );
-    dc.SetFont( m_labelButton->GetFont() );
-    wxSize textSize = dc.GetTextExtent( aText );
-    
-    int newWidth = textSize.x + 30;
+        wxStringTokenizer tokenizer( aMessages, wxS( "\n" ), wxTOKEN_STRTOK );
 
-    int extraFields = 2;  // BGJOB_LABEL and BGJOB_GAUGE are always present
-    if( m_styleFlags & CANCEL_BUTTON ) extraFields++;
-    if( m_styleFlags & LABEL_BUTTON ) extraFields++;
-    if( m_styleFlags & NOTIFICATION_ICON ) extraFields++;
+        while( tokenizer.HasMoreTokens() )
+        {
+            LOAD_MESSAGE msg;
+            msg.message = tokenizer.GetNextToken();
+            msg.severity = RPT_SEVERITY_WARNING;  // Default to warning for font substitutions
+            m_loadWarningMessages.push_back( msg );
+        }
+    }
 
-    int totalFields = m_normalFieldsCount + extraFields;
-    int* widths = new int[totalFields];
-
-    // Reset default widths
-    for( int i = 0; i < m_normalFieldsCount; i++ ) widths[i] = -1;
-    if( std::optional<int> idx = fieldIndex( FIELD::BGJOB_LABEL ) ) widths[m_normalFieldsCount + *idx] = -1;
-    if( std::optional<int> idx = fieldIndex( FIELD::BGJOB_GAUGE ) ) widths[m_normalFieldsCount + *idx] = 75;
-    if( std::optional<int> idx = fieldIndex( FIELD::BGJOB_CANCEL ) ) widths[m_normalFieldsCount + *idx] = 20;
-    if( std::optional<int> idx = fieldIndex( FIELD::NOTIFICATION ) ) widths[m_normalFieldsCount + *idx] = 26;
-
-    // Set our new dynamic width
-    if( std::optional<int> idx = fieldIndex( FIELD::LABEL_BUTTON ) )
-        widths[m_normalFieldsCount + *idx] = newWidth;
-
-
-
-    SetStatusWidths( totalFields, widths );
-    delete[] widths;
-    
-    // Force resize event to update positions
-    wxSizeEvent evt( GetSize(), GetId() );
-    evt.SetEventObject( this );
-    GetEventHandler()->ProcessEvent( evt );
-    
-    // Force refresh to repaint colors
-    m_labelButton->Refresh();
+    updateWarningUI();
 }
 
-#include <widgets/ui_common.h>
+
+void KISTATUSBAR::AddLoadWarningMessages( const std::vector<LOAD_MESSAGE>& aMessages )
+{
+    wxLogTrace( traceLibraries, "KISTATUSBAR::AddLoadWarningMessages: this=%p, count=%zu",
+                this, aMessages.size() );
+
+    if( aMessages.empty() )
+        return;
+
+    {
+        std::lock_guard<std::mutex> lock( m_loadWarningMutex );
+        m_loadWarningMessages.insert( m_loadWarningMessages.end(), aMessages.begin(), aMessages.end() );
+        wxLogTrace( traceLibraries, "  -> total messages now=%zu", m_loadWarningMessages.size() );
+    }
+
+    // Update UI on main thread
+    wxLogTrace( traceLibraries, "  -> calling CallAfter for updateWarningUI" );
+    CallAfter( [this]() { updateWarningUI(); } );
+}
+
+
+size_t KISTATUSBAR::GetLoadWarningCount() const
+{
+    std::lock_guard<std::mutex> lock( m_loadWarningMutex );
+    return m_loadWarningMessages.size();
+}
+
+
+void KISTATUSBAR::updateWarningUI()
+{
+    wxLogTrace( traceLibraries, "KISTATUSBAR::updateWarningUI: this=%p, m_warningButton=%p",
+                this, m_warningButton );
+
+    if( !m_warningButton )
+    {
+        wxLogTrace( traceLibraries, "  -> no warning button, returning early" );
+        return;
+    }
+
+    size_t messageCount;
+    {
+        std::lock_guard<std::mutex> lock( m_loadWarningMutex );
+        messageCount = m_loadWarningMessages.size();
+    }
+
+    wxLogTrace( traceLibraries, "  -> message count=%zu, showing button=%s",
+                messageCount, messageCount > 0 ? "true" : "false" );
+
+    m_warningButton->Show( messageCount > 0 );
+
+    if( messageCount > 0 )
+    {
+        m_warningButton->SetToolTip( wxString::Format( _( "View %zu load message(s)" ), messageCount ) );
+
+        // Show count badge on the warning button
+        m_warningButton->SetShowBadge( true );
+        wxString badgeText = messageCount > 99
+                ? wxString( "99+" )
+                : wxString::Format( wxS( "%zu" ), messageCount );
+        m_warningButton->SetBadgeText( badgeText );
+
+        wxLogTrace( traceLibraries, "  -> badge set to '%s'", badgeText );
+    }
+
+    Layout();
+    Refresh();
+    wxLogTrace( traceLibraries, "  -> Layout and Refresh complete" );
+}
+
+
+void KISTATUSBAR::ClearLoadWarningMessages()
+{
+    {
+        std::lock_guard<std::mutex> lock( m_loadWarningMutex );
+        m_loadWarningMessages.clear();
+    }
+
+    if( m_warningButton )
+    {
+        m_warningButton->Hide();
+        m_warningButton->SetShowBadge( false );
+        m_warningButton->SetBadgeText( wxEmptyString );
+        Layout();
+        Refresh();
+    }
+}
+
+
+void KISTATUSBAR::onLoadWarningsIconClick( wxCommandEvent& aEvent )
+{
+    // Copy messages under lock to avoid holding lock during modal dialog
+    std::vector<LOAD_MESSAGE> messages;
+    {
+        std::lock_guard<std::mutex> lock( m_loadWarningMutex );
+        messages = m_loadWarningMessages;
+    }
+
+    if( messages.empty() )
+        return;
+
+    DIALOG_HTML_REPORTER dlg( GetParent(), wxID_ANY, _( "Load Messages" ) );
+
+    for( const LOAD_MESSAGE& msg : messages )
+        dlg.m_Reporter->Report( msg.message, msg.severity );
+
+    dlg.m_Reporter->Flush();
+    dlg.ShowModal();
+}
+
 void KISTATUSBAR::SetEllipsedTextField( const wxString& aText, int aFieldId )
 {
     wxRect       fieldRect;
@@ -444,29 +544,72 @@ std::optional<int> KISTATUSBAR::fieldIndex( FIELD aField ) const
 
         break;
     }
-    case FIELD::LABEL_BUTTON:
+    case FIELD::WARNING:
     {
-        if( !(m_styleFlags & LABEL_BUTTON) )
-            return std::nullopt;
-            
-        int idx = 2; // Base index after gauge
-        if( m_styleFlags & CANCEL_BUTTON )
-            idx++;
-        if( m_styleFlags & NOTIFICATION_ICON )
-            idx++;
-        return idx;
+        if( m_styleFlags & WARNING_ICON )
+        {
+            int offset = 2;
+
+            if( m_styleFlags & CANCEL_BUTTON )
+                offset++;
+
+            return offset;
+        }
+
+        break;
     }
     case FIELD::NOTIFICATION:
     {
-        if( !(m_styleFlags & NOTIFICATION_ICON) )
-            return std::nullopt;
+        if( m_styleFlags & NOTIFICATION_ICON )
+        {
+            int offset = 2;
 
-        int idx = 2; // Base index
-        if( m_styleFlags & CANCEL_BUTTON )
-            idx++;
-        return idx;
+            if( m_styleFlags & CANCEL_BUTTON )
+                offset++;
+
+            if( m_styleFlags & WARNING_ICON )
+                offset++;
+
+            return offset;
+        }
+
+        break;
+    }
+    case FIELD::LABEL:
+    {
+        if( m_styleFlags & LABEL_BUTTON )
+        {
+            int offset = 2;
+
+            if( m_styleFlags & CANCEL_BUTTON )
+                offset++;
+
+            if( m_styleFlags & WARNING_ICON )
+                offset++;
+
+            if( m_styleFlags & NOTIFICATION_ICON )
+                offset++;
+
+            return offset;
+        }
+
+        break;
     }
     }
 
     return std::nullopt;
+}
+
+
+void KISTATUSBAR::SetProfileBitmap( const wxBitmap& aBitmap )
+{
+    if( m_profileBitmap )
+        m_profileBitmap->SetBitmap( aBitmap );
+}
+
+
+void KISTATUSBAR::SetLabelButtonText( const wxString& aText )
+{
+    if( m_labelButton )
+        m_labelButton->SetLabel( aText );
 }

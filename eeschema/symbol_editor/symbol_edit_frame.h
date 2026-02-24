@@ -374,7 +374,7 @@ public:
      */
     void HardRedraw() override;
 
-    void KiwayMailIn( KIWAY_EXPRESS& mail ) override;
+    void KiwayMailIn( KIWAY_MAIL_EVENT& mail ) override;
 
     void FocusOnItem( EDA_ITEM* aItem, bool aAllowScroll = true ) override;
 
@@ -404,6 +404,8 @@ public:
 
     ///< Restore the empty editor screen, without any symbol or library selected.
     void emptyScreen();
+
+    void ClearToolbarControl( int aId ) override;
 
 protected:
     void configureToolbars() override;

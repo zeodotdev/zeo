@@ -83,7 +83,7 @@ public:
                 return diff;                                \
         } while (0)
 
-#define EPSILON 2
+#define EPSILON 10
 #define TEST_PT( a, b, msg )                                \
         do {                                                \
             if( abs( a.x - b.x ) > EPSILON                  \
@@ -99,7 +99,7 @@ public:
                 return diff;                                \
         } while (0)
 
-#define EPSILON_D 0.000002
+#define EPSILON_D 0.000010
 #define TEST_D( a, b, msg )                                 \
         do {                                                \
             if( abs( a - b ) > EPSILON_D )                  \
@@ -216,12 +216,24 @@ bool primitiveNeedsUpdate( const std::shared_ptr<PCB_SHAPE>& a,
         break;
 
     case SHAPE_T::POLY:
+    {
         TEST( a->GetPolyShape().TotalVertices(), b->GetPolyShape().TotalVertices(), "" );
 
-        for( int ii = 0; ii < a->GetPolyShape().TotalVertices(); ++ii )
-            TEST_PT( a->GetPolyShape().CVertex( ii ), b->GetPolyShape().CVertex( ii ), "" );
+        for( int poly = 0; poly < static_cast<int>( a->GetPolyShape().CPolygons().size() ); poly++ )
+        {
+            const SHAPE_POLY_SET::POLYGON aPolygon = a->GetPolyShape().CPolygon( poly );
+            const SHAPE_POLY_SET::POLYGON  bPolygon = b->GetPolyShape().CPolygon( poly );
+
+            if( aPolygon.size() == 0 || bPolygon.size() == 0
+                || !aPolygon[0].CompareGeometry( bPolygon[0], true, EPSILON ) )
+            {
+                diff = true;
+                return diff;
+            }
+        }
 
         break;
+    }
 
     default:
         UNIMPLEMENTED_FOR( a->SHAPE_T_asString() );
@@ -551,12 +563,22 @@ bool shapeNeedsUpdate( const PCB_SHAPE& curr_shape, const PCB_SHAPE& ref_shape )
         break;
 
     case SHAPE_T::POLY:
+    {
         TEST( curr_shape.GetPolyShape().TotalVertices(), ref_shape.GetPolyShape().TotalVertices(), "" );
 
-        for( int ii = 0; ii < curr_shape.GetPolyShape().TotalVertices(); ++ii )
-            TEST_PT( curr_shape.GetPolyShape().CVertex( ii ), ref_shape.GetPolyShape().CVertex( ii ), "" );
-
+        for( int poly = 0; poly < static_cast<int>( curr_shape.GetPolyShape().CPolygons().size() ); poly++ )
+        {
+            const SHAPE_POLY_SET::POLYGON curr_polygon = curr_shape.GetPolyShape().CPolygon( poly );
+            const SHAPE_POLY_SET::POLYGON ref_polygon  = ref_shape.GetPolyShape().CPolygon( poly );
+            if( curr_polygon.size() == 0 || ref_polygon.size() == 0
+                || !curr_polygon[0].CompareGeometry( ref_polygon[0], true, EPSILON ) )
+            {
+                diff = true;
+                return diff;
+            }
+        }
         break;
+    }
 
     default:
         UNIMPLEMENTED_FOR( curr_shape.SHAPE_T_asString() );
@@ -659,9 +681,13 @@ bool zoneNeedsUpdate( const ZONE* a, const ZONE* b, REPORTER* aReporter )
 
     bool cornersDiffer = false;
 
-    for( int ii = 0; ii < a->Outline()->TotalVertices(); ++ii )
+    for( int poly = 0; poly < static_cast<int>( a->Outline()->CPolygons().size() ); poly++ )
     {
-        if( a->Outline()->CVertex( ii ) != b->Outline()->CVertex( ii ) )
+        const SHAPE_POLY_SET::POLYGON aPolygon = a->Outline()->CPolygon( poly );
+        const SHAPE_POLY_SET::POLYGON bPolygon = b->Outline()->CPolygon( poly );
+
+        if( aPolygon.size() == 0 || bPolygon.size() == 0
+            || !aPolygon[0].CompareGeometry( bPolygon[0], true, EPSILON ) )
         {
             diff = true;
             cornersDiffer = true;
@@ -764,11 +790,12 @@ bool FOOTPRINT::FootprintNeedsUpdate( const FOOTPRINT* aLibFP, int aCompareFlags
         if( IsFlipped() != temp->IsFlipped() )
             temp->Flip( { 0, 0 }, FLIP_DIRECTION::TOP_BOTTOM );
 
-        if( GetOrientation() != temp->GetOrientation() )
-            temp->SetOrientation( GetOrientation() );
-
+        // Set position first before rotating to minimize rounding errors.
         if( GetPosition() != temp->GetPosition() )
             temp->SetPosition( GetPosition() );
+
+        if( GetOrientation() != temp->GetOrientation() )
+            temp->SetOrientation( GetOrientation() );
     }
 
     for( BOARD_ITEM* item : temp->GraphicalItems() )

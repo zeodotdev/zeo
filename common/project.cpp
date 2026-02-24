@@ -55,6 +55,7 @@
 
 PROJECT::PROJECT() :
         m_readOnly( false ),
+        m_lockOverrideGranted( false ),
         m_textVarsTicker( 0 ),
         m_netclassesTicker( 0 ),
         m_projectFile( nullptr ),
@@ -83,6 +84,9 @@ PROJECT::~PROJECT()
 
 bool PROJECT::TextVarResolver( wxString* aToken ) const
 {
+    if( !m_projectFile )
+        return false;
+
     if( aToken->IsSameAs( wxT( "PROJECTNAME" ) )  )
     {
         *aToken = GetProjectName();
@@ -152,8 +156,14 @@ void PROJECT::setProjectFullName( const wxString& aFullPathAndName )
         m_project_name = aFullPathAndName;
 
         wxASSERT( m_project_name.IsAbsolute() );
+        wxString ext = m_project_name.GetExt();
 
-        wxASSERT( m_project_name.GetExt() == FILEEXT::ProjectFileExtension );
+        if( !ext.IsEmpty() && ext != FILEEXT::ProjectFileExtension )
+        {
+            wxLogDebug( wxT( "Project file has unexpected extension '%s', expected '%s'" ), ext,
+                        FILEEXT::ProjectFileExtension );
+            m_project_name.SetExt( FILEEXT::ProjectFileExtension );
+        }
     }
 }
 

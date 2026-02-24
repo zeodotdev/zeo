@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
+// C++ code generated with wxFormBuilder (version 4.2.1-62-g497c85bd-dirty)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -138,7 +138,7 @@ DIALOG_SYMBOL_FIELDS_TABLE_BASE::DIALOG_SYMBOL_FIELDS_TABLE_BASE( wxWindow* pare
 	m_staticText9->Wrap( -1 );
 	bMargins2->Add( m_staticText9, 0, wxTOP|wxBOTTOM|wxLEFT, 2 );
 
-	m_variantListBox = new wxListBox( m_variantsPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0, NULL, 0 );
+	m_variantListBox = new wxListBox( m_variantsPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0, NULL, wxLB_NEEDED_SB|wxLB_SINGLE );
 	bMargins2->Add( m_variantListBox, 1, wxEXPAND|wxBOTTOM, 2 );
 
 	wxBoxSizer* bSizer14;
@@ -149,6 +149,9 @@ DIALOG_SYMBOL_FIELDS_TABLE_BASE::DIALOG_SYMBOL_FIELDS_TABLE_BASE( wxWindow* pare
 
 	m_renameVariantButton = new STD_BITMAP_BUTTON( m_variantsPanel, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
 	bSizer14->Add( m_renameVariantButton, 0, 0, 5 );
+
+	m_copyVariantButton = new STD_BITMAP_BUTTON( m_variantsPanel, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
+	bSizer14->Add( m_copyVariantButton, 0, 0, 5 );
 
 
 	bSizer14->Add( 15, 0, 0, 0, 5 );
@@ -220,13 +223,9 @@ DIALOG_SYMBOL_FIELDS_TABLE_BASE::DIALOG_SYMBOL_FIELDS_TABLE_BASE( wxWindow* pare
 	bControls->Add( m_staticline3, 0, wxEXPAND|wxTOP|wxBOTTOM|wxRIGHT, 3 );
 
 	m_bRefresh = new STD_BITMAP_BUTTON( m_panelEdit, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
-	m_bRefresh->SetMinSize( wxSize( 30,30 ) );
-
 	bControls->Add( m_bRefresh, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxRIGHT, 5 );
 
 	m_bMenu = new STD_BITMAP_BUTTON( m_panelEdit, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
-	m_bMenu->SetMinSize( wxSize( 30,30 ) );
-
 	bControls->Add( m_bMenu, 0, wxRIGHT|wxALIGN_CENTER_VERTICAL, 5 );
 
 
@@ -346,8 +345,6 @@ DIALOG_SYMBOL_FIELDS_TABLE_BASE::DIALOG_SYMBOL_FIELDS_TABLE_BASE( wxWindow* pare
 	bOutputDirectory->Add( m_outputFileName, 1, wxALIGN_CENTER_VERTICAL|wxALL, 5 );
 
 	m_browseButton = new STD_BITMAP_BUTTON( m_panelExport, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
-	m_browseButton->SetMinSize( wxSize( 30,30 ) );
-
 	bOutputDirectory->Add( m_browseButton, 0, wxALIGN_CENTER_VERTICAL|wxTOP|wxBOTTOM|wxRIGHT, 5 );
 
 
@@ -364,8 +361,6 @@ DIALOG_SYMBOL_FIELDS_TABLE_BASE::DIALOG_SYMBOL_FIELDS_TABLE_BASE( wxWindow* pare
 	bPreview->Add( 0, 0, 1, wxEXPAND, 5 );
 
 	m_bRefreshPreview = new STD_BITMAP_BUTTON( m_panelExport, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
-	m_bRefreshPreview->SetMinSize( wxSize( 30,30 ) );
-
 	bPreview->Add( m_bRefreshPreview, 0, wxTOP|wxRIGHT, 5 );
 
 
@@ -441,6 +436,7 @@ DIALOG_SYMBOL_FIELDS_TABLE_BASE::DIALOG_SYMBOL_FIELDS_TABLE_BASE( wxWindow* pare
 	m_variantListBox->Connect( wxEVT_COMMAND_LISTBOX_SELECTED, wxCommandEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::onVariantSelectionChange ), NULL, this );
 	m_addVariantButton->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::onAddVariant ), NULL, this );
 	m_renameVariantButton->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::onRenameVariant ), NULL, this );
+	m_copyVariantButton->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::onCopyVariant ), NULL, this );
 	m_deleteVariantButton->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::onDeleteVariant ), NULL, this );
 	m_nbPages->Connect( wxEVT_COMMAND_NOTEBOOK_PAGE_CHANGED, wxNotebookEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::OnPageChanged ), NULL, this );
 	m_filter->Connect( wxEVT_MOTION, wxMouseEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::OnFilterMouseMoved ), NULL, this );
@@ -480,6 +476,7 @@ DIALOG_SYMBOL_FIELDS_TABLE_BASE::~DIALOG_SYMBOL_FIELDS_TABLE_BASE()
 	m_variantListBox->Disconnect( wxEVT_COMMAND_LISTBOX_SELECTED, wxCommandEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::onVariantSelectionChange ), NULL, this );
 	m_addVariantButton->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::onAddVariant ), NULL, this );
 	m_renameVariantButton->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::onRenameVariant ), NULL, this );
+	m_copyVariantButton->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::onCopyVariant ), NULL, this );
 	m_deleteVariantButton->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::onDeleteVariant ), NULL, this );
 	m_nbPages->Disconnect( wxEVT_COMMAND_NOTEBOOK_PAGE_CHANGED, wxNotebookEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::OnPageChanged ), NULL, this );
 	m_filter->Disconnect( wxEVT_MOTION, wxMouseEventHandler( DIALOG_SYMBOL_FIELDS_TABLE_BASE::OnFilterMouseMoved ), NULL, this );

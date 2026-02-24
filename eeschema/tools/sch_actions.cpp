@@ -616,8 +616,8 @@ TOOL_ACTION SCH_ACTIONS::syncSheetPins( TOOL_ACTION_ARGS()
 TOOL_ACTION SCH_ACTIONS::syncAllSheetsPins( TOOL_ACTION_ARGS()
         .Name( "eeschema.InteractiveDrawing.syncAllSheetsPins" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Sync All Sheets Pins..." ) )
-        .Tooltip( _( "Synchronize all sheets pins and hierarchical labels" ) )
+        .FriendlyName( _( "Sync All Sheet Pins..." ) )
+        .Tooltip( _( "Synchronize all sheet pins and hierarchical labels" ) )
         .Icon( BITMAPS::import_hierarchical_label )
         .Flags( AF_ACTIVATE ) );
 
@@ -1367,13 +1367,6 @@ TOOL_ACTION SCH_ACTIONS::toggleAnnotateAuto( TOOL_ACTION_ARGS()
         .ToolbarState( TOOLBAR_STATE::TOGGLE )
         .Icon( BITMAPS::annotate ) );
 
-TOOL_ACTION SCH_ACTIONS::repairSchematic( TOOL_ACTION_ARGS()
-        .Name( "eeschema.EditorControl.repairSchematic" )
-        .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Repair Schematic" ) )
-        .Tooltip( _( "Run various diagnostics and attempt to repair schematic" ) )
-        .Icon( BITMAPS::rescue ) );
-
 TOOL_ACTION SCH_ACTIONS::previousUnit( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.previousUnit" )
         .Scope( AS_GLOBAL )
@@ -1767,13 +1760,13 @@ TOOL_ACTION SCH_ACTIONS::showNetlist( TOOL_ACTION_ARGS()
 TOOL_ACTION SCH_ACTIONS::addVariant( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.addVariant" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Add Variant..." ) )
-        .Tooltip( _( "Add new variant to the schematic." ) ) );
+        .FriendlyName( _( "Add Design Variant..." ) )
+        .Tooltip( _( "Add new design variant to the schematic." ) ) );
 
 TOOL_ACTION SCH_ACTIONS::removeVariant( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.removeVariant" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Remove Variant..." ) )
-        .Tooltip( _( "Remove an existing variant from the schematic." ) ) );
+        .FriendlyName( _( "Remove Design Variant..." ) )
+        .Tooltip( _( "Remove an existing design variant from the schematic." ) ) );
 
 // clang-format on

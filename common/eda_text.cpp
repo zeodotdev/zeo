@@ -50,7 +50,10 @@
 #include <font/outline_font.h>
 #include <geometry/shape_poly_set.h>
 #include <properties/property_validators.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 #include <ctl_flags.h>
+#include <markup_parser.h>
 #include <api/api_enums.h>
 #include <api/api_utils.h>
 #include <api/common/types/base_types.pb.h>
@@ -98,6 +101,7 @@ EDA_TEXT::EDA_TEXT( const EDA_IU_SCALE& aIuScale, const wxString& aText ) :
         m_text( aText ),
         m_IuScale( aIuScale ),
         m_render_cache_font( nullptr ),
+        m_render_cache_mirrored( false ),
         m_visible( true )
 {
     SetTextSize( VECTOR2I( EDA_UNIT_UTILS::Mils2IU( m_IuScale, DEFAULT_SIZE_TEXT ),
@@ -131,6 +135,7 @@ EDA_TEXT::EDA_TEXT( const EDA_TEXT& aText ) :
     m_render_cache_text = aText.m_render_cache_text;
     m_render_cache_angle = aText.m_render_cache_angle;
     m_render_cache_offset = aText.m_render_cache_offset;
+    m_render_cache_mirrored = aText.m_render_cache_mirrored;
 
     m_render_cache.clear();
 
@@ -173,6 +178,7 @@ EDA_TEXT& EDA_TEXT::operator=( const EDA_TEXT& aText )
     m_render_cache_text = aText.m_render_cache_text;
     m_render_cache_angle = aText.m_render_cache_angle;
     m_render_cache_offset = aText.m_render_cache_offset;
+    m_render_cache_mirrored = aText.m_render_cache_mirrored;
 
     m_render_cache.clear();
 
@@ -693,9 +699,11 @@ EDA_TEXT::GetRenderCache( const KIFONT::FONT* aFont, const wxString& forResolved
     if( aFont->IsOutline() )
     {
         EDA_ANGLE resolvedAngle = GetDrawRotation();
+        bool      mirrored = IsMirrored();
 
         if( m_render_cache.empty() || m_render_cache_font != aFont || m_render_cache_text != forResolvedText
-            || m_render_cache_angle != resolvedAngle || m_render_cache_offset != aOffset )
+            || m_render_cache_angle != resolvedAngle || m_render_cache_offset != aOffset
+            || m_render_cache_mirrored != mirrored )
         {
             m_render_cache.clear();
 
@@ -709,6 +717,7 @@ EDA_TEXT::GetRenderCache( const KIFONT::FONT* aFont, const wxString& forResolved
             m_render_cache_angle = resolvedAngle;
             m_render_cache_text = forResolvedText;
             m_render_cache_offset = aOffset;
+            m_render_cache_mirrored = mirrored;
         }
 
         return &m_render_cache;
@@ -725,6 +734,7 @@ void EDA_TEXT::SetupRenderCache( const wxString& aResolvedText, const KIFONT::FO
     m_render_cache_font = aFont;
     m_render_cache_angle = aAngle;
     m_render_cache_offset = aOffset;
+    m_render_cache_mirrored = IsMirrored();
     m_render_cache.clear();
 }
 
@@ -972,6 +982,29 @@ void EDA_TEXT::printOneLineOfText( const RENDER_SETTINGS* aSettings, const VECTO
 
     GRPrintText( DC, aOffset + aPos, aColor, aText, GetDrawRotation(), size, GetHorizJustify(), GetVertJustify(),
                  penWidth, IsItalic(), IsBold(), font, getFontMetrics() );
+}
+
+
+bool recursiveDescent( const std::unique_ptr<MARKUP::NODE>& aNode )
+{
+    if( aNode->isURL() )
+        return true;
+
+    for( const std::unique_ptr<MARKUP::NODE>& child : aNode->children )
+    {
+        if( recursiveDescent( child ) )
+            return true;
+    }
+
+    return false;
+}
+
+
+bool EDA_TEXT::containsURL() const
+{
+    wxString showntext = GetShownText( false );
+    MARKUP::MARKUP_PARSER markupParser( TO_UTF8( showntext ) );
+    return recursiveDescent( markupParser.Parse() );
 }
 
 

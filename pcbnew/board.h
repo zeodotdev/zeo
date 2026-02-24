@@ -27,10 +27,9 @@
 
 #include <board_item_container.h>
 #include <board_stackup_manager/board_stackup.h>
-#include <component_classes/component_class_manager.h>
 #include <embedded_files.h>
-#include <common.h> // Needed for stl hash extensions
 #include <convert_shape_list_to_polygon.h> // for OUTLINE_ERROR_HANDLER
+#include <geometry/shape_poly_set.h>
 #include <hash.h>
 #include <layer_ids.h>
 #include <lset.h>
@@ -38,14 +37,16 @@
 #include <pcb_item_containers.h>
 #include <pcb_plot_params.h>
 #include <title_block.h>
-#include <tools/pcb_selection.h>
+#include <zone_settings.h>
 #include <shared_mutex>
+#include <unordered_set>
 #include <project.h>
 #include <list>
 
 class BOARD_DESIGN_SETTINGS;
 class BOARD_CONNECTED_ITEM;
 class BOARD_COMMIT;
+class COMPONENT_CLASS_MANAGER;
 class DRC_RTREE;
 class PCB_BASE_FRAME;
 class PCB_EDIT_FRAME;
@@ -62,7 +63,6 @@ class PCB_MARKER;
 class MSG_PANEL_ITEM;
 class NETLIST;
 class REPORTER;
-class SHAPE_POLY_SET;
 class CONNECTIVITY_DATA;
 class COMPONENT;
 class PROJECT;
@@ -399,6 +399,31 @@ public:
 
     const std::map<wxString, wxString>& GetProperties() const { return m_properties; }
     void SetProperties( const std::map<wxString, wxString>& aProps ) { m_properties = aProps; }
+
+    // Variant system
+    wxString GetCurrentVariant() const { return m_currentVariant; }
+    void SetCurrentVariant( const wxString& aVariant );
+
+    const std::vector<wxString>& GetVariantNames() const { return m_variantNames; }
+    void SetVariantNames( const std::vector<wxString>& aNames ) { m_variantNames = aNames; }
+
+    bool HasVariant( const wxString& aVariantName ) const;
+    void AddVariant( const wxString& aVariantName );
+    void DeleteVariant( const wxString& aVariantName );
+    void RenameVariant( const wxString& aOldName, const wxString& aNewName );
+
+    wxString GetVariantDescription( const wxString& aVariantName ) const;
+    void SetVariantDescription( const wxString& aVariantName, const wxString& aDescription );
+
+    /**
+     * Return the variant names for UI display.
+     *
+     * This returns a list suitable for populating UI controls, with the default variant
+     * included and the names sorted using the SortVariantNames helper.
+     *
+     * @return List of variant names including the default entry.
+     */
+    wxArrayString GetVariantNamesForUI() const;
 
     void GetContextualTextVars( wxArrayString* aVars ) const;
     bool ResolveTextVar( wxString* token, int aDepth ) const;
@@ -752,6 +777,22 @@ public:
      */
     BOARD_DESIGN_SETTINGS& GetDesignSettings() const;
     void                   SetDesignSettings( const BOARD_DESIGN_SETTINGS& aSettings );
+
+    /**
+     * Invalidate the clearance cache for a specific item.
+     *
+     * Called by items when properties that could affect clearance change.
+     *
+     * @param aUuid the UUID of the item to invalidate.
+     */
+    void InvalidateClearanceCache( const KIID& aUuid );
+
+    /**
+     * Initialize the clearance cache for all board items.
+     *
+     * Pre-populates the cache to avoid delays during first render.
+     */
+    void InitializeClearanceCache();
 
     BOARD_STACKUP GetStackupOrDefault() const;
 
@@ -1382,6 +1423,31 @@ public:
         return m_itemByIdCache;
     }
 
+    /**
+     * Add an item to the item-by-id cache.
+     *
+     * This is called by FOOTPRINT::Add() when items are added to footprints that are already
+     * on the board, to keep the cache in sync.
+     */
+    void CacheItemById( BOARD_ITEM* aItem )
+    {
+        if( IsFootprintHolder() )
+            return;
+
+        m_itemByIdCache.insert( { aItem->m_Uuid, aItem } );
+    }
+
+    /**
+     * Remove an item from the item-by-id cache.
+     *
+     * This is called by FOOTPRINT::Remove() when items are removed from footprints that are
+     * already on the board, to keep the cache in sync.
+     */
+    void UncacheItemById( const KIID& aId )
+    {
+        m_itemByIdCache.erase( aId );
+    }
+
     // --------- Item order comparators ---------
 
     struct cmp_items
@@ -1407,6 +1473,16 @@ public:
     std::shared_ptr<DRC_RTREE>                            m_CopperItemRTreeCache;
     mutable std::unordered_map<const ZONE*, BOX2I>        m_ZoneBBoxCache;
     mutable std::optional<int>                            m_maxClearanceValue;
+
+    mutable std::unordered_map<const BOARD_ITEM*, wxString> m_ItemNetclassCache;
+
+    // Zone name lookup cache for DRC rule area functions like enclosedByArea/intersectsArea.
+    // Maps zone names to vectors of matching zones to avoid O(n) zone iteration per lookup.
+    mutable std::unordered_map<wxString, std::vector<ZONE*>> m_ZonesByNameCache;
+
+    // Deflated zone outline cache for DRC area checks. Caches the deflated outline for each zone
+    // to avoid repeated expensive deflation operations during collidesWithArea calls.
+    mutable std::unordered_map<const ZONE*, SHAPE_POLY_SET> m_DeflatedZoneOutlineCache;
 
     // ------------ DRC caches -------------
     std::vector<ZONE*>    m_DRCZones;
@@ -1456,8 +1532,9 @@ private:
     PCB_BOARD_OUTLINE*  m_boardOutline;
     PCB_POINTS          m_points;
 
-    // Cache for fast access to items in the containers above by KIID, including children
-    std::unordered_map<KIID, BOARD_ITEM*> m_itemByIdCache;
+    // Cache for fast access to items in the containers above by KIID, including children.
+    // Mutable because it's a performance cache that can be populated during const lookups.
+    mutable std::unordered_map<KIID, BOARD_ITEM*> m_itemByIdCache;
 
     std::map<int, LAYER> m_layers;                  // layer data
 
@@ -1475,6 +1552,11 @@ private:
     PCB_PLOT_PARAMS     m_plotOptions;
     PROJECT*            m_project;                  // project this board is a part of
     EDA_UNITS           m_userUnits;
+
+    // Variant system
+    wxString                        m_currentVariant;        // Currently active variant (empty = default)
+    std::vector<wxString>           m_variantNames;          // All variant names in the board
+    std::map<wxString, wxString>    m_variantDescriptions;   // Descriptions for each variant
 
     /**
      * All of the board design settings are stored as a JSON object inside the project file.  The

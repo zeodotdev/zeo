@@ -48,16 +48,18 @@
 #include <gestfich.h>
 #include <kiplatform/app.h>
 #include <kiplatform/environment.h>
+#include <kiplatform/ui.h>
 #include <kiplatform/policy.h>
 #include <build_version.h>
 #include <kiway.h>
-#include <kiway_express.h>
+#include <kiway_mail.h>
 #include <launch_ext.h>
 #include <lockfile.h>
 #include <notifications_manager.h>
 #include <reporter.h>
 #include <project/project_local_settings.h>
 #include <sch_file_versions.h>
+#include <settings/common_settings.h>
 #include <settings/settings_manager.h>
 #include <tool/action_manager.h>
 #include <tool/action_toolbar.h>
@@ -79,6 +81,7 @@
 #include <cstdint>
 #include <update_manager.h>
 #include <jobs/jobset.h>
+#include <widgets/wx_aui_art_providers.h>
 
 #include <../pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.h>   // for SEXPR_BOARD_FILE_VERSION def
 
@@ -117,11 +120,10 @@ BEGIN_EVENT_TABLE( KICAD_MANAGER_FRAME, EDA_BASE_FRAME )
     EVT_MENU( ID_IMPORT_EASYEDA_PROJECT, KICAD_MANAGER_FRAME::OnImportEasyEdaFiles )
     EVT_MENU( ID_IMPORT_EASYEDAPRO_PROJECT, KICAD_MANAGER_FRAME::OnImportEasyEdaProFiles )
     EVT_MENU( ID_IMPORT_ALTIUM_PROJECT, KICAD_MANAGER_FRAME::OnImportAltiumProjectFiles )
+    EVT_MENU( ID_IMPORT_PADS_PROJECT, KICAD_MANAGER_FRAME::OnImportPadsProjectFiles )
+    EVT_MENU( ID_IMPORT_GEDA_PROJECT, KICAD_MANAGER_FRAME::OnImportGedaFiles )
 
     // Range menu events
-    EVT_MENU_RANGE( ID_LANGUAGE_CHOICE, ID_LANGUAGE_CHOICE_END,
-                    KICAD_MANAGER_FRAME::language_change )
-
     EVT_MENU_RANGE( ID_FILE1, ID_FILEMAX, KICAD_MANAGER_FRAME::OnFileHistory )
     EVT_MENU( ID_FILE_LIST_CLEAR, KICAD_MANAGER_FRAME::OnClearFileHistory )
 
@@ -135,7 +137,6 @@ END_EVENT_TABLE()
 
 // See below the purpose of this include
 #include <wx/xml/xml.h>
-#include <widgets/wx_aui_art_providers.h>
 
 #include <session_manager.h>
 
@@ -143,9 +144,11 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
                                           const wxPoint& pos, const wxSize&   size ) :
         EDA_BASE_FRAME( parent, KICAD_MAIN_FRAME_T, title, pos, size, KICAD_DEFAULT_DRAWFRAME_STYLE,
                         KICAD_MANAGER_FRAME_NAME, &::Kiway, unityScale ),
+        m_openSavedWindows( false ),
+        m_restoredFromHistory( false ),
         m_active_project( false ),
         m_showHistoryPanel( false ),
-        m_leftWin( nullptr ),
+        m_projectTreePane( nullptr ),
         m_historyPane( nullptr ),
         m_launcher( nullptr ),
         m_lastToolbarIconSize( 0 ),
@@ -174,6 +177,7 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
     CreateStatusBar( 2 );
     Pgm().GetBackgroundJobMonitor().RegisterStatusBar( (KISTATUSBAR*) GetStatusBar() );
     Pgm().GetNotificationsManager().RegisterStatusBar( (KISTATUSBAR*) GetStatusBar() );
+    Pgm().RegisterLibraryLoadStatusBar( (KISTATUSBAR*) GetStatusBar() );
     GetStatusBar()->SetFont( KIUI::GetStatusFont( this ) );
 
     // Give an icon
@@ -213,7 +217,7 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
     LoadSettings( config() );
 
     // Left window: is the box which display tree project
-    m_leftWin = new PROJECT_TREE_PANE( this );
+    m_projectTreePane = new PROJECT_TREE_PANE( this );
 
     setupTools();
     setupUIConditions();
@@ -228,20 +232,18 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
 
     m_auimgr.AddPane( m_tbLeft, EDA_PANE().VToolbar().Name( "TopMainToolbar" ).Left().Layer( 2 ) );
 
-    // BestSize() does not always set the actual pane size of m_leftWin to the required value.
-    // It happens when m_leftWin is too large (roughly > 1/3 of the kicad manager frame width.
-    // (Well, BestSize() sets the best size... not the window size)
-    // A trick is to use MinSize() to set the required pane width,
-    // and after give a reasonable MinSize value
-    m_auimgr.AddPane( m_leftWin, EDA_PANE().Palette().Name( "ProjectTree" ).Left().Layer( 1 )
-                      .Caption( PROJECT_FILES_CAPTION ).PaneBorder( false )
-                      .MinSize( m_leftWinWidth, -1 ).BestSize( m_leftWinWidth, -1 ) );
+    // There is no wxAUIPaneInfo::SetSize(), but a trick is to use MinSize() to set the required pane width,
+    // and after give a reasonable MinSize value.
+    m_auimgr.AddPane( m_projectTreePane,
+                      EDA_PANE().Palette().Name( "ProjectTree" ).Left().Layer( 1 )
+                                .Caption( PROJECT_FILES_CAPTION ).PaneBorder( false )
+                                .MinSize( m_leftWinWidth, -1 ).Floatable( false ).Movable( false ) );
 
     m_historyPane = new LOCAL_HISTORY_PANE( this );
     m_auimgr.AddPane( m_historyPane,
                       EDA_PANE().Palette().Name( "LocalHistory" ).Left().Layer( 1 ).Position( 1 )
-                              .Caption( _( "Local History" ) ).PaneBorder( false )
-                              .Floatable( false ).Movable( false ).CloseButton( true ).Hide() );
+                                .Caption( _( "Local History" ) ).PaneBorder( false )
+                                .Floatable( false ).Movable( false ).CloseButton( true ).Hide() );
 
     if( m_showHistoryPanel )
         m_auimgr.GetPane( m_historyPane ).Show();
@@ -269,8 +271,8 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
 
     m_auimgr.Update();
 
-    // Now the actual m_leftWin size is set, give it a reasonable min width
-    m_auimgr.GetPane( m_leftWin ).MinSize( defaultLeftWinWidth, -1 );
+    // Now the actual m_projectTreePane size is set, give it a reasonable min width
+    m_auimgr.GetPane( m_projectTreePane ).MinSize( defaultLeftWinWidth, FromDIP( 80 ) );
 
 
     wxSizer* mainSizer = GetSizer();
@@ -289,7 +291,7 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
         SetTitle( wxString( "Zeo " ) + GetMajorMinorVersion() );
 
     // Do not let the messages window have initial focus
-    m_leftWin->SetFocus();
+    m_projectTreePane->SetFocus();
 
     // Init for dropping files
     m_acceptedExts.emplace( FILEEXT::ProjectFileExtension, &KICAD_MANAGER_ACTIONS::loadProject );
@@ -328,6 +330,7 @@ KICAD_MANAGER_FRAME::~KICAD_MANAGER_FRAME()
 
     Pgm().GetBackgroundJobMonitor().UnregisterStatusBar( (KISTATUSBAR*) GetStatusBar() );
     Pgm().GetNotificationsManager().UnregisterStatusBar( (KISTATUSBAR*) GetStatusBar() );
+    Pgm().UnregisterLibraryLoadStatusBar( (KISTATUSBAR*) GetStatusBar() );
 
     // Shutdown all running tools
     if( m_toolManager )
@@ -335,6 +338,11 @@ KICAD_MANAGER_FRAME::~KICAD_MANAGER_FRAME()
 
     if( m_pcm )
         m_pcm->StopBackgroundUpdate();
+
+    // Stop update manager before tearing down the AUI framework. The update
+    // task runs on the thread pool and may call CallAfter on this frame, so it
+    // must complete before we uninitialize AUI or destroy child windows.
+    m_updateManager.reset();
 
     delete m_actions;
     delete m_toolManager;
@@ -387,7 +395,7 @@ void KICAD_MANAGER_FRAME::onNotebookPageCloseRequest( wxAuiNotebookEvent& evt )
 wxStatusBar* KICAD_MANAGER_FRAME::OnCreateStatusBar( int number, long style, wxWindowID id,
                                                      const wxString& name )
 {
-    auto* statusBar = new KISTATUSBAR( number, this, id, 
+    auto* statusBar = new KISTATUSBAR( number, this, id,
        static_cast<KISTATUSBAR::STYLE_FLAGS>( KISTATUSBAR::DEFAULT_STYLE | KISTATUSBAR::LABEL_BUTTON ) );
 
     if( auto* btn = statusBar->GetLabelButton() )
@@ -413,6 +421,9 @@ void KICAD_MANAGER_FRAME::CreatePCM()
     m_pcm = std::make_shared<PLUGIN_CONTENT_MANAGER>(
             [this]( int aUpdateCount )
             {
+                if( Pgm().m_Quitting )
+                    return;
+
                 m_pcmUpdateCount = aUpdateCount;
 
                 if( aUpdateCount > 0 )
@@ -490,8 +501,7 @@ void KICAD_MANAGER_FRAME::setupUIConditions()
                 return HistoryPanelShown();
             };
 
-    manager->SetConditions( KICAD_MANAGER_ACTIONS::showLocalHistory,
-                            ACTION_CONDITIONS().Check( historyCond ) );
+    manager->SetConditions( KICAD_MANAGER_ACTIONS::showLocalHistory, ACTION_CONDITIONS().Check( historyCond ) );
 
     // These are just here for text boxes, search boxes, etc. in places such as the standard
     // file dialogs.
@@ -505,7 +515,7 @@ void KICAD_MANAGER_FRAME::setupUIConditions()
 
 wxWindow* KICAD_MANAGER_FRAME::GetToolCanvas() const
 {
-    return m_leftWin;
+    return m_projectTreePane;
 }
 
 
@@ -522,6 +532,28 @@ KICAD_SETTINGS* KICAD_MANAGER_FRAME::kicadSettings() const
     KICAD_SETTINGS* ret = dynamic_cast<KICAD_SETTINGS*>( config() );
     wxASSERT( ret );
     return ret;
+}
+
+
+void KICAD_MANAGER_FRAME::PreloadAllLibraries()
+{
+    CallAfter(
+            [&]()
+            {
+                KIFACE *schface = Kiway().KiFACE( KIWAY::FACE_SCH );
+                schface->PreloadLibraries( &Kiway() );
+
+                KIFACE *pcbface = Kiway().KiFACE( KIWAY::FACE_PCB );
+                pcbface->PreloadLibraries( &Kiway() );
+
+                Pgm().PreloadDesignBlockLibraries( &Kiway() );
+            } );
+}
+
+
+wxString KICAD_MANAGER_FRAME::GetCurrentFileName() const
+{
+    return GetProjectFileName();
 }
 
 
@@ -570,7 +602,7 @@ const wxString KICAD_MANAGER_FRAME::PcbLegacyFileName()
 
 void KICAD_MANAGER_FRAME::ReCreateTreePrj()
 {
-    m_leftWin->ReCreateTreePrj();
+    m_projectTreePane->ReCreateTreePrj();
 }
 
 
@@ -628,7 +660,8 @@ void KICAD_MANAGER_FRAME::DoWithAcceptedFiles()
     {
         wxString ext = fileName.GetExt();
 
-        if( ext == FILEEXT::GerberJobFileExtension || ext == FILEEXT::DrillFileExtension
+        if( ext == FILEEXT::GerberJobFileExtension
+            || ext == FILEEXT::DrillFileExtension
             || FILEEXT::IsGerberFileExtension( ext ) )
         {
             gerberFiles += wxT( '\"' );
@@ -709,7 +742,7 @@ void KICAD_MANAGER_FRAME::doCloseWindow()
     }
 #endif
 
-    m_leftWin->Show( false );
+    m_projectTreePane->Show( false );
     Pgm().m_Quitting = true;
 
     Destroy();
@@ -754,6 +787,13 @@ bool KICAD_MANAGER_FRAME::CloseProject( bool aSave )
     if( !Kiway().PlayersClose( false ) )
         return false;
 
+    // Abort any in-progress background load, since the threads depend on the project not changing
+    KIFACE *schface = Kiway().KiFACE( KIWAY::FACE_SCH );
+    schface->CancelPreload();
+
+    KIFACE *pcbface = Kiway().KiFACE( KIWAY::FACE_PCB );
+    pcbface->CancelPreload();
+
     // Save the project file for the currently loaded project.
     if( m_active_project )
     {
@@ -767,15 +807,37 @@ bool KICAD_MANAGER_FRAME::CloseProject( bool aSave )
                 mgr.SaveProject();
         }
 
+        // Ensure the Last_Save tag is at HEAD before closing. This handles the case where
+        // autosave commits were made after the last explicit save - without this, the next
+        // project load would offer to restore the autosave state, which is incorrect after
+        // a clean close.
+        wxString projPath = Prj().GetProjectPath();
+
+        if( !projPath.IsEmpty() && Kiway().LocalHistory().HistoryExists( projPath ) )
+        {
+            if( Kiway().LocalHistory().HeadNewerThanLastSave( projPath ) )
+            {
+                // Commit the current on-disk state and tag it so Last_Save matches HEAD
+                if( Kiway().LocalHistory().CommitFullProjectSnapshot( projPath, wxS( "Close" ) ) )
+                {
+                    Kiway().LocalHistory().TagSave( projPath, wxS( "project" ) );
+                }
+            }
+        }
+
         m_active_project = false;
         // Enforce local history size limit (if enabled) once all pending saves/backups are done.
         if( Pgm().GetCommonSettings() && Pgm().GetCommonSettings()->m_Backup.enabled )
         {
-            auto limit = Pgm().GetCommonSettings()->m_Backup.limit_total_size;
+            unsigned long long int limit = Pgm().GetCommonSettings()->m_Backup.limit_total_size;
 
             if( limit > 0 )
                 Kiway().LocalHistory().EnforceSizeLimit( Prj().GetProjectPath(), (size_t) limit );
         }
+
+        // Unregister the project saver before unloading the project to prevent
+        // dangling references
+        Kiway().LocalHistory().UnregisterSaver( &Prj() );
 
         mgr.UnloadProject( &Prj() );
     }
@@ -794,15 +856,14 @@ bool KICAD_MANAGER_FRAME::CloseProject( bool aSave )
         }
     }
 
-    m_leftWin->EmptyTreePrj();
+    m_projectTreePane->EmptyTreePrj();
     HideTabsIfNeeded();
 
     return true;
 }
 
 
-void KICAD_MANAGER_FRAME::OpenJobsFile( const wxFileName& aFileName, bool aCreate,
-                                        bool aResaveProjectPreferences )
+void KICAD_MANAGER_FRAME::OpenJobsFile( const wxFileName& aFileName, bool aCreate, bool aResaveProjectPreferences )
 {
     for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
     {
@@ -845,25 +906,75 @@ void KICAD_MANAGER_FRAME::OpenJobsFile( const wxFileName& aFileName, bool aCreat
 }
 
 
-void KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
+bool KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
 {
     // The project file should be valid by the time we get here or something has gone wrong.
     if( !aProjectFileName.Exists() )
-        return;
+        return false;
+
+    wxString fullPath = aProjectFileName.GetFullPath();
+
+    // Check if a lock file already exists BEFORE we try to acquire it. We only want to warn
+    // the user if the lock file pre-existed, not if we're about to create it ourselves.
+    // The actual lock acquisition happens in SETTINGS_MANAGER::LoadProject().
+    wxFileName lockFn( fullPath );
+    lockFn.SetName( FILEEXT::LockFilePrefix + lockFn.GetName() );
+    lockFn.SetExt( lockFn.GetExt() + wxS( "." ) + FILEEXT::LockFileExtension );
+    bool lockFilePreExisted = lockFn.FileExists();
+
+    bool lockOverrideGranted = false;
+
+    if( lockFilePreExisted )
+    {
+        // A lock file exists. Create a LOCKFILE to read who owns it and decide what to do.
+        LOCKFILE lockFile( fullPath );
+
+        if( !lockFile.Valid() && lockFile.IsLockedByMe() )
+        {
+            // If we cannot acquire the lock but we appear to be the one who locked it, check to
+            // see if there is another KiCad instance running. If not, then we can override the
+            // lock. This could happen if KiCad crashed or was interrupted.
+            if( !Pgm().SingleInstance()->IsAnotherRunning() )
+                lockFile.OverrideLock();
+        }
+
+        if( !lockFile.Valid() )
+        {
+            wxString msg;
+            msg.Printf( _( "Project '%s' is already open by '%s' at '%s'." ),
+                        fullPath,
+                        lockFile.GetUsername(),
+                        lockFile.GetHostname() );
+
+            if( !AskOverrideLock( this, msg ) )
+                return false;  // User clicked Cancel - abort project loading entirely
+
+            lockFile.OverrideLock();
+            lockOverrideGranted = true;
+        }
+
+        // The LOCKFILE goes out of scope here and releases/removes the lock file.
+        // SETTINGS_MANAGER::LoadProject() will create the actual persistent lock.
+    }
 
     // Any open KIFACE's must be closed if they are not part of the new project.
     // (We never want a KIWAY_PLAYER open on a KIWAY that isn't in the same project.)
     // User is prompted here to close those KIWAY_PLAYERs:
     if( !CloseProject( true ) )
-        return;
+        return false;
 
     m_active_project = true;
 
     // NB: when loading a legacy project SETTINGS_MANAGER::LoadProject() will convert it to
-    // current extension.  Be very careful with aProjectFileName vs. Prj().GetProjectPath()
+    // current extension. Be very careful with aProjectFileName vs. Prj().GetProjectPath()
     // from here on out.
 
-    Pgm().GetSettingsManager().LoadProject( aProjectFileName.GetFullPath() );
+    Pgm().GetSettingsManager().LoadProject( fullPath );
+
+    // Propagate lock override decision to the loaded project
+    if( lockOverrideGranted )
+        Prj().SetLockOverrideGranted( true );
+
     LoadWindowState( aProjectFileName.GetFullName() );
 
     if( aProjectFileName.IsDirWritable() )
@@ -874,9 +985,28 @@ void KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
     if( Kiway().LocalHistory().HeadNewerThanLastSave( Prj().GetProjectPath() ) )
     {
         wxString head = Kiway().LocalHistory().GetHeadHash( Prj().GetProjectPath() );
-        if( wxMessageBox( _( "A newer local history snapshot is available. Restore it?" ),
-                          _( "Restore" ), wxYES_NO | wxICON_QUESTION, this ) == wxYES )
+
+        KICAD_MESSAGE_DIALOG dlg( this, _( "KiCad found unsaved changes from your last session that are newer than "
+                                           "the saved project files." ),
+                                  _( "Recover Unsaved Changes" ), wxYES_NO | wxICON_QUESTION );
+
+        dlg.SetExtendedMessage( _( "This can happen if your previous session ended unexpectedly.\n\n"
+                                   "Choose 'Restore' to recover those changes, or 'Discard' to keep the "
+                                   "currently saved files." ) );
+
+        dlg.SetYesNoLabels( _( "Restore" ), _( "Discard" ) );
+
+        if( dlg.ShowModal() == wxID_YES )
+        {
             Kiway().LocalHistory().RestoreCommit( Prj().GetProjectPath(), head, this );
+        }
+        else
+        {
+            // User declined to restore - commit the current on-disk state and tag it
+            // so we don't prompt again on next load
+            if( Kiway().LocalHistory().CommitFullProjectSnapshot( Prj().GetProjectPath(), wxS( "Declined restore" ) ) )
+                Kiway().LocalHistory().TagSave( Prj().GetProjectPath(), wxS( "project" ) );
+        }
     }
 
     // Save history & window state to disk now.  Don't wait around for a crash.
@@ -884,7 +1014,7 @@ void KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
     SaveSettings( settings );
     settings->SaveToFile( Pgm().GetSettingsManager().GetPathForSettingsFile( settings ) );
 
-    m_leftWin->ReCreateTreePrj();
+    m_projectTreePane->ReCreateTreePrj();
     m_historyPane->RefreshHistory( Prj().GetProjectPath() );
 
     for( const wxString& jobset : Prj().GetLocalSettings().m_OpenJobSets )
@@ -915,16 +1045,8 @@ void KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
 
     // Now that we have a new project, trigger a library preload, which will load in any
     // project-specific symbol and footprint libraries into the manager
-    CallAfter( [&]()
-            {
-                KIFACE *schface = Kiway().KiFACE( KIWAY::FACE_SCH );
-                schface->PreloadLibraries( &Kiway() );
-
-                KIFACE *pcbface = Kiway().KiFACE( KIWAY::FACE_PCB );
-                pcbface->PreloadLibraries( &Kiway() );
-
-                Pgm().PreloadDesignBlockLibraries( &Kiway() );
-            } );
+    PreloadAllLibraries();
+    return true;
 }
 
 
@@ -998,7 +1120,8 @@ void KICAD_MANAGER_FRAME::CreateNewProject( const wxFileName& aProjectFileName, 
                                               "\t)\n"
                                               "\t(embedded_fonts no)\n"
                                               ")",
-                                              SEXPR_SCHEMATIC_FILE_VERSION, GetMajorMinorVersion(),
+                                              SEXPR_SCHEMATIC_FILE_VERSION,
+                                              GetMajorMinorVersion(),
                                               KIID().AsString() ) );
             }
 
@@ -1045,6 +1168,8 @@ void KICAD_MANAGER_FRAME::OnOpenFileInTextEditor( wxCommandEvent& event )
     wxFileDialog dlg( this, _( "Edit File in Text Editor" ), default_dir,  wxEmptyString, wildcard,
                       wxFD_OPEN );
 
+    KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
+
     if( dlg.ShowModal() == wxID_CANCEL )
         return;
 
@@ -1064,14 +1189,7 @@ void KICAD_MANAGER_FRAME::OnEditAdvancedCfg( wxCommandEvent& WXUNUSED( event ) )
 
 void KICAD_MANAGER_FRAME::RefreshProjectTree()
 {
-    m_leftWin->ReCreateTreePrj();
-}
-
-
-void KICAD_MANAGER_FRAME::language_change( wxCommandEvent& event )
-{
-    int id = event.GetId();
-    Kiway().SetLanguage( id );
+    m_projectTreePane->ReCreateTreePrj();
 }
 
 
@@ -1090,10 +1208,10 @@ void KICAD_MANAGER_FRAME::ShowChangedLanguage()
     if( pageId != wxNOT_FOUND )
         m_notebook->SetPageText( pageId, EDITORS_CAPTION );
 
-    m_auimgr.GetPane( m_leftWin ).Caption( PROJECT_FILES_CAPTION );
+    m_auimgr.GetPane( m_projectTreePane ).Caption( PROJECT_FILES_CAPTION );
     m_auimgr.Update();
 
-    m_leftWin->FileWatcherReset();
+    m_projectTreePane->FileWatcherReset();
 
     PrintPrjInfo();
 }
@@ -1115,7 +1233,7 @@ void KICAD_MANAGER_FRAME::CommonSettingsChanged( int aFlags )
         m_lastToolbarIconSize = settings->m_Appearance.toolbar_icon_size;
     }
 
-    m_leftWin->ReCreateTreePrj();
+    m_projectTreePane->ReCreateTreePrj();
 }
 
 
@@ -1144,7 +1262,9 @@ void KICAD_MANAGER_FRAME::ProjectChanged()
         if( !lockFile.Valid() )
         {
             wxString msg;
-            msg.Printf( _( "Project '%s' is already open by '%s' at '%s'." ), file, lockFile.GetUsername(),
+            msg.Printf( _( "Project '%s' is already open by '%s' at '%s'." ),
+                        file,
+                        lockFile.GetUsername(),
                         lockFile.GetHostname() );
 
             if( AskOverrideLock( this, msg ) )
@@ -1183,10 +1303,10 @@ void KICAD_MANAGER_FRAME::ProjectChanged()
     // Register project file saver. Ensures project file participates in
     // autosave history commits without affecting dirty state.
     Kiway().LocalHistory().RegisterSaver( &Prj(),
-        [this]( const wxString& aProjectPath, std::vector<wxString>& aFiles )
-        {
-            Prj().SaveToHistory( aProjectPath, aFiles );
-        } );
+            [this]( const wxString& aProjectPath, std::vector<wxString>& aFiles )
+            {
+                Prj().SaveToHistory( aProjectPath, aFiles );
+            } );
 }
 
 
@@ -1207,13 +1327,12 @@ void KICAD_MANAGER_FRAME::SaveSettings( APP_SETTINGS_BASE* aCfg )
 {
     EDA_BASE_FRAME::SaveSettings( aCfg );
 
-    auto settings = dynamic_cast<KICAD_SETTINGS*>( aCfg );
+    KICAD_SETTINGS* settings = dynamic_cast<KICAD_SETTINGS*>( aCfg );
 
-    wxCHECK( settings, /*void*/);
+    wxCHECK( settings, /*void*/ );
 
-    settings->m_LeftWinWidth = m_leftWin->GetSize().x;
-    settings->m_ShowHistoryPanel = m_historyPane &&
-                                   m_auimgr.GetPane( m_historyPane ).IsShown();
+    settings->m_LeftWinWidth = m_projectTreePane->GetSize().x;
+    settings->m_ShowHistoryPanel = m_historyPane && m_auimgr.GetPane( m_historyPane ).IsShown();
 
     if( !m_isClosing )
         settings->m_OpenProjects = GetSettingsManager()->GetOpenProjects();
@@ -1250,18 +1369,16 @@ void KICAD_MANAGER_FRAME::OnIdle( wxIdleEvent& aEvent )
 
     if( Pgm().GetCommonSettings()->m_Session.remember_open_files )
     {
-        int previousOpenCount =
-                std::count_if( Prj().GetLocalSettings().m_files.begin(),
-                               Prj().GetLocalSettings().m_files.end(),
-                               [&]( const PROJECT_FILE_STATE& f )
-                               {
-                                   return !f.fileName.EndsWith( FILEEXT::ProjectFileExtension ) && f.open;
-                               } );
+        int previousOpenCount = std::count_if( Prj().GetLocalSettings().m_files.begin(),
+                                               Prj().GetLocalSettings().m_files.end(),
+                [&]( const PROJECT_FILE_STATE& f )
+                {
+                    return !f.fileName.EndsWith( FILEEXT::ProjectFileExtension ) && f.open;
+                } );
 
         if( previousOpenCount > 0 )
         {
-            APP_PROGRESS_DIALOG progressReporter( _( "Restoring session" ), wxEmptyString,
-                                                  previousOpenCount, this );
+            APP_PROGRESS_DIALOG progressReporter( _( "Restoring session" ), wxEmptyString, previousOpenCount, this );
 
             // We don't currently support opening more than one view per file
             std::set<wxString> openedFiles;
@@ -1296,6 +1413,20 @@ void KICAD_MANAGER_FRAME::OnIdle( wxIdleEvent& aEvent )
 
     // clear file states regardless if we opened windows or not due to setting
     Prj().GetLocalSettings().ClearFileState();
+
+    // After restore from history, mark open editors as dirty so user is prompted to save
+    if( m_restoredFromHistory )
+    {
+        m_restoredFromHistory = false;
+
+        // Mark schematic editor as dirty if open
+        if( KIWAY_PLAYER* schFrame = Kiway().Player( FRAME_SCH, false ) )
+            schFrame->OnModify();
+
+        // Mark PCB editor as dirty if open
+        if( KIWAY_PLAYER* pcbFrame = Kiway().Player( FRAME_PCB_EDITOR, false ) )
+            pcbFrame->OnModify();
+    }
 
     KICAD_SETTINGS* settings = kicadSettings();
 
@@ -1377,8 +1508,7 @@ void KICAD_MANAGER_FRAME::onToolbarSizeChanged()
     delete m_tbLeft;
     m_tbLeft = nullptr;
     RecreateToolbars();
-    m_auimgr.AddPane( m_tbLeft, EDA_PANE().HToolbar().Name( "TopMainToolbar" ).Left()
-                      .Layer( 2 ) );
+    m_auimgr.AddPane( m_tbLeft, EDA_PANE().HToolbar().Name( "TopMainToolbar" ).Left().Layer( 2 ) );
 
     m_auimgr.Update();
 }
@@ -1402,8 +1532,12 @@ void KICAD_MANAGER_FRAME::RestoreCommitFromHistory( const wxString& aHash )
     if( !Kiway().PlayersClose( true ) )
         return;
 
-    Kiway().LocalHistory().RestoreCommit( Prj().GetProjectPath(), aHash, this );
-    m_leftWin->ReCreateTreePrj();
+    if( Kiway().LocalHistory().RestoreCommit( Prj().GetProjectPath(), aHash, this ) )
+    {
+        m_restoredFromHistory = true;  // Mark editors dirty when they reopen
+    }
+
+    m_projectTreePane->ReCreateTreePrj();
     m_openSavedWindows = true;
     m_historyPane->RefreshHistory( Prj().GetProjectPath() );
 }

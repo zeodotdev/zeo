@@ -33,6 +33,7 @@
 #include <bitmaps.h>
 #include <grid_tricks.h>
 #include <board.h>
+#include <project/net_settings.h>
 #include <footprint_edit_frame.h>
 #include <footprint_editor_settings.h>
 #include <pcbnew_id.h>
@@ -51,6 +52,7 @@
 #include <tool/tool_dispatcher.h>
 #include <tool/action_toolbar.h>
 #include <tool/common_tools.h>
+#include <tool/common_control.h>
 #include <tools/pcb_selection_tool.h>
 #include <tools/pcb_control.h>
 #include <tools/pcb_actions.h>
@@ -146,6 +148,7 @@ FOOTPRINT_WIZARD_FRAME::FOOTPRINT_WIZARD_FRAME( KIWAY* aKiway, wxWindow* aParent
     m_toolManager->RegisterTool( new PCB_SELECTION_TOOL );  // for std context menus (zoom & grid)
     m_toolManager->RegisterTool( new SCRIPTING_TOOL );
     m_toolManager->RegisterTool( new COMMON_TOOLS );
+    m_toolManager->RegisterTool( new COMMON_CONTROL );
     m_toolManager->RegisterTool( new FOOTPRINT_WIZARD_TOOLS );
     m_toolManager->InitTools();
 
@@ -512,7 +515,7 @@ void FOOTPRINT_WIZARD_FRAME::LoadSettings( APP_SETTINGS_BASE* aCfg )
     PCB_BASE_FRAME::LoadSettings( cfg );
 
     m_auiPerspective = cfg->m_FootprintViewer.perspective;
-    m_viewerAuiState = cfg->m_FootprintViewer.aui_state;
+    m_viewerAuiState = std::make_unique<nlohmann::json>( cfg->m_FootprintViewer.aui_state );
 }
 
 

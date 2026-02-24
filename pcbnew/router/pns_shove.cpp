@@ -93,9 +93,6 @@ SHOVE::ROOT_LINE_ENTRY* SHOVE::replaceLine( LINE& aOld, LINE& aNew, bool aInclud
         }
     }
 
-    int old_sc = aOld.SegmentCount();
-    int old_lc = aOld.LinkCount();
-
     if( aOld.EndsWithVia() )
     {
         LINKED_ITEM* viaLink = nullptr;
@@ -311,21 +308,20 @@ bool SHOVE::shoveLineToHullSet( const LINE& aCurLine, const LINE& aObstacleLine,
                                 bool aPermitAdjustingEnd )
 {
     const int c_ENDPOINT_ON_HULL_THRESHOLD = 1000;
-    int attempt;
-    bool permitAdjustingEndpoints = aPermitAdjustingStart || aPermitAdjustingEnd;
+    int       attempt;
+    bool      permitAdjustingEndpoints = aPermitAdjustingStart || aPermitAdjustingEnd;
 
     PNS_DBG( Dbg(), BeginGroup, "shove-details", 1 );
 
-    for( attempt = 0; attempt < 4; attempt++ )
+    for( attempt = 0; attempt < 2; attempt++ )
     {
-        bool invertTraversal = ( attempt >= 2 );
-        bool clockwise = attempt % 2;
-        int vFirst = -1, vLast = -1;
+        bool             invertTraversal = ( attempt >= 1 );
+        int              vFirst = -1, vLast = -1;
         SHAPE_LINE_CHAIN obs = aObstacleLine.CLine();
-        LINE l( aObstacleLine );
-        SHAPE_LINE_CHAIN path( l.CLine() );
+        LINE             l_base( aObstacleLine );
+        SHAPE_LINE_CHAIN path_base( l_base.CLine() );
 
-        if( permitAdjustingEndpoints && l.SegmentCount() >= 1 )
+        if( permitAdjustingEndpoints && l_base.SegmentCount() >= 1 )
         {
             auto minDistP = [&]( VECTOR2I pref, int& mdist, int& minhull ) -> VECTOR2I
             {
@@ -336,7 +332,7 @@ bool SHOVE::shoveLineToHullSet( const LINE& aCurLine, const LINE& aObstacleLine,
                 {
                     const SHAPE_LINE_CHAIN& hull =
                             aHulls[invertTraversal ? aHulls.size() - 1 - i : i];
-                    int  dist;
+                    int            dist;
                     const VECTOR2I p = hull.NearestPoint( pref, true );
 
                     if( hull.PointInside( pref ) )
@@ -360,128 +356,149 @@ bool SHOVE::shoveLineToHullSet( const LINE& aCurLine, const LINE& aObstacleLine,
                 return nearestP;
             };
 
-            int      minDist0, minDist1, minhull0, minhull1 ;
-            VECTOR2I p0 = minDistP( l.CPoint( 0 ), minDist0, minhull0 );
-            VECTOR2I p1 = minDistP( l.CLastPoint(), minDist1, minhull1 );
+            int      minDist0, minDist1, minhull0, minhull1;
+            VECTOR2I p0 = minDistP( l_base.CPoint( 0 ), minDist0, minhull0 );
+            VECTOR2I p1 = minDistP( l_base.CLastPoint(), minDist1, minhull1 );
 
-            PNS_DBG( Dbg(), Message, wxString::Format( "mindists : %d %d hulls %d %d\n", minDist0, minDist1, minhull0, minhull1 ) );
+            PNS_DBG( Dbg(), Message,
+                     wxString::Format( "mindists : %d %d hulls %d %d\n", minDist0, minDist1,
+                                       minhull0, minhull1 ) );
 
             if( minDist1 < c_ENDPOINT_ON_HULL_THRESHOLD && aPermitAdjustingEnd )
             {
-                l.Line().Append( p1 );
-                obs = l.CLine();
-                path = l.CLine();
+                l_base.Line().Append( p1 );
+                obs = l_base.CLine();
+                path_base = l_base.CLine();
             }
 
             if( minDist0 < c_ENDPOINT_ON_HULL_THRESHOLD && aPermitAdjustingStart )
             {
-                l.Line().Insert( 0, p0 );
-                obs = l.CLine();
-                path = l.CLine();
+                l_base.Line().Insert( 0, p0 );
+                obs = l_base.CLine();
+                path_base = l_base.CLine();
             }
         }
 
+        // Try both CW and CCW directions that pass the checks and pick the shortest one
+        PNS::LINE        l_dir[2] = { l_base, l_base };
+        SHAPE_LINE_CHAIN path_dir[2] = { path_base, path_base };
+        long long        minLength = std::numeric_limits<long long>::max();
 
-        bool failWalk = false;
+        PNS_DBG( Dbg(), AddShape, &obs, LIGHTGRAY, aObstacleLine.Width(), "obstacle" );
 
-        for( int i = 0; i < (int) aHulls.size(); i++ )
+        for( int cw = 0; cw <= 1; cw++ )
         {
-            const SHAPE_LINE_CHAIN& hull = aHulls[invertTraversal ? aHulls.size() - 1 - i : i];
+            PNS::LINE&        line = l_dir[cw];
+            SHAPE_LINE_CHAIN& path = path_dir[cw];
+            bool              failWalk = false;
 
-            PNS_DBG( Dbg(), AddShape, &hull, YELLOW, 10000, wxString::Format( "hull[%d]", i ) );
-            PNS_DBG( Dbg(), AddShape, &path, WHITE, l.Width(), wxString::Format( "path[%d]", i ) );
-            PNS_DBG( Dbg(), AddShape, &obs, LIGHTGRAY, aObstacleLine.Width(),  wxString::Format( "obs[%d]", i ) );
+            PNS_DBG( Dbg(), Message, wxString::Format( wxT( "Trying cw %d" ), cw ) );
 
-            if( !l.Walkaround( hull, path, clockwise ) )
+            for( int i = 0; i < (int) aHulls.size(); i++ )
             {
-                PNS_DBG( Dbg(), Message, wxString::Format( wxT( "Fail-Walk %s %s %d\n" ),
-                                                           hull.Format().c_str(),
-                                                           l.CLine().Format().c_str(),
-                                                           clockwise? 1 : 0) );
+                const SHAPE_LINE_CHAIN& hull = aHulls[invertTraversal ? aHulls.size() - 1 - i : i];
 
-                failWalk = true;
-                break;
+                PNS_DBG( Dbg(), AddShape, &hull, YELLOW, 10000, wxString::Format( "hull[%d]", i ) );
+                PNS_DBG( Dbg(), AddShape, &line.CLine(), WHITE, line.Width(),
+                         wxString::Format( "line[%d]", i ) );
+
+                if( !line.Walkaround( hull, path, cw != 0 ) )
+                {
+                    PNS_DBG( Dbg(), Message,
+                             wxString::Format( wxT( "Fail-Walk cw %d %s %s" ), cw,
+                                               hull.Format().c_str(),
+                                               line.CLine().Format().c_str() ) );
+
+                    failWalk = true;
+                    break;
+                }
+
+                path.Simplify2();
+                line.SetShape( path );
+
+                PNS_DBG( Dbg(), AddShape, &path, WHITE, line.Width(),
+                         wxString::Format( "path[%d]", i ) );
             }
 
-            path.Simplify2();
-            l.SetShape( path );
-        }
+            if( failWalk )
+                continue;
 
-        if( failWalk )
-            continue;
-
-        for( int i = 0; i < std::min( path.PointCount(), obs.PointCount() ); i++ )
-        {
-            if( path.CPoint( i ) != obs.CPoint( i ) )
+            for( int i = 0; i < std::min( path.PointCount(), obs.PointCount() ); i++ )
             {
-                vFirst = i;
-                break;
+                if( path.CPoint( i ) != obs.CPoint( i ) )
+                {
+                    vFirst = i;
+                    break;
+                }
             }
-        }
 
-        int k = obs.PointCount() - 1;
+            int k = obs.PointCount() - 1;
 
-        for( int i = path.PointCount() - 1; i >= 0 && k >= 0; i--, k-- )
-        {
-            if( path.CPoint( i ) != obs.CPoint( k ) )
+            for( int i = path.PointCount() - 1; i >= 0 && k >= 0; i--, k-- )
             {
-                vLast = i;
-                break;
+                if( path.CPoint( i ) != obs.CPoint( k ) )
+                {
+                    vLast = i;
+                    break;
+                }
             }
-        }
 
-        if( ( vFirst < 0 || vLast < 0 ) && !path.CompareGeometry( obs ) )
-        {
-            PNS_DBG( Dbg(), Message, wxString::Format( wxT( "attempt %d fail vfirst-last" ),
-                                                       attempt ) );
-            continue;
-        }
-
-        if( path.CLastPoint() != obs.CLastPoint() || path.CPoint( 0 ) != obs.CPoint( 0 ) )
-        {
-            PNS_DBG( Dbg(), Message, wxString::Format( wxT( "attempt %d fail vend-start\n" ),
-                                                       attempt ) );
-            continue;
-        }
-
-        if( !checkShoveDirection( aCurLine, aObstacleLine, l ) )
-        {
-            PNS_DBG( Dbg(), Message, wxString::Format( wxT( "attempt %d fail direction-check" ),
-                                                       attempt ) );
-            aResultLine.SetShape( l.CLine() );
-            continue;
-        }
-
-        if( path.SelfIntersecting() )
-        {
-            PNS_DBG( Dbg(), Message, wxString::Format( wxT( "attempt %d fail self-intersect" ),
-                                                       attempt ) );
-            continue;
-        }
-
-        bool colliding = l.Collide( &aCurLine, m_currentNode, l.Layer() );
-
-      #if 0
-        if(( aCurLine.Marker() & MK_HEAD ) && !colliding )
-        {
-            const JOINT* jtStart = m_currentNode->FindJoint( aCurLine.CPoint( 0 ), &aCurLine );
-
-            for( ITEM* item : jtStart->LinkList() )
+            if( ( vFirst < 0 || vLast < 0 ) && !path.CompareGeometry( obs ) )
             {
-                if( item->Collide( &l, m_currentNode, l.Layer() ) )
-                    colliding = true;
+                PNS_DBG( Dbg(), Message,
+                         wxString::Format( wxT( "attempt %d fail vfirst-last" ), attempt ) );
+                continue;
+            }
+
+            if( path.CLastPoint() != obs.CLastPoint() || path.CPoint( 0 ) != obs.CPoint( 0 ) )
+            {
+                PNS_DBG( Dbg(), Message, wxString::Format( wxT( "attempt %d fail vend-start\n" ),
+                                                           attempt ) );
+                continue;
+            }
+
+            if( path.SelfIntersecting() )
+            {
+                PNS_DBG( Dbg(), Message,
+                         wxString::Format( wxT( "attempt %d fail self-intersect" ), attempt ) );
+                continue;
+            }
+
+            bool colliding = line.Collide( &aCurLine, m_currentNode, line.Layer() );
+
+#if 0
+            if(( aCurLine.Marker() & MK_HEAD ) && !colliding )
+            {
+                const JOINT* jtStart = m_currentNode->FindJoint( aCurLine.CPoint( 0 ), &aCurLine );
+
+                for( ITEM* item : jtStart->LinkList() )
+                {
+                    if( item->Collide( &l, m_currentNode, l.Layer() ) )
+                        colliding = true;
+                }
+            }
+#endif
+
+            if( colliding )
+            {
+                PNS_DBG( Dbg(), Message,
+                         wxString::Format( wxT( "attempt %d fail coll-check" ), attempt ) );
+                continue;
+            }
+
+            long long len = line.CLine().Length();
+            PNS_DBG( Dbg(), Message, wxString::Format( "cw %d length %lld", cw, len ) );
+
+            // Pick the shortest
+            if( len <= minLength )
+            {
+                minLength = len;
+                aResultLine.SetShape( line.CLine() );
             }
         }
-      #endif
 
-        if( colliding )
-        {
-            PNS_DBG( Dbg(), Message, wxString::Format( wxT( "attempt %d fail coll-check" ),
-                                                       attempt ) );
-            continue;
-        }
-
-        aResultLine.SetShape( l.CLine() );
+        if( minLength == std::numeric_limits<long long>::max() )
+            continue; // both cw and ccw failed
 
         PNS_DBGN( Dbg(), EndGroup );
 
@@ -631,18 +648,6 @@ SHOVE::SHOVE_STATUS SHOVE::onCollidingSegment( LINE& aCurrent, SEGMENT* aObstacl
     }
 
     bool shoveOK = ShoveObstacleLine( aCurrent, obstacleLine, shovedLine );
-
-    const double extensionWalkThreshold = 1.0;
-
-    double obsLen = obstacleLine.CLine().Length();
-    double shovedLen = shovedLine.CLine().Length();
-    double extensionFactor = 0.0;
-
-    if( obsLen != 0.0f )
-        extensionFactor = shovedLen / obsLen - 1.0;
-
-    //if( extensionFactor > extensionWalkThreshold )
-      //  return SH_TRY_WALK;
 
     assert( obstacleLine.LayersOverlap( &shovedLine ) );
 
@@ -928,8 +933,6 @@ NODE* SHOVE::reduceSpringback( const ITEM_SET& aHeadSet )
 
         if( !obs && !spTag.m_locked )
         {
-            int i;
-
             PNS_DBG( Dbg(), Message, wxString::Format( "pop-sp node=%p depth=%d", spTag.m_node, spTag.m_node->Depth() ) );
 
             pruneRootLines( spTag.m_node );
@@ -949,7 +952,7 @@ NODE* SHOVE::reduceSpringback( const ITEM_SET& aHeadSet )
 
     SPRINGBACK_TAG& spTag = m_nodeStack.back();
 
-    for( int i = 0; i < spTag.m_draggedVias.size(); i++ )
+    for( int i = 0; i < (int) spTag.m_draggedVias.size(); i++ )
     {
         if (spTag.m_draggedVias[i].valid)
         {
@@ -1172,7 +1175,6 @@ SHOVE::SHOVE_STATUS SHOVE::onCollidingVia( ITEM* aCurrent, VIA* aObstacleVia, OB
 
     int clearance = getClearance( aCurrent, aObstacleVia );
     VECTOR2I mtv;
-    int rank = -1;
 
     bool lineCollision = false;
     bool viaCollision = false;
@@ -1274,7 +1276,8 @@ SHOVE::SHOVE_STATUS SHOVE::onReverseCollidingVia( LINE& aCurrent, VIA* aObstacle
 
         int clearance = getClearance( &aCurrent.Via(), aObstacleVia );
 
-        SHAPE_LINE_CHAIN hull = aObstacleVia->Hull( clearance, aCurrent.Width(), layer );
+        const SHAPE_LINE_CHAIN& hull = m_currentNode->GetRuleResolver()->HullCache(
+                aObstacleVia, clearance, aCurrent.Width(), layer );
 
         bool epInsideHull = hull.PointInside( p0 );
 
@@ -1383,8 +1386,6 @@ SHOVE::SHOVE_STATUS SHOVE::onReverseCollidingVia( LINE& aCurrent, VIA* aObstacle
 
 void SHOVE::unwindLineStack( const LINKED_ITEM* aSeg )
 {
-    int d = 0;
-
     for( std::vector<LINE>::iterator i = m_lineStack.begin(); i != m_lineStack.end() ; )
     {
         if( i->ContainsLink( aSeg ) )
@@ -1421,8 +1422,6 @@ void SHOVE::unwindLineStack( const LINKED_ITEM* aSeg )
         {
             i++;
         }
-
-        d++;
     }
 
     for( std::vector<LINE>::iterator i = m_optimizerQueue.begin(); i != m_optimizerQueue.end() ; )
@@ -1479,7 +1478,6 @@ bool SHOVE::pushLineStack( const LINE& aL, bool aKeepCurrentOnTop )
 
 bool SHOVE::pruneLineFromOptimizerQueue( const LINE& aLine )
 {
-    int pre = m_optimizerQueue.size();
     for( std::vector<LINE>::iterator i = m_optimizerQueue.begin(); i != m_optimizerQueue.end(); )
     {
         bool found = false;
@@ -2078,15 +2076,13 @@ void SHOVE::runOptimizer( NODE* aNode )
 
     std::set<const ITEM*> itemsChk;
 
-    auto iface = Router()->GetInterface();
-
     for( int pass = 0; pass < n_passes; pass++ )
     {
         std::reverse( m_optimizerQueue.begin(), m_optimizerQueue.end() );
 
         PNS_DBG( Dbg(), Message, wxString::Format( wxT( "optimize %d lines, pass %d"), (int)m_optimizerQueue.size(), (int)pass ) );
 
-        for( int i = 0; i < m_optimizerQueue.size(); i++ )
+        for( int i = 0; i < (int) m_optimizerQueue.size(); i++ )
         {
             LINE& lineToOpt = m_optimizerQueue[i];
             LINE* rootLine = nullptr;
@@ -2269,8 +2265,6 @@ void removeHead( NODE *aNode, LINE& head )
 
 void SHOVE::removeHeads()
 {
-    auto iface = Router()->GetInterface();
-
     NODE::ITEM_VECTOR removed, added;
 
     m_currentNode->GetUpdatedItems( removed, added );

@@ -69,6 +69,7 @@
 #include <thread_pool.h>
 #include <trace_helpers.h>
 
+#include <widgets/kistatusbar.h>
 #include <widgets/wx_splash.h>
 
 #ifdef KICAD_IPC_API
@@ -142,6 +143,12 @@ LANGUAGE_DESCR LanguagesList[] =
 #define _(s) wxGetTranslation((s))
 
 
+BS::priority_thread_pool& PGM_BASE::GetThreadPool()
+{
+    return *m_singleton.m_ThreadPool;
+}
+
+
 PGM_BASE::PGM_BASE()
 {
     m_locale = nullptr;
@@ -186,6 +193,13 @@ void PGM_BASE::Destroy()
 #ifdef _MSC_VER
     winrt::uninit_apartment();
 #endif
+
+    // Shut down the thread pool explicitly here, before static destruction begins.
+    // On macOS, if the thread pool destructor runs during static destruction
+    // (via __cxa_finalize_ranges), the condition variables may be in an invalid state,
+    // causing a crash. By destroying the thread pool here, we ensure it's cleaned up
+    // while the C++ runtime is still in a valid state.
+    m_singleton.Shutdown();
 }
 
 
@@ -337,9 +351,11 @@ bool PGM_BASE::InitPgm( bool aHeadless, bool aSkipPyInit, bool aIsUnitTest )
 
     wxInitAllImageHandlers();
 
+#if !wxCHECK_VERSION( 3, 3, 0 )
     // Without this the wxPropertyGridManager segfaults on Windows.
     if( !wxPGGlobalVars )
         wxPGInitResourceModule();
+#endif
 
 #ifndef __WINDOWS__
     if( wxString( wxGetenv( "HOME" ) ).IsEmpty() )
@@ -383,18 +399,6 @@ bool PGM_BASE::InitPgm( bool aHeadless, bool aSkipPyInit, bool aIsUnitTest )
     // Init parameters for configuration
     App().SetVendorName(  wxT( "KiCad" ) );
     App().SetAppName( pgm_name );
-
-    // Install some image handlers, mainly for help
-    if( wxImage::FindHandler( wxBITMAP_TYPE_PNG ) == nullptr )
-        wxImage::AddHandler( new wxPNGHandler );
-
-    if( wxImage::FindHandler( wxBITMAP_TYPE_GIF ) == nullptr )
-        wxImage::AddHandler( new wxGIFHandler );
-
-    if( wxImage::FindHandler( wxBITMAP_TYPE_JPEG ) == nullptr )
-        wxImage::AddHandler( new wxJPEGHandler );
-
-    wxFileSystem::AddHandler( new wxZipFSHandler );
 
     // Analyze the command line & initialize the binary path
     wxString tmp;
@@ -795,7 +799,7 @@ bool PGM_BASE::IsGUI()
 }
 
 
-void PGM_BASE::HandleException( std::exception_ptr aPtr )
+void PGM_BASE::HandleException( std::exception_ptr aPtr, bool aUnhandled )
 {
     try
     {
@@ -805,17 +809,29 @@ void PGM_BASE::HandleException( std::exception_ptr aPtr )
     catch( const IO_ERROR& ioe )
     {
         wxLogError( ioe.What() );
+
+        if( aUnhandled )
+        {
+            // Log this IO_ERROR escaped our usual uses (bad)
+            APP_MONITOR::SENTRY::Instance()->LogException( ioe.What(), aUnhandled );
+        }
     }
     catch( const std::exception& e )
     {
-        APP_MONITOR::SENTRY::Instance()->LogException( e.what() );
+        APP_MONITOR::SENTRY::Instance()->LogException( e.what(), aUnhandled );
 
         wxLogError( wxT( "Unhandled exception class: %s  what: %s" ),
                     From_UTF8( typeid( e ).name() ), From_UTF8( e.what() ) );
     }
     catch( ... )
     {
+        // We really shouldn't have these but just in case...
         wxLogError( wxT( "Unhandled exception of unknown type" ) );
+
+        if( aUnhandled )
+        {
+            APP_MONITOR::SENTRY::Instance()->LogException( "Unhandled exception of unknown type", aUnhandled );
+        }
     }
 }
 
@@ -937,6 +953,79 @@ void PGM_BASE::PreloadDesignBlockLibraries( KIWAY* aKiway )
     thread_pool& tp = GetKiCadThreadPool();
     m_libraryPreloadInProgress.store( true );
     m_libraryPreloadReturn = tp.submit_task( preload );
+}
+
+
+void PGM_BASE::RegisterLibraryLoadStatusBar( KISTATUSBAR* aStatusBar )
+{
+    std::lock_guard<std::mutex> lock( m_libraryLoadStatusBarsMutex );
+
+    wxLogTrace( traceLibraries, "RegisterLibraryLoadStatusBar: statusBar=%p", aStatusBar );
+
+    if( std::find( m_libraryLoadStatusBars.begin(), m_libraryLoadStatusBars.end(), aStatusBar )
+        == m_libraryLoadStatusBars.end() )
+    {
+        m_libraryLoadStatusBars.push_back( aStatusBar );
+        wxLogTrace( traceLibraries, "  -> registered, total count=%zu",
+                    m_libraryLoadStatusBars.size() );
+    }
+    else
+    {
+        wxLogTrace( traceLibraries, "  -> already registered" );
+    }
+}
+
+
+void PGM_BASE::UnregisterLibraryLoadStatusBar( KISTATUSBAR* aStatusBar )
+{
+    std::lock_guard<std::mutex> lock( m_libraryLoadStatusBarsMutex );
+
+    wxLogTrace( traceLibraries, "UnregisterLibraryLoadStatusBar: statusBar=%p", aStatusBar );
+
+    m_libraryLoadStatusBars.erase(
+            std::remove( m_libraryLoadStatusBars.begin(), m_libraryLoadStatusBars.end(),
+                         aStatusBar ),
+            m_libraryLoadStatusBars.end() );
+
+    wxLogTrace( traceLibraries, "  -> remaining count=%zu", m_libraryLoadStatusBars.size() );
+}
+
+
+void PGM_BASE::AddLibraryLoadMessages( const std::vector<LOAD_MESSAGE>& aMessages )
+{
+    wxLogTrace( traceLibraries, "AddLibraryLoadMessages: message_count=%zu", aMessages.size() );
+
+    if( aMessages.empty() )
+        return;
+
+    std::lock_guard<std::mutex> lock( m_libraryLoadStatusBarsMutex );
+
+    wxLogTrace( traceLibraries, "  -> registered status bars=%zu",
+                m_libraryLoadStatusBars.size() );
+
+    for( KISTATUSBAR* statusBar : m_libraryLoadStatusBars )
+    {
+        if( statusBar )
+        {
+            wxLogTrace( traceLibraries, "  -> forwarding to statusBar=%p", statusBar );
+            statusBar->AddLoadWarningMessages( aMessages );
+        }
+    }
+}
+
+
+void PGM_BASE::ClearLibraryLoadMessages()
+{
+    std::lock_guard<std::mutex> lock( m_libraryLoadStatusBarsMutex );
+
+    wxLogTrace( traceLibraries, "ClearLibraryLoadMessages: status bars=%zu",
+                m_libraryLoadStatusBars.size() );
+
+    for( KISTATUSBAR* statusBar : m_libraryLoadStatusBars )
+    {
+        if( statusBar )
+            statusBar->ClearLoadWarningMessages();
+    }
 }
 
 

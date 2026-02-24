@@ -31,6 +31,7 @@
 #include <project/project_local_settings.h>
 #include <project/net_settings.h>
 #include <sch_edit_frame.h>
+#include <settings/color_settings.h>
 #include <sch_painter.h>
 #include <schematic.h>
 #include <widgets/hierarchy_pane.h>
@@ -127,8 +128,7 @@ void SCH_EDIT_FRAME::ShowSchematicSetupDialog( const wxString& aInitialPage )
     // No, this does not escape the function context.
     NULLER raii_nuller( (void*&) m_schematicSetupDialog ); m_schematicSetupDialog = &dlg;
 
-    // TODO: is QuasiModal required here?
-    if( dlg.ShowQuasiModal() == wxID_OK )
+    if( dlg.ShowModal() == wxID_OK )
     {
         // Mark document as modified so that project settings can be saved as part of doc save
         OnModify();
@@ -265,9 +265,13 @@ void SCH_EDIT_FRAME::saveProjectSettings()
 void SCH_EDIT_FRAME::SaveProjectLocalSettings()
 {
     PROJECT_LOCAL_SETTINGS& localSettings = Prj().GetLocalSettings();
-    SCH_SELECTION_TOOL*     selTool = GetToolManager()->GetTool<SCH_SELECTION_TOOL>();
 
-    localSettings.m_SchSelectionFilter = selTool->GetFilter();
+    if( TOOL_MANAGER* toolMgr = GetToolManager() )
+    {
+        if( SCH_SELECTION_TOOL* selTool = toolMgr->GetTool<SCH_SELECTION_TOOL>() )
+            localSettings.m_SchSelectionFilter = selTool->GetFilter();
+    }
+
     localSettings.m_SchHierarchyCollapsed = m_hierarchy->GetCollapsedPaths();
 }
 

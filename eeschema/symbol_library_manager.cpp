@@ -161,7 +161,29 @@ bool SYMBOL_LIBRARY_MANAGER::SaveLibrary( const wxString& aLibrary, const wxStri
         destination.Normalize( FN_NORMALIZE_FLAGS | wxPATH_NORM_ENV_VARS );
 
         if( res && original == destination )
+        {
+            // Delete symbols that were removed from the buffer before clearing the deleted list
+            for( const std::shared_ptr<SYMBOL_BUFFER>& deletedBuf : libBuf.GetDeletedBuffers() )
+            {
+                wxCHECK2( deletedBuf, continue );
+
+                const wxString& originalName = deletedBuf->GetOriginal().GetName();
+
+                try
+                {
+                    if( pi->LoadSymbol( aFileName, originalName ) )
+                        pi->DeleteSymbol( aFileName, originalName, &properties );
+                }
+                catch( const IO_ERROR& ioe )
+                {
+                    wxLogError( _( "Error deleting symbol %s from library '%s'." ) + wxS( "\n%s" ),
+                                UnescapeString( originalName ), aFileName, ioe.What() );
+                    res = false;
+                }
+            }
+
             libBuf.ClearDeletedBuffer();
+        }
     }
     else
     {
@@ -825,14 +847,9 @@ bool SYMBOL_LIBRARY_MANAGER::UpdateLibraryBuffer( const wxString& aLibrary )
         m_libs.erase( aLibrary );
         getLibraryBuffer( aLibrary );
     }
-    catch(const std::exception& e)
+    catch( const std::exception& e )
     {
         wxLogError( _( "Error updating library buffer: %s" ), e.what() );
-        return false;
-    }
-    catch( const IO_ERROR& e )
-    {
-        wxLogError( _( "Error updating library buffer: %s" ), e.What() );
         return false;
     }
     catch(...)

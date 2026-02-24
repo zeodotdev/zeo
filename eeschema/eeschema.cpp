@@ -50,11 +50,14 @@
 #include <symbol_editor_settings.h>
 #include <sexpr/sexpr.h>
 #include <sexpr/sexpr_parser.h>
+#include <string_utils.h>
 #include <trace_helpers.h>
 #include <thread_pool.h>
 #include <kiface_ids.h>
+#include <widgets/kistatusbar.h>
 #include <netlist_exporters/netlist_exporter_kicad.h>
 #include <wx/ffile.h>
+#include <wx/tokenzr.h>
 #include <wildcards_and_files_ext.h>
 
 #include <schematic.h>
@@ -78,17 +81,16 @@
 #include <wx/crt.h>
 
 // The main sheet of the project
-SCH_SHEET* g_RootSheet = nullptr;
+SCH_SHEET*  g_RootSheet = nullptr;
 
 
-namespace SCH
-{
+namespace SCH {
 
 
 // TODO: This should move out of this file
 static std::unique_ptr<SCHEMATIC> readSchematicFromFile( const std::string& aFilename )
 {
-    SCH_IO*                    pi = SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD );
+    SCH_IO* pi = SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD );
     std::unique_ptr<SCHEMATIC> schematic = std::make_unique<SCHEMATIC>( nullptr );
 
     SETTINGS_MANAGER& manager = Pgm().GetSettingsManager();
@@ -99,21 +101,12 @@ static std::unique_ptr<SCHEMATIC> readSchematicFromFile( const std::string& aFil
     manager.LoadProject( "" );
     schematic->Reset();
     schematic->SetProject( &manager.Prj() );
-    schematic->SetRoot( pi->LoadSchematicFile( aFilename, schematic.get() ) );
+    SCH_SHEET* rootSheet = pi->LoadSchematicFile( aFilename, schematic.get() );
 
-    // Set current sheet to the first top-level sheet, not the virtual root
-    std::vector<SCH_SHEET*> topLevelSheets = schematic->GetTopLevelSheets();
+    if( !rootSheet )
+        return nullptr;
 
-    if( !topLevelSheets.empty() )
-    {
-        schematic->CurrentSheet().push_back( topLevelSheets[0] );
-        wxLogTrace( traceSchCurrentSheet, "Set current sheet to first top-level sheet: %s, path: %s",
-                    topLevelSheets[0]->GetName(), schematic->CurrentSheet().Path().AsString() );
-    }
-    else
-    {
-        wxLogWarning( "No top-level sheets found after loading schematic!" );
-    }
+    schematic->SetTopLevelSheets( { rootSheet } );
 
     SCH_SCREENS screens( schematic->Root() );
 
@@ -156,8 +149,8 @@ static std::unique_ptr<SCHEMATIC> readSchematicFromFile( const std::string& aFil
 bool generateSchematicNetlist( const wxString& aFilename, std::string& aNetlist )
 {
     std::unique_ptr<SCHEMATIC> schematic = readSchematicFromFile( aFilename.ToStdString() );
-    NETLIST_EXPORTER_KICAD     exporter( schematic.get() );
-    STRING_FORMATTER           formatter;
+    NETLIST_EXPORTER_KICAD exporter( schematic.get() );
+    STRING_FORMATTER formatter;
 
     exporter.Format( &formatter, GNL_ALL | GNL_OPT_KICAD );
     aNetlist = formatter.GetString();
@@ -174,8 +167,7 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             KIFACE_BASE( aName, aType ),
             UNITS_PROVIDER( schIUScale, EDA_UNITS::MM ),
             m_libraryPreloadInProgress( false )
-    {
-    }
+    {}
 
     bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits, KIWAY* aKiway ) override;
 
@@ -202,7 +194,8 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             return frame;
         }
 
-        case FRAME_SCH_SYMBOL_EDITOR: return new SYMBOL_EDIT_FRAME( aKiway, aParent );
+        case FRAME_SCH_SYMBOL_EDITOR:
+            return new SYMBOL_EDIT_FRAME( aKiway, aParent );
 
         case FRAME_SIMULATOR:
         {
@@ -219,11 +212,12 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             }
         }
 
-        case FRAME_SCH_VIEWER: return new SYMBOL_VIEWER_FRAME( aKiway, aParent );
+        case FRAME_SCH_VIEWER:
+            return new SYMBOL_VIEWER_FRAME( aKiway, aParent );
 
         case FRAME_SYMBOL_CHOOSER:
         {
-            bool                  cancelled = false;
+            bool cancelled = false;
             SYMBOL_CHOOSER_FRAME* chooser = new SYMBOL_CHOOSER_FRAME( aKiway, aParent, cancelled );
 
             if( cancelled )
@@ -284,7 +278,7 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
         case PANEL_SYM_TOOLBARS:
         {
             APP_SETTINGS_BASE* cfg = GetAppSettings<SYMBOL_EDITOR_SETTINGS>( "symbol_editor" );
-            TOOLBAR_SETTINGS*  tb = GetToolbarSettings<SYMBOL_EDIT_TOOLBAR_SETTINGS>( "symbol_editor-toolbars" );
+            TOOLBAR_SETTINGS*  tb  = GetToolbarSettings<SYMBOL_EDIT_TOOLBAR_SETTINGS>( "symbol_editor-toolbars" );
 
             std::vector<TOOL_ACTION*>            actions;
             std::vector<ACTION_TOOLBAR_CONTROL*> controls;
@@ -292,13 +286,14 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             for( TOOL_ACTION* action : ACTION_MANAGER::GetActionList() )
                 actions.push_back( action );
 
-            for( ACTION_TOOLBAR_CONTROL* control : ACTION_TOOLBAR::GetCustomControlList() )
+            for( ACTION_TOOLBAR_CONTROL* control : ACTION_TOOLBAR::GetCustomControlList( FRAME_SCH_SYMBOL_EDITOR ) )
                 controls.push_back( control );
 
             return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, actions, controls );
         }
 
-        case PANEL_SYM_COLORS: return new PANEL_SYM_COLOR_SETTINGS( aParent );
+        case PANEL_SYM_COLORS:
+            return new PANEL_SYM_COLOR_SETTINGS( aParent );
 
         case PANEL_SCH_DISP_OPTIONS:
             return new PANEL_EESCHEMA_DISPLAY_OPTIONS( aParent, GetAppSettings<EESCHEMA_SETTINGS>( "eeschema" ) );
@@ -339,7 +334,7 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
         case PANEL_SCH_TOOLBARS:
         {
             APP_SETTINGS_BASE* cfg = GetAppSettings<EESCHEMA_SETTINGS>( "eeschema" );
-            TOOLBAR_SETTINGS*  tb = GetToolbarSettings<SCH_EDIT_TOOLBAR_SETTINGS>( "eeschema-toolbars" );
+            TOOLBAR_SETTINGS*  tb  = GetToolbarSettings<SCH_EDIT_TOOLBAR_SETTINGS>( "eeschema-toolbars" );
 
             std::vector<TOOL_ACTION*>            actions;
             std::vector<ACTION_TOOLBAR_CONTROL*> controls;
@@ -347,15 +342,17 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             for( TOOL_ACTION* action : ACTION_MANAGER::GetActionList() )
                 actions.push_back( action );
 
-            for( ACTION_TOOLBAR_CONTROL* control : ACTION_TOOLBAR::GetCustomControlList() )
+            for( ACTION_TOOLBAR_CONTROL* control : ACTION_TOOLBAR::GetCustomControlList( FRAME_SCH ) )
                 controls.push_back( control );
 
             return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, actions, controls );
         }
 
-        case PANEL_SCH_COLORS: return new PANEL_EESCHEMA_COLOR_SETTINGS( aParent );
+        case PANEL_SCH_COLORS:
+            return new PANEL_EESCHEMA_COLOR_SETTINGS( aParent );
 
-        case PANEL_SCH_FIELD_NAME_TEMPLATES: return new PANEL_TEMPLATE_FIELDNAMES( aParent, nullptr );
+        case PANEL_SCH_FIELD_NAME_TEMPLATES:
+            return new PANEL_TEMPLATE_FIELDNAMES( aParent, nullptr );
 
         case PANEL_SCH_DATA_SOURCES:
         {
@@ -370,9 +367,11 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             return new class PANEL_SCH_DATA_SOURCES( aParent, frame );
         }
 
-        case PANEL_SCH_SIMULATOR: return new PANEL_SIMULATOR_PREFERENCES( aParent );
+        case PANEL_SCH_SIMULATOR:
+            return new PANEL_SIMULATOR_PREFERENCES( aParent );
 
-        default: return nullptr;
+        default:
+            return nullptr;
         }
     }
 
@@ -390,7 +389,8 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
     {
         switch( aDataId )
         {
-        case KIFACE_NETLIST_SCHEMATIC: return (void*) generateSchematicNetlist;
+            case KIFACE_NETLIST_SCHEMATIC:
+                return (void*) generateSchematicNetlist;
         }
 
         return nullptr;
@@ -402,8 +402,8 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
      * paths in them that need updating).
      */
     void SaveFileAs( const wxString& aProjectBasePath, const wxString& aProjectName,
-                     const wxString& aNewProjectBasePath, const wxString& aNewProjectName, const wxString& aSrcFilePath,
-                     wxString& aErrors ) override;
+                     const wxString& aNewProjectBasePath, const wxString& aNewProjectName,
+                     const wxString& aSrcFilePath, wxString& aErrors ) override;
 
 
     int HandleJob( JOB* aJob, REPORTER* aReporter, PROGRESS_REPORTER* aProgressReporter ) override;
@@ -411,6 +411,7 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
     bool HandleJobConfig( JOB* aJob, wxWindow* aParent ) override;
 
     void PreloadLibraries( KIWAY* aKiway ) override;
+    void CancelPreload( bool aBlock = true ) override;
     void ProjectChanged() override;
 
 private:
@@ -422,20 +423,17 @@ private:
 
 } kiface( "eeschema", KIWAY::FACE_SCH );
 
-} // namespace SCH
+} // namespace
 
 using namespace SCH;
 
 
-KIFACE_BASE& Kiface()
-{
-    return kiface;
-}
+KIFACE_BASE& Kiface() { return kiface; }
 
 
 // KIFACE_GETTER's actual spelling is a substitution macro found in kiway.h.
 // KIFACE_GETTER will not have name mangling due to declaration in kiway.h.
-KIFACE_API KIFACE* KIFACE_GETTER( int* aKIFACEversion, int aKiwayVersion, PGM_BASE* aProgram )
+KIFACE_API KIFACE* KIFACE_GETTER(  int* aKIFACEversion, int aKiwayVersion, PGM_BASE* aProgram )
 {
     return &kiface;
 }
@@ -484,67 +482,108 @@ void IFACE::PreloadLibraries( KIWAY* aKiway )
 
     wxCHECK( aKiway, /* void */ );
 
-    if( m_libraryPreloadInProgress.load() )
+    // Use compare_exchange to atomically check and set the flag to prevent race conditions
+    // when PreloadLibraries is called multiple times concurrently (e.g., from project manager
+    // and schematic editor both scheduling via CallAfter)
+    bool expected = false;
+
+    if( !m_libraryPreloadInProgress.compare_exchange_strong( expected, true ) )
         return;
 
-    m_libraryPreloadBackgroundJob = Pgm().GetBackgroundJobMonitor().Create( _( "Loading Symbol Libraries" ) );
+    Pgm().ClearLibraryLoadMessages();
 
-    auto preload = [this, aKiway]() -> void
-    {
-        std::shared_ptr<BACKGROUND_JOB_REPORTER> reporter = m_libraryPreloadBackgroundJob->m_reporter;
+    m_libraryPreloadBackgroundJob =
+            Pgm().GetBackgroundJobMonitor().Create( _( "Loading Symbol Libraries" ) );
 
-        SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &aKiway->Prj() );
-
-        int elapsed = 0;
-
-        reporter->Report( _( "Loading Symbol Libraries" ) );
-        adapter->AsyncLoad();
-
-        while( true )
+    auto preload =
+        [this, aKiway]() -> void
         {
-            if( m_libraryPreloadAbort.load() )
+            std::shared_ptr<BACKGROUND_JOB_REPORTER> reporter =
+                    m_libraryPreloadBackgroundJob->m_reporter;
+
+            SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &aKiway->Prj() );
+
+            int elapsed = 0;
+
+            reporter->Report( _( "Loading Symbol Libraries" ) );
+            adapter->AsyncLoad();
+
+            while( true )
             {
-                m_libraryPreloadAbort.store( false );
-                break;
+                if( m_libraryPreloadAbort.load() )
+                {
+                    m_libraryPreloadAbort.store( false );
+                    break;
+                }
+
+                std::this_thread::sleep_for( std::chrono::milliseconds( interval ) );
+
+                if( std::optional<float> loadStatus = adapter->AsyncLoadProgress() )
+                {
+                    float progress = *loadStatus;
+                    reporter->SetCurrentProgress( progress );
+
+                    if( progress >= 1 )
+                        break;
+                }
+                else
+                {
+                    reporter->SetCurrentProgress( 1 );
+                    break;
+                }
+
+                elapsed += interval;
+
+                if( elapsed > timeLimit )
+                    break;
             }
 
-            std::this_thread::sleep_for( std::chrono::milliseconds( interval ) );
+            adapter->BlockUntilLoaded();
 
-            if( std::optional<float> loadStatus = adapter->AsyncLoadProgress() )
+            // Collect library load errors for async reporting
+            wxString errors = adapter->GetLibraryLoadErrors();
+
+            wxLogTrace( traceLibraries, "eeschema PreloadLibraries: errors.IsEmpty()=%d, length=%zu",
+                        errors.IsEmpty(), errors.length() );
+
+            std::vector<LOAD_MESSAGE> messages =
+                    ExtractLibraryLoadErrors( errors, RPT_SEVERITY_ERROR );
+
+            if( !messages.empty() )
             {
-                float progress = *loadStatus;
-                reporter->SetCurrentProgress( progress );
-
-                if( progress >= 1 )
-                    break;
+                wxLogTrace( traceLibraries, "  -> collected %zu messages, calling AddLibraryLoadMessages",
+                            messages.size() );
+                Pgm().AddLibraryLoadMessages( messages );
             }
             else
             {
-                reporter->SetCurrentProgress( 1 );
-                break;
+                wxLogTrace( traceLibraries, "  -> no errors from symbol libraries" );
             }
 
-            elapsed += interval;
+            Pgm().GetBackgroundJobMonitor().Remove( m_libraryPreloadBackgroundJob );
+            m_libraryPreloadBackgroundJob.reset();
+            m_libraryPreloadInProgress.store( false );
 
-            if( elapsed > timeLimit )
-                break;
-        }
-
-        adapter->BlockUntilLoaded();
-
-        Pgm().GetBackgroundJobMonitor().Remove( m_libraryPreloadBackgroundJob );
-        m_libraryPreloadBackgroundJob.reset();
-        m_libraryPreloadInProgress.store( false );
-
-        std::string payload = "";
-        aKiway->ExpressMail( FRAME_SCH, MAIL_RELOAD_LIB, payload, nullptr, true );
-        aKiway->ExpressMail( FRAME_SCH_SYMBOL_EDITOR, MAIL_RELOAD_LIB, payload, nullptr, true );
-        aKiway->ExpressMail( FRAME_SCH_VIEWER, MAIL_RELOAD_LIB, payload, nullptr, true );
-    };
+            std::string payload = "";
+            aKiway->ExpressMail( FRAME_SCH, MAIL_RELOAD_LIB, payload, nullptr, true );
+            aKiway->ExpressMail( FRAME_SCH_SYMBOL_EDITOR, MAIL_RELOAD_LIB, payload, nullptr, true );
+            aKiway->ExpressMail( FRAME_SCH_VIEWER, MAIL_RELOAD_LIB, payload, nullptr, true );
+        };
 
     thread_pool& tp = GetKiCadThreadPool();
-    m_libraryPreloadInProgress.store( true );
     m_libraryPreloadReturn = tp.submit_task( preload );
+}
+
+
+void IFACE::CancelPreload( bool aBlock )
+{
+    if( m_libraryPreloadInProgress.load() )
+    {
+        m_libraryPreloadAbort.store( true );
+
+        if( aBlock )
+            m_libraryPreloadReturn.wait();
+    }
 }
 
 
@@ -582,7 +621,7 @@ void IFACE::SaveFileAs( const wxString& aProjectBasePath, const wxString& aProje
     {
         if( destFile.GetName() == aProjectName )
         {
-            destFile.SetName( aNewProjectName );
+            destFile.SetName( aNewProjectName  );
         }
         else if( destFile.GetName() == aNewProjectName )
         {
@@ -592,14 +631,12 @@ void IFACE::SaveFileAs( const wxString& aProjectBasePath, const wxString& aProje
                 aErrors += wxS( "\n" );
 
             msg.Printf( _( "Cannot copy file '%s' as it will be overwritten by the new root "
-                           "sheet file." ),
-                        destFile.GetFullPath() );
+                           "sheet file." ), destFile.GetFullPath() );
             aErrors += msg;
             return;
         }
 
-        CopySexprFile(
-                aSrcFilePath, destFile.GetFullPath(),
+        CopySexprFile( aSrcFilePath, destFile.GetFullPath(),
                 [&]( const std::string& token, wxString& value ) -> bool
                 {
                     if( token == "project" && value == aProjectName )
@@ -617,7 +654,8 @@ void IFACE::SaveFileAs( const wxString& aProjectBasePath, const wxString& aProje
         // Symbols are not project-specific.  Keep their source names.
         KiCopyFile( aSrcFilePath, destFile.GetFullPath(), aErrors );
     }
-    else if( ext == FILEEXT::LegacySymbolLibFileExtension || ext == FILEEXT::LegacySymbolDocumentFileExtension
+    else if( ext == FILEEXT::LegacySymbolLibFileExtension
+             || ext == FILEEXT::LegacySymbolDocumentFileExtension
              || ext == FILEEXT::KiCadSymbolLibFileExtension )
     {
         if( destFile.GetName() == aProjectName + wxS( "-cache" ) )
@@ -633,14 +671,12 @@ void IFACE::SaveFileAs( const wxString& aProjectBasePath, const wxString& aProje
         if( destFile.GetName() == aProjectName )
             destFile.SetName( aNewProjectName );
 
-        CopySexprFile(
-                aSrcFilePath, destFile.GetFullPath(),
+        CopySexprFile( aSrcFilePath, destFile.GetFullPath(),
                 [&]( const std::string& token, wxString& value ) -> bool
                 {
                     if( token == "source" )
                     {
-                        for( const wxString& extension :
-                             { wxString( wxT( ".sch" ) ), wxString( wxT( ".kicad_sch" ) ) } )
+                        for( const wxString& extension : { wxString( wxT( ".sch" ) ), wxString( wxT( ".kicad_sch" ) ) } )
                         {
                             if( value == aProjectName + extension )
                             {
@@ -678,8 +714,9 @@ void IFACE::SaveFileAs( const wxString& aProjectBasePath, const wxString& aProje
             uri.Replace( wxS( "/" ) + aProjectName + wxS( "-cache.lib" ),
                          wxS( "/" ) + aNewProjectName + wxS( "-cache.lib" ) );
             uri.Replace( wxS( "/" ) + aProjectName + wxS( "-rescue.lib" ),
-                         wxS( "/" ) + aNewProjectName + wxS( "-rescue.lib" ) );
-            uri.Replace( wxS( "/" ) + aProjectName + wxS( ".lib" ), wxS( "/" ) + aNewProjectName + wxS( ".lib" ) );
+                         wxS( "/" ) + aNewProjectName +  wxS( "-rescue.lib" ) );
+            uri.Replace( wxS( "/" ) + aProjectName + wxS( ".lib" ),
+                         wxS( "/" ) + aNewProjectName + wxS( ".lib" ) );
 
             row.SetURI( uri );
         }
@@ -687,13 +724,13 @@ void IFACE::SaveFileAs( const wxString& aProjectBasePath, const wxString& aProje
         libTable.Save().map_error(
                 [&]( const LIBRARY_ERROR& aError )
                 {
-                    wxString msg;
+                        wxString msg;
 
-                    if( !aErrors.empty() )
-                        aErrors += wxT( "\n" );
+                        if( !aErrors.empty() )
+                            aErrors += wxT( "\n" );
 
-                    msg.Printf( _( "Cannot copy file '%s'." ), destFile.GetFullPath() );
-                    aErrors += msg;
+                        msg.Printf( _( "Cannot copy file '%s'." ), destFile.GetFullPath() );
+                        aErrors += msg;
                 } );
     }
     else

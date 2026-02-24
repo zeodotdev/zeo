@@ -37,6 +37,8 @@
 #include <systemdirsappend.h>
 #include <trace_helpers.h>
 
+#include <cctype>
+#include <set>
 #include <stdexcept>
 
 #include "pgm_kicad.h"
@@ -56,7 +58,6 @@
 #include "cli/command_pcb_export_3d.h"
 #include "cli/command_pcb_export_drill.h"
 #include "cli/command_pcb_export_dxf.h"
-#include "cli/command_pcb_export_gerber.h"
 #include "cli/command_pcb_export_gerbers.h"
 #include "cli/command_pcb_export_hpgl.h"
 #include "cli/command_pcb_export_gencad.h"
@@ -73,6 +74,7 @@
 #include "cli/command_sch_export_netlist.h"
 #include "cli/command_sch_export_plot.h"
 #include "cli/command_pcb_upgrade.h"
+#include "cli/command_pcb_import.h"
 #include "cli/command_fp.h"
 #include "cli/command_fp_export.h"
 #include "cli/command_fp_export_svg.h"
@@ -125,6 +127,7 @@ static CLI::PCB_COMMAND                  pcbCmd{};
 static CLI::PCB_DRC_COMMAND              pcbDrcCmd{};
 static CLI::PCB_RENDER_COMMAND           pcbRenderCmd{};
 static CLI::PCB_UPGRADE_COMMAND          pcbUpgradeCmd{};
+static CLI::PCB_IMPORT_COMMAND           pcbImportCmd{};
 static CLI::PCB_EXPORT_DRILL_COMMAND     exportPcbDrillCmd{};
 static CLI::PCB_EXPORT_DXF_COMMAND       exportPcbDxfCmd{};
 static CLI::PCB_EXPORT_3D_COMMAND        exportPcbGlbCmd{ "glb", UTF8STDSTR( _( "Export GLB (binary GLTF)" ) ), JOB_EXPORT_PCB_3D::FORMAT::GLB };
@@ -143,7 +146,6 @@ static CLI::PCB_EXPORT_PDF_COMMAND       exportPcbPdfCmd{};
 static CLI::PCB_EXPORT_POS_COMMAND       exportPcbPosCmd{};
 static CLI::PCB_EXPORT_PS_COMMAND        exportPcbPsCmd{};
 static CLI::PCB_EXPORT_STATS_COMMAND     exportPcbStatsCmd{};
-static CLI::PCB_EXPORT_GERBER_COMMAND    exportPcbGerberCmd{};
 static CLI::PCB_EXPORT_GERBERS_COMMAND   exportPcbGerbersCmd{};
 static CLI::PCB_EXPORT_HPGL_COMMAND      exportPcbHpglCmd{};
 static CLI::PCB_EXPORT_GENCAD_COMMAND    exportPcbGencadCmd{};
@@ -158,11 +160,11 @@ static CLI::SCH_UPGRADE_COMMAND          schUpgradeCmd{};
 static CLI::SCH_EXPORT_BOM_COMMAND       exportSchBomCmd{};
 static CLI::SCH_EXPORT_PYTHONBOM_COMMAND exportSchPythonBomCmd{};
 static CLI::SCH_EXPORT_NETLIST_COMMAND   exportSchNetlistCmd{};
-static CLI::SCH_EXPORT_PLOT_COMMAND      exportSchDxfCmd{ "dxf", UTF8STDSTR( _( "Export DXF" ) ), SCH_PLOT_FORMAT::DXF };
-static CLI::SCH_EXPORT_PLOT_COMMAND      exportSchHpglCmd{ "hpgl", UTF8STDSTR( _( "Export HPGL" ) ), SCH_PLOT_FORMAT::HPGL };
-static CLI::SCH_EXPORT_PLOT_COMMAND      exportSchPdfCmd{ "pdf", UTF8STDSTR( _( "Export PDF" ) ), SCH_PLOT_FORMAT::PDF, false };
-static CLI::SCH_EXPORT_PLOT_COMMAND      exportSchPostscriptCmd{ "ps", UTF8STDSTR( _( "Export PS" ) ), SCH_PLOT_FORMAT::POST };
-static CLI::SCH_EXPORT_PLOT_COMMAND      exportSchSvgCmd{ "svg", UTF8STDSTR( _( "Export SVG" ) ), SCH_PLOT_FORMAT::SVG };
+static CLI::SCH_EXPORT_PLOT_COMMAND      exportSchDxfCmd{ "dxf",        UTF8STDSTR( _( "Export DXF" ) ),    SCH_PLOT_FORMAT::DXF,   CLI::COMMAND::IO_TYPE::DIRECTORY };
+static CLI::SCH_EXPORT_PLOT_COMMAND      exportSchHpglCmd{ "hpgl",      UTF8STDSTR( _( "Export HPGL" ) ),   SCH_PLOT_FORMAT::HPGL,  CLI::COMMAND::IO_TYPE::DIRECTORY };
+static CLI::SCH_EXPORT_PLOT_COMMAND      exportSchPdfCmd{ "pdf",        UTF8STDSTR( _( "Export PDF" ) ),    SCH_PLOT_FORMAT::PDF,   CLI::COMMAND::IO_TYPE::FILE };
+static CLI::SCH_EXPORT_PLOT_COMMAND      exportSchPostscriptCmd{ "ps",  UTF8STDSTR( _( "Export PS" ) ),     SCH_PLOT_FORMAT::POST,  CLI::COMMAND::IO_TYPE::DIRECTORY };
+static CLI::SCH_EXPORT_PLOT_COMMAND      exportSchSvgCmd{ "svg",        UTF8STDSTR( _( "Export SVG" ) ),    SCH_PLOT_FORMAT::SVG,   CLI::COMMAND::IO_TYPE::DIRECTORY };
 static CLI::FP_COMMAND                   fpCmd{};
 static CLI::FP_EXPORT_COMMAND            fpExportCmd{};
 static CLI::FP_EXPORT_SVG_COMMAND        fpExportSvgCmd{};
@@ -205,6 +207,9 @@ static std::vector<COMMAND_ENTRY> commandStack = {
                 &pcbDrcCmd
             },
             {
+                &pcbImportCmd
+            },
+            {
                 &pcbRenderCmd
             },
             {
@@ -213,7 +218,6 @@ static std::vector<COMMAND_ENTRY> commandStack = {
                     &exportPcbBrepCmd,
                     &exportPcbDrillCmd,
                     &exportPcbDxfCmd,
-                    &exportPcbGerberCmd,
                     &exportPcbGerbersCmd,
                     &exportPcbHpglCmd,
                     &exportPcbGencadCmd,
@@ -327,6 +331,74 @@ static void printHelp( argparse::ArgumentParser& argParser )
 }
 
 
+/**
+ * Check if a string looks like a numeric vector value that happens to start with a minus sign.
+ *
+ * This handles values like "-45,0,45" or "-3.5,0,1.2" which are valid vector arguments
+ * but get misinterpreted by argparse as unknown options because they start with '-'.
+ */
+static bool looksLikeNegativeVectorValue( const std::string& aValue )
+{
+    if( aValue.empty() || aValue[0] != '-' )
+        return false;
+
+    if( aValue.find( ',' ) == std::string::npos )
+        return false;
+
+    for( size_t i = 1; i < aValue.size(); ++i )
+    {
+        char c = aValue[i];
+
+        if( !std::isdigit( c ) && c != '.' && c != ',' && c != '-' && c != '+' )
+            return false;
+    }
+
+    return true;
+}
+
+
+/**
+ * Pre-process command line arguments to handle negative numeric values.
+ *
+ * The argparse library interprets values starting with '-' as option flags.
+ * For arguments that accept vector values (like --rotate, --pan, --pivot),
+ * we wrap negative values in single quotes to prevent argparse from treating
+ * them as options. The parsing code in command_pcb_render.cpp already strips
+ * these quotes via getToVector3().
+ *
+ * Example: "--rotate -45,0,45" becomes "--rotate='-45,0,45'"
+ */
+static std::vector<std::string> preprocessArgs( int argc, char** argv )
+{
+    std::vector<std::string> result;
+
+    static const std::set<std::string> vectorArgs = {
+        "--rotate", "--pan", "--pivot"
+    };
+
+    for( int i = 0; i < argc; ++i )
+    {
+        std::string current( argv[i] );
+
+        if( vectorArgs.count( current ) && i + 1 < argc )
+        {
+            std::string next( argv[i + 1] );
+
+            if( looksLikeNegativeVectorValue( next ) )
+            {
+                result.push_back( current + "='" + next + "'" );
+                ++i;
+                continue;
+            }
+        }
+
+        result.push_back( current );
+    }
+
+    return result;
+}
+
+
 bool PGM_KICAD::OnPgmInit()
 {
     PGM_BASE::BuildArgvUtf8();
@@ -381,7 +453,11 @@ int PGM_KICAD::OnPgmRun()
         // Use the C locale to parse arguments
         // Otherwise the decimal separator for the locale will be applied
         LOCALE_IO dummy;
-        argParser.parse_args( m_argcUtf8, m_argvUtf8 );
+
+        // Pre-process arguments to handle negative vector values (e.g., --rotate -45,0,45)
+        // which argparse would otherwise interpret as unknown options
+        std::vector<std::string> args = preprocessArgs( m_argcUtf8, m_argvUtf8 );
+        argParser.parse_args( args );
     }
     // std::runtime_error doesn't seem to be enough for the scan<>()
     catch( const std::exception& err )

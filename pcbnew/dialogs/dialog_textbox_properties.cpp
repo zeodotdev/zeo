@@ -175,6 +175,7 @@ DIALOG_TEXTBOX_PROPERTIES::~DIALOG_TEXTBOX_PROPERTIES()
     Disconnect( wxEVT_CHAR_HOOK, wxKeyEventHandler( DIALOG_TEXTBOX_PROPERTIES::OnCharHook ), nullptr, this );
 
     delete m_scintillaTricks;
+    m_scintillaTricks = nullptr;
 
     if( m_helpWindow )
         m_helpWindow->Destroy();
@@ -481,6 +482,26 @@ bool DIALOG_TEXTBOX_PROPERTIES::TransferDataFromWindow()
 
     m_textBox->ClearBoundingBoxCache();
     m_textBox->ClearRenderCache();
+
+    VECTOR2I minBoxSize = m_textBox->GetMinSize();
+    VECTOR2I start = m_textBox->GetStart();
+    VECTOR2I end = m_textBox->GetEnd();
+    bool expanded = false;
+
+    if( minBoxSize.x > 0 && std::abs( end.x - start.x ) < minBoxSize.x )
+    {
+        end.x = ( end.x >= start.x ) ? start.x + minBoxSize.x : start.x - minBoxSize.x;
+        expanded = true;
+    }
+
+    if( minBoxSize.y > 0 && std::abs( end.y - start.y ) < minBoxSize.y )
+    {
+        end.y = ( end.y >= start.y ) ? start.y + minBoxSize.y : start.y - minBoxSize.y;
+        expanded = true;
+    }
+
+    if( expanded )
+        m_textBox->SetEnd( end );
 
     if( pushCommit )
         commit.Push( _( "Edit Text Box Properties" ) );

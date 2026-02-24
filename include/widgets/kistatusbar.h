@@ -27,6 +27,10 @@
 
 #include <kicommon.h>
 #include <optional>
+#include <mutex>
+#include <vector>
+#include <widgets/report_severity.h>
+#include <wx/statusbr.h>
 
 class wxGauge;
 class wxButton;
@@ -43,6 +47,16 @@ class BITMAP_BUTTON;
  * Background notifications button (FIELD_OFFSET_NOTIFICATION_BUTTON  offset id)
  */
 
+/**
+ * Structure to store a load message with its severity.
+ */
+struct LOAD_MESSAGE
+{
+    wxString  message;
+    SEVERITY  severity;
+};
+
+
 class KICOMMON_API KISTATUSBAR : public wxStatusBar
 {
 public:
@@ -51,7 +65,8 @@ public:
         NONE_STYLE        = 0x00,
         NOTIFICATION_ICON = 0x01,
         CANCEL_BUTTON     = 0x02,
-        LABEL_BUTTON      = 0x04,
+        WARNING_ICON      = 0x04,
+        LABEL_BUTTON      = 0x08,
     };
 
     static constexpr auto DEFAULT_STYLE =
@@ -102,51 +117,72 @@ public:
      */
     void SetNotificationCount( int aCount );
 
-    /**
-     * Set the text of the label button.
-     */
-    void SetLabelButtonText( const wxString& aText );
+    void SetLoadWarningMessages( const wxString& aMessages );
+    void ClearLoadWarningMessages();
 
     /**
-     * Get the label button.
+     * Add warning/error messages thread-safely.
+     * Can be called from any thread. UI update is deferred to main thread.
      */
-    wxStaticText* GetLabelButton() const { return m_labelButton; }
+    void AddLoadWarningMessages( const std::vector<LOAD_MESSAGE>& aMessages );
 
     /**
-     * Set the profile bitmap image.
+     * Get current message count (thread-safe).
+     */
+    size_t GetLoadWarningCount() const;
+
+    /**
+     * Get the label button widget (Zeo session management).
+     */
+    wxButton* GetLabelButton() { return m_labelButton; }
+
+    /**
+     * Get the profile bitmap widget (Zeo session management).
+     */
+    wxStaticBitmap* GetProfileBitmap() { return m_profileBitmap; }
+
+    /**
+     * Set the profile bitmap (Zeo session management).
      */
     void SetProfileBitmap( const wxBitmap& aBitmap );
 
     /**
-     * Get the profile bitmap control.
+     * Set the label button text (Zeo session management).
      */
-    wxStaticBitmap* GetProfileBitmap() const { return m_profileBitmap; }
+    void SetLabelButtonText( const wxString& aText );
 
 private:
     void onSize( wxSizeEvent& aEvent );
     void onBackgroundProgressClick( wxMouseEvent& aEvent );
     void onNotificationsIconClick( wxCommandEvent& aEvent );
+    void onLoadWarningsIconClick( wxCommandEvent& aEvent );
+    void updateWarningUI();  ///< Update warning button visibility and badge (main thread only)
 
     enum class FIELD
     {
         BGJOB_LABEL,
         BGJOB_GAUGE,
         BGJOB_CANCEL,
-        LABEL_BUTTON,
-        NOTIFICATION
+        WARNING,
+        NOTIFICATION,
+        LABEL
     };
 
     std::optional<int> fieldIndex( FIELD aField ) const;
 
 private:
-    wxGauge*       m_backgroundProgressBar;
-    wxButton*      m_backgroundStopButton;
-    wxStaticText*  m_backgroundTxt;
-    BITMAP_BUTTON* m_notificationsButton;
-    wxStaticText*  m_labelButton;
-    wxStaticBitmap* m_profileBitmap;
+    wxGauge*        m_backgroundProgressBar;
+    wxButton*       m_backgroundStopButton;
+    wxStaticText*   m_backgroundTxt;
+    BITMAP_BUTTON*  m_notificationsButton;
+    BITMAP_BUTTON*  m_warningButton;
+    wxButton*       m_labelButton;       ///< Zeo session label button
+    wxStaticBitmap* m_profileBitmap;     ///< Zeo session profile avatar
+    mutable std::mutex m_loadWarningMutex;  ///< Protects m_loadWarningMessages
+    std::vector<LOAD_MESSAGE> m_loadWarningMessages;
     int            m_normalFieldsCount;
     STYLE_FLAGS    m_styleFlags;
+    wxString       m_savedStatusText;       ///< Saved text from adjacent field during background jobs
 };
 
 #endif

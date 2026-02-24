@@ -30,9 +30,12 @@ set( QA_COMMON_SRCS
 
     wximage_test_utils.cpp
 
+    test_angle_item.cpp
+
     test_array_axis.cpp
     test_base_set.cpp
     test_bitmap_base.cpp
+    test_clipboard.cpp
     test_collector.cpp
     test_color4d.cpp
     test_commit.cpp
@@ -40,6 +43,7 @@ set( QA_COMMON_SRCS
     test_eda_shape.cpp
     test_eda_text.cpp
     test_embedded_file_compress.cpp
+    test_expand_text_vars.cpp
     test_file_history.cpp
     test_filename_resolver.cpp
     test_hotkey_store.cpp
@@ -52,6 +56,7 @@ set( QA_COMMON_SRCS
     test_pdf_unicode_plot.cpp
     test_kiid.cpp
     test_layer_ids.cpp
+    test_lib_id.cpp
     test_layer_range.cpp
     test_lset.cpp
     test_markup_parser.cpp
@@ -67,6 +72,7 @@ set( QA_COMMON_SRCS
     text_eval/test_text_eval_parser.cpp
     text_eval/test_text_eval_parser_core.cpp
     text_eval/test_text_eval_parser_datetime.cpp
+    text_eval/test_text_eval_parser_vcs.cpp
     text_eval/test_text_eval_parser_integration.cpp
     text_eval/test_text_eval_numeric_compat.cpp
     text_eval/test_text_eval_render.cpp
@@ -85,7 +91,30 @@ set( QA_COMMON_SRCS
 
     io/cadstar/test_cadstar_archive_parser.cpp
 
+    io/pads/test_pads_attribute_mapper.cpp
+    io/pads/test_pads_common.cpp
+    io/pads/test_pads_unit_converter.cpp
+
     view/test_zoom_controller.cpp
+
+    test_netname_validator.cpp
+
+    # GAL tests
+    test_gal_xor_mode.cpp
+
+    # Graphics import tests
+    test_graphics_importer_buffer.cpp
+
+    # Project template tests (source included directly since it's from kicad executable)
+    test_project_template.cpp
+    ${CMAKE_SOURCE_DIR}/kicad/project_template.cpp
+
+    # Project file tests
+    test_project_file.cpp
+
+    # Job tests
+    test_job_export_sch_plot.cpp
+    test_jobs_runner.cpp
 )
 
 if( KICAD_TEST_DATABASE_LIBRARIES )
@@ -114,6 +143,7 @@ target_link_libraries( qa_common
     common
     libcontext
     gal
+    pads_common
     qa_utils
     Boost::headers
     Boost::unit_test_framework
@@ -123,8 +153,10 @@ target_link_libraries( qa_common
 
 include_directories(
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/kicad
     ${CMAKE_SOURCE_DIR}/pcbnew
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/common/io/pads
     ${CMAKE_SOURCE_DIR}/qa/mocks/include
     ${INC_AFTER}
 )

@@ -39,6 +39,9 @@
 #include <geometry/geometry_utils.h>
 #include <sch_textbox.h>
 #include <tools/sch_navigate_tool.h>
+#include <markup_parser.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 #include <api/api_utils.h>
 #include <api/api_enums.h>
@@ -84,6 +87,26 @@ int SCH_TEXTBOX::GetLegacyTextMargin() const
         return KiROUND( GetTextSize().y * 0.8 );
     else
         return KiROUND( GetStroke().GetWidth() / 2.0 ) + KiROUND( GetTextSize().y * 0.75 );
+}
+
+
+VECTOR2I SCH_TEXTBOX::GetMinSize() const
+{
+    if( GetText().IsEmpty() )
+        return VECTOR2I( 0, 0 );
+
+    BOX2I textBox = GetTextBox( nullptr );
+
+    int textHeight = std::abs( textBox.GetHeight() );
+
+    if( GetTextAngle().IsVertical() )
+    {
+        textHeight += GetMarginLeft() + GetMarginRight();
+        return VECTOR2I( textHeight, 0 );
+    }
+
+    textHeight += GetMarginTop() + GetMarginBottom();
+    return VECTOR2I( 0, textHeight );
 }
 
 
@@ -316,25 +339,26 @@ bool SCH_TEXTBOX::HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) cons
 }
 
 
-bool SCH_TEXTBOX::IsHypertext() const
+bool SCH_TEXTBOX::HasHypertext() const
 {
-    if( HasHyperlink() )
-        return true;
-
-    return IsURL( GetShownText( false ) );
+    return HasHyperlink() || containsURL();
 }
 
 
-void SCH_TEXTBOX::DoHypertextAction( EDA_DRAW_FRAME* aFrame ) const
+bool SCH_TEXTBOX::HasHoveredHypertext() const
 {
-    wxCHECK_MSG( IsHypertext(), /* void */, wxT( "Calling a hypertext menu on a SCH_TEXTBOX with no hyperlink?" ) );
+    return !m_activeUrl.IsEmpty();
+}
 
+
+void SCH_TEXTBOX::DoHypertextAction( EDA_DRAW_FRAME* aFrame, const VECTOR2I& aMousePos ) const
+{
     SCH_NAVIGATE_TOOL* navTool = aFrame->GetToolManager()->GetTool<SCH_NAVIGATE_TOOL>();
 
     if( HasHyperlink() )
         navTool->HypertextCommand( m_hyperlink );
-    else
-        navTool->HypertextCommand( GetShownText( false ) );
+    else if( !m_activeUrl.IsEmpty() )
+        navTool->HypertextCommand( m_activeUrl );
 }
 
 
@@ -378,8 +402,8 @@ void SCH_TEXTBOX::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS
     if( bg == COLOR4D::UNSPECIFIED || !aPlotter->GetColorMode() )
         bg = COLOR4D::WHITE;
 
-    if( color.m_text.has_value() && Schematic() )
-        color = COLOR4D( ResolveText( color.m_text.value(), &Schematic()->CurrentSheet() ) );
+    if( color.m_text && Schematic() )
+        color = COLOR4D( ResolveText( *color.m_text, &Schematic()->CurrentSheet() ) );
 
     if( aDimmed )
     {

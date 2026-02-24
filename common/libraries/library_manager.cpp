@@ -18,10 +18,13 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <chrono>
 #include <common.h>
 #include <env_vars.h>
 #include <list>
 #include <magic_enum.hpp>
+#include <thread_pool.h>
+#include <ranges>
 #include <unordered_set>
 
 #include <paths.h>
@@ -31,6 +34,8 @@
 #include <wildcards_and_files_ext.h>
 
 #include <libraries/library_manager.h>
+
+using namespace std::chrono_literals;
 #include <settings/kicad_settings.h>
 #include <settings/settings_manager.h>
 #include <wx/dir.h>
@@ -82,8 +87,19 @@ void LIBRARY_MANAGER::loadTables( const wxString& aTablePath, LIBRARY_TABLE_SCOP
 
         if( fn.IsFileReadable() )
         {
-            auto table = std::make_unique<LIBRARY_TABLE>( fn, aScope );
-            wxCHECK2( table->Type() == type, continue );
+            std::unique_ptr<LIBRARY_TABLE> table = std::make_unique<LIBRARY_TABLE>( fn, aScope );
+
+            if( table->Type() != type )
+            {
+                auto actualName = magic_enum::enum_name( table->Type() );
+                auto expectedName = magic_enum::enum_name( type );
+                wxLogWarning( wxS( "Library table '%s' has type %s but expected %s; skipping" ),
+                              fn.GetFullPath(),
+                              wxString( actualName.data(), actualName.size() ),
+                              wxString( expectedName.data(), expectedName.size() ) );
+                continue;
+            }
+
             aTarget[type] = std::move( table );
             loadNestedTables( *aTarget[type] );
         }
@@ -99,7 +115,7 @@ void LIBRARY_MANAGER::loadNestedTables( LIBRARY_TABLE& aRootTable )
 {
     std::unordered_set<wxString> seenTables;
 
-    std::function<void(LIBRARY_TABLE&)> processOneTable =
+    std::function<void( LIBRARY_TABLE& )> processOneTable =
             [&]( LIBRARY_TABLE& aTable )
             {
                 seenTables.insert( aTable.Path() );
@@ -192,10 +208,8 @@ public:
         wxFileName f( aBasePath, "" );
         m_prefix_dir_count = f.GetDirCount();
 
-        m_symbolTable = m_manager.Table( LIBRARY_TABLE_TYPE::SYMBOL, LIBRARY_TABLE_SCOPE::GLOBAL )
-                                 .value_or( nullptr );
-        m_fpTable = m_manager.Table( LIBRARY_TABLE_TYPE::FOOTPRINT, LIBRARY_TABLE_SCOPE::GLOBAL )
-                             .value_or( nullptr );
+        m_symbolTable = m_manager.Table( LIBRARY_TABLE_TYPE::SYMBOL, LIBRARY_TABLE_SCOPE::GLOBAL ).value_or( nullptr );
+        m_fpTable = m_manager.Table( LIBRARY_TABLE_TYPE::FOOTPRINT, LIBRARY_TABLE_SCOPE::GLOBAL ).value_or( nullptr );
         m_designBlockTable = m_manager.Table( LIBRARY_TABLE_TYPE::DESIGN_BLOCK, LIBRARY_TABLE_SCOPE::GLOBAL )
                                       .value_or( nullptr );
     }
@@ -207,8 +221,9 @@ public:
 
         // consider a file to be a lib if it's name ends with .kicad_sym and
         // it is under $KICADn_3RD_PARTY/symbols/<pkgid>/ i.e. has nested level of at least +2
-        if( file.GetExt() == wxT( "kicad_sym" ) && file.GetDirCount() >= m_prefix_dir_count + 2
-            && file.GetDirs()[m_prefix_dir_count] == wxT( "symbols" ) )
+        if( file.GetExt() == wxT( "kicad_sym" )
+                && file.GetDirCount() >= m_prefix_dir_count + 2
+                && file.GetDirs()[m_prefix_dir_count] == wxT( "symbols" ) )
         {
             addRowIfNecessary( m_symbolTable, file, ADD_MODE::AM_FILE, 10 );
         }
@@ -219,14 +234,14 @@ public:
     /// Handles footprint library and design block library directories, minimum nest level 3
     wxDirTraverseResult OnDir( const wxString& dirPath ) override
     {
-        static wxString designBlockExt = wxString::Format( wxS( ".%s" ),
-                                                           FILEEXT::KiCadDesignBlockLibPathExtension );
+        static wxString designBlockExt = wxString::Format( wxS( ".%s" ), FILEEXT::KiCadDesignBlockLibPathExtension );
         wxFileName dir = wxFileName::DirName( dirPath );
 
         // consider a directory to be a lib if it's name ends with .pretty and
         // it is under $KICADn_3RD_PARTY/footprints/<pkgid>/ i.e. has nested level of at least +3
-        if( dirPath.EndsWith( wxS( ".pretty" ) ) && dir.GetDirCount() >= m_prefix_dir_count + 3
-            && dir.GetDirs()[m_prefix_dir_count] == wxT( "footprints" ) )
+        if( dirPath.EndsWith( wxS( ".pretty" ) )
+                && dir.GetDirCount() >= m_prefix_dir_count + 3
+                && dir.GetDirs()[m_prefix_dir_count] == wxT( "footprints" ) )
         {
             addRowIfNecessary( m_fpTable, dir, ADD_MODE::AM_DIRECTORY, 7 );
         }
@@ -301,6 +316,7 @@ private:
         }
     }
 
+private:
     LIBRARY_MANAGER& m_manager;
     const PROJECT&   m_project;
     wxString         m_path_prefix;
@@ -329,7 +345,9 @@ bool LIBRARY_MANAGER::IsTableValid( const wxString& aPath )
 {
     if( wxFileName fn( aPath ); fn.IsFileReadable() )
     {
-        if( LIBRARY_TABLE temp( fn, LIBRARY_TABLE_SCOPE::GLOBAL ); temp.IsOk() )
+        LIBRARY_TABLE temp( fn, LIBRARY_TABLE_SCOPE::GLOBAL );
+
+        if( temp.IsOk() )
             return true;
     }
 
@@ -352,7 +370,9 @@ std::vector<LIBRARY_TABLE_TYPE> LIBRARY_MANAGER::InvalidGlobalTables()
                                           LIBRARY_TABLE_TYPE::FOOTPRINT,
                                           LIBRARY_TABLE_TYPE::DESIGN_BLOCK } )
     {
-        if( wxFileName fn( basePath, tableFileName( tableType ) ); !IsTableValid( fn.GetFullPath() ) )
+        wxFileName fn( basePath, tableFileName( tableType ) );
+
+        if( !IsTableValid( fn.GetFullPath() ) )
             invalidTables.emplace_back( tableType );
     }
 
@@ -496,6 +516,15 @@ void LIBRARY_MANAGER::ProjectChanged()
 }
 
 
+void LIBRARY_MANAGER::AbortAsyncLoads()
+{
+    std::scoped_lock lock( m_adaptersMutex );
+
+    for( const std::unique_ptr<LIBRARY_MANAGER_ADAPTER>& adapter : m_adapters | std::views::values )
+        adapter->AbortAsyncLoad();
+}
+
+
 void LIBRARY_MANAGER::RegisterAdapter( LIBRARY_TABLE_TYPE aType,
                                        std::unique_ptr<LIBRARY_MANAGER_ADAPTER>&& aAdapter )
 {
@@ -572,16 +601,13 @@ std::optional<LIBRARY_TABLE*> LIBRARY_MANAGER::Table( LIBRARY_TABLE_TYPE aType,
 }
 
 
-std::vector<LIBRARY_TABLE_ROW*> LIBRARY_MANAGER::Rows( LIBRARY_TABLE_TYPE aType,
-                                                       LIBRARY_TABLE_SCOPE aScope,
+std::vector<LIBRARY_TABLE_ROW*> LIBRARY_MANAGER::Rows( LIBRARY_TABLE_TYPE aType, LIBRARY_TABLE_SCOPE aScope,
                                                        bool aIncludeInvalid ) const
 {
     std::map<wxString, LIBRARY_TABLE_ROW*> rows;
     std::vector<wxString> rowOrder;
 
-    std::list<std::ranges::ref_view<
-            const std::map<LIBRARY_TABLE_TYPE, std::unique_ptr<LIBRARY_TABLE>>
-        >> tables;
+    std::list<std::ranges::ref_view<const std::map<LIBRARY_TABLE_TYPE, std::unique_ptr<LIBRARY_TABLE>>>> tables;
 
     switch( aScope )
     {
@@ -618,6 +644,10 @@ std::vector<LIBRARY_TABLE_ROW*> LIBRARY_MANAGER::Rows( LIBRARY_TABLE_TYPE aType,
                                 if( !m_childTables.contains( row.URI() ) )
                                     continue;
 
+                                // Don't include libraries from disabled or hidden nested tables
+                                if( row.Disabled() || row.Hidden() )
+                                    continue;
+
                                 processTable( m_childTables.at( row.URI() ) );
                             }
                             else
@@ -647,8 +677,7 @@ std::vector<LIBRARY_TABLE_ROW*> LIBRARY_MANAGER::Rows( LIBRARY_TABLE_TYPE aType,
 }
 
 
-std::optional<LIBRARY_TABLE_ROW*> LIBRARY_MANAGER::GetRow( LIBRARY_TABLE_TYPE  aType,
-                                                           const wxString&     aNickname,
+std::optional<LIBRARY_TABLE_ROW*> LIBRARY_MANAGER::GetRow( LIBRARY_TABLE_TYPE  aType, const wxString& aNickname,
                                                            LIBRARY_TABLE_SCOPE aScope ) const
 {
     for( LIBRARY_TABLE_ROW* row : Rows( aType, aScope, true ) )
@@ -693,8 +722,7 @@ void LIBRARY_MANAGER::LoadProjectTables( const wxString& aProjectPath,
     else
     {
         m_projectTables.clear();
-        wxLogTrace( traceLibraries, "New project path %s is not readable, not loading project tables",
-                    aProjectPath );
+        wxLogTrace( traceLibraries, "New project path %s is not readable, not loading project tables", aProjectPath );
     }
 }
 
@@ -709,8 +737,7 @@ void LIBRARY_MANAGER::ReloadTables( LIBRARY_TABLE_SCOPE aScope,
 }
 
 
-std::optional<wxString> LIBRARY_MANAGER::GetFullURI( LIBRARY_TABLE_TYPE aType,
-                                                     const wxString& aNickname,
+std::optional<wxString> LIBRARY_MANAGER::GetFullURI( LIBRARY_TABLE_TYPE aType, const wxString& aNickname,
                                                      bool aSubstituted ) const
 {
     if( std::optional<const LIBRARY_TABLE_ROW*> result = GetRow( aType, aNickname ) )
@@ -720,11 +747,10 @@ std::optional<wxString> LIBRARY_MANAGER::GetFullURI( LIBRARY_TABLE_TYPE aType,
 }
 
 
-wxString LIBRARY_MANAGER::GetFullURI( const LIBRARY_TABLE_ROW* aRow,
-                                      bool aSubstituted )
+wxString LIBRARY_MANAGER::GetFullURI( const LIBRARY_TABLE_ROW* aRow, bool aSubstituted )
 {
     if( aSubstituted )
-        return ExpandEnvVarSubstitutions( aRow->URI(), nullptr );
+        return ExpandEnvVarSubstitutions( aRow->URI(), &Pgm().GetSettingsManager().Prj() );
 
     return aRow->URI();
 }
@@ -732,6 +758,8 @@ wxString LIBRARY_MANAGER::GetFullURI( const LIBRARY_TABLE_ROW* aRow,
 
 wxString LIBRARY_MANAGER::ExpandURI( const wxString& aShortURI, const PROJECT& aProject )
 {
+    wxLogNull doNotLog; // We do our own error reporting; we don't want to hear about missing envvars
+
     wxFileName path( ExpandEnvVarSubstitutions( aShortURI, &aProject ) );
     path.MakeAbsolute();
     return path.GetFullPath();
@@ -766,8 +794,8 @@ bool LIBRARY_MANAGER::UrisAreEquivalent( const wxString& aURI1, const wxString& 
 ///
 
 
-LIBRARY_MANAGER_ADAPTER::LIBRARY_MANAGER_ADAPTER( LIBRARY_MANAGER& aManager ) : m_manager( aManager ),
-    m_loadTotal( 0 )
+LIBRARY_MANAGER_ADAPTER::LIBRARY_MANAGER_ADAPTER( LIBRARY_MANAGER& aManager ) :
+        m_manager( aManager )
 {
 }
 
@@ -788,9 +816,15 @@ void LIBRARY_MANAGER_ADAPTER::ProjectChanged()
     abortLoad();
 
     {
-        std::lock_guard lock( m_libraries_mutex );
+        std::unique_lock lock( m_librariesMutex );
         m_libraries.clear();
     }
+}
+
+
+void LIBRARY_MANAGER_ADAPTER::AbortAsyncLoad()
+{
+    abortLoad();
 }
 
 
@@ -813,7 +847,7 @@ void LIBRARY_MANAGER_ADAPTER::GlobalTablesChanged( std::initializer_list<LIBRARY
     abortLoad();
 
     {
-        std::lock_guard lock( globalLibsMutex() );
+        std::unique_lock lock( globalLibsMutex() );
         globalLibs().clear();
     }
 }
@@ -840,6 +874,11 @@ void LIBRARY_MANAGER_ADAPTER::CheckTableRow( LIBRARY_TABLE_ROW& aRow )
             if( status.value().error.has_value() )
                 aRow.SetErrorDescription( status.value().error.value().message );
         }
+    }
+    else if( plugin.error().message == LIBRARY_TABLE_OK().message )
+    {
+        aRow.SetOk( true );
+        aRow.SetErrorDescription( wxEmptyString );
     }
     else
     {
@@ -878,22 +917,30 @@ std::optional<wxString> LIBRARY_MANAGER_ADAPTER::FindLibraryByURI( const wxStrin
 std::vector<wxString> LIBRARY_MANAGER_ADAPTER::GetLibraryNames() const
 {
     std::vector<wxString> ret;
+    std::vector<LIBRARY_TABLE_ROW*> rows = m_manager.Rows( Type() );
 
-    for( const LIBRARY_TABLE_ROW* row : m_manager.Rows( Type() ) )
+    wxLogTrace( traceLibraries, "GetLibraryNames: checking %zu rows from table", rows.size() );
+
+    for( const LIBRARY_TABLE_ROW* row : rows )
     {
-        if( fetchIfLoaded( row->Nickname() ) )
-            ret.emplace_back( row->Nickname() );
+        wxString nickname = row->Nickname();
+        std::optional<const LIB_DATA*> loaded = fetchIfLoaded( nickname );
+
+        if( loaded )
+            ret.emplace_back( nickname );
     }
 
+    wxLogTrace( traceLibraries, "GetLibraryNames: returning %zu of %zu libraries", ret.size(), rows.size() );
     return ret;
 }
 
 
-bool LIBRARY_MANAGER_ADAPTER::HasLibrary( const wxString& aNickname,
-                                          bool aCheckEnabled ) const
+bool LIBRARY_MANAGER_ADAPTER::HasLibrary( const wxString& aNickname, bool aCheckEnabled ) const
 {
-    if( std::optional<const LIB_DATA*> r = fetchIfLoaded( aNickname ); r.has_value() )
-        return !aCheckEnabled || !( *r )->row->Disabled();
+    std::optional<const LIB_DATA*> r = fetchIfLoaded( aNickname );
+
+    if( r.has_value() )
+        return !aCheckEnabled || !r.value()->row->Disabled();
 
     return false;
 }
@@ -953,48 +1000,71 @@ std::optional<LIBRARY_TABLE_ROW*> LIBRARY_MANAGER_ADAPTER::FindRowByURI(
 
 void LIBRARY_MANAGER_ADAPTER::abortLoad()
 {
-    if( m_futures.empty() )
-        return;
+    {
+        std::lock_guard lock( m_loadMutex );
 
-    wxLogTrace( traceLibraries, "Aborting library load..." );
-    m_abort.store( true );
+        if( m_futures.empty() )
+            return;
+
+        wxLogTrace( traceLibraries, "Aborting library load..." );
+        m_abort.store( true );
+    }
 
     BlockUntilLoaded();
     wxLogTrace( traceLibraries, "Aborted" );
 
-    m_abort.store( false );
-    m_futures.clear();
-    m_loadTotal = 0;
+    {
+        std::lock_guard lock( m_loadMutex );
+        m_abort.store( false );
+        m_futures.clear();
+        m_loadTotal.store( 0 );
+        m_loadCount.store( 0 );
+    }
 }
 
 
 std::optional<float> LIBRARY_MANAGER_ADAPTER::AsyncLoadProgress() const
 {
-    if( m_loadTotal == 0 )
+    size_t total = m_loadTotal.load();
+
+    if( total == 0 )
         return std::nullopt;
 
     size_t loaded = m_loadCount.load();
-    return loaded / static_cast<float>( m_loadTotal );
+    return loaded / static_cast<float>( total );
 }
 
 
 void LIBRARY_MANAGER_ADAPTER::BlockUntilLoaded()
 {
+    wxLogTrace( traceLibraries, "BlockUntilLoaded: entry, acquiring m_loadMutex" );
+    std::unique_lock<std::mutex> asyncLock( m_loadMutex );
+
+    wxLogTrace( traceLibraries, "BlockUntilLoaded: waiting on %zu futures", m_futures.size() );
+
     for( const std::future<void>& future : m_futures )
         future.wait();
+
+    wxLogTrace( traceLibraries, "BlockUntilLoaded: all futures complete, loadCount=%zu, loadTotal=%zu",
+                m_loadCount.load(), m_loadTotal.load() );
 }
 
 
 bool LIBRARY_MANAGER_ADAPTER::IsLibraryLoaded( const wxString& aNickname )
 {
-    // TODO: row->IsOK() doesn't actually tell you if a library is loaded
-    // Once we are preloading libraries we can cache the status of plugin load instead
+    {
+        std::shared_lock lock( m_librariesMutex );
 
-    if( m_libraries.contains( aNickname ) )
-        return m_libraries[aNickname].row->IsOk();
+        if( auto it = m_libraries.find( aNickname ); it != m_libraries.end() )
+            return it->second.status.load_status == LOAD_STATUS::LOADED;
+    }
 
-    if( globalLibs().contains( aNickname ) )
-        return globalLibs()[aNickname].row->IsOk();
+    {
+        std::shared_lock lock( globalLibsMutex() );
+
+        if( auto it = globalLibs().find( aNickname ); it != globalLibs().end() )
+            return it->second.status.load_status == LOAD_STATUS::LOADED;
+    }
 
     return false;
 }
@@ -1002,14 +1072,18 @@ bool LIBRARY_MANAGER_ADAPTER::IsLibraryLoaded( const wxString& aNickname )
 
 std::optional<LIBRARY_ERROR> LIBRARY_MANAGER_ADAPTER::LibraryError( const wxString& aNickname ) const
 {
-    if( m_libraries.contains( aNickname ) )
     {
-        return m_libraries.at( aNickname ).status.error;
+        std::shared_lock lock( m_librariesMutex );
+
+        if( auto it = m_libraries.find( aNickname ); it != m_libraries.end() )
+            return it->second.status.error;
     }
 
-    if( globalLibs().contains( aNickname ) )
     {
-        return globalLibs().at( aNickname ).status.error;
+        std::shared_lock lock( globalLibsMutex() );
+
+        if( auto it = globalLibs().find( aNickname ); it != globalLibs().end() )
+            return it->second.status.error;
     }
 
     return std::nullopt;
@@ -1022,6 +1096,9 @@ std::vector<std::pair<wxString, LIB_STATUS>> LIBRARY_MANAGER_ADAPTER::GetLibrary
 
     for( const LIBRARY_TABLE_ROW* row : m_manager.Rows( Type() ) )
     {
+        if( row->Disabled() )
+            continue;
+
         if( std::optional<LIB_STATUS> result = GetLibraryStatus( row->Nickname() ) )
         {
             ret.emplace_back( std::make_pair( row->Nickname(), *result ) );
@@ -1029,10 +1106,11 @@ std::vector<std::pair<wxString, LIB_STATUS>> LIBRARY_MANAGER_ADAPTER::GetLibrary
         else
         {
             // This should probably never happen, but until that can be proved...
-            ret.emplace_back( std::make_pair( row->Nickname(), LIB_STATUS( {
-                    .load_status = LOAD_STATUS::LOAD_ERROR,
-                    .error = LIBRARY_ERROR( _( "Library not found in library table" ) )
-                } ) ) );
+            ret.emplace_back( std::make_pair( row->Nickname(),
+                                              LIB_STATUS( {
+                                                  .load_status = LOAD_STATUS::LOAD_ERROR,
+                                                  .error = LIBRARY_ERROR( _( "Library not found in library table" ) )
+                                              } ) ) );
         }
     }
 
@@ -1040,17 +1118,36 @@ std::vector<std::pair<wxString, LIB_STATUS>> LIBRARY_MANAGER_ADAPTER::GetLibrary
 }
 
 
-void LIBRARY_MANAGER_ADAPTER::ReloadLibraryEntry( const wxString& aNickname,
-                                                  LIBRARY_TABLE_SCOPE aScope )
+wxString LIBRARY_MANAGER_ADAPTER::GetLibraryLoadErrors() const
+{
+    wxString errors;
+
+    for( const auto& [nickname, status] : GetLibraryStatuses() )
+    {
+        if( status.load_status == LOAD_STATUS::LOAD_ERROR && status.error )
+        {
+            if( !errors.IsEmpty() )
+                errors += wxS( "\n" );
+
+            errors += wxString::Format( _( "Library '%s': %s" ),
+                                         nickname, status.error->message );
+        }
+    }
+
+    return errors;
+}
+
+
+void LIBRARY_MANAGER_ADAPTER::ReloadLibraryEntry( const wxString& aNickname, LIBRARY_TABLE_SCOPE aScope )
 {
     auto reloadScope =
             [&]( LIBRARY_TABLE_SCOPE aScopeToReload, std::map<wxString, LIB_DATA>& aTarget,
-                 std::mutex& aMutex )
+                 std::shared_mutex& aMutex )
             {
                 bool wasLoaded = false;
 
                 {
-                    std::lock_guard lock( aMutex );
+                    std::unique_lock lock( aMutex );
                     auto it = aTarget.find( aNickname );
 
                     if( it != aTarget.end() && it->second.plugin )
@@ -1062,12 +1159,11 @@ void LIBRARY_MANAGER_ADAPTER::ReloadLibraryEntry( const wxString& aNickname,
 
                 if( wasLoaded )
                 {
-                    if( LIBRARY_RESULT<LIB_DATA*> result =
-                                loadFromScope( aNickname, aScopeToReload, aTarget, aMutex );
-                            !result.has_value() )
+                    LIBRARY_RESULT<LIB_DATA*> result = loadFromScope( aNickname, aScopeToReload, aTarget, aMutex );
+
+                    if( !result.has_value() )
                     {
-                        wxLogTrace( traceLibraries,
-                                    "ReloadLibraryEntry: failed to reload %s (%s): %s",
+                        wxLogTrace( traceLibraries, "ReloadLibraryEntry: failed to reload %s (%s): %s",
                                     aNickname, magic_enum::enum_name( aScopeToReload ),
                                     result.error().message );
                     }
@@ -1081,12 +1177,12 @@ void LIBRARY_MANAGER_ADAPTER::ReloadLibraryEntry( const wxString& aNickname,
         break;
 
     case LIBRARY_TABLE_SCOPE::PROJECT:
-        reloadScope( LIBRARY_TABLE_SCOPE::PROJECT, m_libraries, m_libraries_mutex );
+        reloadScope( LIBRARY_TABLE_SCOPE::PROJECT, m_libraries, m_librariesMutex );
         break;
 
     case LIBRARY_TABLE_SCOPE::BOTH:
     case LIBRARY_TABLE_SCOPE::UNINITIALIZED:
-        reloadScope( LIBRARY_TABLE_SCOPE::PROJECT, m_libraries, m_libraries_mutex );
+        reloadScope( LIBRARY_TABLE_SCOPE::PROJECT, m_libraries, m_librariesMutex );
         reloadScope( LIBRARY_TABLE_SCOPE::GLOBAL, globalLibs(), globalLibsMutex() );
         break;
     }
@@ -1135,11 +1231,29 @@ wxString LIBRARY_MANAGER_ADAPTER::getUri( const LIBRARY_TABLE_ROW* aRow )
 
 std::optional<const LIB_DATA*> LIBRARY_MANAGER_ADAPTER::fetchIfLoaded( const wxString& aNickname ) const
 {
-    if( m_libraries.contains( aNickname ) && m_libraries.at( aNickname ).status.load_status == LOAD_STATUS::LOADED )
-        return &m_libraries.at( aNickname );
+    {
+        std::shared_lock lock( m_librariesMutex );
 
-    if( globalLibs().contains( aNickname ) && globalLibs().at( aNickname ).status.load_status == LOAD_STATUS::LOADED )
-        return &globalLibs().at( aNickname );
+        if( auto it = m_libraries.find( aNickname ); it != m_libraries.end() )
+        {
+            if( it->second.status.load_status == LOAD_STATUS::LOADED )
+                return &it->second;
+
+            return std::nullopt;
+        }
+    }
+
+    {
+        std::shared_lock lock( globalLibsMutex() );
+
+        if( auto it = globalLibs().find( aNickname ); it != globalLibs().end() )
+        {
+            if( it->second.status.load_status == LOAD_STATUS::LOADED )
+                return &it->second;
+
+            return std::nullopt;
+        }
+    }
 
     return std::nullopt;
 }
@@ -1147,24 +1261,43 @@ std::optional<const LIB_DATA*> LIBRARY_MANAGER_ADAPTER::fetchIfLoaded( const wxS
 
 std::optional<LIB_DATA*> LIBRARY_MANAGER_ADAPTER::fetchIfLoaded( const wxString& aNickname )
 {
-    if( m_libraries.contains( aNickname ) && m_libraries.at( aNickname ).status.load_status == LOAD_STATUS::LOADED )
-        return &m_libraries.at( aNickname );
+    {
+        std::shared_lock lock( m_librariesMutex );
 
-    if( globalLibs().contains( aNickname ) && globalLibs().at( aNickname ).status.load_status == LOAD_STATUS::LOADED )
-        return &globalLibs().at( aNickname );
+        if( auto it = m_libraries.find( aNickname ); it != m_libraries.end() )
+        {
+            if( it->second.status.load_status == LOAD_STATUS::LOADED )
+                return &it->second;
+
+            return std::nullopt;
+        }
+    }
+
+    {
+        std::shared_lock lock( globalLibsMutex() );
+
+        if( auto it = globalLibs().find( aNickname ); it != globalLibs().end() )
+        {
+            if( it->second.status.load_status == LOAD_STATUS::LOADED )
+                return &it->second;
+
+            return std::nullopt;
+        }
+    }
 
     return std::nullopt;
 }
 
 
 LIBRARY_RESULT<LIB_DATA*> LIBRARY_MANAGER_ADAPTER::loadFromScope( const wxString& aNickname,
-                                                                  LIBRARY_TABLE_SCOPE aScope, std::map<wxString,
-                                                                  LIB_DATA>& aTarget, std::mutex& aMutex )
+                                                                  LIBRARY_TABLE_SCOPE aScope,
+                                                                  std::map<wxString, LIB_DATA>& aTarget,
+                                                                  std::shared_mutex& aMutex )
 {
     bool present = false;
 
     {
-        std::lock_guard lock( aMutex );
+        std::shared_lock lock( aMutex );
         present = aTarget.contains( aNickname ) && aTarget.at( aNickname ).plugin;
     }
 
@@ -1178,7 +1311,7 @@ LIBRARY_RESULT<LIB_DATA*> LIBRARY_MANAGER_ADAPTER::loadFromScope( const wxString
 
             if( LIBRARY_RESULT<IO_BASE*> plugin = createPlugin( row ); plugin.has_value() )
             {
-                std::lock_guard lock( aMutex );
+                std::unique_lock lock( aMutex );
 
                 aTarget[ row->Nickname() ].status.load_status = LOAD_STATUS::LOADING;
                 aTarget[ row->Nickname() ].row = row;
@@ -1195,14 +1328,15 @@ LIBRARY_RESULT<LIB_DATA*> LIBRARY_MANAGER_ADAPTER::loadFromScope( const wxString
         return nullptr;
     }
 
+    std::shared_lock lock( aMutex );
     return &aTarget.at( aNickname );
 }
 
 
 LIBRARY_RESULT<LIB_DATA*> LIBRARY_MANAGER_ADAPTER::loadIfNeeded( const wxString& aNickname )
 {
-    LIBRARY_RESULT<LIB_DATA*> result = loadFromScope( aNickname, LIBRARY_TABLE_SCOPE::PROJECT, m_libraries,
-                                                      m_libraries_mutex );
+    LIBRARY_RESULT<LIB_DATA*> result = loadFromScope( aNickname, LIBRARY_TABLE_SCOPE::PROJECT,
+                                                      m_libraries, m_librariesMutex );
 
     if( !result.has_value() || *result )
         return result;
@@ -1214,4 +1348,156 @@ LIBRARY_RESULT<LIB_DATA*> LIBRARY_MANAGER_ADAPTER::loadIfNeeded( const wxString&
 
     wxString msg = wxString::Format( _( "Library %s not found" ), aNickname );
     return tl::unexpected( LIBRARY_ERROR( msg ) );
+}
+
+
+std::optional<LIB_STATUS> LIBRARY_MANAGER_ADAPTER::GetLibraryStatus( const wxString& aNickname ) const
+{
+    {
+        std::shared_lock lock( m_librariesMutex );
+
+        if( auto it = m_libraries.find( aNickname ); it != m_libraries.end() )
+            return it->second.status;
+    }
+
+    {
+        std::shared_lock lock( globalLibsMutex() );
+
+        if( auto it = globalLibs().find( aNickname ); it != globalLibs().end() )
+            return it->second.status;
+    }
+
+    return std::nullopt;
+}
+
+
+void LIBRARY_MANAGER_ADAPTER::AsyncLoad()
+{
+    std::unique_lock<std::mutex> asyncLock( m_loadMutex, std::try_to_lock );
+
+    if( !asyncLock )
+        return;
+
+    std::erase_if( m_futures,
+                   []( std::future<void>& aFuture )
+                   {
+                       return aFuture.valid()
+                              && aFuture.wait_for( 0s ) == std::future_status::ready;
+                   } );
+
+    if( !m_futures.empty() )
+    {
+        wxLogTrace( traceLibraries, "Cannot AsyncLoad, futures from a previous call remain!" );
+        return;
+    }
+
+    std::vector<LIBRARY_TABLE_ROW*> rows = m_manager.Rows( Type() );
+
+    m_loadTotal.store( rows.size() );
+    m_loadCount.store( 0 );
+
+    if( rows.empty() )
+    {
+        wxLogTrace( traceLibraries, "AsyncLoad: no libraries left to load; exiting" );
+        return;
+    }
+
+    thread_pool& tp = GetKiCadThreadPool();
+
+    auto check =
+            [&]( const wxString& aLib, std::map<wxString, LIB_DATA>& aMap, std::shared_mutex& aMutex )
+            {
+                std::shared_lock lock( aMutex );
+
+                if( auto it = aMap.find( aLib ); it != aMap.end() )
+                {
+                    LOAD_STATUS status = it->second.status.load_status;
+
+                    if( status == LOAD_STATUS::LOADED || status == LOAD_STATUS::LOADING )
+                        return true;
+                }
+
+                return false;
+            };
+
+    for( const LIBRARY_TABLE_ROW* row : rows )
+    {
+        wxString nickname = row->Nickname();
+        LIBRARY_TABLE_SCOPE scope = row->Scope();
+
+        if( check( nickname, m_libraries, m_librariesMutex ) )
+        {
+            m_loadTotal.fetch_sub( 1 );
+            continue;
+        }
+
+        if( check( nickname, globalLibs(), globalLibsMutex() ) )
+        {
+            m_loadTotal.fetch_sub( 1 );
+            continue;
+        }
+
+        // Resolve the URI on the main thread. URI expansion accesses PROJECT data
+        // (text variables, env vars) that is not thread-safe.
+        wxString uri = getUri( row );
+
+        m_futures.emplace_back( tp.submit_task(
+                [this, nickname, scope, uri]()
+                {
+                    if( m_abort.load() )
+                        return;
+
+                    LIBRARY_RESULT<LIB_DATA*> result = loadIfNeeded( nickname );
+
+                    if( result.has_value() )
+                    {
+                        LIB_DATA* lib = *result;
+
+                        try
+                        {
+                            {
+                                std::unique_lock lock( scope == LIBRARY_TABLE_SCOPE::GLOBAL ? globalLibsMutex()
+                                                                                            : m_librariesMutex );
+                                lib->status.load_status = LOAD_STATUS::LOADING;
+                            }
+
+                            enumerateLibrary( lib, uri );
+
+                            {
+                                std::unique_lock lock( scope == LIBRARY_TABLE_SCOPE::GLOBAL ? globalLibsMutex()
+                                                                                            : m_librariesMutex );
+                                lib->status.load_status = LOAD_STATUS::LOADED;
+                            }
+                        }
+                        catch( IO_ERROR& e )
+                        {
+                            std::unique_lock lock( scope == LIBRARY_TABLE_SCOPE::GLOBAL ? globalLibsMutex()
+                                                                                        : m_librariesMutex );
+                            lib->status.load_status = LOAD_STATUS::LOAD_ERROR;
+                            lib->status.error = LIBRARY_ERROR( { e.What() } );
+                            wxLogTrace( traceLibraries, "%s: plugin threw exception: %s", nickname, e.What() );
+                        }
+                    }
+                    else
+                    {
+                        std::unique_lock lock( scope == LIBRARY_TABLE_SCOPE::GLOBAL ? globalLibsMutex()
+                                                                                    : m_librariesMutex );
+
+                        std::map<wxString, LIB_DATA>& target = ( scope == LIBRARY_TABLE_SCOPE::GLOBAL ) ? globalLibs()
+                                                                                                        : m_libraries;
+
+                        target[nickname].status = LIB_STATUS( {
+                                .load_status = LOAD_STATUS::LOAD_ERROR,
+                                .error = result.error()
+                        } );
+                    }
+
+                    ++m_loadCount;
+                }, BS::pr::lowest ) );
+    }
+
+    size_t total = m_loadTotal.load();
+
+    if( total )
+        wxLogTrace( traceLibraries, "Started async load of %zu libraries", total );
 }

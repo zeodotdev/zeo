@@ -1,7 +1,8 @@
 {
   "ERC": {
     "crossprobe": true,
-    "scroll_on_crossprobe": true
+    "scroll_on_crossprobe": true,
+    "show_all_errors": false
   },
   "annotation": {
     "automatic": true,
@@ -9,6 +10,7 @@
     "method": 0,
     "options": 0,
     "recursive": true,
+    "regroup_units": false,
     "scope": 0,
     "sort_order": 0
   },
@@ -174,6 +176,7 @@
     "scope": 0,
     "selection_mode": 0,
     "sidebar_collapsed": false,
+    "variant_sash_pos": 500,
     "width": 0
   },
   "find_replace": {
@@ -342,10 +345,15 @@
     "actions": []
   },
   "printing": {
+    "as_item_checkboxes": false,
     "background": false,
     "color_theme": "",
+    "drill_marks": 1,
+    "edge_cuts_on_all_pages": true,
     "layers": [],
+    "mirror": false,
     "monochrome": true,
+    "pagination": 1,
     "scale": 1.0,
     "title_block": false,
     "use_theme": false

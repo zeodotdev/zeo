@@ -24,6 +24,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <settings/common_settings.h>
 #include <advanced_config.h>
 #include <bitmaps.h>
 #include <file_history.h>
@@ -136,6 +137,15 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
 
     importMenu->Add( _( "EasyEDA (JLCEDA) Pro Project..." ),
                      _( "Import EasyEDA (JLCEDA) Professional schematic and board" ), ID_IMPORT_EASYEDAPRO_PROJECT,
+                     BITMAPS::import_project );
+
+    importMenu->Add( _( "PADS Project..." ),
+                     _( "Import PADS Logic schematic and PADS ASCII PCB (*.asc, *.txt)" ),
+                     ID_IMPORT_PADS_PROJECT, BITMAPS::import_project );
+
+    importMenu->Add( _( "gEDA / Lepton EDA Project..." ),
+                     _( "Import gEDA or Lepton EDA schematic and PCB layout" ),
+                     ID_IMPORT_GEDA_PROJECT,
                      BITMAPS::import_project );
 
     fileMenu->Add( importMenu );

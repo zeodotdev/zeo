@@ -22,6 +22,7 @@
  */
 
 #include <algorithm>
+#include <set>
 
 #include <confirm.h>
 #include <project/project_file.h>
@@ -29,6 +30,7 @@
 #include <sch_edit_frame.h>
 #include <schematic.h>
 #include <sch_commit.h>
+#include <sch_group.h>
 #include <erc/erc_settings.h>
 #include <sch_reference_list.h>
 #include <tools/sch_selection.h>
@@ -200,6 +202,21 @@ std::unordered_set<SCH_SYMBOL*> getInferredSymbols( const SCH_SELECTION& aSelect
             symbols.insert( static_cast<SCH_SYMBOL*>( item ) );
             break;
 
+        case SCH_GROUP_T:
+        {
+            SCH_GROUP* group = static_cast<SCH_GROUP*>( item );
+
+            group->RunOnChildren(
+                    [&symbols]( SCH_ITEM* aChild )
+                    {
+                        if( aChild->Type() == SCH_SYMBOL_T )
+                            symbols.insert( static_cast<SCH_SYMBOL*>( aChild ) );
+                    },
+                    RECURSE_MODE::RECURSE );
+
+            break;
+        }
+
         default:
             break;
         }
@@ -212,7 +229,8 @@ std::unordered_set<SCH_SYMBOL*> getInferredSymbols( const SCH_SELECTION& aSelect
 void SCH_EDIT_FRAME::AnnotateSymbols( SCH_COMMIT* aCommit, ANNOTATE_SCOPE_T  aAnnotateScope,
                                       ANNOTATE_ORDER_T aSortOption, ANNOTATE_ALGO_T aAlgoOption,
                                       bool aRecursive, int aStartNumber, bool aResetAnnotation,
-                                      bool aRepairTimestamps, REPORTER& aReporter )
+                                      bool aRegroupUnits, bool aRepairTimestamps,
+                                      REPORTER& aReporter )
 {
     SCH_SELECTION_TOOL* selTool = m_toolManager->GetTool<SCH_SELECTION_TOOL>();
     SCH_SELECTION&      selection = selTool->GetSelection();
@@ -280,29 +298,64 @@ void SCH_EDIT_FRAME::AnnotateSymbols( SCH_COMMIT* aCommit, ANNOTATE_SCOPE_T  aAn
         }
     }
 
-    // Collect all the sets that must be annotated together.
-    switch( aAnnotateScope )
+    // Collect all the sets that must be annotated together. When regrouping, we skip this step
+    // to allow fresh groupings based on symbol placement. When resetting without regrouping, we
+    // collect locked symbols but then check for unit conflicts (duplicate units within a ref).
+    if( !aRegroupUnits )
     {
-    case ANNOTATE_ALL:
-        sheets.GetMultiUnitSymbols( lockedSymbols );
-        break;
+        switch( aAnnotateScope )
+        {
+        case ANNOTATE_ALL:
+            sheets.GetMultiUnitSymbols( lockedSymbols );
+            break;
 
-    case ANNOTATE_CURRENT_SHEET:
-        currentSheet.GetMultiUnitSymbols( lockedSymbols );
+        case ANNOTATE_CURRENT_SHEET:
+            currentSheet.GetMultiUnitSymbols( lockedSymbols );
 
-        if( aRecursive )
-            subSheets.GetMultiUnitSymbols( lockedSymbols );
+            if( aRecursive )
+                subSheets.GetMultiUnitSymbols( lockedSymbols );
 
-        break;
+            break;
 
-    case ANNOTATE_SELECTION:
-        for( SCH_SYMBOL* symbol : selectedSymbols )
-            currentSheet.AppendMultiUnitSymbol( lockedSymbols, symbol );
+        case ANNOTATE_SELECTION:
+            for( SCH_SYMBOL* symbol : selectedSymbols )
+                currentSheet.AppendMultiUnitSymbol( lockedSymbols, symbol );
 
-        if( aRecursive )
-            selectedSheets.GetMultiUnitSymbols( lockedSymbols );
+            if( aRecursive )
+                selectedSheets.GetMultiUnitSymbols( lockedSymbols );
 
-        break;
+            break;
+        }
+
+        // When resetting annotations, check for and remove groups with unit conflicts (duplicate
+        // units within the same reference designator). These will get fresh assignments.
+        if( aResetAnnotation )
+        {
+            std::vector<wxString> conflictingRefs;
+
+            for( auto& [refBase, refList] : lockedSymbols )
+            {
+                std::set<int> seenUnits;
+                bool hasConflict = false;
+
+                for( const SCH_REFERENCE& ref : refList )
+                {
+                    if( seenUnits.count( ref.GetUnit() ) )
+                    {
+                        hasConflict = true;
+                        break;
+                    }
+
+                    seenUnits.insert( ref.GetUnit() );
+                }
+
+                if( hasConflict )
+                    conflictingRefs.push_back( refBase );
+            }
+
+            for( const wxString& ref : conflictingRefs )
+                lockedSymbols.erase( ref );
+        }
     }
 
     // Store previous annotations for building info messages

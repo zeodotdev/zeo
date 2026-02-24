@@ -50,6 +50,7 @@
 #include <sch_sheet_pin.h>
 #include <sch_textbox.h>
 #include <sch_table.h>
+#include <sch_no_connect.h>
 #include <drawing_sheet/ds_proxy_view_item.h>
 #include <eeschema_id.h>
 #include <dialogs/dialog_change_symbols.h>
@@ -301,13 +302,16 @@ bool SCH_EDIT_TOOL::Init()
         return false;
     };
 
-    auto attribDNPCond = []( const SELECTION& aSel )
+    auto attribDNPCond = [this]( const SELECTION& aSel )
     {
+        SCH_SHEET_PATH* sheet = &m_frame->GetCurrentSheet();
+        wxString        variant = m_frame->Schematic().GetCurrentVariant();
+
         return std::all_of( aSel.Items().begin(), aSel.Items().end(),
-                            []( const EDA_ITEM* item )
+                            [sheet, variant]( const EDA_ITEM* item )
                             {
                                 return !item->IsType( { SCH_SYMBOL_T } )
-                                       || static_cast<const SCH_SYMBOL*>( item )->GetDNP();
+                                       || static_cast<const SCH_SYMBOL*>( item )->GetDNP( sheet, variant );
                             } );
     };
 
@@ -756,6 +760,9 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
     bool        moving = false;
     SCH_COMMIT  localCommit( m_toolMgr );
     SCH_COMMIT* commit = dynamic_cast<SCH_COMMIT*>( aEvent.Commit() );
+    SCH_SCREEN* screen = m_frame->GetScreen();
+
+    std::map<SCH_SHEET_PIN*, SCH_NO_CONNECT*> noConnects;
 
     if( !commit )
         commit = &localCommit;
@@ -786,7 +793,7 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
             rotPoint = m_frame->GetNearestHalfGridPosition( head->GetBoundingBox().GetCenter() );
 
         if( !moving )
-            commit->Modify( head, m_frame->GetScreen(), RECURSE_MODE::RECURSE );
+            commit->Modify( head, screen, RECURSE_MODE::RECURSE );
 
         switch( head->Type() )
         {
@@ -801,7 +808,7 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
                 AUTOPLACE_ALGO fieldsAutoplaced = symbol->GetFieldsAutoplaced();
 
                 if( fieldsAutoplaced == AUTOPLACE_AUTO || fieldsAutoplaced == AUTOPLACE_MANUAL )
-                    symbol->AutoplaceFields( m_frame->GetScreen(), fieldsAutoplaced );
+                    symbol->AutoplaceFields( screen, fieldsAutoplaced );
             }
 
             break;
@@ -823,6 +830,9 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
             // Rotate pin within parent sheet
             SCH_SHEET_PIN* pin = static_cast<SCH_SHEET_PIN*>( head );
             SCH_SHEET*     sheet = pin->GetParent();
+
+            for( SCH_ITEM* ncItem : screen->Items().Overlapping( SCH_NO_CONNECT_T, pin->GetTextPos() ) )
+                noConnects[pin] = static_cast<SCH_NO_CONNECT*>( ncItem );
 
             pin->Rotate( sheet->GetBoundingBox().GetCenter(), !clockwise );
 
@@ -915,6 +925,8 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
             // Rotate the sheet on itself. Sheets do not have an anchor point.
             SCH_SHEET* sheet = static_cast<SCH_SHEET*>( head );
 
+            noConnects = sheet->GetNoConnects();
+
             rotPoint = m_frame->GetNearestHalfGridPosition( sheet->GetRotationCenter() );
             sheet->Rotate( rotPoint, !clockwise );
 
@@ -944,7 +956,7 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
             continue;
 
         if( !moving )
-            commit->Modify( item, m_frame->GetScreen(), RECURSE_MODE::RECURSE );
+            commit->Modify( item, screen, RECURSE_MODE::RECURSE );
 
         if( item->Type() == SCH_LINE_T )
         {
@@ -963,6 +975,9 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
                 // rotate within parent
                 SCH_SHEET_PIN* pin = static_cast<SCH_SHEET_PIN*>( item );
                 SCH_SHEET*     sheet = pin->GetParent();
+
+                for( SCH_ITEM* ncItem : screen->Items().Overlapping( SCH_NO_CONNECT_T, pin->GetTextPos() ) )
+                    noConnects[pin] = static_cast<SCH_NO_CONNECT*>( ncItem );
 
                 pin->Rotate( sheet->GetBodyBoundingBox().GetCenter(), !clockwise );
             }
@@ -993,6 +1008,14 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
 
             table->Move( beforeCenter - table->GetCenter() );
         }
+        else if( item->Type() == SCH_SHEET_T )
+        {
+            SCH_SHEET* sheet = static_cast<SCH_SHEET*>( item );
+
+            noConnects = sheet->GetNoConnects();
+
+            sheet->Rotate( rotPoint, !clockwise );
+        }
         else
         {
             VECTOR2I posBefore = item->GetPosition();
@@ -1015,6 +1038,16 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
     }
     else
     {
+        for( auto& [sheetPin, noConnect] : noConnects )
+        {
+            if( noConnect->GetPosition() != sheetPin->GetTextPos() )
+            {
+                commit->Modify( noConnect, screen );
+                noConnect->SetPosition( sheetPin->GetTextPos() );
+                updateItem( noConnect, true );
+            }
+        }
+
         SCH_SELECTION selectionCopy = selection;
 
         if( selection.IsHover() )
@@ -1047,6 +1080,9 @@ int SCH_EDIT_TOOL::Mirror( const TOOL_EVENT& aEvent )
     bool        moving = item->IsMoving();
     SCH_COMMIT  localCommit( m_toolMgr );
     SCH_COMMIT* commit = dynamic_cast<SCH_COMMIT*>( aEvent.Commit() );
+    SCH_SCREEN* screen = m_frame->GetScreen();
+
+    std::map<SCH_SHEET_PIN*, SCH_NO_CONNECT*> noConnects;
 
     if( !commit )
         commit = &localCommit;
@@ -1054,7 +1090,7 @@ int SCH_EDIT_TOOL::Mirror( const TOOL_EVENT& aEvent )
     if( selection.GetSize() == 1 )
     {
         if( !moving )
-            commit->Modify( item, m_frame->GetScreen(), RECURSE_MODE::RECURSE );
+            commit->Modify( item, screen, RECURSE_MODE::RECURSE );
 
         switch( item->Type() )
         {
@@ -1087,6 +1123,9 @@ int SCH_EDIT_TOOL::Mirror( const TOOL_EVENT& aEvent )
             // mirror within parent sheet
             SCH_SHEET_PIN* pin = static_cast<SCH_SHEET_PIN*>( item );
             SCH_SHEET*     sheet = pin->GetParent();
+
+            for( SCH_ITEM* ncItem : screen->Items().Overlapping( SCH_NO_CONNECT_T, pin->GetTextPos() ) )
+                noConnects[pin] = static_cast<SCH_NO_CONNECT*>( ncItem );
 
             if( vertical )
                 pin->MirrorVertically( sheet->GetBoundingBox().GetCenter().y );
@@ -1123,6 +1162,8 @@ int SCH_EDIT_TOOL::Mirror( const TOOL_EVENT& aEvent )
 
         case SCH_SHEET_T:
         {
+            noConnects = static_cast<SCH_SHEET*>( item )->GetNoConnects();
+
             // Mirror the sheet on itself. Sheets do not have a anchor point.
             VECTOR2I mirrorPoint = m_frame->GetNearestHalfGridPosition( item->GetBoundingBox().Centre() );
 
@@ -1155,7 +1196,7 @@ int SCH_EDIT_TOOL::Mirror( const TOOL_EVENT& aEvent )
             item = static_cast<SCH_ITEM*>( edaItem );
 
             if( !moving )
-                commit->Modify( item, m_frame->GetScreen(), RECURSE_MODE::RECURSE );
+                commit->Modify( item, screen, RECURSE_MODE::RECURSE );
 
             if( item->Type() == SCH_SHEET_PIN_T )
             {
@@ -1210,6 +1251,16 @@ int SCH_EDIT_TOOL::Mirror( const TOOL_EVENT& aEvent )
     }
     else
     {
+        for( auto& [sheetPin, noConnect] : noConnects )
+        {
+            if( noConnect->GetPosition() != sheetPin->GetTextPos() )
+            {
+                commit->Modify( noConnect, screen );
+                noConnect->SetPosition( sheetPin->GetTextPos() );
+                updateItem( noConnect, true );
+            }
+        }
+
         SCH_SELECTION selectionCopy = selection;
 
         if( selection.IsHover() )
@@ -1389,10 +1440,14 @@ int SCH_EDIT_TOOL::Swap( const TOOL_EVENT& aEvent )
 
                 const SPIN_STYLE aSpinStyle = aLabelBase.GetSpinStyle();
                 const SPIN_STYLE bSpinStyle = bLabelBase.GetSpinStyle();
+                const GR_TEXT_V_ALIGN_T aVertJustify = aLabelBase.GetVertJustify();
+                const GR_TEXT_V_ALIGN_T bVertJustify = bLabelBase.GetVertJustify();
 
                 // First, swap the label orientations
                 aLabelBase.SetSpinStyle( bSpinStyle );
                 bLabelBase.SetSpinStyle( aSpinStyle );
+                aLabelBase.SetVertJustify( bVertJustify );
+                bLabelBase.SetVertJustify( aVertJustify );
 
                 // And swap the fields as best we can
                 std::vector<SCH_FIELD>& aFields = aLabelBase.GetFields();
@@ -1403,14 +1458,43 @@ int SCH_EDIT_TOOL::Swap( const TOOL_EVENT& aEvent )
                 swapFieldPositionsWithMatching( aFields, bFields, rotationsAtoB );
                 break;
             }
+            case SCH_TEXT_T:
+            case SCH_TEXTBOX_T:
+            {
+                EDA_TEXT* aText = dynamic_cast<EDA_TEXT*>( a );
+                EDA_TEXT* bText = dynamic_cast<EDA_TEXT*>( b );
+
+                if( !aText || !bText )
+                    break;
+
+                const GR_TEXT_H_ALIGN_T aHorizJustify = aText->GetHorizJustify();
+                const GR_TEXT_V_ALIGN_T aVertJustify = aText->GetVertJustify();
+                const GR_TEXT_H_ALIGN_T bHorizJustify = bText->GetHorizJustify();
+                const GR_TEXT_V_ALIGN_T bVertJustify = bText->GetVertJustify();
+
+                aText->SetHorizJustify( bHorizJustify );
+                aText->SetVertJustify( bVertJustify );
+                bText->SetHorizJustify( aHorizJustify );
+                bText->SetVertJustify( aVertJustify );
+                break;
+            }
             case SCH_SYMBOL_T:
             {
                 SCH_SYMBOL* aSymbol = static_cast<SCH_SYMBOL*>( a );
                 SCH_SYMBOL* bSymbol = static_cast<SCH_SYMBOL*>( b );
-                int         aOrient = aSymbol->GetOrientation(), bOrient = bSymbol->GetOrientation();
-                std::swap( aOrient, bOrient );
-                aSymbol->SetOrientation( aOrient );
-                bSymbol->SetOrientation( bOrient );
+
+                // Only swap orientations when both symbols are the same library symbol.
+                // Different symbols (e.g. LED vs resistor) have different default orientations,
+                // so swapping their orientations leads to unexpected visual results.
+                if( aSymbol->GetLibId() == bSymbol->GetLibId() )
+                {
+                    int aOrient = aSymbol->GetOrientation();
+                    int bOrient = bSymbol->GetOrientation();
+                    std::swap( aOrient, bOrient );
+                    aSymbol->SetOrientation( aOrient );
+                    bSymbol->SetOrientation( bOrient );
+                }
+
                 break;
             }
             default: break;
@@ -1872,7 +1956,8 @@ int SCH_EDIT_TOOL::RepeatDrawItem( const TOOL_EVENT& aEvent )
                 static_cast<SCH_SYMBOL*>( newItem )->ClearAnnotation( nullptr, false );
                 NULL_REPORTER reporter;
                 m_frame->AnnotateSymbols( &commit, ANNOTATE_SELECTION, annotateOrder, annotateAlgo,
-                                          true /* recursive */, annotateStartNum, false, false, reporter );
+                                          true /* recursive */, annotateStartNum, false, false, false,
+                                          reporter );
             }
 
             // Annotation clears the selection so re-add the item
@@ -3243,8 +3328,10 @@ void SCH_EDIT_TOOL::collectUnits( const SCH_SELECTION&                          
 
 int SCH_EDIT_TOOL::SetAttribute( const TOOL_EVENT& aEvent )
 {
-    SCH_SELECTION& selection = m_selectionTool->RequestSelection( { SCH_SYMBOL_T } );
-    SCH_COMMIT     commit( m_toolMgr );
+    SCH_SELECTION&  selection = m_selectionTool->RequestSelection( { SCH_SYMBOL_T } );
+    SCH_COMMIT      commit( m_toolMgr );
+    SCH_SHEET_PATH* sheet = &m_frame->GetCurrentSheet();
+    wxString        variant = m_frame->Schematic().GetCurrentVariant();
 
     std::set<std::pair<SCH_SYMBOL*, SCH_SCREEN*>> collectedUnits;
 
@@ -3253,10 +3340,10 @@ int SCH_EDIT_TOOL::SetAttribute( const TOOL_EVENT& aEvent )
 
     for( const auto& [symbol, _] : collectedUnits )
     {
-        if( ( aEvent.IsAction( &SCH_ACTIONS::setDNP ) && !symbol->GetDNP() )
-            || ( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromSimulation ) && !symbol->GetExcludedFromSim() )
-            || ( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromBOM ) && !symbol->GetExcludedFromBOM() )
-            || ( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromBoard ) && !symbol->GetExcludedFromBoard() ) )
+        if( ( aEvent.IsAction( &SCH_ACTIONS::setDNP ) && !symbol->GetDNP( sheet, variant ) )
+         || ( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromSimulation ) && !symbol->GetExcludedFromSim( sheet, variant ) )
+         || ( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromBOM ) && !symbol->GetExcludedFromBOM( sheet, variant ) )
+         || ( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromBoard ) && !symbol->GetExcludedFromBoard( sheet, variant ) ) )
         {
             new_state = true;
             break;

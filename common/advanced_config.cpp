@@ -98,7 +98,6 @@ static const wxChar Skip3DModelFileCache[] = wxT( "Skip3DModelFileCache" );
 static const wxChar Skip3DModelMemoryCache[] = wxT( "Skip3DModelMemoryCache" );
 static const wxChar HideVersionFromTitle[] = wxT( "HideVersionFromTitle" );
 static const wxChar TraceMasks[] = wxT( "TraceMasks" );
-static const wxChar ShowRepairSchematic[] = wxT( "ShowRepairSchematic" );
 static const wxChar ShowEventCounters[] = wxT( "ShowEventCounters" );
 static const wxChar AllowManualCanvasScale[] = wxT( "AllowManualCanvasScale" );
 static const wxChar UpdateUIEventInterval[] = wxT( "UpdateUIEventInterval" );
@@ -106,6 +105,7 @@ static const wxChar V3DRT_BevelHeight_um[] = wxT( "V3DRT_BevelHeight_um" );
 static const wxChar V3DRT_BevelExtentFactor[] = wxT( "V3DRT_BevelExtentFactor" );
 static const wxChar EnablePcbDesignBlocks[] = wxT( "EnablePcbDesignBlocks" );
 static const wxChar EnableGenerators[] = wxT( "EnableGenerators" );
+static const wxChar EnableDrcRuleEditor[] = wxT( "EnableDrcRuleEditor" );
 static const wxChar EnableLibWithText[] = wxT( "EnableLibWithText" );
 static const wxChar EnableLibDir[] = wxT( "EnableLibDir" );
 static const wxChar DisambiguationTime[] = wxT( "DisambiguationTime" );
@@ -135,14 +135,20 @@ static const wxChar NetInspectorBulkUpdateOptimisationThreshold[] =
 static const wxChar ExcludeFromSimulationLineWidth[] = wxT( "ExcludeFromSimulationLineWidth" );
 static const wxChar SimulatorMultiRunCombinationLimit[] = wxT( "SimulatorMultiRunCombinationLimit" );
 static const wxChar GitIconRefreshInterval[] = wxT( "GitIconRefreshInterval" );
-static const wxChar ConfigurableToolbars[] = wxT( "ConfigurableToolbars" );
 static const wxChar MaxPastedTextLength[] = wxT( "MaxPastedTextLength" );
 static const wxChar PNSProcessClusterTimeout[] = wxT( "PNSProcessClusterTimeout" );
+static const wxChar FollowBranchTimeout[] = wxT( "FollowBranchTimeoutMs" );
 static const wxChar ImportSkipComponentBodies[] = wxT( "ImportSkipComponentBodies" );
 static const wxChar ScreenDPI[] = wxT( "ScreenDPI" );
-static const wxChar EnableVariantsUI[] = wxT( "EnableVariantsUI" );
 static const wxChar EnableUseAuiPerspective[] = wxT( "EnableUseAuiPerspective" );
 static const wxChar HistoryLockStaleTimeout[] = wxT( "HistoryLockStaleTimeout" );
+static const wxChar ZoneFillIterativeRefill[] = wxT( "ZoneFillIterativeRefill" );
+static const wxChar PadsPcbTextHeightScale[] = wxT( "PadsPcbTextHeightScale" );
+static const wxChar PadsPcbTextWidthScale[] = wxT( "PadsPcbTextWidthScale" );
+static const wxChar PadsSchTextHeightScale[] = wxT( "PadsSchTextHeightScale" );
+static const wxChar PadsSchTextWidthScale[] = wxT( "PadsSchTextWidthScale" );
+static const wxChar PadsTextAnchorOffsetNm[] = wxT( "PadsTextAnchorOffsetNm" );
+static const wxChar PcbImportMinObjectSizeNm[] = wxT( "PcbImportMinObjectSizeNm" );
 
 } // namespace AC_KEYS
 
@@ -267,9 +273,9 @@ ADVANCED_CFG::ADVANCED_CFG()
     m_AllowManualCanvasScale = false;
     m_CompactSave = false;
     m_UpdateUIEventInterval = 0;
-    m_ShowRepairSchematic = false;
     m_EnablePcbDesignBlocks = true;
     m_EnableGenerators = false;
+    m_EnableDrcRuleEditor = false;
     m_EnableLibWithText = false;
     m_EnableLibDir = false;
 
@@ -321,20 +327,25 @@ ADVANCED_CFG::ADVANCED_CFG()
 
     m_GitIconRefreshInterval = 10000;
 
-    m_ConfigurableToolbars = false;
-
     m_MaxPastedTextLength = 100;
 
     m_PNSProcessClusterTimeout = 100; // Default: 100 ms
+    m_FollowBranchTimeout = 500; // Default: 500 ms
 
     m_ImportSkipComponentBodies = false;
 
     m_ScreenDPI = 91;
 
-    m_EnableVariantsUI = false;
-
-    m_EnableUseAuiPerspective = false;
+    m_EnableUseAuiPerspective = true;
     m_HistoryLockStaleTimeout = 300; // 5 minutes default
+    m_ZoneFillIterativeRefill = true;
+
+    m_PadsPcbTextHeightScale = 0.69;
+    m_PadsPcbTextWidthScale  = 0.64;
+    m_PadsSchTextHeightScale = 0.50;
+    m_PadsSchTextWidthScale  = 0.46;
+    m_PadsTextAnchorOffsetNm = 350000;
+    m_PcbImportMinObjectSizeNm = 1000;
 
     loadFromConfigFile();
 }
@@ -500,9 +511,6 @@ void ADVANCED_CFG::loadSettings( wxConfigBase& aCfg )
     m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::HideVersionFromTitle, &m_HideVersionFromTitle,
                                                            m_HideVersionFromTitle ) );
 
-    m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::ShowRepairSchematic, &m_ShowRepairSchematic,
-                                                           m_ShowRepairSchematic ) );
-
     m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::ShowEventCounters, &m_ShowEventCounters,
                                                            m_ShowEventCounters ) );
 
@@ -531,6 +539,9 @@ void ADVANCED_CFG::loadSettings( wxConfigBase& aCfg )
 
     m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::EnableGenerators, &m_EnableGenerators,
                                                            m_EnableGenerators ) );
+
+    m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::EnableDrcRuleEditor, &m_EnableDrcRuleEditor,
+                                                           m_EnableDrcRuleEditor ) );
 
     m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::EnableAPILogging, &m_EnableAPILogging,
                                                            m_EnableAPILogging ) );
@@ -622,11 +633,8 @@ void ADVANCED_CFG::loadSettings( wxConfigBase& aCfg )
                                                           &m_SimulatorMultiRunCombinationLimit,
                                                           m_SimulatorMultiRunCombinationLimit, 1, 100 ) );
 
-    m_entries.push_back( std::make_unique<PARAM_CFG_INT>(
-            true, AC_KEYS::GitIconRefreshInterval, &m_GitIconRefreshInterval, m_GitIconRefreshInterval, 0, 100000 ) );
-
-    m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::ConfigurableToolbars, &m_ConfigurableToolbars,
-                                                           m_ConfigurableToolbars ) );
+    m_entries.push_back( std::make_unique<PARAM_CFG_INT>( true, AC_KEYS::GitIconRefreshInterval,
+                                                          &m_GitIconRefreshInterval, m_GitIconRefreshInterval, 0, 100000 ) );
 
     m_entries.push_back( std::make_unique<PARAM_CFG_INT>( true, AC_KEYS::MaxPastedTextLength, &m_MaxPastedTextLength,
                                                           m_MaxPastedTextLength, 0, 100000 ) );
@@ -634,14 +642,13 @@ void ADVANCED_CFG::loadSettings( wxConfigBase& aCfg )
     m_entries.push_back( std::make_unique<PARAM_CFG_INT>( true, AC_KEYS::PNSProcessClusterTimeout,
                                                           &m_PNSProcessClusterTimeout, 100, 10, 10000 ) );
 
-    m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>(
-            true, AC_KEYS::ImportSkipComponentBodies, &m_ImportSkipComponentBodies, m_ImportSkipComponentBodies ) );
+    m_entries.push_back( std::make_unique<PARAM_CFG_INT>( true, AC_KEYS::FollowBranchTimeout,
+                                                          &m_FollowBranchTimeout, 500, 50, 5000 ) );
 
-    m_entries.push_back(
-            std::make_unique<PARAM_CFG_INT>( true, AC_KEYS::ScreenDPI, &m_ScreenDPI, m_ScreenDPI, 50, 500 ) );
+    m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::ImportSkipComponentBodies,
+                                                           &m_ImportSkipComponentBodies, m_ImportSkipComponentBodies ) );
 
-    m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::EnableVariantsUI, &m_EnableVariantsUI,
-                                                           m_EnableVariantsUI ) );
+    m_entries.push_back( std::make_unique<PARAM_CFG_INT>( true, AC_KEYS::ScreenDPI, &m_ScreenDPI, m_ScreenDPI, 50, 500 ) );
 
     m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::EnableUseAuiPerspective,
                                                            &m_EnableUseAuiPerspective, m_EnableUseAuiPerspective ) );
@@ -649,6 +656,34 @@ void ADVANCED_CFG::loadSettings( wxConfigBase& aCfg )
     m_entries.push_back( std::make_unique<PARAM_CFG_INT>( true, AC_KEYS::HistoryLockStaleTimeout,
                                                           &m_HistoryLockStaleTimeout, m_HistoryLockStaleTimeout, 10,
                                                           86400 ) ); // 10 seconds to 24 hours
+
+    m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::ZoneFillIterativeRefill,
+                                                           &m_ZoneFillIterativeRefill, m_ZoneFillIterativeRefill ) );
+
+    m_entries.push_back( std::make_unique<PARAM_CFG_DOUBLE>( true, AC_KEYS::PadsPcbTextHeightScale,
+                                                             &m_PadsPcbTextHeightScale,
+                                                             m_PadsPcbTextHeightScale, 0.1, 1.0 ) );
+
+    m_entries.push_back( std::make_unique<PARAM_CFG_DOUBLE>( true, AC_KEYS::PadsPcbTextWidthScale,
+                                                             &m_PadsPcbTextWidthScale,
+                                                             m_PadsPcbTextWidthScale, 0.1, 1.0 ) );
+
+    m_entries.push_back( std::make_unique<PARAM_CFG_DOUBLE>( true, AC_KEYS::PadsSchTextHeightScale,
+                                                             &m_PadsSchTextHeightScale,
+                                                             m_PadsSchTextHeightScale, 0.1, 1.0 ) );
+
+    m_entries.push_back( std::make_unique<PARAM_CFG_DOUBLE>( true, AC_KEYS::PadsSchTextWidthScale,
+                                                             &m_PadsSchTextWidthScale,
+                                                             m_PadsSchTextWidthScale, 0.1, 1.0 ) );
+
+    m_entries.push_back( std::make_unique<PARAM_CFG_INT>( true, AC_KEYS::PadsTextAnchorOffsetNm,
+                                                          &m_PadsTextAnchorOffsetNm,
+                                                          m_PadsTextAnchorOffsetNm, 0, 1000000 ) );
+
+    m_entries.push_back( std::make_unique<PARAM_CFG_INT>( true, AC_KEYS::PcbImportMinObjectSizeNm,
+                                                          &m_PcbImportMinObjectSizeNm,
+                                                          m_PcbImportMinObjectSizeNm, 100,
+                                                          1000000 ) );
 
     // Special case for trace mask setting...we just grab them and set them immediately
     // Because we even use wxLogTrace inside of advanced config

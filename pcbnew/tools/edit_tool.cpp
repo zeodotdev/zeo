@@ -32,6 +32,7 @@
 #include <gal/graphics_abstraction_layer.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <collectors.h>
 #include <footprint.h>
 #include <increment.h>
 #include <pcb_shape.h>
@@ -79,7 +80,7 @@ using namespace std::placeholders;
 
 const unsigned int EDIT_TOOL::COORDS_PADDING = pcbIUScale.mmToIU( 20 );
 
-static bool itemHasEditableVertices( BOARD_ITEM* aItem )
+static bool itemHasEditableCorners( BOARD_ITEM* aItem )
 {
     if( !aItem )
         return false;
@@ -103,13 +104,13 @@ static bool itemHasEditableVertices( BOARD_ITEM* aItem )
     return false;
 }
 
-static bool selectionHasEditableVertices( const SELECTION& aSelection )
+static bool selectionHasEditableCorners( const SELECTION& aSelection )
 {
     if( aSelection.GetSize() != 1 )
         return false;
 
     BOARD_ITEM* item = dynamic_cast<BOARD_ITEM*>( aSelection.Front() );
-    return itemHasEditableVertices( item );
+    return itemHasEditableCorners( item );
 }
 
 static const std::vector<KICAD_T> padTypes = { PCB_PAD_T };
@@ -195,26 +196,62 @@ static std::shared_ptr<CONDITIONAL_MENU> makeShapeModificationMenu( TOOL_INTERAC
         return pt_tool && pt_tool->HasMidpoint();
     };
 
+    auto canAddCornerCondition = []( const SELECTION& aSelection )
+    {
+        const EDA_ITEM* item = aSelection.Front();
+
+        return item && PCB_POINT_EDITOR::CanAddCorner( *item );
+    };
+
+    auto canChamferCornerCondition = []( const SELECTION& aSelection )
+    {
+        const EDA_ITEM* item = aSelection.Front();
+
+        return item && PCB_POINT_EDITOR::CanChamferCorner( *item );
+    };
+
+    auto canRemoveCornerCondition = [aTool]( const SELECTION& aSelection )
+    {
+        PCB_POINT_EDITOR* pt_tool = aTool->GetManager()->GetTool<PCB_POINT_EDITOR>();
+
+        return pt_tool && pt_tool->CanRemoveCorner( aSelection );
+    };
+
     // clang-format off
-    menu->AddItem( PCB_ACTIONS::healShapes,              SELECTION_CONDITIONS::HasTypes( healShapesTypes ) );
-    menu->AddItem( PCB_ACTIONS::simplifyPolygons,        SELECTION_CONDITIONS::HasTypes( polygonSimplifyTypes ) );
-    menu->AddItem( PCB_ACTIONS::filletLines,             SELECTION_CONDITIONS::OnlyTypes( filletChamferTypes ) );
-    menu->AddItem( PCB_ACTIONS::chamferLines,            SELECTION_CONDITIONS::OnlyTypes( filletChamferTypes ) );
-    menu->AddItem( PCB_ACTIONS::dogboneCorners,          SELECTION_CONDITIONS::OnlyTypes( filletChamferTypes ) );
-    menu->AddItem( PCB_ACTIONS::extendLines,             SELECTION_CONDITIONS::OnlyTypes( lineExtendTypes )
-                                                             && SELECTION_CONDITIONS::Count( 2 ) );
-    menu->AddItem( PCB_ACTIONS::pointEditorMoveCorner,   hasCornerCondition );
-    menu->AddItem( PCB_ACTIONS::pointEditorMoveMidpoint, hasMidpointCondition );
+
+    // Shape cleanup
+    menu->AddItem( PCB_ACTIONS::healShapes,       SELECTION_CONDITIONS::HasTypes( healShapesTypes ) );
+    menu->AddItem( PCB_ACTIONS::simplifyPolygons, SELECTION_CONDITIONS::HasTypes( polygonSimplifyTypes ) );
+
+    menu->AddSeparator( SELECTION_CONDITIONS::OnlyTypes( filletChamferTypes ) );
+
+    // Shape corner modifications
+    menu->AddItem( PCB_ACTIONS::filletLines,    SELECTION_CONDITIONS::OnlyTypes( filletChamferTypes ) );
+    menu->AddItem( PCB_ACTIONS::chamferLines,   SELECTION_CONDITIONS::OnlyTypes( filletChamferTypes ) );
+    menu->AddItem( PCB_ACTIONS::dogboneCorners, SELECTION_CONDITIONS::OnlyTypes( filletChamferTypes ) );
+    menu->AddItem( PCB_ACTIONS::extendLines,    SELECTION_CONDITIONS::OnlyTypes( lineExtendTypes )
+                                                    && SELECTION_CONDITIONS::Count( 2 ) );
+
+    menu->AddSeparator( SELECTION_CONDITIONS::Count( 1 ) );
+
+    // Point editor corner operations
+    menu->AddItem( PCB_ACTIONS::pointEditorMoveCorner,    hasCornerCondition );
+    menu->AddItem( PCB_ACTIONS::pointEditorMoveMidpoint,  hasMidpointCondition );
+    menu->AddItem( PCB_ACTIONS::pointEditorAddCorner,     SELECTION_CONDITIONS::Count( 1 ) && canAddCornerCondition );
+    menu->AddItem( PCB_ACTIONS::pointEditorRemoveCorner,  SELECTION_CONDITIONS::Count( 1 ) && canRemoveCornerCondition );
+    menu->AddItem( PCB_ACTIONS::pointEditorChamferCorner, SELECTION_CONDITIONS::Count( 1 ) && canChamferCornerCondition );
+    menu->AddItem( PCB_ACTIONS::editVertices,             selectionHasEditableCorners );
 
     menu->AddSeparator( SELECTION_CONDITIONS::OnlyTypes( polygonBooleanTypes )
-                        && SELECTION_CONDITIONS::MoreThan( 1 ) );
+                            && SELECTION_CONDITIONS::MoreThan( 1 ) );
 
-    menu->AddItem( PCB_ACTIONS::mergePolygons,           SELECTION_CONDITIONS::OnlyTypes( polygonBooleanTypes )
-                                                             && SELECTION_CONDITIONS::MoreThan( 1 ) );
-    menu->AddItem( PCB_ACTIONS::subtractPolygons,        SELECTION_CONDITIONS::OnlyTypes( polygonBooleanTypes )
-                                                             && SELECTION_CONDITIONS::MoreThan( 1 ) );
-    menu->AddItem( PCB_ACTIONS::intersectPolygons,       SELECTION_CONDITIONS::OnlyTypes( polygonBooleanTypes )
-                                                             && SELECTION_CONDITIONS::MoreThan( 1 ) );
+    // Polygon boolean operations
+    menu->AddItem( PCB_ACTIONS::mergePolygons,     SELECTION_CONDITIONS::OnlyTypes( polygonBooleanTypes )
+                                                       && SELECTION_CONDITIONS::MoreThan( 1 ) );
+    menu->AddItem( PCB_ACTIONS::subtractPolygons,  SELECTION_CONDITIONS::OnlyTypes( polygonBooleanTypes )
+                                                       && SELECTION_CONDITIONS::MoreThan( 1 ) );
+    menu->AddItem( PCB_ACTIONS::intersectPolygons, SELECTION_CONDITIONS::OnlyTypes( polygonBooleanTypes )
+                                                       && SELECTION_CONDITIONS::MoreThan( 1 ) );
     // clang-format on
 
     return menu;
@@ -664,7 +701,6 @@ bool EDIT_TOOL::Init()
                                                       && SELECTION_CONDITIONS::HasType( PCB_FOOTPRINT_T ) );
 
     menu.AddItem( PCB_ACTIONS::properties,        propertiesCondition );
-    menu.AddItem( PCB_ACTIONS::editVertices,      selectionHasEditableVertices );
 
     menu.AddItem( PCB_ACTIONS::assignNetClass,    SELECTION_CONDITIONS::OnlyTypes( connectedTypes )
                                                       && !inFootprintEditor );
@@ -2007,6 +2043,7 @@ int EDIT_TOOL::SimplifyPolygons( const TOOL_EVENT& aEvent )
             SHAPE_POLY_SET* poly = zone->Outline();
 
             poly->SimplifyOutlines( s_toleranceValue );
+            zone->HatchBorder();
         }
     }
 
@@ -2336,7 +2373,7 @@ int EDIT_TOOL::EditVertices( const TOOL_EVENT& aEvent )
                 sTool->FilterCollectorForLockedItems( aCollector );
             } );
 
-    if( !selectionHasEditableVertices( selection ) )
+    if( !selectionHasEditableCorners( selection ) )
     {
         wxBell();
         return 0;
@@ -2417,7 +2454,7 @@ int EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
     // Note a RECT shape rotated by a not cardinal angle is a POLY shape
     bool usePcbShapeCenter = false;
 
-    if( selection.Size() == 1 && dynamic_cast<PCB_SHAPE*>( selection.Front() ) )
+    if( selection.Size() == 1 && !m_dragging && dynamic_cast<PCB_SHAPE*>( selection.Front() ) )
     {
         PCB_SHAPE* shape = static_cast<PCB_SHAPE*>( selection.Front() );
 
@@ -2425,7 +2462,7 @@ int EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
             usePcbShapeCenter = true;
     }
 
-    if( selection.Size() == 1 && dynamic_cast<PCB_TABLE*>( selection.Front() ) )
+    if( selection.Size() == 1 && !m_dragging && dynamic_cast<PCB_TABLE*>( selection.Front() ) )
         usePcbShapeCenter = true;
 
     if( selection.Size() == 1 && dynamic_cast<PCB_TEXTBOX*>( selection.Front() ) )
@@ -2486,7 +2523,9 @@ int EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
             }
         }
 
-        if( !localCommit.Empty() )
+        // Don't push a separate undo entry when we're in the middle of a move operation.
+        // The parent move will handle the commit.
+        if( !localCommit.Empty() && !m_dragging )
             localCommit.Push( _( "Rotate" ) );
 
         if( is_hover && !m_dragging )
@@ -2634,7 +2673,9 @@ int EDIT_TOOL::Mirror( const TOOL_EVENT& aEvent )
         }
     }
 
-    if( !localCommit.Empty() )
+    // Don't push a separate undo entry when we're in the middle of a move operation.
+    // The parent move will handle the commit.
+    if( !localCommit.Empty() && !m_dragging )
         localCommit.Push( _( "Mirror" ) );
 
     if( selection.IsHover() && !m_dragging )
@@ -2795,7 +2836,9 @@ int EDIT_TOOL::Flip( const TOOL_EVENT& aEvent )
             static_cast<FOOTPRINT*>( boardItem )->InvalidateComponentClassCache();
     }
 
-    if( !localCommit.Empty() )
+    // Don't push a separate undo entry when we're in the middle of a move operation.
+    // The parent move will handle the commit.
+    if( !localCommit.Empty() && !m_dragging )
         localCommit.Push( _( "Change Side / Flip" ) );
 
     if( selection.IsHover() && !m_dragging )
@@ -3053,6 +3096,8 @@ int EDIT_TOOL::Remove( const TOOL_EVENT& aEvent )
         // In "alternative" mode, we expand selected track items to their full connection.
         if( isAlt && ( selectionCopy.HasType( PCB_TRACE_T ) || selectionCopy.HasType( PCB_VIA_T ) ) )
             m_toolMgr->RunAction( PCB_ACTIONS::selectConnection );
+
+        selectionCopy = m_selectionTool->GetSelection();
     }
 
     DeleteItems( selectionCopy, isCut );
@@ -3490,18 +3535,19 @@ bool EDIT_TOOL::pickReferencePoint( const wxString& aTooltip, const wxString& aS
     picker->SetCursor( KICURSOR::PLACE );
     picker->ClearHandlers();
 
-    const auto setPickerLayerSet = [&]()
-    {
-        MAGNETIC_SETTINGS* magSettings = editFrame->GetMagneticItemsSettings();
-        LSET               layerFilter;
+    const auto setPickerLayerSet =
+            [&]()
+            {
+                MAGNETIC_SETTINGS* magSettings = editFrame->GetMagneticItemsSettings();
+                LSET               layerFilter;
 
-        if( !magSettings->allLayers )
-            layerFilter = LSET( { editFrame->GetActiveLayer() } );
-        else
-            layerFilter = LSET::AllLayersMask();
+                if( !magSettings->allLayers )
+                    layerFilter = LSET( { editFrame->GetActiveLayer() } );
+                else
+                    layerFilter = LSET::AllLayersMask();
 
-        picker->SetLayerSet( layerFilter );
-    };
+                picker->SetLayerSet( layerFilter );
+            };
 
     // Initial set
     setPickerLayerSet();

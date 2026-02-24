@@ -69,7 +69,7 @@ CLI::PCB_EXPORT_3D_COMMAND::PCB_EXPORT_3D_COMMAND( const std::string&        aNa
         m_format( aFormat )
 {
     m_argParser.add_description( aDescription );
-    addCommonArgs( true, true, false, false );
+    addCommonArgs( true, true, IO_TYPE::FILE, IO_TYPE::FILE );
     addDefineArg();
 
     if( m_format == JOB_EXPORT_PCB_3D::FORMAT::UNKNOWN )
@@ -93,6 +93,8 @@ CLI::PCB_EXPORT_3D_COMMAND::PCB_EXPORT_3D_COMMAND( const std::string&        aNa
             .help( UTF8STDSTR( _( "Exclude 3D models for components with 'Do not populate' "
                                   "attribute" ) ) )
             .flag();
+
+    addVariantsArg();
 
     if( m_format != JOB_EXPORT_PCB_3D::FORMAT::UNKNOWN
         && m_format != JOB_EXPORT_PCB_3D::FORMAT::VRML )
@@ -251,6 +253,10 @@ int CLI::PCB_EXPORT_3D_COMMAND::doPerform( KIWAY& aKiway )
     params.m_IncludeUnspecified = !m_argParser.get<bool>( ARG_NO_UNSPECIFIED );
     params.m_IncludeDNP = !m_argParser.get<bool>( ARG_NO_DNP );
     params.m_Overwrite = m_argParser.get<bool>( ARG_FORCE );
+
+    if( !m_argVariantNames.empty() )
+        step->m_variant = m_argVariantNames.front();
+
     step->SetConfiguredOutputPath( m_argOutput );
 
     step->m_filename = m_argInput;

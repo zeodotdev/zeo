@@ -31,13 +31,27 @@
 
 #include <qa_utils/wx_utils/wx_assert.h>
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <set>
+#include <vector>
 
 #include <wx/gdicmn.h>
 #include <wx/string.h>
 
+// C++20 deleted operator<<(ostream&, const wchar_t*) (P1423R3), which breaks wxString streaming
+// via implicit wchar_t* conversion in Boost.Test's lazy_ostream (used by BOOST_TEST_CONTEXT,
+// BOOST_TEST_MESSAGE, BOOST_CHECK_MESSAGE, and BOOST_FAIL).
+inline std::ostream& operator<<( std::ostream& os, const wxString& aStr )
+{
+#if wxUSE_UNICODE
+    os << aStr.ToUTF8().data();
+#else
+    os << aStr.c_str();
+#endif
+    return os;
+}
 
 
 template<class T>
@@ -335,6 +349,16 @@ struct NAMED_CASE
 std::string GetEeschemaTestDataDir();
 
 std::string GetTestDataRootDir();
+
+/**
+ * Load the contents of a file into a vector of bytes.
+ *
+ * If this fails, it throws a std::runtime_error with a descriptive message.
+ *
+ * @param aFilePath the path to the file to load
+ * @param aLoadBytes the number of bytes to load, or all bytes if not specified
+ */
+std::vector<uint8_t> LoadBinaryData( const std::string& aFilePath, std::optional<size_t> aLoadBytes = std::nullopt );
 
 void SetMockConfigDir();
 

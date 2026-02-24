@@ -31,12 +31,12 @@
 #ifndef  PGM_BASE_H_
 #define  PGM_BASE_H_
 
-#include <bs_thread_pool.hpp>
 #include <kicommon.h>
 #include <singleton.h>
 #include <exception>
 #include <map>
 #include <future>
+#include <mutex>
 #include <vector>
 #include <memory>
 #include <search_stack.h>
@@ -49,6 +49,8 @@ class wxWindow;
 class wxSplashScreen;
 class wxSingleInstanceChecker;
 
+class KISTATUSBAR;
+struct LOAD_MESSAGE;
 struct BACKGROUND_JOB;
 class BACKGROUND_JOBS_MONITOR;
 class NOTIFICATIONS_MANAGER;
@@ -114,7 +116,7 @@ public:
      */
     void BuildArgvUtf8();
 
-    BS::priority_thread_pool& GetThreadPool() { return *m_singleton.m_ThreadPool; }
+    BS::priority_thread_pool& GetThreadPool();
 
     GL_CONTEXT_MANAGER* GetGLContextManager() { return m_singleton.m_GLContextManager; }
 
@@ -318,7 +320,7 @@ public:
      *
      * @param aPtr Pass the std::current_exception() from within the catch block.
      */
-    void HandleException( std::exception_ptr aPtr );
+    void HandleException( std::exception_ptr aPtr, bool aUnhandled = false );
 
     /**
      * A common assert handler to be used between single_top and kicad.
@@ -359,6 +361,28 @@ public:
      * handled here unlike symbol/footprint loading which are taken care of by the KIFACEs.
      */
     void PreloadDesignBlockLibraries( KIWAY* aKiway );
+
+    /**
+     * Register a status bar to receive library load warning messages.
+     * Multiple status bars can be registered (one per open frame).
+     */
+    void RegisterLibraryLoadStatusBar( KISTATUSBAR* aStatusBar );
+
+    /**
+     * Unregister a status bar from receiving library load warning messages.
+     */
+    void UnregisterLibraryLoadStatusBar( KISTATUSBAR* aStatusBar );
+
+    /**
+     * Add library load messages to all registered status bars.
+     * Thread-safe - can be called from background threads.
+     */
+    void AddLibraryLoadMessages( const std::vector<LOAD_MESSAGE>& aMessages );
+
+    /**
+     * Clear library load messages from all registered status bars.
+     */
+    void ClearLibraryLoadMessages();
 
     /**
      * wxWidgets on MSW tends to crash if you spool up more than one print job at a time.
@@ -432,6 +456,9 @@ protected:
     std::future<void>               m_libraryPreloadReturn;
     std::atomic_bool                m_libraryPreloadInProgress;
     std::atomic_bool                m_libraryPreloadAbort;
+
+    std::vector<KISTATUSBAR*>       m_libraryLoadStatusBars;
+    mutable std::mutex              m_libraryLoadStatusBarsMutex;
 };
 
 

@@ -27,6 +27,7 @@
 #include <pgm_base.h>
 #include <settings/settings_manager.h>
 #include <board.h>
+#include <component_classes/component_class_manager.h>
 #include <footprint.h>
 #include <lset.h>
 #include <pcb_group.h>
@@ -271,7 +272,7 @@ void BOARD_COMMIT::Push( const wxString& aMessage, int aCommitFlags )
             }
         }
 
-        if( boardItem->IsSelected() )
+        if( boardItem->IsSelected() || ( m_isFootprintEditor && boardItem == board->GetFirstFootprint() ) )
             selectedModified = true;
     }
 
@@ -687,6 +688,7 @@ void BOARD_COMMIT::Revert()
     std::vector<BOARD_ITEM*> bulkAddedItems;
     std::vector<BOARD_ITEM*> bulkRemovedItems;
     std::vector<BOARD_ITEM*> itemsChanged;
+    std::vector<BOARD_ITEM*> itemsToDelete;
 
     for( COMMIT_LINE& entry : m_entries )
     {
@@ -700,24 +702,30 @@ void BOARD_COMMIT::Revert()
         switch( changeType )
         {
         case CHT_ADD:
-            if( !( changeFlags & CHT_DONE ) )
-                break;
-
-            if( boardItem->Type() != PCB_NETINFO_T )
-                view->Remove( boardItem );
-
-            if( m_isFootprintEditor )
+            if( changeFlags & CHT_DONE )
             {
-                if( FOOTPRINT* parentFP = board->GetFirstFootprint() )
-                    parentFP->Remove( boardItem );
-            }
-            else
-            {
-                board->Remove( boardItem, REMOVE_MODE::BULK );
-                bulkRemovedItems.push_back( boardItem );
+                if( boardItem->Type() != PCB_NETINFO_T )
+                    view->Remove( boardItem );
+
+                connectivity->Remove( boardItem );
+
+                if( m_isFootprintEditor )
+                {
+                    if( FOOTPRINT* parentFP = board->GetFirstFootprint() )
+                        parentFP->Remove( boardItem );
+                }
+                else
+                {
+                    board->Remove( boardItem, REMOVE_MODE::BULK );
+                    bulkRemovedItems.push_back( boardItem );
+                }
             }
 
-            break;
+            // Defer deletion until after OnItemsCompositeUpdate so that
+            // board listeners do not receive dangling pointers.
+            itemsToDelete.push_back( boardItem );
+            entry.m_item = nullptr;
+            continue;
 
         case CHT_REMOVE:
         {
@@ -760,8 +768,6 @@ void BOARD_COMMIT::Revert()
             itemsChanged.push_back( boardItem );
 
             updateComponentClasses( boardItem );
-
-            delete entry.m_copy;
             break;
         }
 
@@ -769,6 +775,10 @@ void BOARD_COMMIT::Revert()
             UNIMPLEMENTED_FOR( boardItem->GetClass() );
             break;
         }
+
+        // Delete any copies we still have ownership of
+        delete entry.m_copy;
+        entry.m_copy = nullptr;
 
         boardItem->ClearEditFlags();
     }
@@ -778,6 +788,9 @@ void BOARD_COMMIT::Revert()
 
     if( bulkAddedItems.size() > 0 || bulkRemovedItems.size() > 0 || itemsChanged.size() > 0 )
         board->OnItemsCompositeUpdate( bulkAddedItems, bulkRemovedItems, itemsChanged );
+
+    for( BOARD_ITEM* item : itemsToDelete )
+        delete item;
 
     if( m_isBoardEditor )
     {

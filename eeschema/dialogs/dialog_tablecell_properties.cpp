@@ -27,6 +27,7 @@
 #include <widgets/color_swatch.h>
 #include <widgets/font_choice.h>
 #include <settings/color_settings.h>
+#include <widgets/wx_infobar.h>
 #include <sch_table.h>
 #include <sch_text.h>
 #include <sch_commit.h>
@@ -121,6 +122,7 @@ DIALOG_TABLECELL_PROPERTIES::DIALOG_TABLECELL_PROPERTIES( SCH_EDIT_FRAME* aFrame
 DIALOG_TABLECELL_PROPERTIES::~DIALOG_TABLECELL_PROPERTIES()
 {
     delete m_scintillaTricks;
+    m_scintillaTricks = nullptr;
 
     if( m_helpWindow )
         m_helpWindow->Destroy();

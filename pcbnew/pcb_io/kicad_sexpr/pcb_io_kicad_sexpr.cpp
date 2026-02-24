@@ -31,6 +31,7 @@
 #include <board.h>
 #include <board_design_settings.h>
 #include <callback_gal.h>
+#include <component_classes/component_class.h>
 #include <confirm.h>
 #include <convert_basic_shapes_to_polygon.h> // for enum RECT_CHAMFER_POSITIONS definition
 #include <fmt/core.h>
@@ -38,6 +39,7 @@
 #include <footprint.h>
 #include <io/kicad/kicad_io_utils.h>
 #include <kiface_base.h>
+#include <kiplatform/io.h>
 #include <layer_range.h>
 #include <macros.h>
 #include <pad.h>
@@ -190,6 +192,17 @@ void FP_CACHE::Load()
 
                 footprint->SetFPID( LIB_ID( wxEmptyString, fpName ) );
                 m_footprints.insert( fpName, new FP_CACHE_ENTRY( footprint, fn ) );
+
+                // Collect any non-fatal parse warnings
+                for( const wxString& warning : parser.GetParseWarnings() )
+                {
+                    if( !cacheError.IsEmpty() )
+                        cacheError += wxT( "\n\n" );
+
+                    cacheError += wxString::Format( _( "Warning in file '%s'" ) + '\n',
+                                                    fn.GetFullPath() );
+                    cacheError += warning;
+                }
             }
             catch( const IO_ERROR& ioe )
             {
@@ -258,7 +271,7 @@ long long FP_CACHE::GetTimestamp( const wxString& aLibPath )
 {
     wxString fileSpec = wxT( "*." ) + wxString( FILEEXT::KiCadFootprintFileExtension );
 
-    return TimestampDir( aLibPath, fileSpec );
+    return KIPLATFORM::IO::TimestampDir( aLibPath, fileSpec );
 }
 
 
@@ -699,6 +712,31 @@ void PCB_IO_KICAD_SEXPR::formatProperties( const BOARD* aBoard ) const
 }
 
 
+void PCB_IO_KICAD_SEXPR::formatVariants( const BOARD* aBoard ) const
+{
+    const std::vector<wxString>& variantNames = aBoard->GetVariantNames();
+
+    if( variantNames.empty() )
+        return;
+
+    m_out->Print( "(variants" );
+
+    for( const wxString& variantName : variantNames )
+    {
+        m_out->Print( "(variant (name %s)", m_out->Quotew( variantName ).c_str() );
+
+        wxString description = aBoard->GetVariantDescription( variantName );
+
+        if( !description.IsEmpty() )
+            m_out->Print( "(description %s)", m_out->Quotew( description ).c_str() );
+
+        m_out->Print( ")" );
+    }
+
+    m_out->Print( ")" );
+}
+
+
 void PCB_IO_KICAD_SEXPR::formatHeader( const BOARD* aBoard ) const
 {
     formatGeneral( aBoard );
@@ -711,6 +749,9 @@ void PCB_IO_KICAD_SEXPR::formatHeader( const BOARD* aBoard ) const
 
     // Properties
     formatProperties( aBoard );
+
+    // Variants
+    formatVariants( aBoard );
 }
 
 
@@ -755,12 +796,12 @@ void PCB_IO_KICAD_SEXPR::format( const BOARD* aBoard ) const
 {
     std::set<BOARD_ITEM*, BOARD_ITEM::ptr_cmp> sorted_footprints( aBoard->Footprints().begin(),
                                                                   aBoard->Footprints().end() );
-    std::set<BOARD_ITEM*, BOARD_ITEM::ptr_cmp> sorted_drawings( aBoard->Drawings().begin(),
+    std::set<BOARD_ITEM*, BOARD::cmp_drawings> sorted_drawings( aBoard->Drawings().begin(),
                                                                 aBoard->Drawings().end() );
     std::set<PCB_TRACK*, PCB_TRACK::cmp_tracks> sorted_tracks( aBoard->Tracks().begin(),
                                                                aBoard->Tracks().end() );
     std::set<PCB_POINT*, BOARD_ITEM::ptr_cmp> sorted_points( aBoard->Points().begin(),
-                                                               aBoard->Points().end() );
+                                                             aBoard->Points().end() );
     std::set<BOARD_ITEM*, BOARD_ITEM::ptr_cmp> sorted_zones( aBoard->Zones().begin(),
                                                              aBoard->Zones().end() );
     std::set<BOARD_ITEM*, BOARD_ITEM::ptr_cmp> sorted_groups( aBoard->Groups().begin(),
@@ -1186,6 +1227,9 @@ void PCB_IO_KICAD_SEXPR::format( const FOOTPRINT* aFootprint ) const
 
     for( const PCB_FIELD* field : aFootprint->GetFields() )
     {
+        if( !field )
+            continue;
+
         m_out->Print( "(property %s %s",
                       m_out->Quotew( field->GetCanonicalName() ).c_str(),
                       m_out->Quotew( field->GetText() ).c_str() );
@@ -1402,6 +1446,43 @@ void PCB_IO_KICAD_SEXPR::format( const FOOTPRINT* aFootprint ) const
     // Save groups.
     for( BOARD_ITEM* group : sorted_groups )
         Format( group );
+
+    // Save variants.
+    const bool baseDnp = aFootprint->IsDNP();
+    const bool baseExcludedFromBOM = aFootprint->IsExcludedFromBOM();
+    const bool baseExcludedFromPosFiles = aFootprint->IsExcludedFromPosFiles();
+
+    for( const auto& [variantName, variant] : aFootprint->GetVariants() )
+    {
+        m_out->Print( "(variant (name %s)", m_out->Quotew( variantName ).c_str() );
+
+        if( variant.GetDNP() != baseDnp )
+            KICAD_FORMAT::FormatBool( m_out, "dnp", variant.GetDNP() );
+
+        if( variant.GetExcludedFromBOM() != baseExcludedFromBOM )
+            KICAD_FORMAT::FormatBool( m_out, "exclude_from_bom", variant.GetExcludedFromBOM() );
+
+        if( variant.GetExcludedFromPosFiles() != baseExcludedFromPosFiles )
+        {
+            KICAD_FORMAT::FormatBool( m_out, "exclude_from_pos_files",
+                                      variant.GetExcludedFromPosFiles() );
+        }
+
+        for( const auto& [fieldName, fieldValue] : variant.GetFields() )
+        {
+            const PCB_FIELD* baseField = aFootprint->GetField( fieldName );
+            const wxString baseValue = baseField ? baseField->GetText() : wxString();
+
+            if( fieldValue == baseValue )
+                continue;
+
+            m_out->Print( "(field (name %s) (value %s))",
+                          m_out->Quotew( fieldName ).c_str(),
+                          m_out->Quotew( fieldValue ).c_str() );
+        }
+
+        m_out->Print( ")" );
+    }
 
     KICAD_FORMAT::FormatBool( m_out, "embedded_fonts",
                               aFootprint->GetEmbeddedFiles()->GetAreFontsEmbedded() );
@@ -1972,12 +2053,16 @@ void PCB_IO_KICAD_SEXPR::format( const PAD* aPad ) const
     if( !isDefaultTeardropParameters( aPad->GetTeardropParams() ) )
         formatTeardropParameters( aPad->GetTeardropParams() );
 
-    m_out->Print( 0, " (tenting " );
-    KICAD_FORMAT::FormatOptBool( m_out, "front",
-                                 aPad->Padstack().FrontOuterLayers().has_solder_mask );
-    KICAD_FORMAT::FormatOptBool( m_out, "back",
-                                 aPad->Padstack().BackOuterLayers().has_solder_mask );
-    m_out->Print( 0, ")" );
+    if( aPad->Padstack().FrontOuterLayers().has_solder_mask.has_value()
+        || aPad->Padstack().BackOuterLayers().has_solder_mask.has_value() )
+    {
+        m_out->Print( 0, " (tenting " );
+        KICAD_FORMAT::FormatOptBool( m_out, "front",
+                                     aPad->Padstack().FrontOuterLayers().has_solder_mask );
+        KICAD_FORMAT::FormatOptBool( m_out, "back",
+                                     aPad->Padstack().BackOuterLayers().has_solder_mask );
+        m_out->Print( 0, ")" );
+    }
 
     KICAD_FORMAT::FormatUuid( m_out, aPad->m_Uuid );
 
@@ -2144,6 +2229,15 @@ void PCB_IO_KICAD_SEXPR::format( const PCB_BARCODE* aBarcode ) const
         }
 
         m_out->Print( "(ecc_level %s)", eccStr );
+    }
+
+    KICAD_FORMAT::FormatBool( m_out, "hide", !aBarcode->GetShowText() );
+    KICAD_FORMAT::FormatBool( m_out, "knockout", aBarcode->IsKnockout() );
+
+    if( aBarcode->GetMargin().x != 0 || aBarcode->GetMargin().y != 0 )
+    {
+        m_out->Print( "(margins %s %s)", formatInternalUnits( aBarcode->GetMargin().x ).c_str(),
+                      formatInternalUnits( aBarcode->GetMargin().y ).c_str() );
     }
 
     KICAD_FORMAT::FormatUuid( m_out, aBarcode->m_Uuid );
@@ -2345,8 +2439,30 @@ void PCB_IO_KICAD_SEXPR::format( const PCB_TABLE* aTable ) const
 
 void PCB_IO_KICAD_SEXPR::format( const PCB_GROUP* aGroup ) const
 {
-    // Don't write empty groups
-    if( aGroup->GetItems().empty() )
+    wxArrayString memberIds;
+
+    if( m_board )
+    {
+        const auto& cache = m_board->GetItemByIdCache();
+
+        std::unordered_set<const EDA_ITEM*> validPtrs;
+
+        for( const auto& [uuid, item] : cache )
+            validPtrs.insert( item );
+
+        for( EDA_ITEM* member : aGroup->GetItems() )
+        {
+            if( validPtrs.count( member ) )
+                memberIds.Add( member->m_Uuid.AsString() );
+        }
+    }
+    else
+    {
+        for( EDA_ITEM* member : aGroup->GetItems() )
+            memberIds.Add( member->m_Uuid.AsString() );
+    }
+
+    if( memberIds.size() <= 1 )
         return;
 
     m_out->Print( "(group %s", m_out->Quotew( aGroup->GetName() ).c_str() );
@@ -2358,11 +2474,6 @@ void PCB_IO_KICAD_SEXPR::format( const PCB_GROUP* aGroup ) const
 
     if( aGroup->HasDesignBlockLink() )
         m_out->Print( "(lib_id \"%s\")", aGroup->GetDesignBlockLibId().Format().c_str() );
-
-    wxArrayString memberIds;
-
-    for( EDA_ITEM* member : aGroup->GetItems() )
-        memberIds.Add( member->m_Uuid.AsString() );
 
     memberIds.Sort();
 
@@ -2608,24 +2719,44 @@ void PCB_IO_KICAD_SEXPR::format( const PCB_TRACK* aTrack ) const
 
         const PADSTACK& padstack = via->Padstack();
 
-        m_out->Print( 0, " (tenting " );
-        KICAD_FORMAT::FormatOptBool( m_out, "front", padstack.FrontOuterLayers().has_solder_mask );
-        KICAD_FORMAT::FormatOptBool( m_out, "back", padstack.BackOuterLayers().has_solder_mask );
-        m_out->Print( 0, ")" );
+        if( padstack.FrontOuterLayers().has_solder_mask.has_value()
+            || padstack.BackOuterLayers().has_solder_mask.has_value() )
+        {
+            m_out->Print( 0, " (tenting " );
+            KICAD_FORMAT::FormatOptBool( m_out, "front",
+                                         padstack.FrontOuterLayers().has_solder_mask );
+            KICAD_FORMAT::FormatOptBool( m_out, "back",
+                                         padstack.BackOuterLayers().has_solder_mask );
+            m_out->Print( 0, ")" );
+        }
 
-        KICAD_FORMAT::FormatOptBool( m_out, "capping", padstack.Drill().is_capped );
+        if( padstack.Drill().is_capped.has_value() )
+            KICAD_FORMAT::FormatOptBool( m_out, "capping", padstack.Drill().is_capped );
 
-        m_out->Print( 0, " (covering " );
-        KICAD_FORMAT::FormatOptBool( m_out, "front", padstack.FrontOuterLayers().has_covering );
-        KICAD_FORMAT::FormatOptBool( m_out, "back", padstack.BackOuterLayers().has_covering );
-        m_out->Print( 0, ")" );
+        if( padstack.FrontOuterLayers().has_covering.has_value()
+            || padstack.BackOuterLayers().has_covering.has_value() )
+        {
+            m_out->Print( 0, " (covering " );
+            KICAD_FORMAT::FormatOptBool( m_out, "front",
+                                         padstack.FrontOuterLayers().has_covering );
+            KICAD_FORMAT::FormatOptBool( m_out, "back",
+                                         padstack.BackOuterLayers().has_covering );
+            m_out->Print( 0, ")" );
+        }
 
-        m_out->Print( 0, " (plugging " );
-        KICAD_FORMAT::FormatOptBool( m_out, "front", padstack.FrontOuterLayers().has_plugging );
-        KICAD_FORMAT::FormatOptBool( m_out, "back", padstack.BackOuterLayers().has_plugging );
-        m_out->Print( 0, ")" );
+        if( padstack.FrontOuterLayers().has_plugging.has_value()
+            || padstack.BackOuterLayers().has_plugging.has_value() )
+        {
+            m_out->Print( 0, " (plugging " );
+            KICAD_FORMAT::FormatOptBool( m_out, "front",
+                                         padstack.FrontOuterLayers().has_plugging );
+            KICAD_FORMAT::FormatOptBool( m_out, "back",
+                                         padstack.BackOuterLayers().has_plugging );
+            m_out->Print( 0, ")" );
+        }
 
-        KICAD_FORMAT::FormatOptBool( m_out, "filling", padstack.Drill().is_filled );
+        if( padstack.Drill().is_filled.has_value() )
+            KICAD_FORMAT::FormatOptBool( m_out, "filling", padstack.Drill().is_filled );
 
         if( padstack.Mode() != PADSTACK::MODE::NORMAL )
         {
@@ -2979,7 +3110,8 @@ BOARD* PCB_IO_KICAD_SEXPR::LoadBoard( const wxString& aFileName, BOARD* aAppendT
 
     unsigned lineCount = 0;
 
-    fontconfig::FONTCONFIG::SetReporter( &WXLOG_REPORTER::GetInstance() );
+    // Collect the font substitution warnings (RAII - automatically reset on scope exit)
+    FONTCONFIG_REPORTER_SCOPE fontconfigScope( &LOAD_INFO_REPORTER::GetInstance() );
 
     if( m_progressReporter )
     {
@@ -3038,6 +3170,10 @@ BOARD* PCB_IO_KICAD_SEXPR::DoLoad( LINE_READER& aReader, BOARD* aAppendToMe,
                            parser.CurLine(), parser.CurLineNumber(), parser.CurOffset() );
     }
 
+    // Report any non-fatal parse warnings to the load info reporter
+    for( const wxString& warning : parser.GetParseWarnings() )
+        LOAD_INFO_REPORTER::GetInstance().Report( warning, RPT_SEVERITY_WARNING );
+
     return board;
 }
 
@@ -3052,7 +3188,8 @@ void PCB_IO_KICAD_SEXPR::init( const std::map<std::string, UTF8>* aProperties )
 
 void PCB_IO_KICAD_SEXPR::validateCache( const wxString& aLibraryPath, bool checkModified )
 {
-    fontconfig::FONTCONFIG::SetReporter( nullptr );
+    // Suppress font substitution warnings (RAII - automatically restored on scope exit)
+    FONTCONFIG_REPORTER_SCOPE fontconfigScope( nullptr );
 
     if( !m_cache || !m_cache->IsPath( aLibraryPath ) || ( checkModified && m_cache->IsModified() ) )
     {
@@ -3150,7 +3287,8 @@ FOOTPRINT* PCB_IO_KICAD_SEXPR::ImportFootprint( const wxString& aFootprintPath,
     wxString fcontents;
     wxFFile  f( aFootprintPath );
 
-    fontconfig::FONTCONFIG::SetReporter( nullptr );
+    // Suppress font substitution warnings (RAII - automatically restored on scope exit)
+    FONTCONFIG_REPORTER_SCOPE fontconfigScope( nullptr );
 
     if( !f.IsOpened() )
         return nullptr;
@@ -3168,7 +3306,8 @@ FOOTPRINT* PCB_IO_KICAD_SEXPR::FootprintLoad( const wxString& aLibraryPath,
                                               bool  aKeepUUID,
                                               const std::map<std::string, UTF8>* aProperties )
 {
-    fontconfig::FONTCONFIG::SetReporter( nullptr );
+    // Suppress font substitution warnings (RAII - automatically restored on scope exit)
+    FONTCONFIG_REPORTER_SCOPE fontconfigScope( nullptr );
 
     const FOOTPRINT* footprint = getFootprint( aLibraryPath, aFootprintName, aProperties, true );
 
@@ -3319,6 +3458,15 @@ void PCB_IO_KICAD_SEXPR::FootprintDelete( const wxString& aLibraryPath,
     m_cache->Remove( aFootprintName );
 }
 
+
+void PCB_IO_KICAD_SEXPR::ClearCachedFootprints( const wxString& aLibraryPath )
+{
+    if( m_cache && m_cache->IsPath( aLibraryPath ) )
+    {
+        delete m_cache;
+        m_cache = nullptr;
+    }
+}
 
 
 long long PCB_IO_KICAD_SEXPR::GetLibraryTimestamp( const wxString& aLibraryPath ) const

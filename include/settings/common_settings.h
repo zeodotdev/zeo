@@ -20,20 +20,12 @@
 
 #pragma once
 
+#include <memory>
+#include <mouse_drag_action.h>
 #include <settings/environment.h>
 #include <settings/json_settings.h>
 
-
-enum class MOUSE_DRAG_ACTION
-{
-    // WARNING: these are encoded as integers in the file, so don't change their values.
-    DRAG_ANY = -2,
-    DRAG_SELECTED,
-    SELECT,
-    ZOOM,
-    PAN,
-    NONE
-};
+struct COMMON_SETTINGS_INTERNALS;
 
 enum class ICON_THEME
 {
@@ -188,7 +180,10 @@ public:
 
     COMMON_SETTINGS();
 
-    virtual ~COMMON_SETTINGS() {}
+    virtual ~COMMON_SETTINGS();
+
+    COMMON_SETTINGS_INTERNALS& CsInternals()             { return *m_csInternals; }
+    const COMMON_SETTINGS_INTERNALS& CsInternals() const { return *m_csInternals; }
 
     virtual bool MigrateFromLegacy( wxConfigBase* aLegacyConfig ) override;
 
@@ -202,6 +197,7 @@ private:
     bool migrateSchema1to2();
     bool migrateSchema2to3();
     bool migrateSchema3to4();
+    bool migrateSchema4to5();
 
     struct LEGACY_3D_SEARCH_PATH
     {
@@ -230,6 +226,5 @@ public:
     GIT               m_Git;
     API               m_Api;
 
-    /// Persistent dialog control values
-    std::map<std::string, std::map<std::string, nlohmann::json>> m_dialogControlValues;
+    std::unique_ptr<COMMON_SETTINGS_INTERNALS> m_csInternals;
 };

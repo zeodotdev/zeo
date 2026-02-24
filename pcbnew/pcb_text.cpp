@@ -26,6 +26,7 @@
 #include <google/protobuf/any.pb.h>
 
 #include <advanced_config.h>
+#include <common.h>
 #include <pcb_edit_frame.h>
 #include <base_units.h>
 #include <bitmaps.h>
@@ -45,6 +46,8 @@
 #include <api/api_enums.h>
 #include <api/api_utils.h>
 #include <api/board/board_types.pb.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 
 PCB_TEXT::PCB_TEXT( BOARD_ITEM* parent, KICAD_T idtype ) :
@@ -273,10 +276,26 @@ void PCB_TEXT::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_IT
         aList.emplace_back( _( "Footprint" ), parentFP->GetReference() );
 
     // Don't use GetShownText() here; we want to show the user the variable references
+    wxString value = GetText();
+
     if( parentFP )
-        aList.emplace_back( _( "Text" ), KIUI::EllipsizeStatusText( aFrame, GetText() ) );
+    {
+        if( PCB_FIELD* field = dynamic_cast<PCB_FIELD*>( this ) )
+        {
+            wxString variant;
+
+            if( BOARD* board = parentFP->GetBoard() )
+                variant = board->GetCurrentVariant();
+
+            value = parentFP->GetFieldValueForVariant( variant, field->GetName() );
+        }
+
+        aList.emplace_back( _( "Text" ), KIUI::EllipsizeStatusText( aFrame, value ) );
+    }
     else
-        aList.emplace_back( _( "PCB Text" ), KIUI::EllipsizeStatusText( aFrame, GetText() ) );
+    {
+        aList.emplace_back( _( "PCB Text" ), KIUI::EllipsizeStatusText( aFrame, value ) );
+    }
 
     if( parentFP )
         aList.emplace_back( _( "Type" ), GetTextTypeDescription() );

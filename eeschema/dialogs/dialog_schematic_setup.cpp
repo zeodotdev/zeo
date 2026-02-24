@@ -36,6 +36,7 @@
 #include <project/net_settings.h>
 #include <sch_io/sch_io.h>
 #include <settings/settings_manager.h>
+#include <widgets/wx_infobar.h>
 #include <widgets/wx_progress_reporters.h>
 #include <sch_reference_list.h>
 #include <nlohmann/json.hpp>

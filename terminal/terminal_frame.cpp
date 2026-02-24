@@ -3,7 +3,7 @@
 #include "headless_python_executor.h"
 #include "agent_monitor_log.h"
 #include "pty_webview_panel.h"
-#include <kiway_express.h>
+#include <kiway_mail.h>
 #include <mail_type.h>
 #include <wx/sizer.h>
 #include <wx/settings.h>
@@ -381,7 +381,7 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
     return result.empty() ? "(no output)" : result;
 }
 
-void TERMINAL_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
+void TERMINAL_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
 {
     if( aEvent.Command() == MAIL_AGENT_REQUEST )
     {

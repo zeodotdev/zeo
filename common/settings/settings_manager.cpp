@@ -286,6 +286,20 @@ COLOR_SETTINGS* SETTINGS_MANAGER::GetColorSettings( const wxString& aName )
 }
 
 
+std::vector<COLOR_SETTINGS*> SETTINGS_MANAGER::GetColorSettingsList()
+{
+    std::vector<COLOR_SETTINGS*> ret;
+
+    for( const std::pair<const wxString, COLOR_SETTINGS*>& entry : m_color_settings )
+        ret.push_back( entry.second );
+
+    std::sort( ret.begin(), ret.end(), []( COLOR_SETTINGS* a, COLOR_SETTINGS* b )
+                                       { return a->GetName() < b->GetName(); } );
+
+    return ret;
+}
+
+
 COLOR_SETTINGS* SETTINGS_MANAGER::loadColorSettingsByName( const wxString& aName )
 {
     wxLogTrace( traceSettings, wxT( "Attempting to load color theme %s" ), aName );
@@ -573,7 +587,8 @@ public:
             path.Replace( m_src, m_dest, false );
             dir.SetPath( path );
 
-            wxMkdir( dir.GetFullPath() );
+            if( !wxDirExists( dir.GetPath() ) )
+                wxMkdir( dir.GetPath() );
 
             return wxDIR_CONTINUE;
         }
@@ -797,7 +812,7 @@ bool SETTINGS_MANAGER::GetPreviousVersionPaths( std::vector<wxString>* aPaths )
                    if( !extractVersion( verB ) )
                        return true;
 
-                   return compareVersions( verA, verB ) >= 0;
+                   return compareVersions( verA, verB ) > 0;
                } );
 
     return aPaths->size() > 0;
@@ -938,10 +953,11 @@ bool SETTINGS_MANAGER::extractVersion( const std::string& aVersionString, int* a
 
 bool SETTINGS_MANAGER::LoadProject( const wxString& aFullPath, bool aSetActive )
 {
-    // Normalize path to new format even if migrating from a legacy file
+    // Normalize path to current project extension. Users may open legacy .pro files,
+    // or the OS may hand us a .kicad_sch/.kicad_pcb via file association or drag-and-drop.
     wxFileName path( aFullPath );
 
-    if( path.GetExt() == FILEEXT::LegacyProjectFileExtension )
+    if( path.HasName() && path.GetExt() != FILEEXT::ProjectFileExtension )
         path.SetExt( FILEEXT::ProjectFileExtension );
 
     wxString fullPath = path.GetFullPath();
@@ -962,6 +978,20 @@ bool SETTINGS_MANAGER::LoadProject( const wxString& aFullPath, bool aSetActive )
     // No MDI yet
     if( aSetActive && !m_projects.empty() )
     {
+        // Cancel any in-progress library preloads and wait for them to finish before
+        // modifying m_projects_list. Background preload threads access Prj() which becomes
+        // invalid when the project list is modified.
+        if( m_kiway )
+        {
+            if( KIFACE* pcbFace = m_kiway->KiFACE( KIWAY::FACE_PCB, false ) )
+                pcbFace->CancelPreload( true );
+        }
+
+        // Abort any async library loads before modifying m_projects_list to prevent race
+        // conditions where background threads try to access Prj() while the list is empty.
+        if( PgmOrNull() )
+            Pgm().GetLibraryManager().AbortAsyncLoads();
+
         PROJECT* oldProject = m_projects.begin()->second;
         unloadProjectFile( oldProject, false );
         m_projects.erase( m_projects.begin() );
@@ -1034,14 +1064,28 @@ bool SETTINGS_MANAGER::UnloadProject( PROJECT* aProject, bool aSave )
     if( !aProject || !m_projects.count( aProject->GetProjectFullName() ) )
         return false;
 
-    if( !unloadProjectFile( aProject, aSave ) )
-        return false;
-
     wxString projectPath = aProject->GetProjectFullName();
     wxLogTrace( traceSettings, wxT( "Unload project %s" ), projectPath );
 
     PROJECT* toRemove = m_projects.at( projectPath );
     bool wasActiveProject = m_projects_list.begin()->get() == toRemove;
+
+    // Cancel any in-progress library preloads and wait for them to finish before
+    // modifying m_projects_list. Background preload threads access Prj() which becomes
+    // invalid when the project list is modified.
+    if( wasActiveProject && m_kiway )
+    {
+        if( KIFACE* pcbFace = m_kiway->KiFACE( KIWAY::FACE_PCB, false ) )
+            pcbFace->CancelPreload( true );
+    }
+
+    // Abort any async library loads before modifying m_projects_list to prevent race
+    // conditions where background threads try to access Prj() while the list is empty.
+    if( wasActiveProject && PgmOrNull() )
+        Pgm().GetLibraryManager().AbortAsyncLoads();
+
+    if( !unloadProjectFile( aProject, aSave ) )
+        return false;
 
     auto it = std::find_if( m_projects_list.begin(), m_projects_list.end(),
                             [&]( const std::unique_ptr<PROJECT>& ptr )
@@ -1064,6 +1108,14 @@ bool SETTINGS_MANAGER::UnloadProject( PROJECT* aProject, bool aSave )
         // Remove the reference in the environment to the previous project
         wxSetEnv( PROJECT_VAR_NAME, wxS( "" ) );
 
+#ifdef _WIN32
+        // On Windows, processes hold a handle to their current working directory, preventing
+        // it from being deleted. Reset to the user settings path to release the project
+        // directory. This mirrors the wxSetWorkingDirectory call in LoadProject.
+        if( wxTheApp && wxTheApp->IsGUI() )
+            wxSetWorkingDirectory( PATHS::GetUserSettingsPath() );
+#endif
+
         if( m_kiway )
             m_kiway->ProjectChanged();
     }
@@ -1075,7 +1127,14 @@ bool SETTINGS_MANAGER::UnloadProject( PROJECT* aProject, bool aSave )
 PROJECT& SETTINGS_MANAGER::Prj() const
 {
     // No MDI yet:  First project in the list is the active project
-    wxASSERT_MSG( m_projects_list.size(), wxT( "no project in list" ) );
+    if( m_projects_list.empty() )
+    {
+        wxLogTrace( traceSettings, wxT( "Prj() called with no project loaded" ) );
+
+        static PROJECT s_emptyProject;
+        return s_emptyProject;
+    }
+
     return *m_projects_list.begin()->get();
 }
 

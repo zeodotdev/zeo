@@ -172,6 +172,8 @@ void PlotInteractiveLayer( BOARD* aBoard, PLOTTER* aPlotter, const PCB_PLOT_PARA
 
         for( const PCB_FIELD* field : fp->GetFields() )
         {
+            wxCHECK2( field, continue );
+
             if( field->IsReference() || field->IsValue() )
                 continue;
 
@@ -335,6 +337,7 @@ void PlotStandardLayer( BOARD* aBoard, PLOTTER* aPlotter, const LSET& aLayerMask
     bool onFrontFab = ( LSET( { F_Fab } ) & aLayerMask ).any();
     bool onBackFab  = ( LSET( { B_Fab } ) & aLayerMask ).any();
     bool sketchPads = ( onFrontFab || onBackFab ) && aPlotOpt.GetSketchPadsOnFabLayers();
+    const wxString variantName = aBoard->GetCurrentVariant();
 
     // Plot edge layer and graphic items
     for( const BOARD_ITEM* item : aBoard->Drawings() )
@@ -351,6 +354,8 @@ void PlotStandardLayer( BOARD* aBoard, PLOTTER* aPlotter, const LSET& aLayerMask
     // Plot footprint pads
     for( FOOTPRINT* footprint : aBoard->Footprints() )
     {
+        const bool dnp = footprint->GetDNPForVariant( variantName );
+
         aPlotter->StartBlock( nullptr );
 
         for( PAD* pad : footprint->Pads() )
@@ -631,7 +636,7 @@ void PlotStandardLayer( BOARD* aBoard, PLOTTER* aPlotter, const LSET& aLayerMask
                 plotPadLayer( layer );
         }
 
-        if( footprint->IsDNP()
+        if( dnp
                 && !itemplotter.GetHideDNPFPsOnFabLayers()
                 && itemplotter.GetCrossoutDNPFPsOnFabLayers()
                 && (   ( onFrontFab && footprint->GetLayer() == F_Cu )
@@ -998,6 +1003,8 @@ void GenerateLayerPoly( SHAPE_POLY_SET* aResult, BOARD *aBoard, PLOTTER* aPlotte
 
             for( const PCB_FIELD* field : footprint->GetFields() )
             {
+                wxCHECK2( field, continue );
+
                 if( field->IsReference() && !aPlotReferences )
                     continue;
 
@@ -1076,7 +1083,12 @@ void GenerateLayerPoly( SHAPE_POLY_SET* aResult, BOARD *aBoard, PLOTTER* aPlotte
             if( !zone->IsOnLayer( aLayer ) )
                 continue;
 
-            SHAPE_POLY_SET area = *zone->GetFill( aLayer );
+            SHAPE_POLY_SET* fillData = zone->GetFill( aLayer );
+
+            if( !fillData )
+                continue;
+
+            SHAPE_POLY_SET area = *fillData;
 
             if( inflate != 0 )
                 exactPolys.Append( area );
@@ -1207,18 +1219,20 @@ static void FillNegativeKnockout( PLOTTER *aPlotter, const BOX2I &aBbbox )
 
 static void plotPdfBackground( BOARD* aBoard, const PCB_PLOT_PARAMS* aPlotOpts, PLOTTER* aPlotter )
 {
+    const PAGE_INFO& pageInfo = aPlotter->PageSettings();
+    const VECTOR2I   plotOffset = aPlotter->GetPlotOffsetUserUnits();
+    const VECTOR2I   pageSizeIU( pageInfo.GetWidthIU( pcbIUScale.IU_PER_MILS ),
+                                 pageInfo.GetHeightIU( pcbIUScale.IU_PER_MILS ) );
+
     if( aPlotter->GetColorMode()
         && aPlotOpts->GetPDFBackgroundColor() != COLOR4D::UNSPECIFIED )
     {
         aPlotter->SetColor( aPlotOpts->GetPDFBackgroundColor() );
 
-        // Use page size selected in pcb to know the schematic bg area
-        const PAGE_INFO& actualPage = aBoard->GetPageSettings();
+        // Use plotter page size and offset so background matches the plotted output.
+        VECTOR2I end = plotOffset + pageSizeIU;
 
-        VECTOR2I end( actualPage.GetWidthIU( pcbIUScale.IU_PER_MILS ),
-                      actualPage.GetHeightIU( pcbIUScale.IU_PER_MILS ) );
-
-        aPlotter->Rect( VECTOR2I( 0, 0 ), end, FILL_T::FILLED_SHAPE, 1.0 );
+        aPlotter->Rect( plotOffset, end, FILL_T::FILLED_SHAPE, 1.0 );
     }
 }
 

@@ -23,16 +23,18 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <wx/tokenzr.h>
 #include <bitmaps.h>
 #include <symbol_library_common.h>
 #include <confirm.h>
 #include <dialogs/html_message_box.h>
 #include <eeschema_id.h>
 #include <eeschema_settings.h>
+#include <settings/color_settings.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <kiface_base.h>
 #include <kiway.h>
-#include <kiway_express.h>
+#include <kiway_mail.h>
 #include <locale_io.h>
 #include <symbol_viewer_frame.h>
 #include <widgets/msgpanel.h>
@@ -87,6 +89,8 @@ BEGIN_EVENT_TABLE( SYMBOL_VIEWER_FRAME, SCH_BASE_FRAME )
     EVT_TOOL( ID_LIBVIEW_PREVIOUS, SYMBOL_VIEWER_FRAME::onSelectPreviousSymbol )
     EVT_CHOICE( ID_LIBVIEW_SELECT_UNIT_NUMBER, SYMBOL_VIEWER_FRAME::onSelectSymbolUnit )
     EVT_CHOICE( ID_LIBVIEW_SELECT_BODY_STYLE, SYMBOL_VIEWER_FRAME::onSelectSymbolBodyStyle )
+    EVT_CHOICE( ID_ON_ZOOM_SELECT, SYMBOL_VIEWER_FRAME::OnSelectZoom )
+    EVT_CHOICE( ID_ON_GRID_SELECT, SYMBOL_VIEWER_FRAME::OnSelectGrid )
 
     // listbox events
     EVT_TEXT( ID_LIBVIEW_LIB_FILTER, SYMBOL_VIEWER_FRAME::OnLibFilter )
@@ -1070,7 +1074,7 @@ SELECTION& SYMBOL_VIEWER_FRAME::GetCurrentSelection()
 }
 
 
-void SYMBOL_VIEWER_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
+void SYMBOL_VIEWER_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 {
 
     switch( mail.Command() )

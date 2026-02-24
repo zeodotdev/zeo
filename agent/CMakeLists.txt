@@ -104,6 +104,7 @@ set( AGENT_SRCS
     tools/handlers/check_status_handler.cpp
     tools/handlers/create_project_handler.cpp
     tools/handlers/open_editor_handler.cpp
+    tools/handlers/datasheet_handler.cpp
 
 )
 

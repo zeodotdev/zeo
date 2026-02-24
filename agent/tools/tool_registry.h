@@ -8,6 +8,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
+class AGENT_AUTH;
 class TOOL_HANDLER;
 class wxEvtHandler;
 
@@ -64,6 +65,15 @@ public:
     void SetSendRequestFn( SendRequestFn aFn )            { m_sendRequestFn = std::move( aFn ); }
     const SendRequestFn& GetSendRequestFn() const         { return m_sendRequestFn; }
 
+    void SetAuth( AGENT_AUTH* aAuth )                      { m_auth = aAuth; }
+    AGENT_AUTH* GetAuth() const                            { return m_auth; }
+
+    void SetSupabaseUrl( const std::string& aUrl )         { m_supabaseUrl = aUrl; }
+    const std::string& GetSupabaseUrl() const              { return m_supabaseUrl; }
+
+    void SetSupabaseAnonKey( const std::string& aKey )     { m_supabaseAnonKey = aKey; }
+    const std::string& GetSupabaseAnonKey() const          { return m_supabaseAnonKey; }
+
 private:
     TOOL_REGISTRY();
     ~TOOL_REGISTRY() = default;
@@ -88,6 +98,11 @@ private:
     std::string   m_projectName;
     std::vector<std::string> m_openEditorFiles;
     SendRequestFn m_sendRequestFn;
+
+    // Auth and Supabase config (for datasheet extraction)
+    AGENT_AUTH*    m_auth = nullptr;
+    std::string   m_supabaseUrl;
+    std::string   m_supabaseAnonKey;
 };
 
 #endif // TOOL_REGISTRY_H

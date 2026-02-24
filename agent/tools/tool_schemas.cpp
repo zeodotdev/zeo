@@ -65,6 +65,32 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
     checkStatus.read_only = true;
     tools.push_back( checkStatus );
 
+    // datasheet_query - Query extracted datasheet data for a component
+    LLM_TOOL datasheetQuery;
+    datasheetQuery.name = "datasheet_query";
+    datasheetQuery.description =
+        "Query extracted datasheet data for an electronic component. Returns detailed specifications "
+        "including electrical ratings, pin definitions, packages, placement rules, design guidelines, "
+        "decoupling requirements, and external parts. Data is automatically extracted from datasheets "
+        "when components are placed in the schematic. Returns extraction_status: 'completed', "
+        "'processing' (check back later), or 'not_found'.";
+    datasheetQuery.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "part_number", {
+                { "type", "string" },
+                { "description", "Component part number (e.g., 'CP2102N', 'STM32F411CEU6')" }
+            }},
+            { "manufacturer", {
+                { "type", "string" },
+                { "description", "Component manufacturer (optional, helps disambiguate)" }
+            }}
+        }},
+        { "required", json::array( { "part_number" } ) }
+    };
+    datasheetQuery.read_only = true;
+    tools.push_back( datasheetQuery );
+
     // create_project - Create a new KiCad project
     LLM_TOOL createProject;
     createProject.name = "create_project";

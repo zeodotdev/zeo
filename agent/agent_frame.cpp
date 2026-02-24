@@ -951,6 +951,9 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
                 m_auth = sharedAuth;
                 m_ownsAuth = false;
 
+                // Wire auth to tool registry (for datasheet extraction)
+                TOOL_REGISTRY::Instance().SetAuth( m_auth );
+
                 // Wire the shared auth to LLM client and controller
                 m_llmClient->SetAuth( m_auth );
 
@@ -2671,6 +2674,15 @@ void AGENT_FRAME::EnsureAuth()
     else
         m_auth->LoadSession();
 
+    // Wire auth and Supabase config to tool registry (for datasheet extraction)
+    TOOL_REGISTRY::Instance().SetAuth( m_auth );
+
+    if( !supabaseUrl.empty() )
+    {
+        TOOL_REGISTRY::Instance().SetSupabaseUrl( supabaseUrl );
+        TOOL_REGISTRY::Instance().SetSupabaseAnonKey( supabaseKey );
+    }
+
     // Wire to LLM client and controller
     m_llmClient->SetAuth( m_auth );
 
@@ -4034,6 +4046,10 @@ void AGENT_FRAME::ConfigureCloudSync()
 
     m_cloudSync->SetAuth( m_auth );
     m_cloudSync->Configure( supabaseUrl, supabaseKey );
+
+    // Also configure tool registry with Supabase credentials (for datasheet extraction)
+    TOOL_REGISTRY::Instance().SetSupabaseUrl( supabaseUrl );
+    TOOL_REGISTRY::Instance().SetSupabaseAnonKey( supabaseKey );
 
     // Run initial sync to upload any missed chats/logs from previous sessions
     m_cloudSync->SyncAll();

@@ -58,6 +58,17 @@ try:
     except:
         pass
 
+    # Cache datasheet URLs by lib_id (avoids repeated IPC lookups)
+    _ds_cache = {}
+    def _get_datasheet(lid):
+        if lid not in _ds_cache:
+            try:
+                _info = sch.library.get_symbol_info(lid)
+                _ds_cache[lid] = getattr(_info, 'datasheet', '') or ''
+            except:
+                _ds_cache[lid] = ''
+        return _ds_cache[lid]
+
     # Format symbols with pin positions
     symbol_data = []
     for sym in symbols:
@@ -79,6 +90,9 @@ try:
             'unit': sym.unit if hasattr(sym, 'unit') else 1,
             'pins': []
         }
+        _ds = _get_datasheet(lib_id_str)
+        if _ds:
+            sym_info['datasheet_url'] = _ds
         # Get pin positions using batch API for efficiency (single IPC call per symbol)
         if hasattr(sym, 'pins'):
             # Use batch API if available

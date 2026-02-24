@@ -1109,25 +1109,78 @@ SCH_SCREEN* SCH_EDIT_FRAME::GetScreen() const
 
 SCH_SCREEN* SCH_EDIT_FRAME::GetScreenForApi() const
 {
-    // When an agent transaction is active, operate on the target sheet's screen
-    // instead of the user's current view. This enables concurrent editing.
-    if( m_agentTransactionActive && m_agentTargetSheetUuid != NilUuid() )
+    // Use agent target sheet if set, regardless of transaction state.
+    // This handles both:
+    // 1. Agent transactions (concurrent editing mode)
+    // 2. API-initiated navigation without explicit transaction
+    wxLogMessage( "GetScreenForApi: m_agentTargetSheetUuid=%s, NilUuid=%s",
+                  m_agentTargetSheetUuid.AsStdString(),
+                  NilUuid().AsStdString() );
+
+    if( m_agentTargetSheetUuid != NilUuid() )
     {
         SCH_SHEET_LIST sheetList = Schematic().Hierarchy();
+
+        wxLogMessage( "GetScreenForApi: Searching %zu paths for target UUID=%s",
+                      sheetList.size(), m_agentTargetSheetUuid.AsStdString() );
+
+        // Log all paths in hierarchy for debugging
+        for( size_t i = 0; i < sheetList.size(); i++ )
+        {
+            const SCH_SHEET_PATH& p = sheetList[i];
+            SCH_SCREEN* scr = p.LastScreen();
+            wxLogMessage( "GetScreenForApi: Path[%zu]: %s, lastUuid=%s, screen=%p, items=%zu",
+                          i, p.PathHumanReadable(),
+                          p.size() > 0 ? p.Last()->m_Uuid.AsStdString() : "empty",
+                          scr, scr ? scr->Items().size() : 0 );
+        }
 
         // Find the path that ends at our target sheet (path.Last() matches target UUID)
         for( const SCH_SHEET_PATH& path : sheetList )
         {
             if( path.size() > 0 && path.Last()->m_Uuid == m_agentTargetSheetUuid )
             {
-                return path.LastScreen();
+                SCH_SCREEN* screen = path.LastScreen();
+                SCH_SHEET* sheet = path.Last();
+                wxLogMessage( "GetScreenForApi: Found target sheet! path=%s, sheet=%s, sheetScreen=%p, pathScreen=%p, items=%zu",
+                              path.PathHumanReadable(),
+                              sheet ? sheet->GetName() : "null",
+                              sheet ? sheet->GetScreen() : nullptr,
+                              screen,
+                              screen ? screen->Items().size() : 0 );
+
+                // Log what types of items are on the screen
+                if( screen )
+                {
+                    int symbols = 0, wires = 0, labels = 0, sheets = 0, other = 0;
+                    for( SCH_ITEM* item : screen->Items() )
+                    {
+                        switch( item->Type() )
+                        {
+                        case SCH_SYMBOL_T: symbols++; break;
+                        case SCH_LINE_T: wires++; break;
+                        case SCH_LABEL_T:
+                        case SCH_GLOBAL_LABEL_T:
+                        case SCH_HIER_LABEL_T: labels++; break;
+                        case SCH_SHEET_T: sheets++; break;
+                        default: other++; break;
+                        }
+                    }
+                    wxLogMessage( "GetScreenForApi: Screen contents: symbols=%d, wires=%d, labels=%d, sheets=%d, other=%d",
+                                  symbols, wires, labels, sheets, other );
+                }
+                return screen;
             }
         }
 
+        wxLogMessage( "GetScreenForApi: Target sheet NOT FOUND, falling back to current" );
         // Target sheet not found - fall back to current screen
     }
 
-    return GetCurrentSheet().LastScreen();
+    SCH_SCREEN* currentScreen = GetCurrentSheet().LastScreen();
+    wxLogMessage( "GetScreenForApi: Using current sheet screen=%p, items=%zu",
+                  currentScreen, currentScreen ? currentScreen->Items().size() : 0 );
+    return currentScreen;
 }
 
 

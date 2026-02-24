@@ -1670,11 +1670,15 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
             if( m_agentTargetSheetUuid != NilUuid() )
             {
                 // Reusing existing target sheet
+                wxLogMessage( "MAIL_AGENT_BEGIN_TRANSACTION: Reusing existing target sheet UUID=%s",
+                              m_agentTargetSheetUuid.AsStdString() );
             }
             else if( !sheetUuid.IsEmpty() )
             {
                 // Explicit sheet UUID provided
                 m_agentTargetSheetUuid = KIID( sheetUuid.ToStdString() );
+                wxLogMessage( "MAIL_AGENT_BEGIN_TRANSACTION: Using explicit sheet UUID=%s",
+                              m_agentTargetSheetUuid.AsStdString() );
             }
             else
             {
@@ -1685,10 +1689,13 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                 if( currentPath.size() > 0 )
                 {
                     m_agentTargetSheetUuid = currentPath.Last()->m_Uuid;
+                    wxLogMessage( "MAIL_AGENT_BEGIN_TRANSACTION: Captured current sheet UUID=%s",
+                                  m_agentTargetSheetUuid.AsStdString() );
                 }
                 else
                 {
                     m_agentTargetSheetUuid = NilUuid();
+                    wxLogMessage( "MAIL_AGENT_BEGIN_TRANSACTION: No current sheet, set to NilUuid" );
                 }
             }
         }
@@ -1721,6 +1728,8 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
     case MAIL_AGENT_RESET_TARGET_SHEET:
     {
         // Reset target sheet for new conversation turn - sent when user sends a new message
+        wxLogMessage( "MAIL_AGENT_RESET_TARGET_SHEET: Clearing target sheet (was %s)",
+                      m_agentTargetSheetUuid.AsStdString() );
         m_agentTargetSheetUuid = NilUuid();
         m_agentTransactionActive = false;
         break;

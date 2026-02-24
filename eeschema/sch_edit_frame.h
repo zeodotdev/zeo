@@ -171,6 +171,11 @@ public:
      */
     void SetAgentTargetSheet( const KIID& aUuid ) { m_agentTargetSheetUuid = aUuid; }
 
+    /**
+     * Get the target sheet UUID for agent API operations.
+     */
+    KIID GetAgentTargetSheetUuid() const { return m_agentTargetSheetUuid; }
+
     SELECTION& GetCurrentSelection() override;
 
     SCHEMATIC& Schematic() const;

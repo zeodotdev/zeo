@@ -1581,7 +1581,7 @@ TOOL_ACTION PCB_ACTIONS::showAgent( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Zeo Agent" ) )
         .Tooltip( _( "Open the Zeo AI Agent" ) )
-        .Icon( BITMAPS::net_highlight ) );  // TODO: Add agent icon
+        .Icon( BITMAPS::icon_kicad ) );  // TODO: Add agent icon
 
 // DESIGN RULE EDITOR
 TOOL_ACTION PCB_ACTIONS::drcRuleEditor( TOOL_ACTION_ARGS()

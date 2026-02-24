@@ -353,9 +353,9 @@ std::optional<TOOLBAR_CONFIGURATION> PCB_EDIT_TOOLBAR_SETTINGS::DefaultToolbarCo
 
         config.AppendSeparator();
         config.AppendAction( PCB_ACTIONS::showEeschema );
-        config.AppendAction( PCB_ACTIONS::showAgent );
         config.AppendControl( PCB_ACTION_TOOLBAR_CONTROLS::currentVariant );
         config.AppendControl( ACTION_TOOLBAR_CONTROLS::ipcScripting );
+        config.AppendAction( PCB_ACTIONS::showAgent );
 
         break;
 

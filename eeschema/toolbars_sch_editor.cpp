@@ -209,14 +209,15 @@ std::optional<TOOLBAR_CONFIGURATION> SCH_EDIT_TOOLBAR_SETTINGS::DefaultToolbarCo
               .AppendAction( SCH_ACTIONS::generateBOM );
 
         config.AppendSeparator()
-              .AppendAction( SCH_ACTIONS::showPcbNew )
-              .AppendAction( SCH_ACTIONS::showAgent );
+              .AppendAction( SCH_ACTIONS::showPcbNew );
 
         config.AppendControl( SCH_ACTION_TOOLBAR_CONTROLS::currentVariant );
 
         // Insert all the IPC plugins here on the toolbar
         // TODO (ISM): Move this to individual actions for each script
         config.AppendControl( ACTION_TOOLBAR_CONTROLS::ipcScripting );
+
+        config.AppendAction( SCH_ACTIONS::showAgent );
 
         break;
     }

@@ -336,21 +336,46 @@ API_HANDLER_SCH::handleGetOpenDocuments( const HANDLER_CONTEXT<GetOpenDocuments>
 
     doc.set_type( DocumentType::DOCTYPE_SCHEMATIC );
     // Use sheet_path for schematic documents, not board_filename
-    // Must set the path field (with at least root sheet) for oneof to be recognized
+    // Must set the path field with the FULL hierarchical path for sub-sheet operations
     types::SheetPath* sheetPath = doc.mutable_sheet_path();
-    sheetPath->set_path_human_readable( "/" );
 
-    // Add a placeholder KIID for the root sheet path
-    // This ensures the sheet_path oneof field is properly serialized
-    SCH_SHEET* lastSheet = m_frame->GetCurrentSheet().Last();
-    wxString lastSheetUuid = lastSheet ? lastSheet->m_Uuid.AsString() : wxString( "null" );
+    // When a target sheet is set (either via agent transaction or API navigation),
+    // return the target sheet path instead of the user's current view
+    SCH_SHEET_PATH targetPath;
+    bool useAgentTarget = false;
 
-    wxLogTrace( "SCHEMATIC", "GetOpenDocuments: CurrentSheet size=%zu, Last UUID=%s, file=%s",
-                m_frame->GetCurrentSheet().size(),
-                lastSheetUuid,
-                m_frame->GetCurrentFileName() );
+    if( m_frame->GetAgentTargetSheetUuid() != NilUuid() )
+    {
+        SCH_SHEET_LIST sheetList = m_frame->Schematic().Hierarchy();
+        KIID targetUuid = m_frame->GetAgentTargetSheetUuid();
 
-    sheetPath->add_path()->set_value( m_frame->GetCurrentSheet().Last()->m_Uuid.AsStdString() );
+        for( const SCH_SHEET_PATH& path : sheetList )
+        {
+            if( path.size() > 0 && path.Last()->m_Uuid == targetUuid )
+            {
+                targetPath = path;
+                useAgentTarget = true;
+                break;
+            }
+        }
+    }
+
+    const SCH_SHEET_PATH& pathToUse = useAgentTarget ? targetPath : m_frame->GetCurrentSheet();
+    sheetPath->set_path_human_readable( pathToUse.PathHumanReadable().ToStdString() );
+
+    // Add ALL UUIDs in the path from root to target sheet
+    // This enables proper hierarchical sheet context for IPC operations
+    wxLogMessage( "GetOpenDocuments: %s path size=%zu, path=%s, file=%s, targetUuid=%s",
+                  useAgentTarget ? "Agent target" : "Current",
+                  pathToUse.size(),
+                  pathToUse.PathHumanReadable(),
+                  m_frame->GetCurrentFileName(),
+                  m_frame->GetAgentTargetSheetUuid().AsStdString() );
+
+    for( size_t i = 0; i < pathToUse.size(); ++i )
+    {
+        sheetPath->add_path()->set_value( pathToUse.at( i )->m_Uuid.AsStdString() );
+    }
 
     *response.mutable_documents()->Add() = doc;
     return response;
@@ -739,6 +764,28 @@ HANDLER_RESULT<GetItemsResponse> API_HANDLER_SCH::handleGetItems( const HANDLER_
         return tl::unexpected( e );
     }
 
+    wxLogMessage( "handleGetItems: screen=%p, items=%zu",
+                  screen, screen->Items().size() );
+
+    // Log all items on this screen for debugging
+    for( SCH_ITEM* item : screen->Items() )
+    {
+        if( item->Type() == SCH_SYMBOL_T )
+        {
+            SCH_SYMBOL* sym = static_cast<SCH_SYMBOL*>( item );
+            wxLogMessage( "handleGetItems: Found symbol ref=%s, libId=%s, uuid=%s",
+                          sym->GetRef( &m_frame->GetCurrentSheet() ),
+                          sym->GetLibId().GetUniStringLibItemName(),
+                          sym->m_Uuid.AsStdString() );
+        }
+        else
+        {
+            wxLogMessage( "handleGetItems: Found item type=%d, uuid=%s",
+                          static_cast<int>( item->Type() ),
+                          item->m_Uuid.AsStdString() );
+        }
+    }
+
     std::vector<SCH_ITEM*> items;
     std::set<KICAD_T> typesRequested, typesInserted;
     bool handledAnything = false;
@@ -867,15 +914,28 @@ HANDLER_RESULT<GetItemsResponse> API_HANDLER_SCH::handleGetItems( const HANDLER_
         return tl::unexpected( e );
     }
 
+    wxLogMessage( "handleGetItems: Collected %zu items to serialize, typesRequested size=%zu",
+                  items.size(), typesRequested.size() );
+
+    int serializedCount = 0;
     for( const SCH_ITEM* item : items )
     {
         if( !typesRequested.count( item->Type() ) )
+        {
+            wxLogMessage( "handleGetItems: Skipping item type=%d (not in requested types)",
+                          static_cast<int>( item->Type() ) );
             continue;
+        }
 
+        wxLogMessage( "handleGetItems: Serializing item type=%d, uuid=%s",
+                      static_cast<int>( item->Type() ), item->m_Uuid.AsStdString() );
         google::protobuf::Any itemBuf;
         item->Serialize( itemBuf );
         response.mutable_items()->Add( std::move( itemBuf ) );
+        serializedCount++;
     }
+
+    wxLogMessage( "handleGetItems: Serialized %d items total", serializedCount );
 
     response.set_status( ItemRequestStatus::IRS_OK );
     return response;
@@ -1964,15 +2024,23 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleNavigateToSheet(
         return tl::unexpected( e );
     }
 
-    if( m_frame->IsAgentTransactionActive() && targetPath.size() > 0 )
+    // Always set the target sheet for subsequent API operations
+    if( targetPath.size() > 0 )
+    {
+        KIID targetUuid = targetPath.Last()->m_Uuid;
+        wxLogMessage( "handleNavigateToSheet: Setting target sheet UUID=%s",
+                      targetUuid.AsStdString() );
+        m_frame->SetAgentTargetSheet( targetUuid );
+    }
+
+    if( m_frame->IsAgentTransactionActive() )
     {
         // During agent transactions, only update the target sheet for API operations
-        // without changing the user's visible view
-        m_frame->SetAgentTargetSheet( targetPath.Last()->m_Uuid );
+        // without changing the user's visible view (already done above)
     }
     else
     {
-        // User-initiated or non-transaction navigation — change the visible view
+        // Non-transaction navigation — also change the visible view
         m_frame->SetCurrentSheet( targetPath );
         m_frame->DisplayCurrentSheet();
     }

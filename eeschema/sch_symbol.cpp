@@ -48,6 +48,11 @@
 #include <properties/property.h>
 #include <properties/property_mgr.h>
 
+// Protobuf serialization includes
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
+#include <google/protobuf/any.pb.h>
+
 
 std::unordered_map<TRANSFORM, int> SCH_SYMBOL::s_transformToOrientationCache;
 
@@ -306,6 +311,123 @@ wxString SCH_SYMBOL::GetDatasheet() const
         return m_part->GetDatasheetField().GetText();
 
     return wxEmptyString;
+}
+
+
+void SCH_SYMBOL::Serialize( google::protobuf::Any& aContainer ) const
+{
+    kiapi::schematic::types::Symbol symbol;
+
+    // ID and position
+    symbol.mutable_id()->set_value( m_Uuid.AsStdString() );
+    kiapi::common::PackVector2Sch( *symbol.mutable_position(), m_pos );
+
+    // Orientation - convert from KiCad internal format to angle + mirrors
+    int orientation = GetOrientation();
+    double angle = 0.0;
+
+    switch( orientation & ~( SYM_MIRROR_X | SYM_MIRROR_Y ) )
+    {
+    case SYM_ORIENT_0:   angle = 0.0;   break;
+    case SYM_ORIENT_90:  angle = 90.0;  break;
+    case SYM_ORIENT_180: angle = 180.0; break;
+    case SYM_ORIENT_270: angle = 270.0; break;
+    default:             angle = 0.0;   break;
+    }
+
+    symbol.mutable_angle()->set_value_degrees( angle );
+    symbol.set_mirror_x( ( orientation & SYM_MIRROR_X ) != 0 );
+    symbol.set_mirror_y( ( orientation & SYM_MIRROR_Y ) != 0 );
+
+    // Library ID
+    symbol.mutable_lib_id()->set_library_nickname( std::string( m_lib_id.GetLibNickname().c_str() ) );
+    symbol.mutable_lib_id()->set_entry_name( std::string( m_lib_id.GetLibItemName().c_str() ) );
+
+    // Unit (for multi-unit symbols) - use the current sheet context or default to 1
+    symbol.set_unit( m_unit );
+
+    // Flags
+    symbol.set_dnp( m_DNP );
+    symbol.set_exclude_from_bom( m_excludedFromBOM );
+    symbol.set_exclude_from_board( m_excludedFromBoard );
+    symbol.set_exclude_from_sim( m_excludedFromSim );
+
+    // Serialize fields
+    for( const SCH_FIELD& field : m_fields )
+    {
+        kiapi::schematic::types::Field* protoField = symbol.add_fields();
+        protoField->mutable_id()->set_value( field.m_Uuid.AsStdString() );
+        kiapi::common::PackVector2Sch( *protoField->mutable_position(), field.GetPosition() );
+        protoField->set_text( field.GetText().ToStdString() );
+        protoField->set_name( field.GetName().ToStdString() );
+        protoField->set_id_int( static_cast<int>( field.GetId() ) );
+    }
+
+    // Serialize pins
+    for( const std::unique_ptr<SCH_PIN>& pin : m_pins )
+    {
+        kiapi::schematic::types::Pin* protoPin = symbol.add_pins();
+        protoPin->mutable_id()->set_value( pin->m_Uuid.AsStdString() );
+        kiapi::common::PackVector2Sch( *protoPin->mutable_position(), pin->GetPosition() );
+        protoPin->set_name( pin->GetName().ToStdString() );
+        protoPin->set_number( pin->GetNumber().ToStdString() );
+    }
+
+    aContainer.PackFrom( symbol );
+}
+
+
+bool SCH_SYMBOL::Deserialize( const google::protobuf::Any& aContainer )
+{
+    kiapi::schematic::types::Symbol symbol;
+
+    if( !aContainer.UnpackTo( &symbol ) )
+        return false;
+
+    // ID
+    if( !symbol.id().value().empty() )
+        const_cast<KIID&>( m_Uuid ) = KIID( symbol.id().value() );
+
+    // Position
+    m_pos = kiapi::common::UnpackVector2Sch( symbol.position() );
+
+    // Orientation - convert from angle + mirrors to KiCad internal format
+    double angle = symbol.angle().value_degrees();
+    int orientation = SYM_ORIENT_0;
+
+    if( angle >= 315.0 || angle < 45.0 )
+        orientation = SYM_ORIENT_0;
+    else if( angle >= 45.0 && angle < 135.0 )
+        orientation = SYM_ORIENT_90;
+    else if( angle >= 135.0 && angle < 225.0 )
+        orientation = SYM_ORIENT_180;
+    else
+        orientation = SYM_ORIENT_270;
+
+    if( symbol.mirror_x() )
+        orientation |= SYM_MIRROR_X;
+    if( symbol.mirror_y() )
+        orientation |= SYM_MIRROR_Y;
+
+    SetOrientation( orientation );
+
+    // Library ID
+    m_lib_id = LIB_ID( symbol.lib_id().library_nickname(), symbol.lib_id().entry_name() );
+
+    // Unit
+    m_unit = symbol.unit();
+
+    // Flags
+    m_DNP = symbol.dnp();
+    m_excludedFromBOM = symbol.exclude_from_bom();
+    m_excludedFromBoard = symbol.exclude_from_board();
+    m_excludedFromSim = symbol.exclude_from_sim();
+
+    // Note: Fields and pins deserialization would require more complex handling
+    // to properly sync with existing fields/pins. For now, we handle the main
+    // symbol properties which is sufficient for IPC read operations.
+
+    return true;
 }
 
 

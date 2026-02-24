@@ -117,6 +117,9 @@ public:
         return wxT( "SCH_SYMBOL" );
     }
 
+    void Serialize( google::protobuf::Any& aContainer ) const override;
+    bool Deserialize( const google::protobuf::Any& aContainer ) override;
+
     /**
      * Check to see if the library symbol is set to the dummy library symbol.
      *

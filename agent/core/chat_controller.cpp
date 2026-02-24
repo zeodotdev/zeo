@@ -1972,6 +1972,8 @@ void CHAT_CONTROLLER::GenerateTitle()
             // Build request body
             nlohmann::json requestBody;
             requestBody["message"] = message;
+            if( !m_chatId.empty() )
+                requestBody["conversation_id"] = m_chatId;
             std::string jsonStr = requestBody.dump();
             curl.SetPostFields( jsonStr );
 

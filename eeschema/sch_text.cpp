@@ -50,6 +50,9 @@
 #include <markup_parser.h>
 #include <properties/property.h>
 #include <properties/property_mgr.h>
+#include <api/api_utils.h>
+#include <api/api_enums.h>
+#include <api/schematic/schematic_types.pb.h>
 
 
 SCH_TEXT::SCH_TEXT( const VECTOR2I& aPos, const wxString& aText, SCH_LAYER_ID aLayer, KICAD_T aType ) :
@@ -740,6 +743,95 @@ int SCH_TEXT::compare( const SCH_ITEM& aOther, int aCompareFlags ) const
         return GetTextHeight() - tmp.GetTextHeight();
 
     return 0;
+}
+
+
+void SCH_TEXT::Serialize( google::protobuf::Any& aContainer ) const
+{
+    using namespace kiapi::common;
+    kiapi::schematic::types::Text schText;
+
+    schText.mutable_id()->set_value( m_Uuid.AsStdString() );
+
+    // Set the Text field
+    types::Text* text = schText.mutable_text();
+    text->set_text( GetText().ToStdString() );
+    PackVector2Sch( *text->mutable_position(), GetTextPos() );
+
+    // Set text attributes
+    types::TextAttributes* attrs = text->mutable_attributes();
+
+    if( GetFont() )
+        attrs->set_font_name( GetFont()->GetName().ToStdString() );
+
+    attrs->set_horizontal_alignment( ToProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>( GetHorizJustify() ) );
+    attrs->set_vertical_alignment( ToProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>( GetVertJustify() ) );
+    attrs->mutable_angle()->set_value_degrees( GetTextAngleDegrees() );
+    attrs->set_line_spacing( GetLineSpacing() );
+    attrs->mutable_stroke_width()->set_value_nm( GetTextThickness() );
+    attrs->set_italic( IsItalic() );
+    attrs->set_bold( IsBold() );
+    attrs->set_underlined( GetAttributes().m_Underlined );
+    attrs->set_visible( IsVisible() );
+    attrs->set_mirrored( IsMirrored() );
+    attrs->set_multiline( IsMultilineAllowed() );
+    attrs->set_keep_upright( IsKeepUpright() );
+    PackVector2Sch( *attrs->mutable_size(), GetTextSize() );
+
+    if( HasHyperlink() )
+        text->set_hyperlink( GetHyperlink().ToStdString() );
+
+    aContainer.PackFrom( schText );
+}
+
+
+bool SCH_TEXT::Deserialize( const google::protobuf::Any& aContainer )
+{
+    using namespace kiapi::common;
+    kiapi::schematic::types::Text schText;
+
+    if( !aContainer.UnpackTo( &schText ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( schText.id().value() );
+
+    // Deserialize the text field
+    const types::Text& text = schText.text();
+    SetText( wxString::FromUTF8( text.text() ) );
+    SetTextPos( UnpackVector2Sch( text.position() ) );
+
+    if( !text.hyperlink().empty() )
+        SetHyperlink( wxString::FromUTF8( text.hyperlink() ) );
+
+    // Deserialize text attributes
+    if( text.has_attributes() )
+    {
+        const types::TextAttributes& attrs = text.attributes();
+
+        SetBold( attrs.bold() );
+        SetItalic( attrs.italic() );
+        SetMirrored( attrs.mirrored() );
+        SetMultilineAllowed( attrs.multiline() );
+        SetKeepUpright( attrs.keep_upright() );
+        SetTextThickness( attrs.stroke_width().value_nm() );
+        SetTextSize( UnpackVector2Sch( attrs.size() ) );
+        SetTextAngleDegrees( attrs.angle().value_degrees() );
+        SetLineSpacing( attrs.line_spacing() );
+        SetHorizJustify( FromProtoEnum<GR_TEXT_H_ALIGN_T>( attrs.horizontal_alignment() ) );
+        SetVertJustify( FromProtoEnum<GR_TEXT_V_ALIGN_T>( attrs.vertical_alignment() ) );
+
+        TEXT_ATTRIBUTES textAttrs = GetAttributes();
+        textAttrs.m_Underlined = attrs.underlined();
+        SetAttributes( textAttrs );
+
+        if( !attrs.font_name().empty() )
+        {
+            SetFont( KIFONT::FONT::GetFont( wxString::FromUTF8( attrs.font_name() ),
+                                            attrs.bold(), attrs.italic() ) );
+        }
+    }
+
+    return true;
 }
 
 

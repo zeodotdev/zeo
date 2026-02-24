@@ -670,6 +670,10 @@ bool SCH_TEXTBOX::Deserialize( const google::protobuf::Any& aContainer )
         SetHorizJustify( FromProtoEnum<GR_TEXT_H_ALIGN_T>( attrs.horizontal_alignment() ) );
         SetVertJustify( FromProtoEnum<GR_TEXT_V_ALIGN_T>( attrs.vertical_alignment() ) );
 
+        TEXT_ATTRIBUTES textAttrs = GetAttributes();
+        textAttrs.m_Underlined = attrs.underlined();
+        SetAttributes( textAttrs );
+
         if( !attrs.font_name().empty() )
         {
             SetFont( KIFONT::FONT::GetFont( wxString( attrs.font_name().c_str(), wxConvUTF8 ),

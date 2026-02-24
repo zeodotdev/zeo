@@ -83,8 +83,15 @@ void SCH_JUNCTION::Serialize( google::protobuf::Any& aContainer ) const
     kiapi::common::PackVector2Sch( *junction.mutable_position(), m_pos );
     junction.set_diameter( m_diameter );
 
-    // Color is stored but not serialized for now (requires conversion logic)
-    // TODO: Add color serialization when needed
+    // Pack color as uint32 RGBA
+    if( m_color != COLOR4D::UNSPECIFIED )
+    {
+        uint32_t rgba = ( static_cast<uint32_t>( m_color.r * 255 ) << 24 ) |
+                        ( static_cast<uint32_t>( m_color.g * 255 ) << 16 ) |
+                        ( static_cast<uint32_t>( m_color.b * 255 ) << 8 ) |
+                        static_cast<uint32_t>( m_color.a * 255 );
+        junction.set_color( rgba );
+    }
 
     aContainer.PackFrom( junction );
 }
@@ -104,8 +111,20 @@ bool SCH_JUNCTION::Deserialize( const google::protobuf::Any& aContainer )
     m_pos = kiapi::common::UnpackVector2Sch( junction.position() );
     m_diameter = junction.diameter();
 
-    // Color deserialization - use default for now
-    m_color = COLOR4D::UNSPECIFIED;
+    // Unpack color from uint32 RGBA
+    if( junction.color() != 0 )
+    {
+        uint32_t rgba = junction.color();
+        double r = ( ( rgba >> 24 ) & 0xFF ) / 255.0;
+        double g = ( ( rgba >> 16 ) & 0xFF ) / 255.0;
+        double b = ( ( rgba >> 8 ) & 0xFF ) / 255.0;
+        double a = ( rgba & 0xFF ) / 255.0;
+        m_color = COLOR4D( r, g, b, a );
+    }
+    else
+    {
+        m_color = COLOR4D::UNSPECIFIED;
+    }
 
     return true;
 }

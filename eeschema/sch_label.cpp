@@ -53,6 +53,7 @@
 #include <sch_rule_area.h>
 #include <magic_enum.hpp>
 #include <api/api_utils.h>
+#include <api/api_enums.h>
 #include <api/schematic/schematic_types.pb.h>
 #include <properties/property.h>
 #include <properties/property_mgr.h>
@@ -1589,10 +1590,35 @@ SCH_LABEL::SCH_LABEL( const VECTOR2I& pos, const wxString& text ) :
 
 void SCH_LABEL::Serialize( google::protobuf::Any& aContainer ) const
 {
+    using namespace kiapi::common;
     kiapi::schematic::types::LocalLabel label;
 
     label.mutable_id()->set_value( m_Uuid.AsStdString() );
-    kiapi::common::PackVector2( *label.mutable_position(), GetPosition() );
+    PackVector2Sch( *label.mutable_position(), GetPosition() );
+
+    // Set the text field with full attributes
+    types::Text* text = label.mutable_text();
+    text->set_text( GetText().ToStdString() );
+    PackVector2Sch( *text->mutable_position(), GetTextPos() );
+
+    // Set text attributes
+    types::TextAttributes* attrs = text->mutable_attributes();
+
+    if( GetFont() )
+        attrs->set_font_name( GetFont()->GetName().ToStdString() );
+
+    attrs->set_horizontal_alignment( ToProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>( GetHorizJustify() ) );
+    attrs->set_vertical_alignment( ToProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>( GetVertJustify() ) );
+    attrs->mutable_angle()->set_value_degrees( GetTextAngleDegrees() );
+    attrs->mutable_stroke_width()->set_value_nm( GetTextThickness() );
+    attrs->set_italic( IsItalic() );
+    attrs->set_bold( IsBold() );
+    attrs->set_underlined( GetAttributes().m_Underlined );
+    attrs->set_mirrored( IsMirrored() );
+    attrs->set_line_spacing( GetLineSpacing() );
+    attrs->set_multiline( IsMultilineAllowed() );
+    attrs->set_keep_upright( IsKeepUpright() );
+    PackVector2Sch( *attrs->mutable_size(), GetTextSize() );
 
     aContainer.PackFrom( label );
 }
@@ -1600,13 +1626,46 @@ void SCH_LABEL::Serialize( google::protobuf::Any& aContainer ) const
 
 bool SCH_LABEL::Deserialize( const google::protobuf::Any& aContainer )
 {
+    using namespace kiapi::common;
     kiapi::schematic::types::LocalLabel label;
 
     if( !aContainer.UnpackTo( &label ) )
         return false;
 
     const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
-    SetPosition( kiapi::common::UnpackVector2( label.position() ) );
+    SetPosition( UnpackVector2Sch( label.position() ) );
+
+    // Deserialize the text field
+    const types::Text& text = label.text();
+    SetText( wxString::FromUTF8( text.text() ) );
+
+    // Deserialize text attributes
+    if( text.has_attributes() )
+    {
+        const types::TextAttributes& attrs = text.attributes();
+
+        SetBold( attrs.bold() );
+        SetItalic( attrs.italic() );
+        SetMirrored( attrs.mirrored() );
+        SetMultilineAllowed( attrs.multiline() );
+        SetKeepUpright( attrs.keep_upright() );
+        SetTextThickness( attrs.stroke_width().value_nm() );
+        SetTextSize( UnpackVector2Sch( attrs.size() ) );
+        SetTextAngleDegrees( attrs.angle().value_degrees() );
+        SetLineSpacing( attrs.line_spacing() );
+        SetHorizJustify( FromProtoEnum<GR_TEXT_H_ALIGN_T>( attrs.horizontal_alignment() ) );
+        SetVertJustify( FromProtoEnum<GR_TEXT_V_ALIGN_T>( attrs.vertical_alignment() ) );
+
+        TEXT_ATTRIBUTES textAttrs = GetAttributes();
+        textAttrs.m_Underlined = attrs.underlined();
+        SetAttributes( textAttrs );
+
+        if( !attrs.font_name().empty() )
+        {
+            SetFont( KIFONT::FONT::GetFont( wxString::FromUTF8( attrs.font_name() ),
+                                            attrs.bold(), attrs.italic() ) );
+        }
+    }
 
     return true;
 }
@@ -1692,14 +1751,84 @@ SCH_DIRECTIVE_LABEL::~SCH_DIRECTIVE_LABEL()
 
 void SCH_DIRECTIVE_LABEL::Serialize( google::protobuf::Any& aContainer ) const
 {
-    UNIMPLEMENTED_FOR( GetClass() );
+    using namespace kiapi::common;
+    kiapi::schematic::types::DirectiveLabel label;
+
+    label.mutable_id()->set_value( m_Uuid.AsStdString() );
+    PackVector2Sch( *label.mutable_position(), GetPosition() );
+
+    // Set the text field with full attributes
+    types::Text* text = label.mutable_text();
+    text->set_text( GetText().ToStdString() );
+    PackVector2Sch( *text->mutable_position(), GetTextPos() );
+
+    // Set text attributes
+    types::TextAttributes* attrs = text->mutable_attributes();
+
+    if( GetFont() )
+        attrs->set_font_name( GetFont()->GetName().ToStdString() );
+
+    attrs->set_horizontal_alignment( ToProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>( GetHorizJustify() ) );
+    attrs->set_vertical_alignment( ToProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>( GetVertJustify() ) );
+    attrs->mutable_angle()->set_value_degrees( GetTextAngleDegrees() );
+    attrs->mutable_stroke_width()->set_value_nm( GetTextThickness() );
+    attrs->set_italic( IsItalic() );
+    attrs->set_bold( IsBold() );
+    attrs->set_underlined( GetAttributes().m_Underlined );
+    attrs->set_mirrored( IsMirrored() );
+    attrs->set_line_spacing( GetLineSpacing() );
+    attrs->set_multiline( IsMultilineAllowed() );
+    attrs->set_keep_upright( IsKeepUpright() );
+    PackVector2Sch( *attrs->mutable_size(), GetTextSize() );
+
+    aContainer.PackFrom( label );
 }
 
 
 bool SCH_DIRECTIVE_LABEL::Deserialize( const google::protobuf::Any& aContainer )
 {
-    UNIMPLEMENTED_FOR( GetClass() );
-    return false;
+    using namespace kiapi::common;
+    kiapi::schematic::types::DirectiveLabel label;
+
+    if( !aContainer.UnpackTo( &label ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
+    SetPosition( UnpackVector2Sch( label.position() ) );
+
+    // Deserialize the text field
+    const types::Text& text = label.text();
+    SetText( wxString::FromUTF8( text.text() ) );
+
+    // Deserialize text attributes
+    if( text.has_attributes() )
+    {
+        const types::TextAttributes& attrs = text.attributes();
+
+        SetBold( attrs.bold() );
+        SetItalic( attrs.italic() );
+        SetMirrored( attrs.mirrored() );
+        SetMultilineAllowed( attrs.multiline() );
+        SetKeepUpright( attrs.keep_upright() );
+        SetTextThickness( attrs.stroke_width().value_nm() );
+        SetTextSize( UnpackVector2Sch( attrs.size() ) );
+        SetTextAngleDegrees( attrs.angle().value_degrees() );
+        SetLineSpacing( attrs.line_spacing() );
+        SetHorizJustify( FromProtoEnum<GR_TEXT_H_ALIGN_T>( attrs.horizontal_alignment() ) );
+        SetVertJustify( FromProtoEnum<GR_TEXT_V_ALIGN_T>( attrs.vertical_alignment() ) );
+
+        TEXT_ATTRIBUTES textAttrs = GetAttributes();
+        textAttrs.m_Underlined = attrs.underlined();
+        SetAttributes( textAttrs );
+
+        if( !attrs.font_name().empty() )
+        {
+            SetFont( KIFONT::FONT::GetFont( wxString::FromUTF8( attrs.font_name() ),
+                                            attrs.bold(), attrs.italic() ) );
+        }
+    }
+
+    return true;
 }
 
 
@@ -1994,14 +2123,84 @@ SCH_GLOBALLABEL::SCH_GLOBALLABEL( const SCH_GLOBALLABEL& aGlobalLabel ) :
 
 void SCH_GLOBALLABEL::Serialize( google::protobuf::Any& aContainer ) const
 {
-    UNIMPLEMENTED_FOR( GetClass() );
+    using namespace kiapi::common;
+    kiapi::schematic::types::GlobalLabel label;
+
+    label.mutable_id()->set_value( m_Uuid.AsStdString() );
+    PackVector2Sch( *label.mutable_position(), GetPosition() );
+
+    // Set the text field with full attributes
+    types::Text* text = label.mutable_text();
+    text->set_text( GetText().ToStdString() );
+    PackVector2Sch( *text->mutable_position(), GetTextPos() );
+
+    // Set text attributes
+    types::TextAttributes* attrs = text->mutable_attributes();
+
+    if( GetFont() )
+        attrs->set_font_name( GetFont()->GetName().ToStdString() );
+
+    attrs->set_horizontal_alignment( ToProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>( GetHorizJustify() ) );
+    attrs->set_vertical_alignment( ToProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>( GetVertJustify() ) );
+    attrs->mutable_angle()->set_value_degrees( GetTextAngleDegrees() );
+    attrs->mutable_stroke_width()->set_value_nm( GetTextThickness() );
+    attrs->set_italic( IsItalic() );
+    attrs->set_bold( IsBold() );
+    attrs->set_underlined( GetAttributes().m_Underlined );
+    attrs->set_mirrored( IsMirrored() );
+    attrs->set_line_spacing( GetLineSpacing() );
+    attrs->set_multiline( IsMultilineAllowed() );
+    attrs->set_keep_upright( IsKeepUpright() );
+    PackVector2Sch( *attrs->mutable_size(), GetTextSize() );
+
+    aContainer.PackFrom( label );
 }
 
 
 bool SCH_GLOBALLABEL::Deserialize( const google::protobuf::Any& aContainer )
 {
-    UNIMPLEMENTED_FOR( GetClass() );
-    return false;
+    using namespace kiapi::common;
+    kiapi::schematic::types::GlobalLabel label;
+
+    if( !aContainer.UnpackTo( &label ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
+    SetPosition( UnpackVector2Sch( label.position() ) );
+
+    // Deserialize the text field
+    const types::Text& text = label.text();
+    SetText( wxString::FromUTF8( text.text() ) );
+
+    // Deserialize text attributes
+    if( text.has_attributes() )
+    {
+        const types::TextAttributes& attrs = text.attributes();
+
+        SetBold( attrs.bold() );
+        SetItalic( attrs.italic() );
+        SetMirrored( attrs.mirrored() );
+        SetMultilineAllowed( attrs.multiline() );
+        SetKeepUpright( attrs.keep_upright() );
+        SetTextThickness( attrs.stroke_width().value_nm() );
+        SetTextSize( UnpackVector2Sch( attrs.size() ) );
+        SetTextAngleDegrees( attrs.angle().value_degrees() );
+        SetLineSpacing( attrs.line_spacing() );
+        SetHorizJustify( FromProtoEnum<GR_TEXT_H_ALIGN_T>( attrs.horizontal_alignment() ) );
+        SetVertJustify( FromProtoEnum<GR_TEXT_V_ALIGN_T>( attrs.vertical_alignment() ) );
+
+        TEXT_ATTRIBUTES textAttrs = GetAttributes();
+        textAttrs.m_Underlined = attrs.underlined();
+        SetAttributes( textAttrs );
+
+        if( !attrs.font_name().empty() )
+        {
+            SetFont( KIFONT::FONT::GetFont( wxString::FromUTF8( attrs.font_name() ),
+                                            attrs.bold(), attrs.italic() ) );
+        }
+    }
+
+    return true;
 }
 
 
@@ -2211,14 +2410,84 @@ SCH_HIERLABEL::SCH_HIERLABEL( const VECTOR2I& pos, const wxString& text, KICAD_T
 
 void SCH_HIERLABEL::Serialize( google::protobuf::Any& aContainer ) const
 {
-    UNIMPLEMENTED_FOR( GetClass() );
+    using namespace kiapi::common;
+    kiapi::schematic::types::HierarchicalLabel label;
+
+    label.mutable_id()->set_value( m_Uuid.AsStdString() );
+    PackVector2Sch( *label.mutable_position(), GetPosition() );
+
+    // Set the text field with full attributes
+    types::Text* text = label.mutable_text();
+    text->set_text( GetText().ToStdString() );
+    PackVector2Sch( *text->mutable_position(), GetTextPos() );
+
+    // Set text attributes
+    types::TextAttributes* attrs = text->mutable_attributes();
+
+    if( GetFont() )
+        attrs->set_font_name( GetFont()->GetName().ToStdString() );
+
+    attrs->set_horizontal_alignment( ToProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>( GetHorizJustify() ) );
+    attrs->set_vertical_alignment( ToProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>( GetVertJustify() ) );
+    attrs->mutable_angle()->set_value_degrees( GetTextAngleDegrees() );
+    attrs->mutable_stroke_width()->set_value_nm( GetTextThickness() );
+    attrs->set_italic( IsItalic() );
+    attrs->set_bold( IsBold() );
+    attrs->set_underlined( GetAttributes().m_Underlined );
+    attrs->set_mirrored( IsMirrored() );
+    attrs->set_line_spacing( GetLineSpacing() );
+    attrs->set_multiline( IsMultilineAllowed() );
+    attrs->set_keep_upright( IsKeepUpright() );
+    PackVector2Sch( *attrs->mutable_size(), GetTextSize() );
+
+    aContainer.PackFrom( label );
 }
 
 
 bool SCH_HIERLABEL::Deserialize( const google::protobuf::Any& aContainer )
 {
-    UNIMPLEMENTED_FOR( GetClass() );
-    return false;
+    using namespace kiapi::common;
+    kiapi::schematic::types::HierarchicalLabel label;
+
+    if( !aContainer.UnpackTo( &label ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( label.id().value() );
+    SetPosition( UnpackVector2Sch( label.position() ) );
+
+    // Deserialize the text field
+    const types::Text& text = label.text();
+    SetText( wxString::FromUTF8( text.text() ) );
+
+    // Deserialize text attributes
+    if( text.has_attributes() )
+    {
+        const types::TextAttributes& attrs = text.attributes();
+
+        SetBold( attrs.bold() );
+        SetItalic( attrs.italic() );
+        SetMirrored( attrs.mirrored() );
+        SetMultilineAllowed( attrs.multiline() );
+        SetKeepUpright( attrs.keep_upright() );
+        SetTextThickness( attrs.stroke_width().value_nm() );
+        SetTextSize( UnpackVector2Sch( attrs.size() ) );
+        SetTextAngleDegrees( attrs.angle().value_degrees() );
+        SetLineSpacing( attrs.line_spacing() );
+        SetHorizJustify( FromProtoEnum<GR_TEXT_H_ALIGN_T>( attrs.horizontal_alignment() ) );
+        SetVertJustify( FromProtoEnum<GR_TEXT_V_ALIGN_T>( attrs.vertical_alignment() ) );
+
+        TEXT_ATTRIBUTES textAttrs = GetAttributes();
+        textAttrs.m_Underlined = attrs.underlined();
+        SetAttributes( textAttrs );
+
+        if( !attrs.font_name().empty() )
+        {
+            SetFont( KIFONT::FONT::GetFont( wxString::FromUTF8( attrs.font_name() ),
+                                            attrs.bold(), attrs.italic() ) );
+        }
+    }
+
+    return true;
 }
 
 

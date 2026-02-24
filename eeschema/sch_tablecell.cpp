@@ -30,6 +30,8 @@
 #include <sch_tablecell.h>
 #include <properties/property.h>
 #include <properties/property_mgr.h>
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
 
 
 SCH_TABLECELL::SCH_TABLECELL( int aLineWidth, FILL_T aFillType ) :
@@ -407,6 +409,39 @@ bool SCH_TABLECELL::operator==( const SCH_TABLECELL& aOtherItem ) const
 {
     return m_colSpan == aOtherItem.m_colSpan && m_rowSpan == aOtherItem.m_rowSpan
            && SCH_TEXTBOX::operator==( aOtherItem );
+}
+
+
+void SCH_TABLECELL::Serialize( google::protobuf::Any& aContainer ) const
+{
+    kiapi::schematic::types::TableCell cell;
+
+    cell.mutable_id()->set_value( m_Uuid.AsStdString() );
+    cell.set_text( GetText().ToStdString() );
+    cell.set_col_span( m_colSpan );
+    cell.set_row_span( m_rowSpan );
+
+    // Note: TextAttributes not serialized - proto doesn't support them yet
+
+    aContainer.PackFrom( cell );
+}
+
+
+bool SCH_TABLECELL::Deserialize( const google::protobuf::Any& aContainer )
+{
+    kiapi::schematic::types::TableCell cell;
+
+    if( !aContainer.UnpackTo( &cell ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( cell.id().value() );
+    SetText( wxString::FromUTF8( cell.text() ) );
+    m_colSpan = cell.col_span();
+    m_rowSpan = cell.row_span();
+
+    // Note: TextAttributes not deserialized - proto doesn't support them yet
+
+    return true;
 }
 
 

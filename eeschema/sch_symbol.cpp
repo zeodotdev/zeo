@@ -50,6 +50,7 @@
 
 // Protobuf serialization includes
 #include <api/api_utils.h>
+#include <api/api_enums.h>
 #include <api/schematic/schematic_types.pb.h>
 #include <google/protobuf/any.pb.h>
 
@@ -361,6 +362,24 @@ void SCH_SYMBOL::Serialize( google::protobuf::Any& aContainer ) const
         protoField->set_text( field.GetText().ToStdString() );
         protoField->set_name( field.GetName().ToStdString() );
         protoField->set_id_int( static_cast<int>( field.GetId() ) );
+
+        // Serialize text attributes
+        kiapi::common::types::TextAttributes* attrs = protoField->mutable_attributes();
+        if( field.GetFont() )
+            attrs->set_font_name( field.GetFont()->GetName().ToStdString() );
+        attrs->set_horizontal_alignment( ToProtoEnum<GR_TEXT_H_ALIGN_T, kiapi::common::types::HorizontalAlignment>( field.GetHorizJustify() ) );
+        attrs->set_vertical_alignment( ToProtoEnum<GR_TEXT_V_ALIGN_T, kiapi::common::types::VerticalAlignment>( field.GetVertJustify() ) );
+        attrs->mutable_angle()->set_value_degrees( field.GetTextAngleDegrees() );
+        attrs->mutable_stroke_width()->set_value_nm( field.GetTextThickness() );
+        attrs->set_italic( field.IsItalic() );
+        attrs->set_bold( field.IsBold() );
+        attrs->set_underlined( field.GetAttributes().m_Underlined );
+        attrs->set_visible( field.IsVisible() );
+        attrs->set_mirrored( field.IsMirrored() );
+        attrs->set_line_spacing( field.GetLineSpacing() );
+        attrs->set_multiline( field.IsMultilineAllowed() );
+        attrs->set_keep_upright( field.IsKeepUpright() );
+        kiapi::common::PackVector2Sch( *attrs->mutable_size(), field.GetTextSize() );
     }
 
     // Serialize pins
@@ -423,9 +442,63 @@ bool SCH_SYMBOL::Deserialize( const google::protobuf::Any& aContainer )
     m_excludedFromBoard = symbol.exclude_from_board();
     m_excludedFromSim = symbol.exclude_from_sim();
 
-    // Note: Fields and pins deserialization would require more complex handling
-    // to properly sync with existing fields/pins. For now, we handle the main
-    // symbol properties which is sufficient for IPC read operations.
+    // Deserialize fields - update existing fields by their field ID
+    for( const auto& protoField : symbol.fields() )
+    {
+        FIELD_T fieldId = static_cast<FIELD_T>( protoField.id_int() );
+
+        // Find existing field by ID
+        SCH_FIELD* field = nullptr;
+        for( SCH_FIELD& f : m_fields )
+        {
+            if( f.GetId() == fieldId )
+            {
+                field = &f;
+                break;
+            }
+        }
+
+        if( field )
+        {
+            // Update existing field
+            if( !protoField.id().value().empty() )
+                const_cast<KIID&>( field->m_Uuid ) = KIID( protoField.id().value() );
+
+            field->SetPosition( kiapi::common::UnpackVector2Sch( protoField.position() ) );
+            field->SetText( wxString::FromUTF8( protoField.text() ) );
+
+            if( !protoField.name().empty() )
+                field->SetName( wxString::FromUTF8( protoField.name() ) );
+
+            // Deserialize text attributes
+            if( protoField.has_attributes() )
+            {
+                const kiapi::common::types::TextAttributes& attrs = protoField.attributes();
+                field->SetBold( attrs.bold() );
+                field->SetItalic( attrs.italic() );
+                field->SetVisible( attrs.visible() );
+                field->SetMirrored( attrs.mirrored() );
+                field->SetMultilineAllowed( attrs.multiline() );
+                field->SetKeepUpright( attrs.keep_upright() );
+                field->SetTextThickness( attrs.stroke_width().value_nm() );
+                field->SetTextSize( kiapi::common::UnpackVector2Sch( attrs.size() ) );
+                field->SetTextAngleDegrees( attrs.angle().value_degrees() );
+                field->SetLineSpacing( attrs.line_spacing() );
+                field->SetHorizJustify( FromProtoEnum<GR_TEXT_H_ALIGN_T>( attrs.horizontal_alignment() ) );
+                field->SetVertJustify( FromProtoEnum<GR_TEXT_V_ALIGN_T>( attrs.vertical_alignment() ) );
+
+                TEXT_ATTRIBUTES textAttrs = field->GetAttributes();
+                textAttrs.m_Underlined = attrs.underlined();
+                field->SetAttributes( textAttrs );
+
+                if( !attrs.font_name().empty() )
+                {
+                    field->SetFont( KIFONT::FONT::GetFont( wxString::FromUTF8( attrs.font_name() ),
+                                                            attrs.bold(), attrs.italic() ) );
+                }
+            }
+        }
+    }
 
     return true;
 }

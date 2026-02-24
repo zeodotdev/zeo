@@ -36,6 +36,8 @@
 #include <geometry/geometry_utils.h>
 #include <properties/property.h>
 #include <properties/property_mgr.h>
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
 
 
 SCH_TABLE::SCH_TABLE( int aLineWidth ) :
@@ -513,6 +515,83 @@ double SCH_TABLE::Similarity( const SCH_ITEM& aOther ) const
         similarity *= m_cells[ii]->Similarity( *other.m_cells[ii] );
 
     return similarity;
+}
+
+
+void SCH_TABLE::Serialize( google::protobuf::Any& aContainer ) const
+{
+    using namespace kiapi::common;
+    kiapi::schematic::types::Table table;
+
+    table.mutable_id()->set_value( m_Uuid.AsStdString() );
+    PackVector2Sch( *table.mutable_position(), GetPosition() );
+    table.set_columns( m_colCount );
+    table.set_rows( GetRowCount() );
+    table.set_header_on( m_StrokeHeaderSeparator );
+
+    // Serialize default column width and row height
+    if( !m_colWidths.empty() )
+        table.set_col_width( m_colWidths.begin()->second );
+
+    if( !m_rowHeights.empty() )
+        table.set_row_height( m_rowHeights.begin()->second );
+
+    // Serialize cells
+    for( SCH_TABLECELL* cell : m_cells )
+    {
+        kiapi::schematic::types::TableCell* protoCell = table.add_cells();
+        protoCell->mutable_id()->set_value( cell->m_Uuid.AsStdString() );
+        protoCell->set_text( cell->GetText().ToStdString() );
+        protoCell->set_col_span( cell->GetColSpan() );
+        protoCell->set_row_span( cell->GetRowSpan() );
+    }
+
+    aContainer.PackFrom( table );
+}
+
+
+bool SCH_TABLE::Deserialize( const google::protobuf::Any& aContainer )
+{
+    using namespace kiapi::common;
+    kiapi::schematic::types::Table table;
+
+    if( !aContainer.UnpackTo( &table ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( table.id().value() );
+    SetPosition( UnpackVector2Sch( table.position() ) );
+    m_colCount = table.columns();
+    m_StrokeHeaderSeparator = table.header_on();
+
+    // Set default column widths and row heights
+    int colWidth = table.col_width();
+    int rowHeight = table.row_height();
+
+    for( int col = 0; col < m_colCount; ++col )
+        m_colWidths[col] = colWidth;
+
+    int rowCount = table.rows();
+    for( int row = 0; row < rowCount; ++row )
+        m_rowHeights[row] = rowHeight;
+
+    // Clear existing cells and deserialize new ones
+    ClearCells();
+
+    for( const kiapi::schematic::types::TableCell& protoCell : table.cells() )
+    {
+        SCH_TABLECELL* cell = new SCH_TABLECELL();
+
+        const_cast<KIID&>( cell->m_Uuid ) = KIID( protoCell.id().value() );
+        cell->SetText( wxString::FromUTF8( protoCell.text() ) );
+        cell->SetColSpan( protoCell.col_span() );
+        cell->SetRowSpan( protoCell.row_span() );
+
+        AddCell( cell );
+    }
+
+    Normalize();
+
+    return true;
 }
 
 

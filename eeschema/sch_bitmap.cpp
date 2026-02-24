@@ -42,6 +42,8 @@
 #include <wx/mstream.h>
 #include <properties/property.h>
 #include <properties/property_mgr.h>
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
 
 
 SCH_BITMAP::SCH_BITMAP( const VECTOR2I& pos ) :
@@ -294,6 +296,54 @@ int SCH_BITMAP::GetHeight() const
 void SCH_BITMAP::SetHeight( int aHeight )
 {
     m_referenceImage.SetHeight( aHeight );
+}
+
+
+void SCH_BITMAP::Serialize( google::protobuf::Any& aContainer ) const
+{
+    using namespace kiapi::common;
+    kiapi::schematic::types::Bitmap bitmap;
+
+    bitmap.mutable_id()->set_value( m_Uuid.AsStdString() );
+    PackVector2Sch( *bitmap.mutable_position(), GetPosition() );
+    bitmap.set_scale( m_referenceImage.GetImageScale() );
+
+    // Get the image data as PNG
+    wxMemoryOutputStream stream;
+    if( m_referenceImage.GetImage().SaveImageData( stream ) )
+    {
+        const wxStreamBuffer* buffer = stream.GetOutputStreamBuffer();
+        bitmap.set_data( buffer->GetBufferStart(), buffer->GetBufferSize() );
+    }
+
+    aContainer.PackFrom( bitmap );
+}
+
+
+bool SCH_BITMAP::Deserialize( const google::protobuf::Any& aContainer )
+{
+    using namespace kiapi::common;
+    kiapi::schematic::types::Bitmap bitmap;
+
+    if( !aContainer.UnpackTo( &bitmap ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( bitmap.id().value() );
+    SetPosition( UnpackVector2Sch( bitmap.position() ) );
+    m_referenceImage.SetImageScale( bitmap.scale() );
+
+    // Load the image data
+    if( !bitmap.data().empty() )
+    {
+        wxMemoryInputStream stream( bitmap.data().data(), bitmap.data().size() );
+        wxImage image;
+        if( image.LoadFile( stream ) )
+        {
+            m_referenceImage.SetImage( image );
+        }
+    }
+
+    return true;
 }
 
 

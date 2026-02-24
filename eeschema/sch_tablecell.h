@@ -86,6 +86,9 @@ public:
     bool operator==( const SCH_TABLECELL& aOther ) const;
     bool operator==( const SCH_ITEM& aOther ) const override;
 
+    void Serialize( google::protobuf::Any& aContainer ) const override;
+    bool Deserialize( const google::protobuf::Any& aContainer ) override;
+
 protected:
     void swapData( SCH_ITEM* aItem ) override;
 

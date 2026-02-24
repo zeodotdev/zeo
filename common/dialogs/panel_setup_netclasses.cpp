@@ -198,7 +198,10 @@ PANEL_SETUP_NETCLASSES::PANEL_SETUP_NETCLASSES( wxWindow* aParentWindow, EDA_DRA
     wxSizer* buttonSizer = m_importColorsButton->GetContainingSizer();
 
     if( buttonSizer )
-        buttonSizer->Add( m_autoGenerateButton, 0, wxALIGN_CENTER_VERTICAL | wxBOTTOM | wxRIGHT | wxLEFT, 10 );
+    {
+        buttonSizer->Add( m_autoGenerateButton, 0, wxALIGN_CENTER_VERTICAL | wxBOTTOM | wxLEFT, 5 );
+        buttonSizer->Add( 10, 0 );  // Extra right padding to align with OK button
+    }
 
     m_colorDefaultHelpText->SetFont( KIUI::GetInfoFont( this ).Italic() );
 

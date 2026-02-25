@@ -5,18 +5,20 @@
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 #include <wx/filename.h>
+#include <wx/dir.h>
 #include <wx/log.h>
+#include <wx/app.h>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
 #include <set>
 #include <cmath>
+#include <thread>
 
 using json = nlohmann::json;
 
 /**
  * Escape a string for KiCad S-expression format.
- * Double quotes and backslashes must be escaped.
  */
 static std::string EscapeSExpr( const std::string& s )
 {
@@ -50,124 +52,232 @@ static std::string UrlEncode( const std::string& s )
     return result;
 }
 
+/**
+ * Null-safe JSON string accessor.
+ * json::value() throws when the key exists but has a null value.
+ */
+static std::string SafeStr( const json& j, const char* key, const std::string& def )
+{
+    auto it = j.find( key );
+    if( it == j.end() || it->is_null() )
+        return def;
+    return it->get<std::string>();
+}
+
+
 // KiCad grid spacing for pins (100 mil = 2.54 mm)
 static constexpr double PIN_SPACING = 2.54;
-// Pin length in mm
 static constexpr double PIN_LENGTH = 2.54;
-// Gap between pin groups on a side
 static constexpr double GROUP_GAP = 2.54;
-// Minimum body width/height
-static constexpr double MIN_BODY_WIDTH = 10.16;  // 400 mil
-static constexpr double MIN_BODY_HEIGHT = 5.08;  // 200 mil
-// Font size for pin names and numbers
+static constexpr double MIN_BODY_WIDTH = 10.16;   // 400 mil
+static constexpr double MIN_BODY_HEIGHT = 5.08;    // 200 mil
 static constexpr double FONT_SIZE = 1.27;
-// Property text offset from body
 static constexpr double PROP_OFFSET = 1.27;
 
 
+// ---------------------------------------------------------------------------
+// Execute (sync stub — not used since IsAsync returns true)
+// ---------------------------------------------------------------------------
 std::string SYMBOL_GENERATOR::Execute( const std::string& aToolName,
                                         const nlohmann::json& aInput )
 {
+    return R"({"error": "generate_symbol must be called asynchronously"})";
+}
+
+
+std::string SYMBOL_GENERATOR::GetDescription( const std::string& aToolName,
+                                               const nlohmann::json& aInput ) const
+{
+    std::string part = aInput.value( "part_number", "" );
+    return "Generating KiCad symbol for " + part;
+}
+
+
+// ---------------------------------------------------------------------------
+// ExecuteAsync — spawns background thread for the full workflow
+// ---------------------------------------------------------------------------
+void SYMBOL_GENERATOR::ExecuteAsync( const std::string& aToolName,
+                                      const nlohmann::json& aInput,
+                                      const std::string& aToolUseId,
+                                      wxEvtHandler* aEventHandler )
+{
     std::string partNumber = aInput.value( "part_number", "" );
     std::string manufacturer = aInput.value( "manufacturer", "" );
+    std::string datasheetUrl = aInput.value( "datasheet_url", "" );
+    std::string componentId = aInput.value( "component_id", "" );
     std::string libraryName = aInput.value( "library_name", "" );
 
-    if( partNumber.empty() )
-        return R"({"error": "part_number is required"})";
+    if( datasheetUrl.empty() )
+    {
+        ToolExecutionResult result;
+        result.tool_use_id = aToolUseId;
+        result.tool_name = aToolName;
+        result.result = R"({"error": "datasheet_url is required"})";
+        result.success = false;
+        PostToolResult( aEventHandler, result );
+        return;
+    }
 
-    // Default library name to project-local library
     if( libraryName.empty() )
         libraryName = "project";
 
-    wxLogInfo( "SYMBOL_GENERATOR: Generating symbol for %s by %s",
-               partNumber.c_str(), manufacturer.c_str() );
-
-    // Fetch component data from database
-    ComponentData data;
-    if( !FetchComponentData( partNumber, manufacturer, data ) )
-    {
-        return R"({"error": "Component not found or extraction not completed. Use extract_datasheet first."})";
-    }
-
-    if( data.pins.empty() )
-    {
-        return R"({"error": "No pin data available for this component. Cannot generate symbol."})";
-    }
-
-    // Determine output path
+    // Get project path on main thread
     const auto& reg = TOOL_REGISTRY::Instance();
     std::string projectPath = reg.GetProjectPath();
 
     if( projectPath.empty() )
-        return R"({"error": "No project open. Open or create a project first."})";
+    {
+        ToolExecutionResult result;
+        result.tool_use_id = aToolUseId;
+        result.tool_name = aToolName;
+        result.result = R"({"error": "No project open. Open or create a project first."})";
+        result.success = false;
+        PostToolResult( aEventHandler, result );
+        return;
+    }
 
-    // Write to <project_dir>/<library_name>.kicad_sym
-    wxFileName projDir( wxString::FromUTF8( projectPath ), "" );
-    std::string libFileName = libraryName + ".kicad_sym";
+    wxLogInfo( "SYMBOL_GENERATOR: Starting for %s (datasheet=%s, component_id=%s)",
+               partNumber.c_str(), datasheetUrl.c_str(), componentId.c_str() );
+
+    std::thread( [=, this]()
+    {
+        std::string resultStr = DoGenerate( partNumber, manufacturer, datasheetUrl,
+                                             componentId, libraryName, projectPath );
+
+        bool success = false;
+        try
+        {
+            auto resultJson = json::parse( resultStr );
+            success = !resultJson.contains( "error" );
+        }
+        catch( ... ) {}
+
+        wxTheApp->CallAfter( [=]()
+        {
+            ToolExecutionResult result;
+            result.tool_use_id = aToolUseId;
+            result.tool_name = "generate_symbol";
+            result.result = resultStr;
+            result.success = success;
+            PostToolResult( aEventHandler, result );
+        } );
+    } ).detach();
+}
+
+
+// ---------------------------------------------------------------------------
+// DoGenerate — full workflow (runs on background thread)
+// ---------------------------------------------------------------------------
+std::string SYMBOL_GENERATOR::DoGenerate( const std::string& aPartNumber,
+                                           const std::string& aManufacturer,
+                                           const std::string& aDatasheetUrl,
+                                           const std::string& aComponentId,
+                                           const std::string& aLibraryName,
+                                           const std::string& aProjectPath )
+{
+    // Step 1: Check local library for existing symbol with matching datasheet URL
+    if( !aDatasheetUrl.empty() )
+    {
+        std::string existingLibId = FindLocalSymbolByDatasheet( aDatasheetUrl, aProjectPath );
+        if( !existingLibId.empty() )
+        {
+            wxLogInfo( "SYMBOL_GENERATOR: Found existing local symbol: %s", existingLibId.c_str() );
+            json result;
+            result["status"] = "already_exists";
+            result["message"] = "Symbol already exists in local library";
+            result["lib_id"] = existingLibId;
+            return result.dump( 2 );
+        }
+    }
+
+    // Step 2: Try to fetch component data from DB
+    ComponentData data;
+    bool haveData = FetchComponentData( aPartNumber, aManufacturer, data,
+                                         aComponentId, aDatasheetUrl );
+
+    // Step 3: If no extraction data, auto-trigger extraction
+    if( !haveData && !aDatasheetUrl.empty() )
+    {
+        wxLogInfo( "SYMBOL_GENERATOR: No extraction data found, triggering extraction" );
+        std::string newComponentId = TriggerExtractionSync( aPartNumber, aManufacturer,
+                                                             aDatasheetUrl );
+
+        if( newComponentId.empty() )
+        {
+            json err;
+            err["error"] = "Datasheet extraction failed. Check the URL is accessible.";
+            return err.dump();
+        }
+
+        // Re-fetch with the component ID we got back
+        haveData = FetchComponentData( aPartNumber, aManufacturer, data, newComponentId );
+    }
+
+    if( !haveData )
+    {
+        json err;
+        err["error"] = "Component not found. Provide a datasheet_url to extract data automatically.";
+        return err.dump();
+    }
+
+    if( data.pins.empty() )
+    {
+        json err;
+        err["error"] = "No pin data available for this component. The datasheet may not have "
+                        "contained parseable pin information.";
+        return err.dump();
+    }
+
+    // Step 4: Generate and write the symbol
+    wxFileName projDir( wxString::FromUTF8( aProjectPath ), "" );
+    std::string libFileName = aLibraryName + ".kicad_sym";
     wxFileName libPath( projDir.GetPath(), wxString::FromUTF8( libFileName ) );
     std::string outputPath = libPath.GetFullPath().ToStdString();
 
     wxLogInfo( "SYMBOL_GENERATOR: Output path: %s", outputPath.c_str() );
 
-    // Check if library file already exists — if so, we need to check for the
-    // symbol name and either append or report conflict
+    std::string symbolContent = GenerateSymbolContent( data, aLibraryName );
     bool libExists = wxFileName::FileExists( libPath.GetFullPath() );
-
-    // Generate the symbol S-expression content
-    std::string symbolContent = GenerateSymbolContent( data, libraryName );
 
     if( libExists )
     {
-        // Read existing file
         std::ifstream existingFile( outputPath );
         std::string existingContent( ( std::istreambuf_iterator<char>( existingFile ) ),
                                        std::istreambuf_iterator<char>() );
         existingFile.close();
 
-        // Check if symbol already exists in library
+        // Check if symbol already exists by name
         std::string symbolTag = "(symbol \"" + data.part_number + "\"";
         if( existingContent.find( symbolTag ) != std::string::npos )
         {
             json result;
             result["status"] = "already_exists";
             result["message"] = "Symbol '" + data.part_number + "' already exists in " + libFileName;
-            result["lib_id"] = libraryName + ":" + data.part_number;
+            result["lib_id"] = aLibraryName + ":" + data.part_number;
             result["file_path"] = outputPath;
             return result.dump( 2 );
         }
 
-        // Append symbol before the closing parenthesis
+        // Append symbol before closing paren
         size_t lastParen = existingContent.rfind( ')' );
         if( lastParen != std::string::npos )
         {
             std::string newContent = existingContent.substr( 0, lastParen )
                                      + symbolContent + "\n)\n";
-
             std::ofstream outFile( outputPath );
-
             if( !outFile.is_open() )
             {
                 json err;
                 err["error"] = "Failed to open library file for writing: " + outputPath;
                 return err.dump();
             }
-
             outFile << newContent;
             outFile.close();
-
-            if( outFile.fail() )
-            {
-                json err;
-                err["error"] = "Failed to write library file: " + outputPath;
-                return err.dump();
-            }
         }
     }
     else
     {
-        // Create new library file
         std::ofstream outFile( outputPath );
-
         if( !outFile.is_open() )
         {
             json err;
@@ -181,13 +291,6 @@ std::string SYMBOL_GENERATOR::Execute( const std::string& aToolName,
                 << "\t(generator_version \"1.0\")\n"
                 << symbolContent << "\n)\n";
         outFile.close();
-
-        if( outFile.fail() )
-        {
-            json err;
-            err["error"] = "Failed to write library file: " + outputPath;
-            return err.dump();
-        }
     }
 
     wxLogInfo( "SYMBOL_GENERATOR: Symbol written for %s (%zu pins)",
@@ -197,27 +300,101 @@ std::string SYMBOL_GENERATOR::Execute( const std::string& aToolName,
     result["status"] = "created";
     result["message"] = "Symbol '" + data.part_number + "' generated with "
                         + std::to_string( data.pins.size() ) + " pins";
-    result["lib_id"] = libraryName + ":" + data.part_number;
+    result["lib_id"] = aLibraryName + ":" + data.part_number;
     result["file_path"] = outputPath;
     result["pin_count"] = data.pins.size();
     result["instructions"] = "Add the library to the project symbol table if not already present, "
-                             "then use sch_add with lib_id '" + libraryName + ":"
+                             "then use sch_add with lib_id '" + aLibraryName + ":"
                              + data.part_number + "' to place the symbol.";
     return result.dump( 2 );
 }
 
 
-std::string SYMBOL_GENERATOR::GetDescription( const std::string& aToolName,
-                                               const nlohmann::json& aInput ) const
+// ---------------------------------------------------------------------------
+// FindLocalSymbolByDatasheet — scan .kicad_sym files for matching Datasheet URL
+// ---------------------------------------------------------------------------
+std::string SYMBOL_GENERATOR::FindLocalSymbolByDatasheet( const std::string& aDatasheetUrl,
+                                                           const std::string& aProjectPath )
 {
-    std::string part = aInput.value( "part_number", "" );
-    return "Generating KiCad symbol for " + part;
+    wxFileName projDir( wxString::FromUTF8( aProjectPath ), "" );
+    wxString dirPath = projDir.GetPath();
+
+    wxArrayString files;
+    wxDir::GetAllFiles( dirPath, &files, "*.kicad_sym", wxDIR_FILES );
+
+    // Search pattern: (property "Datasheet" "URL"
+    std::string searchStr = "(property \"Datasheet\" \"" + EscapeSExpr( aDatasheetUrl ) + "\"";
+
+    for( const auto& filePath : files )
+    {
+        std::ifstream file( filePath.ToStdString() );
+        if( !file.is_open() )
+            continue;
+
+        std::string content( ( std::istreambuf_iterator<char>( file ) ),
+                               std::istreambuf_iterator<char>() );
+        file.close();
+
+        size_t datasheetPos = content.find( searchStr );
+        if( datasheetPos == std::string::npos )
+            continue;
+
+        // Found! Now find the enclosing symbol name.
+        // Walk backwards from datasheetPos to find (symbol "NAME"
+        size_t searchStart = content.rfind( "(symbol \"", datasheetPos );
+        if( searchStart == std::string::npos )
+            continue;
+
+        size_t nameStart = searchStart + 9; // length of '(symbol "'
+        size_t nameEnd = content.find( '"', nameStart );
+        if( nameEnd == std::string::npos )
+            continue;
+
+        std::string symbolName = content.substr( nameStart, nameEnd - nameStart );
+
+        // Skip sub-symbol entries like "LT8711HE_0_1" or "LT8711HE_1_1"
+        // These contain underscores followed by digits — the real symbol doesn't
+        if( symbolName.find( '_' ) != std::string::npos )
+        {
+            // Check if it ends with _N_N pattern
+            size_t lastUnderscore = symbolName.rfind( '_' );
+            if( lastUnderscore > 0 )
+            {
+                size_t secondLastUnderscore = symbolName.rfind( '_', lastUnderscore - 1 );
+                if( secondLastUnderscore != std::string::npos )
+                {
+                    // Re-search from further back to find the parent symbol
+                    searchStart = content.rfind( "(symbol \"", searchStart - 1 );
+                    if( searchStart != std::string::npos )
+                    {
+                        nameStart = searchStart + 9;
+                        nameEnd = content.find( '"', nameStart );
+                        if( nameEnd != std::string::npos )
+                            symbolName = content.substr( nameStart, nameEnd - nameStart );
+                    }
+                }
+            }
+        }
+
+        // Derive library name from filename
+        wxFileName fn( filePath );
+        std::string libName = fn.GetName().ToStdString();
+
+        return libName + ":" + symbolName;
+    }
+
+    return "";
 }
 
 
+// ---------------------------------------------------------------------------
+// FetchComponentData — query Supabase by datasheet URL, component ID, or part number
+// ---------------------------------------------------------------------------
 bool SYMBOL_GENERATOR::FetchComponentData( const std::string& aPartNumber,
                                             const std::string& aManufacturer,
-                                            ComponentData& aData )
+                                            ComponentData& aData,
+                                            const std::string& aComponentId,
+                                            const std::string& aDatasheetUrl )
 {
     const auto& reg = TOOL_REGISTRY::Instance();
     AGENT_AUTH* auth = reg.GetAuth();
@@ -231,18 +408,30 @@ bool SYMBOL_GENERATOR::FetchComponentData( const std::string& aPartNumber,
     if( accessToken.empty() )
         return false;
 
-    // Query component with packages (which contain pins) and footprints
     std::string url = supabaseUrl + "/rest/v1/components?select="
         "id,part_number,manufacturer,description,category,datasheet_url,"
         "extraction_status,"
         "component_packages(id,package_type,"
             "component_pins(pin_number,pin_name,pin_type,function_group),"
             "component_footprints(footprint_library,footprint_name,is_datasheet_recommended)"
-        ")"
-        "&part_number=eq." + UrlEncode( aPartNumber );
+        ")";
 
-    if( !aManufacturer.empty() )
-        url += "&manufacturer=eq." + UrlEncode( aManufacturer );
+    // Priority: datasheet_url > component_id > part_number
+    if( !aDatasheetUrl.empty() )
+    {
+        url += "&datasheet_url=eq." + UrlEncode( aDatasheetUrl );
+    }
+    else if( !aComponentId.empty() )
+    {
+        url += "&id=eq." + UrlEncode( aComponentId );
+    }
+    else
+    {
+        url += "&part_number=eq." + UrlEncode( aPartNumber );
+
+        if( !aManufacturer.empty() )
+            url += "&manufacturer=eq." + UrlEncode( aManufacturer );
+    }
 
     url += "&limit=1";
 
@@ -269,20 +458,18 @@ bool SYMBOL_GENERATOR::FetchComponentData( const std::string& aPartNumber,
 
         auto& comp = response[0];
 
-        if( comp.value( "extraction_status", "" ) != "completed" )
+        if( SafeStr( comp, "extraction_status", "" ) != "completed" )
         {
-            wxLogTrace( "Agent", "SYMBOL_GENERATOR: Extraction not completed for %s",
-                        aPartNumber.c_str() );
+            wxLogTrace( "Agent", "SYMBOL_GENERATOR: Extraction not completed" );
             return false;
         }
 
-        aData.part_number = comp.value( "part_number", aPartNumber );
-        aData.manufacturer = comp.value( "manufacturer", aManufacturer );
-        aData.description = comp.value( "description", "" );
-        aData.category = comp.value( "category", "" );
-        aData.datasheet_url = comp.value( "datasheet_url", "" );
+        aData.part_number = SafeStr( comp, "part_number", aPartNumber );
+        aData.manufacturer = SafeStr( comp, "manufacturer", aManufacturer );
+        aData.description = SafeStr( comp, "description", "" );
+        aData.category = SafeStr( comp, "category", "" );
+        aData.datasheet_url = SafeStr( comp, "datasheet_url", "" );
 
-        // Extract pins from packages
         if( comp.contains( "component_packages" ) )
         {
             for( const auto& pkg : comp["component_packages"] )
@@ -292,21 +479,20 @@ bool SYMBOL_GENERATOR::FetchComponentData( const std::string& aPartNumber,
                     for( const auto& pin : pkg["component_pins"] )
                     {
                         PinData pd;
-                        pd.number = pin.value( "pin_number", "" );
-                        pd.name = pin.value( "pin_name", "" );
-                        pd.type = pin.value( "pin_type", "passive" );
-                        pd.function_group = pin.value( "function_group", "" );
+                        pd.number = SafeStr( pin, "pin_number", "" );
+                        pd.name = SafeStr( pin, "pin_name", "" );
+                        pd.type = SafeStr( pin, "pin_type", "passive" );
+                        pd.function_group = SafeStr( pin, "function_group", "" );
                         aData.pins.push_back( pd );
                     }
                 }
 
-                // Get first recommended footprint
                 if( aData.footprint.empty() && pkg.contains( "component_footprints" ) )
                 {
                     for( const auto& fp : pkg["component_footprints"] )
                     {
-                        std::string lib = fp.value( "footprint_library", "" );
-                        std::string name = fp.value( "footprint_name", "" );
+                        std::string lib = SafeStr( fp, "footprint_library", "" );
+                        std::string name = SafeStr( fp, "footprint_name", "" );
                         if( !name.empty() )
                         {
                             aData.footprint = lib.empty() ? name : ( lib + ":" + name );
@@ -327,21 +513,93 @@ bool SYMBOL_GENERATOR::FetchComponentData( const std::string& aPartNumber,
 }
 
 
+// ---------------------------------------------------------------------------
+// TriggerExtractionSync — call extract-datasheet edge function, return component_id
+// ---------------------------------------------------------------------------
+std::string SYMBOL_GENERATOR::TriggerExtractionSync( const std::string& aPartNumber,
+                                                      const std::string& aManufacturer,
+                                                      const std::string& aDatasheetUrl )
+{
+    const auto& reg = TOOL_REGISTRY::Instance();
+    AGENT_AUTH* auth = reg.GetAuth();
+    const std::string& supabaseUrl = reg.GetSupabaseUrl();
+    const std::string& anonKey = reg.GetSupabaseAnonKey();
+
+    if( !auth || supabaseUrl.empty() )
+        return "";
+
+    std::string accessToken = auth->GetAccessToken();
+    if( accessToken.empty() )
+        return "";
+
+    json body;
+    body["datasheet_url"] = aDatasheetUrl;
+    body["mode"] = "sync";
+
+    if( !aPartNumber.empty() )
+        body["part_number"] = aPartNumber;
+    if( !aManufacturer.empty() )
+        body["manufacturer"] = aManufacturer;
+
+    std::string url = supabaseUrl + "/functions/v1/extract-datasheet";
+
+    try
+    {
+        KICAD_CURL_EASY curl;
+        curl.SetURL( url );
+        curl.SetFollowRedirects( true );
+        curl.SetHeader( "Authorization", "Bearer " + accessToken );
+        curl.SetHeader( "apikey", anonKey );
+        curl.SetHeader( "Content-Type", "application/json" );
+        curl.SetPostFields( body.dump() );
+
+        // Sync extraction can take 30-120s
+        curl_easy_setopt( curl.GetCurl(), CURLOPT_TIMEOUT, 180L );
+
+        curl.Perform();
+
+        long httpCode = curl.GetResponseStatusCode();
+        std::string response = curl.GetBuffer();
+
+        wxLogInfo( "SYMBOL_GENERATOR: Extraction HTTP %ld for %s",
+                    httpCode, aDatasheetUrl.c_str() );
+
+        if( httpCode >= 200 && httpCode < 300 )
+        {
+            auto resultJson = json::parse( response );
+            std::string status = SafeStr( resultJson, "extraction_status", "" );
+
+            if( status == "completed" )
+                return SafeStr( resultJson, "component_id", "" );
+        }
+
+        wxLogTrace( "Agent", "SYMBOL_GENERATOR: Extraction failed HTTP %ld: %s",
+                    httpCode, response.c_str() );
+        return "";
+    }
+    catch( const std::exception& e )
+    {
+        wxLogTrace( "Agent", "SYMBOL_GENERATOR: Extraction exception: %s", e.what() );
+        return "";
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// Pin layout and symbol generation (unchanged logic)
+// ---------------------------------------------------------------------------
 SYMBOL_GENERATOR::PinLayout SYMBOL_GENERATOR::AssignPinSides(
     const std::vector<PinData>& aPins )
 {
     PinLayout layout;
 
-    // Group pins by function_group for ordered placement
     std::map<std::string, std::vector<const PinData*>> groups;
-
     for( const auto& pin : aPins )
     {
         std::string group = pin.function_group.empty() ? "Other" : pin.function_group;
         groups[group].push_back( &pin );
     }
 
-    // Assign each pin to a side based on type
     for( const auto& [groupName, pins] : groups )
     {
         for( const auto* pin : pins )
@@ -356,11 +614,10 @@ SYMBOL_GENERATOR::PinLayout SYMBOL_GENERATOR::AssignPinSides(
             else if( pin->type == "no_connect" )
                 layout.right.push_back( pin );
             else
-                layout.left.push_back( pin );  // input, bidirectional, passive, etc.
+                layout.left.push_back( pin );
         }
     }
 
-    // Sort pins within each side by function_group then by pin name/number
     auto sortPins = []( std::vector<const PinData*>& pins )
     {
         std::sort( pins.begin(), pins.end(),
@@ -388,11 +645,11 @@ std::string SYMBOL_GENERATOR::PinTypeToKiCad( const std::string& aType )
     if( aType == "input" )          return "input";
     if( aType == "output" )         return "output";
     if( aType == "bidirectional" )   return "bidirectional";
-    if( aType == "open_drain" )     return "open_collector";  // KiCad uses open_collector for both
+    if( aType == "open_drain" )     return "open_collector";
     if( aType == "open_collector" ) return "open_collector";
     if( aType == "passive" )        return "passive";
     if( aType == "no_connect" )     return "no_connect";
-    if( aType == "ground" )         return "power_in";  // Ground is power_in in KiCad
+    if( aType == "ground" )         return "power_in";
     return "unspecified";
 }
 
@@ -417,14 +674,12 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
 {
     PinLayout layout = AssignPinSides( aData.pins );
 
-    // Calculate how many pins on each side, accounting for group gaps
     auto countWithGaps = []( const std::vector<const PinData*>& pins ) -> int
     {
         if( pins.empty() )
             return 0;
 
         int count = static_cast<int>( pins.size() );
-        // Count group transitions (add gap for each new group)
         std::string lastGroup;
         for( const auto* pin : pins )
         {
@@ -440,14 +695,12 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
     int topSlots = countWithGaps( layout.top );
     int bottomSlots = countWithGaps( layout.bottom );
 
-    // Body dimensions
     int verticalSlots = std::max( leftSlots, rightSlots );
     int horizontalSlots = std::max( topSlots, bottomSlots );
 
     double bodyHeight = std::max( MIN_BODY_HEIGHT, verticalSlots * PIN_SPACING );
     double bodyWidth = std::max( MIN_BODY_WIDTH, horizontalSlots * PIN_SPACING );
 
-    // Also ensure body is wide enough for the longest pin name on left/right
     auto maxNameLen = []( const std::vector<const PinData*>& pins ) -> size_t
     {
         size_t maxLen = 0;
@@ -461,7 +714,6 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
     double nameWidth = std::max( maxLeftName, maxRightName ) * FONT_SIZE * 0.7;
     bodyWidth = std::max( bodyWidth, nameWidth * 2 + 2.0 );
 
-    // Snap body dimensions to grid
     bodyWidth = std::ceil( bodyWidth / PIN_SPACING ) * PIN_SPACING;
     bodyHeight = std::ceil( bodyHeight / PIN_SPACING ) * PIN_SPACING;
 
@@ -474,14 +726,12 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
     ss << std::fixed;
     ss.precision( 2 );
 
-    // Escape strings for S-expression format
     std::string escPart = EscapeSExpr( aData.part_number );
     std::string escFootprint = EscapeSExpr( aData.footprint );
     std::string escDatasheet = EscapeSExpr( aData.datasheet_url );
     std::string escDescription = EscapeSExpr( aData.description );
     std::string escManufacturer = EscapeSExpr( aData.manufacturer );
 
-    // Symbol definition
     ss << "\t(symbol \"" << escPart << "\"\n";
     ss << "\t\t(pin_names\n";
     ss << "\t\t\t(offset 1.016)\n";
@@ -490,7 +740,6 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
     ss << "\t\t(in_bom yes)\n";
     ss << "\t\t(on_board yes)\n";
 
-    // Properties
     ss << "\t\t(property \"Reference\" \"" << ref << "\"\n";
     ss << "\t\t\t(at 0 " << ( halfH + PROP_OFFSET + 2.54 ) << " 0)\n";
     ss << "\t\t\t(effects (font (size " << FONT_SIZE << " " << FONT_SIZE << ")))\n";
@@ -524,7 +773,6 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
         ss << "\t\t)\n";
     }
 
-    // Body rectangle (unit 0 = common graphics)
     ss << "\t\t(symbol \"" << escPart << "_0_1\"\n";
     ss << "\t\t\t(rectangle\n";
     ss << "\t\t\t\t(start " << -halfW << " " << halfH << ")\n";
@@ -534,15 +782,11 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
     ss << "\t\t\t)\n";
     ss << "\t\t)\n";
 
-    // Pins (unit 1 = all pins in single unit)
     ss << "\t\t(symbol \"" << escPart << "_1_1\"\n";
 
-    // Helper lambda to emit a pin
     auto emitPin = [&]( const PinData* pin, double x, double y, int orientation )
     {
         std::string kiType = PinTypeToKiCad( pin->type );
-
-        // Orientation: 0=right, 90=up, 180=left, 270=down
         ss << "\t\t\t(pin " << kiType << " line\n";
         ss << "\t\t\t\t(at " << x << " " << y << " " << orientation << ")\n";
         ss << "\t\t\t\t(length " << PIN_LENGTH << ")\n";
@@ -555,7 +799,6 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
         ss << "\t\t\t)\n";
     };
 
-    // Emit pins with group gaps
     auto emitSidePins = [&]( const std::vector<const PinData*>& pins,
                               double startX, double startY,
                               double dx, double dy, int orientation )
@@ -565,13 +808,11 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
 
         for( const auto* pin : pins )
         {
-            // Add gap between groups
             if( !lastGroup.empty() && pin->function_group != lastGroup )
                 slot++;
 
             double x = startX + slot * dx;
             double y = startY + slot * dy;
-
             emitPin( pin, x, y, orientation );
 
             lastGroup = pin->function_group;
@@ -579,45 +820,33 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
         }
     };
 
-    // Left side: connection at left, pin extends right toward body (orientation 0)
     if( !layout.left.empty() )
     {
         double startY = ( ( leftSlots - 1 ) * PIN_SPACING ) / 2.0;
-        emitSidePins( layout.left,
-                      -( halfW + PIN_LENGTH ), startY,
-                      0, -PIN_SPACING, 0 );
+        emitSidePins( layout.left, -( halfW + PIN_LENGTH ), startY, 0, -PIN_SPACING, 0 );
     }
 
-    // Right side: connection at right, pin extends left toward body (orientation 180)
     if( !layout.right.empty() )
     {
         double startY = ( ( rightSlots - 1 ) * PIN_SPACING ) / 2.0;
-        emitSidePins( layout.right,
-                      halfW + PIN_LENGTH, startY,
-                      0, -PIN_SPACING, 180 );
+        emitSidePins( layout.right, halfW + PIN_LENGTH, startY, 0, -PIN_SPACING, 180 );
     }
 
-    // Top side: connection at top, pin extends down toward body (orientation 270)
     if( !layout.top.empty() )
     {
         double startX = -( ( topSlots - 1 ) * PIN_SPACING ) / 2.0;
-        emitSidePins( layout.top,
-                      startX, halfH + PIN_LENGTH,
-                      PIN_SPACING, 0, 270 );
+        emitSidePins( layout.top, startX, halfH + PIN_LENGTH, PIN_SPACING, 0, 270 );
     }
 
-    // Bottom side: connection at bottom, pin extends up toward body (orientation 90)
     if( !layout.bottom.empty() )
     {
         double startX = -( ( bottomSlots - 1 ) * PIN_SPACING ) / 2.0;
-        emitSidePins( layout.bottom,
-                      startX, -( halfH + PIN_LENGTH ),
-                      PIN_SPACING, 0, 90 );
+        emitSidePins( layout.bottom, startX, -( halfH + PIN_LENGTH ), PIN_SPACING, 0, 90 );
     }
 
-    ss << "\t\t)\n";  // close pin unit symbol
+    ss << "\t\t)\n";
     ss << "\t\t(embedded_fonts no)\n";
-    ss << "\t)\n";     // close symbol
+    ss << "\t)\n";
 
     return ss.str();
 }

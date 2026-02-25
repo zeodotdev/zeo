@@ -122,23 +122,26 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
     };
     tools.push_back( extractDatasheet );
 
-    // generate_symbol - Generate a KiCad symbol from extracted datasheet data
+    // generate_symbol - Generate a KiCad symbol from a datasheet
     LLM_TOOL generateSymbol;
     generateSymbol.name = "generate_symbol";
     generateSymbol.description =
-        "Generate a KiCad schematic symbol (.kicad_sym) from extracted datasheet data. "
-        "Uses pin definitions (name, number, type, function_group) from the component "
-        "database to create a symbol with pins grouped by function and assigned to "
-        "appropriate sides (power top, ground bottom, inputs left, outputs right). "
-        "The component must have completed datasheet extraction first. "
-        "Writes the symbol to a project-local library file and returns the lib_id "
-        "that can be used with sch_add to place the symbol.";
+        "Generate a KiCad schematic symbol (.kicad_sym) from a datasheet PDF. "
+        "Self-contained: checks local libraries first (by datasheet URL), then checks "
+        "the component database, and auto-extracts from the PDF if needed. "
+        "Returns the lib_id that can be used with sch_add to place the symbol. "
+        "Prefer passing datasheet_url for reliable deduplication.";
     generateSymbol.input_schema = {
         { "type", "object" },
         { "properties", {
             { "part_number", {
                 { "type", "string" },
-                { "description", "Component part number to generate symbol for" }
+                { "description", "Component part number (used as symbol name)" }
+            }},
+            { "datasheet_url", {
+                { "type", "string" },
+                { "description", "URL to the PDF datasheet. Used to check for existing symbols "
+                                 "and to auto-extract pin data if not already in the database." }
             }},
             { "manufacturer", {
                 { "type", "string" },
@@ -150,7 +153,7 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
                                  "Defaults to 'project'. The file is created in the project directory." }
             }}
         }},
-        { "required", json::array( { "part_number" } ) }
+        { "required", json::array( { "datasheet_url" } ) }
     };
     tools.push_back( generateSymbol );
 

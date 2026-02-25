@@ -51,6 +51,7 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
         m_warningButton( nullptr ),
         m_labelButton( nullptr ),
         m_profileBitmap( nullptr ),
+        m_profileLogicalSize( 18, 18 ),
         m_normalFieldsCount( aNumberFields ),
         m_styleFlags( aFlags )
 {
@@ -103,7 +104,7 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
         widths[aNumberFields + *idx] = 20;  // notifications button
 
     if( std::optional<int> idx = fieldIndex( FIELD::LABEL ) )
-        widths[aNumberFields + *idx] = 100;  // Zeo session label button
+        widths[aNumberFields + *idx] = 35;  // Zeo session label button (18px logical + 17px padding)
 
 #ifdef __WXOSX__
     // offset from the right edge
@@ -292,9 +293,9 @@ void KISTATUSBAR::onSize( wxSizeEvent& aEvent )
 
         if( m_profileBitmap )
         {
-            // Center the profile bitmap in the field
-            wxSize bmpSize = m_profileBitmap->GetSize();
-            int bmpX = x + ( w - bmpSize.GetWidth() ) / 2;
+            wxSize bmpSize = m_profileLogicalSize;
+            m_profileBitmap->SetSize( bmpSize );
+            int bmpX = x + ( w - bmpSize.GetWidth() ) / 2 + 4;
             int bmpY = y + ( h - bmpSize.GetHeight() ) / 2;
             m_profileBitmap->SetPosition( { bmpX, bmpY } );
         }
@@ -601,15 +602,74 @@ std::optional<int> KISTATUSBAR::fieldIndex( FIELD aField ) const
 }
 
 
-void KISTATUSBAR::SetProfileBitmap( const wxBitmap& aBitmap )
+void KISTATUSBAR::updateLabelFieldWidth( int aNewWidth )
 {
-    if( m_profileBitmap )
-        m_profileBitmap->SetBitmap( aBitmap );
+    auto idx = fieldIndex( FIELD::LABEL );
+    if( !idx )
+        return;
+
+    // Reconstruct the full widths array — must match the layout from the constructor.
+    int extraFields = 2;  // BGJOB_LABEL + BGJOB_GAUGE always present
+#ifdef __WXOSX__
+    extraFields++;  // rounded corner spacer
+#endif
+    if( m_styleFlags & CANCEL_BUTTON )     extraFields++;
+    if( m_styleFlags & WARNING_ICON )      extraFields++;
+    if( m_styleFlags & NOTIFICATION_ICON ) extraFields++;
+    if( m_styleFlags & LABEL_BUTTON )      extraFields++;
+
+    int totalFields = m_normalFieldsCount + extraFields;
+    int* widths = new int[totalFields];
+
+    for( int i = 0; i < m_normalFieldsCount; i++ )
+        widths[i] = -1;
+
+    if( auto i = fieldIndex( FIELD::BGJOB_LABEL ) )  widths[m_normalFieldsCount + *i] = -1;
+    if( auto i = fieldIndex( FIELD::BGJOB_GAUGE ) )  widths[m_normalFieldsCount + *i] = 75;
+    if( auto i = fieldIndex( FIELD::BGJOB_CANCEL ) ) widths[m_normalFieldsCount + *i] = 20;
+    if( auto i = fieldIndex( FIELD::WARNING ) )      widths[m_normalFieldsCount + *i] = 20;
+    if( auto i = fieldIndex( FIELD::NOTIFICATION ) ) widths[m_normalFieldsCount + *i] = 20;
+    widths[m_normalFieldsCount + *idx] = aNewWidth;
+
+#ifdef __WXOSX__
+    widths[totalFields - 1] = 10;  // rounded corner offset
+#endif
+
+    SetStatusWidths( totalFields, widths );
+    delete[] widths;
+
+    // Trigger onSize to reposition all widgets
+    wxSizeEvent evt( GetSize(), GetId() );
+    evt.SetEventObject( this );
+    GetEventHandler()->ProcessEvent( evt );
+}
+
+
+void KISTATUSBAR::SetProfileBitmap( const wxBitmapBundle& aBundle )
+{
+    if( !m_profileBitmap )
+        return;
+
+    m_profileBitmap->SetBitmap( aBundle );
+
+    wxSize defaultSize = aBundle.GetDefaultSize();
+    if( defaultSize.IsFullySpecified() )
+    {
+        m_profileLogicalSize = defaultSize;
+        updateLabelFieldWidth( defaultSize.GetWidth() + 17 );
+    }
 }
 
 
 void KISTATUSBAR::SetLabelButtonText( const wxString& aText )
 {
-    if( m_labelButton )
-        m_labelButton->SetLabel( aText );
+    if( !m_labelButton )
+        return;
+
+    m_labelButton->SetLabel( aText );
+
+    wxClientDC dc( m_labelButton );
+    dc.SetFont( m_labelButton->GetFont() );
+    int newWidth = dc.GetTextExtent( aText ).x + 30;
+    updateLabelFieldWidth( newWidth );
 }

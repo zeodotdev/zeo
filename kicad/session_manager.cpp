@@ -39,6 +39,7 @@
 #include <wx/mstream.h>
 #include <wx/statbmp.h>
 #include <kicad_curl/kicad_curl_easy.h>
+#include <wx/bmpbndl.h>
 
 using json = nlohmann::json;
 
@@ -307,40 +308,41 @@ void SESSION_MANAGER::UpdateUI()
                     
                     if( image.IsOk() )
                     {
-                        // Resize to fit (e.g. 20px height)
-                        image.Rescale( 20, 20, wxIMAGE_QUALITY_HIGH );
-                        
-                        // Make round
+                        // Apply circular mask + border at full source resolution,
+                        // then downsample to 1x and 2x for a wxBitmapBundle.
+                        // wx picks the right variant per DPI automatically.
+
                         if( !image.HasAlpha() )
                             image.InitAlpha();
-                            
+
                         int w = image.GetWidth();
                         int h = image.GetHeight();
                         float cx = w / 2.0f;
                         float cy = h / 2.0f;
-                        float radius = std::min(w, h) / 2.0f;
-                        float r2 = radius * radius;
-                        
+                        float r2 = ( std::min( w, h ) / 2.0f ) * ( std::min( w, h ) / 2.0f );
+
                         unsigned char* alpha = image.GetAlpha();
-                        if( alpha )
+
+                        for( int py = 0; py < h; ++py )
                         {
-                            for( int y = 0; y < h; ++y )
+                            for( int px = 0; px < w; ++px )
                             {
-                                for( int x = 0; x < w; ++x )
-                            {
-                                    float dx = x - cx + 0.5f; // Center of pixel
-                                    float dy = y - cy + 0.5f;
-                                    if( dx*dx + dy*dy > r2 )
-                                        alpha[y*w + x] = 0;
-                                    else
-                                        alpha[y*w + x] = 255; // Ensure opacity inside
-                                }
+                                float dx = px - cx + 0.5f;
+                                float dy = py - cy + 0.5f;
+                                alpha[py * w + px] = ( dx * dx + dy * dy <= r2 ) ? 255 : 0;
                             }
                         }
-                        
-                        wxBitmap bitmap( image );
-                        
-                        statusBar->SetProfileBitmap( bitmap );
+
+                        // Downsample to 1x (18px) and 2x (36px) for the bundle
+                        wxImage img1x = image.Scale( 18, 18, wxIMAGE_QUALITY_HIGH );
+                        wxImage img2x = image.Scale( 36, 36, wxIMAGE_QUALITY_HIGH );
+
+                        wxVector<wxBitmap> bitmaps;
+                        bitmaps.push_back( wxBitmap( img1x ) );
+                        bitmaps.push_back( wxBitmap( img2x ) );
+                        wxBitmapBundle bundle = wxBitmapBundle::FromBitmaps( bitmaps );
+
+                        statusBar->SetProfileBitmap( bundle );
                         statusBar->GetLabelButton()->Hide();
                         statusBar->GetProfileBitmap()->Show();
                         statusBar->Layout(); // Ensure visibility update

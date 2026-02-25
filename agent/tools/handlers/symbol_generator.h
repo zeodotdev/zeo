@@ -88,7 +88,8 @@ private:
                             const std::string& aDatasheetUrl,
                             const std::string& aComponentId,
                             const std::string& aLibraryName,
-                            const std::string& aProjectPath );
+                            const std::string& aProjectPath,
+                            bool aForce = false );
 
     std::string GenerateSymbolContent( const ComponentData& aData,
                                         const std::string& aLibName );

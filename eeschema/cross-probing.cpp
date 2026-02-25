@@ -1609,6 +1609,17 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 
     case MAIL_RELOAD_LIB:
     {
+        SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &Prj() );
+
+        // If payload contains a specific library nickname, reload it so newly-written
+        // symbols on disk become visible to GetLibSymbol / LoadSymbol.
+        if( !payload.empty() )
+        {
+            wxString libName = wxString::FromUTF8( payload );
+            adapter->LoadOne( libName );
+            wxLogInfo( "MAIL_RELOAD_LIB: Reloaded library '%s'", libName );
+        }
+
         if( m_designBlocksPane && m_designBlocksPane->IsShown() )
         {
             m_designBlocksPane->RefreshLibs();
@@ -1618,7 +1629,6 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
         // Show any symbol library load errors in the status bar
         if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
         {
-            SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &Prj() );
             wxString errors = adapter->GetLibraryLoadErrors();
 
             if( !errors.IsEmpty() )

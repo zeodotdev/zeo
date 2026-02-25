@@ -53,16 +53,18 @@ try:
                             pins.append({'number': pin.number, 'name': getattr(pin, 'name', ''), 'pos': abs_pos})
                     except:
                         pass
-            symbol_data.append({
+            sym_dict = {
                 'uuid': get_uuid_str(sym),
                 'lib_id': lib_id_str,
                 'ref': sym.reference if hasattr(sym, 'reference') else '',
                 'value': sym.value if hasattr(sym, 'value') else '',
+                'footprint': getattr(sym, 'footprint', ''),
                 'pos': get_pos(getattr(sym, 'position', None)),
                 'angle': getattr(sym, 'angle', 0),
                 'unit': getattr(sym, 'unit', 1),
                 'pins': pins
-            })
+            }
+            symbol_data.append(sym_dict)
         result['symbols'] = symbol_data
 
     if section in ('wires', 'all'):

@@ -74,6 +74,22 @@ public:
     void SetSupabaseAnonKey( const std::string& aKey )     { m_supabaseAnonKey = aKey; }
     const std::string& GetSupabaseAnonKey() const          { return m_supabaseAnonKey; }
 
+    using ReloadSymbolLibFn = std::function<void( const std::string& )>;
+    void SetReloadSymbolLibFn( ReloadSymbolLibFn aFn )     { m_reloadSymbolLibFn = std::move( aFn ); }
+    void ReloadSymbolLib( const std::string& aLibName ) const
+    {
+        if( m_reloadSymbolLibFn )
+            m_reloadSymbolLibFn( aLibName );
+    }
+
+    using ReloadFootprintLibFn = std::function<void( const std::string& )>;
+    void SetReloadFootprintLibFn( ReloadFootprintLibFn aFn ) { m_reloadFootprintLibFn = std::move( aFn ); }
+    void ReloadFootprintLib( const std::string& aLibName ) const
+    {
+        if( m_reloadFootprintLibFn )
+            m_reloadFootprintLibFn( aLibName );
+    }
+
 private:
     TOOL_REGISTRY();
     ~TOOL_REGISTRY() = default;
@@ -103,6 +119,8 @@ private:
     AGENT_AUTH*    m_auth = nullptr;
     std::string   m_supabaseUrl;
     std::string   m_supabaseAnonKey;
+    ReloadSymbolLibFn m_reloadSymbolLibFn;
+    ReloadFootprintLibFn m_reloadFootprintLibFn;
 };
 
 #endif // TOOL_REGISTRY_H

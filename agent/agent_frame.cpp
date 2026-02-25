@@ -490,6 +490,30 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             return result;
         } );
 
+    // Callback for symbol generator to reload a symbol library after writing to disk
+    {
+        auto& reg = TOOL_REGISTRY::Instance();
+        reg.SetReloadSymbolLibFn(
+            [this]( const std::string& aLibName ) {
+                wxLogInfo( "TOOL_REGISTRY: Reloading symbol library '%s' via MAIL_RELOAD_LIB",
+                           aLibName.c_str() );
+                std::string payload = aLibName;
+                Kiway().ExpressMail( FRAME_SCH, MAIL_RELOAD_LIB, payload );
+            } );
+    }
+
+    // Callback for footprint generator to reload a footprint library after writing to disk
+    {
+        auto& reg = TOOL_REGISTRY::Instance();
+        reg.SetReloadFootprintLibFn(
+            [this]( const std::string& aLibName ) {
+                wxLogInfo( "TOOL_REGISTRY: Reloading footprint library '%s' via MAIL_RELOAD_LIB",
+                           aLibName.c_str() );
+                std::string payload = aLibName;
+                Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_RELOAD_LIB, payload );
+            } );
+    }
+
     // Sync editor + project state to TOOL_REGISTRY before each tool execution
     m_chatController->SetEditorStateSyncFn(
         [this]() {

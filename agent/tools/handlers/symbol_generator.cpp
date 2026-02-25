@@ -1,4 +1,5 @@
 #include "symbol_generator.h"
+#include "footprint_generator.h"
 #include "tools/tool_registry.h"
 #include <zeo/agent_auth.h>
 #include <kicad_curl/kicad_curl_easy.h>
@@ -106,6 +107,7 @@ void SYMBOL_GENERATOR::ExecuteAsync( const std::string& aToolName,
     std::string datasheetUrl = aInput.value( "datasheet_url", "" );
     std::string componentId = aInput.value( "component_id", "" );
     std::string libraryName = aInput.value( "library_name", "" );
+    bool force = aInput.value( "force", false );
 
     if( datasheetUrl.empty() )
     {
@@ -142,7 +144,8 @@ void SYMBOL_GENERATOR::ExecuteAsync( const std::string& aToolName,
     std::thread( [=, this]()
     {
         std::string resultStr = DoGenerate( partNumber, manufacturer, datasheetUrl,
-                                             componentId, libraryName, projectPath );
+                                             componentId, libraryName, projectPath,
+                                             force );
 
         bool success = false;
         try
@@ -154,6 +157,33 @@ void SYMBOL_GENERATOR::ExecuteAsync( const std::string& aToolName,
 
         wxTheApp->CallAfter( [=]()
         {
+            // If we successfully created a symbol, reload the library in the schematic
+            // editor so that subsequent sch_add calls can find the new symbol.
+            if( success )
+            {
+                try
+                {
+                    auto resultJson = json::parse( resultStr );
+                    std::string status = SafeStr( resultJson, "status", "" );
+
+                    if( status == "created" )
+                    {
+                        wxLogInfo( "SYMBOL_GENERATOR: Reloading library '%s' after symbol creation",
+                                   libraryName.c_str() );
+                        TOOL_REGISTRY::Instance().ReloadSymbolLib( libraryName );
+
+                        // If a footprint was auto-generated, reload the footprint library too
+                        if( resultJson.contains( "footprint_lib_id" ) )
+                        {
+                            wxLogInfo( "SYMBOL_GENERATOR: Reloading footprint library '%s'",
+                                       libraryName.c_str() );
+                            TOOL_REGISTRY::Instance().ReloadFootprintLib( libraryName );
+                        }
+                    }
+                }
+                catch( ... ) {}
+            }
+
             ToolExecutionResult result;
             result.tool_use_id = aToolUseId;
             result.tool_name = "generate_symbol";
@@ -173,10 +203,11 @@ std::string SYMBOL_GENERATOR::DoGenerate( const std::string& aPartNumber,
                                            const std::string& aDatasheetUrl,
                                            const std::string& aComponentId,
                                            const std::string& aLibraryName,
-                                           const std::string& aProjectPath )
+                                           const std::string& aProjectPath,
+                                           bool aForce )
 {
     // Step 1: Check local library for existing symbol with matching datasheet URL
-    if( !aDatasheetUrl.empty() )
+    if( !aForce && !aDatasheetUrl.empty() )
     {
         std::string existingLibId = FindLocalSymbolByDatasheet( aDatasheetUrl, aProjectPath );
         if( !existingLibId.empty() )
@@ -184,7 +215,7 @@ std::string SYMBOL_GENERATOR::DoGenerate( const std::string& aPartNumber,
             wxLogInfo( "SYMBOL_GENERATOR: Found existing local symbol: %s", existingLibId.c_str() );
             json result;
             result["status"] = "already_exists";
-            result["message"] = "Symbol already exists in local library";
+            result["message"] = "Symbol already exists in local library. Use force=true to regenerate.";
             result["lib_id"] = existingLibId;
             return result.dump( 2 );
         }
@@ -248,22 +279,55 @@ std::string SYMBOL_GENERATOR::DoGenerate( const std::string& aPartNumber,
 
         // Check if symbol already exists by name
         std::string symbolTag = "(symbol \"" + data.part_number + "\"";
-        if( existingContent.find( symbolTag ) != std::string::npos )
+        size_t symbolPos = existingContent.find( symbolTag );
+        if( symbolPos != std::string::npos )
         {
-            json result;
-            result["status"] = "already_exists";
-            result["message"] = "Symbol '" + data.part_number + "' already exists in " + libFileName;
-            result["lib_id"] = aLibraryName + ":" + data.part_number;
-            result["file_path"] = outputPath;
-            return result.dump( 2 );
+            if( !aForce )
+            {
+                json result;
+                result["status"] = "already_exists";
+                result["message"] = "Symbol '" + data.part_number + "' already exists in "
+                                    + libFileName + ". Use force=true to regenerate.";
+                result["lib_id"] = aLibraryName + ":" + data.part_number;
+                result["file_path"] = outputPath;
+                return result.dump( 2 );
+            }
+
+            // force=true: Remove old symbol definition and replace with new one
+            wxLogInfo( "SYMBOL_GENERATOR: force=true, replacing existing symbol '%s'",
+                       data.part_number.c_str() );
+
+            // Find the end of the existing symbol block by matching parens
+            int depth = 0;
+            size_t endPos = symbolPos;
+            for( size_t i = symbolPos; i < existingContent.size(); i++ )
+            {
+                if( existingContent[i] == '(' )
+                    depth++;
+                else if( existingContent[i] == ')' )
+                {
+                    depth--;
+                    if( depth == 0 )
+                    {
+                        endPos = i + 1;
+                        break;
+                    }
+                }
+            }
+
+            // Replace old symbol with new one
+            existingContent.replace( symbolPos, endPos - symbolPos, symbolContent );
+        }
+        else
+        {
+            // Append symbol before closing paren
+            size_t lastParen = existingContent.rfind( ')' );
+            if( lastParen != std::string::npos )
+                existingContent = existingContent.substr( 0, lastParen )
+                                  + symbolContent + "\n)\n";
         }
 
-        // Append symbol before closing paren
-        size_t lastParen = existingContent.rfind( ')' );
-        if( lastParen != std::string::npos )
         {
-            std::string newContent = existingContent.substr( 0, lastParen )
-                                     + symbolContent + "\n)\n";
             std::ofstream outFile( outputPath );
             if( !outFile.is_open() )
             {
@@ -271,7 +335,7 @@ std::string SYMBOL_GENERATOR::DoGenerate( const std::string& aPartNumber,
                 err["error"] = "Failed to open library file for writing: " + outputPath;
                 return err.dump();
             }
-            outFile << newContent;
+            outFile << existingContent;
             outFile.close();
         }
     }
@@ -296,6 +360,53 @@ std::string SYMBOL_GENERATOR::DoGenerate( const std::string& aPartNumber,
     wxLogInfo( "SYMBOL_GENERATOR: Symbol written for %s (%zu pins)",
                data.part_number.c_str(), data.pins.size() );
 
+    // Auto-generate footprint if none was set from the DB
+    std::string footprintLibId;
+    if( data.footprint.empty() && !aDatasheetUrl.empty() )
+    {
+        wxLogInfo( "SYMBOL_GENERATOR: No footprint set, auto-generating footprint" );
+        FOOTPRINT_GENERATOR fpGen;
+        std::string fpResult = fpGen.DoGenerate( aPartNumber, aManufacturer, aDatasheetUrl,
+                                                  aComponentId, aLibraryName, aProjectPath );
+        try
+        {
+            auto fpJson = json::parse( fpResult );
+            if( fpJson.contains( "lib_id" ) )
+            {
+                footprintLibId = fpJson["lib_id"].get<std::string>();
+                wxLogInfo( "SYMBOL_GENERATOR: Auto-generated footprint: %s",
+                           footprintLibId.c_str() );
+
+                // Update the Footprint property in the symbol file
+                std::ifstream inFile( outputPath );
+                std::string content( ( std::istreambuf_iterator<char>( inFile ) ),
+                                       std::istreambuf_iterator<char>() );
+                inFile.close();
+
+                std::string emptyFp = "(property \"Footprint\" \"\"";
+                std::string newFp = "(property \"Footprint\" \"" + footprintLibId + "\"";
+                size_t fpPos = content.find( emptyFp );
+                if( fpPos != std::string::npos )
+                {
+                    content.replace( fpPos, emptyFp.length(), newFp );
+                    std::ofstream outFile( outputPath );
+                    outFile << content;
+                    outFile.close();
+                    wxLogInfo( "SYMBOL_GENERATOR: Updated Footprint property in symbol file" );
+                }
+            }
+            else if( fpJson.contains( "error" ) )
+            {
+                wxLogWarning( "SYMBOL_GENERATOR: Footprint generation failed: %s",
+                              fpJson["error"].get<std::string>().c_str() );
+            }
+        }
+        catch( ... )
+        {
+            wxLogWarning( "SYMBOL_GENERATOR: Failed to parse footprint result" );
+        }
+    }
+
     json result;
     result["status"] = "created";
     result["message"] = "Symbol '" + data.part_number + "' generated with "
@@ -303,9 +414,10 @@ std::string SYMBOL_GENERATOR::DoGenerate( const std::string& aPartNumber,
     result["lib_id"] = aLibraryName + ":" + data.part_number;
     result["file_path"] = outputPath;
     result["pin_count"] = data.pins.size();
-    result["instructions"] = "Add the library to the project symbol table if not already present, "
-                             "then use sch_add with lib_id '" + aLibraryName + ":"
-                             + data.part_number + "' to place the symbol.";
+    if( !footprintLibId.empty() )
+        result["footprint_lib_id"] = footprintLibId;
+    else if( !data.footprint.empty() )
+        result["footprint_lib_id"] = data.footprint;
     return result.dump( 2 );
 }
 
@@ -493,9 +605,9 @@ bool SYMBOL_GENERATOR::FetchComponentData( const std::string& aPartNumber,
                     {
                         std::string lib = SafeStr( fp, "footprint_library", "" );
                         std::string name = SafeStr( fp, "footprint_name", "" );
-                        if( !name.empty() )
+                        if( !name.empty() && !lib.empty() )
                         {
-                            aData.footprint = lib.empty() ? name : ( lib + ":" + name );
+                            aData.footprint = lib + ":" + name;
                             break;
                         }
                     }

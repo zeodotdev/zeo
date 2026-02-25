@@ -130,7 +130,8 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
         "Self-contained: checks local libraries first (by datasheet URL), then checks "
         "the component database, and auto-extracts from the PDF if needed. "
         "Returns the lib_id that can be used with sch_add to place the symbol. "
-        "Prefer passing datasheet_url for reliable deduplication.";
+        "Prefer passing datasheet_url for reliable deduplication. "
+        "If the symbol already exists, pass force=true to regenerate it.";
     generateSymbol.input_schema = {
         { "type", "object" },
         { "properties", {
@@ -151,11 +152,58 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
                 { "type", "string" },
                 { "description", "Name for the output library file (without .kicad_sym extension). "
                                  "Defaults to 'project'. The file is created in the project directory." }
+            }},
+            { "force", {
+                { "type", "boolean" },
+                { "description", "If true, regenerate the symbol even if it already exists in the library. "
+                                 "The old symbol will be replaced." }
             }}
         }},
         { "required", json::array( { "datasheet_url" } ) }
     };
     tools.push_back( generateSymbol );
+
+    // generate_footprint - Generate a KiCad footprint from a datasheet
+    LLM_TOOL generateFootprint;
+    generateFootprint.name = "generate_footprint";
+    generateFootprint.description =
+        "Generate a KiCad PCB footprint (.kicad_mod) from a datasheet PDF. "
+        "Self-contained: first tries to match an existing KiCad standard library footprint "
+        "from the package dimensions, then generates a custom footprint as fallback. "
+        "Fetches package data from the component database (auto-extracts if needed). "
+        "Returns the lib_id (Library:Footprint) that can be used to assign to a symbol. "
+        "Prefer passing datasheet_url for reliable deduplication. "
+        "If the footprint already exists, pass force=true to regenerate it.";
+    generateFootprint.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "part_number", {
+                { "type", "string" },
+                { "description", "Component part number" }
+            }},
+            { "datasheet_url", {
+                { "type", "string" },
+                { "description", "URL to the PDF datasheet. Used to look up package data "
+                                 "and to auto-extract if not already in the database." }
+            }},
+            { "manufacturer", {
+                { "type", "string" },
+                { "description", "Component manufacturer (optional)" }
+            }},
+            { "library_name", {
+                { "type", "string" },
+                { "description", "Name for the output .pretty library folder (without extension). "
+                                 "Defaults to 'project'. Created in the project directory." }
+            }},
+            { "force", {
+                { "type", "boolean" },
+                { "description", "If true, regenerate the footprint even if it already exists. "
+                                 "The old footprint file will be overwritten." }
+            }}
+        }},
+        { "required", json::array( { "datasheet_url" } ) }
+    };
+    tools.push_back( generateFootprint );
 
     // create_project - Create a new KiCad project
     LLM_TOOL createProject;

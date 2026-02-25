@@ -23,11 +23,10 @@ try:
             else:
                 _current_sheet = '/ (root)'
     except Exception as _cs_err:
-        print(f'[sch_get_summary] current sheet detection failed: {_cs_err}', file=sys.stderr)
+        tool_log(f'[sch_get_summary] current sheet detection failed: {_cs_err}')
 
     # Query live state via IPC
     symbols = sch.symbols.get_all()
-    print(f'[IPC DEBUG] Retrieved {len(symbols)} symbols', file=sys.stderr)
     wires = sch.crud.get_wires()
     junctions = sch.crud.get_junctions()
     labels = sch.labels.get_all()

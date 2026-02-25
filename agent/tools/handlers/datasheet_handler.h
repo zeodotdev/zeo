@@ -49,6 +49,8 @@ private:
     std::string QueryExtractionData( const std::string& aPartNumber,
                                      const std::string& aManufacturer );
 
+    std::string QueryExtractionDataById( const std::string& aComponentId );
+
     /**
      * Call the extract-datasheet edge function in sync mode.
      * Blocks until extraction is complete (30-60s typical).

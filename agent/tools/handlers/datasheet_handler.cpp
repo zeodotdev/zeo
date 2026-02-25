@@ -196,9 +196,15 @@ std::string DATASHEET_HANDLER::ExtractDatasheetSync( const std::string& aPartNum
 
             if( status == "completed" )
             {
-                // Extraction done — now query the full data
-                wxLogInfo( "DATASHEET_HANDLER: Sync extraction completed, querying data" );
-                std::string queryResult = QueryExtractionData( aPartNumber, aManufacturer );
+                // Extraction done — query by component_id (more reliable than
+                // part_number since Claude may have extracted a different name)
+                std::string componentId = resultJson.value( "component_id", "" );
+                wxLogInfo( "DATASHEET_HANDLER: Sync extraction completed (component_id=%s), querying data",
+                           componentId.c_str() );
+
+                std::string queryResult = componentId.empty()
+                    ? QueryExtractionData( aPartNumber, aManufacturer )
+                    : QueryExtractionDataById( componentId );
 
                 try
                 {
@@ -314,6 +320,72 @@ std::string DATASHEET_HANDLER::QueryExtractionData( const std::string& aPartNumb
     catch( const std::exception& e )
     {
         wxLogTrace( "Agent", "DATASHEET_HANDLER: Query exception: %s", e.what() );
+        return R"({"error": "Query failed"})";
+    }
+}
+
+
+std::string DATASHEET_HANDLER::QueryExtractionDataById( const std::string& aComponentId )
+{
+    const auto& reg = TOOL_REGISTRY::Instance();
+    AGENT_AUTH* auth = reg.GetAuth();
+    const std::string& supabaseUrl = reg.GetSupabaseUrl();
+    const std::string& anonKey = reg.GetSupabaseAnonKey();
+
+    if( !auth || supabaseUrl.empty() )
+        return R"({"error": "Not configured"})";
+
+    std::string accessToken = auth->GetAccessToken();
+
+    if( accessToken.empty() )
+        return R"({"error": "Not authenticated"})";
+
+    std::string url = supabaseUrl + "/rest/v1/components?select="
+        "id,part_number,manufacturer,description,category,subcategory,lifecycle,"
+        "extraction_status,extracted_at,"
+        "component_packages(*),"
+        "component_electrical(*),"
+        "component_voltage_rails(*),"
+        "component_placement(*),"
+        "component_design_guidelines(*),"
+        "component_decoupling_requirements(*),"
+        "component_external_parts(*)"
+        "&id=eq." + UrlEncode( aComponentId )
+        + "&limit=1";
+
+    try
+    {
+        KICAD_CURL_EASY curl;
+        curl.SetURL( url );
+        curl.SetFollowRedirects( true );
+        curl.SetHeader( "Authorization", "Bearer " + accessToken );
+        curl.SetHeader( "apikey", anonKey );
+        curl.SetHeader( "Accept", "application/json" );
+        curl.Perform();
+
+        long httpCode = curl.GetResponseStatusCode();
+
+        if( httpCode >= 200 && httpCode < 300 )
+        {
+            auto response = json::parse( curl.GetBuffer() );
+
+            if( response.is_array() && !response.empty() )
+            {
+                return response[0].dump( 2 );
+            }
+
+            return R"({"extraction_status": "not_found", "message": "No extraction data found for this component"})";
+        }
+        else
+        {
+            wxLogTrace( "Agent", "DATASHEET_HANDLER: Query by ID failed HTTP %ld: %s",
+                        httpCode, curl.GetBuffer().c_str() );
+            return R"({"error": "Query failed"})";
+        }
+    }
+    catch( const std::exception& e )
+    {
+        wxLogTrace( "Agent", "DATASHEET_HANDLER: Query by ID exception: %s", e.what() );
         return R"({"error": "Query failed"})";
     }
 }

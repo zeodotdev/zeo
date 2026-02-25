@@ -154,6 +154,11 @@ img[src^="data:"] { cursor: pointer; }
     border-radius: 10px; overflow: hidden; margin-bottom: 8px;
 }
 #pending-changes-bar.visible { display: block; }
+.pc-header { cursor: pointer; -webkit-user-select: none; user-select: none; }
+.pc-header:hover { background: #3d3d3d; }
+.pc-chevron { display: inline-block; transition: transform 0.15s ease; font-size: 8px; color: #808080; margin-right: 6px; }
+.pc-chevron.expanded { transform: rotate(90deg); }
+#pc-rows.collapsed { display: none; }
 .pc-btn {
     padding: 3px 10px; border-radius: 6px; font-size: 13px; cursor: pointer;
     border: none; -webkit-user-select: none; user-select: none;
@@ -326,7 +331,8 @@ mark.search-highlight.current { background: rgba(255,152,0,0.6); }
 
     <!-- Pending changes panel (sits directly above editor, shares border) -->
     <div id="pending-changes-bar">
-        <div class="flex items-center px-3 py-1.5">
+        <div class="pc-header flex items-center px-3 py-1.5" id="pc-header">
+            <span class="pc-chevron expanded" id="pc-chevron">&#9654;</span>
             <span class="text-[13px] font-bold text-white flex-1">Pending Changes</span>
             <button class="pc-btn pc-accept mr-1" id="pc-accept-all">Accept All</button>
             <button class="pc-btn pc-reject" id="pc-reject-all">Reject All</button>
@@ -1516,6 +1522,26 @@ App.PendingChanges = (function() {
     var rowsEl = document.getElementById('pc-rows');
     var acceptAllBtn = document.getElementById('pc-accept-all');
     var rejectAllBtn = document.getElementById('pc-reject-all');
+    var headerEl = document.getElementById('pc-header');
+    var chevronEl = document.getElementById('pc-chevron');
+    var _collapsed = false;
+
+    function _toggleCollapse() {
+        _collapsed = !_collapsed;
+        if (_collapsed) {
+            rowsEl.classList.add('collapsed');
+            chevronEl.classList.remove('expanded');
+        } else {
+            rowsEl.classList.remove('collapsed');
+            chevronEl.classList.add('expanded');
+        }
+    }
+
+    headerEl.addEventListener('click', function(e) {
+        // Don't toggle when clicking Accept/Reject buttons
+        if (e.target.closest('.pc-btn')) return;
+        _toggleCollapse();
+    });
 
     function update(data) {
         var sheets = data.sheets || [];

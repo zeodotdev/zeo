@@ -199,6 +199,55 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
     };
     screenshot.read_only = true;
     tools.push_back( screenshot );
+
+    // component_search - Search electronic components via PCBParts MCP
+    LLM_TOOL componentSearch;
+    componentSearch.name = "component_search";
+    componentSearch.description =
+        "Search online component suppliers (JLCPCB, Mouser, DigiKey) for real parts "
+        "with pricing, stock levels, and specifications. Use this when the user needs to "
+        "find specific manufacturer parts, check availability, or compare pricing. "
+        "Capabilities: search by keyword/specs, get detailed part info, find alternatives, "
+        "validate BOM availability, get pinout data, get KiCad symbols/footprints, "
+        "list categories, and export BOM. "
+        "Default supplier is JLCPCB. Some actions (find_alternatives, validate_bom, "
+        "get_pinout, list_categories, export_bom) are only available on JLCPCB. "
+        "For validate_bom and export_bom, pass the parts list via params.parts "
+        "(array of {lcsc, qty} objects). "
+        "Use the params field to pass supplier-specific filters like spec_filters.";
+    componentSearch.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "action", {
+                { "type", "string" },
+                { "enum", json::array( { "search", "get_part", "find_alternatives",
+                                         "validate_bom", "get_pinout", "get_kicad",
+                                         "list_categories", "export_bom" } ) },
+                { "description", "The operation to perform" }
+            }},
+            { "query", {
+                { "type", "string" },
+                { "description", "Search terms, part number, or LCSC number (e.g. 'ESP32-S3', 'C2913202')" }
+            }},
+            { "supplier", {
+                { "type", "string" },
+                { "enum", json::array( { "jlcpcb", "mouser", "digikey" } ) },
+                { "description", "Component supplier (default: jlcpcb)" }
+            }},
+            { "limit", {
+                { "type", "integer" },
+                { "description", "Maximum number of results to return (default: 5)" }
+            }},
+            { "params", {
+                { "type", "object" },
+                { "description", "Additional parameters passed through to the underlying API "
+                                 "(e.g. spec_filters, category_id, bom)" }
+            }}
+        }},
+        { "required", json::array( { "action" } ) }
+    };
+    componentSearch.read_only = true;
+    tools.push_back( componentSearch );
 }
 
 

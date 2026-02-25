@@ -1097,7 +1097,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     wxString bubbleContent = FileAttach::BuildAttachmentBubbleHtml( m_pendingAttachments )
                              + escapedText;
     wxString msgHtml = wxString::Format(
-        "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
+        "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">%s</div></div>",
         bubbleContent );
 
     // Add streaming content container for incremental updates
@@ -1332,7 +1332,7 @@ void AGENT_FRAME::QueueMessage()
                              + escapedText;
     wxString newHtml = wxString::Format(
         "<div id=\"queued-msg\" class=\"flex justify-end my-3\" style=\"opacity:0.5;\">"
-        "<div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">"
+        "<div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">"
         "%s</div></div>",
         bubbleContent );
 
@@ -2375,7 +2375,7 @@ void AGENT_FRAME::RenderChatHistory()
                 display.Replace( ">", "&gt;" );
                 display.Replace( "\n", "<br>" );
                 m_fullHtmlContent += wxString::Format(
-                    "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
+                    "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">%s</div></div>",
                     display );
             }
             else if( role == "assistant" )
@@ -2456,7 +2456,7 @@ void AGENT_FRAME::RenderChatHistory()
                         display.Replace( ">", "&gt;" );
                         display.Replace( "\n", "<br>" );
                         m_fullHtmlContent += wxString::Format(
-                            "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
+                            "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">%s</div></div>",
                             display );
                     }
                 }

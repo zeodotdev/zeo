@@ -357,7 +357,7 @@ wxString FileAttach::BuildHistoryBubbleHtml( const nlohmann::json& aContentArray
 
     return wxString::Format(
         "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary "
-        "py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s"
+        "py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">%s"
         "</div></div>",
         bubbleContent );
 }

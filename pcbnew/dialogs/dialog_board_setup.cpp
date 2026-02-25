@@ -226,24 +226,45 @@ DIALOG_BOARD_SETUP::DIALOG_BOARD_SETUP( PCB_EDIT_FRAME* aFrame, wxWindow* aParen
                             // Copper layer count
                             context["copper_layers"] = board->GetCopperLayerCount();
 
-                            // Component summary (ref + value, grouped with counts)
-                            std::map<std::string, int> componentCounts;
+                            // Component list grouped by value+datasheet
+                            struct CompGroup
+                            {
+                                std::string            value;
+                                std::string            datasheet;
+                                std::vector<std::string> refs;
+                            };
+
+                            std::map<std::string, CompGroup> groups;
 
                             for( FOOTPRINT* fp : board->Footprints() )
                             {
-                                std::string key = fp->GetReference().ToStdString() + " ("
-                                                  + fp->GetValue().ToStdString() + ")";
-                                componentCounts[key]++;
+                                std::string ref = fp->GetReference().ToStdString();
+                                std::string value = fp->GetValue().ToStdString();
+                                std::string datasheet;
+
+                                const PCB_FIELD* dsField = fp->GetField( FIELD_T::DATASHEET );
+                                if( dsField )
+                                    datasheet = dsField->GetText().ToStdString();
+
+                                std::string key = value + "|" + datasheet;
+                                auto& group = groups[key];
+                                group.value = value;
+                                group.datasheet = datasheet;
+                                group.refs.push_back( ref );
                             }
 
                             nlohmann::json components = nlohmann::json::array();
 
-                            for( const auto& [key, count] : componentCounts )
+                            for( const auto& [key, group] : groups )
                             {
-                                if( count > 1 )
-                                    components.push_back( key + " x" + std::to_string( count ) );
-                                else
-                                    components.push_back( key );
+                                nlohmann::json comp;
+                                comp["value"] = group.value;
+                                comp["refs"] = group.refs;
+
+                                if( !group.datasheet.empty() )
+                                    comp["datasheet"] = group.datasheet;
+
+                                components.push_back( comp );
                             }
 
                             context["components"] = components;

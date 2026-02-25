@@ -449,8 +449,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
     LLM_TOOL schGetPins;
     schGetPins.name = "sch_get_pins";
     schGetPins.description =
-        "Get pin positions for a single placed symbol. MUCH faster than sch_get_summary "
-        "when you only need pin positions for wiring a specific component. "
+        "Get pin positions for a single placed symbol by reference designator. "
         "Returns exact transformed positions (after rotation/mirror) in mm. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schGetPins.input_schema = {
@@ -923,15 +922,9 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
     LLM_TOOL schSetup;
     schSetup.name = "sch_setup";
     schSetup.description =
-        "Read or modify schematic document settings from Schematic Setup dialog. "
-        "Use action='get' to retrieve all settings, action='set' to update specific settings. "
-        "Settings include: page size, title block, grid, formatting (text/symbol defaults, "
-        "connections, inter-sheet refs, dashed lines, operating-point overlay), annotation "
-        "(symbol unit notation, sort order, numbering method), field name templates, ERC rules, "
-        "pin_conflict_map (ERC pin-to-pin error matrix), net_classes (wire/bus styling), "
-        "net_class_assignments (pattern-based net to netclass mappings), bus_aliases "
-        "(named groups of signals for bus definitions), and text_variables (project-level "
-        "variable substitution like ${AUTHOR}, ${VERSION}). "
+        "Read or modify schematic document settings (Schematic Setup dialog). "
+        "action='get' returns all settings. action='set' updates only provided fields. "
+        "Use 'get' first to discover available settings and current values. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schSetup.input_schema = {
         { "type", "object" },
@@ -1037,23 +1030,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
                         { "type", "object" },
                         { "description",
                             "Map of ERC rule codes to severity ('error', 'warning', or 'ignore'). "
-                            "Available codes - Connections: ERCE_PIN_NOT_CONNECTED, ERCE_PIN_NOT_DRIVEN, "
-                            "ERCE_POWERPIN_NOT_DRIVEN, ERCE_NOCONNECT_CONNECTED, ERCE_NOCONNECT_NOT_CONNECTED, "
-                            "ERCE_LABEL_NOT_CONNECTED, ERCE_LABEL_SINGLE_PIN, ERCE_SINGLE_GLOBAL_LABEL, "
-                            "ERCE_SAME_LOCAL_GLOBAL_LABEL, ERCE_WIRE_DANGLING, ERCE_BUS_ENTRY_NEEDED, "
-                            "ERCE_ENDPOINT_OFF_GRID, ERCE_FOUR_WAY_JUNCTION, ERCE_LABEL_MULTIPLE_WIRES, "
-                            "ERCE_UNCONNECTED_WIRE_ENDPOINT. "
-                            "Conflicts: ERCE_DUPLICATE_REFERENCE, ERCE_DIFFERENT_UNIT_VALUE, "
-                            "ERCE_DIFFERENT_UNIT_FP, ERCE_DIFFERENT_UNIT_NET, ERCE_DUPLICATE_SHEET_NAME, "
-                            "ERCE_HIERACHICAL_LABEL, ERCE_DRIVER_CONFLICT, ERCE_BUS_ALIAS_CONFLICT, "
-                            "ERCE_BUS_TO_BUS_CONFLICT, ERCE_BUS_ENTRY_CONFLICT, ERCE_BUS_TO_NET_CONFLICT, "
-                            "ERCE_GROUND_PIN_NOT_GROUND. "
-                            "Miscellaneous: ERCE_STACKED_PIN_SYNTAX, ERCE_UNANNOTATED, ERCE_UNRESOLVED_VARIABLE, "
-                            "ERCE_UNDEFINED_NETCLASS, ERCE_SIMULATION_MODEL, ERCE_SIMILAR_LABELS, "
-                            "ERCE_SIMILAR_POWER, ERCE_SIMILAR_LABEL_AND_POWER, ERCE_LIB_SYMBOL_ISSUES, "
-                            "ERCE_LIB_SYMBOL_MISMATCH, ERCE_FOOTPRINT_LINK_ISSUES, ERCE_FOOTPRINT_FILTERS, "
-                            "ERCE_EXTRA_UNITS, ERCE_MISSING_UNIT, ERCE_MISSING_INPUT_PIN, ERCE_MISSING_BIDI_PIN, "
-                            "ERCE_MISSING_POWER_INPUT_PIN." },
+                            "Use sch_setup action='get' to see all available rule codes and their current severities." },
                         { "additionalProperties", {
                             { "type", "string" },
                             { "enum", json::array( { "error", "warning", "ignore" } ) }
@@ -1359,8 +1336,9 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
     LLM_TOOL pcbGetSummary;
     pcbGetSummary.name = "pcb_get_summary";
     pcbGetSummary.description =
-        "Get a high-level overview of the open PCB. Returns JSON with footprints, tracks, "
-        "vias, zones, board outline, layer count, and net information. "
+        "Get a high-level overview of the open PCB. Returns footprints (ref, lib_id, position, layer), "
+        "track/via/zone counts, net names, and enabled layers. "
+        "For detailed data use pcb_read_section, pcb_get_pads, or pcb_get_footprint. "
         "REQUIRES: PCB editor must be open with a document loaded.";
     pcbGetSummary.input_schema = {
         { "type", "object" },
@@ -1975,27 +1953,11 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
     pcbSetup.name = "pcb_setup";
     pcbSetup.description =
         "Read or modify PCB board settings (Board Setup dialog). "
-        "action='get' retrieves all settings including physical_stackup, board_finish, solder_mask_paste, "
-        "zone_hatch_offsets, text_and_graphics, dimension_defaults, zone_defaults, predefined_sizes, teardrops, "
-        "board_editor_layers, design rules, grid, DRC severities, net classes, text variables, title block, and origins. "
-        "action='set' updates only the provided fields, leaving others unchanged. "
-        "physical_stackup contains full layer stackup with dielectric properties, impedance control, etc. "
-        "board_finish contains copper finish type, edge plating, and edge connector settings. "
-        "solder_mask_paste contains mask expansion, via tenting, and paste margins. "
-        "zone_hatch_offsets contains per-layer X/Y offsets for zone hatched fills. "
-        "text_and_graphics contains per-layer-class defaults (silkscreen, copper, edges, etc.) for line thickness, text size, italic, keep_upright. "
-        "dimension_defaults contains units, precision, text position, arrow settings for new dimensions. "
-        "zone_defaults contains clearance, pad connection, thermal relief, island removal for new zones. "
-        "predefined_sizes contains track widths, via sizes (diameter/drill), and diff pair dimensions for quick selection. "
-        "teardrops contains settings for teardrop shapes at pad/via connections (length/width ratios, max sizes, curved edges). "
-        "length_tuning_patterns contains meander settings for single track, diff pair, and diff pair skew tuning. "
-        "tuning_profiles contains impedance/delay tuning profiles for controlled impedance and time domain analysis (set replaces all profiles). "
-        "component_classes contains component class assignment rules (enable_sheet_component_classes toggle and custom assignment rules). "
-        "custom_rules contains the DRC custom rules text (get returns rules_text, set REPLACES the entire file - append to existing rules yourself if needed). "
-        "drc_severities is a map of DRC check names to severity ('error', 'warning', 'ignore') for violation severity settings. "
-        "text_variables is a map of variable names to substitution values (project-level, use as ${VAR_NAME} in text). "
+        "action='get' returns all settings. action='set' updates only provided fields. "
+        "Use 'get' first to discover available settings and current values. "
         "All dimensions are in nanometers (nm) unless otherwise noted. "
-        "Net classes are project-level settings (shared between schematic and PCB). Set REPLACES all classes (except Default). "
+        "Net classes are project-level (shared with schematic). Set REPLACES all classes (except Default). "
+        "custom_rules set REPLACES the entire file — get current rules first if appending. "
         "REQUIRES: PCB editor must be open with a document loaded.";
     pcbSetup.input_schema = {
         { "type", "object" },
@@ -2652,14 +2614,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
             { "drc_severities", {
                 { "type", "object" },
                 { "description", "Map of DRC check names to severity: 'error', 'warning', or 'ignore'. "
-                                "Check names by category - "
-                                "Electrical: shorting_items, tracks_crossing, clearance, creepage, via_dangling, track_dangling, starved_thermal. "
-                                "DFM: copper_edge_clearance, hole_clearance, hole_to_hole, holes_co_located, track_width, track_angle, track_segment_length, annular_width, drill_out_of_range, microvia_drill_out_of_range, courtyards_overlap, missing_courtyard, malformed_courtyard, invalid_outline, copper_sliver, solder_mask_bridge, connection_width. "
-                                "Schematic Parity: duplicate_footprints, missing_footprint, extra_footprint, footprint_symbol_mismatch, footprint_filters_mismatch, net_conflict, unconnected_items. "
-                                "Signal Integrity: length_out_of_range, skew_out_of_range, too_many_vias, diff_pair_gap_out_of_range, diff_pair_uncoupled_length_too_long. "
-                                "Readability: silk_overlap, silk_over_copper, silk_edge_clearance, text_height, text_thickness, mirrored_text_on_front_layer, nonmirrored_text_on_back_layer. "
-                                "Miscellaneous: items_not_allowed, text_on_edge_cuts, zones_intersect, isolated_copper, footprint, padstack, pth_inside_courtyard, npth_inside_courtyard, item_on_disabled_layer, unresolved_variable, lib_footprint_issues, lib_footprint_mismatch, through_hole_pad_without_hole, missing_tuning_profile. "
-                                "Example: {\"clearance\": \"error\", \"track_width\": \"warning\", \"missing_courtyard\": \"ignore\"}" },
+                                "Use pcb_setup action='get' to see all available check names and current severities." },
                 { "additionalProperties", { { "type", "string" }, { "enum", json::array( { "error", "warning", "ignore" } ) } } }
             }},
             { "custom_rules", {

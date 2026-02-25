@@ -32,7 +32,6 @@ try:
     labels = sch.labels.get_all()
     no_connects = sch.crud.get_no_connects()
     sheets = sch.crud.get_sheets()
-    # Get bus entries if available
     bus_entries = []
     try:
         if hasattr(sch, 'buses') and hasattr(sch.buses, 'get_bus_entries'):
@@ -42,164 +41,50 @@ try:
     except:
         pass
 
-    # Get document info if available
-    doc_info = {}
+    # Get document title
+    _title = ''
     try:
-        doc = sch.document
-        if hasattr(doc, 'version'):
-            doc_info['version'] = doc.version
-        if hasattr(doc, 'uuid'):
-            doc_info['uuid'] = str(doc.uuid)
-        if hasattr(doc, 'paper'):
-            doc_info['paper'] = doc.paper
-        if hasattr(doc, 'title'):
-            doc_info['title'] = doc.title
+        if hasattr(sch.document, 'title'):
+            _title = sch.document.title or ''
     except:
         pass
 
-    # Cache datasheet URLs by lib_id (avoids repeated IPC lookups)
-    _ds_cache = {}
-    def _get_datasheet(lid):
-        if lid not in _ds_cache:
-            try:
-                _info = sch.library.get_symbol_info(lid)
-                _ds_cache[lid] = getattr(_info, 'datasheet', '') or ''
-            except:
-                _ds_cache[lid] = ''
-        return _ds_cache[lid]
-
-    # Format symbols with pin positions
+    # Format symbols — lightweight: ref, value, lib_id, pos, pin_count
+    # Use sch_get_pins or sch_read_section for full pin details
     symbol_data = []
     for sym in symbols:
         lib_id_str = get_lib_id_str(sym)
-
-        # Get symbol position and angle for pin transformation
-        sym_pos = get_pos(getattr(sym, 'position', None))
-        sym_angle = sym.angle if hasattr(sym, 'angle') else 0
-        mirror_x = getattr(sym, 'mirror_x', False)
-        mirror_y = getattr(sym, 'mirror_y', False)
-
+        pin_count = len(sym.pins) if hasattr(sym, 'pins') else 0
         sym_info = {
-            'uuid': get_uuid_str(sym),
-            'lib_id': lib_id_str,
             'ref': sym.reference if hasattr(sym, 'reference') else '',
             'value': sym.value if hasattr(sym, 'value') else '',
-            'pos': sym_pos,
-            'angle': sym_angle,
-            'unit': sym.unit if hasattr(sym, 'unit') else 1,
-            'pins': []
+            'lib_id': lib_id_str,
+            'pos': get_pos(getattr(sym, 'position', None)),
+            'pin_count': pin_count
         }
-        _ds = _get_datasheet(lib_id_str)
-        if _ds:
-            sym_info['datasheet_url'] = _ds
-        # Get pin positions using batch API for efficiency (single IPC call per symbol)
-        if hasattr(sym, 'pins'):
-            # Use batch API if available
-            pin_map = {}
-            if hasattr(sch.symbols, 'get_all_transformed_pin_positions'):
-                try:
-                    all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
-                    for p in all_pins:
-                        pin_map[p['pin_number']] = get_pos(p)
-                except:
-                    pass
-
-            for pin in sym.pins:
-                try:
-                    abs_pos = pin_map.get(pin.number)
-
-                    # Fallback: pin.position on placed symbols is already absolute (transformed)
-                    # Do NOT add sym_pos - it's already included in the position
-                    if not abs_pos or (abs_pos[0] == 0 and abs_pos[1] == 0):
-                        pin_pos = get_pos(getattr(pin, 'position', None))
-                        if pin_pos and (pin_pos[0] != 0 or pin_pos[1] != 0):
-                            abs_pos = pin_pos  # Already absolute, no transformation needed
-
-                    if abs_pos:
-                        sym_info['pins'].append({
-                            'number': pin.number,
-                            'name': getattr(pin, 'name', ''),
-                            'pos': abs_pos
-                        })
-                except:
-                    pass
         symbol_data.append(sym_info)
 
-    # Format wires
-    wire_data = []
-    for wire in wires:
-        wire_data.append({
-            'uuid': get_uuid_str(wire),
-            'start': get_pos(getattr(wire, 'start', None)),
-            'end': get_pos(getattr(wire, 'end', None))
-        })
-
-    # Format junctions
-    junction_data = []
-    for junc in junctions:
-        junction_data.append({
-            'uuid': get_uuid_str(junc),
-            'pos': get_pos(getattr(junc, 'position', None))
-        })
-
-    # Format labels
+    # Format labels — text and type are key for understanding net connectivity
     label_data = []
     for lbl in labels:
         label_data.append({
-            'uuid': get_uuid_str(lbl),
             'text': lbl.text if hasattr(lbl, 'text') else '',
-            'pos': get_pos(getattr(lbl, 'position', None)),
-            'type': type(lbl).__name__
+            'type': type(lbl).__name__,
+            'pos': get_pos(getattr(lbl, 'position', None))
         })
 
-    # Format no_connects
-    nc_data = []
-    for nc in no_connects:
-        nc_data.append({
-            'uuid': get_uuid_str(nc),
-            'pos': get_pos(getattr(nc, 'position', None))
-        })
-
-    # Format sheets with full details including hierarchical pins
-    _side_map = {1: 'left', 2: 'right', 3: 'top', 4: 'bottom'}
-    _shape_map = {1: 'input', 2: 'output', 3: 'bidirectional', 4: 'tri_state', 5: 'passive'}
+    # Format sheets — name and file for hierarchy, pin_count for interface size
     sheet_data = []
     for sheet in sheets:
-        sheet_info = {
-            'uuid': get_uuid_str(sheet),
+        pin_count = len(sheet.pins) if hasattr(sheet, 'pins') else 0
+        sheet_data.append({
             'name': sheet.name if hasattr(sheet, 'name') else '',
             'file': sheet.filename if hasattr(sheet, 'filename') else '',
-            'pins': []
-        }
-        if hasattr(sheet, 'pins'):
-            for pin in sheet.pins:
-                try:
-                    pin_info = {
-                        'name': pin.name if hasattr(pin, 'name') else '',
-                        'pos': get_pos(getattr(pin, 'position', None)),
-                        'side': _side_map.get(pin.side, str(pin.side)) if hasattr(pin, 'side') else '',
-                        'shape': _shape_map.get(pin.shape, str(pin.shape)) if hasattr(pin, 'shape') else ''
-                    }
-                    sheet_info['pins'].append(pin_info)
-                except:
-                    pass
-        sheet_data.append(sheet_info)
-
-    # Format bus entries
-    bus_entry_data = []
-    for entry in bus_entries:
-        entry_info = {
-            'uuid': get_uuid_str(entry),
-            'pos': get_pos(getattr(entry, 'position', None)),
-        }
-        # Get size/end point if available
-        if hasattr(entry, 'size'):
-            entry_info['size'] = get_pos(entry.size)
-        if hasattr(entry, 'end'):
-            entry_info['end'] = get_pos(entry.end)
-        bus_entry_data.append(entry_info)
+            'pin_count': pin_count
+        })
 
     # Audit: detect orphaned items
+    # (uses raw wire/pin data internally but only reports findings)
     rnd = lambda v: round(v, 2)
     def wire_ep(w):
         return (rnd(w.start.x/1e6), rnd(w.start.y/1e6)), (rnd(w.end.x/1e6), rnd(w.end.y/1e6))
@@ -216,7 +101,6 @@ try:
             pass
 
     # Collect all symbol pin positions (for label/junction connectivity)
-    # Use batch API to get all pin positions in a single IPC call per symbol
     all_pin_pts = set()
     for sym in symbols:
         if hasattr(sym, 'pins'):
@@ -235,7 +119,6 @@ try:
             if not hasattr(sym, 'reference') or not sym.reference.startswith('#PWR'):
                 continue
             connected = False
-            # Use batch API for efficiency
             try:
                 all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
                 for tp in all_pins:
@@ -290,20 +173,12 @@ try:
         audit['orphaned_junctions'] = orphaned_junctions
 
     summary = {
-        'source': 'ipc',
         'current_sheet': _current_sheet,
         'file': os.path.basename(file_path) if file_path else '',
-        'version': doc_info.get('version', 0),
-        'uuid': doc_info.get('uuid', ''),
-        'paper': doc_info.get('paper', ''),
-        'title': doc_info.get('title', ''),
+        'title': _title,
         'symbols': symbol_data,
-        'wires': wire_data,
-        'junctions': junction_data,
         'labels': label_data,
-        'no_connects': nc_data,
         'sheets': sheet_data,
-        'bus_entries': bus_entry_data,
         'counts': {
             'symbols': len(symbols),
             'wires': len(wires),

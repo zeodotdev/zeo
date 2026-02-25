@@ -308,9 +308,12 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
     LLM_TOOL schGetSummary;
     schGetSummary.name = "sch_get_summary";
     schGetSummary.description = "Get a high-level overview of the schematic from the live editor. "
-                                "Returns JSON with symbols, wires, junctions, labels, and counts. "
+                                "Returns a lightweight summary: symbols (ref, value, lib_id, pos, pin_count), "
+                                "labels (text, type, pos), sheets (name, file, pin_count), and element counts. "
                                 "Includes an audit section that flags orphaned items (power symbols with no wire "
                                 "connections, labels not touching any wire or pin, junctions with fewer than 2 wires). "
+                                "For detailed data use sch_get_pins (pin positions), sch_read_section (wires, "
+                                "junctions, full symbol fields), or sch_find_symbol (library lookup). "
                                 "REQUIRES: Schematic editor must be open with a document loaded.";
     schGetSummary.input_schema = {
         { "type", "object" },

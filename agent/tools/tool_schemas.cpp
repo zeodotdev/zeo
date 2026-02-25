@@ -1490,6 +1490,50 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
     };
     tools.push_back( pcbPlace );
 
+    // pcb_place_companions - Place companion footprints near an IC
+    LLM_TOOL pcbPlaceCompanions;
+    pcbPlaceCompanions.name = "pcb_place_companions";
+    pcbPlaceCompanions.description =
+        "Place companion footprints (bypass caps, pull-up/down resistors, filter caps) near their "
+        "associated IC on the PCB. Uses net connectivity to identify which companion pads connect "
+        "to which IC pads, then finds optimal positions minimizing ratsnest distance.\n\n"
+        "Use AFTER importing the netlist (Update PCB from Schematic) so footprints and nets exist. "
+        "Place the IC first with pcb_place, then use this tool for its support components.\n\n"
+        "Best practices:\n"
+        "- Bypass/decoupling caps should be as close as possible to IC power pins\n"
+        "- Pull-up resistors near the IC pin they connect to\n"
+        "- Place larger/critical components first, then companions\n\n"
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbPlaceCompanions.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "ic_ref", {
+                { "type", "string" },
+                { "description", "Reference designator of the IC to place companions near (e.g., 'U1')" }
+            }},
+            { "companions", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "object" },
+                    { "properties", {
+                        { "ref", {
+                            { "type", "string" },
+                            { "description", "Reference designator of the companion footprint (e.g., 'C1', 'R3')" }
+                        }},
+                        { "angle", {
+                            { "type", "number" },
+                            { "description", "Optional rotation angle in degrees (0, 90, 180, 270)" }
+                        }}
+                    }},
+                    { "required", json::array( { "ref" } ) }
+                }},
+                { "description", "Array of companion footprints to place near the IC" }
+            }}
+        }},
+        { "required", json::array( { "ic_ref", "companions" } ) }
+    };
+    tools.push_back( pcbPlaceCompanions );
+
     // pcb_add - Batch add elements to PCB (matches sch_add pattern)
     LLM_TOOL pcbAdd;
     pcbAdd.name = "pcb_add";

@@ -8,9 +8,16 @@
 #include <wx/app.h>
 #include <wx/log.h>
 #include <thread>
+#include <mutex>
 #include <set>
 
 using json = nlohmann::json;
+
+// Tracks parts already triggered for background extraction this session.
+// Prevents duplicate batch requests when sch_get_summary is called multiple
+// times before a prior extraction finishes.
+static std::mutex          s_triggeredMutex;
+static std::set<std::string> s_triggeredParts;
 
 /**
  * URL-encode a string using libcurl.
@@ -420,6 +427,20 @@ void DATASHEET_HANDLER::TriggerExtractionAsync( const std::string& aPartNumber,
                                                  const std::string& aManufacturer,
                                                  const std::string& aDatasheetUrl )
 {
+    // Deduplicate across calls: skip if already triggered this session
+    {
+        std::lock_guard<std::mutex> lock( s_triggeredMutex );
+
+        if( s_triggeredParts.count( aPartNumber ) )
+        {
+            wxLogInfo( "DATASHEET_HANDLER: Skipping duplicate extraction trigger for %s",
+                       aPartNumber.c_str() );
+            return;
+        }
+
+        s_triggeredParts.insert( aPartNumber );
+    }
+
     const auto& reg = TOOL_REGISTRY::Instance();
     AGENT_AUTH* auth = reg.GetAuth();
     const std::string& supabaseUrl = reg.GetSupabaseUrl();

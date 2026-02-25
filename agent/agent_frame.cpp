@@ -317,11 +317,23 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
                     case KEY_SHORTCUT::STOP_GENERATING:
                         if( m_isGenerating )
-                            DoStopClick();
+                        {
+                            m_webView->RunScriptAsync(
+                                    wxS( "if(App.Search.isOpen()){App.Search.close()}"
+                                         "else{App.Bridge.sendMsg('stop_click')}" ) );
+                        }
+                        else
+                        {
+                            m_webView->RunScriptAsync( wxS( "App.Search.close()" ) );
+                        }
                         break;
 
                     case KEY_SHORTCUT::NEW_CHAT:
                         DoNewChat();
+                        break;
+
+                    case KEY_SHORTCUT::SEARCH_CHAT:
+                        m_webView->RunScriptAsync( wxS( "App.Search.open()" ) );
                         break;
                     }
                 } );

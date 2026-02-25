@@ -13,7 +13,8 @@ enum class KEY_SHORTCUT
     REDO,             // Cmd+Shift+Z
     FOCUS_INPUT,      // Cmd+L
     STOP_GENERATING,  // Escape
-    NEW_CHAT          // Cmd+N
+    NEW_CHAT,         // Cmd+N
+    SEARCH_CHAT       // Cmd+F
 };
 
 /**

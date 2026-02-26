@@ -21,6 +21,7 @@
 #include <python_scripting.h>
 #include <unistd.h>    // for write(), close()
 #include <stdlib.h>    // for mkstemps()
+#include <wx/log.h>
 
 // Define the custom events
 wxDEFINE_EVENT( wxEVT_PYTHON_OUTPUT, wxThreadEvent );
@@ -195,10 +196,18 @@ void* PYTHON_EXEC_THREAD::Entry()
     // Post completion event with result (only if not stopped and handler still valid)
     if( !TestDestroy() && !m_stopRequested.load() )
     {
+        wxLogInfo( "HEADLESS_EXEC: Python thread completed, posting wxEVT_PYTHON_COMPLETE event" );
         wxThreadEvent* event = new wxThreadEvent( wxEVT_PYTHON_COMPLETE );
         event->SetString( wxString::FromUTF8( resultStr.c_str() ) );
         event->SetInt( success ? 1 : 0 );
         wxQueueEvent( m_handler, event );
+        wxLogInfo( "HEADLESS_EXEC: wxQueueEvent called, event posted to handler %p", m_handler );
+    }
+    else
+    {
+        wxLogInfo( "HEADLESS_EXEC: Python thread completed but NOT posting event "
+                   "(TestDestroy=%d, stopRequested=%d)",
+                   TestDestroy(), m_stopRequested.load() );
     }
 
     return nullptr;

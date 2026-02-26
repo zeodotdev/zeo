@@ -11,50 +11,7 @@ pin_labels = TOOL_ARGS.get("labels", {})
 h_align_override = TOOL_ARGS.get("h_align", None)
 v_align_override = TOOL_ARGS.get("v_align", None)
 
-_LABEL_SHRINK = 0.4  # Shrink label bboxes to allow stacking at 2.54mm pitch
-
-# Collect bounding boxes of existing elements for overlap detection
-_BBOX_MARGIN = 1.0
-placed_bboxes = []
-try:
-    for _esym in sch.symbols.get_all():
-        try:
-            _ebb = sch.transform.get_bounding_box(_esym, units='mm', include_text=False)
-        except:
-            continue
-        if _ebb:
-            placed_bboxes.append({'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})
-except:
-    pass
-try:
-    for _esht in sch.crud.get_sheets():
-        try:
-            _ebb = sch.transform.get_bounding_box(_esht, units='mm')
-        except:
-            continue
-        if _ebb:
-            placed_bboxes.append({'ref': getattr(_esht, 'name', 'sheet'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})
-except:
-    pass
-try:
-    for _elbl in sch.labels.get_all():
-        try:
-            _ebb = sch.transform.get_bounding_box(_elbl, units='mm')
-        except:
-            continue
-        if _ebb:
-            placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] + _LABEL_SHRINK, 'max_x': _ebb['max_x'] - _LABEL_SHRINK, 'min_y': _ebb['min_y'] + _LABEL_SHRINK, 'max_y': _ebb['max_y'] - _LABEL_SHRINK})
-except:
-    pass
-
-def _bboxes_overlap(a, b):
-    return a['min_x'] < b['max_x'] and a['max_x'] > b['min_x'] and a['min_y'] < b['max_y'] and a['max_y'] > b['min_y']
-
-def _point_in_bbox(px, py, bb):
-    """Check if a point is inside a bounding box (for pin-on-pin exclusion)."""
-    return bb['min_x'] <= px <= bb['max_x'] and bb['min_y'] <= py <= bb['max_y']
-
-def create_label(text, position, h_align, v_align):
+def create_label(text, position, h_align, v_align, rotation=0):
     if label_type == 'global':
         lbl = GlobalLabel.create(position, text)
     elif label_type == 'hierarchical':
@@ -63,6 +20,8 @@ def create_label(text, position, h_align, v_align):
         lbl = LocalLabel.create(position, text)
     lbl._proto.text.attributes.horizontal_alignment = h_align
     lbl._proto.text.attributes.vertical_alignment = v_align
+    if rotation != 0:
+        lbl._proto.text.attributes.angle.value_degrees = rotation
     created = sch.crud.create_items(lbl)
     return created[0] if created else lbl
 
@@ -104,7 +63,8 @@ elif _is_sheet:
 
             # Sheet pin side -> label alignment (already world-space)
             # SPS_LEFT=1: label extends left; SPS_RIGHT=2: label extends right
-            # SPS_TOP=3: horizontal above; SPS_BOTTOM=4: horizontal below
+            # SPS_TOP=3: vertical above; SPS_BOTTOM=4: vertical below
+            rotation = 0  # Label rotation in degrees
             if _side == 1:
                 h_align, v_align = HA_RIGHT, VA_BOTTOM
                 direction = 'left'
@@ -114,9 +74,11 @@ elif _is_sheet:
             elif _side == 3:
                 h_align, v_align = HA_LEFT, VA_BOTTOM
                 direction = 'up'
+                rotation = 90  # Rotate label for vertical sheet pin
             elif _side == 4:
                 h_align, v_align = HA_LEFT, VA_TOP
                 direction = 'down'
+                rotation = 90  # Rotate label for vertical sheet pin
             else:
                 h_align, v_align = HA_LEFT, VA_BOTTOM
                 direction = 'right'
@@ -129,32 +91,8 @@ elif _is_sheet:
 
             lbl_x, lbl_y = px, py
             label_pos = Vector2.from_xy_mm(lbl_x, lbl_y)
-            _lbl = create_label(label_text, label_pos, h_align, v_align)
-
-            # Overlap detection -- reject if label overlaps any existing element
-            _rejected = False
-            try:
-                _bb = sch.transform.get_bounding_box(_lbl, units='mm')
-                if _bb:
-                    _new_bbox = {'min_x': _bb['min_x'] + _LABEL_SHRINK, 'max_x': _bb['max_x'] - _LABEL_SHRINK, 'min_y': _bb['min_y'] + _LABEL_SHRINK, 'max_y': _bb['max_y'] - _LABEL_SHRINK}
-                    _conflict = None
-                    for _pb in placed_bboxes:
-                        if _bboxes_overlap(_new_bbox, _pb) and not _point_in_bbox(px, py, _pb):
-                            _conflict = _pb
-                            break
-                    if _conflict:
-                        sch.crud.remove_items([_lbl])
-                        _cr = _conflict.get('ref', '?')
-                        _ox = min(_new_bbox['max_x'], _conflict['max_x']) - max(_new_bbox['min_x'], _conflict['min_x'])
-                        _oy = min(_new_bbox['max_y'], _conflict['max_y']) - max(_new_bbox['min_y'], _conflict['min_y'])
-                        results.append({'pin': pin_id, 'label': label_text, 'error': f"Placement rejected: overlaps '{_cr}' by {_ox:.1f}mm horizontal, {_oy:.1f}mm vertical"})
-                        _rejected = True
-                    else:
-                        placed_bboxes.append({'ref': label_text, **_new_bbox})
-            except:
-                pass
-            if not _rejected:
-                results.append({'pin': pin_id, 'label': label_text, 'position': [round(lbl_x, 2), round(lbl_y, 2)], 'direction': direction})
+            _lbl = create_label(label_text, label_pos, h_align, v_align, rotation)
+            results.append({'pin': pin_id, 'label': label_text, 'position': [round(lbl_x, 2), round(lbl_y, 2)], 'direction': direction})
 
         except Exception as e:
             results.append({'pin': pin_id, 'label': label_text, 'error': str(e)})
@@ -195,6 +133,7 @@ else:
 
             # Transform orientation and compute escape direction
             out_dx, out_dy = 0, 0
+            rotation = 0  # Label rotation in degrees
             if orient is not None:
                 orient = transform_orientation(orient)
                 # orient 0=PIN_RIGHT(body), 1=PIN_LEFT(body), 2=PIN_UP(body), 3=PIN_DOWN(body)
@@ -206,14 +145,16 @@ else:
                     h_align, v_align = HA_LEFT, VA_BOTTOM
                     direction = 'right'
                     out_dx, out_dy = 1, 0
-                elif orient == 2:  # escape down
+                elif orient == 2:  # escape down (vertical pin)
                     h_align, v_align = HA_LEFT, VA_TOP
                     direction = 'down'
                     out_dx, out_dy = 0, 1
-                elif orient == 3:  # escape up
+                    rotation = 90  # Rotate label for vertical pin
+                elif orient == 3:  # escape up (vertical pin)
                     h_align, v_align = HA_LEFT, VA_BOTTOM
                     direction = 'up'
                     out_dx, out_dy = 0, -1
+                    rotation = 90  # Rotate label for vertical pin
                 else:
                     h_align, v_align = HA_LEFT, VA_BOTTOM
                     direction = 'right'
@@ -239,32 +180,8 @@ else:
 
             lbl_x, lbl_y = px, py
             label_pos = Vector2.from_xy_mm(lbl_x, lbl_y)
-            _lbl = create_label(label_text, label_pos, h_align, v_align)
-
-            # Overlap detection -- reject if label overlaps any existing element
-            _rejected = False
-            try:
-                _bb = sch.transform.get_bounding_box(_lbl, units='mm')
-                if _bb:
-                    _new_bbox = {'min_x': _bb['min_x'] + _LABEL_SHRINK, 'max_x': _bb['max_x'] - _LABEL_SHRINK, 'min_y': _bb['min_y'] + _LABEL_SHRINK, 'max_y': _bb['max_y'] - _LABEL_SHRINK}
-                    _conflict = None
-                    for _pb in placed_bboxes:
-                        if _bboxes_overlap(_new_bbox, _pb) and not _point_in_bbox(px, py, _pb):
-                            _conflict = _pb
-                            break
-                    if _conflict:
-                        sch.crud.remove_items([_lbl])
-                        _cr = _conflict.get('ref', '?')
-                        _ox = min(_new_bbox['max_x'], _conflict['max_x']) - max(_new_bbox['min_x'], _conflict['min_x'])
-                        _oy = min(_new_bbox['max_y'], _conflict['max_y']) - max(_new_bbox['min_y'], _conflict['min_y'])
-                        results.append({'pin': pin_id, 'label': label_text, 'error': f"Placement rejected: overlaps '{_cr}' by {_ox:.1f}mm horizontal, {_oy:.1f}mm vertical"})
-                        _rejected = True
-                    else:
-                        placed_bboxes.append({'ref': label_text, **_new_bbox})
-            except:
-                pass
-            if not _rejected:
-                results.append({'pin': pin_id, 'label': label_text, 'position': [round(lbl_x, 2), round(lbl_y, 2)], 'direction': direction})
+            _lbl = create_label(label_text, label_pos, h_align, v_align, rotation)
+            results.append({'pin': pin_id, 'label': label_text, 'position': [round(lbl_x, 2), round(lbl_y, 2)], 'direction': direction})
 
         except Exception as e:
             results.append({'pin': pin_id, 'label': label_text, 'error': str(e)})

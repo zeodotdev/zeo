@@ -1938,7 +1938,7 @@ std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayloa
     // Wait for response (Sync)
     // We expect the target frame to reply via MAIL_AGENT_RESPONSE which sets m_toolResponse
     wxLongLong start = wxGetLocalTimeMillis();
-    constexpr long TIMEOUT_MS = 10000;
+    constexpr long TIMEOUT_MS = 120000;  // 2 minutes for bulk operations (e.g., labeling 100+ pins)
     m_stopRequested = false;  // Reset stop flag
     while( m_toolResponse == NO_RESPONSE_SENTINEL && ( wxGetLocalTimeMillis() - start < TIMEOUT_MS ) )
     {

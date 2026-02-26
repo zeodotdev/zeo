@@ -111,20 +111,28 @@ std::string HEADLESS_PYTHON_EXECUTOR::RunPython( const std::string& aCode,
 
 void HEADLESS_PYTHON_EXECUTOR::OnPythonComplete( wxThreadEvent& aEvent )
 {
+    wxLogInfo( "HEADLESS_EXEC: OnPythonComplete EVENT RECEIVED" );
     m_lastPythonResult = aEvent.GetString().ToStdString();
     m_pythonRunning.store( false );
+    wxLogInfo( "HEADLESS_EXEC: OnPythonComplete - m_pythonRunning set to false, result_len=%zu",
+               m_lastPythonResult.length() );
 }
 
 
 void HEADLESS_PYTHON_EXECUTOR::OnPythonPollTimer( wxTimerEvent& aEvent )
 {
+    long elapsedMs = ( wxGetLocalTimeMillis() - m_pythonStartTime ).ToLong();
+    wxLogInfo( "HEADLESS_EXEC: PollTimer - m_pythonRunning=%d, elapsed=%ldms",
+               m_pythonRunning.load(), elapsedMs );
+
     if( !m_pythonRunning.load() )
     {
+        wxLogInfo( "HEADLESS_EXEC: PollTimer - Python no longer running, calling FinishPythonExecution" );
         FinishPythonExecution();
         return;
     }
 
-    long timeoutMs = 10000;
+    long timeoutMs = 120000;  // 2 minutes for bulk operations (e.g., labeling 100+ pins)
 
     if( wxGetLocalTimeMillis() - m_pythonStartTime > timeoutMs )
     {
@@ -141,7 +149,7 @@ void HEADLESS_PYTHON_EXECUTOR::OnPythonPollTimer( wxTimerEvent& aEvent )
         m_pythonRunning.store( false );
         m_pythonTimedOut = true;
 
-        wxLogWarning( "HEADLESS_EXEC: Python execution timed out" );
+        wxLogWarning( "HEADLESS_EXEC: Python execution timed out after %ldms", elapsedMs );
         FinishPythonExecution();
     }
 }
@@ -149,18 +157,21 @@ void HEADLESS_PYTHON_EXECUTOR::OnPythonPollTimer( wxTimerEvent& aEvent )
 
 void HEADLESS_PYTHON_EXECUTOR::FinishPythonExecution()
 {
-    wxLogInfo( "HEADLESS_EXEC: FinishPythonExecution, timedOut=%d, hasCallback=%d",
+    wxLogInfo( "HEADLESS_EXEC: FinishPythonExecution ENTRY, timedOut=%d, hasCallback=%d",
                m_pythonTimedOut, m_completionCallback != nullptr );
 
     m_pythonPollTimer.Stop();
 
     if( m_pythonThread )
     {
+        wxLogInfo( "HEADLESS_EXEC: Waiting for Python thread to finish" );
         m_pythonThread->Wait();
         delete m_pythonThread;
         m_pythonThread = nullptr;
+        wxLogInfo( "HEADLESS_EXEC: Python thread cleaned up" );
     }
 
+    wxLogInfo( "HEADLESS_EXEC: Calling SetIPCShellBlocking(false)" );
     SetIPCShellBlocking( false );
 
     if( m_completionCallback )
@@ -170,11 +181,17 @@ void HEADLESS_PYTHON_EXECUTOR::FinishPythonExecution()
                 ? "Error: Python execution timed out"
                 : ( m_lastPythonResult.empty() ? "(no output)" : m_lastPythonResult );
 
-        wxLogInfo( "HEADLESS_EXEC: Invoking callback, success=%d, result_len=%zu",
+        wxLogInfo( "HEADLESS_EXEC: About to invoke completion callback, success=%d, result_len=%zu",
                    success, result.length() );
 
         m_completionCallback( result, success );
+
+        wxLogInfo( "HEADLESS_EXEC: Completion callback invoked" );
         m_completionCallback = nullptr;
+    }
+    else
+    {
+        wxLogInfo( "HEADLESS_EXEC: No completion callback to invoke!" );
     }
 
     m_pythonTimedOut = false;

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <map>
 #include <set>
 #include <thread>
 #include <kiway.h>
@@ -1341,12 +1342,94 @@ bool CHAT_CONTROLLER::RepairMessageArray( nlohmann::json& messages )
     // The Anthropic API requires:
     // 1. Every tool_use must have a corresponding tool_result in the NEXT message
     // 2. Every tool_result must reference a tool_use in the PREVIOUS message
+    // 3. Server-side tools (web_search, etc.) must have both server_tool_use AND
+    //    their result (web_search_tool_result) in the SAME assistant message
 
     if( messages.empty() )
         return false;
 
     using json = nlohmann::json;
     bool modified = false;
+
+    // PASS 0: Remove orphaned server_tool_use blocks
+    // Server-side tools (e.g., web_search) require both the server_tool_use and its
+    // result (e.g., web_search_tool_result) in the same assistant message.
+    // If a stream was interrupted, we might have server_tool_use without its result.
+    for( auto& msg : messages )
+    {
+        if( !msg.contains( "role" ) || msg["role"] != "assistant" )
+            continue;
+        if( !msg.contains( "content" ) || !msg["content"].is_array() )
+            continue;
+
+        // Collect server_tool_use IDs and their expected result types
+        // Format: { id -> expected_result_type }
+        // e.g., "web_search" server_tool_use expects "web_search_tool_result"
+        std::map<std::string, std::string> serverToolUseIds;
+        for( const auto& block : msg["content"] )
+        {
+            if( block.contains( "type" ) && block["type"] == "server_tool_use" &&
+                block.contains( "id" ) && block.contains( "name" ) )
+            {
+                std::string id = block["id"].get<std::string>();
+                std::string name = block["name"].get<std::string>();
+                // Expected result type is "<name>_tool_result"
+                serverToolUseIds[id] = name + "_tool_result";
+            }
+        }
+
+        if( serverToolUseIds.empty() )
+            continue;
+
+        // Check which server_tool_use IDs have their corresponding results
+        std::set<std::string> foundResultIds;
+        for( const auto& block : msg["content"] )
+        {
+            if( !block.contains( "type" ) )
+                continue;
+
+            std::string blockType = block["type"].get<std::string>();
+
+            // Check if this is a server tool result (ends with "_tool_result")
+            if( blockType.length() > 12 &&
+                blockType.substr( blockType.length() - 12 ) == "_tool_result" &&
+                block.contains( "tool_use_id" ) )
+            {
+                foundResultIds.insert( block["tool_use_id"].get<std::string>() );
+            }
+        }
+
+        // Filter out orphaned server_tool_use blocks
+        json newContent = json::array();
+        size_t removedCount = 0;
+        for( const auto& block : msg["content"] )
+        {
+            bool keep = true;
+            if( block.contains( "type" ) && block["type"] == "server_tool_use" &&
+                block.contains( "id" ) )
+            {
+                std::string id = block["id"].get<std::string>();
+                if( foundResultIds.find( id ) == foundResultIds.end() )
+                {
+                    // This server_tool_use has no result - remove it
+                    keep = false;
+                    removedCount++;
+                    wxLogInfo( "CHAT_CONTROLLER::RepairMessageArray - removing orphaned "
+                               "server_tool_use id=%s", id.c_str() );
+                }
+            }
+            if( keep )
+            {
+                newContent.push_back( block );
+            }
+        }
+
+        if( removedCount > 0 )
+        {
+            msg["content"] = newContent;
+            modified = true;
+        }
+    }
 
     // PASS 1: Remove orphaned tool_result blocks
     // These are tool_results that don't have a matching tool_use in the previous message

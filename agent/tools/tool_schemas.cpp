@@ -274,6 +274,45 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
     schGetPins.read_only = true;
     tools.push_back( schGetPins );
 
+    // sch_symbols - Query symbols with comprehensive data including footprint and connectivity
+    LLM_TOOL schSymbols;
+    schSymbols.name = "sch_symbols";
+    schSymbols.description =
+        "Query schematic symbols with comprehensive data including footprint and pin connectivity. "
+        "Returns for each symbol: ref, value, footprint, position, and pins with connection status. "
+        "Pin connectivity shows which pins are connected to wires/labels and their net names. "
+        "Use sch_update with properties.Footprint to change footprint assignments. "
+        "REQUIRES: Schematic editor must be open.";
+    schSymbols.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "filter", {
+                { "type", "string" },
+                { "description", "Filter by reference pattern (glob): 'R*', 'U?', 'C1'. Omit for all." }
+            }},
+            { "library", {
+                { "type", "string" },
+                { "description", "Filter by library name (e.g., 'Device')" }
+            }},
+            { "refs", {
+                { "type", "array" },
+                { "items", { { "type", "string" } } },
+                { "description", "Specific refs to query: ['R1', 'C2', 'U3']" }
+            }},
+            { "include_library_info", {
+                { "type", "boolean" },
+                { "description", "Include footprint_filters, description. Default: false" }
+            }},
+            { "include_connectivity", {
+                { "type", "boolean" },
+                { "description", "Include pin connection status. Default: true" }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    schSymbols.read_only = true;
+    tools.push_back( schSymbols );
+
     // ===== IPC-based CRUD Tools (sch_add, sch_update, sch_delete, sch_batch_delete) =====
     // These work on the LIVE schematic via kipy API
 
@@ -1418,6 +1457,19 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
                             { "type", "number" },
                             { "description", "Via drill diameter in mm (default: 0.4)" }
                         }},
+                        { "via_type", {
+                            { "type", "string" },
+                            { "enum", json::array({ "through", "blind", "buried", "blind_buried", "micro" }) },
+                            { "description", "Via type: 'through' (default), 'blind', 'buried', 'micro'" }
+                        }},
+                        { "start_layer", {
+                            { "type", "string" },
+                            { "description", "Start layer for blind/buried vias (e.g., 'F.Cu', 'In1.Cu')" }
+                        }},
+                        { "end_layer", {
+                            { "type", "string" },
+                            { "description", "End layer for blind/buried vias (e.g., 'In2.Cu', 'B.Cu')" }
+                        }},
                         { "outline", {
                             { "type", "array" },
                             { "description", "Zone/keepout outline as [[x,y],...] vertices" }
@@ -1440,7 +1492,19 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
                         { "text", { { "type", "string" } } },
                         { "text_size", { { "type", "number" } } },
                         { "thickness", { { "type", "number" } } },
-                        { "filled", { { "type", "boolean" } } }
+                        { "filled", { { "type", "boolean" } } },
+                        { "clearance", {
+                            { "type", "number" },
+                            { "description", "Zone clearance in mm" }
+                        }},
+                        { "min_thickness", {
+                            { "type", "number" },
+                            { "description", "Zone minimum fill thickness in mm" }
+                        }},
+                        { "locked", {
+                            { "type", "boolean" },
+                            { "description", "Lock element to prevent accidental modification" }
+                        }}
                     }},
                     { "required", json::array( { "element_type" } ) }
                 }},
@@ -1502,6 +1566,82 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
                         { "outline", {
                             { "type", "array" },
                             { "description", "New zone/keepout outline [[x,y],...]" }
+                        }},
+                        { "diameter", {
+                            { "type", "number" },
+                            { "description", "Via pad diameter in mm" }
+                        }},
+                        { "drill_diameter", {
+                            { "type", "number" },
+                            { "description", "Via drill hole diameter in mm" }
+                        }},
+                        { "via_type", {
+                            { "type", "string" },
+                            { "description", "Via type: through, blind, buried, micro" }
+                        }},
+                        { "start_layer", {
+                            { "type", "string" },
+                            { "description", "Start layer for blind/buried vias" }
+                        }},
+                        { "end_layer", {
+                            { "type", "string" },
+                            { "description", "End layer for blind/buried vias" }
+                        }},
+                        { "start", {
+                            { "type", "array" },
+                            { "description", "Track start point [x, y] in mm" }
+                        }},
+                        { "end", {
+                            { "type", "array" },
+                            { "description", "Track end point [x, y] in mm" }
+                        }},
+                        { "priority", {
+                            { "type", "integer" },
+                            { "description", "Zone fill priority" }
+                        }},
+                        { "clearance", {
+                            { "type", "number" },
+                            { "description", "Zone clearance in mm" }
+                        }},
+                        { "min_thickness", {
+                            { "type", "number" },
+                            { "description", "Zone minimum fill thickness in mm" }
+                        }},
+                        { "top_left", {
+                            { "type", "array" },
+                            { "items", { { "type", "number" } } },
+                            { "description", "Rectangle top-left corner [x, y] in mm" }
+                        }},
+                        { "bottom_right", {
+                            { "type", "array" },
+                            { "items", { { "type", "number" } } },
+                            { "description", "Rectangle bottom-right corner [x, y] in mm" }
+                        }},
+                        { "center", {
+                            { "type", "array" },
+                            { "items", { { "type", "number" } } },
+                            { "description", "Circle center [x, y] in mm" }
+                        }},
+                        { "radius", {
+                            { "type", "number" },
+                            { "description", "Circle radius in mm" }
+                        }},
+                        { "mid", {
+                            { "type", "array" },
+                            { "items", { { "type", "number" } } },
+                            { "description", "Arc midpoint [x, y] in mm" }
+                        }},
+                        { "no_copper", {
+                            { "type", "boolean" },
+                            { "description", "Keepout: prohibit copper pour" }
+                        }},
+                        { "no_vias", {
+                            { "type", "boolean" },
+                            { "description", "Keepout: prohibit vias" }
+                        }},
+                        { "no_tracks", {
+                            { "type", "boolean" },
+                            { "description", "Keepout: prohibit tracks" }
                         }}
                     }},
                     { "required", json::array( { "target" } ) }

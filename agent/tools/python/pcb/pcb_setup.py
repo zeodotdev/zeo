@@ -13,8 +13,9 @@ def _get():
     try:
         stackup = board.layers.get_stackup()
         layers_data = []
-        for l in stackup.layers:
+        for idx, l in enumerate(stackup.layers):
             layer_info = {
+                'index': idx,
                 'layer': BoardLayer.Name(l.layer) if l.layer else None,
                 'user_name': l.user_name if l.user_name else None,
                 'thickness_nm': l.thickness,
@@ -403,20 +404,30 @@ def _set():
                     'BSLT_SOLDERPASTE': board_pb2.BoardStackupLayerType.BSLT_SOLDERPASTE,
                 }
                 for sl in stackup_layers:
+                    sl_index = sl.get('index')
                     sl_layer = sl.get('layer')
-                    if not sl_layer:
-                        continue
-                    for proto_layer in stackup.proto.layers:
-                        if BoardLayer.Name(proto_layer.layer) == sl_layer:
+
+                    # Iterate over stackup.layers (wrapper) to match indices from _get
+                    for idx, layer in enumerate(stackup.layers):
+                        # Match by index if provided, otherwise by layer name
+                        match = False
+                        if sl_index is not None:
+                            match = (idx == sl_index)
+                        elif sl_layer:
+                            match = (BoardLayer.Name(layer.layer) == sl_layer)
+
+                        if match:
+                            # Access proto through the wrapper for modifications
+                            proto_layer = layer._proto
                             if 'thickness_nm' in sl:
                                 proto_layer.thickness.value_nm = sl['thickness_nm']
                             if 'material' in sl:
                                 proto_layer.material_name = sl['material']
                             if 'color' in sl and isinstance(sl['color'], dict):
-                                proto_layer.color.red = sl['color'].get('r', 0)
-                                proto_layer.color.green = sl['color'].get('g', 0)
-                                proto_layer.color.blue = sl['color'].get('b', 0)
-                                proto_layer.color.alpha = sl['color'].get('a', 255)
+                                proto_layer.color.r = sl['color'].get('r', 0)
+                                proto_layer.color.g = sl['color'].get('g', 0)
+                                proto_layer.color.b = sl['color'].get('b', 0)
+                                proto_layer.color.a = sl['color'].get('a', 255)
                             if 'dielectric' in sl and isinstance(sl['dielectric'], list):
                                 for i, sub_props in enumerate(sl['dielectric']):
                                     if i < len(proto_layer.dielectric.layer):

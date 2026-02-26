@@ -2271,6 +2271,8 @@ void AGENT_FRAME::DoNewChat()
     m_activeRunningHtml.Clear();
     m_activeToolResultIdx = -1;
 
+    // Focus the input textarea so the user can start typing immediately
+    m_bridge->PushInputFocus();
 }
 
 void AGENT_FRAME::LoadConversation( const std::string& aConversationId )

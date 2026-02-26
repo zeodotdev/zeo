@@ -1065,7 +1065,7 @@ void CHAT_CONTROLLER::ExecuteNextTool()
     // Background datasheet extraction for symbols with datasheet URLs
     if( success && ( tool->tool_name == "sch_add"
                      || tool->tool_name == "sch_get_summary"
-                     || tool->tool_name == "sch_read_section" ) )
+                     || tool->tool_name == "sch_inspect" ) )
     {
         try
         {

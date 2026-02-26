@@ -433,8 +433,8 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
         return std::string( "Getting schematic summary" );
     } );
 
-    Register( "sch_read_section", "sch", "schematic/sch_read_section.py", []( const nlohmann::json& a ) {
-        return "Reading schematic " + a.value( "section", "all" );
+    Register( "sch_inspect", "sch", "schematic/sch_inspect.py", []( const nlohmann::json& a ) {
+        return "Inspecting schematic " + a.value( "section", "all" );
     } );
 
     Register( "sch_get_pins", "sch", "schematic/sch_get_pins.py", []( const nlohmann::json& a ) {
@@ -487,8 +487,8 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
         return std::string( "Getting PCB summary" );
     } );
 
-    Register( "pcb_read_section", "pcb", "pcb/pcb_read_section.py", []( const nlohmann::json& a ) {
-        return "Reading PCB " + a.value( "section", "all" );
+    Register( "pcb_inspect", "pcb", "pcb/pcb_inspect.py", []( const nlohmann::json& a ) {
+        return "Inspecting PCB " + a.value( "section", "all" );
     } );
 
     Register( "pcb_run_drc", "pcb", "pcb/pcb_run_drc.py", []( const nlohmann::json& ) {

@@ -93,7 +93,7 @@ def cmd_tool(args):
         """Print available agent tools."""
         tools = [
             ("sch_get_summary", "Get high-level overview of schematic"),
-            ("sch_read_section", "Read specific section (symbols, wires, etc.)"),
+            ("sch_inspect", "Inspect specific section (symbols, wires, etc.)"),
             ("sch_add", "Add elements to schematic"),
             ("sch_update", "Update schematic elements"),
             ("sch_delete", "Delete schematic elements"),
@@ -103,7 +103,7 @@ def cmd_tool(args):
             ("sch_run_erc", "Run electrical rules check"),
             ("sch_setup", "Get/set schematic settings"),
             ("pcb_get_summary", "Get high-level overview of PCB"),
-            ("pcb_read_section", "Read specific section of PCB"),
+            ("pcb_inspect", "Inspect specific section of PCB"),
             ("pcb_add", "Add elements to PCB"),
             ("pcb_update", "Update PCB elements"),
             ("pcb_delete", "Delete PCB elements"),
@@ -142,9 +142,9 @@ def cmd_tool(args):
                 print(f"\n{YELLOW}Note: Direct tool execution not yet implemented.{RESET}")
                 print(f"{DIM}Use 'zeo shell' to run Python code directly, e.g.:{RESET}")
                 if tool_name.startswith("sch_"):
-                    print(f"  sch.get_symbols()  # for sch_read_section")
+                    print(f"  sch.get_symbols()  # for sch_inspect")
                 elif tool_name.startswith("pcb_"):
-                    print(f"  board.get_footprints()  # for pcb_read_section")
+                    print(f"  board.get_footprints()  # for pcb_inspect")
                 return
         except json.JSONDecodeError:
             pass

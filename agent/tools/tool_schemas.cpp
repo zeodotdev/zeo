@@ -362,7 +362,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
                                 "labels (text, type, pos), sheets (name, file, pin_count), and element counts. "
                                 "Includes an audit section that flags orphaned items (power symbols with no wire "
                                 "connections, labels not touching any wire or pin, junctions with fewer than 2 wires). "
-                                "For detailed data use sch_get_pins (pin positions), sch_read_section (wires, "
+                                "For detailed data use sch_get_pins (pin positions), sch_inspect (wires, "
                                 "junctions, full symbol fields), or sch_find_symbol (library lookup). "
                                 "REQUIRES: Schematic editor must be open with a document loaded.";
     schGetSummary.input_schema = {
@@ -373,10 +373,10 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
     schGetSummary.read_only = true;
     tools.push_back( schGetSummary );
 
-    // sch_read_section - Read specific section of schematic
+    // sch_inspect - Inspect specific section of schematic
     LLM_TOOL schReadSection;
-    schReadSection.name = "sch_read_section";
-    schReadSection.description = "Read a specific section of the schematic from the live editor. "
+    schReadSection.name = "sch_inspect";
+    schReadSection.description = "Inspect a specific section of the schematic from the live editor. "
                                  "Returns JSON data for the requested section. "
                                  "Sections: header, symbols, wires, junctions, labels, sheets, all. "
                                  "REQUIRES: Schematic editor must be open with a document loaded.";
@@ -1411,7 +1411,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
     pcbGetSummary.description =
         "Get a high-level overview of the open PCB. Returns footprints (ref, lib_id, position, layer), "
         "track/via/zone counts, net names, and enabled layers. "
-        "For detailed data use pcb_read_section, pcb_get_pads, or pcb_get_footprint. "
+        "For detailed data use pcb_inspect, pcb_get_pads, or pcb_get_footprint. "
         "REQUIRES: PCB editor must be open with a document loaded.";
     pcbGetSummary.input_schema = {
         { "type", "object" },
@@ -1421,11 +1421,11 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
     pcbGetSummary.read_only = true;
     tools.push_back( pcbGetSummary );
 
-    // pcb_read_section - Read specific section of PCB
+    // pcb_inspect - Inspect specific section of PCB
     LLM_TOOL pcbReadSection;
-    pcbReadSection.name = "pcb_read_section";
+    pcbReadSection.name = "pcb_inspect";
     pcbReadSection.description =
-        "Read a specific section of the open PCB in detail. "
+        "Inspect a specific section of the open PCB in detail. "
         "Sections: footprints, tracks, vias, zones, drawings, nets, layers, stackup. "
         "REQUIRES: PCB editor must be open with a document loaded.";
     pcbReadSection.input_schema = {

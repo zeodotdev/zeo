@@ -440,7 +440,7 @@ void DATASHEET_HANDLER::MaybeTriggerExtraction( const std::string& aToolName,
                 symbolEntries.push_back( &r );
         }
     }
-    else if( ( aToolName == "sch_get_summary" || aToolName == "sch_read_section" )
+    else if( ( aToolName == "sch_get_summary" || aToolName == "sch_inspect" )
              && resultJson.contains( "symbols" ) )
     {
         for( const auto& s : resultJson["symbols"] )

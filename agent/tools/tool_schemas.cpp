@@ -205,6 +205,56 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
     };
     tools.push_back( generateFootprint );
 
+    // sch_import_symbol - Import a pre-built KiCad symbol+footprint from cse_get_kicad
+    LLM_TOOL importSymbol;
+    importSymbol.name = "sch_import_symbol";
+    importSymbol.description =
+        "Import a KiCad symbol and footprint (from component_search get_kicad) into the project "
+        "library so the part can be immediately placed with sch_add. "
+        "Writes the symbol into <library_name>.kicad_sym and the footprint into "
+        "<library_name>.pretty/<name>.kicad_mod, registers both in sym-lib-table and fp-lib-table, "
+        "and returns lib_id + footprint_lib_id. "
+        "Pass kicad_symbol and kicad_footprint directly from component_search get_kicad output. "
+        "Typical 3-step flow: (1) component_search { action: get_kicad, query: ... } "
+        "→ kicad_symbol + kicad_footprint, "
+        "(2) sch_import_symbol { kicad_symbol, kicad_footprint } → lib_id, "
+        "(3) sch_add { elements: [{ lib_id }] }. "
+        "If the symbol already exists, returns the existing lib_id (use force=true to replace). "
+        "symbol_name and library_name are optional — name is extracted from the content, "
+        "library defaults to 'project'.";
+    importSymbol.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "kicad_symbol", {
+                { "type", "string" },
+                { "description", "Raw .kicad_sym S-expression from component_search get_kicad "
+                                 "(the kicad_symbol field). Contains symbol pins, properties, and graphics." }
+            }},
+            { "kicad_footprint", {
+                { "type", "string" },
+                { "description", "Raw .kicad_mod S-expression from component_search get_kicad "
+                                 "(the kicad_footprint field). Contains pad layout, silkscreen, courtyard." }
+            }},
+            { "symbol_name", {
+                { "type", "string" },
+                { "description", "Override for the symbol name (lib_id symbol part). "
+                                 "If omitted, extracted automatically from kicad_symbol content." }
+            }},
+            { "library_name", {
+                { "type", "string" },
+                { "description", "Name for the library files (without extension). "
+                                 "Defaults to 'project'. Symbol goes to project.kicad_sym, "
+                                 "footprint goes to project.pretty/." }
+            }},
+            { "force", {
+                { "type", "boolean" },
+                { "description", "If true, overwrite an existing symbol/footprint with the same name. Default false." }
+            }}
+        }},
+        { "required", json::array( { "kicad_symbol" } ) }
+    };
+    tools.push_back( importSymbol );
+
     // create_project - Create a new KiCad project
     LLM_TOOL createProject;
     createProject.name = "create_project";

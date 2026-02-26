@@ -7,6 +7,7 @@
 #include "handlers/create_project_handler.h"
 #include "handlers/datasheet_handler.h"
 #include "handlers/symbol_generator.h"
+#include "handlers/symbol_importer.h"
 #include "handlers/component_search_handler.h"
 #include "handlers/footprint_generator.h"
 #include "handlers/netclass_generator.h"
@@ -42,6 +43,7 @@ TOOL_REGISTRY::TOOL_REGISTRY()
     Register( std::make_unique<CREATE_PROJECT_HANDLER>() );
     Register( std::make_unique<DATASHEET_HANDLER>() );
     Register( std::make_unique<SYMBOL_GENERATOR>() );
+    Register( std::make_unique<SYMBOL_IMPORTER>() );
     Register( std::make_unique<COMPONENT_SEARCH_HANDLER>() );
     Register( std::make_unique<FOOTPRINT_GENERATOR>() );
     Register( std::make_unique<NETCLASS_GENERATOR>() );

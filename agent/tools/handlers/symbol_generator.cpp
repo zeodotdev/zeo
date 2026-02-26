@@ -75,11 +75,7 @@ static constexpr double MIN_BODY_HEIGHT = 5.08;    // 200 mil
 static constexpr double FONT_SIZE = 1.27;
 static constexpr double PROP_OFFSET = 1.27;
 static constexpr double PIN_NAMES_OFFSET = 1.016; // KiCad pin_names offset from body edge
-// Padding added to body when pins exist on both vertical and horizontal sides.
-// Required to prevent pin name labels from overlapping at corners.
-// With PIN_SPACING, the clearance between corner labels is:
-//   gap = PIN_SPACING - (PIN_NAMES_OFFSET + FONT_SIZE) = 2.54 - (1.016 + 1.27) = 0.254mm (10 mil)
-static constexpr double CORNER_PAD = PIN_SPACING;
+static constexpr double CORNER_MARGIN = 0.5;  // extra breathing room at corners (mm)
 
 
 // ---------------------------------------------------------------------------
@@ -816,8 +812,8 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
     int verticalSlots = std::max( leftSlots, rightSlots );
     int horizontalSlots = std::max( topSlots, bottomSlots );
 
-    double bodyHeight = std::max( MIN_BODY_HEIGHT, verticalSlots * PIN_SPACING );
-    double bodyWidth = std::max( MIN_BODY_WIDTH, horizontalSlots * PIN_SPACING );
+    bool hasVerticalPins = verticalSlots > 0;
+    bool hasHorizontalPins = horizontalSlots > 0;
 
     auto maxNameLen = []( const std::vector<const PinData*>& pins ) -> size_t
     {
@@ -827,21 +823,74 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
         return maxLen;
     };
 
+    // Corner clearance: when pins exist on perpendicular sides, their rendered
+    // labels can overlap at corners.  Calculate the clearance needed from each
+    // body edge to the nearest pin on that side.  With pins centered on the body,
+    // clearance = halfBody - (slots-1)*PIN_SPACING/2, so body = (slots-1)*PIN_SPACING + 2*clearance.
+    double topClear    = PIN_SPACING / 2.0;
+    double bottomClear = PIN_SPACING / 2.0;
+    double leftClear   = PIN_SPACING / 2.0;
+    double rightClear  = PIN_SPACING / 2.0;
+
+    if( hasVerticalPins && hasHorizontalPins )
+    {
+        // Top/bottom pin labels render vertically, extending inward from the body
+        // edge by PIN_NAMES_OFFSET + name_length.  Left/right pins near those
+        // corners need enough clearance so their horizontal labels (FONT_SIZE tall)
+        // don't overlap with the vertical text.
+        if( !layout.top.empty() )
+        {
+            double nameExt = maxNameLen( layout.top ) * FONT_SIZE * 0.7;
+            topClear = std::max( topClear,
+                                 PIN_NAMES_OFFSET + nameExt + FONT_SIZE / 2.0 + CORNER_MARGIN );
+        }
+
+        if( !layout.bottom.empty() )
+        {
+            double nameExt = maxNameLen( layout.bottom ) * FONT_SIZE * 0.7;
+            bottomClear = std::max( bottomClear,
+                                    PIN_NAMES_OFFSET + nameExt + FONT_SIZE / 2.0 + CORNER_MARGIN );
+        }
+
+        // Left/right pin labels render horizontally, extending inward from the body
+        // edge.  Top/bottom pins near those corners need enough clearance so their
+        // vertical labels (FONT_SIZE wide) don't overlap with the horizontal text.
+        if( !layout.left.empty() )
+        {
+            double nameExt = maxNameLen( layout.left ) * FONT_SIZE * 0.7;
+            leftClear = std::max( leftClear,
+                                  PIN_NAMES_OFFSET + nameExt + FONT_SIZE / 2.0 + CORNER_MARGIN );
+        }
+
+        if( !layout.right.empty() )
+        {
+            double nameExt = maxNameLen( layout.right ) * FONT_SIZE * 0.7;
+            rightClear = std::max( rightClear,
+                                   PIN_NAMES_OFFSET + nameExt + FONT_SIZE / 2.0 + CORNER_MARGIN );
+        }
+    }
+
+    // Body height: accommodate centered vertical pins with corner clearances.
+    double vertClear = std::max( topClear, bottomClear );
+    double bodyHeight = MIN_BODY_HEIGHT;
+
+    if( verticalSlots > 0 )
+        bodyHeight = std::max( bodyHeight,
+                               ( verticalSlots - 1 ) * PIN_SPACING + 2.0 * vertClear );
+
+    // Body width: accommodate centered horizontal pins with corner clearances.
+    double horizClear = std::max( leftClear, rightClear );
+    double bodyWidth = MIN_BODY_WIDTH;
+
+    if( horizontalSlots > 0 )
+        bodyWidth = std::max( bodyWidth,
+                              ( horizontalSlots - 1 ) * PIN_SPACING + 2.0 * horizClear );
+
+    // Ensure body is wide enough for left/right pin name labels (prevent L/R overlap)
     size_t maxLeftName = maxNameLen( layout.left );
     size_t maxRightName = maxNameLen( layout.right );
     double nameWidth = std::max( maxLeftName, maxRightName ) * FONT_SIZE * 0.7;
     bodyWidth = std::max( bodyWidth, nameWidth * 2 + 2.0 );
-
-    // When pins exist on both vertical (left/right) and horizontal (top/bottom) sides,
-    // the corner pin labels overlap by ~1mm. Adding CORNER_PAD to each body dimension
-    // shifts halfH/halfW outward enough to clear the overlap.
-    bool hasVerticalPins = verticalSlots > 0;
-    bool hasHorizontalPins = horizontalSlots > 0;
-    if( hasVerticalPins && hasHorizontalPins )
-    {
-        bodyHeight += CORNER_PAD;
-        bodyWidth += CORNER_PAD;
-    }
 
     bodyWidth = std::ceil( bodyWidth / PIN_SPACING ) * PIN_SPACING;
     bodyHeight = std::ceil( bodyHeight / PIN_SPACING ) * PIN_SPACING;

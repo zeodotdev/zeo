@@ -74,6 +74,12 @@ static constexpr double MIN_BODY_WIDTH = 10.16;   // 400 mil
 static constexpr double MIN_BODY_HEIGHT = 5.08;    // 200 mil
 static constexpr double FONT_SIZE = 1.27;
 static constexpr double PROP_OFFSET = 1.27;
+static constexpr double PIN_NAMES_OFFSET = 1.016; // KiCad pin_names offset from body edge
+// Padding added to body when pins exist on both vertical and horizontal sides.
+// Required to prevent pin name labels from overlapping at corners.
+// With PIN_SPACING, the clearance between corner labels is:
+//   gap = PIN_SPACING - (PIN_NAMES_OFFSET + FONT_SIZE) = 2.54 - (1.016 + 1.27) = 0.254mm (10 mil)
+static constexpr double CORNER_PAD = PIN_SPACING;
 
 
 // ---------------------------------------------------------------------------
@@ -825,6 +831,17 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
     size_t maxRightName = maxNameLen( layout.right );
     double nameWidth = std::max( maxLeftName, maxRightName ) * FONT_SIZE * 0.7;
     bodyWidth = std::max( bodyWidth, nameWidth * 2 + 2.0 );
+
+    // When pins exist on both vertical (left/right) and horizontal (top/bottom) sides,
+    // the corner pin labels overlap by ~1mm. Adding CORNER_PAD to each body dimension
+    // shifts halfH/halfW outward enough to clear the overlap.
+    bool hasVerticalPins = verticalSlots > 0;
+    bool hasHorizontalPins = horizontalSlots > 0;
+    if( hasVerticalPins && hasHorizontalPins )
+    {
+        bodyHeight += CORNER_PAD;
+        bodyWidth += CORNER_PAD;
+    }
 
     bodyWidth = std::ceil( bodyWidth / PIN_SPACING ) * PIN_SPACING;
     bodyHeight = std::ceil( bodyHeight / PIN_SPACING ) * PIN_SPACING;

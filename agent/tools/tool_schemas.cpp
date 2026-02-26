@@ -65,6 +65,146 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
     checkStatus.read_only = true;
     tools.push_back( checkStatus );
 
+    // datasheet_query - Query extracted datasheet data for a component
+    LLM_TOOL datasheetQuery;
+    datasheetQuery.name = "datasheet_query";
+    datasheetQuery.description =
+        "Query extracted datasheet data for an electronic component. Returns detailed specifications "
+        "including electrical ratings, pin definitions, packages, placement rules, design guidelines, "
+        "decoupling requirements, and external parts. Data is automatically extracted from datasheets "
+        "when components are placed in the schematic. Returns extraction_status: 'completed', "
+        "'processing' (check back later), or 'not_found'.";
+    datasheetQuery.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "part_number", {
+                { "type", "string" },
+                { "description", "Component part number (e.g., 'CP2102N', 'STM32F411CEU6')" }
+            }},
+            { "manufacturer", {
+                { "type", "string" },
+                { "description", "Component manufacturer (optional, helps disambiguate)" }
+            }}
+        }},
+        { "required", json::array( { "part_number" } ) }
+    };
+    datasheetQuery.read_only = true;
+    tools.push_back( datasheetQuery );
+
+    // extract_datasheet - Synchronously extract datasheet data for a component
+    LLM_TOOL extractDatasheet;
+    extractDatasheet.name = "extract_datasheet";
+    extractDatasheet.description =
+        "Extract component data from a PDF datasheet URL. This calls the extraction "
+        "service synchronously and waits for the result (may take 30-60 seconds). "
+        "Use this when you need datasheet data immediately for a component that hasn't "
+        "been extracted yet (datasheet_query returned 'not_found'). The extracted data "
+        "is stored in the database and can be queried later with datasheet_query. "
+        "Returns the full extracted component data including pins, electrical specs, "
+        "and design guidelines.";
+    extractDatasheet.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "part_number", {
+                { "type", "string" },
+                { "description", "Component part number (e.g., 'CP2102N', 'ESP32-C3-WROOM-02')" }
+            }},
+            { "manufacturer", {
+                { "type", "string" },
+                { "description", "Component manufacturer (optional, helps disambiguate)" }
+            }},
+            { "datasheet_url", {
+                { "type", "string" },
+                { "description", "URL to the component's PDF datasheet" }
+            }}
+        }},
+        { "required", json::array( { "part_number", "datasheet_url" } ) }
+    };
+    tools.push_back( extractDatasheet );
+
+    // generate_symbol - Generate a KiCad symbol from a datasheet
+    LLM_TOOL generateSymbol;
+    generateSymbol.name = "generate_symbol";
+    generateSymbol.description =
+        "Generate a KiCad schematic symbol (.kicad_sym) from a datasheet PDF. "
+        "Self-contained: checks local libraries first (by datasheet URL), then checks "
+        "the component database, and auto-extracts from the PDF if needed. "
+        "Returns the lib_id that can be used with sch_add to place the symbol. "
+        "Prefer passing datasheet_url for reliable deduplication. "
+        "If the symbol already exists, pass force=true to regenerate it.";
+    generateSymbol.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "part_number", {
+                { "type", "string" },
+                { "description", "Component part number (used as symbol name)" }
+            }},
+            { "datasheet_url", {
+                { "type", "string" },
+                { "description", "URL to the PDF datasheet. Used to check for existing symbols "
+                                 "and to auto-extract pin data if not already in the database." }
+            }},
+            { "manufacturer", {
+                { "type", "string" },
+                { "description", "Component manufacturer (optional)" }
+            }},
+            { "library_name", {
+                { "type", "string" },
+                { "description", "Name for the output library file (without .kicad_sym extension). "
+                                 "Defaults to 'project'. The file is created in the project directory." }
+            }},
+            { "force", {
+                { "type", "boolean" },
+                { "description", "If true, regenerate the symbol even if it already exists in the library. "
+                                 "The old symbol will be replaced." }
+            }}
+        }},
+        { "required", json::array( { "datasheet_url" } ) }
+    };
+    tools.push_back( generateSymbol );
+
+    // generate_footprint - Generate a KiCad footprint from a datasheet
+    LLM_TOOL generateFootprint;
+    generateFootprint.name = "generate_footprint";
+    generateFootprint.description =
+        "Generate a KiCad PCB footprint (.kicad_mod) from a datasheet PDF. "
+        "Self-contained: first tries to match an existing KiCad standard library footprint "
+        "from the package dimensions, then generates a custom footprint as fallback. "
+        "Fetches package data from the component database (auto-extracts if needed). "
+        "Returns the lib_id (Library:Footprint) that can be used to assign to a symbol. "
+        "Prefer passing datasheet_url for reliable deduplication. "
+        "If the footprint already exists, pass force=true to regenerate it.";
+    generateFootprint.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "part_number", {
+                { "type", "string" },
+                { "description", "Component part number" }
+            }},
+            { "datasheet_url", {
+                { "type", "string" },
+                { "description", "URL to the PDF datasheet. Used to look up package data "
+                                 "and to auto-extract if not already in the database." }
+            }},
+            { "manufacturer", {
+                { "type", "string" },
+                { "description", "Component manufacturer (optional)" }
+            }},
+            { "library_name", {
+                { "type", "string" },
+                { "description", "Name for the output .pretty library folder (without extension). "
+                                 "Defaults to 'project'. Created in the project directory." }
+            }},
+            { "force", {
+                { "type", "boolean" },
+                { "description", "If true, regenerate the footprint even if it already exists. "
+                                 "The old footprint file will be overwritten." }
+            }}
+        }},
+        { "required", json::array( { "datasheet_url" } ) }
+    };
+    tools.push_back( generateFootprint );
+
     // create_project - Create a new KiCad project
     LLM_TOOL createProject;
     createProject.name = "create_project";
@@ -110,6 +250,55 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
     };
     screenshot.read_only = true;
     tools.push_back( screenshot );
+
+    // component_search - Search electronic components via PCBParts MCP
+    LLM_TOOL componentSearch;
+    componentSearch.name = "component_search";
+    componentSearch.description =
+        "Search online component suppliers (JLCPCB, Mouser, DigiKey) for real parts "
+        "with pricing, stock levels, and specifications. Use this when the user needs to "
+        "find specific manufacturer parts, check availability, or compare pricing. "
+        "Capabilities: search by keyword/specs, get detailed part info, find alternatives, "
+        "validate BOM availability, get pinout data, get KiCad symbols/footprints, "
+        "list categories, and export BOM. "
+        "Default supplier is JLCPCB. Some actions (find_alternatives, validate_bom, "
+        "get_pinout, list_categories, export_bom) are only available on JLCPCB. "
+        "For validate_bom and export_bom, pass the parts list via params.parts "
+        "(array of {lcsc, qty} objects). "
+        "Use the params field to pass supplier-specific filters like spec_filters.";
+    componentSearch.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "action", {
+                { "type", "string" },
+                { "enum", json::array( { "search", "get_part", "find_alternatives",
+                                         "validate_bom", "get_pinout", "get_kicad",
+                                         "list_categories", "export_bom" } ) },
+                { "description", "The operation to perform" }
+            }},
+            { "query", {
+                { "type", "string" },
+                { "description", "Search terms, part number, or LCSC number (e.g. 'ESP32-S3', 'C2913202')" }
+            }},
+            { "supplier", {
+                { "type", "string" },
+                { "enum", json::array( { "jlcpcb", "mouser", "digikey" } ) },
+                { "description", "Component supplier (default: jlcpcb)" }
+            }},
+            { "limit", {
+                { "type", "integer" },
+                { "description", "Maximum number of results to return (default: 5)" }
+            }},
+            { "params", {
+                { "type", "object" },
+                { "description", "Additional parameters passed through to the underlying API "
+                                 "(e.g. spec_filters, category_id, bom)" }
+            }}
+        }},
+        { "required", json::array( { "action" } ) }
+    };
+    componentSearch.read_only = true;
+    tools.push_back( componentSearch );
 }
 
 
@@ -119,9 +308,12 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
     LLM_TOOL schGetSummary;
     schGetSummary.name = "sch_get_summary";
     schGetSummary.description = "Get a high-level overview of the schematic from the live editor. "
-                                "Returns JSON with symbols, wires, junctions, labels, and counts. "
+                                "Returns a lightweight summary: symbols (ref, value, lib_id, pos, pin_count), "
+                                "labels (text, type, pos), sheets (name, file, pin_count), and element counts. "
                                 "Includes an audit section that flags orphaned items (power symbols with no wire "
                                 "connections, labels not touching any wire or pin, junctions with fewer than 2 wires). "
+                                "For detailed data use sch_get_pins (pin positions), sch_read_section (wires, "
+                                "junctions, full symbol fields), or sch_find_symbol (library lookup). "
                                 "REQUIRES: Schematic editor must be open with a document loaded.";
     schGetSummary.input_schema = {
         { "type", "object" },
@@ -257,8 +449,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
     LLM_TOOL schGetPins;
     schGetPins.name = "sch_get_pins";
     schGetPins.description =
-        "Get pin positions for a single placed symbol. MUCH faster than sch_get_summary "
-        "when you only need pin positions for wiring a specific component. "
+        "Get pin positions for a single placed symbol by reference designator. "
         "Returns exact transformed positions (after rotation/mirror) in mm. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schGetPins.input_schema = {
@@ -770,15 +961,9 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
     LLM_TOOL schSetup;
     schSetup.name = "sch_setup";
     schSetup.description =
-        "Read or modify schematic document settings from Schematic Setup dialog. "
-        "Use action='get' to retrieve all settings, action='set' to update specific settings. "
-        "Settings include: page size, title block, grid, formatting (text/symbol defaults, "
-        "connections, inter-sheet refs, dashed lines, operating-point overlay), annotation "
-        "(symbol unit notation, sort order, numbering method), field name templates, ERC rules, "
-        "pin_conflict_map (ERC pin-to-pin error matrix), net_classes (wire/bus styling), "
-        "net_class_assignments (pattern-based net to netclass mappings), bus_aliases "
-        "(named groups of signals for bus definitions), and text_variables (project-level "
-        "variable substitution like ${AUTHOR}, ${VERSION}). "
+        "Read or modify schematic document settings (Schematic Setup dialog). "
+        "action='get' returns all settings. action='set' updates only provided fields. "
+        "Use 'get' first to discover available settings and current values. "
         "REQUIRES: Schematic editor must be open with a document loaded.";
     schSetup.input_schema = {
         { "type", "object" },
@@ -884,23 +1069,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
                         { "type", "object" },
                         { "description",
                             "Map of ERC rule codes to severity ('error', 'warning', or 'ignore'). "
-                            "Available codes - Connections: ERCE_PIN_NOT_CONNECTED, ERCE_PIN_NOT_DRIVEN, "
-                            "ERCE_POWERPIN_NOT_DRIVEN, ERCE_NOCONNECT_CONNECTED, ERCE_NOCONNECT_NOT_CONNECTED, "
-                            "ERCE_LABEL_NOT_CONNECTED, ERCE_LABEL_SINGLE_PIN, ERCE_SINGLE_GLOBAL_LABEL, "
-                            "ERCE_SAME_LOCAL_GLOBAL_LABEL, ERCE_WIRE_DANGLING, ERCE_BUS_ENTRY_NEEDED, "
-                            "ERCE_ENDPOINT_OFF_GRID, ERCE_FOUR_WAY_JUNCTION, ERCE_LABEL_MULTIPLE_WIRES, "
-                            "ERCE_UNCONNECTED_WIRE_ENDPOINT. "
-                            "Conflicts: ERCE_DUPLICATE_REFERENCE, ERCE_DIFFERENT_UNIT_VALUE, "
-                            "ERCE_DIFFERENT_UNIT_FP, ERCE_DIFFERENT_UNIT_NET, ERCE_DUPLICATE_SHEET_NAME, "
-                            "ERCE_HIERACHICAL_LABEL, ERCE_DRIVER_CONFLICT, ERCE_BUS_ALIAS_CONFLICT, "
-                            "ERCE_BUS_TO_BUS_CONFLICT, ERCE_BUS_ENTRY_CONFLICT, ERCE_BUS_TO_NET_CONFLICT, "
-                            "ERCE_GROUND_PIN_NOT_GROUND. "
-                            "Miscellaneous: ERCE_STACKED_PIN_SYNTAX, ERCE_UNANNOTATED, ERCE_UNRESOLVED_VARIABLE, "
-                            "ERCE_UNDEFINED_NETCLASS, ERCE_SIMULATION_MODEL, ERCE_SIMILAR_LABELS, "
-                            "ERCE_SIMILAR_POWER, ERCE_SIMILAR_LABEL_AND_POWER, ERCE_LIB_SYMBOL_ISSUES, "
-                            "ERCE_LIB_SYMBOL_MISMATCH, ERCE_FOOTPRINT_LINK_ISSUES, ERCE_FOOTPRINT_FILTERS, "
-                            "ERCE_EXTRA_UNITS, ERCE_MISSING_UNIT, ERCE_MISSING_INPUT_PIN, ERCE_MISSING_BIDI_PIN, "
-                            "ERCE_MISSING_POWER_INPUT_PIN." },
+                            "Use sch_setup action='get' to see all available rule codes and their current severities." },
                         { "additionalProperties", {
                             { "type", "string" },
                             { "enum", json::array( { "error", "warning", "ignore" } ) }
@@ -1206,8 +1375,9 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
     LLM_TOOL pcbGetSummary;
     pcbGetSummary.name = "pcb_get_summary";
     pcbGetSummary.description =
-        "Get a high-level overview of the open PCB. Returns JSON with footprints, tracks, "
-        "vias, zones, board outline, layer count, and net information. "
+        "Get a high-level overview of the open PCB. Returns footprints (ref, lib_id, position, layer), "
+        "track/via/zone counts, net names, and enabled layers. "
+        "For detailed data use pcb_read_section, pcb_get_pads, or pcb_get_footprint. "
         "REQUIRES: PCB editor must be open with a document loaded.";
     pcbGetSummary.input_schema = {
         { "type", "object" },
@@ -1390,6 +1560,50 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array( { "placements" } ) }
     };
     tools.push_back( pcbPlace );
+
+    // pcb_place_companions - Place companion footprints near an IC
+    LLM_TOOL pcbPlaceCompanions;
+    pcbPlaceCompanions.name = "pcb_place_companions";
+    pcbPlaceCompanions.description =
+        "Place companion footprints (bypass caps, pull-up/down resistors, filter caps) near their "
+        "associated IC on the PCB. Uses net connectivity to identify which companion pads connect "
+        "to which IC pads, then finds optimal positions minimizing ratsnest distance.\n\n"
+        "Use AFTER importing the netlist (Update PCB from Schematic) so footprints and nets exist. "
+        "Place the IC first with pcb_place, then use this tool for its support components.\n\n"
+        "Best practices:\n"
+        "- Bypass/decoupling caps should be as close as possible to IC power pins\n"
+        "- Pull-up resistors near the IC pin they connect to\n"
+        "- Place larger/critical components first, then companions\n\n"
+        "REQUIRES: PCB editor must be open with a document loaded.";
+    pcbPlaceCompanions.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "ic_ref", {
+                { "type", "string" },
+                { "description", "Reference designator of the IC to place companions near (e.g., 'U1')" }
+            }},
+            { "companions", {
+                { "type", "array" },
+                { "items", {
+                    { "type", "object" },
+                    { "properties", {
+                        { "ref", {
+                            { "type", "string" },
+                            { "description", "Reference designator of the companion footprint (e.g., 'C1', 'R3')" }
+                        }},
+                        { "angle", {
+                            { "type", "number" },
+                            { "description", "Optional rotation angle in degrees (0, 90, 180, 270)" }
+                        }}
+                    }},
+                    { "required", json::array( { "ref" } ) }
+                }},
+                { "description", "Array of companion footprints to place near the IC" }
+            }}
+        }},
+        { "required", json::array( { "ic_ref", "companions" } ) }
+    };
+    tools.push_back( pcbPlaceCompanions );
 
     // pcb_add - Batch add elements to PCB (matches sch_add pattern)
     LLM_TOOL pcbAdd;
@@ -1879,27 +2093,11 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
     pcbSetup.name = "pcb_setup";
     pcbSetup.description =
         "Read or modify PCB board settings (Board Setup dialog). "
-        "action='get' retrieves all settings including physical_stackup, board_finish, solder_mask_paste, "
-        "zone_hatch_offsets, text_and_graphics, dimension_defaults, zone_defaults, predefined_sizes, teardrops, "
-        "board_editor_layers, design rules, grid, DRC severities, net classes, text variables, title block, and origins. "
-        "action='set' updates only the provided fields, leaving others unchanged. "
-        "physical_stackup contains full layer stackup with dielectric properties, impedance control, etc. "
-        "board_finish contains copper finish type, edge plating, and edge connector settings. "
-        "solder_mask_paste contains mask expansion, via tenting, and paste margins. "
-        "zone_hatch_offsets contains per-layer X/Y offsets for zone hatched fills. "
-        "text_and_graphics contains per-layer-class defaults (silkscreen, copper, edges, etc.) for line thickness, text size, italic, keep_upright. "
-        "dimension_defaults contains units, precision, text position, arrow settings for new dimensions. "
-        "zone_defaults contains clearance, pad connection, thermal relief, island removal for new zones. "
-        "predefined_sizes contains track widths, via sizes (diameter/drill), and diff pair dimensions for quick selection. "
-        "teardrops contains settings for teardrop shapes at pad/via connections (length/width ratios, max sizes, curved edges). "
-        "length_tuning_patterns contains meander settings for single track, diff pair, and diff pair skew tuning. "
-        "tuning_profiles contains impedance/delay tuning profiles for controlled impedance and time domain analysis (set replaces all profiles). "
-        "component_classes contains component class assignment rules (enable_sheet_component_classes toggle and custom assignment rules). "
-        "custom_rules contains the DRC custom rules text (get returns rules_text, set REPLACES the entire file - append to existing rules yourself if needed). "
-        "drc_severities is a map of DRC check names to severity ('error', 'warning', 'ignore') for violation severity settings. "
-        "text_variables is a map of variable names to substitution values (project-level, use as ${VAR_NAME} in text). "
+        "action='get' returns all settings. action='set' updates only provided fields. "
+        "Use 'get' first to discover available settings and current values. "
         "All dimensions are in nanometers (nm) unless otherwise noted. "
-        "Net classes are project-level settings (shared between schematic and PCB). Set REPLACES all classes (except Default). "
+        "Net classes are project-level (shared with schematic). Set REPLACES all classes (except Default). "
+        "custom_rules set REPLACES the entire file — get current rules first if appending. "
         "REQUIRES: PCB editor must be open with a document loaded.";
     pcbSetup.input_schema = {
         { "type", "object" },
@@ -2556,14 +2754,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
             { "drc_severities", {
                 { "type", "object" },
                 { "description", "Map of DRC check names to severity: 'error', 'warning', or 'ignore'. "
-                                "Check names by category - "
-                                "Electrical: shorting_items, tracks_crossing, clearance, creepage, via_dangling, track_dangling, starved_thermal. "
-                                "DFM: copper_edge_clearance, hole_clearance, hole_to_hole, holes_co_located, track_width, track_angle, track_segment_length, annular_width, drill_out_of_range, microvia_drill_out_of_range, courtyards_overlap, missing_courtyard, malformed_courtyard, invalid_outline, copper_sliver, solder_mask_bridge, connection_width. "
-                                "Schematic Parity: duplicate_footprints, missing_footprint, extra_footprint, footprint_symbol_mismatch, footprint_filters_mismatch, net_conflict, unconnected_items. "
-                                "Signal Integrity: length_out_of_range, skew_out_of_range, too_many_vias, diff_pair_gap_out_of_range, diff_pair_uncoupled_length_too_long. "
-                                "Readability: silk_overlap, silk_over_copper, silk_edge_clearance, text_height, text_thickness, mirrored_text_on_front_layer, nonmirrored_text_on_back_layer. "
-                                "Miscellaneous: items_not_allowed, text_on_edge_cuts, zones_intersect, isolated_copper, footprint, padstack, pth_inside_courtyard, npth_inside_courtyard, item_on_disabled_layer, unresolved_variable, lib_footprint_issues, lib_footprint_mismatch, through_hole_pad_without_hole, missing_tuning_profile. "
-                                "Example: {\"clearance\": \"error\", \"track_width\": \"warning\", \"missing_courtyard\": \"ignore\"}" },
+                                "Use pcb_setup action='get' to see all available check names and current severities." },
                 { "additionalProperties", { { "type", "string" }, { "enum", json::array( { "error", "warning", "ignore" } ) } } }
             }},
             { "custom_rules", {

@@ -132,26 +132,55 @@ DIALOG_SCHEMATIC_SETUP::DIALOG_SCHEMATIC_SETUP( SCH_EDIT_FRAME* aFrame ) :
                                 sheets.push_back( path.PathHumanReadable().ToStdString() );
                             context["sheets"] = sheets;
 
-                            // Component summary (ref + value, grouped with counts)
-                            SCH_REFERENCE_LIST refs;
-                            sch.Hierarchy().GetSymbols( refs, false );
-
-                            std::map<std::string, int> componentCounts;
-                            for( unsigned i = 0; i < refs.GetCount(); i++ )
+                            // Component list grouped by value+datasheet
+                            struct CompGroup
                             {
-                                std::string key = refs[i].GetRef().ToStdString() + " ("
-                                                  + refs[i].GetValue().ToStdString() + ")";
-                                componentCounts[key]++;
+                                std::string              value;
+                                std::string              datasheet;
+                                std::vector<std::string>  refs;
+                            };
+
+                            SCH_REFERENCE_LIST refList;
+                            sch.Hierarchy().GetSymbols( refList, false );
+
+                            std::map<std::string, CompGroup> groups;
+
+                            for( unsigned i = 0; i < refList.GetCount(); i++ )
+                            {
+                                std::string ref = refList[i].GetRef().ToStdString();
+                                std::string value = refList[i].GetValue().ToStdString();
+                                std::string datasheet;
+
+                                SCH_SYMBOL* symbol = refList[i].GetSymbol();
+                                if( symbol )
+                                {
+                                    const SCH_FIELD* dsField =
+                                            symbol->GetField( FIELD_T::DATASHEET );
+                                    if( dsField )
+                                        datasheet = dsField->GetText().ToStdString();
+                                }
+
+                                std::string key = value + "|" + datasheet;
+                                auto& group = groups[key];
+                                group.value = value;
+                                group.datasheet = datasheet;
+                                group.refs.push_back( ref );
                             }
 
                             nlohmann::json components = nlohmann::json::array();
-                            for( const auto& [key, count] : componentCounts )
+
+                            for( const auto& [key, group] : groups )
                             {
-                                if( count > 1 )
-                                    components.push_back( key + " x" + std::to_string( count ) );
-                                else
-                                    components.push_back( key );
+                                nlohmann::json comp;
+                                comp["value"] = group.value;
+                                comp["refs"] = group.refs;
+
+                                if( !group.datasheet.empty() )
+                                    comp["datasheet"] = group.datasheet;
+
+                                components.push_back( comp );
                             }
+
                             context["components"] = components;
 
                             return context;

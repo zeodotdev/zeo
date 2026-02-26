@@ -55,6 +55,11 @@ void InstallKeyboardMonitor( void* aNativeView,
                 shortcut = KEY_SHORTCUT::NEW_CHAT;
                 matched = true;
             }
+            else if( !hasShift && !hasCtrl && !hasOpt && [key isEqualToString:@"f"] )
+            {
+                shortcut = KEY_SHORTCUT::SEARCH_CHAT;
+                matched = true;
+            }
         }
 
         if( matched )

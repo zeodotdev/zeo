@@ -2,6 +2,7 @@
 #include "chat_events.h"
 #include "../tools/tool_schemas.h"
 #include "../tools/tool_registry.h"
+#include "../tools/handlers/datasheet_handler.h"
 #include "view/file_attach.h"
 #include "agent_llm_client.h"
 #include "agent_chat_history.h"
@@ -1060,6 +1061,21 @@ void CHAT_CONTROLLER::ExecuteNextTool()
         wxLogError( "CHAT_CONTROLLER::ExecuteNextTool - unknown exception during tool execution" );
         result = "Error: Tool execution failed with unknown exception";
         success = false;
+    }
+
+    // Background datasheet extraction for symbols with datasheet URLs
+    if( success && ( tool->tool_name == "sch_add"
+                     || tool->tool_name == "sch_get_summary"
+                     || tool->tool_name == "sch_read_section" ) )
+    {
+        try
+        {
+            DATASHEET_HANDLER::MaybeTriggerExtraction( tool->tool_name, result );
+        }
+        catch( ... )
+        {
+            wxLogTrace( "Agent", "DATASHEET_HANDLER: Exception in MaybeTriggerExtraction" );
+        }
     }
 
     // Process the result (logging happens in ProcessToolResult)

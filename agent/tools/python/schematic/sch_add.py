@@ -256,7 +256,13 @@ try:
                     if _bb:
                         placed_bboxes.append({'ref': _new_ref, **_new_bbox})
                     _placed_syms[i] = sym
-                    _res = {'index': i, 'element_type': 'symbol', 'reference': _new_ref}
+                    _res = {'index': i, 'element_type': 'symbol', 'reference': _new_ref, 'lib_id': lib_id}
+                    try:
+                        _sym_info = sch.library.get_symbol_info(lib_id)
+                        if hasattr(_sym_info, 'datasheet') and _sym_info.datasheet:
+                            _res['datasheet_url'] = _sym_info.datasheet
+                    except:
+                        pass
                     if _bb:
                         _res['bbox_mm'] = {'min_x': round(_new_bbox['min_x'], 2), 'max_x': round(_new_bbox['max_x'], 2), 'min_y': round(_new_bbox['min_y'], 2), 'max_y': round(_new_bbox['max_y'], 2)}
                     if _shifted:

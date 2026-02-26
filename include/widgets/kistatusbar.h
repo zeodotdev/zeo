@@ -31,6 +31,7 @@
 #include <vector>
 #include <widgets/report_severity.h>
 #include <wx/statusbr.h>
+#include <wx/bmpbndl.h>
 
 class wxGauge;
 class wxButton;
@@ -144,7 +145,7 @@ public:
     /**
      * Set the profile bitmap (Zeo session management).
      */
-    void SetProfileBitmap( const wxBitmap& aBitmap );
+    void SetProfileBitmap( const wxBitmapBundle& aBundle );
 
     /**
      * Set the label button text (Zeo session management).
@@ -169,6 +170,7 @@ private:
     };
 
     std::optional<int> fieldIndex( FIELD aField ) const;
+    void updateLabelFieldWidth( int aNewWidth );  ///< Dynamically resize the LABEL status field
 
 private:
     wxGauge*        m_backgroundProgressBar;
@@ -176,8 +178,9 @@ private:
     wxStaticText*   m_backgroundTxt;
     BITMAP_BUTTON*  m_notificationsButton;
     BITMAP_BUTTON*  m_warningButton;
-    wxButton*       m_labelButton;       ///< Zeo session label button
+    wxButton*       m_labelButton;        ///< Zeo session label button
     wxStaticBitmap* m_profileBitmap;     ///< Zeo session profile avatar
+    wxSize          m_profileLogicalSize; ///< Logical display size of the profile avatar
     mutable std::mutex m_loadWarningMutex;  ///< Protects m_loadWarningMessages
     std::vector<LOAD_MESSAGE> m_loadWarningMessages;
     int            m_normalFieldsCount;

@@ -511,6 +511,15 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
         return std::string( "Placing footprints" );
     } );
 
+    Register( "pcb_place_companions", "pcb", "pcb/pcb_place_companions.py",
+              []( const nlohmann::json& a ) {
+                  std::string icRef = a.value( "ic_ref", "?" );
+                  int count = 0;
+                  if( a.contains( "companions" ) && a["companions"].is_array() )
+                      count = static_cast<int>( a["companions"].size() );
+                  return "Placing " + std::to_string( count ) + " companion(s) near " + icRef;
+              } );
+
     Register( "pcb_add",    "pcb", "pcb/pcb_add.py",    DescribePcbAdd );
     Register( "pcb_update", "pcb", "pcb/pcb_update.py",  DescribePcbUpdate );
     Register( "pcb_delete", "pcb", "pcb/pcb_delete.py",  DescribePcbDelete );
@@ -594,8 +603,9 @@ std::string PYTHON_TOOL_HANDLER::GetIPCCommand( const std::string& aToolName,
     // Assemble: preamble + optional bbox + tool script
     std::string script = m_preamble + "\n";
 
-    // sch_add and sch_update need the bounding-box overlap utilities
-    if( aToolName == "sch_add" || aToolName == "sch_update" )
+    // sch_add, sch_update, and pcb placement tools need bounding-box utilities
+    if( aToolName == "sch_add" || aToolName == "sch_update"
+        || aToolName == "pcb_place" || aToolName == "pcb_place_companions" )
         script += m_bbox + "\n";
 
     script += it->second.script;

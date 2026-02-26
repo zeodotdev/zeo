@@ -4,6 +4,16 @@ import sys, math
 # Shared utilities prepended to every embedded tool script
 # ---------------------------------------------------------------------------
 
+def tool_log(msg):
+    """Write a diagnostic message to the real stderr.
+
+    python_exec_thread redirects sys.stderr into the captured output buffer
+    so that tool results are clean JSON. Use this instead of print(...,
+    file=sys.stderr) to emit diagnostics without corrupting the result.
+    sys.__stderr__ always refers to the original pre-redirect stderr.
+    """
+    print(msg, file=sys.__stderr__)
+
 def refresh_or_fail(api):
     """Refresh document specifier; raise if editor is not open."""
     if hasattr(api, 'refresh_document'):

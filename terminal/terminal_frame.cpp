@@ -465,6 +465,15 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
 #ifdef KICAD_IPC_API
         socketPath = Pgm().GetApiServer().SocketPath();
         wxLogInfo( "TERMINAL: Using API socket path: %s", socketPath.c_str() );
+
+        if( socketPath.empty() )
+        {
+            wxLogWarning( "TERMINAL: API server socket path is empty — server may be disabled. "
+                          "Enable it in Preferences > Scripting > Enable Scripting Server." );
+            SendAgentResponse( "Error: KiCad IPC API server is not running.\n"
+                               "Enable it in Preferences > Scripting > 'Enable Scripting Server', then restart Zeo." );
+            return;
+        }
 #endif
 
         if( mode == "sch" )

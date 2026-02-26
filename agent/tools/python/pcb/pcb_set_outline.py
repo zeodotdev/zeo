@@ -73,10 +73,14 @@ elif shape == "rounded_rectangle":
     w = mm_to_nm(width)
     h = mm_to_nm(height)
     r = mm_to_nm(radius)
+    # Clamp radius to half the smallest dimension to prevent inverted geometry
+    max_r = min(w, h) // 2
+    if r > max_r:
+        r = max_r
     n = 8  # points per corner arc
     points = []
-    # Four corners: BR, TR, TL, BL (clockwise from bottom-right)
-    corners = [(ox+w-r, oy+h-r, 0), (ox+w-r, oy+r, 270), (ox+r, oy+r, 180), (ox+r, oy+h-r, 90)]
+    # Four corners: TR, BR, BL, TL (clockwise traversal)
+    corners = [(ox+w-r, oy+r, 270), (ox+w-r, oy+h-r, 0), (ox+r, oy+h-r, 90), (ox+r, oy+r, 180)]
     for cx, cy, start_deg in corners:
         for i in range(n):
             a = math.radians(start_deg + 90.0 * i / n)

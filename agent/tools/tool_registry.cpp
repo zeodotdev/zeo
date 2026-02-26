@@ -5,6 +5,10 @@
 #include "handlers/screenshot_handler.h"
 #include "handlers/check_status_handler.h"
 #include "handlers/create_project_handler.h"
+#include "handlers/datasheet_handler.h"
+#include "handlers/symbol_generator.h"
+#include "handlers/component_search_handler.h"
+#include "handlers/footprint_generator.h"
 
 #include <frame_type.h>
 #include <wx/log.h>
@@ -35,6 +39,10 @@ TOOL_REGISTRY::TOOL_REGISTRY()
     Register( std::make_unique<SCREENSHOT_HANDLER>() );
     Register( std::make_unique<CHECK_STATUS_HANDLER>() );
     Register( std::make_unique<CREATE_PROJECT_HANDLER>() );
+    Register( std::make_unique<DATASHEET_HANDLER>() );
+    Register( std::make_unique<SYMBOL_GENERATOR>() );
+    Register( std::make_unique<COMPONENT_SEARCH_HANDLER>() );
+    Register( std::make_unique<FOOTPRINT_GENERATOR>() );
 
     wxLogInfo( "TOOL_REGISTRY: %zu tools registered", m_toolMap.size() );
 }

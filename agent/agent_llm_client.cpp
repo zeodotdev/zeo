@@ -204,8 +204,9 @@ void* LLM_REQUEST_THREAD::Entry()
 
     std::string requestBodyStr = requestBody.dump();
 
-    wxLogInfo( "LLM_REQUEST: model=%s, messages=%zu, tools=%zu, body_size=%zu bytes",
-               apiModel.c_str(), m_messages.size(), m_tools.size(), requestBodyStr.size() );
+    wxLogInfo( "LLM_REQUEST: model=%s, messages=%zu, tools=%zu, body_size=%zu bytes, url=%s",
+               apiModel.c_str(), m_messages.size(), m_tools.size(), requestBodyStr.size(),
+               ZEO_API_URL.c_str() );
 
     // Get access token from auth manager
     std::string accessToken;

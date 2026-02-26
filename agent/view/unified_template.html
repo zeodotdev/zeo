@@ -154,6 +154,11 @@ img[src^="data:"] { cursor: pointer; }
     border-radius: 10px; overflow: hidden; margin-bottom: 8px;
 }
 #pending-changes-bar.visible { display: block; }
+.pc-header { cursor: pointer; -webkit-user-select: none; user-select: none; }
+.pc-header:hover { background: #3d3d3d; }
+.pc-chevron { display: inline-block; transition: transform 0.15s ease; font-size: 8px; color: #808080; margin-right: 6px; }
+.pc-chevron.expanded { transform: rotate(90deg); }
+#pc-rows.collapsed { display: none; }
 .pc-btn {
     padding: 3px 10px; border-radius: 6px; font-size: 13px; cursor: pointer;
     border: none; -webkit-user-select: none; user-select: none;
@@ -239,6 +244,29 @@ img[src^="data:"] { cursor: pointer; }
 .toast.slide-out { animation: toast-out 0.3s ease forwards; }
 @keyframes toast-in { to { opacity: 1; transform: translateX(0); } }
 @keyframes toast-out { to { opacity: 0; transform: translateX(100%); } }
+
+/* ── Search bar ──────────────────────────────────────────────────── */
+#search-bar {
+    display: none; align-items: center; gap: 6px;
+    padding: 4px 12px; border-bottom: 1px solid #404040;
+    background: #2d2d2d; flex-shrink: 0;
+}
+#search-bar.visible { display: flex; }
+#search-input {
+    flex: 1; background: #3d3d3d; border: 1px solid #404040; border-radius: 4px;
+    color: #fff; padding: 4px 8px; font-size: 13px; outline: none;
+    min-width: 0;
+}
+#search-input:focus { border-color: #569cd6; }
+#search-count { color: #808080; font-size: 12px; white-space: nowrap; min-width: 32px; text-align: center; }
+.search-nav-btn {
+    width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+    background: none; border: none; color: #808080; cursor: pointer; border-radius: 4px;
+    font-size: 11px; padding: 0; -webkit-user-select: none; user-select: none;
+}
+.search-nav-btn:hover { color: #fff; background: rgba(255,255,255,0.08); }
+mark.search-highlight { background: rgba(255,213,79,0.3); color: inherit; border-radius: 2px; }
+mark.search-highlight.current { background: rgba(255,152,0,0.6); }
 </style>
 </head>
 
@@ -274,6 +302,17 @@ img[src^="data:"] { cursor: pointer; }
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
+     SEARCH BAR (find in chat)
+     ═══════════════════════════════════════════════════════════════════ -->
+<div id="search-bar">
+    <input id="search-input" type="text" placeholder="Find in chat...">
+    <span id="search-count"></span>
+    <button class="search-nav-btn" id="search-prev" title="Previous match">&#x25B2;</button>
+    <button class="search-nav-btn" id="search-next" title="Next match">&#x25BC;</button>
+    <button class="search-nav-btn" id="search-close" title="Close">&times;</button>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
      CHAT AREA (scrollable, flex-col-reverse for auto-scroll)
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="chat-area" class="flex-1 overflow-y-scroll flex flex-col-reverse" style="min-height:0;">
@@ -292,7 +331,8 @@ img[src^="data:"] { cursor: pointer; }
 
     <!-- Pending changes panel (sits directly above editor, shares border) -->
     <div id="pending-changes-bar">
-        <div class="flex items-center px-3 py-1.5">
+        <div class="pc-header flex items-center px-3 py-1.5" id="pc-header">
+            <span class="pc-chevron expanded" id="pc-chevron">&#9654;</span>
             <span class="text-[13px] font-bold text-white flex-1">Pending Changes</span>
             <button class="pc-btn pc-accept mr-1" id="pc-accept-all">Accept All</button>
             <button class="pc-btn pc-reject" id="pc-reject-all">Reject All</button>
@@ -494,6 +534,172 @@ App.TopBar = (function() {
     });
 
     return { setTitle: setTitle, setHistoryList: setHistoryList, showHistory: showHistory, setActiveChat: setActiveChat };
+})();
+
+// =====================================================================
+// App.Search — find-in-chat (Cmd+F)
+// =====================================================================
+App.Search = (function() {
+    var bar = document.getElementById('search-bar');
+    var input = document.getElementById('search-input');
+    var countEl = document.getElementById('search-count');
+    var prevBtn = document.getElementById('search-prev');
+    var nextBtn = document.getElementById('search-next');
+    var closeBtn = document.getElementById('search-close');
+    var _marks = [];
+    var _currentIdx = -1;
+    var _debounceTimer = null;
+
+    function open() {
+        bar.classList.add('visible');
+        input.focus();
+        input.select();
+    }
+
+    function close() {
+        bar.classList.remove('visible');
+        input.value = '';
+        clearHighlights();
+        App.Input.focus();
+    }
+
+    function isOpen() {
+        return bar.classList.contains('visible');
+    }
+
+    function clearHighlights() {
+        // Restore original text nodes by replacing marks with their text content
+        var wrapper = document.querySelector('.content-wrapper');
+        if (!wrapper) return;
+        var marks = wrapper.querySelectorAll('mark.search-highlight');
+        for (var i = marks.length - 1; i >= 0; i--) {
+            var mark = marks[i];
+            var parent = mark.parentNode;
+            parent.replaceChild(document.createTextNode(mark.textContent), mark);
+            parent.normalize();
+        }
+        _marks = [];
+        _currentIdx = -1;
+        countEl.textContent = '';
+    }
+
+    function doSearch(query) {
+        clearHighlights();
+        if (!query) return;
+
+        var wrapper = document.querySelector('.content-wrapper');
+        if (!wrapper) return;
+
+        var lowerQuery = query.toLowerCase();
+        var walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT, null, false);
+        var textNodes = [];
+        var node;
+        while (node = walker.nextNode()) {
+            if (node.nodeValue.toLowerCase().indexOf(lowerQuery) !== -1) {
+                textNodes.push(node);
+            }
+        }
+
+        for (var i = 0; i < textNodes.length; i++) {
+            highlightNode(textNodes[i], lowerQuery);
+        }
+
+        _marks = wrapper.querySelectorAll('mark.search-highlight');
+        if (_marks.length > 0) {
+            _currentIdx = 0;
+            _marks[0].classList.add('current');
+            scrollToMark(_marks[0]);
+            updateCount();
+        } else {
+            updateCount();
+        }
+    }
+
+    function highlightNode(textNode, lowerQuery) {
+        var text = textNode.nodeValue;
+        var lowerText = text.toLowerCase();
+        var idx = lowerText.indexOf(lowerQuery);
+        if (idx === -1) return;
+
+        var frag = document.createDocumentFragment();
+        var pos = 0;
+        while (idx !== -1) {
+            if (idx > pos) {
+                frag.appendChild(document.createTextNode(text.substring(pos, idx)));
+            }
+            var mark = document.createElement('mark');
+            mark.className = 'search-highlight';
+            mark.textContent = text.substring(idx, idx + lowerQuery.length);
+            frag.appendChild(mark);
+            pos = idx + lowerQuery.length;
+            idx = lowerText.indexOf(lowerQuery, pos);
+        }
+        if (pos < text.length) {
+            frag.appendChild(document.createTextNode(text.substring(pos)));
+        }
+        textNode.parentNode.replaceChild(frag, textNode);
+    }
+
+    function scrollToMark(mark) {
+        var chatArea = document.getElementById('chat-area');
+        // chat-area uses flex-col-reverse, so scroll coordinates are inverted.
+        // Use scrollIntoView which handles this correctly.
+        mark.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+
+    function goNext() {
+        if (_marks.length === 0) return;
+        _marks[_currentIdx].classList.remove('current');
+        _currentIdx = (_currentIdx + 1) % _marks.length;
+        _marks[_currentIdx].classList.add('current');
+        scrollToMark(_marks[_currentIdx]);
+        updateCount();
+    }
+
+    function goPrev() {
+        if (_marks.length === 0) return;
+        _marks[_currentIdx].classList.remove('current');
+        _currentIdx = (_currentIdx - 1 + _marks.length) % _marks.length;
+        _marks[_currentIdx].classList.add('current');
+        scrollToMark(_marks[_currentIdx]);
+        updateCount();
+    }
+
+    function updateCount() {
+        if (_marks.length === 0) {
+            countEl.textContent = input.value ? '0/0' : '';
+        } else {
+            countEl.textContent = (_currentIdx + 1) + '/' + _marks.length;
+        }
+    }
+
+    // Events
+    input.addEventListener('input', function() {
+        if (_debounceTimer) clearTimeout(_debounceTimer);
+        _debounceTimer = setTimeout(function() {
+            doSearch(input.value);
+        }, 150);
+    });
+
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            close();
+        } else if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            goNext();
+        } else if (e.key === 'Enter' && e.shiftKey) {
+            e.preventDefault();
+            goPrev();
+        }
+    });
+
+    prevBtn.addEventListener('click', function() { goPrev(); });
+    nextBtn.addEventListener('click', function() { goNext(); });
+    closeBtn.addEventListener('click', function() { close(); });
+
+    return { open: open, close: close, isOpen: isOpen };
 })();
 
 // =====================================================================
@@ -1316,6 +1522,26 @@ App.PendingChanges = (function() {
     var rowsEl = document.getElementById('pc-rows');
     var acceptAllBtn = document.getElementById('pc-accept-all');
     var rejectAllBtn = document.getElementById('pc-reject-all');
+    var headerEl = document.getElementById('pc-header');
+    var chevronEl = document.getElementById('pc-chevron');
+    var _collapsed = false;
+
+    function _toggleCollapse() {
+        _collapsed = !_collapsed;
+        if (_collapsed) {
+            rowsEl.classList.add('collapsed');
+            chevronEl.classList.remove('expanded');
+        } else {
+            rowsEl.classList.remove('collapsed');
+            chevronEl.classList.add('expanded');
+        }
+    }
+
+    headerEl.addEventListener('click', function(e) {
+        // Don't toggle when clicking Accept/Reject buttons
+        if (e.target.closest('.pc-btn')) return;
+        _toggleCollapse();
+    });
 
     function update(data) {
         var sheets = data.sheets || [];

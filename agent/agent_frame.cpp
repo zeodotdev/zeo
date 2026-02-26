@@ -317,11 +317,23 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
                     case KEY_SHORTCUT::STOP_GENERATING:
                         if( m_isGenerating )
-                            DoStopClick();
+                        {
+                            m_webView->RunScriptAsync(
+                                    wxS( "if(App.Search.isOpen()){App.Search.close()}"
+                                         "else{App.Bridge.sendMsg('stop_click')}" ) );
+                        }
+                        else
+                        {
+                            m_webView->RunScriptAsync( wxS( "App.Search.close()" ) );
+                        }
                         break;
 
                     case KEY_SHORTCUT::NEW_CHAT:
                         DoNewChat();
+                        break;
+
+                    case KEY_SHORTCUT::SEARCH_CHAT:
+                        m_webView->RunScriptAsync( wxS( "App.Search.open()" ) );
                         break;
                     }
                 } );
@@ -477,6 +489,30 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
             return result;
         } );
+
+    // Callback for symbol generator to reload a symbol library after writing to disk
+    {
+        auto& reg = TOOL_REGISTRY::Instance();
+        reg.SetReloadSymbolLibFn(
+            [this]( const std::string& aLibName ) {
+                wxLogInfo( "TOOL_REGISTRY: Reloading symbol library '%s' via MAIL_RELOAD_LIB",
+                           aLibName.c_str() );
+                std::string payload = aLibName;
+                Kiway().ExpressMail( FRAME_SCH, MAIL_RELOAD_LIB, payload );
+            } );
+    }
+
+    // Callback for footprint generator to reload a footprint library after writing to disk
+    {
+        auto& reg = TOOL_REGISTRY::Instance();
+        reg.SetReloadFootprintLibFn(
+            [this]( const std::string& aLibName ) {
+                wxLogInfo( "TOOL_REGISTRY: Reloading footprint library '%s' via MAIL_RELOAD_LIB",
+                           aLibName.c_str() );
+                std::string payload = aLibName;
+                Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_RELOAD_LIB, payload );
+            } );
+    }
 
     // Sync editor + project state to TOOL_REGISTRY before each tool execution
     m_chatController->SetEditorStateSyncFn(
@@ -951,6 +987,9 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
                 m_auth = sharedAuth;
                 m_ownsAuth = false;
 
+                // Wire auth to tool registry (for datasheet extraction)
+                TOOL_REGISTRY::Instance().SetAuth( m_auth );
+
                 // Wire the shared auth to LLM client and controller
                 m_llmClient->SetAuth( m_auth );
 
@@ -1082,7 +1121,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     wxString bubbleContent = FileAttach::BuildAttachmentBubbleHtml( m_pendingAttachments )
                              + escapedText;
     wxString msgHtml = wxString::Format(
-        "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
+        "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">%s</div></div>",
         bubbleContent );
 
     // Add streaming content container for incremental updates
@@ -1317,7 +1356,7 @@ void AGENT_FRAME::QueueMessage()
                              + escapedText;
     wxString newHtml = wxString::Format(
         "<div id=\"queued-msg\" class=\"flex justify-end my-3\" style=\"opacity:0.5;\">"
-        "<div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">"
+        "<div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">"
         "%s</div></div>",
         bubbleContent );
 
@@ -2360,7 +2399,7 @@ void AGENT_FRAME::RenderChatHistory()
                 display.Replace( ">", "&gt;" );
                 display.Replace( "\n", "<br>" );
                 m_fullHtmlContent += wxString::Format(
-                    "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
+                    "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">%s</div></div>",
                     display );
             }
             else if( role == "assistant" )
@@ -2441,7 +2480,7 @@ void AGENT_FRAME::RenderChatHistory()
                         display.Replace( ">", "&gt;" );
                         display.Replace( "\n", "<br>" );
                         m_fullHtmlContent += wxString::Format(
-                            "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap\">%s</div></div>",
+                            "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">%s</div></div>",
                             display );
                     }
                 }
@@ -2670,6 +2709,15 @@ void AGENT_FRAME::EnsureAuth()
         m_auth->Configure( supabaseUrl, supabaseKey );
     else
         m_auth->LoadSession();
+
+    // Wire auth and Supabase config to tool registry (for datasheet extraction)
+    TOOL_REGISTRY::Instance().SetAuth( m_auth );
+
+    if( !supabaseUrl.empty() )
+    {
+        TOOL_REGISTRY::Instance().SetSupabaseUrl( supabaseUrl );
+        TOOL_REGISTRY::Instance().SetSupabaseAnonKey( supabaseKey );
+    }
 
     // Wire to LLM client and controller
     m_llmClient->SetAuth( m_auth );
@@ -4034,6 +4082,10 @@ void AGENT_FRAME::ConfigureCloudSync()
 
     m_cloudSync->SetAuth( m_auth );
     m_cloudSync->Configure( supabaseUrl, supabaseKey );
+
+    // Also configure tool registry with Supabase credentials (for datasheet extraction)
+    TOOL_REGISTRY::Instance().SetSupabaseUrl( supabaseUrl );
+    TOOL_REGISTRY::Instance().SetSupabaseAnonKey( supabaseKey );
 
     // Run initial sync to upload any missed chats/logs from previous sessions
     m_cloudSync->SyncAll();

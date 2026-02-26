@@ -69,6 +69,7 @@
 #include <diff_manager.h>
 #include <agent_change_tracker.h>
 #include <settings/settings_manager.h>
+#include <pgm_base.h>
 #include <python_scripting.h> // Fixed include path
 #include "pcb_plotter.h"
 #include <reporter.h>
@@ -1372,12 +1373,26 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 
     case MAIL_RELOAD_LIB:
     {
+        // Re-read the project fp-lib-table from disk so newly-added library entries
+        // (e.g. from the agent footprint generator) become known in memory.
+        Pgm().GetLibraryManager().LoadProjectTables( { LIBRARY_TABLE_TYPE::FOOTPRINT } );
+
+        FOOTPRINT_LIBRARY_ADAPTER* adapter = PROJECT_PCB::FootprintLibAdapter( &Prj() );
+
+        // If payload contains a specific library nickname, reload it so newly-written
+        // footprints on disk become visible to the footprint browser / board editor.
+        if( !payload.empty() )
+        {
+            wxString libName = wxString::FromUTF8( payload );
+            adapter->LoadOne( libName );
+            wxLogInfo( "MAIL_RELOAD_LIB: Reloaded footprint library '%s'", libName );
+        }
+
         m_designBlocksPane->RefreshLibs();
 
         // Show any footprint library load errors in the status bar
         if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
         {
-            FOOTPRINT_LIBRARY_ADAPTER* adapter = PROJECT_PCB::FootprintLibAdapter( &Prj() );
             wxString errors = adapter->GetLibraryLoadErrors();
 
             if( !errors.IsEmpty() )

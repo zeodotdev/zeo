@@ -314,22 +314,6 @@ static std::string DescribePcbDelete( const nlohmann::json& a )
 }
 
 
-static std::string DescribePcbRoute( const nlohmann::json& a )
-{
-    std::string fromRef, toRef;
-
-    if( a.contains( "from" ) )
-        fromRef = a["from"].value( "ref", "" );
-
-    if( a.contains( "to" ) )
-        toRef = a["to"].value( "ref", "" );
-
-    if( !fromRef.empty() && !toRef.empty() )
-        return "Routing " + fromRef + " to " + toRef;
-
-    return "Routing pads";
-}
-
 
 static std::string DescribePcbSetup( const nlohmann::json& a )
 {
@@ -423,7 +407,7 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
     Register( "sch_annotate", "sch", "schematic/sch_annotate.py", []( const nlohmann::json& a ) {
         std::string scope = a.value( "scope", "unannotated_only" );
         if( scope == "all" )  return std::string( "Annotating all symbols" );
-        return std::string( "Annotating unannotated symbols" );
+        return std::string( "Annotating symbols" );
     } );
 
     Register( "sch_run_simulation", "sch", "schematic/sch_run_simulation.py", DescribeSchSimulation );
@@ -531,8 +515,6 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
         std::string ref = a.value( "ref", "" );
         return "Getting footprint " + ( ref.empty() ? std::string( "info" ) : ref );
     } );
-
-    Register( "pcb_route",    "pcb", "pcb/pcb_route.py",      DescribePcbRoute );
 
     Register( "pcb_get_nets", "pcb", "pcb/pcb_get_nets.py", []( const nlohmann::json& ) {
         return std::string( "Getting net list" );

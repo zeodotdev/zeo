@@ -1,10 +1,12 @@
 #include "component_search_handler.h"
+#include "../../agent_llm_client.h"
 #include "../../agent_events.h"
 #include <kicad_curl/kicad_curl_easy.h>
 #include <nlohmann/json.hpp>
 #include <wx/app.h>
 #include <wx/log.h>
 #include <curl/curl.h>
+#include <set>
 #include <thread>
 
 using json = nlohmann::json;
@@ -12,108 +14,186 @@ using json = nlohmann::json;
 static const char* MCP_ENDPOINT = "https://pcbparts.dev/mcp";
 
 
+COMPONENT_SEARCH_HANDLER::COMPONENT_SEARCH_HANDLER()
+{
+    // Fire background fetch of tool schemas from MCP server
+    std::thread( [this]() { FetchMcpSchemas(); } ).detach();
+}
+
+
+void COMPONENT_SEARCH_HANDLER::FetchMcpSchemas()
+{
+    wxLogInfo( "COMPONENT_SEARCH: Fetching tool schemas from %s", MCP_ENDPOINT );
+
+    try
+    {
+        json request;
+        request["jsonrpc"] = "2.0";
+        request["method"]  = "tools/list";
+        request["id"]      = 1;
+
+        KICAD_CURL_EASY curl;
+        curl.SetURL( MCP_ENDPOINT );
+        curl.SetFollowRedirects( true );
+        curl.SetHeader( "Content-Type", "application/json" );
+        curl.SetHeader( "Accept", "application/json, text/event-stream" );
+        curl.SetPostFields( request.dump() );
+        curl_easy_setopt( curl.GetCurl(), CURLOPT_TIMEOUT, 15L );
+
+        curl.Perform();
+
+        long httpCode = curl.GetResponseStatusCode();
+
+        if( httpCode < 200 || httpCode >= 300 )
+        {
+            wxLogTrace( "Agent", "COMPONENT_SEARCH: tools/list HTTP %ld", httpCode );
+            return;
+        }
+
+        // Parse SSE or plain JSON response
+        std::string body = curl.GetBuffer();
+        std::string jsonStr;
+        size_t dataPos = body.rfind( "data: " );
+
+        if( dataPos != std::string::npos )
+        {
+            jsonStr = body.substr( dataPos + 6 );
+
+            while( !jsonStr.empty()
+                   && ( jsonStr.back() == '\n' || jsonStr.back() == '\r'
+                        || jsonStr.back() == ' ' ) )
+            {
+                jsonStr.pop_back();
+            }
+        }
+        else
+        {
+            jsonStr = body;
+        }
+
+        auto response = json::parse( jsonStr );
+
+        if( !response.contains( "result" ) || !response["result"].contains( "tools" ) )
+        {
+            wxLogTrace( "Agent", "COMPONENT_SEARCH: tools/list missing result.tools" );
+            return;
+        }
+
+        // Build set of tool names we handle (for filtering)
+        auto handledNames = GetToolNames();
+        std::set<std::string> handled( handledNames.begin(), handledNames.end() );
+
+        std::vector<LLM_TOOL> tools;
+
+        for( const auto& mcpTool : response["result"]["tools"] )
+        {
+            std::string name = mcpTool.value( "name", "" );
+
+            if( !handled.count( name ) )
+                continue;
+
+            LLM_TOOL tool;
+            tool.name = name;
+            tool.description = mcpTool.value( "description", "" );
+            tool.defer_loading = true;
+
+            // MCP uses "inputSchema" (camelCase), Anthropic API expects "input_schema"
+            if( mcpTool.contains( "inputSchema" ) )
+                tool.input_schema = mcpTool["inputSchema"];
+            else
+                tool.input_schema = { { "type", "object" }, { "properties", json::object() } };
+
+            tools.push_back( std::move( tool ) );
+        }
+
+        {
+            std::lock_guard<std::mutex> lock( m_mcpMutex );
+            m_mcpTools = std::move( tools );
+            m_mcpFetched = true;
+        }
+
+        wxLogInfo( "COMPONENT_SEARCH: Fetched %zu tool schemas from MCP",
+                   m_mcpTools.size() );
+    }
+    catch( const std::exception& e )
+    {
+        wxLogTrace( "Agent", "COMPONENT_SEARCH: tools/list failed: %s", e.what() );
+    }
+}
+
+
+std::vector<LLM_TOOL> COMPONENT_SEARCH_HANDLER::GetDynamicTools() const
+{
+    std::lock_guard<std::mutex> lock( m_mcpMutex );
+    return m_mcpTools;
+}
+
+
 std::string COMPONENT_SEARCH_HANDLER::Execute( const std::string& aToolName,
                                                 const nlohmann::json& aInput )
 {
-    std::string action   = aInput.value( "action", "" );
-    std::string supplier = aInput.value( "supplier", "jlcpcb" );
-    std::string query    = aInput.value( "query", "" );
+    json args = aInput;
 
-    if( action.empty() )
-        return R"({"error": "action is required"})";
+    // Inject default limit for search/list tools if not provided
+    static const std::set<std::string> limitTools = {
+        "jlc_search", "jlc_find_alternatives",
+        "mouser_search", "digikey_search", "cse_search"
+    };
 
-    std::string mcpTool = MapToMCPTool( action, supplier );
+    if( limitTools.count( aToolName ) && !args.contains( "limit" ) )
+        args["limit"] = 5;
 
-    if( mcpTool.empty() )
-    {
-        return R"({"error": "Unsupported action/supplier combination: )"
-               + action + "/" + supplier + R"("})";
-    }
-
-    // Build the MCP arguments: start with params (pass-through), then merge query
-    json args;
-
-    if( aInput.contains( "params" ) && aInput["params"].is_object() )
-        args = aInput["params"];
-
-    // Map query to the correct parameter name for each MCP tool
-    if( !query.empty() )
-    {
-        if( mcpTool == "mouser_search" )
-            args["keyword"] = query;
-        else if( mcpTool == "mouser_get_part" )
-            args["part_number"] = query;
-        else if( mcpTool == "digikey_search" )
-            args["keywords"] = query;
-        else if( mcpTool == "digikey_get_part" )
-            args["product_number"] = query;
-        else if( mcpTool == "jlc_get_part" )
-        {
-            // LCSC numbers start with 'C' followed by digits; everything else is MPN
-            if( !query.empty() && query[0] == 'C'
-                && query.find_first_not_of( "0123456789", 1 ) == std::string::npos )
-                args["lcsc"] = query;
-            else
-                args["mpn"] = query;
-        }
-        else if( mcpTool == "jlc_find_alternatives" )
-            args["lcsc"] = query;
-        else if( mcpTool == "jlc_get_pinout" )
-            args["lcsc"] = query;
-        else
-            args["query"] = query;
-    }
-
-    // Only inject limit for tools that support it (search/list tools)
-    bool supportsLimit = ( mcpTool == "jlc_search" || mcpTool == "jlc_search_api"
-                           || mcpTool == "jlc_find_alternatives"
-                           || mcpTool == "mouser_search" || mcpTool == "digikey_search"
-                           || mcpTool == "cse_search" );
-
-    if( supportsLimit )
-    {
-        if( aInput.contains( "limit" ) && aInput["limit"].is_number_integer() )
-            args["limit"] = aInput["limit"];
-        else if( !args.contains( "limit" ) )
-            args["limit"] = 5;
-    }
-
-    return CallMCP( mcpTool, args );
+    return CallMCP( aToolName, args );
 }
 
 
 std::string COMPONENT_SEARCH_HANDLER::GetDescription( const std::string& aToolName,
                                                        const nlohmann::json& aInput ) const
 {
-    std::string action   = aInput.value( "action", "search" );
-    std::string supplier = aInput.value( "supplier", "jlcpcb" );
-    std::string query    = aInput.value( "query", "" );
+    // Extract a human-readable label from the tool name
+    std::string label = aToolName;
 
-    // Capitalize supplier for display
-    std::string supplierLabel = supplier;
+    // Map tool prefixes to supplier labels
+    if( aToolName.rfind( "jlc_", 0 ) == 0 )
+        label = "JLCPCB";
+    else if( aToolName.rfind( "mouser_", 0 ) == 0 )
+        label = "Mouser";
+    else if( aToolName.rfind( "digikey_", 0 ) == 0 )
+        label = "DigiKey";
+    else if( aToolName.rfind( "cse_", 0 ) == 0 )
+        label = "PCBParts";
 
-    if( supplier == "jlcpcb" )       supplierLabel = "JLCPCB";
-    else if( supplier == "mouser" )  supplierLabel = "Mouser";
-    else if( supplier == "digikey" ) supplierLabel = "DigiKey";
+    // Try to extract a query/keyword for context
+    std::string query;
 
-    if( action == "search" && !query.empty() )
-        return "Searching " + supplierLabel + " for " + query;
-    else if( action == "get_part" && !query.empty() )
-        return "Getting part details for " + query;
-    else if( action == "find_alternatives" )
-        return "Finding alternatives on " + supplierLabel;
-    else if( action == "validate_bom" )
-        return "Validating BOM on " + supplierLabel;
-    else if( action == "get_pinout" )
+    for( const auto& key : { "query", "keyword", "keywords", "lcsc", "mpn",
+                              "part_number", "product_number" } )
+    {
+        if( aInput.contains( key ) && aInput[key].is_string() )
+        {
+            query = aInput[key].get<std::string>();
+            break;
+        }
+    }
+
+    if( aToolName.find( "search" ) != std::string::npos && !query.empty() )
+        return "Searching " + label + " for " + query;
+    else if( aToolName.find( "get_part" ) != std::string::npos && !query.empty() )
+        return "Getting " + label + " part: " + query;
+    else if( aToolName.find( "alternatives" ) != std::string::npos )
+        return "Finding alternatives on " + label;
+    else if( aToolName.find( "validate_bom" ) != std::string::npos )
+        return "Validating BOM on " + label;
+    else if( aToolName.find( "pinout" ) != std::string::npos )
         return "Getting pinout data";
-    else if( action == "get_kicad" )
+    else if( aToolName.find( "get_kicad" ) != std::string::npos )
         return "Getting KiCad symbol/footprint";
-    else if( action == "list_categories" )
-        return "Listing component categories";
-    else if( action == "export_bom" )
+    else if( aToolName.find( "list_attributes" ) != std::string::npos )
+        return "Listing component attributes";
+    else if( aToolName.find( "export_bom" ) != std::string::npos )
         return "Exporting BOM";
 
-    return "Component search: " + action;
+    return "Component search: " + aToolName;
 }
 
 
@@ -154,50 +234,6 @@ void COMPONENT_SEARCH_HANDLER::ExecuteAsync( const std::string& aToolName,
             PostToolResult( aEventHandler, result );
         } );
     } ).detach();
-}
-
-
-std::string COMPONENT_SEARCH_HANDLER::MapToMCPTool( const std::string& aAction,
-                                                     const std::string& aSupplier ) const
-{
-    if( aAction == "search" )
-    {
-        if( aSupplier == "jlcpcb" )  return "jlc_search";
-        if( aSupplier == "mouser" )  return "mouser_search";
-        if( aSupplier == "digikey" ) return "digikey_search";
-    }
-    else if( aAction == "get_part" )
-    {
-        if( aSupplier == "jlcpcb" )  return "jlc_get_part";
-        if( aSupplier == "mouser" )  return "mouser_get_part";
-        if( aSupplier == "digikey" ) return "digikey_get_part";
-    }
-    else if( aAction == "find_alternatives" && aSupplier == "jlcpcb" )
-    {
-        return "jlc_find_alternatives";
-    }
-    else if( aAction == "validate_bom" && aSupplier == "jlcpcb" )
-    {
-        return "jlc_validate_bom";
-    }
-    else if( aAction == "get_pinout" && aSupplier == "jlcpcb" )
-    {
-        return "jlc_get_pinout";
-    }
-    else if( aAction == "get_kicad" )
-    {
-        return "cse_get_kicad";
-    }
-    else if( aAction == "list_categories" && aSupplier == "jlcpcb" )
-    {
-        return "jlc_list_categories";
-    }
-    else if( aAction == "export_bom" && aSupplier == "jlcpcb" )
-    {
-        return "jlc_export_bom";
-    }
-
-    return "";
 }
 
 

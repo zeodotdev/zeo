@@ -6,6 +6,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
+struct LLM_TOOL;
 class wxEvtHandler;
 
 /**
@@ -61,6 +62,13 @@ public:
     {
         // Default implementation does nothing - override in async handlers
     }
+
+    /**
+     * Return tool schemas fetched dynamically (e.g. from an MCP server).
+     * Called before each LLM request to merge into the tool list.
+     * Default returns empty — override in handlers that provide dynamic schemas.
+     */
+    virtual std::vector<LLM_TOOL> GetDynamicTools() const;
 };
 
 #endif // TOOL_HANDLER_H

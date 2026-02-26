@@ -80,6 +80,7 @@
 #include <project_pcb.h>
 #include <footprint_library_adapter.h>
 #include <footprint_info.h>
+#include <pgm_base.h>
 
 #include <api/common/types/base_types.pb.h>
 #include <widgets/appearance_controls.h>
@@ -3497,6 +3498,22 @@ HANDLER_RESULT<UpdatePCBFromSchematicResponse> API_HANDLER_PCB::handleUpdatePCBF
 
     // Configure updater
     wxLogInfo( "API: handleUpdatePCBFromSchematic - configuring updater" );
+
+    // Ensure project footprint library is loaded synchronously before the netlist updater runs.
+    // When generate_footprint or sch_import_symbol runs while the PCB editor is closed,
+    // MAIL_RELOAD_LIB is silently dropped. When the PCB editor later opens, background preload
+    // may still be in progress (LOADING state) when pcb_sync_schematic is called, causing
+    // fetchIfLoaded("project") to return nullopt and footprint lookup to fail.
+    // Calling LoadProjectTables + LoadOne here guarantees the library is in LOADED state.
+    wxLogInfo( "API: handleUpdatePCBFromSchematic - ensuring project footprint library is loaded" );
+    Pgm().GetLibraryManager().LoadProjectTables( { LIBRARY_TABLE_TYPE::FOOTPRINT } );
+    FOOTPRINT_LIBRARY_ADAPTER* fpAdapter = PROJECT_PCB::FootprintLibAdapter( &frame()->Prj() );
+    if( fpAdapter )
+    {
+        fpAdapter->LoadOne( wxT( "project" ) );
+        wxLogInfo( "API: handleUpdatePCBFromSchematic - project footprint library load complete" );
+    }
+
     BOARD_NETLIST_UPDATER updater( frame(), board );
     updater.SetReporter( &reporter );
 

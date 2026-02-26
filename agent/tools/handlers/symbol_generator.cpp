@@ -586,19 +586,17 @@ bool SYMBOL_GENERATOR::FetchComponentData( const std::string& aPartNumber,
 
         if( comp.contains( "component_packages" ) )
         {
+            // Use only the first package that has pins. Merging multiple packages
+            // produces duplicate pin numbers when the extractor created multiple
+            // package entries for the same physical package.
+            const json* bestPkg = nullptr;
+
             for( const auto& pkg : comp["component_packages"] )
             {
-                if( pkg.contains( "component_pins" ) )
+                if( pkg.contains( "component_pins" ) && !pkg["component_pins"].empty() )
                 {
-                    for( const auto& pin : pkg["component_pins"] )
-                    {
-                        PinData pd;
-                        pd.number = SafeStr( pin, "pin_number", "" );
-                        pd.name = SafeStr( pin, "pin_name", "" );
-                        pd.type = SafeStr( pin, "pin_type", "passive" );
-                        pd.function_group = SafeStr( pin, "function_group", "" );
-                        aData.pins.push_back( pd );
-                    }
+                    if( !bestPkg )
+                        bestPkg = &pkg;
                 }
 
                 if( aData.footprint.empty() && pkg.contains( "component_footprints" ) )
@@ -615,8 +613,61 @@ bool SYMBOL_GENERATOR::FetchComponentData( const std::string& aPartNumber,
                     }
                 }
             }
+
+            if( bestPkg && bestPkg->contains( "component_pins" ) )
+            {
+                // Deduplicate by pin_number: the extractor sometimes creates one row
+                // per alternate function instead of one row per physical pin. Keep the
+                // first occurrence of each pin number.
+                std::set<std::string> seenPinNumbers;
+                int maxNumericPin = 0;
+
+                // First pass: collect all numeric pin numbers to determine max
+                for( const auto& pin : ( *bestPkg )["component_pins"] )
+                {
+                    std::string num = SafeStr( pin, "pin_number", "" );
+                    try
+                    {
+                        int n = std::stoi( num );
+                        maxNumericPin = std::max( maxNumericPin, n );
+                    }
+                    catch( ... ) {}
+                }
+
+                // Second pass: build pin list with EP normalization
+                for( const auto& pin : ( *bestPkg )["component_pins"] )
+                {
+                    std::string num = SafeStr( pin, "pin_number", "" );
+
+                    if( num.empty() )
+                        continue;
+
+                    // Normalize exposed-pad pin numbers ("EP", "Center", "EPAD",
+                    // "GND_PAD", "Thermal", etc.) to max_pin+1 so they match the
+                    // footprint generator which uses pin_count+1 for the EP pad.
+                    bool isNumeric = true;
+                    try { std::stoi( num ); }
+                    catch( ... ) { isNumeric = false; }
+
+                    if( !isNumeric )
+                        num = std::to_string( maxNumericPin + 1 );
+
+                    if( seenPinNumbers.count( num ) )
+                        continue;
+
+                    seenPinNumbers.insert( num );
+
+                    PinData pd;
+                    pd.number = num;
+                    pd.name = SafeStr( pin, "pin_name", "" );
+                    pd.type = SafeStr( pin, "pin_type", "passive" );
+                    pd.function_group = SafeStr( pin, "function_group", "" );
+                    aData.pins.push_back( pd );
+                }
+            }
         }
 
+        wxLogInfo( "SYMBOL_GENERATOR: Loaded %zu unique pins from DB", aData.pins.size() );
         return !aData.pins.empty();
     }
     catch( const std::exception& e )

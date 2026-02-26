@@ -495,10 +495,35 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         auto& reg = TOOL_REGISTRY::Instance();
         reg.SetReloadSymbolLibFn(
             [this]( const std::string& aLibName ) {
+                // Step 1: Register the library in the project sym-lib-table if it doesn't
+                // exist yet (handles first-time generation of project.kicad_sym).
+                // MAIL_ADD_LOCAL_LIB checks HasRow before inserting, so it's safe to send
+                // unconditionally — it's a no-op for already-registered libraries except that
+                // it also calls manager.LoadProjectTables and adapter->LoadOne for new entries.
+                wxString    projectPath = Prj().GetProjectPath();
+                wxFileName  libFile( projectPath,
+                                     wxString::FromUTF8( aLibName ) + wxS( ".kicad_sym" ) );
+
+                if( libFile.FileExists() )
+                {
+                    wxLogInfo( "TOOL_REGISTRY: Registering/reloading symbol library '%s' via "
+                               "MAIL_ADD_LOCAL_LIB",
+                               aLibName.c_str() );
+                    // Payload format: srcProjDir\nfilePath\n  (same as import_proj.cpp)
+                    std::string addPayload = projectPath.ToUTF8().data();
+                    addPayload += '\n';
+                    addPayload += libFile.GetFullPath().ToUTF8().data();
+                    addPayload += '\n';
+                    Kiway().ExpressMail( FRAME_SCH, MAIL_ADD_LOCAL_LIB, addPayload );
+                }
+
+                // Step 2: Refresh the plugin cache so newly-written symbols become visible.
+                // MAIL_RELOAD_LIB now calls LoadProjectTables before LoadOne, ensuring the
+                // library is found in the in-memory table even if Step 1 was a no-op.
                 wxLogInfo( "TOOL_REGISTRY: Reloading symbol library '%s' via MAIL_RELOAD_LIB",
                            aLibName.c_str() );
-                std::string payload = aLibName;
-                Kiway().ExpressMail( FRAME_SCH, MAIL_RELOAD_LIB, payload );
+                std::string reloadPayload = aLibName;
+                Kiway().ExpressMail( FRAME_SCH, MAIL_RELOAD_LIB, reloadPayload );
             } );
     }
 

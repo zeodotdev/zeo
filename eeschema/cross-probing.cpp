@@ -1616,8 +1616,19 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
         if( !payload.empty() )
         {
             wxString libName = wxString::FromUTF8( payload );
-            adapter->LoadOne( libName );
-            wxLogInfo( "MAIL_RELOAD_LIB: Reloaded library '%s'", libName );
+
+            // Re-read the project sym-lib-table from disk before calling LoadOne.
+            // This is required when the library was just added to the table by
+            // MAIL_ADD_LOCAL_LIB (new library) or when the in-memory table is stale.
+            // Without this, loadIfNeeded("project") returns "Library not found" and
+            // LoadOne silently fails.
+            LIBRARY_MANAGER& manager = Pgm().GetLibraryManager();
+            manager.LoadProjectTables( { LIBRARY_TABLE_TYPE::SYMBOL } );
+
+            std::optional<LIB_STATUS> result = adapter->LoadOne( libName );
+            bool ok = result.has_value() && result->load_status == LOAD_STATUS::LOADED;
+            wxLogInfo( "MAIL_RELOAD_LIB: Reloaded library '%s' (%s)", libName,
+                       ok ? "success" : "failed - library not in sym-lib-table" );
         }
 
         if( m_designBlocksPane && m_designBlocksPane->IsShown() )

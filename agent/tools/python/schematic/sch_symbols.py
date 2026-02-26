@@ -144,7 +144,7 @@ try:
         if hasattr(sym, '_proto') and hasattr(sym._proto, 'fields'):
             for field in sym._proto.fields:
                 if field.name == 'Footprint':
-                    footprint = field.value.text if hasattr(field.value, 'text') else str(field.value)
+                    footprint = getattr(field, 'text', '') or ''
                     break
 
         sym_data = {

@@ -8,6 +8,9 @@
 
 #include <nlohmann/json.hpp>
 
+// Define the custom event for title changes
+wxDEFINE_EVENT( wxEVT_TERMINAL_TITLE_CHANGED, wxCommandEvent );
+
 
 PTY_WEBVIEW_PANEL::PTY_WEBVIEW_PANEL( wxWindow* aParent ) :
         wxPanel( aParent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxNO_BORDER ),
@@ -87,6 +90,20 @@ wxString PTY_WEBVIEW_PANEL::GetTitle() const
 {
     if( !m_termTitle.IsEmpty() )
         return m_termTitle;
+
+    // Default title shows shell type
+    const char* shell = getenv( "SHELL" );
+
+    if( shell )
+    {
+        wxString shellName = wxString::FromUTF8( shell );
+        int lastSlash = shellName.Find( '/', true );
+
+        if( lastSlash != wxNOT_FOUND )
+            shellName = shellName.Mid( lastSlash + 1 );
+
+        return shellName;
+    }
 
     return "Shell";
 }
@@ -208,7 +225,18 @@ void PTY_WEBVIEW_PANEL::OnMessage( const wxString& aMsg )
         }
         else if( action == "title" )
         {
-            m_termTitle = wxString::FromUTF8( msg.value( "title", "" ) );
+            wxString newTitle = wxString::FromUTF8( msg.value( "title", "" ) );
+
+            if( newTitle != m_termTitle )
+            {
+                m_termTitle = newTitle;
+
+                // Notify parent (TERMINAL_FRAME) to update the notebook tab
+                wxCommandEvent evt( wxEVT_TERMINAL_TITLE_CHANGED );
+                evt.SetEventObject( this );
+                evt.SetString( m_termTitle );
+                wxPostEvent( GetParent(), evt );
+            }
         }
     }
     catch( const std::exception& e )

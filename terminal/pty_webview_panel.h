@@ -10,6 +10,9 @@
 class WEBVIEW_PANEL;
 class PTY_HANDLER;
 
+// Custom event for terminal title changes
+wxDECLARE_EVENT( wxEVT_TERMINAL_TITLE_CHANGED, wxCommandEvent );
+
 class PTY_WEBVIEW_PANEL : public wxPanel
 {
 public:

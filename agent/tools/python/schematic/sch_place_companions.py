@@ -170,16 +170,16 @@ def _calc_companion_bbox(cx, cy, escape_dir, lib_id=''):
     else:  # down
         return {'min_x': cx - width_half, 'max_x': cx + width_half, 'min_y': cy - body_half, 'max_y': cy + term_half}
 
-def _calc_center_from_offset(px, py, offset_mm, escape_dir, perp_offset=0):
-    """Calculate companion center given IC pin pos, offset, escape direction, and perpendicular offset."""
+def _calc_center_from_offset(px, py, offset_mm, escape_dir):
+    """Calculate companion center given IC pin pos, offset, and escape direction."""
     if escape_dir == 'left':
-        return snap_to_grid(px - offset_mm), snap_to_grid(py + perp_offset)
+        return snap_to_grid(px - offset_mm), snap_to_grid(py)
     elif escape_dir == 'right':
-        return snap_to_grid(px + offset_mm), snap_to_grid(py + perp_offset)
+        return snap_to_grid(px + offset_mm), snap_to_grid(py)
     elif escape_dir == 'up':
-        return snap_to_grid(px + perp_offset), snap_to_grid(py - offset_mm)
+        return snap_to_grid(px), snap_to_grid(py - offset_mm)
     else:  # down
-        return snap_to_grid(px + perp_offset), snap_to_grid(py + offset_mm)
+        return snap_to_grid(px), snap_to_grid(py + offset_mm)
 
 def _estimate_label_bbox(pos_x, pos_y, text, angle=0):
     """Estimate bounding box for a label based on text length and position."""
@@ -203,59 +203,48 @@ def _estimate_label_bbox(pos_x, pos_y, text, angle=0):
         }
 
 def _find_clear_position(px, py, escape_dir, lib_id=''):
-    """Find a non-overlapping position prioritizing closeness to IC."""
+    """Find a non-overlapping position by increasing offset distance (vertical staggering)."""
     _debug.append(f'_find_clear_position: px={px:.2f}, py={py:.2f}, escape={escape_dir}, placed={len(placed_companions)}, labels={len(existing_labels)}')
 
-    perp_step = GRID_MM * 2
-    max_perp_steps = 8
-
-    for try_grids in range(MIN_OFFSET_GRIDS, MAX_OFFSET_GRIDS + 5):
+    for try_grids in range(MIN_OFFSET_GRIDS, MAX_OFFSET_GRIDS + 10):
         try_offset = try_grids * GRID_MM
 
-        for perp_idx in range(max_perp_steps):
-            if perp_idx == 0:
-                perp_offset = 0
-            else:
-                mult = (perp_idx + 1) // 2
-                sign = 1 if perp_idx % 2 == 1 else -1
-                perp_offset = mult * perp_step * sign
+        try_cx, try_cy = _calc_center_from_offset(px, py, try_offset, escape_dir)
+        try_bbox = _calc_companion_bbox(try_cx, try_cy, escape_dir, lib_id)
 
-            try_cx, try_cy = _calc_center_from_offset(px, py, try_offset, escape_dir, perp_offset)
-            try_bbox = _calc_companion_bbox(try_cx, try_cy, escape_dir, lib_id)
+        # Check against IC bbox
+        if _bboxes_overlap(try_bbox, ic_bbox_expanded):
+            continue
 
-            # Check against IC bbox
-            if _bboxes_overlap(try_bbox, ic_bbox_expanded):
-                continue
+        # Check against placed companions
+        overlaps = False
+        for placed in placed_companions:
+            placed_bbox = _calc_companion_bbox(placed['cx'], placed['cy'], placed['escape_dir'], placed.get('lib_id', ''))
+            if _bboxes_overlap(try_bbox, placed_bbox):
+                overlaps = True
+                break
 
-            # Check against placed companions
-            overlaps = False
-            for placed in placed_companions:
-                placed_bbox = _calc_companion_bbox(placed['cx'], placed['cy'], placed['escape_dir'], placed.get('lib_id', ''))
-                if _bboxes_overlap(try_bbox, placed_bbox):
+        # Check against existing labels
+        if not overlaps:
+            for lbl_bbox in existing_labels:
+                if _bboxes_overlap(try_bbox, lbl_bbox):
                     overlaps = True
                     break
 
-            # Check against existing labels
-            if not overlaps:
-                for lbl_bbox in existing_labels:
-                    if _bboxes_overlap(try_bbox, lbl_bbox):
-                        overlaps = True
-                        break
+        # Check if wire path would cross existing wires
+        if not overlaps:
+            try_wire_path = _compute_wire_path(px, py, try_cx, try_cy, escape_dir)
+            if _wire_path_crosses_existing(try_wire_path, placed_wires):
+                overlaps = True
 
-            # Check if wire path would cross existing wires
-            if not overlaps:
-                try_wire_path = _compute_wire_path(px, py, try_cx, try_cy, escape_dir)
-                if _wire_path_crosses_existing(try_wire_path, placed_wires):
-                    overlaps = True
-
-            if not overlaps:
-                _debug.append(f'  FOUND: offset={try_grids} perp={perp_offset:.1f} -> ({try_cx:.2f}, {try_cy:.2f})')
-                return try_cx, try_cy, try_offset, perp_offset
+        if not overlaps:
+            _debug.append(f'  FOUND: offset={try_grids} -> ({try_cx:.2f}, {try_cy:.2f})')
+            return try_cx, try_cy, try_offset
 
     # Fallback
     _debug.append(f'  FALLBACK: no clear position found')
-    cx, cy = _calc_center_from_offset(px, py, MIN_OFFSET_GRIDS * GRID_MM, escape_dir, 0)
-    return cx, cy, MIN_OFFSET_GRIDS * GRID_MM, 0
+    cx, cy = _calc_center_from_offset(px, py, MIN_OFFSET_GRIDS * GRID_MM, escape_dir)
+    return cx, cy, MIN_OFFSET_GRIDS * GRID_MM
 
 # Reference counters for auto-generating refdes
 ref_counters = {}
@@ -501,9 +490,9 @@ try:
                 })
                 continue
 
-            # Find clear position
-            cx, cy, _offset, _perp = _find_clear_position(px, py, escape_dir, lib_id)
-            _debug.append(f'Comp{i}: offset={_offset:.2f}mm perp={_perp:.2f}mm at ({cx:.2f},{cy:.2f})')
+            # Find clear position (vertical staggering only, no lateral shift)
+            cx, cy, _offset = _find_clear_position(px, py, escape_dir, lib_id)
+            _debug.append(f'Comp{i}: offset={_offset:.2f}mm at ({cx:.2f},{cy:.2f})')
 
             # Calculate rotation angle
             comp_angle = _get_component_angle(escape_dir, lib_id)

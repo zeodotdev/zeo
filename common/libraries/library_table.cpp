@@ -48,7 +48,10 @@ bool LIBRARY_TABLE_ROW::operator==( const LIBRARY_TABLE_ROW& aOther ) const
 
 std::map<std::string, UTF8> LIBRARY_TABLE_ROW::GetOptionsMap() const
 {
-    return LIBRARY_TABLE::ParseOptions( TO_UTF8( m_options ) );
+    // Make a local copy to avoid thread-safety issues with wxString::utf8_str()
+    // which uses an internal cached buffer that can be corrupted by concurrent access
+    wxString optionsCopy = m_options;
+    return LIBRARY_TABLE::ParseOptions( TO_UTF8( optionsCopy ) );
 }
 
 

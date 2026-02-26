@@ -1,5 +1,6 @@
 #include "tool_registry.h"
 #include "tool_handler.h"
+#include "../agent_llm_client.h"
 #include "handlers/python_tool_handler.h"
 #include "handlers/pcb_autoroute_handler.h"
 #include "handlers/screenshot_handler.h"
@@ -7,8 +8,10 @@
 #include "handlers/create_project_handler.h"
 #include "handlers/datasheet_handler.h"
 #include "handlers/symbol_generator.h"
+#include "handlers/symbol_importer.h"
 #include "handlers/component_search_handler.h"
 #include "handlers/footprint_generator.h"
+#include "handlers/netclass_generator.h"
 
 #include <frame_type.h>
 #include <wx/log.h>
@@ -18,6 +21,20 @@ TOOL_REGISTRY& TOOL_REGISTRY::Instance()
 {
     static TOOL_REGISTRY instance;
     return instance;
+}
+
+
+std::vector<LLM_TOOL> TOOL_REGISTRY::GetDynamicTools() const
+{
+    std::vector<LLM_TOOL> result;
+
+    for( const auto& handler : m_handlers )
+    {
+        auto tools = handler->GetDynamicTools();
+        result.insert( result.end(), tools.begin(), tools.end() );
+    }
+
+    return result;
 }
 
 
@@ -41,8 +58,10 @@ TOOL_REGISTRY::TOOL_REGISTRY()
     Register( std::make_unique<CREATE_PROJECT_HANDLER>() );
     Register( std::make_unique<DATASHEET_HANDLER>() );
     Register( std::make_unique<SYMBOL_GENERATOR>() );
+    Register( std::make_unique<SYMBOL_IMPORTER>() );
     Register( std::make_unique<COMPONENT_SEARCH_HANDLER>() );
     Register( std::make_unique<FOOTPRINT_GENERATOR>() );
+    Register( std::make_unique<NETCLASS_GENERATOR>() );
 
     wxLogInfo( "TOOL_REGISTRY: %zu tools registered", m_toolMap.size() );
 }

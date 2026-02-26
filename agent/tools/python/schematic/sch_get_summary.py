@@ -50,7 +50,7 @@ try:
         pass
 
     # Format symbols — lightweight: ref, value, lib_id, pos, pin_count
-    # Use sch_get_pins or sch_read_section for full pin details
+    # Use sch_get_pins or sch_inspect for full pin details
     symbol_data = []
     for sym in symbols:
         lib_id_str = get_lib_id_str(sym)

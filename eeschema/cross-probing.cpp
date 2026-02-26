@@ -917,10 +917,20 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                 row.SetType( SCH_IO_MGR::ShowType( type ) );
                 toLoad.emplace_back( fn.GetName() );
             }
+            else
+            {
+                // Library already registered — still (re)load it so the adapter cache
+                // is refreshed in subsequent sessions where the row exists on disk but
+                // LoadOne has not yet been called for this library.
+                toLoad.emplace_back( fn.GetName() );
+            }
         }
 
         if( !toLoad.empty() )
         {
+            // Save only if we inserted new rows; use the first element to check whether
+            // the row existed before (i.e. is it in the table before our changes).
+            // Simpler: always attempt save — it's a no-op if nothing changed on disk.
             bool success = true;
 
             table->Save().map_error(
@@ -1616,8 +1626,33 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
         if( !payload.empty() )
         {
             wxString libName = wxString::FromUTF8( payload );
-            adapter->LoadOne( libName );
-            wxLogInfo( "MAIL_RELOAD_LIB: Reloaded library '%s'", libName );
+
+            // Re-read the project sym-lib-table from disk before calling LoadOne.
+            // This is required when the library was just added to the table by
+            // MAIL_ADD_LOCAL_LIB (new library) or when the in-memory table is stale.
+            // Without this, loadIfNeeded("project") returns "Library not found" and
+            // LoadOne silently fails.
+            LIBRARY_MANAGER& manager = Pgm().GetLibraryManager();
+            manager.LoadProjectTables( { LIBRARY_TABLE_TYPE::SYMBOL } );
+
+            std::optional<LIB_STATUS> result = adapter->LoadOne( libName );
+            bool ok = result.has_value() && result->load_status == LOAD_STATUS::LOADED;
+
+            if( ok )
+            {
+                wxLogInfo( "MAIL_RELOAD_LIB: Reloaded library '%s' (success)", libName );
+            }
+            else
+            {
+                wxString errMsg;
+
+                if( result.has_value() && result->error.has_value() )
+                    errMsg = result->error->message;
+                else
+                    errMsg = "library not found in sym-lib-table after LoadProjectTables";
+
+                wxLogInfo( "MAIL_RELOAD_LIB: Failed to reload library '%s': %s", libName, errMsg );
+            }
         }
 
         if( m_designBlocksPane && m_designBlocksPane->IsShown() )

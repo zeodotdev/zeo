@@ -106,8 +106,10 @@ set( AGENT_SRCS
     tools/handlers/open_editor_handler.cpp
     tools/handlers/datasheet_handler.cpp
     tools/handlers/symbol_generator.cpp
+    tools/handlers/symbol_importer.cpp
     tools/handlers/footprint_generator.cpp
     tools/handlers/component_search_handler.cpp
+    tools/handlers/netclass_generator.cpp
 
 )
 

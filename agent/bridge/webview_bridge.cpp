@@ -287,6 +287,26 @@ void WEBVIEW_BRIDGE::PushAppendChat( const wxString& aHtml )
     RunScript( wxString::Format( "App.Chat.appendMessage('%s');", EscapeJs( aHtml ) ) );
 }
 
+void WEBVIEW_BRIDGE::PushAppendToEnd( const wxString& aHtml )
+{
+    LogBridge( "C++->JS", "appendToEnd" );
+    RunScript( wxString::Format(
+        "(function(){var w=document.querySelector('.content-wrapper');"
+        "if(w){var t=document.createElement('div');t.innerHTML='%s';"
+        "while(t.firstChild)w.appendChild(t.firstChild);}})();",
+        EscapeJs( aHtml ) ) );
+}
+
+void WEBVIEW_BRIDGE::PushReplaceQueuedBubble( const wxString& aHtml )
+{
+    LogBridge( "C++->JS", "replaceQueuedBubble" );
+    RunScript( wxString::Format(
+        "(function(){var el=document.getElementById('queued-msg');"
+        "if(el){var t=document.createElement('div');t.innerHTML='%s';"
+        "el.parentNode.replaceChild(t.firstChild,el);}})();",
+        EscapeJs( aHtml ) ) );
+}
+
 void WEBVIEW_BRIDGE::PushFinalizeStreaming()
 {
     LogBridge( "C++->JS", "finalizeStreaming" );
@@ -336,20 +356,24 @@ void WEBVIEW_BRIDGE::PushFullChatContent( const wxString& aHtml )
     RunScript( wxString::Format( "App.Chat.setFullContent('%s');", EscapeJs( aHtml ) ) );
 }
 
-void WEBVIEW_BRIDGE::PushReplaceQueuedMessage( const wxString& aHtml )
+void WEBVIEW_BRIDGE::PushFinalizeFirstQueuedMessage()
 {
-    LogBridge( "C++->JS", "replaceQueuedMessage" );
-    RunScript( wxString::Format(
-        "var el=document.getElementById('queued-msg');"
-        "if(el) el.outerHTML='%s';",
-        EscapeJs( aHtml ) ) );
+    LogBridge( "C++->JS", "finalizeFirstQueuedMessage" );
+    RunScript( "var el=document.querySelector('.queued-msg');"
+               "if(el){el.classList.remove('queued-msg');el.removeAttribute('id');el.style.opacity='';}" );
 }
 
-void WEBVIEW_BRIDGE::PushRemoveQueuedMessage()
+void WEBVIEW_BRIDGE::PushFinalizeAllQueuedMessages()
 {
-    LogBridge( "C++->JS", "removeQueuedMessage" );
-    RunScript( "var el=document.getElementById('queued-msg');"
-               "if(el){el.removeAttribute('id');el.style.opacity='';}" );
+    LogBridge( "C++->JS", "finalizeAllQueuedMessages" );
+    RunScript( "document.querySelectorAll('.queued-msg').forEach(function(el){"
+               "el.classList.remove('queued-msg');el.removeAttribute('id');el.style.opacity='';});" );
+}
+
+void WEBVIEW_BRIDGE::PushRemoveAllQueuedMessages()
+{
+    LogBridge( "C++->JS", "removeAllQueuedMessages" );
+    RunScript( "document.querySelectorAll('.queued-msg').forEach(function(el){el.remove();});" );
 }
 
 void WEBVIEW_BRIDGE::PushInputClear()
@@ -371,6 +395,11 @@ void WEBVIEW_BRIDGE::PushInputSetText( const wxString& aText )
 void WEBVIEW_BRIDGE::PushInputAppendText( const wxString& aText )
 {
     RunScript( wxString::Format( "App.Input.appendText('%s');", EscapeJs( aText ) ) );
+}
+
+void WEBVIEW_BRIDGE::PushInputPrependText( const wxString& aText )
+{
+    RunScript( wxString::Format( "App.Input.prependText('%s');", EscapeJs( aText ) ) );
 }
 
 void WEBVIEW_BRIDGE::PushAddAttachment( const wxString& aBase64, const wxString& aMediaType,

@@ -64,7 +64,10 @@ API_HANDLER_COMMON::API_HANDLER_COMMON() :
             &API_HANDLER_COMMON::handleGetTextVariables );
     registerHandler<SetTextVariables, Empty>(
             &API_HANDLER_COMMON::handleSetTextVariables );
-
+    registerHandler<GetNetClassAssignments, GetNetClassAssignmentsResponse>(
+            &API_HANDLER_COMMON::handleGetNetClassAssignments );
+    registerHandler<SetNetClassAssignments, Empty>(
+            &API_HANDLER_COMMON::handleSetNetClassAssignments );
 }
 
 
@@ -480,6 +483,64 @@ HANDLER_RESULT<Empty> API_HANDLER_COMMON::handleSetTextVariables(
         vars[wxString::FromUTF8( key )] = wxString::FromUTF8( value );
 
     Pgm().GetSettingsManager().SaveProject();
+
+    return Empty();
+}
+
+
+HANDLER_RESULT<GetNetClassAssignmentsResponse> API_HANDLER_COMMON::handleGetNetClassAssignments(
+        const HANDLER_CONTEXT<GetNetClassAssignments>& aCtx )
+{
+    GetNetClassAssignmentsResponse response;
+
+    std::shared_ptr<NET_SETTINGS>& netSettings =
+            Pgm().GetSettingsManager().Prj().GetProjectFile().m_NetSettings;
+
+    if( !netSettings )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Net settings not available" );
+        return tl::unexpected( e );
+    }
+
+    auto& assignments = netSettings->GetNetclassPatternAssignments();
+
+    for( const auto& [matcher, netclassName] : assignments )
+    {
+        auto* assignment = response.add_assignments();
+        assignment->set_pattern( matcher->GetPattern().ToStdString() );
+        assignment->set_netclass( netclassName.ToStdString() );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<Empty> API_HANDLER_COMMON::handleSetNetClassAssignments(
+        const HANDLER_CONTEXT<SetNetClassAssignments>& aCtx )
+{
+    std::shared_ptr<NET_SETTINGS>& netSettings =
+            Pgm().GetSettingsManager().Prj().GetProjectFile().m_NetSettings;
+
+    if( !netSettings )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Net settings not available" );
+        return tl::unexpected( e );
+    }
+
+    netSettings->ClearNetclassPatternAssignments();
+
+    for( const auto& assignment : aCtx.Request.assignments() )
+    {
+        wxString pattern = wxString::FromUTF8( assignment.pattern() );
+        wxString netclass = wxString::FromUTF8( assignment.netclass() );
+        netSettings->SetNetclassPatternAssignment( pattern, netclass );
+    }
+
+    netSettings->ClearAllCaches();
 
     return Empty();
 }

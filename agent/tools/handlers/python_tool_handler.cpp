@@ -314,22 +314,6 @@ static std::string DescribePcbDelete( const nlohmann::json& a )
 }
 
 
-static std::string DescribePcbRoute( const nlohmann::json& a )
-{
-    std::string fromRef, toRef;
-
-    if( a.contains( "from" ) )
-        fromRef = a["from"].value( "ref", "" );
-
-    if( a.contains( "to" ) )
-        toRef = a["to"].value( "ref", "" );
-
-    if( !fromRef.empty() && !toRef.empty() )
-        return "Routing " + fromRef + " to " + toRef;
-
-    return "Routing pads";
-}
-
 
 static std::string DescribePcbSetup( const nlohmann::json& a )
 {
@@ -423,7 +407,7 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
     Register( "sch_annotate", "sch", "schematic/sch_annotate.py", []( const nlohmann::json& a ) {
         std::string scope = a.value( "scope", "unannotated_only" );
         if( scope == "all" )  return std::string( "Annotating all symbols" );
-        return std::string( "Annotating unannotated symbols" );
+        return std::string( "Annotating symbols" );
     } );
 
     Register( "sch_run_simulation", "sch", "schematic/sch_run_simulation.py", DescribeSchSimulation );
@@ -433,8 +417,8 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
         return std::string( "Getting schematic summary" );
     } );
 
-    Register( "sch_read_section", "sch", "schematic/sch_read_section.py", []( const nlohmann::json& a ) {
-        return "Reading schematic " + a.value( "section", "all" );
+    Register( "sch_inspect", "sch", "schematic/sch_inspect.py", []( const nlohmann::json& a ) {
+        return "Inspecting schematic " + a.value( "section", "all" );
     } );
 
     Register( "sch_get_pins", "sch", "schematic/sch_get_pins.py", []( const nlohmann::json& a ) {
@@ -447,6 +431,11 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
         if( filter == "*" || filter.empty() )
             return std::string( "Querying all symbols" );
         return "Querying symbols: " + filter;
+    } );
+
+    Register( "sch_get_nets", "sch", "schematic/sch_get_nets.py", []( const nlohmann::json& a ) {
+        std::string f = a.value( "filter", "" );
+        return f.empty() ? std::string( "Getting schematic nets" ) : "Getting nets matching " + f;
     } );
 
     Register( "sch_connect_net", "sch", "schematic/sch_connect_net.py", DescribeSchConnectNet );
@@ -489,8 +478,8 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
         return std::string( "Getting PCB summary" );
     } );
 
-    Register( "pcb_read_section", "pcb", "pcb/pcb_read_section.py", []( const nlohmann::json& a ) {
-        return "Reading PCB " + a.value( "section", "all" );
+    Register( "pcb_inspect", "pcb", "pcb/pcb_inspect.py", []( const nlohmann::json& a ) {
+        return "Inspecting PCB " + a.value( "section", "all" );
     } );
 
     Register( "pcb_run_drc", "pcb", "pcb/pcb_run_drc.py", []( const nlohmann::json& ) {
@@ -533,8 +522,6 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
         std::string ref = a.value( "ref", "" );
         return "Getting footprint " + ( ref.empty() ? std::string( "info" ) : ref );
     } );
-
-    Register( "pcb_route",    "pcb", "pcb/pcb_route.py",      DescribePcbRoute );
 
     Register( "pcb_get_nets", "pcb", "pcb/pcb_get_nets.py", []( const nlohmann::json& ) {
         return std::string( "Getting net list" );

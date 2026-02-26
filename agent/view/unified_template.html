@@ -757,8 +757,8 @@ App.Chat = (function() {
             var temp = document.createElement('div');
             temp.innerHTML = html;
             highlightCodeBlocks(temp);
-            // Insert before #queued-msg so queued message stays at the bottom
-            var queuedMsg = document.getElementById('queued-msg');
+            // Insert before first .queued-msg so queued messages stay at the bottom
+            var queuedMsg = document.querySelector('.queued-msg');
             while (temp.firstChild) {
                 if (queuedMsg) {
                     wrapper.insertBefore(temp.firstChild, queuedMsg);
@@ -787,6 +787,16 @@ App.Chat = (function() {
         if (body) {
             body.innerHTML = bodyHtml;
             highlightCodeBlocks(body);
+        }
+        // Convert non-clickable div header to clickable <a> for toggle
+        var header = el.querySelector('.tool-result-header');
+        if (header && header.tagName === 'DIV') {
+            var idx = el.id.replace('tool-result-', '');
+            var a = document.createElement('a');
+            a.href = 'toggle:toolresult:' + idx;
+            a.className = header.className + ' no-underline';
+            a.innerHTML = header.innerHTML;
+            header.parentNode.replaceChild(a, header);
         }
     }
 
@@ -1360,6 +1370,13 @@ App.Input = (function() {
         autoResize();
     }
 
+    function prependText(text) {
+        if (textarea.value) textarea.value = text + '\n' + textarea.value;
+        else textarea.value = text;
+        textarea.selectionStart = textarea.selectionEnd = 0;
+        autoResize();
+    }
+
     function submit() {
         var text = textarea.value;
         if (text.trim() !== '') {
@@ -1391,6 +1408,7 @@ App.Input = (function() {
         focus: focus,
         setText: setText,
         appendText: appendText,
+        prependText: prependText,
         submit: submit,
         undo: undo,
         redo: redo,

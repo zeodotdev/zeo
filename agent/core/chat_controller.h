@@ -223,6 +223,16 @@ public:
     }
 
     /**
+     * Set a callback that returns true when the frame has a queued user message.
+     * Used to interrupt the tool→ContinueChat loop so the queued message
+     * can be sent between tool rounds instead of waiting for the full turn.
+     */
+    void SetHasQueuedMessageFn( std::function<bool()> aFn )
+    {
+        m_hasQueuedMessageFn = aFn;
+    }
+
+    /**
      * Set the function used to get a JSON snapshot of the current schematic state.
      * Used for detecting user edits between agent turns.
      * @param aFn Function returning a JSON string summary of all schematic items
@@ -301,6 +311,7 @@ private:
     std::function<std::string()> m_getProjectPathFn;  ///< Get project path for context injection
     std::function<std::string()> m_getSchematicSummaryFn;  ///< Get schematic snapshot for edit detection
     std::function<void()> m_syncEditorStateFn;  ///< Sync editor state to TOOL_REGISTRY before tool execution
+    std::function<bool()> m_hasQueuedMessageFn; ///< Returns true when frame has a queued user message
 
     // -------------------------------------------------------------------------
     // User edit detection (schematic diff between turns)
@@ -316,6 +327,7 @@ private:
     // Tool definitions
     // -------------------------------------------------------------------------
     std::vector<LLM_TOOL> m_tools;      ///< Available tool definitions
+    bool                  m_dynamicToolsMerged = false;  ///< True once MCP schemas are merged
     AgentMode             m_agentMode;  ///< Current agent mode (EXECUTE or PLAN)
 
     // -------------------------------------------------------------------------
@@ -326,6 +338,12 @@ private:
     // -------------------------------------------------------------------------
     // Internal methods
     // -------------------------------------------------------------------------
+
+    /**
+     * Merge dynamic tool schemas from handlers (e.g. MCP-fetched) into m_tools.
+     * Called once when schemas become available; no-op after that.
+     */
+    void MergeDynamicTools();
 
     /**
      * Get tools filtered by current agent mode.

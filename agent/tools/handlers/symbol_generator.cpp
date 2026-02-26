@@ -74,6 +74,8 @@ static constexpr double MIN_BODY_WIDTH = 10.16;   // 400 mil
 static constexpr double MIN_BODY_HEIGHT = 5.08;    // 200 mil
 static constexpr double FONT_SIZE = 1.27;
 static constexpr double PROP_OFFSET = 1.27;
+static constexpr double PIN_NAMES_OFFSET = 1.016; // KiCad pin_names offset from body edge
+static constexpr double CORNER_MARGIN = 0.5;  // extra breathing room at corners (mm)
 
 
 // ---------------------------------------------------------------------------
@@ -584,19 +586,17 @@ bool SYMBOL_GENERATOR::FetchComponentData( const std::string& aPartNumber,
 
         if( comp.contains( "component_packages" ) )
         {
+            // Use only the first package that has pins. Merging multiple packages
+            // produces duplicate pin numbers when the extractor created multiple
+            // package entries for the same physical package.
+            const json* bestPkg = nullptr;
+
             for( const auto& pkg : comp["component_packages"] )
             {
-                if( pkg.contains( "component_pins" ) )
+                if( pkg.contains( "component_pins" ) && !pkg["component_pins"].empty() )
                 {
-                    for( const auto& pin : pkg["component_pins"] )
-                    {
-                        PinData pd;
-                        pd.number = SafeStr( pin, "pin_number", "" );
-                        pd.name = SafeStr( pin, "pin_name", "" );
-                        pd.type = SafeStr( pin, "pin_type", "passive" );
-                        pd.function_group = SafeStr( pin, "function_group", "" );
-                        aData.pins.push_back( pd );
-                    }
+                    if( !bestPkg )
+                        bestPkg = &pkg;
                 }
 
                 if( aData.footprint.empty() && pkg.contains( "component_footprints" ) )
@@ -613,8 +613,61 @@ bool SYMBOL_GENERATOR::FetchComponentData( const std::string& aPartNumber,
                     }
                 }
             }
+
+            if( bestPkg && bestPkg->contains( "component_pins" ) )
+            {
+                // Deduplicate by pin_number: the extractor sometimes creates one row
+                // per alternate function instead of one row per physical pin. Keep the
+                // first occurrence of each pin number.
+                std::set<std::string> seenPinNumbers;
+                int maxNumericPin = 0;
+
+                // First pass: collect all numeric pin numbers to determine max
+                for( const auto& pin : ( *bestPkg )["component_pins"] )
+                {
+                    std::string num = SafeStr( pin, "pin_number", "" );
+                    try
+                    {
+                        int n = std::stoi( num );
+                        maxNumericPin = std::max( maxNumericPin, n );
+                    }
+                    catch( ... ) {}
+                }
+
+                // Second pass: build pin list with EP normalization
+                for( const auto& pin : ( *bestPkg )["component_pins"] )
+                {
+                    std::string num = SafeStr( pin, "pin_number", "" );
+
+                    if( num.empty() )
+                        continue;
+
+                    // Normalize exposed-pad pin numbers ("EP", "Center", "EPAD",
+                    // "GND_PAD", "Thermal", etc.) to max_pin+1 so they match the
+                    // footprint generator which uses pin_count+1 for the EP pad.
+                    bool isNumeric = true;
+                    try { std::stoi( num ); }
+                    catch( ... ) { isNumeric = false; }
+
+                    if( !isNumeric )
+                        num = std::to_string( maxNumericPin + 1 );
+
+                    if( seenPinNumbers.count( num ) )
+                        continue;
+
+                    seenPinNumbers.insert( num );
+
+                    PinData pd;
+                    pd.number = num;
+                    pd.name = SafeStr( pin, "pin_name", "" );
+                    pd.type = SafeStr( pin, "pin_type", "passive" );
+                    pd.function_group = SafeStr( pin, "function_group", "" );
+                    aData.pins.push_back( pd );
+                }
+            }
         }
 
+        wxLogInfo( "SYMBOL_GENERATOR: Loaded %zu unique pins from DB", aData.pins.size() );
         return !aData.pins.empty();
     }
     catch( const std::exception& e )
@@ -721,12 +774,92 @@ SYMBOL_GENERATOR::PinLayout SYMBOL_GENERATOR::AssignPinSides(
             else if( pin->type == "ground" )
                 layout.bottom.push_back( pin );
             else if( pin->type == "output" || pin->type == "power_out"
-                     || pin->type == "open_drain" || pin->type == "open_collector" )
+                     || pin->type == "open_drain" || pin->type == "open_collector"
+                     || pin->type == "open_emitter" || pin->type == "tri_state" )
                 layout.right.push_back( pin );
             else if( pin->type == "no_connect" )
                 layout.right.push_back( pin );
             else
                 layout.left.push_back( pin );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Rebalance left↔right if one side is significantly heavier.
+    // Moves whole function groups to keep related pins together.
+    // For a single function group, splits pins evenly.
+    // -----------------------------------------------------------------------
+    {
+        std::vector<const PinData*>* heavy = &layout.left;
+        std::vector<const PinData*>* light = &layout.right;
+
+        if( layout.right.size() > layout.left.size() )
+            std::swap( heavy, light );
+
+        size_t heavyCount = heavy->size();
+        size_t lightCount = light->size();
+
+        if( heavyCount >= 4 && ( lightCount == 0 || heavyCount > lightCount * 3 ) )
+        {
+            // Collect function groups from the heavy side
+            std::map<std::string, std::vector<const PinData*>> groupMap;
+
+            for( const auto* pin : *heavy )
+            {
+                std::string grp = pin->function_group.empty() ? "Other"
+                                                               : pin->function_group;
+                groupMap[grp].push_back( pin );
+            }
+
+            // Sort groups by size (largest first) for better bin packing
+            std::vector<std::pair<std::string, std::vector<const PinData*>>> groups(
+                    groupMap.begin(), groupMap.end() );
+
+            std::sort( groups.begin(), groups.end(),
+                       []( const auto& a, const auto& b )
+                       { return a.second.size() > b.second.size(); } );
+
+            if( groups.size() >= 2 )
+            {
+                // Multiple groups: greedy bin packing, accounting for existing
+                // light-side pins
+                std::vector<const PinData*> newHeavy;
+                size_t newHeavyCount = 0;
+                size_t newLightCount = lightCount;
+
+                for( const auto& [name, pins] : groups )
+                {
+                    if( newHeavyCount <= newLightCount )
+                    {
+                        newHeavy.insert( newHeavy.end(), pins.begin(), pins.end() );
+                        newHeavyCount += pins.size();
+                    }
+                    else
+                    {
+                        light->insert( light->end(), pins.begin(), pins.end() );
+                        newLightCount += pins.size();
+                    }
+                }
+
+                *heavy = std::move( newHeavy );
+            }
+            else
+            {
+                // Single group: split pins to balance both sides
+                size_t total = heavyCount + lightCount;
+                size_t targetHeavy = ( total + 1 ) / 2;
+
+                if( targetHeavy < heavyCount )
+                {
+                    auto splitIt = heavy->begin()
+                                   + static_cast<ptrdiff_t>( targetHeavy );
+                    light->insert( light->end(), splitIt, heavy->end() );
+                    heavy->erase( splitIt, heavy->end() );
+                }
+            }
+
+            wxLogTrace( "Agent", "SYMBOL_GENERATOR: Rebalanced pins L=%zu R=%zu",
+                        layout.left.size(), layout.right.size() );
         }
     }
 
@@ -757,8 +890,10 @@ std::string SYMBOL_GENERATOR::PinTypeToKiCad( const std::string& aType )
     if( aType == "input" )          return "input";
     if( aType == "output" )         return "output";
     if( aType == "bidirectional" )   return "bidirectional";
+    if( aType == "tri_state" )      return "tri_state";
     if( aType == "open_drain" )     return "open_collector";
     if( aType == "open_collector" ) return "open_collector";
+    if( aType == "open_emitter" )   return "open_emitter";
     if( aType == "passive" )        return "passive";
     if( aType == "no_connect" )     return "no_connect";
     if( aType == "ground" )         return "power_in";
@@ -810,8 +945,8 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
     int verticalSlots = std::max( leftSlots, rightSlots );
     int horizontalSlots = std::max( topSlots, bottomSlots );
 
-    double bodyHeight = std::max( MIN_BODY_HEIGHT, verticalSlots * PIN_SPACING );
-    double bodyWidth = std::max( MIN_BODY_WIDTH, horizontalSlots * PIN_SPACING );
+    bool hasVerticalPins = verticalSlots > 0;
+    bool hasHorizontalPins = horizontalSlots > 0;
 
     auto maxNameLen = []( const std::vector<const PinData*>& pins ) -> size_t
     {
@@ -821,6 +956,70 @@ std::string SYMBOL_GENERATOR::GenerateSymbolContent( const ComponentData& aData,
         return maxLen;
     };
 
+    // Corner clearance: when pins exist on perpendicular sides, their rendered
+    // labels can overlap at corners.  Calculate the clearance needed from each
+    // body edge to the nearest pin on that side.  With pins centered on the body,
+    // clearance = halfBody - (slots-1)*PIN_SPACING/2, so body = (slots-1)*PIN_SPACING + 2*clearance.
+    double topClear    = PIN_SPACING / 2.0;
+    double bottomClear = PIN_SPACING / 2.0;
+    double leftClear   = PIN_SPACING / 2.0;
+    double rightClear  = PIN_SPACING / 2.0;
+
+    if( hasVerticalPins && hasHorizontalPins )
+    {
+        // Top/bottom pin labels render vertically, extending inward from the body
+        // edge by PIN_NAMES_OFFSET + name_length.  Left/right pins near those
+        // corners need enough clearance so their horizontal labels (FONT_SIZE tall)
+        // don't overlap with the vertical text.
+        if( !layout.top.empty() )
+        {
+            double nameExt = maxNameLen( layout.top ) * FONT_SIZE * 0.7;
+            topClear = std::max( topClear,
+                                 PIN_NAMES_OFFSET + nameExt + FONT_SIZE / 2.0 + CORNER_MARGIN );
+        }
+
+        if( !layout.bottom.empty() )
+        {
+            double nameExt = maxNameLen( layout.bottom ) * FONT_SIZE * 0.7;
+            bottomClear = std::max( bottomClear,
+                                    PIN_NAMES_OFFSET + nameExt + FONT_SIZE / 2.0 + CORNER_MARGIN );
+        }
+
+        // Left/right pin labels render horizontally, extending inward from the body
+        // edge.  Top/bottom pins near those corners need enough clearance so their
+        // vertical labels (FONT_SIZE wide) don't overlap with the horizontal text.
+        if( !layout.left.empty() )
+        {
+            double nameExt = maxNameLen( layout.left ) * FONT_SIZE * 0.7;
+            leftClear = std::max( leftClear,
+                                  PIN_NAMES_OFFSET + nameExt + FONT_SIZE / 2.0 + CORNER_MARGIN );
+        }
+
+        if( !layout.right.empty() )
+        {
+            double nameExt = maxNameLen( layout.right ) * FONT_SIZE * 0.7;
+            rightClear = std::max( rightClear,
+                                   PIN_NAMES_OFFSET + nameExt + FONT_SIZE / 2.0 + CORNER_MARGIN );
+        }
+    }
+
+    // Body height: accommodate centered vertical pins with corner clearances.
+    double vertClear = std::max( topClear, bottomClear );
+    double bodyHeight = MIN_BODY_HEIGHT;
+
+    if( verticalSlots > 0 )
+        bodyHeight = std::max( bodyHeight,
+                               ( verticalSlots - 1 ) * PIN_SPACING + 2.0 * vertClear );
+
+    // Body width: accommodate centered horizontal pins with corner clearances.
+    double horizClear = std::max( leftClear, rightClear );
+    double bodyWidth = MIN_BODY_WIDTH;
+
+    if( horizontalSlots > 0 )
+        bodyWidth = std::max( bodyWidth,
+                              ( horizontalSlots - 1 ) * PIN_SPACING + 2.0 * horizClear );
+
+    // Ensure body is wide enough for left/right pin name labels (prevent L/R overlap)
     size_t maxLeftName = maxNameLen( layout.left );
     size_t maxRightName = maxNameLen( layout.right );
     double nameWidth = std::max( maxLeftName, maxRightName ) * FONT_SIZE * 0.7;

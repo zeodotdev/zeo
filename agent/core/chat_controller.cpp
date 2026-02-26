@@ -220,11 +220,11 @@ void CHAT_CONTROLLER::Cancel()
                            m_ctx.GetState() == AgentConversationState::EXECUTING_TOOL ||
                            m_ctx.GetState() == AgentConversationState::PROCESSING_TOOL_RESULT;
 
-    wxLogInfo( "CHAT_CONTROLLER::Cancel toolStateActive=%d, willSavePartial=%d",
+    wxLogInfo( "CHAT_CONTROLLER::Cancel toolStateActive=%d, hasResponse=%d, hasThinking=%d",
                toolStateActive,
-               !toolStateActive && ( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() ) );
+               !m_currentResponse.empty(), !m_thinkingContent.IsEmpty() );
 
-    if( !toolStateActive && ( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() ) )
+    if( !toolStateActive )
     {
         nlohmann::json content = nlohmann::json::array();
 
@@ -247,8 +247,10 @@ void CHAT_CONTROLLER::Cancel()
             } );
         }
 
-        // If content is empty (e.g. cancelled during thinking before signature arrived),
-        // add a minimal text block to avoid sending an empty assistant message to the API.
+        // If content is empty (e.g. cancelled during compaction before any response,
+        // or cancelled during thinking before signature arrived), add a minimal text
+        // block. This prevents consecutive user messages (e.g. compaction marker
+        // followed by next user message) which the API rejects.
         if( content.empty() )
         {
             content.push_back( {
@@ -1066,7 +1068,7 @@ void CHAT_CONTROLLER::ExecuteNextTool()
     // Background datasheet extraction for symbols with datasheet URLs
     if( success && ( tool->tool_name == "sch_add"
                      || tool->tool_name == "sch_get_summary"
-                     || tool->tool_name == "sch_read_section" ) )
+                     || tool->tool_name == "sch_inspect" ) )
     {
         try
         {
@@ -1239,6 +1241,20 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
     {
         // All tools complete - add ALL tool results as ONE user message
         AddAllToolResultsToHistory();
+
+        // If the frame has a queued user message, interrupt the auto-continue loop
+        // so the queued message gets sent between tool rounds (like Claude Code).
+        if( m_hasQueuedMessageFn && m_hasQueuedMessageFn() )
+        {
+            wxLogInfo( "CHAT_CONTROLLER::ProcessToolResult - queued message detected, "
+                       "yielding to frame instead of auto-continuing" );
+            AgentConversationState oldState = m_ctx.GetState();
+            m_ctx.TransitionTo( AgentConversationState::IDLE );
+            EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
+                                                                      static_cast<int>( m_ctx.GetState() ) ) );
+            EmitEvent( EVT_CHAT_TURN_COMPLETE, ChatTurnCompleteData( false ) );
+            return;
+        }
 
         AgentConversationState oldState = m_ctx.GetState();
         m_ctx.TransitionTo( AgentConversationState::PROCESSING_TOOL_RESULT );
@@ -1943,16 +1959,67 @@ nlohmann::json CHAT_CONTROLLER::BuildApiContext() const
 }
 
 
+void CHAT_CONTROLLER::MergeDynamicTools()
+{
+    if( m_dynamicToolsMerged )
+        return;
+
+    auto dynamicTools = TOOL_REGISTRY::Instance().GetDynamicTools();
+
+    if( dynamicTools.empty() )
+        return;
+
+    m_tools.insert( m_tools.end(), dynamicTools.begin(), dynamicTools.end() );
+    m_dynamicToolsMerged = true;
+
+    wxLogInfo( "CHAT_CONTROLLER: Merged %zu dynamic tool schemas", dynamicTools.size() );
+}
+
+
 std::vector<LLM_TOOL> CHAT_CONTROLLER::GetFilteredTools() const
 {
-    if( m_agentMode == AgentMode::EXECUTE )
+    // Plan mode: return only read-only tools
+    if( m_agentMode == AgentMode::PLAN )
+    {
+        std::vector<LLM_TOOL> filtered;
+        std::copy_if( m_tools.begin(), m_tools.end(), std::back_inserter( filtered ),
+                      []( const LLM_TOOL& t ) { return t.read_only; } );
+        return filtered;
+    }
+
+    // Execute mode: all core tools + editor-filtered deferred tools.
+    // Core (non-deferred) tools are always included to keep the cached prefix stable.
+    // Deferred tools are filtered by editor state to reduce tool search noise.
+    bool schOpen = TOOL_REGISTRY::Instance().IsSchematicEditorOpen();
+    bool pcbOpen = TOOL_REGISTRY::Instance().IsPcbEditorOpen();
+
+    // Both or neither editor open → include everything
+    if( schOpen == pcbOpen )
         return m_tools;
 
-    // Plan mode: return only read-only tools
-    std::vector<LLM_TOOL> filtered;
-    std::copy_if( m_tools.begin(), m_tools.end(), std::back_inserter( filtered ),
-                  []( const LLM_TOOL& t ) { return t.read_only; } );
-    return filtered;
+    std::vector<LLM_TOOL> result;
+
+    for( const auto& t : m_tools )
+    {
+        if( !t.defer_loading )
+        {
+            result.push_back( t );
+        }
+        else if( t.group == ToolGroup::GENERAL )
+        {
+            result.push_back( t );
+        }
+        else if( t.group == ToolGroup::SCHEMATIC && schOpen )
+        {
+            result.push_back( t );
+        }
+        else if( t.group == ToolGroup::PCB && pcbOpen )
+        {
+            result.push_back( t );
+        }
+    }
+
+    return result;
 }
 
 
@@ -2008,6 +2075,13 @@ void CHAT_CONTROLLER::StartLLMRequest()
 
     // Sanitize context before sending to ensure valid message format
     SanitizeMessages( apiContext );
+
+    // Sync editor state so GetFilteredTools() has current open/closed state
+    if( m_syncEditorStateFn )
+        m_syncEditorStateFn();
+
+    // Merge MCP tool schemas if they've arrived from background fetch
+    MergeDynamicTools();
 
     // Start async request - events will be forwarded to HandleLLMChunk
     bool started = m_llmClient->AskStreamWithToolsAsync( apiContext, GetFilteredTools(), m_eventSink );

@@ -8,6 +8,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
+struct LLM_TOOL;
 class AGENT_AUTH;
 class TOOL_HANDLER;
 class wxEvtHandler;
@@ -27,6 +28,11 @@ public:
     static TOOL_REGISTRY& Instance();
 
     // --- Tool dispatch ---
+
+    /**
+     * Collect dynamic tool schemas from all handlers (e.g. MCP-fetched schemas).
+     */
+    std::vector<LLM_TOOL> GetDynamicTools() const;
 
     bool        HasHandler( const std::string& aToolName ) const;
     std::string Execute( const std::string& aToolName, const nlohmann::json& aInput );

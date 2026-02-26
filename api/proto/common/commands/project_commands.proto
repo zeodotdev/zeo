@@ -122,3 +122,30 @@ message SetTextVariables
   // Whether to merge or replace the existing text variables map with the contents of this message
   kiapi.common.types.MapMergeMode merge_mode = 3;
 }
+
+
+/// A netclass pattern assignment (pattern -> netclass).
+/// Stored at the project level in NET_SETTINGS.
+message NetClassAssignment
+{
+  string pattern = 1;                    // Wildcard pattern to match net names
+  string netclass = 2;                   // Netclass to assign
+}
+
+
+/// Gets all netclass pattern assignments
+message GetNetClassAssignments
+{
+}
+
+message GetNetClassAssignmentsResponse
+{
+  repeated NetClassAssignment assignments = 1;
+}
+
+
+/// Sets all netclass pattern assignments (replaces existing)
+message SetNetClassAssignments
+{
+  repeated NetClassAssignment assignments = 1;
+}

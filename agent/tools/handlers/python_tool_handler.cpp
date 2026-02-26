@@ -442,6 +442,11 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
         return "Getting pins for " + ( ref.empty() ? std::string( "symbol" ) : ref );
     } );
 
+    Register( "sch_get_nets", "sch", "schematic/sch_get_nets.py", []( const nlohmann::json& a ) {
+        std::string f = a.value( "filter", "" );
+        return f.empty() ? std::string( "Getting schematic nets" ) : "Getting nets matching " + f;
+    } );
+
     Register( "sch_connect_net", "sch", "schematic/sch_connect_net.py", DescribeSchConnectNet );
     Register( "sch_label_pins",  "sch", "schematic/sch_label_pins.py",  DescribeSchLabelPins );
 

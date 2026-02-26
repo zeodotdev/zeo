@@ -465,6 +465,29 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
     schGetPins.read_only = true;
     tools.push_back( schGetPins );
 
+    // sch_get_nets - Query schematic net connectivity
+    LLM_TOOL schGetNets;
+    schGetNets.name = "sch_get_nets";
+    schGetNets.description =
+        "Query schematic net connectivity. Returns which symbol pins are connected to which nets. "
+        "Use filter to query specific nets, or include_unconnected to find floating pins.";
+    schGetNets.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "filter", {
+                { "type", "string" },
+                { "description", "Glob pattern to match net names (e.g. 'VCC', 'SPI_*'). Omit for all nets." }
+            }},
+            { "include_unconnected", {
+                { "type", "boolean" },
+                { "description", "Include pins not connected to any net. Default false." }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    schGetNets.read_only = true;
+    tools.push_back( schGetNets );
+
     // ===== IPC-based CRUD Tools (sch_add, sch_update, sch_delete, sch_batch_delete) =====
     // These work on the LIVE schematic via kipy API
 

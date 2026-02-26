@@ -108,6 +108,7 @@ set( AGENT_SRCS
     tools/handlers/symbol_generator.cpp
     tools/handlers/footprint_generator.cpp
     tools/handlers/component_search_handler.cpp
+    tools/handlers/netclass_generator.cpp
 
 )
 

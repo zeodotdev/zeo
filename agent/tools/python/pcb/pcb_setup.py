@@ -313,6 +313,33 @@ def _get():
     except Exception as e:
         result['origins'] = {'error': str(e)}
 
+    # Net class assignments (pattern -> netclass mappings)
+    try:
+        project = board.get_project()
+        result['net_class_assignments'] = project.get_net_class_assignments()
+    except Exception as e:
+        result['net_class_assignments'] = {'error': str(e)}
+
+    # Components summary (ref, value, datasheet) for net class generation
+    try:
+        comp_list = []
+        for fp in board.get_footprints():
+            ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else ''
+            value = fp.value_field.text.value if hasattr(fp, 'value_field') else ''
+            comp = {'ref': ref, 'value': value}
+            # Extract datasheet from fields
+            if hasattr(fp, 'definition') and hasattr(fp.definition, 'fields'):
+                for field in fp.definition.fields:
+                    if hasattr(field, 'name') and field.name == 'Datasheet':
+                        ds = field.text.value if hasattr(field.text, 'value') else ''
+                        if ds:
+                            comp['datasheet'] = ds
+                        break
+            comp_list.append(comp)
+        result['components'] = comp_list
+    except Exception as e:
+        result['components'] = {'error': str(e)}
+
     print(json.dumps(result, indent=2))
 
 
@@ -984,6 +1011,16 @@ def _set():
             result['updated'].append('net_classes')
         except Exception as e:
             result['net_classes_error'] = str(e)
+
+    # Net class assignments (pattern -> netclass mappings)
+    net_class_assignments = TOOL_ARGS.get("net_class_assignments")
+    if net_class_assignments:
+        try:
+            project = board.get_project()
+            project.set_net_class_assignments(net_class_assignments)
+            result['updated'].append('net_class_assignments')
+        except Exception as e:
+            result['net_class_assignments_error'] = str(e)
 
     # Text variables
     text_variables = TOOL_ARGS.get("text_variables")

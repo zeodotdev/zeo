@@ -75,6 +75,12 @@ private:
 
     HANDLER_RESULT<Empty> handleSetTextVariables(
         const HANDLER_CONTEXT<commands::SetTextVariables>& aCtx );
+
+    HANDLER_RESULT<commands::GetNetClassAssignmentsResponse> handleGetNetClassAssignments(
+        const HANDLER_CONTEXT<commands::GetNetClassAssignments>& aCtx );
+
+    HANDLER_RESULT<Empty> handleSetNetClassAssignments(
+        const HANDLER_CONTEXT<commands::SetNetClassAssignments>& aCtx );
 };
 
 #endif //KICAD_API_HANDLER_COMMON_H

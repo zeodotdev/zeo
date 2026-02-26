@@ -1948,6 +1948,29 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
     };
     tools.push_back( pcbAutoroute );
 
+    // generate_net_classes - AI-powered net class generation
+    LLM_TOOL generateNetClasses;
+    generateNetClasses.name = "generate_net_classes";
+    generateNetClasses.description =
+        "Generate net class definitions using AI analysis of the PCB design. "
+        "Analyzes net names, components, and datasheet-extracted electrical specs to create "
+        "appropriate net classes (power, signal, differential pairs, etc.) with calculated "
+        "trace widths, clearances, and diff pair dimensions. "
+        "By default, applies the generated classes to the board. Set apply=false to preview. "
+        "REQUIRES: PCB editor must be open with a netlist loaded.";
+    generateNetClasses.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "apply", {
+                { "type", "boolean" },
+                { "description", "If true (default), apply generated net classes to the board. "
+                                 "If false, return the generated classes without applying." }
+            }}
+        }},
+        { "required", json::array() }
+    };
+    tools.push_back( generateNetClasses );
+
     // pcb_setup - Read/write board settings
     LLM_TOOL pcbSetup;
     pcbSetup.name = "pcb_setup";

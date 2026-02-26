@@ -141,9 +141,13 @@ private:
     std::vector<FILE_ATTACHMENT> m_pendingAttachments;  // File attachments from JS submit
 
     // Message queue (queued during generation, auto-sent when turn completes)
-    wxString                     m_queuedInputText;
-    std::vector<FILE_ATTACHMENT> m_queuedAttachments;
-    wxString                     m_queuedMsgHtml;  // Tracks queued message HTML in DOM
+    struct QueuedMessage
+    {
+        wxString                     text;
+        std::vector<FILE_ATTACHMENT> attachments;
+    };
+    std::vector<QueuedMessage>   m_queuedMessages;
+    wxString                     m_queuedBubbleHtml;  // Tracks the single combined queued bubble in DOM
     bool                         m_turnCompleteForQueue = false;  // Set when turn ends (continuing=false)
 
     wxImage     m_pendingCopyImage;  // Image waiting for context menu "Copy Image" action
@@ -259,6 +263,7 @@ private:
     // Message queueing (queue during generation, auto-send when turn completes)
     bool     HasQueuedMessage() const;
     void     QueueMessage();
+    void     RebuildQueuedBubble();
     void     SendQueuedMessage();
     void     ClearQueuedMessage();
     void     DoCancelOperation( bool aShowStopped );

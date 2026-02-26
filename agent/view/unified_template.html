@@ -757,8 +757,8 @@ App.Chat = (function() {
             var temp = document.createElement('div');
             temp.innerHTML = html;
             highlightCodeBlocks(temp);
-            // Insert before #queued-msg so queued message stays at the bottom
-            var queuedMsg = document.getElementById('queued-msg');
+            // Insert before first .queued-msg so queued messages stay at the bottom
+            var queuedMsg = document.querySelector('.queued-msg');
             while (temp.firstChild) {
                 if (queuedMsg) {
                     wrapper.insertBefore(temp.firstChild, queuedMsg);

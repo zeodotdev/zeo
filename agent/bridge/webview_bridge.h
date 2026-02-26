@@ -38,6 +38,8 @@ public:
     // Chat area
     void PushStreamingContent( const wxString& aHtml );
     void PushAppendChat( const wxString& aHtml );
+    void PushAppendToEnd( const wxString& aHtml );
+    void PushReplaceQueuedBubble( const wxString& aHtml );
     void PushFinalizeStreaming();
     void PushToolResultUpdate( int aIndex, const wxString& aStatusClass,
                                const wxString& aStatusText, const wxString& aBodyHtml );
@@ -46,8 +48,9 @@ public:
     void PushToolResultImageEnd( int aIndex );
     void PushCancelRunningTools();
     void PushFullChatContent( const wxString& aHtml );
-    void PushReplaceQueuedMessage( const wxString& aHtml );
-    void PushRemoveQueuedMessage();
+    void PushFinalizeFirstQueuedMessage();
+    void PushFinalizeAllQueuedMessages();
+    void PushRemoveAllQueuedMessages();
 
     // Input area
     void PushInputClear();

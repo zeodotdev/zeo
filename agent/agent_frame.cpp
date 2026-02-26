@@ -376,7 +376,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_thinkingHtmlDirty = false;
     m_currentThinkingIndex = -1;
 
-    // Initialize tool result toggle state
+    // Initialize tool result counters
     m_toolResultCounter = 0;
     m_activeRunningHtml.Clear();
     m_activeToolResultIdx = -1;
@@ -662,10 +662,10 @@ void AGENT_FRAME::ShowChangedLanguage()
 
 void AGENT_FRAME::AppendHtml( const wxString& aHtml )
 {
-    // Insert before queued message so it stays at the bottom
-    if( !m_queuedMsgHtml.IsEmpty() )
+    // Insert before queued bubble so it stays at the bottom
+    if( !m_queuedBubbleHtml.IsEmpty() )
     {
-        size_t pos = m_fullHtmlContent.Find( m_queuedMsgHtml );
+        size_t pos = m_fullHtmlContent.Find( m_queuedBubbleHtml );
         if( pos != wxString::npos )
         {
             m_fullHtmlContent.insert( pos, aHtml );
@@ -829,9 +829,9 @@ void AGENT_FRAME::OnHtmlUpdateTimer( wxTimerEvent& aEvent )
         wxString fullHtml = m_htmlBeforeAgentResponse;
         fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
         fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
-        // Preserve queued message at the end
-        if( !m_queuedMsgHtml.IsEmpty() )
-            fullHtml += m_queuedMsgHtml;
+        // Preserve queued bubble at the end
+        if( !m_queuedBubbleHtml.IsEmpty() )
+            fullHtml += m_queuedBubbleHtml;
         m_fullHtmlContent = fullHtml;
     }
     // If user scrolled up, leave m_htmlUpdateNeeded=true so update happens when they scroll back
@@ -867,6 +867,9 @@ void AGENT_FRAME::StopGeneratingAnimation()
         wxString html = m_htmlBeforeAgentResponse;
         html.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
         html += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
+        // Preserve queued bubble at the end
+        if( !m_queuedBubbleHtml.IsEmpty() )
+            html += m_queuedBubbleHtml;
         m_fullHtmlContent = html;
     }
 
@@ -1251,12 +1254,26 @@ void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
 {
     wxLogInfo( "AGENT_FRAME::OnStop called" );
 
-    // Re-insert queued message text back into the input box before clearing it.
-    // If the input already has text, prepend the queued text.
-    if( HasQueuedMessage() && !m_queuedInputText.IsEmpty() )
+    // Re-insert all queued message text back into the input box before clearing.
+    // Messages are joined with newlines, prepended to any existing input.
+    if( HasQueuedMessage() )
     {
-        wxLogInfo( "AGENT_FRAME::OnStop - re-inserting queued message into input" );
-        m_bridge->PushInputPrependText( m_queuedInputText );
+        wxString combined;
+        for( const auto& msg : m_queuedMessages )
+        {
+            if( !msg.text.IsEmpty() )
+            {
+                if( !combined.IsEmpty() )
+                    combined += "\n";
+                combined += msg.text;
+            }
+        }
+        if( !combined.IsEmpty() )
+        {
+            wxLogInfo( "AGENT_FRAME::OnStop - re-inserting %zu queued messages into input",
+                       m_queuedMessages.size() );
+            m_bridge->PushInputPrependText( combined );
+        }
     }
 
     ClearQueuedMessage();
@@ -1368,51 +1385,71 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
 
 bool AGENT_FRAME::HasQueuedMessage() const
 {
-    return !m_queuedInputText.IsEmpty() || !m_queuedAttachments.empty();
+    return !m_queuedMessages.empty();
 }
 
 
 void AGENT_FRAME::QueueMessage()
 {
-    wxLogInfo( "AGENT_FRAME::QueueMessage - queueing message during generation" );
+    wxLogInfo( "AGENT_FRAME::QueueMessage - queueing message during generation (queue size=%zu)",
+               m_queuedMessages.size() );
 
-    // Move pending → queue
-    m_queuedInputText = m_pendingInputText;
-    m_queuedAttachments = std::move( m_pendingAttachments );
+    QueuedMessage msg;
+    msg.text = m_pendingInputText;
+    msg.attachments = std::move( m_pendingAttachments );
     m_pendingInputText.Clear();
     m_pendingAttachments.clear();
+    m_queuedMessages.push_back( std::move( msg ) );
 
-    // Build user message bubble HTML with queued-msg ID
-    wxString escapedText = m_queuedInputText;
-    escapedText.Replace( "&", "&amp;" );
-    escapedText.Replace( "<", "&lt;" );
-    escapedText.Replace( ">", "&gt;" );
-    escapedText.Replace( "\n", "<br>" );
-
-    wxString bubbleContent = FileAttach::BuildAttachmentBubbleHtml( m_queuedAttachments )
-                             + escapedText;
-    wxString newHtml = wxString::Format(
-        "<div id=\"queued-msg\" class=\"flex justify-end my-3\" style=\"opacity:0.5;\">"
-        "<div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">"
-        "%s</div></div>",
-        bubbleContent );
-
-    if( !m_queuedMsgHtml.IsEmpty() )
-    {
-        // Replace existing queued message in HTML and DOM
-        m_fullHtmlContent.Replace( m_queuedMsgHtml, newHtml );
-        m_bridge->PushReplaceQueuedMessage( newHtml );
-    }
-    else
-    {
-        // First queue: append to HTML and DOM
-        m_fullHtmlContent += newHtml;
-        m_bridge->PushAppendChat( newHtml );
-    }
-    m_queuedMsgHtml = newHtml;
+    // Rebuild the single combined queued bubble from all queued messages
+    RebuildQueuedBubble();
 
     // Clear input (button stays "Stop" during generation)
     m_bridge->PushInputClear();
+}
+
+
+void AGENT_FRAME::RebuildQueuedBubble()
+{
+    // Build combined content from all queued messages
+    wxString combinedContent;
+    for( size_t i = 0; i < m_queuedMessages.size(); i++ )
+    {
+        const auto& msg = m_queuedMessages[i];
+
+        // Add line break between messages
+        if( i > 0 )
+            combinedContent += "<br>";
+
+        combinedContent += FileAttach::BuildAttachmentBubbleHtml( msg.attachments );
+
+        wxString escapedText = msg.text;
+        escapedText.Replace( "&", "&amp;" );
+        escapedText.Replace( "<", "&lt;" );
+        escapedText.Replace( ">", "&gt;" );
+        escapedText.Replace( "\n", "<br>" );
+        combinedContent += escapedText;
+    }
+
+    wxString newHtml = wxString::Format(
+        "<div id=\"queued-msg\" class=\"queued-msg flex justify-end my-3\" style=\"opacity:0.5;\">"
+        "<div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">"
+        "%s</div></div>",
+        combinedContent );
+
+    if( !m_queuedBubbleHtml.IsEmpty() )
+    {
+        // Replace existing combined bubble
+        m_fullHtmlContent.Replace( m_queuedBubbleHtml, newHtml );
+        m_bridge->PushReplaceQueuedBubble( newHtml );
+    }
+    else
+    {
+        // First queue: append to end
+        m_fullHtmlContent += newHtml;
+        m_bridge->PushAppendToEnd( newHtml );
+    }
+    m_queuedBubbleHtml = newHtml;
 }
 
 
@@ -1421,24 +1458,38 @@ void AGENT_FRAME::SendQueuedMessage()
     if( !HasQueuedMessage() )
         return;
 
-    wxLogInfo( "AGENT_FRAME::SendQueuedMessage - auto-sending queued message" );
+    wxLogInfo( "AGENT_FRAME::SendQueuedMessage - sending %zu queued messages as one",
+               m_queuedMessages.size() );
 
     m_turnCompleteForQueue = false;
 
-    wxString text = m_queuedInputText;
-    std::vector<FILE_ATTACHMENT> attachments = std::move( m_queuedAttachments );
-    m_queuedInputText.Clear();
-    m_queuedAttachments.clear();
+    // Merge all queued messages into one: join texts with newlines, collect all attachments
+    wxString combinedText;
+    std::vector<FILE_ATTACHMENT> combinedAttachments;
 
-    // Finalize queued message: remove the id so it becomes a permanent user bubble
-    if( !m_queuedMsgHtml.IsEmpty() )
+    for( auto& msg : m_queuedMessages )
     {
-        wxString permanentHtml = m_queuedMsgHtml;
-        permanentHtml.Replace( " id=\"queued-msg\"", "" );
+        if( !msg.text.IsEmpty() )
+        {
+            if( !combinedText.IsEmpty() )
+                combinedText += "\n";
+            combinedText += msg.text;
+        }
+        for( auto& att : msg.attachments )
+            combinedAttachments.push_back( std::move( att ) );
+    }
+    m_queuedMessages.clear();
+
+    // Finalize the combined queued bubble (remove queued styling, make permanent)
+    if( !m_queuedBubbleHtml.IsEmpty() )
+    {
+        wxString permanentHtml = m_queuedBubbleHtml;
+        permanentHtml.Replace( " class=\"queued-msg", " class=\"" );
         permanentHtml.Replace( " style=\"opacity:0.5;\"", "" );
-        m_fullHtmlContent.Replace( m_queuedMsgHtml, permanentHtml );
-        m_bridge->PushRemoveQueuedMessage();
-        m_queuedMsgHtml.Clear();
+        permanentHtml.Replace( " id=\"queued-msg\"", "" );
+        m_fullHtmlContent.Replace( m_queuedBubbleHtml, permanentHtml );
+        m_bridge->PushFinalizeFirstQueuedMessage();
+        m_queuedBubbleHtml.Clear();
     }
 
     // Add streaming div
@@ -1485,19 +1536,19 @@ void AGENT_FRAME::SendQueuedMessage()
     std::string emptyPayload;
     Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_RESET_TARGET_SHEET, emptyPayload );
 
-    // Send via controller
+    // Send merged message via controller
     if( m_chatController )
     {
-        if( !attachments.empty() )
+        if( !combinedAttachments.empty() )
         {
             std::vector<CHAT_CONTROLLER::UserAttachment> atts;
-            for( const auto& att : attachments )
+            for( const auto& att : combinedAttachments )
                 atts.push_back( { att.base64_data, att.media_type } );
-            m_chatController->SendMessageWithAttachments( text.ToStdString(), atts );
+            m_chatController->SendMessageWithAttachments( combinedText.ToStdString(), atts );
         }
         else
         {
-            m_chatController->SendMessage( text.ToStdString() );
+            m_chatController->SendMessage( combinedText.ToStdString() );
         }
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
@@ -1509,15 +1560,14 @@ void AGENT_FRAME::SendQueuedMessage()
 
 void AGENT_FRAME::ClearQueuedMessage()
 {
-    if( !m_queuedMsgHtml.IsEmpty() )
-    {
-        m_fullHtmlContent.Replace( m_queuedMsgHtml, "" );
-        // Remove the #queued-msg element from DOM entirely
-        m_bridge->PushReplaceQueuedMessage( "" );
-    }
-    m_queuedInputText.Clear();
-    m_queuedAttachments.clear();
-    m_queuedMsgHtml.Clear();
+    if( !m_queuedBubbleHtml.IsEmpty() )
+        m_fullHtmlContent.Replace( m_queuedBubbleHtml, "" );
+
+    if( !m_queuedMessages.empty() )
+        m_bridge->PushRemoveAllQueuedMessages();
+
+    m_queuedMessages.clear();
+    m_queuedBubbleHtml.Clear();
     m_turnCompleteForQueue = false;
 }
 
@@ -2280,6 +2330,7 @@ void AGENT_FRAME::DoNewChat()
     m_historicalToolResultExpanded.clear();
     m_currentThinkingIndex = -1;
     m_toolResultCounter = 0;
+    m_queuedBubbleHtml.Clear();
     m_activeRunningHtml.Clear();
     m_activeToolResultIdx = -1;
 
@@ -2385,9 +2436,10 @@ void AGENT_FRAME::RenderChatHistory()
     // Clear historical thinking storage
     m_historicalThinking.clear();
 
-    // Reset counter - RenderChatHistory updates m_toolResultCounter so that
+    // Reset counters - RenderChatHistory updates m_toolResultCounter so that
     // subsequent live tool calls get indices that don't collide with historical ones.
     m_toolResultCounter = 0;
+    m_queuedBubbleHtml.Clear();
     m_toolDescByUseId.clear();
 
     // Build HTML from chat history (inner content only, no template wrapper)
@@ -3201,9 +3253,9 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         wxString fullHtml = m_htmlBeforeAgentResponse;
         fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
         fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
-        // Preserve queued message at the end
-        if( !m_queuedMsgHtml.IsEmpty() )
-            fullHtml += m_queuedMsgHtml;
+        // Preserve queued bubble at the end
+        if( !m_queuedBubbleHtml.IsEmpty() )
+            fullHtml += m_queuedBubbleHtml;
         m_fullHtmlContent = fullHtml;
     }
 
@@ -3651,9 +3703,22 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     StopGeneratingAnimation();
     m_isCompacting = false;
 
-    // Re-insert queued message into input on error (don't lose the user's text)
-    if( HasQueuedMessage() && !m_queuedInputText.IsEmpty() )
-        m_bridge->PushInputPrependText( m_queuedInputText );
+    // Re-insert all queued messages into input on error (don't lose the user's text)
+    if( HasQueuedMessage() )
+    {
+        wxString combined;
+        for( const auto& msg : m_queuedMessages )
+        {
+            if( !msg.text.IsEmpty() )
+            {
+                if( !combined.IsEmpty() )
+                    combined += "\n";
+                combined += msg.text;
+            }
+        }
+        if( !combined.IsEmpty() )
+            m_bridge->PushInputPrependText( combined );
+    }
 
     ClearQueuedMessage();
     m_bridge->PushActionButtonState( "Send" );

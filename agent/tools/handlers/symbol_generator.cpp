@@ -774,12 +774,92 @@ SYMBOL_GENERATOR::PinLayout SYMBOL_GENERATOR::AssignPinSides(
             else if( pin->type == "ground" )
                 layout.bottom.push_back( pin );
             else if( pin->type == "output" || pin->type == "power_out"
-                     || pin->type == "open_drain" || pin->type == "open_collector" )
+                     || pin->type == "open_drain" || pin->type == "open_collector"
+                     || pin->type == "open_emitter" || pin->type == "tri_state" )
                 layout.right.push_back( pin );
             else if( pin->type == "no_connect" )
                 layout.right.push_back( pin );
             else
                 layout.left.push_back( pin );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Rebalance left↔right if one side is significantly heavier.
+    // Moves whole function groups to keep related pins together.
+    // For a single function group, splits pins evenly.
+    // -----------------------------------------------------------------------
+    {
+        std::vector<const PinData*>* heavy = &layout.left;
+        std::vector<const PinData*>* light = &layout.right;
+
+        if( layout.right.size() > layout.left.size() )
+            std::swap( heavy, light );
+
+        size_t heavyCount = heavy->size();
+        size_t lightCount = light->size();
+
+        if( heavyCount >= 4 && ( lightCount == 0 || heavyCount > lightCount * 3 ) )
+        {
+            // Collect function groups from the heavy side
+            std::map<std::string, std::vector<const PinData*>> groupMap;
+
+            for( const auto* pin : *heavy )
+            {
+                std::string grp = pin->function_group.empty() ? "Other"
+                                                               : pin->function_group;
+                groupMap[grp].push_back( pin );
+            }
+
+            // Sort groups by size (largest first) for better bin packing
+            std::vector<std::pair<std::string, std::vector<const PinData*>>> groups(
+                    groupMap.begin(), groupMap.end() );
+
+            std::sort( groups.begin(), groups.end(),
+                       []( const auto& a, const auto& b )
+                       { return a.second.size() > b.second.size(); } );
+
+            if( groups.size() >= 2 )
+            {
+                // Multiple groups: greedy bin packing, accounting for existing
+                // light-side pins
+                std::vector<const PinData*> newHeavy;
+                size_t newHeavyCount = 0;
+                size_t newLightCount = lightCount;
+
+                for( const auto& [name, pins] : groups )
+                {
+                    if( newHeavyCount <= newLightCount )
+                    {
+                        newHeavy.insert( newHeavy.end(), pins.begin(), pins.end() );
+                        newHeavyCount += pins.size();
+                    }
+                    else
+                    {
+                        light->insert( light->end(), pins.begin(), pins.end() );
+                        newLightCount += pins.size();
+                    }
+                }
+
+                *heavy = std::move( newHeavy );
+            }
+            else
+            {
+                // Single group: split pins to balance both sides
+                size_t total = heavyCount + lightCount;
+                size_t targetHeavy = ( total + 1 ) / 2;
+
+                if( targetHeavy < heavyCount )
+                {
+                    auto splitIt = heavy->begin()
+                                   + static_cast<ptrdiff_t>( targetHeavy );
+                    light->insert( light->end(), splitIt, heavy->end() );
+                    heavy->erase( splitIt, heavy->end() );
+                }
+            }
+
+            wxLogTrace( "Agent", "SYMBOL_GENERATOR: Rebalanced pins L=%zu R=%zu",
+                        layout.left.size(), layout.right.size() );
         }
     }
 
@@ -810,8 +890,10 @@ std::string SYMBOL_GENERATOR::PinTypeToKiCad( const std::string& aType )
     if( aType == "input" )          return "input";
     if( aType == "output" )         return "output";
     if( aType == "bidirectional" )   return "bidirectional";
+    if( aType == "tri_state" )      return "tri_state";
     if( aType == "open_drain" )     return "open_collector";
     if( aType == "open_collector" ) return "open_collector";
+    if( aType == "open_emitter" )   return "open_emitter";
     if( aType == "passive" )        return "passive";
     if( aType == "no_connect" )     return "no_connect";
     if( aType == "ground" )         return "power_in";

@@ -54,6 +54,7 @@ public:
     void PushInputFocus();
     void PushInputSetText( const wxString& aText );
     void PushInputAppendText( const wxString& aText );
+    void PushInputPrependText( const wxString& aText );
     void PushAddAttachment( const wxString& aBase64, const wxString& aMediaType,
                             const wxString& aFilename );
 

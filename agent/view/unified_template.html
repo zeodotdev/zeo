@@ -1370,6 +1370,13 @@ App.Input = (function() {
         autoResize();
     }
 
+    function prependText(text) {
+        if (textarea.value) textarea.value = text + '\n' + textarea.value;
+        else textarea.value = text;
+        textarea.selectionStart = textarea.selectionEnd = 0;
+        autoResize();
+    }
+
     function submit() {
         var text = textarea.value;
         if (text.trim() !== '') {
@@ -1401,6 +1408,7 @@ App.Input = (function() {
         focus: focus,
         setText: setText,
         appendText: appendText,
+        prependText: prependText,
         submit: submit,
         undo: undo,
         redo: redo,

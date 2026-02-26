@@ -223,6 +223,16 @@ public:
     }
 
     /**
+     * Set a callback that returns true when the frame has a queued user message.
+     * Used to interrupt the tool→ContinueChat loop so the queued message
+     * can be sent between tool rounds instead of waiting for the full turn.
+     */
+    void SetHasQueuedMessageFn( std::function<bool()> aFn )
+    {
+        m_hasQueuedMessageFn = aFn;
+    }
+
+    /**
      * Set the function used to get a JSON snapshot of the current schematic state.
      * Used for detecting user edits between agent turns.
      * @param aFn Function returning a JSON string summary of all schematic items
@@ -301,6 +311,7 @@ private:
     std::function<std::string()> m_getProjectPathFn;  ///< Get project path for context injection
     std::function<std::string()> m_getSchematicSummaryFn;  ///< Get schematic snapshot for edit detection
     std::function<void()> m_syncEditorStateFn;  ///< Sync editor state to TOOL_REGISTRY before tool execution
+    std::function<bool()> m_hasQueuedMessageFn; ///< Returns true when frame has a queued user message
 
     // -------------------------------------------------------------------------
     // User edit detection (schematic diff between turns)

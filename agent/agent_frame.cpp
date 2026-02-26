@@ -560,6 +560,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             reg.SetOpenEditorFiles( std::move( openFiles ) );
         } );
 
+    m_chatController->SetHasQueuedMessageFn(
+        [this]() { return HasQueuedMessage(); } );
+
     // Load persisted model preference (default to Claude 4.6 Opus)
     m_currentModel = LoadModelPreference();
     m_chatController->SetModel( m_currentModel );
@@ -1247,6 +1250,15 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
 {
     wxLogInfo( "AGENT_FRAME::OnStop called" );
+
+    // Re-insert queued message text back into the input box before clearing it.
+    // If the input already has text, prepend the queued text.
+    if( HasQueuedMessage() && !m_queuedInputText.IsEmpty() )
+    {
+        wxLogInfo( "AGENT_FRAME::OnStop - re-inserting queued message into input" );
+        m_bridge->PushInputPrependText( m_queuedInputText );
+    }
+
     ClearQueuedMessage();
     DoCancelOperation( true );
 }
@@ -3638,6 +3650,11 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     // Stop all animations and reset button
     StopGeneratingAnimation();
     m_isCompacting = false;
+
+    // Re-insert queued message into input on error (don't lose the user's text)
+    if( HasQueuedMessage() && !m_queuedInputText.IsEmpty() )
+        m_bridge->PushInputPrependText( m_queuedInputText );
+
     ClearQueuedMessage();
     m_bridge->PushActionButtonState( "Send" );
 

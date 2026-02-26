@@ -373,6 +373,11 @@ void WEBVIEW_BRIDGE::PushInputAppendText( const wxString& aText )
     RunScript( wxString::Format( "App.Input.appendText('%s');", EscapeJs( aText ) ) );
 }
 
+void WEBVIEW_BRIDGE::PushInputPrependText( const wxString& aText )
+{
+    RunScript( wxString::Format( "App.Input.prependText('%s');", EscapeJs( aText ) ) );
+}
+
 void WEBVIEW_BRIDGE::PushAddAttachment( const wxString& aBase64, const wxString& aMediaType,
                                         const wxString& aFilename )
 {

@@ -1241,6 +1241,20 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
         // All tools complete - add ALL tool results as ONE user message
         AddAllToolResultsToHistory();
 
+        // If the frame has a queued user message, interrupt the auto-continue loop
+        // so the queued message gets sent between tool rounds (like Claude Code).
+        if( m_hasQueuedMessageFn && m_hasQueuedMessageFn() )
+        {
+            wxLogInfo( "CHAT_CONTROLLER::ProcessToolResult - queued message detected, "
+                       "yielding to frame instead of auto-continuing" );
+            AgentConversationState oldState = m_ctx.GetState();
+            m_ctx.TransitionTo( AgentConversationState::IDLE );
+            EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
+                                                                      static_cast<int>( m_ctx.GetState() ) ) );
+            EmitEvent( EVT_CHAT_TURN_COMPLETE, ChatTurnCompleteData( false ) );
+            return;
+        }
+
         AgentConversationState oldState = m_ctx.GetState();
         m_ctx.TransitionTo( AgentConversationState::PROCESSING_TOOL_RESULT );
         EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),

@@ -1,5 +1,6 @@
 #include "tool_registry.h"
 #include "tool_handler.h"
+#include "../agent_llm_client.h"
 #include "handlers/python_tool_handler.h"
 #include "handlers/pcb_autoroute_handler.h"
 #include "handlers/screenshot_handler.h"
@@ -14,10 +15,28 @@
 #include <wx/log.h>
 
 
+// Default: no dynamic tools
+std::vector<LLM_TOOL> TOOL_HANDLER::GetDynamicTools() const { return {}; }
+
+
 TOOL_REGISTRY& TOOL_REGISTRY::Instance()
 {
     static TOOL_REGISTRY instance;
     return instance;
+}
+
+
+std::vector<LLM_TOOL> TOOL_REGISTRY::GetDynamicTools() const
+{
+    std::vector<LLM_TOOL> result;
+
+    for( const auto& handler : m_handlers )
+    {
+        auto tools = handler->GetDynamicTools();
+        result.insert( result.end(), tools.begin(), tools.end() );
+    }
+
+    return result;
 }
 
 

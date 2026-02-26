@@ -89,6 +89,7 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array( { "part_number" } ) }
     };
     datasheetQuery.read_only = true;
+    datasheetQuery.defer_loading = true;
     tools.push_back( datasheetQuery );
 
     // extract_datasheet - Synchronously extract datasheet data for a component
@@ -120,6 +121,7 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "part_number", "datasheet_url" } ) }
     };
+    extractDatasheet.defer_loading = true;
     tools.push_back( extractDatasheet );
 
     // generate_symbol - Generate a KiCad symbol from a datasheet
@@ -161,6 +163,7 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "datasheet_url" } ) }
     };
+    generateSymbol.defer_loading = true;
     tools.push_back( generateSymbol );
 
     // generate_footprint - Generate a KiCad footprint from a datasheet
@@ -203,6 +206,7 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "datasheet_url" } ) }
     };
+    generateFootprint.defer_loading = true;
     tools.push_back( generateFootprint );
 
     // create_project - Create a new KiCad project
@@ -224,6 +228,7 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "project_name", "directory" } ) }
     };
+    createProject.defer_loading = true;
     tools.push_back( createProject );
 
     // screenshot - Export a visual render of a schematic or PCB
@@ -251,54 +256,6 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
     screenshot.read_only = true;
     tools.push_back( screenshot );
 
-    // component_search - Search electronic components via PCBParts MCP
-    LLM_TOOL componentSearch;
-    componentSearch.name = "component_search";
-    componentSearch.description =
-        "Search online component suppliers (JLCPCB, Mouser, DigiKey) for real parts "
-        "with pricing, stock levels, and specifications. Use this when the user needs to "
-        "find specific manufacturer parts, check availability, or compare pricing. "
-        "Capabilities: search by keyword/specs, get detailed part info, find alternatives, "
-        "validate BOM availability, get pinout data, get KiCad symbols/footprints, "
-        "list categories, and export BOM. "
-        "Default supplier is JLCPCB. Some actions (find_alternatives, validate_bom, "
-        "get_pinout, list_categories, export_bom) are only available on JLCPCB. "
-        "For validate_bom and export_bom, pass the parts list via params.parts "
-        "(array of {lcsc, qty} objects). "
-        "Use the params field to pass supplier-specific filters like spec_filters.";
-    componentSearch.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "action", {
-                { "type", "string" },
-                { "enum", json::array( { "search", "get_part", "find_alternatives",
-                                         "validate_bom", "get_pinout", "get_kicad",
-                                         "list_categories", "export_bom" } ) },
-                { "description", "The operation to perform" }
-            }},
-            { "query", {
-                { "type", "string" },
-                { "description", "Search terms, part number, or LCSC number (e.g. 'ESP32-S3', 'C2913202')" }
-            }},
-            { "supplier", {
-                { "type", "string" },
-                { "enum", json::array( { "jlcpcb", "mouser", "digikey" } ) },
-                { "description", "Component supplier (default: jlcpcb)" }
-            }},
-            { "limit", {
-                { "type", "integer" },
-                { "description", "Maximum number of results to return (default: 5)" }
-            }},
-            { "params", {
-                { "type", "object" },
-                { "description", "Additional parameters passed through to the underlying API "
-                                 "(e.g. spec_filters, category_id, bom)" }
-            }}
-        }},
-        { "required", json::array( { "action" } ) }
-    };
-    componentSearch.read_only = true;
-    tools.push_back( componentSearch );
 }
 
 
@@ -321,6 +278,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array() }
     };
     schGetSummary.read_only = true;
+    schGetSummary.group = ToolGroup::SCHEMATIC;
     tools.push_back( schGetSummary );
 
     // sch_read_section - Read specific section of schematic
@@ -346,6 +304,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array( { "section" } ) }
     };
     schReadSection.read_only = true;
+    schReadSection.group = ToolGroup::SCHEMATIC;
     tools.push_back( schReadSection );
 
     // sch_run_erc - Run ERC on open schematic
@@ -374,6 +333,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array() }
     };
     schRunErc.read_only = true;
+    schRunErc.group = ToolGroup::SCHEMATIC;
     tools.push_back( schRunErc );
 
     // sch_run_simulation - Run SPICE simulation on open schematic
@@ -404,6 +364,8 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "command" } ) }
     };
+    schRunSim.group = ToolGroup::SCHEMATIC;
+    schRunSim.defer_loading = true;
     tools.push_back( schRunSim );
 
     // sch_find_symbol - Query symbol library for pin positions
@@ -443,6 +405,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array( { "lib_id" } ) }
     };
     schGetLibSymbol.read_only = true;
+    schGetLibSymbol.group = ToolGroup::SCHEMATIC;
     tools.push_back( schGetLibSymbol );
 
     // sch_get_pins - Lightweight pin lookup for a single placed symbol
@@ -463,6 +426,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array( { "ref" } ) }
     };
     schGetPins.read_only = true;
+    schGetPins.group = ToolGroup::SCHEMATIC;
     tools.push_back( schGetPins );
 
     // ===== IPC-based CRUD Tools (sch_add, sch_update, sch_delete, sch_batch_delete) =====
@@ -549,6 +513,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "elements" } ) }
     };
+    schAdd.group = ToolGroup::SCHEMATIC;
     tools.push_back( schAdd );
 
     // sch_update - Update one or more elements
@@ -622,6 +587,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "updates" } ) }
     };
+    schUpdate.group = ToolGroup::SCHEMATIC;
     tools.push_back( schUpdate );
 
     // sch_delete - Delete one or more elements
@@ -665,6 +631,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "targets" } ) }
     };
+    schDelete.group = ToolGroup::SCHEMATIC;
     tools.push_back( schDelete );
 
     // sch_label_pins - Batch label pins on a symbol or sheet
@@ -716,6 +683,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "ref", "labels" } ) }
     };
+    schLabelPins.group = ToolGroup::SCHEMATIC;
     tools.push_back( schLabelPins );
 
     // sch_place_companions - Place companion components adjacent to IC pins
@@ -791,6 +759,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "ic_ref", "companions" } ) }
     };
+    schPlaceCompanions.group = ToolGroup::SCHEMATIC;
     tools.push_back( schPlaceCompanions );
 
     // sch_add_sheet - Add a hierarchical sheet
@@ -823,6 +792,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "sheet_name" } ) }
     };
+    schAddSheet.group = ToolGroup::SCHEMATIC;
     tools.push_back( schAddSheet );
 
     // sch_switch_sheet - Navigate between sheets in a hierarchical schematic
@@ -847,6 +817,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array() }
     };
     schSwitchSheet.read_only = true;
+    schSwitchSheet.group = ToolGroup::SCHEMATIC;
     tools.push_back( schSwitchSheet );
 
     // sch_connect_net - Connect multiple pins on the same net in one call
@@ -881,6 +852,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "pins" } ) }
     };
+    schConnectNet.group = ToolGroup::SCHEMATIC;
     tools.push_back( schConnectNet );
 
     // sch_annotate - Annotate schematic symbols
@@ -916,6 +888,8 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array() }
     };
+    schAnnotate.group = ToolGroup::SCHEMATIC;
+    schAnnotate.defer_loading = true;
     tools.push_back( schAnnotate );
 
     // sch_setup - Read/modify schematic document settings
@@ -1326,6 +1300,8 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "action" } ) }
     };
+    schSetup.group = ToolGroup::SCHEMATIC;
+    schSetup.defer_loading = true;
     tools.push_back( schSetup );
 }
 
@@ -1346,6 +1322,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array() }
     };
     pcbGetSummary.read_only = true;
+    pcbGetSummary.group = ToolGroup::PCB;
     tools.push_back( pcbGetSummary );
 
     // pcb_read_section - Read specific section of PCB
@@ -1371,6 +1348,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array( { "section" } ) }
     };
     pcbReadSection.read_only = true;
+    pcbReadSection.group = ToolGroup::PCB;
     tools.push_back( pcbReadSection );
 
     // pcb_run_drc - Run design rule check
@@ -1397,6 +1375,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array() }
     };
     pcbRunDrc.read_only = true;
+    pcbRunDrc.group = ToolGroup::PCB;
     tools.push_back( pcbRunDrc );
 
     // pcb_set_outline - Set board outline/shape
@@ -1446,6 +1425,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "shape" } ) }
     };
+    pcbSetOutline.group = ToolGroup::PCB;
     tools.push_back( pcbSetOutline );
 
     // pcb_sync_schematic - Import/update footprints from schematic
@@ -1477,6 +1457,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array() }
     };
+    pcbSyncSchematic.group = ToolGroup::PCB;
     tools.push_back( pcbSyncSchematic );
 
     // pcb_place - Batch footprint placement
@@ -1520,6 +1501,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "placements" } ) }
     };
+    pcbPlace.group = ToolGroup::PCB;
     tools.push_back( pcbPlace );
 
     // pcb_place_companions - Place companion footprints near an IC
@@ -1564,6 +1546,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "ic_ref", "companions" } ) }
     };
+    pcbPlaceCompanions.group = ToolGroup::PCB;
     tools.push_back( pcbPlaceCompanions );
 
     // pcb_add - Batch add elements to PCB (matches sch_add pattern)
@@ -1663,6 +1646,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "elements" } ) }
     };
+    pcbAdd.group = ToolGroup::PCB;
     tools.push_back( pcbAdd );
 
     // pcb_update - Batch update elements (matches sch_update pattern)
@@ -1725,6 +1709,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "updates" } ) }
     };
+    pcbUpdate.group = ToolGroup::PCB;
     tools.push_back( pcbUpdate );
 
     // pcb_delete - Batch delete elements (matches sch_delete pattern)
@@ -1754,6 +1739,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array() }
     };
+    pcbDelete.group = ToolGroup::PCB;
     tools.push_back( pcbDelete );
 
     // pcb_get_pads - Get pad positions for a footprint (like sch_get_pins)
@@ -1774,6 +1760,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array( { "ref" } ) }
     };
     pcbGetPads.read_only = true;
+    pcbGetPads.group = ToolGroup::PCB;
     tools.push_back( pcbGetPads );
 
     // pcb_get_footprint - Get detailed footprint info including pads
@@ -1794,59 +1781,8 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array( { "ref" } ) }
     };
     pcbGetFootprint.read_only = true;
+    pcbGetFootprint.group = ToolGroup::PCB;
     tools.push_back( pcbGetFootprint );
-
-    // pcb_route - High-level pad-to-pad routing
-    LLM_TOOL pcbRoute;
-    pcbRoute.name = "pcb_route";
-    pcbRoute.description =
-        "Draw a track between two pads with optional via layer transitions. "
-        "This is a convenience tool that handles coordinate lookup and multi-segment routing. "
-        "For simple connections, specify from/to pads. For complex routes, add waypoints. "
-        "REQUIRES: PCB editor must be open with a document loaded.";
-    pcbRoute.input_schema = {
-        { "type", "object" },
-        { "properties", {
-            { "from", {
-                { "type", "object" },
-                { "properties", {
-                    { "ref", { { "type", "string" }, { "description", "Footprint reference (e.g., 'U1')" } } },
-                    { "pad", { { "type", "string" }, { "description", "Pad number/name (e.g., '1', 'VCC')" } } }
-                }},
-                { "description", "Starting pad: {ref, pad}" }
-            }},
-            { "to", {
-                { "type", "object" },
-                { "properties", {
-                    { "ref", { { "type", "string" } } },
-                    { "pad", { { "type", "string" } } }
-                }},
-                { "description", "Ending pad: {ref, pad}" }
-            }},
-            { "width", {
-                { "type", "number" },
-                { "description", "Track width in mm (default: net class width or 0.25)" }
-            }},
-            { "layer", {
-                { "type", "string" },
-                { "description", "Starting layer (default: auto-detect from pad)" }
-            }},
-            { "waypoints", {
-                { "type", "array" },
-                { "items", {
-                    { "type", "object" },
-                    { "properties", {
-                        { "position", { { "type", "array" }, { "description", "[x, y] in mm" } } },
-                        { "via", { { "type", "boolean" }, { "description", "Place via at this waypoint" } } },
-                        { "layer", { { "type", "string" }, { "description", "Switch to this layer after via" } } }
-                    }}
-                }},
-                { "description", "Intermediate waypoints with optional layer transitions" }
-            }}
-        }},
-        { "required", json::array( { "from", "to" } ) }
-    };
-    tools.push_back( pcbRoute );
 
     // pcb_get_nets - Get net information with connections
     LLM_TOOL pcbGetNets;
@@ -1874,6 +1810,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         { "required", json::array() }
     };
     pcbGetNets.read_only = true;
+    pcbGetNets.group = ToolGroup::PCB;
     tools.push_back( pcbGetNets );
 
     // pcb_export - Generate output files
@@ -1915,6 +1852,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "format", "output_dir" } ) }
     };
+    pcbExport.group = ToolGroup::PCB;
     tools.push_back( pcbExport );
 
     // pcb_autoroute - Run Freerouting autorouter
@@ -1946,6 +1884,7 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array() }
     };
+    pcbAutoroute.group = ToolGroup::PCB;
     tools.push_back( pcbAutoroute );
 
     // pcb_setup - Read/write board settings
@@ -2701,8 +2640,14 @@ static void AddPcbTools( std::vector<LLM_TOOL>& tools )
         }},
         { "required", json::array( { "action" } ) }
     };
+    pcbSetup.group = ToolGroup::PCB;
+    pcbSetup.defer_loading = true;
     tools.push_back( pcbSetup );
 }
+
+
+// Part search tool schemas (jlc_*, mouser_*, digikey_*, cse_*) are fetched
+// dynamically from pcbparts.dev/mcp by COMPONENT_SEARCH_HANDLER at startup.
 
 
 std::vector<LLM_TOOL> GetToolDefinitions()

@@ -316,6 +316,7 @@ private:
     // Tool definitions
     // -------------------------------------------------------------------------
     std::vector<LLM_TOOL> m_tools;      ///< Available tool definitions
+    bool                  m_dynamicToolsMerged = false;  ///< True once MCP schemas are merged
     AgentMode             m_agentMode;  ///< Current agent mode (EXECUTE or PLAN)
 
     // -------------------------------------------------------------------------
@@ -326,6 +327,12 @@ private:
     // -------------------------------------------------------------------------
     // Internal methods
     // -------------------------------------------------------------------------
+
+    /**
+     * Merge dynamic tool schemas from handlers (e.g. MCP-fetched) into m_tools.
+     * Called once when schemas become available; no-op after that.
+     */
+    void MergeDynamicTools();
 
     /**
      * Get tools filtered by current agent mode.

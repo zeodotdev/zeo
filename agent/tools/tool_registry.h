@@ -28,6 +28,11 @@ public:
 
     // --- Tool dispatch ---
 
+    /**
+     * Collect dynamic tool schemas from all handlers (e.g. MCP-fetched schemas).
+     */
+    std::vector<LLM_TOOL> GetDynamicTools() const;
+
     bool        HasHandler( const std::string& aToolName ) const;
     std::string Execute( const std::string& aToolName, const nlohmann::json& aInput );
     std::string GetDescription( const std::string& aToolName, const nlohmann::json& aInput ) const;

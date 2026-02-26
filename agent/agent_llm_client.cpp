@@ -198,6 +198,10 @@ void* LLM_REQUEST_THREAD::Entry()
             toolObj["name"] = tool.name;
             toolObj["description"] = tool.description;
             toolObj["input_schema"] = tool.input_schema;
+
+            if( tool.defer_loading )
+                toolObj["defer_loading"] = true;
+
             requestBody["tools"].push_back( toolObj );
         }
     }

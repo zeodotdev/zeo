@@ -17,10 +17,6 @@
 #include <wx/log.h>
 
 
-// Default: no dynamic tools
-std::vector<LLM_TOOL> TOOL_HANDLER::GetDynamicTools() const { return {}; }
-
-
 TOOL_REGISTRY& TOOL_REGISTRY::Instance()
 {
     static TOOL_REGISTRY instance;

@@ -8,6 +8,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
+struct LLM_TOOL;
 class AGENT_AUTH;
 class TOOL_HANDLER;
 class wxEvtHandler;

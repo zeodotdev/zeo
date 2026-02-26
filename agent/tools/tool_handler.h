@@ -68,7 +68,7 @@ public:
      * Called before each LLM request to merge into the tool list.
      * Default returns empty — override in handlers that provide dynamic schemas.
      */
-    virtual std::vector<LLM_TOOL> GetDynamicTools() const;
+    virtual std::vector<LLM_TOOL> GetDynamicTools() const { return {}; }
 };
 
 #endif // TOOL_HANDLER_H

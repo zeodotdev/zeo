@@ -788,6 +788,16 @@ App.Chat = (function() {
             body.innerHTML = bodyHtml;
             highlightCodeBlocks(body);
         }
+        // Convert non-clickable div header to clickable <a> for toggle
+        var header = el.querySelector('.tool-result-header');
+        if (header && header.tagName === 'DIV') {
+            var idx = el.id.replace('tool-result-', '');
+            var a = document.createElement('a');
+            a.href = 'toggle:toolresult:' + idx;
+            a.className = header.className + ' no-underline';
+            a.innerHTML = header.innerHTML;
+            header.parentNode.replaceChild(a, header);
+        }
     }
 
     function updateToolResult(index, statusClass, statusText, bodyHtml) {

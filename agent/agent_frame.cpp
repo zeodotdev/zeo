@@ -171,16 +171,16 @@ static wxString BuildRunningToolHtml( int aIndex, const wxString& aDesc )
 {
     return wxString::Format(
         "<div id=\"tool-result-%d\" class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
-        "<a href=\"toggle:toolresult:%d\" "
-        "class=\"tool-result-header p-3 px-3 no-underline flex items-center gap-2\">"
+        "<div "
+        "class=\"tool-result-header p-3 px-3 flex items-center gap-2\">"
         "<span class=\"text-text-secondary text-[12px]\">%s</span>"
         "<span class=\"tool-status text-text-muted text-[12px] ml-auto\"><i>Running...</i></span>"
-        "</a>"
+        "</div>"
         "<div class=\"tool-result-body p-3 pt-0 border-t border-border-dark\" "
         "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
         "</div>"
         "</div>",
-        aIndex, aIndex, aDesc, aIndex );
+        aIndex, aDesc, aIndex );
 }
 
 

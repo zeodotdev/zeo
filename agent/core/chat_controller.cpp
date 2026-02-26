@@ -219,11 +219,11 @@ void CHAT_CONTROLLER::Cancel()
                            m_ctx.GetState() == AgentConversationState::EXECUTING_TOOL ||
                            m_ctx.GetState() == AgentConversationState::PROCESSING_TOOL_RESULT;
 
-    wxLogInfo( "CHAT_CONTROLLER::Cancel toolStateActive=%d, willSavePartial=%d",
+    wxLogInfo( "CHAT_CONTROLLER::Cancel toolStateActive=%d, hasResponse=%d, hasThinking=%d",
                toolStateActive,
-               !toolStateActive && ( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() ) );
+               !m_currentResponse.empty(), !m_thinkingContent.IsEmpty() );
 
-    if( !toolStateActive && ( !m_currentResponse.empty() || !m_thinkingContent.IsEmpty() ) )
+    if( !toolStateActive )
     {
         nlohmann::json content = nlohmann::json::array();
 
@@ -246,8 +246,10 @@ void CHAT_CONTROLLER::Cancel()
             } );
         }
 
-        // If content is empty (e.g. cancelled during thinking before signature arrived),
-        // add a minimal text block to avoid sending an empty assistant message to the API.
+        // If content is empty (e.g. cancelled during compaction before any response,
+        // or cancelled during thinking before signature arrived), add a minimal text
+        // block. This prevents consecutive user messages (e.g. compaction marker
+        // followed by next user message) which the API rejects.
         if( content.empty() )
         {
             content.push_back( {

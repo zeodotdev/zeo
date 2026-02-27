@@ -2670,76 +2670,7 @@ const UI = {
     const fname  = ctx.filePath.split('/').pop();
     const isSch  = ctx.filePath.endsWith('.kicad_sch');
 
-    // Helper: parse SVG scale (SVG units per mm) from the SVG string.
-    // viewBox format: "minX minY width height" — capture the 3rd value.
-    // Use [-\d.]+ (with explicit separators) so spaces don't bleed into the number match.
-    const parseSvgScale = (svg) => {
-      const wm = svg.match(/width="([\d.]+)mm"/);
-      const vm = svg.match(/viewBox="[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)/);
-      if (wm && vm) return parseFloat(vm[1]) / parseFloat(wm[1]);
-      return 100; // fallback: 100 SVG units/mm (schematic default)
-    };
-
-    // Helper: inject highlight rects for changed items into SVG string
-    const addHighlights = (svg, items) => {
-      if (!items.length || !svg) return svg;
-      const scale   = parseSvgScale(svg);
-      const boxHalf = 5 * scale;      // 5 mm half-size box
-      const sw      = Math.max(1, scale * 0.25);
-      const rects   = items.map(item => {
-        const cx   = item.x * scale;
-        const cy   = item.y * scale;
-        const fill = item.changeType === 'added'    ? 'rgba(0,200,80,0.18)'
-                   : item.changeType === 'deleted'  ? 'rgba(220,50,50,0.18)'
-                   :                                  'rgba(255,160,0,0.18)';
-        const stroke = item.changeType === 'added'   ? '#00c853'
-                     : item.changeType === 'deleted' ? '#ff1744'
-                     :                                 '#ff9100';
-        return `<rect x="${cx-boxHalf}" y="${cy-boxHalf}" width="${boxHalf*2}" height="${boxHalf*2}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" rx="${scale*0.4}" stroke-dasharray="${sw*4},${sw*2}" pointer-events="none"/>`;
-      }).join('');
-      return svg.replace('</svg>', `<g id="vcs-hl">${rects}</g></svg>`);
-    };
-
-    // Helper: crop SVG viewBox to content bounds, then fit+center in pane via pan/zoom.
-    // For schematics the default viewBox covers the full page; we crop to actual content.
-    const fitSvgToPane = (contentId) => {
-      const container = document.getElementById(contentId);
-      if (!container) return;
-      const canvas = container.querySelector('.vd-svg-canvas');
-      const svgEl  = canvas && canvas.querySelector('svg');
-      if (!svgEl) return;
-
-      // For schematics: crop the SVG viewBox to the actual content bounds.
-      // Skip <rect> elements (background), only consider <g> children.
-      // Sanity check: if the computed bounds are nearly the full page, skip the crop.
-      if (isSch) {
-        const origVb = svgEl.viewBox.baseVal;
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const child of svgEl.children) {
-          if (child.id === 'vcs-hl') continue;
-          if (child.tagName.toLowerCase() !== 'g') continue;
-          try {
-            const b = child.getBBox();
-            if (b.width > 0 && b.height > 0) {
-              minX = Math.min(minX, b.x);   minY = Math.min(minY, b.y);
-              maxX = Math.max(maxX, b.x + b.width); maxY = Math.max(maxY, b.y + b.height);
-            }
-          } catch(e) {}
-        }
-        if (isFinite(minX) && maxX > minX && maxY > minY) {
-          const w = maxX - minX, h = maxY - minY;
-          // Only apply crop if it meaningfully reduces the page bounds (>20% smaller)
-          const origW = origVb.width || 1, origH = origVb.height || 1;
-          if (w < origW * 0.8 || h < origH * 0.8) {
-            const pad = Math.max(w, h) * 0.08;
-            svgEl.setAttribute('viewBox', `${minX-pad} ${minY-pad} ${w+pad*2} ${h+pad*2}`);
-          }
-        }
-      }
-
-      // Fit-to-pane: scale SVG so it fills the pane, then center it
-      VdZoom.fitToPane(contentId);
-    };
+    const fitSvgToPane = (contentId) => VdZoom.fitToPane(contentId);
 
     const loadingPh = `<div class="vd-placeholder">
       <div class="vd-placeholder-icon">${iconLg}</div>
@@ -2783,7 +2714,7 @@ const UI = {
         return parts.length ? `<div class="vd-change-bar">${parts.join('')}</div>` : '';
       };
 
-      const renderPane = (svgContent, paneItems) => {
+      const renderPane = (svgContent) => {
         if (!svgContent) {
           if (isNewFile) return ''; // before pane is hidden
           return `<div class="vd-placeholder">
@@ -2792,25 +2723,31 @@ const UI = {
             <div class="vd-placeholder-sub">SVG export unavailable<br>kicad-cli not found</div>
           </div>`;
         }
-        let svg = svgContent;
-        // Keep natural SVG dimensions — pan/zoom will handle sizing
-        svg = addHighlights(svg, paneItems);
+        // Schematics: strip the baked-in cream background rect so the pane
+        // background shows through.  The first self-closing <rect/> in the SVG
+        // is always the KiCad page background; content lives inside <g> elements.
+        const svg = isSch ? svgContent.replace(/<rect\b[^>]*\/>/, '') : svgContent;
         return `<div class="vd-svg-canvas">${svg}</div>`;
       };
 
-      // Before pane: show deleted + modified items
-      const beforeItems = changedItems.filter(i => i.changeType === 'deleted' || i.changeType === 'modified');
-      // After pane: show added + modified items; badge only here
-      const afterItems  = changedItems.filter(i => i.changeType === 'added'   || i.changeType === 'modified');
+      // Insert SVG content while panes are still invisible (display:none during load
+      // was set above).  After fitSvgToPane applies the correct viewBox we reveal them,
+      // so the user never sees the raw full-page SVG size.
+      const beforeEl = document.getElementById('vd-before');
+      const afterEl  = document.getElementById('vd-after');
+      beforeEl.style.visibility = 'hidden';
+      afterEl.style.visibility  = 'hidden';
 
-      document.getElementById('vd-before').innerHTML = renderPane(payload.beforeSvg, beforeItems);
-      const afterContent = makeBadge() + renderPane(payload.afterSvg, afterItems);
-      document.getElementById('vd-after').innerHTML  = afterContent;
+      beforeEl.innerHTML = renderPane(payload.beforeSvg);
+      afterEl.innerHTML  = makeBadge() + renderPane(payload.afterSvg);
 
-      // Fit SVGs to their panes after a short delay for WebKit layout
+      // Fit SVGs after a short delay so WebKit has laid out the SVG DOM,
+      // then reveal — no visible resize flash.
       setTimeout(() => {
         fitSvgToPane('vd-before');
         fitSvgToPane('vd-after');
+        beforeEl.style.visibility = '';
+        afterEl.style.visibility  = '';
       }, 200);
     }).catch(err => {
       const errHtml = `<div class="vd-placeholder">

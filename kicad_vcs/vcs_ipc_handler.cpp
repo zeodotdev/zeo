@@ -226,17 +226,22 @@ void VCS_IPC_HANDLER::HandleGetVisualDiff( const json& aMsg )
             ? wxString::FromUTF8( aMsg["requestId"].get<std::string>() )
             : wxString();
 
-    std::string oldCommit = aMsg.value( "oldCommit", "" );
-    std::string newCommit = aMsg.value( "newCommit", "" );
-    std::string filePath  = aMsg.value( "filePath",  "" );
+    std::string oldCommit  = aMsg.value( "oldCommit",  "" );
+    std::string newCommit  = aMsg.value( "newCommit",  "" );
+    std::string filePath   = aMsg.value( "filePath",   "" );
+    bool        skipBefore = aMsg.value( "skipBefore", false );
 
-    // Extract file contents from git for both revisions
+    // Extract file contents from git for both revisions.
+    // Resolve symbolic refs (e.g. "HEAD") to a real commit SHA first,
+    // because GetFileAtCommit only accepts 40-char hex OIDs.
     std::string oldContent, newContent;
 
     try
     {
-        if( !oldCommit.empty() && oldCommit != "INDEX" )
-            oldContent = m_git->GetFileAtCommit( oldCommit, filePath );
+        // Skip loading the before content if the caller already has it cached.
+        if( !skipBefore && !oldCommit.empty() && oldCommit != "INDEX" )
+            oldContent = m_git->GetFileAtCommit(
+                    m_git->ResolveRef( oldCommit ), filePath );
     }
     catch( ... ) {}
 
@@ -267,11 +272,21 @@ void VCS_IPC_HANDLER::HandleGetVisualDiff( const json& aMsg )
     auto renderer = std::make_shared<KICAD_FILE_RENDERER>();
 
     std::thread( [this, reqId, renderer,
-                  oldContent = std::move( oldContent ),
-                  newContent = std::move( newContent ),
-                  filePath]() mutable
+                  oldContent  = std::move( oldContent ),
+                  newContent  = std::move( newContent ),
+                  filePath,
+                  skipBefore]() mutable
     {
         json result = renderer->GetVisualDiff( oldContent, newContent, filePath );
+
+        // When skipBefore is set, we intentionally passed empty oldContent —
+        // override fileIsNew so the JS side doesn't hide the before pane.
+        if( skipBefore )
+        {
+            result["fileIsNew"]     = false;
+            result["beforeSkipped"] = true;
+        }
+
         bool success = result.value( "success", false );
 
         wxTheApp->CallAfter( [this, reqId, result = std::move( result ), success]()

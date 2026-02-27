@@ -763,6 +763,25 @@ json GIT_VCS_BRIDGE::GetTextDiff( const std::string& aOldCommit, const std::stri
 }
 
 
+std::string GIT_VCS_BRIDGE::ResolveRef( const std::string& aRef )
+{
+    if( !m_repo || aRef.empty() )
+        return aRef;
+
+    git_object* obj = nullptr;
+
+    if( git_revparse_single( &obj, m_repo, aRef.c_str() ) != 0 )
+        return aRef; // can't resolve — return as-is, caller's catch will handle it
+
+    git_oid oid = *git_object_id( obj );
+    git_object_free( obj );
+
+    char buf[GIT_OID_HEXSZ + 1];
+    git_oid_tostr( buf, sizeof( buf ), &oid );
+    return std::string( buf );
+}
+
+
 std::string GIT_VCS_BRIDGE::GetFileAtCommit( const std::string& aCommitHash,
                                               const std::string& aFilePath )
 {

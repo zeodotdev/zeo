@@ -179,6 +179,13 @@ public:
     static std::string GetUsernameForHost( const std::string& aHost );
 
     /**
+     * Resolve a symbolic ref or abbreviated OID to a full 40-char hex SHA.
+     * Handles "HEAD", branch names, and hex commit hashes.
+     * Returns the input unchanged if resolution fails.
+     */
+    std::string ResolveRef( const std::string& aRef );
+
+    /**
      * Get the project (working directory) path.
      */
     wxString GetProjectDir() const { return m_projectDir; }

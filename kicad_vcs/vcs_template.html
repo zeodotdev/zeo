@@ -1928,7 +1928,7 @@ const Bridge = (() => {
   function onMessage(msg) {
     switch (msg.action) {
       case 'status_changed':
-        App.refreshStatus();
+        App.refreshStatus(msg.data?.paths || []);
         break;
       case 'project_changed':
         App.fullRefresh();
@@ -2309,8 +2309,8 @@ const UI = {
     const stagedSet = new Set(State.staged.map(f => f.path));
     const all = [
       ...State.staged.map(f    => ({ path: f.path, status: f.status,    checked: true  })),
-      ...State.unstaged.map(f  => ({ path: f.path, status: f.status,    checked: false })),
-      ...State.untracked.map(p => ({ path: p,       status: 'untracked', checked: false })),
+      ...State.unstaged.filter(f => !stagedSet.has(f.path)).map(f => ({ path: f.path, status: f.status, checked: false })),
+      ...State.untracked.filter(p => !stagedSet.has(p)).map(p => ({ path: p, status: 'untracked', checked: false })),
     ].sort((a, b) => basename(a.path).localeCompare(basename(b.path)));
 
     const total   = all.length;
@@ -2670,7 +2670,40 @@ const UI = {
     const fname  = ctx.filePath.split('/').pop();
     const isSch  = ctx.filePath.endsWith('.kicad_sch');
 
-    const fitSvgToPane = (contentId) => VdZoom.fitToPane(contentId);
+    // fitSvgToPane: crop to content (schematics only) then fit to pane.
+    // Returns the viewBox string that was set, or null if no crop was applied.
+    const fitSvgToPane = (contentId, storedVb = null) => {
+      const canvas = document.getElementById(contentId)?.querySelector('.vd-svg-canvas');
+      const svgEl  = canvas?.querySelector('svg');
+
+      if (svgEl) {
+        if (storedVb) {
+          // Fast path (cache hit): apply the pre-computed viewBox directly — no getBBox needed
+          svgEl.setAttribute('viewBox', storedVb);
+        } else if (isSch) {
+          // Slow path (first render): compute content bounds via getBBox
+          try {
+            const b = svgEl.getBBox();
+            if (b.width > 0 && b.height > 0) {
+              const pad = Math.max(b.width, b.height) * 0.05;
+              const vb  = `${b.x - pad} ${b.y - pad} ${b.width + pad * 2} ${b.height + pad * 2}`;
+              svgEl.setAttribute('viewBox', vb);
+              VdZoom.fitToPane(contentId);
+              return vb; // caller stores this for future cache hits
+            }
+          } catch (e) { /* getBBox can throw if SVG not yet rendered */ }
+        }
+      }
+
+      VdZoom.fitToPane(contentId);
+      return null;
+    };
+
+    const cacheKey    = `${ctx.oldCommit}|${ctx.newCommit}|${ctx.filePath}`;
+    const cached      = UI._visualCache && UI._visualCache[cacheKey];
+    // If a live update saved the before SVG, we can skip re-exporting it from C++
+    const savedBefore = UI._savedBefore && UI._savedBefore[cacheKey];
+    const skipBefore  = !!(savedBefore?.svg);
 
     const loadingPh = `<div class="vd-placeholder">
       <div class="vd-placeholder-icon">${iconLg}</div>
@@ -2685,13 +2718,30 @@ const UI = {
     if (beforePane)   beforePane.style.display  = 'none';
     if (separatorEl)  separatorEl.style.display = 'none';
     document.getElementById('vd-before').innerHTML = '';
-    document.getElementById('vd-after').innerHTML  = loadingPh;
+    document.getElementById('vd-after').innerHTML  = cached ? '' : loadingPh;
 
-    Bridge.send('get_visual_diff', {
-      oldCommit: ctx.oldCommit,
-      newCommit: ctx.newCommit,
-      filePath:  ctx.filePath,
-    }, 60000).then(payload => {
+    const fetchPromise = cached
+      ? Promise.resolve(cached)
+      : Bridge.send('get_visual_diff', {
+          oldCommit:  ctx.oldCommit,
+          newCommit:  ctx.newCommit,
+          filePath:   ctx.filePath,
+          skipBefore,
+        }, 60000).then(payload => {
+          // Restore saved before SVG if C++ skipped exporting it
+          if (payload.beforeSkipped && savedBefore?.svg) {
+            payload.beforeSvg = savedBefore.svg;
+            if (savedBefore.vb) {
+              if (!payload._croppedVb) payload._croppedVb = {};
+              payload._croppedVb.before = savedBefore.vb;
+            }
+          }
+          if (!UI._visualCache) UI._visualCache = {};
+          UI._visualCache[cacheKey] = payload;
+          return payload;
+        });
+
+    fetchPromise.then(payload => {
       const changedItems = payload.changedItems || [];
       State.visualDiffItems = changedItems;
       this._updateOpenInEditorBtn();
@@ -2723,16 +2773,9 @@ const UI = {
             <div class="vd-placeholder-sub">SVG export unavailable<br>kicad-cli not found</div>
           </div>`;
         }
-        // Schematics: strip the baked-in cream background rect so the pane
-        // background shows through.  The first self-closing <rect/> in the SVG
-        // is always the KiCad page background; content lives inside <g> elements.
-        const svg = isSch ? svgContent.replace(/<rect\b[^>]*\/>/, '') : svgContent;
-        return `<div class="vd-svg-canvas">${svg}</div>`;
+        return `<div class="vd-svg-canvas">${svgContent}</div>`;
       };
 
-      // Insert SVG content while panes are still invisible (display:none during load
-      // was set above).  After fitSvgToPane applies the correct viewBox we reveal them,
-      // so the user never sees the raw full-page SVG size.
       const beforeEl = document.getElementById('vd-before');
       const afterEl  = document.getElementById('vd-after');
       beforeEl.style.visibility = 'hidden';
@@ -2741,14 +2784,26 @@ const UI = {
       beforeEl.innerHTML = renderPane(payload.beforeSvg);
       afterEl.innerHTML  = makeBadge() + renderPane(payload.afterSvg);
 
-      // Fit SVGs after a short delay so WebKit has laid out the SVG DOM,
-      // then reveal — no visible resize flash.
-      setTimeout(() => {
-        fitSvgToPane('vd-before');
-        fitSvgToPane('vd-after');
+      if (payload._croppedVb) {
+        // Cache hit with stored viewBox: apply synchronously, no timer needed.
+        // VdZoom.fitToPane only reads viewBox attributes (no layout required),
+        // so this works immediately after innerHTML without waiting for WebKit.
+        fitSvgToPane('vd-before', payload._croppedVb.before);
+        fitSvgToPane('vd-after',  payload._croppedVb.after);
         beforeEl.style.visibility = '';
         afterEl.style.visibility  = '';
-      }, 200);
+      } else {
+        // First render: getBBox() is layout-forcing — calling it on a visibility:hidden
+        // (but not display:none) element causes WebKit to synchronously complete layout
+        // before returning, so no timer is needed.
+        const vbBefore = fitSvgToPane('vd-before');
+        const vbAfter  = fitSvgToPane('vd-after');
+        beforeEl.style.visibility = '';
+        afterEl.style.visibility  = '';
+        // Store cropped viewBoxes so future cache hits can skip getBBox entirely
+        const entry = UI._visualCache && UI._visualCache[cacheKey];
+        if (entry) entry._croppedVb = { before: vbBefore, after: vbAfter };
+      }
     }).catch(err => {
       const errHtml = `<div class="vd-placeholder">
         <div class="vd-placeholder-icon">⚠️</div>
@@ -2978,11 +3033,11 @@ const Actions = {
 
   async refreshAll() {
     // Workdir diffs (newCommit = '') may have changed; evict those cache entries
-    if (UI._diffCache) {
-      for (const k of Object.keys(UI._diffCache)) {
+    for (const cache of [UI._diffCache, UI._visualCache]) {
+      if (!cache) continue;
+      for (const k of Object.keys(cache)) {
         // key format: oldCommit|newCommit|filePath — evict if newCommit segment is empty
-        const parts = k.split('|');
-        if (parts[1] === '') delete UI._diffCache[k];
+        if (k.split('|')[1] === '') delete cache[k];
       }
     }
     await Promise.all([
@@ -3444,8 +3499,48 @@ const Actions = {
 
 // Expose App for C++ push notifications
 const App = {
-  refreshStatus: () => Actions.loadStatus(),
-  fullRefresh:   () => Actions.refreshAll(),
+  refreshStatus(changedPaths = []) {
+    App._doRefreshStatus(changedPaths);
+  },
+
+  async _doRefreshStatus(changedPaths) {
+    const f = State.selectedFile;
+    // Determine whether the currently viewed file is one that changed
+    const isVisualFile = f && (f.path.endsWith('.kicad_sch') || f.path.endsWith('.kicad_pcb'));
+    const viewedFileChanged = isVisualFile && (
+      changedPaths.length === 0 ||
+      changedPaths.some(p => p === f.path || p.endsWith('/' + f.path))
+    );
+
+    // Save before SVGs only if we'll need to re-render the visual diff
+    const savedBefore = {};
+    if (viewedFileChanged && UI._visualCache) {
+      for (const [k, v] of Object.entries(UI._visualCache)) {
+        if (k.split('|')[1] === '' && v.beforeSvg) {
+          savedBefore[k] = { svg: v.beforeSvg, vb: v._croppedVb?.before ?? null };
+        }
+      }
+    }
+
+    // Evict stale working-dir cache entries
+    for (const cache of [UI._diffCache, UI._visualCache]) {
+      if (!cache) continue;
+      for (const k of Object.keys(cache)) {
+        if (k.split('|')[1] === '') delete cache[k];
+      }
+    }
+
+    await Actions.loadStatus();
+
+    // Re-render visual diff only if the viewed file actually changed
+    if (viewedFileChanged && f.context !== 'commit') {
+      UI._savedBefore = savedBefore;
+      await UI.selectFile(f.path, f.context, f.status);
+      UI._savedBefore = null;
+    }
+  },
+
+  fullRefresh: () => Actions.refreshAll(),
 };
 
 // ══════════════════════════════════════════════════════════════════════

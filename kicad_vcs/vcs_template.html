@@ -1,0 +1,4267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KiCad VCS</title>
+<style>
+/* ── Reset & Base ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:          #1e1e1e;
+  --bg-panel:    #252526;
+  --bg-hover:    #2a2d2e;
+  --bg-selected: #094771;
+  --bg-input:    #3c3c3c;
+  --border:      #333333;
+  --border-focus:#555555;
+  --text:        #cccccc;
+  --text-dim:    #858585;
+  --text-bright: #e8e8e8;
+  --green:       #4caf50;
+  --green-dim:   #2e7d32;
+  --red:         #f44336;
+  --red-dim:     #b71c1c;
+  --yellow:      #ffb300;
+  --blue:        #2196f3;
+  --purple:      #9c27b0;
+  --diff-add:    #0d2a0d;
+  --diff-add-ln: #1a4a1a;
+  --diff-del:    #2a0d0d;
+  --diff-del-ln: #4a1a1a;
+  --diff-hunk:   #1a1a2e;
+  --scrollbar:   #424242;
+  --radius:      4px;
+  --font-mono:   'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  --font-ui:     -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #5a5a5a; }
+
+/* ── App Shell ────────────────────────────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ── Branch Bar ───────────────────────────────────────────────────── */
+#branch-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  min-height: 38px;
+}
+
+.branch-dropdown-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+#branch-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-bright);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#branch-btn:hover { border-color: var(--border-focus); }
+
+.branch-icon { color: var(--purple); flex-shrink: 0; }
+.chevron { font-size: 10px; color: var(--text-dim); flex-shrink: 0; }
+
+#branch-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 220px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: #2d2d30;
+  border: 1px solid var(--border-focus);
+  border-radius: var(--radius);
+  z-index: 1000;
+  display: none;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+#branch-menu.open { display: block; }
+
+#accounts-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: auto;
+  min-width: 200px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #2d2d30;
+  border: 1px solid var(--border-focus);
+  border-radius: var(--radius);
+  z-index: 1000;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+
+.branch-section-header {
+  padding: 6px 10px 3px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--border);
+  margin-top: 4px;
+}
+.branch-section-header:first-child { margin-top: 0; }
+
+.branch-item {
+  padding: 5px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+.branch-item:hover { background: var(--bg-hover); }
+.branch-item.current { color: var(--green); }
+.branch-item .bi-check { font-size: 12px; margin-left: auto; }
+.branch-new-item {
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.branch-new-item:hover { color: var(--text); }
+
+/* Accounts menu rows */
+.account-row {
+  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: default;
+}
+.account-row:hover { background: rgba(255,255,255,0.07); }
+.account-row .account-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  font-size: 12px;
+}
+.account-row .account-signout {
+  opacity: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: opacity 0.1s, color 0.1s;
+  white-space: nowrap;
+}
+.account-row:hover .account-signout { opacity: 1; }
+.account-row .account-signout:hover { color: var(--text); }
+
+#branch-bar-spacer { flex: 1; }
+
+.bar-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  white-space: nowrap;
+  transition: border-color 0.15s, background 0.15s;
+}
+.bar-btn:hover { border-color: var(--border-focus); background: var(--bg-hover); }
+.bar-btn:active { background: #3a3a3a; }
+.bar-btn:disabled { opacity: 0.4; cursor: default; }
+
+.bar-btn.primary {
+  background: var(--green-dim);
+  border-color: var(--green);
+  color: #fff;
+}
+.bar-btn.primary:hover { background: var(--green); }
+
+.count-badge {
+  background: rgba(255,255,255,0.15);
+  border-radius: 10px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ── Main Layout ──────────────────────────────────────────────────── */
+#main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Left Panel ───────────────────────────────────────────────────── */
+#left-panel {
+  width: 280px;
+  min-width: 180px;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+#left-panel-resizer {
+  width: 4px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.12s;
+}
+#left-panel-resizer:hover,
+#left-panel-resizer.dragging { background: var(--green); opacity: 0.4; }
+
+#changes-area {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* ── Section Headers ──────────────────────────────────────────────── */
+.section-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.section-header:hover { color: var(--text); }
+.section-header .section-count {
+  margin-left: 5px;
+  color: var(--text-dim);
+  font-weight: 400;
+}
+.section-header .section-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+.section-action-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-size: 11px;
+}
+.section-action-btn:hover { background: var(--bg-hover); color: var(--text); }
+.section-chevron { margin-right: 4px; font-size: 10px; transition: transform 0.15s; }
+.section-chevron.collapsed { transform: rotate(-90deg); }
+
+.file-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border: 1px solid var(--border-focus);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  position: relative;
+  margin: 0;
+}
+.file-checkbox:hover { border-color: var(--green); }
+.file-checkbox:checked {
+  background: var(--green);
+  border-color: var(--green);
+}
+.file-checkbox:checked::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  width: 5px;
+  height: 8px;
+  border: 2px solid #000;
+  border-top: none;
+  border-left: none;
+  transform: rotate(45deg);
+}
+
+/* ── File List ────────────────────────────────────────────────────── */
+.file-list { list-style: none; }
+.file-list.collapsed { display: none; }
+
+.file-item {
+  display: flex;
+  align-items: center;
+  padding: 3px 8px 3px 8px;
+  cursor: pointer;
+  gap: 8px;
+  min-height: 24px;
+}
+.file-item:hover { background: var(--bg-hover); }
+.file-item.selected { background: var(--bg-selected); color: var(--text-bright); }
+.file-item.multi-sel { background: rgba(9,71,113,0.5); }
+.file-item.multi-sel.selected { background: var(--bg-selected); }
+
+
+.file-icon { font-size: 13px; flex-shrink: 0; line-height: 1; display: flex; align-items: center; }
+
+.ft-badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 4px 1px 3px;
+  border-radius: 3px;
+  line-height: 14px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.ft-sch  { background: #0d2a40; color: #4db8ff; border: 1px solid #1a4f70; }
+.ft-pcb  { background: #0d2e14; color: #5dba68; border: 1px solid #1a5228; }
+.ft-pro  { background: #2e1f0a; color: #e8972a; border: 1px solid #5c3a10; }
+.ft-sym  { background: #0d1f3d; color: #7baee8; border: 1px solid #1a3a6e; }
+.ft-fp   { background: #0a2118; color: #6ebf7a; border: 1px solid #164030; }
+.ft-wks  { background: #252525; color: #888;    border: 1px solid #3c3c3c; }
+.ft-file { background: #252525; color: #777;    border: 1px solid #3c3c3c; }
+
+.ft-badge-lg {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 6px 12px;
+  border-radius: 6px;
+  display: inline-block;
+}
+.file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+
+.file-status-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  line-height: 1;
+}
+.file-status-glyph.added     { color: var(--green); }
+.file-status-glyph.modified  { color: var(--yellow); }
+.file-status-glyph.deleted   { color: var(--red); }
+.file-status-glyph.renamed   { color: var(--blue); }
+.file-status-glyph.conflict  { color: #ff6b35; }
+.file-status-glyph.untracked { color: var(--green); }
+
+.file-item-actions {
+  display: none;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.file-item:hover .file-item-actions { display: flex; }
+.file-action-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.file-action-btn:hover { background: rgba(255,255,255,0.1); color: var(--text); }
+
+/* ── Commit Panel ─────────────────────────────────────────────────── */
+#commit-panel {
+  flex-shrink: 0;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#commit-msg {
+  width: 100%;
+  min-height: 60px;
+  max-height: 120px;
+  resize: none;
+  overflow-y: auto;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-bright);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 6px 8px;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+#commit-msg:focus { border-color: var(--green); }
+#commit-msg::placeholder { color: var(--text-dim); }
+
+#commit-btn {
+  width: 100%;
+  padding: 7px 12px;
+  background: var(--green-dim);
+  border: 1px solid var(--green);
+  border-radius: var(--radius);
+  color: #fff;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+#commit-btn:hover:not(:disabled) { background: var(--green); }
+#commit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.commit-count-badge {
+  background: rgba(255,255,255,0.2);
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 11px;
+}
+
+/* ── History List ─────────────────────────────────────────────────── */
+#history-area {
+  flex-shrink: 0;
+  max-height: 35%;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#history-list {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.commit-item {
+  display: flex;
+  align-items: flex-start;
+  padding: 5px 8px;
+  cursor: pointer;
+  gap: 7px;
+  border-bottom: 1px solid rgba(51,51,51,0.5);
+}
+.commit-item:hover { background: var(--bg-hover); }
+.commit-item.selected { background: var(--bg-selected); }
+
+.commit-info { flex: 1; overflow: hidden; }
+.commit-top-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  overflow: hidden;
+}
+.commit-hash {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--yellow);
+  flex-shrink: 0;
+}
+.commit-subject {
+  font-size: 12px;
+  color: var(--text-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+.commit-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+#load-more-btn {
+  width: 100%;
+  padding: 6px;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+#load-more-btn:hover { color: var(--text); background: var(--bg-hover); }
+
+/* ── Right Panel ──────────────────────────────────────────────────── */
+#right-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* ── Placeholder ──────────────────────────────────────────────────── */
+#placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-dim);
+  gap: 10px;
+}
+#placeholder .ph-icon { font-size: 48px; opacity: 0.3; }
+#placeholder .ph-text { font-size: 14px; }
+
+/* ── Diff Viewer ──────────────────────────────────────────────────── */
+#diff-view {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#diff-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 8px;
+  min-height: 36px;
+}
+#diff-file-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-bright);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diff-mode-btn {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+}
+.diff-mode-btn.active { border-color: var(--green); color: var(--green); }
+.diff-mode-btn:hover:not(.active) { border-color: var(--border-focus); color: var(--text); }
+
+#diff-content {
+  flex: 1;
+  overflow: auto;
+}
+
+/* ── Text Diff ────────────────────────────────────────────────────── */
+.diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.diff-table td { padding: 0; vertical-align: top; }
+
+.diff-ln {
+  width: 42px;
+  min-width: 42px;
+  text-align: right;
+  padding: 0 6px;
+  color: var(--text-dim);
+  user-select: none;
+  -webkit-user-select: none;
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+}
+.diff-code {
+  padding: 0 8px;
+  white-space: pre;
+  width: 100%;
+  overflow: visible;
+  word-break: normal;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+tr.diff-add { background: var(--diff-add); }
+tr.diff-add .diff-ln { background: var(--diff-add-ln); }
+tr.diff-add .diff-code { color: #a8d8a8; }
+tr.diff-add .diff-sign { color: var(--green); }
+
+tr.diff-del { background: var(--diff-del); }
+tr.diff-del .diff-ln { background: var(--diff-del-ln); }
+tr.diff-del .diff-code { color: #d8a8a8; }
+tr.diff-del .diff-sign { color: var(--red); }
+
+tr.diff-hunk { background: var(--diff-hunk); }
+tr.diff-hunk td { color: var(--blue); font-style: italic; padding: 3px 8px; }
+
+tr.diff-ctx .diff-code { color: var(--text); }
+tr.diff-ctx .diff-sign { color: var(--text-dim); }
+
+/* ── Settings/JSON Diff ────────────────────────────────────────────── */
+#settings-diff-panel {
+  display: none;
+  flex: 1;
+  overflow-y: auto;
+}
+.settings-diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.settings-diff-table th {
+  padding: 6px 10px;
+  text-align: left;
+  background: #2a2a2a;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 11px;
+}
+.settings-diff-table td {
+  padding: 4px 10px;
+  border-bottom: 1px solid rgba(51,51,51,0.5);
+  font-family: var(--font-mono);
+}
+.settings-diff-table tr.sdt-add { background: var(--diff-add); }
+.settings-diff-table tr.sdt-del { background: var(--diff-del); }
+.settings-diff-table tr.sdt-mod { background: #1a1a0d; }
+.sdt-key { color: var(--text-bright); }
+.sdt-old { color: #d8a8a8; }
+.sdt-new { color: #a8d8a8; }
+.sdt-change-arrow { color: var(--text-dim); padding: 0 4px; }
+
+/* ── Commit Detail ────────────────────────────────────────────────── */
+#commit-detail {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+#commit-detail-header {
+  padding: 12px 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.cd-hash {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--yellow);
+  margin-bottom: 4px;
+  cursor: pointer;
+}
+.cd-hash:hover { text-decoration: underline; }
+.cd-subject {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-bright);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+.cd-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.cd-meta span { display: flex; align-items: center; gap: 4px; }
+
+#commit-detail-body {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+#commit-files-pane {
+  width: 220px;
+  min-width: 140px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 8px 8px;
+  border-right: 1px solid var(--border);
+}
+#commit-diff-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#commit-diff-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--text-dim);
+  gap: 8px;
+}
+#commit-diff-empty .ph-icon { font-size: 32px; opacity: 0.3; }
+#commit-diff-empty .ph-text { font-size: 13px; }
+.cd-files-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 0;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.cd-file-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 6px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  gap: 6px;
+}
+.cd-file-item:hover { background: var(--bg-hover); }
+.cd-file-item.selected { background: var(--bg-selected); }
+
+/* ── No Repo State ────────────────────────────────────────────────── */
+#no-repo-view {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 16px;
+  padding: 40px;
+  text-align: center;
+}
+#no-repo-view .nr-icon { font-size: 56px; opacity: 0.4; }
+#no-repo-view .nr-title { font-size: 18px; font-weight: 600; color: var(--text-bright); }
+#no-repo-view .nr-desc { color: var(--text-dim); max-width: 340px; line-height: 1.6; }
+#init-repo-btn {
+  padding: 10px 24px;
+  background: var(--green-dim);
+  border: 1px solid var(--green);
+  border-radius: var(--radius);
+  color: #fff;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 500;
+  margin-top: 8px;
+}
+#init-repo-btn:hover { background: var(--green); }
+
+/* ── Add Remote Panel ─────────────────────────────────────────────── */
+#add-remote-panel {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 2000;
+  align-items: center;
+  justify-content: center;
+}
+#add-remote-panel.open { display: flex; }
+.modal-box {
+  background: #2d2d30;
+  border: 1px solid var(--border-focus);
+  border-radius: 6px;
+  padding: 20px;
+  width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.modal-title { font-size: 15px; font-weight: 600; color: var(--text-bright); }
+.modal-field { display: flex; flex-direction: column; gap: 4px; }
+.modal-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; }
+.modal-input {
+  padding: 6px 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-bright);
+  font-size: 13px;
+  font-family: var(--font-ui);
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.modal-input:focus { border-color: var(--green); }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+.modal-cancel-btn {
+  padding: 6px 14px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+.modal-cancel-btn:hover { border-color: var(--border-focus); }
+.modal-ok-btn {
+  padding: 6px 14px;
+  background: var(--green-dim);
+  border: 1px solid var(--green);
+  border-radius: var(--radius);
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+.modal-ok-btn:hover { background: var(--green); }
+
+/* ── Context Menu ─────────────────────────────────────────────────── */
+#ctx-menu {
+  position: fixed;
+  display: none;
+  flex-direction: column;
+  background: #2d2d30;
+  border: 1px solid var(--border-focus);
+  border-radius: 5px;
+  padding: 3px 0;
+  min-width: 160px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  z-index: 9999;
+  user-select: none;
+}
+#ctx-menu.visible { display: flex; }
+.ctx-item {
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ctx-item:hover { background: var(--bg-hover); color: var(--text-bright); }
+.ctx-item.danger:hover { background: rgba(200,40,40,0.18); color: #f88; }
+.ctx-sep { height: 1px; background: var(--border); margin: 3px 0; }
+
+/* ── OAuth Buttons ────────────────────────────────────────────────── */
+.oauth-btns {
+  display: flex;
+  gap: 8px;
+}
+.oauth-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: var(--font-ui);
+  border: 1px solid;
+  transition: filter 0.1s;
+}
+.oauth-btn:hover { filter: brightness(1.2); }
+.github-btn { background: #24292e; border-color: #555d68; color: #f0f6fc; }
+.gitlab-btn { background: #6b4fbb; border-color: #8c6dc7; color: #fff; }
+.oauth-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.oauth-divider::before, .oauth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ── Credential Modal ─────────────────────────────────────────────── */
+#credential-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 3000;
+  align-items: center;
+  justify-content: center;
+}
+#credential-modal.visible { display: flex; }
+.cred-info {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+.cred-info a {
+  color: var(--blue);
+  cursor: pointer;
+  text-decoration: none;
+}
+.cred-info a:hover { text-decoration: underline; }
+
+/* ── Toast ────────────────────────────────────────────────────────── */
+#toast-container {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: #fff;
+  max-width: 360px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.error { background: #c62828; border: 1px solid var(--red); }
+.toast.success { background: var(--green-dim); border: 1px solid var(--green); }
+.toast.info { background: #1565c0; border: 1px solid var(--blue); }
+.toast-close { margin-left: auto; cursor: pointer; opacity: 0.7; }
+.toast-close:hover { opacity: 1; }
+
+/* ── Spinner ──────────────────────────────────────────────────────── */
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Loading Overlay ──────────────────────────────────────────────── */
+.loading-row td {
+  text-align: center;
+  padding: 20px;
+  color: var(--text-dim);
+}
+
+/* ── Inline empty state ───────────────────────────────────────────── */
+.empty-section {
+  padding: 6px 16px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-style: italic;
+}
+
+
+/* ── GitHub Repo Picker ───────────────────────────────────────────── */
+.gh-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.gh-picker-dialog {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 520px;
+  max-height: 600px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  overflow: hidden;
+}
+.gh-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 0;
+  flex-shrink: 0;
+}
+.gh-picker-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+.gh-picker-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.gh-picker-close:hover { background: var(--bg-hover); color: var(--text); }
+.gh-picker-tabs {
+  display: flex;
+  gap: 0;
+  padding: 10px 16px 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.gh-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 6px 12px 8px;
+  margin-bottom: -1px;
+  transition: color 0.12s;
+}
+.gh-tab:hover { color: var(--text); }
+.gh-tab.active { color: var(--text-bright); border-bottom-color: var(--accent); }
+.gh-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.gh-search-wrap { padding: 10px 12px 6px; flex-shrink: 0; }
+.gh-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-input, var(--bg-hover));
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 10px;
+  outline: none;
+}
+.gh-search:focus { border-color: var(--accent); }
+.gh-repo-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0 12px 8px;
+}
+.gh-repo-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.1s;
+}
+.gh-repo-item:hover { background: var(--bg-hover); }
+.gh-repo-item.selected { background: var(--bg-selected); border-color: var(--accent); }
+.gh-repo-icon { flex-shrink: 0; color: var(--text-dim); line-height: 1; }
+.gh-repo-info { flex: 1; min-width: 0; }
+.gh-repo-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gh-repo-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gh-repo-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.gh-use-btn {
+  flex-shrink: 0;
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.gh-repo-item:hover .gh-use-btn,
+.gh-repo-item.selected .gh-use-btn { opacity: 1; }
+.gh-use-btn:hover { filter: brightness(1.15); }
+.gh-list-status {
+  padding: 24px 8px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.gh-load-more {
+  padding: 8px;
+  text-align: center;
+}
+.gh-load-more button {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.gh-load-more button:hover { background: var(--bg-selected); color: var(--text); }
+.gh-create-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 16px;
+  flex: 1;
+}
+.gh-vis-row {
+  display: flex;
+  gap: 8px;
+}
+.gh-vis-btn {
+  flex: 1;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 7px 0;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.gh-vis-btn.active {
+  background: rgba(var(--accent-rgb, 59,130,246), 0.12);
+  border-color: var(--accent);
+  color: var(--text-bright);
+}
+.gh-vis-btn:hover:not(.active) { background: var(--bg-selected); color: var(--text); }
+
+/* ── Discard modal ─────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.modal-dialog {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 20px;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.modal-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+.modal-body {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.modal-suppress-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.modal-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.modal-btn {
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.modal-btn:hover { background: var(--bg-selected); }
+.modal-btn.danger { background: rgba(211,47,47,0.15); border-color: var(--red); color: var(--red); }
+.modal-btn.danger:hover { background: rgba(211,47,47,0.3); }
+
+/* ── History graph ────────────────────────────────────────────────── */
+.commit-graph-col {
+  flex-shrink: 0;
+  width: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  align-self: stretch;
+}
+.graph-line {
+  width: 2px;
+  flex: 1;
+  background: #3a3a3a;
+  min-height: 4px;
+}
+.graph-line.invis { background: transparent; }
+.graph-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #555;
+  flex-shrink: 0;
+  border: 1.5px solid var(--bg-panel);
+  transition: background 0.12s;
+}
+.graph-dot.head { background: var(--green); border-color: rgba(76,175,80,0.3); box-shadow: 0 0 0 2px rgba(76,175,80,0.18); }
+.commit-item:hover .graph-dot { background: var(--text-dim); }
+.commit-item.selected .graph-dot { background: #4db8ff; border-color: rgba(33,150,243,0.3); }
+
+/* ── Visual diff panel ────────────────────────────────────────────── */
+#visual-diff-panel {
+  display: none;
+  flex: 1;
+  overflow: hidden;
+}
+.vd-panes {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+.vd-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+.vd-pane-header {
+  padding: 5px 12px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+.vd-pane-content {
+  flex: 1;
+  overflow: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.vd-separator { width: 1px; background: var(--border); flex-shrink: 0; }
+.vd-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: var(--text-dim);
+  padding: 40px;
+  text-align: center;
+}
+.vd-placeholder-icon { font-size: 40px; opacity: 0.5; margin-bottom: 4px; }
+.vd-placeholder-msg  { font-size: 12px; line-height: 1.6; max-width: 260px; }
+.vd-placeholder-sub  { font-size: 11px; color: var(--text-dim); margin-top: 4px; text-align: center; max-width: 220px; line-height: 1.5; }
+
+/* SVG pane: pan+zoom via viewBox (always vector-crisp) */
+.vd-pane-content { cursor: grab; overflow: hidden; }
+.vd-pane-content.dragging { cursor: grabbing; }
+.vd-svg-canvas { width: 100%; height: 100%; }
+.vd-svg-canvas svg { display: block; width: 100%; height: 100%; }
+
+/* Change-count bar above "After" pane */
+.vd-change-bar { display: flex; gap: 6px; flex-wrap: wrap; padding: 5px 10px;
+  background: var(--bg-panel); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.vd-badge { font-size: 10px; font-family: var(--font-mono); padding: 1px 6px;
+  border-radius: 3px; font-weight: 600; }
+.vd-badge-added    { background: rgba(40,167,69,0.2);  color: #4caf50; border: 1px solid rgba(76,175,80,0.4); }
+.vd-badge-modified { background: rgba(255,152,0,0.2);  color: #ff9800; border: 1px solid rgba(255,152,0,0.4); }
+.vd-badge-deleted  { background: rgba(244,67,54,0.2);  color: #f44336; border: 1px solid rgba(244,67,54,0.4); }
+
+/* ── Resizer ──────────────────────────────────────────────────────── */
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ── Branch Bar ─────────────────────────────────────────────────── -->
+  <div id="branch-bar">
+    <div class="branch-dropdown-wrap">
+      <button id="branch-btn" onclick="UI.toggleBranchMenu()">
+        <span class="branch-icon">⎇</span>
+        <span id="branch-btn-label">Loading…</span>
+        <span class="chevron">▼</span>
+      </button>
+      <div id="branch-menu"></div>
+    </div>
+    <div id="branch-bar-spacer"></div>
+    <button class="bar-btn" id="fetch-btn" onclick="Actions.fetch()">⟳ Fetch</button>
+    <button class="bar-btn primary" id="push-btn" onclick="Actions.push()">
+      <span>↑ Push</span><span class="count-badge" id="push-count" style="display:none">0</span>
+    </button>
+    <button class="bar-btn" id="pull-btn" onclick="Actions.pull()">
+      <span>↓ Pull</span><span class="count-badge" id="pull-count" style="display:none">0</span>
+    </button>
+    <div class="branch-dropdown-wrap">
+      <button class="bar-btn" id="accounts-btn" onclick="UI.toggleAccountsMenu()" title="Accounts">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0Zm4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4Zm-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.289 10 8 10s-3.516.68-4.168 1.332c-.678.678-.83 1.418-.832 1.664h10Z"/></svg>
+      </button>
+      <div id="accounts-menu" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- ── Main ───────────────────────────────────────────────────────── -->
+  <div id="main">
+
+    <!-- ── Left Panel ───────────────────────────────────────────────── -->
+    <div id="left-panel">
+
+      <!-- Changes -->
+      <div id="changes-section">
+        <div class="section-header">
+          <span>CHANGES</span>
+          <span class="section-count" id="changes-count"></span>
+          <div class="section-actions" onclick="event.stopPropagation()">
+            <button class="section-action-btn" onclick="Actions.checkAll()" title="Check All">✓</button>
+            <button class="section-action-btn" onclick="Actions.uncheckAll()" title="Uncheck All">−</button>
+          </div>
+        </div>
+        <ul class="file-list" id="changes-list"></ul>
+      </div>
+
+      <!-- Commit Panel -->
+      <div id="commit-panel">
+        <textarea id="commit-msg" placeholder="Commit message (Cmd+Enter to commit)"></textarea>
+        <button id="commit-btn" onclick="Actions.commit()" disabled title="">
+          <span>Commit</span>
+          <span class="commit-count-badge" id="commit-count-badge" style="display:none">0</span>
+        </button>
+      </div>
+
+      <!-- History -->
+      <div id="history-area">
+        <div class="section-header">
+          <span>HISTORY</span>
+        </div>
+        <div id="history-list"></div>
+        <button id="load-more-btn" onclick="Actions.loadMoreHistory()" style="display:none">Load more…</button>
+      </div>
+
+    </div><!-- /left-panel -->
+
+    <div id="left-panel-resizer"></div>
+
+    <!-- ── Right Panel ───────────────────────────────────────────────── -->
+    <div id="right-panel">
+
+      <!-- No repo -->
+      <div id="no-repo-view">
+        <div class="nr-icon">📁</div>
+        <div class="nr-title">No Git Repository</div>
+        <div class="nr-desc">This project directory is not yet tracked by Git. Initialize a repository to start tracking changes.</div>
+        <button id="init-repo-btn" onclick="Actions.initRepo()">Initialize Repository</button>
+      </div>
+
+      <!-- Placeholder -->
+      <div id="placeholder">
+        <div class="ph-icon">⎇</div>
+        <div class="ph-text">Select a file or commit to view details</div>
+      </div>
+
+      <!-- Diff view -->
+      <div id="diff-view">
+        <div id="diff-header">
+          <span id="diff-file-path"></span>
+          <div id="diff-mode-btns" style="display:flex;gap:4px;align-items:center">
+            <button class="diff-mode-btn active" id="diff-mode-text" onclick="UI.setDiffMode('text')">Diff</button>
+            <button class="diff-mode-btn" id="diff-mode-visual" onclick="UI.setDiffMode('visual')" style="display:none">Visual</button>
+            <button class="diff-mode-btn" id="diff-mode-settings" onclick="UI.setDiffMode('settings')" style="display:none">Settings</button>
+            <button class="diff-mode-btn" id="open-in-editor-btn" onclick="Actions.openInEditor()" style="display:none" title="Open in editor with change highlights">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M3.5 1.5A1.5 1.5 0 0 1 5 0h6a1.5 1.5 0 0 1 1.5 1.5v13A1.5 1.5 0 0 1 11 16H5a1.5 1.5 0 0 1-1.5-1.5v-13Zm1.5 0v13h6V1.5H5Z"/><path d="M6.5 4.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1H7a.5.5 0 0 1-.5-.5Zm0 2a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1H7a.5.5 0 0 1-.5-.5Zm0 2a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1H7a.5.5 0 0 1-.5-.5Z"/></svg>Open in Editor
+            </button>
+          </div>
+        </div>
+        <div id="diff-content" style="display:flex;flex-direction:column;flex:1;min-height:0">
+          <div id="text-diff-panel" style="flex:1;overflow:auto;min-height:0"></div>
+          <div id="visual-diff-panel">
+            <div class="vd-panes">
+              <div class="vd-pane" id="vd-pane-before">
+                <div class="vd-pane-header">Before</div>
+                <div class="vd-pane-content" id="vd-before"></div>
+              </div>
+              <div class="vd-separator" id="vd-separator"></div>
+              <div class="vd-pane">
+                <div class="vd-pane-header">After</div>
+                <div class="vd-pane-content" id="vd-after"></div>
+              </div>
+            </div>
+          </div>
+          <div id="settings-diff-panel">
+            <table class="settings-diff-table" id="settings-diff-table">
+              <thead><tr><th>Key</th><th>Before</th><th></th><th>After</th></tr></thead>
+              <tbody id="settings-diff-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Commit detail -->
+      <div id="commit-detail">
+        <div id="commit-detail-header">
+          <div class="cd-hash" id="cd-hash"></div>
+          <div class="cd-subject" id="cd-subject"></div>
+          <div class="cd-meta">
+            <span id="cd-author"></span>
+            <span id="cd-date"></span>
+          </div>
+        </div>
+        <div id="commit-detail-body">
+          <!-- Left: file list -->
+          <div id="commit-files-pane">
+            <div class="cd-files-header">Changed Files</div>
+            <div id="cd-files-list"></div>
+          </div>
+          <!-- Right: inline diff — #diff-view is moved here dynamically by showView('commit') -->
+          <div id="commit-diff-pane">
+            <div id="commit-diff-empty">
+              <div class="ph-icon">📄</div>
+              <div class="ph-text">Select a file to view diff</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /right-panel -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- Discard Confirm Modal -->
+<div id="discard-modal" class="modal-overlay" style="display:none">
+  <div class="modal-dialog">
+    <div class="modal-title">Discard Changes</div>
+    <div class="modal-body" id="discard-modal-msg"></div>
+    <label class="modal-suppress-row">
+      <input type="checkbox" id="discard-suppress-cb"> Don't ask again
+    </label>
+    <div class="modal-buttons">
+      <button class="modal-btn cancel" onclick="DiscardModal.cancel()">Cancel</button>
+      <button class="modal-btn danger" onclick="DiscardModal.confirm()">Discard</button>
+    </div>
+  </div>
+</div>
+
+<!-- New Branch Modal -->
+<div id="new-branch-modal" class="modal-overlay" style="display:none">
+  <div class="modal-dialog">
+    <div class="modal-title">New Branch</div>
+    <div class="modal-body">
+      <input class="modal-input" id="new-branch-input" placeholder="branch-name" autocomplete="off"
+             style="width:100%;margin-top:4px"
+             onkeydown="if(event.key==='Enter')NewBranchModal.confirm();if(event.key==='Escape')NewBranchModal.cancel()">
+    </div>
+    <div class="modal-buttons">
+      <button class="modal-btn cancel" onclick="NewBranchModal.cancel()">Cancel</button>
+      <button class="modal-btn" id="new-branch-ok" onclick="NewBranchModal.confirm()">Create Branch</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Remote Modal -->
+<div id="add-remote-panel">
+  <div class="modal-box">
+    <div class="modal-title">Connect to Remote</div>
+    <div id="add-remote-auth-status" style="display:none;font-size:12px;color:var(--green);margin-bottom:4px;padding:6px 8px;background:rgba(0,180,80,0.08);border-radius:4px;border:1px solid rgba(0,180,80,0.2)"></div>
+    <div class="oauth-btns" id="add-remote-oauth-btns">
+      <button class="oauth-btn github-btn" onclick="Actions.authGitHub()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+        Connect GitHub
+      </button>
+      <button class="oauth-btn gitlab-btn" onclick="Actions.authGitLab()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M23.955 13.587l-1.342-4.135-2.664-8.189a.455.455 0 0 0-.867 0L16.418 9.45H7.582L4.918 1.263a.455.455 0 0 0-.867 0L1.386 9.449.044 13.587a.924.924 0 0 0 .331 1.023L12 23.054l11.625-8.443a.924.924 0 0 0 .33-1.024"/></svg>
+        Connect GitLab
+      </button>
+    </div>
+    <div class="oauth-divider"><span>or enter URL manually</span></div>
+    <div class="modal-field">
+      <label class="modal-label">Name</label>
+      <input class="modal-input" id="remote-name-input" placeholder="origin" value="origin">
+    </div>
+    <div class="modal-field">
+      <label class="modal-label">URL</label>
+      <input class="modal-input" id="remote-url-input" placeholder="https://github.com/user/repo.git">
+    </div>
+    <div class="modal-actions">
+      <button class="modal-cancel-btn" onclick="UI.closeAddRemote()">Cancel</button>
+      <button class="modal-ok-btn" onclick="Actions.addRemote()">Add Remote</button>
+    </div>
+  </div>
+</div>
+
+<!-- GitHub Repo Picker Modal -->
+<div id="gh-repo-picker" class="gh-picker-overlay" style="display:none">
+  <div class="gh-picker-dialog">
+    <div class="gh-picker-header">
+      <div class="gh-picker-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+        Add GitHub Repository
+      </div>
+      <button class="gh-picker-close" onclick="GitHubRepoPicker.close()">✕</button>
+    </div>
+    <div class="gh-picker-tabs">
+      <button class="gh-tab active" id="gh-tab-yours" onclick="GitHubRepoPicker.showTab('yours')">Your Repositories</button>
+      <button class="gh-tab" id="gh-tab-create" onclick="GitHubRepoPicker.showTab('create')">Create New</button>
+    </div>
+    <!-- Your Repos panel -->
+    <div id="gh-panel-yours" class="gh-panel">
+      <div class="gh-search-wrap">
+        <input class="gh-search" id="gh-search" placeholder="Filter repositories…" oninput="GitHubRepoPicker.filterRepos(this.value)">
+      </div>
+      <div id="gh-repo-list" class="gh-repo-list">
+        <div class="gh-list-status"><span class="spinner"></span><span>Loading repositories…</span></div>
+      </div>
+      <div id="gh-load-more" class="gh-load-more" style="display:none">
+        <button onclick="GitHubRepoPicker.loadMore()">Load more…</button>
+      </div>
+    </div>
+    <!-- Create New panel -->
+    <div id="gh-panel-create" class="gh-create-panel" style="display:none">
+      <div class="modal-field">
+        <label class="modal-label">Repository name</label>
+        <input class="modal-input" id="gh-new-name" placeholder="my-kicad-project" autocomplete="off">
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">Description <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+        <input class="modal-input" id="gh-new-desc" placeholder="KiCad PCB design" autocomplete="off">
+      </div>
+      <div class="gh-vis-row">
+        <button class="gh-vis-btn active" id="gh-vis-private" onclick="GitHubRepoPicker.setVisibility('private')">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M4 5V3.25C4 1.455 5.455 0 7.25 0h1.5C10.545 0 12 1.455 12 3.25V5h.5A1.5 1.5 0 0 1 14 6.5v7A1.5 1.5 0 0 1 12.5 15h-9A1.5 1.5 0 0 1 2 13.5v-7A1.5 1.5 0 0 1 3.5 5H4Zm1.5-1.75A1.75 1.75 0 0 1 7.25 1.5h1.5A1.75 1.75 0 0 1 10.5 3.25V5h-5V3.25Z"/></svg>
+          Private
+        </button>
+        <button class="gh-vis-btn" id="gh-vis-public" onclick="GitHubRepoPicker.setVisibility('public')">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8V1.5Z"/></svg>
+          Public
+        </button>
+      </div>
+      <div class="modal-actions" style="margin-top:auto">
+        <button class="modal-cancel-btn" onclick="GitHubRepoPicker.close()">Cancel</button>
+        <button class="modal-ok-btn" id="gh-create-btn" onclick="GitHubRepoPicker.createRepo()">Create Repository</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- GitLab Repo Picker Modal -->
+<div id="gl-repo-picker" class="gh-picker-overlay" style="display:none">
+  <div class="gh-picker-dialog">
+    <div class="gh-picker-header">
+      <div class="gh-picker-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M23.955 13.587l-1.342-4.135-2.664-8.189a.455.455 0 0 0-.867 0L16.418 9.45H7.582L4.918 1.263a.455.455 0 0 0-.867 0L1.386 9.449.044 13.587a.924.924 0 0 0 .331 1.023L12 23.054l11.625-8.443a.924.924 0 0 0 .33-1.024"/></svg>
+        Add GitLab Repository
+      </div>
+      <button class="gh-picker-close" onclick="GitLabRepoPicker.close()">✕</button>
+    </div>
+    <div class="gh-picker-tabs">
+      <button class="gh-tab active" id="gl-tab-yours" onclick="GitLabRepoPicker.showTab('yours')">Your Repositories</button>
+      <button class="gh-tab" id="gl-tab-create" onclick="GitLabRepoPicker.showTab('create')">Create New</button>
+    </div>
+    <!-- Your Repos panel -->
+    <div id="gl-panel-yours" class="gh-panel">
+      <div class="gh-search-wrap">
+        <input class="gh-search" id="gl-search" placeholder="Filter repositories…" oninput="GitLabRepoPicker.filterRepos(this.value)">
+      </div>
+      <div id="gl-repo-list" class="gh-repo-list">
+        <div class="gh-list-status"><span class="spinner"></span><span>Loading repositories…</span></div>
+      </div>
+      <div id="gl-load-more" class="gh-load-more" style="display:none">
+        <button onclick="GitLabRepoPicker.loadMore()">Load more…</button>
+      </div>
+    </div>
+    <!-- Create New panel -->
+    <div id="gl-panel-create" class="gh-create-panel" style="display:none">
+      <div class="modal-field">
+        <label class="modal-label">Repository name</label>
+        <input class="modal-input" id="gl-new-name" placeholder="my-kicad-project" autocomplete="off">
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">Description <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+        <input class="modal-input" id="gl-new-desc" placeholder="KiCad PCB design" autocomplete="off">
+      </div>
+      <div class="gh-vis-row">
+        <button class="gh-vis-btn active" id="gl-vis-private" onclick="GitLabRepoPicker.setVisibility('private')">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M4 5V3.25C4 1.455 5.455 0 7.25 0h1.5C10.545 0 12 1.455 12 3.25V5h.5A1.5 1.5 0 0 1 14 6.5v7A1.5 1.5 0 0 1 12.5 15h-9A1.5 1.5 0 0 1 2 13.5v-7A1.5 1.5 0 0 1 3.5 5H4Zm1.5-1.75A1.75 1.75 0 0 1 7.25 1.5h1.5A1.75 1.75 0 0 1 10.5 3.25V5h-5V3.25Z"/></svg>
+          Private
+        </button>
+        <button class="gh-vis-btn" id="gl-vis-public" onclick="GitLabRepoPicker.setVisibility('public')">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8V1.5Z"/></svg>
+          Public
+        </button>
+      </div>
+      <div class="modal-actions" style="margin-top:auto">
+        <button class="modal-cancel-btn" onclick="GitLabRepoPicker.close()">Cancel</button>
+        <button class="modal-ok-btn" id="gl-create-btn" onclick="GitLabRepoPicker.createRepo()">Create Repository</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Context Menu -->
+<div id="ctx-menu"></div>
+
+<!-- Credential Modal -->
+<div id="credential-modal">
+  <div class="modal-box">
+    <div class="modal-title" id="cred-modal-title">Connect to GitHub</div>
+    <div class="cred-info" id="cred-modal-info"></div>
+    <div class="modal-field">
+      <label class="modal-label">Username</label>
+      <input class="modal-input" id="cred-username" placeholder="your-username" autocomplete="username">
+    </div>
+    <div class="modal-field">
+      <label class="modal-label">Personal Access Token</label>
+      <input class="modal-input" id="cred-token" type="password" placeholder="ghp_…" autocomplete="current-password">
+    </div>
+    <div class="modal-actions">
+      <button class="modal-cancel-btn" onclick="UI.closeCredentialModal()">Cancel</button>
+      <button class="modal-ok-btn" onclick="Actions.saveCredential()">Save &amp; Connect</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast Container -->
+<div id="toast-container"></div>
+
+<script>
+// Redirect console.log to the native logger (appears in ~/Library/Logs/Zeo/*.log)
+(function() {
+  const _orig = console.log.bind(console);
+  console.log = function(...args) {
+    _orig(...args);
+    const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+    try {
+      window.webkit.messageHandlers.vcs.postMessage(
+        JSON.stringify({ action: 'console_log', message: msg })
+      );
+    } catch(e) {}
+  };
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+// VdZoom — pan + zoom via SVG viewBox (always vector-crisp)
+// ══════════════════════════════════════════════════════════════════════
+const VdZoom = (() => {
+  // Per-pane: { origX, origY, origW, origH, vbX, vbY, vbW, vbH }
+  // vbW/vbH are the current viewBox dimensions (shrink = zoom in, grow = zoom out)
+  const panes = {};
+
+  function getSvg(id) {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    const canvas = el.querySelector('.vd-svg-canvas');
+    return canvas ? canvas.querySelector('svg') : null;
+  }
+
+  function applyViewBox(id) {
+    const s = panes[id];
+    if (!s) return;
+    const svg = getSvg(id);
+    if (!svg) return;
+    svg.setAttribute('viewBox', `${s.vbX} ${s.vbY} ${s.vbW} ${s.vbH}`);
+  }
+
+  function fitToPane(id) {
+    const container = document.getElementById(id);
+    if (!container) return;
+    const svg = getSvg(id);
+    if (!svg) return;
+
+    const vb = svg.viewBox.baseVal;
+    if (!vb || vb.width <= 0 || vb.height <= 0) return;
+
+    const cw = container.clientWidth  || 400;
+    const ch = container.clientHeight || 300;
+
+    // Aspect-ratio-based fitting: expand viewBox to match pane AR while
+    // keeping content at 92% fill.  No scale factor involved — just geometry.
+    const aspContent = vb.width / vb.height;
+    const aspPane    = cw / ch;
+    let vbW, vbH;
+    if (aspContent > aspPane) {
+      // Width-constrained: content fills 92% of pane width
+      vbW = vb.width  / 0.92;
+      vbH = vbW * ch / cw;
+    } else {
+      // Height-constrained: content fills 92% of pane height
+      vbH = vb.height / 0.92;
+      vbW = vbH * cw / ch;
+    }
+
+    panes[id] = {
+      origX: vb.x, origY: vb.y, origW: vb.width, origH: vb.height,
+      vbW, vbH,
+      vbX: vb.x + vb.width  / 2 - vbW / 2,
+      vbY: vb.y + vb.height / 2 - vbH / 2,
+    };
+
+    svg.setAttribute('width',  '100%');
+    svg.setAttribute('height', '100%');
+    applyViewBox(id);
+  }
+
+  function init() {
+    // Wheel → zoom centred on cursor
+    document.addEventListener('wheel', (e) => {
+      const pane = e.target.closest('.vd-pane-content[id]');
+      if (!pane) return;
+      e.preventDefault();
+      const id = pane.id;
+      const s  = panes[id];
+      if (!s) return;
+
+      const rect = pane.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const cw = pane.clientWidth, ch = pane.clientHeight;
+
+      // SVG coordinate under cursor (before zoom)
+      const svgMx = s.vbX + mx / cw * s.vbW;
+      const svgMy = s.vbY + my / ch * s.vbH;
+
+      const factor = e.deltaY < 0 ? 1.15 : (1 / 1.15);
+      s.vbW /= factor;
+      s.vbH /= factor;
+
+      // Reposition so the cursor SVG coord stays fixed
+      s.vbX = svgMx - mx / cw * s.vbW;
+      s.vbY = svgMy - my / ch * s.vbH;
+      applyViewBox(id);
+    }, { passive: false });
+
+    // Drag → pan
+    let drag = null;
+    document.addEventListener('mousedown', (e) => {
+      const pane = e.target.closest('.vd-pane-content[id]');
+      if (!pane || e.button !== 0) return;
+      if (e.target.closest('button,a')) return;
+      const id = pane.id;
+      const s  = panes[id];
+      if (!s) return;
+      const cw = pane.clientWidth, ch = pane.clientHeight;
+      drag = { id, startX: e.clientX, startY: e.clientY,
+               origVbX: s.vbX, origVbY: s.vbY,
+               pxW: s.vbW / cw,   // SVG units per display pixel
+               pxH: s.vbH / ch };
+      pane.classList.add('dragging');
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!drag) return;
+      const s = panes[drag.id];
+      if (!s) return;
+      s.vbX = drag.origVbX - (e.clientX - drag.startX) * drag.pxW;
+      s.vbY = drag.origVbY - (e.clientY - drag.startY) * drag.pxH;
+      applyViewBox(drag.id);
+    });
+    document.addEventListener('mouseup', () => {
+      if (drag) {
+        const el = document.getElementById(drag.id);
+        if (el) el.classList.remove('dragging');
+        drag = null;
+      }
+    });
+
+    // Double-click → reset to fit
+    document.addEventListener('dblclick', (e) => {
+      const pane = e.target.closest('.vd-pane-content[id]');
+      if (!pane) return;
+      delete panes[pane.id];
+      fitToPane(pane.id);
+    });
+  }
+
+  return { init, fitToPane };
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+// Bridge — JS ↔ C++ communication
+// ══════════════════════════════════════════════════════════════════════
+const Bridge = (() => {
+  let _pendingQueue = [];
+  let _bridgeReady = false;
+  const _pending = new Map(); // requestId → { resolve, reject, timeout }
+
+  function _genId() {
+    return 'req_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now();
+  }
+
+  function _send(msg) {
+    const raw = JSON.stringify(msg);
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.vcs) {
+      window.webkit.messageHandlers.vcs.postMessage(raw);
+    } else {
+      // Bridge not available — queue for retry (or log in dev)
+      _pendingQueue.push(raw);
+      // In dev mode without the bridge, we can use the mock
+      if (window._vcsMock) window._vcsMock(msg);
+    }
+  }
+
+  function send(action, params, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const requestId = _genId();
+      const msg = Object.assign({ action, requestId }, params || {});
+      const timer = setTimeout(() => {
+        _pending.delete(requestId);
+        reject(new Error('Request timed out: ' + action));
+      }, timeoutMs || 15000);
+      _pending.set(requestId, { resolve, reject, timer });
+      _send(msg);
+    });
+  }
+
+  // Called by C++ for request/response
+  function onResponse(msg) {
+    const entry = _pending.get(msg.requestId);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    _pending.delete(msg.requestId);
+    if (msg.success) {
+      entry.resolve(msg.payload || {});
+    } else {
+      // Attach the payload to the Error so callers can inspect structured fields
+      // (e.g. noRemote, authFailed) even on failure
+      const payload = msg.payload || {};
+      const errMsg  = msg.error || payload.message || 'Unknown error';
+      const err     = new Error(errMsg);
+      err.payload   = payload;
+      entry.reject(err);
+    }
+  }
+
+  // Called by C++ for push notifications (status changed, etc.)
+  function onMessage(msg) {
+    switch (msg.action) {
+      case 'status_changed':
+        App.refreshStatus();
+        break;
+      case 'project_changed':
+        App.fullRefresh();
+        break;
+      case 'github_auth_complete': {
+        const username = msg.data && msg.data.username ? msg.data.username : '';
+        State.hasGitHubAuth  = true;
+        State.githubUsername = username;
+        // Fetch the stored token, then open the repo picker
+        Bridge.send('get_github_token').then(res => {
+          State.githubToken = res.token || '';
+          GitHubRepoPicker.open(username, State.githubToken);
+        }).catch(() => {
+          // Token unavailable — fall back to manual URL entry
+          UI.openAddRemote();
+        });
+        break;
+      }
+      case 'gitlab_auth_complete': {
+        const username = msg.data && msg.data.username ? msg.data.username : '';
+        State.hasGitLabAuth  = true;
+        State.gitlabUsername = username;
+        // Fetch the stored token, then open the repo picker
+        Bridge.send('get_gitlab_token').then(res => {
+          State.gitlabToken = res.token || '';
+          GitLabRepoPicker.open(username, State.gitlabToken);
+        }).catch(() => {
+          UI.openAddRemote();
+        });
+        break;
+      }
+    }
+  }
+
+  return { send, onResponse, onMessage };
+})();
+
+// Expose to C++
+window.VcsApp = {
+  onResponse: (msg) => Bridge.onResponse(msg),
+  onMessage:  (msg) => Bridge.onMessage(msg),
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// State
+// ══════════════════════════════════════════════════════════════════════
+const State = {
+  hasRepo:       false,
+  staged:        [],
+  unstaged:      [],
+  untracked:     [],
+  ahead:         0,
+  behind:        0,
+  remote:        null,
+  repoPath:      null,
+  currentBranch: '',
+  localBranches: [],
+  remoteBranches:[],
+
+  history:       [],
+  historyOffset: 0,
+  historyCount:  40,
+  historyHasMore:false,
+
+  selectedCommit:    null,  // commit object
+  selectedFile:      null,  // { path, context: 'staged'|'unstaged'|'untracked'|'commit', commitHash? }
+  multiSelected:     new Set(), // paths shift-click selected
+  lastClickedPath:   null,  // anchor for shift-click range
+  multiCursorPath:   null,  // keyboard cursor (far end of range); null = same as anchor
+  currentDiffMode:   'text',
+  commitNavTarget:   'history', // 'history'|'files' — what Up/Down navigates in commit view
+  diffContext:       null,  // { oldCommit, newCommit, filePath } — drives visual diff
+  visualDiffItems:   [],   // changedItems from last visual diff response
+  currentView:       'placeholder', // 'norepo' | 'placeholder' | 'diff' | 'commit'
+  userConfig:        null,  // { name, email } from git config
+  hasRemote:         false, // whether any remote is configured
+  _pushAfterRemote:  false, // set to true when user tries to push with no remote
+  _oauthPlatform:    'github', // 'github' | 'gitlab'
+  hasGitHubAuth:     false, // whether GitHub OAuth token is stored
+  githubUsername:    '',    // stored GitHub username
+  githubToken:       '',    // OAuth token (only in memory, never persisted by JS)
+  hasGitLabAuth:     false, // whether GitLab OAuth token is stored
+  gitlabUsername:    '',    // stored GitLab username
+  gitlabToken:       '',    // GitLab OAuth token (only in memory)
+
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// Utilities
+// ══════════════════════════════════════════════════════════════════════
+const FILE_TYPE_META = {
+  kicad_sch: { cls: 'ft-sch',  label: 'SCH',  title: 'Schematic' },
+  kicad_pcb: { cls: 'ft-pcb',  label: 'PCB',  title: 'PCB Layout' },
+  kicad_pro: { cls: 'ft-pro',  label: 'PRO',  title: 'Project' },
+  kicad_sym: { cls: 'ft-sym',  label: 'SYM',  title: 'Symbol Library' },
+  kicad_mod: { cls: 'ft-fp',   label: 'FP',   title: 'Footprint Library' },
+  kicad_wks: { cls: 'ft-wks',  label: 'WKS',  title: 'Drawing Sheet' },
+};
+
+function fileIcon(path) {
+  if (!path) return '<span class="ft-badge ft-file">FILE</span>';
+  const ext = (path.split('.').slice(1).join('.') || path.split('.').pop()).toLowerCase();
+  const meta = FILE_TYPE_META[ext];
+  if (!meta) {
+    const rawExt = path.split('.').pop().toUpperCase().slice(0, 4);
+    return `<span class="ft-badge ft-file" title="${rawExt}">${rawExt}</span>`;
+  }
+  return `<span class="ft-badge ${meta.cls}" title="${meta.title}">${meta.label}</span>`;
+}
+
+function fileIconLarge(path) {
+  if (!path) return '<span class="ft-badge-lg ft-file">FILE</span>';
+  const ext = (path.split('.').slice(1).join('.') || path.split('.').pop()).toLowerCase();
+  const meta = FILE_TYPE_META[ext];
+  if (!meta) {
+    const rawExt = path.split('.').pop().toUpperCase().slice(0, 4);
+    return `<span class="ft-badge-lg ft-file">${rawExt}</span>`;
+  }
+  return `<span class="ft-badge-lg ${meta.cls}">${meta.label}</span>`;
+}
+
+function statusIcon(status) {
+  switch ((status || '').toLowerCase()) {
+    case 'added':    return { icon: '+', cls: 'added' };
+    case 'modified': return { icon: '●', cls: 'modified' };
+    case 'deleted':  return { icon: '−', cls: 'deleted' };
+    case 'renamed':  return { icon: '→', cls: 'renamed' };
+    case 'conflict': return { icon: '!', cls: 'conflict' };
+    case 'untracked':return { icon: '+', cls: 'untracked' };
+    default:         return { icon: '+', cls: 'untracked' };
+  }
+}
+
+function basename(path) {
+  return (path || '').replace(/\\/g, '/').split('/').pop();
+}
+
+function relDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = Date.now();
+  const diff = now - d.getTime();
+  const min = 60000, hour = 3600000, day = 86400000;
+  if (diff < min)   return 'just now';
+  if (diff < hour)  return Math.floor(diff/min) + 'm ago';
+  if (diff < day)   return Math.floor(diff/hour) + 'h ago';
+  if (diff < 7*day) return Math.floor(diff/day) + 'd ago';
+  return d.toLocaleDateString(undefined, { month:'short', day:'numeric', year:'numeric' });
+}
+
+function escHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// Toast
+// ══════════════════════════════════════════════════════════════════════
+const Toast = {
+  show(msg, type, duration) {
+    const container = document.getElementById('toast-container');
+    const el = document.createElement('div');
+    el.className = 'toast ' + (type || 'info');
+    const msgEl = document.createElement('span');
+    msgEl.textContent = msg;
+    msgEl.style.cssText = 'user-select:text;-webkit-user-select:text;cursor:text';
+    const closeEl = document.createElement('span');
+    closeEl.className = 'toast-close';
+    closeEl.textContent = '✕';
+    closeEl.onclick = () => el.remove();
+    el.appendChild(msgEl);
+    el.appendChild(closeEl);
+    container.appendChild(el);
+    requestAnimationFrame(() => { requestAnimationFrame(() => { el.classList.add('show'); }); });
+    setTimeout(() => {
+      el.classList.remove('show');
+      setTimeout(() => el.remove(), 250);
+    }, duration || 4000);
+  },
+  error(msg)   { this.show(msg, 'error', 6000); },
+  success(msg) { this.show(msg, 'success'); },
+  info(msg)    { this.show(msg, 'info'); },
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// UI Rendering
+// ══════════════════════════════════════════════════════════════════════
+const UI = {
+
+  // ── Show/hide panels ──────────────────────────────────────────────
+  showView(which) {
+    // which: 'norepo' | 'placeholder' | 'diff' | 'commit'
+    State.currentView = which;
+    const diffView   = document.getElementById('diff-view');
+    const rightPanel = document.getElementById('right-panel');
+    const commitPane = document.getElementById('commit-diff-pane');
+
+    if (which === 'commit') {
+      // Move diff-view into commit-diff-pane (before the empty placeholder)
+      if (diffView.parentNode !== commitPane) {
+        const empty = document.getElementById('commit-diff-empty');
+        commitPane.insertBefore(diffView, empty);
+      }
+      diffView.style.display = 'none'; // hidden until a file is selected
+    } else {
+      // Move diff-view back to right-panel if needed
+      if (diffView.parentNode !== rightPanel) {
+        rightPanel.appendChild(diffView);
+      }
+      diffView.style.display = which === 'diff' ? 'flex' : 'none';
+    }
+
+    document.getElementById('no-repo-view').style.display    = which === 'norepo'      ? 'flex' : 'none';
+    document.getElementById('placeholder').style.display     = which === 'placeholder' ? 'flex' : 'none';
+    document.getElementById('commit-detail').style.display   = which === 'commit'      ? 'flex' : 'none';
+  },
+
+  // ── Branch bar ────────────────────────────────────────────────────
+  renderBranchBar() {
+    const label = document.getElementById('branch-btn-label');
+    if (label) label.textContent = State.currentBranch || '(no branch)';
+
+    // ahead/behind badges — elements may be absent during a spinner swap
+    const pushCount = document.getElementById('push-count');
+    const pullCount = document.getElementById('pull-count');
+    if (pushCount) {
+      pushCount.textContent   = State.ahead;
+      pushCount.style.display = State.ahead > 0 ? '' : 'none';
+    }
+    if (pullCount) {
+      pullCount.textContent   = State.behind;
+      pullCount.style.display = State.behind > 0 ? '' : 'none';
+    }
+
+    // Push button: disable if remote exists but nothing to push; keep enabled to trigger connect flow
+    const pushBtn = document.getElementById('push-btn');
+    if (pushBtn && !pushBtn.querySelector('.spinner')) {
+      const pushDisabled = State.hasRemote && State.ahead === 0;
+      pushBtn.disabled = pushDisabled;
+      pushBtn.title = pushDisabled ? 'Up to date' : (State.hasRemote ? '' : 'No remote configured — click to connect');
+    }
+
+    // Pull button: disable if remote exists but nothing to pull
+    const pullBtn = document.getElementById('pull-btn');
+    if (pullBtn && !pullBtn.querySelector('.spinner')) {
+      const pullDisabled = State.hasRemote && State.behind === 0;
+      pullBtn.disabled = pullDisabled;
+      pullBtn.title = pullDisabled ? 'Up to date' : '';
+    }
+  },
+
+  toggleBranchMenu() {
+    const menu = document.getElementById('branch-menu');
+    if (menu.classList.contains('open')) {
+      menu.classList.remove('open');
+      return;
+    }
+    this.renderBranchMenu();
+    menu.classList.add('open');
+  },
+
+  renderBranchMenu() {
+    const menu = document.getElementById('branch-menu');
+    let html = '';
+
+    if (State.localBranches.length) {
+      html += '<div class="branch-section-header">Local</div>';
+      State.localBranches.forEach(b => {
+        const isCur = b === State.currentBranch;
+        html += `<div class="branch-item ${isCur?'current':''}" onclick="Actions.switchBranch('${escHtml(b)}')">
+          <span>⎇</span><span>${escHtml(b)}</span>${isCur ? '<span class="bi-check">✓</span>' : ''}
+        </div>`;
+      });
+    }
+    if (State.remoteBranches.length) {
+      html += '<div class="branch-section-header">Remote</div>';
+      State.remoteBranches.forEach(b => {
+        html += `<div class="branch-item" onclick="Actions.switchBranch('${escHtml(b)}')">
+          <span style="color:var(--text-dim)">⎇</span><span style="color:var(--text-dim)">${escHtml(b)}</span>
+        </div>`;
+      });
+    }
+    if (!State.localBranches.length && !State.remoteBranches.length) {
+      html = '<div class="empty-section">No branches yet</div>';
+    }
+    html += `<div class="branch-item branch-new-item" onclick="UI.closeBranchMenu();Actions.createBranch()">
+      <span>＋</span><span>New branch…</span>
+    </div>`;
+    menu.innerHTML = html;
+  },
+
+  closeBranchMenu() {
+    document.getElementById('branch-menu').classList.remove('open');
+  },
+
+  _updateOpenInEditorBtn() {
+    const btn = document.getElementById('open-in-editor-btn');
+    if (!btn) return;
+    const ctx = State.diffContext;
+    const isKiCad = ctx && (ctx.filePath.endsWith('.kicad_sch') || ctx.filePath.endsWith('.kicad_pcb'));
+    btn.style.display = isKiCad ? '' : 'none';
+  },
+
+  copyHash(hash) {
+    navigator.clipboard.writeText(hash)
+      .then(() => Toast.success('Copied ' + hash.slice(0, 7)));
+  },
+
+  toggleAccountsMenu() {
+    const menu = document.getElementById('accounts-menu');
+    const isOpen = menu.style.display !== 'none';
+    if (isOpen) { menu.style.display = 'none'; return; }
+    this.renderAccountsMenu();
+    menu.style.display = '';
+  },
+
+  closeAccountsMenu() {
+    const menu = document.getElementById('accounts-menu');
+    if (menu) menu.style.display = 'none';
+  },
+
+  renderAccountsMenu() {
+    const menu = document.getElementById('accounts-menu');
+    let html = '';
+
+    if (State.hasGitHubAuth && State.githubUsername) {
+      const ghIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>`;
+      html += `<div class="branch-section-header">GitHub</div>
+        <div class="account-row">
+          <span class="account-label">${ghIcon}@${escHtml(State.githubUsername)}</span>
+          <a class="account-signout" onclick="UI.closeAccountsMenu();Actions.disconnectGitHub()">Sign out</a>
+        </div>`;
+    } else {
+      const ghIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>`;
+      html += `<div class="branch-section-header">GitHub</div>
+        <div class="account-row" style="cursor:pointer" onclick="UI.closeAccountsMenu();Actions.authGitHub()">
+          <span class="account-label">${ghIcon}Connect GitHub…</span>
+        </div>`;
+    }
+
+    if (State.hasGitLabAuth && State.gitlabUsername) {
+      const glIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0"><path d="M23.955 13.587l-1.342-4.135-2.664-8.189a.455.455 0 0 0-.867 0L16.418 9.45H7.582L4.918 1.263a.455.455 0 0 0-.867 0L1.386 9.449.044 13.587a.924.924 0 0 0 .331 1.023L12 23.054l11.625-8.443a.924.924 0 0 0 .33-1.024"/></svg>`;
+      html += `<div class="branch-section-header">GitLab</div>
+        <div class="account-row">
+          <span class="account-label">${glIcon}@${escHtml(State.gitlabUsername)}</span>
+          <a class="account-signout" onclick="UI.closeAccountsMenu();Actions.disconnectGitLab()">Sign out</a>
+        </div>`;
+    } else {
+      const glIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0"><path d="M23.955 13.587l-1.342-4.135-2.664-8.189a.455.455 0 0 0-.867 0L16.418 9.45H7.582L4.918 1.263a.455.455 0 0 0-.867 0L1.386 9.449.044 13.587a.924.924 0 0 0 .331 1.023L12 23.054l11.625-8.443a.924.924 0 0 0 .33-1.024"/></svg>`;
+      html += `<div class="branch-section-header">GitLab</div>
+        <div class="account-row" style="cursor:pointer" onclick="UI.closeAccountsMenu();Actions.authGitLab()">
+          <span class="account-label">${glIcon}Connect GitLab…</span>
+        </div>`;
+    }
+
+    if (State.userConfig && (State.userConfig.name || State.userConfig.email)) {
+      html += `<div class="branch-section-header">Git Identity</div>
+        <div class="account-row" style="flex-direction:column;align-items:flex-start;gap:2px">
+          ${State.userConfig.name ? `<span class="account-label">${escHtml(State.userConfig.name)}</span>` : ''}
+          ${State.userConfig.email ? `<span style="color:var(--text-dim);font-size:11px">${escHtml(State.userConfig.email)}</span>` : ''}
+        </div>`;
+    }
+
+    menu.innerHTML = html;
+  },
+
+  // ── Left panel file lists ─────────────────────────────────────────
+  renderChanges() {
+    const list    = document.getElementById('changes-list');
+    const countEl = document.getElementById('changes-count');
+
+    // Unified list sorted alphabetically by filename — checked state doesn't affect order
+    const stagedSet = new Set(State.staged.map(f => f.path));
+    const all = [
+      ...State.staged.map(f    => ({ path: f.path, status: f.status,    checked: true  })),
+      ...State.unstaged.map(f  => ({ path: f.path, status: f.status,    checked: false })),
+      ...State.untracked.map(p => ({ path: p,       status: 'untracked', checked: false })),
+    ].sort((a, b) => basename(a.path).localeCompare(basename(b.path)));
+
+    const total   = all.length;
+    const checked = State.staged.length;
+    countEl.textContent = total ? `(${checked}/${total})` : '';
+
+    if (!all.length) {
+      list.innerHTML = '<li class="empty-section">No changes</li>';
+      this.renderCommitPanel();
+      return;
+    }
+
+    list.innerHTML = all.map(f => {
+      const st           = statusIcon(f.status);
+      const name         = basename(f.path);
+      const isNew        = f.status === 'untracked';
+      const isSel        = State.selectedFile && State.selectedFile.path === f.path;
+      const isMultiSel   = State.multiSelected.has(f.path);
+      const discardTitle = isNew ? 'Delete file' : 'Discard changes';
+      const discard      = `<button class="file-action-btn" onclick="event.stopPropagation();Actions.discard(['${escHtml(f.path)}'])" title="${discardTitle}">↩</button>`;
+      const cls          = ['file-item', isSel ? 'selected' : '', isMultiSel ? 'multi-sel' : ''].filter(Boolean).join(' ');
+      return `<li class="${cls}" data-path="${escHtml(f.path)}"
+          onclick="UI.selectFile('${escHtml(f.path)}', 'changes', '${escHtml(f.status)}', event)">
+        <input type="checkbox" class="file-checkbox" ${f.checked ? 'checked' : ''}
+          onclick="event.stopPropagation()"
+          onchange="Actions.toggleFile('${escHtml(f.path)}', this.checked)">
+        <span class="file-name" title="${escHtml(f.path)}">${escHtml(name)}</span>
+        <div class="file-item-actions">${discard}</div>
+        <span class="file-status-glyph ${st.cls}" title="${escHtml(f.status)}">${st.icon}</span>
+      </li>`;
+    }).join('');
+    this.renderCommitPanel();
+  },
+
+  renderCommitPanel() {
+    const btn   = document.getElementById('commit-btn');
+    const badge = document.getElementById('commit-count-badge');
+    const msg   = document.getElementById('commit-msg').value.trim();
+    const n     = State.staged.length;
+    if (badge) {
+      badge.textContent = n;
+      badge.style.display = n > 0 ? '' : 'none';
+    }
+    // Don't re-enable the button while it's in spinner/committing state
+    if (btn && !btn.querySelector('.spinner')) btn.disabled = (n === 0 || !msg);
+  },
+
+  clearMultiSelect() {
+    State.multiSelected.clear();
+    State.lastClickedPath  = null;
+    State.multiCursorPath  = null;
+    this.renderChanges();
+  },
+
+  // ── History ───────────────────────────────────────────────────────
+  renderHistory() {
+    const el = document.getElementById('history-list');
+    if (!State.history.length) {
+      el.innerHTML = '<div class="empty-section">No commits yet</div>';
+      document.getElementById('load-more-btn').style.display = 'none';
+      return;
+    }
+    el.innerHTML = State.history.map((c, i) => {
+      const isSel  = State.selectedCommit && State.selectedCommit.hash === c.hash;
+      const isHead = i === 0;
+      const isLast = i === State.history.length - 1;
+      return `<div class="commit-item ${isSel?'selected':''}" onclick="UI.selectCommit('${escHtml(c.hash)}')">
+        <div class="commit-graph-col">
+          <div class="graph-line${isHead?' invis':''}"></div>
+          <div class="graph-dot${isHead?' head':''}"></div>
+          <div class="graph-line${isLast?' invis':''}"></div>
+        </div>
+        <div class="commit-info">
+          <div class="commit-top-row">
+            <span class="commit-hash">${escHtml(c.shortHash || c.hash.slice(0,7))}</span>
+            <span class="commit-subject">${escHtml(c.subject || c.message || '')}</span>
+          </div>
+          <div class="commit-meta">${escHtml(c.author)} · ${relDate(c.date)}</div>
+        </div>
+      </div>`;
+    }).join('');
+    document.getElementById('load-more-btn').style.display = State.historyHasMore ? '' : 'none';
+  },
+
+  // ── File selection (for diff) ─────────────────────────────────────
+  async selectFile(path, context, status, event) {
+    // Shift-click: extend range selection
+    if (event && event.shiftKey && State.lastClickedPath) {
+      const items = [...document.querySelectorAll('#changes-list .file-item')];
+      const paths = items.map(el => el.dataset.path).filter(Boolean);
+      const fromIdx = paths.indexOf(State.lastClickedPath);
+      const toIdx   = paths.indexOf(path);
+      if (fromIdx !== -1 && toIdx !== -1) {
+        const [lo, hi] = [Math.min(fromIdx, toIdx), Math.max(fromIdx, toIdx)];
+        for (let i = lo; i <= hi; i++) State.multiSelected.add(paths[i]);
+      }
+      this.renderChanges();
+      return;
+    }
+    // Ctrl/Cmd-click: toggle individual file in multi-select
+    if (event && (event.metaKey || event.ctrlKey)) {
+      if (State.multiSelected.has(path)) State.multiSelected.delete(path);
+      else State.multiSelected.add(path);
+      this.renderChanges();
+      return;
+    }
+    // Regular click: clear multi-select, set anchor, reset cursor
+    State.multiSelected.clear();
+    State.lastClickedPath = path;
+    State.multiCursorPath = null;
+
+    // Deselect commit
+    State.selectedCommit = null;
+    State.selectedFile = { path, context, status };
+
+    // Re-render lists to update selection highlight
+    this.renderChanges();
+    this.renderHistory();
+
+    // Always show HEAD vs working copy — full picture of all changes
+    const oldCommit = 'HEAD';
+    const newCommit = '';
+
+    // Store for visual diff mode
+    State.diffContext = { oldCommit, newCommit, filePath: path };
+    State.visualDiffItems = [];
+    UI._updateOpenInEditorBtn();
+
+    this.showView('diff');
+    document.getElementById('diff-file-path').textContent = path;
+
+    // Show mode tabs based on file type
+    const isProFile   = path.endsWith('.kicad_pro');
+    const isKiCadFile = path.endsWith('.kicad_sch') || path.endsWith('.kicad_pcb');
+    document.getElementById('diff-mode-visual').style.display   = isKiCadFile ? '' : 'none';
+    document.getElementById('diff-mode-settings').style.display = isProFile   ? '' : 'none';
+    this.setDiffMode(isKiCadFile ? 'visual' : isProFile ? 'settings' : 'text');
+
+    // Fetch and render text diff (loaded in background even when visual is default)
+    await this._loadTextDiff(oldCommit, newCommit, path);
+  },
+
+  async _loadTextDiff(oldCommit, newCommit, filePath) {
+    const cacheKey = `${oldCommit}|${newCommit}|${filePath}`;
+    const cached = this._diffCache && this._diffCache[cacheKey];
+    const panel = document.getElementById('text-diff-panel');
+
+    if (cached) {
+      this._currentDiffPayload = cached;
+      this._renderTextDiff(cached);
+      if (filePath.endsWith('.kicad_pro')) this._renderSettingsDiff(cached);
+      return;
+    }
+
+    // Only show spinner if the request takes longer than 80 ms — avoids visible flash
+    const loadingTimer = setTimeout(() => {
+      panel.innerHTML = '<div style="padding:20px;color:var(--text-dim);display:flex;align-items:center;gap:8px"><span class="spinner"></span> Loading diff…</div>';
+    }, 80);
+
+    try {
+      const payload = await Bridge.send('get_text_diff', { oldCommit, newCommit, filePath });
+      clearTimeout(loadingTimer);
+      if (!this._diffCache) this._diffCache = {};
+      this._diffCache[cacheKey] = payload;
+      this._currentDiffPayload = payload;
+      this._renderTextDiff(payload);
+      if (filePath.endsWith('.kicad_pro')) this._renderSettingsDiff(payload);
+    } catch (err) {
+      clearTimeout(loadingTimer);
+      panel.innerHTML = `<div style="padding:20px;color:var(--red)">Error: ${escHtml(err.message)}</div>`;
+    }
+  },
+
+  _renderTextDiff(payload) {
+    const panel = document.getElementById('text-diff-panel');
+
+    // Binary file
+    if (payload.isBinary) {
+      panel.innerHTML = '<div class="empty-section" style="padding:20px;font-style:italic;">Binary file — no text diff available</div>';
+      return;
+    }
+
+    const { patch, hunks } = payload;
+
+    // If backend sends raw patch string
+    if (patch && typeof patch === 'string') {
+      panel.innerHTML = this._parsePatchToHtml(patch);
+      return;
+    }
+
+    // If backend sends structured hunks
+    if (hunks && Array.isArray(hunks)) {
+      panel.innerHTML = this._renderHunks(hunks);
+      return;
+    }
+
+    panel.innerHTML = '<div class="empty-section">No changes</div>';
+  },
+
+  _parsePatchToHtml(patch) {
+    const lines = patch.split('\n');
+    let html = '<table class="diff-table"><tbody>';
+    let oldLn = 0, newLn = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.startsWith('@@')) {
+        // Parse hunk header: @@ -a,b +c,d @@
+        const m = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+        if (m) { oldLn = parseInt(m[1]); newLn = parseInt(m[2]); }
+        html += `<tr class="diff-hunk"><td colspan="3">${escHtml(line)}</td></tr>`;
+        continue;
+      }
+      if (line.startsWith('---') || line.startsWith('+++') || line.startsWith('diff ') || line.startsWith('index ') ||
+          line.startsWith('new file mode') || line.startsWith('deleted file mode') ||
+          line.startsWith('old mode') || line.startsWith('new mode') ||
+          line.startsWith('similarity index') || line.startsWith('rename from') ||
+          line.startsWith('rename to') || line.startsWith('copy from') ||
+          line.startsWith('copy to') || line.startsWith('Binary files')) {
+        continue; // skip file/mode headers
+      }
+      if (line.startsWith('+')) {
+        html += `<tr class="diff-add">
+          <td class="diff-ln"></td>
+          <td class="diff-ln">${newLn++}</td>
+          <td class="diff-code"><span class="diff-sign">+</span>${escHtml(line.slice(1))}</td></tr>`;
+      } else if (line.startsWith('-')) {
+        html += `<tr class="diff-del">
+          <td class="diff-ln">${oldLn++}</td>
+          <td class="diff-ln"></td>
+          <td class="diff-code"><span class="diff-sign">−</span>${escHtml(line.slice(1))}</td></tr>`;
+      } else if (line.startsWith('\\')) {
+        // "No newline at end of file"
+      } else {
+        html += `<tr class="diff-ctx">
+          <td class="diff-ln">${oldLn++}</td>
+          <td class="diff-ln">${newLn++}</td>
+          <td class="diff-code"><span class="diff-sign"> </span>${escHtml(line.slice(1))}</td></tr>`;
+      }
+    }
+    html += '</tbody></table>';
+    return html;
+  },
+
+  _renderHunks(hunks) {
+    let html = '<table class="diff-table"><tbody>';
+    for (const hunk of hunks) {
+      html += `<tr class="diff-hunk"><td colspan="3">${escHtml(hunk.header || '')}</td></tr>`;
+      let oldLn = hunk.oldStart || 0;
+      let newLn = hunk.newStart || 0;
+      for (const line of (hunk.lines || [])) {
+        const t = line.type || 'context';
+        const c = line.content || '';
+        if (t === 'add') {
+          html += `<tr class="diff-add">
+            <td class="diff-ln"></td>
+            <td class="diff-ln">${newLn++}</td>
+            <td class="diff-code"><span class="diff-sign">+</span>${escHtml(c)}</td></tr>`;
+        } else if (t === 'del' || t === 'delete') {
+          html += `<tr class="diff-del">
+            <td class="diff-ln">${oldLn++}</td>
+            <td class="diff-ln"></td>
+            <td class="diff-code"><span class="diff-sign">−</span>${escHtml(c)}</td></tr>`;
+        } else {
+          html += `<tr class="diff-ctx">
+            <td class="diff-ln">${oldLn++}</td>
+            <td class="diff-ln">${newLn++}</td>
+            <td class="diff-code"><span class="diff-sign"> </span>${escHtml(c)}</td></tr>`;
+        }
+      }
+    }
+    html += '</tbody></table>';
+    return html;
+  },
+
+  _renderSettingsDiff(payload) {
+    const tbody = document.getElementById('settings-diff-body');
+    tbody.innerHTML = '';
+
+    try {
+      const oldText = payload.oldContent || '';
+      const newText = payload.newContent || '';
+      if (!oldText && !newText) return;
+
+      const oldJson = JSON.parse(oldText || '{}');
+      const newJson = JSON.parse(newText || '{}');
+
+      // Recursively collect leaf-level changes, using dot-path keys
+      const rows = [];
+      const fmt = v => {
+        if (v === undefined) return '';
+        if (typeof v === 'object') return JSON.stringify(v);
+        return String(v);
+      };
+      const diff = (oldObj, newObj, prefix) => {
+        const allKeys = new Set([
+          ...Object.keys(oldObj || {}),
+          ...Object.keys(newObj || {}),
+        ]);
+        for (const k of allKeys) {
+          const path = prefix ? `${prefix}.${k}` : k;
+          const oldV = (oldObj || {})[k];
+          const newV = (newObj || {})[k];
+          const bothObj = oldV && newV && typeof oldV === 'object' && typeof newV === 'object'
+                          && !Array.isArray(oldV) && !Array.isArray(newV);
+          if (bothObj) {
+            diff(oldV, newV, path);
+          } else {
+            const oldS = fmt(oldV);
+            const newS = fmt(newV);
+            if (oldV === undefined) {
+              rows.push({ key: path, oldVal: '', newVal: newS, cls: 'sdt-add' });
+            } else if (newV === undefined) {
+              rows.push({ key: path, oldVal: oldS, newVal: '', cls: 'sdt-del' });
+            } else if (oldS !== newS) {
+              rows.push({ key: path, oldVal: oldS, newVal: newS, cls: 'sdt-mod' });
+            }
+          }
+        }
+      };
+      diff(oldJson, newJson, '');
+
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-section">No setting changes detected</td></tr>';
+        return;
+      }
+
+      for (const r of rows) {
+        const tr = document.createElement('tr');
+        tr.className = r.cls;
+        tr.innerHTML = `<td class="sdt-key">${escHtml(r.key)}</td>
+          <td class="sdt-old">${escHtml(r.oldVal)}</td>
+          <td class="sdt-change-arrow">→</td>
+          <td class="sdt-new">${escHtml(r.newVal)}</td>`;
+        tbody.appendChild(tr);
+      }
+    } catch (e) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-section">Could not parse as JSON</td></tr>';
+    }
+  },
+
+  setDiffMode(mode) {
+    State.currentDiffMode = mode;
+    document.getElementById('diff-mode-text').classList.toggle('active',     mode === 'text');
+    document.getElementById('diff-mode-visual').classList.toggle('active',   mode === 'visual');
+    document.getElementById('diff-mode-settings').classList.toggle('active', mode === 'settings');
+    document.getElementById('text-diff-panel').style.display     = mode === 'text'     ? 'block' : 'none';
+    document.getElementById('visual-diff-panel').style.display   = mode === 'visual'   ? 'flex'  : 'none';
+    document.getElementById('settings-diff-panel').style.display = mode === 'settings' ? 'block' : 'none';
+    if (mode === 'visual') this._renderVisualDiff();
+  },
+
+  _renderVisualDiff() {
+    const ctx = State.diffContext;
+    if (!ctx) return;
+    const iconLg = fileIconLarge(ctx.filePath);
+    const fname  = ctx.filePath.split('/').pop();
+    const isSch  = ctx.filePath.endsWith('.kicad_sch');
+
+    // Helper: parse SVG scale (SVG units per mm) from the SVG string.
+    // viewBox format: "minX minY width height" — capture the 3rd value.
+    // Use [-\d.]+ (with explicit separators) so spaces don't bleed into the number match.
+    const parseSvgScale = (svg) => {
+      const wm = svg.match(/width="([\d.]+)mm"/);
+      const vm = svg.match(/viewBox="[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)/);
+      if (wm && vm) return parseFloat(vm[1]) / parseFloat(wm[1]);
+      return 100; // fallback: 100 SVG units/mm (schematic default)
+    };
+
+    // Helper: inject highlight rects for changed items into SVG string
+    const addHighlights = (svg, items) => {
+      if (!items.length || !svg) return svg;
+      const scale   = parseSvgScale(svg);
+      const boxHalf = 5 * scale;      // 5 mm half-size box
+      const sw      = Math.max(1, scale * 0.25);
+      const rects   = items.map(item => {
+        const cx   = item.x * scale;
+        const cy   = item.y * scale;
+        const fill = item.changeType === 'added'    ? 'rgba(0,200,80,0.18)'
+                   : item.changeType === 'deleted'  ? 'rgba(220,50,50,0.18)'
+                   :                                  'rgba(255,160,0,0.18)';
+        const stroke = item.changeType === 'added'   ? '#00c853'
+                     : item.changeType === 'deleted' ? '#ff1744'
+                     :                                 '#ff9100';
+        return `<rect x="${cx-boxHalf}" y="${cy-boxHalf}" width="${boxHalf*2}" height="${boxHalf*2}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" rx="${scale*0.4}" stroke-dasharray="${sw*4},${sw*2}" pointer-events="none"/>`;
+      }).join('');
+      return svg.replace('</svg>', `<g id="vcs-hl">${rects}</g></svg>`);
+    };
+
+    // Helper: crop SVG viewBox to content bounds, then fit+center in pane via pan/zoom.
+    // For schematics the default viewBox covers the full page; we crop to actual content.
+    const fitSvgToPane = (contentId) => {
+      const container = document.getElementById(contentId);
+      if (!container) return;
+      const canvas = container.querySelector('.vd-svg-canvas');
+      const svgEl  = canvas && canvas.querySelector('svg');
+      if (!svgEl) return;
+
+      // For schematics: crop the SVG viewBox to the actual content bounds.
+      // Skip <rect> elements (background), only consider <g> children.
+      // Sanity check: if the computed bounds are nearly the full page, skip the crop.
+      if (isSch) {
+        const origVb = svgEl.viewBox.baseVal;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const child of svgEl.children) {
+          if (child.id === 'vcs-hl') continue;
+          if (child.tagName.toLowerCase() !== 'g') continue;
+          try {
+            const b = child.getBBox();
+            if (b.width > 0 && b.height > 0) {
+              minX = Math.min(minX, b.x);   minY = Math.min(minY, b.y);
+              maxX = Math.max(maxX, b.x + b.width); maxY = Math.max(maxY, b.y + b.height);
+            }
+          } catch(e) {}
+        }
+        if (isFinite(minX) && maxX > minX && maxY > minY) {
+          const w = maxX - minX, h = maxY - minY;
+          // Only apply crop if it meaningfully reduces the page bounds (>20% smaller)
+          const origW = origVb.width || 1, origH = origVb.height || 1;
+          if (w < origW * 0.8 || h < origH * 0.8) {
+            const pad = Math.max(w, h) * 0.08;
+            svgEl.setAttribute('viewBox', `${minX-pad} ${minY-pad} ${w+pad*2} ${h+pad*2}`);
+          }
+        }
+      }
+
+      // Fit-to-pane: scale SVG so it fills the pane, then center it
+      VdZoom.fitToPane(contentId);
+    };
+
+    const loadingPh = `<div class="vd-placeholder">
+      <div class="vd-placeholder-icon">${iconLg}</div>
+      <div class="vd-placeholder-msg">Rendering visual diff…</div>
+      <div class="vd-placeholder-sub">Running kicad-cli export</div>
+    </div>`;
+
+    // During loading: hide the before pane to avoid flicker (two-col → one-col flash).
+    // It will be revealed after load only if this is not a new file.
+    const beforePane  = document.getElementById('vd-pane-before');
+    const separatorEl = document.getElementById('vd-separator');
+    if (beforePane)   beforePane.style.display  = 'none';
+    if (separatorEl)  separatorEl.style.display = 'none';
+    document.getElementById('vd-before').innerHTML = '';
+    document.getElementById('vd-after').innerHTML  = loadingPh;
+
+    Bridge.send('get_visual_diff', {
+      oldCommit: ctx.oldCommit,
+      newCommit: ctx.newCommit,
+      filePath:  ctx.filePath,
+    }, 60000).then(payload => {
+      const changedItems = payload.changedItems || [];
+      State.visualDiffItems = changedItems;
+      this._updateOpenInEditorBtn();
+      // Use the server-side flag — it's definitive even if beforeSvg export fails
+      const isNewFile = !!payload.fileIsNew;
+
+      // Reveal before pane only for modified/deleted files
+      if (beforePane)  beforePane.style.display  = isNewFile ? 'none' : '';
+      if (separatorEl) separatorEl.style.display = isNewFile ? 'none' : '';
+
+      // Build change-count badge
+      const makeBadge = () => {
+        const added    = changedItems.filter(i => i.changeType === 'added').length;
+        const modified = changedItems.filter(i => i.changeType === 'modified').length;
+        const deleted  = changedItems.filter(i => i.changeType === 'deleted').length;
+        const parts = [];
+        if (added)    parts.push(`<span class="vd-badge vd-badge-added">+${added} added</span>`);
+        if (modified) parts.push(`<span class="vd-badge vd-badge-modified">~${modified} modified</span>`);
+        if (deleted)  parts.push(`<span class="vd-badge vd-badge-deleted">-${deleted} deleted</span>`);
+        return parts.length ? `<div class="vd-change-bar">${parts.join('')}</div>` : '';
+      };
+
+      const renderPane = (svgContent, paneItems) => {
+        if (!svgContent) {
+          if (isNewFile) return ''; // before pane is hidden
+          return `<div class="vd-placeholder">
+            <div class="vd-placeholder-icon">${iconLg}</div>
+            <div class="vd-placeholder-msg">${escHtml(fname)}</div>
+            <div class="vd-placeholder-sub">SVG export unavailable<br>kicad-cli not found</div>
+          </div>`;
+        }
+        let svg = svgContent;
+        // Keep natural SVG dimensions — pan/zoom will handle sizing
+        svg = addHighlights(svg, paneItems);
+        return `<div class="vd-svg-canvas">${svg}</div>`;
+      };
+
+      // Before pane: show deleted + modified items
+      const beforeItems = changedItems.filter(i => i.changeType === 'deleted' || i.changeType === 'modified');
+      // After pane: show added + modified items; badge only here
+      const afterItems  = changedItems.filter(i => i.changeType === 'added'   || i.changeType === 'modified');
+
+      document.getElementById('vd-before').innerHTML = renderPane(payload.beforeSvg, beforeItems);
+      const afterContent = makeBadge() + renderPane(payload.afterSvg, afterItems);
+      document.getElementById('vd-after').innerHTML  = afterContent;
+
+      // Fit SVGs to their panes after a short delay for WebKit layout
+      setTimeout(() => {
+        fitSvgToPane('vd-before');
+        fitSvgToPane('vd-after');
+      }, 200);
+    }).catch(err => {
+      const errHtml = `<div class="vd-placeholder">
+        <div class="vd-placeholder-icon">⚠️</div>
+        <div class="vd-placeholder-msg">${escHtml(err.message || String(err))}</div>
+      </div>`;
+      document.getElementById('vd-before').innerHTML = errHtml;
+      document.getElementById('vd-after').innerHTML  = errHtml;
+    });
+  },
+
+  renderUserConfig() {
+    const btn = document.getElementById('commit-btn');
+    if (!btn) return;
+    const cfg = State.userConfig;
+    if (!cfg) { btn.title = ''; return; }
+    if (cfg.name || cfg.email) {
+      btn.title = `Committing as ${cfg.name || 'Unknown'}${cfg.email ? ' <' + cfg.email + '>' : ''}`;
+    } else {
+      btn.title = 'No git user configured (set user.name / user.email)';
+    }
+  },
+
+  // ── Commit selection ──────────────────────────────────────────────
+  async selectCommit(hash) {
+    if (State.selectedCommit && State.selectedCommit.hash === hash) return;
+    const commit = State.history.find(c => c.hash === hash);
+    if (!commit) return;
+
+    State.selectedCommit  = commit;
+    State.selectedFile    = null;
+    State.commitNavTarget = 'history'; // Up/Down navigates history until user clicks a file
+
+    this.renderHistory();
+    this.renderChanges();
+    this.showView('commit');
+
+    const cdHashEl = document.getElementById('cd-hash');
+    cdHashEl.textContent = commit.hash;
+    cdHashEl.title       = 'Click to copy';
+    cdHashEl.onclick     = () => UI.copyHash(commit.hash);
+    document.getElementById('cd-subject').textContent   = commit.subject || commit.message || '';
+    const authorEl = document.getElementById('cd-author');
+    authorEl.textContent = commit.author || '';
+    authorEl.title       = commit.email  || '';
+    document.getElementById('cd-date').textContent      = commit.date ? new Date(commit.date).toLocaleString() : '';
+
+    // Reset commit diff pane to empty state
+    document.getElementById('diff-view').style.display         = 'none';
+    document.getElementById('commit-diff-empty').style.display = 'flex';
+
+    const filesEl = document.getElementById('cd-files-list');
+    filesEl.innerHTML = '<div style="padding:8px;color:var(--text-dim);display:flex;align-items:center;gap:6px"><span class="spinner"></span> Loading…</div>';
+
+    try {
+      const payload = await Bridge.send('get_commit_files', { hash });
+      const files = payload.files || [];
+      if (!files.length) {
+        filesEl.innerHTML = '<div class="empty-section">No changed files</div>';
+        return;
+      }
+      filesEl.innerHTML = files.map(f => {
+        const st   = statusIcon(f.status);
+        const name = basename(f.path);
+        return `<div class="cd-file-item" data-path="${escHtml(f.path)}"
+            onclick="UI.selectCommitFile('${escHtml(hash)}', '${escHtml(f.path)}', '${escHtml(f.status)}', event)">
+          <span class="file-status-glyph ${st.cls}" title="${escHtml(f.status)}">${st.icon}</span>
+          <span class="file-name" title="${escHtml(f.path)}">${escHtml(name)}</span>
+        </div>`;
+      }).join('');
+
+      // No auto-selection — user navigates with arrow keys or clicks a file
+    } catch (err) {
+      filesEl.innerHTML = `<div style="padding:8px;color:var(--red)">${escHtml(err.message)}</div>`;
+    }
+  },
+
+  async selectCommitFile(commitHash, filePath, status, clickEvent) {
+    // Highlight selected file in the list
+    document.querySelectorAll('.cd-file-item').forEach(el => el.classList.remove('selected'));
+    const clickedEl = clickEvent && clickEvent.currentTarget;
+    if (clickedEl) clickedEl.classList.add('selected');
+    else {
+      // Auto-selection path: find by data-path
+      const el = document.querySelector(`.cd-file-item[data-path="${CSS.escape(filePath)}"]`);
+      if (el) el.classList.add('selected');
+    }
+
+    State.selectedFile    = { path: filePath, context: 'commit', status, commitHash };
+    State.commitNavTarget = 'files'; // Up/Down now navigates files within this commit
+
+    const commit = State.selectedCommit;
+    const parentHash = (commit && commit.parents && commit.parents[0]) ? commit.parents[0] : '';
+
+    // Store context for visual diff (shared with workdir visual diff)
+    State.diffContext = { oldCommit: parentHash || '', newCommit: commitHash, filePath };
+    State.visualDiffItems = [];
+    UI._updateOpenInEditorBtn();
+
+    // Show diff-view inside commit-diff-pane, hide empty placeholder
+    document.getElementById('diff-view').style.display         = 'flex';
+    document.getElementById('commit-diff-empty').style.display = 'none';
+
+    // Update shared diff header
+    document.getElementById('diff-file-path').textContent = filePath.split('/').pop();
+    const isProFile   = filePath.endsWith('.kicad_pro');
+    const isKiCadFile = filePath.endsWith('.kicad_sch') || filePath.endsWith('.kicad_pcb');
+    document.getElementById('diff-mode-visual').style.display   = isKiCadFile ? '' : 'none';
+    document.getElementById('diff-mode-settings').style.display = isProFile   ? '' : 'none';
+    this.setDiffMode(isKiCadFile ? 'visual' : isProFile ? 'settings' : 'text');
+
+    await this._loadTextDiff(parentHash || '', commitHash, filePath);
+
+    // DEBUG: log diff payload and rendered row counts
+    setTimeout(() => {
+      const payload = this._currentDiffPayload;
+      const addRows = document.querySelectorAll('#text-diff-panel .diff-add').length;
+      const delRows = document.querySelectorAll('#text-diff-panel .diff-del').length;
+      const ctxRows = document.querySelectorAll('#text-diff-panel .diff-ctx').length;
+      console.log(`[VCS] diff payload keys: ${payload ? Object.keys(payload).join(', ') : 'null'}`);
+      console.log(`[VCS] isBinary=${payload?.isBinary} hasPatch=${!!payload?.patch} hasHunks=${!!payload?.hunks}`);
+      console.log(`[VCS] rendered rows — add:${addRows} del:${delRows} ctx:${ctxRows}`);
+      if (payload?.patch) {
+        const first200 = payload.patch.slice(0, 200).replace(/\n/g, '\\n');
+        console.log(`[VCS] patch[0:200]: ${first200}`);
+        const lines = payload.patch.split('\n');
+        const plusLines  = lines.filter(l => l.startsWith('+')).length;
+        const minusLines = lines.filter(l => l.startsWith('-')).length;
+        const atLines    = lines.filter(l => l.startsWith('@@')).length;
+        console.log(`[VCS] patch lines total:${lines.length}  +:${plusLines}  -:${minusLines}  @@:${atLines}`);
+      }
+      if (payload?.hunks) {
+        let total = 0, adds = 0, dels = 0;
+        for (const h of payload.hunks) {
+          for (const l of (h.lines || [])) { total++; if (l.type==='add') adds++; if (l.type==='del'||l.type==='delete') dels++; }
+        }
+        console.log(`[VCS] hunks:${payload.hunks.length} lines total:${total} add:${adds} del:${dels}`);
+      }
+      console.log(`[VCS] oldCommit="${parentHash||''}" newCommit="${commitHash}" filePath="${filePath}"`);
+    }, 300);
+  },
+
+  // ── Add Remote Modal ──────────────────────────────────────────────
+  openAddRemote() {
+    this.renderAddRemoteOAuth();
+    document.getElementById('add-remote-panel').classList.add('open');
+    document.getElementById('remote-url-input').focus();
+  },
+  closeAddRemote() {
+    document.getElementById('add-remote-panel').classList.remove('open');
+  },
+  renderAddRemoteOAuth() {
+    const btns = document.getElementById('add-remote-oauth-btns');
+    if (!btns) return;
+    const ghBtn  = btns.querySelector('.github-btn');
+    const glBtn  = btns.querySelector('.gitlab-btn');
+    const status = document.getElementById('add-remote-auth-status');
+
+    const ghIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>`;
+    const glIcon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M23.955 13.587l-1.342-4.135-2.664-8.189a.455.455 0 0 0-.867 0L16.418 9.45H7.582L4.918 1.263a.455.455 0 0 0-.867 0L1.386 9.449.044 13.587a.924.924 0 0 0 .331 1.023L12 23.054l11.625-8.443a.924.924 0 0 0 .33-1.024"/></svg>`;
+
+    // Update GitHub button
+    if (ghBtn) {
+      if (State.hasGitHubAuth && State.githubUsername) {
+        ghBtn.innerHTML = `${ghIcon} ✓ @${escHtml(State.githubUsername)}`;
+      } else {
+        ghBtn.innerHTML = `${ghIcon} Connect GitHub`;
+      }
+      ghBtn.onclick = () => Actions.authGitHub();
+    }
+
+    // Update GitLab button
+    if (glBtn) {
+      if (State.hasGitLabAuth && State.gitlabUsername) {
+        glBtn.innerHTML = `${glIcon} ✓ @${escHtml(State.gitlabUsername)}`;
+      } else {
+        glBtn.innerHTML = `${glIcon} Connect GitLab`;
+      }
+      glBtn.onclick = () => Actions.authGitLab();
+    }
+
+    // Build combined auth status line
+    if (status) {
+      const parts = [];
+      if (State.hasGitHubAuth && State.githubUsername) {
+        parts.push(`GitHub: @${escHtml(State.githubUsername)} &nbsp;<a style="color:var(--text-dim);cursor:pointer;text-decoration:underline" onclick="Actions.disconnectGitHub()">Sign out</a>`);
+      }
+      if (State.hasGitLabAuth && State.gitlabUsername) {
+        parts.push(`GitLab: @${escHtml(State.gitlabUsername)} &nbsp;<a style="color:var(--text-dim);cursor:pointer;text-decoration:underline" onclick="Actions.disconnectGitLab()">Sign out</a>`);
+      }
+      if (parts.length > 0) {
+        status.innerHTML = parts.join(' &nbsp;·&nbsp; ');
+        status.style.display = '';
+      } else {
+        status.style.display = 'none';
+      }
+    }
+  },
+
+  // ── Credential Modal ───────────────────────────────────────────────
+  openCredentialModal(platform) {
+    State._oauthPlatform = platform;
+    const isGitLab = platform === 'gitlab';
+    document.getElementById('cred-modal-title').textContent =
+      isGitLab ? 'Connect to GitLab' : 'Connect to GitHub';
+    document.getElementById('cred-modal-info').innerHTML = isGitLab
+      ? 'Create a Personal Access Token with <strong>write_repository</strong> scope at ' +
+        '<a onclick="Bridge.send(\'open_url\',{url:\'https://gitlab.com/-/user_settings/personal_access_tokens\'})">gitlab.com/user_settings/personal_access_tokens</a>'
+      : 'Create a Personal Access Token with <strong>repo</strong> scope at ' +
+        '<a onclick="Bridge.send(\'open_url\',{url:\'https://github.com/settings/tokens/new\'})">github.com/settings/tokens</a>';
+    document.getElementById('cred-username').placeholder =
+      isGitLab ? 'your-gitlab-username' : 'your-github-username';
+    document.getElementById('cred-token').placeholder =
+      isGitLab ? 'glpat-xxxxxxxxxxxx' : 'ghp_xxxxxxxxxxxx';
+    document.getElementById('credential-modal').classList.add('visible');
+  },
+  closeCredentialModal() {
+    document.getElementById('credential-modal').classList.remove('visible');
+    document.getElementById('cred-username').value = '';
+    document.getElementById('cred-token').value = '';
+  },
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// Actions — high-level operations
+// ══════════════════════════════════════════════════════════════════════
+const Actions = {
+
+  async refreshAll() {
+    // Workdir diffs (newCommit = '') may have changed; evict those cache entries
+    if (UI._diffCache) {
+      for (const k of Object.keys(UI._diffCache)) {
+        // key format: oldCommit|newCommit|filePath — evict if newCommit segment is empty
+        const parts = k.split('|');
+        if (parts[1] === '') delete UI._diffCache[k];
+      }
+    }
+    await Promise.all([
+      this.loadStatus(),
+      this.loadBranches(),
+    ]);
+    await this.loadHistory(true);
+  },
+
+  async loadUserConfig() {
+    try {
+      const cfg = await Bridge.send('get_user_config');
+      State.userConfig = cfg;
+      UI.renderUserConfig();
+    } catch (e) { /* non-fatal */ }
+  },
+
+  async loadStatus() {
+    try {
+      const payload = await Bridge.send('get_status');
+      State.hasRepo    = payload.hasRepo !== false;
+      State.staged     = payload.staged   || [];
+      State.unstaged   = payload.unstaged || [];
+      State.untracked  = payload.untracked || [];
+      State.ahead      = payload.ahead  || 0;
+      State.behind     = payload.behind || 0;
+      State.remote     = payload.remote || null;
+      State.repoPath   = payload.repoPath || null;
+      State.hasRemote      = payload.hasRemote      || false;
+      State.hasGitHubAuth  = payload.hasGitHubAuth  || false;
+      State.githubUsername = payload.githubUsername  || '';
+      State.hasGitLabAuth  = payload.hasGitLabAuth  || false;
+      State.gitlabUsername = payload.gitlabUsername  || '';
+
+      if (!State.hasRepo) {
+        UI.showView('norepo');
+        document.getElementById('left-panel').style.display = 'none';
+        document.getElementById('branch-bar').style.display = 'none';
+        return;
+      }
+
+      document.getElementById('left-panel').style.display = '';
+      document.getElementById('branch-bar').style.display = '';
+      UI.renderChanges();
+      UI.renderBranchBar();
+
+      // If nothing is selected, show placeholder
+      if (!State.selectedFile && !State.selectedCommit) {
+        UI.showView('placeholder');
+      }
+    } catch (err) {
+      Toast.error('Failed to get status: ' + err.message);
+    }
+  },
+
+  async loadBranches() {
+    try {
+      const payload = await Bridge.send('get_branches');
+      State.currentBranch  = payload.current || '';
+      State.localBranches  = payload.local   || [];
+      State.remoteBranches = payload.remote  || [];
+      UI.renderBranchBar();
+    } catch (err) {
+      // Non-fatal; branch info may not be available on init
+    }
+  },
+
+  async loadHistory(reset) {
+    if (reset) {
+      State.history       = [];
+      State.historyOffset = 0;
+      State.historyHasMore = false;
+    }
+    try {
+      const payload = await Bridge.send('get_history', {
+        count:  State.historyCount + 1,
+        offset: State.historyOffset,
+      });
+      const commits = payload.commits || [];
+      if (commits.length > State.historyCount) {
+        State.historyHasMore = true;
+        commits.pop();
+      } else {
+        State.historyHasMore = false;
+      }
+      State.history       = (reset ? [] : State.history).concat(commits);
+      State.historyOffset += commits.length;
+      UI.renderHistory();
+    } catch (err) {
+      // Empty repo or no commits yet is fine
+    }
+  },
+
+  loadMoreHistory() {
+    this.loadHistory(false);
+  },
+
+  async stage(paths) {
+    try {
+      await Bridge.send('stage', { paths });
+      await this.loadStatus();
+    } catch (err) {
+      Toast.error('Stage failed: ' + err.message);
+    }
+  },
+
+  async unstage(paths) {
+    try {
+      await Bridge.send('unstage', { paths });
+      await this.loadStatus();
+    } catch (err) {
+      Toast.error('Unstage failed: ' + err.message);
+    }
+  },
+
+  async toggleFile(path, checked) {
+    if (checked) {
+      await this.stage([path]);
+    } else {
+      await this.unstage([path]);
+    }
+  },
+
+  async checkAll() {
+    const paths = [
+      ...State.unstaged.map(f => f.path),
+      ...State.untracked,
+    ];
+    if (!paths.length) return;
+    await this.stage(paths);
+  },
+
+  async uncheckAll() {
+    const paths = State.staged.map(f => f.path);
+    if (!paths.length) return;
+    await this.unstage(paths);
+  },
+
+  async discard(paths) {
+    const hasUntracked = paths.some(p => State.untracked.includes(p));
+    const msg = hasUntracked
+      ? `Delete ${paths.length} untracked file(s)? This cannot be undone.`
+      : `Discard changes to ${paths.length} file(s)? This cannot be undone.`;
+    if (!await DiscardModal.ask(msg)) return;
+    try {
+      await Bridge.send('discard_changes', { paths });
+      await this.loadStatus();
+      Toast.info('Changes discarded');
+    } catch (err) {
+      Toast.error('Discard failed: ' + err.message);
+    }
+  },
+
+  async discardSelected() {
+    const paths = [...State.multiSelected];
+    if (!paths.length) return;
+    const hasUntracked = paths.some(p => State.untracked.includes(p));
+    const noun = hasUntracked ? 'Delete' : 'Discard changes to';
+    if (!await DiscardModal.ask(`${noun} ${paths.length} selected file(s)? This cannot be undone.`)) return;
+    try {
+      await Bridge.send('discard_changes', { paths });
+      State.multiSelected.clear();
+      State.lastClickedPath = null;
+      await this.loadStatus();
+      Toast.info(`Discarded ${paths.length} file(s)`);
+    } catch (err) {
+      Toast.error('Discard failed: ' + err.message);
+    }
+  },
+
+  async commit() {
+    const msgEl = document.getElementById('commit-msg');
+    const message = msgEl.value.trim();
+    if (!message) { Toast.error('Commit message is required'); return; }
+    if (!State.staged.length) { Toast.error('No files checked — check at least one file to commit'); return; }
+
+    const btn = document.getElementById('commit-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Committing…';
+
+    try {
+      const payload = await Bridge.send('commit', { message });
+      msgEl.value = '';
+      State.selectedCommit = null;
+      State.selectedFile   = null;
+      Toast.success('Committed: ' + (payload.hash || '').slice(0, 7));
+      await this.refreshAll();
+      UI.showView('placeholder');
+    } catch (err) {
+      Toast.error('Commit failed: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = 'Commit <span class="commit-count-badge" id="commit-count-badge">0</span>';
+      UI.renderCommitPanel();
+    }
+  },
+
+  async push() {
+    // If no remote is configured, go straight to the connect flow
+    if (!State.hasRemote) {
+      State._pushAfterRemote = true;
+      UI.openAddRemote();
+      return;
+    }
+    const btn = document.getElementById('push-btn');
+    btn.disabled = true;
+    const orig = btn.innerHTML;
+    btn.style.width = btn.offsetWidth + 'px';
+    btn.innerHTML = '<span class="spinner"></span>';
+    try {
+      const payload = await Bridge.send('push', {});
+      Toast.success(payload.message || 'Push successful');
+      await this.loadStatus();
+      await this.loadBranches();
+    } catch (err) {
+      if (err.payload && err.payload.noRemote) {
+        State._pushAfterRemote = true;
+        UI.openAddRemote();
+        Toast.info('No remote configured — add one to push');
+      } else if (err.payload && err.payload.authFailed) {
+        Toast.error('Push failed: authentication error. Check your credentials.');
+      } else {
+        Toast.error('Push failed: ' + err.message);
+      }
+    } finally {
+      btn.disabled = false;
+      btn.style.width = '';
+      btn.innerHTML = orig;
+      UI.renderBranchBar(); // refresh badge from updated State.ahead
+    }
+  },
+
+  async pull() {
+    const btn = document.getElementById('pull-btn');
+    btn.disabled = true;
+    const orig = btn.innerHTML;
+    btn.style.width = btn.offsetWidth + 'px';
+    btn.innerHTML = '<span class="spinner"></span>';
+    try {
+      const payload = await Bridge.send('pull', {});
+      if (payload.noRemote) {
+        State._pushAfterRemote = false; // pull, not push
+        UI.openAddRemote();
+        Toast.info('No remote configured — add one to pull');
+      } else if (payload.conflicts && payload.conflicts.length) {
+        Toast.error('Pull completed with conflicts: ' + payload.conflicts.join(', '));
+        await this.refreshAll();
+      } else {
+        Toast.success(payload.message || 'Pull successful');
+        await this.refreshAll();
+      }
+    } catch (err) {
+      if (err.payload && err.payload.noRemote) {
+        UI.openAddRemote();
+        Toast.info('No remote configured — add one to pull');
+      } else {
+        Toast.error('Pull failed: ' + err.message);
+      }
+    } finally {
+      btn.disabled = false;
+      btn.style.width = '';
+      btn.innerHTML = orig;
+      UI.renderBranchBar(); // refresh badge from updated State.behind
+    }
+  },
+
+  async fetch() {
+    const btn = document.getElementById('fetch-btn');
+    btn.disabled = true;
+    const orig = btn.innerHTML;
+    btn.style.width = btn.offsetWidth + 'px';
+    btn.innerHTML = '<span class="spinner"></span>';
+    try {
+      await Bridge.send('fetch', {});
+      await this.loadStatus();
+      await this.loadBranches();
+      Toast.info('Fetched latest from remote');
+    } catch (err) {
+      if (err.payload && err.payload.noRemote) {
+        UI.openAddRemote();
+        Toast.info('No remote configured — add one to sync');
+      } else {
+        Toast.error('Fetch failed: ' + err.message);
+      }
+    } finally {
+      btn.disabled = false;
+      btn.style.width = '';
+      btn.innerHTML = orig;
+    }
+  },
+
+  async createBranch() {
+    const name = await NewBranchModal.ask();
+    if (!name) return;
+    try {
+      await Bridge.send('create_branch', { name: name.trim() });
+      await Bridge.send('switch_branch', { name: name.trim() });
+      await this.loadBranches();
+      Toast.success('Switched to new branch: ' + name.trim());
+    } catch (err) {
+      Toast.error('Create branch failed: ' + err.message);
+    }
+  },
+
+  async switchBranch(name) {
+    UI.closeBranchMenu();
+    if (name === State.currentBranch) return;
+    try {
+      await Bridge.send('switch_branch', { name });
+      await this.refreshAll();
+      Toast.info('Switched to ' + name);
+    } catch (err) {
+      Toast.error('Switch branch failed: ' + err.message);
+    }
+  },
+
+  // ── Credential / OAuth actions ────────────────────────────────────
+  authGitHub() {
+    if (State.hasGitHubAuth && State.githubUsername) {
+      // Already authenticated — go straight to repo picker, fetching token on demand
+      if (State.githubToken) {
+        GitHubRepoPicker.open(State.githubUsername, State.githubToken);
+      } else {
+        Bridge.send('get_github_token').then(res => {
+          State.githubToken = res.token || '';
+          GitHubRepoPicker.open(State.githubUsername, State.githubToken);
+        }).catch(() => UI.openAddRemote());
+      }
+      return;
+    }
+    // Opens zeo.dev/auth/connect-vcs which triggers GitHub OAuth with repo scope.
+    // When auth completes, the app receives kicad-agent://vcs-callback and
+    // sends a github_auth_complete message back to the webview.
+    Bridge.send('connect_github');
+    Toast.info('Opening GitHub authorization in your browser…');
+  },
+  authGitLab() {
+    if (State.hasGitLabAuth && State.gitlabUsername) {
+      // Already authenticated — go straight to repo picker, fetching token on demand
+      if (State.gitlabToken) {
+        GitLabRepoPicker.open(State.gitlabUsername, State.gitlabToken);
+      } else {
+        Bridge.send('get_gitlab_token').then(res => {
+          State.gitlabToken = res.token || '';
+          GitLabRepoPicker.open(State.gitlabUsername, State.gitlabToken);
+        }).catch(() => UI.openAddRemote());
+      }
+      return;
+    }
+    // Opens zeo.dev/auth/connect-gitlab which triggers GitLab OAuth.
+    // When auth completes, the app receives kicad-agent://vcs-callback and
+    // sends a gitlab_auth_complete message back to the webview.
+    Bridge.send('connect_gitlab');
+    Toast.info('Opening GitLab authorization in your browser…');
+  },
+
+  async openInEditor() {
+    const ctx = State.diffContext;
+    if (!ctx) return;
+    const btn = document.getElementById('open-in-editor-btn');
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner"></span>';
+    btn.disabled = true;
+    try {
+      await Bridge.send('open_in_editor', {
+        filePath:     ctx.filePath,
+        changedItems: State.visualDiffItems || [],
+      });
+      Toast.success('Opened in editor');
+    } catch (err) {
+      Toast.error('Open in editor failed: ' + err.message);
+    } finally {
+      btn.innerHTML = orig;
+      btn.disabled  = false;
+    }
+  },
+
+  async disconnectGitHub() {
+    try {
+      await Bridge.send('disconnect_github');
+      State.hasGitHubAuth  = false;
+      State.githubUsername = '';
+      State.githubToken    = '';
+      UI.renderAddRemoteOAuth();
+      Toast.info('Signed out of GitHub');
+    } catch (err) {
+      Toast.error('Sign out failed: ' + err.message);
+    }
+  },
+
+  async disconnectGitLab() {
+    try {
+      await Bridge.send('disconnect_gitlab');
+      State.hasGitLabAuth  = false;
+      State.gitlabUsername = '';
+      State.gitlabToken    = '';
+      UI.renderAddRemoteOAuth();
+      Toast.info('Signed out of GitLab');
+    } catch (err) {
+      Toast.error('Sign out failed: ' + err.message);
+    }
+  },
+
+  async saveCredential() {
+    const username = document.getElementById('cred-username').value.trim();
+    const token    = document.getElementById('cred-token').value.trim();
+    if (!username || !token) { Toast.error('Username and token are required'); return; }
+    const platform = State._oauthPlatform || 'github';
+    const host     = platform === 'gitlab' ? 'gitlab.com' : 'github.com';
+    try {
+      await Bridge.send('store_credential', { host, username, token });
+      UI.closeCredentialModal();
+      // Reopen Add Remote so user can enter their repo URL
+      UI.openAddRemote();
+      const urlInput = document.getElementById('remote-url-input');
+      if (urlInput && !urlInput.value.trim()) {
+        urlInput.value = `https://${host}/${username}/`;
+        urlInput.focus();
+        urlInput.setSelectionRange(urlInput.value.length, urlInput.value.length);
+      }
+    } catch (err) {
+      Toast.error('Failed to save credentials: ' + err.message);
+    }
+  },
+
+  async addRemote() {
+    const name = document.getElementById('remote-name-input').value.trim();
+    const url  = document.getElementById('remote-url-input').value.trim();
+    if (!name || !url) { Toast.error('Name and URL are required'); return; }
+    try {
+      await Bridge.send('add_remote', { name, url });
+      UI.closeAddRemote();
+      Toast.success('Remote "' + name + '" added');
+      await this.loadStatus();
+      if (State._pushAfterRemote) {
+        State._pushAfterRemote = false;
+        await this.push();
+      }
+    } catch (err) {
+      Toast.error('Add remote failed: ' + err.message);
+    }
+  },
+
+  async initRepo() {
+    const btn = document.getElementById('init-repo-btn');
+    btn.disabled = true;
+    btn.textContent = 'Initializing…';
+    try {
+      await Bridge.send('init_repo', {});
+      Toast.success('Repository initialized');
+      await this.refreshAll();
+    } catch (err) {
+      Toast.error('Init failed: ' + err.message);
+      btn.disabled = false;
+      btn.textContent = 'Initialize Repository';
+    }
+  },
+};
+
+// Expose App for C++ push notifications
+const App = {
+  refreshStatus: () => Actions.loadStatus(),
+  fullRefresh:   () => Actions.refreshAll(),
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// Event wiring
+// ══════════════════════════════════════════════════════════════════════
+
+// Commit message enables/disables button
+document.getElementById('commit-msg').addEventListener('input', () => {
+  UI.renderCommitPanel();
+});
+
+// Cmd+Enter to commit
+document.getElementById('commit-msg').addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    e.preventDefault();
+    Actions.commit();
+  }
+});
+
+// Close branch/accounts menus when clicking outside
+document.addEventListener('click', (e) => {
+  const wraps = document.querySelectorAll('.branch-dropdown-wrap');
+  wraps.forEach(wrap => {
+    if (!wrap.contains(e.target)) {
+      const menu = wrap.querySelector('#branch-menu');
+      if (menu) UI.closeBranchMenu();
+      const amenu = wrap.querySelector('#accounts-menu');
+      if (amenu) UI.closeAccountsMenu();
+    }
+  });
+});
+
+// Close add-remote modal on backdrop click
+document.getElementById('add-remote-panel').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) UI.closeAddRemote();
+});
+
+// Close credential modal on backdrop click
+document.getElementById('credential-modal').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) UI.closeCredentialModal();
+});
+
+// ── Keyboard navigation ──────────────────────────────────────────────
+// opts.jumpEnd  : Cmd/Ctrl+arrow — jump to first/last item
+// opts.shiftSel : Shift+arrow  — extend multi-select range (changes list only)
+function _navFileList(listSel, itemSel, dir, { jumpEnd = false, shiftSel = false } = {}) {
+  const items = [...document.querySelectorAll(`${listSel} ${itemSel}`)];
+  if (!items.length) return false;
+  const selIdx = items.findIndex(el => el.classList.contains('selected'));
+
+  // Shift+Arrow: extend multi-select range (changes list only)
+  if (shiftSel && listSel === '#changes-list') {
+    const paths = items.map(el => el.dataset.path).filter(Boolean);
+
+    // Anchor: the item that was originally clicked (stays fixed)
+    const anchorPath = State.lastClickedPath;
+    const anchorIdx  = (anchorPath != null && paths.indexOf(anchorPath) !== -1)
+                       ? paths.indexOf(anchorPath)
+                       : (selIdx !== -1 ? selIdx : 0);
+
+    // Cursor: the moving far end of the range (separate from anchor)
+    const cursorPath = State.multiCursorPath;
+    const cursorIdx  = (cursorPath != null && paths.indexOf(cursorPath) !== -1)
+                       ? paths.indexOf(cursorPath)
+                       : anchorIdx;
+
+    let next;
+    if (jumpEnd) {
+      next = dir > 0 ? paths.length - 1 : 0;
+    } else {
+      next = Math.max(0, Math.min(paths.length - 1, cursorIdx + dir));
+    }
+
+    if (next === cursorIdx && !jumpEnd) return true; // already at boundary
+
+    // Update cursor
+    State.multiCursorPath = paths[next] || null;
+
+    // Rebuild selection as [anchor … cursor]
+    const lo = Math.min(anchorIdx, next), hi = Math.max(anchorIdx, next);
+    State.multiSelected.clear();
+    for (let i = lo; i <= hi; i++) { if (paths[i]) State.multiSelected.add(paths[i]); }
+
+    UI.renderChanges();
+    const refreshed = document.querySelectorAll(`${listSel} ${itemSel}`);
+    if (refreshed[next]) refreshed[next].scrollIntoView({ block: 'nearest' });
+    return true;
+  }
+
+  let next;
+  if (jumpEnd) {
+    next = dir > 0 ? items.length - 1 : 0;
+  } else if (selIdx === -1) {
+    next = dir > 0 ? 0 : items.length - 1;
+  } else {
+    // Wrap-around for regular navigation
+    next = (selIdx + dir + items.length) % items.length;
+  }
+
+  if (next !== selIdx || jumpEnd) {
+    items[next].click();
+    items[next].scrollIntoView({ block: 'nearest' });
+  }
+  return true;
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  // Don't steal keys while user is typing
+  if (e.target.matches('input, textarea, select, [contenteditable]')) return;
+
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    if (State.currentView === 'commit') {
+      // Left/Right switches between navigating history and the commit's file list
+      const next = e.key === 'ArrowLeft' ? 'history' : 'files';
+      State.commitNavTarget = next;
+      if (next === 'files') {
+        // Right arrow: auto-select first file if none is selected yet
+        const alreadySelected = document.querySelector('.cd-file-item.selected');
+        if (!alreadySelected) {
+          const first = document.querySelector('.cd-file-item');
+          if (first) first.click();
+        }
+      } else {
+        // Left arrow: deselect file, hide diff pane
+        document.querySelectorAll('.cd-file-item').forEach(el => el.classList.remove('selected'));
+        State.selectedFile = null;
+        document.getElementById('diff-view').style.display         = 'none';
+        document.getElementById('commit-diff-empty').style.display = 'flex';
+      }
+      e.preventDefault();
+    } else {
+      // In diff view: cycle through visible diff mode tabs (Diff / Visual / Settings)
+      const modeIds = ['diff-mode-text', 'diff-mode-visual', 'diff-mode-settings'];
+      const visible = modeIds.filter(id => {
+        const el = document.getElementById(id);
+        return el && el.style.display !== 'none';
+      });
+      if (visible.length > 1) {
+        const activeId = visible.find(id => document.getElementById(id).classList.contains('active'));
+        const curIdx   = visible.indexOf(activeId);
+        const dir      = e.key === 'ArrowRight' ? 1 : -1;
+        const nextIdx  = (curIdx + dir + visible.length) % visible.length;
+        e.preventDefault();
+        UI.setDiffMode(visible[nextIdx].replace('diff-mode-', ''));
+      }
+    }
+    return;
+  }
+
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const dir     = e.key === 'ArrowDown' ? 1 : -1;
+    const jumpEnd = e.metaKey || e.ctrlKey;
+    const shift   = e.shiftKey;
+    if (State.currentView === 'commit') {
+      if (State.commitNavTarget === 'files') {
+        // Navigate commit file list; if exhausted, do nothing (stay on last file)
+        _navFileList('#cd-files-list', '.cd-file-item', dir, { jumpEnd });
+      } else {
+        // Navigate history
+        _navFileList('#history-list', '.commit-item', dir, { jumpEnd });
+      }
+    } else if (State.currentView === 'diff') {
+      _navFileList('#changes-list', '.file-item', dir, { jumpEnd, shiftSel: shift });
+    } else {
+      if (!_navFileList('#changes-list', '.file-item', dir, { jumpEnd, shiftSel: shift }))
+        _navFileList('#history-list', '.commit-item', dir, { jumpEnd });
+    }
+  } else if (e.key === 'Enter') {
+    // Toggle checkbox of focused changes-list file
+    const sel = document.querySelector('#changes-list .file-item.selected');
+    if (sel) {
+      const cb = sel.querySelector('.file-checkbox');
+      if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); }
+    }
+  } else if (e.key === 'Escape') {
+    CtxMenu.hide();
+    UI.closeBranchMenu();
+    UI.closeAccountsMenu();
+    UI.closeAddRemote();
+    UI.closeCredentialModal();
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// Context Menu
+// ══════════════════════════════════════════════════════════════════════
+// Discard Confirmation Modal
+// ══════════════════════════════════════════════════════════════════════
+const DiscardModal = {
+  _resolve: null,
+
+  async ask(msg) {
+    // If user has suppressed, skip the dialog
+    if (localStorage.getItem('discard-no-confirm') === '1') return true;
+    return new Promise(resolve => {
+      this._resolve = resolve;
+      document.getElementById('discard-modal-msg').textContent = msg;
+      document.getElementById('discard-suppress-cb').checked = false;
+      document.getElementById('discard-modal').style.display = 'flex';
+    });
+  },
+
+  confirm() {
+    if (document.getElementById('discard-suppress-cb').checked) {
+      localStorage.setItem('discard-no-confirm', '1');
+    }
+    document.getElementById('discard-modal').style.display = 'none';
+    if (this._resolve) { this._resolve(true); this._resolve = null; }
+  },
+
+  cancel() {
+    document.getElementById('discard-modal').style.display = 'none';
+    if (this._resolve) { this._resolve(false); this._resolve = null; }
+  },
+};
+
+// ══════════════════════════════════════════════════════════════════════
+const NewBranchModal = {
+  _resolve: null,
+
+  ask() {
+    return new Promise(resolve => {
+      this._resolve = resolve;
+      const input = document.getElementById('new-branch-input');
+      input.value = '';
+      document.getElementById('new-branch-modal').style.display = 'flex';
+      requestAnimationFrame(() => input.focus());
+    });
+  },
+
+  confirm() {
+    const name = document.getElementById('new-branch-input').value.trim();
+    document.getElementById('new-branch-modal').style.display = 'none';
+    if (this._resolve) { this._resolve(name || null); this._resolve = null; }
+  },
+
+  cancel() {
+    document.getElementById('new-branch-modal').style.display = 'none';
+    if (this._resolve) { this._resolve(null); this._resolve = null; }
+  },
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// GitHub Repo Picker
+// ══════════════════════════════════════════════════════════════════════
+const GitHubRepoPicker = {
+  _token:     '',
+  _username:  '',
+  _allRepos:  [],   // full list fetched so far
+  _page:      1,
+  _hasMore:   false,
+  _loading:   false,
+  _visibility: 'private',
+
+  open(username, token) {
+    this._token    = token;
+    this._username = username;
+    this._allRepos = [];
+    this._page     = 1;
+    this._hasMore  = false;
+    this._loading  = false;
+    this._visibility = 'private';
+
+    // Pre-fill repo name from project folder
+    const projName = State.repoPath
+      ? State.repoPath.replace(/\\/g, '/').split('/').filter(Boolean).pop() || ''
+      : '';
+    document.getElementById('gh-new-name').value = projName;
+    document.getElementById('gh-new-desc').value = '';
+    this.setVisibility('private');
+
+    document.getElementById('gh-search').value = '';
+    document.getElementById('gh-repo-picker').style.display = 'flex';
+    this.showTab('yours');
+    this._fetchRepos();
+  },
+
+  close() {
+    document.getElementById('gh-repo-picker').style.display = 'none';
+  },
+
+  showTab(tab) {
+    document.getElementById('gh-tab-yours').classList.toggle('active', tab === 'yours');
+    document.getElementById('gh-tab-create').classList.toggle('active', tab === 'create');
+    document.getElementById('gh-panel-yours').style.display = tab === 'yours' ? 'flex' : 'none';
+    document.getElementById('gh-panel-create').style.display = tab === 'create' ? 'flex' : 'none';
+    if (tab === 'create') document.getElementById('gh-new-name').focus();
+  },
+
+  setVisibility(v) {
+    this._visibility = v;
+    document.getElementById('gh-vis-private').classList.toggle('active', v === 'private');
+    document.getElementById('gh-vis-public').classList.toggle('active', v === 'public');
+  },
+
+  async _fetchRepos() {
+    if (this._loading) return;
+    this._loading = true;
+
+    const list = document.getElementById('gh-repo-list');
+    if (this._page === 1) {
+      list.innerHTML = '<div class="gh-list-status"><span class="spinner"></span><span>Loading repositories…</span></div>';
+    }
+
+    try {
+      const res = await fetch(
+        `https://api.github.com/user/repos?sort=updated&per_page=50&page=${this._page}`,
+        { headers: { Authorization: `token ${this._token}`, Accept: 'application/vnd.github+json' } }
+      );
+      if (!res.ok) throw new Error(`GitHub API error ${res.status}`);
+
+      const repos = await res.json();
+      // Check Link header for more pages
+      const link = res.headers.get('Link') || '';
+      this._hasMore = link.includes('rel="next"');
+      this._allRepos.push(...repos);
+      this._renderRepos(document.getElementById('gh-search').value);
+      document.getElementById('gh-load-more').style.display = this._hasMore ? '' : 'none';
+    } catch (err) {
+      list.innerHTML = `<div class="gh-list-status" style="color:var(--red)">Failed to load repositories: ${escHtml(err.message)}</div>`;
+    } finally {
+      this._loading = false;
+    }
+  },
+
+  loadMore() {
+    this._page++;
+    this._fetchRepos();
+  },
+
+  filterRepos(query) {
+    this._renderRepos(query || '');
+  },
+
+  _renderRepos(query) {
+    const list = document.getElementById('gh-repo-list');
+    const q = (query || '').toLowerCase().trim();
+    const filtered = q
+      ? this._allRepos.filter(r => r.name.toLowerCase().includes(q) || (r.description || '').toLowerCase().includes(q))
+      : this._allRepos;
+
+    if (!filtered.length) {
+      list.innerHTML = `<div class="gh-list-status">${q ? 'No repositories match your filter.' : 'No repositories found.'}</div>`;
+      return;
+    }
+
+    list.innerHTML = filtered.map(repo => {
+      const vis = repo.private
+        ? '<svg class="gh-repo-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 5V3.25C4 1.455 5.455 0 7.25 0h1.5C10.545 0 12 1.455 12 3.25V5h.5A1.5 1.5 0 0 1 14 6.5v7A1.5 1.5 0 0 1 12.5 15h-9A1.5 1.5 0 0 1 2 13.5v-7A1.5 1.5 0 0 1 3.5 5H4Zm1.5-1.75A1.75 1.75 0 0 1 7.25 1.5h1.5A1.75 1.75 0 0 1 10.5 3.25V5h-5V3.25Z"/></svg>'
+        : '<svg class="gh-repo-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8V1.5Z"/></svg>';
+      const updated = this._relativeTime(repo.updated_at);
+      const desc = repo.description ? `<div class="gh-repo-meta">${escHtml(repo.description.slice(0, 80))}</div>` : `<div class="gh-repo-meta" style="color:var(--text-dim)">${updated}</div>`;
+      const cloneUrl = repo.clone_url; // always HTTPS
+      return `<div class="gh-repo-item" onclick="GitHubRepoPicker.selectRepo(${JSON.stringify(cloneUrl)}, ${JSON.stringify(repo.name)})">
+        ${vis}
+        <div class="gh-repo-info">
+          <div class="gh-repo-name">${escHtml(repo.name)}</div>
+          ${desc}
+        </div>
+        <span class="gh-repo-badge">${repo.private ? 'Private' : 'Public'}</span>
+        <button class="gh-use-btn" onclick="event.stopPropagation();GitHubRepoPicker.selectRepo(${JSON.stringify(cloneUrl)}, ${JSON.stringify(repo.name)})">Use</button>
+      </div>`;
+    }).join('');
+  },
+
+  _relativeTime(iso) {
+    if (!iso) return '';
+    const ms = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(ms / 60000);
+    if (m < 1)   return 'just now';
+    if (m < 60)  return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24)  return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    if (d < 30)  return `${d}d ago`;
+    const mo = Math.floor(d / 30);
+    return `${mo}mo ago`;
+  },
+
+  async selectRepo(cloneUrl, repoName) {
+    try {
+      await Bridge.send('add_remote', { name: 'origin', url: cloneUrl });
+      this.close();
+      Toast.success(`Linked to ${repoName}`);
+      await Actions.loadStatus();
+      // Offer to push if there are commits
+      if (State.ahead > 0 || (State.staged.length + State.unstaged.length + State.untracked.length) === 0) {
+        State._pushAfterRemote = false; // manual push
+      }
+    } catch (err) {
+      Toast.error('Failed to add remote: ' + err.message);
+    }
+  },
+
+  async createRepo() {
+    const name = document.getElementById('gh-new-name').value.trim();
+    if (!name) { Toast.error('Repository name is required'); return; }
+    const desc = document.getElementById('gh-new-desc').value.trim();
+    const isPrivate = this._visibility === 'private';
+
+    const btn = document.getElementById('gh-create-btn');
+    btn.disabled = true;
+    btn.textContent = 'Creating…';
+
+    try {
+      const res = await fetch('https://api.github.com/user/repos', {
+        method: 'POST',
+        headers: {
+          Authorization: `token ${this._token}`,
+          Accept: 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name, description: desc, private: isPrivate, auto_init: false }),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        const msg = errBody.message || `GitHub API error ${res.status}`;
+        throw new Error(msg);
+      }
+
+      const repo = await res.json();
+      await Bridge.send('add_remote', { name: 'origin', url: repo.clone_url });
+      this.close();
+      Toast.success(`Created ${repo.full_name}`);
+      await Actions.loadStatus();
+      // Prompt to push immediately
+      State._pushAfterRemote = true;
+      await Actions.push();
+    } catch (err) {
+      Toast.error('Create failed: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Create Repository';
+    }
+  },
+};
+
+// ══════════════════════════════════════════════════════════════════════
+const GitLabRepoPicker = {
+  _token:      '',
+  _username:   '',
+  _allRepos:   [],
+  _page:       1,
+  _hasMore:    false,
+  _loading:    false,
+  _visibility: 'private',
+
+  open(username, token) {
+    this._token      = token;
+    this._username   = username;
+    this._allRepos   = [];
+    this._page       = 1;
+    this._hasMore    = false;
+    this._loading    = false;
+    this._visibility = 'private';
+
+    const projName = State.repoPath
+      ? State.repoPath.replace(/\\/g, '/').split('/').filter(Boolean).pop() || ''
+      : '';
+    document.getElementById('gl-new-name').value = projName;
+    document.getElementById('gl-new-desc').value = '';
+    this.setVisibility('private');
+
+    document.getElementById('gl-search').value = '';
+    document.getElementById('gl-repo-picker').style.display = 'flex';
+    this.showTab('yours');
+    this._fetchRepos();
+  },
+
+  close() {
+    document.getElementById('gl-repo-picker').style.display = 'none';
+  },
+
+  showTab(tab) {
+    document.getElementById('gl-tab-yours').classList.toggle('active', tab === 'yours');
+    document.getElementById('gl-tab-create').classList.toggle('active', tab === 'create');
+    document.getElementById('gl-panel-yours').style.display = tab === 'yours' ? 'flex' : 'none';
+    document.getElementById('gl-panel-create').style.display = tab === 'create' ? 'flex' : 'none';
+    if (tab === 'create') document.getElementById('gl-new-name').focus();
+  },
+
+  setVisibility(v) {
+    this._visibility = v;
+    document.getElementById('gl-vis-private').classList.toggle('active', v === 'private');
+    document.getElementById('gl-vis-public').classList.toggle('active', v === 'public');
+  },
+
+  async _fetchRepos() {
+    if (this._loading) return;
+    this._loading = true;
+
+    const list = document.getElementById('gl-repo-list');
+    if (this._page === 1) {
+      list.innerHTML = '<div class="gh-list-status"><span class="spinner"></span><span>Loading repositories…</span></div>';
+    }
+
+    try {
+      const res = await fetch(
+        `https://gitlab.com/api/v4/projects?membership=true&order_by=last_activity_at&per_page=50&page=${this._page}&simple=true`,
+        { headers: { Authorization: `Bearer ${this._token}` } }
+      );
+      if (!res.ok) {
+        if (res.status === 403 || res.status === 401) {
+          throw new Error('Token lacks API access. In GitLab → Applications, enable the read_api scope, then sign out and reconnect.');
+        }
+        throw new Error(`GitLab API error ${res.status}`);
+      }
+
+      const repos = await res.json();
+      const nextPage = res.headers.get('X-Next-Page') || '';
+      this._hasMore = nextPage !== '';
+      this._allRepos.push(...repos);
+      this._renderRepos(document.getElementById('gl-search').value);
+      document.getElementById('gl-load-more').style.display = this._hasMore ? '' : 'none';
+    } catch (err) {
+      list.innerHTML = `<div class="gh-list-status" style="color:var(--red)">Failed to load repositories: ${escHtml(err.message)}</div>`;
+    } finally {
+      this._loading = false;
+    }
+  },
+
+  loadMore() {
+    this._page++;
+    this._fetchRepos();
+  },
+
+  filterRepos(query) {
+    this._renderRepos(query || '');
+  },
+
+  _renderRepos(query) {
+    const list = document.getElementById('gl-repo-list');
+    const q = (query || '').toLowerCase().trim();
+    const filtered = q
+      ? this._allRepos.filter(r => r.name.toLowerCase().includes(q) || (r.description || '').toLowerCase().includes(q))
+      : this._allRepos;
+
+    if (!filtered.length) {
+      list.innerHTML = `<div class="gh-list-status">${q ? 'No repositories match your filter.' : 'No repositories found.'}</div>`;
+      return;
+    }
+
+    list.innerHTML = filtered.map(repo => {
+      const isPrivate = repo.visibility === 'private' || repo.visibility === 'internal';
+      const vis = isPrivate
+        ? '<svg class="gh-repo-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 5V3.25C4 1.455 5.455 0 7.25 0h1.5C10.545 0 12 1.455 12 3.25V5h.5A1.5 1.5 0 0 1 14 6.5v7A1.5 1.5 0 0 1 12.5 15h-9A1.5 1.5 0 0 1 2 13.5v-7A1.5 1.5 0 0 1 3.5 5H4Zm1.5-1.75A1.75 1.75 0 0 1 7.25 1.5h1.5A1.75 1.75 0 0 1 10.5 3.25V5h-5V3.25Z"/></svg>'
+        : '<svg class="gh-repo-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8V1.5Z"/></svg>';
+      const updated = this._relativeTime(repo.last_activity_at);
+      const nameSlug = repo.path_with_namespace || repo.name;
+      const desc = repo.description
+        ? `<div class="gh-repo-meta">${escHtml(repo.description.slice(0, 80))}</div>`
+        : `<div class="gh-repo-meta" style="color:var(--text-dim)">${updated}</div>`;
+      const cloneUrl = repo.http_url_to_repo;
+      return `<div class="gh-repo-item" onclick="GitLabRepoPicker.selectRepo(${JSON.stringify(cloneUrl)}, ${JSON.stringify(nameSlug)})">
+        ${vis}
+        <div class="gh-repo-info">
+          <div class="gh-repo-name">${escHtml(nameSlug)}</div>
+          ${desc}
+        </div>
+        <span class="gh-repo-badge">${isPrivate ? 'Private' : 'Public'}</span>
+        <button class="gh-use-btn" onclick="event.stopPropagation();GitLabRepoPicker.selectRepo(${JSON.stringify(cloneUrl)}, ${JSON.stringify(nameSlug)})">Use</button>
+      </div>`;
+    }).join('');
+  },
+
+  _relativeTime(iso) {
+    if (!iso) return '';
+    const ms = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(ms / 60000);
+    if (m < 1)   return 'just now';
+    if (m < 60)  return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24)  return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    if (d < 30)  return `${d}d ago`;
+    const mo = Math.floor(d / 30);
+    return `${mo}mo ago`;
+  },
+
+  async selectRepo(cloneUrl, repoName) {
+    try {
+      await Bridge.send('add_remote', { name: 'origin', url: cloneUrl });
+      this.close();
+      Toast.success(`Linked to ${repoName}`);
+      await Actions.loadStatus();
+    } catch (err) {
+      Toast.error('Failed to add remote: ' + err.message);
+    }
+  },
+
+  async createRepo() {
+    const name = document.getElementById('gl-new-name').value.trim();
+    if (!name) { Toast.error('Repository name is required'); return; }
+    const desc = document.getElementById('gl-new-desc').value.trim();
+    const isPrivate = this._visibility === 'private';
+
+    const btn = document.getElementById('gl-create-btn');
+    btn.disabled = true;
+    btn.textContent = 'Creating…';
+
+    try {
+      const res = await fetch('https://gitlab.com/api/v4/projects', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this._token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name,
+          description: desc,
+          visibility: isPrivate ? 'private' : 'public',
+          initialize_with_readme: false,
+        }),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        const msg = errBody.message
+          ? (Array.isArray(errBody.message) ? errBody.message.join(', ') : errBody.message)
+          : `GitLab API error ${res.status}`;
+        throw new Error(msg);
+      }
+
+      const repo = await res.json();
+      await Bridge.send('add_remote', { name: 'origin', url: repo.http_url_to_repo });
+      this.close();
+      Toast.success(`Created ${repo.path_with_namespace}`);
+      await Actions.loadStatus();
+      State._pushAfterRemote = true;
+      await Actions.push();
+    } catch (err) {
+      Toast.error('Create failed: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Create Repository';
+    }
+  },
+};
+
+// ══════════════════════════════════════════════════════════════════════
+const CtxMenu = {
+  _menu: null,
+
+  init() {
+    this._menu = document.getElementById('ctx-menu');
+    // Hide on any outside click
+    document.addEventListener('click', () => this.hide(), true);
+    document.addEventListener('contextmenu', (e) => {
+      const item = e.target.closest('#changes-list .file-item');
+      if (!item) { this.hide(); return; }
+      e.preventDefault();
+      this._showForItem(item, e.clientX, e.clientY);
+    });
+  },
+
+  hide() {
+    if (this._menu) this._menu.classList.remove('visible');
+  },
+
+  _showForItem(item, x, y) {
+    const path   = item.dataset.path || '';
+    if (!path) return;
+    const onclick  = item.getAttribute('onclick') || '';
+    const sm       = onclick.match(/'([^']+)'\s*\)$/);
+    const status   = sm ? sm[1] : '';
+    const isNew    = status === 'untracked';
+    const isStaged = State.staged.some(f => f.path === path);
+    // Multi-select: right-clicking a selected-group file offers group action
+    const inGroup  = State.multiSelected.has(path) && State.multiSelected.size > 1;
+
+    let html = '';
+    if (inGroup) {
+      const n = State.multiSelected.size;
+      html += `<div class="ctx-item danger" data-action="discard-selected">Discard ${n} selected files…</div>`;
+    } else {
+      if (isStaged) {
+        html += `<div class="ctx-item" data-action="unstage" data-path="${escHtml(path)}">Unstage</div>`;
+      } else if (!isNew) {
+        html += `<div class="ctx-item" data-action="stage" data-path="${escHtml(path)}">Stage</div>`;
+      }
+      if (!isNew || isStaged) html += `<div class="ctx-sep"></div>`;
+      const discardLabel = isNew ? 'Delete file…' : 'Discard changes…';
+      html += `<div class="ctx-item danger" data-action="discard" data-path="${escHtml(path)}">${discardLabel}</div>`;
+    }
+
+    this._menu.innerHTML = html;
+    this._menu.querySelectorAll('.ctx-item[data-action]').forEach(el => {
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        this.hide();
+        const p = el.dataset.path;
+        if (el.dataset.action === 'stage')            Actions.stage([p]);
+        if (el.dataset.action === 'unstage')          Actions.unstage([p]);
+        if (el.dataset.action === 'discard')          Actions.discard([p]);
+        if (el.dataset.action === 'discard-selected') Actions.discardSelected();
+      });
+    });
+
+    this._menu.classList.add('visible');
+    const mw = this._menu.offsetWidth, mh = this._menu.offsetHeight;
+    this._menu.style.left = Math.min(x, window.innerWidth  - mw - 4) + 'px';
+    this._menu.style.top  = Math.min(y, window.innerHeight - mh - 4) + 'px';
+  },
+};
+CtxMenu.init();
+VdZoom.init();
+
+// ══════════════════════════════════════════════════════════════════════
+// Left panel resizer
+// ══════════════════════════════════════════════════════════════════════
+(function initResizer() {
+  const resizer = document.getElementById('left-panel-resizer');
+  const panel   = document.getElementById('left-panel');
+  if (!resizer || !panel) return;
+
+  let dragging = false, startX = 0, startW = 0;
+
+  resizer.addEventListener('mousedown', e => {
+    dragging = true;
+    startX   = e.clientX;
+    startW   = panel.offsetWidth;
+    resizer.classList.add('dragging');
+    document.body.style.cursor     = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const w = Math.max(180, Math.min(480, startW + (e.clientX - startX)));
+    panel.style.width = w + 'px';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('dragging');
+    document.body.style.cursor     = '';
+    document.body.style.userSelect = '';
+  });
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+// Init
+// ══════════════════════════════════════════════════════════════════════
+(function init() {
+  UI.showView('placeholder');
+  Actions.refreshAll();
+  Actions.loadUserConfig();
+})();
+</script>
+</body>
+</html>

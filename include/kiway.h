@@ -299,6 +299,7 @@ public:
         FACE_AGENT,
         FACE_TERMINAL,
         FACE_PYTHON,
+        FACE_VCS,
 
         KIWAY_FACE_COUNT
     };

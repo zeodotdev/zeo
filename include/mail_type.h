@@ -92,7 +92,10 @@ enum MAIL_T
     MAIL_AGENT_FILE_EDIT_ABORT,     // Agent -> Editor: Abort file edit session
 
     // Diff overlay refresh
-    MAIL_AGENT_REFRESH_DIFF         // Agent -> Editor: Refresh diff overlays (items may have moved)
+    MAIL_AGENT_REFRESH_DIFF,        // Agent -> Editor: Refresh diff overlays (items may have moved)
+
+    // VCS app communication
+    MAIL_VCS_AUTH_COMPLETE          // Launcher -> VCS: GitHub OAuth complete (JSON: {username})
 };
 
 

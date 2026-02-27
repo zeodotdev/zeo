@@ -59,6 +59,11 @@ public:
     bool HandleDeepLink( const wxString& aUrl );
 
     /**
+     * Handles deep link callback specifically for VCS OAuth (GitHub/GitLab).
+     */
+    void HandleVcsCallback( const wxString& aUrl );
+
+    /**
      * Takes ownership of the AGENT_AUTH module.
      */
     AGENT_AUTH* GetAuth() const { return m_auth.get(); }

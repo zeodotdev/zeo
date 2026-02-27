@@ -27,7 +27,14 @@
 #include <kiway.h>
 #include <mail_type.h>
 #include <wx/button.h>
+#include <wx/file.h>
+#include <wx/filename.h>
+#include <wx/log.h>
 #include <wx/msgdlg.h>
+#include <wx/stdpaths.h>
+#include <wx/textfile.h>
+#include <wx/utils.h>
+#include <nlohmann/json.hpp>
 #include <wx/menu.h>
 #include <wx/utils.h>
 #include <wx/filename.h>
@@ -249,6 +256,13 @@ void SESSION_MANAGER::StartOAuthFlow()
 
 bool SESSION_MANAGER::HandleDeepLink( const wxString& aUrl )
 {
+    // VCS-specific GitHub OAuth callback — does NOT touch the main user session
+    if( aUrl.Contains( "vcs-callback" ) )
+    {
+        HandleVcsCallback( aUrl );
+        return true;
+    }
+
     std::string errorMsg;
     if( m_auth && m_auth->HandleOAuthCallback( aUrl.ToStdString(), errorMsg ) )
     {
@@ -266,6 +280,135 @@ bool SESSION_MANAGER::HandleDeepLink( const wxString& aUrl )
         wxMessageBox( _("Sign in failed: ") + errorMsg, _("Error"), wxOK | wxICON_ERROR );
         return false;
     }
+}
+
+
+// Simple percent-decode for URL query parameter values
+static wxString VcsUrlDecode( const wxString& aEncoded )
+{
+    std::string encoded = aEncoded.ToStdString();
+    std::string result;
+    result.reserve( encoded.size() );
+    for( size_t i = 0; i < encoded.size(); ++i )
+    {
+        if( encoded[i] == '%' && i + 2 < encoded.size() )
+        {
+            char hex[3] = { encoded[i + 1], encoded[i + 2], '\0' };
+            result += static_cast<char>( std::strtol( hex, nullptr, 16 ) );
+            i += 2;
+        }
+        else if( encoded[i] == '+' )
+        {
+            result += ' ';
+        }
+        else
+        {
+            result += encoded[i];
+        }
+    }
+    return wxString::FromUTF8( result );
+}
+
+
+void SESSION_MANAGER::HandleVcsCallback( const wxString& aUrl )
+{
+    using json = nlohmann::json;
+
+    // Parse query params from the deep link
+    // Format: kicad-agent://vcs-callback?provider_token=xxx&github_username=xxx
+    wxString query = aUrl.AfterFirst( '?' );
+    std::map<wxString, wxString> params;
+    for( wxString pair : wxSplit( query, '&' ) )
+    {
+        wxString key   = pair.BeforeFirst( '=' );
+        wxString value = VcsUrlDecode( pair.AfterFirst( '=' ) );
+        params[key] = value;
+    }
+
+    wxString token    = params["provider_token"];
+    // New format sends "username"; legacy GitHub flow sent "github_username"
+    wxString username = !params["username"].IsEmpty() ? params["username"] : params["github_username"];
+    wxString provider = !params["provider"].IsEmpty() ? params["provider"] : "github";
+    std::string host  = ( provider == "gitlab" ) ? "gitlab.com" : "github.com";
+
+    if( token.IsEmpty() || username.IsEmpty() )
+    {
+        wxLogError( "SESSION_MANAGER: VCS callback missing token or username" );
+        return;
+    }
+
+    // ── Write to ~/.git-credentials ───────────────────────────────────────
+    wxString newEntry = wxString::Format( "https://%s:%s@%s", username, token, host );
+    wxString credsPath = wxGetHomeDir() + wxFILE_SEP_PATH + ".git-credentials";
+
+    wxArrayString lines;
+    if( wxFileExists( credsPath ) )
+    {
+        wxTextFile tf;
+        if( tf.Open( credsPath ) )
+        {
+            for( size_t i = 0; i < tf.GetLineCount(); i++ )
+            {
+                wxString line = tf.GetLine( i );
+                if( !line.IsEmpty()
+                    && !( line.Contains( wxString( host ) ) && line.Contains( username ) ) )
+                    lines.Add( line );
+            }
+            tf.Close();
+        }
+    }
+    lines.Add( newEntry );
+
+    {
+        wxFile out( credsPath, wxFile::write );
+        if( out.IsOpened() )
+        {
+            for( const wxString& line : lines )
+                out.Write( line + "\n" );
+            out.Close();
+        }
+    }
+    wxFileName fn( credsPath );
+    fn.SetPermissions( wxS_IRUSR | wxS_IWUSR );
+
+    // ── Ensure credential.helper = store in git config ────────────────────
+    // (libgit2 call omitted here — StoreCredential in git_vcs_bridge handles
+    //  this when the VCS frame first opens a repo. Credential file is enough.)
+
+    // ── Write UI credentials JSON ─────────────────────────────────────────
+    wxString dataDir = wxStandardPaths::Get().GetUserDataDir();
+    if( !wxDirExists( dataDir ) ) wxMkdir( dataDir );
+    wxString jsonPath = dataDir + wxFILE_SEP_PATH + "vcs_credentials.json";
+
+    json ui = {
+        { "connected", true },
+        { "host",      host },
+        { "username",  username.ToStdString() }
+    };
+    {
+        wxFile jf( jsonPath, wxFile::write );
+        if( jf.IsOpened() )
+        {
+            jf.Write( wxString::FromUTF8( ui.dump() ) );
+            jf.Close();
+        }
+    }
+    wxFileName jfn( jsonPath );
+    jfn.SetPermissions( wxS_IRUSR | wxS_IWUSR );
+
+    // ── Notify VCS frame and bring it to front ────────────────────────────
+    std::string payload = ui.dump();
+    m_frame->Kiway().ExpressMail( FRAME_VCS, MAIL_VCS_AUTH_COMPLETE, payload, m_frame );
+
+    // Raise the VCS window so the user returns to it after the browser OAuth flow
+    KIWAY_PLAYER* vcsPlayer = m_frame->Kiway().Player( FRAME_VCS, false, m_frame );
+    if( vcsPlayer )
+    {
+        vcsPlayer->Raise();
+        vcsPlayer->SetFocus();
+    }
+
+    wxLogMessage( "SESSION_MANAGER: %s VCS auth complete for @%s", provider, username );
 }
 
 void SESSION_MANAGER::SignOut()

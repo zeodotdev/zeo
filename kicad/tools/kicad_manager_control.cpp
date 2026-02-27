@@ -998,6 +998,7 @@ void KICAD_MANAGER_CONTROL::setTransitions()
     Go( &KICAD_MANAGER_CONTROL::ShowPlayer, KICAD_MANAGER_ACTIONS::editPCB.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::ShowPlayer, KICAD_MANAGER_ACTIONS::editFootprints.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::ShowPlayer, KICAD_MANAGER_ACTIONS::showAiAssistant.MakeEvent() );
+    Go( &KICAD_MANAGER_CONTROL::ShowPlayer, KICAD_MANAGER_ACTIONS::showVersionControl.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::Execute, KICAD_MANAGER_ACTIONS::viewGerbers.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::Execute, KICAD_MANAGER_ACTIONS::convertImage.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::Execute, KICAD_MANAGER_ACTIONS::showCalculator.MakeEvent() );

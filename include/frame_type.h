@@ -66,6 +66,8 @@ enum FRAME_T
 
     FRAME_TERMINAL,
 
+    FRAME_VCS,
+
     KIWAY_PLAYER_COUNT, // counts subset of FRAME_T's which are KIWAY_PLAYER derivatives
 
     // Kicad project manager is not a KIWAY_PLAYER

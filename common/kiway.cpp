@@ -129,6 +129,7 @@ const wxString KIWAY::dso_search_path( FACE_T aFaceId )
     case FACE_PYTHON: name = KIFACE_PREFIX "kipython"; break;
     case FACE_AGENT: name = KIFACE_PREFIX "agent"; break; // or "kicad_agent" if dso name is that
     case FACE_TERMINAL: name = KIFACE_PREFIX "terminal"; break;
+    case FACE_VCS: name = KIFACE_PREFIX "kicad_vcs"; break;
 
     default: wxASSERT_MSG( 0, wxT( "caller has a bug, passed a bad aFaceId" ) ); return wxEmptyString;
     }
@@ -192,6 +193,7 @@ const wxString KIWAY::dso_search_path( FACE_T aFaceId )
         case FACE_PYTHON: dirName = "scripting"; break;
         case FACE_AGENT: dirName = "agent"; break;
         case FACE_TERMINAL: dirName = "terminal"; break;
+        case FACE_VCS: dirName = "kicad_vcs"; break;
         default: dirName = name + 1; break;
         }
 
@@ -377,6 +379,8 @@ KIWAY::FACE_T KIWAY::KifaceType( FRAME_T aFrameType )
     case FRAME_AGENT: return FACE_AGENT;
 
     case FRAME_TERMINAL: return FACE_TERMINAL;
+
+    case FRAME_VCS: return FACE_VCS;
 
     default: return FACE_T( -1 );
     }

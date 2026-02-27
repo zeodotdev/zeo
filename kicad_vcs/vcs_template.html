@@ -2668,48 +2668,8 @@ const UI = {
     if (!ctx) return;
     const iconLg = fileIconLarge(ctx.filePath);
     const fname  = ctx.filePath.split('/').pop();
-    const isSch  = ctx.filePath.endsWith('.kicad_sch');
 
-    // Helper: parse SVG scale (SVG units per mm) from the SVG string.
-    // Helper: crop SVG viewBox to content bounds, then fit+center in pane via pan/zoom.
-    // For schematics the default viewBox covers the full page; we crop to actual content.
-    const fitSvgToPane = (contentId) => {
-      const container = document.getElementById(contentId);
-      if (!container) return;
-      const canvas = container.querySelector('.vd-svg-canvas');
-      const svgEl  = canvas && canvas.querySelector('svg');
-      if (!svgEl) return;
-
-      // For schematics: crop the SVG viewBox to the actual content bounds.
-      // Skip <rect> elements (background), only consider <g> children.
-      // Sanity check: if the computed bounds are nearly the full page, skip the crop.
-      if (isSch) {
-        const origVb = svgEl.viewBox.baseVal;
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const child of svgEl.children) {
-          if (child.tagName.toLowerCase() !== 'g') continue;
-          try {
-            const b = child.getBBox();
-            if (b.width > 0 && b.height > 0) {
-              minX = Math.min(minX, b.x);   minY = Math.min(minY, b.y);
-              maxX = Math.max(maxX, b.x + b.width); maxY = Math.max(maxY, b.y + b.height);
-            }
-          } catch(e) {}
-        }
-        if (isFinite(minX) && maxX > minX && maxY > minY) {
-          const w = maxX - minX, h = maxY - minY;
-          // Only apply crop if it meaningfully reduces the page bounds (>20% smaller)
-          const origW = origVb.width || 1, origH = origVb.height || 1;
-          if (w < origW * 0.8 || h < origH * 0.8) {
-            const pad = Math.max(w, h) * 0.08;
-            svgEl.setAttribute('viewBox', `${minX-pad} ${minY-pad} ${w+pad*2} ${h+pad*2}`);
-          }
-        }
-      }
-
-      // Fit-to-pane: scale SVG so it fills the pane, then center it
-      VdZoom.fitToPane(contentId);
-    };
+    const fitSvgToPane = (contentId) => VdZoom.fitToPane(contentId);
 
     const loadingPh = `<div class="vd-placeholder">
       <div class="vd-placeholder-icon">${iconLg}</div>

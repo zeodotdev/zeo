@@ -2668,6 +2668,7 @@ const UI = {
     if (!ctx) return;
     const iconLg = fileIconLarge(ctx.filePath);
     const fname  = ctx.filePath.split('/').pop();
+    const isSch  = ctx.filePath.endsWith('.kicad_sch');
 
     const fitSvgToPane = (contentId) => VdZoom.fitToPane(contentId);
 
@@ -2722,7 +2723,11 @@ const UI = {
             <div class="vd-placeholder-sub">SVG export unavailable<br>kicad-cli not found</div>
           </div>`;
         }
-        return `<div class="vd-svg-canvas">${svgContent}</div>`;
+        // Schematics: strip the baked-in cream background rect so the pane
+        // background shows through.  The first self-closing <rect/> in the SVG
+        // is always the KiCad page background; content lives inside <g> elements.
+        const svg = isSch ? svgContent.replace(/<rect\b[^>]*\/>/, '') : svgContent;
+        return `<div class="vd-svg-canvas">${svg}</div>`;
       };
 
       // Insert SVG content while panes are still invisible (display:none during load

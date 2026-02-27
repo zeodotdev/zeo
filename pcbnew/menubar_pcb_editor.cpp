@@ -432,11 +432,8 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
     toolsMenu->Add( PCB_ACTIONS::boardReannotate );
     toolsMenu->Add( ACTIONS::updateSchematicFromPcb )->Enable( !Kiface().IsSingle() );
 
-    if( SCRIPTING::IsWxAvailable() )
-    {
-        toolsMenu->AppendSeparator();
-        toolsMenu->Add( PCB_ACTIONS::showPythonConsole );
-    }
+    toolsMenu->AppendSeparator();
+    toolsMenu->Add( PCB_ACTIONS::showPythonConsole );
 
     ACTION_MENU* multichannelSubmenu = new ACTION_MENU( false, selTool );
     multichannelSubmenu->SetTitle( _( "Multi-Channel" ) );

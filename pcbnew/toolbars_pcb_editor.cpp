@@ -455,7 +455,7 @@ void PCB_EDIT_FRAME::configureToolbars()
     auto pluginControlFactory =
             [this]( ACTION_TOOLBAR* aToolbar )
             {
-                // Add scripting console and API plugins
+                // Add terminal and API plugins
                 bool scriptingAvailable = SCRIPTING::IsWxAvailable();
 
 #ifdef KICAD_IPC_API
@@ -465,19 +465,16 @@ void PCB_EDIT_FRAME::configureToolbars()
                 bool haveApiPlugins = false;
 #endif
 
-                if( scriptingAvailable || haveApiPlugins )
-                {
-                    aToolbar->AddScaledSeparator( aToolbar->GetParent() );
+                aToolbar->AddScaledSeparator( aToolbar->GetParent() );
 
-                    if( scriptingAvailable )
-                    {
-                        aToolbar->Add( PCB_ACTIONS::showPythonConsole );
-                        addActionPluginTools( aToolbar );
-                    }
+                // Terminal button is always available
+                aToolbar->Add( PCB_ACTIONS::showPythonConsole );
 
-                    if( haveApiPlugins )
-                        AddApiPluginTools( aToolbar );
-                }
+                if( scriptingAvailable )
+                    addActionPluginTools( aToolbar );
+
+                if( haveApiPlugins )
+                    AddApiPluginTools( aToolbar );
             };
 
     RegisterCustomToolbarControlFactory( ACTION_TOOLBAR_CONTROLS::ipcScripting, pluginControlFactory );

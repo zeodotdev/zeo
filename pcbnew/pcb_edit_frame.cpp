@@ -1203,9 +1203,6 @@ void PCB_EDIT_FRAME::setupUIConditions()
     mgr->SetConditions( PCB_ACTIONS::graphicsOutlines, CHECK( !cond.GraphicsFillDisplay() ) );
     mgr->SetConditions( PCB_ACTIONS::textOutlines,     CHECK( !cond.TextFillDisplay() ) );
 
-    if( SCRIPTING::IsWxAvailable() )
-        mgr->SetConditions( PCB_ACTIONS::showPythonConsole, CHECK( cond.ScriptingConsoleVisible() ) );
-
     auto enableZoneControlCondition =
             [this] ( const SELECTION& )
             {

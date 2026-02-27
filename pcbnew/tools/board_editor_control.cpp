@@ -863,7 +863,14 @@ int BOARD_EDITOR_CONTROL::ToggleSearch( const TOOL_EVENT& aEvent )
 
 int BOARD_EDITOR_CONTROL::TogglePythonConsole( const TOOL_EVENT& aEvent )
 {
-    m_frame->ScriptingConsoleEnableDisable();
+    KIWAY_PLAYER* frame = m_frame->Kiway().Player( FRAME_TERMINAL, true );
+
+    if( frame )
+    {
+        frame->Show( true );
+        frame->Raise();
+    }
+
     return 0;
 }
 

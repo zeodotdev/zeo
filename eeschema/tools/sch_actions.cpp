@@ -1208,6 +1208,13 @@ TOOL_ACTION SCH_ACTIONS::showAgent( TOOL_ACTION_ARGS()
         .Tooltip( _( "Open the AI Agent" ) )
         .Icon( BITMAPS::icon_kicad ) );
 
+TOOL_ACTION SCH_ACTIONS::showPythonConsole( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.showPythonConsole" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Terminal" ) )
+        .Tooltip( _( "Show Terminal" ) )
+        .Icon( BITMAPS::py_script ) );
+
 TOOL_ACTION SCH_ACTIONS::exportNetlist( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.exportNetlist" )
         .Scope( AS_GLOBAL )

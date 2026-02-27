@@ -3031,6 +3031,20 @@ int SCH_EDITOR_CONTROL::ShowAgent( const TOOL_EVENT& aEvent )
 }
 
 
+int SCH_EDITOR_CONTROL::ShowTerminal( const TOOL_EVENT& aEvent )
+{
+    KIWAY_PLAYER* frame = m_frame->Kiway().Player( FRAME_TERMINAL, true );
+
+    if( frame )
+    {
+        frame->Show( true );
+        frame->Raise();
+    }
+
+    return 0;
+}
+
+
 int SCH_EDITOR_CONTROL::UpdatePCB( const TOOL_EVENT& aEvent )
 {
     m_frame->OnUpdatePCB();
@@ -3580,6 +3594,7 @@ void SCH_EDITOR_CONTROL::setTransitions()
     Go( &SCH_EDITOR_CONTROL::EditSymbolLibraryLinks, SCH_ACTIONS::editSymbolLibraryLinks.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::ShowPcbNew, SCH_ACTIONS::showPcbNew.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::ShowAgent, SCH_ACTIONS::showAgent.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::ShowTerminal, SCH_ACTIONS::showPythonConsole.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::UpdatePCB, ACTIONS::updatePcbFromSchematic.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::UpdateFromPCB, ACTIONS::updateSchematicFromPcb.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::ExportNetlist, SCH_ACTIONS::exportNetlist.MakeEvent() );

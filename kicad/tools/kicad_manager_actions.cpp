@@ -263,6 +263,14 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::showAiAssistant( TOOL_ACTION_ARGS()
                                                             .Icon( BITMAPS::icon_kicad )
                                                             .Parameter( FRAME_AGENT ) );
 
+TOOL_ACTION KICAD_MANAGER_ACTIONS::showVersionControl( TOOL_ACTION_ARGS()
+                                                               .Name( "kicad.Control.showVersionControl" )
+                                                               .Scope( AS_GLOBAL )
+                                                               .FriendlyName( _( "Version Control" ) )
+                                                               .Tooltip( _( "Manage project version history, commit, push, and pull changes" ) )
+                                                               .Icon( BITMAPS::git_good_check )
+                                                               .Parameter( FRAME_VCS ) );
+
 TOOL_ACTION KICAD_MANAGER_ACTIONS::showTerminal( TOOL_ACTION_ARGS()
                                                          .Name( "kicad.Control.showTerminal" )
                                                          .Scope( AS_GLOBAL )

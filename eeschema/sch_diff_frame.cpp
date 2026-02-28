@@ -11,6 +11,8 @@
  */
 
 #include "sch_diff_frame.h"
+#include "sch_diff_highlight.h"
+#include <diff_manager.h>
 
 #include <gal/color4d.h>
 #include <gal/graphics_abstraction_layer.h>
@@ -87,21 +89,48 @@ public:
             return;
 
         gal->Save();
-        gal->SetIsStroke( true );
+
+        // Three-pass rendering so borders are never obscured:
+        //   1. Bordered item fills (components, labels)
+        //   2. Borderless item fills (wires, junctions)
+        //   3. Borders — always on top
+
+        // Pass 1: bordered item fills
+        gal->SetIsStroke( false );
         gal->SetIsFill( true );
 
         for( const DiffBox& b : m_boxes )
         {
-            gal->SetFillColor( b.color.WithAlpha( 0.20 ) );
-            gal->SetIsFill( true );
-            gal->SetIsStroke( b.hasBorder );
+            if( !b.hasBorder )
+                continue;
+            gal->SetFillColor( b.color.WithAlpha( DIFF_FILL_ALPHA ) );
+            gal->DrawRectangle( VECTOR2D( b.bbox.GetLeft(),  b.bbox.GetTop() ),
+                                VECTOR2D( b.bbox.GetRight(), b.bbox.GetBottom() ) );
+        }
 
+        // Pass 2: borderless item fills
+        for( const DiffBox& b : m_boxes )
+        {
             if( b.hasBorder )
-            {
-                gal->SetStrokeColor( b.color.WithAlpha( 0.85 ) );
-                gal->SetLineWidth( schIUScale.MilsToIU( 3 ) );
-            }
+                continue;
+            gal->SetFillColor( b.color.WithAlpha( DIFF_FILL_ALPHA ) );
+            gal->DrawRectangle( VECTOR2D( b.bbox.GetLeft(),  b.bbox.GetTop() ),
+                                VECTOR2D( b.bbox.GetRight(), b.bbox.GetBottom() ) );
+        }
 
+        // Pass 3: borders (screen-space width)
+        // 10 mils in schematic IU: 10 * 254 = 2540
+        double borderWidth = 2540;
+
+        gal->SetIsFill( false );
+        gal->SetIsStroke( true );
+        gal->SetLineWidth( borderWidth );
+
+        for( const DiffBox& b : m_boxes )
+        {
+            if( !b.hasBorder )
+                continue;
+            gal->SetStrokeColor( b.color.WithAlpha( DIFF_BORDER_ALPHA ) );
             gal->DrawRectangle( VECTOR2D( b.bbox.GetLeft(),  b.bbox.GetTop() ),
                                 VECTOR2D( b.bbox.GetRight(), b.bbox.GetBottom() ) );
         }
@@ -436,61 +465,19 @@ void SCH_DIFF_FRAME::buildAndAddHighlight( SCH_SCREEN* aScreen, bool aIsBefore )
     if( !aScreen )
         return;
 
-    static const KIGFX::COLOR4D addedColor(    0.15, 0.65, 0.20, 1.0 );  // green
-    static const KIGFX::COLOR4D deletedColor(  0.80, 0.15, 0.15, 1.0 );  // red
-    static const KIGFX::COLOR4D modifiedColor( 0.85, 0.55, 0.05, 1.0 );  // amber
-
     const std::set<KIID>& primarySet   = aIsBefore ? m_deletedUuids  : m_addedUuids;
-    const KIGFX::COLOR4D& primaryColor = aIsBefore ? deletedColor     : addedColor;
-
-    // Build UUID → item map for fast lookup.
-    std::unordered_map<KIID, SCH_ITEM*> itemMap;
-    for( SCH_ITEM* item : aScreen->Items() )
-        itemMap[item->m_Uuid] = item;
-
-    const int symbolMargin = schIUScale.MilsToIU( 20 );  // breathing room for symbols/labels
-    const int wireMargin   = schIUScale.MilsToIU( 5 );   // tight inflation for wires
+    const KIGFX::COLOR4D& primaryColor = aIsBefore ? SCH_DIFF::COLOR_DELETED
+                                                     : SCH_DIFF::COLOR_ADDED;
 
     auto* highlight = new SCH_DIFF_HIGHLIGHT_ITEM();
 
-    auto addBox = [&]( const KIID& aUuid, const KIGFX::COLOR4D& aColor )
-    {
-        auto it = itemMap.find( aUuid );
-        if( it == itemMap.end() )
-            return;
+    // Build highlight boxes using shared utility
+    for( const auto& db : SCH_DIFF::BuildHighlightBoxes( aScreen, primarySet, primaryColor ) )
+        highlight->AddBox( db.bbox, db.color, db.hasBorder );
 
-        SCH_ITEM* item = it->second;
-
-        bool isWire = ( item->Type() == SCH_LINE_T
-                        && static_cast<SCH_LINE*>( item )->IsWire() );
-
-        BOX2I bbox;
-        if( item->Type() == SCH_SYMBOL_T )
-            bbox = static_cast<SCH_SYMBOL*>( item )->GetBodyAndPinsBoundingBox();
-        else
-            bbox = item->GetBoundingBox();
-
-        bbox.Normalize();
-
-        if( isWire )
-        {
-            // Wires get a tight inflation only — no min-size enforcement, no border,
-            // so overlapping wire segments don't create a cluttered box grid.
-            bbox.Inflate( wireMargin );
-            highlight->AddBox( bbox, aColor, false /* hasBorder */ );
-        }
-        else
-        {
-            // Symbols, labels, junctions etc: solid border + breathing room.
-            bbox.Inflate( symbolMargin );
-            highlight->AddBox( bbox, aColor, true /* hasBorder */ );
-        }
-    };
-
-    for( const KIID& uuid : primarySet )
-        addBox( uuid, primaryColor );
-    for( const KIID& uuid : m_modifiedUuids )
-        addBox( uuid, modifiedColor );
+    for( const auto& db : SCH_DIFF::BuildHighlightBoxes( aScreen, m_modifiedUuids,
+                                                           SCH_DIFF::COLOR_MODIFIED ) )
+        highlight->AddBox( db.bbox, db.color, db.hasBorder );
 
     m_highlightItem = highlight;
     view->Add( m_highlightItem );

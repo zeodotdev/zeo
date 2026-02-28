@@ -63,10 +63,12 @@ void WEBVIEW_BRIDGE::OnMessage( const wxString& aMessage )
         else if( action == BridgeAction::PLAN_APPROVE )          HandlePlanApprove( msg );
 
         // Pending changes actions
-        else if( action == BridgeAction::PENDING_CHANGES_TOGGLE )     HandlePendingChangesToggle( msg );
+        else if( action == BridgeAction::PENDING_CHANGES_TOGGLE )       HandlePendingChangesToggle( msg );
         else if( action == BridgeAction::PENDING_CHANGES_ACCEPT_ALL ) HandlePendingChangesAcceptAll( msg );
         else if( action == BridgeAction::PENDING_CHANGES_REJECT_ALL ) HandlePendingChangesRejectAll( msg );
         else if( action == BridgeAction::PENDING_CHANGES_VIEW )       HandlePendingChangesView( msg );
+        else if( action == BridgeAction::PENDING_CHANGES_ACCEPT_SHEET ) HandlePendingChangesAcceptSheet( msg );
+        else if( action == BridgeAction::PENDING_CHANGES_REJECT_SHEET ) HandlePendingChangesRejectSheet( msg );
 
         // Auth actions
         else if( action == BridgeAction::SIGN_IN_CLICK )  HandleSignInClick( msg );
@@ -231,6 +233,20 @@ void WEBVIEW_BRIDGE::HandlePendingChangesView( const nlohmann::json& aMsg )
     std::string path = aMsg.value( "path", "" );
     bool isPcb = aMsg.value( "is_pcb", false );
     m_frame->DoPendingChangesView( wxString::FromUTF8( path ), isPcb );
+}
+
+void WEBVIEW_BRIDGE::HandlePendingChangesAcceptSheet( const nlohmann::json& aMsg )
+{
+    std::string path = aMsg.value( "path", "" );
+    bool isPcb = aMsg.value( "is_pcb", false );
+    m_frame->DoPendingChangesAcceptSheet( wxString::FromUTF8( path ), isPcb );
+}
+
+void WEBVIEW_BRIDGE::HandlePendingChangesRejectSheet( const nlohmann::json& aMsg )
+{
+    std::string path = aMsg.value( "path", "" );
+    bool isPcb = aMsg.value( "is_pcb", false );
+    m_frame->DoPendingChangesRejectSheet( wxString::FromUTF8( path ), isPcb );
 }
 
 void WEBVIEW_BRIDGE::HandleSignInClick( const nlohmann::json& aMsg )

@@ -116,6 +116,8 @@ private:
     void HandlePendingChangesAcceptAll( const nlohmann::json& aMsg );
     void HandlePendingChangesRejectAll( const nlohmann::json& aMsg );
     void HandlePendingChangesView( const nlohmann::json& aMsg );
+    void HandlePendingChangesAcceptSheet( const nlohmann::json& aMsg );
+    void HandlePendingChangesRejectSheet( const nlohmann::json& aMsg );
 
     // Auth
     void HandleSignInClick( const nlohmann::json& aMsg );

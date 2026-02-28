@@ -123,7 +123,7 @@
 #include <kiplatform/app.h>
 #include <diff_manager.h>
 #include <agent_change_tracker.h>
-#include <file_edit_session.h>
+#include <agent_snapshot_session.h>
 #include <kiplatform/ui.h>
 #include <core/profile.h>
 #include <math/box2_minmax.h>
@@ -800,15 +800,12 @@ void PCB_EDIT_FRAME::OnBoardItemRemoved( BOARD& aBoard, BOARD_ITEM* aBoardItem )
         // If all tracked items are gone, do full rejection
         if( !m_agentChangeTracker->HasChanges() )
         {
-            wxLogInfo( "PCB: All tracked items removed by user, auto-rejecting agent changes "
-                       "(baseline=%d, undoCount=%d, agentUndoCount=%d)",
-                       m_agentChangeTracker->GetUndoBaseline(),
-                       GetUndoCommandCount(),
-                       m_agentChangeTracker->GetAgentUndoCount() );
+            wxLogInfo( "PCB: All tracked items removed by user, auto-rejecting agent changes" );
 
             m_hasAgentPendingChanges = false;
-            m_showingAgentBefore = false;
             m_agentChangeTracker->ClearTrackedItems();
+            if( m_snapshotSession )
+                m_snapshotSession->EndSession();
             DIFF_MANAGER::GetInstance().ClearDiff();
         }
         else
@@ -845,15 +842,12 @@ void PCB_EDIT_FRAME::OnBoardItemsRemoved( BOARD& aBoard, std::vector<BOARD_ITEM*
         // If all tracked items are gone, do full rejection
         if( !m_agentChangeTracker->HasChanges() )
         {
-            wxLogInfo( "PCB: All tracked items removed by user (batch), auto-rejecting agent changes "
-                       "(baseline=%d, undoCount=%d, agentUndoCount=%d)",
-                       m_agentChangeTracker->GetUndoBaseline(),
-                       GetUndoCommandCount(),
-                       m_agentChangeTracker->GetAgentUndoCount() );
+            wxLogInfo( "PCB: All tracked items removed by user (batch), auto-rejecting agent changes" );
 
             m_hasAgentPendingChanges = false;
-            m_showingAgentBefore = false;
             m_agentChangeTracker->ClearTrackedItems();
+            if( m_snapshotSession )
+                m_snapshotSession->EndSession();
             DIFF_MANAGER::GetInstance().ClearDiff();
         }
         else
@@ -931,7 +925,8 @@ void PCB_EDIT_FRAME::OnBoardCompositeUpdate( BOARD& aBoard,
         wxLogInfo( "PCB: All tracked items removed, dismissing diff view" );
         DIFF_MANAGER::GetInstance().ClearDiff();
         m_hasAgentPendingChanges = false;
-        m_showingAgentBefore = false;
+        if( m_snapshotSession )
+            m_snapshotSession->EndSession();
         std::string payload = "pcb";
         Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
         return;
@@ -2196,7 +2191,7 @@ void PCB_EDIT_FRAME::OnModify()
     // Check if agent-tracked items were deleted by the user
     // Skip when showing "before" state — items are intentionally absent from screen
     // Skip during undo/redo — items are temporarily absent but on the redo/undo list
-    if( m_hasAgentPendingChanges && !m_showingAgentBefore && !m_inUndoRedo
+    if( m_hasAgentPendingChanges && !m_inUndoRedo
         && m_agentChangeTracker && m_agentChangeTracker->HasChanges() )
     {
         std::set<KIID>  trackedItems = m_agentChangeTracker->GetAllTrackedItems();
@@ -3548,23 +3543,57 @@ bool PCB_EDIT_FRAME::DoAutoSave()
 }
 
 
-void PCB_EDIT_FRAME::RecordAgentUndoPosition()
+void PCB_EDIT_FRAME::BeginAgentSnapshot()
 {
-    // If we already have pending changes, don't reset the baseline - we want to accumulate
-    // all changes since the FIRST tool call, not just the most recent one
-    if( m_hasAgentPendingChanges )
+    // If we already have a snapshot, don't take another one — accumulate changes
+    if( m_snapshotSession && m_snapshotSession->HasSnapshot() )
     {
-        // Keep the original baseline, don't clear or reset
+        wxLogInfo( "PCB: BeginAgentSnapshot: snapshot already exists, skipping" );
         return;
     }
 
-    // Initialize tracker if needed
     if( !m_agentChangeTracker )
         m_agentChangeTracker = std::make_unique<AGENT_CHANGE_TRACKER>();
 
-    // No existing session - start a new one
-    // Record the current undo stack count - kipy API operations will create undo entries
-    m_agentChangeTracker->SetUndoBaseline( GetUndoCommandCount() );
+    if( !m_snapshotSession )
+        m_snapshotSession = std::make_unique<AGENT_SNAPSHOT_SESSION>();
+
+    if( !m_snapshotSession->CreateTempDir() )
+    {
+        wxLogWarning( "PCB: BeginAgentSnapshot: failed to create temp dir" );
+        return;
+    }
+
+    BOARD* board = GetBoard();
+    if( !board )
+        return;
+
+    wxString snapshotDir = m_snapshotSession->GetSnapshotDir();
+    wxString origPath = board->GetFileName();
+
+    if( origPath.IsEmpty() )
+    {
+        wxLogWarning( "PCB: BeginAgentSnapshot: board has no filename" );
+        return;
+    }
+
+    wxFileName fn( origPath );
+    wxString snapPath = snapshotDir + wxFileName::GetPathSeparator() + fn.GetFullName();
+
+    try
+    {
+        IO_RELEASER<PCB_IO> pi( PCB_IO_MGR::FindPlugin( PCB_IO_MGR::KICAD_SEXP ) );
+        pi->SaveBoard( snapPath, board );
+        m_snapshotSession->RegisterPcbSnapshot( snapPath );
+        wxLogInfo( "PCB: BeginAgentSnapshot: saved %s -> %s", origPath, snapPath );
+    }
+    catch( const IO_ERROR& ioe )
+    {
+        wxLogWarning( "PCB: BeginAgentSnapshot: failed to save: %s", ioe.What() );
+    }
+
+    m_snapshotSession->FinalizeSnapshot();
+    wxLogInfo( "PCB: BeginAgentSnapshot: snapshot complete" );
 }
 
 
@@ -3574,53 +3603,51 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
     if( !board )
         return false;
 
-    // Initialize tracker if needed
     if( !m_agentChangeTracker )
         m_agentChangeTracker = std::make_unique<AGENT_CHANGE_TRACKER>();
 
-    // Check if any undo entries were created since we took the snapshot
-    int currentUndoCount = GetUndoCommandCount();
-    int baseline = m_agentChangeTracker->GetUndoBaseline();
-    bool hasNewChanges = ( currentUndoCount > baseline );
-
-    if( !hasNewChanges && !m_hasAgentPendingChanges )
+    if( !m_snapshotSession || !m_snapshotSession->HasSnapshot() )
     {
-        // No changes detected and no existing pending changes
+        wxLogWarning( "PCB: DetectAgentChanges: no snapshot session" );
         return false;
     }
 
-    // Iterate through the new undo entries to track changed items
-    for( int i = baseline; i < currentUndoCount; i++ )
+    // Walk undo list to populate tracker with changed item KIIDs
+    int currentUndoCount = GetUndoCommandCount();
+    bool foundNewItems = false;
+
+    for( int i = 0; i < currentUndoCount; i++ )
     {
         PICKED_ITEMS_LIST* undoCommand = m_undoList.m_CommandsList[i];
         if( !undoCommand )
             continue;
-
-        wxLogInfo( "PCB: Processing undo command %d with %u items", i, undoCommand->GetCount() );
 
         for( unsigned int j = 0; j < undoCommand->GetCount(); j++ )
         {
             EDA_ITEM* item = undoCommand->GetPickedItem( j );
             UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
 
-            // Skip if no valid item pointer
             if( !item )
                 continue;
 
-            // Validate pointer looks reasonable (not obviously garbage)
-            // Valid heap pointers on macOS arm64 are typically in ranges starting with 0x0000000
             uintptr_t ptrVal = reinterpret_cast<uintptr_t>( item );
             if( ptrVal < 0x100000000ULL || ptrVal > 0x800000000000ULL )
-            {
-                wxLogWarning( "PCB: Skipping invalid item pointer %p in undo command", item );
                 continue;
-            }
 
-            // Track the item by KIID with change type (PCB has no sheet path)
-            // Use try-catch to protect against any remaining invalid pointers
             try
             {
-                m_agentChangeTracker->TrackItem( item->m_Uuid, status );
+                AGENT_CHANGE_TYPE changeType;
+                if( status == UNDO_REDO::NEWITEM )
+                    changeType = AGENT_CHANGE_TYPE::ADDED;
+                else if( status == UNDO_REDO::DELETED )
+                    changeType = AGENT_CHANGE_TYPE::DELETED;
+                else
+                    changeType = AGENT_CHANGE_TYPE::CHANGED;
+
+                if( !m_agentChangeTracker->IsTracked( item->m_Uuid ) )
+                    foundNewItems = true;
+
+                m_agentChangeTracker->TrackItem( item->m_Uuid, changeType );
             }
             catch( ... )
             {
@@ -3629,262 +3656,153 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
         }
     }
 
+    if( !foundNewItems && !m_hasAgentPendingChanges )
+        return false;
+
     m_hasAgentPendingChanges = true;
+    m_snapshotSession->SetChangesDetected();
 
-    int agentUndoCount = currentUndoCount - baseline;
-    m_agentChangeTracker->SetAgentUndoCount( agentUndoCount );
-    wxLogInfo( "PCB: DetectAgentChanges: baseline=%d, currentUndo=%d, agentUndoCount=%d",
-               baseline, currentUndoCount, agentUndoCount );
-
-    wxLogInfo( "PCB: Agent diff tracking %zu items", m_agentChangeTracker->GetTrackedItemCount() );
+    wxLogInfo( "PCB: DetectAgentChanges: tracking %zu items",
+               m_agentChangeTracker->GetTrackedItemCount() );
 
     // Set up callbacks for the diff overlay
     DIFF_CALLBACKS callbacks;
     callbacks.onApprove = [this]() {
-        // Make sure we're showing "after" state before approving
-        if( m_showingAgentBefore )
-            ShowAgentChangesAfter();
         ClearAgentPendingChanges();
-        // Notify agent frame that diff was handled via overlay
         std::string payload = "pcb";
         Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
     };
     callbacks.onReject = [this]() {
-        // Make sure we're showing "after" state before reverting
-        if( m_showingAgentBefore )
-            ShowAgentChangesAfter();
         RevertAgentChanges();
-        // Notify agent frame that diff was handled via overlay
         std::string payload = "pcb";
         Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
     };
-    callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
-    callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
+    callbacks.onViewDiff = [this]() {
+        std::string payload = "{}";
+        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_VIEW_CHANGES, payload );
+    };
     callbacks.onRefresh = [this]() {
         if( GetCanvas() )
             GetCanvas()->Refresh();
     };
 
-    // Create a bbox compute callback for dynamic updates
     BBOX_COMPUTE_CALLBACK bboxCallback = [this]() -> BOX2I {
         return ComputeTrackedItemsBBox();
     };
 
-    // Compute initial bbox for logging
-    BOX2I initialBBox = bboxCallback();
-    wxLogInfo( "PCB: Registering diff overlay with bbox (%d,%d) size (%d,%d)",
-               initialBBox.GetX(), initialBBox.GetY(),
-               initialBBox.GetWidth(), initialBBox.GetHeight() );
+    ITEM_HIGHLIGHTS_CALLBACK highlightsCallback = [this]() -> std::vector<DIFF_ITEM_HIGHLIGHT> {
+        return ComputeItemHighlights();
+    };
 
     DIFF_MANAGER::GetInstance().RegisterOverlay(
         GetCanvas()->GetView(),
         m_agentChangeTracker.get(),
-        wxEmptyString,  // No sheet path for PCB
+        wxEmptyString,
         callbacks,
-        bboxCallback );
+        bboxCallback,
+        highlightsCallback );
 
-    // Force refresh to ensure the overlay is rendered
     GetCanvas()->ForceRefresh();
 
-    return hasNewChanges;
+    return foundNewItems;
 }
 
 
 bool PCB_EDIT_FRAME::HasAgentPendingChanges() const
 {
-    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
-        return false;
-
-    // If agent used undo-based changes and all have been undone, tracker is stale
-    int agentUndoCount = m_agentChangeTracker->GetAgentUndoCount();
-    if( agentUndoCount > 0 )
-    {
-        int baseline = m_agentChangeTracker->GetUndoBaseline();
-        int currentUndoCount = GetUndoCommandCount();
-
-        if( currentUndoCount <= baseline && GetRedoCommandCount() == 0 )
-        {
-            wxLogInfo( "PCB: HasAgentPendingChanges: returning false — stale tracker "
-                       "(undoCount=%d <= baseline=%d, agentUndoCount=%d, no redo entries)",
-                       currentUndoCount, baseline, agentUndoCount );
-            return false;
-        }
-    }
-
-    return true;
-}
-
-
-void PCB_EDIT_FRAME::ClearStaleAgentChanges()
-{
-    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
-        return;
-
-    // Don't auto-reject while viewing "before" state via diff overlay —
-    // the undos are intentional for diff viewing, not actual user undos
-    if( m_showingAgentBefore )
-        return;
-
-    int agentUndoCount = m_agentChangeTracker->GetAgentUndoCount();
-    int currentUndoCount = GetUndoCommandCount();
-    int baseline = m_agentChangeTracker->GetUndoBaseline();
-
-    wxLogInfo( "PCB: ClearStaleAgentChanges: agentUndoCount=%d, currentUndo=%d, baseline=%d",
-               agentUndoCount, currentUndoCount, baseline );
-
-    if( agentUndoCount > 0 && currentUndoCount <= baseline )
-    {
-        // If there are redo entries, the user just undid agent changes and can still
-        // redo them — don't auto-reject yet. Only auto-reject when the redo list is
-        // empty (user made new edits after undoing, which clears the redo list).
-        if( GetRedoCommandCount() > 0 )
-        {
-            wxLogInfo( "PCB: All agent undo entries undone but redo available (%d entries), "
-                       "keeping diff overlay", GetRedoCommandCount() );
-            return;
-        }
-
-        wxLogInfo( "PCB: All agent undo entries undone (undoCount %d <= baseline %d), auto-rejecting",
-                   currentUndoCount, baseline );
-        m_agentChangeTracker->ClearTrackedItems();
-        m_hasAgentPendingChanges = false;
-        m_showingAgentBefore = false;
-        DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
-    }
+    return m_hasAgentPendingChanges
+           && m_snapshotSession && m_snapshotSession->HasChanges()
+           && m_agentChangeTracker && m_agentChangeTracker->HasChanges();
 }
 
 
 void PCB_EDIT_FRAME::ClearAgentPendingChanges()
 {
     m_hasAgentPendingChanges = false;
-    m_showingAgentBefore = false;
 
-    // Clear the tracker
     if( m_agentChangeTracker )
         m_agentChangeTracker->ClearTrackedItems();
 
-    // Clear the diff overlay
-    DIFF_MANAGER::GetInstance().ClearDiff();
+    if( m_snapshotSession )
+        m_snapshotSession->EndSession();
 
-    // Clear redo list to prevent accidental redo after approve
+    DIFF_MANAGER::GetInstance().ClearDiff();
     ClearUndoORRedoList( REDO_LIST );
+
+    wxLogInfo( "PCB: ClearAgentPendingChanges: accepted, snapshot discarded" );
 }
 
 
 void PCB_EDIT_FRAME::RevertAgentChanges()
 {
-    wxLogInfo( "PCB: RevertAgentChanges called (hasAgentPendingChanges=%d, showingBefore=%d)",
-               m_hasAgentPendingChanges, m_showingAgentBefore );
+    wxLogInfo( "PCB: RevertAgentChanges called (hasAgentPendingChanges=%d)", m_hasAgentPendingChanges );
 
-    if( !HasAgentPendingChanges() || !m_agentChangeTracker )
+    if( !m_snapshotSession || !m_snapshotSession->HasSnapshot() )
     {
-        wxLogInfo( "PCB: RevertAgentChanges: no real pending changes — cleaning up stale state" );
+        wxLogInfo( "PCB: RevertAgentChanges: no snapshot — cleaning up stale state" );
         if( m_agentChangeTracker )
             m_agentChangeTracker->ClearTrackedItems();
         m_hasAgentPendingChanges = false;
-        m_showingAgentBefore = false;
         DIFF_MANAGER::GetInstance().ClearDiff();
         return;
     }
 
-    if( m_showingAgentBefore )
+    wxString snapshotPath = m_snapshotSession->GetPcbSnapshotPath();
+    if( snapshotPath.IsEmpty() || !wxFileName::FileExists( snapshotPath ) )
     {
-        wxLogInfo( "PCB: RevertAgentChanges: showing 'before' state, clearing redo list" );
-        ClearUndoORRedoList( REDO_LIST );
+        wxLogWarning( "PCB: RevertAgentChanges: snapshot file not found" );
+        return;
     }
-    else
+
+    wxLogInfo( "PCB: RevertAgentChanges: reloading board from snapshot '%s'", snapshotPath );
+
+    try
     {
-        int currentUndoCount = GetUndoCommandCount();
-        int baseline = m_agentChangeTracker->GetUndoBaseline();
-        int agentUndoCount = m_agentChangeTracker->GetAgentUndoCount();
-        int entriesSinceBaseline = currentUndoCount - baseline;
+        IO_RELEASER<PCB_IO> pi( PCB_IO_MGR::FindPlugin( PCB_IO_MGR::KICAD_SEXP ) );
+        BOARD* loadedBoard = pi->LoadBoard( snapshotPath, nullptr );
 
-        wxLogInfo( "PCB: RevertAgentChanges: currentUndo=%d, baseline=%d, agentUndoCount=%d, "
-                   "entriesSinceBaseline=%d",
-                   currentUndoCount, baseline, agentUndoCount, entriesSinceBaseline );
+        if( !loadedBoard )
+        {
+            wxLogWarning( "PCB: RevertAgentChanges: failed to load snapshot" );
+            return;
+        }
 
-        if( agentUndoCount > 0 && entriesSinceBaseline == agentUndoCount )
-        {
-            wxLogInfo( "PCB: RevertAgentChanges: safe undo rollback (%d entries)", entriesSinceBaseline );
-            for( int i = 0; i < entriesSinceBaseline; i++ )
-                RollbackFromUndo();
-        }
-        else if( agentUndoCount > 0 && entriesSinceBaseline > agentUndoCount )
-        {
-            wxLogInfo( "PCB: RevertAgentChanges: user mixed in %d entries — clearing state "
-                       "(PCB has no per-sheet rejection)", entriesSinceBaseline - agentUndoCount );
-            // PCB has no per-sheet rejection, just clear state
-        }
-        else
-        {
-            wxLogInfo( "PCB: RevertAgentChanges: no undo entries to roll back "
-                       "(agentUndoCount=%d, entriesSinceBaseline=%d), clearing state",
-                       agentUndoCount, entriesSinceBaseline );
-        }
+        // Preserve the original filename
+        wxString origFileName = GetBoard()->GetFileName();
+        loadedBoard->SetFileName( origFileName );
+
+        // SetBoard takes ownership and deletes the old board
+        SetBoard( loadedBoard );
+
+        wxLogInfo( "PCB: RevertAgentChanges: board reloaded from snapshot" );
     }
+    catch( const IO_ERROR& ioe )
+    {
+        wxLogWarning( "PCB: RevertAgentChanges: failed to load snapshot: %s", ioe.What() );
+        return;
+    }
+
+    // Clear undo/redo — they reference items from the old board
+    ClearUndoORRedoList( UNDO_LIST );
+    ClearUndoORRedoList( REDO_LIST );
 
     DIFF_MANAGER::GetInstance().ClearDiff();
-    m_agentChangeTracker->ClearTrackedItems();
+    DIFF_MANAGER::GetInstance().UnregisterOverlay();
+    if( m_agentChangeTracker )
+        m_agentChangeTracker->ClearTrackedItems();
     m_hasAgentPendingChanges = false;
-    m_showingAgentBefore = false;
-    wxLogInfo( "PCB: RevertAgentChanges: done, state cleared" );
-}
+    m_snapshotSession->EndSession();
 
+    // Rebuild and refresh
+    Compile_Ratsnest( true );
+    GetCanvas()->ForceRefresh();
 
-void PCB_EDIT_FRAME::ShowAgentChangesBefore()
-{
-    if( !m_hasAgentPendingChanges || m_showingAgentBefore || !m_agentChangeTracker )
-        return;
-
-    // Use native undo to show the "before" state
-    // Undo all agent changes (they'll go to redo list for later restoration)
-    int currentUndoCount = GetUndoCommandCount();
-    int baseline = m_agentChangeTracker->GetUndoBaseline();
-    int numToUndo = currentUndoCount - baseline;
-
-    // Cache the bbox before undoing so the overlay can still render at the correct position
-    if( numToUndo > 0 )
-    {
-        m_cachedAgentBBox = ComputeTrackedItemsBBox();
-
-        // Set flag BEFORE the undo loop so that ClearStaleAgentChanges() and OnModify()
-        // know these undos are intentional diff viewing, not actual user undos
-        m_showingAgentBefore = true;
-    }
-
-    for( int i = 0; i < numToUndo; i++ )
-    {
-        wxCommandEvent evt;
-        RestoreCopyFromUndoList( evt );
-    }
-}
-
-
-void PCB_EDIT_FRAME::ShowAgentChangesAfter()
-{
-    if( !m_hasAgentPendingChanges || !m_showingAgentBefore )
-        return;
-
-    // Use native redo to restore the "after" state
-    // Redo all agent changes that were undone by ShowAgentChangesBefore
-    int redoCount = GetRedoCommandCount();
-
-    for( int i = 0; i < redoCount; i++ )
-    {
-        wxCommandEvent evt;
-        RestoreCopyFromRedoList( evt );
-    }
-
-    m_showingAgentBefore = false;
+    wxLogInfo( "PCB: RevertAgentChanges: done, board restored" );
 }
 
 
 BOX2I PCB_EDIT_FRAME::ComputeTrackedItemsBBox() const
 {
-    // When showing "before" state, items are undone off screen — use cached bbox
-    if( m_showingAgentBefore )
-        return m_cachedAgentBBox;
-
     BOX2I bbox;
 
     if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
@@ -4008,4 +3926,80 @@ BOX2I PCB_EDIT_FRAME::ComputeTrackedItemsBBox() const
                foundCount, bbox.GetX(), bbox.GetY(), bbox.GetWidth(), bbox.GetHeight() );
 
     return bbox;
+}
+
+
+std::vector<DIFF_ITEM_HIGHLIGHT> PCB_EDIT_FRAME::ComputeItemHighlights() const
+{
+    std::vector<DIFF_ITEM_HIGHLIGHT> highlights;
+
+    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
+        return highlights;
+
+    BOARD* board = GetBoard();
+    if( !board )
+        return highlights;
+
+    std::set<KIID> trackedItems = m_agentChangeTracker->GetAllTrackedItems();
+
+    // Colors matching the VCS diff view
+    static const KIGFX::COLOR4D colorAdded( 0.15, 0.65, 0.20, 1.0 );    // Green
+    static const KIGFX::COLOR4D colorChanged( 0.85, 0.55, 0.05, 1.0 );   // Orange/amber
+    static const KIGFX::COLOR4D colorDeleted( 0.80, 0.15, 0.15, 1.0 );   // Red
+
+    // Helper lambda to add a highlight for a board item
+    auto addHighlight = [&]( BOARD_ITEM* item, const KIID& kiid )
+    {
+        AGENT_CHANGE_TYPE changeType = m_agentChangeTracker->GetChangeType( kiid );
+
+        if( changeType == AGENT_CHANGE_TYPE::DELETED )
+            return;
+
+        KIGFX::COLOR4D color;
+        switch( changeType )
+        {
+        case AGENT_CHANGE_TYPE::ADDED:   color = colorAdded;   break;
+        case AGENT_CHANGE_TYPE::CHANGED: color = colorChanged;  break;
+        default:                         color = colorAdded;    break;
+        }
+
+        BOX2I itemBBox = item->GetBoundingBox();
+        highlights.push_back( { itemBBox, color } );
+    };
+
+    // Try cache first
+    const auto& itemCache = board->GetItemByIdCache();
+    for( const KIID& kiid : trackedItems )
+    {
+        auto it = itemCache.find( kiid );
+        if( it != itemCache.end() && it->second )
+            addHighlight( it->second, kiid );
+    }
+
+    // If cache missed everything, try direct iteration
+    if( highlights.empty() && !trackedItems.empty() )
+    {
+        for( FOOTPRINT* fp : board->Footprints() )
+        {
+            if( trackedItems.count( fp->m_Uuid ) )
+                addHighlight( fp, fp->m_Uuid );
+        }
+        for( PCB_TRACK* track : board->Tracks() )
+        {
+            if( trackedItems.count( track->m_Uuid ) )
+                addHighlight( track, track->m_Uuid );
+        }
+        for( BOARD_ITEM* item : board->Drawings() )
+        {
+            if( trackedItems.count( item->m_Uuid ) )
+                addHighlight( item, item->m_Uuid );
+        }
+        for( ZONE* zone : board->Zones() )
+        {
+            if( trackedItems.count( zone->m_Uuid ) )
+                addHighlight( zone, zone->m_Uuid );
+        }
+    }
+
+    return highlights;
 }

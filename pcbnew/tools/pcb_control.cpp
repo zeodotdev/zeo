@@ -2172,13 +2172,8 @@ int PCB_CONTROL::Undo( const TOOL_EVENT& aEvent )
         std::string payload;
         editFrame->Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_CHECK_CHANGES, payload );
 
-        // Check if all agent undo entries have been undone — auto-reject if so
-        if( pcbEditFrame )
-        {
-            wxLogInfo( "PCB: Undo handler: checking for stale agent changes (undoCount=%d)",
-                       pcbEditFrame->GetUndoCommandCount() );
-            pcbEditFrame->ClearStaleAgentChanges();
-        }
+        // No longer need stale agent change detection — snapshot-based approach
+        // handles reject/approve without coupling to undo stack
     }
 
     return 0;

@@ -34,7 +34,8 @@
 
 class ACTION_PLUGIN;
 class AGENT_CHANGE_TRACKER;
-class FILE_EDIT_SESSION;
+class AGENT_SNAPSHOT_SESSION;
+struct DIFF_ITEM_HIGHLIGHT;
 class PCB_SCREEN;
 class BOARD;
 class BOARD_COMMIT;
@@ -903,9 +904,9 @@ private:
     std::unique_ptr<API_HANDLER_COMMON> m_apiHandlerCommon;
 #endif
 
-    // Agent pending changes support (item-based tracking with dynamic bbox)
-    std::unique_ptr<AGENT_CHANGE_TRACKER> m_agentChangeTracker;  ///< Item-based change tracker
-    std::unique_ptr<FILE_EDIT_SESSION>    m_fileEditSession;     ///< File edit session manager
+    // Agent pending changes support (item-based tracking with dynamic bbox + snapshot)
+    std::unique_ptr<AGENT_CHANGE_TRACKER>  m_agentChangeTracker;  ///< Item-based change tracker
+    std::unique_ptr<AGENT_SNAPSHOT_SESSION> m_snapshotSession;    ///< Snapshot-based change session
     bool  m_hasAgentPendingChanges = false;
 
     // Concurrent editing support (agent operates while user navigates/edits)
@@ -913,9 +914,10 @@ private:
 
 public:
     /**
-     * Called before agent Python execution to record the current undo position.
+     * Take a snapshot of the PCB board before agent execution.
+     * Idempotent — skips if snapshot already taken.
      */
-    void RecordAgentUndoPosition();
+    void BeginAgentSnapshot();
 
     /**
      * Called after agent Python execution to detect and show changes.
@@ -929,29 +931,11 @@ public:
     void ClearAgentPendingChanges();
 
     /**
-     * Revert pending agent changes (called on deny).
+     * Revert all pending agent changes by reloading from snapshot.
      */
     void RevertAgentChanges();
 
-    /**
-     * Temporarily show the "before" state (for View Before button).
-     * Does not clear snapshots - can toggle back with ShowAgentChangesAfter().
-     */
-    void ShowAgentChangesBefore();
-
-    /**
-     * Show the "after" state (for View After button).
-     * Restores the modified state after ShowAgentChangesBefore().
-     */
-    void ShowAgentChangesAfter();
-
     bool HasAgentPendingChanges() const;
-
-    /**
-     * Clear stale agent change state when all agent undo entries have been undone.
-     * Called from the undo handler to auto-reject when user Ctrl+Z's past baseline.
-     */
-    void ClearStaleAgentChanges();
 
     /**
      * Get the agent change tracker.
@@ -966,11 +950,13 @@ public:
      */
     BOX2I ComputeTrackedItemsBBox() const;
 
-    bool m_inUndoRedo = false;          ///< True during undo/redo (suppresses OnModify auto-reject)
+    /**
+     * Compute per-item highlight data for the diff overlay.
+     * Returns colored bounding boxes for each tracked item (green=added, orange=modified).
+     */
+    std::vector<DIFF_ITEM_HIGHLIGHT> ComputeItemHighlights() const;
 
-private:
-    bool m_showingAgentBefore = false;  ///< True if currently showing "before" state
-    BOX2I m_cachedAgentBBox;            ///< Cached bbox for use when items are undone (before state)
+    bool m_inUndoRedo = false;          ///< True during undo/redo (suppresses OnModify auto-reject)
 };
 
 #endif  // __PCB_EDIT_FRAME_H__

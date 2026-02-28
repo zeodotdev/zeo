@@ -26,13 +26,14 @@
 #include <api/api_handler_sch.h>
 #include <api/api_server.h>
 #include <agent_change_tracker.h>
+#include <agent_snapshot_session.h>
 #include <nlohmann/json.hpp>
-#include <file_edit_session.h>
 #include <base_units.h>
 #include <bitmaps.h>
 #include <confirm.h>
 #include <connection_graph.h>
 #include <diff_manager.h>
+#include "sch_diff_highlight.h"
 #include <dialogs/dialog_erc.h>
 #include <dialogs/dialog_book_reporter.h>
 #include <dialogs/dialog_symbol_fields_table.h>
@@ -683,17 +684,14 @@ void SCH_EDIT_FRAME::OnSchItemsRemoved( SCHEMATIC& aSch, std::vector<SCH_ITEM*>&
         // Check if we still have any tracked items
         if( !m_agentChangeTracker->HasChanges() )
         {
-            wxLogInfo( "SCH: All tracked items deleted by user, auto-rejecting agent changes "
-                       "(baseline=%d, undoCount=%d, agentUndoCount=%d)",
-                       m_agentChangeTracker->GetUndoBaseline(),
-                       GetUndoCommandCount(),
-                       m_agentChangeTracker->GetAgentUndoCount() );
+            wxLogInfo( "SCH: All tracked items deleted by user, auto-rejecting agent changes" );
 
             // Full rejection — clear all state as if user pressed Reject All
             m_hasAgentPendingChanges = false;
-            m_showingAgentBefore = false;
             m_agentChangedSheetPath.clear();
-            m_agentChangeTracker->ClearTrackedItems();  // also resets undo baseline
+            m_agentChangeTracker->ClearTrackedItems();
+            if( m_snapshotSession )
+                m_snapshotSession->EndSession();
             DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
         }
         else
@@ -1251,11 +1249,7 @@ void SCH_EDIT_FRAME::SetCurrentSheet( const SCH_SHEET_PATH& aSheet )
                 wxString capturedSheetPath = currentSheetPath;
                 DIFF_CALLBACKS callbacks;
                 callbacks.onApprove = [this, capturedSheetPath]() {
-                    if( m_showingAgentBefore )
-                        ShowAgentChangesAfter();
-                    // Only approve changes on this sheet, not all sheets
                     ApproveAgentChangesOnSheet( capturedSheetPath );
-                    // Notify agent frame with sheet path so it can update its UI
                     nlohmann::json j;
                     j["editor"] = "sch";
                     j["sheet_path"] = capturedSheetPath.ToStdString();
@@ -1263,19 +1257,17 @@ void SCH_EDIT_FRAME::SetCurrentSheet( const SCH_SHEET_PATH& aSheet )
                     Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
                 };
                 callbacks.onReject = [this, capturedSheetPath]() {
-                    if( m_showingAgentBefore )
-                        ShowAgentChangesAfter();
-                    // Only reject changes on this sheet, not all sheets
                     RejectAgentChangesOnSheet( capturedSheetPath );
-                    // Notify agent frame with sheet path so it can update its UI
                     nlohmann::json j;
                     j["editor"] = "sch";
                     j["sheet_path"] = capturedSheetPath.ToStdString();
                     std::string payload = j.dump();
                     Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
                 };
-                callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
-                callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
+                callbacks.onViewDiff = [this]() {
+                    std::string payload = "{}";
+                    Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_VIEW_CHANGES, payload );
+                };
                 callbacks.onRefresh = [this]() {
                     if( GetCanvas() )
                         GetCanvas()->Refresh();
@@ -1286,12 +1278,17 @@ void SCH_EDIT_FRAME::SetCurrentSheet( const SCH_SHEET_PATH& aSheet )
                     return ComputeTrackedItemsBBox();
                 };
 
+                ITEM_HIGHLIGHTS_CALLBACK highlightsCallback = [this]() -> std::vector<DIFF_ITEM_HIGHLIGHT> {
+                    return ComputeItemHighlights();
+                };
+
                 DIFF_MANAGER::GetInstance().RegisterOverlay(
                     GetCanvas()->GetView(),
                     m_agentChangeTracker.get(),
                     currentSheetPath,
                     callbacks,
-                    bboxCallback );
+                    bboxCallback,
+                    highlightsCallback );
 
                 // Force a canvas refresh to ensure the overlay is rendered
                 // This is needed because DisplaySheet() cleared the view before we added the overlay
@@ -1538,7 +1535,7 @@ void SCH_EDIT_FRAME::OnModify()
     // Skip during undo/redo — items are temporarily absent but on the redo/undo list
     // Skip during agent transactions — the agent may be mid-operation (e.g. overlap
     // rejection removes a symbol before re-adding at a different position)
-    if( m_hasAgentPendingChanges && !m_showingAgentBefore && !m_inUndoRedo
+    if( m_hasAgentPendingChanges && !m_inUndoRedo
         && !m_agentTransactionActive
         && m_agentChangeTracker && m_agentChangeTracker->HasChanges() )
     {
@@ -1573,9 +1570,10 @@ void SCH_EDIT_FRAME::OnModify()
             wxLogInfo( "SCH: OnModify: all tracked items deleted, auto-rejecting" );
 
             m_hasAgentPendingChanges = false;
-            m_showingAgentBefore = false;
             m_agentChangedSheetPath.clear();
             m_agentChangeTracker->ClearTrackedItems();
+            if( m_snapshotSession )
+                m_snapshotSession->EndSession();
             DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
 
             // Notify agent frame to refresh its pending changes panel
@@ -2632,11 +2630,7 @@ void SCH_EDIT_FRAME::DisplayCurrentSheet()
             wxString capturedSheetPath = currentSheetPath;
             DIFF_CALLBACKS callbacks;
             callbacks.onApprove = [this, capturedSheetPath]() {
-                if( m_showingAgentBefore )
-                    ShowAgentChangesAfter();
-                // Only approve changes on this sheet, not all sheets
                 ApproveAgentChangesOnSheet( capturedSheetPath );
-                // Notify agent frame with sheet path so it can update its UI
                 nlohmann::json j;
                 j["editor"] = "sch";
                 j["sheet_path"] = capturedSheetPath.ToStdString();
@@ -2644,19 +2638,17 @@ void SCH_EDIT_FRAME::DisplayCurrentSheet()
                 Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
             };
             callbacks.onReject = [this, capturedSheetPath]() {
-                if( m_showingAgentBefore )
-                    ShowAgentChangesAfter();
-                // Only reject changes on this sheet, not all sheets
                 RejectAgentChangesOnSheet( capturedSheetPath );
-                // Notify agent frame with sheet path so it can update its UI
                 nlohmann::json j;
                 j["editor"] = "sch";
                 j["sheet_path"] = capturedSheetPath.ToStdString();
                 std::string payload = j.dump();
                 Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
             };
-            callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
-            callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
+            callbacks.onViewDiff = [this]() {
+                std::string payload = "{}";
+                Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_VIEW_CHANGES, payload );
+            };
             callbacks.onRefresh = [this]() {
                 if( GetCanvas() )
                     GetCanvas()->Refresh();
@@ -2667,12 +2659,17 @@ void SCH_EDIT_FRAME::DisplayCurrentSheet()
                 return ComputeTrackedItemsBBox();
             };
 
+            ITEM_HIGHLIGHTS_CALLBACK highlightsCallback = [this]() -> std::vector<DIFF_ITEM_HIGHLIGHT> {
+                return ComputeItemHighlights();
+            };
+
             DIFF_MANAGER::GetInstance().RegisterOverlay(
                 GetCanvas()->GetView(),
                 m_agentChangeTracker.get(),
                 currentSheetPath,
                 callbacks,
-                bboxCallback );
+                bboxCallback,
+                highlightsCallback );
 
             // Force refresh to ensure the overlay is visible immediately
             GetCanvas()->ForceRefresh();
@@ -3397,24 +3394,82 @@ bool SCH_EDIT_FRAME::doAutoSave()
 }
 
 
-void SCH_EDIT_FRAME::RecordAgentUndoPosition()
+void SCH_EDIT_FRAME::BeginAgentSnapshot()
 {
-    // If we already have pending changes, don't reset the baseline - we want to accumulate
-    // all changes since the FIRST tool call, not just the most recent one
-    if( m_hasAgentPendingChanges )
+    // If we already have a snapshot, don't take another one — accumulate changes
+    if( m_snapshotSession && m_snapshotSession->HasSnapshot() )
     {
-        // Keep the original baseline, don't clear or reset
+        wxLogInfo( "SCH: BeginAgentSnapshot: snapshot already exists, skipping" );
         return;
     }
 
-    // Initialize tracker if needed
+    // Initialize tracker and snapshot session
     if( !m_agentChangeTracker )
         m_agentChangeTracker = std::make_unique<AGENT_CHANGE_TRACKER>();
 
-    // No existing session - start a new one
-    // Record the current undo stack count - kipy API operations will create undo entries
-    m_agentChangeTracker->SetUndoBaseline( GetUndoCommandCount() );
-    m_agentChangedSheetPath.clear();  // Reset sheet path
+    if( !m_snapshotSession )
+        m_snapshotSession = std::make_unique<AGENT_SNAPSHOT_SESSION>();
+
+    // Create temp directory for snapshot files
+    if( !m_snapshotSession->CreateTempDir() )
+    {
+        wxLogWarning( "SCH: BeginAgentSnapshot: failed to create temp dir" );
+        return;
+    }
+
+    wxString snapshotDir = m_snapshotSession->GetSnapshotDir();
+
+    // Serialize every unique SCH_SCREEN to a temp file
+    SCH_SCREENS screens( Schematic().Root() );
+
+    for( SCH_SCREEN* screen = screens.GetFirst(); screen; screen = screens.GetNext() )
+    {
+        wxString origPath = screen->GetFileName();
+        if( origPath.IsEmpty() )
+            continue;
+
+        // Build a temp file path in the snapshot directory
+        wxFileName fn( origPath );
+        wxString snapPath = snapshotDir + wxFileName::GetPathSeparator() + fn.GetFullName();
+
+        try
+        {
+            IO_RELEASER<SCH_IO> pi( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD ) );
+            std::map<std::string, UTF8> props;
+            props["PropSaveCurrentSheetOnly"] = "";
+
+            // Find a sheet that uses this screen so we can pass it to SaveSchematicFile
+            SCH_SHEET_LIST sheetList = Schematic().Hierarchy();
+            SCH_SHEET* sheetForScreen = nullptr;
+
+            for( const SCH_SHEET_PATH& path : sheetList )
+            {
+                if( path.LastScreen() == screen )
+                {
+                    sheetForScreen = path.Last();
+                    break;
+                }
+            }
+
+            if( sheetForScreen )
+            {
+                pi->SaveSchematicFile( snapPath, sheetForScreen, &Schematic(), &props );
+                m_snapshotSession->RegisterSchematicSnapshot( origPath, snapPath );
+                wxLogInfo( "SCH: BeginAgentSnapshot: saved %s -> %s", origPath, snapPath );
+            }
+        }
+        catch( const IO_ERROR& ioe )
+        {
+            wxLogWarning( "SCH: BeginAgentSnapshot: failed to save %s: %s",
+                           origPath, ioe.What() );
+        }
+    }
+
+    m_snapshotSession->FinalizeSnapshot();
+    m_agentChangedSheetPath.clear();
+    m_agentUndoBaseline = GetUndoCommandCount();
+    wxLogInfo( "SCH: BeginAgentSnapshot: snapshot complete (%zu screens), undo baseline=%d",
+               m_snapshotSession->GetSnapshotOriginalPaths().size(), m_agentUndoBaseline );
 }
 
 
@@ -3424,56 +3479,56 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
     if( !m_agentChangeTracker )
         m_agentChangeTracker = std::make_unique<AGENT_CHANGE_TRACKER>();
 
-    // Check if any undo entries were created since we took the snapshot
-    int currentUndoCount = GetUndoCommandCount();
-    int baseline = m_agentChangeTracker->GetUndoBaseline();
-    bool hasNewChanges = ( currentUndoCount > baseline );
-
-    if( !hasNewChanges && !m_hasAgentPendingChanges )
+    if( !m_snapshotSession || !m_snapshotSession->HasSnapshot() )
     {
-        // No changes detected and no existing pending changes
+        wxLogWarning( "SCH: DetectAgentChanges: no snapshot session, cannot detect changes" );
         return false;
     }
 
-    // Get the hierarchy for looking up sheet paths
+    // Walk undo entries added AFTER the snapshot was taken.
+    // Only these represent agent changes; earlier entries are user edits.
     SCH_SHEET_LIST sheets = Schematic().Hierarchy();
+    int currentUndoCount = GetUndoCommandCount();
+    bool foundNewItems = false;
 
-    // Iterate through the new undo entries to track changed items
-    for( int i = baseline; i < currentUndoCount; i++ )
+    for( int i = m_agentUndoBaseline; i < currentUndoCount; i++ )
     {
         PICKED_ITEMS_LIST* undoCommand = m_undoList.m_CommandsList[i];
         if( !undoCommand )
             continue;
-
-        wxLogInfo( "SCH: Processing undo command %d with %u items", i, undoCommand->GetCount() );
 
         for( unsigned int j = 0; j < undoCommand->GetCount(); j++ )
         {
             EDA_ITEM* item = undoCommand->GetPickedItem( j );
             UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
 
-            // Skip if no valid item pointer
             if( !item )
                 continue;
 
-            // Validate pointer looks reasonable (not obviously garbage)
-            // Valid heap pointers on macOS arm64 are typically in ranges starting with 0x0000000
+            // Validate pointer
             uintptr_t ptrVal = reinterpret_cast<uintptr_t>( item );
             if( ptrVal < 0x100000000ULL || ptrVal > 0x800000000000ULL )
-            {
-                wxLogWarning( "SCH: Skipping invalid item pointer %p in undo command", item );
                 continue;
-            }
 
-            // Track the item by KIID with its actual sheet path and change type
-            // Use try-catch to protect against any remaining invalid pointers
             try
             {
                 SCH_SCREEN*    screen = dynamic_cast<SCH_SCREEN*>( undoCommand->GetScreenForItem( j ) );
                 SCH_SHEET_PATH itemSheet = sheets.FindSheetForScreen( screen );
                 wxString       sheetPath = itemSheet.PathHumanReadable( false );
 
-                m_agentChangeTracker->TrackItem( item->m_Uuid, sheetPath, status );
+                // Map UNDO_REDO status to AGENT_CHANGE_TYPE
+                AGENT_CHANGE_TYPE changeType;
+                if( status == UNDO_REDO::NEWITEM )
+                    changeType = AGENT_CHANGE_TYPE::ADDED;
+                else if( status == UNDO_REDO::DELETED )
+                    changeType = AGENT_CHANGE_TYPE::DELETED;
+                else
+                    changeType = AGENT_CHANGE_TYPE::CHANGED;
+
+                if( !m_agentChangeTracker->IsTracked( item->m_Uuid ) )
+                    foundNewItems = true;
+
+                m_agentChangeTracker->TrackItem( item->m_Uuid, sheetPath, changeType );
             }
             catch( ... )
             {
@@ -3482,31 +3537,25 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
         }
     }
 
+    if( !foundNewItems && !m_hasAgentPendingChanges )
+        return false;
+
     m_hasAgentPendingChanges = true;
+    m_snapshotSession->SetChangesDetected();
 
-    // Capture before/after content for the diff frame (only once per change session)
-    if( m_diffBeforeFilePath.IsEmpty() )
-    {
-        // "Before" = the last saved disk file (agent changes are only in-memory)
-        SCH_SCREEN* screen = GetCurrentSheet().LastScreen();
-        if( screen )
-        {
-            wxString diskPath = screen->GetFileName();
-            if( !diskPath.IsEmpty() && wxFileName::FileExists( diskPath ) )
-            {
-                m_diffBeforeFilePath = diskPath;
-                wxLogInfo( "SCH: DetectAgentChanges: before content = disk file: %s", diskPath );
-            }
-        }
-    }
-
-    // Always update "after" = current in-memory state serialized to a temp file
+    // Serialize current in-memory state as the "after" file for the diff viewer
     {
         SCH_SHEET_PATH currentPath = GetCurrentSheet();
-        // Find the sheet being diffed (use the current target sheet's sheet node)
         SCH_SHEET* targetSheet = currentPath.Last();
         if( targetSheet )
         {
+            // Clean up previous after file if it exists
+            if( !m_snapshotSession->GetAfterPath().IsEmpty()
+                && wxFileName::FileExists( m_snapshotSession->GetAfterPath() ) )
+            {
+                wxRemoveFile( m_snapshotSession->GetAfterPath() );
+            }
+
             wxFileName tmpFile;
             tmpFile.AssignTempFileName( wxS( "zeo_sch_diff_after" ) );
             tmpFile.SetExt( wxS( "kicad_sch" ) );
@@ -3518,22 +3567,18 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
                 std::map<std::string, UTF8> props;
                 props["PropSaveCurrentSheetOnly"] = "";
                 pi->SaveSchematicFile( tmpPath, targetSheet, &Schematic(), &props );
-                m_diffAfterFilePath = tmpPath;
-                wxLogInfo( "SCH: DetectAgentChanges: after content saved to temp: %s", tmpPath );
+                m_snapshotSession->SetAfterPath( tmpPath );
+                wxLogInfo( "SCH: DetectAgentChanges: after state saved to: %s", tmpPath );
             }
             catch( const IO_ERROR& ioe )
             {
-                wxLogWarning( "SCH: DetectAgentChanges: failed to save after state: %s", ioe.What() );
+                wxLogWarning( "SCH: DetectAgentChanges: failed to save after state: %s",
+                               ioe.What() );
             }
         }
     }
 
-    int agentUndoCount = currentUndoCount - baseline;
-    m_agentChangeTracker->SetAgentUndoCount( agentUndoCount );
-    wxLogInfo( "SCH: DetectAgentChanges: baseline=%d, currentUndo=%d, agentUndoCount=%d",
-               baseline, currentUndoCount, agentUndoCount );
-
-    // Log the tracked items and affected sheets
+    // Log tracked items and affected sheets
     std::set<wxString> affectedSheets = m_agentChangeTracker->GetAffectedSheets();
     wxString sheetsStr;
     for( const wxString& s : affectedSheets )
@@ -3542,7 +3587,7 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
             sheetsStr += ", ";
         sheetsStr += s;
     }
-    wxLogInfo( "SCH: Agent diff tracking %zu items on sheets: %s",
+    wxLogInfo( "SCH: DetectAgentChanges: tracking %zu items on sheets: %s",
                m_agentChangeTracker->GetTrackedItemCount(), sheetsStr );
 
     // Store the target sheet path if not already set
@@ -3550,7 +3595,6 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
     {
         if( m_agentTargetSheetUuid != NilUuid() )
         {
-            // Find the sheet path that matches the target UUID
             SCH_SHEET_LIST sheetList = Schematic().Hierarchy();
             for( const SCH_SHEET_PATH& path : sheetList )
             {
@@ -3562,11 +3606,8 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
             }
         }
 
-        // Fallback to current sheet if target not found
         if( m_agentChangedSheetPath.size() == 0 )
-        {
             m_agentChangedSheetPath = GetCurrentSheet();
-        }
     }
 
     // Only show the diff overlay if we're currently on the target sheet
@@ -3574,17 +3615,10 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
 
     if( isOnTargetSheet )
     {
-        // Set up callbacks for the diff overlay
-        // Capture sheet path for per-sheet approve/reject via overlay buttons
         wxString capturedSheetPath = GetCurrentSheet().PathHumanReadable( false );
         DIFF_CALLBACKS callbacks;
         callbacks.onApprove = [this, capturedSheetPath]() {
-            // Make sure we're showing "after" state before approving
-            if( m_showingAgentBefore )
-                ShowAgentChangesAfter();
-            // Only approve changes on this sheet, not all sheets
             ApproveAgentChangesOnSheet( capturedSheetPath );
-            // Notify agent frame with sheet path so it can update its UI
             nlohmann::json j;
             j["editor"] = "sch";
             j["sheet_path"] = capturedSheetPath.ToStdString();
@@ -3592,28 +3626,28 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
             Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
         };
         callbacks.onReject = [this, capturedSheetPath]() {
-            // Make sure we're showing "after" state before reverting
-            if( m_showingAgentBefore )
-                ShowAgentChangesAfter();
-            // Only reject changes on this sheet, not all sheets
             RejectAgentChangesOnSheet( capturedSheetPath );
-            // Notify agent frame with sheet path so it can update its UI
             nlohmann::json j;
             j["editor"] = "sch";
             j["sheet_path"] = capturedSheetPath.ToStdString();
             std::string payload = j.dump();
             Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
         };
-        callbacks.onUndo = [this]() { ShowAgentChangesBefore(); };
-        callbacks.onRedo = [this]() { ShowAgentChangesAfter(); };
+        callbacks.onViewDiff = [this]() {
+            std::string payload = "{}";
+            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_VIEW_CHANGES, payload );
+        };
         callbacks.onRefresh = [this]() {
             if( GetCanvas() )
                 GetCanvas()->Refresh();
         };
 
-        // Create a bbox compute callback for dynamic updates
         BBOX_COMPUTE_CALLBACK bboxCallback = [this]() -> BOX2I {
             return ComputeTrackedItemsBBox();
+        };
+
+        ITEM_HIGHLIGHTS_CALLBACK highlightsCallback = [this]() -> std::vector<DIFF_ITEM_HIGHLIGHT> {
+            return ComputeItemHighlights();
         };
 
         DIFF_MANAGER::GetInstance().RegisterOverlay(
@@ -3621,102 +3655,42 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
             m_agentChangeTracker.get(),
             GetCurrentSheet().PathHumanReadable( false ),
             callbacks,
-            bboxCallback );
+            bboxCallback,
+            highlightsCallback );
 
-        // Force refresh to ensure the overlay is rendered
         GetCanvas()->ForceRefresh();
     }
 
-    return hasNewChanges;
+    return foundNewItems;
 }
 
 
 bool SCH_EDIT_FRAME::HasAgentPendingChanges() const
 {
-    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
-        return false;
-
-    // If agent used undo-based changes and all have been undone, tracker is stale
-    int agentUndoCount = m_agentChangeTracker->GetAgentUndoCount();
-    if( agentUndoCount > 0 )
-    {
-        int baseline = m_agentChangeTracker->GetUndoBaseline();
-        int currentUndoCount = GetUndoCommandCount();
-
-        if( currentUndoCount <= baseline && GetRedoCommandCount() == 0 )
-        {
-            wxLogInfo( "SCH: HasAgentPendingChanges: returning false — stale tracker "
-                       "(undoCount=%d <= baseline=%d, agentUndoCount=%d, no redo entries)",
-                       currentUndoCount, baseline, agentUndoCount );
-            return false;
-        }
-    }
-
-    return true;
-}
-
-
-void SCH_EDIT_FRAME::ClearStaleAgentChanges()
-{
-    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
-        return;
-
-    // Don't auto-reject while viewing "before" state via diff overlay —
-    // the undos are intentional for diff viewing, not actual user undos
-    if( m_showingAgentBefore )
-        return;
-
-    int agentUndoCount = m_agentChangeTracker->GetAgentUndoCount();
-    int currentUndoCount = GetUndoCommandCount();
-    int baseline = m_agentChangeTracker->GetUndoBaseline();
-
-    wxLogInfo( "SCH: ClearStaleAgentChanges: agentUndoCount=%d, currentUndo=%d, baseline=%d",
-               agentUndoCount, currentUndoCount, baseline );
-
-    if( agentUndoCount > 0 && currentUndoCount <= baseline )
-    {
-        // If there are redo entries, the user just undid agent changes and can still
-        // redo them — don't auto-reject yet. Only auto-reject when the redo list is
-        // empty (user made new edits after undoing, which clears the redo list).
-        if( GetRedoCommandCount() > 0 )
-        {
-            wxLogInfo( "SCH: All agent undo entries undone but redo available (%d entries), "
-                       "keeping diff overlay", GetRedoCommandCount() );
-            return;
-        }
-
-        wxLogInfo( "SCH: All agent undo entries undone (undoCount %d <= baseline %d), auto-rejecting",
-                   currentUndoCount, baseline );
-        m_agentChangeTracker->ClearTrackedItems();
-        m_hasAgentPendingChanges = false;
-        m_showingAgentBefore = false;
-        m_agentChangedSheetPath.clear();
-        DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
-    }
+    return m_hasAgentPendingChanges
+           && m_snapshotSession && m_snapshotSession->HasChanges()
+           && m_agentChangeTracker && m_agentChangeTracker->HasChanges();
 }
 
 
 void SCH_EDIT_FRAME::ClearAgentPendingChanges()
 {
     m_hasAgentPendingChanges = false;
-    m_showingAgentBefore = false;
-    m_agentChangedSheetPath.clear();  // Reset sheet path
+    m_agentChangedSheetPath.clear();
 
-    // Clear the tracker
     if( m_agentChangeTracker )
         m_agentChangeTracker->ClearTrackedItems();
 
-    // Clear the diff overlay
+    // Discard snapshot — changes are accepted
+    if( m_snapshotSession )
+        m_snapshotSession->EndSession();
+
     DIFF_MANAGER::GetInstance().ClearDiff();
 
     // Clear redo list to prevent accidental redo after approve
     ClearUndoORRedoList( REDO_LIST );
 
-    // Clean up diff temp files
-    if( !m_diffAfterFilePath.IsEmpty() && wxFileName::FileExists( m_diffAfterFilePath ) )
-        wxRemoveFile( m_diffAfterFilePath );
-    m_diffBeforeFilePath.Clear();
-    m_diffAfterFilePath.Clear();
+    wxLogInfo( "SCH: ClearAgentPendingChanges: accepted, snapshot discarded" );
 }
 
 
@@ -3730,71 +3704,31 @@ void SCH_EDIT_FRAME::ApproveAgentChangesOnSheet( const wxString& aSheetPath )
     // Untrack all items on this sheet
     std::set<KIID> itemsOnSheet = m_agentChangeTracker->GetTrackedItemsOnSheet( aSheetPath );
     for( const KIID& kiid : itemsOnSheet )
-    {
         m_agentChangeTracker->UntrackItem( kiid );
-    }
 
     // Clear the diff overlay for the current view if it's this sheet
     wxString currentSheetPath = GetCurrentSheet().PathHumanReadable( false );
     if( currentSheetPath == aSheetPath )
-    {
         DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
-    }
 
     // If no more tracked items, clear everything
     if( !m_agentChangeTracker->HasChanges() )
     {
         m_hasAgentPendingChanges = false;
-        m_showingAgentBefore = false;
         m_agentChangedSheetPath.clear();
+        if( m_snapshotSession )
+            m_snapshotSession->EndSession();
         ClearUndoORRedoList( REDO_LIST );
     }
 }
 
 
-SCH_ITEM* SCH_EDIT_FRAME::FindPreAgentState( const KIID& aItemId )
-{
-    if( !m_agentChangeTracker )
-        return nullptr;
-
-    int baseline = m_agentChangeTracker->GetUndoBaseline();
-    int currentUndoCount = GetUndoCommandCount();
-
-    // Search agent undo entries for the first CHANGED record for this item
-    for( int i = baseline; i < currentUndoCount; i++ )
-    {
-        PICKED_ITEMS_LIST* undoCommand = m_undoList.m_CommandsList[i];
-        if( !undoCommand )
-            continue;
-
-        for( unsigned int j = 0; j < undoCommand->GetCount(); j++ )
-        {
-            EDA_ITEM* item = undoCommand->GetPickedItem( j );
-            if( item && item->m_Uuid == aItemId
-                && undoCommand->GetPickedItemStatus( j ) == UNDO_REDO::CHANGED )
-            {
-                return dynamic_cast<SCH_ITEM*>( undoCommand->GetPickedItemLink( j ) );
-            }
-        }
-    }
-
-    wxLogWarning( "SCH: FindPreAgentState: no CHANGED undo entry found for %s", aItemId.AsString() );
-    return nullptr;
-}
-
-
 void SCH_EDIT_FRAME::RejectAgentChangesOnSheet( const wxString& aSheetPath )
 {
-    if( !m_hasAgentPendingChanges || !m_agentChangeTracker )
+    if( !m_hasAgentPendingChanges || !m_agentChangeTracker || !m_snapshotSession )
         return;
 
     wxLogInfo( "SCH: Rejecting agent changes on sheet '%s'", aSheetPath );
-
-    // Get items on this sheet before untracking
-    std::set<KIID> itemsOnSheet = m_agentChangeTracker->GetTrackedItemsOnSheet( aSheetPath );
-
-    if( itemsOnSheet.empty() )
-        return;
 
     // Find the screen for this sheet path
     SCH_SHEET_LIST sheets = Schematic().Hierarchy();
@@ -3811,242 +3745,216 @@ void SCH_EDIT_FRAME::RejectAgentChangesOnSheet( const wxString& aSheetPath )
 
     if( !targetScreen )
     {
-        wxLogWarning( "SCH: Could not find screen for sheet '%s'", aSheetPath );
+        wxLogWarning( "SCH: RejectOnSheet: could not find screen for sheet '%s'", aSheetPath );
         return;
     }
 
-    // Remove or restore tracked items on this sheet using a commit
-    // NEWITEM items are deleted; CHANGED items are restored to pre-agent state
-    SCH_COMMIT commit( m_toolManager );
-    std::vector<wxString> nestedSheetPaths;
+    // Find the snapshot file for this screen
+    wxString origPath = targetScreen->GetFileName();
+    wxString snapshotPath = m_snapshotSession->GetSnapshotPathForSheet( origPath );
 
-    for( const KIID& kiid : itemsOnSheet )
+    if( snapshotPath.IsEmpty() || !wxFileName::FileExists( snapshotPath ) )
     {
-        UNDO_REDO changeType = m_agentChangeTracker->GetChangeType( kiid );
+        wxLogWarning( "SCH: RejectOnSheet: no snapshot found for '%s'", origPath );
+        return;
+    }
 
-        // Find the item on the screen
-        for( SCH_ITEM* item : targetScreen->Items() )
+    wxLogInfo( "SCH: RejectOnSheet: reloading screen from snapshot '%s'", snapshotPath );
+
+    // Load the snapshot into a temporary schematic
+    try
+    {
+        IO_RELEASER<SCH_IO> pi( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD ) );
+
+        // Create a temporary schematic to load the snapshot into
+        SCHEMATIC tempSchematic( &Prj() );
+        tempSchematic.CreateDefaultScreens();
+
+        SCH_SHEET* loadedSheet = pi->LoadSchematicFile( snapshotPath, &tempSchematic );
+        if( !loadedSheet )
         {
-            if( item->m_Uuid == kiid )
-            {
-                if( changeType == UNDO_REDO::NEWITEM )
-                {
-                    // Agent created this item — delete it
-                    wxLogInfo( "SCH: RejectOnSheet: removing NEWITEM %s", kiid.AsString() );
-
-                    // Check if this is a sheet symbol - need to untrack nested items too
-                    if( item->Type() == SCH_SHEET_T )
-                    {
-                        SCH_SHEET* sheet = static_cast<SCH_SHEET*>( item );
-                        SCH_SHEET_PATH nestedPath;
-                        SCH_SHEET_LIST allSheets = Schematic().Hierarchy();
-                        for( const SCH_SHEET_PATH& path : allSheets )
-                        {
-                            if( path.PathHumanReadable( false ) == aSheetPath )
-                            {
-                                nestedPath = path;
-                                nestedPath.push_back( sheet );
-                                nestedSheetPaths.push_back( nestedPath.PathHumanReadable( false ) );
-                                break;
-                            }
-                        }
-                    }
-
-                    commit.Remove( item, targetScreen );
-                }
-                else if( changeType == UNDO_REDO::CHANGED )
-                {
-                    // Agent modified this existing item — restore pre-agent state
-                    SCH_ITEM* preAgentLink = FindPreAgentState( kiid );
-                    if( preAgentLink )
-                    {
-                        wxLogInfo( "SCH: RejectOnSheet: restoring CHANGED item %s to pre-agent state",
-                                   kiid.AsString() );
-
-                        // Clone the pre-agent state so we don't corrupt the undo entry
-                        SCH_ITEM* restoreData = static_cast<SCH_ITEM*>( preAgentLink->Clone() );
-
-                        // Record current state for undo (in case user wants to redo)
-                        commit.Modified( item, targetScreen );
-
-                        // Swap item data to restore pre-agent state
-                        item->SwapItemData( restoreData );
-
-                        // Clean up — restoreData now holds post-agent data
-                        delete restoreData;
-                    }
-                    else
-                    {
-                        wxLogWarning( "SCH: RejectOnSheet: could not find pre-agent state for "
-                                      "CHANGED item %s, skipping", kiid.AsString() );
-                    }
-                }
-                else
-                {
-                    wxLogInfo( "SCH: RejectOnSheet: removing item %s (changeType=%d)",
-                               kiid.AsString(), static_cast<int>( changeType ) );
-                    commit.Remove( item, targetScreen );
-                }
-
-                break;
-            }
+            wxLogWarning( "SCH: RejectOnSheet: LoadSchematicFile returned null" );
+            return;
         }
 
-        // Untrack the item
-        m_agentChangeTracker->UntrackItem( kiid );
-    }
-
-    // Untrack items on any nested sheets that are being deleted with their parent sheet symbols
-    for( const wxString& nestedPath : nestedSheetPaths )
-    {
-        size_t untracked = m_agentChangeTracker->UntrackItemsOnSheetAndNested( nestedPath );
-        if( untracked > 0 )
+        SCH_SCREEN* loadedScreen = loadedSheet->GetScreen();
+        if( !loadedScreen )
         {
-            wxLogInfo( "SCH: Untracked %zu items from deleted nested sheet %s",
-                       untracked, nestedPath );
+            wxLogWarning( "SCH: RejectOnSheet: loaded snapshot has no screen" );
+            return;
         }
+
+        // Clear the target screen and transfer items from the loaded screen
+        targetScreen->Clear( true );
+
+        // Transfer library symbols first (before moving items that reference them)
+        for( const auto& [name, libSym] : loadedScreen->GetLibSymbols() )
+        {
+            if( libSym )
+                targetScreen->AddLibSymbol( new LIB_SYMBOL( *libSym ) );
+        }
+
+        // Move items from loaded screen to target screen
+        std::vector<SCH_ITEM*> itemsToMove;
+        for( SCH_ITEM* item : loadedScreen->Items() )
+            itemsToMove.push_back( item );
+
+        for( SCH_ITEM* item : itemsToMove )
+        {
+            loadedScreen->Remove( item );
+            item->SetParent( targetScreen );
+            targetScreen->Append( item );
+        }
+
+        wxLogInfo( "SCH: RejectOnSheet: transferred %zu items + %zu lib symbols from snapshot",
+                   itemsToMove.size(), loadedScreen->GetLibSymbols().size() );
     }
-
-    commit.Push( wxString::Format( "Reject agent changes on %s", aSheetPath ) );
-
-    // Clear the diff overlay for the current view if it's this sheet
-    wxString currentSheetPath = GetCurrentSheet().PathHumanReadable( false );
-    if( currentSheetPath == aSheetPath )
+    catch( const IO_ERROR& ioe )
     {
-        DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
+        wxLogWarning( "SCH: RejectOnSheet: failed to load snapshot: %s", ioe.What() );
+        return;
     }
 
-    // Refresh the canvas
-    GetCanvas()->Refresh();
+    // Untrack items on this sheet and any nested sheets
+    m_agentChangeTracker->UntrackItemsOnSheetAndNested( aSheetPath );
+
+    // Clear the diff overlay
+    DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
+
+    // Clear undo/redo — they reference items that no longer exist
+    ClearUndoORRedoList( UNDO_LIST );
+    ClearUndoORRedoList( REDO_LIST );
 
     // If no more tracked items, clear everything
     if( !m_agentChangeTracker->HasChanges() )
     {
         m_hasAgentPendingChanges = false;
-        m_showingAgentBefore = false;
         m_agentChangedSheetPath.clear();
+        DIFF_MANAGER::GetInstance().UnregisterOverlay();
+        if( m_snapshotSession )
+            m_snapshotSession->EndSession();
     }
+
+    // Rebuild connectivity and fully refresh the view
+    RecalculateConnections( nullptr, GLOBAL_CLEANUP );
+    HardRedraw();
 }
 
 
 void SCH_EDIT_FRAME::RevertAgentChanges()
 {
-    wxLogInfo( "SCH: RevertAgentChanges called (hasAgentPendingChanges=%d, showingBefore=%d)",
-               m_hasAgentPendingChanges, m_showingAgentBefore );
+    wxLogInfo( "SCH: RevertAgentChanges called (hasAgentPendingChanges=%d)", m_hasAgentPendingChanges );
 
-    if( !HasAgentPendingChanges() || !m_agentChangeTracker )
+    if( !m_snapshotSession || !m_snapshotSession->HasSnapshot() )
     {
-        wxLogInfo( "SCH: RevertAgentChanges: no real pending changes — cleaning up stale state" );
+        wxLogInfo( "SCH: RevertAgentChanges: no snapshot — cleaning up stale state" );
         if( m_agentChangeTracker )
             m_agentChangeTracker->ClearTrackedItems();
         m_hasAgentPendingChanges = false;
-        m_showingAgentBefore = false;
         DIFF_MANAGER::GetInstance().ClearDiff();
         return;
     }
 
-    if( m_showingAgentBefore )
-    {
-        wxLogInfo( "SCH: RevertAgentChanges: showing 'before' state, clearing redo list" );
-        ClearUndoORRedoList( REDO_LIST );
-    }
-    else
-    {
-        int currentUndoCount = GetUndoCommandCount();
-        int baseline = m_agentChangeTracker->GetUndoBaseline();
-        int agentUndoCount = m_agentChangeTracker->GetAgentUndoCount();
-        int entriesSinceBaseline = currentUndoCount - baseline;
+    // Reload each screen from its snapshot file
+    SCH_SCREENS screens( Schematic().Root() );
+    int reloadedCount = 0;
 
-        wxLogInfo( "SCH: RevertAgentChanges: currentUndo=%d, baseline=%d, agentUndoCount=%d, "
-                   "entriesSinceBaseline=%d",
-                   currentUndoCount, baseline, agentUndoCount, entriesSinceBaseline );
+    for( SCH_SCREEN* screen = screens.GetFirst(); screen; screen = screens.GetNext() )
+    {
+        wxString origPath = screen->GetFileName();
+        wxString snapshotPath = m_snapshotSession->GetSnapshotPathForSheet( origPath );
 
-        if( agentUndoCount > 0 && entriesSinceBaseline == agentUndoCount )
+        if( snapshotPath.IsEmpty() || !wxFileName::FileExists( snapshotPath ) )
+            continue;
+
+        wxLogInfo( "SCH: RevertAgentChanges: reloading '%s' from snapshot", origPath );
+
+        try
         {
-            wxLogInfo( "SCH: RevertAgentChanges: safe undo rollback (%d entries)", entriesSinceBaseline );
-            for( int i = 0; i < entriesSinceBaseline; i++ )
-                RollbackSchematicFromUndo();
-        }
-        else if( agentUndoCount > 0 && entriesSinceBaseline > agentUndoCount )
-        {
-            wxLogInfo( "SCH: RevertAgentChanges: user mixed in %d entries — falling back to "
-                       "per-sheet rejection", entriesSinceBaseline - agentUndoCount );
-            std::set<wxString> sheets = m_agentChangeTracker->GetAffectedSheets();
-            for( const wxString& sheet : sheets )
+            IO_RELEASER<SCH_IO> pi( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD ) );
+
+            // Create a temporary schematic to load the snapshot into
+            SCHEMATIC tempSchematic( &Prj() );
+            tempSchematic.CreateDefaultScreens();
+
+            SCH_SHEET* loadedSheet = pi->LoadSchematicFile( snapshotPath, &tempSchematic );
+            if( !loadedSheet )
             {
-                wxLogInfo( "SCH: RevertAgentChanges: rejecting sheet '%s'", sheet );
-                RejectAgentChangesOnSheet( sheet );
+                wxLogWarning( "SCH: RevertAgentChanges: LoadSchematicFile returned null for '%s'",
+                               origPath );
+                continue;
             }
-            return;  // RejectAgentChangesOnSheet handles cleanup
+
+            SCH_SCREEN* loadedScreen = loadedSheet->GetScreen();
+            if( !loadedScreen )
+            {
+                wxLogWarning( "SCH: RevertAgentChanges: loaded snapshot has no screen for '%s'",
+                               origPath );
+                continue;
+            }
+
+            // Clear target screen and transfer items from loaded screen
+            screen->Clear( true );
+
+            // Transfer library symbols first (before moving items that reference them)
+            for( const auto& [name, libSym] : loadedScreen->GetLibSymbols() )
+            {
+                if( libSym )
+                    screen->AddLibSymbol( new LIB_SYMBOL( *libSym ) );
+            }
+
+            std::vector<SCH_ITEM*> itemsToMove;
+            for( SCH_ITEM* item : loadedScreen->Items() )
+                itemsToMove.push_back( item );
+
+            for( SCH_ITEM* item : itemsToMove )
+            {
+                loadedScreen->Remove( item );
+                item->SetParent( screen );
+                screen->Append( item );
+            }
+
+            wxLogInfo( "SCH: RevertAgentChanges: transferred %zu items + lib symbols for '%s'",
+                       itemsToMove.size(), origPath );
+
+            reloadedCount++;
         }
-        else
+        catch( const IO_ERROR& ioe )
         {
-            wxLogInfo( "SCH: RevertAgentChanges: no undo entries to roll back "
-                       "(agentUndoCount=%d, entriesSinceBaseline=%d), clearing state",
-                       agentUndoCount, entriesSinceBaseline );
+            wxLogWarning( "SCH: RevertAgentChanges: failed to load snapshot for '%s': %s",
+                           origPath, ioe.What() );
         }
     }
 
+    wxLogInfo( "SCH: RevertAgentChanges: reloaded %d screens from snapshots", reloadedCount );
+
+    // Clear undo/redo — they reference items that no longer exist
+    ClearUndoORRedoList( UNDO_LIST );
+    ClearUndoORRedoList( REDO_LIST );
+
+    // Clean up all state BEFORE HardRedraw so overlay won't be re-registered
     DIFF_MANAGER::GetInstance().ClearDiff();
-    m_agentChangeTracker->ClearTrackedItems();
+    DIFF_MANAGER::GetInstance().UnregisterOverlay();
+    if( m_agentChangeTracker )
+        m_agentChangeTracker->ClearTrackedItems();
     m_hasAgentPendingChanges = false;
-    m_showingAgentBefore = false;
-    wxLogInfo( "SCH: RevertAgentChanges: done, state cleared" );
+    m_agentChangedSheetPath.clear();
+    m_snapshotSession->EndSession();
+
+    // Rebuild connectivity and fully refresh the view
+    // HardRedraw rebuilds the GAL view from the screen's R-tree (just ForceRefresh
+    // doesn't sync the view with new items transferred from the snapshot)
+    RecalculateConnections( nullptr, GLOBAL_CLEANUP );
+    HardRedraw();
+
+    wxLogInfo( "SCH: RevertAgentChanges: done, all screens restored" );
 }
 
 
-void SCH_EDIT_FRAME::ShowAgentChangesBefore()
-{
-    if( !m_hasAgentPendingChanges || m_showingAgentBefore || !m_agentChangeTracker )
-        return;
-
-    // Use native undo to show the "before" state
-    // Undo all agent changes (they'll go to redo list for later restoration)
-    int currentUndoCount = GetUndoCommandCount();
-    int baseline = m_agentChangeTracker->GetUndoBaseline();
-    int numToUndo = currentUndoCount - baseline;
-
-    // Cache the bbox before undoing so the overlay can still render at the correct position
-    if( numToUndo > 0 )
-    {
-        m_cachedAgentBBox = ComputeTrackedItemsBBox();
-
-        // Set flag BEFORE the undo loop so that ClearStaleAgentChanges() and OnModify()
-        // know these undos are intentional diff viewing, not actual user undos
-        m_showingAgentBefore = true;
-    }
-
-    for( int i = 0; i < numToUndo; i++ )
-    {
-        GetToolManager()->RunAction( ACTIONS::undo );
-    }
-}
-
-
-void SCH_EDIT_FRAME::ShowAgentChangesAfter()
-{
-    if( !m_hasAgentPendingChanges || !m_showingAgentBefore )
-        return;
-
-    // Use native redo to restore the "after" state
-    // Redo all agent changes that were undone by ShowAgentChangesBefore
-    int redoCount = GetRedoCommandCount();
-
-    for( int i = 0; i < redoCount; i++ )
-    {
-        GetToolManager()->RunAction( ACTIONS::redo );
-    }
-
-    m_showingAgentBefore = false;
-}
 
 
 BOX2I SCH_EDIT_FRAME::ComputeTrackedItemsBBox() const
 {
-    // When showing "before" state, items are undone off screen — use cached bbox
-    if( m_showingAgentBefore )
-        return m_cachedAgentBBox;
-
     BOX2I bbox;
 
     if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
@@ -4098,37 +4006,56 @@ BOX2I SCH_EDIT_FRAME::ComputeTrackedItemsBBox() const
 }
 
 
-void SCH_EDIT_FRAME::OnAgentFileEditBegin( const wxString& aPayload )
+std::vector<DIFF_ITEM_HIGHLIGHT> SCH_EDIT_FRAME::ComputeItemHighlights() const
 {
-    // Initialize file edit session
-    if( !m_fileEditSession )
-        m_fileEditSession = std::make_unique<FILE_EDIT_SESSION>();
+    std::vector<DIFF_ITEM_HIGHLIGHT> highlights;
 
-    // Parse JSON payload for file path
-    // TODO: Implement JSON parsing when file edit flow is needed
-    wxLogInfo( "SCH: Agent file edit begin: %s", aPayload );
-}
+    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
+        return highlights;
 
+    SCH_SCREEN* screen = GetCurrentSheet().LastScreen();
+    if( !screen )
+        return highlights;
 
-void SCH_EDIT_FRAME::OnAgentFileEditComplete( const wxString& aPayload )
-{
-    if( !m_fileEditSession )
-        return;
+    wxString currentSheetPath = GetCurrentSheet().PathHumanReadable( false );
+    std::set<KIID> trackedItems = m_agentChangeTracker->GetTrackedItemsOnSheet( currentSheetPath );
 
-    // Mark lint passed and trigger reload/diff
-    m_fileEditSession->SetLintPassed();
+    // Build raw per-item boxes
+    std::vector<SCH_DIFF::DiffBox> rawBoxes;
 
-    // TODO: Implement reload and diff computation when file edit flow is needed
-    wxLogInfo( "SCH: Agent file edit complete: %s", aPayload );
-}
-
-
-void SCH_EDIT_FRAME::OnAgentFileEditAbort()
-{
-    if( m_fileEditSession )
+    for( const KIID& kiid : trackedItems )
     {
-        m_fileEditSession->EndSession( false );
+        AGENT_CHANGE_TYPE changeType = m_agentChangeTracker->GetChangeType( kiid );
+
+        if( changeType == AGENT_CHANGE_TYPE::DELETED )
+            continue;
+
+        KIGFX::COLOR4D color;
+        switch( changeType )
+        {
+        case AGENT_CHANGE_TYPE::ADDED:   color = SCH_DIFF::COLOR_ADDED;    break;
+        case AGENT_CHANGE_TYPE::CHANGED: color = SCH_DIFF::COLOR_MODIFIED; break;
+        default:                         color = SCH_DIFF::COLOR_ADDED;    break;
+        }
+
+        for( SCH_ITEM* item : screen->Items() )
+        {
+            if( item->m_Uuid == kiid )
+            {
+                rawBoxes.push_back( SCH_DIFF::ComputeItemBox( item, color ) );
+                break;
+            }
+        }
     }
 
-    wxLogInfo( "SCH: Agent file edit aborted" );
+    // Merge overlapping wire/junction boxes into continuous bordered groups
+    std::vector<SCH_DIFF::DiffBox> merged = SCH_DIFF::MergeWireBoxes( rawBoxes );
+
+    highlights.reserve( merged.size() );
+    for( const auto& db : merged )
+        highlights.push_back( { db.bbox, db.color, db.hasBorder } );
+
+    return highlights;
 }
+
+

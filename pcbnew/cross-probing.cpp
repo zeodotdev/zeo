@@ -651,8 +651,8 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                 std::string code = j_in["code"];
                 std::string result;
 
-                // Record the current undo position before Python execution
-                RecordAgentUndoPosition();
+                // Take a snapshot before Python execution
+                BeginAgentSnapshot();
 
                 // We need to capture stdout/stderr.
                 // Approach:
@@ -746,10 +746,10 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
             }
             else if( j_in.contains( "type" ) && j_in["type"] == "take_snapshot" )
             {
-                // Record the current undo position before kipy execution
+                // Take a whole-file snapshot before kipy execution
                 fprintf( stderr, "PCB_EDIT_FRAME: Received take_snapshot request\n" );
                 fflush( stderr );
-                RecordAgentUndoPosition();
+                BeginAgentSnapshot();
                 break;  // No response needed
             }
             else if( j_in.contains( "type" ) && j_in["type"] == "detect_changes" )
@@ -1035,14 +1035,6 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                     bbox = BOX2I( VECTOR2I( 0, 0 ), VECTOR2I( 100000000, 100000000 ) ); // Default 100mm box if empty
 
                 DIFF_CALLBACKS callbacks;
-                callbacks.onUndo = []()
-                {
-                    wxLogMessage( "Diff: Undo Clicked" );
-                };
-                callbacks.onRedo = []()
-                {
-                    wxLogMessage( "Diff: Redo Clicked" );
-                };
 
                 DIFF_MANAGER::GetInstance().RegisterOverlay( this->GetCanvas()->GetView(), callbacks );
                 DIFF_MANAGER::GetInstance().ShowDiff( bbox );
@@ -1162,29 +1154,22 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                 BOX2I bbox( VECTOR2I( j["x"], j["y"] ), VECTOR2I( j["w"], j["h"] ) );
 
                 DIFF_CALLBACKS callbacks;
-                callbacks.onUndo = [this]()
-                {
-                    wxCommandEvent evt( wxEVT_COMMAND_MENU_SELECTED, wxID_UNDO );
-                    this->ProcessEvent( evt );
-                };
-                callbacks.onRedo = [this]()
-                {
-                    wxCommandEvent evt( wxEVT_COMMAND_MENU_SELECTED, wxID_REDO );
-                    this->ProcessEvent( evt );
-                };
                 callbacks.onApprove = [this]()
                 {
                     ClearAgentPendingChanges();
-                    // Notify agent frame that diff was handled via overlay
                     std::string payload = "pcb";
                     Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
                 };
                 callbacks.onReject = [this]()
                 {
                     RevertAgentChanges();
-                    // Notify agent frame that diff was handled via overlay
                     std::string payload = "pcb";
                     Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+                };
+                callbacks.onViewDiff = [this]()
+                {
+                    std::string payload = "{}";
+                    Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_VIEW_CHANGES, payload );
                 };
                 callbacks.onRefresh = [this]()
                 {
@@ -1211,18 +1196,12 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 
     case MAIL_AGENT_APPROVE:
     {
-        // Approve pending agent changes
-        if( m_showingAgentBefore )
-            ShowAgentChangesAfter();
         ClearAgentPendingChanges();
         break;
     }
 
     case MAIL_AGENT_REJECT:
     {
-        // Reject pending agent changes
-        if( m_showingAgentBefore )
-            ShowAgentChangesAfter();
         RevertAgentChanges();
         break;
     }

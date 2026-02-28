@@ -1891,8 +1891,6 @@ HANDLER_RESULT<Empty> API_HANDLER_PCB::handleShowDiffOverlay(
     }
 
     DIFF_CALLBACKS callbacks;
-    callbacks.onUndo = []() { /* Test: no-op */ };
-    callbacks.onRedo = []() { /* Test: no-op */ };
 
     DIFF_MANAGER::GetInstance().RegisterOverlay( frame()->GetCanvas()->GetView(), callbacks );
     DIFF_MANAGER::GetInstance().ShowDiff( bbox );

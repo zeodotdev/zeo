@@ -167,6 +167,14 @@ img[src^="data:"] { cursor: pointer; }
 .pc-accept:hover { background: rgba(78,201,176,0.25); }
 .pc-reject { background: rgba(244,71,71,0.15); color: #f44747; }
 .pc-reject:hover { background: rgba(244,71,71,0.25); }
+.pc-row { position: relative; }
+.pc-row-actions { display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); gap: 4px; }
+.pc-row:hover .pc-row-actions { display: flex; }
+.pc-row-btn { padding: 1px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; border: none; -webkit-user-select: none; user-select: none; }
+.pc-row-accept { background: rgba(78,201,176,0.15); color: #4ec9b0; }
+.pc-row-accept:hover { background: rgba(78,201,176,0.3); }
+.pc-row-reject { background: rgba(244,71,71,0.15); color: #f44747; }
+.pc-row-reject:hover { background: rgba(244,71,71,0.3); }
 
 /* ── Icon buttons ──────────────────────────────────────────────────── */
 .icon-btn {
@@ -1561,19 +1569,29 @@ App.PendingChanges = (function() {
         _toggleCollapse();
     });
 
+    function _escPath(p) { return p.replace(/'/g, "\\'"); }
+
+    function _rowHtml(label, path, isPcb) {
+        var esc = _escPath(path);
+        return '<div class="pc-row px-3 py-1 text-[12px] text-[#aaa] cursor-pointer hover:bg-[#4d4d4d]">'
+             + '<span>' + label + '</span>'
+             + '<div class="pc-row-actions">'
+             + '<button class="pc-row-btn pc-row-accept" onclick="event.stopPropagation();App.PendingChanges._acceptSheet(\'' + esc + '\',' + isPcb + ')">Accept</button>'
+             + '<button class="pc-row-btn pc-row-reject" onclick="event.stopPropagation();App.PendingChanges._rejectSheet(\'' + esc + '\',' + isPcb + ')">Reject</button>'
+             + '</div></div>';
+    }
+
     function update(data) {
         var sheets = data.sheets || [];
         var hasPcb = data.has_pcb || false;
         var html = '';
 
         for (var i = 0; i < sheets.length; i++) {
-            html += '<div class="px-3 py-1 text-[12px] text-[#aaa] cursor-pointer hover:bg-[#4d4d4d]" '
-                 + 'onclick="App.PendingChanges._viewSheet(\'' + sheets[i].replace(/'/g, "\\'") + '\')">'
-                 + sheets[i] + (sheets[i].endsWith('/') ? '' : '/') + '</div>';
+            var label = sheets[i] + (sheets[i].endsWith('/') ? '' : '/');
+            html += _rowHtml(label, sheets[i], false);
         }
         if (hasPcb) {
-            html += '<div class="px-3 py-1 text-[12px] text-[#aaa] cursor-pointer hover:bg-[#4d4d4d]" '
-                 + 'onclick="App.PendingChanges._viewPcb()">PCB</div>';
+            html += _rowHtml('PCB', 'PCB', true);
         }
         rowsEl.innerHTML = html;
 
@@ -1601,6 +1619,14 @@ App.PendingChanges = (function() {
         App.Bridge.sendMsg('pending_changes_view', { path: 'PCB', is_pcb: true });
     }
 
+    function _acceptSheet(path, isPcb) {
+        App.Bridge.sendMsg('pending_changes_accept_sheet', { path: path, is_pcb: isPcb });
+    }
+
+    function _rejectSheet(path, isPcb) {
+        App.Bridge.sendMsg('pending_changes_reject_sheet', { path: path, is_pcb: isPcb });
+    }
+
     acceptAllBtn.addEventListener('click', function() {
         App.Bridge.sendMsg('pending_changes_accept_all');
     });
@@ -1613,7 +1639,9 @@ App.PendingChanges = (function() {
         update: update,
         show: show,
         _viewSheet: _viewSheet,
-        _viewPcb: _viewPcb
+        _viewPcb: _viewPcb,
+        _acceptSheet: _acceptSheet,
+        _rejectSheet: _rejectSheet
     };
 })();
 

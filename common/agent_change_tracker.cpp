@@ -35,14 +35,14 @@ AGENT_CHANGE_TRACKER::~AGENT_CHANGE_TRACKER()
 
 
 void AGENT_CHANGE_TRACKER::TrackItem( const KIID& aItemId, const wxString& aSheetPath,
-                                      UNDO_REDO aChangeType )
+                                      AGENT_CHANGE_TYPE aChangeType )
 {
     auto it = m_trackedItems.find( aItemId );
     if( it != m_trackedItems.end() )
     {
-        if( it->second.changeType == UNDO_REDO::NEWITEM )
+        if( it->second.changeType == AGENT_CHANGE_TYPE::ADDED )
         {
-            if( aChangeType == UNDO_REDO::DELETED )
+            if( aChangeType == AGENT_CHANGE_TYPE::DELETED )
             {
                 // Agent created then deleted this item — net result is nothing, untrack it
                 m_trackedItems.erase( it );
@@ -58,7 +58,7 @@ void AGENT_CHANGE_TRACKER::TrackItem( const KIID& aItemId, const wxString& aShee
 }
 
 
-void AGENT_CHANGE_TRACKER::TrackItem( const KIID& aItemId, UNDO_REDO aChangeType )
+void AGENT_CHANGE_TRACKER::TrackItem( const KIID& aItemId, AGENT_CHANGE_TYPE aChangeType )
 {
     // For PCB items, use empty string for sheet path
     TrackItem( aItemId, wxEmptyString, aChangeType );
@@ -80,8 +80,6 @@ bool AGENT_CHANGE_TRACKER::IsTracked( const KIID& aItemId ) const
 void AGENT_CHANGE_TRACKER::ClearTrackedItems()
 {
     m_trackedItems.clear();
-    m_undoBaseline = 0;
-    m_agentUndoCount = 0;
 }
 
 
@@ -158,37 +156,13 @@ wxString AGENT_CHANGE_TRACKER::GetSheetPathForItem( const KIID& aItemId ) const
 }
 
 
-UNDO_REDO AGENT_CHANGE_TRACKER::GetChangeType( const KIID& aItemId ) const
+AGENT_CHANGE_TYPE AGENT_CHANGE_TRACKER::GetChangeType( const KIID& aItemId ) const
 {
     auto it = m_trackedItems.find( aItemId );
     if( it != m_trackedItems.end() )
         return it->second.changeType;
 
-    return UNDO_REDO::NEWITEM;
-}
-
-
-void AGENT_CHANGE_TRACKER::SetUndoBaseline( int aUndoCount )
-{
-    m_undoBaseline = aUndoCount;
-}
-
-
-int AGENT_CHANGE_TRACKER::GetUndoBaseline() const
-{
-    return m_undoBaseline;
-}
-
-
-void AGENT_CHANGE_TRACKER::SetAgentUndoCount( int aCount )
-{
-    m_agentUndoCount = aCount;
-}
-
-
-int AGENT_CHANGE_TRACKER::GetAgentUndoCount() const
-{
-    return m_agentUndoCount;
+    return AGENT_CHANGE_TYPE::ADDED;
 }
 
 

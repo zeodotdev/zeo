@@ -48,6 +48,7 @@
 #include <libraries/symbol_library_adapter.h>
 #include <widgets/sch_design_block_pane.h>
 #include <agent_change_tracker.h>
+#include <agent_snapshot_session.h>
 #include <settings/settings_manager.h>
 #include <widgets/kistatusbar.h>
 #include <wx/filefn.h>
@@ -976,8 +977,8 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
             {
                 if( j_in.contains( "type" ) && j_in["type"] == "take_snapshot" )
                 {
-                    // Record the current undo position before agent execution
-                    RecordAgentUndoPosition();
+                    // Take a whole-file snapshot before agent execution
+                    BeginAgentSnapshot();
                     break;  // No response needed
                 }
                 else if( j_in.contains( "type" ) && j_in["type"] == "detect_changes" )
@@ -1206,29 +1207,22 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
             {
                 BOX2I          bbox( VECTOR2I( j["x"], j["y"] ), VECTOR2I( j["w"], j["h"] ) );
                 DIFF_CALLBACKS callbacks;
-                callbacks.onUndo = [this]()
-                {
-                    wxCommandEvent evt( wxEVT_COMMAND_MENU_SELECTED, wxID_UNDO );
-                    this->ProcessEvent( evt );
-                };
-                callbacks.onRedo = [this]()
-                {
-                    wxCommandEvent evt( wxEVT_COMMAND_MENU_SELECTED, wxID_REDO );
-                    this->ProcessEvent( evt );
-                };
                 callbacks.onApprove = [this]()
                 {
                     ClearAgentPendingChanges();
-                    // Notify agent frame that diff was handled via overlay
                     std::string payload = "sch";
                     Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
                 };
                 callbacks.onReject = [this]()
                 {
                     RevertAgentChanges();
-                    // Notify agent frame that diff was handled via overlay
                     std::string payload = "sch";
                     Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+                };
+                callbacks.onViewDiff = [this]()
+                {
+                    std::string payload = "{}";
+                    Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_VIEW_CHANGES, payload );
                 };
                 callbacks.onRefresh = [this]()
                 {
@@ -1298,9 +1292,6 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
             // Legacy format or parse error - approve all
         }
 
-        if( m_showingAgentBefore )
-            ShowAgentChangesAfter();
-
         if( targetSheet.IsEmpty() )
         {
             // Approve all sheets
@@ -1332,9 +1323,6 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
             // Legacy format or parse error - reject all
         }
 
-        if( m_showingAgentBefore )
-            ShowAgentChangesAfter();
-
         if( targetSheet.IsEmpty() )
         {
             // Reject all sheets
@@ -1363,9 +1351,19 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
         {
         }
 
-        // Prepare before/after content paths from the live editor's stored diff paths
-        wxString beforePath = GetDiffBeforeFilePath();
-        wxString afterPath  = GetDiffAfterFilePath();
+        // Get before/after paths from the snapshot session
+        wxString beforePath;
+        wxString afterPath;
+
+        if( m_snapshotSession )
+        {
+            // "Before" = snapshot of the current screen's original file
+            SCH_SCREEN* screen = GetCurrentSheet().LastScreen();
+            if( screen )
+                beforePath = m_snapshotSession->GetSnapshotPathForSheet( screen->GetFileName() );
+
+            afterPath = m_snapshotSession->GetAfterPath();
+        }
 
         if( beforePath.IsEmpty() && afterPath.IsEmpty() )
         {
@@ -1777,6 +1775,9 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                     wxLogMessage( "MAIL_AGENT_BEGIN_TRANSACTION: No current sheet, set to NilUuid" );
                 }
             }
+
+            // Take a whole-file snapshot before agent execution (idempotent)
+            BeginAgentSnapshot();
         }
         catch( ... )
         {
@@ -1896,24 +1897,14 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
     }
 
     //=========================================================================
-    // File edit session management
+    // File edit session management (removed — snapshot-based approach)
     //=========================================================================
 
     case MAIL_AGENT_FILE_EDIT_BEGIN:
-    {
-        OnAgentFileEditBegin( payload );
-        break;
-    }
-
     case MAIL_AGENT_FILE_EDIT_COMPLETE:
-    {
-        OnAgentFileEditComplete( payload );
-        break;
-    }
-
     case MAIL_AGENT_FILE_EDIT_ABORT:
     {
-        OnAgentFileEditAbort();
+        // File edit session removed — snapshot-based approach handles this
         break;
     }
 

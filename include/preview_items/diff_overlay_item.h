@@ -27,6 +27,7 @@
 #include <preview_items/simple_overlay_item.h>
 #include <math/box2.h>
 #include <functional>
+#include <vector>
 
 namespace KIGFX
 {
@@ -37,10 +38,23 @@ namespace PREVIEW
     using BBOX_CALLBACK = std::function<BOX2I()>;
 
     /**
- * DIFF_OVERLAY_ITEM represents a pending change from the Agent.
- * It draws a bounding box around the affected area and interactive buttons
- * for Approve/Deny/View.
- */
+     * Per-item highlight data for live diff overlay.
+     * Each entry represents one changed item with its bounding box and change type color.
+     */
+    struct ITEM_HIGHLIGHT
+    {
+        BOX2I   bbox;
+        COLOR4D color;
+        bool    hasBorder = true;  ///< false for wires (fill only, no border)
+    };
+
+    // Callback to get per-item highlight data for live diff rendering
+    using ITEM_HIGHLIGHTS_CALLBACK = std::function<std::vector<ITEM_HIGHLIGHT>()>;
+
+    /**
+     * DIFF_OVERLAY_ITEM represents pending changes from the Agent.
+     * It draws per-item colored bounding boxes around changed items on the live canvas.
+     */
     class DIFF_OVERLAY_ITEM : public SIMPLE_OVERLAY_ITEM
     {
     public:
@@ -49,8 +63,7 @@ namespace PREVIEW
             BTN_NONE = 0,
             BTN_APPROVE,
             BTN_REJECT,
-            BTN_VIEW_BEFORE,
-            BTN_VIEW_AFTER
+            BTN_VIEW_DIFF
         };
 
         // Static bbox constructor (legacy)
@@ -65,33 +78,31 @@ namespace PREVIEW
         wxString      GetClass() const override { return "DIFF_OVERLAY_ITEM"; }
 
         /**
-     * hit tests the buttons drawn by this overlay.
-     * @param aPoint world coordinate point
-     * @return BUTTON_ID of the clicked button, or BTN_NONE
-     */
+         * Hit tests the buttons drawn by this overlay.
+         * @param aPoint world coordinate point
+         * @return BUTTON_ID of the clicked button, or BTN_NONE
+         */
         BUTTON_ID HitTestButtons( const VECTOR2I& aPoint, KIGFX::VIEW* aView ) const;
 
-        void SetShowingBefore( bool aVal ) { m_showBefore = aVal; }
-        bool IsShowingBefore() const { return m_showBefore; }
-
         /**
-         * Control whether action buttons (Approve/Reject/Undo) are drawn.
+         * Control whether action buttons (Approve/Reject/View Diff) are drawn.
          * Set to false for read-only diff viewers that have no action handlers.
          */
         void SetShowButtons( bool aVal ) { m_showButtons = aVal; }
         bool GetShowButtons() const { return m_showButtons; }
 
         /**
-         * Enable diff-viewer mode, which draws Before/After toggle buttons
-         * instead of the standard Approve/Reject/Undo buttons.
-         * Used by SCH_DIFF_FRAME for its canvas overlay.
+         * Set a callback to provide per-item highlight data.
+         * When set, the overlay draws colored boxes around each changed item
+         * instead of a single overall bounding box.
          */
-        void SetDiffViewMode( bool aVal ) { m_diffViewMode = aVal; }
-        bool IsDiffViewMode() const { return m_diffViewMode; }
+        void SetItemHighlightsCallback( ITEM_HIGHLIGHTS_CALLBACK aCallback )
+        {
+            m_itemHighlightsCallback = aCallback;
+        }
 
         /**
          * Update the bounding box for dynamic tracking.
-         * Call this when tracked items may have moved.
          * @param aBBox The new bounding box.
          */
         void SetBBox( const BOX2I& aBBox ) { m_bbox = aBBox; }
@@ -99,13 +110,11 @@ namespace PREVIEW
         /**
          * Get the current bounding box.
          * If a callback is set, this recomputes the bbox.
-         * @return The bounding box.
          */
         BOX2I GetCurrentBBox() const;
 
         /**
          * Get the cached bounding box (without recomputing).
-         * @return The bounding box.
          */
         const BOX2I& GetBBox() const { return m_bbox; }
 
@@ -113,16 +122,14 @@ namespace PREVIEW
         void drawPreviewShape( KIGFX::VIEW* aView ) const override;
 
         // Helpers to get button geometries (world coords)
-        // We place buttons at the top-right of the bbox
         BOX2I getButtonRect( int aIndex, double aScale ) const;
         void  drawButton( KIGFX::GAL* aGal, int aIndex, const wxString& aLabel, const COLOR4D& aColor,
                           double aScale ) const;
 
         mutable BOX2I m_bbox;  // mutable so we can update it in const methods
-        bool  m_showBefore;
-        bool  m_showButtons  = true;   ///< false for read-only diff viewers (no Approve/Reject/Undo)
-        bool  m_diffViewMode = false;  ///< true → draw Before/After buttons instead of Approve/Reject/Undo
+        bool  m_showButtons  = false;  ///< false by default — approve/reject lives in agent window
         BBOX_CALLBACK m_bboxCallback;  // Optional callback for dynamic bbox
+        ITEM_HIGHLIGHTS_CALLBACK m_itemHighlightsCallback;  // Per-item highlight data
 
         static constexpr double BTN_WIDTH = 60.0;
         static constexpr double BTN_HEIGHT = 20.0;

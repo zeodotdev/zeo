@@ -70,11 +70,10 @@ macro( create_git_version_header _git_src_path )
         set( ENV{LC_ALL} ${_Git_SAVED_LC_ALL} )
     endif( GIT_FOUND )
 
-    # Check to make sure 'git' command did not fail.  Otherwise fallback
-    # to KiCadVersion.cmake as the revision level.
-    if( _git_describe_result EQUAL 0 )
-        set( KICAD_VERSION "${_git_DESCRIBE}" )
-    else()
+    # Always use KICAD_SEMANTIC_VERSION from KiCadVersion.cmake instead of
+    # git describe, which may return an outdated tag-based version.
+    # KICAD_VERSION is already set to KICAD_SEMANTIC_VERSION by KiCadVersion.cmake.
+    if( NOT _git_describe_result EQUAL 0 )
         message( STATUS "git describe returned error ${_git_describe_result}: ${_git_describe_error}" )
     endif()
 

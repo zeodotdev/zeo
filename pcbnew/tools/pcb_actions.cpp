@@ -1581,7 +1581,7 @@ TOOL_ACTION PCB_ACTIONS::showAgent( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Zeo Agent" ) )
         .Tooltip( _( "Open the Zeo AI Agent" ) )
-        .Icon( BITMAPS::icon_kicad ) );  // TODO: Add agent icon
+        .Icon( BITMAPS::icon_agent ) );
 
 // DESIGN RULE EDITOR
 TOOL_ACTION PCB_ACTIONS::drcRuleEditor( TOOL_ACTION_ARGS()
@@ -1616,7 +1616,7 @@ TOOL_ACTION PCB_ACTIONS::showPythonConsole( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Terminal" ) )
         .Tooltip( _( "Open Terminal" ) )
-        .Icon( BITMAPS::py_script ) );
+        .Icon( BITMAPS::icon_terminal ) );
 
 TOOL_ACTION PCB_ACTIONS::showLayersManager( TOOL_ACTION_ARGS()
         .Name( "pcbnew.Control.showLayersManager" )

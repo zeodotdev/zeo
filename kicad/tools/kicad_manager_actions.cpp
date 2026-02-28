@@ -260,7 +260,7 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::showAiAssistant( TOOL_ACTION_ARGS()
                                                             .LegacyHotkeyName( "Show Agent" )
                                                             .FriendlyName( _( "Agent" ) )
                                                             .Tooltip( _( "Open Agent" ) )
-                                                            .Icon( BITMAPS::icon_kicad )
+                                                            .Icon( BITMAPS::icon_agent )
                                                             .Parameter( FRAME_AGENT ) );
 
 TOOL_ACTION KICAD_MANAGER_ACTIONS::showVersionControl( TOOL_ACTION_ARGS()
@@ -276,5 +276,5 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::showTerminal( TOOL_ACTION_ARGS()
                                                          .Scope( AS_GLOBAL )
                                                          .FriendlyName( _( "Terminal" ) )
                                                          .Tooltip( _( "Open Terminal" ) )
-                                                         .Icon( BITMAPS::py_script )
+                                                         .Icon( BITMAPS::icon_terminal )
                                                          .Parameter( FRAME_TERMINAL ) );

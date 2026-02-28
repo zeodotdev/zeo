@@ -167,8 +167,8 @@ wxDEFINE_EVENT( EDA_EVT_SCHEMATIC_CHANGING, wxCommandEvent );
 wxDEFINE_EVENT( EDA_EVT_SCHEMATIC_CHANGED, wxCommandEvent );
 
 
-SCH_EDIT_FRAME::SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
-        SCH_BASE_FRAME( aKiway, aParent, FRAME_SCH, wxT( "Eeschema" ), wxDefaultPosition, wxDefaultSize,
+SCH_EDIT_FRAME::SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrameType ) :
+        SCH_BASE_FRAME( aKiway, aParent, aFrameType, wxT( "Eeschema" ), wxDefaultPosition, wxDefaultSize,
                         KICAD_DEFAULT_DRAWFRAME_STYLE, SCH_EDIT_FRAME_NAME ),
         m_ercDialog( nullptr ),
         m_diffSymbolDialog( nullptr ),
@@ -3484,6 +3484,50 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
 
     m_hasAgentPendingChanges = true;
 
+    // Capture before/after content for the diff frame (only once per change session)
+    if( m_diffBeforeFilePath.IsEmpty() )
+    {
+        // "Before" = the last saved disk file (agent changes are only in-memory)
+        SCH_SCREEN* screen = GetCurrentSheet().LastScreen();
+        if( screen )
+        {
+            wxString diskPath = screen->GetFileName();
+            if( !diskPath.IsEmpty() && wxFileName::FileExists( diskPath ) )
+            {
+                m_diffBeforeFilePath = diskPath;
+                wxLogInfo( "SCH: DetectAgentChanges: before content = disk file: %s", diskPath );
+            }
+        }
+    }
+
+    // Always update "after" = current in-memory state serialized to a temp file
+    {
+        SCH_SHEET_PATH currentPath = GetCurrentSheet();
+        // Find the sheet being diffed (use the current target sheet's sheet node)
+        SCH_SHEET* targetSheet = currentPath.Last();
+        if( targetSheet )
+        {
+            wxFileName tmpFile;
+            tmpFile.AssignTempFileName( wxS( "zeo_sch_diff_after" ) );
+            tmpFile.SetExt( wxS( "kicad_sch" ) );
+            wxString tmpPath = tmpFile.GetFullPath();
+
+            try
+            {
+                IO_RELEASER<SCH_IO> pi( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD ) );
+                std::map<std::string, UTF8> props;
+                props["PropSaveCurrentSheetOnly"] = "";
+                pi->SaveSchematicFile( tmpPath, targetSheet, &Schematic(), &props );
+                m_diffAfterFilePath = tmpPath;
+                wxLogInfo( "SCH: DetectAgentChanges: after content saved to temp: %s", tmpPath );
+            }
+            catch( const IO_ERROR& ioe )
+            {
+                wxLogWarning( "SCH: DetectAgentChanges: failed to save after state: %s", ioe.What() );
+            }
+        }
+    }
+
     int agentUndoCount = currentUndoCount - baseline;
     m_agentChangeTracker->SetAgentUndoCount( agentUndoCount );
     wxLogInfo( "SCH: DetectAgentChanges: baseline=%d, currentUndo=%d, agentUndoCount=%d",
@@ -3667,6 +3711,12 @@ void SCH_EDIT_FRAME::ClearAgentPendingChanges()
 
     // Clear redo list to prevent accidental redo after approve
     ClearUndoORRedoList( REDO_LIST );
+
+    // Clean up diff temp files
+    if( !m_diffAfterFilePath.IsEmpty() && wxFileName::FileExists( m_diffAfterFilePath ) )
+        wxRemoveFile( m_diffAfterFilePath );
+    m_diffBeforeFilePath.Clear();
+    m_diffAfterFilePath.Clear();
 }
 
 
@@ -4017,19 +4067,32 @@ BOX2I SCH_EDIT_FRAME::ComputeTrackedItemsBBox() const
         {
             if( item->m_Uuid == kiid )
             {
+                // GetBoundingBox() on SCH_SYMBOL includes reference/value fields which
+                // can be placed far from the body — use body+pins only to keep the
+                // diff overlay box tight around the actual component.
+                BOX2I itemBBox;
+                if( item->Type() == SCH_SYMBOL_T )
+                    itemBBox = static_cast<SCH_SYMBOL*>( item )->GetBodyAndPinsBoundingBox();
+                else
+                    itemBBox = item->GetBoundingBox();
+                itemBBox.Normalize();  // Ensure positive width/height
+
                 if( first )
                 {
-                    bbox = item->GetBoundingBox();
+                    bbox = itemBBox;
                     first = false;
                 }
                 else
                 {
-                    bbox.Merge( item->GetBoundingBox() );
+                    bbox.Merge( itemBBox );
                 }
                 break;
             }
         }
     }
+
+    if( !first )
+        bbox.Normalize();
 
     return bbox;
 }

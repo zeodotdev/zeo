@@ -52,15 +52,16 @@ DIFF_MANAGER::~DIFF_MANAGER()
     m_viewStates.clear();
 }
 
-void DIFF_MANAGER::ShowDiff( const BOX2I& aBBox )
+void DIFF_MANAGER::ShowDiff( const BOX2I& aBBox, bool aDiffViewMode )
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
 
     if( !m_currentView )
         return;
 
-    wxLogInfo( "Agent diff: showing overlay at (%d,%d) size (%d,%d)",
-               aBBox.GetX(), aBBox.GetY(), aBBox.GetWidth(), aBBox.GetHeight() );
+    wxLogInfo( "Agent diff: showing overlay at (%d,%d) size (%d,%d)%s",
+               aBBox.GetX(), aBBox.GetY(), aBBox.GetWidth(), aBBox.GetHeight(),
+               aDiffViewMode ? " [diff-view mode]" : "" );
 
     DIFF_VIEW_STATE& state = m_viewStates[m_currentView];
     state.active = true;
@@ -75,6 +76,8 @@ void DIFF_MANAGER::ShowDiff( const BOX2I& aBBox )
     }
 
     state.item = new KIGFX::PREVIEW::DIFF_OVERLAY_ITEM( aBBox );
+    if( aDiffViewMode )
+        state.item->SetDiffViewMode( true );
 
     m_currentView->Add( state.item );
     m_currentView->SetVisible( state.item, true );
@@ -85,6 +88,20 @@ void DIFF_MANAGER::ShowDiff( const BOX2I& aBBox )
     if( state.callbacks.onRefresh )
         state.callbacks.onRefresh();
 }
+
+void DIFF_MANAGER::SetShowingBefore( KIGFX::VIEW* aView, bool aShowBefore )
+{
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    auto it = m_viewStates.find( aView );
+    if( it == m_viewStates.end() || !it->second.item )
+        return;
+
+    it->second.item->SetShowingBefore( aShowBefore );
+    aView->Update( it->second.item );
+    aView->MarkDirty();
+}
+
 
 void DIFF_MANAGER::ClearDiff()
 {
@@ -260,14 +277,23 @@ bool DIFF_MANAGER::HandleClick( KIGFX::VIEW* aView, const VECTOR2I& aPoint )
 
     auto it = m_viewStates.find( aView );
     if( it == m_viewStates.end() )
+    {
+        wxLogDebug( "DIFF_MANAGER::HandleClick: view %p not registered (%zu states)",
+                    aView, m_viewStates.size() );
         return false;
+    }
 
     DIFF_VIEW_STATE& state = it->second;
 
     if( !state.active || !state.item || !aView )
+    {
+        wxLogDebug( "DIFF_MANAGER::HandleClick: state not ready (active=%d item=%p)",
+                    state.active, state.item );
         return false;
+    }
 
     auto btn = state.item->HitTestButtons( aPoint, aView );
+    wxLogDebug( "DIFF_MANAGER::HandleClick: point=(%d,%d) btn=%d", aPoint.x, aPoint.y, (int)btn );
 
     switch( btn )
     {

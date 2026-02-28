@@ -89,21 +89,32 @@ void DIFF_OVERLAY_ITEM::drawPreviewShape( KIGFX::VIEW* aView ) const
     // Draw the main bounding box
     gal->DrawRectangle( m_bbox.GetPosition(), m_bbox.GetEnd() );
 
-    // Draw Buttons
-    // We need the view scale to keep buttons constant size on screen ideally,
-    // or we just draw them in world units relative to zoom.
-    // For simplicity V1: Draw in world units but scaled by inverse zoom to be constant screen size.
-
     double scale = 1.0 / gal->GetWorldScale();
 
-    // Button 1: Undo/Redo (Toggle)
+    if( m_diffViewMode )
+    {
+        // Diff-viewer mode: Before/After toggle buttons floating above the bbox.
+        // Active button uses a saturated color; inactive button uses a dim dark style.
+        COLOR4D beforeColor = m_showBefore
+                                ? COLOR4D( 0.1, 0.4, 0.9, 0.95 )   // active: blue
+                                : COLOR4D( 0.2, 0.2, 0.25, 0.80 );  // inactive: dark
+        COLOR4D afterColor  = !m_showBefore
+                                ? COLOR4D( 0.0, 0.6, 0.3, 0.95 )   // active: green
+                                : COLOR4D( 0.2, 0.2, 0.25, 0.80 );  // inactive: dark
+
+        // Index 1 = "Before" (left button), index 0 = "After" (right button)
+        drawButton( gal, 1, "Before", beforeColor, scale );
+        drawButton( gal, 0, "After",  afterColor,  scale );
+        return;
+    }
+
+    if( !m_showButtons )
+        return;
+
+    // Standard agent diff buttons: Undo/Redo toggle, Approve (green), Reject (red)
     drawButton( gal, 0, m_showBefore ? "Redo" : "Undo", COLOR4D( 0.2, 0.2, 0.2, 0.8 ), scale );
-
-    // Button 2: Approve (Green)
     drawButton( gal, 1, "Approve", COLOR4D( 0.0, 0.6, 0.0, 0.9 ), scale );
-
-    // Button 3: Reject (Red)
-    drawButton( gal, 2, "Reject", COLOR4D( 0.8, 0.0, 0.0, 0.9 ), scale );
+    drawButton( gal, 2, "Reject",  COLOR4D( 0.8, 0.0, 0.0, 0.9 ), scale );
 }
 
 BOX2I DIFF_OVERLAY_ITEM::getButtonRect( int aIndex, double aScale ) const
@@ -183,8 +194,6 @@ void DIFF_OVERLAY_ITEM::drawButton( KIGFX::GAL* aGal, int aIndex, const wxString
 
 DIFF_OVERLAY_ITEM::BUTTON_ID DIFF_OVERLAY_ITEM::HitTestButtons( const VECTOR2I& aPoint, KIGFX::VIEW* aView ) const
 {
-    // Need scale to reconstruct boxes
-    // This is tricky because HitTest is usually called from tool which has view access
     if( !aView )
         return BTN_NONE;
 
@@ -193,6 +202,18 @@ DIFF_OVERLAY_ITEM::BUTTON_ID DIFF_OVERLAY_ITEM::HitTestButtons( const VECTOR2I& 
         return BTN_NONE;
 
     double scale = 1.0 / gal->GetWorldScale();
+
+    if( m_diffViewMode )
+    {
+        // Diff-viewer mode: only Before (index 1) and After (index 0) buttons
+        if( getButtonRect( 1, scale ).Contains( aPoint ) ) return BTN_VIEW_BEFORE;
+        if( getButtonRect( 0, scale ).Contains( aPoint ) ) return BTN_VIEW_AFTER;
+        return BTN_NONE;
+    }
+
+    // Standard mode buttons are only visible when m_showButtons is true
+    if( !m_showButtons )
+        return BTN_NONE;
 
     for( int i = 0; i < 3; ++i )
     {

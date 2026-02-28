@@ -55,7 +55,7 @@
 #include "sch_plotter.h"
 #include <nlohmann/json.hpp>
 #include <sch_text.h>
-#include <nlohmann/json.hpp>
+#include "sch_diff_frame.h"
 #include <sch_text.h>
 #include <trace_helpers.h>
 #include <id.h>
@@ -1350,6 +1350,8 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 
     case MAIL_AGENT_VIEW_CHANGES:
     {
+        // Open a separate read-only diff frame (SCH_DIFF_FRAME) that shows before/after
+        // states as native in-memory KiCad schematics — NOT the live editor.
         wxString targetSheetPath;
         try
         {
@@ -1361,27 +1363,59 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
         {
         }
 
-        if( !targetSheetPath.IsEmpty() )
+        // Prepare before/after content paths from the live editor's stored diff paths
+        wxString beforePath = GetDiffBeforeFilePath();
+        wxString afterPath  = GetDiffAfterFilePath();
+
+        if( beforePath.IsEmpty() && afterPath.IsEmpty() )
         {
-            SCH_SHEET_LIST sheets = Schematic().Hierarchy();
-            for( const SCH_SHEET_PATH& path : sheets )
+            // Fallback: no diff content available — just navigate to the sheet in the live editor
+            if( !targetSheetPath.IsEmpty() )
             {
-                if( path.PathHumanReadable( false ) == targetSheetPath )
+                SCH_SHEET_LIST sheets = Schematic().Hierarchy();
+                for( const SCH_SHEET_PATH& path : sheets )
                 {
-                    if( path != GetCurrentSheet() )
+                    if( path.PathHumanReadable( false ) == targetSheetPath )
                     {
-                        SCH_SHEET_PATH target = path;
-                        GetToolManager()->RunAction<SCH_SHEET_PATH*>(
-                                SCH_ACTIONS::changeSheet, &target );
+                        if( path != GetCurrentSheet() )
+                        {
+                            SCH_SHEET_PATH target = path;
+                            GetToolManager()->RunAction<SCH_SHEET_PATH*>(
+                                    SCH_ACTIONS::changeSheet, &target );
+                        }
+                        break;
                     }
-                    break;
                 }
             }
+            if( GetCanvas() )
+                GetCanvas()->Refresh();
+            break;
         }
 
-        if( GetCanvas() )
-            GetCanvas()->Refresh();
+        // Open (or reuse) the diff frame
+        KIWAY_PLAYER* diffPlayer = Kiway().Player( FRAME_SCH_DIFF, true );
+        if( diffPlayer )
+        {
+            // Send the before/after content to the diff frame, including changed UUIDs
+            // so the diff frame can draw a highlight overlay around the changed items.
+            nlohmann::json contentMsg;
+            contentMsg["before_path"] = beforePath.ToUTF8().data();
+            contentMsg["after_path"]  = afterPath.ToUTF8().data();
+            contentMsg["sheet_path"]  = targetSheetPath.ToUTF8().data();
 
+            // Collect changed UUIDs on the target sheet for the highlight overlay
+            if( m_agentChangeTracker )
+            {
+                std::set<KIID> uuids = m_agentChangeTracker->GetTrackedItemsOnSheet( targetSheetPath );
+                nlohmann::json uuidArray = nlohmann::json::array();
+                for( const KIID& id : uuids )
+                    uuidArray.push_back( id.AsString().ToUTF8().data() );
+                contentMsg["changed_uuids"] = uuidArray;
+            }
+
+            std::string contentPayload = contentMsg.dump();
+            Kiway().ExpressMail( FRAME_SCH_DIFF, MAIL_SCH_DIFF_CONTENT, contentPayload );
+        }
         break;
     }
 

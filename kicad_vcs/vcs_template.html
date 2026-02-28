@@ -2938,7 +2938,9 @@ const UI = {
             <div class="vd-placeholder-sub">SVG export unavailable<br>kicad-cli not found</div>
           </div>`;
         }
-        return `<div class="vd-svg-canvas">${svgContent}</div>`;
+        // Strip <title> elements — they cause unwanted browser tooltips on hover
+        const cleanSvg = svgContent.replace(/<title[^>]*>[\s\S]*?<\/title>/gi, '');
+        return `<div class="vd-svg-canvas">${cleanSvg}</div>`;
       };
 
       const beforeEl = document.getElementById('vd-before');
@@ -3579,6 +3581,8 @@ const Actions = {
     try {
       await Bridge.send('open_in_editor', {
         filePath:     ctx.filePath,
+        oldCommit:    ctx.oldCommit || '',
+        newCommit:    ctx.newCommit || '',
         changedItems: State.visualDiffItems || [],
       });
       Toast.success('Opened in editor');

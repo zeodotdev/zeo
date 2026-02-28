@@ -75,6 +75,21 @@ namespace PREVIEW
         bool IsShowingBefore() const { return m_showBefore; }
 
         /**
+         * Control whether action buttons (Approve/Reject/Undo) are drawn.
+         * Set to false for read-only diff viewers that have no action handlers.
+         */
+        void SetShowButtons( bool aVal ) { m_showButtons = aVal; }
+        bool GetShowButtons() const { return m_showButtons; }
+
+        /**
+         * Enable diff-viewer mode, which draws Before/After toggle buttons
+         * instead of the standard Approve/Reject/Undo buttons.
+         * Used by SCH_DIFF_FRAME for its canvas overlay.
+         */
+        void SetDiffViewMode( bool aVal ) { m_diffViewMode = aVal; }
+        bool IsDiffViewMode() const { return m_diffViewMode; }
+
+        /**
          * Update the bounding box for dynamic tracking.
          * Call this when tracked items may have moved.
          * @param aBBox The new bounding box.
@@ -105,6 +120,8 @@ namespace PREVIEW
 
         mutable BOX2I m_bbox;  // mutable so we can update it in const methods
         bool  m_showBefore;
+        bool  m_showButtons  = true;   ///< false for read-only diff viewers (no Approve/Reject/Undo)
+        bool  m_diffViewMode = false;  ///< true → draw Before/After buttons instead of Approve/Reject/Undo
         BBOX_CALLBACK m_bboxCallback;  // Optional callback for dynamic bbox
 
         static constexpr double BTN_WIDTH = 60.0;

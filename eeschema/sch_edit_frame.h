@@ -144,7 +144,7 @@ private:
 class SCH_EDIT_FRAME : public SCH_BASE_FRAME, public SCHEMATIC_LISTENER
 {
 public:
-    SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent );
+    SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrameType = FRAME_SCH );
     ~SCH_EDIT_FRAME() override;
 
     // SCHEMATIC_LISTENER interface - detect user edits to agent-modified items
@@ -504,7 +504,7 @@ public:
      *                This may only be done in standalone mode.
      * @return true if the schematic was saved
      */
-    bool SaveProject( bool aSaveAs = false );
+    virtual bool SaveProject( bool aSaveAs = false );
 
     bool OpenProjectFiles( const std::vector<wxString>& aFileSet, int aCtl = 0 ) override;
 
@@ -1202,6 +1202,14 @@ private:
     bool           m_inUndoRedo = false;          ///< True during undo/redo (suppresses OnModify auto-reject)
     BOX2I          m_cachedAgentBBox;             ///< Cached bbox for use when items are undone (before state)
     SCH_SHEET_PATH m_agentChangedSheetPath;       ///< Sheet path where agent changes were made
+    wxString       m_diffBeforeFilePath;          ///< Temp file path for diff "before" state (disk content)
+    wxString       m_diffAfterFilePath;           ///< Temp file path for diff "after" state (in-memory serialized)
+
+public:
+    const wxString& GetDiffBeforeFilePath() const { return m_diffBeforeFilePath; }
+    const wxString& GetDiffAfterFilePath() const  { return m_diffAfterFilePath; }
+
+private:
 
     // Concurrent editing support - agent transaction tracking
     bool           m_agentTransactionActive = false;  ///< True if agent transaction is active

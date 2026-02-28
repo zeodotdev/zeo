@@ -63,8 +63,9 @@ class DIFF_MANAGER
 public:
     static DIFF_MANAGER& GetInstance();
 
-    // Show diff on the currently active view (set via RegisterOverlay)
-    void ShowDiff( const BOX2I& aBBox );
+    // Show diff on the currently active view (set via RegisterOverlay).
+    // aDiffViewMode=true draws Before/After toggle buttons instead of Approve/Reject/Undo.
+    void ShowDiff( const BOX2I& aBBox, bool aDiffViewMode = false );
 
     // Register a view to draw the overlay on, and callbacks for interaction
     // This sets the "current" view for subsequent ShowDiff/ClearDiff calls
@@ -104,6 +105,13 @@ public:
 
     // Handle click on a specific view
     bool HandleClick( KIGFX::VIEW* aView, const VECTOR2I& aPoint );
+
+    /**
+     * Update the "showing before" flag on the overlay item for a specific view.
+     * Used by SCH_DIFF_FRAME when the user switches between before/after states
+     * without going through the canvas button click path.
+     */
+    void SetShowingBefore( KIGFX::VIEW* aView, bool aShowBefore );
 
     /**
      * Refresh the diff overlay on the current view.

@@ -4833,6 +4833,7 @@ void BuildBitmapInfo( std::unordered_map<BITMAPS, std::vector<BITMAP_INFO>>& aBi
     aBitmapInfoCache[BITMAPS::icon_pcm].emplace_back( BITMAPS::icon_pcm, wxT( "icon_pcm_64.png" ), 64, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_vcs].emplace_back( BITMAPS::icon_vcs, wxT( "icon_vcs_64.png" ), 64, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_agent].emplace_back( BITMAPS::icon_agent, wxT( "icon_agent_64.png" ), 64, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_agent_launcher].emplace_back( BITMAPS::icon_agent_launcher, wxT( "icon_agent_64.png" ), 64, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_terminal].emplace_back( BITMAPS::icon_terminal, wxT( "icon_terminal_64.png" ), 64, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_cvpcb].emplace_back( BITMAPS::icon_cvpcb, wxT( "icon_cvpcb_dark_64.png" ), 64, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_eeschema].emplace_back( BITMAPS::icon_eeschema, wxT( "icon_eeschema_dark_64.png" ), 64, wxT( "dark" ) );
@@ -4848,6 +4849,7 @@ void BuildBitmapInfo( std::unordered_map<BITMAPS, std::vector<BITMAP_INFO>>& aBi
     aBitmapInfoCache[BITMAPS::icon_pcm].emplace_back( BITMAPS::icon_pcm, wxT( "icon_pcm_dark_64.png" ), 64, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_vcs].emplace_back( BITMAPS::icon_vcs, wxT( "icon_vcs_dark_64.png" ), 64, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_agent].emplace_back( BITMAPS::icon_agent, wxT( "icon_agent_dark_64.png" ), 64, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::icon_agent_launcher].emplace_back( BITMAPS::icon_agent_launcher, wxT( "icon_agent_dark_64.png" ), 64, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_terminal].emplace_back( BITMAPS::icon_terminal, wxT( "icon_terminal_dark_64.png" ), 64, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_cvpcb].emplace_back( BITMAPS::icon_cvpcb, wxT( "icon_cvpcb_128.png" ), 128, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_eeschema].emplace_back( BITMAPS::icon_eeschema, wxT( "icon_eeschema_128.png" ), 128, wxT( "light" ) );
@@ -4863,6 +4865,7 @@ void BuildBitmapInfo( std::unordered_map<BITMAPS, std::vector<BITMAP_INFO>>& aBi
     aBitmapInfoCache[BITMAPS::icon_pcm].emplace_back( BITMAPS::icon_pcm, wxT( "icon_pcm_128.png" ), 128, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_vcs].emplace_back( BITMAPS::icon_vcs, wxT( "icon_vcs_128.png" ), 128, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_agent].emplace_back( BITMAPS::icon_agent, wxT( "icon_agent_128.png" ), 128, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_agent_launcher].emplace_back( BITMAPS::icon_agent_launcher, wxT( "icon_agent_128.png" ), 128, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_terminal].emplace_back( BITMAPS::icon_terminal, wxT( "icon_terminal_128.png" ), 128, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_cvpcb].emplace_back( BITMAPS::icon_cvpcb, wxT( "icon_cvpcb_dark_128.png" ), 128, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_eeschema].emplace_back( BITMAPS::icon_eeschema, wxT( "icon_eeschema_dark_128.png" ), 128, wxT( "dark" ) );
@@ -4878,6 +4881,7 @@ void BuildBitmapInfo( std::unordered_map<BITMAPS, std::vector<BITMAP_INFO>>& aBi
     aBitmapInfoCache[BITMAPS::icon_pcm].emplace_back( BITMAPS::icon_pcm, wxT( "icon_pcm_dark_128.png" ), 128, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_vcs].emplace_back( BITMAPS::icon_vcs, wxT( "icon_vcs_dark_128.png" ), 128, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_agent].emplace_back( BITMAPS::icon_agent, wxT( "icon_agent_dark_128.png" ), 128, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::icon_agent_launcher].emplace_back( BITMAPS::icon_agent_launcher, wxT( "icon_agent_dark_128.png" ), 128, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_terminal].emplace_back( BITMAPS::icon_terminal, wxT( "icon_terminal_dark_128.png" ), 128, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_cvpcb].emplace_back( BITMAPS::icon_cvpcb, wxT( "icon_cvpcb_256.png" ), 256, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_eeschema].emplace_back( BITMAPS::icon_eeschema, wxT( "icon_eeschema_256.png" ), 256, wxT( "light" ) );
@@ -4893,6 +4897,7 @@ void BuildBitmapInfo( std::unordered_map<BITMAPS, std::vector<BITMAP_INFO>>& aBi
     aBitmapInfoCache[BITMAPS::icon_pcm].emplace_back( BITMAPS::icon_pcm, wxT( "icon_pcm_256.png" ), 256, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_vcs].emplace_back( BITMAPS::icon_vcs, wxT( "icon_vcs_256.png" ), 256, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_agent].emplace_back( BITMAPS::icon_agent, wxT( "icon_agent_256.png" ), 256, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_agent_launcher].emplace_back( BITMAPS::icon_agent_launcher, wxT( "icon_agent_256.png" ), 256, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_terminal].emplace_back( BITMAPS::icon_terminal, wxT( "icon_terminal_256.png" ), 256, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_cvpcb].emplace_back( BITMAPS::icon_cvpcb, wxT( "icon_cvpcb_dark_256.png" ), 256, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_eeschema].emplace_back( BITMAPS::icon_eeschema, wxT( "icon_eeschema_dark_256.png" ), 256, wxT( "dark" ) );
@@ -4908,6 +4913,7 @@ void BuildBitmapInfo( std::unordered_map<BITMAPS, std::vector<BITMAP_INFO>>& aBi
     aBitmapInfoCache[BITMAPS::icon_pcm].emplace_back( BITMAPS::icon_pcm, wxT( "icon_pcm_dark_256.png" ), 256, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_vcs].emplace_back( BITMAPS::icon_vcs, wxT( "icon_vcs_dark_256.png" ), 256, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_agent].emplace_back( BITMAPS::icon_agent, wxT( "icon_agent_dark_256.png" ), 256, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::icon_agent_launcher].emplace_back( BITMAPS::icon_agent_launcher, wxT( "icon_agent_dark_256.png" ), 256, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_terminal].emplace_back( BITMAPS::icon_terminal, wxT( "icon_terminal_dark_256.png" ), 256, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::dialog_warning].emplace_back( BITMAPS::dialog_warning, wxT( "dialog_warning_48.png" ), 48, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_3d].emplace_back( BITMAPS::icon_3d, wxT( "icon_3d_48.png" ), 48, wxT( "light" ) );
@@ -4925,6 +4931,7 @@ void BuildBitmapInfo( std::unordered_map<BITMAPS, std::vector<BITMAP_INFO>>& aBi
     aBitmapInfoCache[BITMAPS::icon_pcm].emplace_back( BITMAPS::icon_pcm, wxT( "icon_pcm_48.png" ), 48, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_vcs].emplace_back( BITMAPS::icon_vcs, wxT( "icon_vcs_48.png" ), 48, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_agent].emplace_back( BITMAPS::icon_agent, wxT( "icon_agent_48.png" ), 48, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_agent_launcher].emplace_back( BITMAPS::icon_agent_launcher, wxT( "icon_agent_48.png" ), 48, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::icon_terminal].emplace_back( BITMAPS::icon_terminal, wxT( "icon_terminal_48.png" ), 48, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::reannotate_down_left].emplace_back( BITMAPS::reannotate_down_left, wxT( "reannotate_down_left_48.png" ), 48, wxT( "light" ) );
     aBitmapInfoCache[BITMAPS::reannotate_down_right].emplace_back( BITMAPS::reannotate_down_right, wxT( "reannotate_down_right_48.png" ), 48, wxT( "light" ) );
@@ -4952,6 +4959,7 @@ void BuildBitmapInfo( std::unordered_map<BITMAPS, std::vector<BITMAP_INFO>>& aBi
     aBitmapInfoCache[BITMAPS::icon_pcm].emplace_back( BITMAPS::icon_pcm, wxT( "icon_pcm_dark_48.png" ), 48, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_vcs].emplace_back( BITMAPS::icon_vcs, wxT( "icon_vcs_dark_48.png" ), 48, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_agent].emplace_back( BITMAPS::icon_agent, wxT( "icon_agent_dark_48.png" ), 48, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::icon_agent_launcher].emplace_back( BITMAPS::icon_agent_launcher, wxT( "icon_agent_dark_48.png" ), 48, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::icon_terminal].emplace_back( BITMAPS::icon_terminal, wxT( "icon_terminal_dark_48.png" ), 48, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::reannotate_down_left].emplace_back( BITMAPS::reannotate_down_left, wxT( "reannotate_down_left_dark_48.png" ), 48, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::reannotate_down_right].emplace_back( BITMAPS::reannotate_down_right, wxT( "reannotate_down_right_dark_48.png" ), 48, wxT( "dark" ) );

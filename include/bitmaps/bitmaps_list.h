@@ -311,6 +311,7 @@ enum class BITMAPS : unsigned int
     icon_vcs,
     icon_terminal,
     icon_agent,
+    icon_agent_launcher,
     image,
     import,
     import3d,

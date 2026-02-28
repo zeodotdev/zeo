@@ -144,7 +144,7 @@ void PANEL_KICAD_LAUNCHER::CreateLaunchers()
                 return btn;
             };
 
-    addLauncher( KICAD_MANAGER_ACTIONS::showAiAssistant, BITMAPS::icon_kicad,
+    addLauncher( KICAD_MANAGER_ACTIONS::showAiAssistant, BITMAPS::icon_agent_launcher,
                  _( "Edit the project with an AI assistant" ) );
 
     addLauncher( KICAD_MANAGER_ACTIONS::editSchematic, BITMAPS::icon_eeschema,

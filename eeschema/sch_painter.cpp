@@ -448,7 +448,9 @@ COLOR4D SCH_PAINTER::getRenderColor( const SCH_ITEM* aItem, int aLayer, bool aDr
 
     if( aItem->IsBrightened() ) // Selection disambiguation, net highlighting, etc.
     {
-        color = m_schSettings.GetLayerColor( LAYER_BRIGHTENED );
+        // Per-item color override (used for diff highlights: green=added, red=deleted, amber=modified)
+        color = aItem->HasForcedColor() ? aItem->GetForcedColor()
+                                        : m_schSettings.GetLayerColor( LAYER_BRIGHTENED );
 
         if( aDrawingShadows )
         {
@@ -2726,6 +2728,12 @@ void SCH_PAINTER::draw( const SCH_SYMBOL* aSymbol, int aLayer )
     for( SCH_ITEM& tempItem : tempSymbol.GetDrawItems() )
     {
         tempItem.SetFlags( aSymbol->GetFlags() );     // SELECTED, HIGHLIGHTED, BRIGHTENED,
+        // Propagate per-item forced color (e.g. diff highlights) so temp draw items
+        // don't fall back to LAYER_BRIGHTENED (magenta) instead of the intended color.
+        if( aSymbol->HasForcedColor() )
+            tempItem.SetForcedColor( aSymbol->GetForcedColor() );
+        else
+            tempItem.ClearForcedColor();
         tempItem.Move( aSymbol->GetPosition() );
 
         if( tempItem.Type() == SCH_TEXT_T )
@@ -2756,6 +2764,11 @@ void SCH_PAINTER::draw( const SCH_SYMBOL* aSymbol, int aLayer )
         tempPin->ClearFlags();
         tempPin->SetFlags( symbolPin->GetFlags() );     // SELECTED, HIGHLIGHTED, BRIGHTENED,
                                                         // IS_SHOWN_AS_BITMAP
+        // Propagate forced color from the schematic symbol to its temp pins.
+        if( aSymbol->HasForcedColor() )
+            tempPin->SetForcedColor( aSymbol->GetForcedColor() );
+        else
+            tempPin->ClearForcedColor();
 
         tempPin->SetName( expandLibItemTextVars( symbolPin->GetShownName(), aSymbol ) );
         tempPin->SetType( symbolPin->GetType() );

@@ -5,9 +5,11 @@
 #include <mutex>
 #include <functional>
 #include <unordered_map>
+#include <vector>
 #include <wx/string.h>
 #include <math/box2.h>
 #include <math/vector2d.h>
+#include <gal/color4d.h>
 
 // Forward declarations
 class AGENT_CHANGE_TRACKER;
@@ -30,8 +32,7 @@ namespace PREVIEW
  */
 struct DIFF_CALLBACKS
 {
-    std::function<void()> onUndo;      ///< Called when "View Before" is clicked
-    std::function<void()> onRedo;      ///< Called when "View After" is clicked
+    std::function<void()> onViewDiff;  ///< Called when "View Diff" is clicked
     std::function<void()> onApprove;   ///< Called when "Approve" is clicked
     std::function<void()> onReject;    ///< Called when "Reject" is clicked
     std::function<void()> onRefresh;   ///< Called to trigger canvas refresh after view changes
@@ -43,6 +44,22 @@ struct DIFF_CALLBACKS
  * frame classes that have access to SCHEMATIC or BOARD objects.
  */
 using BBOX_COMPUTE_CALLBACK = std::function<BOX2I()>;
+
+// Diff highlight style constants (shared across live overlay and diff viewer)
+constexpr double DIFF_FILL_ALPHA   = 0.20;
+constexpr double DIFF_BORDER_ALPHA = 0.65;
+
+/**
+ * Per-item highlight data for live diff overlays.
+ */
+struct DIFF_ITEM_HIGHLIGHT
+{
+    BOX2I              bbox;
+    KIGFX::COLOR4D     color;
+    bool               hasBorder = true;  ///< false for wires (fill only)
+};
+
+using ITEM_HIGHLIGHTS_CALLBACK = std::function<std::vector<DIFF_ITEM_HIGHLIGHT>()>;
 
 /**
  * Per-view diff overlay state
@@ -63,7 +80,7 @@ class DIFF_MANAGER
 public:
     static DIFF_MANAGER& GetInstance();
 
-    // Show diff on the currently active view (set via RegisterOverlay)
+    // Show diff on the currently active view (set via RegisterOverlay).
     void ShowDiff( const BOX2I& aBBox );
 
     // Register a view to draw the overlay on, and callbacks for interaction
@@ -81,7 +98,8 @@ public:
      */
     void RegisterOverlay( KIGFX::VIEW* aView, AGENT_CHANGE_TRACKER* aTracker,
                           const wxString& aSheetPath, DIFF_CALLBACKS aCallbacks,
-                          BBOX_COMPUTE_CALLBACK aBBoxCallback );
+                          BBOX_COMPUTE_CALLBACK aBBoxCallback,
+                          ITEM_HIGHLIGHTS_CALLBACK aHighlightsCallback = nullptr );
 
     // Unregister the current view
     void UnregisterOverlay();
@@ -142,8 +160,7 @@ private:
 
     void OnApprove( KIGFX::VIEW* aView );
     void OnReject( KIGFX::VIEW* aView );
-    void OnViewBefore( KIGFX::VIEW* aView );
-    void OnViewAfter( KIGFX::VIEW* aView );
+    void OnViewDiff( KIGFX::VIEW* aView );
 
     // Non-copyable
     DIFF_MANAGER( const DIFF_MANAGER& ) = delete;

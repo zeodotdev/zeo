@@ -30,6 +30,7 @@
 #include <vector>
 #include <limits>
 
+#include <gal/color4d.h>
 #include <gal/gal.h>
 #include <math/box2.h>
 #include <inspectable.h>
@@ -89,7 +90,8 @@ public:
             m_isSCH_ITEM( isSCH_ITEM ),
             m_isBOARD_ITEM( isBOARD_ITEM ),
             m_viewPrivData( nullptr ),
-            m_forcedTransparency( 0.0 )
+            m_forcedTransparency( 0.0 ),
+            m_hasForcedColor( false )
     {
     }
 
@@ -173,6 +175,22 @@ public:
         return m_forcedTransparency;
     }
 
+    /// Override the BRIGHTENED render color for this item (e.g. for per-item diff highlights).
+    void SetForcedColor( const COLOR4D& aColor )
+    {
+        m_forcedColor    = aColor;
+        m_hasForcedColor = true;
+    }
+
+    void ClearForcedColor()
+    {
+        m_hasForcedColor = false;
+    }
+
+    bool HasForcedColor() const { return m_hasForcedColor; }
+
+    COLOR4D GetForcedColor() const { return m_forcedColor; }
+
 protected:
     /**
      * Return this constant from ViewGetLOD() to hide the item unconditionally.
@@ -208,6 +226,8 @@ private:
     bool            m_isBOARD_ITEM;
     VIEW_ITEM_DATA* m_viewPrivData;
     double          m_forcedTransparency;  ///< Additional transparency for diff'ing items.
+    COLOR4D         m_forcedColor;         ///< Per-item BRIGHTENED color override (diff highlights).
+    bool            m_hasForcedColor;      ///< True when m_forcedColor is active.
 };
 
 } // namespace KIGFX

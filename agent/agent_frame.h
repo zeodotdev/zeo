@@ -90,6 +90,8 @@ public:
     void DoPendingChangesAcceptAll();
     void DoPendingChangesRejectAll();
     void DoPendingChangesView( const wxString& aPath, bool aIsPcb );
+    void DoPendingChangesAcceptSheet( const wxString& aPath, bool aIsPcb );
+    void DoPendingChangesRejectSheet( const wxString& aPath, bool aIsPcb );
     void DoSignIn();
 
     // Agent change approval

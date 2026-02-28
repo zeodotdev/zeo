@@ -396,6 +396,7 @@ set( EESCHEMA_SRCS
     sch_collectors.cpp
     sch_commit.cpp
     sch_connection.cpp
+    sch_diff_frame.cpp
     sch_draw_panel.cpp
     sch_edit_frame.cpp
     sch_field.cpp

@@ -1985,6 +1985,68 @@ void AGENT_FRAME::DoPendingChangesRejectAll()
     QueryPendingChanges();
 }
 
+void AGENT_FRAME::DoPendingChangesAcceptSheet( const wxString& aPath, bool aIsPcb )
+{
+    wxLogInfo( "AGENT_FRAME::DoPendingChangesAcceptSheet: %s (isPcb=%d)", aPath, aIsPcb );
+
+    if( aIsPcb )
+    {
+        KIWAY_PLAYER* pcbPlayer = Kiway().Player( FRAME_PCB_EDITOR, false );
+        if( pcbPlayer )
+        {
+            std::string payload;
+            Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_APPROVE, payload );
+        }
+        m_hasPcbChanges = false;
+        m_pcbFilename.Clear();
+    }
+    else
+    {
+        KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );
+        if( schPlayer )
+        {
+            nlohmann::json j;
+            j["sheet_path"] = aPath.ToStdString();
+            std::string payload = j.dump();
+            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_APPROVE, payload );
+        }
+        m_pendingSchSheets.erase( aPath );
+    }
+
+    QueryPendingChanges();
+}
+
+void AGENT_FRAME::DoPendingChangesRejectSheet( const wxString& aPath, bool aIsPcb )
+{
+    wxLogInfo( "AGENT_FRAME::DoPendingChangesRejectSheet: %s (isPcb=%d)", aPath, aIsPcb );
+
+    if( aIsPcb )
+    {
+        KIWAY_PLAYER* pcbPlayer = Kiway().Player( FRAME_PCB_EDITOR, false );
+        if( pcbPlayer )
+        {
+            std::string payload;
+            Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REJECT, payload );
+        }
+        m_hasPcbChanges = false;
+        m_pcbFilename.Clear();
+    }
+    else
+    {
+        KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );
+        if( schPlayer )
+        {
+            nlohmann::json j;
+            j["sheet_path"] = aPath.ToStdString();
+            std::string payload = j.dump();
+            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REJECT, payload );
+        }
+        m_pendingSchSheets.erase( aPath );
+    }
+
+    QueryPendingChanges();
+}
+
 void AGENT_FRAME::DoPendingChangesView( const wxString& aPath, bool aIsPcb )
 {
     wxLogInfo( "AGENT_FRAME::DoPendingChangesView: %s (isPcb=%d)", aPath, aIsPcb );

@@ -511,7 +511,7 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
         // Single click? Select single object
         else if( evt->IsClick( BUT_LEFT ) )
         {
-            if( DIFF_MANAGER::GetInstance().HandleClick( evt->Position() ) )
+            if( DIFF_MANAGER::GetInstance().HandleClick( getView(), evt->Position() ) )
             {
                 m_disambiguateTimer.Stop();  // Stop timer to prevent disambiguation menu
                 continue;  // Consume the event, don't pass to other tools
@@ -665,7 +665,7 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
         else if( evt->IsDblClick( BUT_LEFT ) )
         {
             // Check if double-clicking on diff overlay buttons - consume event if so
-            if( DIFF_MANAGER::GetInstance().HandleClick( evt->Position() ) )
+            if( DIFF_MANAGER::GetInstance().HandleClick( getView(), evt->Position() ) )
             {
                 m_disambiguateTimer.Stop();
                 continue;
@@ -702,6 +702,13 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
         else if( evt->IsDrag( BUT_LEFT ) )
         {
             m_disambiguateTimer.Stop();
+
+            // Read-only diff frame: always treat left-drag as a selection drag, never a move.
+            if( m_frame->GetFrameType() == FRAME_SCH_DIFF )
+            {
+                selectMultiple();
+                continue;
+            }
 
             // Is another tool already moving a new object?  Don't allow a drag start
             if( !m_selection.Empty() && m_selection[0]->HasFlag( IS_NEW | IS_MOVING ) )

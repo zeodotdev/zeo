@@ -50,7 +50,8 @@
 #include <memory>
 
 class AGENT_CHANGE_TRACKER;
-class FILE_EDIT_SESSION;
+class AGENT_SNAPSHOT_SESSION;
+struct DIFF_ITEM_HIGHLIGHT;
 
 class SCH_ITEM;
 class EDA_ITEM;
@@ -144,7 +145,7 @@ private:
 class SCH_EDIT_FRAME : public SCH_BASE_FRAME, public SCHEMATIC_LISTENER
 {
 public:
-    SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent );
+    SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrameType = FRAME_SCH );
     ~SCH_EDIT_FRAME() override;
 
     // SCHEMATIC_LISTENER interface - detect user edits to agent-modified items
@@ -504,7 +505,7 @@ public:
      *                This may only be done in standalone mode.
      * @return true if the schematic was saved
      */
-    bool SaveProject( bool aSaveAs = false );
+    virtual bool SaveProject( bool aSaveAs = false );
 
     bool OpenProjectFiles( const std::vector<wxString>& aFileSet, int aCtl = 0 ) override;
 
@@ -932,18 +933,23 @@ public:
     PLUGIN_ACTION_SCOPE PluginActionScope() const override { return PLUGIN_ACTION_SCOPE::SCHEMATIC; }
 
     /**
-     * Called before agent Python execution to record the current undo position.
+     * Take a snapshot of all schematic sheets before agent execution.
+     * Called from MAIL_AGENT_BEGIN_TRANSACTION. Idempotent — skips if snapshot
+     * already taken for the current session.
      */
-    void RecordAgentUndoPosition();
+    void BeginAgentSnapshot();
 
     /**
      * Called after agent Python execution to detect and show changes.
+     * Walks the undo list to populate the change tracker with affected KIIDs,
+     * then registers the diff overlay.
      * @return true if changes were detected and diff overlay is shown.
      */
     bool DetectAgentChanges();
 
     /**
      * Clear pending agent changes (called on approve).
+     * Discards snapshot, clears tracker and overlay.
      */
     void ClearAgentPendingChanges();
 
@@ -955,42 +961,31 @@ public:
     void ApproveAgentChangesOnSheet( const wxString& aSheetPath );
 
     /**
-     * Revert pending agent changes (called on deny).
+     * Revert all pending agent changes by reloading from snapshot.
+     * Clears undo and redo stacks, rebuilds connectivity.
      */
     void RevertAgentChanges();
 
     /**
      * Reject agent changes on a specific sheet only.
-     * Reverts and untracks items on that sheet.
+     * Reloads that sheet's screen from its snapshot file.
      * @param aSheetPath The human-readable sheet path to reject.
      */
     void RejectAgentChangesOnSheet( const wxString& aSheetPath );
 
-    /**
-     * Temporarily show the "before" state (for View Before button).
-     * Does not clear snapshots - can toggle back with ShowAgentChangesAfter().
-     */
-    void ShowAgentChangesBefore();
-
-    /**
-     * Show the "after" state (for View After button).
-     * Restores the modified state after ShowAgentChangesBefore().
-     */
-    void ShowAgentChangesAfter();
-
     bool HasAgentPendingChanges() const;
-
-    /**
-     * Clear stale agent change state when all agent undo entries have been undone.
-     * Called from the undo handler to auto-reject when user Ctrl+Z's past baseline.
-     */
-    void ClearStaleAgentChanges();
 
     /**
      * Get the agent change tracker.
      * @return Pointer to the tracker, or nullptr if not initialized.
      */
     AGENT_CHANGE_TRACKER* GetAgentChangeTracker() { return m_agentChangeTracker.get(); }
+
+    /**
+     * Get the snapshot session for diff viewing.
+     * @return Pointer to the session, or nullptr if not active.
+     */
+    AGENT_SNAPSHOT_SESSION* GetSnapshotSession() { return m_snapshotSession.get(); }
 
     /**
      * Compute the bounding box for tracked items on the current sheet.
@@ -1000,21 +995,10 @@ public:
     BOX2I ComputeTrackedItemsBBox() const;
 
     /**
-     * Handle file edit session begin message from agent.
-     * @param aPayload JSON payload with file path and sheet info.
+     * Compute per-item highlight data for the diff overlay on the current sheet.
+     * Returns colored bounding boxes for each tracked item (green=added, orange=modified).
      */
-    void OnAgentFileEditBegin( const wxString& aPayload );
-
-    /**
-     * Handle file edit session complete message from agent.
-     * @param aPayload JSON payload with completion status.
-     */
-    void OnAgentFileEditComplete( const wxString& aPayload );
-
-    /**
-     * Handle file edit session abort message from agent.
-     */
-    void OnAgentFileEditAbort();
+    std::vector<DIFF_ITEM_HIGHLIGHT> ComputeItemHighlights() const;
 
     void ClearToolbarControl( int aId ) override;
 
@@ -1193,14 +1177,12 @@ private:
     bool              m_show_search;
     bool              m_highlightedConnChanged;
 
-    // Agent pending changes support (item-based tracking with dynamic bbox)
-    SCH_ITEM* FindPreAgentState( const KIID& aItemId );  ///< Find pre-agent state from undo entries
-    std::unique_ptr<AGENT_CHANGE_TRACKER> m_agentChangeTracker;  ///< Item-based change tracker
-    std::unique_ptr<FILE_EDIT_SESSION>    m_fileEditSession;     ///< File edit session manager
+    // Agent pending changes support (item-based tracking with dynamic bbox + snapshot)
+    std::unique_ptr<AGENT_CHANGE_TRACKER>  m_agentChangeTracker;  ///< Item-based change tracker
+    std::unique_ptr<AGENT_SNAPSHOT_SESSION> m_snapshotSession;    ///< Snapshot-based change session
     bool           m_hasAgentPendingChanges = false;
-    bool           m_showingAgentBefore = false;  ///< True if currently showing "before" state
+    int            m_agentUndoBaseline = 0;           ///< Undo stack depth at snapshot time
     bool           m_inUndoRedo = false;          ///< True during undo/redo (suppresses OnModify auto-reject)
-    BOX2I          m_cachedAgentBBox;             ///< Cached bbox for use when items are undone (before state)
     SCH_SHEET_PATH m_agentChangedSheetPath;       ///< Sheet path where agent changes were made
 
     // Concurrent editing support - agent transaction tracking

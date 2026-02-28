@@ -226,17 +226,22 @@ void VCS_IPC_HANDLER::HandleGetVisualDiff( const json& aMsg )
             ? wxString::FromUTF8( aMsg["requestId"].get<std::string>() )
             : wxString();
 
-    std::string oldCommit = aMsg.value( "oldCommit", "" );
-    std::string newCommit = aMsg.value( "newCommit", "" );
-    std::string filePath  = aMsg.value( "filePath",  "" );
+    std::string oldCommit  = aMsg.value( "oldCommit",  "" );
+    std::string newCommit  = aMsg.value( "newCommit",  "" );
+    std::string filePath   = aMsg.value( "filePath",   "" );
+    bool        skipBefore = aMsg.value( "skipBefore", false );
 
-    // Extract file contents from git for both revisions
+    // Extract file contents from git for both revisions.
+    // Resolve symbolic refs (e.g. "HEAD") to a real commit SHA first,
+    // because GetFileAtCommit only accepts 40-char hex OIDs.
     std::string oldContent, newContent;
 
     try
     {
-        if( !oldCommit.empty() && oldCommit != "INDEX" )
-            oldContent = m_git->GetFileAtCommit( oldCommit, filePath );
+        // Skip loading the before content if the caller already has it cached.
+        if( !skipBefore && !oldCommit.empty() && oldCommit != "INDEX" )
+            oldContent = m_git->GetFileAtCommit(
+                    m_git->ResolveRef( oldCommit ), filePath );
     }
     catch( ... ) {}
 
@@ -267,11 +272,21 @@ void VCS_IPC_HANDLER::HandleGetVisualDiff( const json& aMsg )
     auto renderer = std::make_shared<KICAD_FILE_RENDERER>();
 
     std::thread( [this, reqId, renderer,
-                  oldContent = std::move( oldContent ),
-                  newContent = std::move( newContent ),
-                  filePath]() mutable
+                  oldContent  = std::move( oldContent ),
+                  newContent  = std::move( newContent ),
+                  filePath,
+                  skipBefore]() mutable
     {
         json result = renderer->GetVisualDiff( oldContent, newContent, filePath );
+
+        // When skipBefore is set, we intentionally passed empty oldContent —
+        // override fileIsNew so the JS side doesn't hide the before pane.
+        if( skipBefore )
+        {
+            result["fileIsNew"]     = false;
+            result["beforeSkipped"] = true;
+        }
+
         bool success = result.value( "success", false );
 
         wxTheApp->CallAfter( [this, reqId, result = std::move( result ), success]()
@@ -791,6 +806,8 @@ void VCS_IPC_HANDLER::HandleOpenInEditor( const json& aMsg )
             : wxString();
 
     std::string filePath     = aMsg.value( "filePath", "" );
+    std::string oldCommit    = aMsg.value( "oldCommit", "" );
+    std::string newCommit    = aMsg.value( "newCommit", "" );
     json        changedItems = aMsg.contains( "changedItems" ) ? aMsg["changedItems"]
                                                                 : json::array();
 
@@ -800,7 +817,7 @@ void VCS_IPC_HANDLER::HandleOpenInEditor( const json& aMsg )
         return;
     }
 
-    // Determine editor frame type from file extension
+    // Determine file type from extension
     bool isSch = filePath.size() > 10 && filePath.substr( filePath.size() - 10 ) == ".kicad_sch";
     bool isPcb = filePath.size() > 10 && filePath.substr( filePath.size() - 10 ) == ".kicad_pcb";
 
@@ -810,22 +827,108 @@ void VCS_IPC_HANDLER::HandleOpenInEditor( const json& aMsg )
         return;
     }
 
-    // Build full path
+    // Build full path to the working-tree file
     wxString projDir  = wxString::FromUTF8( m_git->GetProjectDir() );
     wxString fullPath = projDir + wxFileName::GetPathSeparator()
                         + wxString::FromUTF8( filePath );
 
+    // --- Schematic: open in diff frame with before/after ---
+    if( isSch )
+    {
+        // Collect changed UUIDs
+        json changedUuids = json::array();
+        for( const auto& item : changedItems )
+        {
+            std::string uuid = item.value( "uuid", "" );
+            if( !uuid.empty() )
+                changedUuids.push_back( uuid );
+        }
+
+        // Extract "before" file from git (oldCommit) to a temp file.
+        // Resolve symbolic refs (e.g. "HEAD") to a real commit SHA first.
+        // If oldCommit is empty, no before state is available.
+        wxString beforeTempPath;
+        if( !oldCommit.empty() )
+        {
+            std::string resolvedOld = m_git->ResolveRef( oldCommit );
+            std::string beforeContent = m_git->GetFileAtCommit( resolvedOld, filePath );
+            if( !beforeContent.empty() )
+            {
+                wxFileName tmpFile( wxFileName::GetTempDir(),
+                                    wxString::Format( "vcs_before_%s.kicad_sch",
+                                                      wxString::FromUTF8( oldCommit.substr( 0, 8 ) ) ) );
+                wxFile f;
+                if( f.Open( tmpFile.GetFullPath(), wxFile::write ) )
+                {
+                    f.Write( beforeContent.data(), beforeContent.size() );
+                    f.Close();
+                    beforeTempPath = tmpFile.GetFullPath();
+                    wxLogDebug( "VCS_IPC_HANDLER: wrote before temp to %s", beforeTempPath );
+                }
+            }
+        }
+
+        // "After" is either the working-tree file (newCommit empty) or extracted from newCommit
+        wxString afterTempPath;
+        if( newCommit.empty() )
+        {
+            // Working-tree changes: use the file as-is
+            afterTempPath = fullPath;
+        }
+        else
+        {
+            std::string resolvedNew = m_git->ResolveRef( newCommit );
+            std::string afterContent = m_git->GetFileAtCommit( resolvedNew, filePath );
+            if( !afterContent.empty() )
+            {
+                wxFileName tmpFile( wxFileName::GetTempDir(),
+                                    wxString::Format( "vcs_after_%s.kicad_sch",
+                                                      wxString::FromUTF8( newCommit.substr( 0, 8 ) ) ) );
+                wxFile f;
+                if( f.Open( tmpFile.GetFullPath(), wxFile::write ) )
+                {
+                    f.Write( afterContent.data(), afterContent.size() );
+                    f.Close();
+                    afterTempPath = tmpFile.GetFullPath();
+                }
+            }
+        }
+
+        if( afterTempPath.IsEmpty() )
+        {
+            SendError( reqId, "Could not prepare after-state for diff viewer" );
+            return;
+        }
+
+        // Open (or reuse) the schematic diff frame
+        KIWAY_PLAYER* diffPlayer = m_frame->Kiway().Player( FRAME_SCH_DIFF, true );
+        if( !diffPlayer )
+        {
+            SendError( reqId, "Failed to open diff viewer" );
+            return;
+        }
+
+        json contentMsg;
+        contentMsg["before_path"]   = beforeTempPath.ToUTF8().data();
+        contentMsg["after_path"]    = afterTempPath.ToUTF8().data();
+        contentMsg["sheet_path"]    = filePath;  // human-readable label
+        contentMsg["changed_uuids"] = changedUuids;
+        std::string contentPayload = contentMsg.dump();
+        m_frame->Kiway().ExpressMail( FRAME_SCH_DIFF, MAIL_SCH_DIFF_CONTENT,
+                                      contentPayload );
+
+        SendResponse( reqId, true, json::object() );
+        return;
+    }
+
+    // --- PCB: open in live editor (diff viewer not yet implemented for PCB) ---
     if( !wxFileName::FileExists( fullPath ) )
     {
         SendError( reqId, "File not found: " + fullPath.ToStdString() );
         return;
     }
 
-    FRAME_T frameType = isSch ? FRAME_SCH : FRAME_PCB_EDITOR;
-
-    // Open (or raise) the editor frame and load the file
-    KIWAY_PLAYER* player = m_frame->Kiway().Player( frameType, true, m_frame );
-
+    KIWAY_PLAYER* player = m_frame->Kiway().Player( FRAME_PCB_EDITOR, true, m_frame );
     if( !player )
     {
         SendError( reqId, "Failed to open editor" );
@@ -837,56 +940,4 @@ void VCS_IPC_HANDLER::HandleOpenInEditor( const json& aMsg )
     player->Raise();
 
     SendResponse( reqId, true, json::object() );
-
-    if( changedItems.empty() )
-        return;
-
-    // Build MAIL_AGENT_WORKING_SET payload — UUIDs only
-    json wsPayload;
-    wsPayload["sheet_path"] = "/";
-    wsPayload["items"]      = json::array();
-
-    // Compute bounding box in editor IU from item mm coordinates.
-    // Schematic: 25400 IU/mm (1 IU = 1 mil).  PCB: 1 000 000 IU/mm (1 IU = 1 nm).
-    const double iuPerMm = isSch ? 25400.0 : 1000000.0;
-    const double padMm   = 20.0; // 20 mm padding around all changed items
-
-    double minX =  1e18, minY =  1e18;
-    double maxX = -1e18, maxY = -1e18;
-
-    for( const auto& item : changedItems )
-    {
-        std::string uuid = item.value( "uuid", "" );
-
-        if( !uuid.empty() )
-            wsPayload["items"].push_back( uuid );
-
-        double x = item.value( "x", 0.0 );
-        double y = item.value( "y", 0.0 );
-
-        if( x < minX ) minX = x;
-        if( y < minY ) minY = y;
-        if( x > maxX ) maxX = x;
-        if( y > maxY ) maxY = y;
-    }
-
-    // Send working set so the dynamic tracker lights up items
-    std::string wsStr = wsPayload.dump();
-    m_frame->Kiway().ExpressMail( frameType, MAIL_AGENT_WORKING_SET, wsStr, m_frame );
-
-    // Send MAIL_SHOW_DIFF with padded bounding box
-    long long bx = static_cast<long long>( ( minX - padMm ) * iuPerMm );
-    long long by = static_cast<long long>( ( minY - padMm ) * iuPerMm );
-    long long bw = static_cast<long long>( ( maxX - minX + 2.0 * padMm ) * iuPerMm );
-    long long bh = static_cast<long long>( ( maxY - minY + 2.0 * padMm ) * iuPerMm );
-
-    json diffPayload = {
-        { "x", bx },
-        { "y", by },
-        { "w", bw },
-        { "h", bh }
-    };
-
-    std::string diffStr = diffPayload.dump();
-    m_frame->Kiway().ExpressMail( frameType, MAIL_SHOW_DIFF, diffStr, m_frame );
 }

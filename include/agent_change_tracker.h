@@ -25,16 +25,27 @@
 #define AGENT_CHANGE_TRACKER_H
 
 #include <kiid.h>
-#include <undo_redo_container.h>
 #include <set>
 #include <map>
 #include <wx/string.h>
 
 
+/**
+ * Classification of how an item was changed by the agent.
+ * Used for smart deduplication (e.g. ADDED then DELETED = net zero).
+ */
+enum class AGENT_CHANGE_TYPE
+{
+    ADDED,      ///< Item was created by the agent
+    CHANGED,    ///< Item existed before and was modified
+    DELETED     ///< Item was deleted by the agent
+};
+
+
 struct TrackedItemInfo
 {
-    wxString    sheetPath;
-    UNDO_REDO   changeType = UNDO_REDO::NEWITEM;
+    wxString          sheetPath;
+    AGENT_CHANGE_TYPE changeType = AGENT_CHANGE_TYPE::ADDED;
 };
 
 /**
@@ -61,17 +72,18 @@ public:
      * Track an item by KIID with its sheet path and change type (for schematic).
      * @param aItemId The KIID of the item to track.
      * @param aSheetPath The sheet path where the item exists (as a string).
-     * @param aChangeType The type of change (NEWITEM, CHANGED, etc.).
+     * @param aChangeType The type of change (ADDED, CHANGED, DELETED).
      */
     void TrackItem( const KIID& aItemId, const wxString& aSheetPath,
-                    UNDO_REDO aChangeType = UNDO_REDO::NEWITEM );
+                    AGENT_CHANGE_TYPE aChangeType = AGENT_CHANGE_TYPE::ADDED );
 
     /**
      * Track an item by KIID without sheet path (for PCB).
      * @param aItemId The KIID of the item to track.
-     * @param aChangeType The type of change (NEWITEM, CHANGED, etc.).
+     * @param aChangeType The type of change (ADDED, CHANGED, DELETED).
      */
-    void TrackItem( const KIID& aItemId, UNDO_REDO aChangeType = UNDO_REDO::NEWITEM );
+    void TrackItem( const KIID& aItemId,
+                    AGENT_CHANGE_TYPE aChangeType = AGENT_CHANGE_TYPE::ADDED );
 
     /**
      * Stop tracking an item.
@@ -129,33 +141,9 @@ public:
     /**
      * Get the change type for a tracked item.
      * @param aItemId The KIID to query.
-     * @return The change type, or UNDO_REDO::NEWITEM if not tracked.
+     * @return The change type, or AGENT_CHANGE_TYPE::ADDED if not tracked.
      */
-    UNDO_REDO GetChangeType( const KIID& aItemId ) const;
-
-    /**
-     * Set the undo stack baseline for this tracking session.
-     * @param aUndoCount The undo stack count at session start.
-     */
-    void SetUndoBaseline( int aUndoCount );
-
-    /**
-     * Get the undo stack baseline.
-     * @return The undo count at session start.
-     */
-    int GetUndoBaseline() const;
-
-    /**
-     * Set the number of undo entries created by the agent.
-     * @param aCount The number of agent-created undo entries.
-     */
-    void SetAgentUndoCount( int aCount );
-
-    /**
-     * Get the number of undo entries created by the agent.
-     * @return The agent undo count.
-     */
-    int GetAgentUndoCount() const;
+    AGENT_CHANGE_TYPE GetChangeType( const KIID& aItemId ) const;
 
     /**
      * Check if there are any tracked changes.
@@ -172,12 +160,6 @@ public:
 private:
     // Map of KIID -> tracked item info (sheet path + change type)
     std::map<KIID, TrackedItemInfo> m_trackedItems;
-
-    // Undo stack count at the start of agent session
-    int m_undoBaseline = 0;
-
-    // Number of undo entries created by the agent
-    int m_agentUndoCount = 0;
 };
 
 #endif // AGENT_CHANGE_TRACKER_H

@@ -19,8 +19,9 @@
   --text:        #cccccc;
   --text-dim:    #858585;
   --text-bright: #e8e8e8;
-  --green:       #4caf50;
-  --green-dim:   #2e7d32;
+  --green:       #569cd6;
+  --green-dim:   #1a3a5c;
+  --added:       #4caf50;
   --red:         #f44336;
   --red-dim:     #b71c1c;
   --yellow:      #ffb300;
@@ -395,12 +396,12 @@ html, body {
   font-family: var(--font-mono);
   line-height: 1;
 }
-.file-status-glyph.added     { color: var(--green); }
+.file-status-glyph.added     { color: var(--added); }
 .file-status-glyph.modified  { color: var(--yellow); }
 .file-status-glyph.deleted   { color: var(--red); }
 .file-status-glyph.renamed   { color: var(--blue); }
 .file-status-glyph.conflict  { color: #ff6b35; }
-.file-status-glyph.untracked { color: var(--green); }
+.file-status-glyph.untracked { color: var(--added); }
 
 .file-item-actions {
   display: none;
@@ -468,7 +469,7 @@ html, body {
   gap: 6px;
 }
 #commit-btn:hover:not(:disabled) { background: var(--green); }
-#commit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+#commit-btn:disabled { opacity: 0.4; cursor: default; }
 .commit-count-badge {
   background: rgba(255,255,255,0.2);
   border-radius: 10px;
@@ -646,7 +647,7 @@ html, body {
 tr.diff-add { background: var(--diff-add); }
 tr.diff-add .diff-ln { background: var(--diff-add-ln); }
 tr.diff-add .diff-code { color: #a8d8a8; }
-tr.diff-add .diff-sign { color: var(--green); }
+tr.diff-add .diff-sign { color: var(--added); }
 
 tr.diff-del { background: var(--diff-del); }
 tr.diff-del .diff-ln { background: var(--diff-del-ln); }
@@ -960,34 +961,118 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
 /* ── Toast ────────────────────────────────────────────────────────── */
 #toast-container {
   position: fixed;
-  bottom: 16px;
-  right: 16px;
+  bottom: 20px;
+  right: 20px;
   z-index: 9999;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-direction: column-reverse;
+  gap: 6px;
   pointer-events: none;
 }
 .toast {
-  padding: 10px 14px;
+  position: relative;
+  padding: 10px 12px 10px 16px;
   border-radius: var(--radius);
-  font-size: 13px;
-  color: #fff;
-  max-width: 360px;
-  opacity: 0;
-  transform: translateY(8px);
-  transition: opacity 0.2s, transform 0.2s;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text);
+  max-width: 380px;
+  min-width: 240px;
   pointer-events: auto;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 9px;
+  opacity: 0;
+  transform: translateX(12px) translateY(4px);
+  transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  background: rgba(30, 30, 30, 0.82);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-left: 2px solid transparent;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
 }
-.toast.show { opacity: 1; transform: translateY(0); }
-.toast.error { background: #c62828; border: 1px solid var(--red); }
-.toast.success { background: var(--green-dim); border: 1px solid var(--green); }
-.toast.info { background: #1565c0; border: 1px solid var(--blue); }
-.toast-close { margin-left: auto; cursor: pointer; opacity: 0.7; }
+.toast.show { opacity: 1; transform: translateX(0) translateY(0); }
+.toast.hiding {
+  opacity: 0;
+  transform: translateX(8px) translateY(0);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.toast.error   { border-left-color: var(--red); }
+.toast.success { border-left-color: var(--added); }
+.toast.info    { border-left-color: var(--blue); }
+.toast-icon {
+  flex-shrink: 0;
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1.6;
+  opacity: 0.9;
+}
+.toast.error   .toast-icon { color: var(--red); }
+.toast.success .toast-icon { color: var(--added); }
+.toast.info    .toast-icon { color: var(--blue); }
+.toast-body {
+  flex: 1;
+  line-height: 1.5;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+.toast-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.2;
+  transform-origin: left;
+  animation: toast-drain linear forwards;
+  animation-play-state: paused;
+}
+.toast.error   .toast-progress { color: var(--red); }
+.toast.success .toast-progress { color: var(--added); }
+.toast.info    .toast-progress { color: var(--blue); }
+@keyframes toast-drain {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+.toast-close {
+  flex-shrink: 0;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.6;
+  padding: 0 2px;
+  opacity: 0.5;
+  transition: opacity 0.12s;
+  font-family: var(--font-mono);
+  margin-left: 4px;
+}
 .toast-close:hover { opacity: 1; }
+
+/* ── Custom tooltip ───────────────────────────────────────────────── */
+#custom-tooltip {
+  position: fixed;
+  z-index: 99999;
+  background: #2a2d2e;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  pointer-events: none;
+  max-width: 280px;
+  white-space: normal;
+  line-height: 1.4;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  opacity: 0;
+  transition: opacity 0.1s;
+  transition-delay: 0s;
+}
+#custom-tooltip.visible {
+  opacity: 1;
+  transition-delay: 0.5s;
+}
 
 /* ── Spinner ──────────────────────────────────────────────────────── */
 .spinner {
@@ -1293,7 +1378,7 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
   border: 1.5px solid var(--bg-panel);
   transition: background 0.12s;
 }
-.graph-dot.head { background: var(--green); border-color: rgba(76,175,80,0.3); box-shadow: 0 0 0 2px rgba(76,175,80,0.18); }
+.graph-dot.head { background: var(--green); border-color: rgba(86,156,214,0.3); box-shadow: 0 0 0 2px rgba(86,156,214,0.18); }
 .commit-item:hover .graph-dot { background: var(--text-dim); }
 .commit-item.selected .graph-dot { background: #4db8ff; border-color: rgba(33,150,243,0.3); }
 
@@ -1522,13 +1607,11 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
 </div><!-- /app -->
 
 <!-- Discard Confirm Modal -->
-<div id="discard-modal" class="modal-overlay" style="display:none">
+<div id="discard-modal" class="modal-overlay" style="display:none" tabindex="-1" onkeydown="if(event.key==='Enter')DiscardModal.confirm();else if(event.key==='Escape')DiscardModal.cancel();">
   <div class="modal-dialog">
     <div class="modal-title">Discard Changes</div>
     <div class="modal-body" id="discard-modal-msg"></div>
-    <label class="modal-suppress-row">
-      <input type="checkbox" id="discard-suppress-cb"> Don't ask again
-    </label>
+
     <div class="modal-buttons">
       <button class="modal-btn cancel" onclick="DiscardModal.cancel()">Cancel</button>
       <button class="modal-btn danger" onclick="DiscardModal.confirm()">Discard</button>
@@ -1556,7 +1639,7 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
 <div id="add-remote-panel">
   <div class="modal-box">
     <div class="modal-title">Connect to Remote</div>
-    <div id="add-remote-auth-status" style="display:none;font-size:12px;color:var(--green);margin-bottom:4px;padding:6px 8px;background:rgba(0,180,80,0.08);border-radius:4px;border:1px solid rgba(0,180,80,0.2)"></div>
+    <div id="add-remote-auth-status" style="display:none;font-size:12px;color:var(--green);margin-bottom:4px;padding:6px 8px;background:rgba(86,156,214,0.08);border-radius:4px;border:1px solid rgba(86,156,214,0.2)"></div>
     <div class="oauth-btns" id="add-remote-oauth-btns">
       <button class="oauth-btn github-btn" onclick="Actions.authGitHub()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
@@ -1716,6 +1799,7 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
 
 <!-- Toast Container -->
 <div id="toast-container"></div>
+<div id="custom-tooltip"></div>
 
 <script>
 // Redirect console.log to the native logger (appears in ~/Library/Logs/Zeo/*.log)
@@ -1928,7 +2012,7 @@ const Bridge = (() => {
   function onMessage(msg) {
     switch (msg.action) {
       case 'status_changed':
-        App.refreshStatus();
+        App.refreshStatus(msg.data?.paths || []);
         break;
       case 'project_changed':
         App.fullRefresh();
@@ -2090,32 +2174,105 @@ function escHtml(str) {
 
 
 // ══════════════════════════════════════════════════════════════════════
+// Custom tooltip — intercepts native title attributes for faster, styled tooltips
+// ══════════════════════════════════════════════════════════════════════
+(() => {
+  const tip = document.getElementById('custom-tooltip');
+  let current = null;
+
+  function show(el, e) {
+    const text = el.getAttribute('title');
+    if (!text) return;
+    el.setAttribute('data-title', text);
+    el.removeAttribute('title');        // suppress native tooltip
+    current = el;
+    tip.textContent = text;
+    tip.classList.add('visible');
+    move(e);
+  }
+
+  function hide() {
+    if (!current) return;
+    current.setAttribute('title', current.getAttribute('data-title') || '');
+    current.removeAttribute('data-title');
+    current = null;
+    tip.classList.remove('visible');
+  }
+
+  function move(e) {
+    const x = e.clientX + 12;
+    const y = e.clientY + 16;
+    tip.style.left = Math.min(x, window.innerWidth  - tip.offsetWidth  - 8) + 'px';
+    tip.style.top  = Math.min(y, window.innerHeight - tip.offsetHeight - 8) + 'px';
+  }
+
+  document.addEventListener('mouseover',  e => { const t = e.target.closest('[title]'); if (t) show(t, e); });
+  document.addEventListener('mouseout',   e => { if (current && !current.contains(e.relatedTarget)) hide(); });
+  document.addEventListener('mousedown',  () => hide());
+  document.addEventListener('scroll',     () => hide(), true);
+})();
+
 // Toast
 // ══════════════════════════════════════════════════════════════════════
 const Toast = {
+  _icons: { success: '✓', error: '✗', info: 'i' },
+
   show(msg, type, duration) {
+    type = type || 'info';
+    duration = duration || 4000;
     const container = document.getElementById('toast-container');
     const el = document.createElement('div');
-    el.className = 'toast ' + (type || 'info');
-    const msgEl = document.createElement('span');
-    msgEl.textContent = msg;
-    msgEl.style.cssText = 'user-select:text;-webkit-user-select:text;cursor:text';
+    el.className = 'toast ' + type;
+
+    const iconEl = document.createElement('span');
+    iconEl.className = 'toast-icon';
+    iconEl.setAttribute('aria-hidden', 'true');
+    iconEl.textContent = this._icons[type] || 'i';
+
+    const bodyEl = document.createElement('span');
+    bodyEl.className = 'toast-body';
+    bodyEl.textContent = msg;
+    bodyEl.style.cssText = 'user-select:text;-webkit-user-select:text;cursor:text';
+
     const closeEl = document.createElement('span');
     closeEl.className = 'toast-close';
     closeEl.textContent = '✕';
-    closeEl.onclick = () => el.remove();
-    el.appendChild(msgEl);
+
+    const progressEl = document.createElement('div');
+    progressEl.className = 'toast-progress';
+    progressEl.style.animationDuration = duration + 'ms';
+
+    el.appendChild(iconEl);
+    el.appendChild(bodyEl);
     el.appendChild(closeEl);
+    el.appendChild(progressEl);
     container.appendChild(el);
-    requestAnimationFrame(() => { requestAnimationFrame(() => { el.classList.add('show'); }); });
-    setTimeout(() => {
+
+    const dismiss = () => {
+      el.classList.add('hiding');
       el.classList.remove('show');
-      setTimeout(() => el.remove(), 250);
-    }, duration || 4000);
+      setTimeout(() => el.remove(), 200);
+    };
+
+    closeEl.onclick = dismiss;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        el.classList.add('show');
+        progressEl.style.animationPlayState = 'running';
+      });
+    });
+
+    const timer = setTimeout(dismiss, duration);
+    el.addEventListener('mouseenter', () => {
+      clearTimeout(timer);
+      progressEl.style.animationPlayState = 'paused';
+    });
+    el.addEventListener('mouseleave', () => dismiss());
   },
+
   error(msg)   { this.show(msg, 'error', 6000); },
-  success(msg) { this.show(msg, 'success'); },
-  info(msg)    { this.show(msg, 'info'); },
+  success(msg) { this.show(msg, 'success', 4000); },
+  info(msg)    { this.show(msg, 'info', 4000); },
 };
 
 // ══════════════════════════════════════════════════════════════════════
@@ -2309,8 +2466,8 @@ const UI = {
     const stagedSet = new Set(State.staged.map(f => f.path));
     const all = [
       ...State.staged.map(f    => ({ path: f.path, status: f.status,    checked: true  })),
-      ...State.unstaged.map(f  => ({ path: f.path, status: f.status,    checked: false })),
-      ...State.untracked.map(p => ({ path: p,       status: 'untracked', checked: false })),
+      ...State.unstaged.filter(f => !stagedSet.has(f.path)).map(f => ({ path: f.path, status: f.status, checked: false })),
+      ...State.untracked.filter(p => !stagedSet.has(p)).map(p => ({ path: p, status: 'untracked', checked: false })),
     ].sort((a, b) => basename(a.path).localeCompare(basename(b.path)));
 
     const total   = all.length;
@@ -2355,7 +2512,15 @@ const UI = {
       badge.style.display = n > 0 ? '' : 'none';
     }
     // Don't re-enable the button while it's in spinner/committing state
-    if (btn && !btn.querySelector('.spinner')) btn.disabled = (n === 0 || !msg);
+    if (btn && !btn.querySelector('.spinner')) {
+      const noFiles = n === 0;
+      const noMsg   = !msg;
+      btn.disabled  = noFiles || noMsg;
+      if (noFiles && noMsg) btn.title = 'Check files to stage and enter a commit message';
+      else if (noFiles)     btn.title = 'No files checked — check at least one file to commit';
+      else if (noMsg)       btn.title = 'Enter a commit message';
+      else                  btn.title = '';  // renderUserConfig will set the author tooltip
+    }
   },
 
   clearMultiSelect() {
@@ -2670,7 +2835,40 @@ const UI = {
     const fname  = ctx.filePath.split('/').pop();
     const isSch  = ctx.filePath.endsWith('.kicad_sch');
 
-    const fitSvgToPane = (contentId) => VdZoom.fitToPane(contentId);
+    // fitSvgToPane: crop to content (schematics only) then fit to pane.
+    // Returns the viewBox string that was set, or null if no crop was applied.
+    const fitSvgToPane = (contentId, storedVb = null) => {
+      const canvas = document.getElementById(contentId)?.querySelector('.vd-svg-canvas');
+      const svgEl  = canvas?.querySelector('svg');
+
+      if (svgEl) {
+        if (storedVb) {
+          // Fast path (cache hit): apply the pre-computed viewBox directly — no getBBox needed
+          svgEl.setAttribute('viewBox', storedVb);
+        } else if (isSch) {
+          // Slow path (first render): compute content bounds via getBBox
+          try {
+            const b = svgEl.getBBox();
+            if (b.width > 0 && b.height > 0) {
+              const pad = Math.max(b.width, b.height) * 0.05;
+              const vb  = `${b.x - pad} ${b.y - pad} ${b.width + pad * 2} ${b.height + pad * 2}`;
+              svgEl.setAttribute('viewBox', vb);
+              VdZoom.fitToPane(contentId);
+              return vb; // caller stores this for future cache hits
+            }
+          } catch (e) { /* getBBox can throw if SVG not yet rendered */ }
+        }
+      }
+
+      VdZoom.fitToPane(contentId);
+      return null;
+    };
+
+    const cacheKey    = `${ctx.oldCommit}|${ctx.newCommit}|${ctx.filePath}`;
+    const cached      = UI._visualCache && UI._visualCache[cacheKey];
+    // If a live update saved the before SVG, we can skip re-exporting it from C++
+    const savedBefore = UI._savedBefore && UI._savedBefore[cacheKey];
+    const skipBefore  = !!(savedBefore?.svg);
 
     const loadingPh = `<div class="vd-placeholder">
       <div class="vd-placeholder-icon">${iconLg}</div>
@@ -2685,13 +2883,30 @@ const UI = {
     if (beforePane)   beforePane.style.display  = 'none';
     if (separatorEl)  separatorEl.style.display = 'none';
     document.getElementById('vd-before').innerHTML = '';
-    document.getElementById('vd-after').innerHTML  = loadingPh;
+    document.getElementById('vd-after').innerHTML  = cached ? '' : loadingPh;
 
-    Bridge.send('get_visual_diff', {
-      oldCommit: ctx.oldCommit,
-      newCommit: ctx.newCommit,
-      filePath:  ctx.filePath,
-    }, 60000).then(payload => {
+    const fetchPromise = cached
+      ? Promise.resolve(cached)
+      : Bridge.send('get_visual_diff', {
+          oldCommit:  ctx.oldCommit,
+          newCommit:  ctx.newCommit,
+          filePath:   ctx.filePath,
+          skipBefore,
+        }, 60000).then(payload => {
+          // Restore saved before SVG if C++ skipped exporting it
+          if (payload.beforeSkipped && savedBefore?.svg) {
+            payload.beforeSvg = savedBefore.svg;
+            if (savedBefore.vb) {
+              if (!payload._croppedVb) payload._croppedVb = {};
+              payload._croppedVb.before = savedBefore.vb;
+            }
+          }
+          if (!UI._visualCache) UI._visualCache = {};
+          UI._visualCache[cacheKey] = payload;
+          return payload;
+        });
+
+    fetchPromise.then(payload => {
       const changedItems = payload.changedItems || [];
       State.visualDiffItems = changedItems;
       this._updateOpenInEditorBtn();
@@ -2723,16 +2938,11 @@ const UI = {
             <div class="vd-placeholder-sub">SVG export unavailable<br>kicad-cli not found</div>
           </div>`;
         }
-        // Schematics: strip the baked-in cream background rect so the pane
-        // background shows through.  The first self-closing <rect/> in the SVG
-        // is always the KiCad page background; content lives inside <g> elements.
-        const svg = isSch ? svgContent.replace(/<rect\b[^>]*\/>/, '') : svgContent;
-        return `<div class="vd-svg-canvas">${svg}</div>`;
+        // Strip <title> elements — they cause unwanted browser tooltips on hover
+        const cleanSvg = svgContent.replace(/<title[^>]*>[\s\S]*?<\/title>/gi, '');
+        return `<div class="vd-svg-canvas">${cleanSvg}</div>`;
       };
 
-      // Insert SVG content while panes are still invisible (display:none during load
-      // was set above).  After fitSvgToPane applies the correct viewBox we reveal them,
-      // so the user never sees the raw full-page SVG size.
       const beforeEl = document.getElementById('vd-before');
       const afterEl  = document.getElementById('vd-after');
       beforeEl.style.visibility = 'hidden';
@@ -2741,14 +2951,26 @@ const UI = {
       beforeEl.innerHTML = renderPane(payload.beforeSvg);
       afterEl.innerHTML  = makeBadge() + renderPane(payload.afterSvg);
 
-      // Fit SVGs after a short delay so WebKit has laid out the SVG DOM,
-      // then reveal — no visible resize flash.
-      setTimeout(() => {
-        fitSvgToPane('vd-before');
-        fitSvgToPane('vd-after');
+      if (payload._croppedVb) {
+        // Cache hit with stored viewBox: apply synchronously, no timer needed.
+        // VdZoom.fitToPane only reads viewBox attributes (no layout required),
+        // so this works immediately after innerHTML without waiting for WebKit.
+        fitSvgToPane('vd-before', payload._croppedVb.before);
+        fitSvgToPane('vd-after',  payload._croppedVb.after);
         beforeEl.style.visibility = '';
         afterEl.style.visibility  = '';
-      }, 200);
+      } else {
+        // First render: getBBox() is layout-forcing — calling it on a visibility:hidden
+        // (but not display:none) element causes WebKit to synchronously complete layout
+        // before returning, so no timer is needed.
+        const vbBefore = fitSvgToPane('vd-before');
+        const vbAfter  = fitSvgToPane('vd-after');
+        beforeEl.style.visibility = '';
+        afterEl.style.visibility  = '';
+        // Store cropped viewBoxes so future cache hits can skip getBBox entirely
+        const entry = UI._visualCache && UI._visualCache[cacheKey];
+        if (entry) entry._croppedVb = { before: vbBefore, after: vbAfter };
+      }
     }).catch(err => {
       const errHtml = `<div class="vd-placeholder">
         <div class="vd-placeholder-icon">⚠️</div>
@@ -2978,11 +3200,11 @@ const Actions = {
 
   async refreshAll() {
     // Workdir diffs (newCommit = '') may have changed; evict those cache entries
-    if (UI._diffCache) {
-      for (const k of Object.keys(UI._diffCache)) {
+    for (const cache of [UI._diffCache, UI._visualCache]) {
+      if (!cache) continue;
+      for (const k of Object.keys(cache)) {
         // key format: oldCommit|newCommit|filePath — evict if newCommit segment is empty
-        const parts = k.split('|');
-        if (parts[1] === '') delete UI._diffCache[k];
+        if (k.split('|')[1] === '') delete cache[k];
       }
     }
     await Promise.all([
@@ -3129,6 +3351,11 @@ const Actions = {
     if (!await DiscardModal.ask(msg)) return;
     try {
       await Bridge.send('discard_changes', { paths });
+      const pathSet = new Set(paths);
+      if (State.selectedFile && pathSet.has(State.selectedFile.path)) {
+        State.selectedFile = null;
+        UI.showView('placeholder');
+      }
       await this.loadStatus();
       Toast.info('Changes discarded');
     } catch (err) {
@@ -3146,6 +3373,11 @@ const Actions = {
       await Bridge.send('discard_changes', { paths });
       State.multiSelected.clear();
       State.lastClickedPath = null;
+      const pathSet = new Set(paths);
+      if (State.selectedFile && pathSet.has(State.selectedFile.path)) {
+        State.selectedFile = null;
+        UI.showView('placeholder');
+      }
       await this.loadStatus();
       Toast.info(`Discarded ${paths.length} file(s)`);
     } catch (err) {
@@ -3349,6 +3581,8 @@ const Actions = {
     try {
       await Bridge.send('open_in_editor', {
         filePath:     ctx.filePath,
+        oldCommit:    ctx.oldCommit || '',
+        newCommit:    ctx.newCommit || '',
         changedItems: State.visualDiffItems || [],
       });
       Toast.success('Opened in editor');
@@ -3444,8 +3678,48 @@ const Actions = {
 
 // Expose App for C++ push notifications
 const App = {
-  refreshStatus: () => Actions.loadStatus(),
-  fullRefresh:   () => Actions.refreshAll(),
+  refreshStatus(changedPaths = []) {
+    App._doRefreshStatus(changedPaths);
+  },
+
+  async _doRefreshStatus(changedPaths) {
+    const f = State.selectedFile;
+    // Determine whether the currently viewed file is one that changed
+    const isVisualFile = f && (f.path.endsWith('.kicad_sch') || f.path.endsWith('.kicad_pcb'));
+    const viewedFileChanged = isVisualFile && (
+      changedPaths.length === 0 ||
+      changedPaths.some(p => p === f.path || p.endsWith('/' + f.path))
+    );
+
+    // Save before SVGs only if we'll need to re-render the visual diff
+    const savedBefore = {};
+    if (viewedFileChanged && UI._visualCache) {
+      for (const [k, v] of Object.entries(UI._visualCache)) {
+        if (k.split('|')[1] === '' && v.beforeSvg) {
+          savedBefore[k] = { svg: v.beforeSvg, vb: v._croppedVb?.before ?? null };
+        }
+      }
+    }
+
+    // Evict stale working-dir cache entries
+    for (const cache of [UI._diffCache, UI._visualCache]) {
+      if (!cache) continue;
+      for (const k of Object.keys(cache)) {
+        if (k.split('|')[1] === '') delete cache[k];
+      }
+    }
+
+    await Actions.loadStatus();
+
+    // Re-render visual diff only if the viewed file actually changed
+    if (viewedFileChanged && f.context !== 'commit') {
+      UI._savedBefore = savedBefore;
+      await UI.selectFile(f.path, f.context, f.status);
+      UI._savedBefore = null;
+    }
+  },
+
+  fullRefresh: () => Actions.refreshAll(),
 };
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3616,12 +3890,25 @@ document.addEventListener('keydown', (e) => {
         _navFileList('#history-list', '.commit-item', dir, { jumpEnd });
     }
   } else if (e.key === 'Enter') {
-    // Toggle checkbox of focused changes-list file
-    const sel = document.querySelector('#changes-list .file-item.selected');
-    if (sel) {
-      const cb = sel.querySelector('.file-checkbox');
-      if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); }
+    if (State.multiSelected.size > 1) {
+      // Bulk toggle: if all multi-selected are staged → unstage all, otherwise stage all
+      const paths    = [...State.multiSelected];
+      const stagedSet = new Set(State.staged.map(f => f.path));
+      const allStaged = paths.every(p => stagedSet.has(p));
+      if (allStaged) Actions.unstage(paths); else Actions.stage(paths);
+    } else {
+      // Single file: toggle its checkbox
+      const sel = document.querySelector('#changes-list .file-item.selected');
+      if (sel) {
+        const cb = sel.querySelector('.file-checkbox');
+        if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); }
+      }
     }
+  } else if (e.key === 'Backspace' && (e.metaKey || e.ctrlKey)) {
+    const paths = State.multiSelected.size > 1
+      ? [...State.multiSelected]
+      : State.selectedFile ? [State.selectedFile.path] : [];
+    if (paths.length) { e.preventDefault(); Actions.discard(paths); }
   } else if (e.key === 'Escape') {
     CtxMenu.hide();
     UI.closeBranchMenu();
@@ -3640,20 +3927,16 @@ const DiscardModal = {
   _resolve: null,
 
   async ask(msg) {
-    // If user has suppressed, skip the dialog
-    if (localStorage.getItem('discard-no-confirm') === '1') return true;
     return new Promise(resolve => {
       this._resolve = resolve;
       document.getElementById('discard-modal-msg').textContent = msg;
-      document.getElementById('discard-suppress-cb').checked = false;
-      document.getElementById('discard-modal').style.display = 'flex';
+      const el = document.getElementById('discard-modal');
+      el.style.display = 'flex';
+      el.focus();
     });
   },
 
   confirm() {
-    if (document.getElementById('discard-suppress-cb').checked) {
-      localStorage.setItem('discard-no-confirm', '1');
-    }
     document.getElementById('discard-modal').style.display = 'none';
     if (this._resolve) { this._resolve(true); this._resolve = null; }
   },

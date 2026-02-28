@@ -33,27 +33,26 @@ static void FsEventsCallback( ConstFSEventStreamRef  /*streamRef*/,
     VCS_FRAME* frame = static_cast<VCS_FRAME*>( aClientInfo );
     auto**     paths = reinterpret_cast<char**>( aEventPaths );
 
+    json changedPaths = json::array();
+
     for( size_t i = 0; i < aNumEvents; ++i )
     {
         wxString p = wxString::FromUTF8( paths[i] );
 
-        // Skip git-internal changes (index, pack files, refs) — the UI already
-        // handles those via explicit refreshes after git operations.
-        if( p.Contains( wxS( "/.git/" ) ) )
+        // Only care about files with visual diff support
+        if( !p.EndsWith( wxS( ".kicad_sch" ) ) && !p.EndsWith( wxS( ".kicad_pcb" ) ) )
             continue;
 
-        // Skip backup/temporary files written by KiCad during saves
-        if( p.EndsWith( wxS( ".bak" ) ) || p.EndsWith( wxS( ".000" ) )
-                || p.EndsWith( wxS( ".tmp" ) ) || p.EndsWith( wxS( "~" ) ) )
-            continue;
-
-        // At least one relevant file changed — notify the UI and stop scanning
-        wxTheApp->CallAfter( [frame]()
-        {
-            frame->SendToWebView( wxS( "status_changed" ), json::object() );
-        } );
-        return;
+        changedPaths.push_back( paths[i] );
     }
+
+    if( changedPaths.empty() )
+        return;
+
+    wxTheApp->CallAfter( [frame, changedPaths]()
+    {
+        frame->SendToWebView( wxS( "status_changed" ), json{ { "paths", changedPaths } } );
+    } );
 }
 #endif // __APPLE__
 
@@ -183,16 +182,13 @@ void VCS_FRAME::StartWatching( const wxString& aPath )
 
     FSEventStreamContext ctx = { 0, this, nullptr, nullptr, nullptr };
 
-    // 1.5 s latency: coalesces rapid saves (e.g. schematic auto-backup writes)
-    // into a single notification.  kFSEventStreamCreateFlagFileEvents gives
-    // per-file paths so the callback can filter git internals precisely.
     m_fsWatcher = FSEventStreamCreate(
             kCFAllocatorDefault,
             &FsEventsCallback,
             &ctx,
             cfPaths,
             kFSEventStreamEventIdSinceNow,
-            1.5,
+            0.1,
             kFSEventStreamCreateFlagFileEvents );
 
     CFRelease( cfPaths );

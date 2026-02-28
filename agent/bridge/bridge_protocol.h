@@ -42,10 +42,12 @@ namespace BridgeAction
     constexpr const char* PLAN_APPROVE         = "plan_approve";
 
     // Pending changes actions
-    constexpr const char* PENDING_CHANGES_TOGGLE     = "pending_changes_toggle";
-    constexpr const char* PENDING_CHANGES_ACCEPT_ALL = "pending_changes_accept_all";
-    constexpr const char* PENDING_CHANGES_REJECT_ALL = "pending_changes_reject_all";
-    constexpr const char* PENDING_CHANGES_VIEW       = "pending_changes_view";
+    constexpr const char* PENDING_CHANGES_TOGGLE       = "pending_changes_toggle";
+    constexpr const char* PENDING_CHANGES_ACCEPT_ALL   = "pending_changes_accept_all";
+    constexpr const char* PENDING_CHANGES_REJECT_ALL   = "pending_changes_reject_all";
+    constexpr const char* PENDING_CHANGES_VIEW         = "pending_changes_view";
+    constexpr const char* PENDING_CHANGES_ACCEPT_SHEET = "pending_changes_accept_sheet";
+    constexpr const char* PENDING_CHANGES_REJECT_SHEET = "pending_changes_reject_sheet";
 
     // Auth actions
     constexpr const char* SIGN_IN_CLICK      = "sign_in_click";

@@ -94,6 +94,9 @@ enum MAIL_T
     // Diff overlay refresh
     MAIL_AGENT_REFRESH_DIFF,        // Agent -> Editor: Refresh diff overlays (items may have moved)
 
+    // Diff frame content delivery
+    MAIL_SCH_DIFF_CONTENT,          // SCH -> SCH_DIFF: Send before/after content (JSON: {before_path, after_path, sheet_path})
+
     // VCS app communication
     MAIL_VCS_AUTH_COMPLETE          // Launcher -> VCS: GitHub OAuth complete (JSON: {username})
 };

@@ -325,7 +325,7 @@ std::string KICAD_FILE_RENDERER::ExportToSvg( const std::string& aContent, bool 
         wxFileName::Mkdir( wxString::FromUTF8( outDir ), wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
 
         std::string cmd = cliPrefix
-                          + " sch export svg --exclude-drawing-sheet"
+                          + " sch export svg --exclude-drawing-sheet --no-background-color"
                           + " --theme _builtin_default"
                           + " -o \"" + outDir + "\" \"" + inFile + "\"";
 

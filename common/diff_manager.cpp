@@ -86,6 +86,7 @@ void DIFF_MANAGER::ShowDiff( const BOX2I& aBBox )
         state.callbacks.onRefresh();
 }
 
+
 void DIFF_MANAGER::ClearDiff()
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
@@ -143,7 +144,8 @@ void DIFF_MANAGER::RegisterOverlay( KIGFX::VIEW* aView, DIFF_CALLBACKS aCallback
 
 void DIFF_MANAGER::RegisterOverlay( KIGFX::VIEW* aView, AGENT_CHANGE_TRACKER* aTracker,
                                      const wxString& aSheetPath, DIFF_CALLBACKS aCallbacks,
-                                     BBOX_COMPUTE_CALLBACK aBBoxCallback )
+                                     BBOX_COMPUTE_CALLBACK aBBoxCallback,
+                                     ITEM_HIGHLIGHTS_CALLBACK aHighlightsCallback )
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
 
@@ -173,6 +175,22 @@ void DIFF_MANAGER::RegisterOverlay( KIGFX::VIEW* aView, AGENT_CHANGE_TRACKER* aT
             state.item = new KIGFX::PREVIEW::DIFF_OVERLAY_ITEM( aBBoxCallback );
             state.active = true;
             state.currentBBox = bbox;
+
+            // Set per-item highlights callback for live diff coloring
+            if( aHighlightsCallback )
+            {
+                state.item->SetItemHighlightsCallback(
+                    [aHighlightsCallback]() -> std::vector<KIGFX::PREVIEW::ITEM_HIGHLIGHT>
+                    {
+                        // Convert from DIFF_ITEM_HIGHLIGHT to ITEM_HIGHLIGHT
+                        auto diffHighlights = aHighlightsCallback();
+                        std::vector<KIGFX::PREVIEW::ITEM_HIGHLIGHT> result;
+                        result.reserve( diffHighlights.size() );
+                        for( const auto& dh : diffHighlights )
+                            result.push_back( { dh.bbox, dh.color, dh.hasBorder } );
+                        return result;
+                    } );
+            }
 
             aView->Add( state.item );
             aView->SetVisible( state.item, true );
@@ -260,21 +278,29 @@ bool DIFF_MANAGER::HandleClick( KIGFX::VIEW* aView, const VECTOR2I& aPoint )
 
     auto it = m_viewStates.find( aView );
     if( it == m_viewStates.end() )
+    {
+        wxLogDebug( "DIFF_MANAGER::HandleClick: view %p not registered (%zu states)",
+                    aView, m_viewStates.size() );
         return false;
+    }
 
     DIFF_VIEW_STATE& state = it->second;
 
     if( !state.active || !state.item || !aView )
+    {
+        wxLogDebug( "DIFF_MANAGER::HandleClick: state not ready (active=%d item=%p)",
+                    state.active, state.item );
         return false;
+    }
 
     auto btn = state.item->HitTestButtons( aPoint, aView );
+    wxLogDebug( "DIFF_MANAGER::HandleClick: point=(%d,%d) btn=%d", aPoint.x, aPoint.y, (int)btn );
 
     switch( btn )
     {
     case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_APPROVE: OnApprove( aView ); return true;
     case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_REJECT: OnReject( aView ); return true;
-    case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_VIEW_BEFORE: OnViewBefore( aView ); return true;
-    case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_VIEW_AFTER: OnViewAfter( aView ); return true;
+    case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_VIEW_DIFF: OnViewDiff( aView ); return true;
     default: return false;
     }
 }
@@ -309,7 +335,7 @@ void DIFF_MANAGER::OnReject( KIGFX::VIEW* aView )
     ClearDiff( aView );
 }
 
-void DIFF_MANAGER::OnViewBefore( KIGFX::VIEW* aView )
+void DIFF_MANAGER::OnViewDiff( KIGFX::VIEW* aView )
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
 
@@ -319,62 +345,8 @@ void DIFF_MANAGER::OnViewBefore( KIGFX::VIEW* aView )
 
     DIFF_VIEW_STATE& state = it->second;
 
-    if( state.item && aView )
-    {
-        // If we are currently showing AFTER (default), then Before means UNDO.
-        if( !state.item->IsShowingBefore() )
-        {
-            if( state.callbacks.onUndo )
-                state.callbacks.onUndo();
-
-            // Re-check: the callback may have triggered ClearDiff() which deletes state.item
-            if( !state.item )
-                return;
-
-            state.item->SetShowingBefore( true );
-        }
-
-        aView->Update( state.item );
-        aView->MarkDirty();
-
-        // Trigger canvas refresh
-        if( state.callbacks.onRefresh )
-            state.callbacks.onRefresh();
-    }
-}
-
-void DIFF_MANAGER::OnViewAfter( KIGFX::VIEW* aView )
-{
-    std::lock_guard<std::recursive_mutex> lock( m_mutex );
-
-    auto it = m_viewStates.find( aView );
-    if( it == m_viewStates.end() )
-        return;
-
-    DIFF_VIEW_STATE& state = it->second;
-
-    if( state.item && aView )
-    {
-        // If we are currently showing BEFORE, then After means REDO.
-        if( state.item->IsShowingBefore() )
-        {
-            if( state.callbacks.onRedo )
-                state.callbacks.onRedo();
-
-            // Re-check: the callback may have triggered ClearDiff() which deletes state.item
-            if( !state.item )
-                return;
-
-            state.item->SetShowingBefore( false );
-        }
-
-        aView->Update( state.item );
-        aView->MarkDirty();
-
-        // Trigger canvas refresh
-        if( state.callbacks.onRefresh )
-            state.callbacks.onRefresh();
-    }
+    if( state.callbacks.onViewDiff )
+        state.callbacks.onViewDiff();
 }
 
 

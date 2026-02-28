@@ -1212,7 +1212,7 @@ TOOL_ACTION SCH_ACTIONS::showPythonConsole( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.showPythonConsole" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Terminal" ) )
-        .Tooltip( _( "Show Terminal" ) )
+        .Tooltip( _( "Open Terminal" ) )
         .Icon( BITMAPS::py_script ) );
 
 TOOL_ACTION SCH_ACTIONS::exportNetlist( TOOL_ACTION_ARGS()

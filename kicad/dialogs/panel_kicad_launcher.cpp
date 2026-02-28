@@ -147,9 +147,6 @@ void PANEL_KICAD_LAUNCHER::CreateLaunchers()
     addLauncher( KICAD_MANAGER_ACTIONS::showAiAssistant, BITMAPS::icon_kicad,
                  _( "Edit the project with an AI assistant" ) );
 
-    addLauncher( KICAD_MANAGER_ACTIONS::showVersionControl, BITMAPS::icon_vcs,
-                 _( "Commit, push, pull, and view project version history" ) );
-
     addLauncher( KICAD_MANAGER_ACTIONS::editSchematic, BITMAPS::icon_eeschema,
                  _( "Edit the project schematic" ) );
 

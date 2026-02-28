@@ -1615,7 +1615,7 @@ TOOL_ACTION PCB_ACTIONS::showPythonConsole( TOOL_ACTION_ARGS()
         .Name( "pcbnew.Control.showPythonConsole" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Terminal" ) )
-        .Tooltip( _( "Show Terminal" ) )
+        .Tooltip( _( "Open Terminal" ) )
         .Icon( BITMAPS::py_script ) );
 
 TOOL_ACTION PCB_ACTIONS::showLayersManager( TOOL_ACTION_ARGS()

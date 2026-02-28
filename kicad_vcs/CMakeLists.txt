@@ -53,6 +53,8 @@ set_target_properties( kicad_vcs_kiface PROPERTIES
     OUTPUT_NAME kicad_vcs
     PREFIX ${KIFACE_PREFIX}
     SUFFIX ${KIFACE_SUFFIX}
+    CXX_VISIBILITY_PRESET default
+    VISIBILITY_INLINES_HIDDEN OFF
 )
 
 if( APPLE )
@@ -69,6 +71,7 @@ endif()
 target_link_libraries( kicad_vcs_kiface
     PRIVATE
     common
+    gal
     kicommon
     ${wxWidgets_LIBRARIES}
     ${LIBGIT2_LIBRARIES}

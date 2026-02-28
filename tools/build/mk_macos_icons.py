@@ -19,12 +19,13 @@ ICONS = [
     ("libedit", ("libedit", "libedit_doc"), "../../eeschema"),
     ("gerbview", ("gerbview", "gerbview_doc"), "../../gerbview"),
     ("kicad", ("kicad", "kicad_doc"), "../../kicad"),
-    ("kicad", ("agent",), "../../agent"),
+    ("agent", ("agent",), "../../agent"),
+    ("vcs", ("vcs",), "../../kicad_vcs"),
     ("pagelayout_editor", ("pagelayout_editor", "pagelayout_editor_doc"), "../../pagelayout_editor"),
     ("pcbcalculator", ("pcb_calculator",), "../../pcb_calculator"),
     ("pcbnew", ("pcbnew", "pcbnew_doc"), "../../pcbnew"),
     ("modedit", ("fpedit", "fpedit_doc"), "../../pcbnew"),
-    ("kicad", ("terminal",), "../../terminal")
+    ("terminal", ("terminal",), "../../terminal")
 ]
 
 SIZES = [

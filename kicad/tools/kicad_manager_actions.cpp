@@ -268,13 +268,13 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::showVersionControl( TOOL_ACTION_ARGS()
                                                                .Scope( AS_GLOBAL )
                                                                .FriendlyName( _( "Version Control" ) )
                                                                .Tooltip( _( "Manage project version history, commit, push, and pull changes" ) )
-                                                               .Icon( BITMAPS::git_good_check )
+                                                               .Icon( BITMAPS::icon_vcs )
                                                                .Parameter( FRAME_VCS ) );
 
 TOOL_ACTION KICAD_MANAGER_ACTIONS::showTerminal( TOOL_ACTION_ARGS()
                                                          .Name( "kicad.Control.showTerminal" )
                                                          .Scope( AS_GLOBAL )
                                                          .FriendlyName( _( "Terminal" ) )
-                                                         .Tooltip( _( "Show Terminal" ) )
+                                                         .Tooltip( _( "Open Terminal" ) )
                                                          .Icon( BITMAPS::py_script )
                                                          .Parameter( FRAME_TERMINAL ) );

@@ -39,6 +39,7 @@ enum class TOOLBAR_ITEM_TYPE
     TOOL,
     TB_GROUP,
     SPACER,
+    STRETCH_SPACER,
     CONTROL,
     SEPARATOR
 };
@@ -126,6 +127,7 @@ public:
     TOOLBAR_ITEM_REF AppendAction( const TOOL_ACTION& aAction );
     TOOLBAR_CONFIGURATION& AppendSeparator();
     TOOLBAR_CONFIGURATION& AppendSpacer( int aSize );
+    TOOLBAR_CONFIGURATION& AppendStretchSpacer();
     TOOLBAR_CONFIGURATION& AppendGroup( const TOOLBAR_GROUP_CONFIG& aGroup );
     TOOLBAR_CONFIGURATION& AppendControl( const std::string& aControlName );
     TOOLBAR_CONFIGURATION& AppendControl( const ACTION_TOOLBAR_CONTROL& aControl );
@@ -220,6 +222,12 @@ public:
     TOOLBAR_CONFIGURATION& AppendSpacer( int aSize )
     {
         m_toolbarItems.emplace_back( TOOLBAR_ITEM_TYPE::SPACER, aSize );
+        return *this;
+    }
+
+    TOOLBAR_CONFIGURATION& AppendStretchSpacer()
+    {
+        m_toolbarItems.emplace_back( TOOLBAR_ITEM_TYPE::STRETCH_SPACER );
         return *this;
     }
 

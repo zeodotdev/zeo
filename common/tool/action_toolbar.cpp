@@ -318,6 +318,10 @@ void ACTION_TOOLBAR::ApplyConfiguration( const TOOLBAR_CONFIGURATION& aConfig )
             AddSpacer( item.m_Size );
             break;
 
+        case TOOLBAR_ITEM_TYPE::STRETCH_SPACER:
+            AddStretchSpacer();
+            break;
+
         case TOOLBAR_ITEM_TYPE::TB_GROUP:
         {
             // Add a group of items to the toolbar
@@ -331,6 +335,7 @@ void ACTION_TOOLBAR::ApplyConfiguration( const TOOLBAR_CONFIGURATION& aConfig )
                 {
                 case TOOLBAR_ITEM_TYPE::SEPARATOR:
                 case TOOLBAR_ITEM_TYPE::SPACER:
+                case TOOLBAR_ITEM_TYPE::STRETCH_SPACER:
                 case TOOLBAR_ITEM_TYPE::TB_GROUP:
                 case TOOLBAR_ITEM_TYPE::CONTROL:
                     wxFAIL_MSG( wxT( "Unsupported group item type" ) );

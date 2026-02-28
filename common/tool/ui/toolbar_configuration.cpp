@@ -46,6 +46,10 @@ void to_json( nlohmann::json& aJson, const TOOLBAR_ITEM& aItem )
         aJson["size"] = aItem.m_Size;
         break;
 
+    case TOOLBAR_ITEM_TYPE::STRETCH_SPACER:
+        // Nothing to add for a stretch spacer
+        break;
+
     case TOOLBAR_ITEM_TYPE::CONTROL:
         aJson["name"] = aItem.m_ControlName;
         break;
@@ -93,6 +97,10 @@ void from_json( const nlohmann::json& aJson, TOOLBAR_ITEM& aItem )
         if( aJson.contains( "size" ) )
             aItem.m_Size = aJson["size"].get<int>();
 
+        break;
+
+    case TOOLBAR_ITEM_TYPE::STRETCH_SPACER:
+        // Nothing to read for a stretch spacer
         break;
 
     case TOOLBAR_ITEM_TYPE::CONTROL:
@@ -249,6 +257,12 @@ TOOLBAR_CONFIGURATION& TOOLBAR_ITEM_REF::AppendSeparator()
 TOOLBAR_CONFIGURATION& TOOLBAR_ITEM_REF::AppendSpacer( int aSize )
 {
     return m_parent.AppendSpacer( aSize );
+}
+
+
+TOOLBAR_CONFIGURATION& TOOLBAR_ITEM_REF::AppendStretchSpacer()
+{
+    return m_parent.AppendStretchSpacer();
 }
 
 

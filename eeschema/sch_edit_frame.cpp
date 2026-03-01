@@ -3467,78 +3467,26 @@ void SCH_EDIT_FRAME::BeginAgentSnapshot()
 
     m_snapshotSession->FinalizeSnapshot();
     m_agentChangedSheetPath.clear();
-    m_agentUndoBaseline = GetUndoCommandCount();
-    wxLogInfo( "SCH: BeginAgentSnapshot: snapshot complete (%zu screens), undo baseline=%d",
-               m_snapshotSession->GetSnapshotOriginalPaths().size(), m_agentUndoBaseline );
+    wxLogInfo( "SCH: BeginAgentSnapshot: snapshot complete (%zu screens)",
+               m_snapshotSession->GetSnapshotOriginalPaths().size() );
 }
 
 
 bool SCH_EDIT_FRAME::DetectAgentChanges()
 {
-    // Initialize tracker if needed
-    if( !m_agentChangeTracker )
-        m_agentChangeTracker = std::make_unique<AGENT_CHANGE_TRACKER>();
-
     if( !m_snapshotSession || !m_snapshotSession->HasSnapshot() )
     {
         wxLogWarning( "SCH: DetectAgentChanges: no snapshot session, cannot detect changes" );
         return false;
     }
 
-    // Walk undo entries added AFTER the snapshot was taken.
-    // Only these represent agent changes; earlier entries are user edits.
-    SCH_SHEET_LIST sheets = Schematic().Hierarchy();
-    int currentUndoCount = GetUndoCommandCount();
-    bool foundNewItems = false;
-
-    for( int i = m_agentUndoBaseline; i < currentUndoCount; i++ )
+    // Items are now tracked at the source (IPC API handlers call TrackItem directly).
+    // Just check whether the tracker has any changes.
+    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
     {
-        PICKED_ITEMS_LIST* undoCommand = m_undoList.m_CommandsList[i];
-        if( !undoCommand )
-            continue;
-
-        for( unsigned int j = 0; j < undoCommand->GetCount(); j++ )
-        {
-            EDA_ITEM* item = undoCommand->GetPickedItem( j );
-            UNDO_REDO status = undoCommand->GetPickedItemStatus( j );
-
-            if( !item )
-                continue;
-
-            // Validate pointer
-            uintptr_t ptrVal = reinterpret_cast<uintptr_t>( item );
-            if( ptrVal < 0x100000000ULL || ptrVal > 0x800000000000ULL )
-                continue;
-
-            try
-            {
-                SCH_SCREEN*    screen = dynamic_cast<SCH_SCREEN*>( undoCommand->GetScreenForItem( j ) );
-                SCH_SHEET_PATH itemSheet = sheets.FindSheetForScreen( screen );
-                wxString       sheetPath = itemSheet.PathHumanReadable( false );
-
-                // Map UNDO_REDO status to AGENT_CHANGE_TYPE
-                AGENT_CHANGE_TYPE changeType;
-                if( status == UNDO_REDO::NEWITEM )
-                    changeType = AGENT_CHANGE_TYPE::ADDED;
-                else if( status == UNDO_REDO::DELETED )
-                    changeType = AGENT_CHANGE_TYPE::DELETED;
-                else
-                    changeType = AGENT_CHANGE_TYPE::CHANGED;
-
-                if( !m_agentChangeTracker->IsTracked( item->m_Uuid ) )
-                    foundNewItems = true;
-
-                m_agentChangeTracker->TrackItem( item->m_Uuid, sheetPath, changeType );
-            }
-            catch( ... )
-            {
-                wxLogWarning( "SCH: Exception accessing item in undo command, skipping" );
-            }
-        }
+        if( !m_hasAgentPendingChanges )
+            return false;
     }
-
-    if( !foundNewItems && !m_hasAgentPendingChanges )
-        return false;
 
     m_hasAgentPendingChanges = true;
     m_snapshotSession->SetChangesDetected();
@@ -3661,7 +3609,7 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
         GetCanvas()->ForceRefresh();
     }
 
-    return foundNewItems;
+    return m_agentChangeTracker && m_agentChangeTracker->HasChanges();
 }
 
 
@@ -3686,9 +3634,6 @@ void SCH_EDIT_FRAME::ClearAgentPendingChanges()
         m_snapshotSession->EndSession();
 
     DIFF_MANAGER::GetInstance().ClearDiff();
-
-    // Clear redo list to prevent accidental redo after approve
-    ClearUndoORRedoList( REDO_LIST );
 
     wxLogInfo( "SCH: ClearAgentPendingChanges: accepted, snapshot discarded" );
 }
@@ -3718,7 +3663,6 @@ void SCH_EDIT_FRAME::ApproveAgentChangesOnSheet( const wxString& aSheetPath )
         m_agentChangedSheetPath.clear();
         if( m_snapshotSession )
             m_snapshotSession->EndSession();
-        ClearUndoORRedoList( REDO_LIST );
     }
 }
 
@@ -3759,14 +3703,13 @@ void SCH_EDIT_FRAME::RejectAgentChangesOnSheet( const wxString& aSheetPath )
         return;
     }
 
-    wxLogInfo( "SCH: RejectOnSheet: reloading screen from snapshot '%s'", snapshotPath );
+    wxLogInfo( "SCH: RejectOnSheet: reverting via item-level undo from snapshot '%s'", snapshotPath );
 
     // Load the snapshot into a temporary schematic
     try
     {
         IO_RELEASER<SCH_IO> pi( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD ) );
 
-        // Create a temporary schematic to load the snapshot into
         SCHEMATIC tempSchematic( &Prj() );
         tempSchematic.CreateDefaultScreens();
 
@@ -3777,37 +3720,118 @@ void SCH_EDIT_FRAME::RejectAgentChangesOnSheet( const wxString& aSheetPath )
             return;
         }
 
-        SCH_SCREEN* loadedScreen = loadedSheet->GetScreen();
-        if( !loadedScreen )
+        SCH_SCREEN* snapshotScreen = loadedSheet->GetScreen();
+        if( !snapshotScreen )
         {
             wxLogWarning( "SCH: RejectOnSheet: loaded snapshot has no screen" );
             return;
         }
 
-        // Clear the target screen and transfer items from the loaded screen
-        targetScreen->Clear( true );
+        // Build KIID→item maps for current screen and snapshot
+        std::map<KIID, SCH_ITEM*> currentItems;
+        for( SCH_ITEM* item : targetScreen->Items() )
+            currentItems[item->m_Uuid] = item;
 
-        // Transfer library symbols first (before moving items that reference them)
-        for( const auto& [name, libSym] : loadedScreen->GetLibSymbols() )
+        std::map<KIID, SCH_ITEM*> snapshotItems;
+        for( SCH_ITEM* item : snapshotScreen->Items() )
+            snapshotItems[item->m_Uuid] = item;
+
+        // Get tracked items on this sheet
+        std::set<KIID> trackedOnSheet =
+                m_agentChangeTracker->GetTrackedItemsOnSheet( aSheetPath );
+
+        SCH_COMMIT commit( this );
+        int rejectedCount = 0;
+
+        for( const KIID& kiid : trackedOnSheet )
         {
-            if( libSym )
-                targetScreen->AddLibSymbol( new LIB_SYMBOL( *libSym ) );
+            AGENT_CHANGE_TYPE changeType = m_agentChangeTracker->GetChangeType( kiid );
+
+            switch( changeType )
+            {
+            case AGENT_CHANGE_TYPE::ADDED:
+            {
+                // Agent added this item — remove it to reject
+                auto it = currentItems.find( kiid );
+                if( it != currentItems.end() )
+                {
+                    commit.Remove( it->second, targetScreen );
+                    rejectedCount++;
+                    wxLogInfo( "SCH: RejectOnSheet: removing agent-added item %s",
+                               kiid.AsStdString() );
+                }
+                else
+                {
+                    wxLogWarning( "SCH: RejectOnSheet: agent-added item %s not found on screen",
+                                   kiid.AsStdString() );
+                }
+                break;
+            }
+
+            case AGENT_CHANGE_TYPE::CHANGED:
+            {
+                // Agent modified this item — revert to pre-agent state
+                auto currentIt = currentItems.find( kiid );
+                auto snapshotIt = snapshotItems.find( kiid );
+
+                if( currentIt != currentItems.end() && snapshotIt != snapshotItems.end() )
+                {
+                    SCH_ITEM* currentItem = currentIt->second;
+                    SCH_ITEM* snapshotItem = snapshotIt->second;
+
+                    // Modify() saves a clone of the current (agent-modified) state
+                    commit.Modify( currentItem, targetScreen );
+
+                    // Swap current item data with snapshot (pre-agent) data
+                    currentItem->SetConnectivityDirty();
+                    RemoveFromScreen( currentItem, targetScreen );
+                    currentItem->SwapItemData( snapshotItem );
+                    AddToScreen( currentItem, targetScreen );
+
+                    rejectedCount++;
+                    wxLogInfo( "SCH: RejectOnSheet: reverted agent-changed item %s",
+                               kiid.AsStdString() );
+                }
+                else
+                {
+                    wxLogWarning( "SCH: RejectOnSheet: agent-changed item %s not found "
+                                   "(current=%d, snapshot=%d)", kiid.AsStdString(),
+                                   currentIt != currentItems.end(),
+                                   snapshotIt != snapshotItems.end() );
+                }
+                break;
+            }
+
+            case AGENT_CHANGE_TYPE::DELETED:
+            {
+                // Agent deleted this item — restore from snapshot
+                auto snapshotIt = snapshotItems.find( kiid );
+
+                if( snapshotIt != snapshotItems.end() )
+                {
+                    SCH_ITEM* restored =
+                            static_cast<SCH_ITEM*>( snapshotIt->second->Clone() );
+                    restored->SetParent( targetScreen );
+                    commit.Add( restored, targetScreen );
+                    rejectedCount++;
+                    wxLogInfo( "SCH: RejectOnSheet: restored agent-deleted item %s",
+                               kiid.AsStdString() );
+                }
+                else
+                {
+                    wxLogWarning( "SCH: RejectOnSheet: agent-deleted item %s not found "
+                                   "in snapshot", kiid.AsStdString() );
+                }
+                break;
+            }
+            }
         }
 
-        // Move items from loaded screen to target screen
-        std::vector<SCH_ITEM*> itemsToMove;
-        for( SCH_ITEM* item : loadedScreen->Items() )
-            itemsToMove.push_back( item );
+        if( rejectedCount > 0 )
+            commit.Push( _( "Reject Agent Changes" ) );
 
-        for( SCH_ITEM* item : itemsToMove )
-        {
-            loadedScreen->Remove( item );
-            item->SetParent( targetScreen );
-            targetScreen->Append( item );
-        }
-
-        wxLogInfo( "SCH: RejectOnSheet: transferred %zu items + %zu lib symbols from snapshot",
-                   itemsToMove.size(), loadedScreen->GetLibSymbols().size() );
+        wxLogInfo( "SCH: RejectOnSheet: rejected %d items on sheet '%s'",
+                   rejectedCount, aSheetPath );
     }
     catch( const IO_ERROR& ioe )
     {
@@ -3820,10 +3844,6 @@ void SCH_EDIT_FRAME::RejectAgentChangesOnSheet( const wxString& aSheetPath )
 
     // Clear the diff overlay
     DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
-
-    // Clear undo/redo — they reference items that no longer exist
-    ClearUndoORRedoList( UNDO_LIST );
-    ClearUndoORRedoList( REDO_LIST );
 
     // If no more tracked items, clear everything
     if( !m_agentChangeTracker->HasChanges() )
@@ -3855,69 +3875,136 @@ void SCH_EDIT_FRAME::RevertAgentChanges()
         return;
     }
 
-    // Reload each screen from its snapshot file
-    SCH_SCREENS screens( Schematic().Root() );
-    int reloadedCount = 0;
-
-    for( SCH_SCREEN* screen = screens.GetFirst(); screen; screen = screens.GetNext() )
+    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
     {
-        wxString origPath = screen->GetFileName();
+        wxLogInfo( "SCH: RevertAgentChanges: no tracked items — cleaning up" );
+        m_hasAgentPendingChanges = false;
+        DIFF_MANAGER::GetInstance().ClearDiff();
+        DIFF_MANAGER::GetInstance().UnregisterOverlay();
+        m_agentChangedSheetPath.clear();
+        m_snapshotSession->EndSession();
+        return;
+    }
+
+    // Group tracked items by sheet path → screen
+    SCH_SHEET_LIST sheetList = Schematic().Hierarchy();
+    std::set<wxString> affectedSheets = m_agentChangeTracker->GetAffectedSheets();
+
+    SCH_COMMIT commit( this );
+    int totalReverted = 0;
+
+    for( const wxString& sheetPath : affectedSheets )
+    {
+        // Find the screen for this sheet path
+        SCH_SCREEN* targetScreen = nullptr;
+        for( const SCH_SHEET_PATH& path : sheetList )
+        {
+            if( path.PathHumanReadable( false ) == sheetPath )
+            {
+                targetScreen = path.LastScreen();
+                break;
+            }
+        }
+
+        if( !targetScreen )
+        {
+            wxLogWarning( "SCH: RevertAgentChanges: no screen for sheet '%s'", sheetPath );
+            continue;
+        }
+
+        // Find and load the snapshot for this screen
+        wxString origPath = targetScreen->GetFileName();
         wxString snapshotPath = m_snapshotSession->GetSnapshotPathForSheet( origPath );
 
         if( snapshotPath.IsEmpty() || !wxFileName::FileExists( snapshotPath ) )
+        {
+            wxLogWarning( "SCH: RevertAgentChanges: no snapshot for '%s'", origPath );
             continue;
-
-        wxLogInfo( "SCH: RevertAgentChanges: reloading '%s' from snapshot", origPath );
+        }
 
         try
         {
             IO_RELEASER<SCH_IO> pi( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD ) );
 
-            // Create a temporary schematic to load the snapshot into
             SCHEMATIC tempSchematic( &Prj() );
             tempSchematic.CreateDefaultScreens();
 
             SCH_SHEET* loadedSheet = pi->LoadSchematicFile( snapshotPath, &tempSchematic );
-            if( !loadedSheet )
+            if( !loadedSheet || !loadedSheet->GetScreen() )
             {
-                wxLogWarning( "SCH: RevertAgentChanges: LoadSchematicFile returned null for '%s'",
+                wxLogWarning( "SCH: RevertAgentChanges: failed to load snapshot for '%s'",
                                origPath );
                 continue;
             }
 
-            SCH_SCREEN* loadedScreen = loadedSheet->GetScreen();
-            if( !loadedScreen )
+            SCH_SCREEN* snapshotScreen = loadedSheet->GetScreen();
+
+            // Build KIID→item maps
+            std::map<KIID, SCH_ITEM*> currentItems;
+            for( SCH_ITEM* item : targetScreen->Items() )
+                currentItems[item->m_Uuid] = item;
+
+            std::map<KIID, SCH_ITEM*> snapshotItems;
+            for( SCH_ITEM* item : snapshotScreen->Items() )
+                snapshotItems[item->m_Uuid] = item;
+
+            // Process tracked items on this sheet
+            std::set<KIID> trackedOnSheet =
+                    m_agentChangeTracker->GetTrackedItemsOnSheet( sheetPath );
+
+            for( const KIID& kiid : trackedOnSheet )
             {
-                wxLogWarning( "SCH: RevertAgentChanges: loaded snapshot has no screen for '%s'",
-                               origPath );
-                continue;
+                AGENT_CHANGE_TYPE changeType = m_agentChangeTracker->GetChangeType( kiid );
+
+                switch( changeType )
+                {
+                case AGENT_CHANGE_TYPE::ADDED:
+                {
+                    auto it = currentItems.find( kiid );
+                    if( it != currentItems.end() )
+                    {
+                        commit.Remove( it->second, targetScreen );
+                        totalReverted++;
+                    }
+                    break;
+                }
+
+                case AGENT_CHANGE_TYPE::CHANGED:
+                {
+                    auto currentIt = currentItems.find( kiid );
+                    auto snapshotIt = snapshotItems.find( kiid );
+
+                    if( currentIt != currentItems.end()
+                        && snapshotIt != snapshotItems.end() )
+                    {
+                        SCH_ITEM* currentItem = currentIt->second;
+                        SCH_ITEM* snapshotItem = snapshotIt->second;
+
+                        commit.Modify( currentItem, targetScreen );
+                        currentItem->SetConnectivityDirty();
+                        RemoveFromScreen( currentItem, targetScreen );
+                        currentItem->SwapItemData( snapshotItem );
+                        AddToScreen( currentItem, targetScreen );
+                        totalReverted++;
+                    }
+                    break;
+                }
+
+                case AGENT_CHANGE_TYPE::DELETED:
+                {
+                    auto snapshotIt = snapshotItems.find( kiid );
+                    if( snapshotIt != snapshotItems.end() )
+                    {
+                        SCH_ITEM* restored =
+                                static_cast<SCH_ITEM*>( snapshotIt->second->Clone() );
+                        restored->SetParent( targetScreen );
+                        commit.Add( restored, targetScreen );
+                        totalReverted++;
+                    }
+                    break;
+                }
+                }
             }
-
-            // Clear target screen and transfer items from loaded screen
-            screen->Clear( true );
-
-            // Transfer library symbols first (before moving items that reference them)
-            for( const auto& [name, libSym] : loadedScreen->GetLibSymbols() )
-            {
-                if( libSym )
-                    screen->AddLibSymbol( new LIB_SYMBOL( *libSym ) );
-            }
-
-            std::vector<SCH_ITEM*> itemsToMove;
-            for( SCH_ITEM* item : loadedScreen->Items() )
-                itemsToMove.push_back( item );
-
-            for( SCH_ITEM* item : itemsToMove )
-            {
-                loadedScreen->Remove( item );
-                item->SetParent( screen );
-                screen->Append( item );
-            }
-
-            wxLogInfo( "SCH: RevertAgentChanges: transferred %zu items + lib symbols for '%s'",
-                       itemsToMove.size(), origPath );
-
-            reloadedCount++;
         }
         catch( const IO_ERROR& ioe )
         {
@@ -3926,11 +4013,10 @@ void SCH_EDIT_FRAME::RevertAgentChanges()
         }
     }
 
-    wxLogInfo( "SCH: RevertAgentChanges: reloaded %d screens from snapshots", reloadedCount );
+    if( totalReverted > 0 )
+        commit.Push( _( "Revert Agent Changes" ) );
 
-    // Clear undo/redo — they reference items that no longer exist
-    ClearUndoORRedoList( UNDO_LIST );
-    ClearUndoORRedoList( REDO_LIST );
+    wxLogInfo( "SCH: RevertAgentChanges: reverted %d items", totalReverted );
 
     // Clean up all state BEFORE HardRedraw so overlay won't be re-registered
     DIFF_MANAGER::GetInstance().ClearDiff();
@@ -3942,8 +4028,6 @@ void SCH_EDIT_FRAME::RevertAgentChanges()
     m_snapshotSession->EndSession();
 
     // Rebuild connectivity and fully refresh the view
-    // HardRedraw rebuilds the GAL view from the screen's R-tree (just ForceRefresh
-    // doesn't sync the view with new items transferred from the snapshot)
     RecalculateConnections( nullptr, GLOBAL_CLEANUP );
     HardRedraw();
 

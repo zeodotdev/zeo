@@ -22,6 +22,7 @@
 #include <api/api_sch_utils.h>
 #include <api/api_utils.h>
 #include <api/api_enums.h>
+#include <agent_change_tracker.h>
 #include <magic_enum.hpp>
 #include <sch_commit.h>
 #include <sch_edit_frame.h>
@@ -614,6 +615,8 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
         status.set_code( ItemStatusCode::ISC_OK );
         google::protobuf::Any newItem;
 
+        KIID trackedUuid = item->m_Uuid;
+
         if( aCreate )
         {
             item->Serialize( newItem );
@@ -654,6 +657,15 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
             {
                 wxASSERT( false );
             }
+        }
+
+        // Track item for agent change detection (only agent uses the IPC API)
+        if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
+        {
+            tracker->TrackItem( trackedUuid,
+                                m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                                aCreate ? AGENT_CHANGE_TYPE::ADDED
+                                        : AGENT_CHANGE_TYPE::CHANGED );
         }
 
         aItemHandler( status, newItem );
@@ -708,6 +720,14 @@ void API_HANDLER_SCH::deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& a
         {
             commit->Remove( item, screen );
             status = ItemDeletionStatus::IDS_OK;
+
+            // Track deletion for agent change detection
+            if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
+            {
+                tracker->TrackItem( id,
+                                    m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                                    AGENT_CHANGE_TYPE::DELETED );
+            }
         }
         else
         {
@@ -2134,6 +2154,14 @@ API_HANDLER_SCH::handleCreateSheet(
     commit.Added( newSheet, screen );
     commit.Push( _( "API: Create Sheet" ) );
 
+    // Track for agent change detection
+    if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
+    {
+        tracker->TrackItem( newSheet->m_Uuid,
+                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            AGENT_CHANGE_TYPE::ADDED );
+    }
+
     // Refresh the hierarchy cache so the new sheet can be found
     m_frame->Schematic().RefreshHierarchy();
 
@@ -2226,6 +2254,14 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleDeleteSheet(
     SCH_COMMIT commit( m_frame );
     commit.Remove( sheet, screen );
     commit.Push( _( "API: Delete Sheet" ) );
+
+    // Track for agent change detection
+    if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
+    {
+        tracker->TrackItem( sheetId,
+                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            AGENT_CHANGE_TYPE::DELETED );
+    }
 
     // Refresh the hierarchy cache
     m_frame->Schematic().RefreshHierarchy();
@@ -2377,6 +2413,14 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetSheetProperties(
 
     commit.Push( _( "API: Update Sheet Properties" ) );
 
+    // Track for agent change detection
+    if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
+    {
+        tracker->TrackItem( sheetId,
+                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            AGENT_CHANGE_TYPE::CHANGED );
+    }
+
     return Empty();
 }
 
@@ -2471,6 +2515,14 @@ API_HANDLER_SCH::handleCreateSheetPin(
     sheet->AddPin( pin );
     commit.Push( _( "API: Create Sheet Pin" ) );
 
+    // Track for agent change detection (sheet is modified by adding a pin)
+    if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
+    {
+        tracker->TrackItem( sheetId,
+                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            AGENT_CHANGE_TYPE::CHANGED );
+    }
+
     kiapi::schematic::commands::CreateSheetPinResponse response;
     response.mutable_pin_id()->set_value( pin->m_Uuid.AsStdString() );
 
@@ -2536,6 +2588,14 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleDeleteSheetPin(
     commit.Modify( parentSheet, screen );
     parentSheet->RemovePin( targetPin );
     commit.Push( _( "API: Delete Sheet Pin" ) );
+
+    // Track for agent change detection (sheet is modified by removing a pin)
+    if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
+    {
+        tracker->TrackItem( parentSheet->m_Uuid,
+                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            AGENT_CHANGE_TYPE::CHANGED );
+    }
 
     return Empty();
 }
@@ -2759,6 +2819,16 @@ API_HANDLER_SCH::handleSyncSheetPins(
         {
             sheet->RemovePin( pin );
             pinsRemoved++;
+        }
+
+        // Track for agent change detection if pins were added or removed
+        if( ( !newPinNames.empty() || !pinsToRemove.empty() )
+            && m_frame->GetAgentChangeTracker() )
+        {
+            m_frame->GetAgentChangeTracker()->TrackItem(
+                sheet->m_Uuid,
+                m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                AGENT_CHANGE_TYPE::CHANGED );
         }
     }
 

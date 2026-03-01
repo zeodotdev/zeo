@@ -1181,7 +1181,6 @@ private:
     std::unique_ptr<AGENT_CHANGE_TRACKER>  m_agentChangeTracker;  ///< Item-based change tracker
     std::unique_ptr<AGENT_SNAPSHOT_SESSION> m_snapshotSession;    ///< Snapshot-based change session
     bool           m_hasAgentPendingChanges = false;
-    int            m_agentUndoBaseline = 0;           ///< Undo stack depth at snapshot time
     bool           m_inUndoRedo = false;          ///< True during undo/redo (suppresses OnModify auto-reject)
     SCH_SHEET_PATH m_agentChangedSheetPath;       ///< Sheet path where agent changes were made
 

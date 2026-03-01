@@ -3010,16 +3010,21 @@ int SCH_EDITOR_CONTROL::ShowAgent( const TOOL_EVENT& aEvent )
 
     if( frame )
     {
-        // Sidebar sizing: 25% width, right aligned
         if( m_frame )
         {
             wxRect parentRect = m_frame->GetRect();
-            int    width = parentRect.GetWidth() / 4;
+            int    agentWidth = parentRect.GetWidth() / 4;
+            int    parentNewWidth = parentRect.GetWidth() - agentWidth;
             int    height = parentRect.GetHeight();
-            int    x = parentRect.GetX() + parentRect.GetWidth() - width;
-            int    y = parentRect.GetY();
 
-            frame->SetSize( x, y, width, height );
+            // Resize parent window to make room for agent
+            m_frame->SetSize( parentRect.GetX(), parentRect.GetY(), parentNewWidth, height );
+
+            // Position agent window to the right of parent (no overlap)
+            int agentX = parentRect.GetX() + parentNewWidth;
+            int agentY = parentRect.GetY();
+
+            frame->SetSize( agentX, agentY, agentWidth, height );
         }
         frame->Show( true );
         frame->Raise();

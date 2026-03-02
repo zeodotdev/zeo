@@ -337,7 +337,7 @@ void DIALOG_CONFIGURE_PATHS::OnGridCellChanging( wxGridEvent& event )
         {
             wxString msg1 = _( "This path was defined  externally to the running process and\n"
                                "will only be temporarily overwritten." );
-            wxString msg2 = _( "The next time KiCad is launched, any paths that have already\n"
+            wxString msg2 = _( "The next time Zeo is launched, any paths that have already\n"
                                "been defined are honored and any settings defined in the path\n"
                                "configuration dialog are ignored.  If you did not intend for\n"
                                "this behavior, either rename any conflicting entries or remove\n"

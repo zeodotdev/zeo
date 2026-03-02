@@ -1589,7 +1589,7 @@ void SCH_EDIT_FRAME::OnUpdatePCB()
     if( Kiface().IsSingle() )
     {
         DisplayError( this,  _( "Cannot update the PCB because the Schematic Editor is opened in stand-alone "
-                                "mode. In order to create/update PCBs from schematics, launch the main KiCad "
+                                "mode. In order to create/update PCBs from schematics, launch the main Zeo "
                                 "application and create a project." ) );
         return;
     }

@@ -524,7 +524,7 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
         {
             wxLogWarning( "TERMINAL: API server socket path is empty — server may be disabled. "
                           "Enable it in Preferences > Scripting > Enable Scripting Server." );
-            SendAgentResponse( "Error: KiCad IPC API server is not running.\n"
+            SendAgentResponse( "Error: Zeo IPC API server is not running.\n"
                                "Enable it in Preferences > Scripting > 'Enable Scripting Server', then restart Zeo." );
             return;
         }

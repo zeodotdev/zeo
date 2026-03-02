@@ -15,7 +15,7 @@ DIALOG_IMPORT_CHOOSE_PROJECT_BASE::DIALOG_IMPORT_CHOOSE_PROJECT_BASE( wxWindow* 
 
 	bSizerMain = new wxBoxSizer( wxVERTICAL );
 
-	m_titleText = new wxStaticText( this, wxID_ANY, _("This project file contains multiple PCB+Schematic combinations.\nChoose which one should be imported to KiCad."), wxDefaultPosition, wxDefaultSize, 0 );
+	m_titleText = new wxStaticText( this, wxID_ANY, _("This project file contains multiple PCB+Schematic combinations.\nChoose which one should be imported to Zeo."), wxDefaultPosition, wxDefaultSize, 0 );
 	m_titleText->Wrap( -1 );
 	bSizerMain->Add( m_titleText, 0, wxALL, 5 );
 

@@ -270,7 +270,7 @@ wxString ToHtml( const wxString& aMarkdown )
             if( !inTable )
             {
                 if( inList ) { result += "</ul>"; inList = false; }
-                result += "<table>";
+                result += "<div class=\"table-scroll-wrapper\"><table>";
                 inTable = true;
             }
 
@@ -336,7 +336,7 @@ wxString ToHtml( const wxString& aMarkdown )
         }
         else if( inTable )
         {
-            result += "</table><br>";
+            result += "</table></div><br>";
             inTable = false;
         }
 
@@ -440,7 +440,7 @@ wxString ToHtml( const wxString& aMarkdown )
     if( inList )
         result += "</ul>";
     if( inTable )
-        result += "</table>";
+        result += "</table></div>";
     if( inCodeBlock )
     {
         codeBlockContent.Replace( "&", "&amp;" );

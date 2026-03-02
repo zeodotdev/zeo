@@ -106,13 +106,13 @@ else:
         o = orient
         for _ in range(_rot_steps):
             o = _rot90.get(o, o)
-        # Apply mirroring: mirror_x flips left<->right, mirror_y flips up<->down
+        # Apply mirroring: mirror_x flips up<->down, mirror_y flips left<->right
         if getattr(sym, 'mirror_x', False):
-            if o == 0: o = 1
-            elif o == 1: o = 0
-        if getattr(sym, 'mirror_y', False):
             if o == 2: o = 3
             elif o == 3: o = 2
+        if getattr(sym, 'mirror_y', False):
+            if o == 0: o = 1
+            elif o == 1: o = 0
         return o
 
     for pin_id, label_text in pin_labels.items():

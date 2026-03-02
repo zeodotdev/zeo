@@ -311,12 +311,13 @@ def transform_orientation(orient):
     o = orient
     for _ in range(_rot_steps):
         o = _rot90.get(o, o)
+    # mirror_x = vertical flip (up<->down), mirror_y = horizontal flip (left<->right)
     if getattr(ic_sym, 'mirror_x', False):
-        if o == 0: o = 1
-        elif o == 1: o = 0
-    if getattr(ic_sym, 'mirror_y', False):
         if o == 2: o = 3
         elif o == 3: o = 2
+    if getattr(ic_sym, 'mirror_y', False):
+        if o == 0: o = 1
+        elif o == 1: o = 0
     return o
 
 def get_escape_dir(orient):

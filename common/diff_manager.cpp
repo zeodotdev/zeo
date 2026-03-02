@@ -23,6 +23,7 @@
 
 #include <diff_manager.h>
 #include <preview_items/diff_overlay_item.h>
+#include <gal/graphics_abstraction_layer.h>
 #include <view/view.h>
 #include <wx/log.h>
 
@@ -187,7 +188,8 @@ void DIFF_MANAGER::RegisterOverlay( KIGFX::VIEW* aView, AGENT_CHANGE_TRACKER* aT
                         std::vector<KIGFX::PREVIEW::ITEM_HIGHLIGHT> result;
                         result.reserve( diffHighlights.size() );
                         for( const auto& dh : diffHighlights )
-                            result.push_back( { dh.bbox, dh.color, dh.hasBorder } );
+                            result.push_back( { dh.bbox, dh.color, dh.hasBorder,
+                                                dh.itemIds } );
                         return result;
                     } );
             }
@@ -293,6 +295,7 @@ bool DIFF_MANAGER::HandleClick( KIGFX::VIEW* aView, const VECTOR2I& aPoint )
         return false;
     }
 
+    // Check overall buttons first
     auto btn = state.item->HitTestButtons( aPoint, aView );
     wxLogDebug( "DIFF_MANAGER::HandleClick: point=(%d,%d) btn=%d", aPoint.x, aPoint.y, (int)btn );
 
@@ -301,8 +304,37 @@ bool DIFF_MANAGER::HandleClick( KIGFX::VIEW* aView, const VECTOR2I& aPoint )
     case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_APPROVE: OnApprove( aView ); return true;
     case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_REJECT: OnReject( aView ); return true;
     case KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::BTN_VIEW_DIFF: OnViewDiff( aView ); return true;
-    default: return false;
+    default: break;
     }
+
+    // Check per-item hover buttons
+    auto itemBtn = state.item->HitTestItemButtons( aPoint, aView );
+    if( itemBtn != KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::IBTN_NONE )
+    {
+        int hovIdx = state.item->GetHoveredHighlightIndex();
+        const auto& highlights = state.item->GetCachedHighlights();
+
+        if( hovIdx >= 0 && hovIdx < (int) highlights.size()
+            && !highlights[hovIdx].itemIds.empty() )
+        {
+            const std::vector<KIID>& itemIds = highlights[hovIdx].itemIds;
+
+            if( itemBtn == KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::IBTN_APPROVE
+                && state.callbacks.onApproveItems )
+            {
+                state.callbacks.onApproveItems( itemIds );
+                return true;
+            }
+            else if( itemBtn == KIGFX::PREVIEW::DIFF_OVERLAY_ITEM::IBTN_REJECT
+                     && state.callbacks.onRejectItems )
+            {
+                state.callbacks.onRejectItems( itemIds );
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 void DIFF_MANAGER::OnApprove( KIGFX::VIEW* aView )
@@ -375,32 +407,15 @@ void DIFF_MANAGER::RefreshOverlay( KIGFX::VIEW* aView )
     if( !state.active )
         return;
 
-    // If we have a bbox callback, recompute and update the overlay
-    if( state.bboxCallback )
+    // Force the view to redraw the existing overlay item (which will recompute
+    // its bbox and highlights via its callbacks on the next draw).
+    if( state.item && aView )
     {
-        BOX2I newBBox = state.bboxCallback();
+        aView->Update( state.item );
+        aView->MarkDirty();
 
-        // Only update if bbox has changed
-        if( newBBox != state.currentBBox )
-        {
-            state.currentBBox = newBBox;
-
-            // Update the overlay item's bbox
-            if( state.item )
-            {
-                aView->Remove( state.item );
-                delete state.item;
-            }
-
-            state.item = new KIGFX::PREVIEW::DIFF_OVERLAY_ITEM( newBBox );
-            aView->Add( state.item );
-            aView->SetVisible( state.item, true );
-            aView->Update( state.item );
-            aView->MarkDirty();
-
-            if( state.callbacks.onRefresh )
-                state.callbacks.onRefresh();
-        }
+        if( state.callbacks.onRefresh )
+            state.callbacks.onRefresh();
     }
 }
 
@@ -438,6 +453,65 @@ wxString DIFF_MANAGER::GetSheetPath( KIGFX::VIEW* aView ) const
         return wxEmptyString;
 
     return it->second.sheetPath;
+}
+
+
+bool DIFF_MANAGER::HandleMouseMotion( KIGFX::VIEW* aView, const VECTOR2I& aPoint )
+{
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    auto it = m_viewStates.find( aView );
+    if( it == m_viewStates.end() )
+        return false;
+
+    DIFF_VIEW_STATE& state = it->second;
+    if( !state.active || !state.item )
+        return false;
+
+    const auto& highlights = state.item->GetCachedHighlights();
+    int curHover = state.item->GetHoveredHighlightIndex();
+    int newIndex = -1;
+
+    // Compute button dimensions in world coords to extend the hover zone.
+    KIGFX::GAL* gal = aView ? aView->GetGAL() : nullptr;
+    int buttonZoneY = 0;
+    int buttonsWidth = 0;
+
+    if( gal )
+    {
+        double scale = 1.0 / gal->GetWorldScale();
+        // Height: IBTN_HEIGHT in screen px + border offset in world coords
+        buttonZoneY = static_cast<int>( 20.0 * scale + 2540.0 );
+        // Width: two buttons side by side (IBTN_WIDTH * 2)
+        buttonsWidth = static_cast<int>( 130.0 * scale );
+    }
+
+    for( size_t i = 0; i < highlights.size(); ++i )
+    {
+        if( highlights[i].itemIds.empty() )
+            continue;
+
+        // Expand hit-test bbox: upward for button height, leftward if buttons
+        // are wider than the highlight box (buttons are right-aligned).
+        BOX2I hitBox = highlights[i].bbox;
+        hitBox.SetY( hitBox.GetY() - buttonZoneY );
+        hitBox.SetHeight( hitBox.GetHeight() + buttonZoneY );
+
+        int overhang = buttonsWidth - hitBox.GetWidth();
+        if( overhang > 0 )
+        {
+            hitBox.SetX( hitBox.GetX() - overhang );
+            hitBox.SetWidth( hitBox.GetWidth() + overhang );
+        }
+
+        if( hitBox.Contains( aPoint ) )
+        {
+            newIndex = static_cast<int>( i );
+            break;
+        }
+    }
+
+    return state.item->SetHoveredHighlightIndex( newIndex );
 }
 
 

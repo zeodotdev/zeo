@@ -10,6 +10,7 @@
 #include <math/box2.h>
 #include <math/vector2d.h>
 #include <gal/color4d.h>
+#include <kiid.h>
 
 // Forward declarations
 class AGENT_CHANGE_TRACKER;
@@ -36,6 +37,10 @@ struct DIFF_CALLBACKS
     std::function<void()> onApprove;   ///< Called when "Approve" is clicked
     std::function<void()> onReject;    ///< Called when "Reject" is clicked
     std::function<void()> onRefresh;   ///< Called to trigger canvas refresh after view changes
+
+    /// Per-item callbacks (for hover-based approve/reject on individual items)
+    std::function<void( const std::vector<KIID>& )> onApproveItems;
+    std::function<void( const std::vector<KIID>& )> onRejectItems;
 };
 
 /**
@@ -56,7 +61,8 @@ struct DIFF_ITEM_HIGHLIGHT
 {
     BOX2I              bbox;
     KIGFX::COLOR4D     color;
-    bool               hasBorder = true;  ///< false for wires (fill only)
+    bool               hasBorder = true;   ///< false for wires (fill only)
+    std::vector<KIID>  itemIds;            ///< KIIDs covered by this highlight
 };
 
 using ITEM_HIGHLIGHTS_CALLBACK = std::function<std::vector<DIFF_ITEM_HIGHLIGHT>()>;
@@ -153,6 +159,14 @@ public:
      * @return The sheet path string.
      */
     wxString GetSheetPath( KIGFX::VIEW* aView ) const;
+
+    /**
+     * Handle mouse motion for per-item hover detection.
+     * Checks if the cursor is inside any per-item highlight bbox and updates
+     * the overlay's hover state. Call from the selection tool's motion handler.
+     * @return true if the hover state changed (caller should refresh canvas).
+     */
+    bool HandleMouseMotion( KIGFX::VIEW* aView, const VECTOR2I& aPoint );
 
 private:
     DIFF_MANAGER();

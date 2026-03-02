@@ -718,6 +718,9 @@ void API_HANDLER_SCH::deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& a
 
         if( item )
         {
+            // Capture bbox before removal (item still on screen at this point)
+            BOX2I deletedBBox = item->GetBoundingBox();
+
             commit->Remove( item, screen );
             status = ItemDeletionStatus::IDS_OK;
 
@@ -726,7 +729,7 @@ void API_HANDLER_SCH::deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& a
             {
                 tracker->TrackItem( id,
                                     m_frame->GetCurrentSheet().PathHumanReadable( false ),
-                                    AGENT_CHANGE_TYPE::DELETED );
+                                    AGENT_CHANGE_TYPE::DELETED, deletedBBox );
             }
         }
         else
@@ -2250,6 +2253,9 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleDeleteSheet(
         return tl::unexpected( e );
     }
 
+    // Capture bbox before deletion
+    BOX2I deletedBBox = sheet->GetBoundingBox();
+
     // Delete the sheet
     SCH_COMMIT commit( m_frame );
     commit.Remove( sheet, screen );
@@ -2260,7 +2266,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleDeleteSheet(
     {
         tracker->TrackItem( sheetId,
                             m_frame->GetCurrentSheet().PathHumanReadable( false ),
-                            AGENT_CHANGE_TYPE::DELETED );
+                            AGENT_CHANGE_TYPE::DELETED, deletedBBox );
     }
 
     // Refresh the hierarchy cache

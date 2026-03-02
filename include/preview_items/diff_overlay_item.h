@@ -26,6 +26,7 @@
 
 #include <preview_items/simple_overlay_item.h>
 #include <math/box2.h>
+#include <kiid.h>
 #include <functional>
 #include <vector>
 
@@ -43,9 +44,10 @@ namespace PREVIEW
      */
     struct ITEM_HIGHLIGHT
     {
-        BOX2I   bbox;
-        COLOR4D color;
-        bool    hasBorder = true;  ///< false for wires (fill only, no border)
+        BOX2I              bbox;
+        COLOR4D            color;
+        bool               hasBorder = true;  ///< false for wires (fill only, no border)
+        std::vector<KIID>  itemIds;           ///< KIIDs covered by this highlight (for per-item actions)
     };
 
     // Callback to get per-item highlight data for live diff rendering
@@ -118,6 +120,34 @@ namespace PREVIEW
          */
         const BOX2I& GetBBox() const { return m_bbox; }
 
+        // --- Per-item hover buttons ---
+
+        enum ITEM_BUTTON_ID
+        {
+            IBTN_NONE = 0,
+            IBTN_APPROVE,
+            IBTN_REJECT
+        };
+
+        /**
+         * Set the index of the currently hovered highlight (for per-item buttons).
+         * Pass -1 to clear hover.
+         * @return true if the hover state changed (caller should refresh canvas).
+         */
+        bool SetHoveredHighlightIndex( int aIndex );
+        int  GetHoveredHighlightIndex() const { return m_hoveredHighlightIndex; }
+
+        /**
+         * Hit test the per-item approve/reject buttons.
+         * @return IBTN_APPROVE, IBTN_REJECT, or IBTN_NONE.
+         */
+        ITEM_BUTTON_ID HitTestItemButtons( const VECTOR2I& aPoint, KIGFX::VIEW* aView ) const;
+
+        /**
+         * Get the cached per-item highlights (populated during draw).
+         */
+        const std::vector<ITEM_HIGHLIGHT>& GetCachedHighlights() const { return m_cachedHighlights; }
+
     private:
         void drawPreviewShape( KIGFX::VIEW* aView ) const override;
 
@@ -126,14 +156,28 @@ namespace PREVIEW
         void  drawButton( KIGFX::GAL* aGal, int aIndex, const wxString& aLabel, const COLOR4D& aColor,
                           double aScale ) const;
 
+        // Per-item button helpers
+        BOX2I getItemButtonRect( const BOX2I& aItemBBox, int aButtonIndex, double aScale ) const;
+        void  drawItemButton( KIGFX::GAL* aGal, const BOX2I& aItemBBox, int aIndex,
+                              const wxString& aLabel, const COLOR4D& aColor, double aScale ) const;
+
         mutable BOX2I m_bbox;  // mutable so we can update it in const methods
         bool  m_showButtons  = false;  ///< false by default — approve/reject lives in agent window
         BBOX_CALLBACK m_bboxCallback;  // Optional callback for dynamic bbox
         ITEM_HIGHLIGHTS_CALLBACK m_itemHighlightsCallback;  // Per-item highlight data
 
+        // Per-item hover state
+        mutable int m_hoveredHighlightIndex = -1;
+        mutable std::vector<ITEM_HIGHLIGHT> m_cachedHighlights;
+
         static constexpr double BTN_WIDTH = 60.0;
         static constexpr double BTN_HEIGHT = 20.0;
         static constexpr double BTN_MARGIN = 5.0;
+
+        // Per-item button sizes (pixels, converted to world coords at draw time)
+        static constexpr double IBTN_WIDTH  = 65.0;
+        static constexpr double IBTN_HEIGHT = 18.0;
+        static constexpr double IBTN_MARGIN = 4.0;
     };
 
 } // namespace PREVIEW

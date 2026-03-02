@@ -1115,6 +1115,10 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
                     }
                 }
             }
+
+            // Update per-item diff hover state
+            if( DIFF_MANAGER::GetInstance().HandleMouseMotion( getView(), evt->Position() ) )
+                getView()->MarkDirty();
         }
         else
         {

@@ -1272,6 +1272,12 @@ void SCH_EDIT_FRAME::SetCurrentSheet( const SCH_SHEET_PATH& aSheet )
                     if( GetCanvas() )
                         GetCanvas()->Refresh();
                 };
+                callbacks.onApproveItems = [this]( const std::vector<KIID>& aIds ) {
+                    ApproveAgentItems( aIds );
+                };
+                callbacks.onRejectItems = [this]( const std::vector<KIID>& aIds ) {
+                    RejectAgentItems( aIds );
+                };
 
                 // Create bbox callback for dynamic tracking
                 BBOX_COMPUTE_CALLBACK bboxCallback = [this]() -> BOX2I {
@@ -1544,6 +1550,10 @@ void SCH_EDIT_FRAME::OnModify()
 
         for( const KIID& kiid : trackedItems )
         {
+            // DELETED items are expected to not be on screen — don't untrack them
+            if( m_agentChangeTracker->GetChangeType( kiid ) == AGENT_CHANGE_TYPE::DELETED )
+                continue;
+
             bool found = false;
 
             for( SCH_SCREEN* screen = screens.GetFirst(); screen; screen = screens.GetNext() )
@@ -2653,6 +2663,12 @@ void SCH_EDIT_FRAME::DisplayCurrentSheet()
                 if( GetCanvas() )
                     GetCanvas()->Refresh();
             };
+            callbacks.onApproveItems = [this]( const std::vector<KIID>& aIds ) {
+                ApproveAgentItems( aIds );
+            };
+            callbacks.onRejectItems = [this]( const std::vector<KIID>& aIds ) {
+                RejectAgentItems( aIds );
+            };
 
             // Create bbox callback for dynamic tracking
             BBOX_COMPUTE_CALLBACK bboxCallback = [this]() -> BOX2I {
@@ -3589,6 +3605,12 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
             if( GetCanvas() )
                 GetCanvas()->Refresh();
         };
+        callbacks.onApproveItems = [this]( const std::vector<KIID>& aIds ) {
+            ApproveAgentItems( aIds );
+        };
+        callbacks.onRejectItems = [this]( const std::vector<KIID>& aIds ) {
+            RejectAgentItems( aIds );
+        };
 
         BBOX_COMPUTE_CALLBACK bboxCallback = [this]() -> BOX2I {
             return ComputeTrackedItemsBBox();
@@ -3663,6 +3685,167 @@ void SCH_EDIT_FRAME::ApproveAgentChangesOnSheet( const wxString& aSheetPath )
         m_agentChangedSheetPath.clear();
         if( m_snapshotSession )
             m_snapshotSession->EndSession();
+    }
+}
+
+
+void SCH_EDIT_FRAME::ApproveAgentItems( const std::vector<KIID>& aItemIds )
+{
+    if( !m_hasAgentPendingChanges || !m_agentChangeTracker || aItemIds.empty() )
+        return;
+
+    wxLogInfo( "SCH: Approving %zu individual agent items", aItemIds.size() );
+
+    for( const KIID& kiid : aItemIds )
+        m_agentChangeTracker->UntrackItem( kiid );
+
+    // If no more tracked items, clear everything
+    if( !m_agentChangeTracker->HasChanges() )
+    {
+        ClearAgentPendingChanges();
+        // Notify agent that diff is cleared
+        nlohmann::json j;
+        j["editor"] = "sch";
+        j["sheet_path"] = GetCurrentSheet().PathHumanReadable( false ).ToStdString();
+        std::string payload = j.dump();
+        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+    }
+    else
+    {
+        // Refresh the overlay to reflect remaining changes
+        DIFF_MANAGER::GetInstance().RefreshOverlay( GetCanvas()->GetView() );
+        GetCanvas()->ForceRefresh();
+    }
+}
+
+
+void SCH_EDIT_FRAME::RejectAgentItems( const std::vector<KIID>& aItemIds )
+{
+    if( !m_hasAgentPendingChanges || !m_agentChangeTracker || !m_snapshotSession
+        || aItemIds.empty() )
+    {
+        return;
+    }
+
+    wxLogInfo( "SCH: Rejecting %zu individual agent items", aItemIds.size() );
+
+    // Find the screen and snapshot for the current sheet
+    SCH_SCREEN* targetScreen = GetCurrentSheet().LastScreen();
+    if( !targetScreen )
+        return;
+
+    wxString sheetPath = GetCurrentSheet().PathHumanReadable( false );
+    wxString origPath = targetScreen->GetFileName();
+    wxString snapshotPath = m_snapshotSession->GetSnapshotPathForSheet( origPath );
+
+    if( snapshotPath.IsEmpty() || !wxFileName::FileExists( snapshotPath ) )
+    {
+        wxLogWarning( "SCH: RejectItems: no snapshot for '%s'", origPath );
+        return;
+    }
+
+    // Load snapshot
+    IO_RELEASER<SCH_IO> pi( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD ) );
+    SCHEMATIC tempSchematic( &Prj() );
+    tempSchematic.CreateDefaultScreens();
+
+    SCH_SHEET* loadedSheet = pi->LoadSchematicFile( snapshotPath, &tempSchematic );
+    if( !loadedSheet )
+        return;
+
+    SCH_SCREEN* snapshotScreen = loadedSheet->GetScreen();
+    if( !snapshotScreen )
+        return;
+
+    // Build KIID→item maps
+    std::map<KIID, SCH_ITEM*> currentItems;
+    for( SCH_ITEM* item : targetScreen->Items() )
+        currentItems[item->m_Uuid] = item;
+
+    std::map<KIID, SCH_ITEM*> snapshotItems;
+    for( SCH_ITEM* item : snapshotScreen->Items() )
+        snapshotItems[item->m_Uuid] = item;
+
+    SCH_COMMIT commit( this );
+    int rejectedCount = 0;
+
+    for( const KIID& kiid : aItemIds )
+    {
+        if( !m_agentChangeTracker->IsTracked( kiid ) )
+            continue;
+
+        AGENT_CHANGE_TYPE changeType = m_agentChangeTracker->GetChangeType( kiid );
+
+        switch( changeType )
+        {
+        case AGENT_CHANGE_TYPE::ADDED:
+        {
+            auto it = currentItems.find( kiid );
+            if( it != currentItems.end() )
+            {
+                commit.Remove( it->second, targetScreen );
+                rejectedCount++;
+            }
+            break;
+        }
+        case AGENT_CHANGE_TYPE::CHANGED:
+        {
+            auto curIt = currentItems.find( kiid );
+            auto snapIt = snapshotItems.find( kiid );
+            if( curIt != currentItems.end() && snapIt != snapshotItems.end() )
+            {
+                SCH_ITEM* currentItem = curIt->second;
+                SCH_ITEM* snapshotItem = snapIt->second;
+
+                commit.Modify( currentItem, targetScreen );
+                currentItem->SetConnectivityDirty();
+                RemoveFromScreen( currentItem, targetScreen );
+                currentItem->SwapItemData( snapshotItem );
+                AddToScreen( currentItem, targetScreen );
+                rejectedCount++;
+            }
+            break;
+        }
+        case AGENT_CHANGE_TYPE::DELETED:
+        {
+            auto snapIt = snapshotItems.find( kiid );
+            if( snapIt != snapshotItems.end() )
+            {
+                SCH_ITEM* restored = static_cast<SCH_ITEM*>( snapIt->second->Clone() );
+                restored->SetParent( targetScreen );
+                commit.Add( restored, targetScreen );
+                rejectedCount++;
+            }
+            break;
+        }
+        }
+
+        m_agentChangeTracker->UntrackItem( kiid );
+    }
+
+    if( rejectedCount > 0 )
+    {
+        commit.Push( _( "Reject Agent Items" ) );
+
+        // Refresh connectivity
+        RecalculateConnections( nullptr, GLOBAL_CLEANUP );
+    }
+
+    // If no more tracked items, clear everything
+    if( !m_agentChangeTracker->HasChanges() )
+    {
+        ClearAgentPendingChanges();
+        nlohmann::json j;
+        j["editor"] = "sch";
+        j["sheet_path"] = sheetPath.ToStdString();
+        std::string payload = j.dump();
+        Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
+    }
+    else
+    {
+        // Refresh the overlay to reflect remaining changes
+        DIFF_MANAGER::GetInstance().RefreshOverlay( GetCanvas()->GetView() );
+        GetCanvas()->ForceRefresh();
     }
 }
 
@@ -4054,32 +4237,47 @@ BOX2I SCH_EDIT_FRAME::ComputeTrackedItemsBBox() const
     bool first = true;
     for( const KIID& kiid : trackedItems )
     {
-        // Find the item by iterating through screen items
-        for( SCH_ITEM* item : screen->Items() )
-        {
-            if( item->m_Uuid == kiid )
-            {
-                // GetBoundingBox() on SCH_SYMBOL includes reference/value fields which
-                // can be placed far from the body — use body+pins only to keep the
-                // diff overlay box tight around the actual component.
-                BOX2I itemBBox;
-                if( item->Type() == SCH_SYMBOL_T )
-                    itemBBox = static_cast<SCH_SYMBOL*>( item )->GetBodyAndPinsBoundingBox();
-                else
-                    itemBBox = item->GetBoundingBox();
-                itemBBox.Normalize();  // Ensure positive width/height
+        AGENT_CHANGE_TYPE changeType = m_agentChangeTracker->GetChangeType( kiid );
 
-                if( first )
+        BOX2I itemBBox;
+
+        if( changeType == AGENT_CHANGE_TYPE::DELETED )
+        {
+            // Deleted items are no longer on screen — use cached bbox
+            itemBBox = m_agentChangeTracker->GetDeletedBBox( kiid );
+            if( itemBBox.GetWidth() <= 0 || itemBBox.GetHeight() <= 0 )
+                continue;
+        }
+        else
+        {
+            // Find the item by iterating through screen items
+            bool found = false;
+            for( SCH_ITEM* item : screen->Items() )
+            {
+                if( item->m_Uuid == kiid )
                 {
-                    bbox = itemBBox;
-                    first = false;
+                    if( item->Type() == SCH_SYMBOL_T )
+                        itemBBox = static_cast<SCH_SYMBOL*>( item )->GetBodyAndPinsBoundingBox();
+                    else
+                        itemBBox = item->GetBoundingBox();
+                    found = true;
+                    break;
                 }
-                else
-                {
-                    bbox.Merge( itemBBox );
-                }
-                break;
             }
+            if( !found )
+                continue;
+        }
+
+        itemBBox.Normalize();
+
+        if( first )
+        {
+            bbox = itemBBox;
+            first = false;
+        }
+        else
+        {
+            bbox.Merge( itemBBox );
         }
     }
 
@@ -4111,15 +4309,25 @@ std::vector<DIFF_ITEM_HIGHLIGHT> SCH_EDIT_FRAME::ComputeItemHighlights() const
     {
         AGENT_CHANGE_TYPE changeType = m_agentChangeTracker->GetChangeType( kiid );
 
-        if( changeType == AGENT_CHANGE_TYPE::DELETED )
-            continue;
-
         KIGFX::COLOR4D color;
         switch( changeType )
         {
         case AGENT_CHANGE_TYPE::ADDED:   color = SCH_DIFF::COLOR_ADDED;    break;
         case AGENT_CHANGE_TYPE::CHANGED: color = SCH_DIFF::COLOR_MODIFIED; break;
+        case AGENT_CHANGE_TYPE::DELETED: color = SCH_DIFF::COLOR_DELETED;  break;
         default:                         color = SCH_DIFF::COLOR_ADDED;    break;
+        }
+
+        if( changeType == AGENT_CHANGE_TYPE::DELETED )
+        {
+            // Deleted items no longer exist on screen — use the cached bbox
+            BOX2I deletedBBox = m_agentChangeTracker->GetDeletedBBox( kiid );
+            if( deletedBBox.GetWidth() > 0 && deletedBBox.GetHeight() > 0 )
+            {
+                deletedBBox.Inflate( SCH_DIFF::SYMBOL_MARGIN );
+                rawBoxes.push_back( { deletedBBox, color, true, { kiid } } );
+            }
+            continue;
         }
 
         for( SCH_ITEM* item : screen->Items() )
@@ -4137,7 +4345,7 @@ std::vector<DIFF_ITEM_HIGHLIGHT> SCH_EDIT_FRAME::ComputeItemHighlights() const
 
     highlights.reserve( merged.size() );
     for( const auto& db : merged )
-        highlights.push_back( { db.bbox, db.color, db.hasBorder } );
+        highlights.push_back( { db.bbox, db.color, db.hasBorder, db.itemIds } );
 
     return highlights;
 }

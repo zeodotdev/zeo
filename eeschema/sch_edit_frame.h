@@ -973,6 +973,16 @@ public:
      */
     void RejectAgentChangesOnSheet( const wxString& aSheetPath );
 
+    /**
+     * Approve specific agent-changed items (untrack them, keeping their changes).
+     */
+    void ApproveAgentItems( const std::vector<KIID>& aItemIds );
+
+    /**
+     * Reject specific agent-changed items (revert them using snapshot + SCH_COMMIT).
+     */
+    void RejectAgentItems( const std::vector<KIID>& aItemIds );
+
     bool HasAgentPendingChanges() const;
 
     /**

@@ -78,7 +78,7 @@ elif _is_sheet:
             elif _side == 4:
                 h_align, v_align = HA_LEFT, VA_TOP
                 direction = 'down'
-                rotation = 90  # Rotate label for vertical sheet pin
+                rotation = 270  # Rotate label to read downward (away from sheet)
             else:
                 h_align, v_align = HA_LEFT, VA_BOTTOM
                 direction = 'right'
@@ -149,7 +149,7 @@ else:
                     h_align, v_align = HA_LEFT, VA_TOP
                     direction = 'down'
                     out_dx, out_dy = 0, 1
-                    rotation = 90  # Rotate label for vertical pin
+                    rotation = 270  # Rotate label to read downward (away from component)
                 elif orient == 3:  # escape up (vertical pin)
                     h_align, v_align = HA_LEFT, VA_BOTTOM
                     direction = 'up'

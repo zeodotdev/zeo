@@ -77,6 +77,87 @@
 #include <set>
 // #include <Python.h> // Included by python_scripting.h if KICAD_SCRIPTING is defined
 
+#include <map>
+
+/**
+ * Build the layer sequence for PCB screenshot export based on view configuration.
+ * @param aViewConfig JSON object with optional "layers" array and "view" string
+ * @param aView The view perspective: "top", "bottom", or empty for all layers
+ * @return LSEQ containing the layers to plot
+ */
+static LSEQ BuildScreenshotLayers( const nlohmann::json& aViewConfig, const std::string& aView )
+{
+    // Layer name to ID mapping (KiCad canonical layer names)
+    static const std::map<std::string, PCB_LAYER_ID> layerMap = {
+        { "F.Cu", F_Cu }, { "B.Cu", B_Cu },
+        { "In1.Cu", In1_Cu }, { "In2.Cu", In2_Cu }, { "In3.Cu", In3_Cu }, { "In4.Cu", In4_Cu },
+        { "In5.Cu", In5_Cu }, { "In6.Cu", In6_Cu }, { "In7.Cu", In7_Cu }, { "In8.Cu", In8_Cu },
+        { "In9.Cu", In9_Cu }, { "In10.Cu", In10_Cu }, { "In11.Cu", In11_Cu }, { "In12.Cu", In12_Cu },
+        { "In13.Cu", In13_Cu }, { "In14.Cu", In14_Cu }, { "In15.Cu", In15_Cu }, { "In16.Cu", In16_Cu },
+        { "In17.Cu", In17_Cu }, { "In18.Cu", In18_Cu }, { "In19.Cu", In19_Cu }, { "In20.Cu", In20_Cu },
+        { "In21.Cu", In21_Cu }, { "In22.Cu", In22_Cu }, { "In23.Cu", In23_Cu }, { "In24.Cu", In24_Cu },
+        { "In25.Cu", In25_Cu }, { "In26.Cu", In26_Cu }, { "In27.Cu", In27_Cu }, { "In28.Cu", In28_Cu },
+        { "In29.Cu", In29_Cu }, { "In30.Cu", In30_Cu },
+        { "F.SilkS", F_SilkS }, { "B.SilkS", B_SilkS },
+        { "F.Mask", F_Mask }, { "B.Mask", B_Mask },
+        { "F.Paste", F_Paste }, { "B.Paste", B_Paste },
+        { "F.Adhes", F_Adhes }, { "B.Adhes", B_Adhes },
+        { "F.CrtYd", F_CrtYd }, { "B.CrtYd", B_CrtYd },
+        { "F.Fab", F_Fab }, { "B.Fab", B_Fab },
+        { "Edge.Cuts", Edge_Cuts },
+        { "Dwgs.User", Dwgs_User }, { "Cmts.User", Cmts_User },
+        { "Eco1.User", Eco1_User }, { "Eco2.User", Eco2_User },
+        { "Margin", Margin }
+    };
+
+    LSEQ layers;
+
+    // Check for explicit layer list
+    if( aViewConfig.contains( "layers" ) && aViewConfig["layers"].is_array() )
+    {
+        for( const auto& name : aViewConfig["layers"] )
+        {
+            if( name.is_string() )
+            {
+                auto it = layerMap.find( name.get<std::string>() );
+                if( it != layerMap.end() )
+                    layers.push_back( it->second );
+            }
+        }
+
+        // Always include Edge.Cuts if not already present
+        if( std::find( layers.begin(), layers.end(), Edge_Cuts ) == layers.end() )
+            layers.push_back( Edge_Cuts );
+
+        return layers;
+    }
+
+    // Default layers based on view perspective
+    if( aView == "top" )
+    {
+        layers.push_back( F_Cu );
+        layers.push_back( F_SilkS );
+        layers.push_back( Edge_Cuts );
+    }
+    else if( aView == "bottom" )
+    {
+        layers.push_back( B_Cu );
+        layers.push_back( B_SilkS );
+        layers.push_back( Edge_Cuts );
+    }
+    else
+    {
+        // Default: show all standard layers for full board view
+        layers.push_back( F_Cu );
+        layers.push_back( B_Cu );
+        layers.push_back( F_SilkS );
+        layers.push_back( B_SilkS );
+        layers.push_back( Edge_Cuts );
+    }
+
+    return layers;
+}
+
 
 /* Execute a remote command sent via a socket on port KICAD_PCB_PORT_SERVICE_NUMBER
  *
@@ -767,29 +848,63 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                 wxString    svgPath = wxString::FromUTF8( outputDir )
                                       + wxFileName::GetPathSeparator() + wxT( "pcb.svg" );
 
+                // Parse view configuration
+                nlohmann::json viewConfig;
+                if( j_in.contains( "view_config" ) )
+                    viewConfig = j_in["view_config"];
+
+                std::string view = viewConfig.value( "view", "" );
+                bool        mirror = ( view == "bottom" );
+
                 PCB_PLOT_PARAMS plotOpts;
                 plotOpts.SetFormat( PLOT_FORMAT::SVG );
                 plotOpts.SetPlotFrameRef( false );
                 plotOpts.SetSvgFitPageToBoard( true );
                 plotOpts.SetBlackAndWhite( false );
-                plotOpts.SetMirror( false );
+                plotOpts.SetMirror( mirror );
                 plotOpts.SetNegative( false );
                 plotOpts.SetScale( 1.0 );
                 plotOpts.SetAutoScale( false );
                 plotOpts.SetDrillMarksType( DRILL_MARKS::FULL_DRILL_SHAPE );
-                plotOpts.SetPlotReference( true );
-                plotOpts.SetPlotValue( true );
+
+                // Apply element visibility options
+                // Use explicit type checking since JSON values could be strings or bools
+                bool showRefs = true;
+                bool showVals = true;
+
+                if( viewConfig.contains( "show_references" ) )
+                {
+                    auto& val = viewConfig["show_references"];
+                    if( val.is_boolean() )
+                        showRefs = val.get<bool>();
+                    else if( val.is_string() )
+                        showRefs = ( val.get<std::string>() != "false" );
+                }
+
+                if( viewConfig.contains( "show_values" ) )
+                {
+                    auto& val = viewConfig["show_values"];
+                    if( val.is_boolean() )
+                        showVals = val.get<bool>();
+                    else if( val.is_string() )
+                        showVals = ( val.get<std::string>() != "false" );
+                }
+
+                plotOpts.SetPlotReference( showRefs );
+                plotOpts.SetPlotValue( showVals );
+
+                wxLogInfo( "PCB Screenshot: viewConfig=%s, show_references=%d, show_values=%d",
+                           viewConfig.dump().c_str(), showRefs, showVals );
+
+                // Note: show_pads, show_vias, show_zones would require board visibility
+                // manipulation for full support - not yet implemented
 
                 COLOR_SETTINGS* colors =
                         ::GetColorSettings( wxT( "_builtin_default" ) );
                 plotOpts.SetColorSettings( colors );
 
-                LSEQ layers;
-                layers.push_back( F_Cu );
-                layers.push_back( B_Cu );
-                layers.push_back( F_SilkS );
-                layers.push_back( B_SilkS );
-                layers.push_back( Edge_Cuts );
+                // Build layer sequence from view configuration
+                LSEQ layers = BuildScreenshotLayers( viewConfig, view );
 
                 PCB_PLOTTER plotter( GetBoard(), &NULL_REPORTER::GetInstance(), plotOpts );
                 bool        success =

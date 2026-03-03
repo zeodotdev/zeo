@@ -181,6 +181,25 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
         wxFileName::Rmdir( tempDir );
     } );
 
+    // Build view configuration for PCB screenshots
+    nlohmann::json viewConfig;
+    if( aInput.contains( "view" ) )
+        viewConfig["view"] = aInput["view"];
+    if( aInput.contains( "layers" ) )
+        viewConfig["layers"] = aInput["layers"];
+    if( aInput.contains( "show_zones" ) )
+        viewConfig["show_zones"] = aInput["show_zones"];
+    if( aInput.contains( "show_vias" ) )
+        viewConfig["show_vias"] = aInput["show_vias"];
+    if( aInput.contains( "show_pads" ) )
+        viewConfig["show_pads"] = aInput["show_pads"];
+    if( aInput.contains( "show_values" ) )
+        viewConfig["show_values"] = aInput["show_values"];
+    if( aInput.contains( "show_references" ) )
+        viewConfig["show_references"] = aInput["show_references"];
+
+    wxLogInfo( "SCREENSHOT: viewConfig = %s", viewConfig.dump().c_str() );
+
     // Export to SVG — prefer in-memory IPC export when editor is open,
     // fall back to kicad-cli disk-based export otherwise.
     // We always attempt IPC when the send function is available; SendRequest will
@@ -192,7 +211,7 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
         // When useCurrentView is true, first try schematic, then PCB.
         // Pass empty filePath for current view so IPC handler doesn't navigate.
         svgPath = ExportViaIpc( isSchematic, tempDirStr,
-                                useCurrentView ? "" : filePath );
+                                useCurrentView ? "" : filePath, viewConfig );
 
         // If screenshotting current view and schematic failed, try PCB
         if( svgPath.empty() && useCurrentView && isSchematic )
@@ -200,7 +219,7 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
             wxLogInfo( "SCREENSHOT: Schematic IPC failed for current view, trying PCB" );
             isSchematic = false;
             isPcb = true;
-            svgPath = ExportViaIpc( false, tempDirStr, "" );
+            svgPath = ExportViaIpc( false, tempDirStr, "", viewConfig );
         }
 
         if( svgPath.empty() )
@@ -265,7 +284,8 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
 
 
 std::string SCREENSHOT_HANDLER::ExportViaIpc( bool aIsSchematic, const std::string& aTempDir,
-                                              const std::string& aFilePath )
+                                              const std::string& aFilePath,
+                                              const nlohmann::json& aViewConfig )
 {
     // Create svg_out subdirectory (schematic plotter writes into this directory)
     std::string outputDir = aTempDir + "/svg_out";
@@ -283,6 +303,10 @@ std::string SCREENSHOT_HANDLER::ExportViaIpc( bool aIsSchematic, const std::stri
         wxFileName fn( wxString::FromUTF8( aFilePath ) );
         cmd["sheet_file"] = fn.GetFullName().ToStdString();
     }
+
+    // Pass view configuration for PCB screenshots
+    if( !aViewConfig.empty() )
+        cmd["view_config"] = aViewConfig;
 
     wxLogInfo( "SCREENSHOT: Requesting in-memory export via IPC (frame=%d, file=%s)",
                targetFrame, aFilePath.empty() ? "current" : aFilePath.c_str() );

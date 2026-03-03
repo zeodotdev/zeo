@@ -299,6 +299,39 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
                 { "description", "Absolute path to a .kicad_sch or .kicad_pcb file. "
                                  "If omitted, screenshots the currently open/visible sheet or PCB. "
                                  "Only needed to screenshot a specific sub-sheet that isn't currently visible." }
+            }},
+            { "view", {
+                { "type", "string" },
+                { "enum", json::array({ "top", "bottom" }) },
+                { "description", "PCB view perspective. 'top' shows front layers, "
+                                 "'bottom' shows back layers (mirrored). If omitted, shows all layers overlaid." }
+            }},
+            { "layers", {
+                { "type", "array" },
+                { "items", { { "type", "string" } } },
+                { "description", "Layers to include: 'F.Cu', 'B.Cu', 'In1.Cu'-'In30.Cu', "
+                                 "'F.SilkS', 'B.SilkS', 'F.Mask', 'B.Mask', 'Edge.Cuts', etc. "
+                                 "If omitted, uses default layers for the view." }
+            }},
+            { "show_zones", {
+                { "type", "boolean" },
+                { "description", "Show filled copper zones. Default: true" }
+            }},
+            { "show_vias", {
+                { "type", "boolean" },
+                { "description", "Show vias. Default: true" }
+            }},
+            { "show_pads", {
+                { "type", "boolean" },
+                { "description", "Show component pads. Default: true" }
+            }},
+            { "show_values", {
+                { "type", "boolean" },
+                { "description", "Show component value text. Default: true" }
+            }},
+            { "show_references", {
+                { "type", "boolean" },
+                { "description", "Show reference designators (R1, C1). Default: true" }
             }}
         }},
         { "required", json::array() }

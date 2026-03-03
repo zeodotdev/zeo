@@ -1922,6 +1922,148 @@ void CHAT_CONTROLLER::SanitizeMessages( nlohmann::json& aMessages )
 }
 
 
+/**
+ * Manage image content in API context to prevent 413 errors.
+ * - Replaces "seen" images (before last assistant response) with text placeholders
+ * - Limits recent images to aMaxRecentImages, replacing excess with placeholders
+ *
+ * @param aMessages The API context JSON array to modify in-place
+ * @param aMaxRecentImages Maximum number of recent unseen images to keep (default 3)
+ */
+static void ManageImageContext( nlohmann::json& aMessages, int aMaxRecentImages = 3 )
+{
+    if( !aMessages.is_array() || aMessages.empty() )
+        return;
+
+    // Step 1: Find last assistant message index (images before this are "seen")
+    int lastAssistantIdx = -1;
+    for( int i = static_cast<int>( aMessages.size() ) - 1; i >= 0; --i )
+    {
+        if( aMessages[i].value( "role", "" ) == "assistant" )
+        {
+            lastAssistantIdx = i;
+            break;
+        }
+    }
+
+    // Step 2: Collect all image locations
+    struct ImageLoc {
+        size_t msgIdx;
+        size_t contentIdx;
+        size_t innerIdx;      // SIZE_MAX if not inside tool_result
+        bool   inToolResult;
+        bool   seen;
+        std::string description;
+    };
+    std::vector<ImageLoc> imageLocs;
+
+    for( size_t i = 0; i < aMessages.size(); ++i )
+    {
+        const auto& msg = aMessages[i];
+        if( msg.value( "role", "" ) != "user" )
+            continue;
+
+        if( !msg.contains( "content" ) || !msg["content"].is_array() )
+            continue;
+
+        const auto& content = msg["content"];
+        for( size_t j = 0; j < content.size(); ++j )
+        {
+            const auto& block = content[j];
+            std::string blockType = block.value( "type", "" );
+
+            // Direct image in user message
+            if( blockType == "image" )
+            {
+                imageLocs.push_back( { i, j, SIZE_MAX, false,
+                                       static_cast<int>( i ) < lastAssistantIdx,
+                                       "user-attached image" } );
+            }
+            // Image inside tool_result
+            else if( blockType == "tool_result" && block.contains( "content" )
+                     && block["content"].is_array() )
+            {
+                const auto& inner = block["content"];
+                std::string desc = "screenshot";
+
+                // Try to get description from accompanying text block
+                for( const auto& ib : inner )
+                {
+                    if( ib.value( "type", "" ) == "text" )
+                    {
+                        desc = ib.value( "text", "screenshot" );
+                        break;
+                    }
+                }
+
+                for( size_t k = 0; k < inner.size(); ++k )
+                {
+                    if( inner[k].value( "type", "" ) == "image" )
+                    {
+                        imageLocs.push_back( { i, j, k, true,
+                                               static_cast<int>( i ) < lastAssistantIdx,
+                                               desc } );
+                    }
+                }
+            }
+        }
+    }
+
+    if( imageLocs.empty() )
+        return;
+
+    // Step 3: Determine which images to replace
+    // Process from newest to oldest; keep up to aMaxRecentImages unseen images
+    int recentCount = 0;
+    std::vector<bool> shouldReplace( imageLocs.size(), false );
+
+    for( int idx = static_cast<int>( imageLocs.size() ) - 1; idx >= 0; --idx )
+    {
+        const auto& loc = imageLocs[idx];
+        if( loc.seen )
+        {
+            shouldReplace[idx] = true;  // Already analyzed by LLM
+        }
+        else
+        {
+            recentCount++;
+            if( recentCount > aMaxRecentImages )
+                shouldReplace[idx] = true;  // Exceeds limit
+        }
+    }
+
+    // Step 4: Replace images with text placeholders
+    // Process in reverse order to maintain valid indices
+    for( int idx = static_cast<int>( imageLocs.size() ) - 1; idx >= 0; --idx )
+    {
+        if( !shouldReplace[idx] )
+            continue;
+
+        const auto& loc = imageLocs[idx];
+        std::string placeholder = "[Image: " + loc.description;
+        placeholder += loc.seen ? " - already analyzed]" : " - removed to reduce context size]";
+
+        nlohmann::json textBlock = {
+            { "type", "text" },
+            { "text", placeholder }
+        };
+
+        if( loc.inToolResult )
+        {
+            aMessages[loc.msgIdx]["content"][loc.contentIdx]["content"][loc.innerIdx] = textBlock;
+        }
+        else
+        {
+            aMessages[loc.msgIdx]["content"][loc.contentIdx] = textBlock;
+        }
+    }
+
+    int replaced = std::count( shouldReplace.begin(), shouldReplace.end(), true );
+    wxLogInfo( "ManageImageContext: %zu images found, %d replaced (max recent: %d)",
+               imageLocs.size(), replaced, aMaxRecentImages );
+}
+
+
 nlohmann::json CHAT_CONTROLLER::BuildApiContext() const
 {
     // Find the last compaction marker in m_chatHistory.
@@ -2075,6 +2217,9 @@ void CHAT_CONTROLLER::StartLLMRequest()
 
     // Sanitize context before sending to ensure valid message format
     SanitizeMessages( apiContext );
+
+    // Manage image context to prevent 413 errors from accumulated screenshots
+    ManageImageContext( apiContext, 3 );  // Keep max 3 recent unseen images
 
     // Sync editor state so GetFilteredTools() has current open/closed state
     if( m_syncEditorStateFn )

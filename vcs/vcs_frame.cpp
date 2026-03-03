@@ -94,8 +94,8 @@ VCS_FRAME::VCS_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Apply light theme if system is in light mode
     if( !IsSystemDarkMode() )
     {
-        htmlContent.Replace( wxS( "<html class=\"h-full\">" ),
-                             wxS( "<html class=\"h-full light\">" ) );
+        htmlContent.Replace( wxS( "<html lang=\"en\">" ),
+                             wxS( "<html lang=\"en\" class=\"light\">" ) );
     }
 #endif
 

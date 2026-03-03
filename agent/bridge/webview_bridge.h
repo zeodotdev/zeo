@@ -46,6 +46,7 @@ public:
     void PushToolResultImageBegin( int aIndex, const wxString& aPrefix );
     void PushToolResultImageChunk( int aIndex, const wxString& aChunk );
     void PushToolResultImageEnd( int aIndex );
+    void PushToolResultActionButton( int aIndex, const wxString& aText, const wxString& aHref );
     void PushCancelRunningTools();
     void PushFullChatContent( const wxString& aHtml );
     void PushFinalizeFirstQueuedMessage();

@@ -1659,6 +1659,8 @@ void AGENT_FRAME::OnBridgeLinkClick( const nlohmann::json& aMsg )
         OnApproveOpenEditor();
     else if( href == "agent:reject_open" )
         OnRejectOpenEditor();
+    else if( href == "agent:open_simulator" )
+        OnOpenSimulator();
     else if( href.StartsWith( "http://" ) || href.StartsWith( "https://" ) )
         wxLaunchDefaultBrowser( href );
 }
@@ -2503,6 +2505,7 @@ void AGENT_FRAME::RenderChatHistory()
     m_toolResultCounter = 0;
     m_queuedBubbleHtml.Clear();
     m_toolDescByUseId.clear();
+    m_toolNameByUseId.clear();
 
     // Build HTML from chat history (inner content only, no template wrapper)
     m_fullHtmlContent = "";
@@ -2682,7 +2685,10 @@ void AGENT_FRAME::RenderChatHistory()
 
                     // Store in map keyed by tool_use id for pairing with tool_result
                     if( !toolId.empty() )
+                    {
                         m_toolDescByUseId[toolId] = desc;
+                        m_toolNameByUseId[toolId] = toolName;
+                    }
 
                     m_lastToolDesc = desc;
                 }
@@ -2785,6 +2791,22 @@ void AGENT_FRAME::RenderChatHistory()
                         m_fullHtmlContent += "<div class=\"my-2\">"
                                              + imageHtml
                                              + "</div>";
+                    }
+
+                    // Add "Open in Simulator" button for historical SPICE results
+                    std::string histToolName;
+
+                    if( !toolUseId.empty() && m_toolNameByUseId.count( toolUseId ) )
+                        histToolName = m_toolNameByUseId[toolUseId];
+
+                    if( histToolName == "sch_run_simulation" && !isError && !isPythonError )
+                    {
+                        m_fullHtmlContent +=
+                            "<div class=\"my-1\"><a href=\"agent:open_simulator\" "
+                            "style=\"background:#1a3d1a; color:#4ade80; padding:5px 14px; "
+                            "border-radius:6px; font-size:12px; font-weight:600; "
+                            "text-decoration:none; cursor:pointer; "
+                            "display:inline-block;\">Open in Simulator</a></div>";
                     }
 
                     m_toolResultCounter++;
@@ -3097,6 +3119,30 @@ void AGENT_FRAME::OnRejectOpenEditor()
     if( m_chatController )
         m_chatController->HandleToolResult( toolId,
             "User declined to open " + editorName.ToStdString() + " editor", false );
+}
+
+
+void AGENT_FRAME::OnOpenSimulator()
+{
+    wxLogInfo( "AGENT_FRAME::OnOpenSimulator called" );
+
+    KIWAY_PLAYER* simFrame = Kiway().Player( FRAME_SIMULATOR, true );
+
+    if( !simFrame )
+    {
+        wxLogWarning( "OnOpenSimulator: failed to create simulator frame" );
+        return;
+    }
+
+    if( wxWindow* blocking = simFrame->Kiway().GetBlockingDialog() )
+        blocking->Close( true );
+
+    simFrame->Show( true );
+
+    if( simFrame->IsIconized() )
+        simFrame->Iconize( false );
+
+    simFrame->Raise();
 }
 
 
@@ -3547,6 +3593,13 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
                    numChunks, idx );
     }
 
+    // Add "Open in Simulator" button for successful SPICE simulation results
+    if( data->success && data->toolName == "sch_run_simulation" )
+    {
+        m_bridge->PushToolResultActionButton( idx, "Open in Simulator",
+                                               "agent:open_simulator" );
+    }
+
     // Update internal HTML tracking (replace running HTML with full completed HTML).
     // Image is rendered OUTSIDE the collapsible tool result so it stays visible.
     wxString completedHtml = BuildToolResultHtml( idx, desc, statusClass, statusText,
@@ -3554,6 +3607,15 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
     if( !imageHtml.IsEmpty() )
         completedHtml += "<div class=\"my-2\">" + imageHtml + "</div>";
+
+    // Include "Open in Simulator" button in internal HTML for full re-renders
+    if( data->success && data->toolName == "sch_run_simulation" )
+    {
+        completedHtml += "<div class=\"my-1\"><a href=\"agent:open_simulator\" "
+            "style=\"background:#1a3d1a; color:#4ade80; padding:5px 14px; "
+            "border-radius:6px; font-size:12px; font-weight:600; text-decoration:none; "
+            "cursor:pointer; display:inline-block;\">Open in Simulator</a></div>";
+    }
 
     if( !m_activeRunningHtml.IsEmpty() )
     {

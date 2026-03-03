@@ -162,6 +162,9 @@ void PANEL_KICAD_LAUNCHER::CreateLaunchers()
     addLauncher( KICAD_MANAGER_ACTIONS::viewGerbers, BITMAPS::icon_gerbview,
                  _( "Preview Gerber files" ) );
 
+    addLauncher( KICAD_MANAGER_ACTIONS::showVersionControl, BITMAPS::icon_vcs,
+                 _( "Manage project version history, commit, push, and pull changes" ) );
+
     addLauncher( KICAD_MANAGER_ACTIONS::convertImage, BITMAPS::icon_bitmap2component,
                  _( "Convert bitmap images to schematic symbols or PCB footprints" ) );
 

@@ -42,10 +42,12 @@ private:
      * @param aIsSchematic true for schematic, false for PCB
      * @param aTempDir Temporary directory for output
      * @param aFilePath Path to the schematic file (used to identify sub-sheets)
+     * @param aViewConfig Optional view configuration (layers, mirror, element visibility)
      * @return Path to the exported SVG, or empty on failure
      */
     std::string ExportViaIpc( bool aIsSchematic, const std::string& aTempDir,
-                              const std::string& aFilePath = std::string() );
+                              const std::string& aFilePath = std::string(),
+                              const nlohmann::json& aViewConfig = nlohmann::json() );
 
     /**
      * Export a schematic to SVG using kicad-cli.

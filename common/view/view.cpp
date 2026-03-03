@@ -30,6 +30,8 @@
 #include <trace_helpers.h>
 #include <wx/log.h>
 
+#include <stdexcept>
+
 #include <view/view.h>
 #include <view/view_group.h>
 #include <view/view_item.h>
@@ -768,11 +770,18 @@ void VIEW::UpdateLayerColor( int aLayer )
 
     if( m_gal->IsVisible() )
     {
-        GAL_UPDATE_CONTEXT ctx( m_gal );
+        try
+        {
+            GAL_UPDATE_CONTEXT ctx( m_gal );
 
-        UPDATE_COLOR_VISITOR visitor( aLayer, m_painter, m_gal );
-        m_layers[aLayer].items->Query( r, visitor );
-        MarkTargetDirty( m_layers[aLayer].target );
+            UPDATE_COLOR_VISITOR visitor( aLayer, m_painter, m_gal );
+            m_layers[aLayer].items->Query( r, visitor );
+            MarkTargetDirty( m_layers[aLayer].target );
+        }
+        catch( const std::runtime_error& )
+        {
+            return;
+        }
     }
 }
 
@@ -781,26 +790,33 @@ void VIEW::UpdateAllLayersColor()
 {
     if( m_gal->IsVisible() )
     {
-        GAL_UPDATE_CONTEXT ctx( m_gal );
-
-        for( VIEW_ITEM* item : *m_allItems )
+        try
         {
-            if( !item )
-                continue;
+            GAL_UPDATE_CONTEXT ctx( m_gal );
 
-            VIEW_ITEM_DATA* viewData = item->viewPrivData();
-
-            if( !viewData )
-                continue;
-
-            for( int layer : viewData->m_layers )
+            for( VIEW_ITEM* item : *m_allItems )
             {
-                const COLOR4D color = m_painter->GetSettings()->GetColor( item, layer );
-                int           group = viewData->getGroup( layer );
+                if( !item )
+                    continue;
 
-                if( group >= 0 )
-                    m_gal->ChangeGroupColor( group, color );
+                VIEW_ITEM_DATA* viewData = item->viewPrivData();
+
+                if( !viewData )
+                    continue;
+
+                for( int layer : viewData->m_layers )
+                {
+                    const COLOR4D color = m_painter->GetSettings()->GetColor( item, layer );
+                    int           group = viewData->getGroup( layer );
+
+                    if( group >= 0 )
+                        m_gal->ChangeGroupColor( group, color );
+                }
             }
+        }
+        catch( const std::runtime_error& )
+        {
+            return;
         }
     }
 
@@ -914,25 +930,32 @@ void VIEW::UpdateAllLayersOrder()
 
     if( m_gal->IsVisible() )
     {
-        GAL_UPDATE_CONTEXT ctx( m_gal );
-
-        for( VIEW_ITEM* item : *m_allItems )
+        try
         {
-            if( !item )
-                continue;
+            GAL_UPDATE_CONTEXT ctx( m_gal );
 
-            VIEW_ITEM_DATA* viewData = item->viewPrivData();
-
-            if( !viewData )
-                continue;
-
-            for( int layer : viewData->m_layers )
+            for( VIEW_ITEM* item : *m_allItems )
             {
-                int group = viewData->getGroup( layer );
+                if( !item )
+                    continue;
 
-                if( group >= 0 )
-                    m_gal->ChangeGroupDepth( group, m_layers[layer].renderingOrder );
+                VIEW_ITEM_DATA* viewData = item->viewPrivData();
+
+                if( !viewData )
+                    continue;
+
+                for( int layer : viewData->m_layers )
+                {
+                    int group = viewData->getGroup( layer );
+
+                    if( group >= 0 )
+                        m_gal->ChangeGroupDepth( group, m_layers[layer].renderingOrder );
+                }
             }
+        }
+        catch( const std::runtime_error& )
+        {
+            return;
         }
     }
 
@@ -1556,15 +1579,25 @@ void VIEW::UpdateItems()
 
     if( anyUpdated )
     {
-        GAL_UPDATE_CONTEXT ctx( m_gal );
-
-        for( VIEW_ITEM* item : *m_allItems.get() )
+        try
         {
-            if( item && item->viewPrivData() && item->viewPrivData()->m_requiredUpdate != NONE )
+            GAL_UPDATE_CONTEXT ctx( m_gal );
+
+            for( VIEW_ITEM* item : *m_allItems.get() )
             {
-                invalidateItem( item, item->viewPrivData()->m_requiredUpdate );
-                item->viewPrivData()->m_requiredUpdate = NONE;
+                if( item && item->viewPrivData() && item->viewPrivData()->m_requiredUpdate != NONE )
+                {
+                    invalidateItem( item, item->viewPrivData()->m_requiredUpdate );
+                    item->viewPrivData()->m_requiredUpdate = NONE;
+                }
             }
+        }
+        catch( const std::runtime_error& )
+        {
+            // OpenGL context may become invalid after the app has been idle for a long time
+            // (e.g., macOS GPU power management). Skip this update cycle and let the next
+            // redraw reinitialize the GL context.
+            return;
         }
     }
 

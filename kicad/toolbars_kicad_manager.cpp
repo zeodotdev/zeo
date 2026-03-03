@@ -55,7 +55,6 @@ std::optional<TOOLBAR_CONFIGURATION> KICAD_MANAGER_TOOLBAR_SETTINGS::DefaultTool
         config.AppendStretchSpacer()
               .AppendSpacer( -75 )
               .AppendSeparator()
-              .AppendAction( KICAD_MANAGER_ACTIONS::showVersionControl )
               .AppendAction( KICAD_MANAGER_ACTIONS::showTerminal );
 
         break;

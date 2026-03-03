@@ -71,7 +71,7 @@ public:
         m_mainSizer = new wxBoxSizer( wxVERTICAL );
 
         wxStaticText* pageTitle = new wxStaticText(
-                this, -1, wxString::Format( _( "Welcome to Zeo %s" ), GetMajorMinorVersion() ) );
+                this, -1, wxString::Format( _( "Welcome to Zeo %s" ), GetZeoVersion() ) );
         pageTitle->SetFont(
                 wxFont( 14, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD ) );
         m_mainSizer->Add( pageTitle, 0, wxALIGN_CENTRE | wxALL, 5 );
@@ -88,8 +88,7 @@ public:
 
         wxBoxSizer* helpSizer = new wxBoxSizer( wxHORIZONTAL );
         wxStaticText* helpLabel = new wxStaticText( this, -1, _( "For help, please visit " ) );
-        wxString docsUrl = wxString::Format( "https://go.kicad.org/docs/%s", GetMajorMinorVersion() );
-        wxHyperlinkCtrl* helpLink = new wxHyperlinkCtrl( this, -1, wxT( "docs.kicad.org" ), docsUrl );
+        wxHyperlinkCtrl* helpLink = new wxHyperlinkCtrl( this, -1, wxT( "zeo.dev/docs" ), wxT( "https://zeo.dev/docs" ) );
         helpSizer->Add( helpLabel, 0, wxLEFT | wxTOP | wxBOTTOM | wxALIGN_CENTER_VERTICAL, 5 );
         helpSizer->Add( helpLink, 0, wxRIGHT | wxTOP | wxBOTTOM | wxALIGN_CENTER_VERTICAL, 5 );
         m_mainSizer->Add( helpSizer, 0, wxEXPAND, 5 );

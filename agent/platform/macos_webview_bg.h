@@ -7,4 +7,10 @@
  */
 void SetWebViewDarkBackground( void* aNativeHandle );
 
+/**
+ * Check if macOS system appearance is set to dark mode.
+ * @return true if dark mode, false if light mode
+ */
+bool IsSystemDarkMode();
+
 #endif // MACOS_WEBVIEW_BG_H

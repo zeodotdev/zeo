@@ -70,7 +70,7 @@ protected:
     // Helpers
     void SendDataToTerminal( const std::string& aData );
     void ProcessAgentCapture( const std::string& aData );
-    static wxString GetTerminalHtml();
+    static wxString GetTerminalHtml( bool aLightMode = false );
 };
 
 #endif // PTY_WEBVIEW_PANEL_H

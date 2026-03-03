@@ -315,15 +315,19 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
             }},
             { "show_zones", {
                 { "type", "boolean" },
-                { "description", "Show filled copper zones. Default: true" }
+                { "description", "Show filled copper zones. Default: true. When false, draws zone outlines only." }
             }},
             { "show_vias", {
                 { "type", "boolean" },
-                { "description", "Show vias. Default: true" }
+                { "description", "Show filled vias. Default: true. When false, draws via outlines only." }
             }},
             { "show_pads", {
                 { "type", "boolean" },
-                { "description", "Show component pads. Default: true" }
+                { "description", "Show filled pads. Default: true. When false, draws pad outlines only." }
+            }},
+            { "show_tracks", {
+                { "type", "boolean" },
+                { "description", "Show filled tracks/traces. Default: true. When false, draws thin centerlines." }
             }},
             { "show_values", {
                 { "type", "boolean" },
@@ -425,7 +429,9 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
     schRunSim.description =
         "Run a SPICE simulation on the currently open schematic. "
         "Returns trace summaries with signal names, point counts, and min/max/final values. "
-        "When matplotlib is available, also generates a visual plot of all signal traces. "
+        "When matplotlib is available, also generates a visual plot of signal traces. "
+        "By default, plots user-facing signals (net labels like /in, /out) and filters out "
+        "internal nodes and branch currents. Use plot_signals to select specific traces. "
         "Supported commands:\n"
         "  .op - Operating point analysis\n"
         "  .tran <step> <stop> [start] [maxstep] - Transient analysis (e.g. '.tran 1u 10m')\n"
@@ -443,6 +449,13 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
             { "save_to_schematic", {
                 { "type", "boolean" },
                 { "description", "Persist this command as the schematic's default simulation command (default: false)" }
+            }},
+            { "plot_signals", {
+                { "type", "array" },
+                { "items", { { "type", "string" } } },
+                { "description", "Signal names to plot (e.g. [\"/in\", \"/out\", \"/outb\"]). "
+                    "If omitted, auto-selects user-facing signals (net labels, named nodes) "
+                    "and filters out internal subcircuit nodes, branch currents, and constant rails." }
             }}
         }},
         { "required", json::array( { "command" } ) }

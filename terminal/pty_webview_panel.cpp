@@ -8,6 +8,10 @@
 
 #include <nlohmann/json.hpp>
 
+#ifdef __APPLE__
+#include <agent/platform/macos_webview_bg.h>
+#endif
+
 // Define the custom event for title changes
 wxDEFINE_EVENT( wxEVT_TERMINAL_TITLE_CHANGED, wxCommandEvent );
 
@@ -21,7 +25,15 @@ PTY_WEBVIEW_PANEL::PTY_WEBVIEW_PANEL( wxWindow* aParent ) :
         m_agentCapturing( false ),
         m_agentSentinelStartFound( false )
 {
+#ifdef __APPLE__
+    // Match background color to system theme
+    if( IsSystemDarkMode() )
+        SetBackgroundColour( wxColour( 30, 30, 30 ) );
+    else
+        SetBackgroundColour( wxColour( 255, 255, 255 ) );
+#else
     SetBackgroundColour( wxColour( 30, 30, 30 ) );
+#endif
 
     // Create the webview that will host xterm.js
     m_webView = new WEBVIEW_PANEL( this );
@@ -32,7 +44,12 @@ PTY_WEBVIEW_PANEL::PTY_WEBVIEW_PANEL( wxWindow* aParent ) :
             [this]( const wxString& msg ) { OnMessage( msg ); } );
 
     // Load the xterm.js HTML page
-    m_webView->SetPage( GetTerminalHtml() );
+#ifdef __APPLE__
+    bool lightMode = !IsSystemDarkMode();
+#else
+    bool lightMode = false;
+#endif
+    m_webView->SetPage( GetTerminalHtml( lightMode ) );
 
     // Layout: webview fills entire panel
     wxBoxSizer* sizer = new wxBoxSizer( wxVERTICAL );
@@ -364,9 +381,13 @@ void PTY_WEBVIEW_PANEL::OnAgentTimeout( wxTimerEvent& aEvent )
 
 // ---- HTML Template ----
 
-wxString PTY_WEBVIEW_PANEL::GetTerminalHtml()
+wxString PTY_WEBVIEW_PANEL::GetTerminalHtml( bool aLightMode )
 {
-    return R"HTML(<!DOCTYPE html>
+    // Choose background color based on theme
+    wxString bgColor = aLightMode ? wxS( "#ffffff" ) : wxS( "#1e1e1e" );
+    wxString themeMode = aLightMode ? wxS( "true" ) : wxS( "false" );
+
+    wxString html = wxString::Format( R"HTML(<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -379,7 +400,7 @@ wxString PTY_WEBVIEW_PANEL::GetTerminalHtml()
         width: 100%;
         height: 100%;
         overflow: hidden;
-        background: #1e1e1e;
+        background: %s;
     }
     #terminal {
         width: 100%;
@@ -400,6 +421,8 @@ wxString PTY_WEBVIEW_PANEL::GetTerminalHtml()
 (function() {
     'use strict';
 
+    var isLightMode = %s;
+
     // Send message to C++ via WebKit message handler
     function sendMsg(action, data) {
         var msg = JSON.stringify(Object.assign({action: action}, data || {}));
@@ -408,31 +431,58 @@ wxString PTY_WEBVIEW_PANEL::GetTerminalHtml()
         }
     }
 
-    // Create terminal with dark theme
+    // Theme definitions
+    var darkTheme = {
+        background: '#1e1e1e',
+        foreground: '#d4d4d4',
+        cursor: '#aeafad',
+        cursorAccent: '#1e1e1e',
+        selectionBackground: '#44688b',
+        black: '#1e1e1e',
+        red: '#f44747',
+        green: '#6a9955',
+        yellow: '#d7ba7d',
+        blue: '#569cd6',
+        magenta: '#c586c0',
+        cyan: '#4ec9b0',
+        white: '#d4d4d4',
+        brightBlack: '#808080',
+        brightRed: '#f44747',
+        brightGreen: '#6a9955',
+        brightYellow: '#d7ba7d',
+        brightBlue: '#569cd6',
+        brightMagenta: '#c586c0',
+        brightCyan: '#4ec9b0',
+        brightWhite: '#ffffff'
+    };
+
+    var lightTheme = {
+        background: '#ffffff',
+        foreground: '#383a42',
+        cursor: '#526eff',
+        cursorAccent: '#ffffff',
+        selectionBackground: '#add6ff',
+        black: '#383a42',
+        red: '#e45649',
+        green: '#50a14f',
+        yellow: '#c18401',
+        blue: '#4078f2',
+        magenta: '#a626a4',
+        cyan: '#0184bc',
+        white: '#a0a1a7',
+        brightBlack: '#4f525e',
+        brightRed: '#e06c75',
+        brightGreen: '#98c379',
+        brightYellow: '#e5c07b',
+        brightBlue: '#61afef',
+        brightMagenta: '#c678dd',
+        brightCyan: '#56b6c2',
+        brightWhite: '#ffffff'
+    };
+
+    // Create terminal with appropriate theme
     var term = new Terminal({
-        theme: {
-            background: '#1e1e1e',
-            foreground: '#d4d4d4',
-            cursor: '#aeafad',
-            cursorAccent: '#1e1e1e',
-            selectionBackground: '#44688b',
-            black: '#1e1e1e',
-            red: '#f44747',
-            green: '#6a9955',
-            yellow: '#d7ba7d',
-            blue: '#569cd6',
-            magenta: '#c586c0',
-            cyan: '#4ec9b0',
-            white: '#d4d4d4',
-            brightBlack: '#808080',
-            brightRed: '#f44747',
-            brightGreen: '#6a9955',
-            brightYellow: '#d7ba7d',
-            brightBlue: '#569cd6',
-            brightMagenta: '#c586c0',
-            brightCyan: '#4ec9b0',
-            brightWhite: '#ffffff'
-        },
+        theme: isLightMode ? lightTheme : darkTheme,
         fontFamily: 'Menlo, Monaco, "Courier New", monospace',
         fontSize: 13,
         cursorBlink: true,
@@ -498,5 +548,7 @@ wxString PTY_WEBVIEW_PANEL::GetTerminalHtml()
 })();
 </script>
 </body>
-</html>)HTML";
+</html>)HTML", bgColor, themeMode );
+
+    return html;
 }

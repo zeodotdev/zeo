@@ -16,3 +16,16 @@ void SetWebViewDarkBackground( void* aNativeHandle )
         [view setValue:@NO forKey:@"drawsBackground"];
     }
 }
+
+bool IsSystemDarkMode()
+{
+    if( @available( macOS 10.14, * ) )
+    {
+        NSAppearanceName appearanceName =
+                [[NSApp effectiveAppearance] bestMatchFromAppearancesWithNames:@[
+                        NSAppearanceNameAqua, NSAppearanceNameDarkAqua
+                ]];
+        return [appearanceName isEqualToString:NSAppearanceNameDarkAqua];
+    }
+    return false; // Pre-Mojave doesn't have dark mode
+}

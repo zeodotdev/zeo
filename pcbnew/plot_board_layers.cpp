@@ -337,6 +337,9 @@ void PlotStandardLayer( BOARD* aBoard, PLOTTER* aPlotter, const LSET& aLayerMask
     bool onFrontFab = ( LSET( { F_Fab } ) & aLayerMask ).any();
     bool onBackFab  = ( LSET( { B_Fab } ) & aLayerMask ).any();
     bool sketchPads = ( onFrontFab || onBackFab ) && aPlotOpt.GetSketchPadsOnFabLayers();
+    bool sketchPadsOnCopper = onCopperLayer && aPlotOpt.GetSketchPads();
+    bool sketchVias = onCopperLayer && aPlotOpt.GetSketchVias();
+    bool sketchTracks = onCopperLayer && aPlotOpt.GetSketchTracks();
     const wxString variantName = aBoard->GetCurrentVariant();
 
     // Plot edge layer and graphic items
@@ -360,7 +363,7 @@ void PlotStandardLayer( BOARD* aBoard, PLOTTER* aPlotter, const LSET& aLayerMask
 
         for( PAD* pad : footprint->Pads() )
         {
-            bool doSketchPads = false;
+            bool doSketchPads = sketchPadsOnCopper;
 
             if( !( pad->GetLayerSet() & aLayerMask ).any() )
             {
@@ -749,7 +752,11 @@ void PlotStandardLayer( BOARD* aBoard, PLOTTER* aPlotter, const LSET& aLayerMask
             color = LIGHTGRAY;
 
         aPlotter->SetColor( color );
-        aPlotter->FlashPadCircle( via->GetStart(), diameter, getMetadata() );
+
+        if( sketchVias )
+            aPlotter->ThickCircle( via->GetStart(), diameter, itemplotter.GetSketchPadLineWidth(), getMetadata() );
+        else
+            aPlotter->FlashPadCircle( via->GetStart(), diameter, getMetadata() );
     }
 
     aPlotter->EndBlock( nullptr );
@@ -788,6 +795,10 @@ void PlotStandardLayer( BOARD* aBoard, PLOTTER* aPlotter, const LSET& aLayerMask
             margin = track->GetSolderMaskExpansion();
 
         int width = track->GetWidth() + 2 * margin + itemplotter.getFineWidthAdj();
+
+        // In sketch mode, draw tracks as thin centerlines
+        if( sketchTracks )
+            width = itemplotter.GetSketchPadLineWidth();
 
         aPlotter->SetColor( itemplotter.getColor( track->GetLayer() ) );
 

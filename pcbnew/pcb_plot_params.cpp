@@ -83,6 +83,10 @@ PCB_PLOT_PARAMS::PCB_PLOT_PARAMS()
     m_hideDNPFPsOnFabLayers      = false;
     m_sketchDNPFPsOnFabLayers    = true;
     m_crossoutDNPFPsOnFabLayers  = true;
+    m_sketchPads                 = false;
+    m_sketchVias                 = false;
+    m_sketchZones                = false;
+    m_sketchTracks               = false;
     m_plotPadNumbers             = false;
     m_subtractMaskFromSilk       = false;
     m_format                     = PLOT_FORMAT::GERBER;

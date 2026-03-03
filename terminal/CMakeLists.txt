@@ -13,6 +13,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/utility
     ${CMAKE_SOURCE_DIR}/thirdparty/nlohmann_json
     ${CMAKE_SOURCE_DIR}/scripting
+    ${CMAKE_SOURCE_DIR}  # For agent/platform includes
     ${INC_AFTER}
     ${PYTHON_INCLUDE_DIRS}
     )
@@ -29,6 +30,12 @@ set( TERMINAL_SRCS
     pty_handler.cpp
     pty_webview_panel.cpp
 )
+
+if( APPLE )
+    list( APPEND TERMINAL_SRCS
+        ${CMAKE_SOURCE_DIR}/agent/platform/macos_webview_bg.mm
+    )
+endif()
 
 # Resources for the macOS bundle
 if( APPLE )

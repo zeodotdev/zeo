@@ -223,6 +223,7 @@ private:
     int      m_currentThinkingIndex;
     wxString m_lastToolDesc;
     std::map<std::string, wxString> m_toolDescByUseId; // tool_use id -> description (for history rendering)
+    std::map<std::string, std::string> m_toolNameByUseId; // tool_use id -> tool name (for history rendering)
     bool     m_userScrolledUp;
     long     m_lastScrollActivityMs;
     bool     m_htmlUpdatePending;
@@ -302,6 +303,7 @@ private:
     void ShowOpenEditorApproval( const wxString& aEditorType );
     void OnApproveOpenEditor();
     void OnRejectOpenEditor();
+    void OnOpenSimulator();
 
     bool DoOpenEditor( FRAME_T aFrameType );
 };

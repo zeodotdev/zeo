@@ -26,6 +26,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/common/dialogs
     ${CMAKE_SOURCE_DIR}/thirdparty/nlohmann_json
     ${CMAKE_SOURCE_DIR}/libs/sexpr/include
+    ${CMAKE_SOURCE_DIR}  # For agent/platform includes
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}  # For generated vcs_html_template_embedded.h
     ${INC_AFTER}
@@ -39,6 +40,12 @@ set( VCS_SRCS
     vcs_html_template.cpp
     kicad_file_renderer.cpp
 )
+
+if( APPLE )
+    list( APPEND VCS_SRCS
+        ${CMAKE_SOURCE_DIR}/agent/platform/macos_webview_bg.mm
+    )
+endif()
 
 # Define the KIFACE module
 add_library( vcs_kiface MODULE

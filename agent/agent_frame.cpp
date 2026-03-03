@@ -3748,6 +3748,142 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
 }
 
 
+static wxString HumanizeErrorMessage( const std::string& aRawError )
+{
+    // Curl / network errors
+    if( aRawError.find( "Curl error:" ) == 0 )
+    {
+        std::string lower = aRawError;
+        std::transform( lower.begin(), lower.end(), lower.begin(), ::tolower );
+
+        if( lower.find( "resolve" ) != std::string::npos
+            || lower.find( "connect" ) != std::string::npos )
+        {
+            return "Unable to connect. Please check your internet connection and try again.";
+        }
+        if( lower.find( "timed out" ) != std::string::npos
+            || lower.find( "timeout" ) != std::string::npos )
+        {
+            return "The request timed out. Please try again.";
+        }
+        if( lower.find( "ssl" ) != std::string::npos )
+        {
+            return "A secure connection couldn't be established. Please check your network.";
+        }
+
+        return "A connection error occurred. Please try again.";
+    }
+
+    // HTTP API errors: "LLM API error: HTTP <code>\nResponse: <json>"
+    const std::string httpPrefix = "LLM API error: HTTP ";
+
+    if( aRawError.find( httpPrefix ) == 0 )
+    {
+        int httpCode = 0;
+
+        try
+        {
+            httpCode = std::stoi( aRawError.substr( httpPrefix.size() ) );
+        }
+        catch( ... )
+        {
+        }
+
+        // Try to extract the error message from the JSON response body
+        std::string apiMessage;
+        auto responsePos = aRawError.find( "\nResponse: " );
+
+        if( responsePos != std::string::npos )
+        {
+            std::string body = aRawError.substr( responsePos + 11 ); // skip "\nResponse: "
+
+            try
+            {
+                auto j = nlohmann::json::parse( body );
+
+                if( j.contains( "error" ) )
+                {
+                    if( j["error"].is_string() )
+                        apiMessage = j["error"].get<std::string>();
+                    else if( j["error"].is_object() && j["error"].contains( "message" ) )
+                        apiMessage = j["error"]["message"].get<std::string>();
+                }
+            }
+            catch( ... )
+            {
+            }
+        }
+
+        switch( httpCode )
+        {
+        case 401:
+            return "Your session has expired. Please sign in again.";
+
+        case 429:
+            // Use the proxy's message if available (e.g. "Monthly spending limit reached...")
+            if( !apiMessage.empty() )
+                return wxString::FromUTF8( apiMessage );
+            return "You've reached your usage limit. Please try again later.";
+
+        case 400:
+            if( !apiMessage.empty() )
+                return wxString::FromUTF8( apiMessage );
+            return "The request was invalid. Please try again.";
+
+        case 500:
+        case 502:
+        case 503:
+        case 529:
+            return "The server is temporarily unavailable. Please try again in a moment.";
+
+        default:
+            if( !apiMessage.empty() )
+                return wxString::FromUTF8( apiMessage );
+            return wxString::Format( "An unexpected error occurred (HTTP %d). Please try again.",
+                                     httpCode );
+        }
+    }
+
+    // Anthropic SSE streaming errors: "api_error_type:<type>\n<message>"
+    const std::string apiTypePrefix = "api_error_type:";
+
+    if( aRawError.find( apiTypePrefix ) == 0 )
+    {
+        auto nlPos = aRawError.find( '\n' );
+        std::string errorType = aRawError.substr( apiTypePrefix.size(),
+                                                   nlPos - apiTypePrefix.size() );
+        std::string message = ( nlPos != std::string::npos )
+                              ? aRawError.substr( nlPos + 1 )
+                              : "";
+
+        if( errorType == "overloaded_error" )
+            return "The server is currently overloaded. Please try again in a moment.";
+        if( errorType == "api_error" )
+            return "An internal server error occurred. Please try again.";
+        if( errorType == "rate_limit_error" )
+            return "Too many requests. Please wait a moment and try again.";
+        if( errorType == "authentication_error" )
+            return "Your session has expired. Please sign in again.";
+        if( errorType == "invalid_request_error" )
+        {
+            // These can have useful detail — pass the message through if available
+            if( !message.empty() )
+                return wxString::FromUTF8( message );
+            return "The request was invalid. Please try again.";
+        }
+
+        // Unknown type — show the message if we have one
+        if( !message.empty() )
+            return wxString::FromUTF8( message );
+
+        return "An unexpected error occurred. Please try again.";
+    }
+
+    // Already-friendly messages — pass through
+    return wxString::FromUTF8( aRawError );
+}
+
+
 void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
 {
     wxLogInfo( "AGENT_FRAME::OnChatError - error received" );
@@ -3755,10 +3891,13 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     if( !data )
         return;
 
-    // Display error message
+    // Display human-readable error message (raw error is already in the log from HandleLLMError)
+    wxString friendly = HumanizeErrorMessage( data->message );
     wxString errorHtml = wxString::Format(
-        "<p><font color='red'><b>Error:</b> %s</font></p>",
-        wxString::FromUTF8( data->message ) );
+        "<div class=\"bg-bg-secondary rounded-md p-3 my-2\">"
+        "<p class=\"text-accent-red text-[13px] m-0\"><b>Error:</b> %s</p>"
+        "</div>",
+        friendly );
     AppendHtml( errorHtml );
 
     // Stop all animations and reset button

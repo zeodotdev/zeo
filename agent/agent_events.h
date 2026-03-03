@@ -129,6 +129,7 @@ struct LLMStreamChunk
     std::string    tool_input_json; // For TOOL_USE events (serialized JSON)
     std::string    compaction_content; // For COMPACTION events (full compaction block JSON)
     std::string    error_message;  // For ERROR events
+    std::string    error_type;     // For ERROR events (e.g. "overloaded_error")
     std::string    content_block_json; // For SERVER_TOOL_USE/SERVER_TOOL_RESULT (raw JSON)
 
     LLMStreamChunk() : type( LLMChunkType::TEXT ) {}
@@ -171,6 +172,7 @@ void PostLLMComplete( wxEvtHandler* aHandler, const LLMStreamComplete& aComplete
  * @param aHandler The event handler to receive the error
  * @param aErrorMessage Description of the error
  */
-void PostLLMError( wxEvtHandler* aHandler, const std::string& aErrorMessage );
+void PostLLMError( wxEvtHandler* aHandler, const std::string& aErrorMessage,
+                   long aHttpCode = 0 );
 
 #endif // AGENT_EVENTS_H

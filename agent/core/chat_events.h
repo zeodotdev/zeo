@@ -157,13 +157,17 @@ struct ChatTurnCompleteData
  */
 struct ChatErrorData
 {
-    std::string message;          ///< Error message
+    std::string message;          ///< Error message (raw or API response body)
+    long        httpCode;         ///< HTTP status code (0 for non-HTTP errors)
+    std::string errorType;        ///< Error type (e.g. "overloaded_error", "curl", or empty)
     bool        canRetry;         ///< Whether retry is possible
     bool        isContextError;   ///< Whether this is a context length error
 
-    ChatErrorData() : canRetry( false ), isContextError( false ) {}
-    ChatErrorData( const std::string& aMsg, bool aCanRetry = false, bool aIsContextError = false )
-        : message( aMsg ), canRetry( aCanRetry ), isContextError( aIsContextError ) {}
+    ChatErrorData() : httpCode( 0 ), canRetry( false ), isContextError( false ) {}
+    ChatErrorData( const std::string& aMsg, bool aCanRetry = false, bool aIsContextError = false,
+                   long aHttpCode = 0, const std::string& aErrorType = "" )
+        : message( aMsg ), httpCode( aHttpCode ), errorType( aErrorType ),
+          canRetry( aCanRetry ), isContextError( aIsContextError ) {}
 };
 
 /**

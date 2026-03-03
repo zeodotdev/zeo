@@ -1105,6 +1105,31 @@ SCH_SCREEN* SCH_EDIT_FRAME::GetScreen() const
 }
 
 
+wxString SCH_EDIT_FRAME::GetAgentTargetSheetPath() const
+{
+    if( m_agentTargetSheetUuid != NilUuid() )
+    {
+        SCH_SHEET_LIST sheetList = Schematic().Hierarchy();
+        for( const SCH_SHEET_PATH& path : sheetList )
+        {
+            if( path.size() > 0 && path.Last()->m_Uuid == m_agentTargetSheetUuid )
+            {
+                wxString result = path.PathHumanReadable( false );
+                wxLogInfo( "GetAgentTargetSheetPath: matched UUID %s -> '%s'",
+                           m_agentTargetSheetUuid.AsStdString(), result );
+                return result;
+            }
+        }
+        wxLogWarning( "GetAgentTargetSheetPath: UUID %s not found in hierarchy, falling back",
+                      m_agentTargetSheetUuid.AsStdString() );
+    }
+
+    wxString fallback = GetCurrentSheet().PathHumanReadable( false );
+    wxLogInfo( "GetAgentTargetSheetPath: using current sheet fallback '%s'", fallback );
+    return fallback;
+}
+
+
 SCH_SCREEN* SCH_EDIT_FRAME::GetScreenForApi() const
 {
     // Use agent target sheet if set, regardless of transaction state.
@@ -3574,7 +3599,9 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
             m_agentChangedSheetPath = GetCurrentSheet();
     }
 
-    // Only show the diff overlay if we're currently on the target sheet
+    // Only show the diff overlay if we're currently on the target sheet.
+    // If the agent changed a different sheet, the overlay will appear when
+    // the user navigates to that sheet (handled by SetCurrentSheet).
     bool isOnTargetSheet = ( GetCurrentSheet() == m_agentChangedSheetPath );
 
     if( isOnTargetSheet )

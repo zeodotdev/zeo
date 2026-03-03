@@ -46,6 +46,7 @@
 #include <bus_alias.h>
 #include <refdes_tracker.h>
 #include <wx/filename.h>
+#include <wx/regex.h>
 #include <wx/wfstream.h>
 #include <wx/sstream.h>
 #include <tool/tool_manager.h>
@@ -5271,6 +5272,23 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
 
     wxString query = wxString::FromUTF8( aCtx.Request.query() ).Lower();
     int maxResults = aCtx.Request.max_results() > 0 ? aCtx.Request.max_results() : 100;
+    std::string patternType = aCtx.Request.pattern_type();
+
+    bool isWildcard = ( patternType == "wildcard" );
+    bool isRegex = ( patternType == "regex" );
+
+    // Compile regex pattern if needed
+    wxRegEx regexPattern;
+    if( isRegex && !query.empty() )
+    {
+        if( !regexPattern.Compile( query, wxRE_ICASE | wxRE_NOSUB ) )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( "Invalid regex pattern" );
+            return tl::unexpected( e );
+        }
+    }
 
     // Get the symbol library adapter
     SYMBOL_LIBRARY_ADAPTER* libAdapter = PROJECT_SCH::SymbolLibAdapter( &m_frame->Prj() );
@@ -5328,22 +5346,65 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
                 wxString nameLower = name.Lower();
                 MatchRank rank;
 
-                // Determine match rank
-                if( nameLower == query )
+                if( isWildcard )
                 {
-                    rank = EXACT_MATCH;
+                    // Glob matching — match against "name", "Library:Name", and
+                    // if the query has a "Lib:Sym" form, also match the symbol
+                    // part alone so that "Display:*OLED*" finds symbols in
+                    // "Display_Graphic" (LLM often guesses library names wrong).
+                    wxString fullId = ( libName + ":" + name ).Lower();
+
+                    bool matched = wxMatchWild( query, nameLower, false )
+                                   || wxMatchWild( query, fullId, false );
+
+                    if( !matched && query.Contains( ":" ) )
+                    {
+                        wxString symPattern = query.AfterFirst( ':' );
+                        matched = wxMatchWild( symPattern, nameLower, false );
+                    }
+
+                    if( matched )
+                    {
+                        rank = ( nameLower == query ) ? EXACT_MATCH : SUBSTRING_MATCH;
+                    }
+                    else
+                    {
+                        continue;
+                    }
                 }
-                else if( nameLower.StartsWith( query ) )
+                else if( isRegex )
                 {
-                    rank = PREFIX_MATCH;
-                }
-                else if( nameLower.Contains( query ) )
-                {
-                    rank = SUBSTRING_MATCH;
+                    wxString fullId = ( libName + ":" + name ).Lower();
+
+                    if( regexPattern.Matches( nameLower )
+                        || regexPattern.Matches( fullId ) )
+                    {
+                        rank = SUBSTRING_MATCH;
+                    }
+                    else
+                    {
+                        continue;
+                    }
                 }
                 else
                 {
-                    continue; // No match
+                    // Default: substring matching with ranking
+                    if( nameLower == query )
+                    {
+                        rank = EXACT_MATCH;
+                    }
+                    else if( nameLower.StartsWith( query ) )
+                    {
+                        rank = PREFIX_MATCH;
+                    }
+                    else if( nameLower.Contains( query ) )
+                    {
+                        rank = SUBSTRING_MATCH;
+                    }
+                    else
+                    {
+                        continue;
+                    }
                 }
 
                 // Load symbol and add to matches

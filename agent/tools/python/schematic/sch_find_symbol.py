@@ -1,4 +1,4 @@
-import json, re, fnmatch, sys
+import json, re, sys
 
 lib_id = TOOL_ARGS.get("lib_id", "")
 include_pins = TOOL_ARGS.get("include_pins", True)
@@ -67,16 +67,6 @@ def format_symbol(info):
         result['pins'] = pins
     return result
 
-def get_search_term(s):
-    base = ''
-    for c in s:
-        if c in '*?[]{}()|\\+^$':
-            break
-        base += c
-    if ':' in base:
-        base = base.split(':')[1]
-    return base
-
 try:
     if pattern_type == 'exact':
         if ':' in lib_id:
@@ -113,32 +103,18 @@ try:
                 output = {'status': 'not_found', 'query': lib_id, 'suggestions': suggestions}
             print(json.dumps(output, indent=2))
     else:
-        # Pattern search
-        search_term = get_search_term(lib_id)
-        results = sch.library.search(search_term, max_results=200)
+        # Wildcard/regex search — the API does the matching server-side
+        results = sch.library.search(lib_id, pattern_type=pattern_type, max_results=200)
 
-        has_lib_prefix = ':' in lib_id
-        if pattern_type == 'regex':
-            pattern = re.compile(lib_id)
-            if has_lib_prefix:
-                filtered = [r for r in results if pattern.fullmatch(r.lib_id)]
-            else:
-                filtered = [r for r in results if pattern.fullmatch(r.lib_id) or pattern.fullmatch(r.name)]
+        if len(results) == 1:
+            output = {'status': 'found', 'symbol': format_symbol(get_full_info(results[0]))}
         else:
-            if has_lib_prefix:
-                filtered = [r for r in results if fnmatch.fnmatch(r.lib_id, lib_id)]
-            else:
-                filtered = [r for r in results if fnmatch.fnmatch(r.lib_id, lib_id) or fnmatch.fnmatch(r.name, lib_id)]
-
-        if len(filtered) == 1:
-            output = {'status': 'found', 'symbol': format_symbol(get_full_info(filtered[0]))}
-        else:
-            symbols = [format_symbol(get_full_info(r)) for r in filtered[:max_suggestions]]
+            symbols = [format_symbol(get_full_info(r)) for r in results[:max_suggestions]]
             output = {
                 'status': 'search_results',
                 'pattern': lib_id,
                 'pattern_type': pattern_type,
-                'count': len(filtered),
+                'count': len(results),
                 'symbols': symbols
             }
         print(json.dumps(output, indent=2))

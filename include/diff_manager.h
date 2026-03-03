@@ -107,6 +107,13 @@ public:
                           BBOX_COMPUTE_CALLBACK aBBoxCallback,
                           ITEM_HIGHLIGHTS_CALLBACK aHighlightsCallback = nullptr );
 
+    /**
+     * Null out the overlay item pointer without removing it from the view.
+     * Call this before View::Clear() to prevent dangling pointer usage
+     * when the view clears all items (e.g., during sheet switching).
+     */
+    void NullifyOverlayItem( KIGFX::VIEW* aView );
+
     // Unregister the current view
     void UnregisterOverlay();
 

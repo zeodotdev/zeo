@@ -205,6 +205,20 @@ void DIFF_MANAGER::RegisterOverlay( KIGFX::VIEW* aView, AGENT_CHANGE_TRACKER* aT
     }
 }
 
+void DIFF_MANAGER::NullifyOverlayItem( KIGFX::VIEW* aView )
+{
+    std::lock_guard<std::recursive_mutex> lock( m_mutex );
+
+    auto it = m_viewStates.find( aView );
+    if( it != m_viewStates.end() )
+    {
+        // The view is about to Clear() all its items, so the overlay will be
+        // removed by the view itself. Just null our pointer to avoid dangling.
+        it->second.item = nullptr;
+    }
+}
+
+
 void DIFF_MANAGER::UnregisterOverlay()
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );

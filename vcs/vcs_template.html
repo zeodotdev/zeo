@@ -136,12 +136,12 @@ html, body {
   min-width: 220px;
   max-height: 280px;
   overflow-y: auto;
-  background: #2d2d30;
+  background: var(--bg-panel);
   border: 1px solid var(--border-focus);
   border-radius: var(--radius);
   z-index: 1000;
   display: none;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
 }
 #branch-menu.open { display: block; }
 
@@ -153,11 +153,11 @@ html, body {
   min-width: 200px;
   max-height: 320px;
   overflow-y: auto;
-  background: #2d2d30;
+  background: var(--bg-panel);
   border: 1px solid var(--border-focus);
   border-radius: var(--radius);
   z-index: 1000;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
 }
 
 .branch-section-header {
@@ -236,7 +236,7 @@ html, body {
   transition: border-color 0.15s, background 0.15s;
 }
 .bar-btn:hover { border-color: var(--border-focus); background: var(--bg-hover); }
-.bar-btn:active { background: #3a3a3a; }
+.bar-btn:active { background: var(--bg-hover); }
 .bar-btn:disabled { opacity: 0.4; cursor: default; }
 
 .bar-btn.primary {
@@ -283,7 +283,7 @@ html, body {
 #left-panel-resizer:hover,
 #left-panel-resizer.dragging { background: var(--green); opacity: 0.4; }
 
-#changes-area {
+#changes-section {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
@@ -402,6 +402,15 @@ html, body {
 .ft-fp   { background: #0a2118; color: #6ebf7a; border: 1px solid #164030; }
 .ft-wks  { background: #252525; color: #888;    border: 1px solid #3c3c3c; }
 .ft-file { background: #252525; color: #777;    border: 1px solid #3c3c3c; }
+
+/* Light theme file type badges */
+.light .ft-sch  { background: #e3f2fd; color: #1565c0; border-color: #90caf9; }
+.light .ft-pcb  { background: #e8f5e9; color: #2e7d32; border-color: #a5d6a7; }
+.light .ft-pro  { background: #fff3e0; color: #e65100; border-color: #ffcc80; }
+.light .ft-sym  { background: #e3f2fd; color: #1976d2; border-color: #90caf9; }
+.light .ft-fp   { background: #e8f5e9; color: #388e3c; border-color: #a5d6a7; }
+.light .ft-wks  { background: #f5f5f5; color: #616161; border-color: #e0e0e0; }
+.light .ft-file { background: #f5f5f5; color: #757575; border-color: #e0e0e0; }
 
 .ft-badge-lg {
   font-family: var(--font-mono);
@@ -703,7 +712,7 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
 .settings-diff-table th {
   padding: 6px 10px;
   text-align: left;
-  background: #2a2a2a;
+  background: var(--bg-hover);
   border-bottom: 1px solid var(--border);
   color: var(--text-dim);
   font-weight: 500;
@@ -711,12 +720,12 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
 }
 .settings-diff-table td {
   padding: 4px 10px;
-  border-bottom: 1px solid rgba(51,51,51,0.5);
+  border-bottom: 1px solid var(--border);
   font-family: var(--font-mono);
 }
 .settings-diff-table tr.sdt-add { background: var(--diff-add); }
 .settings-diff-table tr.sdt-del { background: var(--diff-del); }
-.settings-diff-table tr.sdt-mod { background: #1a1a0d; }
+.settings-diff-table tr.sdt-mod { background: var(--diff-hunk); }
 .sdt-key { color: var(--text-bright); }
 .sdt-old { color: #d8a8a8; }
 .sdt-new { color: #a8d8a8; }
@@ -855,7 +864,7 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
 }
 #add-remote-panel.open { display: flex; }
 .modal-box {
-  background: #2d2d30;
+  background: var(--bg-panel);
   border: 1px solid var(--border-focus);
   border-radius: 6px;
   padding: 20px;
@@ -907,12 +916,12 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
   position: fixed;
   display: none;
   flex-direction: column;
-  background: #2d2d30;
+  background: var(--bg-panel);
   border: 1px solid var(--border-focus);
   border-radius: 5px;
   padding: 3px 0;
   min-width: 160px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
   z-index: 9999;
   user-select: none;
 }
@@ -1079,11 +1088,17 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
 }
 .toast-close:hover { opacity: 1; }
 
+/* Light theme toast overrides */
+.light .toast {
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
 /* ── Custom tooltip ───────────────────────────────────────────────── */
 #custom-tooltip {
   position: fixed;
   z-index: 99999;
-  background: #2a2d2e;
+  background: var(--bg-panel);
   border: 1px solid var(--border);
   color: var(--text);
   font-size: 11px;
@@ -1394,7 +1409,7 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
 .graph-line {
   width: 2px;
   flex: 1;
-  background: #3a3a3a;
+  background: var(--border);
   min-height: 4px;
 }
 .graph-line.invis { background: transparent; }

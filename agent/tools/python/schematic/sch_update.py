@@ -89,6 +89,19 @@ try:
                 # Compute move delta from known target position (avoids stale position reads)
                 _dx = round(pos_x - _old_sym_x, 4)
                 _dy = round(pos_y - _old_sym_y, 4)
+                # Fix field positions (IPC API doesn't move fields with symbol)
+                if abs(_dx) > 0.001 or abs(_dy) > 0.001:
+                    _dx_nm = round(_dx * 1_000_000)
+                    _dy_nm = round(_dy * 1_000_000)
+                    _fields_dirty = False
+                    for _f in item._proto.fields:
+                        _f.position.x_nm += _dx_nm
+                        _f.position.y_nm += _dy_nm
+                        _fields_dirty = True
+                    if _fields_dirty:
+                        _upd = sch.crud.update_items(item)
+                        if _upd:
+                            item = _upd[0]
                 # Build pos_map by applying delta to old pin positions
                 _pos_map = {}
                 if abs(_dx) > 0.001 or abs(_dy) > 0.001:
@@ -198,6 +211,19 @@ try:
                         sch.crud.remove_items(_rm_nc)
                         for _np in _add_nc:
                             sch.wiring.add_no_connect(Vector2.from_xy_mm(_np[0], _np[1]))
+                    # Move labels at old pin positions
+                    _all_labels = sch.labels.get_all()
+                    _labels_to_update = []
+                    for _lbl in _all_labels:
+                        if not hasattr(_lbl, 'position'):
+                            continue
+                        _lp = (_rnd(_lbl.position.x / 1e6), _rnd(_lbl.position.y / 1e6))
+                        _lm = _mpos(_lp)
+                        if _lm:
+                            _lbl.position = Vector2.from_xy_mm(_lm[0], _lm[1])
+                            _labels_to_update.append(_lbl)
+                    if _labels_to_update:
+                        sch.crud.update_items(_labels_to_update)
 
                 updated = True
 

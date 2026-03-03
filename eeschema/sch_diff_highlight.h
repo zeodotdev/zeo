@@ -40,9 +40,10 @@ inline const int BORDER_WIDTH  = schIUScale.MilsToIU( 3 );   // border stroke wi
 
 struct DiffBox
 {
-    BOX2I          bbox;
-    KIGFX::COLOR4D color;
-    bool           hasBorder = true;
+    BOX2I              bbox;
+    KIGFX::COLOR4D     color;
+    bool               hasBorder = true;
+    std::vector<KIID>  itemIds;   ///< KIIDs covered by this box
 };
 
 
@@ -74,7 +75,7 @@ inline DiffBox ComputeItemBox( SCH_ITEM* aItem, const KIGFX::COLOR4D& aColor )
     else
         bbox.Inflate( SYMBOL_MARGIN );
 
-    return { bbox, aColor, !noBorder };
+    return { bbox, aColor, !noBorder, { aItem->m_Uuid } };
 }
 
 
@@ -135,6 +136,7 @@ inline std::vector<DiffBox> MergeWireBoxes( const std::vector<DiffBox>& aBoxes )
     // Compute union bbox per group
     std::unordered_map<int, BOX2I> groupBoxes;
     std::unordered_map<int, KIGFX::COLOR4D> groupColors;
+    std::unordered_map<int, std::vector<KIID>> groupIds;
 
     for( size_t i = 0; i < borderless.size(); ++i )
     {
@@ -144,16 +146,20 @@ inline std::vector<DiffBox> MergeWireBoxes( const std::vector<DiffBox>& aBoxes )
         {
             groupBoxes[g] = borderless[i].bbox;
             groupColors[g] = borderless[i].color;
+            groupIds[g] = borderless[i].itemIds;
         }
         else
         {
             it->second.Merge( borderless[i].bbox );
+            groupIds[g].insert( groupIds[g].end(),
+                                borderless[i].itemIds.begin(),
+                                borderless[i].itemIds.end() );
         }
     }
 
     // Emit merged groups as bordered boxes
     for( auto& [g, bbox] : groupBoxes )
-        bordered.push_back( { bbox, groupColors[g], true } );
+        bordered.push_back( { bbox, groupColors[g], true, std::move( groupIds[g] ) } );
 
     return bordered;
 }

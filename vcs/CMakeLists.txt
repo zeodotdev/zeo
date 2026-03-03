@@ -1,6 +1,6 @@
 
 #
-# KiCad VCS (Version Control) CMake config
+# VCS (Version Control) CMake config
 #
 
 # Generate C++ header from VCS HTML template at build time
@@ -31,8 +31,8 @@ include_directories(
     ${INC_AFTER}
 )
 
-set( KICAD_VCS_SRCS
-    kicad_vcs.cpp
+set( VCS_SRCS
+    vcs.cpp
     vcs_frame.cpp
     vcs_ipc_handler.cpp
     git_vcs_bridge.cpp
@@ -41,16 +41,16 @@ set( KICAD_VCS_SRCS
 )
 
 # Define the KIFACE module
-add_library( kicad_vcs_kiface MODULE
-    ${KICAD_VCS_SRCS}
+add_library( vcs_kiface MODULE
+    ${VCS_SRCS}
 )
 
-set_source_files_properties( kicad_vcs.cpp PROPERTIES
+set_source_files_properties( vcs.cpp PROPERTIES
     COMPILE_DEFINITIONS "BUILD_KIWAY_DLL;COMPILING_DLL"
 )
 
-set_target_properties( kicad_vcs_kiface PROPERTIES
-    OUTPUT_NAME kicad_vcs
+set_target_properties( vcs_kiface PROPERTIES
+    OUTPUT_NAME vcs
     PREFIX ${KIFACE_PREFIX}
     SUFFIX ${KIFACE_SUFFIX}
     CXX_VISIBILITY_PRESET default
@@ -58,17 +58,17 @@ set_target_properties( kicad_vcs_kiface PROPERTIES
 )
 
 if( APPLE )
-    set_target_properties( kicad_vcs_kiface PROPERTIES INSTALL_RPATH
+    set_target_properties( vcs_kiface PROPERTIES INSTALL_RPATH
         "@executable_path/../Frameworks;@executable_path/../../../../Frameworks" )
-    set_target_properties( kicad_vcs_kiface PROPERTIES BUILD_WITH_INSTALL_RPATH 1 )
+    set_target_properties( vcs_kiface PROPERTIES BUILD_WITH_INSTALL_RPATH 1 )
 
-    set_target_properties( kicad_vcs_kiface PROPERTIES
+    set_target_properties( vcs_kiface PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY ${OSX_BUNDLE_BUILD_KIFACE_DIR}
     )
 endif()
 
 # Link libraries
-target_link_libraries( kicad_vcs_kiface
+target_link_libraries( vcs_kiface
     PRIVATE
     common
     gal
@@ -78,13 +78,13 @@ target_link_libraries( kicad_vcs_kiface
 )
 
 if( APPLE )
-    target_link_libraries( kicad_vcs_kiface PRIVATE "-framework CoreServices" )
+    target_link_libraries( vcs_kiface PRIVATE "-framework CoreServices" )
 endif()
 
-add_dependencies( kicad_vcs_kiface vcs_html_template )
+add_dependencies( vcs_kiface vcs_html_template )
 
 # Installation
-install( TARGETS kicad_vcs_kiface
+install( TARGETS vcs_kiface
     DESTINATION ${KICAD_BIN}
     COMPONENT binary
 )

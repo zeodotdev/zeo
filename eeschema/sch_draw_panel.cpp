@@ -25,6 +25,7 @@
 
 
 #include <sch_draw_panel.h>
+#include <diff_manager.h>
 
 #include <wx/debug.h>
 #include <wx/event.h>
@@ -112,6 +113,11 @@ void SCH_DRAW_PANEL::DisplaySymbol( LIB_SYMBOL* aSymbol )
 
 void SCH_DRAW_PANEL::DisplaySheet( SCH_SCREEN *aScreen )
 {
+    // View::Clear() removes all view items including diff overlay items.
+    // Null out the overlay pointer before Clear() so DIFF_MANAGER doesn't
+    // hold a dangling pointer to the deleted item.
+    DIFF_MANAGER::GetInstance().NullifyOverlayItem( GetView() );
+
     GetView()->Clear();
 
     if( aScreen )

@@ -46,6 +46,7 @@
 #include <bus_alias.h>
 #include <refdes_tracker.h>
 #include <wx/filename.h>
+#include <wx/regex.h>
 #include <wx/wfstream.h>
 #include <wx/sstream.h>
 #include <tool/tool_manager.h>
@@ -663,7 +664,7 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
         if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
         {
             tracker->TrackItem( trackedUuid,
-                                m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                                m_frame->GetAgentTargetSheetPath(),
                                 aCreate ? AGENT_CHANGE_TYPE::ADDED
                                         : AGENT_CHANGE_TYPE::CHANGED );
         }
@@ -718,6 +719,9 @@ void API_HANDLER_SCH::deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& a
 
         if( item )
         {
+            // Capture bbox before removal (item still on screen at this point)
+            BOX2I deletedBBox = item->GetBoundingBox();
+
             commit->Remove( item, screen );
             status = ItemDeletionStatus::IDS_OK;
 
@@ -725,8 +729,8 @@ void API_HANDLER_SCH::deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& a
             if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
             {
                 tracker->TrackItem( id,
-                                    m_frame->GetCurrentSheet().PathHumanReadable( false ),
-                                    AGENT_CHANGE_TYPE::DELETED );
+                                    m_frame->GetAgentTargetSheetPath(),
+                                    AGENT_CHANGE_TYPE::DELETED, deletedBBox );
             }
         }
         else
@@ -2158,7 +2162,7 @@ API_HANDLER_SCH::handleCreateSheet(
     if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
     {
         tracker->TrackItem( newSheet->m_Uuid,
-                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            m_frame->GetAgentTargetSheetPath(),
                             AGENT_CHANGE_TYPE::ADDED );
     }
 
@@ -2250,6 +2254,9 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleDeleteSheet(
         return tl::unexpected( e );
     }
 
+    // Capture bbox before deletion
+    BOX2I deletedBBox = sheet->GetBoundingBox();
+
     // Delete the sheet
     SCH_COMMIT commit( m_frame );
     commit.Remove( sheet, screen );
@@ -2259,8 +2266,8 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleDeleteSheet(
     if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
     {
         tracker->TrackItem( sheetId,
-                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
-                            AGENT_CHANGE_TYPE::DELETED );
+                            m_frame->GetAgentTargetSheetPath(),
+                            AGENT_CHANGE_TYPE::DELETED, deletedBBox );
     }
 
     // Refresh the hierarchy cache
@@ -2417,7 +2424,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetSheetProperties(
     if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
     {
         tracker->TrackItem( sheetId,
-                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            m_frame->GetAgentTargetSheetPath(),
                             AGENT_CHANGE_TYPE::CHANGED );
     }
 
@@ -2519,7 +2526,7 @@ API_HANDLER_SCH::handleCreateSheetPin(
     if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
     {
         tracker->TrackItem( sheetId,
-                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            m_frame->GetAgentTargetSheetPath(),
                             AGENT_CHANGE_TYPE::CHANGED );
     }
 
@@ -2593,7 +2600,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleDeleteSheetPin(
     if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
     {
         tracker->TrackItem( parentSheet->m_Uuid,
-                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            m_frame->GetAgentTargetSheetPath(),
                             AGENT_CHANGE_TYPE::CHANGED );
     }
 
@@ -2827,7 +2834,7 @@ API_HANDLER_SCH::handleSyncSheetPins(
         {
             m_frame->GetAgentChangeTracker()->TrackItem(
                 sheet->m_Uuid,
-                m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                m_frame->GetAgentTargetSheetPath(),
                 AGENT_CHANGE_TYPE::CHANGED );
         }
     }
@@ -5265,6 +5272,23 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
 
     wxString query = wxString::FromUTF8( aCtx.Request.query() ).Lower();
     int maxResults = aCtx.Request.max_results() > 0 ? aCtx.Request.max_results() : 100;
+    std::string patternType = aCtx.Request.pattern_type();
+
+    bool isWildcard = ( patternType == "wildcard" );
+    bool isRegex = ( patternType == "regex" );
+
+    // Compile regex pattern if needed
+    wxRegEx regexPattern;
+    if( isRegex && !query.empty() )
+    {
+        if( !regexPattern.Compile( query, wxRE_ICASE | wxRE_NOSUB ) )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( "Invalid regex pattern" );
+            return tl::unexpected( e );
+        }
+    }
 
     // Get the symbol library adapter
     SYMBOL_LIBRARY_ADAPTER* libAdapter = PROJECT_SCH::SymbolLibAdapter( &m_frame->Prj() );
@@ -5322,22 +5346,65 @@ API_HANDLER_SCH::handleSearchLibrarySymbols(
                 wxString nameLower = name.Lower();
                 MatchRank rank;
 
-                // Determine match rank
-                if( nameLower == query )
+                if( isWildcard )
                 {
-                    rank = EXACT_MATCH;
+                    // Glob matching — match against "name", "Library:Name", and
+                    // if the query has a "Lib:Sym" form, also match the symbol
+                    // part alone so that "Display:*OLED*" finds symbols in
+                    // "Display_Graphic" (LLM often guesses library names wrong).
+                    wxString fullId = ( libName + ":" + name ).Lower();
+
+                    bool matched = wxMatchWild( query, nameLower, false )
+                                   || wxMatchWild( query, fullId, false );
+
+                    if( !matched && query.Contains( ":" ) )
+                    {
+                        wxString symPattern = query.AfterFirst( ':' );
+                        matched = wxMatchWild( symPattern, nameLower, false );
+                    }
+
+                    if( matched )
+                    {
+                        rank = ( nameLower == query ) ? EXACT_MATCH : SUBSTRING_MATCH;
+                    }
+                    else
+                    {
+                        continue;
+                    }
                 }
-                else if( nameLower.StartsWith( query ) )
+                else if( isRegex )
                 {
-                    rank = PREFIX_MATCH;
-                }
-                else if( nameLower.Contains( query ) )
-                {
-                    rank = SUBSTRING_MATCH;
+                    wxString fullId = ( libName + ":" + name ).Lower();
+
+                    if( regexPattern.Matches( nameLower )
+                        || regexPattern.Matches( fullId ) )
+                    {
+                        rank = SUBSTRING_MATCH;
+                    }
+                    else
+                    {
+                        continue;
+                    }
                 }
                 else
                 {
-                    continue; // No match
+                    // Default: substring matching with ranking
+                    if( nameLower == query )
+                    {
+                        rank = EXACT_MATCH;
+                    }
+                    else if( nameLower.StartsWith( query ) )
+                    {
+                        rank = PREFIX_MATCH;
+                    }
+                    else if( nameLower.Contains( query ) )
+                    {
+                        rank = SUBSTRING_MATCH;
+                    }
+                    else
+                    {
+                        continue;
+                    }
                 }
 
                 // Load symbol and add to matches

@@ -25,6 +25,7 @@
 #define AGENT_CHANGE_TRACKER_H
 
 #include <kiid.h>
+#include <math/box2.h>
 #include <set>
 #include <map>
 #include <wx/string.h>
@@ -46,6 +47,7 @@ struct TrackedItemInfo
 {
     wxString          sheetPath;
     AGENT_CHANGE_TYPE changeType = AGENT_CHANGE_TYPE::ADDED;
+    BOX2I             deletedBBox;   ///< Cached bbox for DELETED items (not on screen)
 };
 
 /**
@@ -73,6 +75,13 @@ public:
      * @param aItemId The KIID of the item to track.
      * @param aSheetPath The sheet path where the item exists (as a string).
      * @param aChangeType The type of change (ADDED, CHANGED, DELETED).
+     * @param aDeletedBBox For DELETED items, the bbox at deletion time (for overlay display).
+     */
+    void TrackItem( const KIID& aItemId, const wxString& aSheetPath,
+                    AGENT_CHANGE_TYPE aChangeType, const BOX2I& aDeletedBBox );
+
+    /**
+     * Track an item by KIID with its sheet path and change type (no bbox).
      */
     void TrackItem( const KIID& aItemId, const wxString& aSheetPath,
                     AGENT_CHANGE_TYPE aChangeType = AGENT_CHANGE_TYPE::ADDED );
@@ -144,6 +153,13 @@ public:
      * @return The change type, or AGENT_CHANGE_TYPE::ADDED if not tracked.
      */
     AGENT_CHANGE_TYPE GetChangeType( const KIID& aItemId ) const;
+
+    /**
+     * Get the cached bbox for a deleted item.
+     * @param aItemId The KIID to query.
+     * @return The bbox, or empty BOX2I if not tracked or not a deletion.
+     */
+    BOX2I GetDeletedBBox( const KIID& aItemId ) const;
 
     /**
      * Check if there are any tracked changes.

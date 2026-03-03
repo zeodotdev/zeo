@@ -973,6 +973,16 @@ public:
      */
     void RejectAgentChangesOnSheet( const wxString& aSheetPath );
 
+    /**
+     * Approve specific agent-changed items (untrack them, keeping their changes).
+     */
+    void ApproveAgentItems( const std::vector<KIID>& aItemIds );
+
+    /**
+     * Reject specific agent-changed items (revert them using snapshot + SCH_COMMIT).
+     */
+    void RejectAgentItems( const std::vector<KIID>& aItemIds );
+
     bool HasAgentPendingChanges() const;
 
     /**
@@ -980,6 +990,14 @@ public:
      * @return Pointer to the tracker, or nullptr if not initialized.
      */
     AGENT_CHANGE_TRACKER* GetAgentChangeTracker() { return m_agentChangeTracker.get(); }
+
+    /**
+     * Get the human-readable sheet path for the agent's target sheet.
+     * Returns the agent target sheet path if set, otherwise the current sheet path.
+     * Use this (not GetCurrentSheet()) when tracking items in API handlers,
+     * since the agent may be targeting a different sheet than the user is viewing.
+     */
+    wxString GetAgentTargetSheetPath() const;
 
     /**
      * Get the snapshot session for diff viewing.

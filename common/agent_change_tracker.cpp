@@ -37,6 +37,13 @@ AGENT_CHANGE_TRACKER::~AGENT_CHANGE_TRACKER()
 void AGENT_CHANGE_TRACKER::TrackItem( const KIID& aItemId, const wxString& aSheetPath,
                                       AGENT_CHANGE_TYPE aChangeType )
 {
+    TrackItem( aItemId, aSheetPath, aChangeType, BOX2I() );
+}
+
+
+void AGENT_CHANGE_TRACKER::TrackItem( const KIID& aItemId, const wxString& aSheetPath,
+                                      AGENT_CHANGE_TYPE aChangeType, const BOX2I& aDeletedBBox )
+{
     auto it = m_trackedItems.find( aItemId );
     if( it != m_trackedItems.end() )
     {
@@ -54,7 +61,7 @@ void AGENT_CHANGE_TRACKER::TrackItem( const KIID& aItemId, const wxString& aShee
         }
     }
 
-    m_trackedItems[aItemId] = { aSheetPath, aChangeType };
+    m_trackedItems[aItemId] = { aSheetPath, aChangeType, aDeletedBBox };
 }
 
 
@@ -163,6 +170,16 @@ AGENT_CHANGE_TYPE AGENT_CHANGE_TRACKER::GetChangeType( const KIID& aItemId ) con
         return it->second.changeType;
 
     return AGENT_CHANGE_TYPE::ADDED;
+}
+
+
+BOX2I AGENT_CHANGE_TRACKER::GetDeletedBBox( const KIID& aItemId ) const
+{
+    auto it = m_trackedItems.find( aItemId );
+    if( it != m_trackedItems.end() && it->second.changeType == AGENT_CHANGE_TYPE::DELETED )
+        return it->second.deletedBBox;
+
+    return BOX2I();
 }
 
 

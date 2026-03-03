@@ -2422,7 +2422,7 @@ bool PCB_EDIT_FRAME::FetchNetlistFromSchematic( NETLIST& aNetlist,
     {
         DisplayErrorMessage( this, _( "Cannot update the PCB because PCB editor is opened in "
                                       "stand-alone mode. In order to create or update PCBs from "
-                                      "schematics, you must launch the KiCad project manager and "
+                                      "schematics, you must launch the Zeo project manager and "
                                       "create a project." ) );
         return false;       // Not in standalone mode
     }
@@ -2457,7 +2457,7 @@ bool PCB_EDIT_FRAME::FetchNetlistFromSchematic( NETLIST& aNetlist,
         wxString extra_info = e.Problem() + wxT( " : " ) + e.What() + wxT( " at " ) + e.Where();
 
         DisplayErrorMessage( this, _( "Received an error while reading netlist.  Please "
-                                      "report this issue to the KiCad team using the menu "
+                                      "report this issue to the Zeo team using the menu "
                                       "Help->Report Bug."), extra_info );
         return false;
     }

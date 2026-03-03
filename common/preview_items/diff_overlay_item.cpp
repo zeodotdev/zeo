@@ -90,7 +90,7 @@ void DIFF_OVERLAY_ITEM::drawPreviewShape( KIGFX::VIEW* aView ) const
     //   - Wires: fill only (no border) to avoid cluttered box grid
     if( m_itemHighlightsCallback )
     {
-        std::vector<ITEM_HIGHLIGHT> highlights = m_itemHighlightsCallback();
+        m_cachedHighlights = m_itemHighlightsCallback();
 
         // Two-pass rendering: fills first, then borders on top.
 
@@ -99,7 +99,7 @@ void DIFF_OVERLAY_ITEM::drawPreviewShape( KIGFX::VIEW* aView ) const
         gal->SetLineWidth( 0 );
         gal->SetIsFill( true );
 
-        for( const ITEM_HIGHLIGHT& hl : highlights )
+        for( const ITEM_HIGHLIGHT& hl : m_cachedHighlights )
         {
             if( hl.bbox.GetWidth() <= 0 || hl.bbox.GetHeight() <= 0 )
                 continue;
@@ -117,14 +117,36 @@ void DIFF_OVERLAY_ITEM::drawPreviewShape( KIGFX::VIEW* aView ) const
         gal->SetIsStroke( true );
         gal->SetLineWidth( borderWidth );
 
-        for( const ITEM_HIGHLIGHT& hl : highlights )
+        for( size_t i = 0; i < m_cachedHighlights.size(); ++i )
         {
+            const ITEM_HIGHLIGHT& hl = m_cachedHighlights[i];
+
             if( !hl.hasBorder || hl.bbox.GetWidth() <= 0 || hl.bbox.GetHeight() <= 0 )
                 continue;
 
-            gal->SetStrokeColor( hl.color.WithAlpha( DIFF_BORDER_ALPHA ) );
+            // Brighten border if this highlight is hovered
+            double alpha = ( (int) i == m_hoveredHighlightIndex )
+                               ? std::min( DIFF_BORDER_ALPHA + 0.25, 1.0 )
+                               : DIFF_BORDER_ALPHA;
+            gal->SetStrokeColor( hl.color.WithAlpha( alpha ) );
             gal->DrawRectangle( VECTOR2D( hl.bbox.GetLeft(),  hl.bbox.GetTop() ),
                                 VECTOR2D( hl.bbox.GetRight(), hl.bbox.GetBottom() ) );
+        }
+
+        // Draw per-item approve/reject buttons on hovered highlight.
+        // Advance depth so buttons render on top of all highlight fills/borders.
+        if( m_hoveredHighlightIndex >= 0
+            && m_hoveredHighlightIndex < (int) m_cachedHighlights.size() )
+        {
+            gal->AdvanceDepth();
+
+            double scale = 1.0 / gal->GetWorldScale();
+            const ITEM_HIGHLIGHT& hovered = m_cachedHighlights[m_hoveredHighlightIndex];
+
+            drawItemButton( gal, hovered.bbox, 0, wxT( "Approve" ),
+                            COLOR4D( 0.0, 0.6, 0.0, 0.9 ), scale );
+            drawItemButton( gal, hovered.bbox, 1, wxT( "Reject" ),
+                            COLOR4D( 0.8, 0.0, 0.0, 0.9 ), scale );
         }
     }
     else
@@ -232,4 +254,106 @@ DIFF_OVERLAY_ITEM::BUTTON_ID DIFF_OVERLAY_ITEM::HitTestButtons( const VECTOR2I& 
         }
     }
     return BTN_NONE;
+}
+
+
+bool DIFF_OVERLAY_ITEM::SetHoveredHighlightIndex( int aIndex )
+{
+    if( aIndex == m_hoveredHighlightIndex )
+        return false;
+
+    m_hoveredHighlightIndex = aIndex;
+    return true;
+}
+
+
+BOX2I DIFF_OVERLAY_ITEM::getItemButtonRect( const BOX2I& aItemBBox, int aButtonIndex,
+                                             double aScale ) const
+{
+    double w_width  = IBTN_WIDTH  * aScale;
+    double w_height = IBTN_HEIGHT * aScale;
+
+    // Position buttons above the item bbox border with a small gap.
+    // The border is drawn centered on the edge at 2540 IU width, so half (1270)
+    // extends above GetTop(). Use world coords for the gap so it tracks the border.
+    // Approve=0 (left), Reject=1 (right). Buttons are touching edge-to-edge.
+    double borderOffset = 2540.0 / 2.0 + 1270.0;  // half border + small margin (world coords)
+
+    VECTOR2I startPos;
+    startPos.x = aItemBBox.GetRight() - ( 2 - aButtonIndex ) * w_width;
+    startPos.y = aItemBBox.GetTop() - w_height - static_cast<int>( borderOffset );
+
+    return BOX2I( startPos, VECTOR2I( w_width, w_height ) );
+}
+
+
+void DIFF_OVERLAY_ITEM::drawItemButton( KIGFX::GAL* aGal, const BOX2I& aItemBBox, int aIndex,
+                                         const wxString& aLabel, const COLOR4D& aColor,
+                                         double aScale ) const
+{
+    BOX2I rect = getItemButtonRect( aItemBBox, aIndex, aScale );
+
+    // Draw button background
+    aGal->SetIsFill( true );
+    aGal->SetIsStroke( true );
+    aGal->SetFillColor( aColor );
+    aGal->SetStrokeColor( COLOR4D( 1.0, 1.0, 1.0, 1.0 ) );
+    aGal->SetLineWidth( 1.0 * aScale );
+
+    aGal->DrawRectangle( rect.GetPosition(), rect.GetEnd() );
+
+    // Advance layer depth so text renders on top of button fill
+    aGal->AdvanceDepth();
+
+    KIFONT::FONT* font = KIFONT::FONT::GetFont();
+
+    double textHeightPx = 11.0;
+    double textHeight = textHeightPx * aScale;
+    double strokeWidth = textHeight * 0.2;
+
+    TEXT_ATTRIBUTES textAttrs;
+    textAttrs.m_Size = VECTOR2I( textHeight * 0.9, textHeight );
+    textAttrs.m_StrokeWidth = strokeWidth;
+    textAttrs.m_Halign = GR_TEXT_H_ALIGN_CENTER;
+    textAttrs.m_Valign = GR_TEXT_V_ALIGN_CENTER;
+
+    aGal->SetIsFill( false );
+    aGal->SetIsStroke( true );
+    aGal->SetStrokeColor( COLOR4D( 1.0, 1.0, 1.0, 1.0 ) );
+    aGal->SetLineWidth( strokeWidth );
+
+    font->Draw( aGal, aLabel, rect.Centre(), textAttrs, KIFONT::METRICS::Default() );
+}
+
+
+DIFF_OVERLAY_ITEM::ITEM_BUTTON_ID DIFF_OVERLAY_ITEM::HitTestItemButtons(
+        const VECTOR2I& aPoint, KIGFX::VIEW* aView ) const
+{
+    if( !aView || m_hoveredHighlightIndex < 0
+        || m_hoveredHighlightIndex >= (int) m_cachedHighlights.size() )
+    {
+        return IBTN_NONE;
+    }
+
+    KIGFX::GAL* gal = aView->GetGAL();
+    if( !gal )
+        return IBTN_NONE;
+
+    double scale = 1.0 / gal->GetWorldScale();
+    const BOX2I& itemBBox = m_cachedHighlights[m_hoveredHighlightIndex].bbox;
+
+    for( int i = 0; i < 2; ++i )
+    {
+        BOX2I rect = getItemButtonRect( itemBBox, i, scale );
+        if( rect.Contains( aPoint ) )
+        {
+            switch( i )
+            {
+            case 0: return IBTN_APPROVE;
+            case 1: return IBTN_REJECT;
+            }
+        }
+    }
+
+    return IBTN_NONE;
 }

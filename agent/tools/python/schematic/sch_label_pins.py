@@ -11,7 +11,8 @@ pin_labels = TOOL_ARGS.get("labels", {})
 h_align_override = TOOL_ARGS.get("h_align", None)
 v_align_override = TOOL_ARGS.get("v_align", None)
 
-def create_label(text, position, h_align, v_align, rotation=0):
+def build_label(text, position, h_align, v_align, rotation=0):
+    """Build a label proto in memory (no IPC call)."""
     if label_type == 'global':
         lbl = GlobalLabel.create(position, text)
     elif label_type == 'hierarchical':
@@ -22,11 +23,11 @@ def create_label(text, position, h_align, v_align, rotation=0):
     lbl._proto.text.attributes.vertical_alignment = v_align
     if rotation != 0:
         lbl._proto.text.attributes.angle.value_degrees = rotation
-    created = sch.crud.create_items(lbl)
-    return created[0] if created else lbl
+    return lbl
 
 # Resolve ref as symbol or sheet
 results = []
+labels_to_create = []  # Collect all label protos for batch creation
 _is_sheet = False
 sym = None
 sheet = None
@@ -62,9 +63,7 @@ elif _is_sheet:
             _side = _pin.side
 
             # Sheet pin side -> label alignment (already world-space)
-            # SPS_LEFT=1: label extends left; SPS_RIGHT=2: label extends right
-            # SPS_TOP=3: vertical above; SPS_BOTTOM=4: vertical below
-            rotation = 0  # Label rotation in degrees
+            rotation = 0
             if _side == 1:
                 h_align, v_align = HA_RIGHT, VA_BOTTOM
                 direction = 'left'
@@ -74,16 +73,15 @@ elif _is_sheet:
             elif _side == 3:
                 h_align, v_align = HA_LEFT, VA_BOTTOM
                 direction = 'up'
-                rotation = 90  # Rotate label for vertical sheet pin
+                rotation = 90
             elif _side == 4:
                 h_align, v_align = HA_LEFT, VA_TOP
                 direction = 'down'
-                rotation = 270  # Rotate label to read downward (away from sheet)
+                rotation = 270
             else:
                 h_align, v_align = HA_LEFT, VA_BOTTOM
                 direction = 'right'
 
-            # Apply alignment overrides
             if h_align_override is not None:
                 h_align = HA_LEFT if h_align_override == 'left' else HA_RIGHT
             if v_align_override is not None:
@@ -91,7 +89,8 @@ elif _is_sheet:
 
             lbl_x, lbl_y = px, py
             label_pos = Vector2.from_xy_mm(lbl_x, lbl_y)
-            _lbl = create_label(label_text, label_pos, h_align, v_align, rotation)
+            lbl = build_label(label_text, label_pos, h_align, v_align, rotation)
+            labels_to_create.append(lbl)
             results.append({'pin': pin_id, 'label': label_text, 'position': [round(lbl_x, 2), round(lbl_y, 2)], 'direction': direction})
 
         except Exception as e:
@@ -106,7 +105,6 @@ else:
         o = orient
         for _ in range(_rot_steps):
             o = _rot90.get(o, o)
-        # Apply mirroring: mirror_x flips up<->down, mirror_y flips left<->right
         if getattr(sym, 'mirror_x', False):
             if o == 2: o = 3
             elif o == 3: o = 2
@@ -131,12 +129,10 @@ else:
                 py = pin_result['position'].y / 1_000_000
                 orient = pin_result.get('orientation', None)
 
-            # Transform orientation and compute escape direction
             out_dx, out_dy = 0, 0
-            rotation = 0  # Label rotation in degrees
+            rotation = 0
             if orient is not None:
                 orient = transform_orientation(orient)
-                # orient 0=PIN_RIGHT(body), 1=PIN_LEFT(body), 2=PIN_UP(body), 3=PIN_DOWN(body)
                 if orient == 0:    # escape left
                     h_align, v_align = HA_RIGHT, VA_BOTTOM
                     direction = 'left'
@@ -149,18 +145,17 @@ else:
                     h_align, v_align = HA_LEFT, VA_TOP
                     direction = 'down'
                     out_dx, out_dy = 0, 1
-                    rotation = 270  # Rotate label to read downward (away from component)
+                    rotation = 270
                 elif orient == 3:  # escape up (vertical pin)
                     h_align, v_align = HA_LEFT, VA_BOTTOM
                     direction = 'up'
                     out_dx, out_dy = 0, -1
-                    rotation = 90  # Rotate label for vertical pin
+                    rotation = 90
                 else:
                     h_align, v_align = HA_LEFT, VA_BOTTOM
                     direction = 'right'
                     out_dx, out_dy = 1, 0
             else:
-                # Fallback: guess from symbol center
                 sym_cx = sym.position.x / 1_000_000
                 sym_cy = sym.position.y / 1_000_000
                 if px > sym_cx:
@@ -172,7 +167,6 @@ else:
                     direction = 'left'
                     out_dx, out_dy = -1, 0
 
-            # Apply alignment overrides
             if h_align_override is not None:
                 h_align = HA_LEFT if h_align_override == 'left' else HA_RIGHT
             if v_align_override is not None:
@@ -180,11 +174,16 @@ else:
 
             lbl_x, lbl_y = px, py
             label_pos = Vector2.from_xy_mm(lbl_x, lbl_y)
-            _lbl = create_label(label_text, label_pos, h_align, v_align, rotation)
+            lbl = build_label(label_text, label_pos, h_align, v_align, rotation)
+            labels_to_create.append(lbl)
             results.append({'pin': pin_id, 'label': label_text, 'position': [round(lbl_x, 2), round(lbl_y, 2)], 'direction': direction})
 
         except Exception as e:
             results.append({'pin': pin_id, 'label': label_text, 'error': str(e)})
+
+# Batch-create all labels in a single IPC call
+if labels_to_create:
+    sch.crud.create_items(labels_to_create)
 
 # Auto-sync sheet pins when placing hierarchical labels
 if label_type == 'hierarchical':

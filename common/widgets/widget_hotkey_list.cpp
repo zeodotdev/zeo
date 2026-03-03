@@ -380,7 +380,7 @@ void WIDGET_HOTKEY_LIST::editItem( wxTreeListItem aItem, int aEditId )
 
         if( it != m_reservedHotkeys.end() )
         {
-            wxString msg = wxString::Format( _( "'%s' is a reserved hotkey in KiCad and cannot "
+            wxString msg = wxString::Format( _( "'%s' is a reserved hotkey in Zeo and cannot "
                                                 "be assigned." ),
                                              it->second );
 

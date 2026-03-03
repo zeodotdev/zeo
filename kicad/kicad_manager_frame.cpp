@@ -986,7 +986,7 @@ bool KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
     {
         wxString head = Kiway().LocalHistory().GetHeadHash( Prj().GetProjectPath() );
 
-        KICAD_MESSAGE_DIALOG dlg( this, _( "KiCad found unsaved changes from your last session that are newer than "
+        KICAD_MESSAGE_DIALOG dlg( this, _( "Zeo found unsaved changes from your last session that are newer than "
                                            "the saved project files." ),
                                   _( "Recover Unsaved Changes" ), wxYES_NO | wxICON_QUESTION );
 

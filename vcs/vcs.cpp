@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <wx/app.h>
 
-// The KIFACE implementation for the KiCad Version Control app
+// The KIFACE implementation for the Version Control app
 class KIFACE_VCS : public KIFACE_BASE
 {
 public:
@@ -43,7 +43,7 @@ private:
     static KIFACE_VCS kiface;
 };
 
-KIFACE_VCS KIFACE_VCS::kiface( "kicad_vcs", KIWAY::FACE_VCS );
+KIFACE_VCS KIFACE_VCS::kiface( "vcs", KIWAY::FACE_VCS );
 
 KIFACE_BASE& Kiface()
 {

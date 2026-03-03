@@ -38,8 +38,8 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
                                                  wxEvtHandler* aHandler )
 {
     // If a previous request was cancelled but the thread hasn't finished yet, wait for it.
-    // This is common with Gemini where thinking pauses mean curl's cancel callbacks fire
-    // less frequently, so the abort takes longer to take effect.
+    // During SSE streaming (especially compaction), the server may pause between events,
+    // leaving curl in a blocking recv() where progress callbacks don't fire.
     if( m_requestInProgress.load() && m_cancelRequested.load() )
     {
         const int maxWaitMs = 3000;
@@ -53,10 +53,18 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
         }
 
         if( m_requestInProgress.load() )
-            wxLogWarning( "Cancelled LLM request did not finish within %dms", maxWaitMs );
+        {
+            // The old thread is stuck (curl blocked in recv with no progress callbacks).
+            // Force-clear the flag so the new request can proceed. The stale thread will
+            // eventually finish and its cleanup is harmless: it won't post events
+            // (wasCancelled is true) and its redundant store(false) is a no-op.
+            wxLogWarning( "Cancelled LLM request did not finish within %dms — force-clearing",
+                          maxWaitMs );
+            m_requestInProgress.store( false );
+        }
     }
 
-    // Check if a request is already in progress
+    // Check if a request is already in progress (non-cancelled)
     if( m_requestInProgress.load() )
     {
         PostLLMError( aHandler, "Another LLM request is already in progress" );
@@ -144,13 +152,15 @@ void* LLM_REQUEST_THREAD::Entry()
     if( !curl )
     {
         PostLLMError( m_handler, "Failed to initialize curl" );
+        if( m_client )
+            m_client->m_requestInProgress.store( false );
         return nullptr;
     }
 
     // Map display name to API model ID
     std::string apiModel;
     if( m_model == "Gemini 3.1 Pro" )
-        apiModel = "gemini-3.1-pro-preview";
+        apiModel = "gemini-3.1-pro-preview-customtools";
     else
         apiModel = "claude-opus-4-6";
 
@@ -222,6 +232,8 @@ void* LLM_REQUEST_THREAD::Entry()
     if( accessToken.empty() )
     {
         PostLLMError( m_handler, "Not authenticated. Please sign in." );
+        if( m_client )
+            m_client->m_requestInProgress.store( false );
         curl_easy_cleanup( curl );
         return nullptr;
     }
@@ -332,6 +344,11 @@ void* LLM_REQUEST_THREAD::Entry()
         std::string errorMsg = "Curl error: " + std::string( curl_easy_strerror( res ) );
         if( !wasCancelled )
             PostLLMError( m_handler, errorMsg );
+        // Clear in-progress flag before returning so the next request isn't blocked.
+        // The destructor also clears this, but detached-thread destruction timing is
+        // non-deterministic and can race with the next AskStreamWithToolsAsync call.
+        if( m_client )
+            m_client->m_requestInProgress.store( false );
         curl_easy_cleanup( curl );
         return nullptr;
     }
@@ -346,6 +363,8 @@ void* LLM_REQUEST_THREAD::Entry()
         }
         if( !wasCancelled )
             PostLLMError( m_handler, errorMsg );
+        if( m_client )
+            m_client->m_requestInProgress.store( false );
         curl_easy_cleanup( curl );
         return nullptr;
     }
@@ -704,7 +723,12 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     return 0;
 
                 auto error = j.value( "error", json::object() );
-                std::string errorMsg = error.value( "message", "Unknown error" );
+                std::string errorType = error.value( "type", "" );
+                std::string errorMsg  = error.value( "message", "Unknown error" );
+
+                // Prefix with error type so the UI can classify it
+                if( !errorType.empty() )
+                    errorMsg = "api_error_type:" + errorType + "\n" + errorMsg;
 
                 LLMStreamChunk chunk;
                 chunk.type = LLMChunkType::ERROR;

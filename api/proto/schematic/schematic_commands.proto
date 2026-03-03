@@ -958,6 +958,7 @@ message SearchLibrarySymbols
   string query = 1;                      // Search query (matches name, description, keywords)
   repeated string libraries = 2;         // Libraries to search (empty = all)
   int32 max_results = 3;                 // Maximum results (0 = no limit)
+  string pattern_type = 4;              // "substring" (default), "wildcard", or "regex"
 }
 
 message SearchLibrarySymbolsResponse

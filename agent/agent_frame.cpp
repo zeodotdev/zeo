@@ -278,7 +278,19 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Load the unified HTML template (contains top bar, chat, input, controls, overlays)
     m_fullHtmlContent = "";
-    m_webView->SetPage( GetUnifiedHtmlTemplate() );
+
+    // Detect system theme and apply it to the HTML template
+    wxString htmlContent = GetUnifiedHtmlTemplate();
+#ifdef __APPLE__
+    if( !IsSystemDarkMode() )
+    {
+        // Apply light theme by adding 'light' class to the html element
+        htmlContent.Replace( wxS( "<html class=\"h-full\">" ),
+                             wxS( "<html class=\"h-full light\">" ) );
+    }
+#endif
+
+    m_webView->SetPage( htmlContent );
     mainSizer->Add( m_webView, 1, wxEXPAND );
 
 #ifdef __APPLE__

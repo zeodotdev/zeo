@@ -2,6 +2,10 @@
 #include "vcs_ipc_handler.h"
 #include "vcs_html_template.h"
 
+#ifdef __APPLE__
+#include <agent/platform/macos_webview_bg.h>
+#endif
+
 #include <kiway.h>
 #include <kiway_mail.h>
 #include <mail_type.h>
@@ -84,7 +88,18 @@ VCS_FRAME::VCS_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         [this]( const wxString& msg ) { m_ipcHandler->OnMessage( msg ); } );
 
     // Load the embedded HTML UI
-    m_webView->SetPage( GetVcsHtmlTemplate() );
+    wxString htmlContent = GetVcsHtmlTemplate();
+
+#ifdef __APPLE__
+    // Apply light theme if system is in light mode
+    if( !IsSystemDarkMode() )
+    {
+        htmlContent.Replace( wxS( "<html class=\"h-full\">" ),
+                             wxS( "<html class=\"h-full light\">" ) );
+    }
+#endif
+
+    m_webView->SetPage( htmlContent );
     mainSizer->Add( m_webView, 1, wxEXPAND );
 
     SetSizer( mainSizer );

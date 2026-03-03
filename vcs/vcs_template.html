@@ -9,6 +9,7 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
+  /* Dark theme (default) */
   --bg:          #1e1e1e;
   --bg-panel:    #252526;
   --bg-hover:    #2a2d2e;
@@ -36,6 +37,34 @@
   --radius:      4px;
   --font-mono:   'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
   --font-ui:     -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+:root.light {
+  /* Light theme */
+  --bg:          #ffffff;
+  --bg-panel:    #f3f3f3;
+  --bg-hover:    #e8e8e8;
+  --bg-selected: #cce5ff;
+  --bg-input:    #ffffff;
+  --border:      #d0d0d0;
+  --border-focus:#a0a0a0;
+  --text:        #333333;
+  --text-dim:    #6e6e6e;
+  --text-bright: #1e1e1e;
+  --green:       #0066cc;
+  --green-dim:   #cce0f0;
+  --added:       #2e7d32;
+  --red:         #c62828;
+  --red-dim:     #ffcdd2;
+  --yellow:      #f57c00;
+  --blue:        #1565c0;
+  --purple:      #7b1fa2;
+  --diff-add:    #e6ffec;
+  --diff-add-ln: #ccffd8;
+  --diff-del:    #ffebe9;
+  --diff-del-ln: #ffd7d5;
+  --diff-hunk:   #f0f0ff;
+  --scrollbar:   #c0c0c0;
 }
 
 html, body {

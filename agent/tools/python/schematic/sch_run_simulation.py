@@ -2,6 +2,7 @@ import json
 
 command = TOOL_ARGS.get("command", "")
 save_to_schematic = TOOL_ARGS.get("save_to_schematic", False)
+plot_signals = TOOL_ARGS.get("plot_signals", None)  # Optional list of signal names to plot
 
 if not command:
     print('Error: command parameter is required')
@@ -63,11 +64,49 @@ else:
                     else:
                         ax.set_xlabel('X')
                         ax.set_ylabel('Y')
-                    for trace in traces:
+                    # Select which traces to plot
+                    plot_traces = []
+                    if plot_signals:
+                        # User/agent specified exact signals to plot
+                        signal_set = set(s.lower() for s in plot_signals)
+                        for trace in traces:
+                            name = trace.get('name', '')
+                            y_data = trace.get('data_values', [])
+                            if len(y_data) <= 1:
+                                continue
+                            if name.lower() in signal_set:
+                                plot_traces.append(trace)
+                    else:
+                        # Default: auto-filter to user-facing signals
+                        # Keep net labels (/in, /out), named nodes (net-_Q1-B_)
+                        # Skip internal subcircuit nodes (contain '.'),
+                        # branch currents (*#branch), constant rails
+                        for trace in traces:
+                            name = trace.get('name', '')
+                            y_data = trace.get('data_values', [])
+                            if len(y_data) <= 1:
+                                continue
+                            if '#branch' in name:
+                                continue
+                            if '.' in name:
+                                continue
+                            if min(y_data) == max(y_data):
+                                continue
+                            plot_traces.append(trace)
+
+                    # Fall back to all non-constant traces if filtering
+                    # removed everything
+                    if not plot_traces:
+                        for trace in traces:
+                            y_data = trace.get('data_values', [])
+                            if len(y_data) > 1 and min(y_data) != max(y_data):
+                                plot_traces.append(trace)
+
+                    for trace in plot_traces:
                         name = trace.get('name', '')
                         y_data = trace.get('data_values', [])
                         t_data = trace.get('time_values', x_data)
-                        if len(y_data) > 1 and len(t_data) == len(y_data):
+                        if len(t_data) == len(y_data):
                             ax.plot(t_data, y_data, label=name, linewidth=1.5)
                     ax.legend(fontsize=8, loc='best')
                     ax.grid(True, alpha=0.3)

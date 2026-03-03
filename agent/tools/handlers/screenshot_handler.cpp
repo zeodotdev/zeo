@@ -197,6 +197,8 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
         viewConfig["show_vias"] = aInput["show_vias"];
     if( aInput.contains( "show_pads" ) )
         viewConfig["show_pads"] = aInput["show_pads"];
+    if( aInput.contains( "show_tracks" ) )
+        viewConfig["show_tracks"] = aInput["show_tracks"];
     if( aInput.contains( "show_values" ) )
         viewConfig["show_values"] = aInput["show_values"];
     if( aInput.contains( "show_references" ) )

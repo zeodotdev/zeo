@@ -881,6 +881,21 @@ void BRDITEMS_PLOTTER::PlotZone( const ZONE* aZone, PCB_LAYER_ID aLayer, const S
 
     m_plotter->StartBlock( nullptr );    // Clean current object attributes
 
+    // In sketch mode, draw zone outlines only (no fill)
+    if( GetSketchZones() )
+    {
+        for( int idx = 0; idx < aPolysList.OutlineCount(); ++idx )
+        {
+            const SHAPE_LINE_CHAIN& outline = aPolysList.Outline( idx );
+            SHAPE_POLY_SET outlinePoly;
+            outlinePoly.AddOutline( outline );
+            m_plotter->ThickPoly( outlinePoly, GetSketchPadLineWidth(), getMetadata() );
+        }
+
+        m_plotter->EndBlock( nullptr );
+        return;
+    }
+
     /*
      * In non filled mode the outline is plotted, but not the filling items
      */

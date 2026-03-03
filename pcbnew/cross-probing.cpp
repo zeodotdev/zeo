@@ -893,11 +893,59 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                 plotOpts.SetPlotReference( showRefs );
                 plotOpts.SetPlotValue( showVals );
 
-                wxLogInfo( "PCB Screenshot: viewConfig=%s, show_references=%d, show_values=%d",
-                           viewConfig.dump().c_str(), showRefs, showVals );
+                // Apply sketch mode for pads, vias, zones (show outlines instead of fills)
+                // When show_X is false, we enable sketch mode for that element type
+                bool sketchPads = false;
+                bool sketchVias = false;
+                bool sketchZones = false;
 
-                // Note: show_pads, show_vias, show_zones would require board visibility
-                // manipulation for full support - not yet implemented
+                if( viewConfig.contains( "show_pads" ) )
+                {
+                    auto& val = viewConfig["show_pads"];
+                    if( val.is_boolean() )
+                        sketchPads = !val.get<bool>();
+                    else if( val.is_string() )
+                        sketchPads = ( val.get<std::string>() == "false" );
+                }
+
+                if( viewConfig.contains( "show_vias" ) )
+                {
+                    auto& val = viewConfig["show_vias"];
+                    if( val.is_boolean() )
+                        sketchVias = !val.get<bool>();
+                    else if( val.is_string() )
+                        sketchVias = ( val.get<std::string>() == "false" );
+                }
+
+                if( viewConfig.contains( "show_zones" ) )
+                {
+                    auto& val = viewConfig["show_zones"];
+                    if( val.is_boolean() )
+                        sketchZones = !val.get<bool>();
+                    else if( val.is_string() )
+                        sketchZones = ( val.get<std::string>() == "false" );
+                }
+
+                bool sketchTracks = false;
+
+                if( viewConfig.contains( "show_tracks" ) )
+                {
+                    auto& val = viewConfig["show_tracks"];
+                    if( val.is_boolean() )
+                        sketchTracks = !val.get<bool>();
+                    else if( val.is_string() )
+                        sketchTracks = ( val.get<std::string>() == "false" );
+                }
+
+                plotOpts.SetSketchPads( sketchPads );
+                plotOpts.SetSketchVias( sketchVias );
+                plotOpts.SetSketchZones( sketchZones );
+                plotOpts.SetSketchTracks( sketchTracks );
+
+                wxLogInfo( "PCB Screenshot: viewConfig=%s, show_references=%d, show_values=%d, "
+                           "sketchPads=%d, sketchVias=%d, sketchZones=%d, sketchTracks=%d",
+                           viewConfig.dump().c_str(), showRefs, showVals,
+                           sketchPads, sketchVias, sketchZones, sketchTracks );
 
                 COLOR_SETTINGS* colors =
                         ::GetColorSettings( wxT( "_builtin_default" ) );

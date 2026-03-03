@@ -105,6 +105,16 @@ public:
     void        SetSketchPadLineWidth( int aWidth ) { m_sketchPadLineWidth = aWidth; }
     int         GetSketchPadLineWidth() const { return m_sketchPadLineWidth; }
 
+    // Screenshot sketch mode options (for outline-only rendering)
+    void        SetSketchPads( bool aFlag ) { m_sketchPads = aFlag; }
+    bool        GetSketchPads() const { return m_sketchPads; }
+    void        SetSketchVias( bool aFlag ) { m_sketchVias = aFlag; }
+    bool        GetSketchVias() const { return m_sketchVias; }
+    void        SetSketchZones( bool aFlag ) { m_sketchZones = aFlag; }
+    bool        GetSketchZones() const { return m_sketchZones; }
+    void        SetSketchTracks( bool aFlag ) { m_sketchTracks = aFlag; }
+    bool        GetSketchTracks() const { return m_sketchTracks; }
+
     void        SetHideDNPFPsOnFabLayers( bool aFlag ) { m_hideDNPFPsOnFabLayers = aFlag; }
     bool        GetHideDNPFPsOnFabLayers() const { return m_hideDNPFPsOnFabLayers; }
     void        SetSketchDNPFPsOnFabLayers( bool aFlag ) { m_sketchDNPFPsOnFabLayers = aFlag; }
@@ -283,6 +293,11 @@ private:
     bool       m_hideDNPFPsOnFabLayers;
     bool       m_sketchDNPFPsOnFabLayers;
     bool       m_crossoutDNPFPsOnFabLayers;
+
+    bool       m_sketchPads;             ///< Screenshot mode: draw pad outlines instead of fills
+    bool       m_sketchVias;             ///< Screenshot mode: draw via outlines instead of fills
+    bool       m_sketchZones;            ///< Screenshot mode: draw zone outlines instead of fills
+    bool       m_sketchTracks;           ///< Screenshot mode: draw track centerlines instead of fills
 
     double     m_fineScaleAdjustX;      ///< Compensation for printer scale errors (and therefore
     double     m_fineScaleAdjustY;      ///<   expected to be very near 1.0).  Only X and Y

@@ -315,15 +315,19 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
             }},
             { "show_zones", {
                 { "type", "boolean" },
-                { "description", "Show filled copper zones. Default: true" }
+                { "description", "Show filled copper zones. Default: true. When false, draws zone outlines only." }
             }},
             { "show_vias", {
                 { "type", "boolean" },
-                { "description", "Show vias. Default: true" }
+                { "description", "Show filled vias. Default: true. When false, draws via outlines only." }
             }},
             { "show_pads", {
                 { "type", "boolean" },
-                { "description", "Show component pads. Default: true" }
+                { "description", "Show filled pads. Default: true. When false, draws pad outlines only." }
+            }},
+            { "show_tracks", {
+                { "type", "boolean" },
+                { "description", "Show filled tracks/traces. Default: true. When false, draws thin centerlines." }
             }},
             { "show_values", {
                 { "type", "boolean" },

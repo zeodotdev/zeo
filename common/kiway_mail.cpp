@@ -36,7 +36,7 @@ KIWAY_MAIL_EVENT::KIWAY_MAIL_EVENT( const KIWAY_MAIL_EVENT& anOther ) :
 }
 
 
-KIWAY_MAIL_EVENT::KIWAY_MAIL_EVENT( FRAME_T aDestination, MAIL_T aCommand, std::string& aPayload,
+KIWAY_MAIL_EVENT::KIWAY_MAIL_EVENT( FRAME_T aDestination, MAIL_T aCommand, const std::string& aPayload,
                               wxWindow* aSource ) :
         wxEvent( aCommand, EDA_KIWAY_MAIL_RECEIVED ),
     m_destination( aDestination ),

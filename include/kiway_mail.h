@@ -58,14 +58,14 @@ public:
 
     KIWAY_MAIL_EVENT* Clone() const override { return new KIWAY_MAIL_EVENT( *this ); }
 
-    KIWAY_MAIL_EVENT( FRAME_T aDestination, MAIL_T aCommand, std::string& aPayload,
+    KIWAY_MAIL_EVENT( FRAME_T aDestination, MAIL_T aCommand, const std::string& aPayload,
                    wxWindow* aSource = nullptr );
 
     KIWAY_MAIL_EVENT( const KIWAY_MAIL_EVENT& anOther );
 
 private:
     FRAME_T         m_destination;    ///< could have been a bitmap indicating multiple recipients.
-    std::string&    m_payload;        ///< very often s-expression text, but not always.
+    std::string     m_payload;        ///< very often s-expression text, but not always.
 };
 
 

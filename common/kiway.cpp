@@ -509,9 +509,17 @@ void KIWAY::ExpressMail( FRAME_T aDestination, MAIL_T aCommand, std::string& aPa
             std::make_unique<KIWAY_MAIL_EVENT>( aDestination, aCommand, aPayload, aSource );
 
     if( aFromOtherThread )
+    {
         QueueEvent( mail.release() );
+    }
     else
+    {
         ProcessEvent( *mail );
+
+        // The handler may have modified the payload (e.g. to return a response).
+        // Copy it back so callers see the updated value.
+        aPayload = mail->GetPayload();
+    }
 }
 
 

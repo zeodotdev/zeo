@@ -569,12 +569,14 @@ try:
                 except Exception as lbl_e:
                     results.append({'index': i, 'warning': f'Label at pin {pin_num}: {str(lbl_e)}'})
 
-            # Record placement
+            # Record placement (include UUID for post-annotation ref lookup)
+            comp_uuid = str(comp_sym.id.value) if hasattr(comp_sym, 'id') and hasattr(comp_sym.id, 'value') else str(getattr(comp_sym, 'id', ''))
             placed_companions.append({
                 'index': i,
                 'lib_id': lib_id,
                 'ic_pin': ic_pin,
                 'ref': comp_sym.reference,
+                'uuid': comp_uuid,
                 'cx': cx,
                 'cy': cy,
                 'position': [round(cx, 2), round(cy, 2)],
@@ -592,6 +594,35 @@ try:
 
 except Exception as e:
     results = [{'error': str(e)}]
+
+# ---------------------------------------------------------------------------
+# Auto-annotate newly placed companions
+# ---------------------------------------------------------------------------
+if placed_companions:
+    try:
+        response = sch.erc.annotate(
+            scope='all',
+            order='x_y',
+            algorithm='incremental',
+            start_number=1,
+            reset_existing=False,
+            recursive=True
+        )
+        # Build UUID→ref map from all symbols after annotation
+        uuid_to_ref = {}
+        for s in sch.symbols.get_all():
+            s_uuid = str(s.id.value) if hasattr(s, 'id') and hasattr(s.id, 'value') else str(getattr(s, 'id', ''))
+            uuid_to_ref[s_uuid] = getattr(s, 'reference', '?')
+        # Update placed companion refs using UUID lookup
+        for comp in placed_companions:
+            if comp.get('power_only'):
+                continue
+            comp_uuid = comp.get('uuid', '')
+            if comp_uuid and comp_uuid in uuid_to_ref:
+                comp['ref'] = uuid_to_ref[comp_uuid]
+        _debug.append(f'Auto-annotated {getattr(response, "symbols_annotated", "?")} symbols')
+    except Exception as ann_e:
+        _debug.append(f'Auto-annotate failed: {str(ann_e)}')
 
 # Output result
 output = {

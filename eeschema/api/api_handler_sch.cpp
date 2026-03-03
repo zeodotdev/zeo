@@ -664,7 +664,7 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
         if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
         {
             tracker->TrackItem( trackedUuid,
-                                m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                                m_frame->GetAgentTargetSheetPath(),
                                 aCreate ? AGENT_CHANGE_TYPE::ADDED
                                         : AGENT_CHANGE_TYPE::CHANGED );
         }
@@ -729,7 +729,7 @@ void API_HANDLER_SCH::deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& a
             if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
             {
                 tracker->TrackItem( id,
-                                    m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                                    m_frame->GetAgentTargetSheetPath(),
                                     AGENT_CHANGE_TYPE::DELETED, deletedBBox );
             }
         }
@@ -2162,7 +2162,7 @@ API_HANDLER_SCH::handleCreateSheet(
     if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
     {
         tracker->TrackItem( newSheet->m_Uuid,
-                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            m_frame->GetAgentTargetSheetPath(),
                             AGENT_CHANGE_TYPE::ADDED );
     }
 
@@ -2266,7 +2266,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleDeleteSheet(
     if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
     {
         tracker->TrackItem( sheetId,
-                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            m_frame->GetAgentTargetSheetPath(),
                             AGENT_CHANGE_TYPE::DELETED, deletedBBox );
     }
 
@@ -2424,7 +2424,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetSheetProperties(
     if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
     {
         tracker->TrackItem( sheetId,
-                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            m_frame->GetAgentTargetSheetPath(),
                             AGENT_CHANGE_TYPE::CHANGED );
     }
 
@@ -2526,7 +2526,7 @@ API_HANDLER_SCH::handleCreateSheetPin(
     if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
     {
         tracker->TrackItem( sheetId,
-                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            m_frame->GetAgentTargetSheetPath(),
                             AGENT_CHANGE_TYPE::CHANGED );
     }
 
@@ -2600,7 +2600,7 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleDeleteSheetPin(
     if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
     {
         tracker->TrackItem( parentSheet->m_Uuid,
-                            m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                            m_frame->GetAgentTargetSheetPath(),
                             AGENT_CHANGE_TYPE::CHANGED );
     }
 
@@ -2834,7 +2834,7 @@ API_HANDLER_SCH::handleSyncSheetPins(
         {
             m_frame->GetAgentChangeTracker()->TrackItem(
                 sheet->m_Uuid,
-                m_frame->GetCurrentSheet().PathHumanReadable( false ),
+                m_frame->GetAgentTargetSheetPath(),
                 AGENT_CHANGE_TYPE::CHANGED );
         }
     }

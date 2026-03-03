@@ -992,6 +992,14 @@ public:
     AGENT_CHANGE_TRACKER* GetAgentChangeTracker() { return m_agentChangeTracker.get(); }
 
     /**
+     * Get the human-readable sheet path for the agent's target sheet.
+     * Returns the agent target sheet path if set, otherwise the current sheet path.
+     * Use this (not GetCurrentSheet()) when tracking items in API handlers,
+     * since the agent may be targeting a different sheet than the user is viewing.
+     */
+    wxString GetAgentTargetSheetPath() const;
+
+    /**
      * Get the snapshot session for diff viewing.
      * @return Pointer to the session, or nullptr if not active.
      */

@@ -723,7 +723,12 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     return 0;
 
                 auto error = j.value( "error", json::object() );
-                std::string errorMsg = error.value( "message", "Unknown error" );
+                std::string errorType = error.value( "type", "" );
+                std::string errorMsg  = error.value( "message", "Unknown error" );
+
+                // Prefix with error type so the UI can classify it
+                if( !errorType.empty() )
+                    errorMsg = "api_error_type:" + errorType + "\n" + errorMsg;
 
                 LLMStreamChunk chunk;
                 chunk.type = LLMChunkType::ERROR;

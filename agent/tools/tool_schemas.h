@@ -2,8 +2,7 @@
 #define TOOL_SCHEMAS_H
 
 #include <vector>
-
-struct LLM_TOOL;
+#include "llm_tool.h"
 
 namespace ToolSchemas
 {

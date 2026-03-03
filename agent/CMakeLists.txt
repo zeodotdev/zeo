@@ -208,8 +208,13 @@ target_link_libraries( agent
     # ${wxWidgets_LIBRARIES} # common/single_top.cpp doesn't need much, but let's be safe if needed
 )
 
-# Ensure HTML template and Python scripts are generated before compiling
-add_dependencies( agent_kiface unified_html_template install_python_scripts )
+# Ensure HTML template is generated before compiling
+add_dependencies( agent_kiface unified_html_template )
+
+# On macOS the Python tool scripts are copied into the app bundle at build time
+if( TARGET install_python_scripts )
+    add_dependencies( agent_kiface install_python_scripts )
+endif()
 add_dependencies( agent agent_kiface )
 
 # Installation rules

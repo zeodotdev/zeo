@@ -1,7 +1,3 @@
-#ifndef __APPLE__
-#error "kicad_file_renderer.cpp requires macOS (POSIX fork/exec, app bundle layout)"
-#endif
-
 #include "kicad_file_renderer.h"
 
 #include <sexpr/sexpr_parser.h>

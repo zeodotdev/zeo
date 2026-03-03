@@ -1,7 +1,3 @@
-#ifndef __APPLE__
-#error "screenshot_handler.cpp requires macOS (sips for image conversion, POSIX APIs)"
-#endif
-
 #include "screenshot_handler.h"
 #include "../tool_registry.h"
 #include "../util/kicad_cli_util.h"
@@ -423,18 +419,26 @@ bool SCREENSHOT_HANDLER::ConvertSvgToPng( const std::string& aSvgPath,
 {
     // Rasterize at 4096px so CropAndResize has plenty of pixels to crop from
     // before downscaling to the API limit (1568px).
-    std::string cmd = "sips -s format png -Z 4096"
-                      " \"" + aSvgPath + "\" --out \"" + aPngPath + "\"";
+    std::string cmd;
+
+#ifdef __APPLE__
+    cmd = "sips -s format png -Z 4096"
+          " \"" + aSvgPath + "\" --out \"" + aPngPath + "\"";
+#else
+    // Linux: use rsvg-convert (librsvg2-bin) for SVG to PNG conversion
+    cmd = "rsvg-convert -w 4096 -h 4096 --keep-aspect-ratio"
+          " -o \"" + aPngPath + "\" \"" + aSvgPath + "\"";
+#endif
 
     std::string stdoutStr, stderrStr;
     int exitCode = RunCommand( cmd, stdoutStr, stderrStr );
 
     if( !stderrStr.empty() )
-        wxLogWarning( "SCREENSHOT: sips stderr: %s", stderrStr.c_str() );
+        wxLogWarning( "SCREENSHOT: SVG convert stderr: %s", stderrStr.c_str() );
 
     if( exitCode != 0 )
     {
-        wxLogError( "SCREENSHOT: sips failed (exit %d)", exitCode );
+        wxLogError( "SCREENSHOT: SVG to PNG conversion failed (exit %d)", exitCode );
         return false;
     }
 

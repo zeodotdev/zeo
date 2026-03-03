@@ -16,7 +16,7 @@
 class AGENT_LLM_CLIENT;
 class AGENT_CHAT_HISTORY;
 class AGENT_CLOUD_SYNC;
-struct LLM_TOOL;
+#include "llm_tool.h"
 
 /**
  * Central controller for chat state and logic.

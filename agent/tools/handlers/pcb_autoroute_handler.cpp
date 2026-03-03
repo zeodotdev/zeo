@@ -1,7 +1,3 @@
-#ifndef __APPLE__
-#error "pcb_autoroute_handler.cpp requires macOS (POSIX APIs)"
-#endif
-
 #include "pcb_autoroute_handler.h"
 #include "../tool_registry.h"
 #include "../util/kicad_cli_util.h"

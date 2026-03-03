@@ -6,7 +6,6 @@
 #include <string>
 
 class wxEvtHandler;
-struct LLM_TOOL;
 
 /**
  * Handler for PCBParts MCP server tools (https://pcbparts.dev/mcp).

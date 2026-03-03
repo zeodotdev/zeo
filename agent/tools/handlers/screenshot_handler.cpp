@@ -202,6 +202,8 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
     if( aInput.contains( "show_references" ) )
         viewConfig["show_references"] = aInput["show_references"];
 
+    wxLogInfo( "SCREENSHOT: viewConfig = %s", viewConfig.dump().c_str() );
+
     // Export to SVG — prefer in-memory IPC export when editor is open,
     // fall back to kicad-cli disk-based export otherwise.
     // We always attempt IPC when the send function is available; SendRequest will

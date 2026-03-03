@@ -868,14 +868,33 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                 plotOpts.SetDrillMarksType( DRILL_MARKS::FULL_DRILL_SHAPE );
 
                 // Apply element visibility options
-                bool showRefs = viewConfig.value( "show_references", true );
-                bool showVals = viewConfig.value( "show_values", true );
+                // Use explicit type checking since JSON values could be strings or bools
+                bool showRefs = true;
+                bool showVals = true;
+
+                if( viewConfig.contains( "show_references" ) )
+                {
+                    auto& val = viewConfig["show_references"];
+                    if( val.is_boolean() )
+                        showRefs = val.get<bool>();
+                    else if( val.is_string() )
+                        showRefs = ( val.get<std::string>() != "false" );
+                }
+
+                if( viewConfig.contains( "show_values" ) )
+                {
+                    auto& val = viewConfig["show_values"];
+                    if( val.is_boolean() )
+                        showVals = val.get<bool>();
+                    else if( val.is_string() )
+                        showVals = ( val.get<std::string>() != "false" );
+                }
+
                 plotOpts.SetPlotReference( showRefs );
                 plotOpts.SetPlotValue( showVals );
 
-                fprintf( stderr, "PCB Screenshot: show_references=%d, show_values=%d\n",
-                         showRefs, showVals );
-                fflush( stderr );
+                wxLogInfo( "PCB Screenshot: viewConfig=%s, show_references=%d, show_values=%d",
+                           viewConfig.dump().c_str(), showRefs, showVals );
 
                 // Note: show_pads, show_vias, show_zones would require board visibility
                 // manipulation for full support - not yet implemented

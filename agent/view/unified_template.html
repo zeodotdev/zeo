@@ -977,6 +977,29 @@ App.Chat = (function() {
         if (el) el.remove();
     }
 
+    // Action button inserted after a tool result (and its image if any)
+    function toolActionBtn(index, text, href) {
+        setTimeout(function() {
+            var el = document.getElementById('tool-result-' + index);
+            if (!el) return;
+            // Insert after last adjacent sibling (image wrapper if present)
+            var target = el;
+            var next = el.nextElementSibling;
+            while (next && next.classList.contains('my-2')) {
+                target = next;
+                next = next.nextElementSibling;
+            }
+            var wrapper = document.createElement('div');
+            wrapper.className = 'my-1';
+            var a = document.createElement('a');
+            a.href = href;
+            a.style.cssText = 'background:#1a3d1a; color:#4ade80; padding:5px 14px; border-radius:6px; font-size:12px; font-weight:600; text-decoration:none; cursor:pointer; display:inline-block;';
+            a.textContent = text;
+            wrapper.appendChild(a);
+            target.insertAdjacentElement('afterend', wrapper);
+        }, 100);
+    }
+
     return {
         updateStreamingContent: updateStreamingContent,
         finalizeStreaming: finalizeStreaming,
@@ -987,6 +1010,7 @@ App.Chat = (function() {
         toolImgBegin: toolImgBegin,
         toolImgChunk: toolImgChunk,
         toolImgEnd: toolImgEnd,
+        toolActionBtn: toolActionBtn,
         showPlanApproval: showPlanApproval,
         removePlanApproval: removePlanApproval,
         setDebug: function(on) { _debug = on; }

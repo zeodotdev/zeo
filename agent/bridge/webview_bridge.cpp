@@ -357,6 +357,14 @@ void WEBVIEW_BRIDGE::PushToolResultImageEnd( int aIndex )
     RunScript( wxString::Format( "App.Chat.toolImgEnd(%d);", aIndex ) );
 }
 
+void WEBVIEW_BRIDGE::PushToolResultActionButton( int aIndex, const wxString& aText,
+                                                  const wxString& aHref )
+{
+    LogBridge( "C++->JS", wxString::Format( "toolActionBtn(%d)", aIndex ) );
+    RunScript( wxString::Format( "App.Chat.toolActionBtn(%d, '%s', '%s');",
+                                  aIndex, EscapeJs( aText ), EscapeJs( aHref ) ) );
+}
+
 void WEBVIEW_BRIDGE::PushCancelRunningTools()
 {
     RunScript(

@@ -53,6 +53,182 @@ def bboxes_overlap(a, b, eps=0.001):
             a['max_y'] > b['min_y'] + eps)
 
 
+def collect_all_obstacle_bboxes(sch, label_shrink=0.0, exclude_ids=None):
+    """Return list of padded bounding boxes for all placed symbols, labels, sheets, and wires.
+
+    Args:
+        sch: Schematic API handle
+        label_shrink: mm to shrink label bboxes inward (allows label stacking)
+        exclude_ids: Set of UUID strings to exclude (e.g., the IC being decorated)
+
+    Returns:
+        List of bbox dicts: {id, ref, kind, min_x, max_x, min_y, max_y}
+    """
+    _exclude = exclude_ids or set()
+    bboxes = []
+
+    # Symbols (includes power symbols)
+    try:
+        for sym in sch.symbols.get_all():
+            uid = get_uuid_str(sym)
+            if uid in _exclude:
+                continue
+            try:
+                bb = sch.transform.get_bounding_box(sym, units='mm', include_text=False)
+            except Exception:
+                continue
+            if bb:
+                bboxes.append({
+                    'id': uid,
+                    'ref': getattr(sym, 'reference', '?'),
+                    'kind': 'symbol',
+                    'min_x': bb['min_x'] - _BBOX_MARGIN,
+                    'max_x': bb['max_x'] + _BBOX_MARGIN,
+                    'min_y': bb['min_y'] - _BBOX_MARGIN,
+                    'max_y': bb['max_y'] + _BBOX_MARGIN,
+                })
+    except Exception:
+        pass
+
+    # Labels (local, global, hierarchical)
+    try:
+        for lbl in sch.labels.get_all():
+            uid = get_uuid_str(lbl)
+            if uid in _exclude:
+                continue
+            try:
+                bb = sch.transform.get_bounding_box(lbl, units='mm')
+            except Exception:
+                continue
+            if bb:
+                bboxes.append({
+                    'id': uid,
+                    'ref': getattr(lbl, 'text', '?'),
+                    'kind': 'label',
+                    'min_x': bb['min_x'] + label_shrink,
+                    'max_x': bb['max_x'] - label_shrink,
+                    'min_y': bb['min_y'] + label_shrink,
+                    'max_y': bb['max_y'] - label_shrink,
+                })
+    except Exception:
+        pass
+
+    # Sheets
+    try:
+        for sht in sch.crud.get_sheets():
+            uid = get_uuid_str(sht)
+            if uid in _exclude:
+                continue
+            try:
+                bb = sch.transform.get_bounding_box(sht, units='mm')
+            except Exception:
+                continue
+            if bb:
+                bboxes.append({
+                    'id': uid,
+                    'ref': getattr(sht, 'name', 'sheet'),
+                    'kind': 'sheet',
+                    'min_x': bb['min_x'] - _BBOX_MARGIN,
+                    'max_x': bb['max_x'] + _BBOX_MARGIN,
+                    'min_y': bb['min_y'] - _BBOX_MARGIN,
+                    'max_y': bb['max_y'] + _BBOX_MARGIN,
+                })
+    except Exception:
+        pass
+
+    # Wires
+    try:
+        bboxes.extend(wire_segments_to_bboxes(sch.crud.get_wires()))
+    except Exception:
+        pass
+
+    return bboxes
+
+
+def wire_segments_to_bboxes(wires):
+    """Convert wire objects into thin AABB dicts.
+
+    Zero-width segments (vertical/horizontal) are expanded by 0.01mm so
+    overlap detection still works.
+    """
+    result = []
+    for w in wires:
+        sx = round(w.start.x / 1e6, 2)
+        sy = round(w.start.y / 1e6, 2)
+        ex = round(w.end.x / 1e6, 2)
+        ey = round(w.end.y / 1e6, 2)
+        wbb = {
+            'kind': 'wire',
+            'min_x': min(sx, ex), 'max_x': max(sx, ex),
+            'min_y': min(sy, ey), 'max_y': max(sy, ey),
+        }
+        if wbb['min_x'] == wbb['max_x']:
+            wbb['min_x'] -= 0.01
+            wbb['max_x'] += 0.01
+        if wbb['min_y'] == wbb['max_y']:
+            wbb['min_y'] -= 0.01
+            wbb['max_y'] += 0.01
+        result.append(wbb)
+    return result
+
+
+class SpatialIndex:
+    """Grid-based spatial index for fast bounding-box overlap queries.
+
+    Divides 2D space into cells of ``cell_size`` mm.  Each bbox is registered
+    in every cell it touches.  Overlap queries check only the cells touched
+    by the query bbox, giving O(1) average-case performance.
+    """
+
+    def __init__(self, cell_size=10.0):
+        self._cell_size = cell_size
+        self._grid = {}   # (col, row) -> list of bbox dicts
+        self._all = []     # flat list for iteration
+
+    def _cells_for_bbox(self, bbox):
+        cs = self._cell_size
+        c0 = int(bbox['min_x'] // cs)
+        c1 = int(bbox['max_x'] // cs)
+        r0 = int(bbox['min_y'] // cs)
+        r1 = int(bbox['max_y'] // cs)
+        cells = []
+        for c in range(c0, c1 + 1):
+            for r in range(r0, r1 + 1):
+                cells.append((c, r))
+        return cells
+
+    def insert(self, bbox):
+        """Add a bbox to the index."""
+        self._all.append(bbox)
+        for cell in self._cells_for_bbox(bbox):
+            self._grid.setdefault(cell, []).append(bbox)
+
+    def any_overlap(self, bbox, eps=0.001):
+        """Return True if any indexed bbox overlaps with the given bbox."""
+        seen = set()
+        for cell in self._cells_for_bbox(bbox):
+            for b in self._grid.get(cell, []):
+                bid = id(b)
+                if bid not in seen:
+                    seen.add(bid)
+                    if bboxes_overlap(bbox, b, eps):
+                        return True
+        return False
+
+    def query_overlaps(self, bbox, eps=0.001):
+        """Return list of indexed bboxes that overlap with the given bbox."""
+        seen = set()
+        results = []
+        for cell in self._cells_for_bbox(bbox):
+            for b in self._grid.get(cell, []):
+                bid = id(b)
+                if bid not in seen:
+                    seen.add(bid)
+                    if bboxes_overlap(bbox, b, eps):
+                        results.append(b)
+        return results
+
+
 # ---------------------------------------------------------------------------
 # PCB bounding-box and ratsnest utilities
 # ---------------------------------------------------------------------------

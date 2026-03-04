@@ -592,7 +592,8 @@ std::string PYTHON_TOOL_HANDLER::GetIPCCommand( const std::string& aToolName,
 
     // sch_add, sch_update, and pcb placement tools need bounding-box utilities
     if( aToolName == "sch_add" || aToolName == "sch_update"
-        || aToolName == "pcb_place" || aToolName == "pcb_place_companions" )
+        || aToolName == "pcb_place" || aToolName == "pcb_place_companions"
+        || aToolName == "sch_place_companions" )
         script += m_bbox + "\n";
 
     script += it->second.script;

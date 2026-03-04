@@ -838,6 +838,24 @@ json GIT_VCS_BRIDGE::GetBranches()
             if( name ) currentBranch = name;
             git_reference_free( head );
         }
+        else if( git_repository_head_unborn( m_repo ) )
+        {
+            // No commits yet — read the unborn branch name from HEAD symbolic ref
+            git_reference* headRef = nullptr;
+            if( git_reference_lookup( &headRef, m_repo, "HEAD" ) == 0 )
+            {
+                const char* target = git_reference_symbolic_target( headRef );
+                if( target )
+                {
+                    // target is e.g. "refs/heads/main" — strip the prefix
+                    std::string ref( target );
+                    const std::string prefix = "refs/heads/";
+                    if( ref.compare( 0, prefix.size(), prefix ) == 0 )
+                        currentBranch = ref.substr( prefix.size() );
+                }
+                git_reference_free( headRef );
+            }
+        }
     }
 
     // Collect local branch names first (need them for dedup)
@@ -860,6 +878,13 @@ json GIT_VCS_BRIDGE::GetBranches()
                 git_reference_free( ref );
             }
             git_branch_iterator_free( it );
+        }
+
+        // If HEAD is unborn, the branch won't appear in the iterator — add it manually
+        if( !currentBranch.empty() && localNames.find( currentBranch ) == localNames.end() )
+        {
+            local.push_back( currentBranch );
+            localNames.insert( currentBranch );
         }
     }
 

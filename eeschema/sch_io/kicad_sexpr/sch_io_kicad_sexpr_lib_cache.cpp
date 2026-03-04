@@ -103,7 +103,7 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::Load()
 
             errorMsg += _( "The library cannot be saved until these errors are fixed manually." );
 
-            THROW_IO_ERROR( errorMsg );
+            wxLogWarning( "%s", errorMsg );
         }
     }
     else
@@ -191,8 +191,7 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::Load()
 
             if( !errorCache.IsEmpty() )
             {
-                errorCache += _( "\n\nThe library cannot be saved until these errors are fixed manually." );
-                THROW_IO_ERROR( errorCache );
+                wxLogWarning( "%s", errorCache );
             }
         }
 
@@ -210,18 +209,6 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::Save( const std::optional<bool>& aOpt )
 {
     if( !m_isModified )
         return;
-
-    // If the library had a parse error during loading, we cannot safely save it.
-    // Only symbols before the parse error were loaded, so saving would permanently
-    // lose all symbols after the error point. See issue #22241.
-    if( HasParseError() )
-    {
-        THROW_IO_ERROR( wxString::Format(
-                _( "Cannot save library '%s' because it had a parse error during loading.\n\n"
-                   "Saving would permanently lose symbols that could not be loaded.\n"
-                   "Please fix the library file manually before saving." ),
-                m_libFileName.GetFullPath() ) );
-    }
 
     // Write through symlinks, don't replace them.
     wxFileName fn = GetRealFile();

@@ -1047,9 +1047,13 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
     schAddSheet.input_schema = {
         { "type", "object" },
         { "properties", {
-            { "sheet_name", {
+            { "sheet_path", {
                 { "type", "string" },
-                { "description", "Display name for the sheet (e.g., 'Power Supply')" }
+                { "description", "Full path of the new sheet to create "
+                                "(e.g., '/Power Supply/' for a root-level sheet, "
+                                "'/Parent Sheet/Child Sheet/' for a nested sheet). "
+                                "The last segment becomes the sheet name. "
+                                "Use sch_switch_sheet with no arguments to list existing sheets." }
             }},
             { "sheet_file", {
                 { "type", "string" },
@@ -1066,7 +1070,7 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
                 { "description", "Sheet size [width, height] in mm. Default: [50, 50]." }
             }}
         }},
-        { "required", json::array( { "sheet_name" } ) }
+        { "required", json::array( { "sheet_path" } ) }
     };
     schAddSheet.group = ToolGroup::SCHEMATIC;
     tools.push_back( schAddSheet );

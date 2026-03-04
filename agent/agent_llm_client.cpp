@@ -355,14 +355,10 @@ void* LLM_REQUEST_THREAD::Entry()
 
     if( http_code != 200 )
     {
-        std::string errorMsg = "LLM API error: HTTP " + std::to_string( http_code );
-        // Include the response body which contains error details
-        if( !ctx.buffer.empty() )
-        {
-            errorMsg += "\nResponse: " + ctx.buffer.substr( 0, 500 ); // Limit to 500 chars
-        }
+        // Pass raw response body and HTTP code as structured data
+        std::string responseBody = ctx.buffer.substr( 0, 500 ); // Limit to 500 chars
         if( !wasCancelled )
-            PostLLMError( m_handler, errorMsg );
+            PostLLMError( m_handler, responseBody, http_code );
         if( m_client )
             m_client->m_requestInProgress.store( false );
         curl_easy_cleanup( curl );
@@ -723,16 +719,11 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     return 0;
 
                 auto error = j.value( "error", json::object() );
-                std::string errorType = error.value( "type", "" );
-                std::string errorMsg  = error.value( "message", "Unknown error" );
-
-                // Prefix with error type so the UI can classify it
-                if( !errorType.empty() )
-                    errorMsg = "api_error_type:" + errorType + "\n" + errorMsg;
 
                 LLMStreamChunk chunk;
                 chunk.type = LLMChunkType::ERROR;
-                chunk.error_message = errorMsg;
+                chunk.error_type = error.value( "type", "" );
+                chunk.error_message = error.value( "message", "Unknown error" );
                 PostLLMChunk( ctx->handler, chunk );
             }
         }

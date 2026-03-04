@@ -606,8 +606,9 @@ std::string PYTHON_TOOL_HANDLER::GetIPCCommand( const std::string& aToolName,
     // Assemble: preamble + optional bbox + tool script
     std::string script = m_preamble + "\n";
 
-    // sch_add, sch_update, sch_draft_circuit, and pcb placement tools need bounding-box utilities
+    // sch_add, sch_update, sch_draft_circuit, sch_place_companions, and pcb placement tools need bounding-box utilities
     if( aToolName == "sch_add" || aToolName == "sch_update" || aToolName == "sch_draft_circuit"
+        || aToolName == "sch_place_companions"
         || aToolName == "pcb_place" || aToolName == "pcb_place_companions" )
         script += m_bbox + "\n";
 

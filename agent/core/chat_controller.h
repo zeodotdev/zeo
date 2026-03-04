@@ -266,9 +266,12 @@ public:
 
     /**
      * Handle LLM stream error.
-     * @param aError The error message
+     * @param aError The error message (raw response body for HTTP errors)
+     * @param aHttpCode HTTP status code (0 for non-HTTP errors)
+     * @param aErrorType Error type string (e.g. "overloaded_error" for SSE errors)
      */
-    void HandleLLMError( const std::string& aError );
+    void HandleLLMError( const std::string& aError, long aHttpCode = 0,
+                         const std::string& aErrorType = "" );
 
     /**
      * Handle tool execution completion.

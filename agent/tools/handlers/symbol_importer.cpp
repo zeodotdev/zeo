@@ -14,6 +14,16 @@ using json = nlohmann::json;
 
 
 // ---------------------------------------------------------------------------
+// Strip Windows carriage returns from S-expression content to prevent
+// KiCad parser errors when importing symbols from external sources.
+// ---------------------------------------------------------------------------
+static void StripCarriageReturns( std::string& s )
+{
+    s.erase( std::remove( s.begin(), s.end(), '\r' ), s.end() );
+}
+
+
+// ---------------------------------------------------------------------------
 // Execute — sync stub (not used since IsAsync returns true)
 // ---------------------------------------------------------------------------
 std::string SYMBOL_IMPORTER::Execute( const std::string& aToolName,
@@ -507,9 +517,16 @@ std::string SYMBOL_IMPORTER::DoImport( const std::string& aSymContent,
                                         const std::string& aProjectPath,
                                         bool aForce )
 {
+    // Sanitize inputs — external sources (SnapEDA, LCSC, etc.) may use \r\n
+    // which the KiCad S-expression parser cannot handle.
+    std::string symContent = aSymContent;
+    std::string fpContent  = aFpContent;
+    StripCarriageReturns( symContent );
+    StripCarriageReturns( fpContent );
+
     // Step 1: Validate symbol content
-    if( aSymContent.find( "(kicad_symbol_lib" ) == std::string::npos
-        && aSymContent.find( "(symbol \"" ) == std::string::npos )
+    if( symContent.find( "(kicad_symbol_lib" ) == std::string::npos
+        && symContent.find( "(symbol \"" ) == std::string::npos )
     {
         json err;
         err["error"] = "kicad_symbol does not appear to be valid KiCad symbol data. "
@@ -521,7 +538,7 @@ std::string SYMBOL_IMPORTER::DoImport( const std::string& aSymContent,
     std::string canonicalName = aSymbolName;
 
     if( canonicalName.empty() )
-        canonicalName = ExtractSymbolName( aSymContent );
+        canonicalName = ExtractSymbolName( symContent );
 
     if( canonicalName.empty() )
     {
@@ -545,20 +562,20 @@ std::string SYMBOL_IMPORTER::DoImport( const std::string& aSymContent,
                canonicalName.c_str(), aLibraryName.c_str() );
 
     // Step 3: Extract inner symbol blocks (strip library wrapper)
-    std::string symbolBlocks = ExtractSymbolBlocks( aSymContent );
+    std::string symbolBlocks = ExtractSymbolBlocks( symContent );
 
     if( symbolBlocks.empty() )
     {
-        symbolBlocks = aSymContent; // Fallback: use raw content
+        symbolBlocks = symContent; // Fallback: use raw content
         wxLogWarning( "SYMBOL_IMPORTER: ExtractSymbolBlocks returned empty; using raw content" );
     }
 
     // Step 4: Import footprint if provided
     std::string footprintLibId;
 
-    if( !aFpContent.empty() )
+    if( !fpContent.empty() )
     {
-        std::string fpName = ExtractFootprintName( aFpContent );
+        std::string fpName = ExtractFootprintName( fpContent );
 
         if( fpName.empty() )
         {
@@ -568,7 +585,7 @@ std::string SYMBOL_IMPORTER::DoImport( const std::string& aSymContent,
                           fpName.c_str() );
         }
 
-        footprintLibId = WriteFootprint( aFpContent, fpName, aLibraryName, aProjectPath, aForce );
+        footprintLibId = WriteFootprint( fpContent, fpName, aLibraryName, aProjectPath, aForce );
 
         if( !footprintLibId.empty() )
             UpdateFpLibTable( aProjectPath, aLibraryName );

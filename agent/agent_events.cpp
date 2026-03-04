@@ -108,7 +108,8 @@ void PostLLMComplete( wxEvtHandler* aHandler, const LLMStreamComplete& aComplete
 }
 
 
-void PostLLMError( wxEvtHandler* aHandler, const std::string& aErrorMessage )
+void PostLLMError( wxEvtHandler* aHandler, const std::string& aErrorMessage,
+                   long aHttpCode )
 {
     if( !aHandler )
         return;
@@ -118,6 +119,7 @@ void PostLLMError( wxEvtHandler* aHandler, const std::string& aErrorMessage )
     LLMStreamComplete* complete = new LLMStreamComplete();
     complete->success = false;
     complete->error_message = aErrorMessage;
+    complete->http_status_code = aHttpCode;
 
     event->SetPayload( complete );
     wxQueueEvent( aHandler, event );

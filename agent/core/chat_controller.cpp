@@ -715,7 +715,7 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
     }
 
     case LLMChunkType::ERROR:
-        HandleLLMError( aChunk.error_message );
+        HandleLLMError( aChunk.error_message, 0, aChunk.error_type );
         break;
 
     case LLMChunkType::MAX_TOKENS:
@@ -908,9 +908,11 @@ void CHAT_CONTROLLER::HandleLLMComplete()
 }
 
 
-void CHAT_CONTROLLER::HandleLLMError( const std::string& aError )
+void CHAT_CONTROLLER::HandleLLMError( const std::string& aError, long aHttpCode,
+                                      const std::string& aErrorType )
 {
-    wxLogInfo( "CHAT_CONTROLLER::HandleLLMError: %s", aError.c_str() );
+    wxLogInfo( "CHAT_CONTROLLER::HandleLLMError: http=%ld type=%s msg=%s",
+               aHttpCode, aErrorType.c_str(), aError.c_str() );
     AgentConversationState oldState = m_ctx.GetState();
 
     // Remove orphaned user message if no assistant response was generated yet.
@@ -962,7 +964,8 @@ void CHAT_CONTROLLER::HandleLLMError( const std::string& aError )
     bool isContextError = aError.find( "context" ) != std::string::npos ||
                           aError.find( "token" ) != std::string::npos;
 
-    EmitEvent( EVT_CHAT_ERROR, ChatErrorData( aError, canRetry, isContextError ) );
+    EmitEvent( EVT_CHAT_ERROR, ChatErrorData( aError, canRetry, isContextError,
+                                              aHttpCode, aErrorType ) );
 
     // Auto-recover to IDLE state so user can retry immediately.
     // This prevents the chat from becoming stuck in ERROR state.

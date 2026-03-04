@@ -2093,13 +2093,108 @@ API_HANDLER_SCH::handleCreateSheet(
         return tl::unexpected( e );
     }
 
-    SCH_SCREEN* screen = m_frame->GetScreenForApi();
-
-    if( !screen )
+    // Resolve the parent sheet from the required parent_sheet_path parameter.
+    if( !aCtx.Request.has_parent_sheet_path()
+        || aCtx.Request.parent_sheet_path().empty() )
     {
         ApiResponseStatus e;
         e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-        e.set_error_message( "No active schematic screen" );
+        e.set_error_message( "parent_sheet_path is required" );
+        return tl::unexpected( e );
+    }
+
+    wxString targetHumanPath =
+            wxString::FromUTF8( aCtx.Request.parent_sheet_path() );
+
+    SCH_SHEET_LIST sheetList = m_frame->Schematic().Hierarchy();
+    SCH_SHEET_PATH parentPath;
+    SCH_SCREEN*    screen = nullptr;
+    bool           found = false;
+
+    // Helper: build a name-based human path for a SCH_SHEET_PATH by concatenating
+    // sheet names with '/'.  This matches the format produced by the Python listing
+    // tool (e.g., "/37 - circuit companion improvements/MCU/") and is reliable for
+    // multi-root schematics where PathHumanReadable() may not resolve root names.
+    auto buildNamePath = []( const SCH_SHEET_PATH& path ) -> wxString
+    {
+        wxString result = wxT( "/" );
+
+        // Skip virtual root if present
+        size_t startIdx = 0;
+
+        if( !path.empty() && path.at( 0 )->IsVirtualRootSheet() )
+            startIdx = 1;
+
+        for( size_t i = startIdx; i < path.size(); i++ )
+        {
+            wxString name = path.GetSheet( i )->GetName();
+
+            if( name.empty() && path.GetSheet( i )->GetScreen() )
+            {
+                // Fallback to filename stem for unnamed sheets
+                wxFileName fn( path.GetSheet( i )->GetScreen()->GetFileName() );
+                name = fn.GetName();
+            }
+
+            if( !name.empty() )
+                result += name + wxT( "/" );
+        }
+
+        return result;
+    };
+
+    // Special case: "/" means root sheet (first entry in hierarchy)
+    if( targetHumanPath == wxT( "/" ) )
+    {
+        if( !sheetList.empty() )
+        {
+            parentPath = sheetList[0];
+            screen = parentPath.LastScreen();
+            found = true;
+        }
+    }
+    else
+    {
+        // Normalize: ensure leading '/' and trailing '/'
+        wxString normalized = targetHumanPath;
+
+        if( !normalized.StartsWith( wxT( "/" ) ) )
+            normalized = wxT( "/" ) + normalized;
+
+        if( !normalized.EndsWith( wxT( "/" ) ) )
+            normalized += wxT( "/" );
+
+        for( const SCH_SHEET_PATH& path : sheetList )
+        {
+            if( buildNamePath( path ) == normalized )
+            {
+                parentPath = path;
+                screen = path.LastScreen();
+                found = true;
+                break;
+            }
+        }
+    }
+
+    if( !found )
+    {
+        // Build list of available paths for the error message
+        wxString availablePaths;
+
+        for( const SCH_SHEET_PATH& path : sheetList )
+        {
+            if( !availablePaths.empty() )
+                availablePaths += wxT( ", " );
+
+            availablePaths += wxT( "'" ) + buildNamePath( path ) + wxT( "'" );
+        }
+
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message(
+                wxString::Format( "Parent sheet path not found: '%s'. Available: %s",
+                                  targetHumanPath, availablePaths )
+                        .ToStdString() );
         return tl::unexpected( e );
     }
 
@@ -2115,7 +2210,7 @@ API_HANDLER_SCH::handleCreateSheet(
     }
 
     // Create the sheet and its backing screen
-    SCH_SHEET* newSheet = new SCH_SHEET( m_frame->GetCurrentSheet().Last(), pos, size );
+    SCH_SHEET* newSheet = new SCH_SHEET( parentPath.Last(), pos, size );
     SCH_SCREEN* newScreen = new SCH_SCREEN( &m_frame->Schematic() );
     newSheet->SetScreen( newScreen );
     newSheet->SetName( wxString::FromUTF8( aCtx.Request.name() ) );
@@ -2152,17 +2247,17 @@ API_HANDLER_SCH::handleCreateSheet(
     // This is required because SCH_COMMIT::Stage() calls undoLevelItem() which returns
     // the parent sheet (since new sheet has parent set), causing CHT_ADD to become CHT_MODIFY.
     // Using AddToScreen() + Added() bypasses this issue (same pattern as sch_drawing_tools.cpp).
-    m_frame->AddToScreen( newSheet );
+    m_frame->AddToScreen( newSheet, screen );
 
     SCH_COMMIT commit( m_frame );
     commit.Added( newSheet, screen );
     commit.Push( _( "API: Create Sheet" ) );
 
-    // Track for agent change detection
+    // Track for agent change detection — use the resolved parent path for accurate tracking
     if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
     {
         tracker->TrackItem( newSheet->m_Uuid,
-                            m_frame->GetAgentTargetSheetPath(),
+                            parentPath.PathHumanReadable(),
                             AGENT_CHANGE_TYPE::ADDED );
     }
 
@@ -2173,8 +2268,8 @@ API_HANDLER_SCH::handleCreateSheet(
     kiapi::schematic::commands::CreateSheetResponse response;
     response.mutable_sheet_id()->set_value( newSheet->m_Uuid.AsStdString() );
 
-    // Build the new sheet path
-    SCH_SHEET_PATH newPath = m_frame->GetCurrentSheet();
+    // Build the new sheet path from the resolved parent
+    SCH_SHEET_PATH newPath = parentPath;
     newPath.push_back( newSheet );
     response.mutable_new_sheet_path()->set_path_human_readable( newPath.PathHumanReadable().ToStdString() );
 

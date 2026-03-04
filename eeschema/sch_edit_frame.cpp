@@ -1611,7 +1611,10 @@ void SCH_EDIT_FRAME::OnModify()
 
     // Update wiring guides when schematic changes (symbol moved, deleted, wire added, etc.)
     if( m_wiringGuideManager )
+    {
+        wxLogMessage( "WIRING_GUIDE: OnModify triggering OnSchematicChanged" );
         m_wiringGuideManager->OnSchematicChanged();
+    }
 
     // Check if agent-tracked items were deleted by the user
     // Skip when showing "before" state — items are intentionally absent from screen

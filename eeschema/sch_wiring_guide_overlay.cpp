@@ -72,27 +72,18 @@ void SCH_WIRING_GUIDE_OVERLAY::ViewDraw( int aLayer, KIGFX::VIEW* aView ) const
 void SCH_WIRING_GUIDE_OVERLAY::drawPreviewShape( KIGFX::VIEW* aView ) const
 {
     if( !m_manager )
-    {
-        // Only log occasionally to avoid spam
-        static int logCount = 0;
-        if( logCount++ % 100 == 0 )
-            wxLogMessage( "WIRING_GUIDE_OVERLAY: drawPreviewShape - no manager" );
         return;
-    }
 
     KIGFX::GAL* gal = aView->GetGAL();
     if( !gal )
         return;
 
+    // Refresh guide positions from current symbol locations for real-time tracking
+    // during drag operations (const_cast is safe here as we're just updating cached positions)
+    const_cast<SCH_WIRING_GUIDE_MANAGER*>( m_manager )->RefreshGuidePositions();
+
     double scale = aView->GetGAL()->GetWorldScale();
     auto guides = m_manager->GetActiveGuides();
-
-    // Log occasionally to avoid spam
-    static int drawCount = 0;
-    if( drawCount++ % 100 == 0 && !guides.empty() )
-    {
-        wxLogMessage( "WIRING_GUIDE_OVERLAY: Drawing %zu guides", guides.size() );
-    }
 
     for( size_t i = 0; i < guides.size(); ++i )
     {

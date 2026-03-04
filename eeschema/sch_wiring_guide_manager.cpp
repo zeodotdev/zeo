@@ -32,6 +32,7 @@
 #include "schematic.h"
 #include "connection_graph.h"
 #include <agent_change_tracker.h>
+#include <set>
 
 
 SCH_WIRING_GUIDE_MANAGER::SCH_WIRING_GUIDE_MANAGER( SCH_EDIT_FRAME* aFrame ) :
@@ -58,18 +59,13 @@ void SCH_WIRING_GUIDE_MANAGER::ScanSymbolsForWiring()
     if( !screen )
         return;
 
-    wxLogMessage( "WIRING_GUIDE: ScanSymbolsForWiring called" );
-
     // First pass: build ref to KIID mapping
-    int symbolCount = 0;
     for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
     {
         SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
         wxString ref = symbol->GetRef( &m_frame->GetCurrentSheet() );
         m_refToKiid[ref] = symbol->m_Uuid;
-        symbolCount++;
     }
-    wxLogMessage( "WIRING_GUIDE: Found %d symbols on screen", symbolCount );
 
     // Second pass: parse Agent_Wiring fields
     for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
@@ -78,16 +74,11 @@ void SCH_WIRING_GUIDE_MANAGER::ScanSymbolsForWiring()
         ParseSymbolWiring( symbol );
     }
 
-    wxLogMessage( "WIRING_GUIDE: Parsed %zu guides from Agent_Wiring fields", m_guides.size() );
-
     // Resolve target positions and check completion states
-    int resolved = 0;
     for( auto& guide : m_guides )
     {
-        if( ResolveTargetPosition( guide ) )
-            resolved++;
+        ResolveTargetPosition( guide );
     }
-    wxLogMessage( "WIRING_GUIDE: Resolved %d/%zu target positions", resolved, m_guides.size() );
 
     RefreshGuideStates();
 }
@@ -100,39 +91,18 @@ void SCH_WIRING_GUIDE_MANAGER::ParseSymbolWiring( SCH_SYMBOL* aSymbol )
 
     wxString symbolRef = aSymbol->GetRef( &m_frame->GetCurrentSheet() );
 
-    // Log all fields on the symbol to help debug
-    const std::vector<SCH_FIELD>& fields = aSymbol->GetFields();
-    wxLogMessage( "WIRING_GUIDE: ParseSymbolWiring checking %s with %zu fields",
-                  symbolRef, fields.size() );
-    for( size_t i = 0; i < fields.size(); ++i )
-    {
-        wxLogMessage( "WIRING_GUIDE:   Field[%zu]: name='%s' value='%s'",
-                      i, fields[i].GetName(), fields[i].GetText() );
-    }
-
     // Get the Agent_Wiring field
     const SCH_FIELD* field = aSymbol->GetField( SCH_AGENT_WIRING::FIELD_NAME );
     if( !field )
-    {
-        wxLogMessage( "WIRING_GUIDE: %s has no Agent_Wiring field (looked for '%s')",
-                      symbolRef, SCH_AGENT_WIRING::FIELD_NAME );
         return;
-    }
 
     wxString fieldValue = field->GetText();
     if( fieldValue.IsEmpty() )
-    {
-        wxLogMessage( "WIRING_GUIDE: %s has empty Agent_Wiring field", symbolRef );
         return;
-    }
-
-    wxLogMessage( "WIRING_GUIDE: %s has Agent_Wiring: %s", symbolRef, fieldValue );
 
     // Parse the wiring entries
     std::vector<SCH_AGENT_WIRING::WIRING_ENTRY> entries =
         SCH_AGENT_WIRING::ParseAgentWiring( fieldValue );
-
-    wxLogMessage( "WIRING_GUIDE: Parsed %zu entries from %s", entries.size(), symbolRef );
 
     for( const auto& entry : entries )
     {
@@ -148,14 +118,7 @@ void SCH_WIRING_GUIDE_MANAGER::ParseSymbolWiring( SCH_SYMBOL* aSymbol )
         // Get source pin position
         if( GetPinPosition( aSymbol, entry.pin, guide.sourcePos ) )
         {
-            wxLogMessage( "WIRING_GUIDE: Added guide %s:%s -> %s",
-                          symbolRef, entry.pin, entry.target );
             m_guides.push_back( guide );
-        }
-        else
-        {
-            wxLogMessage( "WIRING_GUIDE: Failed to get pin position for %s:%s",
-                          symbolRef, entry.pin );
         }
     }
 }
@@ -165,93 +128,58 @@ bool SCH_WIRING_GUIDE_MANAGER::ResolveTargetPosition( WIRING_GUIDE& aGuide )
 {
     aGuide.targetResolved = false;
 
-    wxLogMessage( "WIRING_GUIDE: ResolveTargetPosition for %s:%s -> %s",
-                  aGuide.sourceRef, aGuide.sourcePin, aGuide.targetRef );
-
     if( SCH_AGENT_WIRING::IsPinReference( aGuide.targetRef ) )
     {
         // Target is a pin reference like "U1:PA0"
         wxString symbolRef, pinName;
         if( SCH_AGENT_WIRING::ParsePinReference( aGuide.targetRef, symbolRef, pinName ) )
         {
-            wxLogMessage( "WIRING_GUIDE: Parsed pin ref: symbol='%s' pin='%s'",
-                          symbolRef, pinName );
-
             SCH_SYMBOL* targetSymbol = FindSymbolByRef( symbolRef );
             if( targetSymbol )
             {
-                wxLogMessage( "WIRING_GUIDE: Found target symbol %s", symbolRef );
                 if( GetPinPosition( targetSymbol, pinName, aGuide.targetPos ) )
                 {
-                    wxLogMessage( "WIRING_GUIDE: Resolved pin %s position (%d, %d)",
-                                  pinName, aGuide.targetPos.x, aGuide.targetPos.y );
+                    // Debug: log all pins of target symbol for comparison
+                    wxLogMessage( "WIRING_GUIDE: Resolved %s -> %s at (%d,%d). Target symbol %s pins:",
+                                  aGuide.sourceRef, aGuide.targetRef,
+                                  aGuide.targetPos.x, aGuide.targetPos.y, symbolRef );
+                    for( SCH_PIN* pin : targetSymbol->GetPins( &m_frame->GetCurrentSheet() ) )
+                    {
+                        wxLogMessage( "  pin %s (name=%s) at (%d,%d)",
+                                      pin->GetNumber(), pin->GetName(),
+                                      pin->GetPosition().x, pin->GetPosition().y );
+                    }
+
                     aGuide.targetResolved = true;
                     return true;
                 }
-                else
-                {
-                    wxLogMessage( "WIRING_GUIDE: FAILED to find pin '%s' on symbol %s",
-                                  pinName, symbolRef );
-                    // Log available pins for debugging
-                    std::vector<SCH_PIN*> pins = targetSymbol->GetPins( &m_frame->GetCurrentSheet() );
-                    for( SCH_PIN* pin : pins )
-                    {
-                        wxLogMessage( "WIRING_GUIDE:   - Available pin: num='%s' name='%s'",
-                                      pin->GetNumber(), pin->GetName() );
-                    }
-                }
             }
-            else
-            {
-                wxLogMessage( "WIRING_GUIDE: FAILED to find symbol '%s'", symbolRef );
-                // Log available refs for debugging
-                wxLogMessage( "WIRING_GUIDE: Available refs in map:" );
-                for( const auto& pair : m_refToKiid )
-                {
-                    wxLogMessage( "WIRING_GUIDE:   - '%s'", pair.first );
-                }
-            }
-        }
-        else
-        {
-            wxLogMessage( "WIRING_GUIDE: FAILED to parse pin reference '%s'",
-                          aGuide.targetRef );
         }
     }
     else
     {
         // Target is a net name like "VCC" or "GND"
-        wxLogMessage( "WIRING_GUIDE: Target '%s' is a net name, searching for power symbol",
-                      aGuide.targetRef );
-
-        // Try to find a power symbol with this net on the current screen
         SCH_SCREEN* screen = m_frame->GetScreen();
         if( !screen )
             return false;
 
+        // Try to find a power symbol with this net
         for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
         {
             SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
 
-            // Check if this is a power symbol with matching net
-            if( symbol->GetLibSymbolRef() )
+            if( symbol->GetLibSymbolRef() && symbol->GetLibSymbolRef()->IsPower() )
             {
-                if( symbol->GetLibSymbolRef()->IsPower() )
-                {
-                    wxString powerNet = symbol->GetValue( false, &m_frame->GetCurrentSheet(), false );
+                wxString powerNet = symbol->GetValue( false, &m_frame->GetCurrentSheet(), false );
 
-                    if( powerNet.IsSameAs( aGuide.targetRef, false ) )
+                if( powerNet.IsSameAs( aGuide.targetRef, false ) )
+                {
+                    std::vector<SCH_PIN*> pins = symbol->GetPins( &m_frame->GetCurrentSheet() );
+                    if( !pins.empty() )
                     {
-                        // Get the power symbol's pin position
-                        std::vector<SCH_PIN*> pins = symbol->GetPins( &m_frame->GetCurrentSheet() );
-                        if( !pins.empty() )
-                        {
-                            aGuide.targetPos = pins[0]->GetPosition();
-                            aGuide.targetResolved = true;
-                            wxLogMessage( "WIRING_GUIDE: Resolved power net '%s' at (%d, %d)",
-                                          aGuide.targetRef, aGuide.targetPos.x, aGuide.targetPos.y );
-                            return true;
-                        }
+                        aGuide.targetPos = pins[0]->GetPosition();
+                        aGuide.targetResolved = true;
+                        return true;
                     }
                 }
             }
@@ -265,13 +193,9 @@ bool SCH_WIRING_GUIDE_MANAGER::ResolveTargetPosition( WIRING_GUIDE& aGuide )
             {
                 aGuide.targetPos = label->GetPosition();
                 aGuide.targetResolved = true;
-                wxLogMessage( "WIRING_GUIDE: Resolved net '%s' via label at (%d, %d)",
-                              aGuide.targetRef, aGuide.targetPos.x, aGuide.targetPos.y );
                 return true;
             }
         }
-
-        wxLogMessage( "WIRING_GUIDE: FAILED to resolve net '%s'", aGuide.targetRef );
     }
 
     return false;
@@ -283,25 +207,26 @@ void SCH_WIRING_GUIDE_MANAGER::RefreshGuideStates()
     if( !m_frame )
         return;
 
-    wxLogMessage( "WIRING_GUIDE: RefreshGuideStates - checking %zu guides", m_guides.size() );
-
-    int completed = 0;
     for( auto& guide : m_guides )
     {
         if( guide.targetResolved )
         {
+            bool wasComplete = guide.isComplete;
             guide.isComplete = CheckConnectionExists( guide.sourcePos, guide.targetPos );
-            if( guide.isComplete )
-                completed++;
+
+            // Log state changes for debugging
+            if( wasComplete != guide.isComplete )
+            {
+                wxLogMessage( "WIRING_GUIDE: %s:%s -> %s changed to %s",
+                              guide.sourceRef, guide.sourcePin, guide.targetRef,
+                              guide.isComplete ? "COMPLETE" : "INCOMPLETE" );
+            }
         }
         else
         {
             guide.isComplete = false;
         }
     }
-
-    wxLogMessage( "WIRING_GUIDE: RefreshGuideStates - %d/%zu complete",
-                  completed, m_guides.size() );
 }
 
 
@@ -310,84 +235,88 @@ bool SCH_WIRING_GUIDE_MANAGER::CheckConnectionExists( const VECTOR2I& aStart, co
     // Use the connectivity graph to check if the two positions are on the same net
     CONNECTION_GRAPH* connGraph = m_frame->Schematic().ConnectionGraph();
     if( !connGraph )
-    {
-        wxLogMessage( "WIRING_GUIDE: CheckConnectionExists - no connection graph" );
         return false;
-    }
 
     SCH_SCREEN* screen = m_frame->GetScreen();
     if( !screen )
         return false;
 
-    // Find items at both positions
-    SCH_ITEM* startItem = nullptr;
-    SCH_ITEM* endItem = nullptr;
+    // Find pins at both positions
+    SCH_PIN* startPin = nullptr;
+    SCH_PIN* endPin = nullptr;
+    wxString startPinInfo, endPinInfo;
 
     // Schematic uses ~10000 IU per mm, use 0.5mm tolerance (5000 IU)
     const int tolerance = 5000;
 
     for( SCH_ITEM* item : screen->Items() )
     {
-        if( item->Type() == SCH_PIN_T )
-        {
-            SCH_PIN* pin = static_cast<SCH_PIN*>( item );
-            VECTOR2I pinPos = pin->GetPosition();
-
-            if( ( pinPos - aStart ).EuclideanNorm() < tolerance )
-                startItem = item;
-            if( ( pinPos - aEnd ).EuclideanNorm() < tolerance )
-                endItem = item;
-        }
-        else if( item->Type() == SCH_SYMBOL_T )
+        if( item->Type() == SCH_SYMBOL_T )
         {
             SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+            wxString symRef = symbol->GetRef( &m_frame->GetCurrentSheet() );
+
             for( SCH_PIN* pin : symbol->GetPins( &m_frame->GetCurrentSheet() ) )
             {
                 VECTOR2I pinPos = pin->GetPosition();
 
                 if( ( pinPos - aStart ).EuclideanNorm() < tolerance )
-                    startItem = pin;
+                {
+                    startPin = pin;
+                    startPinInfo = wxString::Format( "%s:%s (name=%s)",
+                                                     symRef, pin->GetNumber(), pin->GetName() );
+                }
                 if( ( pinPos - aEnd ).EuclideanNorm() < tolerance )
-                    endItem = pin;
+                {
+                    endPin = pin;
+                    endPinInfo = wxString::Format( "%s:%s (name=%s)",
+                                                   symRef, pin->GetNumber(), pin->GetName() );
+                }
             }
         }
     }
 
-    if( !startItem || !endItem )
+    if( !startPin || !endPin )
     {
-        wxLogMessage( "WIRING_GUIDE: CheckConnectionExists (%d,%d)->(%d,%d) - items not found (start=%p, end=%p)",
-                      aStart.x, aStart.y, aEnd.x, aEnd.y, startItem, endItem );
+        // Log MISS - one or both pins not found at expected positions
+        wxLogMessage( "WIRING_GUIDE: MISS at (%d,%d)->(%d,%d) start=%s end=%s",
+                      aStart.x, aStart.y, aEnd.x, aEnd.y,
+                      startPinInfo.empty() ? "NOT FOUND" : startPinInfo,
+                      endPinInfo.empty() ? "NOT FOUND" : endPinInfo );
         return false;
     }
 
-    // Check if both items have connections and are on the same net
-    SCH_CONNECTION* startConn = startItem->Connection();
-    SCH_CONNECTION* endConn = endItem->Connection();
+    // Use the CONNECTION_GRAPH to check if both pins are in the same subgraph
+    // This is more reliable than checking pin->Connection() which may have stale data
+    CONNECTION_SUBGRAPH* startSubgraph = connGraph->GetSubgraphForItem( startPin );
+    CONNECTION_SUBGRAPH* endSubgraph = connGraph->GetSubgraphForItem( endPin );
 
-    if( startConn && endConn )
+    if( startSubgraph && endSubgraph )
     {
-        wxString startNet = startConn->Name();
-        wxString endNet = endConn->Name();
-
-        // "/<NO NET>" or empty means unconnected - don't consider these as matching
-        bool startUnconnected = startNet.IsEmpty() || startNet.Contains( wxT( "NO NET" ) );
-        bool endUnconnected = endNet.IsEmpty() || endNet.Contains( wxT( "NO NET" ) );
-
-        if( startUnconnected || endUnconnected )
+        // If both pins are in the same subgraph, they're connected
+        if( startSubgraph == endSubgraph )
         {
-            wxLogMessage( "WIRING_GUIDE: CheckConnectionExists - startNet='%s' endNet='%s' - one or both unconnected",
-                          startNet, endNet );
-            return false;
+            wxLogMessage( "WIRING_GUIDE: Pins connected (same subgraph): start=%s end=%s",
+                          startPinInfo, endPinInfo );
+            return true;
         }
 
-        bool sameNet = startNet == endNet;
-        wxLogMessage( "WIRING_GUIDE: CheckConnectionExists - startNet='%s' endNet='%s' same=%d",
-                      startNet, endNet, sameNet );
-        return sameNet;
+        // Different subgraphs - not connected
+        wxLogMessage( "WIRING_GUIDE: Pins in different subgraphs: start=%s end=%s",
+                      startPinInfo, endPinInfo );
+        return false;
     }
 
-    wxLogMessage( "WIRING_GUIDE: CheckConnectionExists - no connections (startConn=%p, endConn=%p)",
-                  startConn, endConn );
+    // One or both pins not in any subgraph - check if they're NO NET
+    if( !startSubgraph && !endSubgraph )
+    {
+        wxLogMessage( "WIRING_GUIDE: Both pins have no subgraph (unconnected): start=%s end=%s",
+                      startPinInfo, endPinInfo );
+        return false;
+    }
+
+    wxLogMessage( "WIRING_GUIDE: Mixed subgraph state: start=%s (sg=%d) end=%s (sg=%d)",
+                  startPinInfo, startSubgraph != nullptr, endPinInfo, endSubgraph != nullptr );
     return false;
 }
 
@@ -512,12 +441,7 @@ SCH_WIRING_GUIDE_MANAGER::GetActiveGuides() const
     std::vector<WIRING_GUIDE> active;
 
     if( !m_globalVisible )
-    {
-        wxLogMessage( "WIRING_GUIDE: GetActiveGuides - global visibility is OFF" );
         return active;
-    }
-
-    wxLogMessage( "WIRING_GUIDE: GetActiveGuides - checking %zu guides", m_guides.size() );
 
     for( const auto& guide : m_guides )
     {
@@ -532,15 +456,8 @@ SCH_WIRING_GUIDE_MANAGER::GetActiveGuides() const
         {
             active.push_back( guide );
         }
-        else
-        {
-            wxLogMessage( "WIRING_GUIDE: Filtered out %s:%s -> %s (complete=%d, visible=%d, resolved=%d, pending=%d)",
-                          guide.sourceRef, guide.sourcePin, guide.targetRef,
-                          guide.isComplete, guide.isVisible, guide.targetResolved, pending );
-        }
     }
 
-    wxLogMessage( "WIRING_GUIDE: GetActiveGuides returning %zu active guides", active.size() );
     return active;
 }
 
@@ -571,7 +488,20 @@ bool SCH_WIRING_GUIDE_MANAGER::IsGuidePending( const KIID& aSymbolId ) const
 
 void SCH_WIRING_GUIDE_MANAGER::OnSchematicChanged()
 {
-    wxLogMessage( "WIRING_GUIDE: OnSchematicChanged - rescanning symbols" );
+    wxLogMessage( "WIRING_GUIDE: OnSchematicChanged called" );
+
+    // Log wire count on the current screen for debugging
+    if( m_frame && m_frame->GetScreen() )
+    {
+        int wireCount = 0;
+        for( SCH_ITEM* item : m_frame->GetScreen()->Items() )
+        {
+            if( item->Type() == SCH_LINE_T )
+                wireCount++;
+        }
+        wxLogMessage( "WIRING_GUIDE: Current screen has %d wires", wireCount );
+    }
+
     // Re-scan symbols to update positions and resolve any new/moved targets
     ScanSymbolsForWiring();
 }
@@ -593,6 +523,75 @@ int SCH_WIRING_GUIDE_MANAGER::GetIncompleteCount() const
             count++;
     }
     return count;
+}
+
+
+void SCH_WIRING_GUIDE_MANAGER::RefreshGuidePositions()
+{
+    if( !m_frame )
+        return;
+
+    SCH_SCREEN* screen = m_frame->GetScreen();
+    if( !screen )
+        return;
+
+    // Build a quick lookup from KIID to symbol pointer
+    std::map<KIID, SCH_SYMBOL*> kiidToSymbol;
+    for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
+    {
+        SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+        kiidToSymbol[symbol->m_Uuid] = symbol;
+    }
+
+    // Update positions for each guide
+    for( auto& guide : m_guides )
+    {
+        // Update source position
+        auto srcIt = kiidToSymbol.find( guide.sourceSymbolId );
+        if( srcIt != kiidToSymbol.end() )
+        {
+            GetPinPosition( srcIt->second, guide.sourcePin, guide.sourcePos );
+        }
+
+        // Update target position
+        if( guide.targetResolved )
+        {
+            if( SCH_AGENT_WIRING::IsPinReference( guide.targetRef ) )
+            {
+                // Target is a pin reference like "U1:PA0"
+                wxString symbolRef, pinName;
+                if( SCH_AGENT_WIRING::ParsePinReference( guide.targetRef, symbolRef, pinName ) )
+                {
+                    SCH_SYMBOL* targetSymbol = FindSymbolByRef( symbolRef );
+                    if( targetSymbol )
+                    {
+                        GetPinPosition( targetSymbol, pinName, guide.targetPos );
+                    }
+                }
+            }
+            else
+            {
+                // Target is a net name like "VCC" - find power symbol
+                for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
+                {
+                    SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+                    if( symbol->GetLibSymbolRef() && symbol->GetLibSymbolRef()->IsPower() )
+                    {
+                        wxString powerNet = symbol->GetValue( false, &m_frame->GetCurrentSheet(), false );
+                        if( powerNet.IsSameAs( guide.targetRef, false ) )
+                        {
+                            std::vector<SCH_PIN*> pins = symbol->GetPins( &m_frame->GetCurrentSheet() );
+                            if( !pins.empty() )
+                            {
+                                guide.targetPos = pins[0]->GetPosition();
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 

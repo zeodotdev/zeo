@@ -464,7 +464,13 @@ try:
         open_set = [(abs(gx1 - gx0) + abs(gy1 - gy0), 0, gx0, gy0, init_d)]
         g_scores = {start_key: 0}
         came_from = {start_key: None}
+        max_iterations = 80_000
+        iterations = 0
         while open_set:
+            iterations += 1
+            if iterations > max_iterations:
+                print(f'[route] A* exceeded {max_iterations} iterations (margin={margin}), giving up', file=sys.stderr)
+                return None
             f, g, gx, gy, prev_d = heapq.heappop(open_set)
             if (gx, gy) == goal:
                 # Reconstruct path as grid coords

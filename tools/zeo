@@ -350,6 +350,20 @@ def cmd_shell(args):
     code.interact(local=namespace, banner="", exitmsg="")
 
 
+def cmd_mcp(args):
+    """Run MCP server for Claude Code integration."""
+    try:
+        from kipy.mcp.server import run
+    except ImportError as e:
+        print(f"Error: Could not import kipy.mcp: {e}")
+        print("\nMake sure kipy is installed with MCP extras:")
+        print('  pip install -e "/path/to/zeo-python[mcp]"')
+        sys.exit(1)
+
+    import asyncio
+    asyncio.run(run())
+
+
 def cmd_monitor(args):
     """Watch agent shell calls and responses."""
     if not os.path.exists(MONITOR_LOG):
@@ -511,6 +525,12 @@ def main():
         help="Show full stack traces on errors",
     )
 
+    # mcp subcommand
+    subparsers.add_parser(
+        "mcp",
+        help="Run MCP server for Claude Code integration",
+    )
+
     # monitor subcommand
     monitor_parser = subparsers.add_parser(
         "monitor",
@@ -537,6 +557,8 @@ def main():
         cmd_shell(args)
     elif args.command == "tool":
         cmd_tool(args)
+    elif args.command == "mcp":
+        cmd_mcp(args)
     elif args.command == "monitor":
         cmd_monitor(args)
     else:

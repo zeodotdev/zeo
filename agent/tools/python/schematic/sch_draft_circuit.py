@@ -30,6 +30,22 @@ placed_items = {}  # temp_id -> { 'sym': symbol, 'ref': reference, 'type': 'symb
 _power_temp_ids = set()  # Track which temp_ids are power symbols
 
 # ---------------------------------------------------------------------------
+# Build map of existing symbols by reference for connections to existing parts
+# ---------------------------------------------------------------------------
+_existing_refs = {}  # reference -> symbol object
+_existing_ref_to_id = {}  # reference -> "existing:REF" temp_id format
+_existing_refs_error = None
+try:
+    _all_syms = sch.symbols.get_all()
+    for _esym in _all_syms:
+        _eref = getattr(_esym, 'reference', '')
+        if _eref and not _eref.startswith('#'):  # Skip power symbols
+            _existing_refs[_eref] = _esym
+            _existing_ref_to_id[_eref] = f"existing:{_eref}"
+except Exception as _e:
+    _existing_refs_error = str(_e)
+
+# ---------------------------------------------------------------------------
 # Parse connections into per-symbol wiring entries
 # ---------------------------------------------------------------------------
 # connections format: [["mcu:PA0", "r1:2"], ["vcc1:1", "c1:1"], ...]
@@ -43,6 +59,10 @@ connections = TOOL_ARGS.get("connections", [])
 wiring_map = {}  # temp_id -> { pin -> target }
 _debug_info = []  # Debug trace for troubleshooting
 
+# Debug: show existing symbols found
+if _existing_refs_error:
+    _debug_info.append(f"ERROR building _existing_refs: {_existing_refs_error}")
+_debug_info.append(f"_existing_refs has {len(_existing_refs)} entries: {list(_existing_refs.keys())}")
 _debug_info.append(f"connections input: {connections}")
 
 # First pass: collect all power symbol temp_ids from power_symbols array
@@ -52,25 +72,56 @@ for pwr in TOOL_ARGS.get("power_symbols", []):
 
 _debug_info.append(f"power_symbol_ids: {_power_symbol_ids}")
 
+def _resolve_symbol_id(temp_id):
+    """Check if temp_id refers to an existing symbol (by reference like 'U1', 'R2')
+    or a new symbol being placed. Returns (resolved_id, is_existing)."""
+    # Check if it matches an existing symbol reference (case-insensitive)
+    for ref in _existing_refs:
+        if ref.upper() == temp_id.upper():
+            return f"existing:{ref}", True
+    return temp_id, False
+
 for conn in connections:
     if not isinstance(conn, (list, tuple)) or len(conn) != 2:
         continue
     source_str, target_str = conn[0], conn[1]
 
-    # Parse both endpoints
-    if ':' not in source_str or ':' not in target_str:
+    # Source must have a colon (symbol:pin format)
+    if ':' not in source_str:
+        _debug_info.append(f"Skipping connection with invalid source: {source_str}")
         continue
+
     src_id, src_pin = source_str.rsplit(':', 1)
-    tgt_id, tgt_pin = target_str.rsplit(':', 1)
 
-    # Add to source's wiring map (if source is not a power symbol)
-    if src_id not in _power_symbol_ids:
-        wiring_map.setdefault(src_id, {})[src_pin] = target_str
+    # Check if source refers to an existing symbol
+    src_id, src_is_existing = _resolve_symbol_id(src_id)
+    if src_is_existing:
+        _debug_info.append(f"Source {source_str} resolved to existing symbol: {src_id}")
 
-    # Add to target's wiring map (if target is not a power symbol)
-    # This ensures connections FROM power symbols are recorded on the component
-    if tgt_id not in _power_symbol_ids:
-        wiring_map.setdefault(tgt_id, {})[tgt_pin] = source_str
+    # Target can be either symbol:pin or a net name (no colon)
+    if ':' in target_str:
+        # Target is a pin reference like "u2:7"
+        tgt_id, tgt_pin = target_str.rsplit(':', 1)
+
+        # Check if target refers to an existing symbol
+        tgt_id, tgt_is_existing = _resolve_symbol_id(tgt_id)
+        if tgt_is_existing:
+            _debug_info.append(f"Target {target_str} resolved to existing symbol: {tgt_id}")
+
+        # Add to source's wiring map (if source is not a power symbol)
+        if src_id not in _power_symbol_ids:
+            wiring_map.setdefault(src_id, {})[src_pin] = f"{tgt_id}:{tgt_pin}"
+
+        # Add to target's wiring map (if target is not a power symbol)
+        # This ensures connections FROM power symbols are recorded on the component
+        if tgt_id not in _power_symbol_ids:
+            wiring_map.setdefault(tgt_id, {})[tgt_pin] = f"{src_id}:{src_pin}"
+    else:
+        # Target is a net name like "VBAT", "VBUS", "GND" (no colon)
+        # Only add to source's wiring map (net names don't have pins)
+        if src_id not in _power_symbol_ids:
+            wiring_map.setdefault(src_id, {})[src_pin] = target_str
+            _debug_info.append(f"Added net connection: {src_id}:{src_pin} -> {target_str}")
 
 _debug_info.append(f"wiring_map after parsing: {wiring_map}")
 
@@ -136,7 +187,12 @@ def build_agent_wiring_field(temp_id, wiring_entries, id_to_ref, power_ids):
         # Resolve target temp_id to actual reference
         if ':' in target_str:
             target_id, target_pin = target_str.rsplit(':', 1)
-            if target_id in id_to_ref:
+
+            # Check if target is an existing symbol reference
+            if target_id.startswith('existing:'):
+                # Extract the actual reference from "existing:U1" format
+                resolved_target = f"{target_id[9:]}:{target_pin}"
+            elif target_id in id_to_ref:
                 if target_id in power_ids:
                     # Power symbol - just use net name (e.g., "VCC" not "VCC:1")
                     resolved_target = id_to_ref[target_id]
@@ -211,17 +267,22 @@ try:
             _temp_to_sym[temp_id] = sym
             _temp_to_ref[temp_id] = _new_ref
 
-            # Record bbox
+            # Record bbox and check for overlaps
             try:
                 _bb = sch.transform.get_bounding_box(sym, units='mm', include_text=False)
                 if _bb:
-                    placed_bboxes.append({
+                    new_bbox = {
                         'ref': _new_ref,
                         'min_x': _bb['min_x'] - _BBOX_MARGIN,
                         'max_x': _bb['max_x'] + _BBOX_MARGIN,
                         'min_y': _bb['min_y'] - _BBOX_MARGIN,
                         'max_y': _bb['max_y'] + _BBOX_MARGIN
-                    })
+                    }
+                    # Check for overlaps with existing symbols
+                    for existing in placed_bboxes:
+                        if _bboxes_overlap(new_bbox, existing):
+                            _debug_info.append(f"WARNING: {_new_ref} overlaps with {existing.get('ref', '?')}")
+                    placed_bboxes.append(new_bbox)
             except:
                 pass
 
@@ -293,17 +354,22 @@ try:
             _temp_to_ref[temp_id] = pwr_name  # Power symbols use net name, not ref
             _power_temp_ids.add(temp_id)  # Mark as power symbol
 
-            # Record bbox
+            # Record bbox and check for overlaps
             try:
                 _bb = sch.transform.get_bounding_box(pwr, units='mm', include_text=False)
                 if _bb:
-                    placed_bboxes.append({
+                    new_bbox = {
                         'ref': _pwr_ref,
                         'min_x': _bb['min_x'] - _BBOX_MARGIN,
                         'max_x': _bb['max_x'] + _BBOX_MARGIN,
                         'min_y': _bb['min_y'] - _BBOX_MARGIN,
                         'max_y': _bb['max_y'] + _BBOX_MARGIN
-                    })
+                    }
+                    # Check for overlaps with existing symbols
+                    for existing in placed_bboxes:
+                        if _bboxes_overlap(new_bbox, existing):
+                            _debug_info.append(f"WARNING: {pwr_name} overlaps with {existing.get('ref', '?')}")
+                    placed_bboxes.append(new_bbox)
             except:
                 pass
 
@@ -365,6 +431,87 @@ try:
                     'message': f'Failed to set Agent_Wiring: {str(e)}'
                 })
 
+    # Phase 2b: Update EXISTING symbols that have connections to new symbols
+    _debug_info.append(f"Phase 2b: Checking existing symbols for wiring updates")
+    for temp_id in wiring_map:
+        if not temp_id.startswith('existing:'):
+            continue
+
+        # This is an existing symbol that needs Agent_Wiring updated
+        existing_ref = temp_id[9:]  # Strip "existing:" prefix
+        if existing_ref not in _existing_refs:
+            _debug_info.append(f"Phase 2b: Existing symbol {existing_ref} not found in schematic")
+            continue
+
+        existing_sym = _existing_refs[existing_ref]
+        wiring_entries = wiring_map[temp_id]
+        _debug_info.append(f"Phase 2b: Updating existing symbol {existing_ref} with entries: {wiring_entries}")
+
+        # Build the Agent_Wiring value
+        # For existing symbols, we need to add _temp_to_ref mapping for resolution
+        _temp_to_ref[temp_id] = existing_ref
+        agent_wiring_value = build_agent_wiring_field(temp_id, wiring_entries, _temp_to_ref, _power_temp_ids)
+        _debug_info.append(f"Phase 2b: agent_wiring_value = '{agent_wiring_value}'")
+
+        if agent_wiring_value:
+            try:
+                # Check if field already exists and merge, or add new
+                existing_field = None
+                for _f in existing_sym._proto.fields:
+                    if _f.name == AGENT_WIRING_FIELD:
+                        existing_field = _f
+                        break
+
+                if existing_field and existing_field.text:
+                    # Merge with existing value, deduplicating by pin
+                    # Parse existing entries into dict: pin -> target
+                    existing_entries = {}
+                    for entry in existing_field.text.split(WIRING_SEPARATOR):
+                        entry = entry.strip()
+                        if WIRING_ARROW in entry:
+                            parts = entry.split(WIRING_ARROW, 1)
+                            if len(parts) == 2:
+                                existing_entries[parts[0].strip()] = parts[1].strip()
+
+                    # Parse new entries and merge (new values override old)
+                    for entry in agent_wiring_value.split(WIRING_SEPARATOR):
+                        entry = entry.strip()
+                        if WIRING_ARROW in entry:
+                            parts = entry.split(WIRING_ARROW, 1)
+                            if len(parts) == 2:
+                                existing_entries[parts[0].strip()] = parts[1].strip()
+
+                    # Rebuild the merged value
+                    merged_value = WIRING_SEPARATOR.join(
+                        f"{pin}{WIRING_ARROW}{target}" for pin, target in existing_entries.items()
+                    )
+                    existing_field.text = merged_value
+                    _debug_info.append(f"Phase 2b: Merged Agent_Wiring on {existing_ref}: '{merged_value}'")
+                elif existing_field:
+                    # Field exists but empty
+                    existing_field.text = agent_wiring_value
+                    _debug_info.append(f"Phase 2b: Set Agent_Wiring on {existing_ref}: '{agent_wiring_value}'")
+                else:
+                    # Add new field
+                    existing_sym.add_field(AGENT_WIRING_FIELD, agent_wiring_value)
+                    _debug_info.append(f"Phase 2b: Added Agent_Wiring to {existing_ref}")
+
+                sch.crud.update_items(existing_sym)
+
+                wiring_info.append({
+                    'temp_id': temp_id,
+                    'reference': existing_ref,
+                    'agent_wiring': agent_wiring_value,
+                    'existing': True
+                })
+            except Exception as e:
+                _debug_info.append(f"Phase 2b: FAILED to update existing symbol {existing_ref}: {str(e)}")
+                results.append({
+                    'type': 'warning',
+                    'reference': existing_ref,
+                    'message': f'Failed to set Agent_Wiring on existing symbol: {str(e)}'
+                })
+
     # ---------------------------------------------------------------------------
     # Phase 3: Place labels
     # ---------------------------------------------------------------------------
@@ -411,6 +558,9 @@ try:
     _fail = sum(1 for r in results if 'error' in r)
     _total = len(symbols) + len(power_symbols) + len(labels)
 
+    # Extract overlap warnings for visibility
+    _overlaps = [d for d in _debug_info if d.startswith('WARNING:')]
+
     result = {
         'status': 'success' if _fail == 0 else 'partial',
         'total': _total,
@@ -420,11 +570,13 @@ try:
         'wiring_recommendations': wiring_info,
         'connections_received': len(connections),
         'wiring_map_entries': len(wiring_map),
+        'overlap_warnings': _overlaps if _overlaps else None,
         '_debug': _debug_info,
         'message': (
             f"Placed {len(symbols)} symbols and {len(power_symbols)} power symbols. "
             f"{len(wiring_info)} symbols have wiring recommendations in their Agent_Wiring field. "
-            "Review the diff overlay to approve placements, then wire the recommended connections."
+            + (f"WARNING: {len(_overlaps)} placement overlaps detected. " if _overlaps else "")
+            + "Review the diff overlay to approve placements, then wire the recommended connections."
         ) if _fail == 0 else None
     }
 

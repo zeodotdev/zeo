@@ -929,6 +929,9 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
         "Place components on the schematic and show intended connections as wiring guides. "
         "Components appear in a diff view for approval. Once approved, guide lines show which "
         "pins should be connected. The user manually draws the wires.\n\n"
+        "Connections can reference EXISTING symbols in the schematic by their reference designator "
+        "(e.g., 'U1:7' to connect to pin 7 of existing U1). This allows adding companion circuits "
+        "to existing ICs.\n\n"
         "Wiring recommendations are stored in each symbol's 'Agent_Wiring' field, which the user "
         "can view and edit in the symbol properties. Guide lines can be dismissed individually.\n\n"
         "Use this tool for circuits where you want the user to control the final layout. "
@@ -1005,13 +1008,15 @@ static void AddSchematicTools( std::vector<LLM_TOOL>& tools )
             }},
             { "connections", {
                 { "type", "array" },
-                { "description", "Pin-to-pin connections to show as wiring guides. Each connection is [source, target] where each endpoint is 'id:pin' format." },
+                { "description", "Pin-to-pin connections to show as wiring guides. Each connection is [source, target]. "
+                                 "Endpoints can be: (1) temp_id:pin for new symbols, (2) EXISTING_REF:pin for symbols already in schematic (e.g., 'U1:7'), "
+                                 "or (3) net_name for labels (e.g., 'VBUS'). Existing symbols are auto-detected by matching reference designators." },
                 { "items", {
                     { "type", "array" },
                     { "items", { { "type", "string" } } },
                     { "minItems", 2 },
                     { "maxItems", 2 },
-                    { "description", "['source_id:pin', 'target_id:pin'] - e.g., ['mcu:PA0', 'r1:1'] or ['vcc1:1', 'c1:1']" }
+                    { "description", "['source:pin', 'target:pin'] - e.g., ['mcu:PA0', 'r1:1'], ['U1:7', 'r_chrg:1'], or ['led1:K', 'VBUS']" }
                 }}
             }},
             { "labels", {

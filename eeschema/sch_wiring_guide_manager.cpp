@@ -32,6 +32,7 @@
 #include "schematic.h"
 #include "connection_graph.h"
 #include <agent_change_tracker.h>
+#include <algorithm>
 #include <set>
 
 
@@ -59,12 +60,20 @@ void SCH_WIRING_GUIDE_MANAGER::ScanSymbolsForWiring()
     if( !screen )
         return;
 
+    wxLogMessage( "WIRING_GUIDE: ScanSymbolsForWiring starting" );
+
     // First pass: build ref to KIID mapping
     for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
     {
         SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
         wxString ref = symbol->GetRef( &m_frame->GetCurrentSheet() );
         m_refToKiid[ref] = symbol->m_Uuid;
+    }
+
+    wxLogMessage( "WIRING_GUIDE: Found %zu symbols in ref map:", m_refToKiid.size() );
+    for( const auto& pair : m_refToKiid )
+    {
+        wxLogMessage( "  %s -> %s", pair.first, pair.second.AsString() );
     }
 
     // Second pass: parse Agent_Wiring fields
@@ -74,13 +83,45 @@ void SCH_WIRING_GUIDE_MANAGER::ScanSymbolsForWiring()
         ParseSymbolWiring( symbol );
     }
 
+    wxLogMessage( "WIRING_GUIDE: Parsed %zu guides total", m_guides.size() );
+
     // Resolve target positions and check completion states
+    int resolved = 0;
     for( auto& guide : m_guides )
     {
-        ResolveTargetPosition( guide );
+        if( ResolveTargetPosition( guide ) )
+            resolved++;
+    }
+
+    wxLogMessage( "WIRING_GUIDE: Resolved %d/%zu guide targets", resolved, m_guides.size() );
+
+    // Remove guides that couldn't be resolved (target symbol doesn't exist)
+    // This handles orphaned Agent_Wiring entries after changes are rejected
+    size_t beforeCleanup = m_guides.size();
+    m_guides.erase(
+        std::remove_if( m_guides.begin(), m_guides.end(),
+                        []( const WIRING_GUIDE& g ) { return !g.targetResolved; } ),
+        m_guides.end() );
+
+    if( m_guides.size() < beforeCleanup )
+    {
+        wxLogMessage( "WIRING_GUIDE: Removed %zu unresolved guides (orphaned references)",
+                      beforeCleanup - m_guides.size() );
     }
 
     RefreshGuideStates();
+
+    // Summary
+    int complete = 0, incomplete = 0;
+    for( const auto& guide : m_guides )
+    {
+        if( guide.isComplete )
+            complete++;
+        else
+            incomplete++;
+    }
+    wxLogMessage( "WIRING_GUIDE: Summary: %d complete, %d incomplete out of %zu total",
+                  complete, incomplete, m_guides.size() );
 }
 
 
@@ -100,12 +141,27 @@ void SCH_WIRING_GUIDE_MANAGER::ParseSymbolWiring( SCH_SYMBOL* aSymbol )
     if( fieldValue.IsEmpty() )
         return;
 
+    wxLogMessage( "WIRING_GUIDE: Parsing Agent_Wiring for %s: \"%s\"", symbolRef, fieldValue );
+
+    // Log available pins for debugging
+    wxLogMessage( "WIRING_GUIDE: Available pins on %s:", symbolRef );
+    for( SCH_PIN* pin : aSymbol->GetPins( &m_frame->GetCurrentSheet() ) )
+    {
+        wxLogMessage( "  pin number=\"%s\" name=\"%s\" at (%d,%d)",
+                      pin->GetNumber(), pin->GetName(),
+                      pin->GetPosition().x, pin->GetPosition().y );
+    }
+
     // Parse the wiring entries
     std::vector<SCH_AGENT_WIRING::WIRING_ENTRY> entries =
         SCH_AGENT_WIRING::ParseAgentWiring( fieldValue );
 
+    wxLogMessage( "WIRING_GUIDE: Parsed %zu entries from %s", entries.size(), symbolRef );
+
     for( const auto& entry : entries )
     {
+        wxLogMessage( "WIRING_GUIDE: Entry: pin=\"%s\" -> target=\"%s\"", entry.pin, entry.target );
+
         WIRING_GUIDE guide;
         guide.sourceSymbolId = aSymbol->m_Uuid;
         guide.sourceRef = symbolRef;
@@ -118,7 +174,12 @@ void SCH_WIRING_GUIDE_MANAGER::ParseSymbolWiring( SCH_SYMBOL* aSymbol )
         // Get source pin position
         if( GetPinPosition( aSymbol, entry.pin, guide.sourcePos ) )
         {
+            wxLogMessage( "WIRING_GUIDE: Source pin found at (%d,%d)", guide.sourcePos.x, guide.sourcePos.y );
             m_guides.push_back( guide );
+        }
+        else
+        {
+            wxLogMessage( "WIRING_GUIDE: FAILED to find source pin \"%s\" on %s", entry.pin, symbolRef );
         }
     }
 }
@@ -128,30 +189,46 @@ bool SCH_WIRING_GUIDE_MANAGER::ResolveTargetPosition( WIRING_GUIDE& aGuide )
 {
     aGuide.targetResolved = false;
 
+    wxLogMessage( "WIRING_GUIDE: ResolveTargetPosition for %s:%s -> %s",
+                  aGuide.sourceRef, aGuide.sourcePin, aGuide.targetRef );
+
     if( SCH_AGENT_WIRING::IsPinReference( aGuide.targetRef ) )
     {
         // Target is a pin reference like "U1:PA0"
         wxString symbolRef, pinName;
         if( SCH_AGENT_WIRING::ParsePinReference( aGuide.targetRef, symbolRef, pinName ) )
         {
+            wxLogMessage( "WIRING_GUIDE: Target is pin ref: symbol=%s pin=%s", symbolRef, pinName );
+
             SCH_SYMBOL* targetSymbol = FindSymbolByRef( symbolRef );
             if( targetSymbol )
             {
+                wxLogMessage( "WIRING_GUIDE: Found target symbol %s", symbolRef );
+
                 if( GetPinPosition( targetSymbol, pinName, aGuide.targetPos ) )
                 {
-                    // Debug: log all pins of target symbol for comparison
-                    wxLogMessage( "WIRING_GUIDE: Resolved %s -> %s at (%d,%d). Target symbol %s pins:",
-                                  aGuide.sourceRef, aGuide.targetRef,
-                                  aGuide.targetPos.x, aGuide.targetPos.y, symbolRef );
-                    for( SCH_PIN* pin : targetSymbol->GetPins( &m_frame->GetCurrentSheet() ) )
-                    {
-                        wxLogMessage( "  pin %s (name=%s) at (%d,%d)",
-                                      pin->GetNumber(), pin->GetName(),
-                                      pin->GetPosition().x, pin->GetPosition().y );
-                    }
-
+                    wxLogMessage( "WIRING_GUIDE: Resolved %s:%s -> %s at (%d,%d)",
+                                  aGuide.sourceRef, aGuide.sourcePin, aGuide.targetRef,
+                                  aGuide.targetPos.x, aGuide.targetPos.y );
                     aGuide.targetResolved = true;
                     return true;
+                }
+                else
+                {
+                    wxLogMessage( "WIRING_GUIDE: FAILED to find pin \"%s\" on %s. Available pins:",
+                                  pinName, symbolRef );
+                    for( SCH_PIN* pin : targetSymbol->GetPins( &m_frame->GetCurrentSheet() ) )
+                    {
+                        wxLogMessage( "  number=\"%s\" name=\"%s\"", pin->GetNumber(), pin->GetName() );
+                    }
+                }
+            }
+            else
+            {
+                wxLogMessage( "WIRING_GUIDE: FAILED to find symbol %s in ref map. Available refs:", symbolRef );
+                for( const auto& pair : m_refToKiid )
+                {
+                    wxLogMessage( "  %s", pair.first );
                 }
             }
         }
@@ -159,9 +236,32 @@ bool SCH_WIRING_GUIDE_MANAGER::ResolveTargetPosition( WIRING_GUIDE& aGuide )
     else
     {
         // Target is a net name like "VCC" or "GND"
+        wxLogMessage( "WIRING_GUIDE: Target is net name: \"%s\"", aGuide.targetRef );
+
         SCH_SCREEN* screen = m_frame->GetScreen();
         if( !screen )
             return false;
+
+        // Log what labels are available
+        wxLogMessage( "WIRING_GUIDE: Searching for net \"%s\". Available labels:", aGuide.targetRef );
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_GLOBAL_LABEL_T ) )
+        {
+            SCH_GLOBALLABEL* label = static_cast<SCH_GLOBALLABEL*>( item );
+            wxLogMessage( "  GlobalLabel: \"%s\" at (%d,%d)", label->GetText(),
+                          label->GetPosition().x, label->GetPosition().y );
+        }
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_HIER_LABEL_T ) )
+        {
+            SCH_HIERLABEL* label = static_cast<SCH_HIERLABEL*>( item );
+            wxLogMessage( "  HierLabel: \"%s\" at (%d,%d)", label->GetText(),
+                          label->GetPosition().x, label->GetPosition().y );
+        }
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_LABEL_T ) )
+        {
+            SCH_LABEL* label = static_cast<SCH_LABEL*>( item );
+            wxLogMessage( "  Label: \"%s\" at (%d,%d)", label->GetText(),
+                          label->GetPosition().x, label->GetPosition().y );
+        }
 
         // Try to find a power symbol with this net
         for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
@@ -179,13 +279,15 @@ bool SCH_WIRING_GUIDE_MANAGER::ResolveTargetPosition( WIRING_GUIDE& aGuide )
                     {
                         aGuide.targetPos = pins[0]->GetPosition();
                         aGuide.targetResolved = true;
+                        wxLogMessage( "WIRING_GUIDE: Resolved via power symbol at (%d,%d)",
+                                      aGuide.targetPos.x, aGuide.targetPos.y );
                         return true;
                     }
                 }
             }
         }
 
-        // Also check for global/hierarchical labels with this net name
+        // Also check for global labels with this net name
         for( SCH_ITEM* item : screen->Items().OfType( SCH_GLOBAL_LABEL_T ) )
         {
             SCH_GLOBALLABEL* label = static_cast<SCH_GLOBALLABEL*>( item );
@@ -193,9 +295,42 @@ bool SCH_WIRING_GUIDE_MANAGER::ResolveTargetPosition( WIRING_GUIDE& aGuide )
             {
                 aGuide.targetPos = label->GetPosition();
                 aGuide.targetResolved = true;
+                wxLogMessage( "WIRING_GUIDE: Resolved via global label at (%d,%d)",
+                              aGuide.targetPos.x, aGuide.targetPos.y );
                 return true;
             }
         }
+
+        // Check for hierarchical labels
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_HIER_LABEL_T ) )
+        {
+            SCH_HIERLABEL* label = static_cast<SCH_HIERLABEL*>( item );
+            if( label->GetText().IsSameAs( aGuide.targetRef, false ) )
+            {
+                aGuide.targetPos = label->GetPosition();
+                aGuide.targetResolved = true;
+                wxLogMessage( "WIRING_GUIDE: Resolved via hier label at (%d,%d)",
+                              aGuide.targetPos.x, aGuide.targetPos.y );
+                return true;
+            }
+        }
+
+        // Check for regular local labels with this net name
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_LABEL_T ) )
+        {
+            SCH_LABEL* label = static_cast<SCH_LABEL*>( item );
+            if( label->GetText().IsSameAs( aGuide.targetRef, false ) )
+            {
+                aGuide.targetPos = label->GetPosition();
+                aGuide.targetResolved = true;
+                wxLogMessage( "WIRING_GUIDE: Resolved via local label at (%d,%d)",
+                              aGuide.targetPos.x, aGuide.targetPos.y );
+                return true;
+            }
+        }
+
+        wxLogMessage( "WIRING_GUIDE: FAILED to resolve net \"%s\" - no matching label found",
+                      aGuide.targetRef );
     }
 
     return false;
@@ -241,14 +376,15 @@ bool SCH_WIRING_GUIDE_MANAGER::CheckConnectionExists( const VECTOR2I& aStart, co
     if( !screen )
         return false;
 
-    // Find pins at both positions
-    SCH_PIN* startPin = nullptr;
-    SCH_PIN* endPin = nullptr;
-    wxString startPinInfo, endPinInfo;
+    // Find connectivity items at both positions (pins or labels)
+    SCH_ITEM* startItem = nullptr;
+    SCH_ITEM* endItem = nullptr;
+    wxString startItemInfo, endItemInfo;
 
     // Schematic uses ~10000 IU per mm, use 0.5mm tolerance (5000 IU)
     const int tolerance = 5000;
 
+    // Search for pins at both positions
     for( SCH_ITEM* item : screen->Items() )
     {
         if( item->Type() == SCH_SYMBOL_T )
@@ -262,61 +398,143 @@ bool SCH_WIRING_GUIDE_MANAGER::CheckConnectionExists( const VECTOR2I& aStart, co
 
                 if( ( pinPos - aStart ).EuclideanNorm() < tolerance )
                 {
-                    startPin = pin;
-                    startPinInfo = wxString::Format( "%s:%s (name=%s)",
-                                                     symRef, pin->GetNumber(), pin->GetName() );
+                    startItem = pin;
+                    startItemInfo = wxString::Format( "%s:%s (name=%s)",
+                                                      symRef, pin->GetNumber(), pin->GetName() );
                 }
                 if( ( pinPos - aEnd ).EuclideanNorm() < tolerance )
                 {
-                    endPin = pin;
-                    endPinInfo = wxString::Format( "%s:%s (name=%s)",
-                                                   symRef, pin->GetNumber(), pin->GetName() );
+                    endItem = pin;
+                    endItemInfo = wxString::Format( "%s:%s (name=%s)",
+                                                    symRef, pin->GetNumber(), pin->GetName() );
                 }
             }
         }
     }
 
-    if( !startPin || !endPin )
+    // If we didn't find an item at the end position, check for labels
+    if( !endItem )
     {
-        // Log MISS - one or both pins not found at expected positions
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_GLOBAL_LABEL_T ) )
+        {
+            if( ( item->GetPosition() - aEnd ).EuclideanNorm() < tolerance )
+            {
+                endItem = item;
+                endItemInfo = wxString::Format( "GlobalLabel:%s",
+                                                static_cast<SCH_GLOBALLABEL*>( item )->GetText() );
+                break;
+            }
+        }
+    }
+    if( !endItem )
+    {
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_HIER_LABEL_T ) )
+        {
+            if( ( item->GetPosition() - aEnd ).EuclideanNorm() < tolerance )
+            {
+                endItem = item;
+                endItemInfo = wxString::Format( "HierLabel:%s",
+                                                static_cast<SCH_HIERLABEL*>( item )->GetText() );
+                break;
+            }
+        }
+    }
+    if( !endItem )
+    {
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_LABEL_T ) )
+        {
+            if( ( item->GetPosition() - aEnd ).EuclideanNorm() < tolerance )
+            {
+                endItem = item;
+                endItemInfo = wxString::Format( "Label:%s",
+                                                static_cast<SCH_LABEL*>( item )->GetText() );
+                break;
+            }
+        }
+    }
+
+    // Also check for labels at start position (less common but possible)
+    if( !startItem )
+    {
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_GLOBAL_LABEL_T ) )
+        {
+            if( ( item->GetPosition() - aStart ).EuclideanNorm() < tolerance )
+            {
+                startItem = item;
+                startItemInfo = wxString::Format( "GlobalLabel:%s",
+                                                  static_cast<SCH_GLOBALLABEL*>( item )->GetText() );
+                break;
+            }
+        }
+    }
+    if( !startItem )
+    {
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_HIER_LABEL_T ) )
+        {
+            if( ( item->GetPosition() - aStart ).EuclideanNorm() < tolerance )
+            {
+                startItem = item;
+                startItemInfo = wxString::Format( "HierLabel:%s",
+                                                  static_cast<SCH_HIERLABEL*>( item )->GetText() );
+                break;
+            }
+        }
+    }
+    if( !startItem )
+    {
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_LABEL_T ) )
+        {
+            if( ( item->GetPosition() - aStart ).EuclideanNorm() < tolerance )
+            {
+                startItem = item;
+                startItemInfo = wxString::Format( "Label:%s",
+                                                  static_cast<SCH_LABEL*>( item )->GetText() );
+                break;
+            }
+        }
+    }
+
+    if( !startItem || !endItem )
+    {
+        // Log MISS - one or both items not found at expected positions
         wxLogMessage( "WIRING_GUIDE: MISS at (%d,%d)->(%d,%d) start=%s end=%s",
                       aStart.x, aStart.y, aEnd.x, aEnd.y,
-                      startPinInfo.empty() ? "NOT FOUND" : startPinInfo,
-                      endPinInfo.empty() ? "NOT FOUND" : endPinInfo );
+                      startItemInfo.empty() ? "NOT FOUND" : startItemInfo,
+                      endItemInfo.empty() ? "NOT FOUND" : endItemInfo );
         return false;
     }
 
-    // Use the CONNECTION_GRAPH to check if both pins are in the same subgraph
+    // Use the CONNECTION_GRAPH to check if both items are in the same subgraph
     // This is more reliable than checking pin->Connection() which may have stale data
-    CONNECTION_SUBGRAPH* startSubgraph = connGraph->GetSubgraphForItem( startPin );
-    CONNECTION_SUBGRAPH* endSubgraph = connGraph->GetSubgraphForItem( endPin );
+    CONNECTION_SUBGRAPH* startSubgraph = connGraph->GetSubgraphForItem( startItem );
+    CONNECTION_SUBGRAPH* endSubgraph = connGraph->GetSubgraphForItem( endItem );
 
     if( startSubgraph && endSubgraph )
     {
-        // If both pins are in the same subgraph, they're connected
+        // If both items are in the same subgraph, they're connected
         if( startSubgraph == endSubgraph )
         {
-            wxLogMessage( "WIRING_GUIDE: Pins connected (same subgraph): start=%s end=%s",
-                          startPinInfo, endPinInfo );
+            wxLogMessage( "WIRING_GUIDE: Items connected (same subgraph): start=%s end=%s",
+                          startItemInfo, endItemInfo );
             return true;
         }
 
         // Different subgraphs - not connected
-        wxLogMessage( "WIRING_GUIDE: Pins in different subgraphs: start=%s end=%s",
-                      startPinInfo, endPinInfo );
+        wxLogMessage( "WIRING_GUIDE: Items in different subgraphs: start=%s end=%s",
+                      startItemInfo, endItemInfo );
         return false;
     }
 
-    // One or both pins not in any subgraph - check if they're NO NET
+    // One or both items not in any subgraph - check if they're NO NET
     if( !startSubgraph && !endSubgraph )
     {
-        wxLogMessage( "WIRING_GUIDE: Both pins have no subgraph (unconnected): start=%s end=%s",
-                      startPinInfo, endPinInfo );
+        wxLogMessage( "WIRING_GUIDE: Both items have no subgraph (unconnected): start=%s end=%s",
+                      startItemInfo, endItemInfo );
         return false;
     }
 
     wxLogMessage( "WIRING_GUIDE: Mixed subgraph state: start=%s (sg=%d) end=%s (sg=%d)",
-                  startPinInfo, startSubgraph != nullptr, endPinInfo, endSubgraph != nullptr );
+                  startItemInfo, startSubgraph != nullptr, endItemInfo, endSubgraph != nullptr );
     return false;
 }
 
@@ -441,7 +659,12 @@ SCH_WIRING_GUIDE_MANAGER::GetActiveGuides() const
     std::vector<WIRING_GUIDE> active;
 
     if( !m_globalVisible )
+    {
+        wxLogMessage( "WIRING_GUIDE: GetActiveGuides: global visibility is off" );
         return active;
+    }
+
+    wxLogMessage( "WIRING_GUIDE: GetActiveGuides checking %zu guides", m_guides.size() );
 
     for( const auto& guide : m_guides )
     {
@@ -456,8 +679,15 @@ SCH_WIRING_GUIDE_MANAGER::GetActiveGuides() const
         {
             active.push_back( guide );
         }
+        else
+        {
+            wxLogMessage( "WIRING_GUIDE: Filtered out %s:%s->%s (complete=%d visible=%d resolved=%d pending=%d)",
+                          guide.sourceRef, guide.sourcePin, guide.targetRef,
+                          guide.isComplete, guide.isVisible, guide.targetResolved, pending );
+        }
     }
 
+    wxLogMessage( "WIRING_GUIDE: GetActiveGuides returning %zu active guides", active.size() );
     return active;
 }
 
@@ -571,7 +801,8 @@ void SCH_WIRING_GUIDE_MANAGER::RefreshGuidePositions()
             }
             else
             {
-                // Target is a net name like "VCC" - find power symbol
+                // Target is a net name like "VCC" - try power symbols first
+                bool found = false;
                 for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
                 {
                     SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
@@ -584,8 +815,53 @@ void SCH_WIRING_GUIDE_MANAGER::RefreshGuidePositions()
                             if( !pins.empty() )
                             {
                                 guide.targetPos = pins[0]->GetPosition();
+                                found = true;
                                 break;
                             }
+                        }
+                    }
+                }
+
+                // Try global labels
+                if( !found )
+                {
+                    for( SCH_ITEM* item : screen->Items().OfType( SCH_GLOBAL_LABEL_T ) )
+                    {
+                        SCH_GLOBALLABEL* label = static_cast<SCH_GLOBALLABEL*>( item );
+                        if( label->GetText().IsSameAs( guide.targetRef, false ) )
+                        {
+                            guide.targetPos = label->GetPosition();
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+
+                // Try hierarchical labels
+                if( !found )
+                {
+                    for( SCH_ITEM* item : screen->Items().OfType( SCH_HIER_LABEL_T ) )
+                    {
+                        SCH_HIERLABEL* label = static_cast<SCH_HIERLABEL*>( item );
+                        if( label->GetText().IsSameAs( guide.targetRef, false ) )
+                        {
+                            guide.targetPos = label->GetPosition();
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+
+                // Try local labels
+                if( !found )
+                {
+                    for( SCH_ITEM* item : screen->Items().OfType( SCH_LABEL_T ) )
+                    {
+                        SCH_LABEL* label = static_cast<SCH_LABEL*>( item );
+                        if( label->GetText().IsSameAs( guide.targetRef, false ) )
+                        {
+                            guide.targetPos = label->GetPosition();
+                            break;
                         }
                     }
                 }

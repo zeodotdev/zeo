@@ -146,7 +146,8 @@ void DIFF_MANAGER::RegisterOverlay( KIGFX::VIEW* aView, DIFF_CALLBACKS aCallback
 void DIFF_MANAGER::RegisterOverlay( KIGFX::VIEW* aView, AGENT_CHANGE_TRACKER* aTracker,
                                      const wxString& aSheetPath, DIFF_CALLBACKS aCallbacks,
                                      BBOX_COMPUTE_CALLBACK aBBoxCallback,
-                                     ITEM_HIGHLIGHTS_CALLBACK aHighlightsCallback )
+                                     ITEM_HIGHLIGHTS_CALLBACK aHighlightsCallback,
+                                     WIRING_GUIDES_CALLBACK aWiringGuidesCallback )
 {
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
 
@@ -190,6 +191,21 @@ void DIFF_MANAGER::RegisterOverlay( KIGFX::VIEW* aView, AGENT_CHANGE_TRACKER* aT
                         for( const auto& dh : diffHighlights )
                             result.push_back( { dh.bbox, dh.color, dh.hasBorder,
                                                 dh.itemIds } );
+                        return result;
+                    } );
+            }
+
+            // Set wiring guides callback for sch_draft_circuit preview
+            if( aWiringGuidesCallback )
+            {
+                state.item->SetWiringGuidesCallback(
+                    [aWiringGuidesCallback]() -> std::vector<KIGFX::PREVIEW::WIRING_GUIDE_PREVIEW>
+                    {
+                        auto wiringGuides = aWiringGuidesCallback();
+                        std::vector<KIGFX::PREVIEW::WIRING_GUIDE_PREVIEW> result;
+                        result.reserve( wiringGuides.size() );
+                        for( const auto& wg : wiringGuides )
+                            result.push_back( { wg.start, wg.end, wg.sourceSymbolId, wg.label } );
                         return result;
                     } );
             }

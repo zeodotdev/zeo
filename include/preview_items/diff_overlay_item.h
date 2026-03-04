@@ -54,6 +54,21 @@ namespace PREVIEW
     using ITEM_HIGHLIGHTS_CALLBACK = std::function<std::vector<ITEM_HIGHLIGHT>()>;
 
     /**
+     * Wiring guide preview data for sch_draft_circuit tool.
+     * Shows faint dashed lines indicating recommended connections during diff review.
+     */
+    struct WIRING_GUIDE_PREVIEW
+    {
+        VECTOR2I start;           ///< Source pin position
+        VECTOR2I end;             ///< Target pin position
+        KIID     sourceSymbolId;  ///< For linking to symbol approval
+        wxString label;           ///< "R1:1 → VCC" for tooltip
+    };
+
+    // Callback to get wiring guide preview data
+    using WIRING_GUIDES_CALLBACK = std::function<std::vector<WIRING_GUIDE_PREVIEW>()>;
+
+    /**
      * DIFF_OVERLAY_ITEM represents pending changes from the Agent.
      * It draws per-item colored bounding boxes around changed items on the live canvas.
      */
@@ -148,6 +163,35 @@ namespace PREVIEW
          */
         const std::vector<ITEM_HIGHLIGHT>& GetCachedHighlights() const { return m_cachedHighlights; }
 
+        // --- Wiring Guide Preview Support ---
+
+        /**
+         * Set a callback to provide wiring guide preview data.
+         * These are shown as faint dashed lines during diff review,
+         * indicating recommended connections from Agent_Wiring fields.
+         */
+        void SetWiringGuidesCallback( WIRING_GUIDES_CALLBACK aCallback )
+        {
+            m_wiringGuidesCallback = aCallback;
+        }
+
+        /**
+         * Set wiring guides directly (alternative to callback).
+         */
+        void SetWiringGuides( const std::vector<WIRING_GUIDE_PREVIEW>& aGuides )
+        {
+            m_wiringGuides = aGuides;
+        }
+
+        /**
+         * Clear all wiring guides.
+         */
+        void ClearWiringGuides()
+        {
+            m_wiringGuides.clear();
+            m_wiringGuidesCallback = nullptr;
+        }
+
     private:
         void drawPreviewShape( KIGFX::VIEW* aView ) const override;
 
@@ -161,6 +205,11 @@ namespace PREVIEW
         void  drawItemButton( KIGFX::GAL* aGal, const BOX2I& aItemBBox, int aIndex,
                               const wxString& aLabel, const COLOR4D& aColor, double aScale ) const;
 
+        // Wiring guide preview drawing
+        void drawWiringGuides( KIGFX::GAL* aGal ) const;
+        void drawDashedLine( KIGFX::GAL* aGal, const VECTOR2D& aStart, const VECTOR2D& aEnd,
+                             double aDash, double aGap ) const;
+
         mutable BOX2I m_bbox;  // mutable so we can update it in const methods
         bool  m_showButtons  = false;  ///< false by default — approve/reject lives in agent window
         BBOX_CALLBACK m_bboxCallback;  // Optional callback for dynamic bbox
@@ -169,6 +218,16 @@ namespace PREVIEW
         // Per-item hover state
         mutable int m_hoveredHighlightIndex = -1;
         mutable std::vector<ITEM_HIGHLIGHT> m_cachedHighlights;
+
+        // Wiring guide preview state
+        WIRING_GUIDES_CALLBACK m_wiringGuidesCallback;
+        std::vector<WIRING_GUIDE_PREVIEW> m_wiringGuides;
+
+        // Wiring guide visual settings (in mm, converted to IU in draw code)
+        static constexpr double GUIDE_LINE_WIDTH = 0.15;   // mm - line thickness
+        static constexpr double GUIDE_DASH_LEN   = 1.0;    // mm - dash length
+        static constexpr double GUIDE_GAP_LEN    = 0.5;    // mm - gap between dashes
+        static constexpr double GUIDE_ALPHA      = 0.65;   // More visible during preview
 
         static constexpr double BTN_WIDTH = 60.0;
         static constexpr double BTN_HEIGHT = 20.0;

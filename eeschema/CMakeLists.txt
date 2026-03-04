@@ -427,6 +427,9 @@ set( EESCHEMA_SRCS
     sch_textbox.cpp
     sch_validators.cpp
     sch_view.cpp
+    sch_wiring_guide_manager.cpp
+    sch_wiring_guide_overlay.cpp
+    sch_agent_wiring.cpp
     schematic.cpp
     schematic_settings.cpp
     schematic_undo_redo.cpp

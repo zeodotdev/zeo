@@ -442,12 +442,13 @@ bool SCH_SYMBOL::Deserialize( const google::protobuf::Any& aContainer )
     m_excludedFromBoard = symbol.exclude_from_board();
     m_excludedFromSim = symbol.exclude_from_sim();
 
-    // Deserialize fields - update existing fields by their field ID
+    // Deserialize fields - update existing fields by their field ID, or create new ones
     for( const auto& protoField : symbol.fields() )
     {
         FIELD_T fieldId = static_cast<FIELD_T>( protoField.id_int() );
+        wxString fieldName = wxString::FromUTF8( protoField.name() );
 
-        // Find existing field by ID
+        // Find existing field by ID first
         SCH_FIELD* field = nullptr;
         for( SCH_FIELD& f : m_fields )
         {
@@ -456,6 +457,46 @@ bool SCH_SYMBOL::Deserialize( const google::protobuf::Any& aContainer )
                 field = &f;
                 break;
             }
+        }
+
+        // If not found by ID and we have a name, try to find by name (for user fields)
+        if( !field && !fieldName.IsEmpty() )
+        {
+            for( SCH_FIELD& f : m_fields )
+            {
+                if( f.GetName() == fieldName )
+                {
+                    field = &f;
+                    break;
+                }
+            }
+        }
+
+        // If field still not found, create a new one (user-defined field)
+        if( !field && !fieldName.IsEmpty() )
+        {
+            // Create new user field
+            SCH_FIELD newField( this, FIELD_T::USER, fieldName );
+            newField.SetPosition( kiapi::common::UnpackVector2Sch( protoField.position() ) );
+            newField.SetText( wxString::FromUTF8( protoField.text() ) );
+            newField.SetVisible( false ); // User fields hidden by default
+
+            if( !protoField.id().value().empty() )
+                const_cast<KIID&>( newField.m_Uuid ) = KIID( protoField.id().value() );
+
+            // Apply text attributes if present
+            if( protoField.has_attributes() )
+            {
+                const kiapi::common::types::TextAttributes& attrs = protoField.attributes();
+                newField.SetBold( attrs.bold() );
+                newField.SetItalic( attrs.italic() );
+                newField.SetVisible( attrs.visible() );
+                newField.SetMirrored( attrs.mirrored() );
+                newField.SetMultilineAllowed( attrs.multiline() );
+            }
+
+            m_fields.push_back( newField );
+            continue; // Field created, move to next proto field
         }
 
         if( field )

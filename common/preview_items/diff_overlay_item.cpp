@@ -84,6 +84,9 @@ void DIFF_OVERLAY_ITEM::drawPreviewShape( KIGFX::VIEW* aView ) const
 {
     KIGFX::GAL* gal = aView->GetGAL();
 
+    // Draw wiring guide previews first (underneath everything else)
+    drawWiringGuides( gal );
+
     // Draw per-item highlights if we have a callback
     // Style matches the VCS diff view (SCH_DIFF_HIGHLIGHT_ITEM):
     //   - 20% opacity fill, 85% opacity border, 3-mil border width
@@ -356,4 +359,71 @@ DIFF_OVERLAY_ITEM::ITEM_BUTTON_ID DIFF_OVERLAY_ITEM::HitTestItemButtons(
     }
 
     return IBTN_NONE;
+}
+
+
+void DIFF_OVERLAY_ITEM::drawWiringGuides( KIGFX::GAL* aGal ) const
+{
+    // Get guides from callback or stored list
+    std::vector<WIRING_GUIDE_PREVIEW> guides;
+
+    if( m_wiringGuidesCallback )
+        guides = m_wiringGuidesCallback();
+    else
+        guides = m_wiringGuides;
+
+    if( guides.empty() )
+        return;
+
+    // Schematic IU scale: approximately 10,000 IU per mm
+    // (Verified from bbox values: position 80mm ≈ 800,000 IU)
+    constexpr double IU_PER_MM = 10000.0;
+
+    // Light blue color for visibility
+    const COLOR4D guideColor( 0.3, 0.6, 1.0, 0.7 );
+
+    aGal->SetIsStroke( true );
+    aGal->SetIsFill( false );
+    aGal->SetStrokeColor( guideColor );
+    aGal->SetLineWidth( GUIDE_LINE_WIDTH * IU_PER_MM );
+
+    double dashLen = GUIDE_DASH_LEN * IU_PER_MM;
+    double gapLen = GUIDE_GAP_LEN * IU_PER_MM;
+
+    for( const auto& guide : guides )
+    {
+        drawDashedLine( aGal, VECTOR2D( guide.start ), VECTOR2D( guide.end ), dashLen, gapLen );
+
+        // Draw small endpoint markers
+        double radius = 0.3 * IU_PER_MM;  // 0.3mm radius circles
+        aGal->SetIsFill( true );
+        aGal->SetFillColor( guideColor.WithAlpha( 0.5 ) );
+        aGal->DrawCircle( VECTOR2D( guide.start ), radius );
+        aGal->DrawCircle( VECTOR2D( guide.end ), radius );
+        aGal->SetIsFill( false );
+    }
+}
+
+
+void DIFF_OVERLAY_ITEM::drawDashedLine( KIGFX::GAL* aGal, const VECTOR2D& aStart,
+                                         const VECTOR2D& aEnd, double aDash, double aGap ) const
+{
+    VECTOR2D delta = aEnd - aStart;
+    double length = delta.EuclideanNorm();
+
+    if( length < 1 )
+        return;
+
+    VECTOR2D dir = delta / length;
+    double pos = 0;
+
+    while( pos < length )
+    {
+        VECTOR2D dashStart = aStart + dir * pos;
+        double dashEnd = std::min( pos + aDash, length );
+        VECTOR2D dashEndPt = aStart + dir * dashEnd;
+
+        aGal->DrawLine( dashStart, dashEndPt );
+        pos = dashEnd + aGap;
+    }
 }

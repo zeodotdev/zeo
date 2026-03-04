@@ -472,6 +472,22 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
                   return "Placing companions for " + icRef;
               } );
 
+    Register( "sch_draft_circuit", "sch", "schematic/sch_draft_circuit.py",
+              []( const nlohmann::json& a ) {
+                  int symCount = 0;
+                  int pwrCount = 0;
+                  int connCount = 0;
+                  if( a.contains( "symbols" ) && a["symbols"].is_array() )
+                      symCount = static_cast<int>( a["symbols"].size() );
+                  if( a.contains( "power_symbols" ) && a["power_symbols"].is_array() )
+                      pwrCount = static_cast<int>( a["power_symbols"].size() );
+                  if( a.contains( "connections" ) && a["connections"].is_array() )
+                      connCount = static_cast<int>( a["connections"].size() );
+                  return "Drafting circuit: " + std::to_string( symCount ) + " symbols, "
+                         + std::to_string( pwrCount ) + " power, "
+                         + std::to_string( connCount ) + " connections";
+              } );
+
     // --- PCB tools ---
 
     Register( "pcb_get_summary", "pcb", "pcb/pcb_get_summary.py", []( const nlohmann::json& ) {
@@ -590,8 +606,8 @@ std::string PYTHON_TOOL_HANDLER::GetIPCCommand( const std::string& aToolName,
     // Assemble: preamble + optional bbox + tool script
     std::string script = m_preamble + "\n";
 
-    // sch_add, sch_update, and pcb placement tools need bounding-box utilities
-    if( aToolName == "sch_add" || aToolName == "sch_update"
+    // sch_add, sch_update, sch_draft_circuit, and pcb placement tools need bounding-box utilities
+    if( aToolName == "sch_add" || aToolName == "sch_update" || aToolName == "sch_draft_circuit"
         || aToolName == "pcb_place" || aToolName == "pcb_place_companions" )
         script += m_bbox + "\n";
 

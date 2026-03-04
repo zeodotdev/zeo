@@ -522,6 +522,7 @@ set( COMMON_DLG_SRCS
     dialogs/panel_spacemouse_base.cpp
     dialogs/panel_packages_and_updates.cpp
     dialogs/panel_packages_and_updates_base.cpp
+    dialogs/panel_agent_settings.cpp
     dialogs/panel_plugin_settings.cpp
     dialogs/panel_plugin_settings_base.cpp
     dialogs/panel_setup_netclasses.cpp

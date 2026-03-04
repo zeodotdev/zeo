@@ -13,6 +13,9 @@
 #include "tools/handlers/open_editor_handler.h"
 #include <kiway_mail.h>
 #include <mail_type.h>
+#include <pgm_base.h>
+#include <settings/common_settings.h>
+#include <settings/settings_manager.h>
 #include <wx/log.h>
 #include <kiway.h>
 #include <paths.h>
@@ -2933,6 +2936,15 @@ void AGENT_FRAME::QueryPendingChanges()
     m_pendingSchSheets.clear();
     m_hasPcbChanges = false;
     m_pcbFilename.Clear();
+
+    // If diff views are disabled, hide the pending changes bar and skip querying
+    COMMON_SETTINGS* settings = Pgm().GetSettingsManager().GetCommonSettings();
+
+    if( settings && !settings->m_Agent.enable_diff_view )
+    {
+        m_bridge->PushPendingChangesShow( false );
+        return;
+    }
 
     // Query schematic editor for pending changes
     KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );

@@ -38,6 +38,7 @@
 #include <dialogs/panel_mouse_settings.h>
 #include <dialogs/panel_spacemouse.h>
 #include <dialogs/panel_data_collection.h>
+#include <dialogs/panel_agent_settings.h>
 #include <dialogs/panel_plugin_settings.h>
 #include <eda_dde.h>
 #include <file_history.h>
@@ -1551,6 +1552,12 @@ void EDA_BASE_FRAME::ShowPreferences( wxString aStartPage, wxString aStartParent
 #ifdef KICAD_IPC_API
         book->AddPage( new PANEL_PLUGIN_SETTINGS( book ), _( "Plugins" ) );
 #endif
+
+        book->AddLazyPage(
+                []( wxWindow* aParent ) -> wxWindow*
+                {
+                    return new PANEL_AGENT_SETTINGS( aParent );
+                }, _( "Agent" ) );
 
         book->AddPage( new PANEL_MAINTENANCE( book, this ), _( "Maintenance" ) );
 

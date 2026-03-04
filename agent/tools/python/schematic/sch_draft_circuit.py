@@ -513,7 +513,69 @@ try:
                 })
 
     # ---------------------------------------------------------------------------
-    # Phase 3: Place labels
+    # Phase 2c: Auto-create labels for net name connections
+    # ---------------------------------------------------------------------------
+    # When a connection target is a net name (e.g., "VBUS"), create a label at the pin
+    _auto_labels_created = []
+    _debug_info.append(f"Phase 2c: Checking for net name connections that need labels")
+
+    for temp_id, wiring_entries in wiring_map.items():
+        # Skip existing symbols (they're already placed, don't add labels for them)
+        if temp_id.startswith('existing:'):
+            continue
+
+        # Get the symbol object
+        sym_obj = _temp_to_sym.get(temp_id)
+        if not sym_obj:
+            continue
+
+        # Get pin positions for this symbol
+        pin_positions = {}
+        try:
+            all_pins = sch.symbols.get_all_transformed_pin_positions(sym_obj)
+            for ap in all_pins:
+                # Position is in nm, convert to mm
+                pin_positions[ap['pin_number']] = (
+                    ap['position'].x / 1_000_000,
+                    ap['position'].y / 1_000_000
+                )
+        except:
+            pass
+
+        # Also try pin names (some symbols use names instead of numbers)
+        try:
+            for p in sym_obj.pins:
+                if p.number in pin_positions and hasattr(p, 'name') and p.name:
+                    pin_positions[p.name] = pin_positions[p.number]
+        except:
+            pass
+
+        # Check each wiring entry for net name targets
+        for pin, target in wiring_entries.items():
+            if ':' not in target:
+                # Target is a net name (no colon), need to create a label
+                net_name = target
+                pin_pos = pin_positions.get(pin)
+                if pin_pos:
+                    _debug_info.append(f"Phase 2c: Creating label '{net_name}' at pin {pin} of {temp_id} at ({pin_pos[0]:.2f}, {pin_pos[1]:.2f})")
+                    try:
+                        lbl_pos = Vector2.from_xy_mm(snap_to_grid(pin_pos[0]), snap_to_grid(pin_pos[1]))
+                        lbl = sch.labels.add_local(net_name, lbl_pos)
+                        _auto_labels_created.append({
+                            'text': net_name,
+                            'position': [round(pin_pos[0], 2), round(pin_pos[1], 2)],
+                            'for_symbol': _temp_to_ref.get(temp_id, temp_id),
+                            'for_pin': pin
+                        })
+                    except Exception as e:
+                        _debug_info.append(f"Phase 2c: Failed to create label '{net_name}': {str(e)}")
+                else:
+                    _debug_info.append(f"Phase 2c: Could not find pin position for {temp_id}:{pin}")
+
+    _debug_info.append(f"Phase 2c: Created {len(_auto_labels_created)} auto-labels")
+
+    # ---------------------------------------------------------------------------
+    # Phase 3: Place labels (from explicit labels array)
     # ---------------------------------------------------------------------------
 
     labels = TOOL_ARGS.get("labels", [])
@@ -556,7 +618,7 @@ try:
     # ---------------------------------------------------------------------------
 
     _fail = sum(1 for r in results if 'error' in r)
-    _total = len(symbols) + len(power_symbols) + len(labels)
+    _total = len(symbols) + len(power_symbols) + len(labels) + len(_auto_labels_created)
 
     # Extract overlap warnings for visibility
     _overlaps = [d for d in _debug_info if d.startswith('WARNING:')]
@@ -568,13 +630,15 @@ try:
         'failed': _fail,
         'results': results,
         'wiring_recommendations': wiring_info,
+        'auto_labels': _auto_labels_created if _auto_labels_created else None,
         'connections_received': len(connections),
         'wiring_map_entries': len(wiring_map),
         'overlap_warnings': _overlaps if _overlaps else None,
         '_debug': _debug_info,
         'message': (
             f"Placed {len(symbols)} symbols and {len(power_symbols)} power symbols. "
-            f"{len(wiring_info)} symbols have wiring recommendations in their Agent_Wiring field. "
+            + (f"Auto-created {len(_auto_labels_created)} labels for net connections. " if _auto_labels_created else "")
+            + f"{len(wiring_info)} symbols have wiring recommendations in their Agent_Wiring field. "
             + (f"WARNING: {len(_overlaps)} placement overlaps detected. " if _overlaps else "")
             + "Review the diff overlay to approve placements, then wire the recommended connections."
         ) if _fail == 0 else None

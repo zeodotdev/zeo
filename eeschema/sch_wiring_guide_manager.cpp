@@ -32,13 +32,15 @@
 #include "schematic.h"
 #include "connection_graph.h"
 #include <agent_change_tracker.h>
+#include <base_units.h>
 #include <algorithm>
 #include <set>
 
 
 SCH_WIRING_GUIDE_MANAGER::SCH_WIRING_GUIDE_MANAGER( SCH_EDIT_FRAME* aFrame ) :
     m_frame( aFrame ),
-    m_globalVisible( true )
+    m_globalVisible( true ),
+    m_hasActiveWiring( false )
 {
 }
 
@@ -52,6 +54,9 @@ void SCH_WIRING_GUIDE_MANAGER::ScanSymbolsForWiring()
 {
     m_guides.clear();
     m_refToKiid.clear();
+
+    // Clear any active wiring state when rescanning
+    m_hasActiveWiring = false;
 
     if( !m_frame )
         return;
@@ -287,46 +292,71 @@ bool SCH_WIRING_GUIDE_MANAGER::ResolveTargetPosition( WIRING_GUIDE& aGuide )
             }
         }
 
-        // Also check for global labels with this net name
+        // Find the NEAREST matching label to the source position
+        // Collect all matching labels, then pick the closest one
+        VECTOR2I bestPos;
+        int64_t bestDist = INT64_MAX;
+        bool found = false;
+        wxString bestType;
+
+        // Check global labels
         for( SCH_ITEM* item : screen->Items().OfType( SCH_GLOBAL_LABEL_T ) )
         {
             SCH_GLOBALLABEL* label = static_cast<SCH_GLOBALLABEL*>( item );
             if( label->GetText().IsSameAs( aGuide.targetRef, false ) )
             {
-                aGuide.targetPos = label->GetPosition();
-                aGuide.targetResolved = true;
-                wxLogMessage( "WIRING_GUIDE: Resolved via global label at (%d,%d)",
-                              aGuide.targetPos.x, aGuide.targetPos.y );
-                return true;
+                int64_t dist = ( label->GetPosition() - aGuide.sourcePos ).SquaredEuclideanNorm();
+                if( dist < bestDist )
+                {
+                    bestDist = dist;
+                    bestPos = label->GetPosition();
+                    bestType = "global label";
+                    found = true;
+                }
             }
         }
 
-        // Check for hierarchical labels
+        // Check hierarchical labels
         for( SCH_ITEM* item : screen->Items().OfType( SCH_HIER_LABEL_T ) )
         {
             SCH_HIERLABEL* label = static_cast<SCH_HIERLABEL*>( item );
             if( label->GetText().IsSameAs( aGuide.targetRef, false ) )
             {
-                aGuide.targetPos = label->GetPosition();
-                aGuide.targetResolved = true;
-                wxLogMessage( "WIRING_GUIDE: Resolved via hier label at (%d,%d)",
-                              aGuide.targetPos.x, aGuide.targetPos.y );
-                return true;
+                int64_t dist = ( label->GetPosition() - aGuide.sourcePos ).SquaredEuclideanNorm();
+                if( dist < bestDist )
+                {
+                    bestDist = dist;
+                    bestPos = label->GetPosition();
+                    bestType = "hier label";
+                    found = true;
+                }
             }
         }
 
-        // Check for regular local labels with this net name
+        // Check regular local labels
         for( SCH_ITEM* item : screen->Items().OfType( SCH_LABEL_T ) )
         {
             SCH_LABEL* label = static_cast<SCH_LABEL*>( item );
             if( label->GetText().IsSameAs( aGuide.targetRef, false ) )
             {
-                aGuide.targetPos = label->GetPosition();
-                aGuide.targetResolved = true;
-                wxLogMessage( "WIRING_GUIDE: Resolved via local label at (%d,%d)",
-                              aGuide.targetPos.x, aGuide.targetPos.y );
-                return true;
+                int64_t dist = ( label->GetPosition() - aGuide.sourcePos ).SquaredEuclideanNorm();
+                if( dist < bestDist )
+                {
+                    bestDist = dist;
+                    bestPos = label->GetPosition();
+                    bestType = "local label";
+                    found = true;
+                }
             }
+        }
+
+        if( found )
+        {
+            aGuide.targetPos = bestPos;
+            aGuide.targetResolved = true;
+            wxLogMessage( "WIRING_GUIDE: Resolved via %s at (%d,%d) (nearest to source)",
+                          bestType, aGuide.targetPos.x, aGuide.targetPos.y );
+            return true;
         }
 
         wxLogMessage( "WIRING_GUIDE: FAILED to resolve net \"%s\" - no matching label found",
@@ -668,22 +698,20 @@ SCH_WIRING_GUIDE_MANAGER::GetActiveGuides() const
 
     for( const auto& guide : m_guides )
     {
-        bool pending = IsGuidePending( guide.sourceSymbolId );
-
-        // Only show guides that are:
+        // Show guides that are:
         // - Not completed (not yet wired)
         // - Visible (not hidden by user)
         // - Target resolved (we know where to draw the line)
-        // - Not pending approval (symbol not in change tracker)
-        if( !guide.isComplete && guide.isVisible && guide.targetResolved && !pending )
+        // Note: We no longer filter by pending status - guides should show during preview too
+        if( !guide.isComplete && guide.isVisible && guide.targetResolved )
         {
             active.push_back( guide );
         }
         else
         {
-            wxLogMessage( "WIRING_GUIDE: Filtered out %s:%s->%s (complete=%d visible=%d resolved=%d pending=%d)",
+            wxLogMessage( "WIRING_GUIDE: Filtered out %s:%s->%s (complete=%d visible=%d resolved=%d)",
                           guide.sourceRef, guide.sourcePin, guide.targetRef,
-                          guide.isComplete, guide.isVisible, guide.targetResolved, pending );
+                          guide.isComplete, guide.isVisible, guide.targetResolved );
         }
     }
 
@@ -741,6 +769,7 @@ void SCH_WIRING_GUIDE_MANAGER::Clear()
 {
     m_guides.clear();
     m_refToKiid.clear();
+    m_hasActiveWiring = false;
 }
 
 
@@ -912,4 +941,58 @@ bool SCH_WIRING_GUIDE_MANAGER::GetPinPosition( SCH_SYMBOL* aSymbol, const wxStri
     }
 
     return false;
+}
+
+
+void SCH_WIRING_GUIDE_MANAGER::SetActiveWiringPosition( const VECTOR2I& aPos )
+{
+    m_activeWiringPos = aPos;
+    m_hasActiveWiring = true;
+}
+
+
+void SCH_WIRING_GUIDE_MANAGER::ClearActiveWiringPosition()
+{
+    m_hasActiveWiring = false;
+}
+
+
+int SCH_WIRING_GUIDE_MANAGER::GetActiveGuideIndex( const std::vector<WIRING_GUIDE>& aActiveGuides ) const
+{
+    if( !m_hasActiveWiring || aActiveGuides.empty() )
+        return -1;
+
+    // Find the guide whose source or target position is closest to the active wiring position
+    // Use a reasonable threshold - if nothing is close, return -1
+    const int64_t threshold = schIUScale.mmToIU( 2.0 );  // 2mm tolerance
+    const int64_t thresholdSq = threshold * threshold;
+
+    int bestIndex = -1;
+    int64_t bestDistSq = INT64_MAX;
+
+    for( size_t i = 0; i < aActiveGuides.size(); ++i )
+    {
+        const WIRING_GUIDE& guide = aActiveGuides[i];
+
+        // Check distance to source position
+        int64_t srcDistSq = ( guide.sourcePos - m_activeWiringPos ).SquaredEuclideanNorm();
+        if( srcDistSq < bestDistSq && srcDistSq <= thresholdSq )
+        {
+            bestDistSq = srcDistSq;
+            bestIndex = static_cast<int>( i );
+        }
+
+        // Check distance to target position
+        if( guide.targetResolved )
+        {
+            int64_t tgtDistSq = ( guide.targetPos - m_activeWiringPos ).SquaredEuclideanNorm();
+            if( tgtDistSq < bestDistSq && tgtDistSq <= thresholdSq )
+            {
+                bestDistSq = tgtDistSq;
+                bestIndex = static_cast<int>( i );
+            }
+        }
+    }
+
+    return bestIndex;
 }

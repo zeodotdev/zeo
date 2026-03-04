@@ -88,6 +88,17 @@ public:
      */
     void Refresh();
 
+    /**
+     * Visual state of a guide line during rendering.
+     */
+    enum class GUIDE_STATE
+    {
+        NORMAL,     ///< Default appearance
+        HOVERED,    ///< Mouse is over this guide
+        ACTIVE,     ///< User is wiring from/to this guide's endpoint
+        DIMMED      ///< Another guide is active, dim this one
+    };
+
 protected:
     void drawPreviewShape( KIGFX::VIEW* aView ) const override;
 
@@ -96,7 +107,7 @@ private:
      * Draw a single guide line.
      */
     void drawGuideLine( KIGFX::GAL* aGal, const VECTOR2I& aStart, const VECTOR2I& aEnd,
-                        bool aHovered, double aScale ) const;
+                        GUIDE_STATE aState, double aScale ) const;
 
     /**
      * Draw a dashed line between two points.
@@ -107,7 +118,7 @@ private:
     /**
      * Draw endpoint markers (small circles at pin positions).
      */
-    void drawEndpointMarker( KIGFX::GAL* aGal, const VECTOR2I& aPos, bool aHovered,
+    void drawEndpointMarker( KIGFX::GAL* aGal, const VECTOR2I& aPos, GUIDE_STATE aState,
                              double aScale ) const;
 
     /**
@@ -124,6 +135,11 @@ private:
     static const KIGFX::COLOR4D GUIDE_COLOR;
     static const KIGFX::COLOR4D GUIDE_COLOR_HOVER;
     static const KIGFX::COLOR4D ENDPOINT_COLOR;
+
+    // Colors for active wiring highlighting
+    static const KIGFX::COLOR4D GUIDE_COLOR_ACTIVE;
+    static const KIGFX::COLOR4D GUIDE_COLOR_DIMMED;
+    static const KIGFX::COLOR4D ENDPOINT_COLOR_DIMMED;
 
     static constexpr double GUIDE_WIDTH      = 0.15;   // mm
     static constexpr double GUIDE_DASH       = 1.2;    // mm

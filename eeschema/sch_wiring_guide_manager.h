@@ -174,6 +174,37 @@ public:
      */
     void RefreshGuidePositions();
 
+    /**
+     * Set the active wiring position.
+     * When the user starts drawing a wire, call this with the start position.
+     * The guide whose endpoint is closest to this position will be highlighted,
+     * and all other guides will be dimmed.
+     *
+     * @param aPos Position where wiring started (typically a pin position)
+     */
+    void SetActiveWiringPosition( const VECTOR2I& aPos );
+
+    /**
+     * Clear the active wiring position.
+     * Call this when wiring ends (committed or cancelled).
+     * All guides will return to normal appearance.
+     */
+    void ClearActiveWiringPosition();
+
+    /**
+     * Check if there is an active wiring position set.
+     */
+    bool HasActiveWiringPosition() const { return m_hasActiveWiring; }
+
+    /**
+     * Get the index of the guide that should be highlighted based on active wiring position.
+     * Returns -1 if no guide matches or no active wiring position is set.
+     *
+     * @param aActiveGuides The vector of active guides (from GetActiveGuides())
+     * @return Index into the vector, or -1 if none should be highlighted
+     */
+    int GetActiveGuideIndex( const std::vector<WIRING_GUIDE>& aActiveGuides ) const;
+
 private:
     /**
      * Parse Agent_Wiring field from a symbol and add guides.
@@ -206,6 +237,10 @@ private:
     SCH_EDIT_FRAME*           m_frame;
     std::vector<WIRING_GUIDE> m_guides;
     bool                      m_globalVisible;
+
+    // Active wiring position tracking (for guide highlighting)
+    VECTOR2I                  m_activeWiringPos;
+    bool                      m_hasActiveWiring;
 
     // Cache for symbol ref to KIID mapping (rebuilt on scan)
     std::map<wxString, KIID>  m_refToKiid;

@@ -34,6 +34,11 @@ const KIGFX::COLOR4D SCH_WIRING_GUIDE_OVERLAY::GUIDE_COLOR( 0.3, 0.6, 1.0, 0.7 )
 const KIGFX::COLOR4D SCH_WIRING_GUIDE_OVERLAY::GUIDE_COLOR_HOVER( 0.2, 0.5, 1.0, 0.95 );
 const KIGFX::COLOR4D SCH_WIRING_GUIDE_OVERLAY::ENDPOINT_COLOR( 0.3, 0.6, 1.0, 0.8 );
 
+// Colors for active wiring highlighting (like PCB ratsnest)
+const KIGFX::COLOR4D SCH_WIRING_GUIDE_OVERLAY::GUIDE_COLOR_ACTIVE( 0.2, 0.5, 1.0, 0.95 );      // Bright - actively routing this
+const KIGFX::COLOR4D SCH_WIRING_GUIDE_OVERLAY::GUIDE_COLOR_DIMMED( 0.3, 0.6, 1.0, 0.25 );     // Faded - not the active guide
+const KIGFX::COLOR4D SCH_WIRING_GUIDE_OVERLAY::ENDPOINT_COLOR_DIMMED( 0.3, 0.6, 1.0, 0.2 );   // Faded endpoints
+
 
 SCH_WIRING_GUIDE_OVERLAY::SCH_WIRING_GUIDE_OVERLAY( SCH_WIRING_GUIDE_MANAGER* aManager,
                                                       SCH_EDIT_FRAME* aFrame ) :
@@ -85,14 +90,38 @@ void SCH_WIRING_GUIDE_OVERLAY::drawPreviewShape( KIGFX::VIEW* aView ) const
     double scale = aView->GetGAL()->GetWorldScale();
     auto guides = m_manager->GetActiveGuides();
 
+    // Check if there's an active wiring position - if so, highlight one guide and dim others
+    bool hasActiveWiring = m_manager->HasActiveWiringPosition();
+    int activeGuideIndex = hasActiveWiring ? m_manager->GetActiveGuideIndex( guides ) : -1;
+
+    // Only apply active/dimmed states if we found a matching guide
+    // If no guide matches the active position, show all guides normally
+    bool applyActiveHighlight = hasActiveWiring && activeGuideIndex >= 0;
+
     for( size_t i = 0; i < guides.size(); ++i )
     {
         const auto& guide = guides[i];
-        bool hovered = ( static_cast<int>( i ) == m_hoveredIndex );
+        int idx = static_cast<int>( i );
 
-        drawGuideLine( gal, guide.sourcePos, guide.targetPos, hovered, scale );
-        drawEndpointMarker( gal, guide.sourcePos, hovered, scale );
-        drawEndpointMarker( gal, guide.targetPos, hovered, scale );
+        // Determine the visual state for this guide
+        GUIDE_STATE state;
+        if( idx == m_hoveredIndex )
+        {
+            state = GUIDE_STATE::HOVERED;
+        }
+        else if( applyActiveHighlight )
+        {
+            // When actively wiring, highlight the matching guide and dim others
+            state = ( idx == activeGuideIndex ) ? GUIDE_STATE::ACTIVE : GUIDE_STATE::DIMMED;
+        }
+        else
+        {
+            state = GUIDE_STATE::NORMAL;
+        }
+
+        drawGuideLine( gal, guide.sourcePos, guide.targetPos, state, scale );
+        drawEndpointMarker( gal, guide.sourcePos, state, scale );
+        drawEndpointMarker( gal, guide.targetPos, state, scale );
     }
 
     // Draw hover tooltip if applicable
@@ -104,15 +133,37 @@ void SCH_WIRING_GUIDE_OVERLAY::drawPreviewShape( KIGFX::VIEW* aView ) const
 
 
 void SCH_WIRING_GUIDE_OVERLAY::drawGuideLine( KIGFX::GAL* aGal, const VECTOR2I& aStart,
-                                               const VECTOR2I& aEnd, bool aHovered,
+                                               const VECTOR2I& aEnd, GUIDE_STATE aState,
                                                double aScale ) const
 {
-    KIGFX::COLOR4D color = aHovered ? GUIDE_COLOR_HOVER : GUIDE_COLOR;
+    KIGFX::COLOR4D color;
+    double lineWidth;
+
+    switch( aState )
+    {
+    case GUIDE_STATE::HOVERED:
+        color = GUIDE_COLOR_HOVER;
+        lineWidth = GUIDE_WIDTH * 1.5;
+        break;
+    case GUIDE_STATE::ACTIVE:
+        color = GUIDE_COLOR_ACTIVE;
+        lineWidth = GUIDE_WIDTH * 1.5;
+        break;
+    case GUIDE_STATE::DIMMED:
+        color = GUIDE_COLOR_DIMMED;
+        lineWidth = GUIDE_WIDTH;
+        break;
+    case GUIDE_STATE::NORMAL:
+    default:
+        color = GUIDE_COLOR;
+        lineWidth = GUIDE_WIDTH;
+        break;
+    }
 
     aGal->SetIsStroke( true );
     aGal->SetIsFill( false );
     aGal->SetStrokeColor( color );
-    aGal->SetLineWidth( schIUScale.mmToIU( aHovered ? GUIDE_WIDTH * 1.5 : GUIDE_WIDTH ) );
+    aGal->SetLineWidth( schIUScale.mmToIU( lineWidth ) );
 
     // Draw dashed line
     double dashLen = schIUScale.mmToIU( GUIDE_DASH );
@@ -148,9 +199,27 @@ void SCH_WIRING_GUIDE_OVERLAY::drawDashedLine( KIGFX::GAL* aGal, const VECTOR2D&
 
 
 void SCH_WIRING_GUIDE_OVERLAY::drawEndpointMarker( KIGFX::GAL* aGal, const VECTOR2I& aPos,
-                                                    bool aHovered, double aScale ) const
+                                                    GUIDE_STATE aState, double aScale ) const
 {
-    KIGFX::COLOR4D color = aHovered ? GUIDE_COLOR_HOVER : ENDPOINT_COLOR;
+    KIGFX::COLOR4D color;
+
+    switch( aState )
+    {
+    case GUIDE_STATE::HOVERED:
+        color = GUIDE_COLOR_HOVER;
+        break;
+    case GUIDE_STATE::ACTIVE:
+        color = GUIDE_COLOR_ACTIVE;
+        break;
+    case GUIDE_STATE::DIMMED:
+        color = ENDPOINT_COLOR_DIMMED;
+        break;
+    case GUIDE_STATE::NORMAL:
+    default:
+        color = ENDPOINT_COLOR;
+        break;
+    }
+
     double radius = schIUScale.mmToIU( ENDPOINT_RADIUS );
 
     aGal->SetIsStroke( true );

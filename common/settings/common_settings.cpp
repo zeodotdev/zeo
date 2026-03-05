@@ -454,6 +454,9 @@ COMMON_SETTINGS::COMMON_SETTINGS() :
     m_params.emplace_back( new PARAM<bool>( "agent.enable_diff_view",
             &m_Agent.enable_diff_view, true ) );
 
+    m_params.emplace_back( new PARAM<bool>( "agent.follow_agent_navigation",
+            &m_Agent.follow_agent_navigation, false ) );
+
     m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "dialog.controls",
             [&]() -> nlohmann::json
             {

@@ -37,6 +37,7 @@ protected:
 
 private:
     wxCheckBox* m_cbEnableDiffView;
+    wxCheckBox* m_cbFollowNavigation;
 };
 
 #endif // PANEL_AGENT_SETTINGS_H

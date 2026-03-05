@@ -10,8 +10,12 @@
  * option) any later version.
  */
 
+#include <fstream>
+#include <sstream>
+
 #include <wx/log.h>
 #include <wx/filename.h>
+#include <wx/stdpaths.h>
 
 #include "api_handler_project.h"
 #include "kicad_manager_frame.h"
@@ -24,7 +28,6 @@
 #include <pgm_base.h>
 
 #include <api/common/types/base_types.pb.h>
-
 #include <nlohmann/json.hpp>
 
 using namespace kiapi::common::commands;
@@ -37,8 +40,61 @@ API_HANDLER_PROJECT::API_HANDLER_PROJECT( KICAD_MANAGER_FRAME* aFrame ) :
 {
     registerHandler<LaunchEditor, LaunchEditorResponse>(
             &API_HANDLER_PROJECT::handleLaunchEditor );
+    registerHandler<GetToolSchemas, GetToolSchemasResponse>(
+            &API_HANDLER_PROJECT::handleGetToolSchemas );
     registerHandler<ExecuteTool, ExecuteToolResponse>(
             &API_HANDLER_PROJECT::handleExecuteTool );
+}
+
+
+HANDLER_RESULT<GetToolSchemasResponse> API_HANDLER_PROJECT::handleGetToolSchemas(
+        const HANDLER_CONTEXT<GetToolSchemas>& aCtx )
+{
+    GetToolSchemasResponse response;
+
+    // Read tool_manifest.json directly from disk — no need to go through the terminal frame.
+    if( m_manifestCache.empty() )
+    {
+        // Locate tool_manifest.json using the same path logic as TOOL_SCRIPT_LOADER
+        std::string pythonDir;
+        const char* envDir = std::getenv( "AGENT_PYTHON_DIR" );
+
+        if( envDir && envDir[0] )
+        {
+            pythonDir = envDir;
+        }
+        else
+        {
+            wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+            wxFileName dir( exePath.GetPath(), "" );
+            dir.RemoveLastDir();
+            dir.AppendDir( "SharedSupport" );
+            dir.AppendDir( "agent" );
+            dir.AppendDir( "python" );
+            pythonDir = dir.GetPath().ToStdString();
+        }
+
+        std::string manifestPath = pythonDir + "/tool_manifest.json";
+        std::ifstream file( manifestPath );
+
+        if( !file.is_open() )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( "Tool manifest not found at " + manifestPath );
+            return tl::unexpected( e );
+        }
+
+        std::ostringstream ss;
+        ss << file.rdbuf();
+        m_manifestCache = ss.str();
+
+        wxLogMessage( "API_HANDLER_PROJECT: Loaded tool manifest from %s (%zu bytes)",
+                      manifestPath, m_manifestCache.size() );
+    }
+
+    response.set_manifest_json( m_manifestCache );
+    return response;
 }
 
 
@@ -160,55 +216,44 @@ HANDLER_RESULT<ExecuteToolResponse> API_HANDLER_PROJECT::handleExecuteTool(
         return response;
     }
 
+    // RAII guard: always clear the flag when this scope exits (normal return or exception)
+    struct PendingGuard
+    {
+        std::atomic<bool>& flag;
+        ~PendingGuard() { flag.store( false ); }
+    } guard{ m_toolExecutionPending };
+
     const std::string& toolName = aCtx.Request.tool_name();
-    const std::string& app = aCtx.Request.app();
-    const std::string& script = aCtx.Request.script();
+    const std::string& toolArgsJson = aCtx.Request.tool_args_json();
 
-    wxLogMessage( "API_HANDLER_PROJECT: ExecuteTool name=%s, app=%s, script_len=%zu",
-                  toolName, app, script.length() );
+    wxLogMessage( "API_HANDLER_PROJECT: ExecuteTool name=%s, args_json_len=%zu",
+                  toolName, toolArgsJson.length() );
 
-    if( app.empty() || script.empty() )
-    {
-        m_toolExecutionPending.store( false );
-        response.set_success( false );
-        response.set_error_message( "Both 'app' and 'script' fields are required" );
-        return response;
-    }
+    // Send tool_name + tool_args_json as JSON to terminal frame.
+    // The terminal frame's MAIL_MCP_EXECUTE_TOOL handler resolves the tool from
+    // the manifest, wraps it in undo transactions, and executes via headless Python.
+    nlohmann::json payloadJson;
+    payloadJson["tool_name"] = toolName;
+    payloadJson["tool_args_json"] = toolArgsJson;
+    std::string payload = payloadJson.dump();
 
-    if( app != "sch" && app != "pcb" )
-    {
-        m_toolExecutionPending.store( false );
-        response.set_success( false );
-        response.set_error_message( "app must be 'sch' or 'pcb'" );
-        return response;
-    }
-
-    // Ensure the terminal frame exists
+    // Ensure the terminal frame exists — it's created lazily and owns the Python executor
     KIWAY_PLAYER* termPlayer = m_frame->Kiway().Player( FRAME_TERMINAL, true );
 
     if( !termPlayer )
     {
-        m_toolExecutionPending.store( false );
         response.set_success( false );
-        response.set_error_message( "Failed to create terminal frame" );
+        response.set_error_message( "Failed to create terminal frame for tool execution" );
         return response;
     }
 
-    // Build the run_shell command: "run_shell <app> <script>"
-    std::string payload = "run_shell " + app + " " + script;
-
     wxLogMessage( "API_HANDLER_PROJECT: Sending MAIL_MCP_EXECUTE_TOOL to terminal frame" );
 
-    // Use synchronous ExpressMail with MAIL_MCP_EXECUTE_TOOL.
-    // ExpressMail uses ProcessEvent() (synchronous), and the payload is passed by
-    // reference — the terminal frame's KiwayMailIn handler will execute the command
-    // synchronously (with wxYield polling for Python completion) and write the result
-    // back into the payload string. When ExpressMail returns, payload contains the result.
+    // ExpressMail uses ProcessEvent() (synchronous) — the terminal frame executes
+    // the tool and writes the result back into the payload string.
     m_frame->Kiway().ExpressMail( FRAME_TERMINAL, MAIL_MCP_EXECUTE_TOOL, payload );
 
     wxLogMessage( "API_HANDLER_PROJECT: ExecuteTool completed, result_len=%zu", payload.length() );
-
-    m_toolExecutionPending.store( false );
 
     // Check if the result indicates an error
     if( payload.find( "Error:" ) == 0 )

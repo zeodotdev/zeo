@@ -167,6 +167,16 @@ message LaunchEditorResponse
 }
 
 
+/// Retrieve the tool manifest (schemas, script paths, metadata) from the C++ app.
+/// The manifest is built at startup by TOOL_SCRIPT_LOADER and cached as JSON.
+/// Only handled by the project manager's API server.
+message GetToolSchemas {}
+
+message GetToolSchemasResponse {
+  string manifest_json = 1;      // JSON array of tool definitions
+}
+
+
 /// Execute an MCP tool through the C++ application's embedded Python executor.
 /// Routes tool execution through HEADLESS_PYTHON_EXECUTOR with proper timeouts,
 /// cancellation support, and optional transaction management (undo snapshots).
@@ -174,9 +184,9 @@ message LaunchEditorResponse
 message ExecuteTool
 {
   string tool_name = 1;          // Tool name, e.g. "sch_add", "pcb_place"
-  string tool_args_json = 2;     // JSON-encoded tool arguments (reserved for future C++ executor)
-  string app = 3;                // App context: "sch" or "pcb"
-  string script = 4;             // Full Python script to execute (already embeds args via TOOL_ARGS)
+  string tool_args_json = 2;     // JSON-encoded tool arguments — C++ resolves app/script from manifest
+  string app = 3;                // DEPRECATED: C++ resolves from manifest. Kept for wire compat.
+  string script = 4;             // DEPRECATED: C++ resolves from manifest. Kept for wire compat.
 }
 
 message ExecuteToolResponse

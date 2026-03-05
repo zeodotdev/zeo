@@ -36,6 +36,10 @@
 
 #include <kicommon.h>
 
+class API_HANDLER;
+class KINNG_REQUEST_SERVER;
+class wxEvtHandler;
+
 
 /**
  * Structure to track a pending API request and its reply.
@@ -44,19 +48,16 @@
  */
 struct PENDING_REQUEST
 {
-    uint64_t    id;             ///< Unique request ID
-    std::string request;        ///< The serialized request data
-    std::string reply;          ///< The serialized reply (filled by main thread)
-    bool        replyReady;     ///< True when reply is ready to be sent
+    uint64_t              id;             ///< Unique request ID
+    std::string           request;        ///< The serialized request data
+    std::string           reply;          ///< The serialized reply (filled by main thread)
+    bool                  replyReady;     ///< True when reply is ready to be sent
+    KINNG_REQUEST_SERVER* server;         ///< The server that should send the reply
 
-    PENDING_REQUEST() : id( 0 ), replyReady( false ) {}
-    PENDING_REQUEST( uint64_t aId, const std::string& aRequest )
-        : id( aId ), request( aRequest ), replyReady( false ) {}
+    PENDING_REQUEST() : id( 0 ), replyReady( false ), server( nullptr ) {}
+    PENDING_REQUEST( uint64_t aId, const std::string& aRequest, KINNG_REQUEST_SERVER* aServer = nullptr )
+        : id( aId ), request( aRequest ), replyReady( false ), server( aServer ) {}
 };
-
-class API_HANDLER;
-class KINNG_REQUEST_SERVER;
-class wxEvtHandler;
 
 
 wxDECLARE_EVENT( API_REQUEST_EVENT, wxCommandEvent );
@@ -93,6 +94,12 @@ public:
 
     std::string SocketPath() const;
 
+    /**
+     * Return the socket path for the exec (long-running tool) server.
+     * Derived from the primary socket path by replacing .sock with -exec.sock.
+     */
+    std::string ExecSocketPath() const;
+
     const std::string& Token() const { return m_token; }
 
 private:
@@ -103,8 +110,9 @@ private:
      * which can cause issues with nested event processing on macOS.
      *
      * @param aRequest is a pointer to a string containing bytes that came in over the wire
+     * @param aServer is the KINNG_REQUEST_SERVER that received the request (for Reply routing)
      */
-    void onApiRequest( std::string* aRequest );
+    void onApiRequest( std::string* aRequest, KINNG_REQUEST_SERVER* aServer );
 
     /**
      * Idle event handler that processes queued API requests when the event loop is truly idle.
@@ -122,6 +130,7 @@ private:
     void log( const std::string& aOutput );
 
     std::unique_ptr<KINNG_REQUEST_SERVER> m_server;
+    std::unique_ptr<KINNG_REQUEST_SERVER> m_execServer;  ///< Second socket for long-running tool execution
 
     std::set<API_HANDLER*> m_handlers;
 

@@ -7,7 +7,7 @@
       "properties": {},
       "required": []
     },
-    "app": null,
+    "app": "agent",
     "script": null,
     "needs_bbox": false,
     "read_only": true,
@@ -1936,5 +1936,239 @@
     "read_only": false,
     "group": "PCB",
     "deferred": true
+  },
+  {
+    "name": "datasheet_query",
+    "description": "Query extracted datasheet data for an electronic component. Returns detailed specifications including electrical ratings, pin definitions, packages, placement rules, design guidelines, decoupling requirements, and external parts. Data is automatically extracted from datasheets when components are placed in the schematic. Returns extraction_status: 'completed', 'processing' (check back later), or 'not_found'.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "part_number": {
+          "type": "string",
+          "description": "Component part number (e.g., 'CP2102N', 'STM32F411CEU6')"
+        },
+        "manufacturer": {
+          "type": "string",
+          "description": "Component manufacturer (optional, helps disambiguate)"
+        }
+      },
+      "required": ["part_number"]
+    },
+    "app": "agent",
+    "read_only": true,
+    "group": "GENERAL",
+    "deferred": true
+  },
+  {
+    "name": "extract_datasheet",
+    "description": "Extract component data from a PDF datasheet URL. This calls the extraction service synchronously and waits for the result (may take 30-60 seconds). Use this when you need datasheet data immediately for a component that hasn't been extracted yet (datasheet_query returned 'not_found'). The extracted data is stored in the database and can be queried later with datasheet_query. Returns the full extracted component data including pins, electrical specs, and design guidelines.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "part_number": {
+          "type": "string",
+          "description": "Component part number (e.g., 'CP2102N', 'ESP32-C3-WROOM-02')"
+        },
+        "manufacturer": {
+          "type": "string",
+          "description": "Component manufacturer (optional, helps disambiguate)"
+        },
+        "datasheet_url": {
+          "type": "string",
+          "description": "URL to the component's PDF datasheet"
+        }
+      },
+      "required": ["part_number", "datasheet_url"]
+    },
+    "app": "agent",
+    "read_only": false,
+    "group": "GENERAL",
+    "deferred": true
+  },
+  {
+    "name": "generate_symbol",
+    "description": "Generate a KiCad schematic symbol (.kicad_sym) from a datasheet PDF. Self-contained: checks local libraries first (by datasheet URL), then checks the component database, and auto-extracts from the PDF if needed. Returns the lib_id that can be used with sch_add to place the symbol. Prefer passing datasheet_url for reliable deduplication. If the symbol already exists, pass force=true to regenerate it.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "part_number": {
+          "type": "string",
+          "description": "Component part number (used as symbol name)"
+        },
+        "datasheet_url": {
+          "type": "string",
+          "description": "URL to the PDF datasheet. Used to check for existing symbols and to auto-extract pin data if not already in the database."
+        },
+        "manufacturer": {
+          "type": "string",
+          "description": "Component manufacturer (optional)"
+        },
+        "library_name": {
+          "type": "string",
+          "description": "Name for the output library file (without .kicad_sym extension). Defaults to 'project'. The file is created in the project directory."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "If true, regenerate the symbol even if it already exists in the library. The old symbol will be replaced."
+        }
+      },
+      "required": ["datasheet_url"]
+    },
+    "app": "agent",
+    "read_only": false,
+    "group": "GENERAL",
+    "deferred": true
+  },
+  {
+    "name": "generate_footprint",
+    "description": "Generate a KiCad PCB footprint (.kicad_mod) from a datasheet PDF. Self-contained: first tries to match an existing KiCad standard library footprint from the package dimensions, then generates a custom footprint as fallback. Fetches package data from the component database (auto-extracts if needed). Returns the lib_id (Library:Footprint) that can be used to assign to a symbol. Prefer passing datasheet_url for reliable deduplication. If the footprint already exists, pass force=true to regenerate it.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "part_number": {
+          "type": "string",
+          "description": "Component part number"
+        },
+        "datasheet_url": {
+          "type": "string",
+          "description": "URL to the PDF datasheet. Used to look up package data and to auto-extract if not already in the database."
+        },
+        "manufacturer": {
+          "type": "string",
+          "description": "Component manufacturer (optional)"
+        },
+        "library_name": {
+          "type": "string",
+          "description": "Name for the output .pretty library folder (without extension). Defaults to 'project'. Created in the project directory."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "If true, regenerate the footprint even if it already exists. The old footprint file will be overwritten."
+        }
+      },
+      "required": ["datasheet_url"]
+    },
+    "app": "agent",
+    "read_only": false,
+    "group": "GENERAL",
+    "deferred": true
+  },
+  {
+    "name": "sch_import_symbol",
+    "description": "Import a KiCad symbol and footprint (from cse_get_kicad) into the project library so the part can be immediately placed with sch_add. Writes the symbol into <library_name>.kicad_sym and the footprint into <library_name>.pretty/<name>.kicad_mod, registers both in sym-lib-table and fp-lib-table, and returns lib_id + footprint_lib_id. Pass kicad_symbol and kicad_footprint directly from cse_get_kicad output. Typical 3-step flow: (1) cse_get_kicad → kicad_symbol + kicad_footprint, (2) sch_import_symbol { kicad_symbol, kicad_footprint } → lib_id, (3) sch_add { elements: [{ lib_id }] }. If the symbol already exists, returns the existing lib_id (use force=true to replace).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "kicad_symbol": {
+          "type": "string",
+          "description": "Raw .kicad_sym S-expression from cse_get_kicad (the kicad_symbol field). Contains symbol pins, properties, and graphics."
+        },
+        "kicad_footprint": {
+          "type": "string",
+          "description": "Raw .kicad_mod S-expression from cse_get_kicad (the kicad_footprint field). Contains pad layout, silkscreen, courtyard."
+        },
+        "symbol_name": {
+          "type": "string",
+          "description": "Override for the symbol name (lib_id symbol part). If omitted, extracted automatically from kicad_symbol content."
+        },
+        "library_name": {
+          "type": "string",
+          "description": "Name for the library files (without extension). Defaults to 'project'. Symbol goes to project.kicad_sym, footprint goes to project.pretty/."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "If true, overwrite an existing symbol/footprint with the same name. Default false."
+        }
+      },
+      "required": ["kicad_symbol"]
+    },
+    "app": "agent",
+    "read_only": false,
+    "group": "GENERAL",
+    "deferred": false
+  },
+  {
+    "name": "create_project",
+    "description": "Create a new KiCad project with the standard file structure. Creates .kicad_pro, .kicad_sch, and .kicad_pcb files. The project is automatically opened in the project manager after creation.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "project_name": {
+          "type": "string",
+          "description": "Name for the new project (used for filenames)"
+        },
+        "directory": {
+          "type": "string",
+          "description": "Directory where to create the project folder"
+        }
+      },
+      "required": ["project_name", "directory"]
+    },
+    "app": "agent",
+    "read_only": false,
+    "group": "GENERAL",
+    "deferred": true
+  },
+  {
+    "name": "open_project",
+    "description": "Open an existing KiCad project in the project manager. Accepts a path to a .kicad_pro file or a directory containing one. The project must exist on disk. After opening, use launch_editor to open the schematic or PCB editor.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "project_path": {
+          "type": "string",
+          "description": "Path to the .kicad_pro file, or a directory containing a .kicad_pro file"
+        }
+      },
+      "required": ["project_path"]
+    },
+    "app": "agent",
+    "read_only": false,
+    "group": "GENERAL",
+    "deferred": true
+  },
+  {
+    "name": "pcb_autoroute",
+    "description": "Run the Freerouting autorouter on unrouted connections. Exports board to Specctra DSN format, runs headless Freerouting, then imports the routed session (SES) file back into the PCB. Returns statistics: {routed, total, failed, tracks_added, vias_added}. REQUIRES: PCB editor must be open with a document loaded.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "max_passes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999,
+          "description": "Maximum number of routing passes (default: 50). More passes may find better routes but take longer."
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 1800,
+          "description": "Timeout in seconds (default: 300). Complex boards may need longer timeouts."
+        }
+      },
+      "required": []
+    },
+    "app": "agent",
+    "read_only": false,
+    "group": "PCB",
+    "deferred": false
+  },
+  {
+    "name": "generate_net_classes",
+    "description": "Generate net class definitions using AI analysis of the PCB design. Analyzes net names, components, and datasheet-extracted electrical specs to create appropriate net classes (power, signal, differential pairs, etc.) with calculated trace widths, clearances, and diff pair dimensions. By default, applies the generated classes to the board. Set apply=false to preview. REQUIRES: PCB editor must be open with a netlist loaded.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "apply": {
+          "type": "boolean",
+          "description": "If true (default), apply generated net classes to the board. If false, return the generated classes without applying."
+        }
+      },
+      "required": []
+    },
+    "app": "agent",
+    "read_only": false,
+    "group": "GENERAL",
+    "deferred": false
   }
 ]

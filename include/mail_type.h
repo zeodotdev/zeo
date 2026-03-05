@@ -100,6 +100,7 @@ enum MAIL_T
     // MCP tool execution (synchronous via project manager)
     MAIL_MCP_EXECUTE_TOOL,          // ProjectMgr -> Terminal: Execute tool (payload: JSON {tool_name, tool_args_json}, result written back)
     MAIL_MCP_GET_TOOL_SCHEMAS,      // ProjectMgr -> Terminal: Get tool manifest JSON (empty payload, manifest written back)
+    MAIL_MCP_EXECUTE_AGENT_TOOL,    // ProjectMgr -> Agent: Execute C++ handler tool (payload: JSON {tool_name, tool_args_json}, result written back)
 
     // VCS app communication
     MAIL_VCS_AUTH_COMPLETE          // Launcher -> VCS: GitHub OAuth complete (JSON: {username})

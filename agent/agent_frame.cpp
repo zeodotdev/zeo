@@ -1073,6 +1073,64 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
         m_currentSelectionLabel.Clear();
         m_bridge->PushSelectionPill( wxEmptyString, false );
     }
+    else if( aEvent.Command() == MAIL_MCP_EXECUTE_AGENT_TOOL )
+    {
+        // MCP tool execution for C++ handler tools (routed from api_handler_project).
+        // Dispatches directly to TOOL_REGISTRY::Execute() — no chat/UI involvement.
+        std::string payload = aEvent.GetPayload();
+
+        wxLogMessage( "AGENT_FRAME: MAIL_MCP_EXECUTE_AGENT_TOOL received, payload_len=%zu",
+                      payload.length() );
+
+        // Sync Kiway state to TOOL_REGISTRY (same as SetEditorStateSyncFn in chat flow)
+        {
+            KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
+            KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
+
+            auto& reg = TOOL_REGISTRY::Instance();
+            reg.SetSchematicEditorOpen( schEditor && schEditor->IsShown() );
+            reg.SetPcbEditorOpen( pcbEditor && pcbEditor->IsShown() );
+            reg.SetProjectPath( Kiway().Prj().GetProjectPath().ToStdString() );
+            reg.SetProjectName( Kiway().Prj().GetProjectName().ToStdString() );
+
+            std::vector<std::string> openFiles;
+            for( const auto& f : GetOpenEditorFiles() )
+                openFiles.push_back( f.ToStdString() );
+            reg.SetOpenEditorFiles( std::move( openFiles ) );
+        }
+
+        try
+        {
+            auto payloadJson = nlohmann::json::parse( payload );
+            std::string toolName = payloadJson.value( "tool_name", "" );
+            std::string toolArgsJson = payloadJson.value( "tool_args_json", "" );
+
+            wxLogMessage( "AGENT_FRAME: MCP executing agent tool '%s'", toolName );
+
+            nlohmann::json toolInput;
+
+            if( !toolArgsJson.empty() )
+                toolInput = nlohmann::json::parse( toolArgsJson );
+            else
+                toolInput = nlohmann::json::object();
+
+            std::string result = TOOL_REGISTRY::Instance().Execute( toolName, toolInput );
+
+            wxLogMessage( "AGENT_FRAME: MCP agent tool '%s' completed, result_len=%zu",
+                          toolName, result.length() );
+
+            aEvent.SetPayload( result );
+        }
+        catch( const std::exception& e )
+        {
+            wxLogError( "AGENT_FRAME: MCP agent tool execution failed: %s", e.what() );
+
+            nlohmann::json errorJson;
+            errorJson["status"] = "error";
+            errorJson["message"] = std::string( "Agent tool execution failed: " ) + e.what();
+            aEvent.SetPayload( errorJson.dump() );
+        }
+    }
 }
 
 void AGENT_FRAME::DoSelectionPillClick()

@@ -13,12 +13,23 @@ using json = nlohmann::json;
 
 
 // ---------------------------------------------------------------------------
-// Execute (sync stub — must use async)
+// Execute (synchronous — used by MCP tool execution)
 // ---------------------------------------------------------------------------
 std::string NETCLASS_GENERATOR::Execute( const std::string& aToolName,
                                           const nlohmann::json& aInput )
 {
-    return R"({"error": "generate_net_classes must be called asynchronously"})";
+    const auto& reg = TOOL_REGISTRY::Instance();
+
+    if( !reg.IsPcbEditorOpen() )
+        return R"({"error": "PCB editor must be open to generate net classes."})";
+
+    AGENT_AUTH* auth = reg.GetAuth();
+
+    if( !auth || auth->GetAccessToken().empty() )
+        return R"({"error": "Please sign in to Zeo to use AI features."})";
+
+    bool apply = aInput.value( "apply", true );
+    return DoGenerate( apply );
 }
 
 

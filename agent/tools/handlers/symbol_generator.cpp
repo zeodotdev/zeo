@@ -79,12 +79,44 @@ static constexpr double CORNER_MARGIN = 0.5;  // extra breathing room at corners
 
 
 // ---------------------------------------------------------------------------
-// Execute (sync stub — not used since IsAsync returns true)
+// Execute (synchronous — used by MCP tool execution)
 // ---------------------------------------------------------------------------
 std::string SYMBOL_GENERATOR::Execute( const std::string& aToolName,
                                         const nlohmann::json& aInput )
 {
-    return R"({"error": "generate_symbol must be called asynchronously"})";
+    std::string partNumber = aInput.value( "part_number", "" );
+    std::string manufacturer = aInput.value( "manufacturer", "" );
+    std::string datasheetUrl = aInput.value( "datasheet_url", "" );
+    std::string componentId = aInput.value( "component_id", "" );
+    std::string libraryName = aInput.value( "library_name", "" );
+    bool force = aInput.value( "force", false );
+
+    if( datasheetUrl.empty() )
+        return R"({"error": "datasheet_url is required"})";
+
+    if( libraryName.empty() )
+        libraryName = "project";
+
+    std::string projectPath = TOOL_REGISTRY::Instance().GetProjectPath();
+
+    if( projectPath.empty() )
+        return R"({"error": "No project open. Open or create a project first."})";
+
+    std::string result = DoGenerate( partNumber, manufacturer, datasheetUrl,
+                                      componentId, libraryName, projectPath, force );
+
+    // Reload symbol library on success
+    try
+    {
+        auto resultJson = json::parse( result );
+        std::string status = SafeStr( resultJson, "status", "" );
+
+        if( status == "created" )
+            TOOL_REGISTRY::Instance().ReloadSymbolLib( libraryName );
+    }
+    catch( ... ) {}
+
+    return result;
 }
 
 

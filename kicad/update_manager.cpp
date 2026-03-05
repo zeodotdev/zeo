@@ -212,7 +212,7 @@ void UPDATE_MANAGER::CheckForUpdate( wxWindow* aNoticeParent )
         requestContent.platform = "linux";
         requestContent.arch = "";
 #endif
-        wxString verString = GetSemanticVersion();
+        wxString verString = GetZeoVersion();
         verString.Replace( "~", "-" ); // make the string valid for semver
         requestContent.current_version = verString;
         requestContent.lang = Pgm().GetLanguageTag();
@@ -254,10 +254,9 @@ void UPDATE_MANAGER::CheckForUpdate( wxWindow* aNoticeParent )
 
                                 int retCode = notice->ShowModal();
 
-                                if( retCode != wxID_RETRY )
+                                if( retCode == wxID_NO )
                                 {
-                                    // basically saving the last received update prevents us from
-                                    // prompting again
+                                    // Only "Skip This Version" suppresses future prompts
                                     if( KICAD_SETTINGS* cfg = GetAppSettings<KICAD_SETTINGS>( "kicad" ) )
                                         cfg->m_lastReceivedUpdate = response.version;
                                 }

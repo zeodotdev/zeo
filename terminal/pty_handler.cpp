@@ -67,6 +67,13 @@ bool PTY_HANDLER::Start( int aCols, int aRows )
         setenv( "TERM", "xterm-256color", 1 );
         setenv( "COLORTERM", "truecolor", 1 );
 
+        // Clear Python environment variables set by KiCad's embedded scripting.
+        // These point to the bundled Python 3.9 framework which breaks external
+        // Python installations (pyenv, homebrew, system Python) by causing version
+        // mismatches (e.g., Python 3.10 executable trying to use 3.9 libraries).
+        unsetenv( "PYTHONHOME" );
+        unsetenv( "PYTHONPATH" );
+
         // Add the app's SharedSupport/bin to PATH so tools like `zeo` are available
 #ifdef __APPLE__
         {

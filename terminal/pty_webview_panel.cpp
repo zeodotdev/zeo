@@ -536,6 +536,14 @@ wxString PTY_WEBVIEW_PANEL::GetTerminalHtml( bool aLightMode )
         width: 100%% !important;
         height: 100%% !important;
     }
+    /* Hide scrollbar while keeping scroll functionality */
+    .xterm-viewport {
+        scrollbar-width: none; /* Firefox */
+        -ms-overflow-style: none; /* IE/Edge */
+    }
+    .xterm-viewport::-webkit-scrollbar {
+        display: none; /* Chrome, Safari, Opera */
+    }
 </style>
 </head>
 <body>

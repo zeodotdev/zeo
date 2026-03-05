@@ -179,6 +179,12 @@ void VCS_IPC_HANDLER::HandleGetHistory( const json& aMsg )
             ? wxString::FromUTF8( aMsg["requestId"].get<std::string>() )
             : wxString();
 
+    if( !m_git->HasRepo() )
+    {
+        SendResponse( reqId, true, json{ { "commits", json::array() } } );
+        return;
+    }
+
     int count  = aMsg.value( "count",  50 );
     int offset = aMsg.value( "offset",  0 );
 
@@ -314,6 +320,15 @@ void VCS_IPC_HANDLER::HandleGetBranches( const json& aMsg )
             ? wxString::FromUTF8( aMsg["requestId"].get<std::string>() )
             : wxString();
 
+    if( !m_git->HasRepo() )
+    {
+        SendResponse( reqId, true, json{
+            { "branches", json::array() },
+            { "current",  "" }
+        } );
+        return;
+    }
+
     json branches = m_git->GetBranches();
     SendResponse( reqId, true, branches );
 }
@@ -324,6 +339,12 @@ void VCS_IPC_HANDLER::HandleGetRemotes( const json& aMsg )
     wxString reqId = aMsg.contains( "requestId" )
             ? wxString::FromUTF8( aMsg["requestId"].get<std::string>() )
             : wxString();
+
+    if( !m_git->HasRepo() )
+    {
+        SendResponse( reqId, true, json{ { "remotes", json::array() } } );
+        return;
+    }
 
     json remotes = m_git->GetRemotes();
     SendResponse( reqId, true, json{ { "remotes", remotes } } );

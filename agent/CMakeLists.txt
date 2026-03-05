@@ -28,8 +28,9 @@ add_custom_target( unified_html_template DEPENDS "${UNIFIED_TEMPLATE_OUTPUT}" )
 # ---------------------------------------------------------------------------
 set( AGENT_PYTHON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tools/python" )
 
-# Copy python/ directory into the app bundle so scripts are available at runtime.
+# Copy python/ directory so scripts are available at runtime.
 # On macOS: Zeo.app/Contents/SharedSupport/agent/python/
+# On Linux: ${KICAD_DATA}/agent/python/  (e.g. /usr/share/kicad/agent/python/)
 if( APPLE )
     set( AGENT_PYTHON_INSTALL_DIR "${OSX_BUNDLE_BUILD_DIR}/${OSX_BUNDLE_SUP_DIR}/agent/python" )
 
@@ -38,6 +39,11 @@ if( APPLE )
             "${AGENT_PYTHON_DIR}"
             "${AGENT_PYTHON_INSTALL_DIR}"
         COMMENT "Installing Python tool scripts into app bundle"
+    )
+else()
+    install( DIRECTORY "${AGENT_PYTHON_DIR}/"
+        DESTINATION "${KICAD_DATA}/agent/python"
+        FILES_MATCHING PATTERN "*.py"
     )
 endif()
 

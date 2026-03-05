@@ -153,7 +153,8 @@ std::optional<TOOLBAR_CONFIGURATION> SCH_EDIT_TOOLBAR_SETTINGS::DefaultToolbarCo
             config.AppendAction( ACTIONS::open );
         }
 
-        config.AppendAction( ACTIONS::save );
+        config.AppendAction( ACTIONS::save )
+              .AppendAction( ACTIONS::showVersionControl );
 
         config.AppendSeparator()
               .AppendAction( SCH_ACTIONS::schematicSetup );

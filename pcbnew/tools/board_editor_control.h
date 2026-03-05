@@ -93,6 +93,7 @@ public:
     int UpdateSchematicFromPCB( const TOOL_EVENT& aEvent );
     int ShowEeschema( const TOOL_EVENT& aEvent );
     int ShowAgent( const TOOL_EVENT& aEvent );
+    int ShowVersionControl( const TOOL_EVENT& aEvent );
     int ToggleLayersManager( const TOOL_EVENT& aEvent );
     int ToggleProperties( const TOOL_EVENT& aEvent );
     int ToggleNetInspector( const TOOL_EVENT& aEvent );

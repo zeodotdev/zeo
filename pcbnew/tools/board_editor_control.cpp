@@ -864,6 +864,20 @@ int BOARD_EDITOR_CONTROL::ShowAgent( const TOOL_EVENT& aEvent )
 }
 
 
+int BOARD_EDITOR_CONTROL::ShowVersionControl( const TOOL_EVENT& aEvent )
+{
+    KIWAY_PLAYER* frame = m_frame->Kiway().Player( FRAME_VCS, true );
+
+    if( frame )
+    {
+        frame->Show( true );
+        frame->Raise();
+    }
+
+    return 0;
+}
+
+
 int BOARD_EDITOR_CONTROL::ToggleLayersManager( const TOOL_EVENT& aEvent )
 {
     getEditFrame<PCB_EDIT_FRAME>()->ToggleLayersManager();
@@ -1974,6 +1988,7 @@ void BOARD_EDITOR_CONTROL::setTransitions()
     Go( &BOARD_EDITOR_CONTROL::UpdateSchematicFromPCB, ACTIONS::updateSchematicFromPcb.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ShowEeschema, PCB_ACTIONS::showEeschema.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ShowAgent, PCB_ACTIONS::showAgent.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ShowVersionControl, ACTIONS::showVersionControl.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ToggleLayersManager, PCB_ACTIONS::showLayersManager.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ToggleProperties, ACTIONS::showProperties.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ToggleNetInspector, PCB_ACTIONS::showNetInspector.MakeEvent() );

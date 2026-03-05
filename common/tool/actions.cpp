@@ -117,6 +117,13 @@ TOOL_ACTION ACTIONS::saveAll( TOOL_ACTION_ARGS()
         .Tooltip( _( "Save all changes" ) )
         .Icon( BITMAPS::save ) );
 
+TOOL_ACTION ACTIONS::showVersionControl( TOOL_ACTION_ARGS()
+        .Name( "common.Control.showVersionControl" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Version Control" ) )
+        .Tooltip( _( "Manage project version history, commit, push, and pull changes" ) )
+        .Icon( BITMAPS::icon_vcs ) );
+
 TOOL_ACTION ACTIONS::revert( TOOL_ACTION_ARGS()
         .Name( "common.Control.revert" )
         .Scope( AS_GLOBAL )

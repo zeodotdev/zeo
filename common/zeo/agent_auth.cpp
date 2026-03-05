@@ -51,9 +51,9 @@ void AGENT_AUTH::SignOut()
 
 bool AGENT_AUTH::StartOAuthFlow( const std::string& aSource )
 {
-    std::string callback = "kicad-agent://callback";
+    std::string callback = "zeo://callback";
     if( !aSource.empty() )
-        callback += "/" + aSource;  // Use path: kicad-agent://callback/agent
+        callback += "/" + aSource;  // Use path: zeo://callback/agent
 
     std::ostringstream authUrl;
     authUrl << m_authWebUrl << "?redirect_uri=" << callback << "&signout=true";

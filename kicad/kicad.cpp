@@ -632,8 +632,8 @@ struct APP_KICAD : public wxApp
 
     void MacOpenURL( const wxString& aUrl ) override
     {
-        // Handle custom URL scheme for authentication: kicad-agent://callback?access_token=...
-        if( aUrl.StartsWith( "kicad-agent://" ) )
+        // Handle custom URL scheme for authentication: zeo://callback?access_token=...
+        if( aUrl.StartsWith( "zeo://" ) )
         {
             // Find the launcher panel and pass the URL
             wxWindow* topWindow = GetTopWindow();

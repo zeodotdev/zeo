@@ -22,8 +22,61 @@
 
 #include <glib.h>
 
+#include <wx/datetime.h>
+#include <wx/dir.h>
+#include <wx/ffile.h>
+#include <wx/filename.h>
+#include <wx/log.h>
 #include <wx/string.h>
+#include <wx/tokenzr.h>
 #include <wx/utils.h>
+
+
+// Global log file - must persist for lifetime of app
+static wxFFile* s_logFile = nullptr;
+
+// Custom log target that timestamps every line and writes to file, stderr, or
+// both.  Matches the macOS wxLogTimestamped implementation so Linux and macOS
+// produce identical log output.
+class wxLogTimestamped : public wxLog
+{
+public:
+    wxLogTimestamped( FILE* logFile, bool alsoStderr )
+        : m_logFile( logFile ), m_alsoStderr( alsoStderr ) {}
+
+protected:
+    void DoLogRecord( wxLogLevel level, const wxString& msg,
+                      const wxLogRecordInfo& info ) override
+    {
+        wxDateTime dt( (time_t) info.timestamp );
+        wxDateTime now = wxDateTime::UNow();
+        int ms = now.GetMillisecond();
+        wxString ts = dt.Format( wxS( "%H:%M:%S" ) )
+                    + wxString::Format( wxS( ".%03d" ), ms );
+        const wxScopedCharBuffer tsUtf8 = ts.utf8_str();
+
+        wxStringTokenizer tokenizer( msg, wxS( "\n" ), wxTOKEN_RET_EMPTY );
+
+        while( tokenizer.HasMoreTokens() )
+        {
+            wxString line = tokenizer.GetNextToken();
+            const wxScopedCharBuffer lineUtf8 = line.utf8_str();
+
+            if( m_logFile )
+                fprintf( m_logFile, "%s %s\n", tsUtf8.data(), lineUtf8.data() );
+
+            if( m_alsoStderr )
+                fprintf( stderr, "%s %s\n", tsUtf8.data(), lineUtf8.data() );
+        }
+
+        if( m_logFile )
+            fflush( m_logFile );
+    }
+
+private:
+    FILE* m_logFile;
+    bool  m_alsoStderr;
+};
 
 
 /*
@@ -43,6 +96,81 @@ bool KIPLATFORM::APP::Init()
     // Attach a logger that will consume the annoying GTK error messages
     g_log_set_writer_func( nullLogWriter, nullptr, nullptr );
 #endif
+
+    // Set up logging — redirect wxLogInfo/wxLogMessage to a file instead of
+    // the default wxWidgets behaviour (popup dialogs on GTK).
+    wxLog::EnableLogging( true );
+    wxLog::SetLogLevel( wxLOG_Trace );
+
+    // Use XDG_DATA_HOME or fall back to ~/.local/share
+    wxString dataHome;
+
+    if( !wxGetEnv( wxS( "XDG_DATA_HOME" ), &dataHome ) || dataHome.empty() )
+        dataHome = wxFileName::GetHomeDir() + wxS( "/.local/share" );
+
+    wxString logDir = dataHome + wxS( "/zeo/logs" );
+
+    if( !wxDir::Exists( logDir ) )
+        wxFileName::Mkdir( logDir, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
+
+    wxString timestamp = wxDateTime::Now().Format( wxS( "%Y-%m-%d-%H%M%S" ) );
+    wxString logPath = logDir + wxS( "/agent-" ) + timestamp + wxS( ".log" );
+
+    s_logFile = new wxFFile( logPath, wxS( "w" ) );
+
+    // Check if WXTRACE is set for stderr output (development mode)
+    wxString traceVars;
+    bool useStderr = wxGetEnv( wxS( "WXTRACE" ), &traceVars ) && !traceVars.empty();
+
+    if( s_logFile->IsOpened() )
+    {
+        wxLog::SetActiveTarget( new wxLogTimestamped( s_logFile->fp(), useStderr ) );
+    }
+
+    // Enable the "Agent" trace mask so wxLogTrace("Agent", ...) calls produce output
+    wxLog::AddTraceMask( wxS( "Agent" ) );
+
+    wxLogInfo( wxS( "Zeo session started, logging to %s" ), logPath );
+
+    // Clean up old log files: remove empty files and cap at 20
+    wxDir logDirObj( logDir );
+
+    if( logDirObj.IsOpened() )
+    {
+        wxString      filename;
+        wxArrayString logFiles;
+        bool          cont = logDirObj.GetFirst( &filename, wxS( "agent-*.log" ) );
+
+        while( cont )
+        {
+            wxString fullPath = logDir + wxS( "/" ) + filename;
+
+            if( fullPath != logPath )
+            {
+                wxFFile f( fullPath );
+
+                if( f.IsOpened() && f.Length() == 0 )
+                {
+                    f.Close();
+                    wxRemoveFile( fullPath );
+                }
+                else
+                {
+                    logFiles.Add( fullPath );
+                }
+            }
+
+            cont = logDirObj.GetNext( &filename );
+        }
+
+        logFiles.Sort();
+
+        while( logFiles.GetCount() > 20 )
+        {
+            wxRemoveFile( logFiles[0] );
+            logFiles.RemoveAt( 0 );
+        }
+    }
 
     return true;
 }

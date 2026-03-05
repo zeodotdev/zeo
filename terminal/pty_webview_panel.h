@@ -57,6 +57,10 @@ protected:
     wxTimer       m_agentTimeoutTimer;
     static const int AGENT_TIMEOUT_MS = 15000;
 
+    // Title update timer - periodically polls foreground process info
+    wxTimer       m_titleUpdateTimer;
+    static const int TITLE_UPDATE_MS = 500;  // Update every 500ms
+
     // Queued agent command (if called before PTY ready)
     std::string   m_queuedAgentCmd;
     AgentCallback m_queuedAgentCallback;
@@ -66,6 +70,7 @@ protected:
     void OnPtyExit( wxThreadEvent& aEvent );
     void OnMessage( const wxString& aMsg );
     void OnAgentTimeout( wxTimerEvent& aEvent );
+    void OnTitleUpdate( wxTimerEvent& aEvent );
     void OnSize( wxSizeEvent& aEvent );
 
     // Helpers

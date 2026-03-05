@@ -174,41 +174,17 @@ void TERMINAL_FRAME::OnTerminalTitleChanged( wxCommandEvent& aEvent )
     {
         if( m_notebook->GetPage( i ) == panel )
         {
-            wxString newTitle = aEvent.GetString();
+            wxString title = aEvent.GetString();
 
-            // Extract a short title for the tab (last component of path or command)
-            // e.g., "user@host:~/projects/myapp" -> "myapp"
-            // or "vim file.cpp" -> "vim file.cpp"
-            wxString shortTitle = newTitle;
+            // Title is now pre-formatted as "process: directory" from the PTY panel
+            // Just apply length limiting for tab display
+            if( title.length() > 24 )
+                title = title.Left( 22 ) + "...";
 
-            // If it looks like a path prompt (contains : and /), extract last dir
-            int colonPos = newTitle.Find( ':' );
-            if( colonPos != wxNOT_FOUND && newTitle.Find( '/' ) != wxNOT_FOUND )
-            {
-                wxString pathPart = newTitle.Mid( colonPos + 1 );
-                pathPart.Trim( true ).Trim( false );
+            if( title.IsEmpty() )
+                title = "Shell";
 
-                // Get the last path component
-                if( pathPart.EndsWith( "/" ) )
-                    pathPart.RemoveLast();
-
-                int lastSlash = pathPart.Find( '/', true );  // Find from end
-                if( lastSlash != wxNOT_FOUND )
-                    shortTitle = pathPart.Mid( lastSlash + 1 );
-                else if( pathPart == "~" )
-                    shortTitle = "~";
-                else
-                    shortTitle = pathPart;
-            }
-
-            // Limit length for tab display
-            if( shortTitle.length() > 20 )
-                shortTitle = shortTitle.Left( 18 ) + "...";
-
-            if( shortTitle.IsEmpty() )
-                shortTitle = "Shell";
-
-            m_notebook->SetPageText( i, shortTitle );
+            m_notebook->SetPageText( i, title );
             break;
         }
     }

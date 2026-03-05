@@ -25,6 +25,12 @@ public:
 
     bool  IsRunning() const { return m_running.load(); }
     pid_t GetChildPid() const { return m_childPid; }
+    int   GetMasterFd() const { return m_masterFd; }
+
+    // Get the foreground process of the terminal (the process the user is interacting with)
+    pid_t       GetForegroundPid() const;
+    std::string GetForegroundProcessName() const;
+    std::string GetForegroundCwd() const;
 
 private:
     class ReaderThread : public wxThread

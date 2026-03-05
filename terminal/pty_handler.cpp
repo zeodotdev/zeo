@@ -15,6 +15,8 @@
 #include <util.h>
 #include <mach-o/dyld.h>
 #include <libgen.h>
+#include <libproc.h>
+#include <sys/proc_info.h>
 #else
 #include <pty.h>
 #endif
@@ -334,4 +336,93 @@ void* PTY_HANDLER::ReaderThread::Entry()
     wxQueueEvent( m_owner->m_eventTarget, exitEvent );
 
     return nullptr;
+}
+
+
+pid_t PTY_HANDLER::GetForegroundPid() const
+{
+    if( m_masterFd < 0 || !m_running.load() )
+        return -1;
+
+    // tcgetpgrp returns the foreground process group ID of the terminal
+    pid_t fgPid = tcgetpgrp( m_masterFd );
+    return fgPid;
+}
+
+
+std::string PTY_HANDLER::GetForegroundProcessName() const
+{
+    pid_t fgPid = GetForegroundPid();
+
+    if( fgPid <= 0 )
+        return "";
+
+#ifdef __APPLE__
+    // Get process name using proc_name
+    char name[PROC_PIDPATHINFO_MAXSIZE];
+
+    if( proc_name( fgPid, name, sizeof( name ) ) > 0 )
+        return std::string( name );
+
+#else
+    // Linux: read /proc/<pid>/comm
+    char path[64];
+    snprintf( path, sizeof( path ), "/proc/%d/comm", fgPid );
+
+    FILE* f = fopen( path, "r" );
+
+    if( f )
+    {
+        char name[256];
+
+        if( fgets( name, sizeof( name ), f ) )
+        {
+            // Remove trailing newline
+            size_t len = strlen( name );
+
+            if( len > 0 && name[len - 1] == '\n' )
+                name[len - 1] = '\0';
+
+            fclose( f );
+            return std::string( name );
+        }
+
+        fclose( f );
+    }
+#endif
+
+    return "";
+}
+
+
+std::string PTY_HANDLER::GetForegroundCwd() const
+{
+    pid_t fgPid = GetForegroundPid();
+
+    if( fgPid <= 0 )
+        return "";
+
+#ifdef __APPLE__
+    struct proc_vnodepathinfo vnodeInfo;
+    int sz = proc_pidinfo( fgPid, PROC_PIDVNODEPATHINFO, 0, &vnodeInfo, sizeof( vnodeInfo ) );
+
+    if( sz > 0 )
+        return std::string( vnodeInfo.pvi_cdir.vip_path );
+
+#else
+    // Linux: readlink /proc/<pid>/cwd
+    char path[64];
+    snprintf( path, sizeof( path ), "/proc/%d/cwd", fgPid );
+
+    char cwd[PATH_MAX];
+    ssize_t len = readlink( path, cwd, sizeof( cwd ) - 1 );
+
+    if( len > 0 )
+    {
+        cwd[len] = '\0';
+        return std::string( cwd );
+    }
+#endif
+
+    return "";
 }

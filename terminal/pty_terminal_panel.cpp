@@ -1,6 +1,7 @@
 #include "pty_terminal_panel.h"
 #include "pty_handler.h"
 #include "vterm_handler.h"
+#include "pty_webview_panel.h"  // For wxEVT_TERMINAL_TITLE_CHANGED
 
 #include <wx/dcclient.h>
 #include <wx/dcmemory.h>
@@ -88,6 +89,10 @@ PTY_TERMINAL_PANEL::PTY_TERMINAL_PANEL( wxWindow* aParent ) :
     m_agentTimeoutTimer.SetOwner( this );
     Bind( wxEVT_TIMER, &PTY_TERMINAL_PANEL::OnAgentTimeout, this, m_agentTimeoutTimer.GetId() );
 
+    // Title update timer - polls foreground process info periodically
+    m_titleUpdateTimer.SetOwner( this );
+    Bind( wxEVT_TIMER, &PTY_TERMINAL_PANEL::OnTitleUpdate, this, m_titleUpdateTimer.GetId() );
+
     SetBackgroundColour( wxColour( 30, 30, 30 ) );
 }
 
@@ -97,6 +102,7 @@ PTY_TERMINAL_PANEL::~PTY_TERMINAL_PANEL()
     m_cursorBlinkTimer.Stop();
     m_renderTimer.Stop();
     m_agentTimeoutTimer.Stop();
+    m_titleUpdateTimer.Stop();
 
     if( m_pty )
         m_pty->Stop();
@@ -162,6 +168,9 @@ bool PTY_TERMINAL_PANEL::StartShell()
 
     // Start cursor blink
     m_cursorBlinkTimer.Start( CURSOR_BLINK_MS );
+
+    // Start title update timer to poll foreground process info
+    m_titleUpdateTimer.Start( TITLE_UPDATE_MS );
 
     m_needsFullRedraw = true;
     Refresh();
@@ -1088,5 +1097,80 @@ void PTY_TERMINAL_PANEL::OnAgentTimeout( wxTimerEvent& aEvent )
     {
         m_agentCallback( "Error: Command execution timed out", false );
         m_agentCallback = nullptr;
+    }
+}
+
+
+void PTY_TERMINAL_PANEL::OnTitleUpdate( wxTimerEvent& aEvent )
+{
+    if( !m_pty || !m_pty->IsRunning() )
+        return;
+
+    // Get the foreground process name and cwd
+    std::string procName = m_pty->GetForegroundProcessName();
+    std::string procCwd = m_pty->GetForegroundCwd();
+
+    if( procName.empty() && procCwd.empty() )
+        return;
+
+    // Build a title like "vim: ~/projects/myapp" or just "zsh: ~/projects"
+    wxString newTitle;
+
+    // Get the short directory name (last component or ~ for home)
+    wxString shortDir;
+
+    if( !procCwd.empty() )
+    {
+        wxString cwd = wxString::FromUTF8( procCwd );
+
+        // Replace home directory with ~
+        wxString homeDir = wxGetHomeDir();
+
+        if( cwd.StartsWith( homeDir ) )
+        {
+            if( cwd.length() == homeDir.length() )
+            {
+                shortDir = "~";
+            }
+            else
+            {
+                cwd = "~" + cwd.Mid( homeDir.length() );
+            }
+        }
+
+        if( shortDir.IsEmpty() )
+        {
+            // Get last path component
+            int lastSlash = cwd.Find( '/', true );
+
+            if( lastSlash != wxNOT_FOUND && lastSlash < (int) cwd.length() - 1 )
+                shortDir = cwd.Mid( lastSlash + 1 );
+            else
+                shortDir = cwd;
+        }
+    }
+
+    // Format: "process: directory" like modern terminals
+    if( !procName.empty() )
+    {
+        newTitle = wxString::FromUTF8( procName );
+
+        if( !shortDir.IsEmpty() )
+            newTitle += ": " + shortDir;
+    }
+    else if( !shortDir.IsEmpty() )
+    {
+        newTitle = shortDir;
+    }
+
+    // Only send event if title actually changed
+    if( newTitle != m_termTitle && !newTitle.IsEmpty() )
+    {
+        m_termTitle = newTitle;
+
+        wxCommandEvent evt( wxEVT_TERMINAL_TITLE_CHANGED );
+        evt.SetEventObject( this );
+        evt.SetString( m_termTitle );
+        wxPostEvent( GetParent(), evt );
     }
 }

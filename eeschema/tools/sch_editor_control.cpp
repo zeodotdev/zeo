@@ -24,6 +24,7 @@
 
 #include "tools/sch_editor_control.h"
 
+#include <wx/display.h>
 #include <clipboard.h>
 #include <core/base64.h>
 #include <algorithm>
@@ -3013,16 +3014,48 @@ int SCH_EDITOR_CONTROL::ShowAgent( const TOOL_EVENT& aEvent )
         if( m_frame )
         {
             wxRect parentRect = m_frame->GetRect();
-            int    agentWidth = parentRect.GetWidth() / 4;
-            int    parentNewWidth = parentRect.GetWidth() - agentWidth;
             int    height = parentRect.GetHeight();
 
-            // Resize parent window to make room for agent
-            m_frame->SetSize( parentRect.GetX(), parentRect.GetY(), parentNewWidth, height );
+            // Calculate desired agent width (1/4 of parent, but at least 350px)
+            int agentWidth = std::max( 350, parentRect.GetWidth() / 4 );
 
-            // Position agent window to the right of parent (no overlap)
-            int agentX = parentRect.GetX() + parentNewWidth;
-            int agentY = parentRect.GetY();
+            // Get the display that contains the parent window
+            int displayIndex = wxDisplay::GetFromWindow( m_frame );
+            if( displayIndex == wxNOT_FOUND )
+                displayIndex = 0;
+
+            wxDisplay display( displayIndex );
+            wxRect screenRect = display.GetClientArea();  // Excludes taskbar/dock
+
+            // Calculate available space to the right of the parent window
+            int parentRightEdge = parentRect.GetX() + parentRect.GetWidth();
+            int availableSpace = screenRect.GetRight() - parentRightEdge;
+
+            int agentX, agentY;
+
+            if( availableSpace >= agentWidth )
+            {
+                // There's enough space to the right - just position beside without resizing
+                agentX = parentRightEdge;
+                agentY = parentRect.GetY();
+            }
+            else
+            {
+                // Not enough space - shrink the parent window to make room
+                int parentNewWidth = parentRect.GetWidth() - agentWidth;
+
+                // Ensure parent doesn't get too small (minimum 600px)
+                if( parentNewWidth < 600 )
+                {
+                    parentNewWidth = 600;
+                    agentWidth = screenRect.GetWidth() - parentNewWidth;
+                }
+
+                m_frame->SetSize( parentRect.GetX(), parentRect.GetY(), parentNewWidth, height );
+
+                agentX = parentRect.GetX() + parentNewWidth;
+                agentY = parentRect.GetY();
+            }
 
             frame->SetSize( agentX, agentY, agentWidth, height );
         }

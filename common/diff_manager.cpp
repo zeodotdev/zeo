@@ -24,6 +24,9 @@
 #include <diff_manager.h>
 #include <preview_items/diff_overlay_item.h>
 #include <gal/graphics_abstraction_layer.h>
+#include <pgm_base.h>
+#include <settings/common_settings.h>
+#include <settings/settings_manager.h>
 #include <view/view.h>
 #include <wx/log.h>
 
@@ -58,6 +61,11 @@ void DIFF_MANAGER::ShowDiff( const BOX2I& aBBox )
     std::lock_guard<std::recursive_mutex> lock( m_mutex );
 
     if( !m_currentView )
+        return;
+
+    COMMON_SETTINGS* settings = Pgm().GetSettingsManager().GetCommonSettings();
+
+    if( settings && !settings->m_Agent.enable_diff_view )
         return;
 
     wxLogInfo( "Agent diff: showing overlay at (%d,%d) size (%d,%d)",
@@ -159,6 +167,12 @@ void DIFF_MANAGER::RegisterOverlay( KIGFX::VIEW* aView, AGENT_CHANGE_TRACKER* aT
     state.tracker = aTracker;
     state.sheetPath = aSheetPath;
     state.bboxCallback = aBBoxCallback;
+
+    // Check if diff view overlays are enabled in settings
+    COMMON_SETTINGS* settings = Pgm().GetSettingsManager().GetCommonSettings();
+
+    if( settings && !settings->m_Agent.enable_diff_view )
+        return;
 
     // If we have a bbox callback, create overlay with dynamic bbox
     if( aBBoxCallback )

@@ -34,6 +34,127 @@ enum
     ID_CLOSE_TAB
 };
 
+
+// Python bootstrap: adds kipy to sys.path by searching common locations.
+// Used by both sync (ExecuteCommandForAgent) and async (ExecuteCommandForAgentAsync) paths.
+static const std::string KIPY_BOOTSTRAP =
+    "import sys\n"
+    "import os\n"
+    "_kipy_found = False\n"
+    "_search_paths = []\n"
+    "if os.environ.get('KICAD_PYTHON_PATH'):\n"
+    "    _search_paths.append(os.environ['KICAD_PYTHON_PATH'])\n"
+    "_cwd = os.getcwd()\n"
+    "for _i in range(6):\n"
+    "    _search_paths.append(os.path.join(_cwd, 'kicad-python'))\n"
+    "    _search_paths.append(os.path.join(_cwd, 'code', 'kicad-python'))\n"
+    "    _cwd = os.path.dirname(_cwd)\n"
+    "for _p in _search_paths:\n"
+    "    if os.path.isdir(_p) and _p not in sys.path:\n"
+    "        sys.path.insert(0, _p)\n"
+    "        try:\n"
+    "            import kipy\n"
+    "            _kipy_found = True\n"
+    "            break\n"
+    "        except ImportError:\n"
+    "            sys.path.remove(_p)\n"
+    "if not _kipy_found:\n"
+    "    try:\n"
+    "        import kipy\n"
+    "        _kipy_found = True\n"
+    "    except ImportError:\n"
+    "        pass\n";
+
+
+// Build mode-specific Python init code (kipy imports + editor connection).
+// socketPath is empty for sync execution, set for async (known socket).
+static std::string BuildModeInitCode( const wxString& aMode, const std::string& aSocketPath = "" )
+{
+    std::string socketArg;
+    if( !aSocketPath.empty() )
+        socketArg = "socket_path='" + aSocketPath + "', timeout_ms=5000";
+
+    std::string initCode = KIPY_BOOTSTRAP +
+        "import kipy\n"
+        "from kipy.geometry import Vector2\n"
+        "kicad = kipy.KiCad(" + socketArg + ")\n";
+
+    if( aMode == "sch" )
+    {
+        initCode +=
+            "sch = kicad.get_schematic()\n"
+            "if hasattr(sch, 'refresh_document'):\n"
+            "    sch.refresh_document()\n";
+    }
+    else if( aMode == "pcb" )
+    {
+        initCode += "board = kicad.get_board()\n";
+    }
+
+    return initCode;
+}
+
+
+// Wait for a headless Python execution to complete, polling wxYield for UI responsiveness.
+static std::string WaitForPythonResult( HEADLESS_PYTHON_EXECUTOR* aExecutor,
+                                        long aTimeoutMs = 30000 )
+{
+    wxLongLong startTime = wxGetLocalTimeMillis();
+
+    while( aExecutor->IsPythonRunning() )
+    {
+        wxMilliSleep( 50 );
+        wxYield();
+
+        if( wxGetLocalTimeMillis() - startTime > aTimeoutMs )
+            return "Error: Python execution timed out after 30 seconds";
+    }
+
+    std::string result = aExecutor->GetLastPythonResult();
+    return result.empty() ? "(no output)" : result;
+}
+
+
+// Map an editor mode string to a FRAME_T.  Returns FRAME_T(-1) for unknown modes.
+static FRAME_T ModeToFrameType( const std::string& aMode )
+{
+    if( aMode == "sch" )
+        return FRAME_SCH;
+    if( aMode == "pcb" )
+        return FRAME_PCB_EDITOR;
+    return static_cast<FRAME_T>( -1 );
+}
+
+
+// Send undo transaction begin + snapshot to an editor frame.
+static void BeginEditorTransaction( KIWAY& aKiway, FRAME_T aFrame )
+{
+    nlohmann::json beginMsg;
+    beginMsg["sheet_uuid"] = "";
+    std::string beginPayload = beginMsg.dump();
+    aKiway.ExpressMail( aFrame, MAIL_AGENT_BEGIN_TRANSACTION, beginPayload );
+
+    nlohmann::json snapshotMsg;
+    snapshotMsg["type"] = "take_snapshot";
+    std::string snapshotPayload = snapshotMsg.dump();
+    aKiway.ExpressMail( aFrame, MAIL_AGENT_REQUEST, snapshotPayload );
+}
+
+
+// Send detect_changes + commit end-transaction to an editor frame.
+static void EndEditorTransaction( KIWAY& aKiway, FRAME_T aFrame )
+{
+    nlohmann::json detectMsg;
+    detectMsg["type"] = "detect_changes";
+    std::string detectPayload = detectMsg.dump();
+    aKiway.ExpressMail( aFrame, MAIL_AGENT_REQUEST, detectPayload );
+
+    nlohmann::json endMsg;
+    endMsg["commit"] = true;
+    std::string endPayload = endMsg.dump();
+    aKiway.ExpressMail( aFrame, MAIL_AGENT_END_TRANSACTION, endPayload );
+}
+
 BEGIN_EVENT_TABLE( TERMINAL_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, TERMINAL_FRAME::OnExit )
 EVT_MENU( ID_NEW_TAB, TERMINAL_FRAME::OnNewTab )
@@ -299,78 +420,13 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
         wxString mode = rest.BeforeFirst( ' ' );
         wxString code = rest.AfterFirst( ' ' );
 
-        std::string initCode;
-
-        // Common initialization: add kicad-python to sys.path if not already there
-        std::string commonInit =
-            "import sys\n"
-            "import os\n"
-            "_kipy_found = False\n"
-            "_search_paths = []\n"
-            "if os.environ.get('KICAD_PYTHON_PATH'):\n"
-            "    _search_paths.append(os.environ['KICAD_PYTHON_PATH'])\n"
-            "_cwd = os.getcwd()\n"
-            "for _i in range(6):\n"
-            "    _search_paths.append(os.path.join(_cwd, 'kicad-python'))\n"
-            "    _search_paths.append(os.path.join(_cwd, 'code', 'kicad-python'))\n"
-            "    _cwd = os.path.dirname(_cwd)\n"
-            "for _p in _search_paths:\n"
-            "    if os.path.isdir(_p) and _p not in sys.path:\n"
-            "        sys.path.insert(0, _p)\n"
-            "        try:\n"
-            "            import kipy\n"
-            "            _kipy_found = True\n"
-            "            break\n"
-            "        except ImportError:\n"
-            "            sys.path.remove(_p)\n"
-            "if not _kipy_found:\n"
-            "    try:\n"
-            "        import kipy\n"
-            "        _kipy_found = True\n"
-            "    except ImportError:\n"
-            "        pass\n";
-
-        if( mode == "sch" )
-        {
-            initCode = commonInit +
-                "import kipy\n"
-                "from kipy.geometry import Vector2\n"
-                "kicad = kipy.KiCad()\n"
-                "sch = kicad.get_schematic()\n"
-                "if hasattr(sch, 'refresh_document'):\n"
-                "    sch.refresh_document()\n";
-        }
-        else if( mode == "pcb" )
-        {
-            initCode = commonInit +
-                "import kipy\n"
-                "from kipy.geometry import Vector2\n"
-                "kicad = kipy.KiCad()\n"
-                "board = kicad.get_board()\n";
-        }
-
-        // Execute via headless executor
-        std::string fullCode = initCode + code.ToStdString();
+        std::string fullCode = BuildModeInitCode( mode ) + code.ToStdString();
         std::string immediateResult = m_headlessExecutor->RunPython( fullCode, nullptr );
 
         if( !immediateResult.empty() && immediateResult.find( "Error:" ) == 0 )
             return immediateResult;
 
-        // Wait for Python to complete (with timeout)
-        wxLongLong startTime = wxGetLocalTimeMillis();
-        const long timeoutMs = 30000;
-
-        while( m_headlessExecutor->IsPythonRunning() )
-        {
-            wxMilliSleep( 50 );
-            wxYield();
-
-            if( wxGetLocalTimeMillis() - startTime > timeoutMs )
-                return "Error: Python execution timed out after 30 seconds";
-        }
-
-        std::string result = m_headlessExecutor->GetLastPythonResult();
-        return result.empty() ? "(no output)" : result;
+        return WaitForPythonResult( m_headlessExecutor );
     }
 
     if( cmd.StartsWith( "run_terminal " ) )
@@ -451,20 +507,7 @@ std::string TERMINAL_FRAME::ExecuteCommandForAgent( const wxString& aCmd )
     if( !immediateResult.empty() && immediateResult.find( "Error:" ) == 0 )
         return immediateResult;
 
-    wxLongLong startTime = wxGetLocalTimeMillis();
-    const long timeoutMs = 30000;
-
-    while( m_headlessExecutor->IsPythonRunning() )
-    {
-        wxMilliSleep( 50 );
-        wxYield();
-
-        if( wxGetLocalTimeMillis() - startTime > timeoutMs )
-            return "Error: Python execution timed out after 30 seconds";
-    }
-
-    std::string result = m_headlessExecutor->GetLastPythonResult();
-    return result.empty() ? "(no output)" : result;
+    return WaitForPythonResult( m_headlessExecutor );
 }
 
 void TERMINAL_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
@@ -478,6 +521,24 @@ void TERMINAL_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
 
         // Use async execution to avoid blocking the UI thread
         ExecuteCommandForAgentAsync( payload );
+    }
+    else if( aEvent.Command() == MAIL_MCP_EXECUTE_TOOL )
+    {
+        // Synchronous execution for MCP tool calls routed through the project manager.
+        // The payload contains a "run_shell <app> <script>" command.
+        // We execute it synchronously (with wxYield polling) and write the result
+        // back into the payload so the caller gets it when ExpressMail returns.
+        std::string cmd = aEvent.GetPayload();
+
+        wxLogInfo( "TERMINAL: Received MAIL_MCP_EXECUTE_TOOL, cmd_len=%zu", cmd.length() );
+
+        std::string result = ExecuteCommandForAgent( cmd );
+
+        wxLogInfo( "TERMINAL: MAIL_MCP_EXECUTE_TOOL complete, result_len=%zu", result.length() );
+
+        // Write result back into the payload — the caller (API_HANDLER_PROJECT) reads it
+        // after ExpressMail returns since the payload is passed by reference
+        aEvent.SetPayload( result );
     }
 }
 
@@ -509,42 +570,11 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
     cmd.Trim( true );   // Trim trailing whitespace
 
     // Handle new simplified commands (run_shell sch/pcb <code>)
-    if( cmd.StartsWith( "run_shell " ) || cmd.StartsWith( wxT("run_shell ") ) )
+    if( cmd.StartsWith( "run_shell " ) )
     {
         wxString rest = cmd.Mid( 10 ).Trim( false );
         wxString mode = rest.BeforeFirst( ' ' );
         wxString code = rest.AfterFirst( ' ' );
-
-        std::string initCode;
-
-        // Common initialization: add kicad-python to sys.path
-        std::string commonInit =
-            "import sys\n"
-            "import os\n"
-            "_kipy_found = False\n"
-            "_search_paths = []\n"
-            "if os.environ.get('KICAD_PYTHON_PATH'):\n"
-            "    _search_paths.append(os.environ['KICAD_PYTHON_PATH'])\n"
-            "_cwd = os.getcwd()\n"
-            "for _i in range(6):\n"
-            "    _search_paths.append(os.path.join(_cwd, 'kicad-python'))\n"
-            "    _search_paths.append(os.path.join(_cwd, 'code', 'kicad-python'))\n"
-            "    _cwd = os.path.dirname(_cwd)\n"
-            "for _p in _search_paths:\n"
-            "    if os.path.isdir(_p) and _p not in sys.path:\n"
-            "        sys.path.insert(0, _p)\n"
-            "        try:\n"
-            "            import kipy\n"
-            "            _kipy_found = True\n"
-            "            break\n"
-            "        except ImportError:\n"
-            "            sys.path.remove(_p)\n"
-            "if not _kipy_found:\n"
-            "    try:\n"
-            "        import kipy\n"
-            "        _kipy_found = True\n"
-            "    except ImportError:\n"
-            "        pass\n";
 
         // Get the API server socket path so kipy connects to the correct instance
         std::string socketPath;
@@ -562,48 +592,14 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
         }
 #endif
 
-        if( mode == "sch" )
-        {
-            initCode = commonInit +
-                "import kipy\n"
-                "from kipy.geometry import Vector2\n"
-                "kicad = kipy.KiCad(socket_path='" + socketPath + "', timeout_ms=5000)\n"
-                "sch = kicad.get_schematic()\n"
-                "if hasattr(sch, 'refresh_document'):\n"
-                "    sch.refresh_document()\n";
+        std::string initCode = BuildModeInitCode( mode, socketPath );
 
-            nlohmann::json beginMsg;
-            beginMsg["sheet_uuid"] = "";
-            std::string beginPayload = beginMsg.dump();
-            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_BEGIN_TRANSACTION, beginPayload );
-
-            nlohmann::json snapshotMsg;
-            snapshotMsg["type"] = "take_snapshot";
-            std::string snapshotPayload = snapshotMsg.dump();
-            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REQUEST, snapshotPayload );
-        }
-        else if( mode == "pcb" )
-        {
-            initCode = commonInit +
-                "import kipy\n"
-                "from kipy.geometry import Vector2\n"
-                "kicad = kipy.KiCad(socket_path='" + socketPath + "', timeout_ms=5000)\n"
-                "board = kicad.get_board()\n";
-
-            nlohmann::json beginMsg;
-            beginMsg["sheet_uuid"] = "";
-            std::string beginPayload = beginMsg.dump();
-            Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_BEGIN_TRANSACTION, beginPayload );
-
-            nlohmann::json snapshotMsg;
-            snapshotMsg["type"] = "take_snapshot";
-            std::string snapshotPayload = snapshotMsg.dump();
-            Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REQUEST, snapshotPayload );
-        }
+        // Begin undo transaction on the target editor
+        FRAME_T editorFrame = ModeToFrameType( mode.ToStdString() );
+        if( editorFrame != static_cast<FRAME_T>( -1 ) )
+            BeginEditorTransaction( Kiway(), editorFrame );
 
         // Set up completion callback and execute via headless executor
-        bool isPcbMode = ( mode == "pcb" );
-        bool isSchMode = ( mode == "sch" );
         m_asyncRequestPending = true;
 
         std::string modeStr = mode.ToStdString();
@@ -611,38 +607,16 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
         wxLongLong cmdStartTime = wxGetLocalTimeMillis();
         AGENT_MONITOR_LOG::Instance().LogCommandStart( "run_shell", modeStr, codeStr );
 
-        auto callback = [this, isPcbMode, isSchMode, modeStr, cmdStartTime]( const std::string& result, bool success ) {
+        auto callback = [this, editorFrame, modeStr, cmdStartTime]( const std::string& result, bool success ) {
             long durationMs = ( wxGetLocalTimeMillis() - cmdStartTime ).ToLong();
             AGENT_MONITOR_LOG::Instance().LogCommandEnd( "run_shell", modeStr, result, success, durationMs );
 
             wxLogInfo( "TERMINAL: Python completion callback invoked, success=%d, result_len=%zu",
                        success, result.length() );
 
-            if( isPcbMode )
-            {
-                nlohmann::json detectMsg;
-                detectMsg["type"] = "detect_changes";
-                std::string detectPayload = detectMsg.dump();
-                Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REQUEST, detectPayload );
-
-                nlohmann::json endMsg;
-                endMsg["commit"] = true;
-                std::string endPayload = endMsg.dump();
-                Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_END_TRANSACTION, endPayload );
-            }
-
-            if( isSchMode )
-            {
-                nlohmann::json detectMsg;
-                detectMsg["type"] = "detect_changes";
-                std::string detectPayload = detectMsg.dump();
-                Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REQUEST, detectPayload );
-
-                nlohmann::json endMsg;
-                endMsg["commit"] = true;
-                std::string endPayload = endMsg.dump();
-                Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_END_TRANSACTION, endPayload );
-            }
+            // End undo transaction on the target editor
+            if( editorFrame != static_cast<FRAME_T>( -1 ) )
+                EndEditorTransaction( Kiway(), editorFrame );
 
             SendAgentResponse( result );
         };

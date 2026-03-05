@@ -62,6 +62,7 @@ COMMON_SETTINGS::COMMON_SETTINGS() :
         m_DoNotShowAgain(),
         m_PackageManager(),
         m_Api(),
+        m_Agent(),
         m_csInternals( std::make_unique<COMMON_SETTINGS_INTERNALS>() )
 {
     /*
@@ -449,6 +450,9 @@ COMMON_SETTINGS::COMMON_SETTINGS() :
 
     m_params.emplace_back( new PARAM<bool>( "api.enable_server",
             &m_Api.enable_server, true ) );
+
+    m_params.emplace_back( new PARAM<bool>( "agent.enable_diff_view",
+            &m_Agent.enable_diff_view, true ) );
 
     m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "dialog.controls",
             [&]() -> nlohmann::json

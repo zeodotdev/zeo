@@ -17,10 +17,12 @@ size_h = raw_size[1] if len(raw_size) >= 2 else 50
 # e.g., "/Power Supply/" -> parent="/", name="Power Supply"
 parts = [p for p in human_path.split('/') if p]
 if not parts:
-    print(json.dumps({'status': 'error', 'message': 'human_path must contain a sheet name (e.g., "/Power Supply/")'}))
+    print(json.dumps({'status': 'error', 'message': 'sheet_path must contain a sheet name (e.g., "/Power Supply/")'}))
     sys.exit(0)
 
 sheet_name = parts[-1]
+
+# Determine parent sheet path
 if len(parts) == 1:
     parent_sheet_path = '/'
 else:
@@ -29,14 +31,16 @@ else:
 try:
     pos = Vector2.from_xy_mm(pos_x, pos_y)
     size = Vector2.from_xy_mm(size_w, size_h)
-    sheet = sch.sheets.create(
+
+    # Create the sheet, specifying the parent sheet path
+    response = sch.sheets.create(
         name=sheet_name,
         filename=sheet_file if sheet_file else sheet_name + ".kicad_sch",
         position=pos,
         size=size,
         parent_sheet_path=parent_sheet_path
     )
-    result = {'status': 'success', 'name': sheet_name, 'sheet_path': human_path}
+    result = {'status': 'success', 'name': sheet_name, 'sheet_path': human_path, 'sheet_id': response.sheet_id.value}
 
 except Exception as e:
     result = {'status': 'error', 'message': str(e)}

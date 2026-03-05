@@ -23,6 +23,7 @@
  */
 
 #include <sch_line_wire_bus_tool.h>
+#include <sch_wiring_guide_manager.h>
 
 #include <wx/debug.h>
 #include <wx/gdicmn.h>
@@ -690,6 +691,10 @@ int SCH_LINE_WIRE_BUS_TOOL::doDrawSegments( const TOOL_EVENT& aTool, SCH_COMMIT&
                 m_wires.clear();
                 segment = nullptr;
 
+                // Clear the active wiring position when wiring is cancelled
+                if( SCH_WIRING_GUIDE_MANAGER* guideManager = m_frame->GetWiringGuideManager() )
+                    guideManager->ClearActiveWiringPosition();
+
                 if( m_busUnfold.entry )
                     m_frame->RemoveFromScreen( m_busUnfold.entry, screen );
 
@@ -1181,6 +1186,16 @@ SCH_LINE* SCH_LINE_WIRE_BUS_TOOL::startSegments( SCH_COMMIT& aCommit, int aType,
 
     m_selectionTool->AddItemToSel( aSegment, true /*quiet mode*/ );
 
+    // Notify the wiring guide manager that wiring has started at this position
+    // This highlights the relevant guide and dims others (like PCB ratsnest)
+    if( aType == LAYER_WIRE )
+    {
+        if( SCH_WIRING_GUIDE_MANAGER* guideManager = m_frame->GetWiringGuideManager() )
+        {
+            guideManager->SetActiveWiringPosition( VECTOR2I( aPos ) );
+        }
+    }
+
     // We need 2 segments to go from a given start pin to an end point when the
     // horizontal and vertical lines only switch is on.
     if( m_frame->eeconfig()->m_Drawing.line_mode )
@@ -1310,6 +1325,10 @@ void SCH_LINE_WIRE_BUS_TOOL::finishSegments( SCH_COMMIT& aCommit )
     m_wires.clear();
     m_view->ClearPreview();
     m_view->ShowPreview( false );
+
+    // Clear the active wiring position now that wiring is complete
+    if( SCH_WIRING_GUIDE_MANAGER* guideManager = m_frame->GetWiringGuideManager() )
+        guideManager->ClearActiveWiringPosition();
 
     getViewControls()->CaptureCursor( false );
     getViewControls()->SetAutoPan( false );

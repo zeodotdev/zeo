@@ -68,6 +68,19 @@ struct DIFF_ITEM_HIGHLIGHT
 using ITEM_HIGHLIGHTS_CALLBACK = std::function<std::vector<DIFF_ITEM_HIGHLIGHT>()>;
 
 /**
+ * Wiring guide preview data for sch_draft_circuit tool.
+ */
+struct WIRING_GUIDE_PREVIEW_DATA
+{
+    VECTOR2I start;           ///< Source pin position
+    VECTOR2I end;             ///< Target pin position
+    KIID     sourceSymbolId;  ///< For linking to symbol approval
+    wxString label;           ///< "R1:1 → VCC" for tooltip
+};
+
+using WIRING_GUIDES_CALLBACK = std::function<std::vector<WIRING_GUIDE_PREVIEW_DATA>()>;
+
+/**
  * Per-view diff overlay state
  */
 struct DIFF_VIEW_STATE
@@ -101,11 +114,14 @@ public:
      * @param aSheetPath The sheet path for multi-sheet support (empty for PCB).
      * @param aCallbacks User interaction callbacks.
      * @param aBBoxCallback Callback to compute dynamic bounding box.
+     * @param aHighlightsCallback Callback for per-item highlight data.
+     * @param aWiringGuidesCallback Callback for wiring guide preview data (schematic only).
      */
     void RegisterOverlay( KIGFX::VIEW* aView, AGENT_CHANGE_TRACKER* aTracker,
                           const wxString& aSheetPath, DIFF_CALLBACKS aCallbacks,
                           BBOX_COMPUTE_CALLBACK aBBoxCallback,
-                          ITEM_HIGHLIGHTS_CALLBACK aHighlightsCallback = nullptr );
+                          ITEM_HIGHLIGHTS_CALLBACK aHighlightsCallback = nullptr,
+                          WIRING_GUIDES_CALLBACK aWiringGuidesCallback = nullptr );
 
     /**
      * Null out the overlay item pointer without removing it from the view.

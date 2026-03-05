@@ -8,6 +8,7 @@
 #include "agent_chat_history.h"
 #include <zeo/agent_auth.h>
 #include "../cloud/agent_cloud_sync.h"
+#include "agent_monitor_log.h"
 
 #include <algorithm>
 #include <chrono>
@@ -715,7 +716,7 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
     }
 
     case LLMChunkType::ERROR:
-        HandleLLMError( aChunk.error_message );
+        HandleLLMError( aChunk.error_message, 0, aChunk.error_type );
         break;
 
     case LLMChunkType::MAX_TOKENS:
@@ -908,9 +909,11 @@ void CHAT_CONTROLLER::HandleLLMComplete()
 }
 
 
-void CHAT_CONTROLLER::HandleLLMError( const std::string& aError )
+void CHAT_CONTROLLER::HandleLLMError( const std::string& aError, long aHttpCode,
+                                      const std::string& aErrorType )
 {
-    wxLogInfo( "CHAT_CONTROLLER::HandleLLMError: %s", aError.c_str() );
+    wxLogInfo( "CHAT_CONTROLLER::HandleLLMError: http=%ld type=%s msg=%s",
+               aHttpCode, aErrorType.c_str(), aError.c_str() );
     AgentConversationState oldState = m_ctx.GetState();
 
     // Remove orphaned user message if no assistant response was generated yet.
@@ -962,7 +965,8 @@ void CHAT_CONTROLLER::HandleLLMError( const std::string& aError )
     bool isContextError = aError.find( "context" ) != std::string::npos ||
                           aError.find( "token" ) != std::string::npos;
 
-    EmitEvent( EVT_CHAT_ERROR, ChatErrorData( aError, canRetry, isContextError ) );
+    EmitEvent( EVT_CHAT_ERROR, ChatErrorData( aError, canRetry, isContextError,
+                                              aHttpCode, aErrorType ) );
 
     // Auto-recover to IDLE state so user can retry immediately.
     // This prevents the chat from becoming stuck in ERROR state.
@@ -1014,6 +1018,10 @@ void CHAT_CONTROLLER::ExecuteNextTool()
     // Emit tool start event
     EmitEvent( EVT_CHAT_TOOL_START, ChatToolStartData( tool->tool_use_id, tool->tool_name,
                                                         desc, tool->tool_input ) );
+
+    // Log tool start to monitor log
+    AGENT_MONITOR_LOG::Instance().LogToolStart( tool->tool_use_id, tool->tool_name,
+                                                 desc, tool->tool_input.dump() );
 
     // open_editor is frame-managed: it has a deferred approval flow that can't
     // fit the synchronous Execute() interface. AGENT_FRAME handles it directly.
@@ -1223,6 +1231,10 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
     completeData.imageBase64 = imageBase64;
     completeData.imageMediaType = imageMediaType;
     EmitEvent( EVT_CHAT_TOOL_COMPLETE, completeData );
+
+    // Log tool end to monitor log
+    long durationMs = static_cast<long>( ( wxGetUTCTimeMillis() - tool->start_time ).GetValue() );
+    AGENT_MONITOR_LOG::Instance().LogToolEnd( aToolId, toolName, tr.result, aSuccess, durationMs );
 
     // Remove from pending
     m_ctx.RemovePendingToolCall( aToolId );

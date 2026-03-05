@@ -23,6 +23,12 @@ public:
 
     void LogError( const std::string& aContext, const std::string& aError );
 
+    void LogToolStart( const std::string& aToolId, const std::string& aToolName,
+                       const std::string& aDescription, const std::string& aInputJson );
+
+    void LogToolEnd( const std::string& aToolId, const std::string& aToolName,
+                     const std::string& aResult, bool aSuccess, long aDurationMs );
+
 private:
     AGENT_MONITOR_LOG();
     ~AGENT_MONITOR_LOG();

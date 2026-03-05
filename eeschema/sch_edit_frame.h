@@ -52,6 +52,9 @@
 class AGENT_CHANGE_TRACKER;
 class AGENT_SNAPSHOT_SESSION;
 struct DIFF_ITEM_HIGHLIGHT;
+struct WIRING_GUIDE_PREVIEW_DATA;
+class SCH_WIRING_GUIDE_MANAGER;
+class SCH_WIRING_GUIDE_OVERLAY;
 
 class SCH_ITEM;
 class EDA_ITEM;
@@ -974,6 +977,37 @@ public:
     void RejectAgentChangesOnSheet( const wxString& aSheetPath );
 
     /**
+     * Enum for rejection warning dialog action choices.
+     */
+    enum class REJECT_ACTION
+    {
+        CANCEL,                       ///< User cancelled, no action taken
+        REJECT_AND_REMOVE_USER_CHANGES, ///< Remove agent items AND user's connected items
+        REJECT_AND_KEEP_USER_CHANGES   ///< Remove agent items only, keep user items (may be orphaned)
+    };
+
+    /**
+     * Show a warning dialog when rejecting agent changes while user has made modifications.
+     * @return The user's chosen action.
+     */
+    REJECT_ACTION ShowRejectWarningDialog();
+
+    /**
+     * Check if the user has made modifications connected to agent-placed items.
+     * @param aSheetPath The sheet path to check.
+     * @return True if user has made connected modifications.
+     */
+    bool HasUserModificationsConnectedToAgent( const wxString& aSheetPath ) const;
+
+    /**
+     * Get items the user added that are connected to agent-placed items.
+     * Used for the "Reject & Remove My Changes" option.
+     * @param aSheetPath The sheet path to check.
+     * @return Vector of KIIDs for user-added items connected to agent items.
+     */
+    std::vector<KIID> GetUserItemsConnectedToAgent( const wxString& aSheetPath ) const;
+
+    /**
      * Approve specific agent-changed items (untrack them, keeping their changes).
      */
     void ApproveAgentItems( const std::vector<KIID>& aItemIds );
@@ -1006,6 +1040,18 @@ public:
     AGENT_SNAPSHOT_SESSION* GetSnapshotSession() { return m_snapshotSession.get(); }
 
     /**
+     * Get the wiring guide manager for Agent_Wiring field visualization.
+     * @return Pointer to the manager, or nullptr if not initialized.
+     */
+    SCH_WIRING_GUIDE_MANAGER* GetWiringGuideManager() { return m_wiringGuideManager.get(); }
+
+    /**
+     * Refresh wiring guide states after connectivity changes.
+     * Call this when wires are added/removed or symbols approved.
+     */
+    void RefreshWiringGuides();
+
+    /**
      * Compute the bounding box for tracked items on the current sheet.
      * Used by DIFF_MANAGER for dynamic bbox updates.
      * @return The computed bounding box.
@@ -1017,6 +1063,12 @@ public:
      * Returns colored bounding boxes for each tracked item (green=added, orange=modified).
      */
     std::vector<DIFF_ITEM_HIGHLIGHT> ComputeItemHighlights() const;
+
+    /**
+     * Compute wiring guide preview data for pending (tracked) symbols with Agent_Wiring fields.
+     * Used during diff review to show guide previews before approval.
+     */
+    std::vector<WIRING_GUIDE_PREVIEW_DATA> ComputeWiringGuidesPreviews() const;
 
     void ClearToolbarControl( int aId ) override;
 
@@ -1199,6 +1251,10 @@ private:
     std::unique_ptr<AGENT_CHANGE_TRACKER>  m_agentChangeTracker;  ///< Item-based change tracker
     std::unique_ptr<AGENT_SNAPSHOT_SESSION> m_snapshotSession;    ///< Snapshot-based change session
     bool           m_hasAgentPendingChanges = false;
+
+    // Wiring guide manager for Agent_Wiring field visualization
+    std::unique_ptr<SCH_WIRING_GUIDE_MANAGER> m_wiringGuideManager;
+    SCH_WIRING_GUIDE_OVERLAY*                 m_wiringGuideOverlay = nullptr;
     bool           m_inUndoRedo = false;          ///< True during undo/redo (suppresses OnModify auto-reject)
     SCH_SHEET_PATH m_agentChangedSheetPath;       ///< Sheet path where agent changes were made
 

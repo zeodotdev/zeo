@@ -91,6 +91,10 @@ message CreateSheet
 
   // If true, create the .kicad_sch file on disk
   bool                          create_file = 6;
+
+  // Human-readable path of the parent sheet (e.g., "/" for root, "/Power Supply/").
+  // If empty, uses the current agent target sheet (existing behavior).
+  optional string               parent_sheet_path = 7;
 }
 
 message CreateSheetResponse

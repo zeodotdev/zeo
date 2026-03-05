@@ -13,6 +13,9 @@
 #include "tools/handlers/open_editor_handler.h"
 #include <kiway_mail.h>
 #include <mail_type.h>
+#include <pgm_base.h>
+#include <settings/common_settings.h>
+#include <settings/settings_manager.h>
 #include <wx/log.h>
 #include <kiway.h>
 #include <paths.h>
@@ -32,6 +35,7 @@
 #include <bitmaps.h>
 #include <id.h>
 #include <nlohmann/json.hpp>
+#include <zeo/zeo_constants.h>
 #include <wx/settings.h>
 #include <wx/base64.h>
 #include <wx/clipbrd.h>
@@ -866,24 +870,20 @@ void AGENT_FRAME::StopGeneratingAnimation()
     m_htmlUpdateTimer.Stop();
     m_generatingDots = 0;
     m_generatingToolName.Clear();
+    m_htmlUpdateNeeded = false;
 
-    // Perform one final HTML update if there was a pending update
-    if( m_htmlUpdateNeeded )
-    {
-        m_htmlUpdateNeeded = false;
+    // Always push a final content update so the dots are cleared from the DOM
+    wxString streamingContent = BuildStreamingContent();
+    m_bridge->PushStreamingContent( streamingContent );
 
-        wxString streamingContent = BuildStreamingContent();
-        m_bridge->PushStreamingContent( streamingContent );
-
-        // Update full HTML content for consistency
-        wxString html = m_htmlBeforeAgentResponse;
-        html.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
-        html += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
-        // Preserve queued bubble at the end
-        if( !m_queuedBubbleHtml.IsEmpty() )
-            html += m_queuedBubbleHtml;
-        m_fullHtmlContent = html;
-    }
+    // Update full HTML content for consistency
+    wxString html = m_htmlBeforeAgentResponse;
+    html.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
+    html += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
+    // Preserve queued bubble at the end
+    if( !m_queuedBubbleHtml.IsEmpty() )
+        html += m_queuedBubbleHtml;
+    m_fullHtmlContent = html;
 
     // Note: Don't set button to "Send" here - let the caller decide
     // (tool execution keeps "Stop", only IDLE sets "Send")
@@ -2355,12 +2355,13 @@ void AGENT_FRAME::OnLLMStreamError( wxThreadEvent& aEvent )
     // Get error data
     LLMStreamComplete* complete = aEvent.GetPayload<LLMStreamComplete*>();
     std::string errorMessage = complete ? complete->error_message : "Unknown error";
+    long httpCode = complete ? complete->http_status_code : 0;
 
     // Forward to controller - it will emit EVT_CHAT_ERROR
     // UI updates are handled by OnChatError
     if( m_chatController )
     {
-        m_chatController->HandleLLMError( errorMessage );
+        m_chatController->HandleLLMError( errorMessage, httpCode );
     }
 
     // Clean up payload
@@ -2935,6 +2936,15 @@ void AGENT_FRAME::QueryPendingChanges()
     m_pendingSchSheets.clear();
     m_hasPcbChanges = false;
     m_pcbFilename.Clear();
+
+    // If diff views are disabled, hide the pending changes bar and skip querying
+    COMMON_SETTINGS* settings = Pgm().GetSettingsManager().GetCommonSettings();
+
+    if( settings && !settings->m_Agent.enable_diff_view )
+    {
+        m_bridge->PushPendingChangesShow( false );
+        return;
+    }
 
     // Query schematic editor for pending changes
     KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );
@@ -3822,139 +3832,115 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
 }
 
 
-static wxString HumanizeErrorMessage( const std::string& aRawError )
+static wxString HumanizeErrorMessage( const std::string& aMessage, long aHttpCode,
+                                      const std::string& aErrorType )
 {
-    // Curl / network errors
-    if( aRawError.find( "Curl error:" ) == 0 )
+    // Try to extract a human-readable message from JSON response body
+    auto extractApiMessage = []( const std::string& aBody ) -> std::string
     {
-        std::string lower = aRawError;
-        std::transform( lower.begin(), lower.end(), lower.begin(), ::tolower );
-
-        if( lower.find( "resolve" ) != std::string::npos
-            || lower.find( "connect" ) != std::string::npos )
-        {
-            return "Unable to connect. Please check your internet connection and try again.";
-        }
-        if( lower.find( "timed out" ) != std::string::npos
-            || lower.find( "timeout" ) != std::string::npos )
-        {
-            return "The request timed out. Please try again.";
-        }
-        if( lower.find( "ssl" ) != std::string::npos )
-        {
-            return "A secure connection couldn't be established. Please check your network.";
-        }
-
-        return "A connection error occurred. Please try again.";
-    }
-
-    // HTTP API errors: "LLM API error: HTTP <code>\nResponse: <json>"
-    const std::string httpPrefix = "LLM API error: HTTP ";
-
-    if( aRawError.find( httpPrefix ) == 0 )
-    {
-        int httpCode = 0;
-
         try
         {
-            httpCode = std::stoi( aRawError.substr( httpPrefix.size() ) );
+            auto j = nlohmann::json::parse( aBody );
+
+            if( j.contains( "error" ) )
+            {
+                if( j["error"].is_string() )
+                    return j["error"].get<std::string>();
+                if( j["error"].is_object() && j["error"].contains( "message" ) )
+                    return j["error"]["message"].get<std::string>();
+            }
         }
         catch( ... )
         {
         }
+        return "";
+    };
 
-        // Try to extract the error message from the JSON response body
-        std::string apiMessage;
-        auto responsePos = aRawError.find( "\nResponse: " );
+    // --- HTTP errors (from non-200 API responses) ---
+    if( aHttpCode > 0 )
+    {
+        std::string apiMessage = extractApiMessage( aMessage );
 
-        if( responsePos != std::string::npos )
-        {
-            std::string body = aRawError.substr( responsePos + 11 ); // skip "\nResponse: "
-
-            try
-            {
-                auto j = nlohmann::json::parse( body );
-
-                if( j.contains( "error" ) )
-                {
-                    if( j["error"].is_string() )
-                        apiMessage = j["error"].get<std::string>();
-                    else if( j["error"].is_object() && j["error"].contains( "message" ) )
-                        apiMessage = j["error"]["message"].get<std::string>();
-                }
-            }
-            catch( ... )
-            {
-            }
-        }
-
-        switch( httpCode )
+        switch( aHttpCode )
         {
         case 401:
-            return "Your session has expired. Please sign in again.";
+            return wxString::Format( "Your session has expired. Please sign in again. (%ld)",
+                                     aHttpCode );
 
         case 429:
-            // Use the proxy's message if available (e.g. "Monthly spending limit reached...")
-            if( !apiMessage.empty() )
-                return wxString::FromUTF8( apiMessage );
-            return "You've reached your usage limit. Please try again later.";
+        {
+            wxString msg = !apiMessage.empty()
+                    ? wxString::FromUTF8( apiMessage )
+                    : wxString( "You've reached your usage limit." );
+            return wxString::Format(
+                    "<a href=\"%s/dashboard/billing\">%s</a> (%ld)",
+                    ZEO_BASE_URL, msg, aHttpCode );
+        }
 
         case 400:
             if( !apiMessage.empty() )
-                return wxString::FromUTF8( apiMessage );
-            return "The request was invalid. Please try again.";
+                return wxString::Format( "%s (%ld)", apiMessage, aHttpCode );
+            return wxString::Format( "The request was invalid. (%ld)", aHttpCode );
 
         case 500:
+            return wxString::Format( "The server is temporarily unavailable. (%ld)", aHttpCode );
+
         case 502:
         case 503:
         case 529:
-            return "The server is temporarily unavailable. Please try again in a moment.";
+            return wxString::Format( "Anthropic's API is temporarily unavailable. (%ld)",
+                                     aHttpCode );
 
         default:
             if( !apiMessage.empty() )
-                return wxString::FromUTF8( apiMessage );
-            return wxString::Format( "An unexpected error occurred (HTTP %d). Please try again.",
-                                     httpCode );
+                return wxString::Format( "%s (%ld)", apiMessage, aHttpCode );
+            return wxString::Format( "An unexpected error occurred. (%ld)", aHttpCode );
         }
     }
 
-    // Anthropic SSE streaming errors: "api_error_type:<type>\n<message>"
-    const std::string apiTypePrefix = "api_error_type:";
-
-    if( aRawError.find( apiTypePrefix ) == 0 )
+    // --- SSE streaming errors (error type from Anthropic's event stream) ---
+    if( !aErrorType.empty() )
     {
-        auto nlPos = aRawError.find( '\n' );
-        std::string errorType = aRawError.substr( apiTypePrefix.size(),
-                                                   nlPos - apiTypePrefix.size() );
-        std::string message = ( nlPos != std::string::npos )
-                              ? aRawError.substr( nlPos + 1 )
-                              : "";
-
-        if( errorType == "overloaded_error" )
-            return "The server is currently overloaded. Please try again in a moment.";
-        if( errorType == "api_error" )
-            return "An internal server error occurred. Please try again.";
-        if( errorType == "rate_limit_error" )
-            return "Too many requests. Please wait a moment and try again.";
-        if( errorType == "authentication_error" )
-            return "Your session has expired. Please sign in again.";
-        if( errorType == "invalid_request_error" )
+        if( aErrorType == "overloaded_error" )
+            return wxString::Format( "Anthropic's API is currently overloaded. (%s)", aErrorType );
+        if( aErrorType == "api_error" )
+            return wxString::Format( "Anthropic's API returned an internal error. (%s)", aErrorType );
+        if( aErrorType == "rate_limit_error" )
+            return wxString::Format( "Anthropic's API rate limit reached. (%s)", aErrorType );
+        if( aErrorType == "authentication_error" )
+            return wxString::Format( "Your session has expired. Please sign in again. (%s)",
+                                     aErrorType );
+        if( aErrorType == "invalid_request_error" )
         {
-            // These can have useful detail — pass the message through if available
-            if( !message.empty() )
-                return wxString::FromUTF8( message );
-            return "The request was invalid. Please try again.";
+            if( !aMessage.empty() )
+                return wxString::Format( "%s (%s)", aMessage, aErrorType );
+            return wxString::Format( "The request was invalid. (%s)", aErrorType );
         }
 
-        // Unknown type — show the message if we have one
-        if( !message.empty() )
-            return wxString::FromUTF8( message );
-
-        return "An unexpected error occurred. Please try again.";
+        if( !aMessage.empty() )
+            return wxString::Format( "%s (%s)", aMessage, aErrorType );
+        return wxString::Format( "An unexpected error occurred. (%s)", aErrorType );
     }
 
-    // Already-friendly messages — pass through
-    return wxString::FromUTF8( aRawError );
+    // --- Curl / network errors (message starts with "Curl error:") ---
+    if( aMessage.find( "Curl error:" ) == 0 )
+    {
+        std::string lower = aMessage;
+        std::transform( lower.begin(), lower.end(), lower.begin(), ::tolower );
+
+        if( lower.find( "resolve" ) != std::string::npos
+            || lower.find( "connect" ) != std::string::npos )
+            return "Unable to connect — check your internet connection.";
+        if( lower.find( "timed out" ) != std::string::npos
+            || lower.find( "timeout" ) != std::string::npos )
+            return "The request timed out.";
+        if( lower.find( "ssl" ) != std::string::npos )
+            return "A secure connection couldn't be established.";
+        return "A connection error occurred.";
+    }
+
+    // --- Plain messages (controller errors, etc.) — pass through ---
+    return wxString::FromUTF8( aMessage );
 }
 
 
@@ -3965,18 +3951,28 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     if( !data )
         return;
 
+    // Stop all animations before showing the error so the "..." dots are cleared
+    StopGeneratingAnimation();
+    m_isCompacting = false;
+
+    // Finalize the streaming div so the next response gets a fresh one
+    m_bridge->PushFinalizeStreaming();
+    m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
+
+    // Clear streaming state
+    m_thinkingContent.Clear();
+    m_thinkingHtml.Clear();
+    m_toolCallHtml.Clear();
+    m_currentThinkingIndex = -1;
+
     // Display human-readable error message (raw error is already in the log from HandleLLMError)
-    wxString friendly = HumanizeErrorMessage( data->message );
+    wxString friendly = HumanizeErrorMessage( data->message, data->httpCode, data->errorType );
     wxString errorHtml = wxString::Format(
         "<div class=\"bg-bg-secondary rounded-md p-3 my-2\">"
         "<p class=\"text-accent-red text-[13px] m-0\"><b>Error:</b> %s</p>"
         "</div>",
         friendly );
     AppendHtml( errorHtml );
-
-    // Stop all animations and reset button
-    StopGeneratingAnimation();
-    m_isCompacting = false;
 
     // Re-insert all queued messages into input on error (don't lose the user's text)
     if( HasQueuedMessage() )

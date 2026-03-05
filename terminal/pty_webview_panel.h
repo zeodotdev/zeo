@@ -66,6 +66,7 @@ protected:
     void OnPtyExit( wxThreadEvent& aEvent );
     void OnMessage( const wxString& aMsg );
     void OnAgentTimeout( wxTimerEvent& aEvent );
+    void OnSize( wxSizeEvent& aEvent );
 
     // Helpers
     void SendDataToTerminal( const std::string& aData );

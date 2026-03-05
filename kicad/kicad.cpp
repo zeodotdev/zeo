@@ -273,6 +273,12 @@ bool PGM_KICAD::OnPgmInit()
     m_api_server = std::make_unique<KICAD_API_SERVER>();
     m_api_common_handler = std::make_unique<API_HANDLER_COMMON>();
     m_api_server->RegisterHandler( m_api_common_handler.get() );
+
+    if( managerFrame )
+    {
+        m_api_project_handler = std::make_unique<API_HANDLER_PROJECT>( managerFrame );
+        m_api_server->RegisterHandler( m_api_project_handler.get() );
+    }
 #endif
 
     wxString projToLoad;

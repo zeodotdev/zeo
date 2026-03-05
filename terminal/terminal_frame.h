@@ -30,6 +30,7 @@ public:
     void OnTabClosed( wxAuiNotebookEvent& event );
     void OnTabClosedDone( wxAuiNotebookEvent& event );
     void OnTerminalTitleChanged( wxCommandEvent& event );
+    void OnSize( wxSizeEvent& event );
 
     // Tab Management
     void            AddTerminal( TERMINAL_PANEL::TERMINAL_MODE aMode = TERMINAL_PANEL::MODE_SYSTEM );

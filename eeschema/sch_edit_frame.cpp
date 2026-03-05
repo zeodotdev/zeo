@@ -27,6 +27,8 @@
 #include <api/api_server.h>
 #include <agent_change_tracker.h>
 #include <agent_snapshot_session.h>
+#include "sch_wiring_guide_manager.h"
+#include "sch_wiring_guide_overlay.h"
 #include <nlohmann/json.hpp>
 #include <base_units.h>
 #include <bitmaps.h>
@@ -45,6 +47,11 @@
 #include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/menu.h>
+#include <wx/dialog.h>
+#include <wx/button.h>
+#include <wx/stattext.h>
+#include <wx/statbmp.h>
+#include <wx/artprov.h>
 #include <local_history.h>
 #include <eeschema_id.h>
 #include <executable_names.h>
@@ -72,6 +79,9 @@
 #include <sch_sheet_pin.h>
 #include <sch_commit.h>
 #include <sch_rule_area.h>
+#include <sch_line.h>
+#include <sch_junction.h>
+#include <sch_label.h>
 #include <settings/settings_manager.h>
 #include <advanced_config.h>
 #include <sim/simulator_frame.h>
@@ -1282,6 +1292,39 @@ void SCH_EDIT_FRAME::SetCurrentSheet( const SCH_SHEET_PATH& aSheet )
                     Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
                 };
                 callbacks.onReject = [this, capturedSheetPath]() {
+                    // Check if user has made modifications connected to agent items
+                    if( HasUserModificationsConnectedToAgent( capturedSheetPath ) )
+                    {
+                        REJECT_ACTION action = ShowRejectWarningDialog();
+                        if( action == REJECT_ACTION::CANCEL )
+                            return;
+
+                        if( action == REJECT_ACTION::REJECT_AND_REMOVE_USER_CHANGES )
+                        {
+                            // Remove user items first, then reject agent items
+                            std::vector<KIID> userItems = GetUserItemsConnectedToAgent( capturedSheetPath );
+                            if( !userItems.empty() )
+                            {
+                                SCH_COMMIT commit( this );
+                                SCH_SCREEN* screen = GetCurrentSheet().LastScreen();
+                                for( const KIID& kiid : userItems )
+                                {
+                                    for( SCH_ITEM* item : screen->Items() )
+                                    {
+                                        if( item->m_Uuid == kiid )
+                                        {
+                                            commit.Remove( item, screen );
+                                            break;
+                                        }
+                                    }
+                                }
+                                if( !userItems.empty() )
+                                    commit.Push( _( "Remove User Items Connected to Agent" ) );
+                            }
+                        }
+                        // For REJECT_AND_KEEP_USER_CHANGES, we just proceed with normal rejection
+                    }
+
                     RejectAgentChangesOnSheet( capturedSheetPath );
                     nlohmann::json j;
                     j["editor"] = "sch";
@@ -1313,13 +1356,18 @@ void SCH_EDIT_FRAME::SetCurrentSheet( const SCH_SHEET_PATH& aSheet )
                     return ComputeItemHighlights();
                 };
 
+                WIRING_GUIDES_CALLBACK wiringGuidesCallback = [this]() -> std::vector<WIRING_GUIDE_PREVIEW_DATA> {
+                    return ComputeWiringGuidesPreviews();
+                };
+
                 DIFF_MANAGER::GetInstance().RegisterOverlay(
                     GetCanvas()->GetView(),
                     m_agentChangeTracker.get(),
                     currentSheetPath,
                     callbacks,
                     bboxCallback,
-                    highlightsCallback );
+                    highlightsCallback,
+                    wiringGuidesCallback );
 
                 // Force a canvas refresh to ensure the overlay is rendered
                 // This is needed because DisplaySheet() cleared the view before we added the overlay
@@ -1560,6 +1608,13 @@ void SCH_EDIT_FRAME::OnModify()
 
     if( GetScreen() && !GetTitle().StartsWith( wxS( "*" ) ) )
         updateTitle();
+
+    // Update wiring guides when schematic changes (symbol moved, deleted, wire added, etc.)
+    if( m_wiringGuideManager )
+    {
+        wxLogMessage( "WIRING_GUIDE: OnModify triggering OnSchematicChanged" );
+        m_wiringGuideManager->OnSchematicChanged();
+    }
 
     // Check if agent-tracked items were deleted by the user
     // Skip when showing "before" state — items are intentionally absent from screen
@@ -2214,6 +2269,19 @@ void SCH_EDIT_FRAME::RecalculateConnections( SCH_COMMIT* aCommit, SCH_CLEANUP_FL
         RefreshNetNavigator();
         m_highlightedConnChanged = false;
     }
+
+    // Update wiring guide completion states now that connectivity is recalculated
+    if( m_wiringGuideManager && m_wiringGuideManager->HasGuides() )
+    {
+        m_wiringGuideManager->RefreshGuideStates();
+
+        // Refresh the overlay to reflect any newly completed guides
+        if( m_wiringGuideOverlay )
+        {
+            GetCanvas()->GetView()->Update( m_wiringGuideOverlay );
+            GetCanvas()->Refresh();
+        }
+    }
 }
 
 
@@ -2673,6 +2741,39 @@ void SCH_EDIT_FRAME::DisplayCurrentSheet()
                 Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
             };
             callbacks.onReject = [this, capturedSheetPath]() {
+                // Check if user has made modifications connected to agent items
+                if( HasUserModificationsConnectedToAgent( capturedSheetPath ) )
+                {
+                    REJECT_ACTION action = ShowRejectWarningDialog();
+                    if( action == REJECT_ACTION::CANCEL )
+                        return;
+
+                    if( action == REJECT_ACTION::REJECT_AND_REMOVE_USER_CHANGES )
+                    {
+                        // Remove user items first, then reject agent items
+                        std::vector<KIID> userItems = GetUserItemsConnectedToAgent( capturedSheetPath );
+                        if( !userItems.empty() )
+                        {
+                            SCH_COMMIT commit( this );
+                            SCH_SCREEN* screen = GetCurrentSheet().LastScreen();
+                            for( const KIID& kiid : userItems )
+                            {
+                                for( SCH_ITEM* item : screen->Items() )
+                                {
+                                    if( item->m_Uuid == kiid )
+                                    {
+                                        commit.Remove( item, screen );
+                                        break;
+                                    }
+                                }
+                            }
+                            if( !userItems.empty() )
+                                commit.Push( _( "Remove User Items Connected to Agent" ) );
+                        }
+                    }
+                    // For REJECT_AND_KEEP_USER_CHANGES, we just proceed with normal rejection
+                }
+
                 RejectAgentChangesOnSheet( capturedSheetPath );
                 nlohmann::json j;
                 j["editor"] = "sch";
@@ -2704,13 +2805,18 @@ void SCH_EDIT_FRAME::DisplayCurrentSheet()
                 return ComputeItemHighlights();
             };
 
+            WIRING_GUIDES_CALLBACK wiringGuidesCallback = [this]() -> std::vector<WIRING_GUIDE_PREVIEW_DATA> {
+                return ComputeWiringGuidesPreviews();
+            };
+
             DIFF_MANAGER::GetInstance().RegisterOverlay(
                 GetCanvas()->GetView(),
                 m_agentChangeTracker.get(),
                 currentSheetPath,
                 callbacks,
                 bboxCallback,
-                highlightsCallback );
+                highlightsCallback,
+                wiringGuidesCallback );
 
             // Force refresh to ensure the overlay is visible immediately
             GetCanvas()->ForceRefresh();
@@ -2721,6 +2827,9 @@ void SCH_EDIT_FRAME::DisplayCurrentSheet()
             DIFF_MANAGER::GetInstance().ClearDiff( GetCanvas()->GetView() );
         }
     }
+
+    // Refresh wiring guides for any symbols with Agent_Wiring fields on this sheet
+    RefreshWiringGuides();
 }
 
 
@@ -3617,6 +3726,39 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
             Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_DIFF_CLEARED, payload );
         };
         callbacks.onReject = [this, capturedSheetPath]() {
+            // Check if user has made modifications connected to agent items
+            if( HasUserModificationsConnectedToAgent( capturedSheetPath ) )
+            {
+                REJECT_ACTION action = ShowRejectWarningDialog();
+                if( action == REJECT_ACTION::CANCEL )
+                    return;
+
+                if( action == REJECT_ACTION::REJECT_AND_REMOVE_USER_CHANGES )
+                {
+                    // Remove user items first, then reject agent items
+                    std::vector<KIID> userItems = GetUserItemsConnectedToAgent( capturedSheetPath );
+                    if( !userItems.empty() )
+                    {
+                        SCH_COMMIT commit( this );
+                        SCH_SCREEN* screen = GetCurrentSheet().LastScreen();
+                        for( const KIID& kiid : userItems )
+                        {
+                            for( SCH_ITEM* item : screen->Items() )
+                            {
+                                if( item->m_Uuid == kiid )
+                                {
+                                    commit.Remove( item, screen );
+                                    break;
+                                }
+                            }
+                        }
+                        if( !userItems.empty() )
+                            commit.Push( _( "Remove User Items Connected to Agent" ) );
+                    }
+                }
+                // For REJECT_AND_KEEP_USER_CHANGES, we just proceed with normal rejection
+            }
+
             RejectAgentChangesOnSheet( capturedSheetPath );
             nlohmann::json j;
             j["editor"] = "sch";
@@ -3647,13 +3789,18 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
             return ComputeItemHighlights();
         };
 
+        WIRING_GUIDES_CALLBACK wiringGuidesCallback = [this]() -> std::vector<WIRING_GUIDE_PREVIEW_DATA> {
+            return ComputeWiringGuidesPreviews();
+        };
+
         DIFF_MANAGER::GetInstance().RegisterOverlay(
             GetCanvas()->GetView(),
             m_agentChangeTracker.get(),
             GetCurrentSheet().PathHumanReadable( false ),
             callbacks,
             bboxCallback,
-            highlightsCallback );
+            highlightsCallback,
+            wiringGuidesCallback );
 
         GetCanvas()->ForceRefresh();
     }
@@ -3685,6 +3832,9 @@ void SCH_EDIT_FRAME::ClearAgentPendingChanges()
     DIFF_MANAGER::GetInstance().ClearDiff();
 
     wxLogInfo( "SCH: ClearAgentPendingChanges: accepted, snapshot discarded" );
+
+    // Refresh wiring guides - approved symbols may have Agent_Wiring fields
+    RefreshWiringGuides();
 }
 
 
@@ -3713,6 +3863,9 @@ void SCH_EDIT_FRAME::ApproveAgentChangesOnSheet( const wxString& aSheetPath )
         if( m_snapshotSession )
             m_snapshotSession->EndSession();
     }
+
+    // Refresh wiring guides - approved symbols may have Agent_Wiring fields
+    RefreshWiringGuides();
 }
 
 
@@ -3743,6 +3896,9 @@ void SCH_EDIT_FRAME::ApproveAgentItems( const std::vector<KIID>& aItemIds )
         DIFF_MANAGER::GetInstance().RefreshOverlay( GetCanvas()->GetView() );
         GetCanvas()->ForceRefresh();
     }
+
+    // Refresh wiring guides - approved items may have Agent_Wiring fields
+    RefreshWiringGuides();
 }
 
 
@@ -3883,6 +4039,30 @@ void SCH_EDIT_FRAME::RejectAgentChangesOnSheet( const wxString& aSheetPath )
         return;
 
     wxLogInfo( "SCH: Rejecting agent changes on sheet '%s'", aSheetPath );
+
+    // Check if user has made modifications connected to agent items
+    bool removeUserChanges = false;
+    if( HasUserModificationsConnectedToAgent( aSheetPath ) )
+    {
+        REJECT_ACTION action = ShowRejectWarningDialog();
+
+        switch( action )
+        {
+        case REJECT_ACTION::CANCEL:
+            wxLogInfo( "SCH: RejectOnSheet: user cancelled" );
+            return;
+
+        case REJECT_ACTION::REJECT_AND_REMOVE_USER_CHANGES:
+            removeUserChanges = true;
+            wxLogInfo( "SCH: RejectOnSheet: will remove user changes too" );
+            break;
+
+        case REJECT_ACTION::REJECT_AND_KEEP_USER_CHANGES:
+            removeUserChanges = false;
+            wxLogInfo( "SCH: RejectOnSheet: will keep user changes (may be orphaned)" );
+            break;
+        }
+    }
 
     // Find the screen for this sheet path
     SCH_SHEET_LIST sheets = Schematic().Hierarchy();
@@ -4037,6 +4217,23 @@ void SCH_EDIT_FRAME::RejectAgentChangesOnSheet( const wxString& aSheetPath )
             }
         }
 
+        // If user chose to remove their changes too, remove connected wires/labels
+        if( removeUserChanges )
+        {
+            std::vector<KIID> userItems = GetUserItemsConnectedToAgent( aSheetPath );
+            for( const KIID& userKiid : userItems )
+            {
+                auto it = currentItems.find( userKiid );
+                if( it != currentItems.end() )
+                {
+                    commit.Remove( it->second, targetScreen );
+                    rejectedCount++;
+                    wxLogInfo( "SCH: RejectOnSheet: removing user-connected item %s",
+                               userKiid.AsStdString() );
+                }
+            }
+        }
+
         if( rejectedCount > 0 )
             commit.Push( _( "Reject Agent Changes" ) );
 
@@ -4071,6 +4268,304 @@ void SCH_EDIT_FRAME::RejectAgentChangesOnSheet( const wxString& aSheetPath )
 }
 
 
+SCH_EDIT_FRAME::REJECT_ACTION SCH_EDIT_FRAME::ShowRejectWarningDialog()
+{
+    wxDialog dlg( this, wxID_ANY, _( "Reject Agent Changes" ),
+                  wxDefaultPosition, wxSize( 500, 320 ) );
+
+    wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
+
+    // Warning icon and message
+    wxBoxSizer* headerSizer = new wxBoxSizer( wxHORIZONTAL );
+    wxStaticBitmap* icon = new wxStaticBitmap( &dlg, wxID_ANY,
+        wxArtProvider::GetBitmap( wxART_WARNING, wxART_MESSAGE_BOX ) );
+    headerSizer->Add( icon, 0, wxALL | wxALIGN_CENTER_VERTICAL, 10 );
+
+    wxStaticText* message = new wxStaticText( &dlg, wxID_ANY,
+        _( "You've made changes while reviewing the agent's work.\n\n"
+           "How would you like to handle your changes?" ) );
+    headerSizer->Add( message, 1, wxALL | wxALIGN_CENTER_VERTICAL, 10 );
+    mainSizer->Add( headerSizer, 0, wxEXPAND | wxALL, 5 );
+
+    mainSizer->AddSpacer( 10 );
+
+    // Option 1: Reject & Remove My Changes
+    wxButton* btnRemove = new wxButton( &dlg, wxID_ANY,
+        _( "Reject && Remove My Changes" ) );
+    btnRemove->SetToolTip( _( "Remove agent symbols AND your connected wires/labels" ) );
+    mainSizer->Add( btnRemove, 0, wxEXPAND | wxLEFT | wxRIGHT, 20 );
+
+    wxStaticText* descRemove = new wxStaticText( &dlg, wxID_ANY,
+        _( "Remove agent symbols AND your connected wires/labels" ) );
+    descRemove->SetForegroundColour( wxSystemSettings::GetColour( wxSYS_COLOUR_GRAYTEXT ) );
+    mainSizer->Add( descRemove, 0, wxLEFT | wxRIGHT | wxBOTTOM, 25 );
+
+    // Option 2: Reject & Keep My Changes
+    wxButton* btnKeep = new wxButton( &dlg, wxID_ANY,
+        _( "Reject && Keep My Changes" ) );
+    btnKeep->SetToolTip( _( "Remove agent symbols, keep your wires (may be orphaned)" ) );
+    mainSizer->Add( btnKeep, 0, wxEXPAND | wxLEFT | wxRIGHT, 20 );
+
+    wxStaticText* descKeep = new wxStaticText( &dlg, wxID_ANY,
+        _( "Remove agent symbols, keep your wires (may be orphaned)" ) );
+    descKeep->SetForegroundColour( wxSystemSettings::GetColour( wxSYS_COLOUR_GRAYTEXT ) );
+    mainSizer->Add( descKeep, 0, wxLEFT | wxRIGHT | wxBOTTOM, 25 );
+
+    // Cancel button
+    wxButton* btnCancel = new wxButton( &dlg, wxID_CANCEL, _( "Cancel" ) );
+    mainSizer->Add( btnCancel, 0, wxALIGN_CENTER | wxALL, 15 );
+
+    dlg.SetSizer( mainSizer );
+    dlg.Layout();
+
+    REJECT_ACTION result = REJECT_ACTION::CANCEL;
+
+    btnRemove->Bind( wxEVT_BUTTON, [&]( wxCommandEvent& ) {
+        result = REJECT_ACTION::REJECT_AND_REMOVE_USER_CHANGES;
+        dlg.EndModal( wxID_OK );
+    });
+
+    btnKeep->Bind( wxEVT_BUTTON, [&]( wxCommandEvent& ) {
+        result = REJECT_ACTION::REJECT_AND_KEEP_USER_CHANGES;
+        dlg.EndModal( wxID_OK );
+    });
+
+    dlg.ShowModal();
+    return result;
+}
+
+
+bool SCH_EDIT_FRAME::HasUserModificationsConnectedToAgent( const wxString& aSheetPath ) const
+{
+    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
+        return false;
+
+    // Get the tracked items (agent-added items)
+    std::set<KIID> trackedItems = m_agentChangeTracker->GetTrackedItemsOnSheet( aSheetPath );
+    if( trackedItems.empty() )
+        return false;
+
+    // Find the screen for this sheet path
+    SCH_SHEET_LIST sheets = Schematic().Hierarchy();
+    SCH_SCREEN* targetScreen = nullptr;
+
+    for( const SCH_SHEET_PATH& path : sheets )
+    {
+        if( path.PathHumanReadable( false ) == aSheetPath )
+        {
+            targetScreen = path.LastScreen();
+            break;
+        }
+    }
+
+    if( !targetScreen )
+        return false;
+
+    // Collect positions of tracked item pins (agent-placed symbols)
+    std::set<VECTOR2I> agentPinPositions;
+    for( SCH_ITEM* item : targetScreen->Items() )
+    {
+        if( trackedItems.count( item->m_Uuid ) == 0 )
+            continue;
+
+        if( item->Type() == SCH_SYMBOL_T )
+        {
+            SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+            for( SCH_PIN* pin : symbol->GetPins() )
+            {
+                agentPinPositions.insert( pin->GetPosition() );
+            }
+        }
+    }
+
+    // Check if any untracked wires/labels connect to these positions
+    for( SCH_ITEM* item : targetScreen->Items() )
+    {
+        // Skip tracked items (agent items)
+        if( trackedItems.count( item->m_Uuid ) > 0 )
+            continue;
+
+        // Check wires
+        if( item->Type() == SCH_LINE_T )
+        {
+            SCH_LINE* line = static_cast<SCH_LINE*>( item );
+            if( line->GetLayer() == LAYER_WIRE )
+            {
+                if( agentPinPositions.count( line->GetStartPoint() ) > 0 ||
+                    agentPinPositions.count( line->GetEndPoint() ) > 0 )
+                {
+                    return true;
+                }
+            }
+        }
+        // Check labels at pin positions
+        else if( item->Type() == SCH_LABEL_T || item->Type() == SCH_GLOBAL_LABEL_T )
+        {
+            SCH_LABEL_BASE* label = static_cast<SCH_LABEL_BASE*>( item );
+            if( agentPinPositions.count( label->GetPosition() ) > 0 )
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+
+std::vector<KIID> SCH_EDIT_FRAME::GetUserItemsConnectedToAgent( const wxString& aSheetPath ) const
+{
+    std::vector<KIID> userItems;
+
+    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
+        return userItems;
+
+    std::set<KIID> trackedItems = m_agentChangeTracker->GetTrackedItemsOnSheet( aSheetPath );
+    if( trackedItems.empty() )
+        return userItems;
+
+    // Find the screen for this sheet path
+    SCH_SHEET_LIST sheets = Schematic().Hierarchy();
+    SCH_SCREEN* targetScreen = nullptr;
+
+    for( const SCH_SHEET_PATH& path : sheets )
+    {
+        if( path.PathHumanReadable( false ) == aSheetPath )
+        {
+            targetScreen = path.LastScreen();
+            break;
+        }
+    }
+
+    if( !targetScreen )
+        return userItems;
+
+    // Collect positions of tracked item pins (agent-placed symbols)
+    std::set<VECTOR2I> agentPinPositions;
+    for( SCH_ITEM* item : targetScreen->Items() )
+    {
+        if( trackedItems.count( item->m_Uuid ) == 0 )
+            continue;
+
+        if( item->Type() == SCH_SYMBOL_T )
+        {
+            SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+            for( SCH_PIN* pin : symbol->GetPins() )
+            {
+                agentPinPositions.insert( pin->GetPosition() );
+            }
+        }
+    }
+
+    // Find all untracked wires/labels that connect to these positions
+    // Use a set to track visited items and explore connected wires
+    std::set<KIID> visited;
+    std::vector<SCH_ITEM*> toVisit;
+
+    // First, find directly connected items
+    for( SCH_ITEM* item : targetScreen->Items() )
+    {
+        if( trackedItems.count( item->m_Uuid ) > 0 )
+            continue;
+
+        if( item->Type() == SCH_LINE_T )
+        {
+            SCH_LINE* line = static_cast<SCH_LINE*>( item );
+            if( line->GetLayer() == LAYER_WIRE )
+            {
+                if( agentPinPositions.count( line->GetStartPoint() ) > 0 ||
+                    agentPinPositions.count( line->GetEndPoint() ) > 0 )
+                {
+                    toVisit.push_back( item );
+                }
+            }
+        }
+        else if( item->Type() == SCH_LABEL_T || item->Type() == SCH_GLOBAL_LABEL_T )
+        {
+            SCH_LABEL_BASE* label = static_cast<SCH_LABEL_BASE*>( item );
+            if( agentPinPositions.count( label->GetPosition() ) > 0 )
+            {
+                if( visited.insert( item->m_Uuid ).second )
+                    userItems.push_back( item->m_Uuid );
+            }
+        }
+        else if( item->Type() == SCH_JUNCTION_T )
+        {
+            SCH_JUNCTION* junction = static_cast<SCH_JUNCTION*>( item );
+            if( agentPinPositions.count( junction->GetPosition() ) > 0 )
+            {
+                if( visited.insert( item->m_Uuid ).second )
+                    userItems.push_back( item->m_Uuid );
+            }
+        }
+    }
+
+    // BFS to find all connected wire segments
+    while( !toVisit.empty() )
+    {
+        SCH_ITEM* current = toVisit.back();
+        toVisit.pop_back();
+
+        if( !visited.insert( current->m_Uuid ).second )
+            continue;
+
+        userItems.push_back( current->m_Uuid );
+
+        if( current->Type() == SCH_LINE_T )
+        {
+            SCH_LINE* line = static_cast<SCH_LINE*>( current );
+            if( line->GetLayer() != LAYER_WIRE )
+                continue;
+
+            VECTOR2I start = line->GetStartPoint();
+            VECTOR2I end = line->GetEndPoint();
+
+            // Find other wires/junctions connected to this wire's endpoints
+            for( SCH_ITEM* item : targetScreen->Items() )
+            {
+                if( visited.count( item->m_Uuid ) > 0 )
+                    continue;
+                if( trackedItems.count( item->m_Uuid ) > 0 )
+                    continue;
+
+                if( item->Type() == SCH_LINE_T )
+                {
+                    SCH_LINE* other = static_cast<SCH_LINE*>( item );
+                    if( other->GetLayer() == LAYER_WIRE )
+                    {
+                        if( other->GetStartPoint() == start || other->GetEndPoint() == start ||
+                            other->GetStartPoint() == end || other->GetEndPoint() == end )
+                        {
+                            toVisit.push_back( item );
+                        }
+                    }
+                }
+                else if( item->Type() == SCH_JUNCTION_T )
+                {
+                    SCH_JUNCTION* junction = static_cast<SCH_JUNCTION*>( item );
+                    if( junction->GetPosition() == start || junction->GetPosition() == end )
+                    {
+                        if( visited.insert( item->m_Uuid ).second )
+                            userItems.push_back( item->m_Uuid );
+                    }
+                }
+                else if( item->Type() == SCH_LABEL_T || item->Type() == SCH_GLOBAL_LABEL_T )
+                {
+                    SCH_LABEL_BASE* label = static_cast<SCH_LABEL_BASE*>( item );
+                    if( label->GetPosition() == start || label->GetPosition() == end )
+                    {
+                        if( visited.insert( item->m_Uuid ).second )
+                            userItems.push_back( item->m_Uuid );
+                    }
+                }
+            }
+        }
+    }
+
+    return userItems;
+}
+
+
 void SCH_EDIT_FRAME::RevertAgentChanges()
 {
     wxLogInfo( "SCH: RevertAgentChanges called (hasAgentPendingChanges=%d)", m_hasAgentPendingChanges );
@@ -4096,9 +4591,38 @@ void SCH_EDIT_FRAME::RevertAgentChanges()
         return;
     }
 
+    // Check if any affected sheet has user modifications connected to agent items
+    bool removeUserChanges = false;
+    std::set<wxString> affectedSheets = m_agentChangeTracker->GetAffectedSheets();
+
+    for( const wxString& sheetPath : affectedSheets )
+    {
+        if( HasUserModificationsConnectedToAgent( sheetPath ) )
+        {
+            REJECT_ACTION action = ShowRejectWarningDialog();
+
+            switch( action )
+            {
+            case REJECT_ACTION::CANCEL:
+                wxLogInfo( "SCH: RevertAgentChanges: user cancelled" );
+                return;
+
+            case REJECT_ACTION::REJECT_AND_REMOVE_USER_CHANGES:
+                removeUserChanges = true;
+                wxLogInfo( "SCH: RevertAgentChanges: will remove user changes too" );
+                break;
+
+            case REJECT_ACTION::REJECT_AND_KEEP_USER_CHANGES:
+                removeUserChanges = false;
+                wxLogInfo( "SCH: RevertAgentChanges: will keep user changes (may be orphaned)" );
+                break;
+            }
+            break; // Only show dialog once
+        }
+    }
+
     // Group tracked items by sheet path → screen
     SCH_SHEET_LIST sheetList = Schematic().Hierarchy();
-    std::set<wxString> affectedSheets = m_agentChangeTracker->GetAffectedSheets();
 
     SCH_COMMIT commit( this );
     int totalReverted = 0;
@@ -4213,6 +4737,23 @@ void SCH_EDIT_FRAME::RevertAgentChanges()
                     }
                     break;
                 }
+                }
+            }
+
+            // If user chose to remove their changes too, remove connected wires/labels
+            if( removeUserChanges )
+            {
+                std::vector<KIID> userItems = GetUserItemsConnectedToAgent( sheetPath );
+                for( const KIID& userKiid : userItems )
+                {
+                    auto it = currentItems.find( userKiid );
+                    if( it != currentItems.end() )
+                    {
+                        commit.Remove( it->second, targetScreen );
+                        totalReverted++;
+                        wxLogInfo( "SCH: RevertAgentChanges: removing user-connected item %s",
+                                   userKiid.AsStdString() );
+                    }
                 }
             }
         }
@@ -4378,3 +4919,188 @@ std::vector<DIFF_ITEM_HIGHLIGHT> SCH_EDIT_FRAME::ComputeItemHighlights() const
 }
 
 
+std::vector<WIRING_GUIDE_PREVIEW_DATA> SCH_EDIT_FRAME::ComputeWiringGuidesPreviews() const
+{
+    std::vector<WIRING_GUIDE_PREVIEW_DATA> guides;
+
+    if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
+        return guides;
+
+    SCH_SCREEN* screen = GetCurrentSheet().LastScreen();
+    if( !screen )
+        return guides;
+
+    wxString currentSheetPath = GetCurrentSheet().PathHumanReadable( false );
+    std::set<KIID> trackedItems = m_agentChangeTracker->GetTrackedItemsOnSheet( currentSheetPath );
+
+    // Build mapping from reference to symbol for target resolution
+    std::map<wxString, SCH_SYMBOL*> refToSymbol;
+    for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
+    {
+        SCH_SYMBOL* sym = static_cast<SCH_SYMBOL*>( item );
+        wxString ref = sym->GetRef( &GetCurrentSheet() );
+        refToSymbol[ref] = sym;
+    }
+
+    // For each tracked symbol, parse Agent_Wiring and compute guides
+    for( const KIID& kiid : trackedItems )
+    {
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
+        {
+            if( item->m_Uuid != kiid )
+                continue;
+
+            SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+            const SCH_FIELD* field = symbol->GetField( wxT( "Agent_Wiring" ) );
+            if( !field )
+                continue;
+
+            wxString fieldValue = field->GetText();
+            if( fieldValue.IsEmpty() )
+                continue;
+
+            wxString symbolRef = symbol->GetRef( &GetCurrentSheet() );
+            std::vector<SCH_PIN*> pins = symbol->GetPins( &GetCurrentSheet() );
+
+            // Parse wiring entries
+            wxStringTokenizer tokenizer( fieldValue, wxT( ";" ) );
+            while( tokenizer.HasMoreTokens() )
+            {
+                wxString entry = tokenizer.GetNextToken().Trim().Trim( false );
+                if( entry.IsEmpty() )
+                    continue;
+
+                // Find the arrow (→ or ->)
+                int arrowPos = entry.Find( wxT( "→" ) );
+                wxString pinName, target;
+                if( arrowPos != wxNOT_FOUND )
+                {
+                    pinName = entry.Left( arrowPos ).Trim().Trim( false );
+                    target = entry.Mid( arrowPos + wxString( wxT( "→" ) ).length() ).Trim().Trim( false );
+                }
+                else
+                {
+                    arrowPos = entry.Find( wxT( "->" ) );
+                    if( arrowPos == wxNOT_FOUND )
+                        continue;
+                    pinName = entry.Left( arrowPos ).Trim().Trim( false );
+                    target = entry.Mid( arrowPos + 2 ).Trim().Trim( false );
+                }
+
+                if( pinName.IsEmpty() || target.IsEmpty() )
+                    continue;
+
+                // Get source pin position
+                VECTOR2I sourcePos;
+                bool foundSourcePin = false;
+                for( SCH_PIN* pin : pins )
+                {
+                    if( pin->GetNumber() == pinName || pin->GetName() == pinName )
+                    {
+                        sourcePos = pin->GetPosition();
+                        foundSourcePin = true;
+                        break;
+                    }
+                }
+                if( !foundSourcePin )
+                    continue;
+
+                // Resolve target position
+                VECTOR2I targetPos;
+                bool foundTarget = false;
+
+                // Check if target is a pin reference (contains ':')
+                int colonPos = target.Find( wxT( ":" ) );
+                if( colonPos != wxNOT_FOUND )
+                {
+                    // Pin reference like "R1:2" or "U1:PA0"
+                    wxString targetRef = target.Left( colonPos ).Trim().Trim( false );
+                    wxString targetPin = target.Mid( colonPos + 1 ).Trim().Trim( false );
+
+                    auto it = refToSymbol.find( targetRef );
+                    if( it != refToSymbol.end() )
+                    {
+                        SCH_SYMBOL* targetSym = it->second;
+                        for( SCH_PIN* pin : targetSym->GetPins( &GetCurrentSheet() ) )
+                        {
+                            if( pin->GetNumber() == targetPin || pin->GetName() == targetPin )
+                            {
+                                targetPos = pin->GetPosition();
+                                foundTarget = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // Net name like "VCC" or "GND" - find power symbol
+                    for( SCH_ITEM* pwrItem : screen->Items().OfType( SCH_SYMBOL_T ) )
+                    {
+                        SCH_SYMBOL* pwrSym = static_cast<SCH_SYMBOL*>( pwrItem );
+                        if( pwrSym->GetLibSymbolRef() && pwrSym->GetLibSymbolRef()->IsPower() )
+                        {
+                            wxString powerNet = pwrSym->GetValue( false, &GetCurrentSheet(), false );
+                            if( powerNet.IsSameAs( target, false ) )
+                            {
+                                std::vector<SCH_PIN*> pwrPins = pwrSym->GetPins( &GetCurrentSheet() );
+                                if( !pwrPins.empty() )
+                                {
+                                    targetPos = pwrPins[0]->GetPosition();
+                                    foundTarget = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if( foundTarget )
+                {
+                    WIRING_GUIDE_PREVIEW_DATA guide;
+                    guide.start = sourcePos;
+                    guide.end = targetPos;
+                    guide.sourceSymbolId = kiid;
+                    guide.label = wxString::Format( wxT( "%s:%s → %s" ), symbolRef, pinName, target );
+                    guides.push_back( guide );
+                }
+            }
+            break; // Found the symbol, move to next tracked item
+        }
+    }
+
+    return guides;
+}
+
+
+void SCH_EDIT_FRAME::RefreshWiringGuides()
+{
+    wxLogMessage( "WIRING_GUIDE: RefreshWiringGuides called" );
+
+    // Lazy initialization of the wiring guide manager
+    if( !m_wiringGuideManager )
+    {
+        wxLogMessage( "WIRING_GUIDE: Creating manager and overlay" );
+        m_wiringGuideManager = std::make_unique<SCH_WIRING_GUIDE_MANAGER>( this );
+
+        // Create and add the overlay to the view
+        m_wiringGuideOverlay = new SCH_WIRING_GUIDE_OVERLAY( m_wiringGuideManager.get(), this );
+        GetCanvas()->GetView()->Add( m_wiringGuideOverlay );
+    }
+
+    // Scan symbols for Agent_Wiring fields and refresh connection states
+    m_wiringGuideManager->ScanSymbolsForWiring();
+    m_wiringGuideManager->RefreshGuideStates();
+
+    int total, completed;
+    m_wiringGuideManager->GetProgress( total, completed );
+    wxLogMessage( "WIRING_GUIDE: After scan: %d total guides, %d completed, %d active",
+                  total, completed, m_wiringGuideManager->GetActiveGuides().size() );
+
+    // Refresh the canvas to show updated guides
+    if( m_wiringGuideOverlay )
+    {
+        GetCanvas()->GetView()->Update( m_wiringGuideOverlay );
+        GetCanvas()->ForceRefresh();
+    }
+}

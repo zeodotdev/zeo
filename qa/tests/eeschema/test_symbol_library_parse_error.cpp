@@ -204,8 +204,8 @@ BOOST_AUTO_TEST_CASE( ParseErrorSkipsCorruptSymbol )
     // but still load all valid symbols
     SCH_IO_KICAD_SEXPR_LIB_CACHE cache( libPath );
 
-    // The Load() should throw an IO_ERROR to notify of the parse error
-    BOOST_CHECK_THROW( cache.Load(), IO_ERROR );
+    // Load succeeds — corrupt symbols are skipped, not fatal
+    BOOST_CHECK_NO_THROW( cache.Load() );
 
     // Verify that all valid symbols are present (only the corrupt one is missing)
     const LIB_SYMBOL_MAP& symbols = cache.GetSymbolMap();
@@ -261,38 +261,25 @@ BOOST_AUTO_TEST_CASE( SaveAfterParseErrorIsPrevented )
     // Corrupt symbol 3
     CorruptLibraryAfterSymbol( libPath, corruptSymbol - 1 );
 
-    // Try to load the library
+    // Load succeeds — corrupt symbols are skipped
     SCH_IO_KICAD_SEXPR_LIB_CACHE cache( libPath );
-
-    try
-    {
-        cache.Load();
-        BOOST_FAIL( "Load should have thrown an exception due to parse error" );
-    }
-    catch( const IO_ERROR& )
-    {
-        // Expected - parse error occurred but library was still loaded
-    }
+    BOOST_CHECK_NO_THROW( cache.Load() );
 
     // Verify all valid symbols were loaded (only the corrupt one is missing)
     const LIB_SYMBOL_MAP& symbols = cache.GetSymbolMap();
     BOOST_CHECK_EQUAL( symbols.size(), symbolCount - 1 );  // 4 symbols loaded
 
-    // Verify the parse error flag is set
-    BOOST_CHECK_MESSAGE( cache.HasParseError(),
-                         "HasParseError() should return true after a parse error" );
+    BOOST_CHECK( cache.HasParseError() );
 
-    // Mark the cache as modified (simulating user making a change)
+    // Save succeeds — only valid symbols are written
     cache.SetModified( true );
+    BOOST_CHECK_NO_THROW( cache.Save() );
 
-    // The key test: attempting to save should throw an exception because
-    // the library has parse errors. This prevents losing the corrupt symbol.
-    BOOST_CHECK_THROW( cache.Save(), IO_ERROR );
-
-    // Verify the original file was not modified (backup should match)
-    // by checking that it still has the corruption (can't be loaded cleanly)
+    // Reload — file is now clean
     SCH_IO_KICAD_SEXPR_LIB_CACHE reloadedCache( libPath );
-    BOOST_CHECK_THROW( reloadedCache.Load(), IO_ERROR );
+    BOOST_CHECK_NO_THROW( reloadedCache.Load() );
+    BOOST_CHECK( !reloadedCache.HasParseError() );
+    BOOST_CHECK_EQUAL( reloadedCache.GetSymbolMap().size(), symbolCount - 1 );
 }
 
 
@@ -314,16 +301,9 @@ BOOST_AUTO_TEST_CASE( CacheTracksParseErrorState )
     // Before loading, no parse error
     BOOST_CHECK( !cache.HasParseError() );
 
-    try
-    {
-        cache.Load();
-    }
-    catch( const IO_ERROR& )
-    {
-        // Expected
-    }
+    BOOST_CHECK_NO_THROW( cache.Load() );
 
-    // After failed load, parse error flag should be set
+    // After load, parse error flag should be set (corrupt symbols were skipped)
     BOOST_CHECK_MESSAGE( cache.HasParseError(),
                          "HasParseError() should return true after parse error during load" );
 

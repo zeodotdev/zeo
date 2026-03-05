@@ -178,6 +178,11 @@ public:
         bool enable_server;
     };
 
+    struct AGENT
+    {
+        bool enable_diff_view;
+    };
+
     COMMON_SETTINGS();
 
     virtual ~COMMON_SETTINGS();
@@ -225,6 +230,7 @@ public:
     PACKAGE_MANAGER   m_PackageManager;
     GIT               m_Git;
     API               m_Api;
+    AGENT             m_Agent;
 
     std::unique_ptr<COMMON_SETTINGS_INTERNALS> m_csInternals;
 };

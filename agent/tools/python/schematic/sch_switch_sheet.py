@@ -10,7 +10,7 @@ try:
     hierarchy_tree = None
     hierarchy_nodes = []  # Flattened list of (node, path_str) tuples
 
-    def flatten_hierarchy(node, parent_path=''):
+    def flatten_hierarchy(node, parent_path='', parent_human_path='/'):
         """Recursively flatten hierarchy tree into list of nodes with path strings."""
         nodes = []
         name = getattr(node, 'name', '') or ''
@@ -24,24 +24,32 @@ try:
         if not current_path:
             current_path = '/'
 
-        nodes.append((node, name, uuid, current_path))
+        # Always build human_path from hierarchy structure (proto value is unreliable
+        # for multi-root schematics where PathHumanReadable() can't resolve root names)
+        if not name:
+            human_readable = '/'
+        else:
+            p = parent_human_path if parent_human_path.endswith('/') else parent_human_path + '/'
+            human_readable = p + name + '/'
+
+        nodes.append((node, name, uuid, current_path, human_readable))
 
         if hasattr(node, 'children'):
             for child in node.children:
-                nodes.extend(flatten_hierarchy(child, current_path))
+                nodes.extend(flatten_hierarchy(child, current_path, human_readable))
         return nodes
 
     if hasattr(sch.sheets, 'get_hierarchy'):
         try:
             hierarchy_tree = sch.sheets.get_hierarchy()
             hierarchy_nodes = flatten_hierarchy(hierarchy_tree)
-            print(f'[sch_switch_sheet] Hierarchy tree has {len(hierarchy_nodes)} nodes', file=sys.stderr)
+            tool_log(f'[sch_switch_sheet] Hierarchy tree has {len(hierarchy_nodes)} nodes')
         except Exception as he:
-            print(f'[sch_switch_sheet] get_hierarchy failed: {he}', file=sys.stderr)
+            tool_log(f'[sch_switch_sheet] get_hierarchy failed: {he}')
 
     # Also get sheet items for fallback
     sheets = sch.crud.get_sheets()
-    print(f'[sch_switch_sheet] Found {len(sheets)} sheet items', file=sys.stderr)
+    tool_log(f'[sch_switch_sheet] Found {len(sheets)} sheet items')
 
     # Build lookup dictionaries
     hierarchy = []
@@ -50,9 +58,12 @@ try:
     sheet_by_uuid = {}
 
     # Prefer hierarchy nodes (they have proper paths for navigation)
-    for node, name, uuid, path_str in hierarchy_nodes:
+    for node, name, uuid, path_str, human_path in hierarchy_nodes:
+        # Skip virtual root node (empty name, no uuid)
+        if not name and not uuid:
+            continue
         filename = getattr(node, 'filename', '') or ''
-        info = {'name': name, 'file': filename, 'uuid': uuid, 'path': path_str}
+        info = {'name': name, 'file': filename, 'sheet_path': human_path}
         hierarchy.append(info)
         if name:
             sheet_by_name.setdefault(name, []).append((node, info))
@@ -67,7 +78,7 @@ try:
         filename = getattr(sheet, 'filename', '')
         uuid = str(sheet.id.value) if hasattr(sheet, 'id') and hasattr(sheet.id, 'value') else str(getattr(sheet, 'id', getattr(sheet, 'uuid', '')))
         if uuid and uuid not in sheet_by_uuid:
-            info = {'name': name, 'file': filename, 'uuid': uuid}
+            info = {'name': name, 'file': filename}
             hierarchy.append(info)
             if name:
                 sheet_by_name.setdefault(name, []).append((sheet, info))
@@ -94,7 +105,7 @@ try:
                         break
                     sch.sheets.leave()
                 navigated = True
-            target_info = {'name': 'Root', 'file': '', 'uuid': '', 'path': '/'}
+            target_info = {'name': 'Root', 'file': '', 'sheet_path': '/'}
         elif sheet_path.startswith('/'):
             # Path format - could be '/uuid1/uuid2' or '/name' or '/name/'
             parts = [p for p in sheet_path.split('/') if p]
@@ -140,32 +151,32 @@ try:
 
     # Navigate to target sheet if found
     if target_sheet and not navigated:
-        print(f'[sch_switch_sheet] Attempting to navigate to sheet', file=sys.stderr)
+        tool_log(f'[sch_switch_sheet] Attempting to navigate to sheet')
         # First try navigate_to with the SheetPath (most reliable for hierarchy nodes)
         if hasattr(sch.sheets, 'navigate_to') and hasattr(target_sheet, 'path') and target_sheet.path:
             try:
-                print(f'[sch_switch_sheet] Using navigate_to with path', file=sys.stderr)
+                tool_log(f'[sch_switch_sheet] Using navigate_to with path')
                 sch.sheets.navigate_to(target_sheet.path)
                 navigated = True
             except Exception as nav_err:
-                print(f'[sch_switch_sheet] navigate_to failed: {nav_err}', file=sys.stderr)
+                tool_log(f'[sch_switch_sheet] navigate_to failed: {nav_err}')
 
         if not navigated and hasattr(sch.sheets, 'enter'):
             try:
                 # enter might work with the node directly
-                print(f'[sch_switch_sheet] Trying enter method', file=sys.stderr)
+                tool_log(f'[sch_switch_sheet] Trying enter method')
                 sch.sheets.enter(target_sheet)
                 navigated = True
             except Exception as enter_err:
-                print(f'[sch_switch_sheet] enter failed: {enter_err}', file=sys.stderr)
+                tool_log(f'[sch_switch_sheet] enter failed: {enter_err}')
 
         if not navigated and hasattr(sch.sheets, 'open'):
             try:
-                print(f'[sch_switch_sheet] Trying open method', file=sys.stderr)
+                tool_log(f'[sch_switch_sheet] Trying open method')
                 sch.sheets.open(target_sheet)
                 navigated = True
             except Exception as open_err:
-                print(f'[sch_switch_sheet] open failed: {open_err}', file=sys.stderr)
+                tool_log(f'[sch_switch_sheet] open failed: {open_err}')
 
     # Build result
     if navigated:

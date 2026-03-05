@@ -51,6 +51,7 @@ set( KICAD_SRCS
     tools/kicad_manager_actions.cpp
     tools/kicad_manager_control.cpp
     session_manager.cpp
+    api_handler_project.cpp
     )
 
 set( KICAD_CLI_SRCS

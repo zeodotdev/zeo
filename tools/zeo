@@ -48,227 +48,499 @@ def _get_zeo_version():
 
 
 def cmd_tool(args):
-    """TUI for executing agent tool calls."""
-    import traceback
+    """TUI for manually running agent tool calls."""
+    # Check for textual library
+    try:
+        from textual.app import App, ComposeResult
+        from textual.containers import Horizontal, Vertical, VerticalScroll
+        from textual.widgets import Static, ListView, ListItem, Footer, TextArea, Button, Select
+        from textual.reactive import reactive
+        from textual.binding import Binding
+        from textual import work
+        import subprocess
+        from datetime import datetime
+    except ImportError:
+        print("Error: textual library required for TUI mode.")
+        print("Install with: pip install textual")
+        sys.exit(1)
 
-    # ANSI colors
-    CYAN = "\033[36m"
-    GREEN = "\033[32m"
-    YELLOW = "\033[33m"
-    RED = "\033[31m"
-    DIM = "\033[2m"
-    BOLD = "\033[1m"
-    RESET = "\033[0m"
+    def copy_to_clipboard(text: str) -> bool:
+        """Copy text to system clipboard."""
+        try:
+            proc = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
+            proc.communicate(text.encode('utf-8'))
+            return proc.returncode == 0
+        except FileNotFoundError:
+            try:
+                proc = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
+                proc.communicate(text.encode('utf-8'))
+                return proc.returncode == 0
+            except FileNotFoundError:
+                return False
 
-    def clear_screen():
-        print("\033[2J\033[H", end="")
+    # Available tools with their descriptions and example inputs
+    AVAILABLE_TOOLS = [
+        ("sch_get_summary", "Get schematic overview", {}),
+        ("sch_inspect", "Inspect schematic elements", {"section": "symbols"}),
+        ("sch_add", "Add schematic elements", {"type": "symbol", "lib_id": "Device:R", "at": [100, 100]}),
+        ("sch_update", "Update schematic elements", {"uuid": "", "changes": {}}),
+        ("sch_delete", "Delete schematic elements", {"uuids": []}),
+        ("sch_connect_net", "Connect pins with wires", {"connections": []}),
+        ("sch_run_erc", "Run electrical rules check", {}),
+        ("pcb_get_summary", "Get PCB overview", {}),
+        ("pcb_inspect", "Inspect PCB elements", {"section": "footprints"}),
+        ("pcb_add", "Add PCB elements", {"type": "track", "start": [0, 0], "end": [10, 0]}),
+        ("pcb_update", "Update PCB elements", {"uuid": "", "changes": {}}),
+        ("pcb_delete", "Delete PCB elements", {"uuids": []}),
+        ("check_status", "Get project status", {}),
+    ]
 
-    def print_header(sch_status, board_status):
-        print(f"{BOLD}╔══════════════════════════════════════════════════════════════╗{RESET}")
-        print(f"{BOLD}║  Zeo Tool Runner                                        [?]  ║{RESET}")
-        print(f"{BOLD}╠══════════════════════════════════════════════════════════════╣{RESET}")
-        print(f"{BOLD}║{RESET}  Schematic: {sch_status:<12}  PCB: {board_status:<12}              {BOLD}║{RESET}")
-        print(f"{BOLD}╚══════════════════════════════════════════════════════════════╝{RESET}")
+    # =========================================================================
+    # Tool Call data structure
+    # =========================================================================
+    class ToolCall:
+        """Represents a manually-run tool call."""
+        def __init__(self, tool_name, input_json, timestamp=None):
+            self.tool_id = f"manual_{int(time.time() * 1000)}"
+            self.tool_name = tool_name
+            self.description = tool_name
+            self.input_json = input_json
+            self.timestamp = timestamp or datetime.now().isoformat()
+            self.success = None
+            self.duration_ms = 0
+            self.result = ""
 
-    def print_menu():
-        print(f"\n{DIM}Commands:{RESET}")
-        print(f"  {CYAN}[p]{RESET}aste  - Paste tool call JSON (end with blank line)")
-        print(f"  {CYAN}[r]{RESET}un    - Execute the current buffer")
-        print(f"  {CYAN}[c]{RESET}lear  - Clear the buffer")
-        print(f"  {CYAN}[?]{RESET}      - List available tools")
-        print(f"  {CYAN}[q]{RESET}uit   - Exit")
+        def time_str(self):
+            if "T" in self.timestamp:
+                return self.timestamp.split("T")[1].split(".")[0]
+            return self.timestamp[:8]
 
-    def print_buffer(buffer_lines):
-        print(f"\n{BOLD}─── Tool Call Buffer ───{RESET}")
-        if buffer_lines:
-            for i, line in enumerate(buffer_lines[:20]):  # Show first 20 lines
-                print(f"{DIM}{i+1:3}│{RESET} {line}")
-            if len(buffer_lines) > 20:
-                print(f"{DIM}... ({len(buffer_lines) - 20} more lines){RESET}")
-        else:
-            print(f"{DIM}(empty - use 'p' to paste){RESET}")
-        print(f"{BOLD}────────────────────────{RESET}")
+        def status_str(self):
+            if self.success is None:
+                return "[yellow]RUN[/yellow]"
+            elif self.success:
+                return "[green]OK[/green]"
+            else:
+                return "[red]FAIL[/red]"
 
-    def print_tools():
-        """Print available agent tools."""
-        tools = [
-            ("sch_get_summary", "Get high-level overview of schematic"),
-            ("sch_inspect", "Inspect specific section (symbols, wires, etc.)"),
-            ("sch_add", "Add elements to schematic"),
-            ("sch_update", "Update schematic elements"),
-            ("sch_delete", "Delete schematic elements"),
-            ("sch_switch_sheet", "Switch to a different sheet"),
-            ("sch_add_sheet", "Add a new hierarchical sheet"),
-            ("sch_connect_net", "Auto-route wires between pins"),
-            ("sch_run_erc", "Run electrical rules check"),
-            ("sch_setup", "Get/set schematic settings"),
-            ("pcb_get_summary", "Get high-level overview of PCB"),
-            ("pcb_inspect", "Inspect specific section of PCB"),
-            ("pcb_add", "Add elements to PCB"),
-            ("pcb_update", "Update PCB elements"),
-            ("pcb_delete", "Delete PCB elements"),
-            ("run_terminal", "Execute bash/shell commands"),
-            ("check_status", "Get project and editor status"),
+        def get_input_text(self):
+            try:
+                if isinstance(self.input_json, str):
+                    input_obj = json.loads(self.input_json)
+                else:
+                    input_obj = self.input_json
+                return json.dumps(input_obj, indent=2)
+            except (json.JSONDecodeError, TypeError):
+                return str(self.input_json)
+
+        def get_output_text(self):
+            if not self.result:
+                return ""
+            try:
+                result_obj = json.loads(self.result)
+                return json.dumps(result_obj, indent=2)
+            except (json.JSONDecodeError, TypeError):
+                return self.result
+
+    # =========================================================================
+    # Custom widgets
+    # =========================================================================
+    class ToolListItem(ListItem):
+        def __init__(self, tool_call: ToolCall, index: int):
+            super().__init__()
+            self.tool_call = tool_call
+            self.index = index
+
+        def compose(self) -> ComposeResult:
+            tc = self.tool_call
+            yield Static(
+                f"{tc.time_str()} {tc.status_str()}\n [dim]{tc.tool_name}[/dim]",
+                markup=True
+            )
+
+    class DetailView(Static):
+        def __init__(self):
+            super().__init__("")
+            self._tool_call = None
+
+        def set_tool_call(self, tc: ToolCall):
+            self._tool_call = tc
+            self._update_content()
+
+        def _update_content(self):
+            if self._tool_call is None:
+                self.update("[dim]Select a tool, edit input, and click Run[/dim]")
+                return
+
+            tc = self._tool_call
+            result_formatted = tc.get_output_text()
+            if result_formatted and len(result_formatted) > 5000:
+                result_formatted = result_formatted[:5000] + "\n... (truncated)"
+
+            if tc.success is None:
+                status_line = "[yellow]Running...[/yellow]"
+            elif tc.success:
+                status_line = f"[green]Success[/green] ({tc.duration_ms}ms)"
+            else:
+                status_line = f"[red]Failed[/red] ({tc.duration_ms}ms)"
+
+            content = f"""[bold]{tc.tool_name}[/bold] - {status_line}
+
+{result_formatted if result_formatted else '[dim](no output yet)[/dim]'}"""
+
+            self.update(content)
+
+    # =========================================================================
+    # Main TUI App
+    # =========================================================================
+    class ToolApp(App):
+        """TUI for manually running agent tool calls."""
+
+        CSS = """
+        Horizontal {
+            height: 1fr;
+        }
+        #sidebar {
+            width: 35;
+            height: 100%;
+            border-right: solid $primary;
+        }
+        #sidebar-title {
+            height: 1;
+            background: $primary;
+            color: $text;
+            text-align: center;
+        }
+        #main-panel {
+            height: 100%;
+        }
+        #detail-title {
+            height: 1;
+            background: $primary;
+            color: $text;
+            text-align: center;
+        }
+        #tool-selector {
+            height: 3;
+            margin: 1;
+        }
+        #input-label {
+            height: 1;
+            margin: 0 1;
+        }
+        #input-area {
+            height: 8;
+            margin: 0 1;
+            border: solid $primary;
+        }
+        #run-button {
+            margin: 1;
+            width: 100%;
+        }
+        #output-label {
+            height: 1;
+            margin: 0 1;
+            background: $surface;
+        }
+        #output-scroll {
+            height: 1fr;
+            padding: 0 1;
+        }
+        ListView {
+            height: 1fr;
+        }
+        ListItem {
+            padding: 0 1;
+        }
+        ListItem:hover {
+            background: $primary 30%;
+        }
+        ListView:focus ListItem.--highlight {
+            background: $primary 50%;
+        }
+        #connection-status {
+            height: 1;
+            background: $error;
+            color: $text;
+            text-align: center;
+        }
+        #connection-status.connected {
+            background: $success;
+        }
+        """
+
+        BINDINGS = [
+            Binding("q", "quit", "Quit"),
+            Binding("ctrl+r", "run_tool", "Run"),
+            Binding("i", "copy_input", "Copy Input"),
+            Binding("o", "copy_output", "Copy Output"),
+            Binding("up", "cursor_up", "Up", show=False),
+            Binding("down", "cursor_down", "Down", show=False),
         ]
 
-        print(f"\n{BOLD}─── Available Tools ───{RESET}")
-        for name, desc in tools:
-            print(f"  {CYAN}{name:<22}{RESET} {desc}")
-        print(f"{BOLD}───────────────────────{RESET}")
-        print(f"\n{DIM}Tool call format:{RESET}")
-        print(f'  {{"name": "tool_name", "input": {{...}}}}')
+        def __init__(self):
+            super().__init__()
+            self.tool_calls: list[ToolCall] = []
+            self._current_tool_call: ToolCall = None
+            self._kicad = None
+            self._connected = False
+            self._shutting_down = False
 
-    def execute_tool(buffer_lines, namespace):
-        """Execute the tool call in the buffer."""
-        if not buffer_lines:
-            print(f"{YELLOW}Buffer is empty. Use 'p' to paste a tool call.{RESET}")
-            return
+        def compose(self) -> ComposeResult:
+            with Horizontal():
+                with Vertical(id="sidebar"):
+                    yield Static("History", id="sidebar-title")
+                    yield ListView(id="tool-list")
+                with Vertical(id="main-panel"):
+                    yield Static("Tool Runner", id="detail-title")
+                    yield Static("Connecting...", id="connection-status")
+                    yield Select(
+                        [(f"{name} - {desc}", name) for name, desc, _ in AVAILABLE_TOOLS],
+                        prompt="Select a tool",
+                        id="tool-selector"
+                    )
+                    yield Static("[bold]Input JSON:[/bold]", id="input-label")
+                    yield TextArea("{}", id="input-area")
+                    yield Button("Run Tool (Ctrl+R)", id="run-button", variant="primary")
+                    yield Static("[bold]Output:[/bold]", id="output-label")
+                    with VerticalScroll(id="output-scroll"):
+                        yield DetailView()
+            yield Footer()
 
-        buffer_text = "\n".join(buffer_lines)
+        def on_mount(self):
+            self._connect_to_zeo()
 
-        # Try to parse as JSON tool call
-        try:
-            tool_call = json.loads(buffer_text)
-            if isinstance(tool_call, dict) and "name" in tool_call:
-                # It's a tool call JSON - generate Python code
-                tool_name = tool_call.get("name", "")
-                tool_input = tool_call.get("input", {})
+        def action_quit(self):
+            """Clean up and quit."""
+            self._shutting_down = True
 
-                print(f"\n{CYAN}Executing tool: {tool_name}{RESET}")
-                print(f"{DIM}Input: {json.dumps(tool_input, indent=2)}{RESET}")
+            # Cancel all background workers
+            self.workers.cancel_all()
 
-                # For now, we can't directly execute tool calls without the C++ handler
-                # So we'll show what the user would need to do in Python
-                print(f"\n{YELLOW}Note: Direct tool execution not yet implemented.{RESET}")
-                print(f"{DIM}Use 'zeo shell' to run Python code directly, e.g.:{RESET}")
-                if tool_name.startswith("sch_"):
-                    print(f"  sch.get_symbols()  # for sch_inspect")
-                elif tool_name.startswith("pcb_"):
-                    print(f"  board.get_footprints()  # for pcb_inspect")
+            # Close the pynng connection explicitly
+            if self._kicad is not None:
+                try:
+                    if hasattr(self._kicad, '_client') and hasattr(self._kicad._client, '_conn'):
+                        self._kicad._client._conn.close()
+                except Exception:
+                    pass
+            self._kicad = None
+
+            self.exit()
+
+        @work(thread=True, exit_on_error=False)
+        def _connect_to_zeo(self):
+            """Connect to Zeo in background."""
+            if self._shutting_down:
                 return
-        except json.JSONDecodeError:
-            pass
+            try:
+                from kipy import KiCad
+                # Use a shorter timeout to allow faster shutdown
+                self._kicad = KiCad(timeout_ms=2000)
+                if self._shutting_down:
+                    return
+                version = self._kicad.get_version()
+                self._connected = True
+                if not self._shutting_down:
+                    self.call_from_thread(self._update_connection_status, True, version)
+            except Exception as e:
+                self._connected = False
+                if not self._shutting_down:
+                    self.call_from_thread(self._update_connection_status, False, str(e))
 
-        # Execute as Python code
-        print(f"\n{CYAN}Executing Python code...{RESET}")
-        try:
-            # Try as expression first
-            result = eval(buffer_text, namespace)
-            if result is not None:
-                print(f"\n{GREEN}Result:{RESET}")
-                try:
-                    print(json.dumps(result, indent=2, default=str))
-                except (TypeError, ValueError):
-                    print(result)
-        except SyntaxError:
-            # Execute as statements
-            exec(buffer_text, namespace)
-            print(f"{GREEN}Executed successfully.{RESET}")
-
-    # Try to import kipy
-    try:
-        from kipy import KiCad
-    except ImportError as e:
-        print(f"Error: Could not import kipy: {e}")
-        print("\nMake sure kipy is installed with:")
-        print("  pip install -e /path/to/zeo-python")
-        sys.exit(1)
-
-    # Connect to Zeo
-    zeo_version = _get_zeo_version()
-    print(f"Connecting to Zeo {zeo_version}...")
-    try:
-        kicad = KiCad()
-        kicad_version = kicad.get_version()
-        print(f"Connected (KiCad {kicad_version})")
-    except Exception as e:
-        print(f"Error: Could not connect to Zeo: {e}")
-        print("Make sure Zeo is running with a project open.")
-        sys.exit(1)
-
-    # Get schematic and board
-    sch = None
-    board = None
-    sch_status = f"{RED}not open{RESET}"
-    board_status = f"{RED}not open{RESET}"
-
-    try:
-        sch = kicad.get_schematic()
-        sch_status = f"{GREEN}connected{RESET}"
-    except Exception:
-        pass
-
-    try:
-        board = kicad.get_board()
-        board_status = f"{GREEN}connected{RESET}"
-    except Exception:
-        pass
-
-    # Set up namespace for exec
-    namespace = {
-        'kicad': kicad,
-        'sch': sch,
-        'board': board,
-        'json': json,
-    }
-
-    buffer_lines = []
-
-    # Main loop
-    clear_screen()
-    while True:
-        try:
-            print_header(sch_status, board_status)
-            print_buffer(buffer_lines)
-            print_menu()
-
-            cmd = input(f"\n{BOLD}>{RESET} ").strip().lower()
-
-            if cmd in ('q', 'quit', 'exit'):
-                break
-            elif cmd in ('?', 'tools', 'help'):
-                clear_screen()
-                print_tools()
-                input(f"\n{DIM}Press Enter to continue...{RESET}")
-                clear_screen()
-            elif cmd in ('p', 'paste'):
-                clear_screen()
-                print(f"{CYAN}Paste your tool call JSON or Python code.{RESET}")
-                print(f"{DIM}End with a blank line.{RESET}\n")
-                buffer_lines = []
-                while True:
-                    try:
-                        line = input()
-                        if line == "":
-                            break
-                        buffer_lines.append(line)
-                    except EOFError:
-                        break
-                clear_screen()
-                if buffer_lines:
-                    print(f"{GREEN}Pasted {len(buffer_lines)} lines.{RESET}\n")
-            elif cmd in ('r', 'run'):
-                try:
-                    execute_tool(buffer_lines, namespace)
-                except Exception as e:
-                    print(f"{RED}Error:{RESET} {e}")
-                    if args.verbose:
-                        traceback.print_exc()
-                input(f"\n{DIM}Press Enter to continue...{RESET}")
-                clear_screen()
-            elif cmd in ('c', 'clear'):
-                buffer_lines = []
-                clear_screen()
-                print(f"{GREEN}Buffer cleared.{RESET}\n")
+        def _update_connection_status(self, connected: bool, info: str):
+            status = self.query_one("#connection-status", Static)
+            if connected:
+                status.update(f"Connected: {info}")
+                status.add_class("connected")
             else:
-                clear_screen()
-                print(f"{YELLOW}Unknown command: {cmd}{RESET}\n")
+                status.update(f"Not connected - {info}")
+                status.remove_class("connected")
 
-        except KeyboardInterrupt:
-            print(f"\n{DIM}(Use 'q' to quit){RESET}")
-            continue
+        def on_select_changed(self, event: Select.Changed):
+            """When tool is selected, populate input with example."""
+            if event.value and event.value != Select.BLANK:
+                for name, desc, example in AVAILABLE_TOOLS:
+                    if name == event.value:
+                        input_area = self.query_one("#input-area", TextArea)
+                        input_area.text = json.dumps(example, indent=2)
+                        break
 
-    print(f"\n{DIM}Goodbye!{RESET}")
+        def on_button_pressed(self, event: Button.Pressed):
+            if event.button.id == "run-button":
+                self.action_run_tool()
+
+        def action_run_tool(self):
+            """Run the selected tool with the given input."""
+            if not self._connected:
+                self.notify("Not connected to Zeo", severity="error")
+                return
+
+            selector = self.query_one("#tool-selector", Select)
+            input_area = self.query_one("#input-area", TextArea)
+
+            if selector.value == Select.BLANK:
+                self.notify("Please select a tool first", severity="warning")
+                return
+
+            tool_name = selector.value
+
+            # Parse input JSON
+            try:
+                input_json = json.loads(input_area.text)
+            except json.JSONDecodeError as e:
+                self.notify(f"Invalid JSON: {e}", severity="error")
+                return
+
+            # Create tool call record
+            tc = ToolCall(tool_name, input_json)
+            self.tool_calls.insert(0, tc)
+            self._current_tool_call = tc
+            self._refresh_list()
+
+            # Run the tool in background
+            self._execute_tool(tc)
+
+        @work(thread=True, exit_on_error=False)
+        def _execute_tool(self, tc: ToolCall):
+            """Execute a tool call in background."""
+            if self._shutting_down:
+                return
+
+            import time as time_module
+            start_time = time_module.time()
+
+            try:
+                if self._shutting_down or self._kicad is None:
+                    return
+
+                # Get the appropriate editor
+                tool_name = tc.tool_name
+                input_json = tc.input_json
+
+                if tool_name.startswith("sch_"):
+                    editor = self._kicad.get_schematic()
+                elif tool_name.startswith("pcb_"):
+                    editor = self._kicad.get_board()
+                else:
+                    editor = self._kicad
+
+                if self._shutting_down:
+                    return
+
+                # Map tool names to kipy methods
+                result = None
+                if tool_name == "sch_get_summary":
+                    symbols = editor.get_symbols()
+                    result = {"symbol_count": len(symbols), "symbols": [s.to_dict() for s in symbols[:10]]}
+                elif tool_name == "sch_inspect":
+                    section = input_json.get("section", "symbols")
+                    if section == "symbols":
+                        items = editor.get_symbols()
+                    elif section == "wires":
+                        items = editor.get_wires()
+                    else:
+                        items = []
+                    result = {"count": len(items), "items": [i.to_dict() for i in items[:20]]}
+                elif tool_name == "pcb_get_summary":
+                    fps = editor.get_footprints()
+                    result = {"footprint_count": len(fps), "footprints": [f.to_dict() for f in fps[:10]]}
+                elif tool_name == "pcb_inspect":
+                    section = input_json.get("section", "footprints")
+                    if section == "footprints":
+                        items = editor.get_footprints()
+                    elif section == "tracks":
+                        items = editor.get_tracks()
+                    else:
+                        items = []
+                    result = {"count": len(items), "items": [i.to_dict() for i in items[:20]]}
+                elif tool_name == "check_status":
+                    result = {"version": self._kicad.get_version(), "connected": True}
+                else:
+                    result = {"error": f"Tool '{tool_name}' execution not implemented in manual mode"}
+
+                tc.result = json.dumps(result, indent=2, default=str)
+                tc.success = True
+
+            except Exception as e:
+                tc.result = json.dumps({"error": str(e)}, indent=2)
+                tc.success = False
+
+            tc.duration_ms = int((time_module.time() - start_time) * 1000)
+
+            if not self._shutting_down:
+                self.call_from_thread(self._update_after_execution, tc)
+
+        def _update_after_execution(self, tc: ToolCall):
+            """Update UI after tool execution."""
+            self._refresh_list()
+            detail = self.query_one(DetailView)
+            detail.set_tool_call(tc)
+            if tc.success:
+                self.notify(f"{tc.tool_name} completed in {tc.duration_ms}ms")
+            else:
+                self.notify(f"{tc.tool_name} failed", severity="error")
+
+        def _refresh_list(self):
+            list_view = self.query_one("#tool-list", ListView)
+            list_view.clear()
+
+            for i, tc in enumerate(self.tool_calls):
+                list_view.append(ToolListItem(tc, i))
+
+            if self.tool_calls:
+                list_view.index = 0
+
+        def on_list_view_selected(self, event: ListView.Selected):
+            if event.item and isinstance(event.item, ToolListItem):
+                self._select_history_item(event.item.tool_call)
+
+        def on_list_view_highlighted(self, event: ListView.Highlighted):
+            if event.item and isinstance(event.item, ToolListItem):
+                self._select_history_item(event.item.tool_call)
+
+        def _select_history_item(self, tc: ToolCall):
+            """When a history item is selected, populate the editor and show output."""
+            self._current_tool_call = tc
+
+            # Update the tool selector
+            selector = self.query_one("#tool-selector", Select)
+            selector.value = tc.tool_name
+
+            # Update the input area with this tool's input
+            input_area = self.query_one("#input-area", TextArea)
+            input_area.text = tc.get_input_text()
+
+            # Update the output display
+            detail = self.query_one(DetailView)
+            detail.set_tool_call(tc)
+
+        def action_copy_input(self):
+            if self._current_tool_call:
+                text = self._current_tool_call.get_input_text()
+                if copy_to_clipboard(text):
+                    self.notify("Input copied")
+                else:
+                    self.notify("Failed to copy", severity="error")
+            else:
+                self.notify("No tool call selected", severity="warning")
+
+        def action_copy_output(self):
+            if self._current_tool_call:
+                text = self._current_tool_call.get_output_text()
+                if text:
+                    if copy_to_clipboard(text):
+                        self.notify("Output copied")
+                    else:
+                        self.notify("Failed to copy", severity="error")
+                else:
+                    self.notify("No output available", severity="warning")
+            else:
+                self.notify("No tool call selected", severity="warning")
+
+    # Run the TUI app
+    app = ToolApp()
+    app.run()
 
 
 def cmd_shell(args):
@@ -361,11 +633,11 @@ def cmd_monitor(args):
     try:
         from textual.app import App, ComposeResult
         from textual.containers import Horizontal, Vertical, VerticalScroll
-        from textual.widgets import Static, ListView, ListItem, Label, Footer
+        from textual.widgets import Static, ListView, ListItem, Footer
         from textual.reactive import reactive
         from textual.binding import Binding
         from textual import work
-        from textual.message import Message
+        import subprocess
     except ImportError:
         print("Error: textual library required for TUI mode.")
         print("Install with: pip install textual")
@@ -373,6 +645,22 @@ def cmd_monitor(args):
         args.json = True
         _monitor_raw_json(args)
         return
+
+    def copy_to_clipboard(text: str) -> bool:
+        """Copy text to system clipboard."""
+        try:
+            # macOS
+            proc = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
+            proc.communicate(text.encode('utf-8'))
+            return proc.returncode == 0
+        except FileNotFoundError:
+            try:
+                # Linux with xclip
+                proc = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
+                proc.communicate(text.encode('utf-8'))
+                return proc.returncode == 0
+            except FileNotFoundError:
+                return False
 
     # =========================================================================
     # Tool Call data structure
@@ -403,6 +691,27 @@ def cmd_monitor(args):
                 return "[green]OK[/green]"
             else:
                 return "[red]FAIL[/red]"
+
+        def get_input_text(self):
+            """Get formatted input JSON for copying."""
+            try:
+                if isinstance(self.input_json, str):
+                    input_obj = json.loads(self.input_json)
+                else:
+                    input_obj = self.input_json
+                return json.dumps(input_obj, indent=2)
+            except (json.JSONDecodeError, TypeError):
+                return str(self.input_json)
+
+        def get_output_text(self):
+            """Get formatted output for copying."""
+            if not self.result:
+                return ""
+            try:
+                result_obj = json.loads(self.result)
+                return json.dumps(result_obj, indent=2)
+            except (json.JSONDecodeError, TypeError):
+                return self.result
 
     # =========================================================================
     # Custom widgets
@@ -542,6 +851,9 @@ def cmd_monitor(args):
         BINDINGS = [
             Binding("q", "quit", "Quit"),
             Binding("f", "toggle_follow", "Follow"),
+            Binding("i", "copy_input", "Copy Input"),
+            Binding("o", "copy_output", "Copy Output"),
+            Binding("c", "copy_all", "Copy All"),
             Binding("up", "cursor_up", "Up", show=False),
             Binding("down", "cursor_down", "Down", show=False),
         ]
@@ -554,6 +866,7 @@ def cmd_monitor(args):
             self.tool_calls_by_id: dict[str, ToolCall] = {}
             self.follow_mode = follow
             self._file_pos = 0
+            self._current_tool_call: ToolCall = None
 
         def compose(self) -> ComposeResult:
             with Horizontal():
@@ -634,6 +947,7 @@ def cmd_monitor(args):
 
         def _update_detail(self, tc: ToolCall):
             """Update the detail view with selected tool call."""
+            self._current_tool_call = tc
             detail = self.query_one(DetailView)
             detail.set_tool_call(tc)
 
@@ -696,6 +1010,45 @@ def cmd_monitor(args):
                     indicator.add_class("paused")
             except Exception:
                 pass  # Widget may not be mounted yet
+
+        def action_copy_input(self):
+            """Copy the current tool call's input to clipboard."""
+            if self._current_tool_call:
+                text = self._current_tool_call.get_input_text()
+                if copy_to_clipboard(text):
+                    self.notify("Input copied to clipboard")
+                else:
+                    self.notify("Failed to copy to clipboard", severity="error")
+            else:
+                self.notify("No tool call selected", severity="warning")
+
+        def action_copy_output(self):
+            """Copy the current tool call's output to clipboard."""
+            if self._current_tool_call:
+                text = self._current_tool_call.get_output_text()
+                if text:
+                    if copy_to_clipboard(text):
+                        self.notify("Output copied to clipboard")
+                    else:
+                        self.notify("Failed to copy to clipboard", severity="error")
+                else:
+                    self.notify("No output available yet", severity="warning")
+            else:
+                self.notify("No tool call selected", severity="warning")
+
+        def action_copy_all(self):
+            """Copy both input and output to clipboard."""
+            if self._current_tool_call:
+                tc = self._current_tool_call
+                text = f"Tool: {tc.tool_name}\nID: {tc.tool_id}\n\n"
+                text += f"Input:\n{tc.get_input_text()}\n\n"
+                text += f"Output:\n{tc.get_output_text() or '(no output)'}"
+                if copy_to_clipboard(text):
+                    self.notify("Copied to clipboard")
+                else:
+                    self.notify("Failed to copy to clipboard", severity="error")
+            else:
+                self.notify("No tool call selected", severity="warning")
 
     # Run the TUI app
     app = MonitorApp(follow=args.follow)

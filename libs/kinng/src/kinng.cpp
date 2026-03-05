@@ -61,16 +61,29 @@ bool KINNG_REQUEST_SERVER::Start()
 
 void KINNG_REQUEST_SERVER::Stop()
 {
+    wxLogTrace( TraceNng, wxS( "KINNG_REQUEST_SERVER::Stop() called" ) );
+
     if( !m_thread.joinable() )
+    {
+        wxLogTrace( TraceNng, wxS( "KINNG_REQUEST_SERVER::Stop() - thread not joinable, returning" ) );
         return;
+    }
+
+    // Set shutdown flag BEFORE notifying to avoid race condition
+    // where the thread wakes up, checks condition, finds it false,
+    // and goes back to sleep before we set the flag
+    wxLogTrace( TraceNng, wxS( "KINNG_REQUEST_SERVER::Stop() - setting shutdown flag" ) );
+    m_shutdown.store( true );
 
     {
         std::lock_guard<std::mutex> lock( m_mutex );
+        wxLogTrace( TraceNng, wxS( "KINNG_REQUEST_SERVER::Stop() - notifying condition variable" ) );
         m_replyReady.notify_all();
     }
 
-    m_shutdown.store( true );
+    wxLogTrace( TraceNng, wxS( "KINNG_REQUEST_SERVER::Stop() - joining thread..." ) );
     m_thread.join();
+    wxLogTrace( TraceNng, wxS( "KINNG_REQUEST_SERVER::Stop() - thread joined, complete" ) );
 }
 
 
@@ -140,7 +153,14 @@ void KINNG_REQUEST_SERVER::listenThread()
             m_callback( &m_sharedMessage );
 
         std::unique_lock<std::mutex> lock( m_mutex );
-        m_replyReady.wait( lock, [&]() { return !m_pendingReply.empty(); } );
+        m_replyReady.wait( lock, [&]() { return !m_pendingReply.empty() || m_shutdown.load(); } );
+
+        // Check if we're shutting down before trying to send
+        if( m_shutdown.load() )
+        {
+            nng_free( buf, sz );
+            break;
+        }
 
         retCode = nng_send( socket, const_cast<std::string::value_type*>( m_pendingReply.c_str() ),
                             m_pendingReply.length(), 0 );

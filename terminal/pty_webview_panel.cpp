@@ -72,10 +72,19 @@ PTY_WEBVIEW_PANEL::PTY_WEBVIEW_PANEL( wxWindow* aParent ) :
 
 PTY_WEBVIEW_PANEL::~PTY_WEBVIEW_PANEL()
 {
+    wxLogInfo( "PTY_WEBVIEW_PANEL destructor called" );
+
     m_agentTimeoutTimer.Stop();
+    wxLogInfo( "PTY_WEBVIEW_PANEL - timer stopped" );
 
     if( m_pty )
+    {
+        wxLogInfo( "PTY_WEBVIEW_PANEL - stopping PTY..." );
         m_pty->Stop();
+        wxLogInfo( "PTY_WEBVIEW_PANEL - PTY stopped" );
+    }
+
+    wxLogInfo( "PTY_WEBVIEW_PANEL destructor complete" );
 }
 
 

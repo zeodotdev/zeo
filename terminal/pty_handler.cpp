@@ -141,44 +141,83 @@ bool PTY_HANDLER::Start( int aCols, int aRows )
 
 void PTY_HANDLER::Stop()
 {
+    wxLogInfo( "PTY_HANDLER::Stop() called" );
+
     if( !m_running.load() )
+    {
+        wxLogInfo( "PTY_HANDLER::Stop() - not running, returning early" );
         return;
+    }
 
     m_running.store( false );
+    wxLogInfo( "PTY_HANDLER::Stop() - set m_running to false" );
 
-    // Wait for reader thread to finish
+    // Close master fd FIRST to trigger hangup on the slave side
+    // This causes the shell to receive SIGHUP naturally
+    if( m_masterFd >= 0 )
+    {
+        wxLogInfo( "PTY_HANDLER::Stop() - closing master fd %d", m_masterFd );
+        close( m_masterFd );
+        m_masterFd = -1;
+    }
+
+    // Wait for reader thread to finish (it will exit due to closed fd)
     if( m_readerThread )
     {
+        wxLogInfo( "PTY_HANDLER::Stop() - waiting for reader thread..." );
         m_readerThread->Wait();
+        wxLogInfo( "PTY_HANDLER::Stop() - reader thread finished" );
         delete m_readerThread;
         m_readerThread = nullptr;
     }
 
-    // Try graceful shutdown
+    // Clean up child process
     if( m_childPid > 0 )
     {
-        kill( m_childPid, SIGHUP );
-
-        // Give the process a moment to exit
+        // Check if already exited (likely due to PTY hangup)
         int   status;
         pid_t result = waitpid( m_childPid, &status, WNOHANG );
+        wxLogInfo( "PTY_HANDLER::Stop() - waitpid WNOHANG returned %d", result );
 
         if( result == 0 )
         {
-            // Still running, force kill
-            usleep( 100000 ); // 100ms
-            kill( m_childPid, SIGKILL );
-            waitpid( m_childPid, &status, 0 );
+            // Still running, send SIGHUP
+            wxLogInfo( "PTY_HANDLER::Stop() - sending SIGHUP to PID %d", m_childPid );
+            kill( m_childPid, SIGHUP );
+
+            // Brief wait then check again
+            usleep( 50000 ); // 50ms
+            result = waitpid( m_childPid, &status, WNOHANG );
+            wxLogInfo( "PTY_HANDLER::Stop() - waitpid after SIGHUP returned %d", result );
+
+            if( result == 0 )
+            {
+                // Still running, force kill
+                wxLogInfo( "PTY_HANDLER::Stop() - sending SIGKILL to PID %d", m_childPid );
+                kill( m_childPid, SIGKILL );
+
+                // Use WNOHANG in a loop with timeout instead of blocking forever
+                for( int i = 0; i < 20; i++ )  // 2 second timeout
+                {
+                    usleep( 100000 ); // 100ms
+                    result = waitpid( m_childPid, &status, WNOHANG );
+                    wxLogInfo( "PTY_HANDLER::Stop() - waitpid attempt %d returned %d", i, result );
+
+                    if( result != 0 )
+                        break;
+                }
+
+                if( result == 0 )
+                {
+                    wxLogWarning( "PTY_HANDLER::Stop() - process %d did not exit after SIGKILL, giving up", m_childPid );
+                }
+            }
         }
 
         m_childPid = -1;
     }
 
-    if( m_masterFd >= 0 )
-    {
-        close( m_masterFd );
-        m_masterFd = -1;
-    }
+    wxLogInfo( "PTY_HANDLER::Stop() - complete" );
 }
 
 

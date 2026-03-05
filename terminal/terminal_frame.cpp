@@ -176,8 +176,12 @@ void TERMINAL_FRAME::UpdateTabClosing()
 
 TERMINAL_FRAME::~TERMINAL_FRAME()
 {
+    wxLogInfo( "TERMINAL_FRAME destructor called" );
+
     delete m_headlessExecutor;
     m_headlessExecutor = nullptr;
+
+    wxLogInfo( "TERMINAL_FRAME destructor complete" );
 }
 
 

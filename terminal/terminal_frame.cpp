@@ -447,6 +447,24 @@ void TERMINAL_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
         // Use async execution to avoid blocking the UI thread
         ExecuteCommandForAgentAsync( payload );
     }
+    else if( aEvent.Command() == MAIL_MCP_EXECUTE_TOOL )
+    {
+        // Synchronous execution for MCP tool calls routed through the project manager.
+        // The payload contains a "run_shell <app> <script>" command.
+        // We execute it synchronously (with wxYield polling) and write the result
+        // back into the payload so the caller gets it when ExpressMail returns.
+        std::string cmd = aEvent.GetPayload();
+
+        wxLogInfo( "TERMINAL: Received MAIL_MCP_EXECUTE_TOOL, cmd_len=%zu", cmd.length() );
+
+        std::string result = ExecuteCommandForAgent( cmd );
+
+        wxLogInfo( "TERMINAL: MAIL_MCP_EXECUTE_TOOL complete, result_len=%zu", result.length() );
+
+        // Write result back into the payload — the caller (API_HANDLER_PROJECT) reads it
+        // after ExpressMail returns since the payload is passed by reference
+        aEvent.SetPayload( result );
+    }
 }
 
 

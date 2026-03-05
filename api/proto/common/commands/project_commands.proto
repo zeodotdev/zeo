@@ -149,3 +149,39 @@ message SetNetClassAssignments
 {
   repeated NetClassAssignment assignments = 1;
 }
+
+
+/// Launch an editor (schematic or PCB) via the project manager's KIWAY.
+/// Editors launched this way run in non-standalone mode, enabling features like
+/// pcb_sync_schematic that require both editors to share a project context.
+/// Only handled by the project manager's API server.
+message LaunchEditor
+{
+  kiapi.common.types.DocumentType doc_type = 1;
+}
+
+message LaunchEditorResponse
+{
+  bool already_open = 1;      // True if the editor was already open
+  string socket_path = 2;     // API socket path of the launched editor
+}
+
+
+/// Execute an MCP tool through the C++ application's embedded Python executor.
+/// Routes tool execution through HEADLESS_PYTHON_EXECUTOR with proper timeouts,
+/// cancellation support, and optional transaction management (undo snapshots).
+/// Only handled by the project manager's API server.
+message ExecuteTool
+{
+  string tool_name = 1;          // Tool name, e.g. "sch_add", "pcb_place"
+  string tool_args_json = 2;     // JSON-encoded tool arguments (reserved for future C++ executor)
+  string app = 3;                // App context: "sch" or "pcb"
+  string script = 4;             // Full Python script to execute (already embeds args via TOOL_ARGS)
+}
+
+message ExecuteToolResponse
+{
+  bool success = 1;
+  string result_json = 2;     // JSON result from tool execution
+  string error_message = 3;
+}

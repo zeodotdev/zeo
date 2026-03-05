@@ -97,6 +97,9 @@ enum MAIL_T
     // Diff frame content delivery
     MAIL_SCH_DIFF_CONTENT,          // SCH -> SCH_DIFF: Send before/after content (JSON: {before_path, after_path, sheet_path})
 
+    // MCP tool execution (synchronous via project manager)
+    MAIL_MCP_EXECUTE_TOOL,          // ProjectMgr -> Terminal: Execute Python tool (payload: run_shell command, result written back to payload)
+
     // VCS app communication
     MAIL_VCS_AUTH_COMPLETE          // Launcher -> VCS: GitHub OAuth complete (JSON: {username})
 };

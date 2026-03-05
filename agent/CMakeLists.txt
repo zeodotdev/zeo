@@ -114,6 +114,7 @@ set( AGENT_SRCS
     tools/handlers/footprint_generator.cpp
     tools/handlers/component_search_handler.cpp
     tools/handlers/netclass_generator.cpp
+    tools/handlers/file_io_handler.cpp
 
 )
 

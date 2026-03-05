@@ -29,6 +29,7 @@ set( TERMINAL_SRCS
     agent_monitor_log.cpp
     pty_handler.cpp
     pty_webview_panel.cpp
+    tool_script_loader.cpp
 )
 
 if( APPLE )

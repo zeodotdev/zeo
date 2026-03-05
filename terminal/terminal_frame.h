@@ -4,9 +4,11 @@
 #include <kiway_player.h>
 #include <wx/aui/auibook.h>
 #include "terminal_panel.h"
+#include <memory>
 #include <string>
 
 class HEADLESS_PYTHON_EXECUTOR;
+class TOOL_SCRIPT_LOADER;
 
 class TERMINAL_FRAME : public KIWAY_PLAYER
 {
@@ -44,11 +46,26 @@ public:
     // Async Agent Command Dispatch (non-blocking, sends result via ExpressMail)
     void ExecuteCommandForAgentAsync( const wxString& aCmd );
 
+    /**
+     * Execute an MCP tool by name. Looks up the tool in the manifest, builds the
+     * Python command, runs it synchronously with wxYield polling, and returns the result.
+     * @param aToolName the tool name (e.g. "sch_add", "pcb_place")
+     * @param aArgsJson the tool arguments as a JSON string
+     * @return the tool execution result (JSON string or error)
+     */
+    std::string ExecuteMCPTool( const std::string& aToolName, const std::string& aArgsJson );
+
+    /**
+     * Lazy-init accessor for the tool script loader.
+     */
+    TOOL_SCRIPT_LOADER* GetToolLoader();
+
     DECLARE_EVENT_TABLE()
 
 private:
     wxAuiNotebook* m_notebook;
     HEADLESS_PYTHON_EXECUTOR* m_headlessExecutor;
+    std::unique_ptr<TOOL_SCRIPT_LOADER> m_toolLoader;
 
     // Track if we have an active async request
     bool m_asyncRequestPending;

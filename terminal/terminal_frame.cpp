@@ -113,11 +113,30 @@ TERMINAL_FRAME::TERMINAL_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     mainSizer->Add( m_notebook, 1, wxEXPAND | wxALL, 0 );
 
     SetSizer( mainSizer );
-    Layout();
     SetSize( 800, 600 );
 
     // Add initial terminal
     AddTerminal( TERMINAL_PANEL::MODE_SYSTEM );
+
+    // Layout after terminal is added to ensure proper sizing
+    Layout();
+
+    // Bind size event for proper resize handling
+    Bind( wxEVT_SIZE, &TERMINAL_FRAME::OnSize, this );
+
+    // Delayed layout to ensure terminal gets final size after window is shown
+    CallAfter( [this]() {
+        Layout();
+        // Notify all terminal panels to resize
+        for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
+        {
+            if( wxWindow* page = m_notebook->GetPage( i ) )
+            {
+                wxSizeEvent evt( page->GetSize() );
+                page->ProcessWindowEvent( evt );
+            }
+        }
+    } );
 
     // Headless executor for agent Python/shell commands
     m_headlessExecutor = new HEADLESS_PYTHON_EXECUTOR();
@@ -217,6 +236,15 @@ void TERMINAL_FRAME::OnTabClosedDone( wxAuiNotebookEvent& event )
     UpdateTabClosing();
     event.Skip();
 }
+
+
+void TERMINAL_FRAME::OnSize( wxSizeEvent& event )
+{
+    // Ensure proper layout when frame is resized
+    Layout();
+    event.Skip();
+}
+
 
 void TERMINAL_FRAME::AddTerminal( TERMINAL_PANEL::TERMINAL_MODE aMode )
 {

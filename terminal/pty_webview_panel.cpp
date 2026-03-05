@@ -55,10 +55,14 @@ PTY_WEBVIEW_PANEL::PTY_WEBVIEW_PANEL( wxWindow* aParent ) :
     wxBoxSizer* sizer = new wxBoxSizer( wxVERTICAL );
     sizer->Add( m_webView, 1, wxEXPAND );
     SetSizer( sizer );
+    Layout();
 
     // Bind PTY events
     Bind( wxEVT_PTY_DATA, &PTY_WEBVIEW_PANEL::OnPtyData, this );
     Bind( wxEVT_PTY_EXIT, &PTY_WEBVIEW_PANEL::OnPtyExit, this );
+
+    // Bind size event to ensure webview fills panel on resize
+    Bind( wxEVT_SIZE, &PTY_WEBVIEW_PANEL::OnSize, this );
 
     // Agent timeout timer
     m_agentTimeoutTimer.SetOwner( this );
@@ -155,6 +159,21 @@ void PTY_WEBVIEW_PANEL::OnPtyExit( wxThreadEvent& aEvent )
         m_agentCallback( "Error: Shell process exited", false );
         m_agentCallback = nullptr;
     }
+}
+
+
+void PTY_WEBVIEW_PANEL::OnSize( wxSizeEvent& aEvent )
+{
+    // Ensure the webview fills the panel when resized
+    Layout();
+
+    // Explicitly trigger xterm.js to refit after layout
+    if( m_pageReady && m_webView )
+    {
+        m_webView->RunScriptAsync( "if(window.triggerRefit) window.triggerRefit();" );
+    }
+
+    aEvent.Skip();
 }
 
 
@@ -394,21 +413,30 @@ wxString PTY_WEBVIEW_PANEL::GetTerminalHtml( bool aLightMode )
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
 <style>
-    html, body {
+    * {
         margin: 0;
         padding: 0;
-        width: 100%;
-        height: 100%;
+        box-sizing: border-box;
+    }
+    html, body {
+        width: 100%%;
+        height: 100%%;
         overflow: hidden;
         background: %s;
     }
     #terminal {
-        width: 100%;
-        height: 100%;
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
     }
-    /* Ensure xterm fills the container */
-    .xterm {
-        height: 100%;
+    /* Ensure xterm internal elements fill the container */
+    .xterm,
+    .xterm-viewport,
+    .xterm-screen {
+        width: 100%% !important;
+        height: 100%% !important;
     }
 </style>
 </head>
@@ -539,11 +567,27 @@ wxString PTY_WEBVIEW_PANEL::GetTerminalHtml( bool aLightMode )
         }
     };
 
+    // C++ calls this to trigger a refit when the panel is resized
+    window.triggerRefit = function() {
+        try {
+            fitAddon.fit();
+        } catch(e) {
+            console.error('triggerRefit error:', e);
+        }
+    };
+
     // Signal to C++ that the page is ready
     // Use setTimeout to ensure xterm.js is fully initialized
     setTimeout(function() {
+        fitAddon.fit();
         sendMsg('ready', { cols: term.cols, rows: term.rows });
     }, 50);
+
+    // Additional delayed refit to catch late layout changes
+    setTimeout(function() {
+        fitAddon.fit();
+        sendMsg('resize', { cols: term.cols, rows: term.rows });
+    }, 200);
 
 })();
 </script>

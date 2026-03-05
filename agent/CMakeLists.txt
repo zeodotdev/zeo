@@ -49,6 +49,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/thirdparty/nlohmann_json
     ${CMAKE_SOURCE_DIR}/libs/sexpr/include
     ${CMAKE_SOURCE_DIR}/eeschema
+    ${CMAKE_SOURCE_DIR}/terminal
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/view
@@ -74,6 +75,9 @@ set( AGENT_SRCS
     agent_events.cpp
     agent_state.cpp
     agent_chat_history.cpp
+
+    # Monitor logging (shared with terminal)
+    ${CMAKE_SOURCE_DIR}/terminal/agent_monitor_log.cpp
 
     # Core logic modules
     core/chat_controller.cpp

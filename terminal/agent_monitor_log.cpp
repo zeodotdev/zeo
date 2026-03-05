@@ -176,3 +176,37 @@ void AGENT_MONITOR_LOG::LogError( const std::string& aContext, const std::string
 
     WriteLine( json );
 }
+
+
+void AGENT_MONITOR_LOG::LogToolStart( const std::string& aToolId, const std::string& aToolName,
+                                       const std::string& aDescription, const std::string& aInputJson )
+{
+    std::lock_guard<std::mutex> lock( m_mutex );
+
+    // Input is already JSON, embed it directly (not as escaped string)
+    std::string json = "{\"ts\":\"" + GetTimestamp()
+                     + "\",\"event\":\"tool_start\""
+                     + ",\"tool_id\":\"" + EscapeJson( aToolId )
+                     + "\",\"tool_name\":\"" + EscapeJson( aToolName )
+                     + "\",\"description\":\"" + EscapeJson( aDescription )
+                     + "\",\"input\":" + aInputJson + "}";
+
+    WriteLine( json );
+}
+
+
+void AGENT_MONITOR_LOG::LogToolEnd( const std::string& aToolId, const std::string& aToolName,
+                                     const std::string& aResult, bool aSuccess, long aDurationMs )
+{
+    std::lock_guard<std::mutex> lock( m_mutex );
+
+    std::string json = "{\"ts\":\"" + GetTimestamp()
+                     + "\",\"event\":\"tool_end\""
+                     + ",\"tool_id\":\"" + EscapeJson( aToolId )
+                     + "\",\"tool_name\":\"" + EscapeJson( aToolName )
+                     + "\",\"success\":" + ( aSuccess ? "true" : "false" )
+                     + ",\"duration_ms\":" + std::to_string( aDurationMs )
+                     + ",\"result\":\"" + EscapeJson( aResult ) + "\"}";
+
+    WriteLine( json );
+}

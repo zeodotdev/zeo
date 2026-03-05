@@ -351,133 +351,399 @@ def cmd_shell(args):
 
 
 def cmd_monitor(args):
-    """Watch agent shell calls and responses."""
+    """Watch agent tool calls and responses with TUI."""
+    # Raw JSON mode - use simple output
+    if args.json:
+        _monitor_raw_json(args)
+        return
+
+    # Check for textual library
+    try:
+        from textual.app import App, ComposeResult
+        from textual.containers import Horizontal, Vertical, VerticalScroll
+        from textual.widgets import Static, ListView, ListItem, Label, Footer
+        from textual.reactive import reactive
+        from textual.binding import Binding
+        from textual import work
+        from textual.message import Message
+    except ImportError:
+        print("Error: textual library required for TUI mode.")
+        print("Install with: pip install textual")
+        print("\nFalling back to raw JSON mode...")
+        args.json = True
+        _monitor_raw_json(args)
+        return
+
+    # =========================================================================
+    # Tool Call data structure
+    # =========================================================================
+    class ToolCall:
+        """Represents a tool call with start/end data."""
+        def __init__(self, tool_id, tool_name, description, input_json, timestamp):
+            self.tool_id = tool_id
+            self.tool_name = tool_name
+            self.description = description
+            self.input_json = input_json
+            self.timestamp = timestamp
+            self.success = None  # None = running, True = success, False = failed
+            self.duration_ms = 0
+            self.result = ""
+
+        def time_str(self):
+            """Get HH:MM:SS from timestamp."""
+            if "T" in self.timestamp:
+                return self.timestamp.split("T")[1].split(".")[0]
+            return self.timestamp[:8]
+
+        def status_str(self):
+            """Get status string for display."""
+            if self.success is None:
+                return "[yellow]RUN[/yellow]"
+            elif self.success:
+                return "[green]OK[/green]"
+            else:
+                return "[red]FAIL[/red]"
+
+    # =========================================================================
+    # Custom widgets
+    # =========================================================================
+    class ToolListItem(ListItem):
+        """A single tool call in the sidebar list."""
+        def __init__(self, tool_call: ToolCall, index: int):
+            super().__init__()
+            self.tool_call = tool_call
+            self.index = index
+
+        def compose(self) -> ComposeResult:
+            tc = self.tool_call
+            # Truncate description for sidebar
+            desc = tc.description[:35] + "..." if len(tc.description) > 38 else tc.description
+            yield Static(
+                f"{tc.time_str()} {tc.status_str()}\n [dim]{desc}[/dim]",
+                markup=True
+            )
+
+    class DetailView(Static):
+        """Right panel showing selected tool call details."""
+        def __init__(self):
+            super().__init__("")
+            self._tool_call = None
+
+        def set_tool_call(self, tc: ToolCall):
+            self._tool_call = tc
+            self._update_content()
+
+        def _update_content(self):
+            if self._tool_call is None:
+                self.update("[dim]Select a tool call to view details[/dim]")
+                return
+
+            tc = self._tool_call
+
+            # Format input JSON with indentation
+            try:
+                if isinstance(tc.input_json, str):
+                    input_obj = json.loads(tc.input_json)
+                else:
+                    input_obj = tc.input_json
+                input_formatted = json.dumps(input_obj, indent=2)
+            except (json.JSONDecodeError, TypeError):
+                input_formatted = str(tc.input_json)
+
+            # Format result
+            result_formatted = tc.result
+            if result_formatted:
+                # Try to format as JSON if possible
+                try:
+                    result_obj = json.loads(result_formatted)
+                    result_formatted = json.dumps(result_obj, indent=2)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                # Truncate very long results
+                if len(result_formatted) > 2000:
+                    result_formatted = result_formatted[:2000] + "\n... (truncated)"
+
+            # Build status line
+            if tc.success is None:
+                status_line = "[yellow]Running...[/yellow]"
+            elif tc.success:
+                status_line = f"[green]Success[/green] ({tc.duration_ms}ms)"
+            else:
+                status_line = f"[red]Failed[/red] ({tc.duration_ms}ms)"
+
+            content = f"""[bold]Tool:[/bold] {tc.tool_name}
+[bold]ID:[/bold] {tc.tool_id}
+[bold]Description:[/bold] {tc.description}
+
+[bold]Input:[/bold]
+[dim]{input_formatted}[/dim]
+
+[bold]Status:[/bold] {status_line}
+
+[bold]Output:[/bold]
+[dim]{result_formatted if result_formatted else '(no output yet)'}[/dim]"""
+
+            self.update(content)
+
+    # =========================================================================
+    # Main TUI App
+    # =========================================================================
+    class MonitorApp(App):
+        """TUI for monitoring agent tool calls."""
+
+        CSS = """
+        Horizontal {
+            height: 1fr;
+        }
+        #sidebar {
+            width: 40;
+            height: 100%;
+            border-right: solid $primary;
+        }
+        #sidebar-title {
+            height: 1;
+            background: $primary;
+            color: $text;
+            text-align: center;
+        }
+        #detail-title {
+            height: 1;
+            background: $primary;
+            color: $text;
+            text-align: center;
+        }
+        #detail-scroll {
+            height: 1fr;
+            padding: 1;
+        }
+        #follow-indicator {
+            height: 1;
+            background: $success;
+            color: $text;
+            text-align: center;
+        }
+        #follow-indicator.paused {
+            background: $warning;
+        }
+        ListView {
+            height: 1fr;
+        }
+        ListItem {
+            padding: 0 1;
+        }
+        ListItem:hover {
+            background: $primary 30%;
+        }
+        ListView:focus ListItem.--highlight {
+            background: $primary 50%;
+        }
+        """
+
+        BINDINGS = [
+            Binding("q", "quit", "Quit"),
+            Binding("f", "toggle_follow", "Follow"),
+            Binding("up", "cursor_up", "Up", show=False),
+            Binding("down", "cursor_down", "Down", show=False),
+        ]
+
+        follow_mode = reactive(True)
+
+        def __init__(self, follow: bool):
+            super().__init__()
+            self.tool_calls: list[ToolCall] = []
+            self.tool_calls_by_id: dict[str, ToolCall] = {}
+            self.follow_mode = follow
+            self._file_pos = 0
+
+        def compose(self) -> ComposeResult:
+            with Horizontal():
+                with Vertical(id="sidebar"):
+                    yield Static("Tool Calls", id="sidebar-title")
+                    yield ListView(id="tool-list")
+                with Vertical():
+                    yield Static("Detail View", id="detail-title")
+                    indicator_text = "Following" if self.follow_mode else "Paused"
+                    yield Static(indicator_text, id="follow-indicator")
+                    with VerticalScroll(id="detail-scroll"):
+                        yield DetailView()
+            yield Footer()
+
+        def on_mount(self):
+            """Load existing entries and start following if enabled."""
+            self._load_existing_entries()
+            if self.follow_mode:
+                self._start_following()
+
+        def _load_existing_entries(self):
+            """Load existing tool call entries from the log file."""
+            if not os.path.exists(MONITOR_LOG):
+                return
+
+            with open(MONITOR_LOG, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        self._process_line(line)
+                self._file_pos = f.tell()
+
+            # Update the list view
+            self._refresh_list()
+
+        def _process_line(self, line: str):
+            """Process a single JSONL line."""
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                return
+
+            event = data.get("event", "")
+
+            if event == "tool_start":
+                tool_id = data.get("tool_id", "")
+                tc = ToolCall(
+                    tool_id=tool_id,
+                    tool_name=data.get("tool_name", ""),
+                    description=data.get("description", ""),
+                    input_json=data.get("input", {}),
+                    timestamp=data.get("ts", "")
+                )
+                self.tool_calls.append(tc)
+                self.tool_calls_by_id[tool_id] = tc
+
+            elif event == "tool_end":
+                tool_id = data.get("tool_id", "")
+                tc = self.tool_calls_by_id.get(tool_id)
+                if tc:
+                    tc.success = data.get("success", False)
+                    tc.duration_ms = data.get("duration_ms", 0)
+                    tc.result = data.get("result", "")
+
+        def _refresh_list(self):
+            """Refresh the tool list view."""
+            list_view = self.query_one("#tool-list", ListView)
+            list_view.clear()
+
+            # Show most recent at bottom (chronological order)
+            for i, tc in enumerate(self.tool_calls):
+                list_view.append(ToolListItem(tc, i))
+
+            # If following, scroll to bottom and select last item
+            if self.follow_mode and self.tool_calls:
+                list_view.index = len(self.tool_calls) - 1
+                self._update_detail(self.tool_calls[-1])
+
+        def _update_detail(self, tc: ToolCall):
+            """Update the detail view with selected tool call."""
+            detail = self.query_one(DetailView)
+            detail.set_tool_call(tc)
+
+        def on_list_view_selected(self, event: ListView.Selected):
+            """Handle tool selection in sidebar."""
+            if event.item and isinstance(event.item, ToolListItem):
+                self._update_detail(event.item.tool_call)
+
+        def on_list_view_highlighted(self, event: ListView.Highlighted):
+            """Handle tool highlight (cursor movement) in sidebar."""
+            if event.item and isinstance(event.item, ToolListItem):
+                self._update_detail(event.item.tool_call)
+
+        @work(exclusive=True, thread=True)
+        def _start_following(self):
+            """Background worker to follow the log file."""
+            if not os.path.exists(MONITOR_LOG):
+                # Wait for file to exist
+                while not os.path.exists(MONITOR_LOG) and self.follow_mode:
+                    time.sleep(0.5)
+
+            while self.follow_mode:
+                try:
+                    with open(MONITOR_LOG, "r") as f:
+                        f.seek(self._file_pos)
+                        while self.follow_mode:
+                            line = f.readline()
+                            if line:
+                                line = line.strip()
+                                if line:
+                                    self._process_line(line)
+                                    self.call_from_thread(self._refresh_list)
+                                self._file_pos = f.tell()
+                            else:
+                                time.sleep(0.1)
+                except FileNotFoundError:
+                    time.sleep(0.5)
+
+        def action_toggle_follow(self):
+            """Toggle follow mode on/off."""
+            self.follow_mode = not self.follow_mode
+            indicator = self.query_one("#follow-indicator", Static)
+            if self.follow_mode:
+                indicator.update("Following")
+                indicator.remove_class("paused")
+                self._start_following()
+            else:
+                indicator.update("Paused")
+                indicator.add_class("paused")
+
+        def watch_follow_mode(self, value: bool):
+            """React to follow_mode changes."""
+            try:
+                indicator = self.query_one("#follow-indicator", Static)
+                if value:
+                    indicator.update("Following")
+                    indicator.remove_class("paused")
+                else:
+                    indicator.update("Paused")
+                    indicator.add_class("paused")
+            except Exception:
+                pass  # Widget may not be mounted yet
+
+    # Run the TUI app
+    app = MonitorApp(follow=args.follow)
+    app.run()
+
+
+def _monitor_raw_json(args):
+    """Raw JSON output mode for scripting."""
     if not os.path.exists(MONITOR_LOG):
-        print(f"No monitor log found at {MONITOR_LOG}")
-        print("Agent commands will appear here once the agent starts running.")
+        print(f"No monitor log found at {MONITOR_LOG}", file=sys.stderr)
         if args.follow:
-            print("Waiting for log file...")
+            print("Waiting for log file...", file=sys.stderr)
             while not os.path.exists(MONITOR_LOG):
                 time.sleep(0.5)
         else:
             return
 
     if args.follow:
-        _tail_follow(args)
+        # Tail follow mode
+        try:
+            with open(MONITOR_LOG, "r") as f:
+                f.seek(0, 2)  # Seek to end
+                while True:
+                    line = f.readline()
+                    if line:
+                        line = line.strip()
+                        if line:
+                            print(line)
+                            sys.stdout.flush()
+                    else:
+                        time.sleep(0.1)
+        except KeyboardInterrupt:
+            pass
     else:
-        _show_recent(args)
-
-
-def _show_recent(args, count=50):
-    """Show the last N events from the log."""
-    lines = []
-    try:
-        with open(MONITOR_LOG, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    lines.append(line)
-    except FileNotFoundError:
-        print("No monitor log found.")
-        return
-
-    recent = lines[-count:]
-
-    if not recent:
-        print("No events recorded yet.")
-        return
-
-    for line in recent:
-        _format_line(line, args.json)
-
-
-def _tail_follow(args):
-    """Stream events in real-time (tail -f style)."""
-    try:
-        with open(MONITOR_LOG, "r") as f:
-            # Seek to end
-            f.seek(0, 2)
-
-            while True:
-                line = f.readline()
-                if line:
+        # Show recent entries
+        lines = []
+        try:
+            with open(MONITOR_LOG, "r") as f:
+                for line in f:
                     line = line.strip()
                     if line:
-                        _format_line(line, args.json)
-                else:
-                    time.sleep(0.1)
-    except KeyboardInterrupt:
-        pass
+                        lines.append(line)
+        except FileNotFoundError:
+            return
 
-
-def _format_line(line, raw_json=False):
-    """Format a JSONL line for display."""
-    if raw_json:
-        print(line)
-        return
-
-    try:
-        data = json.loads(line)
-    except json.JSONDecodeError:
-        print(line)
-        return
-
-    ts = data.get("ts", "")
-    # Show just time portion (HH:MM:SS.mmm)
-    time_str = ts.split("T")[1] if "T" in ts else ts
-
-    event = data.get("event", "")
-
-    if event == "cmd_start":
-        cmd_type = data.get("type", "")
-        mode = data.get("mode", "")
-        cmd = data.get("cmd", "")
-
-        # Truncate long commands for display
-        if len(cmd) > 200:
-            cmd = cmd[:200] + "..."
-
-        mode_str = f"  {mode:<5}" if mode else "      "
-        print(f"\033[36m{time_str}\033[0m{mode_str} \033[33m{cmd_type}\033[0m")
-        # Show the command indented
-        for cmd_line in cmd.split("\\n"):
-            if cmd_line.strip():
-                print(f"  {cmd_line}")
-
-    elif event == "cmd_end":
-        success = data.get("success", False)
-        duration = data.get("duration_ms", 0)
-        output = data.get("output", "")
-
-        if success:
-            status = f"\033[32mOK\033[0m ({duration}ms)"
-        else:
-            status = f"\033[31mFAIL\033[0m ({duration}ms)"
-
-        # Truncate long output for display
-        if len(output) > 500:
-            output = output[:500] + "..."
-
-        print(f"  {status}")
-        if output and output != "(no output)":
-            # Show first few lines of output
-            out_lines = output.split("\\n")
-            for out_line in out_lines[:10]:
-                if out_line.strip():
-                    print(f"  \033[2m{out_line}\033[0m")
-            if len(out_lines) > 10:
-                print(f"  \033[2m... ({len(out_lines) - 10} more lines)\033[0m")
-        print()
-
-    elif event == "error":
-        context = data.get("context", "")
-        error = data.get("error", "")
-        print(f"\033[36m{time_str}\033[0m  \033[31mERROR\033[0m [{context}] {error}")
-        print()
-
-    else:
-        # Unknown event type, show raw
-        print(line)
+        # Show last 50 entries
+        for line in lines[-50:]:
+            print(line)
 
 
 def main():

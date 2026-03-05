@@ -848,9 +848,9 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                 wxString    svgPath = wxString::FromUTF8( outputDir )
                                       + wxFileName::GetPathSeparator() + wxT( "pcb.svg" );
 
-                // Parse view configuration
-                nlohmann::json viewConfig;
-                if( j_in.contains( "view_config" ) )
+                // Parse view configuration (default to empty object so .value() works)
+                nlohmann::json viewConfig = nlohmann::json::object();
+                if( j_in.contains( "view_config" ) && j_in["view_config"].is_object() )
                     viewConfig = j_in["view_config"];
 
                 std::string view = viewConfig.value( "view", "" );

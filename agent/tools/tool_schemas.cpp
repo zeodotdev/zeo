@@ -55,6 +55,56 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
     };
     tools.push_back( openEditor );
 
+    // file_write - Create or overwrite a text file
+    LLM_TOOL fileWrite;
+    fileWrite.name = "file_write";
+    fileWrite.description = "Create a new file or overwrite an existing file with the given content. "
+                            "Use this for writing text files like .txt, .md, .py, .json, .csv, etc. "
+                            "Cannot write KiCad files (.kicad_sch, .kicad_pcb, etc.) or binary files. "
+                            "The file_path must be an absolute path within the project directory. "
+                            "Parent directories will be created automatically if they don't exist.";
+    fileWrite.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to the file to create or overwrite" }
+            }},
+            { "content", {
+                { "type", "string" },
+                { "description", "The full content to write to the file" }
+            }}
+        }},
+        { "required", json::array( { "file_path", "content" } ) }
+    };
+    tools.push_back( fileWrite );
+
+    // file_read - Read contents of a text file
+    LLM_TOOL fileRead;
+    fileRead.name = "file_read";
+    fileRead.description = "Read the contents of a file. Returns the file content with line count information. "
+                           "Use offset and limit parameters for large files.";
+    fileRead.read_only = true;
+    fileRead.input_schema = {
+        { "type", "object" },
+        { "properties", {
+            { "file_path", {
+                { "type", "string" },
+                { "description", "Absolute path to the file to read" }
+            }},
+            { "offset", {
+                { "type", "integer" },
+                { "description", "Line number to start reading from (0-based). Default: 0" }
+            }},
+            { "limit", {
+                { "type", "integer" },
+                { "description", "Maximum number of lines to read. Default: 2000" }
+            }}
+        }},
+        { "required", json::array( { "file_path" } ) }
+    };
+    tools.push_back( fileRead );
+
     // Remaining "general" tools (check_status, screenshot, datasheet_query,
     // generate_symbol, generate_footprint, sch_import_symbol, create_project,
     // extract_datasheet) are now defined in tool_manifest.json and loaded

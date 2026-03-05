@@ -181,6 +181,7 @@ public:
     struct AGENT
     {
         bool enable_diff_view;
+        bool follow_agent_navigation;
     };
 
     COMMON_SETTINGS();

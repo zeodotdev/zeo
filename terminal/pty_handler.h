@@ -32,6 +32,10 @@ public:
     std::string GetForegroundProcessName() const;
     std::string GetForegroundCwd() const;
 
+    // Get a friendly display name for the foreground process
+    // For Python processes, this extracts the script name (e.g., "zeo" from "python3 /path/to/zeo")
+    std::string GetForegroundDisplayName() const;
+
 private:
     class ReaderThread : public wxThread
     {

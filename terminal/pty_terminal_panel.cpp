@@ -1106,8 +1106,9 @@ void PTY_TERMINAL_PANEL::OnTitleUpdate( wxTimerEvent& aEvent )
     if( !m_pty || !m_pty->IsRunning() )
         return;
 
-    // Get the foreground process name and cwd
-    std::string procName = m_pty->GetForegroundProcessName();
+    // Get the foreground process display name and cwd
+    // GetForegroundDisplayName() handles Python specially to show script name
+    std::string procName = m_pty->GetForegroundDisplayName();
     std::string procCwd = m_pty->GetForegroundCwd();
 
     if( procName.empty() && procCwd.empty() )

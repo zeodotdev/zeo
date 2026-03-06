@@ -8,7 +8,7 @@
 #include <memory>
 
 #ifdef _WIN32
-#include <process.h>  // for intptr_t used as pid
+#include <windows.h>
 #endif
 
 /**
@@ -49,6 +49,27 @@ public:
     void SendUserMessage( const std::string& aText );
 
 private:
+#ifdef _WIN32
+    class ReaderThread : public wxThread
+    {
+    public:
+        ReaderThread( CC_SUBPROCESS* aOwner, HANDLE aStdoutRead, HANDLE aStderrRead );
+        wxThread::ExitCode Entry() override;
+
+    private:
+        CC_SUBPROCESS* m_owner;
+        HANDLE         m_stdoutRead;
+        HANDLE         m_stderrRead;
+    };
+
+    wxEvtHandler*                  m_eventSink;
+    HANDLE                         m_hProcess = NULL;
+    HANDLE                         m_hStdinWrite = NULL;
+    HANDLE                         m_hStdoutRead = NULL;
+    HANDLE                         m_hStderrRead = NULL;
+    std::atomic<bool>              m_running{false};
+    std::unique_ptr<ReaderThread>  m_readerThread;
+#else
     class ReaderThread : public wxThread
     {
     public:
@@ -62,16 +83,13 @@ private:
     };
 
     wxEvtHandler*                  m_eventSink;
-#ifdef _WIN32
-    intptr_t                       m_pid = -1;
-#else
     pid_t                          m_pid = -1;
-#endif
     int                            m_stdinFd = -1;
     int                            m_stdoutFd = -1;
     int                            m_stderrFd = -1;
     std::atomic<bool>              m_running{false};
     std::unique_ptr<ReaderThread>  m_readerThread;
+#endif
 
     void Cleanup();
 };

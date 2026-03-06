@@ -76,9 +76,16 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
     m_requestInProgress.store( true );
 
     // Create and start the background thread
+    // Compose full system prompt: base + plan addendum when in plan mode
+    std::string fullPrompt = m_systemPrompt;
+
+    if( m_agentMode == AgentMode::PLAN && !m_planAddendum.empty() )
+        fullPrompt += "\n" + m_planAddendum;
+
     LLM_REQUEST_THREAD* thread = new LLM_REQUEST_THREAD(
         this, aHandler, m_modelName, aMessages, aTools, m_agentMode,
-        m_chatId, m_chatTitle, m_chatStoragePath, m_logStoragePath );
+        m_chatId, m_chatTitle, m_chatStoragePath, m_logStoragePath,
+        fullPrompt );
 
     // wxThread requires Create() before Run()
     if( thread->Create() != wxTHREAD_NO_ERROR )
@@ -115,7 +122,8 @@ LLM_REQUEST_THREAD::LLM_REQUEST_THREAD( AGENT_LLM_CLIENT* aClient,
                                          const std::string& aChatId,
                                          const std::string& aChatTitle,
                                          const std::string& aChatStoragePath,
-                                         const std::string& aLogStoragePath ) :
+                                         const std::string& aLogStoragePath,
+                                         const std::string& aSystemPrompt ) :
         wxThread( wxTHREAD_DETACHED ),
         m_client( aClient ),
         m_handler( aHandler ),
@@ -123,6 +131,7 @@ LLM_REQUEST_THREAD::LLM_REQUEST_THREAD( AGENT_LLM_CLIENT* aClient,
         m_messages( aMessages ),
         m_tools( aTools ),
         m_agentMode( aAgentMode ),
+        m_systemPrompt( aSystemPrompt ),
         m_cancelFlag( nullptr ),
         m_chatId( aChatId ),
         m_chatTitle( aChatTitle ),
@@ -195,6 +204,9 @@ void* LLM_REQUEST_THREAD::Entry()
 
     if( !m_logStoragePath.empty() )
         metadataObj["log_storage_path"] = m_logStoragePath;
+
+    if( !m_systemPrompt.empty() )
+        metadataObj["system_prompt"] = m_systemPrompt;
 
     requestBody["metadata"] = metadataObj;
 

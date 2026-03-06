@@ -42,10 +42,66 @@ API_HANDLER_PROJECT::API_HANDLER_PROJECT( KICAD_MANAGER_FRAME* aFrame ) :
 {
     registerHandler<LaunchEditor, LaunchEditorResponse>(
             &API_HANDLER_PROJECT::handleLaunchEditor );
+    registerHandler<GetInstructions, GetInstructionsResponse>(
+            &API_HANDLER_PROJECT::handleGetInstructions );
     registerHandler<GetToolSchemas, GetToolSchemasResponse>(
             &API_HANDLER_PROJECT::handleGetToolSchemas );
     registerHandler<ExecuteTool, ExecuteToolResponse>(
             &API_HANDLER_PROJECT::handleExecuteTool );
+}
+
+
+/// Resolves the SharedSupport/agent directory path (same logic as TOOL_SCRIPT_LOADER).
+static std::string GetAgentDir()
+{
+    const char* envDir = std::getenv( "AGENT_PYTHON_DIR" );
+
+    if( envDir && envDir[0] )
+    {
+        // AGENT_PYTHON_DIR points to the python/ subdirectory — go up one level to agent/
+        wxFileName dir( wxString::FromUTF8( envDir ), "" );
+        dir.RemoveLastDir();
+        return dir.GetPath().ToStdString();
+    }
+
+    wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+    wxFileName dir( exePath.GetPath(), "" );
+    dir.RemoveLastDir();
+    dir.AppendDir( "SharedSupport" );
+    dir.AppendDir( "agent" );
+    return dir.GetPath().ToStdString();
+}
+
+
+HANDLER_RESULT<GetInstructionsResponse> API_HANDLER_PROJECT::handleGetInstructions(
+        const HANDLER_CONTEXT<GetInstructions>& aCtx )
+{
+    GetInstructionsResponse response;
+
+    if( m_instructionsCache.empty() )
+    {
+        std::string agentDir = GetAgentDir();
+        std::string corePath = agentDir + "/prompts/core.md";
+        std::ifstream file( corePath );
+
+        if( !file.is_open() )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( "Instructions not found at " + corePath );
+            return tl::unexpected( e );
+        }
+
+        std::ostringstream ss;
+        ss << file.rdbuf();
+        m_instructionsCache = ss.str();
+
+        wxLogMessage( "API_HANDLER_PROJECT: Loaded instructions from %s (%zu bytes)",
+                      corePath, m_instructionsCache.size() );
+    }
+
+    response.set_instructions_md( m_instructionsCache );
+    return response;
 }
 
 

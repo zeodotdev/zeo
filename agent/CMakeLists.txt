@@ -39,6 +39,18 @@ if( APPLE )
             "${AGENT_PYTHON_INSTALL_DIR}"
         COMMENT "Installing Python tool scripts into app bundle"
     )
+
+    # Copy prompts/ directory into the app bundle (core.md shared with MCP server)
+    # On macOS: Zeo.app/Contents/SharedSupport/agent/prompts/
+    set( AGENT_PROMPTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/prompts" )
+    set( AGENT_PROMPTS_INSTALL_DIR "${OSX_BUNDLE_BUILD_DIR}/${OSX_BUNDLE_SUP_DIR}/agent/prompts" )
+
+    add_custom_target( install_agent_prompts ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${AGENT_PROMPTS_DIR}"
+            "${AGENT_PROMPTS_INSTALL_DIR}"
+        COMMENT "Installing agent prompts into app bundle"
+    )
 endif()
 
 include_directories( BEFORE ${INC_BEFORE} )
@@ -214,7 +226,7 @@ target_link_libraries( agent
 )
 
 # Ensure HTML template and Python scripts are generated before compiling
-add_dependencies( agent_kiface unified_html_template install_python_scripts )
+add_dependencies( agent_kiface unified_html_template install_python_scripts install_agent_prompts )
 add_dependencies( agent agent_kiface )
 
 # Installation rules

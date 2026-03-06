@@ -167,6 +167,17 @@ message LaunchEditorResponse
 }
 
 
+/// Retrieve the agent instructions (system prompt) from the C++ app.
+/// Returns the core instructions markdown that is shared between the in-app agent
+/// and the MCP server. Consumers append their own context-specific addendum.
+/// Only handled by the project manager's API server.
+message GetInstructions {}
+
+message GetInstructionsResponse {
+  string instructions_md = 1;   // Core instructions markdown content
+}
+
+
 /// Retrieve the tool manifest (schemas, script paths, metadata) from the C++ app.
 /// The manifest is built at startup by TOOL_SCRIPT_LOADER and cached as JSON.
 /// Only handled by the project manager's API server.

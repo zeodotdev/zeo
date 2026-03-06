@@ -40,6 +40,9 @@ public:
     ~API_HANDLER_PROJECT() override {}
 
 private:
+    HANDLER_RESULT<commands::GetInstructionsResponse> handleGetInstructions(
+            const HANDLER_CONTEXT<commands::GetInstructions>& aCtx );
+
     HANDLER_RESULT<commands::GetToolSchemasResponse> handleGetToolSchemas(
             const HANDLER_CONTEXT<commands::GetToolSchemas>& aCtx );
 
@@ -50,6 +53,9 @@ private:
             const HANDLER_CONTEXT<commands::ExecuteTool>& aCtx );
 
     KICAD_MANAGER_FRAME* m_frame;
+
+    /// Cached core instructions markdown (loaded once from disk)
+    std::string m_instructionsCache;
 
     /// Cached tool manifest JSON (loaded once from disk on first GetToolSchemas call)
     std::string m_manifestCache;

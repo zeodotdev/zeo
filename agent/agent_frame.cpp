@@ -412,6 +412,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Initialize LLM client and tools
     m_llmClient = std::make_unique<AGENT_LLM_CLIENT>( this );
+    LoadAndSetSystemPrompt();
     InitializeTools();
 
     // Auth will be set via MAIL_AUTH_POINTER from the launcher (shared instance).
@@ -2257,6 +2258,71 @@ void AGENT_FRAME::OnPopupClick( wxCommandEvent& aEvent )
 // ============================================================================
 // Native Tool Calling Implementation
 // ============================================================================
+
+void AGENT_FRAME::LoadAndSetSystemPrompt()
+{
+    // Resolve SharedSupport/agent/prompts/ in the app bundle
+    std::string promptsDir;
+    const char* envDir = std::getenv( "AGENT_PYTHON_DIR" );
+
+    if( envDir && envDir[0] )
+    {
+        wxFileName dir( wxString::FromUTF8( envDir ), "" );
+        dir.RemoveLastDir();  // python/ → agent/
+        dir.AppendDir( "prompts" );
+        promptsDir = dir.GetPath().ToStdString();
+    }
+    else
+    {
+        wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+        wxFileName dir( exePath.GetPath(), "" );
+        dir.RemoveLastDir();
+        dir.AppendDir( "SharedSupport" );
+        dir.AppendDir( "agent" );
+        dir.AppendDir( "prompts" );
+        promptsDir = dir.GetPath().ToStdString();
+    }
+
+    auto readFile = []( const std::string& path ) -> std::string
+    {
+        std::ifstream file( path );
+
+        if( !file.is_open() )
+        {
+            wxLogWarning( "Could not open prompt file: %s", path );
+            return "";
+        }
+
+        std::ostringstream ss;
+        ss << file.rdbuf();
+        return ss.str();
+    };
+
+    std::string core = readFile( promptsDir + "/core.md" );
+    std::string agent = readFile( promptsDir + "/agent.md" );
+    std::string plan = readFile( promptsDir + "/plan.md" );
+
+    if( !core.empty() )
+    {
+        std::string combined = core;
+
+        if( !agent.empty() )
+            combined += "\n" + agent;
+
+        m_llmClient->SetSystemPrompt( combined );
+
+        if( !plan.empty() )
+            m_llmClient->SetPlanAddendum( plan );
+
+        wxLogMessage( "Loaded system prompt from bundle (%zu bytes core + %zu bytes agent + %zu bytes plan)",
+                      core.size(), agent.size(), plan.size() );
+    }
+    else
+    {
+        wxLogWarning( "System prompt not found in bundle — proxy will use its local copy" );
+    }
+}
+
 
 void AGENT_FRAME::InitializeTools()
 {

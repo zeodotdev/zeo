@@ -309,6 +309,7 @@ if( KICAD_IPC_API )
         api/api_plugin.cpp
         api/api_plugin_manager.cpp
         api/api_server.cpp
+        api/ipc_shell_blocking.cpp
 
         ../scripting/python_manager.cpp
     )

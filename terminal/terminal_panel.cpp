@@ -282,7 +282,11 @@ void TERMINAL_PANEL::InitShell()
     m_process = new wxProcess( this );
     m_process->Redirect();
 
-    // Use zsh or bash
+    // Use platform-appropriate shell
+#ifdef _WIN32
+    wxString shell = "cmd.exe";
+    m_pid = wxExecute( shell, wxEXEC_ASYNC, m_process );
+#else
     wxString shell = "/bin/zsh"; // Mac default usually
     if( !wxFileExists( shell ) )
         shell = "/bin/bash";
@@ -290,6 +294,7 @@ void TERMINAL_PANEL::InitShell()
     // Launch persistent shell
     // Interactive mode might be needed for some things (-i), but -s is safer for piping
     m_pid = wxExecute( shell + " -s", wxEXEC_ASYNC, m_process );
+#endif
 
     if( m_pid > 0 )
     {

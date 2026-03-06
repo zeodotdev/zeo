@@ -27,10 +27,15 @@ set( TERMINAL_SRCS
     terminal_command_validator.cpp
     headless_python_executor.cpp
     agent_monitor_log.cpp
-    pty_handler.cpp
-    pty_webview_panel.cpp
     tool_script_loader.cpp
 )
+
+if( NOT WIN32 )
+    list( APPEND TERMINAL_SRCS
+        pty_handler.cpp
+        pty_webview_panel.cpp
+    )
+endif()
 
 if( APPLE )
     list( APPEND TERMINAL_SRCS
@@ -52,8 +57,8 @@ if( APPLE )
         )
 endif()
 
-# Create the standalone executable
-# Uses single_top.cpp as the main entry point which loads the KIFACE
+# Create the standalone executable (not needed on Windows - terminal is loaded as kiface by kicad.exe)
+if( NOT WIN32 )
 add_executable( terminal WIN32 MACOSX_BUNDLE
     ${CMAKE_SOURCE_DIR}/common/single_top.cpp
     ${TERMINAL_RESOURCES}
@@ -65,10 +70,11 @@ if( APPLE )
         MACOSX_BUNDLE_GUI_IDENTIFIER org.zeo.terminal
         MACOSX_BUNDLE_NAME Terminal
         )
-    
+
     set_target_properties( terminal PROPERTIES INSTALL_RPATH
         "@executable_path/../Frameworks;@executable_path/../../../../Frameworks;@executable_path/../../../../Frameworks/Python.framework" )
     set_target_properties( terminal PROPERTIES BUILD_WITH_INSTALL_RPATH 1 )
+endif()
 endif()
 
 # Define the KIFACE module for the terminal
@@ -76,9 +82,11 @@ add_library( terminal_kiface MODULE
     ${TERMINAL_SRCS}
     )
 
+if( NOT WIN32 )
 set_source_files_properties( ${CMAKE_SOURCE_DIR}/common/single_top.cpp PROPERTIES
     COMPILE_DEFINITIONS "TOP_FRAME=FRAME_TERMINAL;BUILD_KIWAY_DLL"
     )
+endif()
 
 set_source_files_properties( terminal.cpp PROPERTIES
     COMPILE_DEFINITIONS "BUILD_KIWAY_DLL;COMPILING_DLL"
@@ -109,22 +117,26 @@ else()
 endif()
 
 # Installation rules
+if( NOT WIN32 )
 install( TARGETS terminal
     DESTINATION ${KICAD_BIN}
     COMPONENT binary
     )
+endif()
 
 install( TARGETS terminal_kiface
     DESTINATION ${KICAD_BIN}
     COMPONENT binary
     )
 
+if( NOT WIN32 )
 target_link_libraries( terminal
     PRIVATE
     common
     kicommon
     ${wxWidgets_LIBRARIES}
     )
+endif()
 
 target_link_libraries( terminal_kiface
     PRIVATE
@@ -140,5 +152,7 @@ if( APPLE )
     target_link_libraries( terminal_kiface PRIVATE "-lutil" )
 endif()
 
+if( NOT WIN32 )
 target_compile_definitions( terminal PRIVATE KICAD_SCRIPTING )
+endif()
 target_compile_definitions( terminal_kiface PRIVATE KICAD_SCRIPTING )

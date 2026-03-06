@@ -86,7 +86,7 @@ BEGIN
             // the exe name
             VALUE "OriginalFilename", RC_VER_ORIGINALFILENAME
             // name of distributed package
-            VALUE "ProductName", "KiCad EDA"
+            VALUE "ProductName", "Zeo"
             VALUE "ProductVersion", KICAD_WIN32_RC_PRODVER_STR
         END
     END

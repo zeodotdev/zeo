@@ -131,10 +131,15 @@ static void AddToolsFromManifest( std::vector<LLM_TOOL>& tools )
     {
         wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
         wxFileName dir( exePath.GetPath(), "" );
+#ifdef __WXMSW__
+        dir.AppendDir( "agent" );
+        dir.AppendDir( "python" );
+#else
         dir.RemoveLastDir();
         dir.AppendDir( "SharedSupport" );
         dir.AppendDir( "agent" );
         dir.AppendDir( "python" );
+#endif
         pythonDir = dir.GetPath().ToStdString();
     }
 

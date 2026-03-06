@@ -5,8 +5,7 @@
 #include <string>
 #include <vector>
 #include <nlohmann/json.hpp>
-
-struct LLM_TOOL;
+#include "../agent_llm_client.h"
 class wxEvtHandler;
 
 /**

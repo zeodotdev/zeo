@@ -3,5 +3,5 @@
 
 wxString GetUnifiedHtmlTemplate()
 {
-    return wxString::FromUTF8( UNIFIED_HTML_TEMPLATE_RAW );
+    return wxString::FromUTF8( UNIFIED_HTML_TEMPLATE_RAW, UNIFIED_HTML_TEMPLATE_RAW_LEN );
 }

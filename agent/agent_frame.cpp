@@ -715,7 +715,7 @@ void AGENT_FRAME::RebuildThinkingHtml()
 
     // Use placeholder if content is empty (during initial THINKING_START)
     // This ensures the content div exists immediately for user clicks
-    wxString displayContent = escapedContent.IsEmpty() ? "<i>Thinking...</i>" : escapedContent;
+    wxString displayContent = escapedContent.IsEmpty() ? wxString( "<i>Thinking...</i>" ) : escapedContent;
 
     // Always render both toggle link and content (content hidden by CSS if collapsed)
     // JavaScript will toggle visibility without page reload
@@ -2276,10 +2276,15 @@ void AGENT_FRAME::LoadAndSetSystemPrompt()
     {
         wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
         wxFileName dir( exePath.GetPath(), "" );
+#ifdef __WXMSW__
+        dir.AppendDir( "agent" );
+        dir.AppendDir( "prompts" );
+#else
         dir.RemoveLastDir();
         dir.AppendDir( "SharedSupport" );
         dir.AppendDir( "agent" );
         dir.AppendDir( "prompts" );
+#endif
         promptsDir = dir.GetPath().ToStdString();
     }
 
@@ -3635,7 +3640,7 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
             delete data;
             return;
 
-        case OpenEditorResult::ERROR:
+        case OpenEditorResult::ERRORED:
             if( m_chatController )
                 m_chatController->HandleToolResult( data->toolId, result.errorMessage, false );
             delete data;
@@ -4147,7 +4152,7 @@ void AGENT_FRAME::OnChatStateChanged( wxThreadEvent& aEvent )
     switch( newState )
     {
     case AgentConversationState::IDLE:
-    case AgentConversationState::ERROR:
+    case AgentConversationState::ERRORED:
         m_bridge->PushActionButtonState( "Send" );
         break;
 

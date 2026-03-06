@@ -60,15 +60,3 @@ def get_uuid_str(obj):
     if hasattr(obj, 'id'):
         return str(obj.id.value)
     return ''
-
-# Default footprint assignments for common generic symbols.
-# Applied when no explicit "Footprint" property is provided.
-# Uses 0402 (1005 Metric) as a sensible default for modern designs.
-DEFAULT_FOOTPRINTS = {
-    'Device:R':   'Resistor_SMD:R_0402_1005Metric',
-    'Device:C':   'Capacitor_SMD:C_0402_1005Metric',
-    'Device:L':   'Inductor_SMD:L_0402_1005Metric',
-    'Device:D':   'Diode_SMD:D_0402_1005Metric',
-    'Device:LED': 'LED_SMD:LED_0402_1005Metric',
-    'Device:C_Polarized': 'Capacitor_SMD:C_0805_2012Metric',
-}

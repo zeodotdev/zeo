@@ -109,6 +109,10 @@ bool KIPLATFORM::APP::Init()
     // Let's attach to console when it's possible, or allocate if requested.
     AttachConsole( wxGetEnv( wxS( "KICAD_ALLOC_CONSOLE" ), nullptr ) );
 
+    // Redirect log output to stderr instead of the default wxLogGui which shows
+    // popup dialogs for wxLogWarning/wxLogMessage on Windows
+    wxLog::SetActiveTarget( new wxLogStderr );
+
     // It may be useful to log up to traces in a console, but in Release builds the log level changes to Info
     // Also we have to force the active target to stderr or else it goes to the void
     bool forceLog = wxGetEnv( wxS( "KICAD_FORCE_CONSOLE_TRACE" ), nullptr );
@@ -119,7 +123,6 @@ bool KIPLATFORM::APP::Init()
 #ifndef DEBUG
         wxLog::SetLogLevel( wxLOG_Trace );
 #endif
-        wxLog::SetActiveTarget( new wxLogStderr );
     }
 
 #if wxCHECK_VERSION( 3, 3, 0 )

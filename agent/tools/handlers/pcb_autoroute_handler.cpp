@@ -1,22 +1,12 @@
-#ifndef __APPLE__
-#error "pcb_autoroute_handler.cpp requires macOS (POSIX APIs)"
-#endif
-
 #include "pcb_autoroute_handler.h"
 #include "../tool_registry.h"
 #include "../util/kicad_cli_util.h"
+#include "../util/process_util.h"
 #include <frame_type.h>
 
-#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
-
-#include <errno.h>
-#include <poll.h>
-#include <signal.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 #include <nlohmann/json.hpp>
 #include <wx/app.h>
@@ -99,15 +89,10 @@ std::string PCB_AUTOROUTE_HANDLER::ExecuteAutoroute( const nlohmann::json& aInpu
     }
 
     // Create temp directory for DSN/SES files
-    std::string tempTemplate = ( wxFileName::GetTempDir() + wxFileName::GetPathSeparator()
-                                 + "zeo_autoroute_XXXXXX" ).ToStdString();
-    std::vector<char> tempBuf( tempTemplate.begin(), tempTemplate.end() );
-    tempBuf.push_back( '\0' );
+    std::string tempDir = ProcessUtil::MakeTempDir( "zeo_autoroute_" );
 
-    if( !mkdtemp( tempBuf.data() ) )
+    if( tempDir.empty() )
         return "Error: Failed to create temporary directory";
-
-    std::string tempDir = tempBuf.data();
 
     // Scope guard ensures temp directory is cleaned up on any exit path
     AutorouteScopeGuard cleanupGuard( [tempDir]()
@@ -264,7 +249,7 @@ std::string PCB_AUTOROUTE_HANDLER::RunFreerouting( const std::string& aDsnPath,
     wxLogInfo( "AUTOROUTE: Executing: %s", cmd.c_str() );
 
     std::string stdoutStr, stderrStr;
-    int exitCode = RunCommand( cmd, stdoutStr, stderrStr, aTimeoutSec );
+    int exitCode = ProcessUtil::RunCommand( cmd, stdoutStr, stderrStr, aTimeoutSec );
 
     if( !stderrStr.empty() )
         wxLogWarning( "AUTOROUTE: Freerouting stderr: %s", stderrStr.c_str() );
@@ -329,142 +314,6 @@ std::string PCB_AUTOROUTE_HANDLER::RunFreerouting( const std::string& aDsnPath,
 }
 
 
-int PCB_AUTOROUTE_HANDLER::RunCommand( const std::string& aCommand, std::string& aStdout,
-                                        std::string& aStderr, int aTimeoutSec )
-{
-    aStdout.clear();
-    aStderr.clear();
-
-    // Create pipes for capturing stdout and stderr
-    int stdoutPipe[2];
-    int stderrPipe[2];
-
-    if( pipe( stdoutPipe ) != 0 )
-        return -1;
-
-    if( pipe( stderrPipe ) != 0 )
-    {
-        close( stdoutPipe[0] );
-        close( stdoutPipe[1] );
-        return -1;
-    }
-
-    pid_t pid = fork();
-
-    if( pid < 0 )
-    {
-        close( stdoutPipe[0] );
-        close( stdoutPipe[1] );
-        close( stderrPipe[0] );
-        close( stderrPipe[1] );
-        return -1;
-    }
-
-    if( pid == 0 )
-    {
-        // Child process: redirect stdout/stderr to pipes and exec command
-        close( stdoutPipe[0] );
-        close( stderrPipe[0] );
-        dup2( stdoutPipe[1], STDOUT_FILENO );
-        dup2( stderrPipe[1], STDERR_FILENO );
-        close( stdoutPipe[1] );
-        close( stderrPipe[1] );
-
-        execl( "/bin/sh", "sh", "-c", aCommand.c_str(), nullptr );
-        _exit( 127 );
-    }
-
-    // Parent process: read from pipes with timeout via poll()
-    close( stdoutPipe[1] );
-    close( stderrPipe[1] );
-
-    struct pollfd fds[2] = {
-        { stdoutPipe[0], POLLIN, 0 },
-        { stderrPipe[0], POLLIN, 0 }
-    };
-
-    auto deadline = std::chrono::steady_clock::now()
-                    + std::chrono::seconds( aTimeoutSec );
-    bool timedOut = false;
-    int activeFds = 2;
-    char buf[4096];
-
-    while( activeFds > 0 )
-    {
-        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-                deadline - std::chrono::steady_clock::now() );
-
-        if( remaining.count() <= 0 )
-        {
-            timedOut = true;
-            break;
-        }
-
-        int ret = poll( fds, 2, static_cast<int>( remaining.count() ) );
-
-        if( ret < 0 )
-        {
-            if( errno == EINTR )
-                continue;
-            break;
-        }
-
-        for( int i = 0; i < 2; ++i )
-        {
-            if( fds[i].fd < 0 )
-                continue;
-
-            if( fds[i].revents & ( POLLIN | POLLHUP ) )
-            {
-                ssize_t n = read( fds[i].fd, buf, sizeof( buf ) - 1 );
-
-                if( n > 0 )
-                {
-                    buf[n] = '\0';
-                    ( i == 0 ? aStdout : aStderr ) += buf;
-                }
-                else
-                {
-                    close( fds[i].fd );
-                    fds[i].fd = -1;
-                    --activeFds;
-                }
-            }
-            else if( fds[i].revents & ( POLLERR | POLLNVAL ) )
-            {
-                close( fds[i].fd );
-                fds[i].fd = -1;
-                --activeFds;
-            }
-        }
-    }
-
-    // Clean up any still-open fds
-    for( int i = 0; i < 2; ++i )
-    {
-        if( fds[i].fd >= 0 )
-            close( fds[i].fd );
-    }
-
-    if( timedOut )
-    {
-        kill( pid, SIGKILL );
-        waitpid( pid, nullptr, 0 );
-        wxLogError( "AUTOROUTE: Command timed out after %d seconds", aTimeoutSec );
-        return -1;
-    }
-
-    int status;
-    waitpid( pid, &status, 0 );
-    int exitCode = -1;
-
-    if( WIFEXITED( status ) )
-        exitCode = WEXITSTATUS( status );
-    else if( WIFSIGNALED( status ) )
-        wxLogError( "AUTOROUTE: Process killed by signal %d", WTERMSIG( status ) );
-
-    return exitCode;
-}
 
 
 void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
@@ -520,12 +369,9 @@ void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
     }
 
     // Create temp directory for DSN/SES files (on main thread)
-    std::string tempTemplate = ( wxFileName::GetTempDir() + wxFileName::GetPathSeparator()
-                                 + "zeo_autoroute_XXXXXX" ).ToStdString();
-    std::vector<char> tempBuf( tempTemplate.begin(), tempTemplate.end() );
-    tempBuf.push_back( '\0' );
+    std::string tempDir = ProcessUtil::MakeTempDir( "zeo_autoroute_" );
 
-    if( !mkdtemp( tempBuf.data() ) )
+    if( tempDir.empty() )
     {
         ToolExecutionResult result;
         result.tool_use_id = aToolUseId;
@@ -535,8 +381,6 @@ void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
         PostToolResult( aEventHandler, result );
         return;
     }
-
-    std::string tempDir = tempBuf.data();
     std::string dsnPath = tempDir + "/board.dsn";
     std::string sesPath = tempDir + "/board.ses";
 
@@ -612,166 +456,12 @@ void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
         wxLogInfo( "AUTOROUTE ASYNC: Executing: %s", cmd.c_str() );
 
         std::string stdoutStr, stderrStr;
+        int exitCode = ProcessUtil::RunCommand( cmd, stdoutStr, stderrStr, timeout );
 
-        // Create pipes for capturing stdout and stderr
-        int stdoutPipe[2];
-        int stderrPipe[2];
+        wxLogInfo( "AUTOROUTE ASYNC: Freerouting finished with exit code %d", exitCode );
 
-        if( pipe( stdoutPipe ) != 0 || pipe( stderrPipe ) != 0 )
+        if( exitCode == -1 )
         {
-            wxTheApp->CallAfter( [=]()
-            {
-                // Cleanup temp dir
-                wxDir dir( wxString::FromUTF8( tempDir ) );
-                if( dir.IsOpened() )
-                {
-                    wxString entry;
-                    bool cont = dir.GetFirst( &entry, wxEmptyString, wxDIR_FILES );
-                    while( cont )
-                    {
-                        wxRemoveFile( wxString::FromUTF8( tempDir ) + wxFileName::GetPathSeparator() + entry );
-                        cont = dir.GetNext( &entry );
-                    }
-                }
-                wxFileName::Rmdir( wxString::FromUTF8( tempDir ) );
-
-                ToolExecutionResult result;
-                result.tool_use_id = aToolUseId;
-                result.tool_name = aToolName;
-                result.result = "Error: Failed to create pipes for Freerouting";
-                result.success = false;
-                PostToolResult( aEventHandler, result );
-            } );
-            return;
-        }
-
-        pid_t pid = fork();
-
-        if( pid < 0 )
-        {
-            close( stdoutPipe[0] );
-            close( stdoutPipe[1] );
-            close( stderrPipe[0] );
-            close( stderrPipe[1] );
-
-            wxTheApp->CallAfter( [=]()
-            {
-                // Cleanup
-                wxDir dir( wxString::FromUTF8( tempDir ) );
-                if( dir.IsOpened() )
-                {
-                    wxString entry;
-                    bool cont = dir.GetFirst( &entry, wxEmptyString, wxDIR_FILES );
-                    while( cont )
-                    {
-                        wxRemoveFile( wxString::FromUTF8( tempDir ) + wxFileName::GetPathSeparator() + entry );
-                        cont = dir.GetNext( &entry );
-                    }
-                }
-                wxFileName::Rmdir( wxString::FromUTF8( tempDir ) );
-
-                ToolExecutionResult result;
-                result.tool_use_id = aToolUseId;
-                result.tool_name = aToolName;
-                result.result = "Error: Failed to fork Freerouting process";
-                result.success = false;
-                PostToolResult( aEventHandler, result );
-            } );
-            return;
-        }
-
-        if( pid == 0 )
-        {
-            // Child process
-            close( stdoutPipe[0] );
-            close( stderrPipe[0] );
-            dup2( stdoutPipe[1], STDOUT_FILENO );
-            dup2( stderrPipe[1], STDERR_FILENO );
-            close( stdoutPipe[1] );
-            close( stderrPipe[1] );
-
-            execl( "/bin/sh", "sh", "-c", cmd.c_str(), nullptr );
-            _exit( 127 );
-        }
-
-        // Parent process: read from pipes with timeout
-        close( stdoutPipe[1] );
-        close( stderrPipe[1] );
-
-        struct pollfd fds[2] = {
-            { stdoutPipe[0], POLLIN, 0 },
-            { stderrPipe[0], POLLIN, 0 }
-        };
-
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds( timeout );
-        bool timedOut = false;
-        int activeFds = 2;
-        char buf[4096];
-
-        while( activeFds > 0 )
-        {
-            auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    deadline - std::chrono::steady_clock::now() );
-
-            if( remaining.count() <= 0 )
-            {
-                timedOut = true;
-                break;
-            }
-
-            int ret = poll( fds, 2, static_cast<int>( remaining.count() ) );
-
-            if( ret < 0 )
-            {
-                if( errno == EINTR )
-                    continue;
-                break;
-            }
-
-            for( int i = 0; i < 2; ++i )
-            {
-                if( fds[i].fd < 0 )
-                    continue;
-
-                if( fds[i].revents & ( POLLIN | POLLHUP ) )
-                {
-                    ssize_t n = read( fds[i].fd, buf, sizeof( buf ) - 1 );
-
-                    if( n > 0 )
-                    {
-                        buf[n] = '\0';
-                        ( i == 0 ? stdoutStr : stderrStr ) += buf;
-                    }
-                    else
-                    {
-                        close( fds[i].fd );
-                        fds[i].fd = -1;
-                        --activeFds;
-                    }
-                }
-                else if( fds[i].revents & ( POLLERR | POLLNVAL ) )
-                {
-                    close( fds[i].fd );
-                    fds[i].fd = -1;
-                    --activeFds;
-                }
-            }
-        }
-
-        // Clean up any still-open fds
-        for( int i = 0; i < 2; ++i )
-        {
-            if( fds[i].fd >= 0 )
-                close( fds[i].fd );
-        }
-
-        int exitCode = -1;
-
-        if( timedOut )
-        {
-            kill( pid, SIGKILL );
-            waitpid( pid, nullptr, 0 );
-
             wxTheApp->CallAfter( [=]()
             {
                 // Cleanup
@@ -790,7 +480,7 @@ void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
 
                 nlohmann::json resultJson;
                 resultJson["success"] = false;
-                resultJson["error"] = "Freerouting timed out after " + std::to_string( timeout ) + " seconds";
+                resultJson["error"] = "Freerouting timed out or failed to start";
 
                 ToolExecutionResult result;
                 result.tool_use_id = aToolUseId;
@@ -801,14 +491,6 @@ void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
             } );
             return;
         }
-
-        int status;
-        waitpid( pid, &status, 0 );
-
-        if( WIFEXITED( status ) )
-            exitCode = WEXITSTATUS( status );
-
-        wxLogInfo( "AUTOROUTE ASYNC: Freerouting finished with exit code %d", exitCode );
 
         if( exitCode != 0 )
         {

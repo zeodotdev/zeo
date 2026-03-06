@@ -440,6 +440,9 @@ App.Bridge = (function() {
         var msg = JSON.stringify(Object.assign({action: action}, data || {}));
         if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.agent) {
             window.webkit.messageHandlers.agent.postMessage(msg);
+        } else if (window.agent && window.agent.postMessage) {
+            // wxWidgets 3.3+ WebView2: AddScriptMessageHandler("agent") creates window.agent
+            window.agent.postMessage(msg);
         } else if (window.chrome && window.chrome.webview) {
             window.chrome.webview.postMessage(msg);
         } else {

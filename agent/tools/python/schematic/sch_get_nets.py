@@ -33,11 +33,11 @@ try:
     connected_pin_uuids = set()
 
     for net in nets_resp.nets:
-        # Apply filter if provided
-        if filter_pattern and not fnmatch.fnmatch(net.name, filter_pattern):
-            continue
-        # Always skip truly unconnected stub nets (no useful info)
-        if net.name.startswith('unconnected-'):
+        # Skip internal/unnamed nets unless filter matches
+        if not filter_pattern:
+            if net.name.startswith('unconnected-') or net.name.startswith('Net-('):
+                continue
+        elif not fnmatch.fnmatch(net.name, filter_pattern):
             continue
 
         pins = []

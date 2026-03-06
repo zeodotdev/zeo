@@ -733,7 +733,7 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                 auto error = j.value( "error", json::object() );
 
                 LLMStreamChunk chunk;
-                chunk.type = LLMChunkType::ERROR;
+                chunk.type = LLMChunkType::ERRORED;
                 chunk.error_type = error.value( "type", "" );
                 chunk.error_message = error.value( "message", "Unknown error" );
                 PostLLMChunk( ctx->handler, chunk );

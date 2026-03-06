@@ -68,7 +68,7 @@ OpenEditorResult OPEN_EDITOR_HANDLER::Evaluate( const nlohmann::json& aInput,
     {
         if( aAllowedPaths.empty() )
         {
-            result.action = OpenEditorResult::ERROR;
+            result.action = OpenEditorResult::ERRORED;
             result.errorMessage = "Error: no project or editor is open";
             return result;
         }
@@ -89,7 +89,7 @@ OpenEditorResult OPEN_EDITOR_HANDLER::Evaluate( const nlohmann::json& aInput,
         if( !pathValid )
         {
             wxLogWarning( "OPEN_EDITOR_HANDLER: Path validation failed: %s", pathResult.error );
-            result.action = OpenEditorResult::ERROR;
+            result.action = OpenEditorResult::ERRORED;
             result.errorMessage = "Error: " + pathResult.error;
             return result;
         }

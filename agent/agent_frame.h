@@ -21,9 +21,12 @@
 // Forward Declarations
 class AGENT_AUTH;
 class AGENT_CLOUD_SYNC;
+class CC_CONTROLLER;
 class CHAT_CONTROLLER;
 class WEBVIEW_BRIDGE;
 struct CONFLICT_INFO;
+
+enum class AgentBackend { ZEO_AGENT, CLAUDE_CODE };
 
 enum
 {
@@ -282,6 +285,8 @@ private:
     nlohmann::json                     m_pendingToolCalls;
 
     std::unique_ptr<CHAT_CONTROLLER> m_chatController;
+    std::unique_ptr<CC_CONTROLLER>   m_ccController;
+    AgentBackend                     m_backend = AgentBackend::ZEO_AGENT;
 
     void LoadAndSetSystemPrompt();
     void InitializeTools();

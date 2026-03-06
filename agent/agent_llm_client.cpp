@@ -406,10 +406,12 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
 {
     // Use direct file I/O for crash diagnostics (wxLog buffers from bg threads)
     static FILE* dbgFile = nullptr;
+#ifdef _WIN32
     if( !dbgFile )
     {
         dbgFile = _wfopen( L"C:\\Users\\jared\\AppData\\Roaming\\kicad\\logs\\stream_debug.log", L"w" );
     }
+#endif
 
     size_t realsize = size * nmemb;
     StreamContext* ctx = static_cast<StreamContext*>( userp );

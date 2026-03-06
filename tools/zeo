@@ -950,13 +950,13 @@ def cmd_monitor(args):
             list_view = self.query_one("#tool-list", ListView)
             list_view.clear()
 
-            # Show most recent at bottom (chronological order)
-            for i, tc in enumerate(self.tool_calls):
+            # Show most recent at top (reverse chronological order)
+            for i, tc in enumerate(reversed(self.tool_calls)):
                 list_view.append(ToolListItem(tc, i))
 
-            # If following, scroll to bottom and select last item
+            # If following, select the first item (most recent)
             if self.follow_mode and self.tool_calls:
-                list_view.index = len(self.tool_calls) - 1
+                list_view.index = 0
                 self._update_detail(self.tool_calls[-1])
 
         def _update_detail(self, tc: ToolCall):

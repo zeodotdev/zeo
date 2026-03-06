@@ -1044,6 +1044,110 @@
     "deferred": false
   },
   {
+    "name": "sch_draft_circuit",
+    "description": "Place circuit components with wiring recommendations shown as blue guide lines. Use this for complex or crowded circuits where auto-wiring would be messy. The tool places symbols and power symbols, then stores wiring recommendations in each symbol's Agent_Wiring field. The user manually routes wires following the blue guides, then notifies the agent to run ERC verification.\n\nWorkflow: 1) Call this tool with symbols, power_symbols, and connections. 2) Tell the user to manually wire the blue guide lines. 3) Wait for user confirmation. 4) Run sch_run_erc to verify connections.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "symbols": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "lib_id": {
+                "type": "string",
+                "description": "Library ID (e.g., 'Device:R', 'Device:C', 'Amplifier_Operational:LM358')"
+              },
+              "position": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Position in mm [x, y]. Auto-snapped to 1.27mm grid."
+              },
+              "id": {
+                "type": "string",
+                "description": "Temporary ID for referencing in connections (e.g., 'r1', 'mcu')"
+              },
+              "angle": {
+                "type": "number",
+                "description": "CCW rotation degrees (0, 90, 180, 270)"
+              },
+              "mirror": {
+                "type": "string",
+                "enum": ["none", "x", "y"]
+              },
+              "unit": {
+                "type": "integer",
+                "description": "Unit number for multi-unit symbols. Default: 1"
+              },
+              "properties": {
+                "type": "object",
+                "description": "Symbol properties: {\"Value\": \"10k\", \"Footprint\": \"...\"}"
+              }
+            },
+            "required": ["lib_id", "position", "id"]
+          },
+          "description": "Array of symbols to place"
+        },
+        "power_symbols": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Power symbol name: 'VCC', 'GND', '3V3', etc."
+              },
+              "position": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Position in mm [x, y]"
+              },
+              "id": {
+                "type": "string",
+                "description": "Temporary ID for referencing in connections"
+              },
+              "angle": {
+                "type": "number",
+                "description": "CCW rotation degrees (0, 90, 180, 270)"
+              }
+            },
+            "required": ["name", "position", "id"]
+          },
+          "description": "Array of power symbols to place"
+        },
+        "connections": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "description": "Array of connection pairs. Each pair: [\"id:pin\", \"id:pin\"] for pin-to-pin or [\"id:pin\", \"NET_NAME\"] for pin-to-net. Example: [[\"mcu:PA0\", \"r1:1\"], [\"r1:2\", \"GND\"]]"
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {"type": "string"},
+              "position": {"type": "array", "items": {"type": "number"}},
+              "type": {"type": "string", "enum": ["local", "global", "hierarchical"]}
+            }
+          },
+          "description": "Optional labels to place"
+        }
+      },
+      "required": ["symbols", "connections"]
+    },
+    "app": "sch",
+    "script": "schematic/sch_draft_circuit.py",
+    "needs_bbox": true,
+    "read_only": false,
+    "group": "SCHEMATIC",
+    "deferred": false
+  },
+  {
     "name": "sch_annotate",
     "description": "Annotate symbols in the open schematic. Assigns reference designators (R1, C1, U1, etc.) to symbols that have '?' placeholders. Can re-annotate all symbols or only unannotated ones. Annotation is global across all sheets, so references on a sub-sheet may not start at 1 (e.g., R5, C3) -- this is expected. REQUIRES: Schematic editor must be open with a document loaded.",
     "input_schema": {

@@ -620,7 +620,7 @@ void VCS_IPC_HANDLER::HandleConnectGitHub( const json& aMsg )
             : wxString();
 
     // Open the VCS-specific GitHub OAuth page in the user's default browser.
-    // The page requests 'repo' scope and redirects back via kicad-agent://vcs-callback.
+    // The page requests 'repo' scope and redirects back via zeo://vcs-callback.
     wxLaunchDefaultBrowser( "https://zeo.dev/auth/connect-vcs" );
     SendResponse( reqId, true, json::object() );
 }

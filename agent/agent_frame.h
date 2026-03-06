@@ -279,6 +279,7 @@ private:
 
     std::unique_ptr<CHAT_CONTROLLER> m_chatController;
 
+    void LoadAndSetSystemPrompt();
     void InitializeTools();
 
     // Multi-project access helpers

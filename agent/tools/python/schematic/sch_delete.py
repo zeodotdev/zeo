@@ -40,10 +40,10 @@ try:
                 not_found.append(target)
 
     # Process query-based targets
-    def pos_match(actual_nm, expected_mm):
-        ax = round(actual_nm.x / 1e6, 2)
-        ay = round(actual_nm.y / 1e6, 2)
-        return abs(ax - expected_mm[0]) <= 0.01 and abs(ay - expected_mm[1]) <= 0.01
+    def pos_match(actual_nm, expected_mm, tol=0.1):
+        ax = actual_nm.x / 1e6
+        ay = actual_nm.y / 1e6
+        return abs(ax - expected_mm[0]) <= tol and abs(ay - expected_mm[1]) <= tol
 
     for q in query_targets:
         q_type = q.get('type', '')
@@ -69,6 +69,20 @@ try:
         elif q_type in ('label', 'global_label', 'hierarchical_label'):
             type_map = {'label': 'NetLabel', 'global_label': 'GlobalLabel', 'hierarchical_label': 'HierarchicalLabel'}
             expected_class = type_map.get(q_type, '')
+            q_ref = q.get('ref', None)
+
+            # If ref is specified, collect that symbol's pin positions (in nm)
+            ref_pin_positions = set()
+            if q_ref:
+                ref_sym = sch.symbols.get_by_ref(q_ref)
+                if ref_sym:
+                    try:
+                        all_pins = sch.symbols.get_all_transformed_pin_positions(ref_sym)
+                        for tp in all_pins:
+                            ref_pin_positions.add((tp['position'].x, tp['position'].y))
+                    except:
+                        pass
+
             for lbl in sch.labels.get_all():
                 ok = True
                 if expected_class and type(lbl).__name__ != expected_class:
@@ -76,6 +90,8 @@ try:
                 if q_text is not None and getattr(lbl, 'text', '') != q_text:
                     ok = False
                 if q_pos is not None and not pos_match(lbl.position, q_pos):
+                    ok = False
+                if q_ref is not None and (lbl.position.x, lbl.position.y) not in ref_pin_positions:
                     ok = False
                 if ok:
                     matched.append(lbl)

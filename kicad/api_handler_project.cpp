@@ -42,10 +42,66 @@ API_HANDLER_PROJECT::API_HANDLER_PROJECT( KICAD_MANAGER_FRAME* aFrame ) :
 {
     registerHandler<LaunchEditor, LaunchEditorResponse>(
             &API_HANDLER_PROJECT::handleLaunchEditor );
+    registerHandler<GetInstructions, GetInstructionsResponse>(
+            &API_HANDLER_PROJECT::handleGetInstructions );
     registerHandler<GetToolSchemas, GetToolSchemasResponse>(
             &API_HANDLER_PROJECT::handleGetToolSchemas );
     registerHandler<ExecuteTool, ExecuteToolResponse>(
             &API_HANDLER_PROJECT::handleExecuteTool );
+}
+
+
+/// Resolves the SharedSupport/agent directory path (same logic as TOOL_SCRIPT_LOADER).
+static std::string GetAgentDir()
+{
+    const char* envDir = std::getenv( "AGENT_PYTHON_DIR" );
+
+    if( envDir && envDir[0] )
+    {
+        // AGENT_PYTHON_DIR points to the python/ subdirectory — go up one level to agent/
+        wxFileName dir( wxString::FromUTF8( envDir ), "" );
+        dir.RemoveLastDir();
+        return dir.GetPath().ToStdString();
+    }
+
+    wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+    wxFileName dir( exePath.GetPath(), "" );
+    dir.RemoveLastDir();
+    dir.AppendDir( "SharedSupport" );
+    dir.AppendDir( "agent" );
+    return dir.GetPath().ToStdString();
+}
+
+
+HANDLER_RESULT<GetInstructionsResponse> API_HANDLER_PROJECT::handleGetInstructions(
+        const HANDLER_CONTEXT<GetInstructions>& aCtx )
+{
+    GetInstructionsResponse response;
+
+    if( m_instructionsCache.empty() )
+    {
+        std::string agentDir = GetAgentDir();
+        std::string corePath = agentDir + "/prompts/core.md";
+        std::ifstream file( corePath );
+
+        if( !file.is_open() )
+        {
+            ApiResponseStatus e;
+            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+            e.set_error_message( "Instructions not found at " + corePath );
+            return tl::unexpected( e );
+        }
+
+        std::ostringstream ss;
+        ss << file.rdbuf();
+        m_instructionsCache = ss.str();
+
+        wxLogMessage( "API_HANDLER_PROJECT: Loaded instructions from %s (%zu bytes)",
+                      corePath, m_instructionsCache.size() );
+    }
+
+    response.set_instructions_md( m_instructionsCache );
+    return response;
 }
 
 
@@ -195,10 +251,7 @@ HANDLER_RESULT<LaunchEditorResponse> API_HANDLER_PROJECT::handleLaunchEditor(
         wxLogMessage( "API_HANDLER_PROJECT: Editor launched successfully" );
     }
 
-    // Editors launched via KIWAY share the project manager's API server —
-    // no separate socket to discover.
     response.set_socket_path( "" );
-
     return response;
 }
 
@@ -318,12 +371,75 @@ HANDLER_RESULT<ExecuteToolResponse> API_HANDLER_PROJECT::handleExecuteTool(
         return response;
     }
 
+    // Handle create_project directly via the project manager's native CreateNewProject()
+    if( toolName == "create_project" )
+    {
+        try
+        {
+            nlohmann::json args = toolArgsJson.empty() ? nlohmann::json::object()
+                                                        : nlohmann::json::parse( toolArgsJson );
+            std::string projectName = args.value( "project_name", "" );
+            std::string directory = args.value( "directory", "" );
+
+            if( projectName.empty() || directory.empty() )
+            {
+                response.set_success( false );
+                response.set_error_message( "project_name and directory are required" );
+                return response;
+            }
+
+            // Build project directory and file paths
+            wxString projDir = wxString::FromUTF8( directory ) + wxFileName::GetPathSeparator()
+                             + wxString::FromUTF8( projectName );
+
+            if( !wxFileName::Mkdir( projDir, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL )
+                && !wxDir::Exists( projDir ) )
+            {
+                response.set_success( false );
+                response.set_error_message( "Could not create directory: " + projDir.ToStdString() );
+                return response;
+            }
+
+            wxFileName proFile( projDir, wxString::FromUTF8( projectName ), "kicad_pro" );
+
+            wxLogMessage( "API_HANDLER_PROJECT: Creating project '%s' at '%s'",
+                          projectName, proFile.GetFullPath() );
+
+            // Use the project manager's native method — creates proper stub files
+            // with correct version numbers, matching what File > New Project does.
+            m_frame->CreateNewProject( proFile, true );
+
+            // Now load the newly created project
+            bool loaded = m_frame->LoadProject( proFile );
+
+            nlohmann::json result;
+            result["status"] = "success";
+            result["project_path"] = projDir.ToStdString();
+            result["files_created"] = {
+                projectName + ".kicad_pro",
+                projectName + ".kicad_sch",
+                projectName + ".kicad_pcb"
+            };
+            result["project_opened"] = loaded;
+
+            response.set_success( true );
+            response.set_result_json( result.dump( 2 ) );
+        }
+        catch( const std::exception& e )
+        {
+            response.set_success( false );
+            response.set_error_message( std::string( "create_project failed: " ) + e.what() );
+        }
+
+        return response;
+    }
+
     // Route tool execution: agent handler tools go to FRAME_AGENT via TOOL_REGISTRY,
     // Python-scripted tools go to FRAME_TERMINAL for headless Python execution.
     static const std::unordered_set<std::string> AGENT_TOOLS = {
         "check_status",
         "datasheet_query", "extract_datasheet", "generate_symbol",
-        "generate_footprint", "sch_import_symbol", "create_project",
+        "generate_footprint", "sch_import_symbol",
         "pcb_autoroute", "generate_net_classes"
     };
 

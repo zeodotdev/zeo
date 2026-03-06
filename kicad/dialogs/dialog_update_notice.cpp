@@ -35,7 +35,7 @@ DIALOG_UPDATE_NOTICE::DIALOG_UPDATE_NOTICE( wxWindow* aWindow, const wxString& a
         m_detailsUrl( aDetailsUrl ),
         m_downloadsUrl( aDownloadsUrl )
 {
-    wxString msg = wxString::Format( _( "Zeo %s is now available (you have %s). Would you like to download it now?" ), aNewVersion, GetMajorMinorPatchVersion()  );
+    wxString msg = wxString::Format( _( "Zeo %s is now available (you have %s). Would you like to download it now?" ), aNewVersion, GetZeoMajorMinorPatchVersion() );
     m_messageLine2->SetLabelText( msg );
 
     Fit();
@@ -64,5 +64,4 @@ void DIALOG_UPDATE_NOTICE::OnBtnDetailsPageClicked( wxCommandEvent& aEvent )
 void DIALOG_UPDATE_NOTICE::OnBtnDownloadsPageClicked( wxCommandEvent& aEvent )
 {
     wxLaunchDefaultBrowser( m_downloadsUrl, wxBROWSER_NEW_WINDOW );
-    EndModal( wxID_YES );
 }

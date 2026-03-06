@@ -182,8 +182,18 @@ else:
             results.append({'pin': pin_id, 'label': label_text, 'error': str(e)})
 
 # Batch-create all labels in a single IPC call
+created_items = []
 if labels_to_create:
-    sch.crud.create_items(labels_to_create)
+    created_items = sch.crud.create_items(labels_to_create) or []
+
+# Attach UUIDs from created items to results
+if created_items:
+    success_results = [r for r in results if 'error' not in r]
+    for i, item in enumerate(created_items):
+        if i < len(success_results):
+            uid = str(item.id.value) if hasattr(item, 'id') and hasattr(item.id, 'value') else str(getattr(item, 'id', ''))
+            if uid:
+                success_results[i]['uuid'] = uid
 
 # Auto-sync sheet pins when placing hierarchical labels
 if label_type == 'hierarchical':

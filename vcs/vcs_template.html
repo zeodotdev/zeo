@@ -3590,7 +3590,7 @@ const Actions = {
       return;
     }
     // Opens zeo.dev/auth/connect-vcs which triggers GitHub OAuth with repo scope.
-    // When auth completes, the app receives kicad-agent://vcs-callback and
+    // When auth completes, the app receives zeo://vcs-callback and
     // sends a github_auth_complete message back to the webview.
     Bridge.send('connect_github');
     Toast.info('Opening GitHub authorization in your browser…');
@@ -3609,7 +3609,7 @@ const Actions = {
       return;
     }
     // Opens zeo.dev/auth/connect-gitlab which triggers GitLab OAuth.
-    // When auth completes, the app receives kicad-agent://vcs-callback and
+    // When auth completes, the app receives zeo://vcs-callback and
     // sends a gitlab_auth_complete message back to the webview.
     Bridge.send('connect_gitlab');
     Toast.info('Opening GitLab authorization in your browser…');

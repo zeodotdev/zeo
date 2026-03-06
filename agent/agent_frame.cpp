@@ -35,6 +35,8 @@
 #include <wx/filedlg.h>
 #include <wx/dir.h>
 #include <wx/stattext.h>
+#include <wx/hyperlink.h>
+#include <wx/button.h>
 #include <bitmaps.h>
 #include <id.h>
 #include <nlohmann/json.hpp>
@@ -2159,9 +2161,46 @@ void AGENT_FRAME::DoSignIn()
         Bind( EVT_AUTH_CALLBACK, &AGENT_FRAME::OnAuthCallback, this );
         m_authCallbackBound = true;
     }
-#endif
 
+    std::string authUrl;
+    m_auth->StartOAuthFlow( "agent", &authUrl );
+
+    // Show fallback dialog with clickable link (browser may not auto-open on Linux/Docker)
+    if( !authUrl.empty() )
+    {
+        wxDialog dlg( this, wxID_ANY, _( "Sign In" ), wxDefaultPosition, wxDefaultSize,
+                      wxDEFAULT_DIALOG_STYLE );
+        wxBoxSizer* sizer = new wxBoxSizer( wxVERTICAL );
+
+        sizer->Add( new wxStaticText( &dlg, wxID_ANY,
+                _( "If the browser did not open automatically,\nclick the link below or copy it to your browser:" ) ),
+                0, wxALL, 16 );
+
+        wxString wxUrl = wxString::FromUTF8( authUrl );
+
+        wxHyperlinkCtrl* link = new wxHyperlinkCtrl( &dlg, wxID_ANY, _( "Open sign-in page" ), wxUrl );
+        sizer->Add( link, 0, wxLEFT | wxRIGHT, 16 );
+
+        wxButton* copyBtn = new wxButton( &dlg, wxID_ANY, _( "Copy Link" ) );
+        copyBtn->Bind( wxEVT_BUTTON, [wxUrl]( wxCommandEvent& ) {
+            if( wxTheClipboard->Open() )
+            {
+                wxTheClipboard->SetData( new wxTextDataObject( wxUrl ) );
+                wxTheClipboard->Close();
+            }
+        } );
+        sizer->Add( copyBtn, 0, wxALL, 16 );
+
+        sizer->Add( dlg.CreateStdDialogButtonSizer( wxOK ), 0, wxALL | wxEXPAND, 8 );
+
+        dlg.SetSizer( sizer );
+        dlg.Fit();
+        dlg.CentreOnParent();
+        dlg.ShowModal();
+    }
+#else
     m_auth->StartOAuthFlow( "agent" );
+#endif
 }
 
 #ifndef __WXMAC__

@@ -430,11 +430,16 @@ KIWAY_PLAYER* KIWAY::Player( FRAME_T aFrameType, bool doCreate, wxTopLevelWindow
             APP_MONITOR::AddNavigationBreadcrumb( msg, "kiway.player" );
 
             FACE_T  face_type = KifaceType( aFrameType );
+            wxLogInfo( "KIWAY::Player: loading kiface for face %d (frame %d)", face_type, aFrameType );
             KIFACE* kiface = KiFACE( face_type );
 
             if( !kiface )
+            {
+                wxLogError( "KIWAY::Player: KiFACE returned null for face %d", face_type );
                 return nullptr;
+            }
 
+            wxLogInfo( "KIWAY::Player: creating window for frame type %d", aFrameType );
             frame = (KIWAY_PLAYER*) kiface->CreateKiWindow( aParent, // Parent window of frame in modal mode,
                                                                      // NULL in non modal mode
                                                             aFrameType, this,
@@ -442,14 +447,21 @@ KIWAY_PLAYER* KIWAY::Player( FRAME_T aFrameType, bool doCreate, wxTopLevelWindow
                                                                   // were passed to KIFACE::OnKifaceStart()
             );
             if( frame )
+            {
+                wxLogInfo( "KIWAY::Player: window created successfully for frame type %d", aFrameType );
                 m_playerFrameId[aFrameType].store( frame->GetId() );
+            }
+            else
+            {
+                wxLogError( "KIWAY::Player: CreateKiWindow returned null for frame type %d", aFrameType );
+            }
 
             return frame;
         }
         catch( ... )
         {
             Pgm().HandleException( std::current_exception() );
-            wxLogError( _( "Error loading editor." ) );
+            wxLogError( _( "Error loading editor (frame type %d)." ), aFrameType );
         }
     }
 

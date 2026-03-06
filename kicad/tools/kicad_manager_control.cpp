@@ -759,6 +759,8 @@ int KICAD_MANAGER_CONTROL::ShowPlayer( const TOOL_EVENT& aEvent )
     FRAME_T       playerType = aEvent.Parameter<FRAME_T>();
     KIWAY_PLAYER* player;
 
+    wxLogInfo( "ShowPlayer: requested frame type %d", (int) playerType );
+
     if( playerType == FRAME_SCH && !m_frame->IsProjectActive() )
     {
         DisplayInfoMessage( m_frame, _( "Create (or open) a project to edit a schematic." ), wxEmptyString );
@@ -771,7 +773,10 @@ int KICAD_MANAGER_CONTROL::ShowPlayer( const TOOL_EVENT& aEvent )
     }
 
     if( m_inShowPlayer )
+    {
+        wxLogWarning( "ShowPlayer: reentrancy guard active, skipping frame type %d", (int) playerType );
         return -1;
+    }
 
     REENTRANCY_GUARD guard( &m_inShowPlayer );
 
@@ -787,7 +792,7 @@ int KICAD_MANAGER_CONTROL::ShowPlayer( const TOOL_EVENT& aEvent )
 
     if( !player )
     {
-        wxLogError( _( "Application cannot start." ) );
+        wxLogError( _( "Application cannot start (frame type %d)." ), (int) playerType );
         return -1;
     }
 

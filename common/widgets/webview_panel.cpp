@@ -78,6 +78,13 @@ WEBVIEW_PANEL::WEBVIEW_PANEL( wxWindow* aParent, wxWindowID aId, const wxPoint& 
     m_backend = wxWebViewBackendDefault;
 #endif
 
+    if( !m_browser )
+    {
+        wxLogError( "WEBVIEW_PANEL: wxWebView::New() returned null — WebKit2GTK may not be available" );
+        SetSizer( sizer );
+        return;
+    }
+
 #ifdef __WXMAC__
     m_browser->RegisterHandler( wxSharedPtr<wxWebViewHandler>( new wxWebViewArchiveHandler( "wxfs" ) ) );
     m_browser->RegisterHandler( wxSharedPtr<wxWebViewHandler>( new wxWebViewFSHandler( "memory" ) ) );
@@ -105,7 +112,7 @@ WEBVIEW_PANEL::~WEBVIEW_PANEL()
 
 void WEBVIEW_PANEL::BindLoadedEvent()
 {
-    if( m_loadedEventBound )
+    if( m_loadedEventBound || !m_browser )
         return;
 
     Bind( wxEVT_WEBVIEW_LOADED, &WEBVIEW_PANEL::OnWebViewLoaded, this, m_browser->GetId() );
@@ -114,6 +121,9 @@ void WEBVIEW_PANEL::BindLoadedEvent()
 
 void WEBVIEW_PANEL::LoadURL( const wxString& aURL )
 {
+    if( !m_browser )
+        return;
+
     wxLogTrace( "webview", "Loading URL: %s", aURL );
 
     if( aURL.starts_with( "file:/" ) && !aURL.starts_with( "file:///" ) )
@@ -134,6 +144,9 @@ void WEBVIEW_PANEL::LoadURL( const wxString& aURL )
 
 void WEBVIEW_PANEL::SetPage( const wxString& aHtmlContent )
 {
+    if( !m_browser )
+        return;
+
     wxLogTrace( "webview", "Setting page content" );
     m_browser->SetPage( aHtmlContent, "file://" );
 }

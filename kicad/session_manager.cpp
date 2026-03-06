@@ -34,6 +34,9 @@
 #include <wx/filename.h>
 #include <wx/log.h>
 #include <wx/msgdlg.h>
+#include <wx/hyperlink.h>
+#include <wx/stattext.h>
+#include <wx/clipbrd.h>
 #include <wx/stdpaths.h>
 #include <wx/textfile.h>
 #include <wx/utils.h>
@@ -199,6 +202,12 @@ void SESSION_MANAGER::Initialize()
         m_auth->Configure( supabaseUrl, supabaseKey );
     }
 
+    // Keep launcher UI in sync whenever auth state changes (e.g. sign-in from agent window)
+    m_auth->SetAuthStateCallback( [this]() {
+        if( m_frame )
+            m_frame->CallAfter( [this]() { UpdateUI(); } );
+    } );
+
     UpdateUI();
 }
 
@@ -264,9 +273,46 @@ void SESSION_MANAGER::StartOAuthFlow()
         m_frame->Bind( EVT_AUTH_CALLBACK, &SESSION_MANAGER::OnAuthCallback, this );
         m_authCallbackBound = true;
     }
-#endif
 
+    std::string authUrl;
+    m_auth->StartOAuthFlow( "", &authUrl );
+
+    // Show fallback dialog with clickable link (browser may not auto-open on Linux/Docker)
+    if( !authUrl.empty() )
+    {
+        wxDialog dlg( m_frame, wxID_ANY, _( "Sign In" ), wxDefaultPosition, wxDefaultSize,
+                      wxDEFAULT_DIALOG_STYLE );
+        wxBoxSizer* sizer = new wxBoxSizer( wxVERTICAL );
+
+        sizer->Add( new wxStaticText( &dlg, wxID_ANY,
+                _( "If the browser did not open automatically,\nclick the link below or copy it to your browser:" ) ),
+                0, wxALL, 16 );
+
+        wxString wxUrl = wxString::FromUTF8( authUrl );
+
+        wxHyperlinkCtrl* link = new wxHyperlinkCtrl( &dlg, wxID_ANY, _( "Open sign-in page" ), wxUrl );
+        sizer->Add( link, 0, wxLEFT | wxRIGHT, 16 );
+
+        wxButton* copyBtn = new wxButton( &dlg, wxID_ANY, _( "Copy Link" ) );
+        copyBtn->Bind( wxEVT_BUTTON, [wxUrl]( wxCommandEvent& ) {
+            if( wxTheClipboard->Open() )
+            {
+                wxTheClipboard->SetData( new wxTextDataObject( wxUrl ) );
+                wxTheClipboard->Close();
+            }
+        } );
+        sizer->Add( copyBtn, 0, wxALL, 16 );
+
+        sizer->Add( dlg.CreateStdDialogButtonSizer( wxOK ), 0, wxALL | wxEXPAND, 8 );
+
+        dlg.SetSizer( sizer );
+        dlg.Fit();
+        dlg.CentreOnParent();
+        dlg.ShowModal();
+    }
+#else
     m_auth->StartOAuthFlow();
+#endif
 }
 
 #ifndef __WXMAC__

@@ -23,6 +23,8 @@ class wxEvtHandler;
 class AGENT_AUTH
 {
 public:
+    using AuthStateCallback = std::function<void()>;
+
     AGENT_AUTH();
     ~AGENT_AUTH();
 
@@ -81,11 +83,23 @@ public:
     void LoadSession();
 
     /**
+     * Register a callback that fires whenever auth state changes
+     * (sign-in, sign-out, token refresh).  Used by SESSION_MANAGER
+     * to keep the launcher UI in sync regardless of which window
+     * initiated the sign-in.
+     */
+    void SetAuthStateCallback( AuthStateCallback aCallback )
+    {
+        m_authStateCallback = std::move( aCallback );
+    }
+
+    /**
      * Start the OAuth flow by launching the browser to the auth web page.
      * @param aSource Optional source identifier (e.g., "agent") to track where sign-in originated
-     * @return True if browser was launched successfully
+     * @param aAuthUrlOut If non-null, receives the auth URL (for fallback UI on Linux)
+     * @return True if the OAuth flow was started
      */
-    bool StartOAuthFlow( const std::string& aSource = "" );
+    bool StartOAuthFlow( const std::string& aSource = "", std::string* aAuthUrlOut = nullptr );
 
     /**
      * Read the access token directly from the session file on disk.
@@ -139,6 +153,8 @@ private:
 
     // URL decode a string
     std::string UrlDecode( const std::string& value );
+
+    AuthStateCallback m_authStateCallback;
 
 #ifndef __WXMAC__
     std::unique_ptr<AUTH_CALLBACK_SERVER> m_callbackServer;

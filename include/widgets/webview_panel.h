@@ -52,7 +52,8 @@ public:
 
     void RunScriptAsync( const wxString& aScript, void* aClientData = nullptr ) const
     {
-        m_browser->RunScriptAsync( aScript, aClientData );
+        if( m_browser )
+            m_browser->RunScriptAsync( aScript, aClientData );
     }
 
     bool HasLoadError() const { return m_loadError; }

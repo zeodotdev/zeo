@@ -18,6 +18,10 @@
 #include <sys/stat.h>
 #include <map>
 
+#ifndef __WXMAC__
+#include <cstdlib>
+#endif
+
 using json = nlohmann::json;
 
 static const size_t MAX_SESSION_FILE_SIZE = 1024 * 1024;  // 1MB safety limit
@@ -50,9 +54,39 @@ void AGENT_AUTH::SignOut()
     m_tokenExpiry = 0;
     ClearSession();
     wxLogTrace( "Agent", "Signed out" );
+
+    if( m_authStateCallback )
+        m_authStateCallback();
 }
 
-bool AGENT_AUTH::StartOAuthFlow( const std::string& aSource )
+/**
+ * Try multiple methods to open a URL in the user's browser on Linux.
+ * Returns true if any method claims success (though success can't be
+ * verified reliably from inside containers).
+ */
+#ifndef __WXMAC__
+static bool LaunchBrowserLinux( const std::string& aUrl )
+{
+    // 1. Try D-Bus portal (works from Docker when host portal is running)
+    std::string portalCmd = "gdbus call --session"
+                            " --dest org.freedesktop.portal.Desktop"
+                            " --object-path /org/freedesktop/portal/desktop"
+                            " --method org.freedesktop.portal.OpenURI.OpenURI"
+                            " '' '" + aUrl + "' {} >/dev/null 2>&1";
+
+    if( system( portalCmd.c_str() ) == 0 )
+        return true;
+
+    // 2. Try wxWidgets default (uses gtk_show_uri / xdg-open)
+    if( wxLaunchDefaultBrowser( aUrl ) )
+        return true;
+
+    return false;
+}
+#endif
+
+
+bool AGENT_AUTH::StartOAuthFlow( const std::string& aSource, std::string* aAuthUrlOut )
 {
 #ifndef __WXMAC__
     // Linux: use local HTTP server for OAuth callback
@@ -67,13 +101,11 @@ bool AGENT_AUTH::StartOAuthFlow( const std::string& aSource )
             std::ostringstream authUrl;
             authUrl << m_authWebUrl << "?redirect_uri=" << callback << "&signout=true";
 
-            if( !wxLaunchDefaultBrowser( authUrl.str() ) )
-            {
-                wxMessageBox( _( "Could not open browser. Please check your default browser settings." ),
-                              _( "Error" ), wxOK | wxICON_ERROR );
-                m_callbackServer.reset();
-                return false;
-            }
+            // Return URL to caller for fallback UI
+            if( aAuthUrlOut )
+                *aAuthUrlOut = authUrl.str();
+
+            LaunchBrowserLinux( authUrl.str() );
 
             return true;
         }
@@ -624,7 +656,10 @@ bool AGENT_AUTH::HandleOAuthCallback( const std::string& aCallbackUrl, std::stri
         }
 
         SaveSession();
-        // wxLogMessage( "OAuth sign in successful" );
+
+        if( m_authStateCallback )
+            m_authStateCallback();
+
         return true;
     }
 

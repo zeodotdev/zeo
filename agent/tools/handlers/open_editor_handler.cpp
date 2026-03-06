@@ -24,8 +24,9 @@ PathValidationResult ValidatePathInProject( const std::string& aFilePath,
         auto projectStr = canonicalProject.string();
         auto fileStr = canonicalFile.string();
 
-        if( !projectStr.empty() && projectStr.back() != '/' )
-            projectStr += '/';
+        // Ensure project path ends with the platform's path separator
+        if( !projectStr.empty() && projectStr.back() != '/' && projectStr.back() != '\\' )
+            projectStr += std::filesystem::path::preferred_separator;
 
         if( fileStr.find( projectStr ) != 0 && fileStr != canonicalProject.string() )
         {

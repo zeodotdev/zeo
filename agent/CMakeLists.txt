@@ -139,6 +139,9 @@ set( AGENT_SRCS
     tools/handlers/netclass_generator.cpp
     tools/handlers/file_io_handler.cpp
 
+    # SVG rasterizer (nanosvg-based, used on Windows/Linux for screenshot SVG->PNG)
+    tools/util/svg_rasterizer.cpp
+
 )
 
 # Platform-specific sources
@@ -153,6 +156,11 @@ if( APPLE )
     set_source_files_properties( "${CMAKE_CURRENT_SOURCE_DIR}/agent.icns" PROPERTIES
         MACOSX_PACKAGE_LOCATION Resources
         )
+endif()
+
+# Windows resource file (manifest for Common Controls v6, DPI awareness, version info)
+if( WIN32 )
+    set( AGENT_RESOURCES ${CMAKE_SOURCE_DIR}/resources/msw/agent.rc )
 endif()
 
 # Create the standalone executable

@@ -2,6 +2,7 @@
 #include "../tool_registry.h"
 #include "../util/kicad_cli_util.h"
 #include "../util/process_util.h"
+#include "../util/svg_rasterizer.h"
 #include <frame_type.h>
 
 #include <cstdio>
@@ -21,8 +22,13 @@
 // Max image dimension in pixels per Claude API limits
 static const int MAX_IMAGE_DIMENSION = 1568;
 
-// Shell metacharacters that are unsafe in quoted command arguments
+// Shell metacharacters that are unsafe in quoted command arguments.
+// On Windows, backslash is a valid path separator and must be allowed.
+#ifdef _WIN32
+static const char* UNSAFE_PATH_CHARS = "`$\"!#&|;(){}[]<>?*~\n\r";
+#else
 static const char* UNSAFE_PATH_CHARS = "`$\\\"!#&|;(){}[]<>?*~\n\r";
+#endif
 
 // Background colors from _builtin_default theme (builtin_color_themes.h).
 // Used for compositing since SVG export doesn't include the canvas background.
@@ -237,7 +243,7 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
     std::string pngPath = tempDirStr + "/screenshot.png";
 
     if( !ConvertSvgToPng( svgPath, pngPath ) )
-        return "Error: Failed to convert SVG to PNG. Is 'sips' available?";
+        return "Error: Failed to convert SVG to PNG";
 
     // Crop background and resize to fit API limits (non-fatal on failure).
     // Pass the theme's canvas background since SVG export doesn't include it.
@@ -451,31 +457,8 @@ bool SCREENSHOT_HANDLER::ConvertSvgToPng( const std::string& aSvgPath,
 
     return wxFileName::FileExists( wxString::FromUTF8( aPngPath ) );
 #else
-    // Windows/Linux: use wxImage to load SVG and save as PNG
-    wxImage image;
-
-    if( !image.LoadFile( wxString::FromUTF8( aSvgPath ), wxBITMAP_TYPE_ANY ) )
-    {
-        wxLogError( "SCREENSHOT: Failed to load SVG via wxImage" );
-        return false;
-    }
-
-    // Scale to 4096px on longest side (matching sips behavior)
-    int w = image.GetWidth();
-    int h = image.GetHeight();
-
-    if( w > 0 && h > 0 )
-    {
-        double scale = 4096.0 / std::max( w, h );
-
-        if( scale != 1.0 )
-        {
-            image.Rescale( static_cast<int>( w * scale ),
-                           static_cast<int>( h * scale ), wxIMAGE_QUALITY_HIGH );
-        }
-    }
-
-    return image.SaveFile( wxString::FromUTF8( aPngPath ), wxBITMAP_TYPE_PNG );
+    // Windows/Linux: use nanosvg to rasterize SVG to PNG
+    return SvgRasterizer::RasterizeSvgToPng( aSvgPath, aPngPath, 4096 );
 #endif
 }
 

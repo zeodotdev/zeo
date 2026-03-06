@@ -50,14 +50,10 @@ inline std::string GetFrameworksDir()
 
 /**
  * Build a command prefix for running kicad-cli with proper environment.
- * Includes DYLD_LIBRARY_PATH on macOS and quotes the binary path.
+ * On macOS: sets DYLD_LIBRARY_PATH for the app bundle.
+ * On Windows: just quotes the binary path.
  *
- * NOTE: Currently macOS-only. The DYLD_LIBRARY_PATH environment variable
- * and Frameworks directory layout are specific to macOS app bundles.
- * Other platforms would need LD_LIBRARY_PATH (Linux) or PATH (Windows).
- *
- * @return Command prefix string like: DYLD_LIBRARY_PATH="..." "/path/to/kicad-cli"
- *         or empty string if kicad-cli is not found.
+ * @return Command prefix string, or empty string if kicad-cli is not found.
  */
 inline std::string GetKicadCliCommandPrefix()
 {
@@ -65,9 +61,13 @@ inline std::string GetKicadCliCommandPrefix()
     if( cliPath.empty() )
         return std::string();
 
+#ifdef __APPLE__
     std::string prefix = "DYLD_LIBRARY_PATH=\"" + GetFrameworksDir()
                          + "\" \"" + cliPath + "\"";
     return prefix;
+#else
+    return "\"" + cliPath + "\"";
+#endif
 }
 
 /**

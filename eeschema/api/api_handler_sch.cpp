@@ -73,6 +73,7 @@
 #include <eeschema_settings.h>
 #include <schematic_settings.h>
 #include <settings/common_settings.h>
+#include <settings/settings_manager.h>
 #include <sim/spice_settings.h>
 #include <sim/simulator_frame.h>
 #include <sim/spice_simulator.h>
@@ -2057,14 +2058,11 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleNavigateToSheet(
         m_frame->SetAgentTargetSheet( targetUuid );
     }
 
-    if( m_frame->IsAgentTransactionActive() )
+    // Only change the user's visible view if the setting is enabled
+    COMMON_SETTINGS* commonSettings = Pgm().GetSettingsManager().GetCommonSettings();
+
+    if( commonSettings && commonSettings->m_Agent.follow_agent_navigation )
     {
-        // During agent transactions, only update the target sheet for API operations
-        // without changing the user's visible view (already done above)
-    }
-    else
-    {
-        // Non-transaction navigation — also change the visible view
         m_frame->SetCurrentSheet( targetPath );
         m_frame->DisplayCurrentSheet();
     }

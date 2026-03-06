@@ -24,12 +24,48 @@ static void StripCarriageReturns( std::string& s )
 
 
 // ---------------------------------------------------------------------------
-// Execute — sync stub (not used since IsAsync returns true)
+// Execute (synchronous — used by MCP tool execution)
 // ---------------------------------------------------------------------------
 std::string SYMBOL_IMPORTER::Execute( const std::string& aToolName,
                                        const nlohmann::json& aInput )
 {
-    return R"({"error": "sch_import_symbol must be called asynchronously"})";
+    std::string symContent  = aInput.value( "kicad_symbol", "" );
+    std::string fpContent   = aInput.value( "kicad_footprint", "" );
+    std::string symbolName  = aInput.value( "symbol_name", "" );
+    std::string libraryName = aInput.value( "library_name", "project" );
+    bool        force       = aInput.value( "force", false );
+
+    if( symContent.empty() )
+        return R"({"error": "kicad_symbol is required"})";
+
+    if( libraryName.empty() )
+        libraryName = "project";
+
+    std::string projectPath = TOOL_REGISTRY::Instance().GetProjectPath();
+
+    if( projectPath.empty() )
+        return R"({"error": "No project open. Open or create a project first."})";
+
+    std::string result = DoImport( symContent, fpContent, symbolName,
+                                    libraryName, projectPath, force );
+
+    // Reload libraries on success
+    try
+    {
+        auto resultJson = json::parse( result );
+        std::string status = resultJson.value( "status", "" );
+
+        if( status == "created" || status == "already_exists" )
+        {
+            TOOL_REGISTRY::Instance().ReloadSymbolLib( libraryName );
+
+            if( !fpContent.empty() )
+                TOOL_REGISTRY::Instance().ReloadFootprintLib( libraryName );
+        }
+    }
+    catch( ... ) {}
+
+    return result;
 }
 
 

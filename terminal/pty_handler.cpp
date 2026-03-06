@@ -10,11 +10,15 @@
 #include <fcntl.h>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 #ifdef __APPLE__
 #include <util.h>
 #include <mach-o/dyld.h>
 #include <libgen.h>
+#include <libproc.h>
+#include <sys/proc_info.h>
+#include <sys/sysctl.h>
 #else
 #include <pty.h>
 #endif
@@ -62,6 +66,13 @@ bool PTY_HANDLER::Start( int aCols, int aRows )
         // Child process - exec the user's shell
         setenv( "TERM", "xterm-256color", 1 );
         setenv( "COLORTERM", "truecolor", 1 );
+
+        // Clear Python environment variables set by KiCad's embedded scripting.
+        // These point to the bundled Python 3.9 framework which breaks external
+        // Python installations (pyenv, homebrew, system Python) by causing version
+        // mismatches (e.g., Python 3.10 executable trying to use 3.9 libraries).
+        unsetenv( "PYTHONHOME" );
+        unsetenv( "PYTHONPATH" );
 
         // Add the app's SharedSupport/bin to PATH so tools like `zeo` are available
 #ifdef __APPLE__
@@ -334,4 +345,459 @@ void* PTY_HANDLER::ReaderThread::Entry()
     wxQueueEvent( m_owner->m_eventTarget, exitEvent );
 
     return nullptr;
+}
+
+
+pid_t PTY_HANDLER::GetForegroundPid() const
+{
+    if( m_masterFd < 0 || !m_running.load() )
+        return -1;
+
+    // tcgetpgrp returns the foreground process group ID of the terminal
+    pid_t fgPid = tcgetpgrp( m_masterFd );
+    return fgPid;
+}
+
+
+std::string PTY_HANDLER::GetForegroundProcessName() const
+{
+    pid_t fgPid = GetForegroundPid();
+
+    if( fgPid <= 0 )
+        return "";
+
+#ifdef __APPLE__
+    // Get process name using proc_name
+    char name[PROC_PIDPATHINFO_MAXSIZE];
+
+    if( proc_name( fgPid, name, sizeof( name ) ) > 0 )
+        return std::string( name );
+
+#else
+    // Linux: read /proc/<pid>/comm
+    char path[64];
+    snprintf( path, sizeof( path ), "/proc/%d/comm", fgPid );
+
+    FILE* f = fopen( path, "r" );
+
+    if( f )
+    {
+        char name[256];
+
+        if( fgets( name, sizeof( name ), f ) )
+        {
+            // Remove trailing newline
+            size_t len = strlen( name );
+
+            if( len > 0 && name[len - 1] == '\n' )
+                name[len - 1] = '\0';
+
+            fclose( f );
+            return std::string( name );
+        }
+
+        fclose( f );
+    }
+#endif
+
+    return "";
+}
+
+
+std::string PTY_HANDLER::GetForegroundCwd() const
+{
+    pid_t fgPid = GetForegroundPid();
+
+    if( fgPid <= 0 )
+        return "";
+
+#ifdef __APPLE__
+    struct proc_vnodepathinfo vnodeInfo;
+    int sz = proc_pidinfo( fgPid, PROC_PIDVNODEPATHINFO, 0, &vnodeInfo, sizeof( vnodeInfo ) );
+
+    if( sz > 0 )
+        return std::string( vnodeInfo.pvi_cdir.vip_path );
+
+#else
+    // Linux: readlink /proc/<pid>/cwd
+    char path[64];
+    snprintf( path, sizeof( path ), "/proc/%d/cwd", fgPid );
+
+    char cwd[PATH_MAX];
+    ssize_t len = readlink( path, cwd, sizeof( cwd ) - 1 );
+
+    if( len > 0 )
+    {
+        cwd[len] = '\0';
+        return std::string( cwd );
+    }
+#endif
+
+    return "";
+}
+
+
+// Names to ignore when extracting script display name
+static bool IsIgnoredName( const std::string& aName )
+{
+    if( aName.empty() )
+        return true;
+
+    // Lowercase for comparison
+    std::string lower = aName;
+
+    for( char& c : lower )
+    {
+        if( c >= 'A' && c <= 'Z' )
+            c = c - 'A' + 'a';
+    }
+
+    // Ignore temp directories, common system paths, and generic names
+    if( lower == "tmp" || lower == "temp" || lower == "var" || lower == "private" ||
+        lower == "folders" || lower == "t" || lower == "bin" || lower == "usr" ||
+        lower == "local" || lower == "lib" || lower == "python" || lower == "python3" ||
+        lower == "site-packages" || lower == "scripts" || lower == "contents" ||
+        lower == "macos" || lower == "resources" || lower == "sharedsupport" ||
+        lower == "frameworks" || lower == "applications" || lower == "opt" ||
+        lower == "homebrew" || lower == "cellar" )
+    {
+        return true;
+    }
+
+    // Ignore names that look like temp files (start with tmp/pip/wheel or contain random chars)
+    if( lower.substr( 0, 3 ) == "tmp" || lower.substr( 0, 3 ) == "pip" ||
+        lower.substr( 0, 5 ) == "wheel" )
+    {
+        return true;
+    }
+
+    // Ignore if it looks like a hash or random string (mostly hex chars)
+    int hexCount = 0;
+
+    for( char c : lower )
+    {
+        if( ( c >= '0' && c <= '9' ) || ( c >= 'a' && c <= 'f' ) )
+            hexCount++;
+    }
+
+    if( lower.length() > 8 && hexCount > (int) lower.length() * 2 / 3 )
+        return true;
+
+    return false;
+}
+
+
+// Check if a name is a known Zeo command
+static bool IsKnownCommand( const std::string& aName )
+{
+    std::string lower = aName;
+
+    for( char& c : lower )
+    {
+        if( c >= 'A' && c <= 'Z' )
+            c = c - 'A' + 'a';
+    }
+
+    return lower == "zeo" || lower == "shell" || lower == "monitor" || lower == "tool";
+}
+
+
+// Helper to extract a display name from a script path or module name
+static std::string ExtractScriptDisplayName( const std::string& aArg )
+{
+    if( aArg.empty() )
+        return "";
+
+    std::string name = aArg;
+
+    // Extract filename from path
+    size_t lastSlash = name.rfind( '/' );
+
+    if( lastSlash != std::string::npos )
+        name = name.substr( lastSlash + 1 );
+
+    // Remove .py extension if present
+    if( name.size() > 3 && name.substr( name.size() - 3 ) == ".py" )
+        name = name.substr( 0, name.size() - 3 );
+
+    // For module names like "zeo.cli", take the first component
+    // But only if it looks like a module (contains dots but not at start)
+    if( !name.empty() && name[0] != '.' )
+    {
+        size_t dot = name.find( '.' );
+
+        if( dot != std::string::npos && dot > 0 )
+            name = name.substr( 0, dot );
+    }
+
+    // Check if this is a name we should ignore (unless it's a known command)
+    if( !IsKnownCommand( name ) && IsIgnoredName( name ) )
+        return "";
+
+    // Capitalize first letter for nicer display (e.g., "zeo" -> "Zeo")
+    if( !name.empty() && name[0] >= 'a' && name[0] <= 'z' )
+        name[0] = name[0] - 'a' + 'A';
+
+    return name;
+}
+
+
+std::string PTY_HANDLER::GetForegroundDisplayName() const
+{
+    std::string procName = GetForegroundProcessName();
+
+    if( procName.empty() )
+        return "";
+
+    // Check if this is a Python process - if so, try to get a better name from args
+    bool isPython = ( procName.find( "python" ) != std::string::npos ||
+                      procName.find( "Python" ) != std::string::npos );
+
+    if( !isPython )
+        return procName;
+
+    // For Python processes, try to extract the script name from command line
+    pid_t fgPid = GetForegroundPid();
+
+    if( fgPid <= 0 )
+        return procName;
+
+#ifdef __APPLE__
+    // Use sysctl to get the command line arguments
+    int    mib[3] = { CTL_KERN, KERN_PROCARGS2, fgPid };
+    size_t size = 0;
+
+    // First call to get size
+    if( sysctl( mib, 3, nullptr, &size, nullptr, 0 ) < 0 )
+        return procName;
+
+    // Allocate buffer
+    std::vector<char> buffer( size );
+
+    if( sysctl( mib, 3, buffer.data(), &size, nullptr, 0 ) < 0 )
+        return procName;
+
+    // KERN_PROCARGS2 format: argc (int) + executable path + nulls + argv[0] + null + argv[1] + ...
+    if( size < sizeof( int ) )
+        return procName;
+
+    // Skip argc
+    char* ptr = buffer.data() + sizeof( int );
+    char* end = buffer.data() + size;
+
+    // Skip the executable path (e.g., /usr/bin/python3)
+    while( ptr < end && *ptr != '\0' )
+        ptr++;
+
+    // Skip null bytes between executable and argv[0]
+    while( ptr < end && *ptr == '\0' )
+        ptr++;
+
+    if( ptr >= end )
+        return procName;
+
+    // Collect all arguments into a vector for easier processing
+    std::vector<std::string> args;
+    bool afterDashM = false;
+
+    while( ptr < end )
+    {
+        if( *ptr != '\0' )
+        {
+            std::string arg( ptr );
+            args.push_back( arg );
+
+            // Skip to end of this argument
+            while( ptr < end && *ptr != '\0' )
+                ptr++;
+        }
+
+        // Skip null separators
+        while( ptr < end && *ptr == '\0' )
+            ptr++;
+    }
+
+    // Now scan arguments looking for useful script/command names
+    std::string scriptName;
+    std::string subCommand;
+
+    for( size_t i = 0; i < args.size(); i++ )
+    {
+        const std::string& arg = args[i];
+
+        // Skip flags
+        if( !arg.empty() && arg[0] == '-' )
+        {
+            // Remember if we saw -m (next arg is module name)
+            if( arg == "-m" && i + 1 < args.size() )
+            {
+                std::string name = ExtractScriptDisplayName( args[i + 1] );
+
+                if( !name.empty() )
+                {
+                    scriptName = name;
+
+                    // Look for subcommand after module name
+                    if( i + 2 < args.size() && !args[i + 2].empty() && args[i + 2][0] != '-' )
+                    {
+                        subCommand = args[i + 2];
+
+                        // Capitalize subcommand
+                        if( !subCommand.empty() && subCommand[0] >= 'a' && subCommand[0] <= 'z' )
+                            subCommand[0] = subCommand[0] - 'a' + 'A';
+                    }
+
+                    break;
+                }
+            }
+
+            continue;
+        }
+
+        // Try to extract a useful name from this argument
+        std::string name = ExtractScriptDisplayName( arg );
+
+        if( !name.empty() )
+        {
+            scriptName = name;
+
+            // Look for subcommand (next non-flag argument)
+            if( i + 1 < args.size() && !args[i + 1].empty() && args[i + 1][0] != '-' )
+            {
+                // Check if next arg looks like a subcommand (short, no path chars)
+                const std::string& nextArg = args[i + 1];
+
+                if( nextArg.find( '/' ) == std::string::npos &&
+                    nextArg.find( '.' ) == std::string::npos &&
+                    nextArg.length() < 20 )
+                {
+                    subCommand = nextArg;
+
+                    // Capitalize subcommand
+                    if( !subCommand.empty() && subCommand[0] >= 'a' && subCommand[0] <= 'z' )
+                        subCommand[0] = subCommand[0] - 'a' + 'A';
+                }
+            }
+
+            break;
+        }
+    }
+
+    // Build final display name
+    if( !scriptName.empty() )
+    {
+        if( !subCommand.empty() )
+            return scriptName + " " + subCommand;
+
+        return scriptName;
+    }
+
+    return procName;
+
+#else
+    // Linux: read /proc/<pid>/cmdline
+    char pathBuf[64];
+    snprintf( pathBuf, sizeof( pathBuf ), "/proc/%d/cmdline", fgPid );
+
+    FILE* f = fopen( pathBuf, "r" );
+
+    if( !f )
+        return procName;
+
+    char cmdline[4096];
+    size_t len = fread( cmdline, 1, sizeof( cmdline ) - 1, f );
+    fclose( f );
+
+    if( len == 0 )
+        return procName;
+
+    cmdline[len] = '\0';
+
+    // Collect all arguments
+    std::vector<std::string> args;
+    char* ptr = cmdline;
+    char* end = cmdline + len;
+
+    while( ptr < end )
+    {
+        if( *ptr != '\0' )
+        {
+            std::string arg( ptr );
+            args.push_back( arg );
+
+            while( ptr < end && *ptr != '\0' )
+                ptr++;
+        }
+
+        ptr++;
+    }
+
+    // Scan arguments looking for useful script/command names
+    std::string scriptName;
+    std::string subCommand;
+
+    for( size_t i = 0; i < args.size(); i++ )
+    {
+        const std::string& arg = args[i];
+
+        if( !arg.empty() && arg[0] == '-' )
+        {
+            if( arg == "-m" && i + 1 < args.size() )
+            {
+                std::string name = ExtractScriptDisplayName( args[i + 1] );
+
+                if( !name.empty() )
+                {
+                    scriptName = name;
+
+                    if( i + 2 < args.size() && !args[i + 2].empty() && args[i + 2][0] != '-' )
+                    {
+                        subCommand = args[i + 2];
+
+                        if( !subCommand.empty() && subCommand[0] >= 'a' && subCommand[0] <= 'z' )
+                            subCommand[0] = subCommand[0] - 'a' + 'A';
+                    }
+
+                    break;
+                }
+            }
+
+            continue;
+        }
+
+        std::string name = ExtractScriptDisplayName( arg );
+
+        if( !name.empty() )
+        {
+            scriptName = name;
+
+            if( i + 1 < args.size() && !args[i + 1].empty() && args[i + 1][0] != '-' )
+            {
+                const std::string& nextArg = args[i + 1];
+
+                if( nextArg.find( '/' ) == std::string::npos &&
+                    nextArg.find( '.' ) == std::string::npos &&
+                    nextArg.length() < 20 )
+                {
+                    subCommand = nextArg;
+
+                    if( !subCommand.empty() && subCommand[0] >= 'a' && subCommand[0] <= 'z' )
+                        subCommand[0] = subCommand[0] - 'a' + 'A';
+                }
+            }
+
+            break;
+        }
+    }
+
+    if( !scriptName.empty() )
+    {
+        if( !subCommand.empty() )
+            return scriptName + " " + subCommand;
+
+        return scriptName;
+    }
+
+    return procName;
+#endif
 }

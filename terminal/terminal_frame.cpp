@@ -1,6 +1,7 @@
 #include "terminal_frame.h"
 #include "terminal_command_validator.h"
 #include "headless_python_executor.h"
+#include "tool_script_loader.h"
 #include "agent_monitor_log.h"
 #include "pty_webview_panel.h"
 #include <kiway_mail.h>
@@ -174,41 +175,17 @@ void TERMINAL_FRAME::OnTerminalTitleChanged( wxCommandEvent& aEvent )
     {
         if( m_notebook->GetPage( i ) == panel )
         {
-            wxString newTitle = aEvent.GetString();
+            wxString title = aEvent.GetString();
 
-            // Extract a short title for the tab (last component of path or command)
-            // e.g., "user@host:~/projects/myapp" -> "myapp"
-            // or "vim file.cpp" -> "vim file.cpp"
-            wxString shortTitle = newTitle;
+            // Title is now pre-formatted as "process: directory" from the PTY panel
+            // Just apply length limiting for tab display
+            if( title.length() > 24 )
+                title = title.Left( 22 ) + "...";
 
-            // If it looks like a path prompt (contains : and /), extract last dir
-            int colonPos = newTitle.Find( ':' );
-            if( colonPos != wxNOT_FOUND && newTitle.Find( '/' ) != wxNOT_FOUND )
-            {
-                wxString pathPart = newTitle.Mid( colonPos + 1 );
-                pathPart.Trim( true ).Trim( false );
+            if( title.IsEmpty() )
+                title = "Shell";
 
-                // Get the last path component
-                if( pathPart.EndsWith( "/" ) )
-                    pathPart.RemoveLast();
-
-                int lastSlash = pathPart.Find( '/', true );  // Find from end
-                if( lastSlash != wxNOT_FOUND )
-                    shortTitle = pathPart.Mid( lastSlash + 1 );
-                else if( pathPart == "~" )
-                    shortTitle = "~";
-                else
-                    shortTitle = pathPart;
-            }
-
-            // Limit length for tab display
-            if( shortTitle.length() > 20 )
-                shortTitle = shortTitle.Left( 18 ) + "...";
-
-            if( shortTitle.IsEmpty() )
-                shortTitle = "Shell";
-
-            m_notebook->SetPageText( i, shortTitle );
+            m_notebook->SetPageText( i, title );
             break;
         }
     }
@@ -524,21 +501,57 @@ void TERMINAL_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
     }
     else if( aEvent.Command() == MAIL_MCP_EXECUTE_TOOL )
     {
-        // Synchronous execution for MCP tool calls routed through the project manager.
-        // The payload contains a "run_shell <app> <script>" command.
+        // MCP tool execution routed through the project manager.
+        // The payload is a JSON object with "tool_name" and "tool_args_json" fields.
         // We execute it synchronously (with wxYield polling) and write the result
         // back into the payload so the caller gets it when ExpressMail returns.
-        std::string cmd = aEvent.GetPayload();
+        std::string payload = aEvent.GetPayload();
 
-        wxLogInfo( "TERMINAL: Received MAIL_MCP_EXECUTE_TOOL, cmd_len=%zu", cmd.length() );
+        wxLogDebug( "TERMINAL: Received MAIL_MCP_EXECUTE_TOOL, payload_len=%zu", payload.length() );
 
-        std::string result = ExecuteCommandForAgent( cmd );
+        std::string result;
 
-        wxLogInfo( "TERMINAL: MAIL_MCP_EXECUTE_TOOL complete, result_len=%zu", result.length() );
+        try
+        {
+            nlohmann::json msg = nlohmann::json::parse( payload );
+            std::string toolName = msg.value( "tool_name", "" );
+            std::string toolArgsJson = msg.value( "tool_args_json", "{}" );
+
+            wxLogDebug( "TERMINAL: MAIL_MCP_EXECUTE_TOOL tool='%s' args_len=%zu",
+                        toolName, toolArgsJson.size() );
+
+            result = ExecuteMCPTool( toolName, toolArgsJson );
+        }
+        catch( const nlohmann::json::exception& e )
+        {
+            wxLogError( "TERMINAL: MAIL_MCP_EXECUTE_TOOL JSON parse error: %s", e.what() );
+
+            // Fallback: treat payload as a legacy "run_shell" command
+            wxLogDebug( "TERMINAL: Falling back to legacy ExecuteCommandForAgent" );
+            result = ExecuteCommandForAgent( payload );
+        }
+
+        wxLogDebug( "TERMINAL: MAIL_MCP_EXECUTE_TOOL complete, result_len=%zu", result.length() );
 
         // Write result back into the payload — the caller (API_HANDLER_PROJECT) reads it
         // after ExpressMail returns since the payload is passed by reference
         aEvent.SetPayload( result );
+    }
+    else if( aEvent.Command() == MAIL_MCP_GET_TOOL_SCHEMAS )
+    {
+        // Return the raw tool manifest JSON for schema discovery.
+        TOOL_SCRIPT_LOADER* loader = GetToolLoader();
+
+        if( loader )
+        {
+            wxLogDebug( "TERMINAL: MAIL_MCP_GET_TOOL_SCHEMAS returning manifest" );
+            aEvent.SetPayload( loader->GetManifestJson() );
+        }
+        else
+        {
+            wxLogWarning( "TERMINAL: MAIL_MCP_GET_TOOL_SCHEMAS — tool loader not available" );
+            aEvent.SetPayload( "" );
+        }
     }
 }
 
@@ -671,6 +684,116 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
     // eventually migrate all Python commands to async
     std::string result = ExecuteCommandForAgent( aCmd );
     SendAgentResponse( result );
+}
+
+
+TOOL_SCRIPT_LOADER* TERMINAL_FRAME::GetToolLoader()
+{
+    if( !m_toolLoader )
+    {
+        wxLogDebug( "TERMINAL: Lazy-initializing TOOL_SCRIPT_LOADER" );
+        m_toolLoader = std::make_unique<TOOL_SCRIPT_LOADER>();
+        wxLogDebug( "TERMINAL: TOOL_SCRIPT_LOADER initialized" );
+    }
+
+    return m_toolLoader.get();
+}
+
+
+std::string TERMINAL_FRAME::ExecuteMCPTool( const std::string& aToolName,
+                                             const std::string& aArgsJson )
+{
+    wxLogDebug( "TERMINAL: ExecuteMCPTool('%s') args_len=%zu", aToolName, aArgsJson.size() );
+
+    TOOL_SCRIPT_LOADER* loader = GetToolLoader();
+
+    if( !loader->HasTool( aToolName ) )
+    {
+        wxLogWarning( "TERMINAL: ExecuteMCPTool — unknown tool '%s'", aToolName );
+        nlohmann::json err;
+        err["status"] = "error";
+        err["message"] = "Unknown tool: " + aToolName;
+        return err.dump();
+    }
+
+    std::string app = loader->GetApp( aToolName );
+    bool readOnly = loader->IsReadOnly( aToolName );
+
+    wxLogDebug( "TERMINAL: ExecuteMCPTool tool='%s' app='%s' readOnly=%d", aToolName, app, readOnly );
+
+    // Build the Python code directly (no "run_shell" prefix round-trip)
+    std::string pythonCode = loader->BuildPythonCode( aToolName, aArgsJson );
+
+    if( pythonCode.empty() )
+    {
+        wxLogError( "TERMINAL: ExecuteMCPTool — BuildPythonCode returned empty for '%s'", aToolName );
+        nlohmann::json err;
+        err["status"] = "error";
+        err["message"] = "Failed to build command for tool: " + aToolName;
+        return err.dump();
+    }
+
+    // Get the editor frame type for transaction management
+    FRAME_T editorFrame = ModeToFrameType( app );
+
+    // Begin undo transaction on the target editor for non-read-only tools
+    // (after validation so we don't leak an open transaction on early-return errors)
+    if( !readOnly && editorFrame != static_cast<FRAME_T>( -1 ) )
+    {
+        wxLogDebug( "TERMINAL: BeginEditorTransaction for tool '%s'", aToolName );
+        BeginEditorTransaction( Kiway(), editorFrame );
+    }
+
+    // Get the API server socket path so kipy connects to the correct instance
+    std::string socketPath;
+#ifdef KICAD_IPC_API
+    socketPath = Pgm().GetApiServer().SocketPath();
+    wxLogDebug( "TERMINAL: ExecuteMCPTool using API socket: %s", socketPath );
+
+    if( socketPath.empty() )
+    {
+        wxLogWarning( "TERMINAL: API server socket path is empty" );
+
+        if( !readOnly && editorFrame != static_cast<FRAME_T>( -1 ) )
+            EndEditorTransaction( Kiway(), editorFrame );
+
+        nlohmann::json err;
+        err["status"] = "error";
+        err["message"] = "Zeo IPC API server is not running.";
+        return err.dump();
+    }
+#endif
+
+    std::string initCode = BuildModeInitCode( wxString( app ), socketPath );
+    std::string code = initCode + pythonCode;
+
+    wxLogDebug( "TERMINAL: ExecuteMCPTool running Python, code_len=%zu", code.size() );
+
+    // Execute synchronously with wxYield polling
+    std::string immediateResult = m_headlessExecutor->RunPython( code, nullptr );
+
+    if( !immediateResult.empty() && immediateResult.find( "Error:" ) == 0 )
+    {
+        wxLogError( "TERMINAL: ExecuteMCPTool immediate error: %s", immediateResult );
+
+        if( !readOnly && editorFrame != static_cast<FRAME_T>( -1 ) )
+            EndEditorTransaction( Kiway(), editorFrame );
+
+        return immediateResult;
+    }
+
+    std::string result = WaitForPythonResult( m_headlessExecutor );
+
+    wxLogDebug( "TERMINAL: ExecuteMCPTool result_len=%zu", result.size() );
+
+    // End undo transaction on the target editor for non-read-only tools
+    if( !readOnly && editorFrame != static_cast<FRAME_T>( -1 ) )
+    {
+        wxLogDebug( "TERMINAL: EndEditorTransaction for tool '%s'", aToolName );
+        EndEditorTransaction( Kiway(), editorFrame );
+    }
+
+    return result;
 }
 
 

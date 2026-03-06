@@ -94,6 +94,13 @@ public:
     void SetAuth( AGENT_AUTH* aAuth ) { m_auth = aAuth; }
 
     /**
+     * Set the system prompt (core + agent addendum) to include in API requests.
+     * The web proxy uses this instead of its own local copy.
+     */
+    void SetSystemPrompt( const std::string& aPrompt ) { m_systemPrompt = aPrompt; }
+    void SetPlanAddendum( const std::string& aAddendum ) { m_planAddendum = aAddendum; }
+
+    /**
      * Set the agent mode (EXECUTE or PLAN) for the next request.
      */
     void SetAgentMode( AgentMode aMode ) { m_agentMode = aMode; }
@@ -119,6 +126,10 @@ private:
     AGENT_AUTH*  m_auth = nullptr;
     std::string  m_modelName;
     AgentMode    m_agentMode = AgentMode::EXECUTE;
+
+    // System prompt (core + agent addendum), sent to proxy in metadata
+    std::string  m_systemPrompt;
+    std::string  m_planAddendum;  // Appended to system prompt in plan mode
 
     // Conversation metadata for usage tracking
     std::string  m_chatId;
@@ -148,7 +159,8 @@ public:
                         const std::string& aChatId,
                         const std::string& aChatTitle,
                         const std::string& aChatStoragePath,
-                        const std::string& aLogStoragePath );
+                        const std::string& aLogStoragePath,
+                        const std::string& aSystemPrompt );
 
     virtual ~LLM_REQUEST_THREAD();
 
@@ -162,6 +174,9 @@ private:
     nlohmann::json        m_messages;
     std::vector<LLM_TOOL> m_tools;
     AgentMode             m_agentMode;
+
+    // System prompt sent to proxy
+    std::string           m_systemPrompt;
 
     // Conversation metadata for usage tracking
     std::string           m_chatId;

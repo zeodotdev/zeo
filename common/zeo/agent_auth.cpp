@@ -83,8 +83,8 @@ bool AGENT_AUTH::StartOAuthFlow( const std::string& aSource )
     // Fall through to custom URL scheme if server fails
 #endif
 
-    // macOS: use custom URL scheme (kicad-agent://)
-    std::string callback = "kicad-agent://callback";
+    // macOS: use custom URL scheme (zeo://)
+    std::string callback = "zeo://callback";
     if( !aSource.empty() )
         callback += "/" + aSource;
 

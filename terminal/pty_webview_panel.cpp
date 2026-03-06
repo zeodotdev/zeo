@@ -67,6 +67,10 @@ PTY_WEBVIEW_PANEL::PTY_WEBVIEW_PANEL( wxWindow* aParent ) :
     // Agent timeout timer
     m_agentTimeoutTimer.SetOwner( this );
     Bind( wxEVT_TIMER, &PTY_WEBVIEW_PANEL::OnAgentTimeout, this, m_agentTimeoutTimer.GetId() );
+
+    // Title update timer - polls foreground process info periodically
+    m_titleUpdateTimer.SetOwner( this );
+    Bind( wxEVT_TIMER, &PTY_WEBVIEW_PANEL::OnTitleUpdate, this, m_titleUpdateTimer.GetId() );
 }
 
 
@@ -74,8 +78,9 @@ PTY_WEBVIEW_PANEL::~PTY_WEBVIEW_PANEL()
 {
     wxLogInfo( "PTY_WEBVIEW_PANEL destructor called" );
 
+    m_titleUpdateTimer.Stop();
     m_agentTimeoutTimer.Stop();
-    wxLogInfo( "PTY_WEBVIEW_PANEL - timer stopped" );
+    wxLogInfo( "PTY_WEBVIEW_PANEL - timers stopped" );
 
     if( m_pty )
     {
@@ -103,6 +108,9 @@ bool PTY_WEBVIEW_PANEL::StartShell()
             m_pty.reset();
             return false;
         }
+
+        // Start title update timer to poll foreground process info
+        m_titleUpdateTimer.Start( TITLE_UPDATE_MS );
     }
     // Otherwise, PTY will be started when JS sends 'ready'
 
@@ -225,6 +233,11 @@ void PTY_WEBVIEW_PANEL::OnMessage( const wxString& aMsg )
                 {
                     wxLogError( "PTY_WEBVIEW: Failed to start PTY" );
                     m_pty.reset();
+                }
+                else
+                {
+                    // Start title update timer to poll foreground process info
+                    m_titleUpdateTimer.Start( TITLE_UPDATE_MS );
                 }
             }
 
@@ -407,6 +420,82 @@ void PTY_WEBVIEW_PANEL::OnAgentTimeout( wxTimerEvent& aEvent )
 }
 
 
+void PTY_WEBVIEW_PANEL::OnTitleUpdate( wxTimerEvent& aEvent )
+{
+    if( !m_pty || !m_pty->IsRunning() )
+        return;
+
+    // Get the foreground process display name and cwd
+    // GetForegroundDisplayName() handles Python specially to show script name
+    std::string procName = m_pty->GetForegroundDisplayName();
+    std::string procCwd = m_pty->GetForegroundCwd();
+
+    if( procName.empty() && procCwd.empty() )
+        return;
+
+    // Build a title like "vim: ~/projects/myapp" or just "zsh: ~/projects"
+    wxString newTitle;
+
+    // Get the short directory name (last component or ~ for home)
+    wxString shortDir;
+
+    if( !procCwd.empty() )
+    {
+        wxString cwd = wxString::FromUTF8( procCwd );
+
+        // Replace home directory with ~
+        wxString homeDir = wxGetHomeDir();
+
+        if( cwd.StartsWith( homeDir ) )
+        {
+            if( cwd.length() == homeDir.length() )
+            {
+                shortDir = "~";
+            }
+            else
+            {
+                cwd = "~" + cwd.Mid( homeDir.length() );
+            }
+        }
+
+        if( shortDir.IsEmpty() )
+        {
+            // Get last path component
+            int lastSlash = cwd.Find( '/', true );
+
+            if( lastSlash != wxNOT_FOUND && lastSlash < (int) cwd.length() - 1 )
+                shortDir = cwd.Mid( lastSlash + 1 );
+            else
+                shortDir = cwd;
+        }
+    }
+
+    // Format: "process: directory" like modern terminals
+    if( !procName.empty() )
+    {
+        newTitle = wxString::FromUTF8( procName );
+
+        if( !shortDir.IsEmpty() )
+            newTitle += ": " + shortDir;
+    }
+    else if( !shortDir.IsEmpty() )
+    {
+        newTitle = shortDir;
+    }
+
+    // Only send event if title actually changed
+    if( newTitle != m_termTitle && !newTitle.IsEmpty() )
+    {
+        m_termTitle = newTitle;
+
+        wxCommandEvent evt( wxEVT_TERMINAL_TITLE_CHANGED );
+        evt.SetEventObject( this );
+        evt.SetString( m_termTitle );
+        wxPostEvent( GetParent(), evt );
+    }
+}
+
+
 // ---- HTML Template ----
 
 wxString PTY_WEBVIEW_PANEL::GetTerminalHtml( bool aLightMode )
@@ -446,6 +535,14 @@ wxString PTY_WEBVIEW_PANEL::GetTerminalHtml( bool aLightMode )
     .xterm-screen {
         width: 100%% !important;
         height: 100%% !important;
+    }
+    /* Hide scrollbar while keeping scroll functionality */
+    .xterm-viewport {
+        scrollbar-width: none; /* Firefox */
+        -ms-overflow-style: none; /* IE/Edge */
+    }
+    .xterm-viewport::-webkit-scrollbar {
+        display: none; /* Chrome, Safari, Opera */
     }
 </style>
 </head>

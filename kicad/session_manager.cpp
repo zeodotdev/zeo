@@ -337,7 +337,7 @@ void SESSION_MANAGER::HandleVcsCallback( const wxString& aUrl )
     using json = nlohmann::json;
 
     // Parse query params from the deep link
-    // Format: kicad-agent://vcs-callback?provider_token=xxx&github_username=xxx
+    // Format: zeo://vcs-callback?provider_token=xxx&github_username=xxx
     wxString query = aUrl.AfterFirst( '?' );
     std::map<wxString, wxString> params;
     for( wxString pair : wxSplit( query, '&' ) )

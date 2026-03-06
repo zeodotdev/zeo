@@ -25,6 +25,16 @@ public:
 
     bool  IsRunning() const { return m_running.load(); }
     pid_t GetChildPid() const { return m_childPid; }
+    int   GetMasterFd() const { return m_masterFd; }
+
+    // Get the foreground process of the terminal (the process the user is interacting with)
+    pid_t       GetForegroundPid() const;
+    std::string GetForegroundProcessName() const;
+    std::string GetForegroundCwd() const;
+
+    // Get a friendly display name for the foreground process
+    // For Python processes, this extracts the script name (e.g., "zeo" from "python3 /path/to/zeo")
+    std::string GetForegroundDisplayName() const;
 
 private:
     class ReaderThread : public wxThread

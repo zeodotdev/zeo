@@ -123,6 +123,7 @@ public:
     int ShowPcbNew( const TOOL_EVENT& aEvent );
     int ShowAgent( const TOOL_EVENT& aEvent );
     int ShowTerminal( const TOOL_EVENT& aEvent );
+    int ShowVersionControl( const TOOL_EVENT& aEvent );
     int UpdatePCB( const TOOL_EVENT& aEvent );
     int UpdateFromPCB( const TOOL_EVENT& aEvent );
     int ImportFPAssignments( const TOOL_EVENT& aEvent );

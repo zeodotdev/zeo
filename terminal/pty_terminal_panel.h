@@ -126,6 +126,11 @@ protected:
     // Agent timeout
     void OnAgentTimeout( wxTimerEvent& aEvent );
 
+    // Title update timer
+    void OnTitleUpdate( wxTimerEvent& aEvent );
+    wxTimer m_titleUpdateTimer;
+    static const int TITLE_UPDATE_MS = 500;
+
     // Clipboard
     void CopySelection();
     void Paste();

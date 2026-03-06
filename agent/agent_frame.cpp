@@ -415,6 +415,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Initialize LLM client and tools
     m_llmClient = std::make_unique<AGENT_LLM_CLIENT>( this );
+    LoadAndSetSystemPrompt();
     InitializeTools();
 
     // Auth will be set via MAIL_AUTH_POINTER from the launcher (shared instance).
@@ -1075,6 +1076,64 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
 
         m_currentSelectionLabel.Clear();
         m_bridge->PushSelectionPill( wxEmptyString, false );
+    }
+    else if( aEvent.Command() == MAIL_MCP_EXECUTE_AGENT_TOOL )
+    {
+        // MCP tool execution for C++ handler tools (routed from api_handler_project).
+        // Dispatches directly to TOOL_REGISTRY::Execute() — no chat/UI involvement.
+        std::string payload = aEvent.GetPayload();
+
+        wxLogMessage( "AGENT_FRAME: MAIL_MCP_EXECUTE_AGENT_TOOL received, payload_len=%zu",
+                      payload.length() );
+
+        // Sync Kiway state to TOOL_REGISTRY (same as SetEditorStateSyncFn in chat flow)
+        {
+            KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
+            KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
+
+            auto& reg = TOOL_REGISTRY::Instance();
+            reg.SetSchematicEditorOpen( schEditor && schEditor->IsShown() );
+            reg.SetPcbEditorOpen( pcbEditor && pcbEditor->IsShown() );
+            reg.SetProjectPath( Kiway().Prj().GetProjectPath().ToStdString() );
+            reg.SetProjectName( Kiway().Prj().GetProjectName().ToStdString() );
+
+            std::vector<std::string> openFiles;
+            for( const auto& f : GetOpenEditorFiles() )
+                openFiles.push_back( f.ToStdString() );
+            reg.SetOpenEditorFiles( std::move( openFiles ) );
+        }
+
+        try
+        {
+            auto payloadJson = nlohmann::json::parse( payload );
+            std::string toolName = payloadJson.value( "tool_name", "" );
+            std::string toolArgsJson = payloadJson.value( "tool_args_json", "" );
+
+            wxLogMessage( "AGENT_FRAME: MCP executing agent tool '%s'", toolName );
+
+            nlohmann::json toolInput;
+
+            if( !toolArgsJson.empty() )
+                toolInput = nlohmann::json::parse( toolArgsJson );
+            else
+                toolInput = nlohmann::json::object();
+
+            std::string result = TOOL_REGISTRY::Instance().Execute( toolName, toolInput );
+
+            wxLogMessage( "AGENT_FRAME: MCP agent tool '%s' completed, result_len=%zu",
+                          toolName, result.length() );
+
+            aEvent.SetPayload( result );
+        }
+        catch( const std::exception& e )
+        {
+            wxLogError( "AGENT_FRAME: MCP agent tool execution failed: %s", e.what() );
+
+            nlohmann::json errorJson;
+            errorJson["status"] = "error";
+            errorJson["message"] = std::string( "Agent tool execution failed: " ) + e.what();
+            aEvent.SetPayload( errorJson.dump() );
+        }
     }
 }
 
@@ -2237,6 +2296,71 @@ void AGENT_FRAME::OnPopupClick( wxCommandEvent& aEvent )
 // ============================================================================
 // Native Tool Calling Implementation
 // ============================================================================
+
+void AGENT_FRAME::LoadAndSetSystemPrompt()
+{
+    // Resolve SharedSupport/agent/prompts/ in the app bundle
+    std::string promptsDir;
+    const char* envDir = std::getenv( "AGENT_PYTHON_DIR" );
+
+    if( envDir && envDir[0] )
+    {
+        wxFileName dir( wxString::FromUTF8( envDir ), "" );
+        dir.RemoveLastDir();  // python/ → agent/
+        dir.AppendDir( "prompts" );
+        promptsDir = dir.GetPath().ToStdString();
+    }
+    else
+    {
+        wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+        wxFileName dir( exePath.GetPath(), "" );
+        dir.RemoveLastDir();
+        dir.AppendDir( "SharedSupport" );
+        dir.AppendDir( "agent" );
+        dir.AppendDir( "prompts" );
+        promptsDir = dir.GetPath().ToStdString();
+    }
+
+    auto readFile = []( const std::string& path ) -> std::string
+    {
+        std::ifstream file( path );
+
+        if( !file.is_open() )
+        {
+            wxLogWarning( "Could not open prompt file: %s", path );
+            return "";
+        }
+
+        std::ostringstream ss;
+        ss << file.rdbuf();
+        return ss.str();
+    };
+
+    std::string core = readFile( promptsDir + "/core.md" );
+    std::string agent = readFile( promptsDir + "/agent.md" );
+    std::string plan = readFile( promptsDir + "/plan.md" );
+
+    if( !core.empty() )
+    {
+        std::string combined = core;
+
+        if( !agent.empty() )
+            combined += "\n" + agent;
+
+        m_llmClient->SetSystemPrompt( combined );
+
+        if( !plan.empty() )
+            m_llmClient->SetPlanAddendum( plan );
+
+        wxLogMessage( "Loaded system prompt from bundle (%zu bytes core + %zu bytes agent + %zu bytes plan)",
+                      core.size(), agent.size(), plan.size() );
+    }
+    else
+    {
+        wxLogWarning( "System prompt not found in bundle — proxy will use its local copy" );
+    }
+}
+
 
 void AGENT_FRAME::InitializeTools()
 {

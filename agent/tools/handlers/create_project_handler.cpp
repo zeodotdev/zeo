@@ -20,7 +20,7 @@ std::string CREATE_PROJECT_HANDLER::Execute( const std::string& aToolName,
     wxString projDir = wxString::FromUTF8( directory ) + wxFileName::GetPathSeparator() +
                        wxString::FromUTF8( projectName );
 
-    if( !wxDir::Make( projDir, wxS_DIR_DEFAULT ) && !wxDir::Exists( projDir ) )
+    if( !wxFileName::Mkdir( projDir, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL ) && !wxDir::Exists( projDir ) )
         return "Error: Could not create project directory: " + projDir.ToStdString();
 
     wxString basePath = projDir + wxFileName::GetPathSeparator() + wxString::FromUTF8( projectName );

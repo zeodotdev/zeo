@@ -61,8 +61,20 @@ std::string DATASHEET_HANDLER::Execute( const std::string& aToolName,
         return QueryExtractionData( partNumber, manufacturer );
     }
 
-    // extract_datasheet is async-only, shouldn't reach here
-    return R"({"error": "extract_datasheet must be called asynchronously"})";
+    // extract_datasheet — synchronous extraction via MCP
+    if( aToolName == "extract_datasheet" )
+    {
+        std::string partNumber = aInput.value( "part_number", "" );
+        std::string manufacturer = aInput.value( "manufacturer", "" );
+        std::string datasheetUrl = aInput.value( "datasheet_url", "" );
+
+        if( partNumber.empty() || datasheetUrl.empty() )
+            return R"({"error": "part_number and datasheet_url are required"})";
+
+        return ExtractDatasheetSync( partNumber, manufacturer, datasheetUrl );
+    }
+
+    return R"({"error": "Unknown datasheet tool"})";
 }
 
 

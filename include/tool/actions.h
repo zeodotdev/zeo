@@ -59,6 +59,7 @@ public:
     static TOOL_ACTION saveAs;
     static TOOL_ACTION saveCopy;
     static TOOL_ACTION saveAll;
+    static TOOL_ACTION showVersionControl;
     static TOOL_ACTION revert;
     static TOOL_ACTION pageSettings;
     static TOOL_ACTION print;

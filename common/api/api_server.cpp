@@ -127,9 +127,27 @@ void KICAD_API_SERVER::Start()
 
     m_server = std::make_unique<KINNG_REQUEST_SERVER>( fmt::format( "ipc://{}", socket.GetFullPath().ToStdString() ) );
     m_server->SetCallback(
-            [&]( std::string* aRequest )
+            [this]( std::string* aRequest )
             {
-                onApiRequest( aRequest );
+                onApiRequest( aRequest, m_server.get() );
+            } );
+
+    // Create a second socket for long-running tool execution.
+    // Derived path: api.sock -> api-exec.sock, api-123.sock -> api-123-exec.sock
+    wxFileName execSocket( socket );
+    wxString baseName = execSocket.GetName();       // e.g. "api" or "api-123"
+    wxString execName = baseName + wxS( "-exec" );  // e.g. "api-exec" or "api-123-exec"
+    execSocket.SetName( execName );                 // keeps .sock extension
+
+    wxLogTrace( traceApi, wxString::Format( "Server: creating exec socket at %s",
+                                            execSocket.GetFullPath() ) );
+
+    m_execServer = std::make_unique<KINNG_REQUEST_SERVER>(
+            fmt::format( "ipc://{}", execSocket.GetFullPath().ToStdString() ) );
+    m_execServer->SetCallback(
+            [this]( std::string* aRequest )
+            {
+                onApiRequest( aRequest, m_execServer.get() );
             } );
 
     m_logFilePath.AssignDir( PATHS::GetLogsPath() );
@@ -168,6 +186,12 @@ void KICAD_API_SERVER::Stop()
     }
     m_replyReady.notify_all();
 
+    if( m_execServer )
+    {
+        m_execServer->Stop();
+        m_execServer.reset( nullptr );
+    }
+
     m_server->Stop();
     m_server.reset( nullptr );
 }
@@ -200,14 +224,23 @@ std::string KICAD_API_SERVER::SocketPath() const
 }
 
 
-void KICAD_API_SERVER::onApiRequest( std::string* aRequest )
+std::string KICAD_API_SERVER::ExecSocketPath() const
 {
+    return m_execServer ? m_execServer->SocketPath() : "";
+}
+
+
+void KICAD_API_SERVER::onApiRequest( std::string* aRequest, KINNG_REQUEST_SERVER* aServer )
+{
+    wxLogTrace( traceApi, wxString::Format( "Server: onApiRequest from %s",
+                                            aServer == m_execServer.get() ? "exec" : "primary" ) );
+
     if( !m_readyToReply )
     {
         ApiResponse notHandled;
         notHandled.mutable_status()->set_status( ApiStatusCode::AS_NOT_READY );
         notHandled.mutable_status()->set_error_message( "KiCad is not ready to reply" );
-        m_server->Reply( notHandled.SerializeAsString() );
+        aServer->Reply( notHandled.SerializeAsString() );
         log( "Got incoming request but was not yet ready to reply." );
         // Note: Do NOT delete aRequest - it's managed by KINNG internally
         return;
@@ -220,7 +253,7 @@ void KICAD_API_SERVER::onApiRequest( std::string* aRequest )
     // This avoids processing during ProcessPendingEvents() which causes issues on macOS
     {
         std::lock_guard<std::mutex> queueLock( m_queueMutex );
-        m_pendingRequests[requestId] = PENDING_REQUEST( requestId, *aRequest );
+        m_pendingRequests[requestId] = PENDING_REQUEST( requestId, *aRequest, aServer );
         m_requestQueue.push( requestId );
         m_hasQueuedRequests.store( true );
     }
@@ -255,8 +288,8 @@ void KICAD_API_SERVER::onApiRequest( std::string* aRequest )
         }
     }
 
-    // Send the reply back to the client
-    m_server->Reply( replyString );
+    // Send the reply back via the originating server
+    aServer->Reply( replyString );
 }
 
 

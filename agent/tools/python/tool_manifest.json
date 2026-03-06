@@ -1,5 +1,26 @@
 [
   {
+    "name": "save_document",
+    "description": "Save the current schematic and/or PCB to disk. Use this to commit your changes after making edits. This writes the in-memory state to the .kicad_sch / .kicad_pcb files on disk.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "doc_type": {
+          "type": "string",
+          "enum": ["schematic", "pcb", "all"],
+          "description": "Which document to save: 'schematic', 'pcb', or 'all' (saves both if open). Default: 'all'"
+        }
+      },
+      "required": []
+    },
+    "app": null,
+    "script": null,
+    "needs_bbox": false,
+    "read_only": false,
+    "group": "GENERAL",
+    "deferred": false
+  },
+  {
     "name": "check_status",
     "description": "Get the current project and editor status. Returns which editors are open, current active sheet, project hierarchy, and unsaved changes.",
     "input_schema": {

@@ -81,6 +81,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/cloud
     ${CMAKE_CURRENT_SOURCE_DIR}/tools
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/util
+    ${CMAKE_CURRENT_SOURCE_DIR}/claudecode
     ${CMAKE_CURRENT_SOURCE_DIR}/platform
     ${CMAKE_CURRENT_BINARY_DIR}  # For generated unified_template_embedded.h
     ${INC_AFTER}
@@ -123,6 +124,11 @@ set( AGENT_SRCS
 
     # Tool infrastructure
     tools/tool_registry.cpp
+
+    # Claude Code GUI (subprocess wrapper)
+    claudecode/cc_events.cpp
+    claudecode/cc_subprocess.cpp
+    claudecode/cc_controller.cpp
 
     # Tool handlers
     tools/handlers/python_tool_handler.cpp

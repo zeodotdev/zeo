@@ -11,9 +11,11 @@
 #include "tools/tool_registry.h"
 #include "tools/handlers/check_status_handler.h"
 #include "tools/handlers/open_editor_handler.h"
+#include "claudecode/cc_controller.h"
 #include <kiway_mail.h>
 #include <mail_type.h>
 #include <pgm_base.h>
+#include <api/api_server.h>
 #include <settings/common_settings.h>
 #include <settings/settings_manager.h>
 #include <wx/log.h>
@@ -644,8 +646,17 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     {
         UpdateAuthUI();
 
-        // Push model list
+        // Push model list — include Claude Code if available
         std::vector<std::string> models = { "Claude 4.6 Opus", "Gemini 3.1 Pro" };
+
+        // Check if claude CLI is installed
+        if( wxFileName::FileExists( "/usr/local/bin/claude" )
+            || wxFileName::FileExists( "/opt/homebrew/bin/claude" )
+            || wxFileName::FileExists( wxString( wxGetHomeDir() + "/.local/bin/claude" ) ) )
+        {
+            models.push_back( "Claude Code (Opus)" );
+        }
+
         m_bridge->PushModelList( models, m_currentModel );
 
         // Push initial title
@@ -797,8 +808,13 @@ wxString AGENT_FRAME::BuildStreamingContent()
     if( !m_thinkingHtml.IsEmpty() )
         streamingContent += m_thinkingHtml;
 
-    // Get current response from controller and append with markdown
-    std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
+    // Get current response from the active controller
+    std::string currentResponse;
+
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+        currentResponse = m_ccController->GetCurrentResponse();
+    else if( m_chatController )
+        currentResponse = m_chatController->GetCurrentResponse();
 
     // Strip leading newlines to avoid blank line gap after thinking block
     size_t start = currentResponse.find_first_not_of( "\n\r" );
@@ -1125,6 +1141,13 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
             for( const auto& f : GetOpenEditorFiles() )
                 openFiles.push_back( f.ToStdString() );
             reg.SetOpenEditorFiles( std::move( openFiles ) );
+
+            // Provide send request function so handlers like pcb_autoroute and
+            // generate_net_classes can communicate with editor frames via IPC.
+            reg.SetSendRequestFn(
+                [this]( int aFrameType, const std::string& aPayload ) -> std::string {
+                    return SendRequest( aFrameType, aPayload );
+                } );
         }
 
         try
@@ -1271,21 +1294,6 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_bridge->PushInputClear();
     m_bridge->PushActionButtonState( "Stop" );
 
-    // Configure controller for this request (system prompt now handled server-side)
-    if( m_chatController )
-    {
-        // Sync frame's history to controller before repair
-        // (controller may be out of sync if conversation was loaded from disk)
-        m_chatController->SetHistory( m_chatHistory );
-
-        // Repair orphaned tool_use/tool_result blocks
-        m_chatController->RepairHistory();
-
-        // Sync repaired history back to frame for rendering/persistence
-        m_chatHistory = m_chatController->GetChatHistory();
-        m_apiContext = m_chatController->GetApiContext();
-    }
-
     // Reset frame streaming state
     m_currentResponse = "";
     m_toolCallHtml = "";
@@ -1303,6 +1311,36 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_stopRequested = false;
     m_userScrolledUp = false;
     m_htmlUpdatePending = false;
+
+    // ── Claude Code backend ──────────────────────────────────────────────
+    if( m_backend == AgentBackend::CLAUDE_CODE )
+    {
+        if( m_ccController )
+        {
+            StartGeneratingAnimation();
+            m_ccController->SendMessage( text.ToStdString() );
+        }
+
+        m_pendingAttachments.clear();
+        return;
+    }
+
+    // ── Zeo Agent backend ────────────────────────────────────────────────
+
+    // Configure controller for this request (system prompt now handled server-side)
+    if( m_chatController )
+    {
+        // Sync frame's history to controller before repair
+        // (controller may be out of sync if conversation was loaded from disk)
+        m_chatController->SetHistory( m_chatHistory );
+
+        // Repair orphaned tool_use/tool_result blocks
+        m_chatController->RepairHistory();
+
+        // Sync repaired history back to frame for rendering/persistence
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_apiContext = m_chatController->GetApiContext();
+    }
 
     // Transition frame's state machine (legacy - controller also has state machine)
     m_conversationCtx.Reset();
@@ -1966,15 +2004,114 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
 {
     wxLogInfo( "AGENT_FRAME::DoModelChange - model: %s", aModel.c_str() );
 
-    if( aModel != m_currentModel )
+    if( aModel == m_currentModel )
+        return;
+
+    m_currentModel = aModel;
+
+    if( aModel == "Claude Code (Opus)" )
     {
-        m_currentModel = aModel;
+        m_backend = AgentBackend::CLAUDE_CODE;
+
+        if( !m_ccController )
+            m_ccController = std::make_unique<CC_CONTROLLER>( this );
+
+        // Determine working directory (project dir or home)
+        wxString workDir = wxGetHomeDir();
+
+        try
+        {
+            wxString projPath = Prj().GetProjectPath();
+            if( !projPath.IsEmpty() )
+                workDir = projPath;
+        }
+        catch( ... ) {}
+
+        // Resolve prompts directory (same logic as LoadAndSetSystemPrompt)
+        std::string promptsDir;
+        const char* envDir = std::getenv( "AGENT_PYTHON_DIR" );
+
+        if( envDir && envDir[0] )
+        {
+            wxFileName dir( wxString::FromUTF8( envDir ), "" );
+            dir.RemoveLastDir();  // python/ -> agent/
+            dir.AppendDir( "prompts" );
+            promptsDir = dir.GetPath().ToStdString();
+        }
+        else
+        {
+            wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+            wxFileName dir( exePath.GetPath(), "" );
+#ifdef __WXMSW__
+            dir.AppendDir( "agent" );
+            dir.AppendDir( "prompts" );
+#else
+            dir.RemoveLastDir();
+            dir.AppendDir( "SharedSupport" );
+            dir.AppendDir( "agent" );
+            dir.AppendDir( "prompts" );
+#endif
+            promptsDir = dir.GetPath().ToStdString();
+        }
+
+        // Get API socket path for MCP config
+        std::string apiSocketPath;
+        try
+        {
+            apiSocketPath = Pgm().GetApiServer().SocketPath();
+        }
+        catch( ... )
+        {
+            wxLogWarning( "AGENT_FRAME: Could not get API socket path for CC MCP config" );
+        }
+
+        // Resolve bundled Python3 path
+        std::string pythonPath;
+        {
+            wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+            wxFileName pyPath( exePath.GetPath(), "" );
+#ifdef __WXMSW__
+            // TODO: Windows Python path
+#else
+            // macOS: Contents/MacOS/kicad -> Contents/Frameworks/Python.framework/Versions/Current/bin/python3
+            pyPath.RemoveLastDir();  // MacOS/
+            pyPath.AppendDir( "Frameworks" );
+            pyPath.AppendDir( "Python.framework" );
+            pyPath.AppendDir( "Versions" );
+            pyPath.AppendDir( "Current" );
+            pyPath.AppendDir( "bin" );
+            pyPath.SetFullName( "python3" );
+
+            if( pyPath.FileExists() )
+                pythonPath = pyPath.GetFullPath().ToStdString();
+            else
+                wxLogWarning( "AGENT_FRAME: Bundled Python3 not found at %s", pyPath.GetFullPath() );
+#endif
+        }
+
+        wxLogInfo( "AGENT_FRAME: CC start - prompts=%s, socket=%s, python=%s",
+                   promptsDir.c_str(), apiSocketPath.c_str(), pythonPath.c_str() );
+
+        m_ccController->Start( workDir.ToStdString(), promptsDir, apiSocketPath, pythonPath );
+
+        // Hide plan button in Claude Code mode (CC manages its own planning)
+        m_bridge->PushPlanMode( false );
+
+        wxLogInfo( "AGENT_FRAME::DoModelChange - switched to Claude Code backend" );
+    }
+    else
+    {
+        // Switching away from Claude Code
+        if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+            m_ccController->Cancel();
+
+        m_backend = AgentBackend::ZEO_AGENT;
 
         if( m_chatController )
             m_chatController->SetModel( m_currentModel );
-
-        SaveModelPreference( m_currentModel );
     }
+
+    SaveModelPreference( m_currentModel );
 }
 
 void AGENT_FRAME::DoSendClick()
@@ -1985,6 +2122,14 @@ void AGENT_FRAME::DoSendClick()
 
 void AGENT_FRAME::DoStopClick()
 {
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+    {
+        m_ccController->Cancel();
+        StopGeneratingAnimation();
+        m_bridge->PushActionButtonState( "Send", true );
+        return;
+    }
+
     wxCommandEvent evt;
     OnStop( evt );
 }
@@ -2553,8 +2698,14 @@ void AGENT_FRAME::DoNewChat()
 {
     wxLogInfo( "AGENT_FRAME::DoNewChat called" );
 
-    bool isBusy = m_chatController ? m_chatController->IsBusy()
-                                   : ( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE );
+    bool isBusy = false;
+
+    if( m_backend == AgentBackend::CLAUDE_CODE )
+        isBusy = m_ccController && m_ccController->IsBusy();
+    else
+        isBusy = m_chatController ? m_chatController->IsBusy()
+                                  : ( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE );
+
     if( isBusy )
     {
         wxMessageBox( _( "Please wait for the current response to complete before starting a new chat." ),
@@ -2562,7 +2713,9 @@ void AGENT_FRAME::DoNewChat()
         return;
     }
 
-    if( m_chatController )
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+        m_ccController->NewSession();
+    else if( m_chatController )
         m_chatController->NewChat();
 
     m_chatHistory = nlohmann::json::array();

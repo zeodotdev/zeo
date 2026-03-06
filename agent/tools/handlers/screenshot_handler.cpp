@@ -1,23 +1,14 @@
-#ifndef __APPLE__
-#error "screenshot_handler.cpp requires macOS (sips for image conversion, POSIX APIs)"
-#endif
-
 #include "screenshot_handler.h"
 #include "../tool_registry.h"
 #include "../util/kicad_cli_util.h"
+#include "../util/process_util.h"
+#include "../util/svg_rasterizer.h"
 #include <frame_type.h>
 
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
-
-#include <errno.h>
-#include <poll.h>
-#include <signal.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 #include <nlohmann/json.hpp>
 #include <wx/base64.h>
@@ -31,8 +22,13 @@
 // Max image dimension in pixels per Claude API limits
 static const int MAX_IMAGE_DIMENSION = 1568;
 
-// Shell metacharacters that are unsafe in quoted command arguments
+// Shell metacharacters that are unsafe in quoted command arguments.
+// On Windows, backslash is a valid path separator and must be allowed.
+#ifdef _WIN32
+static const char* UNSAFE_PATH_CHARS = "`$\"!#&|;(){}[]<>?*~\n\r";
+#else
 static const char* UNSAFE_PATH_CHARS = "`$\\\"!#&|;(){}[]<>?*~\n\r";
+#endif
 
 // Background colors from _builtin_default theme (builtin_color_themes.h).
 // Used for compositing since SVG export doesn't include the canvas background.
@@ -132,18 +128,13 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
         }
     }
 
-    // Create a unique temp directory atomically via mkdtemp to avoid TOCTOU races
-    std::string tempTemplate = ( wxFileName::GetTempDir() + wxFileName::GetPathSeparator()
-                                 + "zeo_screenshot_XXXXXX" ).ToStdString();
-    std::vector<char> tempBuf( tempTemplate.begin(), tempTemplate.end() );
-    tempBuf.push_back( '\0' );
+    // Create a unique temp directory
+    std::string tempDirStr = ProcessUtil::MakeTempDir( "zeo_screenshot_" );
 
-    if( !mkdtemp( tempBuf.data() ) )
+    if( tempDirStr.empty() )
         return "Error: Failed to create temporary directory";
 
-    wxString tempDir = wxString::FromUTF8( tempBuf.data() );
-
-    std::string tempDirStr = tempDir.ToStdString();
+    wxString tempDir = wxString::FromUTF8( tempDirStr );
 
     // Scope guard ensures temp directory is cleaned up on any exit path
     ScopeGuard cleanupGuard( [tempDir]()
@@ -252,7 +243,7 @@ std::string SCREENSHOT_HANDLER::ExecuteScreenshot( const nlohmann::json& aInput 
     std::string pngPath = tempDirStr + "/screenshot.png";
 
     if( !ConvertSvgToPng( svgPath, pngPath ) )
-        return "Error: Failed to convert SVG to PNG. Is 'sips' available?";
+        return "Error: Failed to convert SVG to PNG";
 
     // Crop background and resize to fit API limits (non-fatal on failure).
     // Pass the theme's canvas background since SVG export doesn't include it.
@@ -376,7 +367,7 @@ std::string SCREENSHOT_HANDLER::ExportSchematicSvg( const std::string& aFilePath
                       + " -o \"" + outputDir + "\" \"" + aFilePath + "\"";
 
     std::string stdoutStr, stderrStr;
-    int exitCode = RunCommand( cmd, stdoutStr, stderrStr );
+    int exitCode = ProcessUtil::RunCommand( cmd, stdoutStr, stderrStr );
 
     if( !stderrStr.empty() )
         wxLogWarning( "SCREENSHOT: kicad-cli stderr: %s", stderrStr.c_str() );
@@ -423,7 +414,7 @@ std::string SCREENSHOT_HANDLER::ExportPcbSvg( const std::string& aFilePath,
                       + " -o \"" + outputPath + "\" \"" + aFilePath + "\"";
 
     std::string stdoutStr, stderrStr;
-    int exitCode = RunCommand( cmd, stdoutStr, stderrStr );
+    int exitCode = ProcessUtil::RunCommand( cmd, stdoutStr, stderrStr );
 
     if( !stderrStr.empty() )
         wxLogWarning( "SCREENSHOT: kicad-cli stderr: %s", stderrStr.c_str() );
@@ -447,13 +438,13 @@ std::string SCREENSHOT_HANDLER::ExportPcbSvg( const std::string& aFilePath,
 bool SCREENSHOT_HANDLER::ConvertSvgToPng( const std::string& aSvgPath,
                                            const std::string& aPngPath )
 {
-    // Rasterize at 4096px so CropAndResize has plenty of pixels to crop from
-    // before downscaling to the API limit (1568px).
+#ifdef __APPLE__
+    // macOS: use sips for high-quality SVG rasterization at 4096px
     std::string cmd = "sips -s format png -Z 4096"
                       " \"" + aSvgPath + "\" --out \"" + aPngPath + "\"";
 
     std::string stdoutStr, stderrStr;
-    int exitCode = RunCommand( cmd, stdoutStr, stderrStr );
+    int exitCode = ProcessUtil::RunCommand( cmd, stdoutStr, stderrStr );
 
     if( !stderrStr.empty() )
         wxLogWarning( "SCREENSHOT: sips stderr: %s", stderrStr.c_str() );
@@ -465,6 +456,10 @@ bool SCREENSHOT_HANDLER::ConvertSvgToPng( const std::string& aSvgPath,
     }
 
     return wxFileName::FileExists( wxString::FromUTF8( aPngPath ) );
+#else
+    // Windows/Linux: use nanosvg to rasterize SVG to PNG
+    return SvgRasterizer::RasterizeSvgToPng( aSvgPath, aPngPath, 4096 );
+#endif
 }
 
 
@@ -602,139 +597,3 @@ std::string SCREENSHOT_HANDLER::ReadFileAsBase64( const std::string& aFilePath )
 }
 
 
-int SCREENSHOT_HANDLER::RunCommand( const std::string& aCommand, std::string& aStdout,
-                                     std::string& aStderr, int aTimeoutSec )
-{
-    aStdout.clear();
-    aStderr.clear();
-
-    // Create pipes for capturing stdout and stderr directly (no temp files)
-    int stdoutPipe[2];
-    int stderrPipe[2];
-
-    if( pipe( stdoutPipe ) != 0 )
-        return -1;
-
-    if( pipe( stderrPipe ) != 0 )
-    {
-        close( stdoutPipe[0] );
-        close( stdoutPipe[1] );
-        return -1;
-    }
-
-    pid_t pid = fork();
-
-    if( pid < 0 )
-    {
-        close( stdoutPipe[0] );
-        close( stdoutPipe[1] );
-        close( stderrPipe[0] );
-        close( stderrPipe[1] );
-        return -1;
-    }
-
-    if( pid == 0 )
-    {
-        // Child process: redirect stdout/stderr to pipes and exec command
-        close( stdoutPipe[0] );
-        close( stderrPipe[0] );
-        dup2( stdoutPipe[1], STDOUT_FILENO );
-        dup2( stderrPipe[1], STDERR_FILENO );
-        close( stdoutPipe[1] );
-        close( stderrPipe[1] );
-
-        execl( "/bin/sh", "sh", "-c", aCommand.c_str(), nullptr );
-        _exit( 127 );
-    }
-
-    // Parent process: read from pipes with timeout via poll()
-    close( stdoutPipe[1] );
-    close( stderrPipe[1] );
-
-    struct pollfd fds[2] = {
-        { stdoutPipe[0], POLLIN, 0 },
-        { stderrPipe[0], POLLIN, 0 }
-    };
-
-    auto deadline = std::chrono::steady_clock::now()
-                    + std::chrono::seconds( aTimeoutSec );
-    bool timedOut = false;
-    int activeFds = 2;
-    char buf[4096];
-
-    while( activeFds > 0 )
-    {
-        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-                deadline - std::chrono::steady_clock::now() );
-
-        if( remaining.count() <= 0 )
-        {
-            timedOut = true;
-            break;
-        }
-
-        int ret = poll( fds, 2, static_cast<int>( remaining.count() ) );
-
-        if( ret < 0 )
-        {
-            if( errno == EINTR )
-                continue;
-            break;
-        }
-
-        for( int i = 0; i < 2; ++i )
-        {
-            if( fds[i].fd < 0 )
-                continue;
-
-            if( fds[i].revents & ( POLLIN | POLLHUP ) )
-            {
-                ssize_t n = read( fds[i].fd, buf, sizeof( buf ) - 1 );
-
-                if( n > 0 )
-                {
-                    buf[n] = '\0';
-                    ( i == 0 ? aStdout : aStderr ) += buf;
-                }
-                else
-                {
-                    close( fds[i].fd );
-                    fds[i].fd = -1;
-                    --activeFds;
-                }
-            }
-            else if( fds[i].revents & ( POLLERR | POLLNVAL ) )
-            {
-                close( fds[i].fd );
-                fds[i].fd = -1;
-                --activeFds;
-            }
-        }
-    }
-
-    // Clean up any still-open fds
-    for( int i = 0; i < 2; ++i )
-    {
-        if( fds[i].fd >= 0 )
-            close( fds[i].fd );
-    }
-
-    if( timedOut )
-    {
-        kill( pid, SIGKILL );
-        waitpid( pid, nullptr, 0 );
-        wxLogError( "SCREENSHOT: Command timed out after %d seconds", aTimeoutSec );
-        return -1;
-    }
-
-    int status;
-    waitpid( pid, &status, 0 );
-    int exitCode = -1;
-
-    if( WIFEXITED( status ) )
-        exitCode = WEXITSTATUS( status );
-    else if( WIFSIGNALED( status ) )
-        wxLogError( "SCREENSHOT: Process killed by signal %d", WTERMSIG( status ) );
-
-    return exitCode;
-}

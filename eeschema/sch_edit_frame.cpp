@@ -1177,7 +1177,7 @@ SCH_SCREEN* SCH_EDIT_FRAME::GetScreenForApi() const
                 SCH_SHEET* sheet = path.Last();
                 wxLogMessage( "GetScreenForApi: Found target sheet! path=%s, sheet=%s, sheetScreen=%p, pathScreen=%p, items=%zu",
                               path.PathHumanReadable(),
-                              sheet ? sheet->GetName() : "null",
+                              sheet ? sheet->GetName() : wxString( "null" ),
                               sheet ? sheet->GetScreen() : nullptr,
                               screen,
                               screen ? screen->Items().size() : 0 );

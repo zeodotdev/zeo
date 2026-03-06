@@ -37,7 +37,7 @@ struct OpenEditorResult
         FOCUS_EXISTING,     ///< Editor already open with correct file — just focus
         RELOAD_WITH_FILE,   ///< Editor open but needs a different file — close and reopen
         NEEDS_APPROVAL,     ///< Editor not open — show approval dialog
-        ERROR               ///< Validation error — return error to LLM
+        ERRORED             ///< Validation error — return error to LLM
     };
 
     Action      action;

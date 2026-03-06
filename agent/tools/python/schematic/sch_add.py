@@ -214,8 +214,6 @@ try:
                     sch.symbols.set_value(sym, props['Value'])
                 if 'Footprint' in props:
                     sch.symbols.set_footprint(sym, props['Footprint'])
-                elif lib_id in DEFAULT_FOOTPRINTS:
-                    sch.symbols.set_footprint(sym, DEFAULT_FOOTPRINTS[lib_id])
 
                 # Overlap check + slide-off
                 _shifted = False

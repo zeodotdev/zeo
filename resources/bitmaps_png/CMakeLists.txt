@@ -998,15 +998,13 @@ function( bitmap_dir_constraints pngWidth pngHeight bmapList )
 endfunction()
 
 
-include( FindUnixCommands )
+if( MSVC )
+    # Force Windows system tar to avoid Git's MSYS2 tar which interprets "C:" as a remote host
+    set( TAR "C:\\Windows\\System32\\tar.exe" )
+else()
+    include( FindUnixCommands )
 
-if( TAR STREQUAL "TAR-NOTFOUND" )
-    # CMake on Windows CI seems to struggle to find tar even though it's in PATH
-    # Let's help it out as modern windows (Server 2019 and 10 provide tar)
-    if( MSVC )
-        # yolo
-        set( TAR "C:\\Windows\\System32\\tar.exe" )
-    else()
+    if( TAR STREQUAL "TAR-NOTFOUND" )
         message( FATAL_ERROR "Could not find the tar program." )
     endif()
 endif()

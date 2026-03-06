@@ -1,4 +1,4 @@
-import json, re
+import json, sys, re
 from kipy.geometry import Vector2
 
 refresh_or_fail(sch)
@@ -35,6 +35,7 @@ try:
             py = lbl.position.y / 1_000_000
             out_dx, out_dy = 0, 0
             pin_dir = 'h'
+            print(f'[route] label:{name} pos=({px:.2f},{py:.2f})', file=sys.stderr)
         else:
             ref = name
             sym = sch.symbols.get_by_ref(ref)
@@ -95,6 +96,7 @@ try:
                     out_dy = 1.27 if py > sym_cy else -1.27
                     pin_dir = 'v'
             _dir_name = {(1.27,0):'RIGHT', (-1.27,0):'LEFT', (0,-1.27):'UP', (0,1.27):'DOWN'}.get((out_dx,out_dy), '?')
+            print(f'[route] {ref}:{pin_id} pos=({px:.2f},{py:.2f}) orient={pin_orientation} ang={getattr(sym, "angle", 0)} -> {_dir_name} ({out_dx},{out_dy})', file=sys.stderr)
             pin_positions.append({'ref': ref, 'pin': pin_id, 'x': snap_to_grid(px), 'y': snap_to_grid(py), 'raw_x': px, 'raw_y': py, 'esc_x': snap_to_grid(px + out_dx), 'esc_y': snap_to_grid(py + out_dy), 'dir': pin_dir, 'out_dx': out_dx, 'out_dy': out_dy})
 
     # Phase 1.5: Connectivity pre-check — avoid drawing wires on existing nets.
@@ -117,6 +119,7 @@ try:
         except Exception:
             pass
         _pin_nets.append(_net)
+        print(f'[route] pre-check {p["ref"]}:{p.get("pin","")} -> net={_net}', file=sys.stderr)
 
     # Assign each pin to a connected-component group.
     # Pins that share a net name are in the same group; unknown pins get their own.
@@ -133,6 +136,7 @@ try:
             _next_group += 1
 
     _n_components = len(set(_pin_group))
+    print(f'[route] pre-check: {_n_components} disconnected component(s) among {len(pin_positions)} pins', file=sys.stderr)
 
     if _n_components < len(pin_positions) and _n_components > 1:
         # Some pins already connected — replace each multi-pin group with a
@@ -162,7 +166,9 @@ try:
                         _segs.append((_w.start.x / 1_000_000, _w.start.y / 1_000_000,
                                       _w.end.x / 1_000_000, _w.end.y / 1_000_000))
                 _net_wire_segs[_net_name] = _segs
+                print(f'[route] pre-check: net {_net_name} has {len(_segs)} wire segment(s)', file=sys.stderr)
             except Exception as _e:
+                print(f'[route] pre-check: failed to get wires for {_net_name}: {_e}', file=sys.stderr)
                 _net_wire_segs[_net_name] = []
 
         # Build set of resolved pin grid cells to avoid tapping at a pin
@@ -263,10 +269,12 @@ try:
                             'dir': 'h', 'out_dx': _esc_dx, 'out_dy': 0
                         }
                     _new_positions.append(_tap_entry)
+                    print(f'[route] Pre-check: group {_gi} ({_gnet}, {len(members)} pins) -> wire tap at ({tx:.2f}, {ty:.2f})', file=sys.stderr)
                 else:
                     # Fallback: pick closest member pin to other groups' centroid
                     best = min(members, key=lambda i: abs(pin_positions[i]['raw_x'] - _tcx) + abs(pin_positions[i]['raw_y'] - _tcy))
                     _new_positions.append(pin_positions[best])
+                    print(f'[route] Pre-check: group {_gi} ({_gnet}) no tap found, using pin {pin_positions[best]["ref"]}:{pin_positions[best]["pin"]}', file=sys.stderr)
             else:
                 # Single-pin group or no existing wires — keep the pin.
                 if len(members) == 1:
@@ -283,6 +291,8 @@ try:
                     _new_positions.append(pin_positions[best])
 
         _skipped = len(pin_positions) - len(_new_positions)
+        print(f'[route] Pre-check: reduced {len(pin_positions)} pins to {len(_new_positions)} '
+              f'targets (skipped {_skipped} already-connected)', file=sys.stderr)
         pin_positions = _new_positions
 
     # ---------------------------------------------------------------------------
@@ -368,8 +378,11 @@ try:
             if not bbox:
                 continue
             obstacles.append({'min_x': bbox['min_x'], 'max_x': bbox['max_x'], 'min_y': bbox['min_y'], 'max_y': bbox['max_y'], 'ref': getattr(obs_lbl, 'text', 'label')})
-    except Exception:
-        pass
+    except Exception as e:
+        print(f'[route] label obstacle error: {e}', file=sys.stderr)
+
+    print(f'[route] Symbol obstacles: {_sym_obstacle_count}, Label obstacles: {len(obstacles) - _sym_obstacle_count}', file=sys.stderr)
+    print(f'[route] Pin obstacle cells: {len(pin_cells)}', file=sys.stderr)
 
     # Build directional wire obstacle sets.
     # Horizontal wires block horizontal movement; vertical wires block vertical movement.
@@ -393,6 +406,7 @@ try:
                     v_wire_cells.add((gwx0, gy))
     except Exception:
         pass
+    print(f'[route] Wire obstacles: {len(h_wire_cells)} horizontal cells, {len(v_wire_cells)} vertical cells', file=sys.stderr)
 
     def _add_waypoints_to_wire_sets(waypoints, grid=1.27):
         """Register a just-placed path in the directional wire cell sets."""
@@ -455,6 +469,7 @@ try:
         while open_set:
             iterations += 1
             if iterations > max_iterations:
+                print(f'[route] A* exceeded {max_iterations} iterations (margin={margin}), giving up', file=sys.stderr)
                 return None
             f, g, gx, gy, prev_d = heapq.heappop(open_set)
             if (gx, gy) == goal:
@@ -606,14 +621,19 @@ try:
         # end_dir is opposite of outward (wire approaches from outside, moving inward)
         ed = ed ^ 1 if ed >= 0 else -1
         _dn = {0:'RIGHT', 1:'LEFT', 2:'DOWN', 3:'UP', -1:'NONE'}
+        print(f'[route] A* {p0["ref"]}:{p0["pin"]} -> {p1["ref"]}:{p1["pin"]}  start_dir={_dn.get(sd)} end_dir={_dn.get(ed)}', file=sys.stderr)
         # Try progressively wider search margins
         wp = None
         for a_margin, a_label, a_xcost in [(15, 'default', 2), (30, 'wider', 2), (50, 'wide', 2), (100, 'max (relaxed)', 0)]:
             wp = _astar(x0, y0, x1, y1, start_dir=sd, end_dir=ed, margin=a_margin, cross_cost=a_xcost)
             if wp is not None:
+                if a_label != 'default':
+                    print(f'[route]   found path with retry: {a_label}', file=sys.stderr)
                 break
+            print(f'[route]   no path with {a_label}, retrying...', file=sys.stderr)
         if wp is None:
             raise ValueError(f'No path found from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]}. Try repositioning components to clear the path.')
+        print(f'[route]   path: {[(round(x,2),round(y,2)) for x,y in wp]}', file=sys.stderr)
         return wp
 
     def _path_length(waypoints):
@@ -668,6 +688,8 @@ try:
         old_angle = round(getattr(sym, 'angle', 0))
         new_angle = old_angle + 180 if old_angle < 180 else old_angle - 180
         plen = _path_length(waypoints)
+        print(f'[route] {flip_p["ref"]} is power symbol — trying 180\u00b0 flip '
+              f'to find shorter path (current {plen:.1f}mm)', file=sys.stderr)
 
         try:
             # Hypothetical flip test: compute flipped pin state mathematically
@@ -705,8 +727,12 @@ try:
             keep_flip = False
             if new_plen < plen:
                 keep_flip = True
+                print(f'[route] flip improved: {plen:.1f}mm -> {new_plen:.1f}mm', file=sys.stderr)
             elif abs(new_plen - plen) < 0.1 and new_angle == 0:
                 keep_flip = True
+                print(f'[route] equal path length \u2014 preferring conventional orientation ({new_angle}\u00b0 over {old_angle}\u00b0)', file=sys.stderr)
+            else:
+                print(f'[route] flip did not help ({new_plen:.1f}mm >= {plen:.1f}mm), reverting', file=sys.stderr)
 
             # Body-overlap guard: reject flip if wire enters pin from body side
             if keep_flip and len(new_wp) >= 2:
@@ -718,6 +744,7 @@ try:
                     _awy = new_wp[-2][1] - new_wp[-1][1]
                 if _awx * new_pin['out_dx'] + _awy * new_pin['out_dy'] < 0:
                     keep_flip = False
+                    print(f'[route] flip rejected: wire enters pin from body side', file=sys.stderr)
 
             if keep_flip:
                 # Commit the flip: actually rotate the symbol now.
@@ -741,6 +768,7 @@ try:
                 pin_cells.update(old_pcells)
                 return waypoints, p0, p1
         except Exception as _fe:
+            print(f'[route] flip failed: {_fe}, reverting', file=sys.stderr)
             # Restore obstacle state if we removed it.
             try:
                 if old_bbox:
@@ -753,10 +781,12 @@ try:
     # ---------------------------------------------------------------------------
     # Routing: chain and star topology
     # ---------------------------------------------------------------------------
+    print(f'[route] MODE={routing_mode} pins={len(pin_positions)}', file=sys.stderr)
 
     if _n_components == 1:
         # All pins already on the same net — no wiring needed
-        pass
+        print('[route] All pins already connected on same net — skipping routing', file=sys.stderr)
+
     elif routing_mode == 'chain':
         # Chain mode: A* route each consecutive pin pair
         _all_wires = []
@@ -981,7 +1011,7 @@ try:
                     _trunk_points_dedup.append(_tv)
             _trunk_points = _trunk_points_dedup
             if _branch_conn_pts:
-                pass
+                print(f'[route] TRUNK split at {sorted(_branch_conn_pts)} (segs={len(_trunk_points)-1})', file=sys.stderr)
             for _ti in range(len(_trunk_points) - 1):
                 if is_horizontal:
                     _ts = (_trunk_points[_ti], trunk_perp)

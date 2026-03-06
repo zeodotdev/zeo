@@ -3,7 +3,9 @@
 #include "headless_python_executor.h"
 #include "tool_script_loader.h"
 #include "agent_monitor_log.h"
+#ifndef _WIN32
 #include "pty_webview_panel.h"
+#endif
 #include <kiway_mail.h>
 #include <mail_type.h>
 #include <wx/sizer.h>
@@ -74,7 +76,13 @@ static std::string BuildModeInitCode( const wxString& aMode, const std::string& 
 {
     std::string socketArg;
     if( !aSocketPath.empty() )
-        socketArg = "socket_path='" + aSocketPath + "', timeout_ms=5000";
+    {
+        // Escape backslashes for Python string literal (Windows paths)
+        std::string escaped = aSocketPath;
+        for( size_t pos = 0; ( pos = escaped.find( '\\', pos ) ) != std::string::npos; pos += 2 )
+            escaped.insert( pos, "\\" );
+        socketArg = "socket_path='" + escaped + "', timeout_ms=5000";
+    }
 
     std::string initCode = KIPY_BOOTSTRAP +
         "import kipy\n"
@@ -207,7 +215,9 @@ TERMINAL_FRAME::TERMINAL_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     m_notebook->Bind( wxEVT_AUINOTEBOOK_PAGE_CLOSE, &TERMINAL_FRAME::OnTabClosed, this );
     m_notebook->Bind( wxEVT_AUINOTEBOOK_PAGE_CLOSED, &TERMINAL_FRAME::OnTabClosedDone, this );
+#ifndef _WIN32
     m_notebook->Bind( wxEVT_TERMINAL_TITLE_CHANGED, &TERMINAL_FRAME::OnTerminalTitleChanged, this );
+#endif
 
     mainSizer->Add( m_notebook, 1, wxEXPAND | wxALL, 0 );
 
@@ -356,6 +366,7 @@ void TERMINAL_FRAME::OnSize( wxSizeEvent& event )
 
 void TERMINAL_FRAME::AddTerminal( TERMINAL_PANEL::TERMINAL_MODE aMode )
 {
+#ifndef _WIN32
     if( aMode == TERMINAL_PANEL::MODE_SYSTEM )
     {
         PTY_WEBVIEW_PANEL* panel = new PTY_WEBVIEW_PANEL( m_notebook );
@@ -363,6 +374,7 @@ void TERMINAL_FRAME::AddTerminal( TERMINAL_PANEL::TERMINAL_MODE aMode )
         m_notebook->AddPage( panel, panel->GetTitle(), true );
     }
     else
+#endif
     {
         TERMINAL_PANEL* panel = new TERMINAL_PANEL( m_notebook, aMode );
         m_notebook->AddPage( panel, panel->GetTitle(), true );

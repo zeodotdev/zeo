@@ -131,10 +131,15 @@ static void AddToolsFromManifest( std::vector<LLM_TOOL>& tools )
     {
         wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
         wxFileName dir( exePath.GetPath(), "" );
+#ifdef __WXMSW__
+        dir.AppendDir( "agent" );
+        dir.AppendDir( "python" );
+#else
         dir.RemoveLastDir();
         dir.AppendDir( "SharedSupport" );
         dir.AppendDir( "agent" );
         dir.AppendDir( "python" );
+#endif
         pythonDir = dir.GetPath().ToStdString();
     }
 
@@ -187,6 +192,13 @@ static void AddToolsFromManifest( std::vector<LLM_TOOL>& tools )
         std::string groupStr = strVal( entry, "group", "GENERAL" );
 
         if( name.empty() )
+            continue;
+
+        // Skip tools with no app and no script — these are MCP-only
+        std::string app = strVal( entry, "app" );
+        std::string script = strVal( entry, "script" );
+
+        if( app.empty() && script.empty() )
             continue;
 
         LLM_TOOL tool;

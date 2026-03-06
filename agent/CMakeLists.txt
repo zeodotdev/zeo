@@ -28,30 +28,41 @@ add_custom_target( unified_html_template DEPENDS "${UNIFIED_TEMPLATE_OUTPUT}" )
 # ---------------------------------------------------------------------------
 set( AGENT_PYTHON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tools/python" )
 
-# Copy python/ directory into the app bundle so scripts are available at runtime.
+# Copy python/ directory so scripts are available at runtime.
 # On macOS: Zeo.app/Contents/SharedSupport/agent/python/
+# On Windows: <install_dir>/agent/python/
 if( APPLE )
     set( AGENT_PYTHON_INSTALL_DIR "${OSX_BUNDLE_BUILD_DIR}/${OSX_BUNDLE_SUP_DIR}/agent/python" )
-
-    add_custom_target( install_python_scripts ALL
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${AGENT_PYTHON_DIR}"
-            "${AGENT_PYTHON_INSTALL_DIR}"
-        COMMENT "Installing Python tool scripts into app bundle"
-    )
-
-    # Copy prompts/ directory into the app bundle (core.md shared with MCP server)
-    # On macOS: Zeo.app/Contents/SharedSupport/agent/prompts/
-    set( AGENT_PROMPTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/prompts" )
-    set( AGENT_PROMPTS_INSTALL_DIR "${OSX_BUNDLE_BUILD_DIR}/${OSX_BUNDLE_SUP_DIR}/agent/prompts" )
-
-    add_custom_target( install_agent_prompts ALL
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${AGENT_PROMPTS_DIR}"
-            "${AGENT_PROMPTS_INSTALL_DIR}"
-        COMMENT "Installing agent prompts into app bundle"
-    )
+elseif( WIN32 )
+    set( AGENT_PYTHON_INSTALL_DIR "${CMAKE_BINARY_DIR}/agent/python" )
+else()
+    set( AGENT_PYTHON_INSTALL_DIR "${CMAKE_BINARY_DIR}/agent/python" )
 endif()
+
+add_custom_target( install_python_scripts ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${AGENT_PYTHON_DIR}"
+        "${AGENT_PYTHON_INSTALL_DIR}"
+    COMMENT "Installing Python tool scripts into app bundle"
+)
+
+# Copy prompts/ directory (core.md shared with MCP server)
+set( AGENT_PROMPTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/prompts" )
+
+if( APPLE )
+    set( AGENT_PROMPTS_INSTALL_DIR "${OSX_BUNDLE_BUILD_DIR}/${OSX_BUNDLE_SUP_DIR}/agent/prompts" )
+elseif( WIN32 )
+    set( AGENT_PROMPTS_INSTALL_DIR "${CMAKE_BINARY_DIR}/agent/prompts" )
+else()
+    set( AGENT_PROMPTS_INSTALL_DIR "${CMAKE_BINARY_DIR}/agent/prompts" )
+endif()
+
+add_custom_target( install_agent_prompts ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${AGENT_PROMPTS_DIR}"
+        "${AGENT_PROMPTS_INSTALL_DIR}"
+    COMMENT "Installing agent prompts into app bundle"
+)
 
 include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
@@ -128,6 +139,9 @@ set( AGENT_SRCS
     tools/handlers/netclass_generator.cpp
     tools/handlers/file_io_handler.cpp
 
+    # SVG rasterizer (nanosvg-based, used on Windows/Linux for screenshot SVG->PNG)
+    tools/util/svg_rasterizer.cpp
+
 )
 
 # Platform-specific sources
@@ -142,6 +156,11 @@ if( APPLE )
     set_source_files_properties( "${CMAKE_CURRENT_SOURCE_DIR}/agent.icns" PROPERTIES
         MACOSX_PACKAGE_LOCATION Resources
         )
+endif()
+
+# Windows resource file (manifest for Common Controls v6, DPI awareness, version info)
+if( WIN32 )
+    set( AGENT_RESOURCES ${CMAKE_SOURCE_DIR}/resources/msw/agent.rc )
 endif()
 
 # Create the standalone executable
@@ -239,3 +258,14 @@ install( TARGETS agent_kiface
     DESTINATION ${KICAD_BIN}
     COMPONENT binary
     )
+
+if( WIN32 )
+    install( DIRECTORY ${AGENT_PYTHON_DIR}/
+        DESTINATION ${KICAD_BIN}/agent/python
+        COMPONENT binary
+        )
+    install( DIRECTORY ${AGENT_PROMPTS_DIR}/
+        DESTINATION ${KICAD_BIN}/agent/prompts
+        COMPONENT binary
+        )
+endif()

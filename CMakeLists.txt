@@ -593,6 +593,8 @@ if( MSVC )
     string( APPEND CMAKE_CXX_FLAGS_RELWITHDEBINFO " /Gy" )
     # Avoid fatal error because /GF + swig wrapper exceed standard obj file limits
     string( APPEND CMAKE_CXX_FLAGS " /bigobj" )
+    # Allow duplicate symbols from nlohmann::json template instantiations across kicommon/common
+    add_link_options( /FORCE:MULTIPLE )
     # /permissive-: This puts MSVC into compliance mode, this flag is default on with C++20
     # but we want to turn it on to enable debug performance improvements available under C++17 in MSVC 17.5+
     string( APPEND CMAKE_CXX_FLAGS " /permissive-" )

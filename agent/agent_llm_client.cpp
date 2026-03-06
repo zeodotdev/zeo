@@ -270,14 +270,18 @@ void* LLM_REQUEST_THREAD::Entry()
 
     // Set up progress callback for fast cancellation
     // The progress callback is called frequently and can abort immediately
+    // NOTE: Must use an explicit function pointer cast — passing a lambda directly
+    // to curl_easy_setopt (a C variadic function) doesn't trigger the lambda-to-
+    // function-pointer conversion on MSVC, causing a crash in pgrs_update.
     curl_easy_setopt( curl, CURLOPT_NOPROGRESS, 0L );
     curl_easy_setopt( curl, CURLOPT_XFERINFOFUNCTION,
+        static_cast<int(*)( void*, curl_off_t, curl_off_t, curl_off_t, curl_off_t )>(
         []( void* clientp, curl_off_t, curl_off_t, curl_off_t, curl_off_t ) -> int {
             std::atomic<bool>* cancelFlag = static_cast<std::atomic<bool>*>( clientp );
             if( cancelFlag && cancelFlag->load() )
                 return 1;  // Non-zero aborts the transfer
             return 0;
-        });
+        }));
     curl_easy_setopt( curl, CURLOPT_XFERINFODATA, m_cancelFlag );
 
     // Retry loop for transient connection errors
@@ -400,8 +404,25 @@ void* LLM_REQUEST_THREAD::Entry()
 
 size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, size_t nmemb, void* userp )
 {
+    // Use direct file I/O for crash diagnostics (wxLog buffers from bg threads)
+    static FILE* dbgFile = nullptr;
+    if( !dbgFile )
+    {
+        dbgFile = _wfopen( L"C:\\Users\\jared\\AppData\\Roaming\\kicad\\logs\\stream_debug.log", L"w" );
+    }
+
     size_t realsize = size * nmemb;
     StreamContext* ctx = static_cast<StreamContext*>( userp );
+
+    if( dbgFile ) { fprintf( dbgFile, "CB: entry realsize=%zu ctx=%p\n", realsize, (void*)ctx ); fflush( dbgFile ); }
+
+    if( !ctx )
+        return 0;
+
+    if( dbgFile ) { fprintf( dbgFile, "CB: handler=%p cancelFlag=%p\n", (void*)ctx->handler, (void*)ctx->cancelFlag ); fflush( dbgFile ); }
+
+    if( !ctx->handler )
+        return 0;
 
     // Check for cancellation
     if( ctx->cancelFlag && ctx->cancelFlag->load() )
@@ -411,6 +432,7 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
 
     // Append to buffer
     ctx->buffer.append( static_cast<char*>( contents ), realsize );
+    if( dbgFile ) { fprintf( dbgFile, "CB: buffer appended, size=%zu\n", ctx->buffer.size() ); fflush( dbgFile ); }
 
     // Process complete SSE events (lines ending with \n\n)
     size_t pos;
@@ -424,6 +446,8 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
 
         std::string event = ctx->buffer.substr( 0, pos );
         ctx->buffer.erase( 0, pos + 2 );
+
+        if( dbgFile ) { fprintf( dbgFile, "CB: SSE event len=%zu first80='%.80s'\n", event.size(), event.c_str() ); fflush( dbgFile ); }
 
         // Parse SSE event - extract event type and data line
         // SSE format can be "event: xxx\ndata: yyy" or just "data: yyy"
@@ -458,12 +482,15 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
         if( data == "[DONE]" )
             continue;
 
+        if( dbgFile ) { fprintf( dbgFile, "CB: parsing JSON len=%zu\n", data.size() ); fflush( dbgFile ); }
+
         try
         {
             json j = json::parse( data );
 
             // Handle different event types
             std::string eventType = j.value( "type", "" );
+            if( dbgFile ) { fprintf( dbgFile, "CB: eventType='%s' handler=%p\n", eventType.c_str(), (void*)ctx->handler ); fflush( dbgFile ); }
 
             if( eventType == "content_block_start" )
             {
@@ -545,10 +572,12 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                         if( ctx->cancelFlag && ctx->cancelFlag->load() )
                             return 0;
 
+                        if( dbgFile ) { fprintf( dbgFile, "CB: posting TEXT chunk, handler=%p\n", (void*)ctx->handler ); fflush( dbgFile ); }
                         LLMStreamChunk chunk;
                         chunk.type = LLMChunkType::TEXT;
                         chunk.text = text;
                         PostLLMChunk( ctx->handler, chunk );
+                        if( dbgFile ) { fprintf( dbgFile, "CB: TEXT chunk posted OK\n" ); fflush( dbgFile ); }
                     }
                 }
                 else if( deltaType == "input_json_delta" )
@@ -733,18 +762,19 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                 auto error = j.value( "error", json::object() );
 
                 LLMStreamChunk chunk;
-                chunk.type = LLMChunkType::ERROR;
+                chunk.type = LLMChunkType::ERRORED;
                 chunk.error_type = error.value( "type", "" );
                 chunk.error_message = error.value( "message", "Unknown error" );
                 PostLLMChunk( ctx->handler, chunk );
             }
         }
-        catch( const json::exception& )
+        catch( const json::exception& e )
         {
-            // JSON parse error - skip this event and continue
+            if( dbgFile ) { fprintf( dbgFile, "CB: JSON parse error: %s\n", e.what() ); fflush( dbgFile ); }
         }
     }
 
+    if( dbgFile ) { fprintf( dbgFile, "CB: returning realsize=%zu\n", realsize ); fflush( dbgFile ); }
     return realsize;
 }
 

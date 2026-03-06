@@ -545,8 +545,8 @@ bool SCH_WIRING_GUIDE_MANAGER::CheckConnectionExists( const VECTOR2I& aStart, co
         // Log MISS - one or both items not found at expected positions
         wxLogMessage( "WIRING_GUIDE: MISS at (%d,%d)->(%d,%d) start=%s end=%s",
                       aStart.x, aStart.y, aEnd.x, aEnd.y,
-                      startItemInfo.empty() ? "NOT FOUND" : startItemInfo,
-                      endItemInfo.empty() ? "NOT FOUND" : endItemInfo );
+                      startItemInfo.empty() ? wxString( "NOT FOUND" ) : startItemInfo,
+                      endItemInfo.empty() ? wxString( "NOT FOUND" ) : endItemInfo );
         return false;
     }
 

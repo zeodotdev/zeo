@@ -20,11 +20,11 @@ refresh_or_fail(sch)
 # Constants
 # ---------------------------------------------------------------------------
 GRID_MM = 1.27           # 50 mil grid
-BBOX_MARGIN = 0.3        # Margin around components for spacing
+BBOX_MARGIN = 0.5        # Margin around components for spacing
 MAX_OFFSET_GRIDS = 15    # Max push-out distance
 MIN_OFFSET_GRIDS = 3     # Minimum distance from IC (3.81mm)
 COMP_HALF_LEN = 3.81     # Half-length of 2-pin passive (center to pin)
-TERMINAL_EXTENSION = 3.81 # Terminal area for power symbols/labels
+TERMINAL_EXTENSION = 5.08 # Terminal area for power symbols/labels
 LABEL_CHAR_WIDTH = 1.0   # Approximate width per character in mm
 LABEL_HEIGHT = 2.5       # Approximate label height in mm
 _LABEL_SHRINK = 0.4      # Shrink label bboxes to allow stacking at 2.54mm pitch
@@ -561,7 +561,6 @@ def _place_single_companion(companion, index, parent_pin_x=None, parent_pin_y=No
 
     # Set properties
     properties = companion.get('properties', {})
-    has_footprint = 'Footprint' in properties
     for prop_name, prop_value in properties.items():
         if prop_name == 'Value':
             sch.symbols.set_value(comp_sym, prop_value)
@@ -570,10 +569,6 @@ def _place_single_companion(companion, index, parent_pin_x=None, parent_pin_y=No
         else:
             comp_sym.set_field(prop_name, prop_value)
             sch.crud.update_items(comp_sym)
-
-    # Auto-assign default footprint for common generic symbols
-    if not has_footprint and lib_id in DEFAULT_FOOTPRINTS:
-        sch.symbols.set_footprint(comp_sym, DEFAULT_FOOTPRINTS[lib_id])
 
     # Get ALL companion pin positions in 1 IPC call
     comp_pin_map = {}
@@ -763,7 +758,7 @@ try:
             })
 
 except Exception as e:
-    results.append({'error': f'Unexpected error during companion placement: {str(e)}'})
+    results = [{'error': str(e)}]
 
 # ---------------------------------------------------------------------------
 # Auto-place junctions where wires branch or meet

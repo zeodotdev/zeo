@@ -35,6 +35,10 @@
 #include <wx/msgdlg.h>
 #include <wx/cmdline.h>
 
+#ifdef __WXMSW__
+#include <windows.h>
+#endif
+
 #include <env_vars.h>
 #include <file_history.h>
 #include <hotkeys_basic.h>
@@ -470,6 +474,150 @@ void CustomAssertHandler( const wxString& file, int line, const wxString& func, 
 }
 #endif
 
+#ifdef __WXMSW__
+// Windows deep link support for zeo:// URL scheme.
+// Uses a hidden window with a known class name to receive WM_COPYDATA from
+// new instances launched by the OS when a zeo:// URL is clicked.
+
+static const wchar_t* ZEO_DEEPLINK_WINDOW_CLASS = L"ZeoDeepLinkReceiver";
+static const DWORD    ZEO_COPYDATA_DEEPLINK = 0x5A454F;  // "ZEO" magic
+
+static HWND g_deepLinkWindow = nullptr;
+static wxString g_pendingDeepLink;
+
+// Find an existing Zeo instance's deep link receiver window
+static HWND FindExistingZeoInstance()
+{
+    return FindWindowW( ZEO_DEEPLINK_WINDOW_CLASS, nullptr );
+}
+
+// Forward a deep link URL to an existing instance via WM_COPYDATA
+static bool ForwardDeepLinkToExistingInstance( HWND hWnd, const wxString& aUrl )
+{
+    std::string utf8 = aUrl.ToUTF8().data();
+    COPYDATASTRUCT cds = {};
+    cds.dwData = ZEO_COPYDATA_DEEPLINK;
+    cds.cbData = static_cast<DWORD>( utf8.size() + 1 );
+    cds.lpData = const_cast<char*>( utf8.c_str() );
+    return SendMessage( hWnd, WM_COPYDATA, 0, reinterpret_cast<LPARAM>( &cds ) ) != 0;
+}
+
+// Process a received deep link URL (called on the main thread)
+static void ProcessDeepLink( const wxString& aUrl )
+{
+    wxWindow* topWindow = wxTheApp->GetTopWindow();
+
+    if( topWindow && dynamic_cast<KICAD_MANAGER_FRAME*>( topWindow ) )
+    {
+        KICAD_MANAGER_FRAME* frame = static_cast<KICAD_MANAGER_FRAME*>( topWindow );
+
+        if( frame->GetSessionManager() )
+        {
+            frame->GetSessionManager()->HandleDeepLink( aUrl );
+
+            if( !aUrl.Contains( "callback/agent" ) )
+            {
+                if( frame->IsIconized() )
+                    frame->Iconize( false );
+                frame->Show( true );
+                frame->Raise();
+                frame->RequestUserAttention();
+            }
+        }
+    }
+}
+
+// Window procedure for the hidden deep link receiver
+static LRESULT CALLBACK DeepLinkWndProc( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam )
+{
+    if( msg == WM_COPYDATA )
+    {
+        auto* cds = reinterpret_cast<COPYDATASTRUCT*>( lParam );
+
+        if( cds && cds->dwData == ZEO_COPYDATA_DEEPLINK && cds->lpData )
+        {
+            wxString url = wxString::FromUTF8( static_cast<const char*>( cds->lpData ),
+                                                cds->cbData - 1 );
+            if( url.StartsWith( "zeo://" ) )
+            {
+                wxTheApp->CallAfter( [url]() { ProcessDeepLink( url ); } );
+                return 1;
+            }
+        }
+
+        return 0;
+    }
+
+    return DefWindowProc( hWnd, msg, wParam, lParam );
+}
+
+static void CreateDeepLinkWindow()
+{
+    WNDCLASSW wc = {};
+    wc.lpfnWndProc = DeepLinkWndProc;
+    wc.hInstance = GetModuleHandle( nullptr );
+    wc.lpszClassName = ZEO_DEEPLINK_WINDOW_CLASS;
+    RegisterClassW( &wc );
+
+    g_deepLinkWindow = CreateWindowW( ZEO_DEEPLINK_WINDOW_CLASS, L"", 0,
+                                       0, 0, 0, 0, HWND_MESSAGE, nullptr,
+                                       GetModuleHandle( nullptr ), nullptr );
+}
+
+static void DestroyDeepLinkWindow()
+{
+    if( g_deepLinkWindow )
+    {
+        DestroyWindow( g_deepLinkWindow );
+        g_deepLinkWindow = nullptr;
+    }
+
+    UnregisterClassW( ZEO_DEEPLINK_WINDOW_CLASS, GetModuleHandle( nullptr ) );
+}
+
+// Register zeo:// URL scheme in the Windows registry (HKCU, no admin needed)
+static void RegisterUrlScheme()
+{
+    wxString exePath = wxStandardPaths::Get().GetExecutablePath();
+
+    HKEY hKey;
+    LSTATUS result = RegCreateKeyExW( HKEY_CURRENT_USER,
+                                       L"Software\\Classes\\zeo",
+                                       0, nullptr, 0, KEY_WRITE, nullptr,
+                                       &hKey, nullptr );
+    if( result != ERROR_SUCCESS )
+        return;
+
+    const wchar_t* desc = L"Zeo URL Protocol";
+    RegSetValueExW( hKey, nullptr, 0, REG_SZ,
+                    reinterpret_cast<const BYTE*>( desc ),
+                    static_cast<DWORD>( ( wcslen( desc ) + 1 ) * sizeof( wchar_t ) ) );
+
+    const wchar_t* empty = L"";
+    RegSetValueExW( hKey, L"URL Protocol", 0, REG_SZ,
+                    reinterpret_cast<const BYTE*>( empty ),
+                    static_cast<DWORD>( sizeof( wchar_t ) ) );
+    RegCloseKey( hKey );
+
+    // Set the command: "C:\path\to\kicad.exe" "%1"
+    wxString commandKey = "Software\\Classes\\zeo\\shell\\open\\command";
+    wxString command = "\"" + exePath + "\" \"%1\"";
+
+    result = RegCreateKeyExW( HKEY_CURRENT_USER,
+                               commandKey.wc_str(),
+                               0, nullptr, 0, KEY_WRITE, nullptr,
+                               &hKey, nullptr );
+    if( result == ERROR_SUCCESS )
+    {
+        RegSetValueExW( hKey, nullptr, 0, REG_SZ,
+                        reinterpret_cast<const BYTE*>( command.wc_str() ),
+                        static_cast<DWORD>( ( command.length() + 1 ) * sizeof( wchar_t ) ) );
+        RegCloseKey( hKey );
+    }
+}
+#endif // __WXMSW__
+
+
 /**
  * Not publicly visible because most of the action is in #PGM_KICAD these days.
  */
@@ -487,6 +635,29 @@ struct APP_KICAD : public wxApp
 
     bool OnInit() override
     {
+#ifdef __WXMSW__
+        // Check if launched with a zeo:// URL (from OS protocol handler).
+        // If another instance is already running, forward the URL and exit.
+        for( int i = 1; i < argc; i++ )
+        {
+            wxString arg = argv[i];
+
+            if( arg.StartsWith( "zeo://" ) )
+            {
+                HWND existing = FindExistingZeoInstance();
+
+                if( existing )
+                {
+                    ForwardDeepLinkToExistingInstance( existing, arg );
+                    return false;  // exit this instance
+                }
+
+                // No existing instance — store for processing after init
+                g_pendingDeepLink = arg;
+            }
+        }
+#endif
+
 #ifdef NDEBUG
         // These checks generate extra assert noise
         wxSizerFlags::DisableConsistencyChecks();
@@ -515,11 +686,30 @@ struct APP_KICAD : public wxApp
             return false;
         }
 
+#ifdef __WXMSW__
+        // Create the hidden window to receive deep links from future instances
+        CreateDeepLinkWindow();
+
+        // Register zeo:// URL scheme (idempotent, updates path if exe moved)
+        RegisterUrlScheme();
+
+        // Process any deep link URL we were launched with
+        if( !g_pendingDeepLink.empty() )
+        {
+            wxString url = g_pendingDeepLink;
+            g_pendingDeepLink.clear();
+            CallAfter( [url]() { ProcessDeepLink( url ); } );
+        }
+#endif
+
         return true;
     }
 
     int OnExit() override
     {
+#ifdef __WXMSW__
+        DestroyDeepLinkWindow();
+#endif
         program.OnPgmExit();
 
         // Avoid wxLog crashing when used in destructors.

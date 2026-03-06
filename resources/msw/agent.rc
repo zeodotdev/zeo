@@ -1,0 +1,9 @@
+#define INCLUDE_KICAD_VERSION
+#include <kicad_build_version.h>
+
+#include "resource.h"
+
+#define RC_VER_FILE_DESCRIPTION "Zeo Agent " KICAD_WIN32_RC_PRODVER_STR
+#define RC_VER_INTERNALNAME "agent"
+#define RC_VER_ORIGINALFILENAME "agent.exe"
+#include "kiwin32.rc"

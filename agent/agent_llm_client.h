@@ -46,7 +46,7 @@ enum class LLM_EVENT_TYPE
     TOOL_USE,       // Tool call with id, name, input
     TOOL_USE_DONE,  // All tool calls parsed, ready to execute
     END_TURN,       // Model finished (no more tool calls)
-    ERROR           // Error occurred
+    ERRORED         // Error occurred
 };
 
 /**

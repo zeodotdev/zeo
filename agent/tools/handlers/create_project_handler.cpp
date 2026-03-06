@@ -5,6 +5,12 @@
 #include <wx/filename.h>
 #include <wx/log.h>
 #include <kiid.h>
+#include <sch_file_versions.h>
+
+// From pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.h — keep in sync
+#ifndef SEXPR_BOARD_FILE_VERSION
+#define SEXPR_BOARD_FILE_VERSION 20260206
+#endif
 
 
 std::string CREATE_PROJECT_HANDLER::Execute( const std::string& aToolName,
@@ -45,19 +51,22 @@ std::string CREATE_PROJECT_HANDLER::Execute( const std::string& aToolName,
         wxFile f( schFile, wxFile::write );
         if( f.IsOpened() )
         {
-            f.Write(
+            wxString schContent;
+            schContent.Printf(
                 "(kicad_sch\n"
-                "  (version 20250114)\n"
+                "  (version %d)\n"
                 "  (generator \"zeo_agent\")\n"
                 "  (generator_version \"1.0\")\n"
-                "  (uuid \"" + KIID().AsStdString() + "\")\n"
+                "  (uuid \"%s\")\n"
                 "  (paper \"A4\")\n"
                 "  (lib_symbols)\n"
                 "  (sheet_instances\n"
                 "    (path \"/\" (page \"\"))\n"
                 "  )\n"
-                ")\n"
-            );
+                ")\n",
+                SEXPR_SCHEMATIC_FILE_VERSION,
+                KIID().AsStdString() );
+            f.Write( schContent );
         }
     }
 
@@ -67,10 +76,13 @@ std::string CREATE_PROJECT_HANDLER::Execute( const std::string& aToolName,
         wxFile f( pcbFile, wxFile::write );
         if( f.IsOpened() )
         {
-            f.Write(
+            wxString pcbContent;
+            pcbContent.Printf(
                 "(kicad_pcb\n"
-                "  (version 20250114)\n"
-                "  (generator \"zeo_agent\")\n"
+                "  (version %d)\n"
+                "  (generator \"zeo_agent\")\n",
+                SEXPR_BOARD_FILE_VERSION );
+            pcbContent +=
                 "  (generator_version \"1.0\")\n"
                 "  (general\n"
                 "    (thickness 1.6)\n"
@@ -94,8 +106,8 @@ std::string CREATE_PROJECT_HANDLER::Execute( const std::string& aToolName,
                 "  (setup\n"
                 "    (pad_to_mask_clearance 0)\n"
                 "  )\n"
-                ")\n"
-            );
+                ")\n";
+            f.Write( pcbContent );
         }
     }
 

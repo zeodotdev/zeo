@@ -99,10 +99,11 @@ Rotation is **counterclockwise** in degrees (0, 90, 180, 270). It rotates the en
 2. `pcb_set_outline` — define board shape if needed
 3. `pcb_place` — position ICs, connectors, and other primary footprints
 4. `pcb_place_companions` — place companion footprints near their associated ICs
-5. `pcb_add` — route connections (tracks, vias)
-6. `pcb_add` with zones — add copper pours
-7. `pcb_run_drc` — check for design rule violations
-8. `pcb_export` — generate manufacturing files
+5. `generate_net_classes` — auto-generate net classes (power, signal, differential pairs) with appropriate trace widths and clearances based on the design
+6. `pcb_add` — route connections (tracks, vias)
+7. `pcb_add` with zones — add copper pours
+8. `pcb_run_drc` — check for design rule violations
+9. `pcb_export` — generate manufacturing files
 
 ## Key Conventions
 

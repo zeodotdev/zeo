@@ -25,12 +25,13 @@ try:
                 try:
                     all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
                     for p in all_pins:
+                        pos = p['position']
                         pin_map[p['pin_number']] = {
-                            'position': get_pos(p),
+                            'position': [round(pos.x / 1e6, 2), round(pos.y / 1e6, 2)],
                             'orientation': p.get('orientation', 0)
                         }
-                except:
-                    pass
+                except Exception as e:
+                    tool_log(f"get_all_transformed_pin_positions failed: {e}")
 
             for pin in sym.pins:
                 pin_info = {

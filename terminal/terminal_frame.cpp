@@ -21,6 +21,7 @@
 #include <nlohmann/json.hpp>
 #include <pgm_base.h>
 #include <set>
+#include <wx/weakref.h>
 
 #ifdef __APPLE__
 #include <libproc.h>
@@ -223,12 +224,17 @@ TERMINAL_FRAME::TERMINAL_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     Bind( wxEVT_SIZE, &TERMINAL_FRAME::OnSize, this );
 
     // Delayed layout to ensure terminal gets final size after window is shown
-    CallAfter( [this]() {
-        Layout();
+    // Use wxWeakRef to guard against use-after-free if frame is destroyed before CallAfter executes
+    wxWeakRef<TERMINAL_FRAME> weakThis( this );
+    CallAfter( [weakThis]() {
+        if( !weakThis )
+            return;  // Frame was destroyed, abort
+
+        weakThis->Layout();
         // Notify all terminal panels to resize
-        for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
+        for( size_t i = 0; i < weakThis->m_notebook->GetPageCount(); i++ )
         {
-            if( wxWindow* page = m_notebook->GetPage( i ) )
+            if( wxWindow* page = weakThis->m_notebook->GetPage( i ) )
             {
                 wxSizeEvent evt( page->GetSize() );
                 page->ProcessWindowEvent( evt );
@@ -669,12 +675,22 @@ void TERMINAL_FRAME::ExecuteCommandForAgentAsync( const wxString& aCmd )
         AGENT_MONITOR_LOG::Instance().LogCommandStart( "run_terminal", "", bashCmdStr );
         wxLongLong termStartTime = wxGetLocalTimeMillis();
 
-        CallAfter( [this, bashCmd, termStartTime]() {
-            std::string result = m_headlessExecutor->RunSystemCommand( bashCmd );
+        // Use wxWeakRef to guard against use-after-free if frame is destroyed
+        // before CallAfter executes (e.g., during YieldFor() re-entrant event processing)
+        wxWeakRef<TERMINAL_FRAME> weakThis( this );
+        CallAfter( [weakThis, bashCmd, termStartTime]() {
+            if( !weakThis )
+            {
+                // Frame was destroyed, abort - log for debugging
+                wxLogWarning( "TERMINAL: CallAfter aborted - frame was destroyed" );
+                return;
+            }
+
+            std::string result = weakThis->m_headlessExecutor->RunSystemCommand( bashCmd );
             long durationMs = ( wxGetLocalTimeMillis() - termStartTime ).ToLong();
             std::string output = result.empty() ? "(no output)" : result;
             AGENT_MONITOR_LOG::Instance().LogCommandEnd( "run_terminal", "", output, true, durationMs );
-            SendAgentResponse( output );
+            weakThis->SendAgentResponse( output );
         } );
         return;
     }

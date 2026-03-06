@@ -541,6 +541,7 @@ set( COMMON_DLG_SRCS
     libraries/lib_table_grid_data_model.cpp
 
     zeo/agent_auth.cpp
+    zeo/auth_callback_server.cpp
     )
 
 if( KICAD_USE_SENTRY )

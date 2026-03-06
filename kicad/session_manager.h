@@ -29,6 +29,10 @@
 #include <memory>
 #include <zeo/agent_auth.h>
 
+#ifndef __WXMAC__
+class AUTH_CALLBACK_SERVER;
+#endif
+
 class KICAD_MANAGER_FRAME;
 
 /**
@@ -87,6 +91,11 @@ private:
 private:
     KICAD_MANAGER_FRAME*        m_frame;
     std::unique_ptr<AGENT_AUTH> m_auth;
+
+#ifndef __WXMAC__
+    void OnAuthCallback( wxCommandEvent& aEvent );
+    bool m_authCallbackBound = false;
+#endif
 };
 
 #endif // SESSION_MANAGER_H

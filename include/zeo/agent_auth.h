@@ -4,6 +4,12 @@
 #include <string>
 #include <functional>
 #include <map>
+#include <memory>
+
+#ifndef __WXMAC__
+class AUTH_CALLBACK_SERVER;
+class wxEvtHandler;
+#endif
 
 /**
  * Supabase authentication manager.
@@ -91,6 +97,14 @@ public:
      */
     static std::string ReadAccessTokenFromDisk();
 
+#ifndef __WXMAC__
+    /**
+     * Set the event handler that will receive EVT_AUTH_CALLBACK from the local
+     * HTTP callback server (Linux only).
+     */
+    void SetCallbackHandler( wxEvtHandler* aHandler );
+#endif
+
 private:
     std::string m_projectUrl;
     std::string m_anonKey;
@@ -125,6 +139,11 @@ private:
 
     // URL decode a string
     std::string UrlDecode( const std::string& value );
+
+#ifndef __WXMAC__
+    std::unique_ptr<AUTH_CALLBACK_SERVER> m_callbackServer;
+    wxEvtHandler*                         m_callbackHandler = nullptr;
+#endif
 };
 
 #endif // AGENT_AUTH_H

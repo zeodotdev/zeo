@@ -174,6 +174,11 @@ private:
     bool CheckAuthentication();
     void EnsureAuth();          // Lazy-init fallback auth if no shared pointer received
 
+#ifndef __WXMAC__
+    void OnAuthCallback( wxCommandEvent& aEvent );
+    bool m_authCallbackBound = false;
+#endif
+
     // ── Cloud Sync ───────────────────────────────────────────────────────
     std::unique_ptr<AGENT_CLOUD_SYNC> m_cloudSync;
     void ConfigureCloudSync();  // Wire auth + supabase config to cloud sync

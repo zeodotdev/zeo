@@ -1,6 +1,9 @@
 #include "agent_frame.h"
 #include "agent_chat_history.h"
 #include <zeo/agent_auth.h>
+#ifndef __WXMAC__
+#include <zeo/auth_callback_server.h>
+#endif
 #include "cloud/agent_cloud_sync.h"
 #include "bridge/webview_bridge.h"
 #include "view/agent_markdown.h"
@@ -2086,9 +2089,44 @@ void AGENT_FRAME::DoSignIn()
     wxLogInfo( "AGENT_FRAME::DoSignIn called" );
     EnsureAuth();
 
-    if( m_auth )
-        m_auth->StartOAuthFlow( "agent" );
+    if( !m_auth )
+        return;
+
+#ifndef __WXMAC__
+    m_auth->SetCallbackHandler( this );
+
+    if( !m_authCallbackBound )
+    {
+        Bind( EVT_AUTH_CALLBACK, &AGENT_FRAME::OnAuthCallback, this );
+        m_authCallbackBound = true;
+    }
+#endif
+
+    m_auth->StartOAuthFlow( "agent" );
 }
+
+#ifndef __WXMAC__
+void AGENT_FRAME::OnAuthCallback( wxCommandEvent& aEvent )
+{
+    std::string callbackUrl = aEvent.GetString().ToStdString();
+    std::string errorMsg;
+
+    if( m_auth && m_auth->HandleOAuthCallback( callbackUrl, errorMsg ) )
+    {
+        UpdateAuthUI();
+
+        if( IsIconized() )
+            Iconize( false );
+
+        Show( true );
+        Raise();
+    }
+    else
+    {
+        wxMessageBox( _( "Sign in failed: " ) + errorMsg, _( "Error" ), wxOK | wxICON_ERROR );
+    }
+}
+#endif
 
 bool AGENT_FRAME::canCloseWindow( wxCloseEvent& aEvent )
 {

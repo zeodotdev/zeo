@@ -22,6 +22,9 @@
  */
 
 #include "session_manager.h"
+#ifndef __WXMAC__
+#include <zeo/auth_callback_server.h>
+#endif
 #include "kicad_manager_frame.h"
 #include <widgets/kistatusbar.h>
 #include <kiway.h>
@@ -250,9 +253,28 @@ void SESSION_MANAGER::OnSessionButtonClick( wxMouseEvent& aEvent )
 
 void SESSION_MANAGER::StartOAuthFlow()
 {
-    if( m_auth )
-        m_auth->StartOAuthFlow();
+    if( !m_auth )
+        return;
+
+#ifndef __WXMAC__
+    m_auth->SetCallbackHandler( m_frame );
+
+    if( !m_authCallbackBound )
+    {
+        m_frame->Bind( EVT_AUTH_CALLBACK, &SESSION_MANAGER::OnAuthCallback, this );
+        m_authCallbackBound = true;
+    }
+#endif
+
+    m_auth->StartOAuthFlow();
 }
+
+#ifndef __WXMAC__
+void SESSION_MANAGER::OnAuthCallback( wxCommandEvent& aEvent )
+{
+    HandleDeepLink( aEvent.GetString() );
+}
+#endif
 
 bool SESSION_MANAGER::HandleDeepLink( const wxString& aUrl )
 {

@@ -1,4 +1,7 @@
 #include <zeo/agent_auth.h>
+#ifndef __WXMAC__
+#include <zeo/auth_callback_server.h>
+#endif
 #include <zeo/zeo_constants.h>
 #include <kicad_curl/kicad_curl_easy.h>
 #include <curl/curl.h>
@@ -51,9 +54,39 @@ void AGENT_AUTH::SignOut()
 
 bool AGENT_AUTH::StartOAuthFlow( const std::string& aSource )
 {
+#ifndef __WXMAC__
+    // Linux: use local HTTP server for OAuth callback
+    if( m_callbackHandler )
+    {
+        m_callbackServer = std::make_unique<AUTH_CALLBACK_SERVER>( m_callbackHandler );
+
+        if( m_callbackServer->Start() )
+        {
+            std::string callback = m_callbackServer->GetCallbackUrl( aSource );
+
+            std::ostringstream authUrl;
+            authUrl << m_authWebUrl << "?redirect_uri=" << callback << "&signout=true";
+
+            if( !wxLaunchDefaultBrowser( authUrl.str() ) )
+            {
+                wxMessageBox( _( "Could not open browser. Please check your default browser settings." ),
+                              _( "Error" ), wxOK | wxICON_ERROR );
+                m_callbackServer.reset();
+                return false;
+            }
+
+            return true;
+        }
+
+        m_callbackServer.reset();
+    }
+    // Fall through to custom URL scheme if server fails
+#endif
+
+    // macOS: use custom URL scheme (kicad-agent://)
     std::string callback = "kicad-agent://callback";
     if( !aSource.empty() )
-        callback += "/" + aSource;  // Use path: kicad-agent://callback/agent
+        callback += "/" + aSource;
 
     std::ostringstream authUrl;
     authUrl << m_authWebUrl << "?redirect_uri=" << callback << "&signout=true";
@@ -67,6 +100,13 @@ bool AGENT_AUTH::StartOAuthFlow( const std::string& aSource )
 
     return true;
 }
+
+#ifndef __WXMAC__
+void AGENT_AUTH::SetCallbackHandler( wxEvtHandler* aHandler )
+{
+    m_callbackHandler = aHandler;
+}
+#endif
 
 bool AGENT_AUTH::IsAuthenticated()
 {

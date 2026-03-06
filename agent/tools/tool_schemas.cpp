@@ -194,6 +194,13 @@ static void AddToolsFromManifest( std::vector<LLM_TOOL>& tools )
         if( name.empty() )
             continue;
 
+        // Skip tools with no app and no script — these are MCP-only
+        std::string app = strVal( entry, "app" );
+        std::string script = strVal( entry, "script" );
+
+        if( app.empty() && script.empty() )
+            continue;
+
         LLM_TOOL tool;
         tool.name = name;
         tool.description = strVal( entry, "description" );

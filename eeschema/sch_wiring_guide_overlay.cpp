@@ -76,11 +76,13 @@ void SCH_WIRING_GUIDE_OVERLAY::ViewDraw( int aLayer, KIGFX::VIEW* aView ) const
 
 void SCH_WIRING_GUIDE_OVERLAY::drawPreviewShape( KIGFX::VIEW* aView ) const
 {
-    if( !m_manager )
-    {
-        wxLogMessage( "WIRING_GUIDE_OVERLAY: drawPreviewShape - no manager!" );
+    if( !m_manager || !m_frame )
         return;
-    }
+
+    // Don't render during diff preview - DIFF_OVERLAY_ITEM handles wire guides then.
+    // This overlay only renders guides for APPROVED symbols (after accept).
+    if( m_frame->HasAgentPendingChanges() )
+        return;
 
     KIGFX::GAL* gal = aView->GetGAL();
     if( !gal )
@@ -92,13 +94,6 @@ void SCH_WIRING_GUIDE_OVERLAY::drawPreviewShape( KIGFX::VIEW* aView ) const
 
     double scale = aView->GetGAL()->GetWorldScale();
     auto guides = m_manager->GetActiveGuides();
-
-    // Log when drawing guides (only occasionally to avoid spam)
-    static int drawCount = 0;
-    if( ++drawCount % 60 == 1 )  // Log every ~1 second at 60fps
-    {
-        wxLogMessage( "WIRING_GUIDE_OVERLAY: drawPreviewShape - %zu active guides", guides.size() );
-    }
 
     // Check if there's an active wiring position - if so, highlight one guide and dim others
     bool hasActiveWiring = m_manager->HasActiveWiringPosition();

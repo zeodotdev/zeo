@@ -313,7 +313,7 @@
   },
   {
     "name": "sch_get_nets",
-    "description": "Query schematic net connectivity. Returns which symbol pins are connected to which nets.",
+    "description": "Query schematic net connectivity. Returns which symbol pins are connected to which nets. Includes auto-named nets (e.g. 'Net-(U1-DISCH)') by default. Use 'filter' to narrow results.",
     "input_schema": {
       "type": "object",
       "properties": {

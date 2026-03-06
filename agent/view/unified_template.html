@@ -1789,8 +1789,22 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     // Focus input on load
     App.Input.focus();
-    // Signal C++ bridge that the page is ready to receive push messages
-    App.Bridge.sendMsg('page_ready');
+    // Signal C++ bridge that the page is ready to receive push messages.
+    // On Windows/WebView2, the script message handler may not be registered yet
+    // when DOMContentLoaded fires (registration is deferred via CallAfter).
+    // Retry until C++ acknowledges by setting window._pageReadyAcked.
+    (function retryPageReady() {
+        App.Bridge.sendMsg('page_ready');
+        if (!window._pageReadyAcked) setTimeout(retryPageReady, 100);
+    })();
+
+    // Global keyboard shortcuts (WebView2 captures keys before wxWidgets accelerators)
+    document.addEventListener('keydown', function(e) {
+        var mod = e.ctrlKey || e.metaKey;
+        if (mod && e.key === 'n') { e.preventDefault(); App.Bridge.sendMsg('new_chat'); }
+        else if (mod && e.key === 'l') { e.preventDefault(); App.Input.focus(); }
+        else if (e.key === 'Escape') { App.Bridge.sendMsg('stop_click'); App.Search.close(); }
+    });
 
     // Fade in when the window becomes visible (handles preloaded-but-hidden case)
     function showBody() { document.body.classList.add('visible'); }

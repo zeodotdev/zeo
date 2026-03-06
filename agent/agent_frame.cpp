@@ -356,10 +356,14 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     }
 #endif
 
-    // ACCELERATOR TABLE for Cmd+C
-    wxAcceleratorEntry entries[1];
+    // ACCELERATOR TABLE for keyboard shortcuts
+    wxAcceleratorEntry entries[5];
     entries[0].Set( wxACCEL_CTRL, (int) 'C', ID_CHAT_COPY );
-    wxAcceleratorTable accel( 1, entries );
+    entries[1].Set( wxACCEL_CTRL, (int) 'N', ID_CHAT_NEW );
+    entries[2].Set( wxACCEL_CTRL, (int) 'L', ID_CHAT_FOCUS );
+    entries[3].Set( wxACCEL_CTRL, (int) 'F', ID_CHAT_SEARCH );
+    entries[4].Set( wxACCEL_NORMAL, WXK_ESCAPE, ID_CHAT_ESCAPE );
+    wxAcceleratorTable accel( 5, entries );
     SetAcceleratorTable( accel );
 
     SetSizer( mainSizer );
@@ -368,6 +372,29 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Bind menu & accelerator events
     Bind( wxEVT_MENU, &AGENT_FRAME::OnPopupClick, this, ID_CHAT_COPY );
+
+    Bind( wxEVT_MENU, [this]( wxCommandEvent& ) { DoNewChat(); }, ID_CHAT_NEW );
+
+    Bind( wxEVT_MENU, [this]( wxCommandEvent& ) {
+        m_webView->RunScriptAsync( wxS( "App.Input.focus()" ) );
+    }, ID_CHAT_FOCUS );
+
+    Bind( wxEVT_MENU, [this]( wxCommandEvent& ) {
+        m_webView->RunScriptAsync( wxS( "App.Search.open()" ) );
+    }, ID_CHAT_SEARCH );
+
+    Bind( wxEVT_MENU, [this]( wxCommandEvent& ) {
+        if( m_isGenerating )
+        {
+            m_webView->RunScriptAsync(
+                    wxS( "if(App.Search.isOpen()){App.Search.close()}"
+                         "else{App.Bridge.sendMsg('stop_click')}" ) );
+        }
+        else
+        {
+            m_webView->RunScriptAsync( wxS( "App.Search.close()" ) );
+        }
+    }, ID_CHAT_ESCAPE );
 
     // Bind Async LLM Streaming Events
     Bind( EVT_LLM_STREAM_CHUNK, &AGENT_FRAME::OnLLMStreamChunk, this );
@@ -1159,6 +1186,8 @@ void AGENT_FRAME::DoSelectionPillClick()
 
 void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 {
+    try
+    {
     wxLogInfo( "AGENT_FRAME::OnSend called" );
     // NOTE: This method still uses legacy code because it handles KiCad-specific requirements
     // (authentication, pending editor state, system prompt with schematic/PCB context, KIWAY
@@ -1319,6 +1348,16 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     }
 
     m_pendingAttachments.clear();
+
+    }
+    catch( const std::exception& e )
+    {
+        wxLogError( "AGENT_FRAME::OnSend exception: %s", e.what() );
+    }
+    catch( ... )
+    {
+        wxLogError( "AGENT_FRAME::OnSend unknown exception" );
+    }
 }
 
 void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
@@ -2427,10 +2466,18 @@ void AGENT_FRAME::RetryLastRequest()
 
 void AGENT_FRAME::OnLLMStreamChunk( wxThreadEvent& aEvent )
 {
+    wxLogInfo( "AGENT_FRAME::OnLLMStreamChunk - entry" );
+
     // Get the chunk data from the event payload
     LLMStreamChunk* chunk = aEvent.GetPayload<LLMStreamChunk*>();
     if( !chunk )
+    {
+        wxLogError( "AGENT_FRAME::OnLLMStreamChunk - null chunk payload!" );
         return;
+    }
+
+    wxLogInfo( "AGENT_FRAME::OnLLMStreamChunk - type=%d, controller=%p",
+               static_cast<int>( chunk->type ), static_cast<void*>( m_chatController.get() ) );
 
     // Forward to controller for processing
     // Controller emits EVT_CHAT_* events which are handled by OnChat* methods
@@ -2438,6 +2485,8 @@ void AGENT_FRAME::OnLLMStreamChunk( wxThreadEvent& aEvent )
     {
         m_chatController->HandleLLMChunk( *chunk );
     }
+
+    wxLogInfo( "AGENT_FRAME::OnLLMStreamChunk - done" );
 
     // Clean up
     delete chunk;
@@ -3360,6 +3409,8 @@ bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
 
 void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
 {
+    wxLogInfo( "AGENT_FRAME::OnChatTextDelta - entry" );
+
     ChatTextDeltaData* data = aEvent.GetPayload<ChatTextDeltaData*>();
     if( !data )
         return;
@@ -3372,6 +3423,8 @@ void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
 
     // Re-render full response with markdown
     UpdateAgentResponse();
+
+    wxLogInfo( "AGENT_FRAME::OnChatTextDelta - done" );
 
     // Auto-scroll handled by CSS flex-direction: column-reverse
 

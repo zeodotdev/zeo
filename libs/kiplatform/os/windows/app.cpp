@@ -21,8 +21,14 @@
 #include <kiplatform/app.h>
 
 #include <wx/app.h>
+#include <wx/datetime.h>
+#include <wx/dir.h>
+#include <wx/ffile.h>
+#include <wx/filename.h>
 #include <wx/log.h>
+#include <wx/stdpaths.h>
 #include <wx/string.h>
+#include <wx/tokenzr.h>
 #include <wx/window.h>
 #if wxCHECK_VERSION( 3, 3, 0 )
 #include <wx/msw/darkmode.h>
@@ -34,6 +40,8 @@
 #include <versionhelpers.h>
 #include <iostream>
 #include <cstdio>
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
 
 #if defined( _MSC_VER )
 #include <werapi.h>     // issues on msys2
@@ -83,8 +91,105 @@ public:
 #endif
 
 
+static LONG WINAPI ZeoCrashHandler( EXCEPTION_POINTERS* pExInfo )
+{
+    // Write crash info to a file before dying
+    FILE* f = _wfopen( L"C:\\Users\\jared\\AppData\\Roaming\\kicad\\logs\\crash_info.log", L"w" );
+    if( f )
+    {
+        EXCEPTION_RECORD* rec = pExInfo->ExceptionRecord;
+        CONTEXT* ctx = pExInfo->ContextRecord;
+        fprintf( f, "Exception code: 0x%08lX\n", rec->ExceptionCode );
+        fprintf( f, "Exception address: 0x%p\n", rec->ExceptionAddress );
+        fprintf( f, "Access address: 0x%p\n",
+                 rec->NumberParameters >= 2 ? (void*)rec->ExceptionInformation[1] : nullptr );
+        fprintf( f, "Access type: %s\n",
+                 rec->NumberParameters >= 1 ?
+                     ( rec->ExceptionInformation[0] == 0 ? "READ" :
+                       rec->ExceptionInformation[0] == 1 ? "WRITE" : "EXECUTE" ) : "?" );
+#ifdef _M_X64
+        fprintf( f, "RIP: 0x%p\n", (void*)ctx->Rip );
+        fprintf( f, "RSP: 0x%p\n", (void*)ctx->Rsp );
+        fprintf( f, "RBP: 0x%p\n", (void*)ctx->Rbp );
+        fprintf( f, "RAX: 0x%p\n", (void*)ctx->Rax );
+        fprintf( f, "RBX: 0x%p\n", (void*)ctx->Rbx );
+        fprintf( f, "RCX: 0x%p\n", (void*)ctx->Rcx );
+        fprintf( f, "RDX: 0x%p\n", (void*)ctx->Rdx );
+        fprintf( f, "R8:  0x%p\n", (void*)ctx->R8 );
+        fprintf( f, "R9:  0x%p\n", (void*)ctx->R9 );
+
+        // Walk the stack
+        fprintf( f, "\nStack trace:\n" );
+        HANDLE process = GetCurrentProcess();
+        HANDLE thread = GetCurrentThread();
+        SymInitialize( process, NULL, TRUE );
+
+        STACKFRAME64 frame = {};
+        frame.AddrPC.Offset = ctx->Rip;
+        frame.AddrPC.Mode = AddrModeFlat;
+        frame.AddrFrame.Offset = ctx->Rbp;
+        frame.AddrFrame.Mode = AddrModeFlat;
+        frame.AddrStack.Offset = ctx->Rsp;
+        frame.AddrStack.Mode = AddrModeFlat;
+
+        for( int i = 0; i < 30; i++ )
+        {
+            if( !StackWalk64( IMAGE_FILE_MACHINE_AMD64, process, thread,
+                              &frame, ctx, NULL,
+                              SymFunctionTableAccess64, SymGetModuleBase64, NULL ) )
+                break;
+
+            DWORD64 addr = frame.AddrPC.Offset;
+            char symBuf[sizeof(SYMBOL_INFO) + 256];
+            SYMBOL_INFO* sym = (SYMBOL_INFO*)symBuf;
+            sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+            sym->MaxNameLen = 255;
+
+            DWORD64 displacement = 0;
+            HMODULE hMod = NULL;
+            char modName[MAX_PATH] = "???";
+            if( GetModuleHandleExA( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                                    (LPCSTR)addr, &hMod ) )
+                GetModuleFileNameA( hMod, modName, MAX_PATH );
+
+            // Get just the filename
+            char* lastSlash = strrchr( modName, '\\' );
+            char* modShort = lastSlash ? lastSlash + 1 : modName;
+
+            if( SymFromAddr( process, addr, &displacement, sym ) )
+                fprintf( f, "  [%d] %s!%s+0x%llx (0x%p)\n", i, modShort, sym->Name, displacement, (void*)addr );
+            else
+                fprintf( f, "  [%d] %s+0x%llx (0x%p)\n", i, modShort, addr - (DWORD64)hMod, (void*)addr );
+        }
+
+        SymCleanup( process );
+#endif
+        fflush( f );
+        fclose( f );
+    }
+
+    // Also write a minidump
+    HANDLE dumpFile = CreateFileW( L"C:\\Users\\jared\\AppData\\Roaming\\kicad\\logs\\crash.dmp",
+                                   GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
+    if( dumpFile != INVALID_HANDLE_VALUE )
+    {
+        MINIDUMP_EXCEPTION_INFORMATION mdei;
+        mdei.ThreadId = GetCurrentThreadId();
+        mdei.ExceptionPointers = pExInfo;
+        mdei.ClientPointers = FALSE;
+        MiniDumpWriteDump( GetCurrentProcess(), GetCurrentProcessId(),
+                           dumpFile, MiniDumpNormal, &mdei, NULL, NULL );
+        CloseHandle( dumpFile );
+    }
+
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 bool KIPLATFORM::APP::Init()
 {
+    // Install crash handler to capture stack traces
+    SetUnhandledExceptionFilter( ZeoCrashHandler );
+
 #if defined( _MSC_VER ) && defined( DEBUG )
     // wxWidgets turns on leak dumping in debug but its "flawed" and will falsely dump
     // for half a hour _CRTDBG_ALLOC_MEM_DF is the usual default for MSVC.
@@ -109,9 +214,57 @@ bool KIPLATFORM::APP::Init()
     // Let's attach to console when it's possible, or allocate if requested.
     AttachConsole( wxGetEnv( wxS( "KICAD_ALLOC_CONSOLE" ), nullptr ) );
 
-    // Redirect log output to stderr instead of the default wxLogGui which shows
-    // popup dialogs for wxLogWarning/wxLogMessage on Windows
-    wxLog::SetActiveTarget( new wxLogStderr );
+    // Redirect log output to a timestamped file instead of the default wxLogGui
+    // which shows popup dialogs for wxLogWarning/wxLogMessage on Windows.
+    // Log file: %APPDATA%/Zeo/logs/agent-YYYY-MM-DD-HHMMSS.log
+    {
+        wxLog::EnableLogging( true );
+        wxLog::SetLogLevel( wxLOG_Trace );
+
+        wxString logDir = wxStandardPaths::Get().GetUserDataDir() + "\\logs";
+        wxFileName::Mkdir( logDir, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
+
+        wxString timestamp = wxDateTime::Now().Format( wxS( "%Y-%m-%d-%H%M%S" ) );
+        wxString logPath = logDir + "\\agent-" + timestamp + ".log";
+        FILE* logFile = _wfopen( logPath.wc_str(), L"w" );
+
+        if( logFile )
+        {
+            // Timestamped logger matching macOS pattern
+            class wxLogTimestampedFile : public wxLog
+            {
+            public:
+                wxLogTimestampedFile( FILE* f ) : m_fp( f ) {}
+            protected:
+                void DoLogRecord( wxLogLevel, const wxString& msg,
+                                  const wxLogRecordInfo& info ) override
+                {
+                    wxLongLong_t msEpoch = info.timestampMS;
+                    wxDateTime dt( (time_t)( msEpoch / 1000 ) );
+                    int ms = (int)( msEpoch % 1000 );
+                    wxString ts = dt.Format( wxS( "%H:%M:%S" ) )
+                                + wxString::Format( wxS( ".%03d" ), ms );
+                    wxStringTokenizer tok( msg, wxS( "\n" ), wxTOKEN_RET_EMPTY );
+                    while( tok.HasMoreTokens() )
+                    {
+                        wxString line = tok.GetNextToken();
+                        fprintf( m_fp, "%s %s\n", ts.utf8_str().data(), line.utf8_str().data() );
+                    }
+                    fflush( m_fp );
+                }
+            private:
+                FILE* m_fp;
+            };
+            wxLog::SetActiveTarget( new wxLogTimestampedFile( logFile ) );
+        }
+        else
+        {
+            wxLog::SetActiveTarget( new wxLogStderr );
+        }
+
+        wxLog::AddTraceMask( wxS( "Agent" ) );
+        wxLog::AddTraceMask( wxS( "webview" ) );
+    }
 
     // It may be useful to log up to traces in a console, but in Release builds the log level changes to Info
     // Also we have to force the active target to stderr or else it goes to the void

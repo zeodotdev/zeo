@@ -29,6 +29,10 @@ enum
 {
     ID_CHAT_COPY = wxID_HIGHEST + 1001,
     ID_COPY_IMAGE,
+    ID_CHAT_NEW,
+    ID_CHAT_FOCUS,
+    ID_CHAT_SEARCH,
+    ID_CHAT_ESCAPE,
 };
 
 class AGENT_FRAME : public KIWAY_PLAYER

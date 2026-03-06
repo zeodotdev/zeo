@@ -7,6 +7,10 @@
 #include <atomic>
 #include <memory>
 
+#ifdef _WIN32
+#include <process.h>  // for intptr_t used as pid
+#endif
+
 /**
  * CC_SUBPROCESS manages a Claude Code CLI process (`claude -p`) communicating
  * via NDJSON over stdin/stdout pipes.
@@ -58,7 +62,11 @@ private:
     };
 
     wxEvtHandler*                  m_eventSink;
+#ifdef _WIN32
+    intptr_t                       m_pid = -1;
+#else
     pid_t                          m_pid = -1;
+#endif
     int                            m_stdinFd = -1;
     int                            m_stdoutFd = -1;
     int                            m_stderrFd = -1;

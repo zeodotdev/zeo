@@ -3,14 +3,29 @@
 
 #include <wx/log.h>
 
+#ifndef _WIN32
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <poll.h>
 #include <fcntl.h>
+#endif
 #include <errno.h>
 #include <sstream>
 #include <nlohmann/json.hpp>
+
+#ifdef _WIN32
+// Stub implementations for Windows — Claude Code subprocess not yet supported
+CC_SUBPROCESS::CC_SUBPROCESS( wxEvtHandler* aEventSink ) : m_eventSink( aEventSink ) {}
+CC_SUBPROCESS::~CC_SUBPROCESS() { Stop(); }
+bool CC_SUBPROCESS::Start( const std::string&, const std::string&, const std::string&, const std::string&, const std::string& ) { return false; }
+void CC_SUBPROCESS::Stop() { m_running.store( false ); }
+void CC_SUBPROCESS::Cleanup() {}
+void CC_SUBPROCESS::SendUserMessage( const std::string& ) {}
+CC_SUBPROCESS::ReaderThread::ReaderThread( CC_SUBPROCESS* aOwner, int aStdoutFd, int aStderrFd )
+    : wxThread( wxTHREAD_DETACHED ), m_owner( aOwner ), m_stdoutFd( aStdoutFd ), m_stderrFd( aStderrFd ) {}
+wxThread::ExitCode CC_SUBPROCESS::ReaderThread::Entry() { return (wxThread::ExitCode) 0; }
+#else // !_WIN32
 
 
 CC_SUBPROCESS::CC_SUBPROCESS( wxEvtHandler* aEventSink ) :
@@ -381,3 +396,5 @@ wxThread::ExitCode CC_SUBPROCESS::ReaderThread::Entry()
 
     return (wxThread::ExitCode) 0;
 }
+
+#endif // !_WIN32

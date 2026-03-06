@@ -533,7 +533,17 @@ try:
     # ---------------------------------------------------------------------------
     # When a connection target is a net name (e.g., "VBUS"), create a label at the pin
     # Labels are offset from the pin based on pin orientation
+    # SKIP creating auto-labels for nets that have explicit labels defined in the labels array
     _auto_labels_created = []
+
+    # Build set of net names that have explicit labels (Phase 3) - don't auto-create for these
+    _explicit_label_nets = set()
+    for lbl_spec in TOOL_ARGS.get("labels", []):
+        lbl_text = lbl_spec.get("text", "")
+        if lbl_text:
+            _explicit_label_nets.add(lbl_text.upper())  # Case-insensitive
+
+    _debug_info.append(f"Phase 2c: Explicit label nets (will skip auto-create): {_explicit_label_nets}")
     _debug_info.append(f"Phase 2c: Checking for net name connections that need labels")
 
     def _get_label_offset(orientation_deg):
@@ -594,6 +604,12 @@ try:
             if ':' not in target:
                 # Target is a net name (no colon), need to create a label
                 net_name = target
+
+                # Skip if an explicit label exists for this net (will be created in Phase 3)
+                if net_name.upper() in _explicit_label_nets:
+                    _debug_info.append(f"Phase 2c: Skipping auto-label '{net_name}' - explicit label exists")
+                    continue
+
                 pin_info = pin_data.get(pin)
                 if pin_info:
                     pin_pos = pin_info['pos']

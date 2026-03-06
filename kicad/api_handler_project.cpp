@@ -66,9 +66,13 @@ static std::string GetAgentDir()
 
     wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
     wxFileName dir( exePath.GetPath(), "" );
+#ifdef __WXMSW__
+    dir.AppendDir( "agent" );
+#else
     dir.RemoveLastDir();
     dir.AppendDir( "SharedSupport" );
     dir.AppendDir( "agent" );
+#endif
     return dir.GetPath().ToStdString();
 }
 
@@ -125,10 +129,15 @@ HANDLER_RESULT<GetToolSchemasResponse> API_HANDLER_PROJECT::handleGetToolSchemas
         {
             wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
             wxFileName dir( exePath.GetPath(), "" );
+#ifdef __WXMSW__
+            dir.AppendDir( "agent" );
+            dir.AppendDir( "python" );
+#else
             dir.RemoveLastDir();
             dir.AppendDir( "SharedSupport" );
             dir.AppendDir( "agent" );
             dir.AppendDir( "python" );
+#endif
             pythonDir = dir.GetPath().ToStdString();
         }
 

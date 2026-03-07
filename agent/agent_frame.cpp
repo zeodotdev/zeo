@@ -3815,6 +3815,11 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         m_activeRunningHtml = BuildRunningToolHtml( idx, desc );
         m_activeToolResultIdx = idx;
 
+        // Map tool ID to DOM index so OnChatToolComplete can find the right element
+        // (needed for CC backend where multiple tools execute concurrently)
+        if( !data->toolId.empty() )
+            m_toolIdxByUseId[data->toolId] = idx;
+
         wxLogInfo( "AGENT_FRAME::OnChatToolStart - assigned idx=%d (counter now %d)",
                    idx, m_toolResultCounter );
 
@@ -3970,9 +3975,23 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
             + "\" style=\"max-width:100%; border-radius:6px; margin:8px 0;\" />";
     }
 
-    // Update the existing tool result component via JS callback
-    wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
+    // Look up the DOM index for this tool by its ID.
+    // For the CC backend, multiple tools may be in-flight concurrently, so
+    // m_activeToolResultIdx may point to a different tool.
     int idx = m_activeToolResultIdx;
+
+    if( !data->toolId.empty() )
+    {
+        auto idxIt = m_toolIdxByUseId.find( data->toolId );
+
+        if( idxIt != m_toolIdxByUseId.end() )
+        {
+            idx = idxIt->second;
+            m_toolIdxByUseId.erase( idxIt );
+        }
+    }
+
+    wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
 
     // Build the text-only body content (no image - image is appended separately to avoid
     // passing megabytes of base64 data in a single JS string literal)

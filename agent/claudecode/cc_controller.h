@@ -78,6 +78,7 @@ private:
     // Session state
     std::string m_sessionId;
     bool        m_busy = false;
+    bool        m_intentionalStop = false;  // Suppress error on intentional process kill
 
     // Accumulation state for current assistant turn
     std::string m_currentResponse;       // Accumulated text content

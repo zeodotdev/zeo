@@ -81,6 +81,7 @@ void CC_CONTROLLER::Cancel()
 {
     if( m_subprocess )
     {
+        m_intentionalStop = true;
         m_subprocess->Stop();
         m_subprocess.reset();
     }
@@ -154,9 +155,17 @@ void CC_CONTROLLER::OnCCLine( wxThreadEvent& aEvent )
 void CC_CONTROLLER::OnCCExit( wxThreadEvent& aEvent )
 {
     int exitCode = aEvent.GetInt();
-    wxLogInfo( "CC_CONTROLLER: Process exited with code %d", exitCode );
+    wxLogInfo( "CC_CONTROLLER: Process exited with code %d (intentional=%d)",
+               exitCode, m_intentionalStop );
 
     m_busy = false;
+
+    // Don't show error for intentional stops (NewSession, Cancel, model switch)
+    if( m_intentionalStop )
+    {
+        m_intentionalStop = false;
+        return;
+    }
 
     if( exitCode != 0 )
     {
@@ -341,6 +350,9 @@ void CC_CONTROLLER::HandleContentBlockDelta( const json& aEvent )
     const json& delta = aEvent.value( "delta", json::object() );
     std::string deltaType = delta.value( "type", "" );
 
+    wxLogInfo( "CC_CONTROLLER::HandleContentBlockDelta - index=%d, type=%s, blockType=%d",
+               index, deltaType.c_str(), static_cast<int>( block.type ) );
+
     if( block.type == BlockType::TEXT && deltaType == "text_delta" )
     {
         std::string text = delta.value( "text", "" );
@@ -384,8 +396,8 @@ void CC_CONTROLLER::HandleContentBlockStop( const json& aEvent )
     else if( block.type == BlockType::TOOL_USE )
     {
         // Tool call is complete — Claude Code will now execute it internally
-        // Parse tool input for display
-        json toolInput;
+        // Parse tool input for display (default to empty object so .value() calls work)
+        json toolInput = json::object();
         try
         {
             if( !block.toolInput.empty() )
@@ -393,12 +405,15 @@ void CC_CONTROLLER::HandleContentBlockStop( const json& aEvent )
         }
         catch( ... )
         {
-            toolInput = block.toolInput;
+            // If parse fails, keep empty object (not a raw string)
         }
 
         // Use display name (with MCP prefix stripped) for description
         std::string name = block.displayName.empty() ? block.toolName : block.displayName;
         std::string desc;
+
+        wxLogInfo( "CC_CONTROLLER::HandleContentBlockStop - tool_use: name=%s, inputLen=%zu",
+                   name.c_str(), block.toolInput.size() );
 
         // For MCP tools (mcp__zeo__*), use TOOL_REGISTRY to get the same
         // human-readable descriptions as the Zeo agent (e.g. "Running ERC check",
@@ -438,6 +453,9 @@ void CC_CONTROLLER::HandleContentBlockStop( const json& aEvent )
         if( hiddenTools.count( block.toolName ) == 0 )
         {
             m_toolResultCounter++;
+
+            wxLogInfo( "CC_CONTROLLER::HandleContentBlockStop - posting EVT_CHAT_TOOL_START for %s (id=%s)",
+                       name.c_str(), block.toolId.c_str() );
 
             ChatToolStartData startData( block.toolId, name, desc, toolInput );
             PostChatEvent( m_eventSink, EVT_CHAT_TOOL_START, startData );

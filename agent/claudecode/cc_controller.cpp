@@ -501,8 +501,10 @@ void CC_CONTROLLER::HandleUserMessage( const json& aMsg )
         if( toolUseId.empty() )
             continue;
 
-        // Extract the result text
+        // Extract the result text and any image data
         std::string resultText;
+        std::string imageBase64;
+        std::string imageMimeType;
 
         if( block.contains( "content" ) )
         {
@@ -512,14 +514,26 @@ void CC_CONTROLLER::HandleUserMessage( const json& aMsg )
             }
             else if( block["content"].is_array() )
             {
-                // Content can be an array of text blocks
+                // Content can be an array of text and image blocks
                 for( const auto& part : block["content"] )
                 {
-                    if( part.value( "type", "" ) == "text" )
+                    std::string partType = part.value( "type", "" );
+
+                    if( partType == "text" )
                     {
                         if( !resultText.empty() )
                             resultText += "\n";
                         resultText += part.value( "text", "" );
+                    }
+                    else if( partType == "image" )
+                    {
+                        // Image block: { "type": "image", "source": { "type": "base64",
+                        //   "media_type": "image/png", "data": "<base64>" } }
+                        if( part.contains( "source" ) && part["source"].is_object() )
+                        {
+                            imageBase64 = part["source"].value( "data", "" );
+                            imageMimeType = part["source"].value( "media_type", "image/png" );
+                        }
                     }
                 }
             }
@@ -532,19 +546,33 @@ void CC_CONTROLLER::HandleUserMessage( const json& aMsg )
         if( displayResult.size() > 2000 )
             displayResult = displayResult.substr( 0, 2000 ) + "\n... (truncated)";
 
+        // Look up the tool name from our pending map
+        std::string toolName;
+        auto nameIt = m_pendingToolNames.find( toolUseId );
+        if( nameIt != m_pendingToolNames.end() )
+            toolName = nameIt->second;
+
         // Match to pending tool and emit completion
         auto it = std::find( m_pendingToolIds.begin(), m_pendingToolIds.end(), toolUseId );
         if( it != m_pendingToolIds.end() )
         {
-            ChatToolCompleteData data( toolUseId, "", displayResult, !isError );
+            ChatToolCompleteData data( toolUseId, toolName, displayResult, !isError );
+
+            if( !imageBase64.empty() )
+            {
+                data.hasImage = true;
+                data.imageBase64 = imageBase64;
+                data.imageMediaType = imageMimeType;
+            }
+
             PostChatEvent( m_eventSink, EVT_CHAT_TOOL_COMPLETE, data );
 
             m_pendingToolIds.erase( it );
             m_pendingToolNames.erase( toolUseId );
         }
 
-        wxLogInfo( "CC_CONTROLLER: Tool result for %s (%zu bytes, error=%d)",
-                   toolUseId.c_str(), resultText.size(), isError );
+        wxLogInfo( "CC_CONTROLLER: Tool result for %s (%zu bytes, error=%d, hasImage=%d)",
+                   toolUseId.c_str(), resultText.size(), isError, !imageBase64.empty() );
     }
 }
 

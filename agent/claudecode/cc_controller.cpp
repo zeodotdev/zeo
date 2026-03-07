@@ -3,13 +3,17 @@
 #include "cc_events.h"
 #include "../core/chat_events.h"
 
+#include "../tools/tool_registry.h"
+
 #include <wx/log.h>
 #include <wx/dir.h>
 #include <wx/filename.h>
 #include <wx/stdpaths.h>
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <set>
 
 using json = nlohmann::json;
 
@@ -77,6 +81,7 @@ void CC_CONTROLLER::Cancel()
 {
     if( m_subprocess )
     {
+        m_intentionalStop = true;
         m_subprocess->Stop();
         m_subprocess.reset();
     }
@@ -132,6 +137,7 @@ void CC_CONTROLLER::ResetTurnState()
     m_inThinking = false;
     m_activeBlocks.clear();
     m_pendingToolIds.clear();
+    m_pendingToolNames.clear();
 }
 
 
@@ -149,9 +155,17 @@ void CC_CONTROLLER::OnCCLine( wxThreadEvent& aEvent )
 void CC_CONTROLLER::OnCCExit( wxThreadEvent& aEvent )
 {
     int exitCode = aEvent.GetInt();
-    wxLogInfo( "CC_CONTROLLER: Process exited with code %d", exitCode );
+    wxLogInfo( "CC_CONTROLLER: Process exited with code %d (intentional=%d)",
+               exitCode, m_intentionalStop );
 
     m_busy = false;
+
+    // Don't show error for intentional stops (NewSession, Cancel, model switch)
+    if( m_intentionalStop )
+    {
+        m_intentionalStop = false;
+        return;
+    }
 
     if( exitCode != 0 )
     {
@@ -217,6 +231,12 @@ void CC_CONTROLLER::ParseLine( const std::string& aLine )
 
         wxLogInfo( "CC_CONTROLLER: System message, session=%s", m_sessionId.c_str() );
     }
+    else if( type == "user" )
+    {
+        // User messages contain tool_result blocks after CC executes tools.
+        // Extract results and match them to pending tool IDs.
+        HandleUserMessage( parsed );
+    }
     else
     {
         wxLogInfo( "CC_CONTROLLER: Unknown message type: %s", type.c_str() );
@@ -240,13 +260,15 @@ void CC_CONTROLLER::HandleStreamEvent( const json& aMsg )
         HandleContentBlockStop( event );
     else if( eventType == "message_start" )
     {
-        // New assistant message — complete any pending tools from previous turn
+        // New assistant message — complete any tools still pending (fallback if
+        // tool_result wasn't captured, e.g. for hidden tools or edge cases)
         for( const auto& toolId : m_pendingToolIds )
         {
-            ChatToolCompleteData data( toolId, "", "(completed)", true );
+            ChatToolCompleteData data( toolId, "", "", true );
             PostChatEvent( m_eventSink, EVT_CHAT_TOOL_COMPLETE, data );
         }
         m_pendingToolIds.clear();
+        m_pendingToolNames.clear();
     }
     else if( eventType == "message_stop" )
     {
@@ -288,9 +310,28 @@ void CC_CONTROLLER::HandleContentBlockStart( const json& aEvent )
         cb.toolId = block.value( "id", "" );
         cb.toolName = block.value( "name", "" );
 
-        // Emit tool generating event
-        ChatToolGeneratingData genData( cb.toolId, cb.toolName );
-        PostChatEvent( m_eventSink, EVT_CHAT_TOOL_GENERATING, genData );
+        // Hide internal CC tools from the UI (same as CC's own GUI behavior)
+        static const std::set<std::string> hiddenTools = {
+            "ToolSearch", "TodoWrite", "EnterPlanMode", "ExitPlanMode",
+            "EnterWorktree", "AskUserQuestion", "Skill", "SendMessage",
+            "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+            "TaskUpdate", "TeamCreate", "TeamDelete", "LSP"
+        };
+
+        if( hiddenTools.count( cb.toolName ) == 0 )
+        {
+            // Strip MCP prefixes for cleaner display (mcp__zeo__check_status → check_status)
+            std::string displayName = cb.toolName;
+            const std::string mcpPrefix = "mcp__zeo__";
+
+            if( displayName.substr( 0, mcpPrefix.size() ) == mcpPrefix )
+                displayName = displayName.substr( mcpPrefix.size() );
+
+            cb.displayName = displayName;
+
+            ChatToolGeneratingData genData( cb.toolId, displayName );
+            PostChatEvent( m_eventSink, EVT_CHAT_TOOL_GENERATING, genData );
+        }
     }
 
     m_activeBlocks[index] = cb;
@@ -308,6 +349,9 @@ void CC_CONTROLLER::HandleContentBlockDelta( const json& aEvent )
     ContentBlock& block = it->second;
     const json& delta = aEvent.value( "delta", json::object() );
     std::string deltaType = delta.value( "type", "" );
+
+    wxLogInfo( "CC_CONTROLLER::HandleContentBlockDelta - index=%d, type=%s, blockType=%d",
+               index, deltaType.c_str(), static_cast<int>( block.type ) );
 
     if( block.type == BlockType::TEXT && deltaType == "text_delta" )
     {
@@ -352,8 +396,8 @@ void CC_CONTROLLER::HandleContentBlockStop( const json& aEvent )
     else if( block.type == BlockType::TOOL_USE )
     {
         // Tool call is complete — Claude Code will now execute it internally
-        // Parse tool input for display
-        json toolInput;
+        // Parse tool input for display (default to empty object so .value() calls work)
+        json toolInput = json::object();
         try
         {
             if( !block.toolInput.empty() )
@@ -361,31 +405,65 @@ void CC_CONTROLLER::HandleContentBlockStop( const json& aEvent )
         }
         catch( ... )
         {
-            toolInput = block.toolInput;
+            // If parse fails, keep empty object (not a raw string)
         }
 
-        // Build a description from tool name + key input fields
-        std::string desc = block.toolName;
+        // Use display name (with MCP prefix stripped) for description
+        std::string name = block.displayName.empty() ? block.toolName : block.displayName;
+        std::string desc;
 
-        if( toolInput.is_object() )
+        wxLogInfo( "CC_CONTROLLER::HandleContentBlockStop - tool_use: name=%s, inputLen=%zu",
+                   name.c_str(), block.toolInput.size() );
+
+        // For MCP tools (mcp__zeo__*), use TOOL_REGISTRY to get the same
+        // human-readable descriptions as the Zeo agent (e.g. "Running ERC check",
+        // "Adding NE555P", "Getting schematic summary").
+        const std::string mcpPrefix2 = "mcp__zeo__";
+        if( block.toolName.substr( 0, mcpPrefix2.size() ) == mcpPrefix2 )
         {
-            if( toolInput.contains( "command" ) )
-                desc = toolInput["command"].get<std::string>();
-            else if( toolInput.contains( "file_path" ) )
-                desc = block.toolName + ": " + toolInput["file_path"].get<std::string>();
-            else if( toolInput.contains( "pattern" ) )
-                desc = block.toolName + ": " + toolInput["pattern"].get<std::string>();
-            else if( toolInput.contains( "prompt" ) )
-                desc = block.toolName + ": " + toolInput["prompt"].get<std::string>();
+            desc = TOOL_REGISTRY::Instance().GetDescription( name, toolInput );
         }
 
-        m_toolResultCounter++;
+        // For non-MCP tools (Read, Edit, Bash, Grep, etc.), derive from input
+        if( desc.empty() || desc == "Executing " + name )
+        {
+            desc = name;
 
-        ChatToolStartData startData( block.toolId, block.toolName, desc, toolInput );
-        PostChatEvent( m_eventSink, EVT_CHAT_TOOL_START, startData );
+            if( toolInput.is_object() )
+            {
+                if( toolInput.contains( "command" ) )
+                    desc = toolInput["command"].get<std::string>();
+                else if( toolInput.contains( "file_path" ) )
+                    desc = name + ": " + toolInput["file_path"].get<std::string>();
+                else if( toolInput.contains( "pattern" ) )
+                    desc = name + ": " + toolInput["pattern"].get<std::string>();
+                else if( toolInput.contains( "query" ) )
+                    desc = name + ": " + toolInput["query"].get<std::string>();
+            }
+        }
 
-        // Track this tool as pending (result comes when CC finishes executing it)
-        m_pendingToolIds.push_back( block.toolId );
+        // Skip hidden internal CC tools
+        static const std::set<std::string> hiddenTools = {
+            "ToolSearch", "TodoWrite", "EnterPlanMode", "ExitPlanMode",
+            "EnterWorktree", "AskUserQuestion", "Skill", "SendMessage",
+            "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
+            "TaskUpdate", "TeamCreate", "TeamDelete", "LSP"
+        };
+
+        if( hiddenTools.count( block.toolName ) == 0 )
+        {
+            m_toolResultCounter++;
+
+            wxLogInfo( "CC_CONTROLLER::HandleContentBlockStop - posting EVT_CHAT_TOOL_START for %s (id=%s)",
+                       name.c_str(), block.toolId.c_str() );
+
+            ChatToolStartData startData( block.toolId, name, desc, toolInput );
+            PostChatEvent( m_eventSink, EVT_CHAT_TOOL_START, startData );
+
+            // Track this tool as pending (result comes in user message with tool_result)
+            m_pendingToolIds.push_back( block.toolId );
+            m_pendingToolNames[block.toolId] = name;
+        }
     }
 
     m_activeBlocks.erase( it );
@@ -400,20 +478,126 @@ void CC_CONTROLLER::HandleAssistantMessage( const json& aMsg )
 }
 
 
+void CC_CONTROLLER::HandleUserMessage( const json& aMsg )
+{
+    // User messages in CC stream contain tool_result blocks after tool execution.
+    // Format: { "type": "user", "message": { "content": [ { "type": "tool_result",
+    //           "tool_use_id": "...", "content": "..." } ] } }
+
+    if( !aMsg.contains( "message" ) )
+        return;
+
+    const json& message = aMsg["message"];
+
+    if( !message.contains( "content" ) || !message["content"].is_array() )
+        return;
+
+    for( const auto& block : message["content"] )
+    {
+        if( block.value( "type", "" ) != "tool_result" )
+            continue;
+
+        std::string toolUseId = block.value( "tool_use_id", "" );
+        if( toolUseId.empty() )
+            continue;
+
+        // Extract the result text and any image data
+        std::string resultText;
+        std::string imageBase64;
+        std::string imageMimeType;
+
+        if( block.contains( "content" ) )
+        {
+            if( block["content"].is_string() )
+            {
+                resultText = block["content"].get<std::string>();
+            }
+            else if( block["content"].is_array() )
+            {
+                // Content can be an array of text and image blocks
+                for( const auto& part : block["content"] )
+                {
+                    std::string partType = part.value( "type", "" );
+
+                    if( partType == "text" )
+                    {
+                        if( !resultText.empty() )
+                            resultText += "\n";
+                        resultText += part.value( "text", "" );
+                    }
+                    else if( partType == "image" )
+                    {
+                        // Image block: { "type": "image", "source": { "type": "base64",
+                        //   "media_type": "image/png", "data": "<base64>" } }
+                        if( part.contains( "source" ) && part["source"].is_object() )
+                        {
+                            imageBase64 = part["source"].value( "data", "" );
+                            imageMimeType = part["source"].value( "media_type", "image/png" );
+                        }
+                    }
+                }
+            }
+        }
+
+        bool isError = block.value( "is_error", false );
+
+        // Truncate very long results for display
+        std::string displayResult = resultText;
+        if( displayResult.size() > 2000 )
+            displayResult = displayResult.substr( 0, 2000 ) + "\n... (truncated)";
+
+        // Look up the tool name from our pending map
+        std::string toolName;
+        auto nameIt = m_pendingToolNames.find( toolUseId );
+        if( nameIt != m_pendingToolNames.end() )
+            toolName = nameIt->second;
+
+        // Match to pending tool and emit completion
+        auto it = std::find( m_pendingToolIds.begin(), m_pendingToolIds.end(), toolUseId );
+        if( it != m_pendingToolIds.end() )
+        {
+            ChatToolCompleteData data( toolUseId, toolName, displayResult, !isError );
+
+            if( !imageBase64.empty() )
+            {
+                data.hasImage = true;
+                data.imageBase64 = imageBase64;
+                data.imageMediaType = imageMimeType;
+            }
+
+            PostChatEvent( m_eventSink, EVT_CHAT_TOOL_COMPLETE, data );
+
+            m_pendingToolIds.erase( it );
+            m_pendingToolNames.erase( toolUseId );
+        }
+
+        wxLogInfo( "CC_CONTROLLER: Tool result for %s (%zu bytes, error=%d, hasImage=%d)",
+                   toolUseId.c_str(), resultText.size(), isError, !imageBase64.empty() );
+    }
+}
+
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MCP config and system prompt helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
 std::string CC_CONTROLLER::GenerateMcpConfig()
 {
-    if( m_pythonPath.empty() || m_apiSocketPath.empty() )
+    if( m_apiSocketPath.empty() )
     {
-        wxLogInfo( "CC_CONTROLLER: Skipping MCP config (python=%s, socket=%s)",
-                   m_pythonPath.c_str(), m_apiSocketPath.c_str() );
+        wxLogInfo( "CC_CONTROLLER: Skipping MCP config (no API socket)" );
         return "";
     }
 
-    // Build MCP config JSON pointing to kipy.mcp as an stdio server
+    if( m_pythonPath.empty() )
+    {
+        wxLogWarning( "CC_CONTROLLER: Skipping MCP config (no Python3 found)" );
+        return "";
+    }
+
+    // Build MCP config JSON pointing to kipy.mcp as an stdio server.
+    // Uses system Python (not bundled 3.9) because the mcp SDK requires >=3.10.
+    // kipy is installed as editable (`pip install -e`) so it uses the source tree.
     json config;
     config["mcpServers"]["zeo"]["command"] = m_pythonPath;
     config["mcpServers"]["zeo"]["args"] = json::array( { "-m", "kipy.mcp" } );
@@ -478,55 +662,61 @@ std::string CC_CONTROLLER::LoadSystemPrompt()
         return "";
     }
 
-    // Try to load MCP addendum from the kipy package within site-packages
+    // Load MCP addendum from kipy package
+    if( !m_pythonPath.empty() )
     {
-        wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
-        wxString addendumPath;
+        std::string addendum;
 
 #ifdef __WXMSW__
         // Windows: bin/Lib/site-packages/kipy/mcp/addendum.md
-        wxFileName siteDir( exePath.GetPath(), "" );
-        siteDir.AppendDir( "Lib" );
-        siteDir.AppendDir( "site-packages" );
-        siteDir.AppendDir( "kipy" );
-        siteDir.AppendDir( "mcp" );
-        addendumPath = siteDir.GetPath() + wxFileName::GetPathSeparator() + "addendum.md";
-#else
-        // macOS: Python.framework/Versions/Current/lib/python3.X/site-packages/kipy/mcp/addendum.md
-        if( !m_pythonPath.empty() )
         {
-            wxFileName pyPath( m_pythonPath );
-            wxFileName siteDir( pyPath.GetPath(), "" );
-            siteDir.RemoveLastDir();  // bin/ -> Versions/Current/
-            siteDir.AppendDir( "lib" );
+            wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+            wxFileName siteDir( exePath.GetPath(), "" );
+            siteDir.AppendDir( "Lib" );
+            siteDir.AppendDir( "site-packages" );
+            siteDir.AppendDir( "kipy" );
+            siteDir.AppendDir( "mcp" );
+            wxString addendumPath = siteDir.GetPath() + wxFileName::GetPathSeparator() + "addendum.md";
+            addendum = readFile( addendumPath.ToStdString() );
+        }
+#else
+        // macOS: Use Python to resolve the path — handles both editable and regular installs.
+        // Must unset PYTHONHOME since the app bundle sets it for bundled Python 3.9.
+        {
+            std::string cmd = "unset PYTHONHOME PYTHONPATH; " + m_pythonPath
+                              + " -c \"import kipy.mcp, os; print(os.path.join("
+                                "os.path.dirname(kipy.mcp.__file__), 'addendum.md'))\" 2>/dev/null";
 
-            wxString libPath = siteDir.GetPath();
-            wxDir dir( libPath );
-
-            if( dir.IsOpened() )
+            FILE* pipe = popen( cmd.c_str(), "r" );
+            if( pipe )
             {
-                wxString subdir;
-                if( dir.GetFirst( &subdir, "python3*", wxDIR_DIRS ) )
+                char buf[1024];
+                std::string addendumPath;
+
+                if( fgets( buf, sizeof( buf ), pipe ) )
                 {
-                    siteDir.AppendDir( subdir );
-                    siteDir.AppendDir( "site-packages" );
-                    siteDir.AppendDir( "kipy" );
-                    siteDir.AppendDir( "mcp" );
-                    addendumPath = siteDir.GetPath() + "/addendum.md";
+                    addendumPath = buf;
+                    while( !addendumPath.empty()
+                           && ( addendumPath.back() == '\n' || addendumPath.back() == '\r' ) )
+                        addendumPath.pop_back();
                 }
+
+                pclose( pipe );
+
+                if( !addendumPath.empty() )
+                    addendum = readFile( addendumPath );
             }
         }
 #endif
 
-        if( !addendumPath.empty() )
+        if( !addendum.empty() )
         {
-            std::string addendum = readFile( addendumPath.ToStdString() );
-
-            if( !addendum.empty() )
-            {
-                prompt += "\n" + addendum;
-                wxLogInfo( "CC_CONTROLLER: Appended MCP addendum (%zu bytes)", addendum.size() );
-            }
+            prompt += "\n" + addendum;
+            wxLogInfo( "CC_CONTROLLER: Appended MCP addendum (%zu bytes)", addendum.size() );
+        }
+        else
+        {
+            wxLogWarning( "CC_CONTROLLER: Could not find kipy/mcp/addendum.md" );
         }
     }
 
@@ -543,6 +733,21 @@ void CC_CONTROLLER::HandleResultMessage( const json& aMsg )
     // Extract session_id if present
     if( aMsg.contains( "session_id" ) )
         m_sessionId = aMsg["session_id"].get<std::string>();
+
+    // If there's a result text (e.g. from slash commands like /cost), emit it
+    if( aMsg.contains( "result" ) && aMsg["result"].is_string() )
+    {
+        std::string resultText = aMsg["result"].get<std::string>();
+
+        if( !resultText.empty() && m_currentResponse.empty() )
+        {
+            // No streamed text yet — this is a slash command result
+            m_currentResponse = resultText;
+
+            ChatTextDeltaData textData( m_currentResponse, resultText );
+            PostChatEvent( m_eventSink, EVT_CHAT_TEXT_DELTA, textData );
+        }
+    }
 
     // Complete any remaining pending tools
     for( const auto& toolId : m_pendingToolIds )

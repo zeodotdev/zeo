@@ -423,6 +423,16 @@ private:
      */
     void GenerateTitle();
 
+public:
+    /**
+     * Request title generation for a given message.
+     * Used by CC_CONTROLLER to trigger title generation via the Zeo API
+     * without going through the normal chat flow.
+     */
+    void RequestTitle( const std::string& aMessage );
+
+private:
+
     /**
      * Emit an event to the event sink.
      */

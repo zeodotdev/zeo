@@ -527,6 +527,12 @@ bool CC_SUBPROCESS::Start( const std::string& aWorkingDir, const std::string& aM
         // Clear CLAUDECODE env var to avoid "nested session" detection
         unsetenv( "CLAUDECODE" );
 
+        // Clear Python env vars set by the app bundle for its embedded Python 3.9.
+        // These would corrupt system Python (3.13) when Claude Code spawns the MCP server.
+        unsetenv( "PYTHONHOME" );
+        unsetenv( "PYTHONPATH" );
+        unsetenv( "PYTHONNOUSERSITE" );
+
         // Change to working directory
         if( !aWorkingDir.empty() )
             chdir( aWorkingDir.c_str() );

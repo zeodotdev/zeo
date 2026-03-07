@@ -33,6 +33,7 @@
 
 #include <wx/event.h>
 #include <wx/filename.h>
+#include <wx/timer.h>
 
 #include <kicommon.h>
 
@@ -121,7 +122,20 @@ private:
     void onIdle( wxIdleEvent& aEvent );
 
     /**
-     * Process a single API request. Called from onIdle when a request is available.
+     * Timer-based fallback for processing queued API requests. On macOS, idle events may not
+     * fire reliably when wx timers are active (e.g., the agent frame's streaming update timer).
+     * This timer ensures requests are processed within a bounded time even if idle is starved.
+     */
+    void onPollTimer( wxTimerEvent& aEvent );
+
+    /**
+     * Dequeue and process the next pending API request, if any.
+     * Called from both onIdle and onPollTimer.
+     */
+    void processNextQueuedRequest();
+
+    /**
+     * Process a single API request. Called from processNextQueuedRequest.
      * @param aRequestId the unique ID of this request
      * @param aRequest the serialized request string
      */
@@ -155,6 +169,9 @@ private:
     // Each waiting thread checks its specific request's replyReady flag
     std::condition_variable m_replyReady;
     std::mutex m_replyMutex;
+
+    // Fallback timer for processing API requests when idle events don't fire
+    wxTimer m_pollTimer;
 };
 
 #endif //KICAD_API_SERVER_H

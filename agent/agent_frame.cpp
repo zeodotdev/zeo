@@ -455,10 +455,14 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Cloud sync (configured when auth pointer arrives)
     m_cloudSync = std::make_unique<AGENT_CLOUD_SYNC>();
 
+    // Initialize first conversation so it gets an ID for usage tracking
+    m_chatHistoryDb.StartNewConversation();
+
     // Create chat controller
     m_chatController = std::make_unique<CHAT_CONTROLLER>( this );
     m_chatController->SetLLMClient( m_llmClient.get() );
     m_chatController->SetChatHistoryDb( &m_chatHistoryDb );
+    m_chatController->SetChatId( m_chatHistoryDb.GetConversationId() );
     m_chatController->SetAuth( nullptr );
     m_chatController->SetCloudSync( m_cloudSync.get() );
     m_chatController->SetKiwayRequestFn(
@@ -694,6 +698,15 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
         // Push plan mode state
         m_bridge->PushPlanMode( m_agentMode == AgentMode::PLAN );
+
+        // If the persisted model is Claude Code, initialize the CC backend now
+        // (deferred to CallAfter so Pgm().GetApiServer() is available)
+        if( m_currentModel == "Claude Code (Opus)" )
+        {
+            std::string savedModel = m_currentModel;
+            m_currentModel = "";  // Force DoModelChange to not early-return
+            DoModelChange( savedModel );
+        }
     } );
 }
 
@@ -1200,6 +1213,28 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
             wxLogMessage( "AGENT_FRAME: MCP agent tool '%s' completed, result_len=%zu",
                           toolName, result.length() );
 
+            // Cache screenshot image for CC backend (CC strips images from tool_result stream)
+            if( toolName == "screenshot" && m_backend == AgentBackend::CLAUDE_CODE )
+            {
+                try
+                {
+                    auto resultJson = nlohmann::json::parse( result );
+
+                    if( resultJson.contains( "image" ) && resultJson["image"].is_object() )
+                    {
+                        m_cachedScreenshotBase64 = resultJson["image"].value( "base64", "" );
+                        m_cachedScreenshotMimeType = resultJson["image"].value( "media_type",
+                                                                                "image/png" );
+                        wxLogInfo( "AGENT_FRAME: Cached screenshot image (%zu bytes)",
+                                   m_cachedScreenshotBase64.size() );
+                    }
+                }
+                catch( ... )
+                {
+                    // Not critical — screenshot will just lack image in UI
+                }
+            }
+
             aEvent.SetPayload( result );
         }
         catch( const std::exception& e )
@@ -1349,6 +1384,10 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         {
             StartGeneratingAnimation();
             m_ccController->SendMessage( text.ToStdString() );
+
+            // Generate title on first message (same as Zeo agent path)
+            if( m_chatHistoryDb.GetTitle().empty() && m_chatController )
+                m_chatController->RequestTitle( text.ToStdString() );
         }
 
         m_pendingAttachments.clear();
@@ -2095,13 +2134,11 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
             wxLogWarning( "AGENT_FRAME: Could not get API socket path for CC MCP config" );
         }
 
-        // Resolve Python3 path
+        // Resolve Python3 path for MCP server.
         std::string pythonPath;
         {
-            wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
-            wxFileName pyPath( exePath.GetPath(), "" );
 #ifdef __WXMSW__
-            // Windows: no bundled python exe — find system Python from PATH
+            // Windows: find system Python from PATH
             char pathBuf[MAX_PATH];
 
             if( SearchPathA( NULL, "python3.exe", NULL, MAX_PATH, pathBuf, NULL ) > 0 )
@@ -2114,19 +2151,25 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
             else
                 wxLogInfo( "AGENT_FRAME: Found Python at %s", pythonPath.c_str() );
 #else
-            // macOS: Contents/MacOS/kicad -> Contents/Frameworks/Python.framework/Versions/Current/bin/python3
-            pyPath.RemoveLastDir();  // MacOS/
-            pyPath.AppendDir( "Frameworks" );
-            pyPath.AppendDir( "Python.framework" );
-            pyPath.AppendDir( "Versions" );
-            pyPath.AppendDir( "Current" );
-            pyPath.AppendDir( "bin" );
-            pyPath.SetFullName( "python3" );
+            // macOS: Must use system Python (>=3.10), not the bundled 3.9, because
+            // the mcp SDK requires Python >=3.10 and wxPython pins us to 3.9 in the bundle.
+            std::vector<wxString> candidates = {
+                "/opt/homebrew/bin/python3",
+                "/usr/local/bin/python3",
+                "/usr/bin/python3"
+            };
 
-            if( pyPath.FileExists() )
-                pythonPath = pyPath.GetFullPath().ToStdString();
-            else
-                wxLogWarning( "AGENT_FRAME: Bundled Python3 not found at %s", pyPath.GetFullPath() );
+            for( const auto& candidate : candidates )
+            {
+                if( wxFileName::FileExists( candidate ) )
+                {
+                    pythonPath = candidate.ToStdString();
+                    break;
+                }
+            }
+
+            if( pythonPath.empty() )
+                wxLogWarning( "AGENT_FRAME: No Python3 found for CC MCP config" );
 #endif
         }
 
@@ -3798,6 +3841,11 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         m_activeRunningHtml = BuildRunningToolHtml( idx, desc );
         m_activeToolResultIdx = idx;
 
+        // Map tool ID to DOM index so OnChatToolComplete can find the right element
+        // (needed for CC backend where multiple tools execute concurrently)
+        if( !data->toolId.empty() )
+            m_toolIdxByUseId[data->toolId] = idx;
+
         wxLogInfo( "AGENT_FRAME::OnChatToolStart - assigned idx=%d (counter now %d)",
                    idx, m_toolResultCounter );
 
@@ -3918,6 +3966,18 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
     wxLogInfo( "AGENT_FRAME::OnChatToolComplete - tool: %s, success: %s",
             data->toolName.c_str(), data->success ? "true" : "false" );
 
+    // CC backend: attach cached screenshot image (CC strips images from tool_result stream)
+    if( m_backend == AgentBackend::CLAUDE_CODE && !m_cachedScreenshotBase64.empty()
+        && !data->hasImage )
+    {
+        data->hasImage = true;
+        data->imageBase64 = std::move( m_cachedScreenshotBase64 );
+        data->imageMediaType = std::move( m_cachedScreenshotMimeType );
+        m_cachedScreenshotBase64.clear();
+        m_cachedScreenshotMimeType.clear();
+        wxLogInfo( "AGENT_FRAME::OnChatToolComplete - attached cached screenshot image" );
+    }
+
     // Determine status display
     wxString statusClass;
     wxString statusText;
@@ -3953,9 +4013,23 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
             + "\" style=\"max-width:100%; border-radius:6px; margin:8px 0;\" />";
     }
 
-    // Update the existing tool result component via JS callback
-    wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
+    // Look up the DOM index for this tool by its ID.
+    // For the CC backend, multiple tools may be in-flight concurrently, so
+    // m_activeToolResultIdx may point to a different tool.
     int idx = m_activeToolResultIdx;
+
+    if( !data->toolId.empty() )
+    {
+        auto idxIt = m_toolIdxByUseId.find( data->toolId );
+
+        if( idxIt != m_toolIdxByUseId.end() )
+        {
+            idx = idxIt->second;
+            m_toolIdxByUseId.erase( idxIt );
+        }
+    }
+
+    wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
 
     // Build the text-only body content (no image - image is appended separately to avoid
     // passing megabytes of base64 data in a single JS string literal)

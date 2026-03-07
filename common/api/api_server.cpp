@@ -166,6 +166,11 @@ void KICAD_API_SERVER::Start()
     // We bind to wxTheApp because idle events are more reliably delivered to the app
     if( wxTheApp )
         wxTheApp->Bind( wxEVT_IDLE, &KICAD_API_SERVER::onIdle, this );
+
+    // Bind fallback poll timer — on macOS, idle events may not fire reliably when
+    // other timers (e.g., agent frame's 50ms streaming update timer) are active.
+    // The timer provides a bounded-latency fallback for processing API requests.
+    m_pollTimer.Bind( wxEVT_TIMER, &KICAD_API_SERVER::onPollTimer, this );
 }
 
 
@@ -175,6 +180,9 @@ void KICAD_API_SERVER::Stop()
         return;
 
     wxLogTrace( traceApi, "Stopping server" );
+
+    m_pollTimer.Stop();
+
     if( wxTheApp )
         wxTheApp->Unbind( wxEVT_IDLE, &KICAD_API_SERVER::onIdle, this );
 
@@ -263,6 +271,19 @@ void KICAD_API_SERVER::onApiRequest( std::string* aRequest, KINNG_REQUEST_SERVER
     // Wake the main thread's event loop to process the request during idle time
     wxWakeUpIdle();
 
+    // Schedule a fallback timer on the main thread to process the request.
+    // On macOS, wxEVT_IDLE may not fire reliably when other timers are active
+    // (e.g., the agent frame's 50ms streaming update timer). CallAfter is thread-safe
+    // and schedules the timer start on the main thread.
+    if( wxTheApp )
+    {
+        wxTheApp->CallAfter( [this]()
+        {
+            if( m_hasQueuedRequests.load() && !m_pollTimer.IsRunning() )
+                m_pollTimer.StartOnce( 50 );
+        } );
+    }
+
     // Wait for THIS request's reply to be ready (each request waits for its own reply)
     std::string replyString;
     {
@@ -298,6 +319,22 @@ void KICAD_API_SERVER::onIdle( wxIdleEvent& aEvent )
     // Allow other idle handlers to run
     aEvent.Skip();
 
+    processNextQueuedRequest();
+}
+
+
+void KICAD_API_SERVER::onPollTimer( wxTimerEvent& aEvent )
+{
+    processNextQueuedRequest();
+
+    // If more requests are pending, restart the timer
+    if( m_hasQueuedRequests.load() )
+        m_pollTimer.StartOnce( 50 );
+}
+
+
+void KICAD_API_SERVER::processNextQueuedRequest()
+{
     // Check if we have any queued requests to process
     if( !m_hasQueuedRequests.load() )
         return;
@@ -331,7 +368,6 @@ void KICAD_API_SERVER::onIdle( wxIdleEvent& aEvent )
         if( m_requestQueue.empty() )
             m_hasQueuedRequests.store( false );
     }
-
 
     // Process the request and store the reply
     processApiRequest( requestId, requestString );

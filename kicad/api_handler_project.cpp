@@ -386,7 +386,7 @@ HANDLER_RESULT<ExecuteToolResponse> API_HANDLER_PROJECT::handleExecuteTool(
     // Route tool execution: agent handler tools go to FRAME_AGENT via TOOL_REGISTRY,
     // Python-scripted tools go to FRAME_TERMINAL for headless Python execution.
     static const std::unordered_set<std::string> AGENT_TOOLS = {
-        "check_status",
+        "check_status", "screenshot",
         "datasheet_query", "extract_datasheet", "generate_symbol",
         "generate_footprint", "sch_import_symbol", "create_project",
         "pcb_autoroute", "generate_net_classes"

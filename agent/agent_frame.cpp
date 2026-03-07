@@ -650,11 +650,41 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         std::vector<std::string> models = { "Claude 4.6 Opus", "Gemini 3.1 Pro" };
 
         // Check if claude CLI is installed
-        if( wxFileName::FileExists( "/usr/local/bin/claude" )
-            || wxFileName::FileExists( "/opt/homebrew/bin/claude" )
-            || wxFileName::FileExists( wxString( wxGetHomeDir() + "/.local/bin/claude" ) ) )
         {
-            models.push_back( "Claude Code (Opus)" );
+            bool found = false;
+#ifdef __WXMSW__
+            char pathBuf[MAX_PATH];
+            found = SearchPathA( NULL, "claude.exe", NULL, MAX_PATH, pathBuf, NULL ) > 0
+                    || SearchPathA( NULL, "claude.cmd", NULL, MAX_PATH, pathBuf, NULL ) > 0;
+
+            if( !found )
+            {
+                // Check common install locations
+                wxString home = wxGetHomeDir();
+                found = wxFileName::FileExists( home + "\\.local\\bin\\claude.exe" );
+
+                if( !found )
+                {
+                    const char* appData = getenv( "APPDATA" );
+                    if( appData )
+                        found = wxFileName::FileExists( wxString( appData ) + "\\npm\\claude.cmd" );
+                }
+
+                if( !found )
+                {
+                    const char* localAppData = getenv( "LOCALAPPDATA" );
+                    if( localAppData )
+                        found = wxFileName::FileExists(
+                            wxString( localAppData ) + "\\Programs\\claude\\claude.exe" );
+                }
+            }
+#else
+            found = wxFileName::FileExists( "/usr/local/bin/claude" )
+                    || wxFileName::FileExists( "/opt/homebrew/bin/claude" )
+                    || wxFileName::FileExists( wxString( wxGetHomeDir() + "/.local/bin/claude" ) );
+#endif
+            if( found )
+                models.push_back( "Claude Code (Opus)" );
         }
 
         m_bridge->PushModelList( models, m_currentModel );

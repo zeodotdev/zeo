@@ -52,6 +52,7 @@ private:
     void ParseLine( const std::string& aLine );
     void HandleStreamEvent( const nlohmann::json& aEvent );
     void HandleAssistantMessage( const nlohmann::json& aMsg );
+    void HandleUserMessage( const nlohmann::json& aMsg );
     void HandleResultMessage( const nlohmann::json& aMsg );
 
     // Content block tracking
@@ -92,15 +93,17 @@ private:
         BlockType   type = BlockType::UNKNOWN;
         int         index = -1;
         std::string toolId;
-        std::string toolName;
-        std::string toolInput;  // Accumulated JSON input string
+        std::string toolName;      // Raw name (e.g. mcp__zeo__check_status)
+        std::string displayName;   // Cleaned name (e.g. check_status)
+        std::string toolInput;     // Accumulated JSON input string
     };
 
     std::map<int, ContentBlock> m_activeBlocks;
 
     // Tool tracking across turns
     int m_toolResultCounter = 0;
-    std::vector<std::string> m_pendingToolIds;  // Tools awaiting results
+    std::vector<std::string> m_pendingToolIds;    // Tool IDs awaiting results
+    std::map<std::string, std::string> m_pendingToolNames;  // toolId → display name
 };
 
 #endif // CC_CONTROLLER_H

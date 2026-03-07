@@ -694,6 +694,15 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
         // Push plan mode state
         m_bridge->PushPlanMode( m_agentMode == AgentMode::PLAN );
+
+        // If the persisted model is Claude Code, initialize the CC backend now
+        // (deferred to CallAfter so Pgm().GetApiServer() is available)
+        if( m_currentModel == "Claude Code (Opus)" )
+        {
+            std::string savedModel = m_currentModel;
+            m_currentModel = "";  // Force DoModelChange to not early-return
+            DoModelChange( savedModel );
+        }
     } );
 }
 
@@ -1349,6 +1358,10 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         {
             StartGeneratingAnimation();
             m_ccController->SendMessage( text.ToStdString() );
+
+            // Generate title on first message (same as Zeo agent path)
+            if( m_chatHistoryDb.GetTitle().empty() && m_chatController )
+                m_chatController->RequestTitle( text.ToStdString() );
         }
 
         m_pendingAttachments.clear();
@@ -2095,13 +2108,11 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
             wxLogWarning( "AGENT_FRAME: Could not get API socket path for CC MCP config" );
         }
 
-        // Resolve Python3 path
+        // Resolve Python3 path for MCP server.
         std::string pythonPath;
         {
-            wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
-            wxFileName pyPath( exePath.GetPath(), "" );
 #ifdef __WXMSW__
-            // Windows: no bundled python exe — find system Python from PATH
+            // Windows: find system Python from PATH
             char pathBuf[MAX_PATH];
 
             if( SearchPathA( NULL, "python3.exe", NULL, MAX_PATH, pathBuf, NULL ) > 0 )
@@ -2114,19 +2125,25 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
             else
                 wxLogInfo( "AGENT_FRAME: Found Python at %s", pythonPath.c_str() );
 #else
-            // macOS: Contents/MacOS/kicad -> Contents/Frameworks/Python.framework/Versions/Current/bin/python3
-            pyPath.RemoveLastDir();  // MacOS/
-            pyPath.AppendDir( "Frameworks" );
-            pyPath.AppendDir( "Python.framework" );
-            pyPath.AppendDir( "Versions" );
-            pyPath.AppendDir( "Current" );
-            pyPath.AppendDir( "bin" );
-            pyPath.SetFullName( "python3" );
+            // macOS: Must use system Python (>=3.10), not the bundled 3.9, because
+            // the mcp SDK requires Python >=3.10 and wxPython pins us to 3.9 in the bundle.
+            std::vector<wxString> candidates = {
+                "/opt/homebrew/bin/python3",
+                "/usr/local/bin/python3",
+                "/usr/bin/python3"
+            };
 
-            if( pyPath.FileExists() )
-                pythonPath = pyPath.GetFullPath().ToStdString();
-            else
-                wxLogWarning( "AGENT_FRAME: Bundled Python3 not found at %s", pyPath.GetFullPath() );
+            for( const auto& candidate : candidates )
+            {
+                if( wxFileName::FileExists( candidate ) )
+                {
+                    pythonPath = candidate.ToStdString();
+                    break;
+                }
+            }
+
+            if( pythonPath.empty() )
+                wxLogWarning( "AGENT_FRAME: No Python3 found for CC MCP config" );
 #endif
         }
 

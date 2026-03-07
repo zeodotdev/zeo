@@ -2341,6 +2341,16 @@ void CHAT_CONTROLLER::GenerateTitle()
 }
 
 
+void CHAT_CONTROLLER::RequestTitle( const std::string& aMessage )
+{
+    if( aMessage.empty() )
+        return;
+
+    m_firstUserMessage = aMessage;
+    GenerateTitle();
+}
+
+
 // ============================================================================
 // Schematic edit detection (diff between turns)
 // ============================================================================

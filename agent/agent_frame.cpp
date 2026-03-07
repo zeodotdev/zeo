@@ -2095,13 +2095,24 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
             wxLogWarning( "AGENT_FRAME: Could not get API socket path for CC MCP config" );
         }
 
-        // Resolve bundled Python3 path
+        // Resolve Python3 path
         std::string pythonPath;
         {
             wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
             wxFileName pyPath( exePath.GetPath(), "" );
 #ifdef __WXMSW__
-            // TODO: Windows Python path
+            // Windows: no bundled python exe — find system Python from PATH
+            char pathBuf[MAX_PATH];
+
+            if( SearchPathA( NULL, "python3.exe", NULL, MAX_PATH, pathBuf, NULL ) > 0 )
+                pythonPath = pathBuf;
+            else if( SearchPathA( NULL, "python.exe", NULL, MAX_PATH, pathBuf, NULL ) > 0 )
+                pythonPath = pathBuf;
+
+            if( pythonPath.empty() )
+                wxLogWarning( "AGENT_FRAME: Python3 not found in PATH for CC MCP config" );
+            else
+                wxLogInfo( "AGENT_FRAME: Found Python at %s", pythonPath.c_str() );
 #else
             // macOS: Contents/MacOS/kicad -> Contents/Frameworks/Python.framework/Versions/Current/bin/python3
             pyPath.RemoveLastDir();  // MacOS/

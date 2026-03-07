@@ -6,6 +6,7 @@
 #include <wx/log.h>
 #include <wx/dir.h>
 #include <wx/filename.h>
+#include <wx/stdpaths.h>
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <sstream>
@@ -418,6 +419,21 @@ std::string CC_CONTROLLER::GenerateMcpConfig()
     config["mcpServers"]["zeo"]["args"] = json::array( { "-m", "kipy.mcp" } );
     config["mcpServers"]["zeo"]["env"]["KICAD_API_SOCKET"] = m_apiSocketPath;
 
+#ifdef __WXMSW__
+    // On Windows, Python is the system interpreter — set PYTHONPATH to the
+    // bundled site-packages so it finds the correct kipy version.
+    wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+    wxFileName siteDir( exePath.GetPath(), "" );
+    siteDir.AppendDir( "Lib" );
+    siteDir.AppendDir( "site-packages" );
+
+    if( wxDir::Exists( siteDir.GetPath() ) )
+    {
+        config["mcpServers"]["zeo"]["env"]["PYTHONPATH"] = siteDir.GetPath().ToStdString();
+        wxLogInfo( "CC_CONTROLLER: Set PYTHONPATH=%s", siteDir.GetPath() );
+    }
+#endif
+
     // Write to temp file
     wxString tempPath = wxFileName::GetTempDir() + "/zeo_cc_mcp.json";
     std::string path = tempPath.ToStdString();
@@ -462,40 +478,54 @@ std::string CC_CONTROLLER::LoadSystemPrompt()
         return "";
     }
 
-    // Try to load MCP addendum from the kipy package (sibling to python path)
-    // The addendum.md is in the kipy/mcp/ package directory within site-packages
-    if( !m_pythonPath.empty() )
+    // Try to load MCP addendum from the kipy package within site-packages
     {
-        // Python path is .../Python.framework/Versions/Current/bin/python3
-        // Site-packages is .../Python.framework/Versions/Current/lib/python3.X/site-packages/
-        wxFileName pyPath( m_pythonPath );
-        wxFileName siteDir( pyPath.GetPath(), "" );
-        siteDir.RemoveLastDir();  // bin/ -> Versions/Current/
-        siteDir.AppendDir( "lib" );
+        wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+        wxString addendumPath;
 
-        // Find the python3.X directory
-        wxString libPath = siteDir.GetPath();
-        wxDir dir( libPath );
-
-        if( dir.IsOpened() )
+#ifdef __WXMSW__
+        // Windows: bin/Lib/site-packages/kipy/mcp/addendum.md
+        wxFileName siteDir( exePath.GetPath(), "" );
+        siteDir.AppendDir( "Lib" );
+        siteDir.AppendDir( "site-packages" );
+        siteDir.AppendDir( "kipy" );
+        siteDir.AppendDir( "mcp" );
+        addendumPath = siteDir.GetPath() + wxFileName::GetPathSeparator() + "addendum.md";
+#else
+        // macOS: Python.framework/Versions/Current/lib/python3.X/site-packages/kipy/mcp/addendum.md
+        if( !m_pythonPath.empty() )
         {
-            wxString subdir;
-            bool found = dir.GetFirst( &subdir, "python3*", wxDIR_DIRS );
+            wxFileName pyPath( m_pythonPath );
+            wxFileName siteDir( pyPath.GetPath(), "" );
+            siteDir.RemoveLastDir();  // bin/ -> Versions/Current/
+            siteDir.AppendDir( "lib" );
 
-            if( found )
+            wxString libPath = siteDir.GetPath();
+            wxDir dir( libPath );
+
+            if( dir.IsOpened() )
             {
-                siteDir.AppendDir( subdir );
-                siteDir.AppendDir( "site-packages" );
-                siteDir.AppendDir( "kipy" );
-                siteDir.AppendDir( "mcp" );
-
-                std::string addendum = readFile( siteDir.GetPath().ToStdString() + "/addendum.md" );
-
-                if( !addendum.empty() )
+                wxString subdir;
+                if( dir.GetFirst( &subdir, "python3*", wxDIR_DIRS ) )
                 {
-                    prompt += "\n" + addendum;
-                    wxLogInfo( "CC_CONTROLLER: Appended MCP addendum (%zu bytes)", addendum.size() );
+                    siteDir.AppendDir( subdir );
+                    siteDir.AppendDir( "site-packages" );
+                    siteDir.AppendDir( "kipy" );
+                    siteDir.AppendDir( "mcp" );
+                    addendumPath = siteDir.GetPath() + "/addendum.md";
                 }
+            }
+        }
+#endif
+
+        if( !addendumPath.empty() )
+        {
+            std::string addendum = readFile( addendumPath.ToStdString() );
+
+            if( !addendum.empty() )
+            {
+                prompt += "\n" + addendum;
+                wxLogInfo( "CC_CONTROLLER: Appended MCP addendum (%zu bytes)", addendum.size() );
             }
         }
     }

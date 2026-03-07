@@ -455,10 +455,14 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Cloud sync (configured when auth pointer arrives)
     m_cloudSync = std::make_unique<AGENT_CLOUD_SYNC>();
 
+    // Initialize first conversation so it gets an ID for usage tracking
+    m_chatHistoryDb.StartNewConversation();
+
     // Create chat controller
     m_chatController = std::make_unique<CHAT_CONTROLLER>( this );
     m_chatController->SetLLMClient( m_llmClient.get() );
     m_chatController->SetChatHistoryDb( &m_chatHistoryDb );
+    m_chatController->SetChatId( m_chatHistoryDb.GetConversationId() );
     m_chatController->SetAuth( nullptr );
     m_chatController->SetCloudSync( m_cloudSync.get() );
     m_chatController->SetKiwayRequestFn(

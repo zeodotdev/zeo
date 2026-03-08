@@ -38,6 +38,10 @@ public:
     // Event handlers
     void OnExit( wxCommandEvent& aEvent );
 
+#ifndef __WXMAC__
+    void OnVcsAuthCallback( wxCommandEvent& aEvent );
+#endif
+
     DECLARE_EVENT_TABLE()
 
 private:
@@ -45,6 +49,10 @@ private:
 
     WEBVIEW_PANEL*                   m_webView;
     std::unique_ptr<VCS_IPC_HANDLER> m_ipcHandler;
+
+#ifndef __WXMAC__
+    bool m_vcsCallbackBound = false;
+#endif
 
 #ifdef __APPLE__
     FSEventStreamRef m_fsWatcher  = nullptr;

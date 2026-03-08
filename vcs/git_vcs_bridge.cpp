@@ -177,11 +177,19 @@ bool GIT_VCS_BRIDGE::OpenRepo( const wxString& aProjectDir )
     m_projectDir = aProjectDir;
 
     std::string path = aProjectDir.ToStdString();
+
+    // Mark directory as safe so libgit2 doesn't reject repos owned by a different
+    // user (common in Docker where host files are bind-mounted).
+    git_libgit2_opts( GIT_OPT_SET_OWNER_VALIDATION, 0 );
+
     int ret = git_repository_open_ext( &m_repo, path.c_str(), 0, nullptr );
 
     if( ret < 0 )
     {
-        wxLogDebug( "GIT_VCS_BRIDGE: No git repo at %s", aProjectDir );
+        const git_error* err = git_error_last();
+        fprintf( stderr, "GIT_VCS_BRIDGE: git_repository_open_ext failed at '%s' (ret=%d): %s\n",
+                 (const char*) aProjectDir.utf8_str(), ret,
+                 err && err->message ? err->message : "unknown" );
         m_repo = nullptr;
         return false;
     }

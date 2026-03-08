@@ -2065,6 +2065,9 @@ const Bridge = (() => {
         const username = msg.data && msg.data.username ? msg.data.username : '';
         State.hasGitHubAuth  = true;
         State.githubUsername = username;
+        // Dismiss fallback banner if visible
+        const ghBanner = document.getElementById('auth-fallback-banner');
+        if (ghBanner) ghBanner.remove();
         // Fetch the stored token, then open the repo picker
         Bridge.send('get_github_token').then(res => {
           State.githubToken = res.token || '';
@@ -2079,6 +2082,9 @@ const Bridge = (() => {
         const username = msg.data && msg.data.username ? msg.data.username : '';
         State.hasGitLabAuth  = true;
         State.gitlabUsername = username;
+        // Dismiss fallback banner if visible
+        const glBanner = document.getElementById('auth-fallback-banner');
+        if (glBanner) glBanner.remove();
         // Fetch the stored token, then open the repo picker
         Bridge.send('get_gitlab_token').then(res => {
           State.gitlabToken = res.token || '';
@@ -2275,7 +2281,8 @@ const Toast = {
 
     const bodyEl = document.createElement('span');
     bodyEl.className = 'toast-body';
-    bodyEl.textContent = msg;
+    if (msg.indexOf('<') !== -1) bodyEl.innerHTML = msg;
+    else bodyEl.textContent = msg;
     bodyEl.style.cssText = 'user-select:text;-webkit-user-select:text;cursor:text';
 
     const closeEl = document.createElement('span');
@@ -3165,6 +3172,24 @@ const UI = {
   closeAddRemote() {
     document.getElementById('add-remote-panel').classList.remove('open');
   },
+  showAuthFallback(url, provider) {
+    const msg = `If the browser did not open, <a href="${escHtml(url)}" target="_blank" style="color:var(--blue);text-decoration:underline">open ${escHtml(provider)} sign-in</a> `
+      + `or <a href="#" class="toast-copy-link" style="color:var(--blue);text-decoration:underline">copy link</a>`;
+    Toast.show(msg, 'info', 30000);
+    // Bind the copy link handler on the most recently added toast
+    setTimeout(() => {
+      const link = document.querySelector('.toast-copy-link');
+      if (link) {
+        link.onclick = (e) => {
+          e.preventDefault();
+          navigator.clipboard.writeText(url).then(() => {
+            link.textContent = 'copied!';
+            setTimeout(() => { link.textContent = 'copy link'; }, 2000);
+          });
+        };
+      }
+    }, 50);
+  },
   renderAddRemoteOAuth() {
     const btns = document.getElementById('add-remote-oauth-btns');
     if (!btns) return;
@@ -3592,8 +3617,15 @@ const Actions = {
     // Opens zeo.dev/auth/connect-vcs which triggers GitHub OAuth with repo scope.
     // When auth completes, the app receives zeo://vcs-callback and
     // sends a github_auth_complete message back to the webview.
-    Bridge.send('connect_github');
-    Toast.info('Opening GitHub authorization in your browser…');
+    Bridge.send('connect_github').then(res => {
+      if (res && res.authUrl) {
+        UI.showAuthFallback(res.authUrl, 'GitHub');
+      } else {
+        Toast.info('Opening GitHub authorization in your browser…');
+      }
+    }).catch(() => {
+      Toast.info('Opening GitHub authorization in your browser…');
+    });
   },
   authGitLab() {
     if (State.hasGitLabAuth && State.gitlabUsername) {
@@ -3611,8 +3643,15 @@ const Actions = {
     // Opens zeo.dev/auth/connect-gitlab which triggers GitLab OAuth.
     // When auth completes, the app receives zeo://vcs-callback and
     // sends a gitlab_auth_complete message back to the webview.
-    Bridge.send('connect_gitlab');
-    Toast.info('Opening GitLab authorization in your browser…');
+    Bridge.send('connect_gitlab').then(res => {
+      if (res && res.authUrl) {
+        UI.showAuthFallback(res.authUrl, 'GitLab');
+      } else {
+        Toast.info('Opening GitLab authorization in your browser…');
+      }
+    }).catch(() => {
+      Toast.info('Opening GitLab authorization in your browser…');
+    });
   },
 
   async openInEditor() {

@@ -6,6 +6,14 @@
 #include <agent/platform/macos_webview_bg.h>
 #endif
 
+#ifndef __WXMAC__
+#include <zeo/auth_callback_server.h>
+#include <wx/file.h>
+#include <wx/filename.h>
+#include <wx/textfile.h>
+#include <wx/stdpaths.h>
+#endif
+
 #include <kiway.h>
 #include <kiway_mail.h>
 #include <mail_type.h>
@@ -105,6 +113,11 @@ VCS_FRAME::VCS_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     SetSizer( mainSizer );
     Layout();
 
+#ifndef __WXMAC__
+    Bind( EVT_AUTH_CALLBACK, &VCS_FRAME::OnVcsAuthCallback, this );
+    m_vcsCallbackBound = true;
+#endif
+
     wxLogDebug( "VCS_FRAME: Created" );
 }
 
@@ -120,6 +133,132 @@ bool VCS_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, int aCt
 {
     return true;
 }
+
+
+#ifndef __WXMAC__
+// Simple percent-decode for URL query parameter values
+static wxString VcsUrlDecode( const wxString& aEncoded )
+{
+    std::string encoded = aEncoded.ToStdString();
+    std::string result;
+    result.reserve( encoded.size() );
+    for( size_t i = 0; i < encoded.size(); ++i )
+    {
+        if( encoded[i] == '%' && i + 2 < encoded.size() )
+        {
+            char hex[3] = { encoded[i + 1], encoded[i + 2], '\0' };
+            result += static_cast<char>( std::strtol( hex, nullptr, 16 ) );
+            i += 2;
+        }
+        else if( encoded[i] == '+' )
+        {
+            result += ' ';
+        }
+        else
+        {
+            result += encoded[i];
+        }
+    }
+    return wxString::FromUTF8( result );
+}
+
+
+void VCS_FRAME::OnVcsAuthCallback( wxCommandEvent& aEvent )
+{
+    wxString url = aEvent.GetString();
+    wxLogMessage( "VCS_FRAME: VCS auth callback: %s", url );
+
+    // Parse query params from the callback URL
+    wxString query = url.AfterFirst( '?' );
+    std::map<wxString, wxString> params;
+    for( wxString pair : wxSplit( query, '&' ) )
+    {
+        wxString key   = pair.BeforeFirst( '=' );
+        wxString value = VcsUrlDecode( pair.AfterFirst( '=' ) );
+        params[key] = value;
+    }
+
+    wxString token    = params["provider_token"];
+    wxString username = !params["username"].IsEmpty() ? params["username"]
+                                                      : params["github_username"];
+    wxString provider = !params["provider"].IsEmpty() ? params["provider"] : "github";
+    std::string host  = ( provider == "gitlab" ) ? "gitlab.com" : "github.com";
+
+    if( token.IsEmpty() || username.IsEmpty() )
+    {
+        wxLogError( "VCS_FRAME: VCS callback missing token or username" );
+        return;
+    }
+
+    // ── Write to ~/.git-credentials ───────────────────────────────────────
+    wxString newEntry = wxString::Format( "https://%s:%s@%s", username, token, host );
+    wxString credsPath = wxGetHomeDir() + wxFILE_SEP_PATH + ".git-credentials";
+
+    wxArrayString lines;
+    if( wxFileExists( credsPath ) )
+    {
+        wxTextFile tf;
+        if( tf.Open( credsPath ) )
+        {
+            for( size_t i = 0; i < tf.GetLineCount(); i++ )
+            {
+                wxString line = tf.GetLine( i );
+                if( !line.IsEmpty()
+                    && !( line.Contains( wxString( host ) ) && line.Contains( username ) ) )
+                    lines.Add( line );
+            }
+            tf.Close();
+        }
+    }
+    lines.Add( newEntry );
+
+    {
+        wxFile out( credsPath, wxFile::write );
+        if( out.IsOpened() )
+        {
+            for( const wxString& line : lines )
+                out.Write( line + "\n" );
+            out.Close();
+        }
+    }
+    wxFileName fn( credsPath );
+    fn.SetPermissions( wxS_IRUSR | wxS_IWUSR );
+
+    // ── Write UI credentials JSON ─────────────────────────────────────────
+    wxString dataDir = wxStandardPaths::Get().GetUserDataDir();
+    if( !wxDirExists( dataDir ) ) wxMkdir( dataDir );
+    wxString jsonPath = dataDir + wxFILE_SEP_PATH + "vcs_credentials.json";
+
+    json ui = {
+        { "connected", true },
+        { "host",      host },
+        { "username",  username.ToStdString() }
+    };
+    {
+        wxFile jf( jsonPath, wxFile::write );
+        if( jf.IsOpened() )
+        {
+            jf.Write( wxString::FromUTF8( ui.dump() ) );
+            jf.Close();
+        }
+    }
+    wxFileName jfn( jsonPath );
+    jfn.SetPermissions( wxS_IRUSR | wxS_IWUSR );
+
+    // ── Notify webview ────────────────────────────────────────────────────
+    std::string action = ( host == "gitlab.com" ) ? "gitlab_auth_complete"
+                                                   : "github_auth_complete";
+    SendToWebView( wxString::FromUTF8( action ),
+                   json{ { "username", username.ToStdString() } } );
+
+    // Bring VCS window to front
+    if( IsIconized() ) Iconize( false );
+    Show( true );
+    Raise();
+
+    wxLogMessage( "VCS_FRAME: %s VCS auth complete for @%s", provider, username );
+}
+#endif
 
 
 void VCS_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )

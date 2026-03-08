@@ -8,6 +8,9 @@
 class VCS_FRAME;
 class WEBVIEW_PANEL;
 class GIT_VCS_BRIDGE;
+#ifndef __WXMAC__
+class AUTH_CALLBACK_SERVER;
+#endif
 
 /**
  * Routes JSON messages from the webview JS to git operations.
@@ -65,6 +68,10 @@ private:
     VCS_FRAME*                    m_frame;
     WEBVIEW_PANEL*                m_webView;
     std::unique_ptr<GIT_VCS_BRIDGE> m_git;
+
+#ifndef __WXMAC__
+    std::unique_ptr<AUTH_CALLBACK_SERVER> m_vcsCallbackServer;
+#endif
 };
 
 #endif // VCS_IPC_HANDLER_H

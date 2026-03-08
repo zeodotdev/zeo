@@ -10,6 +10,7 @@
 #include <mail_type.h>
 #include <project.h>
 #include <pgm_base.h>
+#include <zeo/zeo_constants.h>
 #include <wx/app.h>
 #include <wx/file.h>
 #include <wx/log.h>
@@ -18,10 +19,36 @@
 #include <wx/textfile.h>
 #include <wx/stdpaths.h>
 
+#ifndef __WXMAC__
+#include <zeo/auth_callback_server.h>
+#include <cstdlib>
+#endif
+
 #include <memory>
+#include <sstream>
 #include <thread>
 
 using json = nlohmann::json;
+
+
+#ifndef __WXMAC__
+static bool LaunchBrowserLinux( const std::string& aUrl )
+{
+    std::string portalCmd = "gdbus call --session"
+                            " --dest org.freedesktop.portal.Desktop"
+                            " --object-path /org/freedesktop/portal/desktop"
+                            " --method org.freedesktop.portal.OpenURI.OpenURI"
+                            " '' '" + aUrl + "' {} >/dev/null 2>&1";
+
+    if( system( portalCmd.c_str() ) == 0 )
+        return true;
+
+    if( wxLaunchDefaultBrowser( aUrl ) )
+        return true;
+
+    return false;
+}
+#endif
 
 
 VCS_IPC_HANDLER::VCS_IPC_HANDLER( VCS_FRAME* aFrame, WEBVIEW_PANEL* aWebView ) :
@@ -34,10 +61,18 @@ VCS_IPC_HANDLER::VCS_IPC_HANDLER( VCS_FRAME* aFrame, WEBVIEW_PANEL* aWebView ) :
     PROJECT& prj      = kiway.Prj();
     wxString prjPath  = prj.GetProjectPath();
 
+    fprintf( stderr, "VCS_IPC_HANDLER: project path = '%s'\n", (const char*) prjPath.utf8_str() );
+
     if( !prjPath.empty() )
     {
-        m_git->OpenRepo( prjPath );
+        bool ok = m_git->OpenRepo( prjPath );
+        fprintf( stderr, "VCS_IPC_HANDLER: OpenRepo('%s') = %s\n",
+                 (const char*) prjPath.utf8_str(), ok ? "true" : "false" );
         m_frame->StartWatching( prjPath );
+    }
+    else
+    {
+        fprintf( stderr, "VCS_IPC_HANDLER: project path is empty, no repo opened\n" );
     }
 }
 
@@ -629,7 +664,11 @@ void VCS_IPC_HANDLER::HandleOpenUrl( const json& aMsg )
         return;
     }
 
+#ifndef __WXMAC__
+    LaunchBrowserLinux( url );
+#else
     wxLaunchDefaultBrowser( wxString::FromUTF8( url ) );
+#endif
     SendResponse( reqId, true, json::object() );
 }
 
@@ -640,9 +679,26 @@ void VCS_IPC_HANDLER::HandleConnectGitHub( const json& aMsg )
             ? wxString::FromUTF8( aMsg["requestId"].get<std::string>() )
             : wxString();
 
-    // Open the VCS-specific GitHub OAuth page in the user's default browser.
-    // The page requests 'repo' scope and redirects back via zeo://vcs-callback.
-    wxLaunchDefaultBrowser( "https://zeo.dev/auth/connect-vcs" );
+    std::string connectUrl = ZEO_BASE_URL + "/auth/connect-vcs";
+
+#ifndef __WXMAC__
+    // Linux: use local HTTP server for OAuth callback
+    m_vcsCallbackServer = std::make_unique<AUTH_CALLBACK_SERVER>( m_frame );
+    if( m_vcsCallbackServer->Start() )
+    {
+        std::string callback = m_vcsCallbackServer->GetCallbackUrl( "vcs" );
+        std::ostringstream authUrl;
+        authUrl << connectUrl << "?redirect_uri=" << callback;
+
+        std::string url = authUrl.str();
+        LaunchBrowserLinux( url );
+        SendResponse( reqId, true, json{ { "authUrl", url } } );
+        return;
+    }
+    m_vcsCallbackServer.reset();
+#endif
+
+    wxLaunchDefaultBrowser( connectUrl );
     SendResponse( reqId, true, json::object() );
 }
 
@@ -712,7 +768,26 @@ void VCS_IPC_HANDLER::HandleConnectGitLab( const json& aMsg )
             ? wxString::FromUTF8( aMsg["requestId"].get<std::string>() )
             : wxString();
 
-    wxLaunchDefaultBrowser( "https://zeo.dev/auth/connect-gitlab" );
+    std::string connectUrl = ZEO_BASE_URL + "/auth/connect-gitlab";
+
+#ifndef __WXMAC__
+    // Linux: use local HTTP server for OAuth callback
+    m_vcsCallbackServer = std::make_unique<AUTH_CALLBACK_SERVER>( m_frame );
+    if( m_vcsCallbackServer->Start() )
+    {
+        std::string callback = m_vcsCallbackServer->GetCallbackUrl( "vcs" );
+        std::ostringstream authUrl;
+        authUrl << connectUrl << "?redirect_uri=" << callback;
+
+        std::string url = authUrl.str();
+        LaunchBrowserLinux( url );
+        SendResponse( reqId, true, json{ { "authUrl", url } } );
+        return;
+    }
+    m_vcsCallbackServer.reset();
+#endif
+
+    wxLaunchDefaultBrowser( connectUrl );
     SendResponse( reqId, true, json::object() );
 }
 

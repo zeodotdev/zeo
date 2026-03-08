@@ -53,6 +53,7 @@
 #include <tool/actions.h>
 #include <tools/sch_selection_tool.h>
 #include <tools/sch_navigate_tool.h>
+#include <tools/sch_line_wire_bus_tool.h>
 #include <project_sch.h>
 #include <libraries/symbol_library_adapter.h>
 #include <libraries/library_manager.h>
@@ -296,6 +297,18 @@ void API_HANDLER_SCH::pushCurrentCommit( const std::string& aClientName, const w
 
     if( it == m_commits.end() )
         return;
+
+    // Split wires at junction points before pushing the commit.
+    // The API creates junctions at T-connections but doesn't split the existing
+    // wires that pass through those points.  Without splitting, the connectivity
+    // graph won't register the connection (it only uses wire endpoints).
+    SCH_SCREEN* screen = m_frame->GetScreen();
+
+    if( TOOL_MANAGER* mgr = m_frame->GetToolManager() )
+    {
+        if( auto* wireTool = mgr->GetTool<SCH_LINE_WIRE_BUS_TOOL>() )
+            wireTool->BreakSegmentsOnJunctions( static_cast<SCH_COMMIT*>( it->second.second.get() ), screen );
+    }
 
     // Use SKIP_CLEANUP to prevent the schematic cleanup from removing "unnecessary" junctions.
     // When items are created via the API, the user is in control of what gets created and

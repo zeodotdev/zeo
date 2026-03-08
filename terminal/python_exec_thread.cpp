@@ -1,6 +1,13 @@
 #include "python_exec_thread.h"
 #include <python_scripting.h>
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#include <wx/filename.h>
+#include <wx/stdpaths.h>
+#else
 #include <unistd.h>    // for write(), close()
+#endif
 #include <stdlib.h>    // for mkstemps()
 #include <wx/log.h>
 
@@ -40,6 +47,24 @@ void* PYTHON_EXEC_THREAD::Entry()
         // This handles \n in f-strings, multi-line strings, and other edge cases
         std::string tempFilePath;
         {
+#ifdef _WIN32
+            wchar_t tempDir[MAX_PATH];
+            GetTempPathW( MAX_PATH, tempDir );
+            wchar_t tempFile[MAX_PATH];
+            GetTempFileNameW( tempDir, L"kca", 0, tempFile );
+            // Rename with .py extension
+            std::wstring pyFile = std::wstring( tempFile ) + L".py";
+            _wrename( tempFile, pyFile.c_str() );
+            int fd = _wopen( pyFile.c_str(), _O_WRONLY | _O_BINARY | _O_CREAT | _O_TRUNC, 0600 );
+            if( fd != -1 )
+            {
+                char narrowPath[MAX_PATH];
+                wcstombs( narrowPath, pyFile.c_str(), MAX_PATH );
+                tempFilePath = narrowPath;
+                _write( fd, m_code.c_str(), (unsigned int) m_code.length() );
+                _close( fd );
+            }
+#else
             // Create temp file with Python code
             char tempTemplate[] = "/tmp/kicad_agent_XXXXXX.py";
             int fd = mkstemps( tempTemplate, 3 );  // .py suffix
@@ -49,12 +74,18 @@ void* PYTHON_EXEC_THREAD::Entry()
                 write( fd, m_code.c_str(), m_code.length() );
                 close( fd );
             }
+#endif
         }
 
         std::string wrapper;
         if( !tempFilePath.empty() )
         {
             // Use temp file approach - more robust
+            // Escape backslashes in path for Python string literal
+            std::string escapedPath = tempFilePath;
+            for( size_t pos = 0; ( pos = escapedPath.find( '\\', pos ) ) != std::string::npos; pos += 2 )
+                escapedPath.insert( pos, "\\" );
+
             wrapper = "import sys\n"
                       "from io import StringIO\n"
                       "_term_capture = StringIO()\n"
@@ -62,7 +93,7 @@ void* PYTHON_EXEC_THREAD::Entry()
                       "_term_restore_err = sys.stderr\n"
                       "sys.stdout = _term_capture\n"
                       "sys.stderr = _term_capture\n"
-                      "_term_code_file = '" + tempFilePath + "'\n"
+                      "_term_code_file = '" + escapedPath + "'\n"
                       "try:\n"
                       "    with open(_term_code_file, 'r') as f:\n"
                       "        _term_code = f.read()\n"

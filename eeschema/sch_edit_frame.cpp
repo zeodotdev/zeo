@@ -1177,7 +1177,7 @@ SCH_SCREEN* SCH_EDIT_FRAME::GetScreenForApi() const
                 SCH_SHEET* sheet = path.Last();
                 wxLogMessage( "GetScreenForApi: Found target sheet! path=%s, sheet=%s, sheetScreen=%p, pathScreen=%p, items=%zu",
                               path.PathHumanReadable(),
-                              sheet ? sheet->GetName() : "null",
+                              sheet ? sheet->GetName() : wxString( "null" ),
                               sheet ? sheet->GetScreen() : nullptr,
                               screen,
                               screen ? screen->Items().size() : 0 );
@@ -5034,7 +5034,11 @@ std::vector<WIRING_GUIDE_PREVIEW_DATA> SCH_EDIT_FRAME::ComputeWiringGuidesPrevie
                 }
                 else
                 {
-                    // Net name like "VCC" or "GND" - find power symbol
+                    // Net name like "VCC" or "GND" - find nearest power symbol or label
+                    // This mirrors the logic in SCH_WIRING_GUIDE_MANAGER::ResolveTargetPosition()
+                    int64_t bestDist = INT64_MAX;
+
+                    // First check power symbols
                     for( SCH_ITEM* pwrItem : screen->Items().OfType( SCH_SYMBOL_T ) )
                     {
                         SCH_SYMBOL* pwrSym = static_cast<SCH_SYMBOL*>( pwrItem );
@@ -5046,10 +5050,61 @@ std::vector<WIRING_GUIDE_PREVIEW_DATA> SCH_EDIT_FRAME::ComputeWiringGuidesPrevie
                                 std::vector<SCH_PIN*> pwrPins = pwrSym->GetPins( &GetCurrentSheet() );
                                 if( !pwrPins.empty() )
                                 {
-                                    targetPos = pwrPins[0]->GetPosition();
-                                    foundTarget = true;
-                                    break;
+                                    VECTOR2I pos = pwrPins[0]->GetPosition();
+                                    int64_t dist = ( pos - sourcePos ).SquaredEuclideanNorm();
+                                    if( dist < bestDist )
+                                    {
+                                        bestDist = dist;
+                                        targetPos = pos;
+                                        foundTarget = true;
+                                    }
                                 }
+                            }
+                        }
+                    }
+
+                    // Also check labels (global, hierarchical, local)
+                    for( SCH_ITEM* item : screen->Items().OfType( SCH_GLOBAL_LABEL_T ) )
+                    {
+                        SCH_GLOBALLABEL* label = static_cast<SCH_GLOBALLABEL*>( item );
+                        if( label->GetText().IsSameAs( target, false ) )
+                        {
+                            int64_t dist = ( label->GetPosition() - sourcePos ).SquaredEuclideanNorm();
+                            if( dist < bestDist )
+                            {
+                                bestDist = dist;
+                                targetPos = label->GetPosition();
+                                foundTarget = true;
+                            }
+                        }
+                    }
+
+                    for( SCH_ITEM* item : screen->Items().OfType( SCH_HIER_LABEL_T ) )
+                    {
+                        SCH_HIERLABEL* label = static_cast<SCH_HIERLABEL*>( item );
+                        if( label->GetText().IsSameAs( target, false ) )
+                        {
+                            int64_t dist = ( label->GetPosition() - sourcePos ).SquaredEuclideanNorm();
+                            if( dist < bestDist )
+                            {
+                                bestDist = dist;
+                                targetPos = label->GetPosition();
+                                foundTarget = true;
+                            }
+                        }
+                    }
+
+                    for( SCH_ITEM* item : screen->Items().OfType( SCH_LABEL_T ) )
+                    {
+                        SCH_LABEL* label = static_cast<SCH_LABEL*>( item );
+                        if( label->GetText().IsSameAs( target, false ) )
+                        {
+                            int64_t dist = ( label->GetPosition() - sourcePos ).SquaredEuclideanNorm();
+                            if( dist < bestDist )
+                            {
+                                bestDist = dist;
+                                targetPos = label->GetPosition();
+                                foundTarget = true;
                             }
                         }
                     }

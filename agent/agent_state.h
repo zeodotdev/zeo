@@ -24,7 +24,7 @@ enum class AgentConversationState
     TOOL_USE_DETECTED,       // LLM requested tool use
     EXECUTING_TOOL,          // Tool is running async
     PROCESSING_TOOL_RESULT,  // Processing tool output
-    ERROR                    // Error state
+    ERRORED                  // Error state
 };
 
 /**
@@ -50,7 +50,7 @@ inline const char* AgentStateToString( AgentConversationState aState )
     case AgentConversationState::TOOL_USE_DETECTED:      return "TOOL_USE_DETECTED";
     case AgentConversationState::EXECUTING_TOOL:         return "EXECUTING_TOOL";
     case AgentConversationState::PROCESSING_TOOL_RESULT: return "PROCESSING_TOOL_RESULT";
-    case AgentConversationState::ERROR:                  return "ERROR";
+    case AgentConversationState::ERRORED:                  return "ERROR";
     default:                                             return "UNKNOWN";
     }
 }

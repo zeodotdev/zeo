@@ -561,7 +561,6 @@ def _place_single_companion(companion, index, parent_pin_x=None, parent_pin_y=No
 
     # Set properties
     properties = companion.get('properties', {})
-    has_footprint = 'Footprint' in properties
     for prop_name, prop_value in properties.items():
         if prop_name == 'Value':
             sch.symbols.set_value(comp_sym, prop_value)
@@ -570,10 +569,6 @@ def _place_single_companion(companion, index, parent_pin_x=None, parent_pin_y=No
         else:
             comp_sym.set_field(prop_name, prop_value)
             sch.crud.update_items(comp_sym)
-
-    # Auto-assign default footprint for common generic symbols
-    if not has_footprint and lib_id in DEFAULT_FOOTPRINTS:
-        sch.symbols.set_footprint(comp_sym, DEFAULT_FOOTPRINTS[lib_id])
 
     # Get ALL companion pin positions in 1 IPC call
     comp_pin_map = {}

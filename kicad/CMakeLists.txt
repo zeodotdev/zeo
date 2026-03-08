@@ -181,6 +181,10 @@ if( APPLE )
         core
         )
 else()
+    set_target_properties( kicad PROPERTIES
+        OUTPUT_NAME Zeo
+        )
+
     target_link_libraries( kicad
         nlohmann_json
         common

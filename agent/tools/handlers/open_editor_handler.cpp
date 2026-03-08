@@ -24,8 +24,9 @@ PathValidationResult ValidatePathInProject( const std::string& aFilePath,
         auto projectStr = canonicalProject.string();
         auto fileStr = canonicalFile.string();
 
-        if( !projectStr.empty() && projectStr.back() != '/' )
-            projectStr += '/';
+        // Ensure project path ends with the platform's path separator
+        if( !projectStr.empty() && projectStr.back() != '/' && projectStr.back() != '\\' )
+            projectStr += std::filesystem::path::preferred_separator;
 
         if( fileStr.find( projectStr ) != 0 && fileStr != canonicalProject.string() )
         {
@@ -68,7 +69,7 @@ OpenEditorResult OPEN_EDITOR_HANDLER::Evaluate( const nlohmann::json& aInput,
     {
         if( aAllowedPaths.empty() )
         {
-            result.action = OpenEditorResult::ERROR;
+            result.action = OpenEditorResult::ERRORED;
             result.errorMessage = "Error: no project or editor is open";
             return result;
         }
@@ -89,7 +90,7 @@ OpenEditorResult OPEN_EDITOR_HANDLER::Evaluate( const nlohmann::json& aInput,
         if( !pathValid )
         {
             wxLogWarning( "OPEN_EDITOR_HANDLER: Path validation failed: %s", pathResult.error );
-            result.action = OpenEditorResult::ERROR;
+            result.action = OpenEditorResult::ERRORED;
             result.errorMessage = "Error: " + pathResult.error;
             return result;
         }

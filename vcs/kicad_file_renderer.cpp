@@ -1,4 +1,6 @@
 #include "kicad_file_renderer.h"
+#include "../agent/tools/util/process_util.h"
+#include "../agent/tools/util/kicad_cli_util.h"
 
 #include <sexpr/sexpr_parser.h>
 
@@ -7,15 +9,8 @@
 #include <wx/log.h>
 #include <wx/stdpaths.h>
 
-#include <chrono>
 #include <fstream>
 #include <functional>
-
-#include <errno.h>
-#include <poll.h>
-#include <signal.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -83,142 +78,6 @@ static void RemoveTempDir( const wxString& aDir )
 }
 
 
-/**
- * Fork + exec a shell command, capture stdout/stderr, poll with timeout.
- * Returns the process exit code, or -1 on timeout/error.
- */
-static int RunCommand( const std::string& aCmd,
-                       std::string&       aStdout,
-                       std::string&       aStderr,
-                       int                aTimeoutSec = 30 )
-{
-    aStdout.clear();
-    aStderr.clear();
-
-    int stdoutPipe[2];
-    int stderrPipe[2];
-
-    if( pipe( stdoutPipe ) != 0 )
-        return -1;
-
-    if( pipe( stderrPipe ) != 0 )
-    {
-        close( stdoutPipe[0] );
-        close( stdoutPipe[1] );
-        return -1;
-    }
-
-    pid_t pid = fork();
-
-    if( pid < 0 )
-    {
-        close( stdoutPipe[0] );
-        close( stdoutPipe[1] );
-        close( stderrPipe[0] );
-        close( stderrPipe[1] );
-        return -1;
-    }
-
-    if( pid == 0 )
-    {
-        close( stdoutPipe[0] );
-        close( stderrPipe[0] );
-        dup2( stdoutPipe[1], STDOUT_FILENO );
-        dup2( stderrPipe[1], STDERR_FILENO );
-        close( stdoutPipe[1] );
-        close( stderrPipe[1] );
-        execl( "/bin/sh", "sh", "-c", aCmd.c_str(), nullptr );
-        _exit( 127 );
-    }
-
-    close( stdoutPipe[1] );
-    close( stderrPipe[1] );
-
-    struct pollfd fds[2] = {
-        { stdoutPipe[0], POLLIN, 0 },
-        { stderrPipe[0], POLLIN, 0 }
-    };
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds( aTimeoutSec );
-    bool timedOut = false;
-    int  activeFds = 2;
-    char buf[4096];
-
-    while( activeFds > 0 )
-    {
-        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-                deadline - std::chrono::steady_clock::now() );
-
-        if( remaining.count() <= 0 )
-        {
-            timedOut = true;
-            break;
-        }
-
-        int ret = poll( fds, 2, static_cast<int>( remaining.count() ) );
-
-        if( ret < 0 )
-        {
-            if( errno == EINTR )
-                continue;
-            break;
-        }
-
-        for( int i = 0; i < 2; ++i )
-        {
-            if( fds[i].fd < 0 )
-                continue;
-
-            if( fds[i].revents & ( POLLIN | POLLHUP ) )
-            {
-                ssize_t n = read( fds[i].fd, buf, sizeof( buf ) - 1 );
-
-                if( n > 0 )
-                {
-                    buf[n] = '\0';
-                    ( i == 0 ? aStdout : aStderr ) += buf;
-                }
-                else
-                {
-                    close( fds[i].fd );
-                    fds[i].fd = -1;
-                    --activeFds;
-                }
-            }
-            else if( fds[i].revents & ( POLLERR | POLLNVAL ) )
-            {
-                close( fds[i].fd );
-                fds[i].fd = -1;
-                --activeFds;
-            }
-        }
-    }
-
-    for( int i = 0; i < 2; ++i )
-    {
-        if( fds[i].fd >= 0 )
-            close( fds[i].fd );
-    }
-
-    if( timedOut )
-    {
-        kill( pid, SIGKILL );
-        waitpid( pid, nullptr, 0 );
-        wxLogError( "RENDERER: Command timed out after %d seconds", aTimeoutSec );
-        return -1;
-    }
-
-    int status;
-    waitpid( pid, &status, 0 );
-
-    if( WIFEXITED( status ) )
-        return WEXITSTATUS( status );
-
-    if( WIFSIGNALED( status ) )
-        wxLogError( "RENDERER: Process killed by signal %d", WTERMSIG( status ) );
-
-    return -1;
-}
 
 
 /**
@@ -250,23 +109,7 @@ std::string KICAD_FILE_RENDERER::GetCliPrefix()
     if( !m_cliPrefix.empty() )
         return m_cliPrefix;
 
-    wxString    exePathStr = wxStandardPaths::Get().GetExecutablePath();
-    wxFileName  exePath( exePathStr );
-    wxFileName  cliPath( exePath.GetPath(), "kicad-cli" );
-
-    if( !cliPath.FileExists() )
-    {
-        wxLogWarning( "RENDERER: kicad-cli not found at %s", cliPath.GetFullPath() );
-        return std::string();
-    }
-
-    wxFileName frameworksDir( exePath.GetPath(), "" );
-    frameworksDir.RemoveLastDir();
-    frameworksDir.AppendDir( "Frameworks" );
-
-    m_cliPrefix = "DYLD_LIBRARY_PATH=\"" + frameworksDir.GetPath().ToStdString()
-                  + "\" \"" + cliPath.GetFullPath().ToStdString() + "\"";
-
+    m_cliPrefix = KiCadCliUtil::GetKicadCliCommandPrefix();
     return m_cliPrefix;
 }
 
@@ -282,18 +125,15 @@ std::string KICAD_FILE_RENDERER::ExportToSvg( const std::string& aContent, bool 
     }
 
     // Create isolated temp directory
-    std::string tplStr = ( wxFileName::GetTempDir() + wxFileName::GetPathSeparator()
-                           + "zeo_vcs_XXXXXX" ).ToStdString();
-    std::vector<char> tplBuf( tplStr.begin(), tplStr.end() );
-    tplBuf.push_back( '\0' );
+    std::string tempDirStr = ProcessUtil::MakeTempDir( "zeo_vcs_" );
 
-    if( !mkdtemp( tplBuf.data() ) )
+    if( tempDirStr.empty() )
     {
-        wxLogError( "RENDERER: Failed to create temp dir: %s", strerror( errno ) );
+        wxLogError( "RENDERER: Failed to create temp dir" );
         return std::string();
     }
 
-    wxString tempDir = wxString::FromUTF8( tplBuf.data() );
+    wxString tempDir = wxString::FromUTF8( tempDirStr );
     RendererScopeGuard cleanup( [tempDir]() { RemoveTempDir( tempDir ); } );
 
     // Write content to a temp file with the correct extension
@@ -325,7 +165,7 @@ std::string KICAD_FILE_RENDERER::ExportToSvg( const std::string& aContent, bool 
                           + " --theme _builtin_default"
                           + " -o \"" + outDir + "\" \"" + inFile + "\"";
 
-        int exitCode = RunCommand( cmd, out, err, 30 );
+        int exitCode = ProcessUtil::RunCommand( cmd, out, err, 30 );
 
         if( !err.empty() )
             wxLogDebug( "RENDERER: sch export stderr: %s", err.c_str() );
@@ -358,7 +198,7 @@ std::string KICAD_FILE_RENDERER::ExportToSvg( const std::string& aContent, bool 
                           + " --layers F.Cu,B.Cu,F.Silkscreen,B.Silkscreen,Edge.Cuts"
                           + " -o \"" + svgPath + "\" \"" + inFile + "\"";
 
-        int exitCode = RunCommand( cmd, out, err, 30 );
+        int exitCode = ProcessUtil::RunCommand( cmd, out, err, 30 );
 
         if( !err.empty() )
             wxLogDebug( "RENDERER: pcb export stderr: %s", err.c_str() );

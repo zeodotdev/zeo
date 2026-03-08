@@ -55,14 +55,14 @@ bool AgentConversationContext::IsValidTransition( AgentConversationState aFrom,
         // - ERROR (something went wrong)
         return aTo == AgentConversationState::TOOL_USE_DETECTED ||
                aTo == AgentConversationState::IDLE ||
-               aTo == AgentConversationState::ERROR;
+               aTo == AgentConversationState::ERRORED;
 
     case AgentConversationState::TOOL_USE_DETECTED:
         // From TOOL_USE_DETECTED, can go to:
         // - EXECUTING_TOOL (started executing)
         // - ERROR (couldn't start execution)
         return aTo == AgentConversationState::EXECUTING_TOOL ||
-               aTo == AgentConversationState::ERROR;
+               aTo == AgentConversationState::ERRORED;
 
     case AgentConversationState::EXECUTING_TOOL:
         // From EXECUTING_TOOL, can go to:
@@ -70,7 +70,7 @@ bool AgentConversationContext::IsValidTransition( AgentConversationState aFrom,
         // - ERROR (tool failed or timed out)
         // - IDLE (user cancelled)
         return aTo == AgentConversationState::PROCESSING_TOOL_RESULT ||
-               aTo == AgentConversationState::ERROR ||
+               aTo == AgentConversationState::ERRORED ||
                aTo == AgentConversationState::IDLE;
 
     case AgentConversationState::PROCESSING_TOOL_RESULT:
@@ -80,9 +80,9 @@ bool AgentConversationContext::IsValidTransition( AgentConversationState aFrom,
         // - ERROR (processing failed)
         return aTo == AgentConversationState::WAITING_FOR_LLM ||
                aTo == AgentConversationState::EXECUTING_TOOL ||
-               aTo == AgentConversationState::ERROR;
+               aTo == AgentConversationState::ERRORED;
 
-    case AgentConversationState::ERROR:
+    case AgentConversationState::ERRORED:
         // From ERROR, can only go to IDLE (reset)
         return aTo == AgentConversationState::IDLE;
 

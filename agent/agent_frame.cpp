@@ -14,9 +14,11 @@
 #include "tools/tool_registry.h"
 #include "tools/handlers/check_status_handler.h"
 #include "tools/handlers/open_editor_handler.h"
+#include "claudecode/cc_controller.h"
 #include <kiway_mail.h>
 #include <mail_type.h>
 #include <pgm_base.h>
+#include <api/api_server.h>
 #include <settings/common_settings.h>
 #include <settings/settings_manager.h>
 #include <wx/log.h>
@@ -361,10 +363,14 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     }
 #endif
 
-    // ACCELERATOR TABLE for Cmd+C
-    wxAcceleratorEntry entries[1];
+    // ACCELERATOR TABLE for keyboard shortcuts
+    wxAcceleratorEntry entries[5];
     entries[0].Set( wxACCEL_CTRL, (int) 'C', ID_CHAT_COPY );
-    wxAcceleratorTable accel( 1, entries );
+    entries[1].Set( wxACCEL_CTRL, (int) 'N', ID_CHAT_NEW );
+    entries[2].Set( wxACCEL_CTRL, (int) 'L', ID_CHAT_FOCUS );
+    entries[3].Set( wxACCEL_CTRL, (int) 'F', ID_CHAT_SEARCH );
+    entries[4].Set( wxACCEL_NORMAL, WXK_ESCAPE, ID_CHAT_ESCAPE );
+    wxAcceleratorTable accel( 5, entries );
     SetAcceleratorTable( accel );
 
     SetSizer( mainSizer );
@@ -373,6 +379,29 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Bind menu & accelerator events
     Bind( wxEVT_MENU, &AGENT_FRAME::OnPopupClick, this, ID_CHAT_COPY );
+
+    Bind( wxEVT_MENU, [this]( wxCommandEvent& ) { DoNewChat(); }, ID_CHAT_NEW );
+
+    Bind( wxEVT_MENU, [this]( wxCommandEvent& ) {
+        m_webView->RunScriptAsync( wxS( "App.Input.focus()" ) );
+    }, ID_CHAT_FOCUS );
+
+    Bind( wxEVT_MENU, [this]( wxCommandEvent& ) {
+        m_webView->RunScriptAsync( wxS( "App.Search.open()" ) );
+    }, ID_CHAT_SEARCH );
+
+    Bind( wxEVT_MENU, [this]( wxCommandEvent& ) {
+        if( m_isGenerating )
+        {
+            m_webView->RunScriptAsync(
+                    wxS( "if(App.Search.isOpen()){App.Search.close()}"
+                         "else{App.Bridge.sendMsg('stop_click')}" ) );
+        }
+        else
+        {
+            m_webView->RunScriptAsync( wxS( "App.Search.close()" ) );
+        }
+    }, ID_CHAT_ESCAPE );
 
     // Bind Async LLM Streaming Events
     Bind( EVT_LLM_STREAM_CHUNK, &AGENT_FRAME::OnLLMStreamChunk, this );
@@ -431,10 +460,14 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Cloud sync (configured when auth pointer arrives)
     m_cloudSync = std::make_unique<AGENT_CLOUD_SYNC>();
 
+    // Initialize first conversation so it gets an ID for usage tracking
+    m_chatHistoryDb.StartNewConversation();
+
     // Create chat controller
     m_chatController = std::make_unique<CHAT_CONTROLLER>( this );
     m_chatController->SetLLMClient( m_llmClient.get() );
     m_chatController->SetChatHistoryDb( &m_chatHistoryDb );
+    m_chatController->SetChatId( m_chatHistoryDb.GetConversationId() );
     m_chatController->SetAuth( nullptr );
     m_chatController->SetCloudSync( m_cloudSync.get() );
     m_chatController->SetKiwayRequestFn(
@@ -622,8 +655,47 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     {
         UpdateAuthUI();
 
-        // Push model list
+        // Push model list — include Claude Code if available
         std::vector<std::string> models = { "Claude 4.6 Opus", "Gemini 3.1 Pro" };
+
+        // Check if claude CLI is installed
+        {
+            bool found = false;
+#ifdef __WXMSW__
+            char pathBuf[MAX_PATH];
+            found = SearchPathA( NULL, "claude.exe", NULL, MAX_PATH, pathBuf, NULL ) > 0
+                    || SearchPathA( NULL, "claude.cmd", NULL, MAX_PATH, pathBuf, NULL ) > 0;
+
+            if( !found )
+            {
+                // Check common install locations
+                wxString home = wxGetHomeDir();
+                found = wxFileName::FileExists( home + "\\.local\\bin\\claude.exe" );
+
+                if( !found )
+                {
+                    const char* appData = getenv( "APPDATA" );
+                    if( appData )
+                        found = wxFileName::FileExists( wxString( appData ) + "\\npm\\claude.cmd" );
+                }
+
+                if( !found )
+                {
+                    const char* localAppData = getenv( "LOCALAPPDATA" );
+                    if( localAppData )
+                        found = wxFileName::FileExists(
+                            wxString( localAppData ) + "\\Programs\\claude\\claude.exe" );
+                }
+            }
+#else
+            found = wxFileName::FileExists( "/usr/local/bin/claude" )
+                    || wxFileName::FileExists( "/opt/homebrew/bin/claude" )
+                    || wxFileName::FileExists( wxString( wxGetHomeDir() + "/.local/bin/claude" ) );
+#endif
+            if( found )
+                models.push_back( "Claude Code (Opus)" );
+        }
+
         m_bridge->PushModelList( models, m_currentModel );
 
         // Push initial title
@@ -631,6 +703,15 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
         // Push plan mode state
         m_bridge->PushPlanMode( m_agentMode == AgentMode::PLAN );
+
+        // If the persisted model is Claude Code, initialize the CC backend now
+        // (deferred to CallAfter so Pgm().GetApiServer() is available)
+        if( m_currentModel == "Claude Code (Opus)" )
+        {
+            std::string savedModel = m_currentModel;
+            m_currentModel = "";  // Force DoModelChange to not early-return
+            DoModelChange( savedModel );
+        }
     } );
 }
 
@@ -720,7 +801,7 @@ void AGENT_FRAME::RebuildThinkingHtml()
 
     // Use placeholder if content is empty (during initial THINKING_START)
     // This ensures the content div exists immediately for user clicks
-    wxString displayContent = escapedContent.IsEmpty() ? "<i>Thinking...</i>" : escapedContent;
+    wxString displayContent = escapedContent.IsEmpty() ? wxString( "<i>Thinking...</i>" ) : escapedContent;
 
     // Always render both toggle link and content (content hidden by CSS if collapsed)
     // JavaScript will toggle visibility without page reload
@@ -775,8 +856,13 @@ wxString AGENT_FRAME::BuildStreamingContent()
     if( !m_thinkingHtml.IsEmpty() )
         streamingContent += m_thinkingHtml;
 
-    // Get current response from controller and append with markdown
-    std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
+    // Get current response from the active controller
+    std::string currentResponse;
+
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+        currentResponse = m_ccController->GetCurrentResponse();
+    else if( m_chatController )
+        currentResponse = m_chatController->GetCurrentResponse();
 
     // Strip leading newlines to avoid blank line gap after thinking block
     size_t start = currentResponse.find_first_not_of( "\n\r" );
@@ -1103,6 +1189,13 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
             for( const auto& f : GetOpenEditorFiles() )
                 openFiles.push_back( f.ToStdString() );
             reg.SetOpenEditorFiles( std::move( openFiles ) );
+
+            // Provide send request function so handlers like pcb_autoroute and
+            // generate_net_classes can communicate with editor frames via IPC.
+            reg.SetSendRequestFn(
+                [this]( int aFrameType, const std::string& aPayload ) -> std::string {
+                    return SendRequest( aFrameType, aPayload );
+                } );
         }
 
         try
@@ -1124,6 +1217,28 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
 
             wxLogMessage( "AGENT_FRAME: MCP agent tool '%s' completed, result_len=%zu",
                           toolName, result.length() );
+
+            // Cache screenshot image for CC backend (CC strips images from tool_result stream)
+            if( toolName == "screenshot" && m_backend == AgentBackend::CLAUDE_CODE )
+            {
+                try
+                {
+                    auto resultJson = nlohmann::json::parse( result );
+
+                    if( resultJson.contains( "image" ) && resultJson["image"].is_object() )
+                    {
+                        m_cachedScreenshotBase64 = resultJson["image"].value( "base64", "" );
+                        m_cachedScreenshotMimeType = resultJson["image"].value( "media_type",
+                                                                                "image/png" );
+                        wxLogInfo( "AGENT_FRAME: Cached screenshot image (%zu bytes)",
+                                   m_cachedScreenshotBase64.size() );
+                    }
+                }
+                catch( ... )
+                {
+                    // Not critical — screenshot will just lack image in UI
+                }
+            }
 
             aEvent.SetPayload( result );
         }
@@ -1164,6 +1279,8 @@ void AGENT_FRAME::DoSelectionPillClick()
 
 void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 {
+    try
+    {
     wxLogInfo( "AGENT_FRAME::OnSend called" );
     // NOTE: This method still uses legacy code because it handles KiCad-specific requirements
     // (authentication, pending editor state, system prompt with schematic/PCB context, KIWAY
@@ -1247,21 +1364,6 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_bridge->PushInputClear();
     m_bridge->PushActionButtonState( "Stop" );
 
-    // Configure controller for this request (system prompt now handled server-side)
-    if( m_chatController )
-    {
-        // Sync frame's history to controller before repair
-        // (controller may be out of sync if conversation was loaded from disk)
-        m_chatController->SetHistory( m_chatHistory );
-
-        // Repair orphaned tool_use/tool_result blocks
-        m_chatController->RepairHistory();
-
-        // Sync repaired history back to frame for rendering/persistence
-        m_chatHistory = m_chatController->GetChatHistory();
-        m_apiContext = m_chatController->GetApiContext();
-    }
-
     // Reset frame streaming state
     m_currentResponse = "";
     m_toolCallHtml = "";
@@ -1279,6 +1381,40 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     m_stopRequested = false;
     m_userScrolledUp = false;
     m_htmlUpdatePending = false;
+
+    // ── Claude Code backend ──────────────────────────────────────────────
+    if( m_backend == AgentBackend::CLAUDE_CODE )
+    {
+        if( m_ccController )
+        {
+            StartGeneratingAnimation();
+            m_ccController->SendMessage( text.ToStdString() );
+
+            // Generate title on first message (same as Zeo agent path)
+            if( m_chatHistoryDb.GetTitle().empty() && m_chatController )
+                m_chatController->RequestTitle( text.ToStdString() );
+        }
+
+        m_pendingAttachments.clear();
+        return;
+    }
+
+    // ── Zeo Agent backend ────────────────────────────────────────────────
+
+    // Configure controller for this request (system prompt now handled server-side)
+    if( m_chatController )
+    {
+        // Sync frame's history to controller before repair
+        // (controller may be out of sync if conversation was loaded from disk)
+        m_chatController->SetHistory( m_chatHistory );
+
+        // Repair orphaned tool_use/tool_result blocks
+        m_chatController->RepairHistory();
+
+        // Sync repaired history back to frame for rendering/persistence
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_apiContext = m_chatController->GetApiContext();
+    }
 
     // Transition frame's state machine (legacy - controller also has state machine)
     m_conversationCtx.Reset();
@@ -1324,6 +1460,16 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     }
 
     m_pendingAttachments.clear();
+
+    }
+    catch( const std::exception& e )
+    {
+        wxLogError( "AGENT_FRAME::OnSend exception: %s", e.what() );
+    }
+    catch( ... )
+    {
+        wxLogError( "AGENT_FRAME::OnSend unknown exception" );
+    }
 }
 
 void AGENT_FRAME::OnStop( wxCommandEvent& aEvent )
@@ -1932,15 +2078,129 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
 {
     wxLogInfo( "AGENT_FRAME::DoModelChange - model: %s", aModel.c_str() );
 
-    if( aModel != m_currentModel )
+    if( aModel == m_currentModel )
+        return;
+
+    m_currentModel = aModel;
+
+    if( aModel == "Claude Code (Opus)" )
     {
-        m_currentModel = aModel;
+        m_backend = AgentBackend::CLAUDE_CODE;
+
+        if( !m_ccController )
+            m_ccController = std::make_unique<CC_CONTROLLER>( this );
+
+        // Determine working directory (project dir or home)
+        wxString workDir = wxGetHomeDir();
+
+        try
+        {
+            wxString projPath = Prj().GetProjectPath();
+            if( !projPath.IsEmpty() )
+                workDir = projPath;
+        }
+        catch( ... ) {}
+
+        // Resolve prompts directory (same logic as LoadAndSetSystemPrompt)
+        std::string promptsDir;
+        const char* envDir = std::getenv( "AGENT_PYTHON_DIR" );
+
+        if( envDir && envDir[0] )
+        {
+            wxFileName dir( wxString::FromUTF8( envDir ), "" );
+            dir.RemoveLastDir();  // python/ -> agent/
+            dir.AppendDir( "prompts" );
+            promptsDir = dir.GetPath().ToStdString();
+        }
+        else
+        {
+            wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+            wxFileName dir( exePath.GetPath(), "" );
+#ifdef __WXMSW__
+            dir.AppendDir( "agent" );
+            dir.AppendDir( "prompts" );
+#else
+            dir.RemoveLastDir();
+            dir.AppendDir( "SharedSupport" );
+            dir.AppendDir( "agent" );
+            dir.AppendDir( "prompts" );
+#endif
+            promptsDir = dir.GetPath().ToStdString();
+        }
+
+        // Get API socket path for MCP config
+        std::string apiSocketPath;
+        try
+        {
+            apiSocketPath = Pgm().GetApiServer().SocketPath();
+        }
+        catch( ... )
+        {
+            wxLogWarning( "AGENT_FRAME: Could not get API socket path for CC MCP config" );
+        }
+
+        // Resolve Python3 path for MCP server.
+        std::string pythonPath;
+        {
+#ifdef __WXMSW__
+            // Windows: find system Python from PATH
+            char pathBuf[MAX_PATH];
+
+            if( SearchPathA( NULL, "python3.exe", NULL, MAX_PATH, pathBuf, NULL ) > 0 )
+                pythonPath = pathBuf;
+            else if( SearchPathA( NULL, "python.exe", NULL, MAX_PATH, pathBuf, NULL ) > 0 )
+                pythonPath = pathBuf;
+
+            if( pythonPath.empty() )
+                wxLogWarning( "AGENT_FRAME: Python3 not found in PATH for CC MCP config" );
+            else
+                wxLogInfo( "AGENT_FRAME: Found Python at %s", pythonPath.c_str() );
+#else
+            // macOS: Must use system Python (>=3.10), not the bundled 3.9, because
+            // the mcp SDK requires Python >=3.10 and wxPython pins us to 3.9 in the bundle.
+            std::vector<wxString> candidates = {
+                "/opt/homebrew/bin/python3",
+                "/usr/local/bin/python3",
+                "/usr/bin/python3"
+            };
+
+            for( const auto& candidate : candidates )
+            {
+                if( wxFileName::FileExists( candidate ) )
+                {
+                    pythonPath = candidate.ToStdString();
+                    break;
+                }
+            }
+
+            if( pythonPath.empty() )
+                wxLogWarning( "AGENT_FRAME: No Python3 found for CC MCP config" );
+#endif
+        }
+
+        wxLogInfo( "AGENT_FRAME: CC start - prompts=%s, socket=%s, python=%s",
+                   promptsDir.c_str(), apiSocketPath.c_str(), pythonPath.c_str() );
+
+        m_ccController->Start( workDir.ToStdString(), promptsDir, apiSocketPath, pythonPath );
+
+        // Hide plan button in Claude Code mode (CC manages its own planning)
+        m_bridge->PushPlanMode( false );
+
+        wxLogInfo( "AGENT_FRAME::DoModelChange - switched to Claude Code backend" );
+    }
+    else
+    {
+        // Switching away from Claude Code
+        if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+            m_ccController->Cancel();
+
+        m_backend = AgentBackend::ZEO_AGENT;
 
         if( m_chatController )
             m_chatController->SetModel( m_currentModel );
-
-        SaveModelPreference( m_currentModel );
     }
+
+    SaveModelPreference( m_currentModel );
 }
 
 void AGENT_FRAME::DoSendClick()
@@ -1951,6 +2211,14 @@ void AGENT_FRAME::DoSendClick()
 
 void AGENT_FRAME::DoStopClick()
 {
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+    {
+        m_ccController->Cancel();
+        StopGeneratingAnimation();
+        m_bridge->PushActionButtonState( "Send", true );
+        return;
+    }
+
     wxCommandEvent evt;
     OnStop( evt );
 }
@@ -2353,10 +2621,15 @@ void AGENT_FRAME::LoadAndSetSystemPrompt()
     {
         wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
         wxFileName dir( exePath.GetPath(), "" );
+#ifdef __WXMSW__
+        dir.AppendDir( "agent" );
+        dir.AppendDir( "prompts" );
+#else
         dir.RemoveLastDir();
         dir.AppendDir( "SharedSupport" );
         dir.AppendDir( "agent" );
         dir.AppendDir( "prompts" );
+#endif
         promptsDir = dir.GetPath().ToStdString();
     }
 
@@ -2499,10 +2772,18 @@ void AGENT_FRAME::RetryLastRequest()
 
 void AGENT_FRAME::OnLLMStreamChunk( wxThreadEvent& aEvent )
 {
+    wxLogInfo( "AGENT_FRAME::OnLLMStreamChunk - entry" );
+
     // Get the chunk data from the event payload
     LLMStreamChunk* chunk = aEvent.GetPayload<LLMStreamChunk*>();
     if( !chunk )
+    {
+        wxLogError( "AGENT_FRAME::OnLLMStreamChunk - null chunk payload!" );
         return;
+    }
+
+    wxLogInfo( "AGENT_FRAME::OnLLMStreamChunk - type=%d, controller=%p",
+               static_cast<int>( chunk->type ), static_cast<void*>( m_chatController.get() ) );
 
     // Forward to controller for processing
     // Controller emits EVT_CHAT_* events which are handled by OnChat* methods
@@ -2510,6 +2791,8 @@ void AGENT_FRAME::OnLLMStreamChunk( wxThreadEvent& aEvent )
     {
         m_chatController->HandleLLMChunk( *chunk );
     }
+
+    wxLogInfo( "AGENT_FRAME::OnLLMStreamChunk - done" );
 
     // Clean up
     delete chunk;
@@ -2576,8 +2859,14 @@ void AGENT_FRAME::DoNewChat()
 {
     wxLogInfo( "AGENT_FRAME::DoNewChat called" );
 
-    bool isBusy = m_chatController ? m_chatController->IsBusy()
-                                   : ( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE );
+    bool isBusy = false;
+
+    if( m_backend == AgentBackend::CLAUDE_CODE )
+        isBusy = m_ccController && m_ccController->IsBusy();
+    else
+        isBusy = m_chatController ? m_chatController->IsBusy()
+                                  : ( m_isGenerating || m_conversationCtx.GetState() != AgentConversationState::IDLE );
+
     if( isBusy )
     {
         wxMessageBox( _( "Please wait for the current response to complete before starting a new chat." ),
@@ -2585,7 +2874,9 @@ void AGENT_FRAME::DoNewChat()
         return;
     }
 
-    if( m_chatController )
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+        m_ccController->NewSession();
+    else if( m_chatController )
         m_chatController->NewChat();
 
     m_chatHistory = nlohmann::json::array();
@@ -3432,6 +3723,8 @@ bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
 
 void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
 {
+    wxLogInfo( "AGENT_FRAME::OnChatTextDelta - entry" );
+
     ChatTextDeltaData* data = aEvent.GetPayload<ChatTextDeltaData*>();
     if( !data )
         return;
@@ -3444,6 +3737,8 @@ void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
 
     // Re-render full response with markdown
     UpdateAgentResponse();
+
+    wxLogInfo( "AGENT_FRAME::OnChatTextDelta - done" );
 
     // Auto-scroll handled by CSS flex-direction: column-reverse
 
@@ -3623,6 +3918,11 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         m_activeRunningHtml = BuildRunningToolHtml( idx, desc );
         m_activeToolResultIdx = idx;
 
+        // Map tool ID to DOM index so OnChatToolComplete can find the right element
+        // (needed for CC backend where multiple tools execute concurrently)
+        if( !data->toolId.empty() )
+            m_toolIdxByUseId[data->toolId] = idx;
+
         wxLogInfo( "AGENT_FRAME::OnChatToolStart - assigned idx=%d (counter now %d)",
                    idx, m_toolResultCounter );
 
@@ -3712,7 +4012,7 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
             delete data;
             return;
 
-        case OpenEditorResult::ERROR:
+        case OpenEditorResult::ERRORED:
             if( m_chatController )
                 m_chatController->HandleToolResult( data->toolId, result.errorMessage, false );
             delete data;
@@ -3742,6 +4042,18 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
     wxLogInfo( "AGENT_FRAME::OnChatToolComplete - tool: %s, success: %s",
             data->toolName.c_str(), data->success ? "true" : "false" );
+
+    // CC backend: attach cached screenshot image (CC strips images from tool_result stream)
+    if( m_backend == AgentBackend::CLAUDE_CODE && !m_cachedScreenshotBase64.empty()
+        && !data->hasImage )
+    {
+        data->hasImage = true;
+        data->imageBase64 = std::move( m_cachedScreenshotBase64 );
+        data->imageMediaType = std::move( m_cachedScreenshotMimeType );
+        m_cachedScreenshotBase64.clear();
+        m_cachedScreenshotMimeType.clear();
+        wxLogInfo( "AGENT_FRAME::OnChatToolComplete - attached cached screenshot image" );
+    }
 
     // Determine status display
     wxString statusClass;
@@ -3778,9 +4090,23 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
             + "\" style=\"max-width:100%; border-radius:6px; margin:8px 0;\" />";
     }
 
-    // Update the existing tool result component via JS callback
-    wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
+    // Look up the DOM index for this tool by its ID.
+    // For the CC backend, multiple tools may be in-flight concurrently, so
+    // m_activeToolResultIdx may point to a different tool.
     int idx = m_activeToolResultIdx;
+
+    if( !data->toolId.empty() )
+    {
+        auto idxIt = m_toolIdxByUseId.find( data->toolId );
+
+        if( idxIt != m_toolIdxByUseId.end() )
+        {
+            idx = idxIt->second;
+            m_toolIdxByUseId.erase( idxIt );
+        }
+    }
+
+    wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
 
     // Build the text-only body content (no image - image is appended separately to avoid
     // passing megabytes of base64 data in a single JS string literal)
@@ -4224,7 +4550,7 @@ void AGENT_FRAME::OnChatStateChanged( wxThreadEvent& aEvent )
     switch( newState )
     {
     case AgentConversationState::IDLE:
-    case AgentConversationState::ERROR:
+    case AgentConversationState::ERRORED:
         m_bridge->PushActionButtonState( "Send" );
         break;
 

@@ -111,7 +111,7 @@ enum class LLMChunkType
     SERVER_TOOL_USE,   // Server-side tool invoked (e.g., web_search)
     SERVER_TOOL_RESULT,// Server-side tool completed (e.g., web_search_tool_result)
     REFUSAL,           // Model refused request (stop_reason: refusal)
-    ERROR              // Error occurred
+    ERRORED            // Error occurred
 };
 
 /**

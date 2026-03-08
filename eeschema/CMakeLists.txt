@@ -656,13 +656,17 @@ target_link_libraries( eeschema_kiface
 
 if( MSVC )
     # Allow for MSVC to debug ngspice from the build directory
-    add_custom_command( TARGET eeschema_kiface POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NGSPICE_DLL}" "$<TARGET_FILE_DIR:eeschema_kiface>"
-        )
+    if( NGSPICE_DLL AND NOT NGSPICE_DLL STREQUAL "NGSPICE_DLL-NOTFOUND" )
+        add_custom_command( TARGET eeschema_kiface POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NGSPICE_DLL}" "$<TARGET_FILE_DIR:eeschema_kiface>"
+            )
+    endif()
 
-    add_custom_command( TARGET eeschema_kiface POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory "${NGSPICE_CM_DIR}" "$<TARGET_FILE_DIR:eeschema_kiface>/ngspice"
-        )
+    if( NGSPICE_CM_DIR AND NOT NGSPICE_CM_DIR STREQUAL "NGSPICE_CM_DIR-NOTFOUND" )
+        add_custom_command( TARGET eeschema_kiface POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${NGSPICE_CM_DIR}" "$<TARGET_FILE_DIR:eeschema_kiface>/ngspice"
+            )
+    endif()
 endif()
 
 set_target_properties( eeschema_kiface PROPERTIES

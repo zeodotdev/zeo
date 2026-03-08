@@ -345,7 +345,7 @@ void CHAT_CONTROLLER::Cancel()
 void CHAT_CONTROLLER::Retry()
 {
     wxLogInfo( "CHAT_CONTROLLER::Retry called" );
-    if( m_ctx.GetState() != AgentConversationState::ERROR )
+    if( m_ctx.GetState() != AgentConversationState::ERRORED )
         return;
 
     m_stopRequested = false;
@@ -575,7 +575,7 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
     case LLMChunkType::REFUSAL:
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - REFUSAL" );
         break;
-    case LLMChunkType::ERROR:
+    case LLMChunkType::ERRORED:
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - ERROR: %s", aChunk.error_message.c_str() );
         break;
     default:
@@ -715,7 +715,7 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
         break;
     }
 
-    case LLMChunkType::ERROR:
+    case LLMChunkType::ERRORED:
         HandleLLMError( aChunk.error_message, 0, aChunk.error_type );
         break;
 
@@ -2338,6 +2338,16 @@ void CHAT_CONTROLLER::GenerateTitle()
             // Silently ignore title generation errors
         }
     }).detach();
+}
+
+
+void CHAT_CONTROLLER::RequestTitle( const std::string& aMessage )
+{
+    if( aMessage.empty() )
+        return;
+
+    m_firstUserMessage = aMessage;
+    GenerateTitle();
 }
 
 

@@ -5,6 +5,7 @@
 #include <wx/textctrl.h>
 #include <wx/thread.h>
 #include <wx/timer.h>
+#include <wx/stream.h>
 #include <vector>
 #include <string>
 #include <atomic>

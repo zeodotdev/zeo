@@ -48,8 +48,7 @@ KIFACE_BASE& Kiface()
 
 extern "C"
 {
-    __attribute__( ( visibility( "default" ) ) ) KIFACE* KIFACE_GETTER( int* aKifaceVersion, int aKiwayVersion,
-                                                                        PGM_BASE* aProgram )
+    KIFACE* KIFACE_GETTER( int* aKifaceVersion, int aKiwayVersion, PGM_BASE* aProgram )
     {
         *aKifaceVersion = KIFACE_VERSION;
         return &Kiface();

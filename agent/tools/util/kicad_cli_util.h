@@ -50,14 +50,10 @@ inline std::string GetFrameworksDir()
 
 /**
  * Build a command prefix for running kicad-cli with proper environment.
- * Includes DYLD_LIBRARY_PATH on macOS and quotes the binary path.
+ * On macOS: sets DYLD_LIBRARY_PATH for the app bundle.
+ * On Windows: just quotes the binary path.
  *
- * NOTE: Currently macOS-only. The DYLD_LIBRARY_PATH environment variable
- * and Frameworks directory layout are specific to macOS app bundles.
- * Other platforms would need LD_LIBRARY_PATH (Linux) or PATH (Windows).
- *
- * @return Command prefix string like: DYLD_LIBRARY_PATH="..." "/path/to/kicad-cli"
- *         or empty string if kicad-cli is not found.
+ * @return Command prefix string, or empty string if kicad-cli is not found.
  */
 inline std::string GetKicadCliCommandPrefix()
 {
@@ -65,14 +61,19 @@ inline std::string GetKicadCliCommandPrefix()
     if( cliPath.empty() )
         return std::string();
 
+#ifdef __APPLE__
     std::string prefix = "DYLD_LIBRARY_PATH=\"" + GetFrameworksDir()
                          + "\" \"" + cliPath + "\"";
     return prefix;
+#else
+    return "\"" + cliPath + "\"";
+#endif
 }
 
 /**
  * Locate the Freerouting JAR file in the app bundle.
- * On macOS this is in Contents/SharedSupport/freerouting/freerouting.jar
+ * macOS:   Contents/SharedSupport/freerouting/freerouting.jar
+ * Windows: bin/freerouting/freerouting.jar
  *
  * @return Full path to freerouting.jar, or empty string if not found.
  */
@@ -81,12 +82,14 @@ inline std::string GetFreeroutingJarPath()
     wxString exePathStr = wxStandardPaths::Get().GetExecutablePath();
     wxFileName exePath( exePathStr );
 
-    // Navigate from MacOS to SharedSupport/freerouting
-    // App structure: Zeo.app/Contents/MacOS/kicad -> Zeo.app/Contents/SharedSupport/freerouting
     wxFileName jarPath( exePath.GetPath(), "" );
+#ifdef __WXMSW__
+    jarPath.AppendDir( "freerouting" );
+#else
     jarPath.RemoveLastDir();  // Remove MacOS
     jarPath.AppendDir( "SharedSupport" );
     jarPath.AppendDir( "freerouting" );
+#endif
     jarPath.SetFullName( "freerouting.jar" );
 
     wxLogInfo( "Freerouting: Looking for JAR at: %s", jarPath.GetFullPath() );
@@ -101,18 +104,20 @@ inline std::string GetFreeroutingJarPath()
 
 /**
  * Get the path to the Java executable.
- * Uses system Java on macOS.
+ * Uses system Java on macOS, PATH lookup on Windows.
  *
  * @return Path to java executable, or "java" if not found explicitly.
  */
 inline std::string GetJavaPath()
 {
+#ifndef __WXMSW__
     // On macOS, /usr/bin/java is a stub that invokes the real Java
     // It will show the "install Java" dialog if Java isn't installed
     if( wxFileName::FileExists( "/usr/bin/java" ) )
         return "/usr/bin/java";
+#endif
 
-    // Fall back to PATH lookup
+    // Fall back to PATH lookup (works on Windows and Linux)
     return "java";
 }
 

@@ -76,8 +76,13 @@ void WEBVIEW_BRIDGE::OnMessage( const wxString& aMessage )
         // Lifecycle
         else if( action == BridgeAction::PAGE_READY )
         {
-            LogBridge( "JS->C++", "PAGE_READY", "Flushing pending scripts" );
+            wxLogInfo( "WEBVIEW_BRIDGE: PAGE_READY received, flushing %zu pending scripts",
+                       m_pendingScripts.size() );
             m_pageReady = true;
+
+            // Acknowledge so JS stops retrying (WebView2 handler registration race)
+            m_webView->RunScriptAsync( wxS( "window._pageReadyAcked=true;" ) );
+
             FlushPendingScripts();
 
             // Enable JS debug logging when WXTRACE includes KICAD_AGENT

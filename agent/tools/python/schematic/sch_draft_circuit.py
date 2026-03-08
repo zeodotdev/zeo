@@ -4,7 +4,22 @@ from kipy.proto.common.types.enums_pb2 import HA_LEFT, HA_RIGHT, VA_TOP, VA_BOTT
 
 refresh_or_fail(sch)
 
+# ---------------------------------------------------------------------------
+# Layout constants (grid-based, retrieved from project settings)
+# ---------------------------------------------------------------------------
+try:
+    _grid_settings = sch.page.get_grid_settings()
+    _GRID = _grid_settings.get('size_mm', 2.54)  # Get actual grid from project
+except:
+    _GRID = 2.54  # Fallback to 100 mil default if API fails
+
+_BBOX_MARGIN = 1 * _GRID  # 1 grid unit margin for overlap detection
+_LABEL_OFFSET = 2 * _GRID  # 2 grid units offset from pin for labels
+_MIN_SYMBOL_SPACING = 6 * _GRID  # 6 grid units minimum between symbol centers
+
+# ---------------------------------------------------------------------------
 # Build map of used references for auto-numbering
+# ---------------------------------------------------------------------------
 used_refs = {}
 for _s in sch.symbols.get_all():
     _r = getattr(_s, 'reference', '')
@@ -353,6 +368,7 @@ try:
 
             _temp_to_ref[temp_id] = pwr_name  # Power symbols use net name, not ref
             _power_temp_ids.add(temp_id)  # Mark as power symbol
+            _temp_to_sym[temp_id] = pwr  # Track power symbol object for wiring
 
             # Record bbox and check for overlaps
             try:
@@ -516,8 +532,41 @@ try:
     # Phase 2c: Auto-create labels for net name connections
     # ---------------------------------------------------------------------------
     # When a connection target is a net name (e.g., "VBUS"), create a label at the pin
+    # Labels are offset from the pin based on pin orientation
+    # SKIP creating auto-labels for nets that have explicit labels defined in the labels array
     _auto_labels_created = []
+
+    # Build set of net names that have explicit labels (Phase 3) - don't auto-create for these
+    _explicit_label_nets = set()
+    for lbl_spec in TOOL_ARGS.get("labels", []):
+        lbl_text = lbl_spec.get("text", "")
+        if lbl_text:
+            _explicit_label_nets.add(lbl_text.upper())  # Case-insensitive
+
+    _debug_info.append(f"Phase 2c: Explicit label nets (will skip auto-create): {_explicit_label_nets}")
     _debug_info.append(f"Phase 2c: Checking for net name connections that need labels")
+
+    def _get_label_offset(orientation_deg):
+        """Calculate label offset based on pin orientation.
+        Pin orientation indicates which way the pin points (where the component body is).
+        We offset the label in the opposite direction (where the wire would come from).
+
+        Orientation: 0=right, 90=down, 180=left, 270=up
+        """
+        # Normalize to 0-360
+        orient = orientation_deg % 360
+        if orient == 0:  # Pin points right, label goes left
+            return (-_LABEL_OFFSET, 0)
+        elif orient == 90:  # Pin points down, label goes up
+            return (0, -_LABEL_OFFSET)
+        elif orient == 180:  # Pin points left, label goes right
+            return (_LABEL_OFFSET, 0)
+        elif orient == 270:  # Pin points up, label goes down
+            return (0, _LABEL_OFFSET)
+        else:
+            # Non-standard angle, use radians to compute offset
+            rad = math.radians(orient + 180)  # Opposite direction
+            return (_LABEL_OFFSET * math.cos(rad), _LABEL_OFFSET * math.sin(rad))
 
     for temp_id, wiring_entries in wiring_map.items():
         # Skip existing symbols (they're already placed, don't add labels for them)
@@ -529,24 +578,24 @@ try:
         if not sym_obj:
             continue
 
-        # Get pin positions for this symbol
-        pin_positions = {}
+        # Get pin positions and orientations for this symbol
+        pin_data = {}  # pin_number -> {'pos': (x, y), 'orient': degrees}
         try:
             all_pins = sch.symbols.get_all_transformed_pin_positions(sym_obj)
             for ap in all_pins:
                 # Position is in nm, convert to mm
-                pin_positions[ap['pin_number']] = (
-                    ap['position'].x / 1_000_000,
-                    ap['position'].y / 1_000_000
-                )
+                pin_data[ap['pin_number']] = {
+                    'pos': (ap['position'].x / 1_000_000, ap['position'].y / 1_000_000),
+                    'orient': ap.get('orientation', 0)
+                }
         except:
             pass
 
-        # Also try pin names (some symbols use names instead of numbers)
+        # Also map pin names to pin numbers
         try:
             for p in sym_obj.pins:
-                if p.number in pin_positions and hasattr(p, 'name') and p.name:
-                    pin_positions[p.name] = pin_positions[p.number]
+                if p.number in pin_data and hasattr(p, 'name') and p.name:
+                    pin_data[p.name] = pin_data[p.number]
         except:
             pass
 
@@ -555,22 +604,37 @@ try:
             if ':' not in target:
                 # Target is a net name (no colon), need to create a label
                 net_name = target
-                pin_pos = pin_positions.get(pin)
-                if pin_pos:
-                    _debug_info.append(f"Phase 2c: Creating label '{net_name}' at pin {pin} of {temp_id} at ({pin_pos[0]:.2f}, {pin_pos[1]:.2f})")
+
+                # Skip if an explicit label exists for this net (will be created in Phase 3)
+                if net_name.upper() in _explicit_label_nets:
+                    _debug_info.append(f"Phase 2c: Skipping auto-label '{net_name}' - explicit label exists")
+                    continue
+
+                pin_info = pin_data.get(pin)
+                if pin_info:
+                    pin_pos = pin_info['pos']
+                    pin_orient = pin_info.get('orient', 0)
+                    offset_x, offset_y = _get_label_offset(pin_orient)
+
+                    label_x = snap_to_grid(pin_pos[0] + offset_x)
+                    label_y = snap_to_grid(pin_pos[1] + offset_y)
+
+                    _debug_info.append(f"Phase 2c: Creating label '{net_name}' for {temp_id}:{pin} at ({label_x:.2f}, {label_y:.2f}) [pin orient={pin_orient}]")
                     try:
-                        lbl_pos = Vector2.from_xy_mm(snap_to_grid(pin_pos[0]), snap_to_grid(pin_pos[1]))
+                        # Create label at offset position (NO wire - user wires manually based on guide)
+                        lbl_pos = Vector2.from_xy_mm(label_x, label_y)
                         lbl = sch.labels.add_local(net_name, lbl_pos)
                         _auto_labels_created.append({
                             'text': net_name,
-                            'position': [round(pin_pos[0], 2), round(pin_pos[1], 2)],
+                            'position': [round(label_x, 2), round(label_y, 2)],
+                            'pin_position': [round(pin_pos[0], 2), round(pin_pos[1], 2)],
                             'for_symbol': _temp_to_ref.get(temp_id, temp_id),
                             'for_pin': pin
                         })
                     except Exception as e:
                         _debug_info.append(f"Phase 2c: Failed to create label '{net_name}': {str(e)}")
                 else:
-                    _debug_info.append(f"Phase 2c: Could not find pin position for {temp_id}:{pin}")
+                    _debug_info.append(f"Phase 2c: Could not find pin data for {temp_id}:{pin}")
 
     _debug_info.append(f"Phase 2c: Created {len(_auto_labels_created)} auto-labels")
 
@@ -623,6 +687,9 @@ try:
     # Extract overlap warnings for visibility
     _overlaps = [d for d in _debug_info if d.startswith('WARNING:')]
 
+    # Count symbols with wiring guides
+    _guided = len(wiring_info)
+
     result = {
         'status': 'success' if _fail == 0 else 'partial',
         'total': _total,
@@ -637,10 +704,10 @@ try:
         '_debug': _debug_info,
         'message': (
             f"Placed {len(symbols)} symbols and {len(power_symbols)} power symbols. "
-            + (f"Auto-created {len(_auto_labels_created)} labels for net connections. " if _auto_labels_created else "")
-            + f"{len(wiring_info)} symbols have wiring recommendations in their Agent_Wiring field. "
+            + (f"Auto-created {len(_auto_labels_created)} labels. " if _auto_labels_created else "")
+            + (f"{_guided} symbols have wire guides in Agent_Wiring field. " if _guided else "")
             + (f"WARNING: {len(_overlaps)} placement overlaps detected. " if _overlaps else "")
-            + "Review the diff overlay to approve placements, then wire the recommended connections."
+            + "Review placements, then manually wire the guided connections."
         ) if _fail == 0 else None
     }
 

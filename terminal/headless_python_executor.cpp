@@ -208,12 +208,17 @@ void HEADLESS_PYTHON_EXECUTOR::InitShell()
     m_process = new wxProcess( this );
     m_process->Redirect();
 
+#ifdef _WIN32
+    wxString shell = "cmd.exe";
+    m_pid = wxExecute( shell, wxEXEC_ASYNC, m_process );
+#else
     wxString shell = "/bin/zsh";
 
     if( !wxFileExists( shell ) )
         shell = "/bin/bash";
 
     m_pid = wxExecute( shell + " -s", wxEXEC_ASYNC, m_process );
+#endif
 
     if( m_pid > 0 )
     {

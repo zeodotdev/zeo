@@ -27,6 +27,12 @@
 #include <wx/filename.h>
 #include <wx/log.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <cstdlib>
+#endif
+
 #include <vector>
 
 
@@ -46,6 +52,24 @@ bool AGENT_SNAPSHOT_SESSION::CreateTempDir()
     if( !m_snapshotDir.IsEmpty() )
         return true;  // Already created
 
+#ifdef _WIN32
+    wchar_t tempPath[MAX_PATH];
+    GetTempPathW( MAX_PATH, tempPath );
+
+    LARGE_INTEGER counter;
+    QueryPerformanceCounter( &counter );
+
+    wxString dirPath = wxString( tempPath ) + wxString::Format( "zeo_snapshot_%lld",
+                                                                 counter.QuadPart );
+
+    if( !wxFileName::Mkdir( dirPath, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL ) )
+    {
+        wxLogWarning( "AGENT_SNAPSHOT_SESSION: Failed to create temp directory" );
+        return false;
+    }
+
+    m_snapshotDir = dirPath;
+#else
     std::string tempTemplate = ( wxFileName::GetTempDir() + wxFileName::GetPathSeparator()
                                  + "zeo_snapshot_XXXXXX" ).ToStdString();
     std::vector<char> tempBuf( tempTemplate.begin(), tempTemplate.end() );
@@ -58,6 +82,8 @@ bool AGENT_SNAPSHOT_SESSION::CreateTempDir()
     }
 
     m_snapshotDir = wxString::FromUTF8( tempBuf.data() );
+#endif
+
     wxLogInfo( "AGENT_SNAPSHOT_SESSION: Created temp dir: %s", m_snapshotDir );
     return true;
 }

@@ -23,25 +23,20 @@ std::string PYTHON_TOOL_HANDLER::FindPythonDir()
         return std::string( envDir );
     }
 
+    // 2. Locate relative to the running executable
+    //    macOS:   Zeo.app/Contents/MacOS/kicad -> Contents/SharedSupport/agent/python/
+    //    Windows/Linux: <exe_dir>/agent/python/
     wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+    wxFileName pythonDir( exePath.GetPath(), "" );
 
 #ifdef __WXMAC__
-    // 2a. macOS: locate in app bundle
-    //     Executable: Zeo.app/Contents/MacOS/kicad
-    //     Scripts:    Zeo.app/Contents/SharedSupport/agent/python/
-    wxFileName pythonDir( exePath.GetPath(), "" );
+    // macOS: locate in app bundle SharedSupport
     pythonDir.RemoveLastDir();                  // remove MacOS
     pythonDir.AppendDir( "SharedSupport" );
     pythonDir.AppendDir( "agent" );
     pythonDir.AppendDir( "python" );
 #else
-    // 2b. Linux: scripts installed to ${prefix}/share/kicad/agent/python/
-    //     Executable: /usr/bin/kicad
-    //     Scripts:    /usr/share/kicad/agent/python/
-    wxFileName pythonDir( exePath.GetPath(), "" );
-    pythonDir.RemoveLastDir();                  // remove bin
-    pythonDir.AppendDir( "share" );
-    pythonDir.AppendDir( "kicad" );
+    // Windows and Linux: agent/python/ relative to the executable
     pythonDir.AppendDir( "agent" );
     pythonDir.AppendDir( "python" );
 #endif

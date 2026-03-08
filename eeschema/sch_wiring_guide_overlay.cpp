@@ -76,7 +76,12 @@ void SCH_WIRING_GUIDE_OVERLAY::ViewDraw( int aLayer, KIGFX::VIEW* aView ) const
 
 void SCH_WIRING_GUIDE_OVERLAY::drawPreviewShape( KIGFX::VIEW* aView ) const
 {
-    if( !m_manager )
+    if( !m_manager || !m_frame )
+        return;
+
+    // Don't render during diff preview - DIFF_OVERLAY_ITEM handles wire guides then.
+    // This overlay only renders guides for APPROVED symbols (after accept).
+    if( m_frame->HasAgentPendingChanges() )
         return;
 
     KIGFX::GAL* gal = aView->GetGAL();

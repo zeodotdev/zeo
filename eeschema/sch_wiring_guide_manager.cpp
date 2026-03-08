@@ -140,11 +140,23 @@ void SCH_WIRING_GUIDE_MANAGER::ParseSymbolWiring( SCH_SYMBOL* aSymbol )
     // Get the Agent_Wiring field
     const SCH_FIELD* field = aSymbol->GetField( SCH_AGENT_WIRING::FIELD_NAME );
     if( !field )
+    {
+        // Log all fields on this symbol for debugging
+        wxLogMessage( "WIRING_GUIDE: Symbol %s has no Agent_Wiring field. Fields present:", symbolRef );
+        const std::vector<SCH_FIELD>& fields = aSymbol->GetFields();
+        for( size_t i = 0; i < fields.size(); ++i )
+        {
+            wxLogMessage( "  [%zu] name=\"%s\" value=\"%s\"", i, fields[i].GetName(), fields[i].GetText() );
+        }
         return;
+    }
 
     wxString fieldValue = field->GetText();
     if( fieldValue.IsEmpty() )
+    {
+        wxLogMessage( "WIRING_GUIDE: Symbol %s has Agent_Wiring field but it's empty", symbolRef );
         return;
+    }
 
     wxLogMessage( "WIRING_GUIDE: Parsing Agent_Wiring for %s: \"%s\"", symbolRef, fieldValue );
 
@@ -268,7 +280,14 @@ bool SCH_WIRING_GUIDE_MANAGER::ResolveTargetPosition( WIRING_GUIDE& aGuide )
                           label->GetPosition().x, label->GetPosition().y );
         }
 
-        // Try to find a power symbol with this net
+        // Find the NEAREST matching target (power symbol OR label) to the source position
+        // We check ALL possible targets and pick the closest one
+        VECTOR2I bestPos;
+        int64_t bestDist = INT64_MAX;
+        bool found = false;
+        wxString bestType;
+
+        // Check power symbols
         for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
         {
             SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
@@ -282,22 +301,19 @@ bool SCH_WIRING_GUIDE_MANAGER::ResolveTargetPosition( WIRING_GUIDE& aGuide )
                     std::vector<SCH_PIN*> pins = symbol->GetPins( &m_frame->GetCurrentSheet() );
                     if( !pins.empty() )
                     {
-                        aGuide.targetPos = pins[0]->GetPosition();
-                        aGuide.targetResolved = true;
-                        wxLogMessage( "WIRING_GUIDE: Resolved via power symbol at (%d,%d)",
-                                      aGuide.targetPos.x, aGuide.targetPos.y );
-                        return true;
+                        VECTOR2I pos = pins[0]->GetPosition();
+                        int64_t dist = ( pos - aGuide.sourcePos ).SquaredEuclideanNorm();
+                        if( dist < bestDist )
+                        {
+                            bestDist = dist;
+                            bestPos = pos;
+                            bestType = "power symbol";
+                            found = true;
+                        }
                     }
                 }
             }
         }
-
-        // Find the NEAREST matching label to the source position
-        // Collect all matching labels, then pick the closest one
-        VECTOR2I bestPos;
-        int64_t bestDist = INT64_MAX;
-        bool found = false;
-        wxString bestType;
 
         // Check global labels
         for( SCH_ITEM* item : screen->Items().OfType( SCH_GLOBAL_LABEL_T ) )
@@ -529,8 +545,8 @@ bool SCH_WIRING_GUIDE_MANAGER::CheckConnectionExists( const VECTOR2I& aStart, co
         // Log MISS - one or both items not found at expected positions
         wxLogMessage( "WIRING_GUIDE: MISS at (%d,%d)->(%d,%d) start=%s end=%s",
                       aStart.x, aStart.y, aEnd.x, aEnd.y,
-                      startItemInfo.empty() ? "NOT FOUND" : startItemInfo,
-                      endItemInfo.empty() ? "NOT FOUND" : endItemInfo );
+                      startItemInfo.empty() ? wxString( "NOT FOUND" ) : startItemInfo,
+                      endItemInfo.empty() ? wxString( "NOT FOUND" ) : endItemInfo );
         return false;
     }
 
@@ -830,8 +846,13 @@ void SCH_WIRING_GUIDE_MANAGER::RefreshGuidePositions()
             }
             else
             {
-                // Target is a net name like "VCC" - try power symbols first
+                // Target is a net name like "VCC" - find the NEAREST matching target
+                // This must match the logic in ResolveTargetPosition()
+                VECTOR2I bestPos = guide.targetPos;  // Keep current if nothing found
+                int64_t bestDist = INT64_MAX;
                 bool found = false;
+
+                // Check power symbols
                 for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
                 {
                     SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
@@ -843,56 +864,70 @@ void SCH_WIRING_GUIDE_MANAGER::RefreshGuidePositions()
                             std::vector<SCH_PIN*> pins = symbol->GetPins( &m_frame->GetCurrentSheet() );
                             if( !pins.empty() )
                             {
-                                guide.targetPos = pins[0]->GetPosition();
-                                found = true;
-                                break;
+                                VECTOR2I pos = pins[0]->GetPosition();
+                                int64_t dist = ( pos - guide.sourcePos ).SquaredEuclideanNorm();
+                                if( dist < bestDist )
+                                {
+                                    bestDist = dist;
+                                    bestPos = pos;
+                                    found = true;
+                                }
                             }
                         }
                     }
                 }
 
-                // Try global labels
-                if( !found )
+                // Check global labels
+                for( SCH_ITEM* item : screen->Items().OfType( SCH_GLOBAL_LABEL_T ) )
                 {
-                    for( SCH_ITEM* item : screen->Items().OfType( SCH_GLOBAL_LABEL_T ) )
+                    SCH_GLOBALLABEL* label = static_cast<SCH_GLOBALLABEL*>( item );
+                    if( label->GetText().IsSameAs( guide.targetRef, false ) )
                     {
-                        SCH_GLOBALLABEL* label = static_cast<SCH_GLOBALLABEL*>( item );
-                        if( label->GetText().IsSameAs( guide.targetRef, false ) )
+                        int64_t dist = ( label->GetPosition() - guide.sourcePos ).SquaredEuclideanNorm();
+                        if( dist < bestDist )
                         {
-                            guide.targetPos = label->GetPosition();
+                            bestDist = dist;
+                            bestPos = label->GetPosition();
                             found = true;
-                            break;
                         }
                     }
                 }
 
-                // Try hierarchical labels
-                if( !found )
+                // Check hierarchical labels
+                for( SCH_ITEM* item : screen->Items().OfType( SCH_HIER_LABEL_T ) )
                 {
-                    for( SCH_ITEM* item : screen->Items().OfType( SCH_HIER_LABEL_T ) )
+                    SCH_HIERLABEL* label = static_cast<SCH_HIERLABEL*>( item );
+                    if( label->GetText().IsSameAs( guide.targetRef, false ) )
                     {
-                        SCH_HIERLABEL* label = static_cast<SCH_HIERLABEL*>( item );
-                        if( label->GetText().IsSameAs( guide.targetRef, false ) )
+                        int64_t dist = ( label->GetPosition() - guide.sourcePos ).SquaredEuclideanNorm();
+                        if( dist < bestDist )
                         {
-                            guide.targetPos = label->GetPosition();
+                            bestDist = dist;
+                            bestPos = label->GetPosition();
                             found = true;
-                            break;
                         }
                     }
                 }
 
-                // Try local labels
-                if( !found )
+                // Check local labels
+                for( SCH_ITEM* item : screen->Items().OfType( SCH_LABEL_T ) )
                 {
-                    for( SCH_ITEM* item : screen->Items().OfType( SCH_LABEL_T ) )
+                    SCH_LABEL* label = static_cast<SCH_LABEL*>( item );
+                    if( label->GetText().IsSameAs( guide.targetRef, false ) )
                     {
-                        SCH_LABEL* label = static_cast<SCH_LABEL*>( item );
-                        if( label->GetText().IsSameAs( guide.targetRef, false ) )
+                        int64_t dist = ( label->GetPosition() - guide.sourcePos ).SquaredEuclideanNorm();
+                        if( dist < bestDist )
                         {
-                            guide.targetPos = label->GetPosition();
-                            break;
+                            bestDist = dist;
+                            bestPos = label->GetPosition();
+                            found = true;
                         }
                     }
+                }
+
+                if( found )
+                {
+                    guide.targetPos = bestPos;
                 }
             }
         }

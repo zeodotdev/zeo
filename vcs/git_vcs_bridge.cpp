@@ -1031,8 +1031,18 @@ void GIT_VCS_BRIDGE::Stage( const std::vector<std::string>& aPaths )
         }
         else
         {
-            // File disappeared between status and stage (e.g. a lock file) — skip silently.
-            wxLogDebug( "VCS Stage: skipping missing file '%s'", wxString::FromUTF8( path ) );
+            // File doesn't exist on disk — check if it's tracked in the index (deleted file)
+            const git_index_entry* entry = git_index_get_bypath( index, path.c_str(), 0 );
+            if( entry )
+            {
+                // File is in the index but not on disk — stage the deletion
+                ThrowOnError( git_index_remove_bypath( index, path.c_str() ), "stage deletion " + path );
+            }
+            else
+            {
+                // File not in index and not on disk — skip silently (e.g. a lock file that disappeared)
+                wxLogDebug( "VCS Stage: skipping missing file '%s'", wxString::FromUTF8( path ) );
+            }
         }
     }
 

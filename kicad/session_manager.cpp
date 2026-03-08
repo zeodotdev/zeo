@@ -396,7 +396,7 @@ void SESSION_MANAGER::HandleVcsCallback( const wxString& aUrl )
     wxString token    = params["provider_token"];
     // New format sends "username"; legacy GitHub flow sent "github_username"
     wxString username = !params["username"].IsEmpty() ? params["username"] : params["github_username"];
-    wxString provider = !params["provider"].IsEmpty() ? params["provider"] : "github";
+    wxString provider = !params["provider"].IsEmpty() ? params["provider"] : wxString( "github" );
     std::string host  = ( provider == "gitlab" ) ? "gitlab.com" : "github.com";
 
     if( token.IsEmpty() || username.IsEmpty() )

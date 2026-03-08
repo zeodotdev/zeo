@@ -1563,6 +1563,10 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
     m_pendingOpenToolId.clear();
     m_pendingOpenFilePath.Clear();
 
+    // Clear pending ERC request state
+    m_pendingERCToolId.clear();
+    m_pendingERCInput.clear();
+
     // Take schematic snapshot so user edits before next message are detected
     if( m_chatController )
         m_chatController->TakeSchematicSnapshot();
@@ -1876,6 +1880,10 @@ void AGENT_FRAME::OnBridgeLinkClick( const nlohmann::json& aMsg )
         OnApproveOpenEditor();
     else if( href == "agent:reject_open" )
         OnRejectOpenEditor();
+    else if( href == "agent:approve_erc" )
+        OnApproveRunERC();
+    else if( href == "agent:reject_erc" )
+        OnRejectRunERC();
     else if( href == "agent:open_simulator" )
         OnOpenSimulator();
     else if( href.StartsWith( "http://" ) || href.StartsWith( "https://" ) )
@@ -3559,6 +3567,115 @@ void AGENT_FRAME::OnRejectOpenEditor()
 }
 
 
+//=============================================================================
+// ERC Approval
+//=============================================================================
+
+void AGENT_FRAME::ShowERCApproval()
+{
+    int idx = m_activeToolResultIdx;
+    if( idx < 0 )
+        return;
+
+    wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Run ERC" ) : m_lastToolDesc;
+    wxString approvalHtml = BuildToolApprovalHtml( idx, desc,
+                                                    "Run ERC", "agent:approve_erc",
+                                                    "#1a3d1a", "#4ade80" );
+
+    // Replace the running tool box with the approval box in internal HTML
+    m_fullHtmlContent.Replace( m_activeRunningHtml, approvalHtml );
+    m_htmlBeforeAgentResponse.Replace( m_activeRunningHtml, approvalHtml );
+    m_activeRunningHtml = approvalHtml;
+
+    SetHtml( m_fullHtmlContent );
+}
+
+
+void AGENT_FRAME::OnApproveRunERC()
+{
+    wxLogInfo( "AGENT_FRAME::OnApproveRunERC called" );
+
+    // Validate that we still have a pending request with a valid tool ID
+    if( m_pendingERCToolId.empty() )
+    {
+        wxLogWarning( "OnApproveRunERC: empty tool ID - ignoring stale click" );
+        return;
+    }
+
+    // Validate that the controller still has this tool pending
+    if( m_chatController && !m_chatController->HasPendingTool( m_pendingERCToolId ) )
+    {
+        wxLogWarning( "OnApproveRunERC: tool %s no longer pending - ignoring stale click",
+                      m_pendingERCToolId.c_str() );
+        m_pendingERCToolId.clear();
+        m_pendingERCInput.clear();
+        return;
+    }
+
+    std::string toolId = m_pendingERCToolId;
+    nlohmann::json input = m_pendingERCInput;
+    m_pendingERCToolId.clear();
+    m_pendingERCInput.clear();
+
+    // Execute the ERC tool via the normal tool registry
+    TOOL_REGISTRY::Instance().SetSendRequestFn(
+        [this]( int aFrameType, const std::string& aPayload ) -> std::string {
+            return SendRequest( aFrameType, aPayload );
+        } );
+
+    std::string result;
+    bool success = false;
+
+    try
+    {
+        result = TOOL_REGISTRY::Instance().ExecuteToolSync( "sch_run_erc", input );
+        success = !result.empty() && result.find( "Error:" ) != 0;
+    }
+    catch( const std::exception& e )
+    {
+        wxLogError( "OnApproveRunERC: exception during ERC execution: %s", e.what() );
+        result = std::string( "Error: ERC execution failed with exception: " ) + e.what();
+        success = false;
+    }
+    catch( ... )
+    {
+        wxLogError( "OnApproveRunERC: unknown exception during ERC execution" );
+        result = "Error: ERC execution failed with unknown exception";
+        success = false;
+    }
+
+    if( m_chatController )
+        m_chatController->HandleToolResult( toolId, result, success );
+}
+
+
+void AGENT_FRAME::OnRejectRunERC()
+{
+    wxLogInfo( "AGENT_FRAME::OnRejectRunERC called" );
+
+    // Validate that we still have a pending request
+    if( m_pendingERCToolId.empty() )
+    {
+        wxLogWarning( "OnRejectRunERC: empty tool ID - ignoring stale click" );
+        return;
+    }
+
+    std::string toolId = m_pendingERCToolId;
+    m_pendingERCToolId.clear();
+    m_pendingERCInput.clear();
+
+    // Validate controller still has this tool pending
+    if( m_chatController && !m_chatController->HasPendingTool( toolId ) )
+    {
+        wxLogWarning( "OnRejectRunERC: tool %s no longer pending", toolId.c_str() );
+        return;
+    }
+
+    if( m_chatController )
+        m_chatController->HandleToolResult( toolId, "User declined to run ERC", false );
+}
+
+
 void AGENT_FRAME::OnOpenSimulator()
 {
     wxLogInfo( "AGENT_FRAME::OnOpenSimulator called" );
@@ -3941,6 +4058,16 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
             delete data;
             return;
         }
+    }
+
+    // sch_run_erc — approval-gated to prevent UI hangs on large projects
+    if( data->toolName == "sch_run_erc" )
+    {
+        m_pendingERCToolId = data->toolId;
+        m_pendingERCInput = data->input;
+        ShowERCApproval();
+        delete data;
+        return;
     }
 
     // Tool result lives outside streaming div - keep m_toolCallHtml clear

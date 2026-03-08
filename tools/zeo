@@ -88,14 +88,10 @@ def cmd_tool(args):
         manifest_path = os.path.join(script_dir, "..", "agent", "tools", "python", "tool_manifest.json")
 
         tools = []
-        print(f"DEBUG: script_dir={script_dir}", file=sys.stderr)
-        print(f"DEBUG: manifest_path={manifest_path}", file=sys.stderr)
-        print(f"DEBUG: exists={os.path.exists(manifest_path)}", file=sys.stderr)
         if os.path.exists(manifest_path):
             try:
                 with open(manifest_path, "r") as f:
                     manifest = json.load(f)
-                print(f"DEBUG: manifest has {len(manifest)} entries", file=sys.stderr)
                 for entry in manifest:
                     name = entry.get("name", "")
                     if not name:
@@ -334,7 +330,6 @@ def cmd_tool(args):
                 with Vertical(id="main-panel"):
                     yield Static("Tool Runner", id="detail-title")
                     yield Static("Connecting...", id="connection-status")
-                    print(f"DEBUG: AVAILABLE_TOOLS has {len(AVAILABLE_TOOLS)} items", file=sys.stderr)
                     yield Select(
                         [(f"{name} - {desc}", name) for name, desc, _ in AVAILABLE_TOOLS],
                         prompt="Select a tool",

@@ -16,7 +16,37 @@
 
 
 static const int    DEFAULT_FONT_SIZE = 13;
-static const char*  DEFAULT_FONT_NAME = "Menlo";
+
+// Nerd Font variants for icon support (neovim, powerline, etc.)
+// Falls back through the list until a valid font is found
+static const char*  NERD_FONT_NAMES[] = {
+    "MesloLGS NF",           // Popular for Powerlevel10k
+    "JetBrainsMono Nerd Font",
+    "JetBrains Mono",
+    "FiraCode Nerd Font",
+    "Fira Code",
+    "Hack Nerd Font",
+    "Geist Mono",
+    "SF Mono",
+    "Menlo",                 // macOS fallback (no icons)
+    nullptr
+};
+
+static const char* GetAvailableNerdFont()
+{
+    for( int i = 0; NERD_FONT_NAMES[i] != nullptr; i++ )
+    {
+        wxFont testFont( DEFAULT_FONT_SIZE, wxFONTFAMILY_TELETYPE,
+                         wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL,
+                         false, NERD_FONT_NAMES[i] );
+
+        if( testFont.IsOk() && testFont.GetFaceName() == NERD_FONT_NAMES[i] )
+            return NERD_FONT_NAMES[i];
+    }
+
+    return "Menlo";  // Ultimate fallback
+}
+
 static const int    CURSOR_BLINK_MS   = 500;
 static const int    AGENT_TIMEOUT_MS  = 15000;
 
@@ -42,22 +72,25 @@ PTY_TERMINAL_PANEL::PTY_TERMINAL_PANEL( wxWindow* aParent ) :
 {
     SetBackgroundStyle( wxBG_STYLE_PAINT ); // Avoid flicker
 
+    // Detect available Nerd Font for icon support (neovim, powerline, etc.)
+    const char* fontName = GetAvailableNerdFont();
+
     // Create fonts
     m_fontNormal = wxFont( DEFAULT_FONT_SIZE, wxFONTFAMILY_TELETYPE,
                            wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL,
-                           false, DEFAULT_FONT_NAME );
+                           false, fontName );
 
     m_fontBold = wxFont( DEFAULT_FONT_SIZE, wxFONTFAMILY_TELETYPE,
                          wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD,
-                         false, DEFAULT_FONT_NAME );
+                         false, fontName );
 
     m_fontItalic = wxFont( DEFAULT_FONT_SIZE, wxFONTFAMILY_TELETYPE,
                            wxFONTSTYLE_ITALIC, wxFONTWEIGHT_NORMAL,
-                           false, DEFAULT_FONT_NAME );
+                           false, fontName );
 
     m_fontBoldItalic = wxFont( DEFAULT_FONT_SIZE, wxFONTFAMILY_TELETYPE,
                                wxFONTSTYLE_ITALIC, wxFONTWEIGHT_BOLD,
-                               false, DEFAULT_FONT_NAME );
+                               false, fontName );
 
     MeasureFont();
 

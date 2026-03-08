@@ -230,6 +230,18 @@ void* LLM_REQUEST_THREAD::Entry()
         }
     }
 
+    // Add memory tool (Anthropic built-in tool type — no schema needed)
+    if( apiModel.find( "claude" ) != std::string::npos )
+    {
+        if( !requestBody.contains( "tools" ) )
+            requestBody["tools"] = json::array();
+
+        requestBody["tools"].push_back( {
+            { "type", "memory_20250818" },
+            { "name", "memory" }
+        } );
+    }
+
     std::string requestBodyStr = requestBody.dump();
 
     wxLogInfo( "LLM_REQUEST: model=%s, messages=%zu, tools=%zu, body_size=%zu bytes, url=%s",

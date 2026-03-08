@@ -144,6 +144,7 @@ set( AGENT_SRCS
     tools/handlers/component_search_handler.cpp
     tools/handlers/netclass_generator.cpp
     tools/handlers/file_io_handler.cpp
+    tools/handlers/memory_handler.cpp
 
     # SVG rasterizer (nanosvg-based, used on Windows/Linux for screenshot SVG->PNG)
     tools/util/svg_rasterizer.cpp

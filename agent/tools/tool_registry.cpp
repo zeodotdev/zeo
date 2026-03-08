@@ -13,6 +13,7 @@
 #include "handlers/footprint_generator.h"
 #include "handlers/netclass_generator.h"
 #include "handlers/file_io_handler.h"
+#include "handlers/memory_handler.h"
 
 #include <frame_type.h>
 #include <wx/log.h>
@@ -64,6 +65,7 @@ TOOL_REGISTRY::TOOL_REGISTRY()
     Register( std::make_unique<FOOTPRINT_GENERATOR>() );
     Register( std::make_unique<NETCLASS_GENERATOR>() );
     Register( std::make_unique<FILE_IO_HANDLER>() );
+    Register( std::make_unique<MEMORY_HANDLER>() );
 
     wxLogInfo( "TOOL_REGISTRY: %zu tools registered", m_toolMap.size() );
 }

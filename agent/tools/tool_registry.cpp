@@ -163,6 +163,9 @@ std::string TOOL_REGISTRY::ExecuteToolSync( const std::string& aToolName,
     {
         if( RequiresIPC( aToolName ) )
         {
+            if( !m_sendRequestFn )
+                return "Error: SendRequest function not configured";
+
             std::string command = GetIPCCommand( aToolName, aInput );
             return m_sendRequestFn( FRAME_TERMINAL, command );
         }
@@ -177,6 +180,9 @@ std::string TOOL_REGISTRY::ExecuteToolSync( const std::string& aToolName,
 
         if( command.empty() )
             return "Error: run_terminal requires 'command' parameter";
+
+        if( !m_sendRequestFn )
+            return "Error: SendRequest function not configured";
 
         return m_sendRequestFn( FRAME_TERMINAL, "run_terminal " + command );
     }

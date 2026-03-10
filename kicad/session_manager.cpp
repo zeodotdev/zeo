@@ -92,7 +92,11 @@ public:
         signedInText->SetFont( KIUI::GetControlFont( panel ).Bold() );
         contentSizer->Add( signedInText, 0, wxLEFT | wxRIGHT | wxTOP, 10 );
 
-        wxStaticText* emailText = new wxStaticText( panel, wxID_ANY, aManager->GetAuth()->GetUserEmail() );
+        wxString userEmail;
+        if( aManager->GetAuth() )
+            userEmail = aManager->GetAuth()->GetUserEmail();
+
+        wxStaticText* emailText = new wxStaticText( panel, wxID_ANY, userEmail );
         contentSizer->Add( emailText, 0, wxLEFT | wxRIGHT | wxBOTTOM, 10 );
 
         // Dashboard and Sign out links
@@ -226,7 +230,11 @@ void SESSION_MANAGER::OnSessionButtonClick( wxMouseEvent& aEvent )
             targetCtx = statusBar->GetLabelButton();
         
         if( !targetCtx )
+        {
             targetCtx = statusBar->GetLabelButton();
+            if( !targetCtx )
+                return;
+        }
     }
 
     if( targetCtx )

@@ -35,7 +35,7 @@ try:
     sym = sch.symbols.get_by_ref(ref)
     if not sym:
         raise ValueError('not found')
-except:
+except Exception:
     sym = None
 
 if not sym:
@@ -199,7 +199,7 @@ if created_items:
 if label_type == 'hierarchical':
     try:
         sch.sheets.sync_pins()
-    except:
-        pass
+    except Exception as _e:
+        tool_log(f'[sch_label_pins] sheet pin sync failed: {_e}')
 
 print(json.dumps({'status': 'success', 'ref': ref, 'labels_placed': len([r for r in results if 'error' not in r]), 'labels_failed': len([r for r in results if 'error' in r]), 'results': results}, indent=2))

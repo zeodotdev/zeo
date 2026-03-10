@@ -52,7 +52,8 @@ try:
                     _all_pins = sch.symbols.get_all_transformed_pin_positions(item)
                     for _tp in _all_pins:
                         _old_pins.append((round(_tp['position'].x / 1e6, 2), round(_tp['position'].y / 1e6, 2)))
-                except: pass
+                except Exception as _e:
+                    tool_log(f'[sch_update] get_all_transformed_pin_positions failed: {_e}')
 
                 # Move the symbol
                 new_pos = Vector2.from_xy_mm(pos_x, pos_y)
@@ -73,8 +74,8 @@ try:
                                 _overlap = True
                                 _obstacle_ref = _pb.get('ref', '?')
                                 break
-                except:
-                    pass
+                except Exception as _e:
+                    tool_log(f'[sch_update] overlap detection failed: {_e}')
                 if _overlap:
                     item = sch.symbols.move(item, Vector2.from_xy_mm(_old_sym_x, _old_sym_y))
                     raise ValueError(f'Move rejected: overlaps {_obstacle_ref}')

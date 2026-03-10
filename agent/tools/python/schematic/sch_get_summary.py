@@ -38,16 +38,16 @@ try:
             bus_entries = sch.buses.get_bus_entries()
         elif hasattr(sch.crud, 'get_bus_entries'):
             bus_entries = sch.crud.get_bus_entries()
-    except:
-        pass
+    except Exception as _e:
+        tool_log(f'[sch_get_summary] bus entries fetch failed: {_e}')
 
     # Get document title
     _title = ''
     try:
         if hasattr(sch.document, 'title'):
             _title = sch.document.title or ''
-    except:
-        pass
+    except Exception as _e:
+        tool_log(f'[sch_get_summary] title fetch failed: {_e}')
 
     # Format symbols — lightweight: ref, value, lib_id, pos, pin_count
     # Use sch_get_pins or sch_inspect for full pin details
@@ -97,8 +97,8 @@ try:
             wire_pts.add(s)
             wire_pts.add(e)
             wire_ep_list.append((s, e))
-        except:
-            pass
+        except Exception as _e:
+            tool_log(f'[sch_get_summary] wire endpoint extraction failed: {_e}')
 
     # Collect all symbol pin positions (for label/junction connectivity)
     all_pin_pts = set()
@@ -108,8 +108,8 @@ try:
                 all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
                 for tp in all_pins:
                     all_pin_pts.add((rnd(tp['position'].x/1e6), rnd(tp['position'].y/1e6)))
-            except:
-                pass
+            except Exception as _e:
+                tool_log(f'[sch_get_summary] pin position fetch failed: {_e}')
 
     conn_pts = wire_pts | all_pin_pts
 
@@ -126,12 +126,12 @@ try:
                     if pp in wire_pts:
                         connected = True
                         break
-            except:
-                pass
+            except Exception as _e:
+                tool_log(f'[sch_get_summary] orphaned power pin check failed: {_e}')
             if not connected:
                 orphaned_power.append(sym.reference)
-        except:
-            pass
+        except Exception as _e:
+            tool_log(f'[sch_get_summary] orphaned power detection failed: {_e}')
 
     orphaned_labels = []
     for lbl in labels:
@@ -139,8 +139,8 @@ try:
             lp = (rnd(lbl.position.x/1e6), rnd(lbl.position.y/1e6))
             if lp not in conn_pts:
                 orphaned_labels.append({'text': lbl.text, 'type': type(lbl).__name__, 'pos': list(lp)})
-        except:
-            pass
+        except Exception as _e:
+            tool_log(f'[sch_get_summary] orphaned label detection failed: {_e}')
 
     def _point_on_wire_interior(pt, s, e):
         """Check if pt lies on wire segment s->e but NOT at endpoints."""
@@ -161,8 +161,8 @@ try:
             wc += sum(1 for s, e in wire_ep_list if _point_on_wire_interior(jp, s, e))
             if wc < 2:
                 orphaned_junctions.append({'pos': list(jp)})
-        except:
-            pass
+        except Exception as _e:
+            tool_log(f'[sch_get_summary] orphaned junction detection failed: {_e}')
 
     audit = {}
     if orphaned_power:

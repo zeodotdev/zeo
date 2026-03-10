@@ -10,7 +10,7 @@ refresh_or_fail(sch)
 try:
     _grid_settings = sch.page.get_grid_settings()
     _GRID = _grid_settings.get('size_mm', 2.54)  # Get actual grid from project
-except:
+except Exception:
     _GRID = 2.54  # Fallback to 100 mil default if API fails
 
 _BBOX_MARGIN = 1 * _GRID  # 1 grid unit margin for overlap detection
@@ -149,7 +149,7 @@ try:
     for _esym in _all_existing:
         try:
             _ebb = sch.transform.get_bounding_box(_esym, units='mm', include_text=False)
-        except:
+        except Exception:
             continue
         if _ebb:
             placed_bboxes.append({
@@ -159,8 +159,8 @@ try:
                 'min_y': _ebb['min_y'] - _BBOX_MARGIN,
                 'max_y': _ebb['max_y'] + _BBOX_MARGIN
             })
-except:
-    pass
+except Exception as _e:
+    tool_log(f'[sch_draft_circuit] bbox collection failed: {_e}')
 
 def _bboxes_overlap(a, b):
     return a['min_x'] < b['max_x'] and a['max_x'] > b['min_x'] and a['min_y'] < b['max_y'] and a['max_y'] > b['min_y']
@@ -171,7 +171,7 @@ try:
     _page = sch.page.get_settings()
     _sheet_w = _page.width_mm
     _sheet_h = _page.height_mm
-except:
+except Exception:
     pass
 
 class _OOB(Exception): pass
@@ -298,8 +298,8 @@ try:
                         if _bboxes_overlap(new_bbox, existing):
                             _debug_info.append(f"WARNING: {_new_ref} overlaps with {existing.get('ref', '?')}")
                     placed_bboxes.append(new_bbox)
-            except:
-                pass
+            except Exception as _e:
+                tool_log(f'[sch_draft_circuit] symbol bbox check failed: {_e}')
 
             # Build result entry
             _res = {
@@ -322,7 +322,7 @@ try:
                             round(_ap['position'].x / 1_000_000, 4),
                             round(_ap['position'].y / 1_000_000, 4)
                         ]
-                except:
+                except Exception:
                     pass
 
                 for _p in sym.pins:
@@ -331,7 +331,7 @@ try:
                         _pin_info['position'] = _pin_map[_p.number]
                     _pins.append(_pin_info)
                 _res['pins'] = _pins
-            except:
+            except Exception:
                 pass
 
             results.append(_res)
@@ -386,8 +386,8 @@ try:
                         if _bboxes_overlap(new_bbox, existing):
                             _debug_info.append(f"WARNING: {pwr_name} overlaps with {existing.get('ref', '?')}")
                     placed_bboxes.append(new_bbox)
-            except:
-                pass
+            except Exception as _e:
+                tool_log(f'[sch_draft_circuit] power bbox check failed: {_e}')
 
             results.append({
                 'index': idx,
@@ -588,7 +588,7 @@ try:
                     'pos': (ap['position'].x / 1_000_000, ap['position'].y / 1_000_000),
                     'orient': ap.get('orientation', 0)
                 }
-        except:
+        except Exception:
             pass
 
         # Also map pin names to pin numbers
@@ -596,7 +596,7 @@ try:
             for p in sym_obj.pins:
                 if p.number in pin_data and hasattr(p, 'name') and p.name:
                     pin_data[p.name] = pin_data[p.number]
-        except:
+        except Exception:
             pass
 
         # Check each wiring entry for net name targets

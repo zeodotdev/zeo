@@ -80,7 +80,7 @@ try:
                         all_pins = sch.symbols.get_all_transformed_pin_positions(ref_sym)
                         for tp in all_pins:
                             ref_pin_positions.add((tp['position'].x, tp['position'].y))
-                    except:
+                    except Exception:
                         pass
 
             for lbl in sch.labels.get_all():
@@ -115,7 +115,7 @@ try:
                     be_list = sch.buses.get_bus_entries()
                 elif hasattr(sch.crud, 'get_bus_entries'):
                     be_list = sch.crud.get_bus_entries()
-            except:
+            except Exception:
                 pass
             for be in be_list:
                 if q_pos is not None and not pos_match(be.position, q_pos):
@@ -172,7 +172,7 @@ try:
         try:
             for nc in sch.crud.get_no_connects():
                 _index_item(nc)
-        except:
+        except Exception:
             pass
 
         # Collect symbol pin positions as BFS stop points (batch API for efficiency)
@@ -182,7 +182,7 @@ try:
                 all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
                 for tp in all_pins:
                     pin_positions.add((tp['position'].x, tp['position'].y))
-            except:
+            except Exception:
                 pass
 
         # BFS flood-fill from initial items
@@ -223,7 +223,7 @@ try:
                         dpx = round(tp['position'].x / 1_000_000, 4)
                         dpy = round(tp['position'].y / 1_000_000, 4)
                         deleted_pin_positions.append((dpx, dpy))
-                except:
+                except Exception:
                     pass
 
     if items_to_delete:
@@ -246,12 +246,12 @@ try:
                     all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
                     for tp in all_pins:
                         conn_pts.add((rnd(tp['position'].x/1e6), rnd(tp['position'].y/1e6)))
-                except:
+                except Exception:
                     pass
             for lbl in sch.labels.get_all():
                 try:
                     conn_pts.add((rnd(lbl.position.x/1e6), rnd(lbl.position.y/1e6)))
-                except:
+                except Exception:
                     pass
 
             dead = set((rnd(px), rnd(py)) for px, py in deleted_pin_positions)
@@ -281,7 +281,7 @@ try:
                                 freed.add(e)
                             if e_hit:
                                 freed.add(s)
-                    except:
+                    except Exception:
                         pass
 
                 rm_juncs = []
@@ -292,7 +292,7 @@ try:
                             rm_juncs.append(j)
                             uid = str(j.id.value) if hasattr(j, 'id') else ''
                             orphaned_junctions.append({'uuid': uid, 'position': list(jp)})
-                    except:
+                    except Exception:
                         pass
 
                 if not rm_wires and not rm_juncs:
@@ -309,7 +309,7 @@ try:
                             s, e = wire_ep(w)
                             if s == fp or e == fp:
                                 wc += 1
-                        except:
+                        except Exception:
                             pass
                     if wc <= 1:
                         dead.add(fp)
@@ -322,7 +322,7 @@ try:
                     s, e = wire_ep(w)
                     wire_pts.add(s)
                     wire_pts.add(e)
-                except:
+                except Exception:
                     pass
             for sym in sch.symbols.get_all():
                 try:
@@ -337,11 +337,11 @@ try:
                             if pp in wire_pts:
                                 connected = True
                                 break
-                    except:
+                    except Exception:
                         pass
                     if not connected:
                         orphaned_power.append({'ref': sym.reference, 'uuid': str(sym.id.value) if hasattr(sym, 'id') else ''})
-                except:
+                except Exception:
                     pass
             if orphaned_power:
                 pwr_items = []
@@ -381,7 +381,7 @@ editor_still_open = False
 try:
     if hasattr(sch, 'refresh_document'):
         editor_still_open = sch.refresh_document()
-except:
+except Exception:
     pass  # Editor likely closed
 
 # File-based fallback if IPC failed AND editor is closed

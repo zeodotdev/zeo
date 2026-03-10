@@ -34,32 +34,32 @@ try:
     for _esym in _all_existing:
         try:
             _ebb = sch.transform.get_bounding_box(_esym, units='mm', include_text=False)
-        except:
+        except Exception:
             continue
         if _ebb:
             placed_bboxes.append({'ref': getattr(_esym, 'reference', '?'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})
-except:
-    pass
+except Exception as _e:
+    tool_log(f'[sch_add] symbol bbox collection failed: {_e}')
 try:
     for _esht in sch.crud.get_sheets():
         try:
             _ebb = sch.transform.get_bounding_box(_esht, units='mm')
-        except:
+        except Exception:
             continue
         if _ebb:
             placed_bboxes.append({'ref': getattr(_esht, 'name', 'sheet'), 'min_x': _ebb['min_x'] - _BBOX_MARGIN, 'max_x': _ebb['max_x'] + _BBOX_MARGIN, 'min_y': _ebb['min_y'] - _BBOX_MARGIN, 'max_y': _ebb['max_y'] + _BBOX_MARGIN})
-except:
-    pass
+except Exception as _e:
+    tool_log(f'[sch_add] sheet bbox collection failed: {_e}')
 try:
     for _elbl in sch.labels.get_all():
         try:
             _ebb = sch.transform.get_bounding_box(_elbl, units='mm')
-        except:
+        except Exception:
             continue
         if _ebb:
             placed_bboxes.append({'ref': getattr(_elbl, 'text', '?'), 'min_x': _ebb['min_x'] + _LABEL_SHRINK, 'max_x': _ebb['max_x'] - _LABEL_SHRINK, 'min_y': _ebb['min_y'] + _LABEL_SHRINK, 'max_y': _ebb['max_y'] - _LABEL_SHRINK})
-except:
-    pass
+except Exception as _e:
+    tool_log(f'[sch_add] label bbox collection failed: {_e}')
 
 def _bboxes_overlap_add(a, b):
     return a['min_x'] < b['max_x'] and a['max_x'] > b['min_x'] and a['min_y'] < b['max_y'] and a['max_y'] > b['min_y']
@@ -99,8 +99,8 @@ try:
     _page = sch.page.get_settings()
     _sheet_w = _page.width_mm
     _sheet_h = _page.height_mm
-except:
-    pass
+except Exception as _e:
+    tool_log(f'[sch_add] page settings fetch failed: {_e}')
 
 class _OOB(Exception): pass
 def _check_bounds(x, y, idx):
@@ -240,8 +240,8 @@ try:
                                 _shift_dy = _sdy
                             elif not _sok:
                                 _rejected = True
-                except:
-                    pass
+                except Exception as _e:
+                    tool_log(f'[sch_add] symbol overlap check failed: {_e}')
                 if _rejected:
                     sch.crud.remove_items([sym])
                     results.append({'index': i, 'error': f'Placement rejected: {_overlap_info(_new_bbox)}. Could not auto-slide to clear position.'})
@@ -261,7 +261,7 @@ try:
                         _sym_info = sch.library.get_symbol_info(lib_id)
                         if hasattr(_sym_info, 'datasheet') and _sym_info.datasheet:
                             _res['datasheet_url'] = _sym_info.datasheet
-                    except:
+                    except Exception:
                         pass
                     if _bb:
                         _res['bbox_mm'] = {'min_x': round(_new_bbox['min_x'], 2), 'max_x': round(_new_bbox['max_x'], 2), 'min_y': round(_new_bbox['min_y'], 2), 'max_y': round(_new_bbox['max_y'], 2)}
@@ -309,8 +309,8 @@ try:
                                 _shift_dy = _sdy
                             elif not _sok:
                                 _rejected = True
-                except:
-                    pass
+                except Exception as _e:
+                    tool_log(f'[sch_add] power overlap check failed: {_e}')
                 if _rejected:
                     sch.crud.remove_items([pwr])
                     results.append({'index': i, 'error': f'Placement rejected: {_overlap_info(_new_bbox)}. Could not auto-slide to clear position.'})
@@ -369,8 +369,8 @@ try:
                         _has_conflict = any(_bboxes_overlap_add(_new_bbox, _pb) for _pb in placed_bboxes) or (_find_crossing_wire(_bb) is not None)
                         if _has_conflict:
                             _rejected = True
-                except:
-                    pass
+                except Exception as _e:
+                    tool_log(f'[sch_add] label overlap check failed: {_e}')
                 if _rejected:
                     sch.crud.remove_items([lbl])
                     results.append({'index': i, 'error': f'Placement rejected: {_overlap_info(_new_bbox)}. Moving labels would disconnect them \u2014 place the label at a clear position.'})
@@ -441,8 +441,8 @@ try:
                     _all_pins = sch.symbols.get_all_transformed_pin_positions(_sym)
                     for _ap in _all_pins:
                         _pin_map[_ap['pin_number']] = [round(_ap['position'].x / 1_000_000, 4), round(_ap['position'].y / 1_000_000, 4)]
-                except:
-                    pass
+                except Exception as _e:
+                    tool_log(f'[sch_add] pin position fetch failed: {_e}')
 
                 for _p in _sym.pins:
                     _pin_info = {'number': _p.number, 'name': getattr(_p, 'name', '')}
@@ -453,8 +453,8 @@ try:
                 if _r.get('index') == _idx and 'error' not in _r:
                     _r['pins'] = _pins
                     break
-        except:
-            pass
+        except Exception as _e:
+            tool_log(f'[sch_add] placed symbol pin collection failed: {_e}')
 
     # --- Auto-place junctions for any wires placed in this batch ---
     _junction_count = 0
@@ -464,8 +464,8 @@ try:
             for _jp in _junc_positions:
                 sch.wiring.add_junction(_jp)
                 _junction_count += 1
-        except:
-            pass
+        except Exception as _e:
+            tool_log(f'[sch_add] junction placement failed: {_e}')
 
     _fail = sum(1 for r in results if 'error' in r)
     result = {
@@ -485,7 +485,7 @@ except Exception as batch_error:
 if has_hierarchical_label:
     try:
         sch.sheets.sync_pins()
-    except:
-        pass
+    except Exception as _e:
+        tool_log(f'[sch_add] sheet pin sync failed: {_e}')
 
 print(json.dumps(result, indent=2))

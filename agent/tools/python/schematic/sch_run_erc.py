@@ -55,7 +55,7 @@ def get_erc_description(code):
     try:
         code_int = int(code) if isinstance(code, str) else code
         return ERC_DESCRIPTIONS.get(code_int, f'Unknown error code {code}')
-    except:
+    except Exception:
         return str(code)
 
 

@@ -170,6 +170,8 @@ void* LLM_REQUEST_THREAD::Entry()
     std::string apiModel;
     if( m_model == "Gemini 3.1 Pro" )
         apiModel = "gemini-3.1-pro-preview-customtools";
+    else if( m_model == "Claude 4.6 Opus (1M)" )
+        apiModel = "claude-opus-4-6-1m";
     else
         apiModel = "claude-opus-4-6";
 
@@ -181,7 +183,7 @@ void* LLM_REQUEST_THREAD::Entry()
     // Set max_tokens for Anthropic models (Gemini doesn't need it — proxy handles)
     if( apiModel.find( "gemini" ) == std::string::npos )
     {
-        if( apiModel == "claude-opus-4-6" )
+        if( apiModel.find( "claude-opus-4-6" ) == 0 )
             requestBody["max_tokens"] = 128000;
         else
             requestBody["max_tokens"] = 131072;

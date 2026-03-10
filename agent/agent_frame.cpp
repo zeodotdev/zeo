@@ -651,7 +651,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         UpdateAuthUI();
 
         // Push model list — include Claude Code if available
-        std::vector<std::string> models = { "Claude 4.6 Opus", "Gemini 3.1 Pro" };
+        std::vector<std::string> models = { "Claude 4.6 Opus", "Claude 4.6 Opus (1M)", "Gemini 3.1 Pro" };
 
         // Check if claude CLI is installed
         {

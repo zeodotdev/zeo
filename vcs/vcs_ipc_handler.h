@@ -56,6 +56,7 @@ private:
     void HandleGetGitLabToken( const nlohmann::json& aMsg );
     void HandleDisconnectGitLab( const nlohmann::json& aMsg );
     void HandleOpenInEditor( const nlohmann::json& aMsg );
+    void HandleShowContextMenu( const nlohmann::json& aMsg );
 
     // ── Helpers ──────────────────────────────────────────────────────────
     void SendResponse( const wxString& aRequestId, bool aSuccess,

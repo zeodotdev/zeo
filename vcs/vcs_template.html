@@ -362,6 +362,19 @@ html, body {
   border-left: none;
   transform: rotate(45deg);
 }
+.file-checkbox:indeterminate {
+  background: var(--green);
+  border-color: var(--green);
+}
+.file-checkbox:indeterminate::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 5px;
+  width: 7px;
+  height: 0;
+  border: 1px solid #000;
+}
 
 /* ── File List ────────────────────────────────────────────────────── */
 .file-list { list-style: none; }
@@ -910,32 +923,6 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
   font-size: 13px;
 }
 .modal-ok-btn:hover { background: var(--green); }
-
-/* ── Context Menu ─────────────────────────────────────────────────── */
-#ctx-menu {
-  position: fixed;
-  display: none;
-  flex-direction: column;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-focus);
-  border-radius: 5px;
-  padding: 3px 0;
-  min-width: 160px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
-  z-index: 9999;
-  user-select: none;
-}
-#ctx-menu.visible { display: flex; }
-.ctx-item {
-  padding: 6px 14px;
-  font-size: 12px;
-  color: var(--text);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ctx-item:hover { background: var(--bg-hover); color: var(--text-bright); }
-.ctx-item.danger:hover { background: rgba(200,40,40,0.18); color: #f88; }
-.ctx-sep { height: 1px; background: var(--border); margin: 3px 0; }
 
 /* ── OAuth Buttons ────────────────────────────────────────────────── */
 .oauth-btns {
@@ -1534,12 +1521,12 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
       <!-- Changes -->
       <div id="changes-section">
         <div class="section-header">
+          <input type="checkbox" class="file-checkbox select-all-checkbox" id="select-all-checkbox"
+            onmousedown="this._wasIndeterminate = this.indeterminate"
+            onclick="event.stopPropagation(); if(this._wasIndeterminate){this.checked=false;} Actions.toggleAll(this.checked)"
+            title="Select all / Deselect all" style="margin-right: 8px;">
           <span>CHANGES</span>
           <span class="section-count" id="changes-count"></span>
-          <div class="section-actions" onclick="event.stopPropagation()">
-            <button class="section-action-btn" onclick="Actions.checkAll()" title="Check All">✓</button>
-            <button class="section-action-btn" onclick="Actions.uncheckAll()" title="Uncheck All">−</button>
-          </div>
         </div>
         <ul class="file-list" id="changes-list"></ul>
       </div>
@@ -1819,7 +1806,6 @@ tr.diff-ctx .diff-sign { color: var(--text-dim); }
 </div>
 
 <!-- Context Menu -->
-<div id="ctx-menu"></div>
 
 <!-- Credential Modal -->
 <div id="credential-modal">
@@ -2518,6 +2504,13 @@ const UI = {
     const checked = State.staged.length;
     countEl.textContent = total ? `(${checked}/${total})` : '';
 
+    // Sync the select-all checkbox: checked, unchecked, or indeterminate
+    const selectAllCb = document.getElementById('select-all-checkbox');
+    if (selectAllCb) {
+      selectAllCb.checked = total > 0 && checked === total;
+      selectAllCb.indeterminate = checked > 0 && checked < total;
+    }
+
     if (!all.length) {
       list.innerHTML = '<li class="empty-section">No changes</li>';
       this.renderCommitPanel();
@@ -2536,8 +2529,7 @@ const UI = {
       return `<li class="${cls}" data-path="${escHtml(f.path)}"
           onclick="UI.selectFile('${escHtml(f.path)}', 'changes', '${escHtml(f.status)}', event)">
         <input type="checkbox" class="file-checkbox" ${f.checked ? 'checked' : ''}
-          onclick="event.stopPropagation()"
-          onchange="Actions.toggleFile('${escHtml(f.path)}', this.checked)">
+          onclick="event.stopPropagation(); Actions.toggleFile('${escHtml(f.path)}', this.checked, event)">
         <span class="file-name" title="${escHtml(f.path)}">${escHtml(name)}</span>
         <div class="file-item-actions">${discard}</div>
         <span class="file-status-glyph ${st.cls}" title="${escHtml(f.status)}">${st.icon}</span>
@@ -3364,7 +3356,26 @@ const Actions = {
     }
   },
 
-  async toggleFile(path, checked) {
+  async toggleFile(path, checked, event) {
+    // Shift-click: toggle range from last toggled checkbox to this one
+    if (event && event.shiftKey && State._lastToggledPath) {
+      const items = [...document.querySelectorAll('#changes-list .file-item')];
+      const paths = items.map(el => el.dataset.path).filter(Boolean);
+      const fromIdx = paths.indexOf(State._lastToggledPath);
+      const toIdx   = paths.indexOf(path);
+      if (fromIdx !== -1 && toIdx !== -1) {
+        const [lo, hi] = [Math.min(fromIdx, toIdx), Math.max(fromIdx, toIdx)];
+        const rangePaths = paths.slice(lo, hi + 1);
+        if (checked) {
+          await this.stage(rangePaths);
+        } else {
+          await this.unstage(rangePaths);
+        }
+        State._lastToggledPath = path;
+        return;
+      }
+    }
+    State._lastToggledPath = path;
     if (checked) {
       await this.stage([path]);
     } else {
@@ -3372,19 +3383,19 @@ const Actions = {
     }
   },
 
-  async checkAll() {
-    const paths = [
-      ...State.unstaged.map(f => f.path),
-      ...State.untracked,
-    ];
-    if (!paths.length) return;
-    await this.stage(paths);
-  },
-
-  async uncheckAll() {
-    const paths = State.staged.map(f => f.path);
-    if (!paths.length) return;
-    await this.unstage(paths);
+  async toggleAll(checked) {
+    if (checked) {
+      const paths = [
+        ...State.unstaged.map(f => f.path),
+        ...State.untracked,
+      ];
+      if (!paths.length) return;
+      await this.stage(paths);
+    } else {
+      const paths = State.staged.map(f => f.path);
+      if (!paths.length) return;
+      await this.unstage(paths);
+    }
   },
 
   async discard(paths) {
@@ -4416,68 +4427,43 @@ const GitLabRepoPicker = {
 };
 
 // ══════════════════════════════════════════════════════════════════════
+// Native context menu — sends IPC to C++ which shows a wxMenu
 const CtxMenu = {
-  _menu: null,
-
   init() {
-    this._menu = document.getElementById('ctx-menu');
-    // Hide on any outside click
-    document.addEventListener('click', () => this.hide(), true);
     document.addEventListener('contextmenu', (e) => {
       const item = e.target.closest('#changes-list .file-item');
-      if (!item) { this.hide(); return; }
+      if (!item) return;
       e.preventDefault();
-      this._showForItem(item, e.clientX, e.clientY);
-    });
-  },
 
-  hide() {
-    if (this._menu) this._menu.classList.remove('visible');
-  },
+      const path     = item.dataset.path || '';
+      if (!path) return;
 
-  _showForItem(item, x, y) {
-    const path   = item.dataset.path || '';
-    if (!path) return;
-    const onclick  = item.getAttribute('onclick') || '';
-    const sm       = onclick.match(/'([^']+)'\s*\)$/);
-    const status   = sm ? sm[1] : '';
-    const isNew    = status === 'untracked';
-    const isStaged = State.staged.some(f => f.path === path);
-    // Multi-select: right-clicking a selected-group file offers group action
-    const inGroup  = State.multiSelected.has(path) && State.multiSelected.size > 1;
+      const onclick  = item.getAttribute('onclick') || '';
+      const sm       = onclick.match(/'([^']+)'\s*\)$/);
+      const status   = sm ? sm[1] : '';
+      const isNew    = status === 'untracked';
+      const isStaged = State.staged.some(f => f.path === path);
+      const inGroup  = State.multiSelected.has(path) && State.multiSelected.size > 1;
 
-    let html = '';
-    if (inGroup) {
-      const n = State.multiSelected.size;
-      html += `<div class="ctx-item danger" data-action="discard-selected">Discard ${n} selected files…</div>`;
-    } else {
-      if (isStaged) {
-        html += `<div class="ctx-item" data-action="unstage" data-path="${escHtml(path)}">Unstage</div>`;
-      } else if (!isNew) {
-        html += `<div class="ctx-item" data-action="stage" data-path="${escHtml(path)}">Stage</div>`;
+      const msg = {
+        action: 'show_context_menu',
+        path,
+        isNew,
+        isStaged,
+        inGroup,
+        groupSize: inGroup ? State.multiSelected.size : 0,
+        anyUnstageable: false,
+        anyStageable: false,
+      };
+
+      if (inGroup) {
+        const selPaths = [...State.multiSelected];
+        msg.anyUnstageable = selPaths.some(p => !State.staged.some(f => f.path === p));
+        msg.anyStageable   = selPaths.some(p => State.staged.some(f => f.path === p));
       }
-      if (!isNew || isStaged) html += `<div class="ctx-sep"></div>`;
-      const discardLabel = isNew ? 'Delete file…' : 'Discard changes…';
-      html += `<div class="ctx-item danger" data-action="discard" data-path="${escHtml(path)}">${discardLabel}</div>`;
-    }
 
-    this._menu.innerHTML = html;
-    this._menu.querySelectorAll('.ctx-item[data-action]').forEach(el => {
-      el.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        this.hide();
-        const p = el.dataset.path;
-        if (el.dataset.action === 'stage')            Actions.stage([p]);
-        if (el.dataset.action === 'unstage')          Actions.unstage([p]);
-        if (el.dataset.action === 'discard')          Actions.discard([p]);
-        if (el.dataset.action === 'discard-selected') Actions.discardSelected();
-      });
+      window.webkit.messageHandlers.vcs.postMessage(JSON.stringify(msg));
     });
-
-    this._menu.classList.add('visible');
-    const mw = this._menu.offsetWidth, mh = this._menu.offsetHeight;
-    this._menu.style.left = Math.min(x, window.innerWidth  - mw - 4) + 'px';
-    this._menu.style.top  = Math.min(y, window.innerHeight - mh - 4) + 'px';
   },
 };
 CtxMenu.init();

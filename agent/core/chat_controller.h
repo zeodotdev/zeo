@@ -233,6 +233,16 @@ public:
     }
 
     /**
+     * Set a callback to notify VCS when a write tool modifies project files.
+     * Called once per chat session after the first successful write tool.
+     * @param aFn Function that triggers VCS auto-init and refresh
+     */
+    void SetVcsNotifyFn( std::function<void()> aFn )
+    {
+        m_vcsNotifyFn = aFn;
+    }
+
+    /**
      * Set the function used to get a JSON snapshot of the current schematic state.
      * Used for detecting user edits between agent turns.
      * @param aFn Function returning a JSON string summary of all schematic items
@@ -315,6 +325,8 @@ private:
     std::function<std::string()> m_getSchematicSummaryFn;  ///< Get schematic snapshot for edit detection
     std::function<void()> m_syncEditorStateFn;  ///< Sync editor state to TOOL_REGISTRY before tool execution
     std::function<bool()> m_hasQueuedMessageFn; ///< Returns true when frame has a queued user message
+    std::function<void()> m_vcsNotifyFn;         ///< Notify VCS of file changes (auto-init + refresh)
+    bool                  m_vcsNotified = false;  ///< True once VCS has been notified this session
 
     // -------------------------------------------------------------------------
     // User edit detection (schematic diff between turns)

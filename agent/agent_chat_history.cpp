@@ -144,7 +144,7 @@ nlohmann::json AGENT_CHAT_HISTORY::Load( const std::string& aConversationId )
                 return data;
             }
         }
-        catch( ... )
+        catch( const nlohmann::json::exception& )
         {
             return nlohmann::json::array();
         }
@@ -208,7 +208,7 @@ std::vector<AGENT_CHAT_HISTORY::HistoryEntry> AGENT_CHAT_HISTORY::GetHistoryList
                     entry.lastUpdated = id;
                 }
             }
-            catch( ... )
+            catch( const nlohmann::json::exception& )
             {
                 entry.title = id;
                 entry.createdAt = id;

@@ -104,7 +104,7 @@ static wxString FormatToolResult( const std::string& aRawResult )
         result.Replace( ">", "&gt;" );
         return "<code class=\"language-json\">" + result + "</code>";
     }
-    catch( ... )
+    catch( const nlohmann::json::exception& )
     {
         // Not valid JSON - HTML-escape and return as-is
         wxString result = wxString::FromUTF8( aRawResult );
@@ -156,7 +156,7 @@ static wxString GetToolResultPreview( const std::string& aRawResult, int aMaxLen
             return val;
         }
     }
-    catch( ... )
+    catch( const nlohmann::json::exception& )
     {
         // Not JSON - take first line
         wxString raw = wxString::FromUTF8( aRawResult );

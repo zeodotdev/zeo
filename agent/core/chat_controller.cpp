@@ -1030,6 +1030,13 @@ void CHAT_CONTROLLER::ExecuteNextTool()
         return;
     }
 
+    // sch_run_erc requires user approval before execution to avoid UI hangs
+    // on large projects. AGENT_FRAME handles the approval flow.
+    if( tool->tool_name == "sch_run_erc" )
+    {
+        return;
+    }
+
     // Sync editor state to TOOL_REGISTRY before tool execution
     // This ensures handlers have accurate editor open/closed state
     if( m_syncEditorStateFn )

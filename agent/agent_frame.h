@@ -324,6 +324,13 @@ private:
     void OnOpenSimulator();
 
     bool DoOpenEditor( FRAME_T aFrameType );
+
+    // Pending ERC run request (approval-gated to avoid UI hangs on large projects)
+    std::string     m_pendingERCToolId;
+    nlohmann::json  m_pendingERCInput;
+    void ShowERCApproval();
+    void OnApproveRunERC();
+    void OnRejectRunERC();
 };
 
 #endif // AGENT_FRAME_H

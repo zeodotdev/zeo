@@ -505,6 +505,16 @@ wxString PTY_WEBVIEW_PANEL::GetTerminalHtml( bool aLightMode )
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
 <style>
+    /* Load Nerd Font Symbols for icon support (powerline, devicons, etc.) */
+    @font-face {
+        font-family: 'Symbols Nerd Font Mono';
+        src: url('https://cdn.jsdelivr.net/gh/mshaugh/nerdfont-webfonts@v3.3.0/build/fonts/Symbols-2048-em%%20Nerd%%20Font%%20Complete%%20Mono.woff2') format('woff2');
+        font-weight: normal;
+        font-style: normal;
+        font-display: swap;
+    }
+</style>
+<style>
     * {
         margin: 0;
         padding: 0;
@@ -545,6 +555,7 @@ wxString PTY_WEBVIEW_PANEL::GetTerminalHtml( bool aLightMode )
 
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-unicode11@0.6.0/lib/xterm-addon-unicode11.min.js"></script>
 <script>
 (function() {
     'use strict';
@@ -611,7 +622,7 @@ wxString PTY_WEBVIEW_PANEL::GetTerminalHtml( bool aLightMode )
     // Create terminal with appropriate theme
     var term = new Terminal({
         theme: isLightMode ? lightTheme : darkTheme,
-        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        fontFamily: '"MesloLGS NF", "JetBrainsMono Nerd Font", "JetBrains Mono", "FiraCode Nerd Font", "Fira Code", "Hack Nerd Font", "Geist Mono", "SF Mono", Menlo, Monaco, "Courier New", "Symbols Nerd Font Mono", monospace',
         fontSize: 13,
         cursorBlink: true,
         scrollback: 10000,
@@ -621,6 +632,13 @@ wxString PTY_WEBVIEW_PANEL::GetTerminalHtml( bool aLightMode )
     // Fit addon for auto-resize
     var fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
+
+    // Unicode11 addon for better character width handling (emoji, CJK, symbols)
+    if (typeof Unicode11Addon !== 'undefined') {
+        var unicode11Addon = new Unicode11Addon.Unicode11Addon();
+        term.loadAddon(unicode11Addon);
+        term.unicode.activeVersion = '11';
+    }
 
     // Open terminal in container
     term.open(document.getElementById('terminal'));

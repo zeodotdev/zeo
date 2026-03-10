@@ -61,6 +61,7 @@
 #include <pgm_base.h>
 #include <kiway.h>
 #include <erc/erc.h>
+#include <progress_reporter.h>
 #include <sch_marker.h>
 #include <sch_reference_list.h>
 #include <rc_item.h>
@@ -3156,6 +3157,49 @@ API_HANDLER_SCH::handleCheckAnnotation(
 // ERC Handlers
 // =============================================================================
 
+/**
+ * A minimal progress reporter that yields to the UI event loop between ERC phases.
+ * This prevents the UI from becoming completely unresponsive during ERC on large projects.
+ */
+class YIELDING_PROGRESS_REPORTER : public PROGRESS_REPORTER
+{
+public:
+    YIELDING_PROGRESS_REPORTER() : m_cancelled( false ) {}
+
+    void SetNumPhases( int aNumPhases ) override {}
+    void AddPhases( int aNumPhases ) override {}
+    void BeginPhase( int aPhase ) override {}
+
+    void AdvancePhase() override
+    {
+        // Yield to the event loop to keep the UI responsive
+        wxSafeYield();
+    }
+
+    void AdvancePhase( const wxString& aMessage ) override
+    {
+        wxSafeYield();
+    }
+
+    void Report( const wxString& aMessage ) override {}
+    void SetCurrentProgress( double aProgress ) override {}
+    void SetMaxProgress( int aMaxProgress ) override {}
+    void AdvanceProgress() override {}
+
+    bool KeepRefreshing( bool aWait = false ) override
+    {
+        wxSafeYield();
+        return !m_cancelled;
+    }
+
+    void SetTitle( const wxString& aTitle ) override {}
+    bool IsCancelled() const override { return m_cancelled; }
+
+private:
+    bool m_cancelled;
+};
+
+
 HANDLER_RESULT<kiapi::schematic::commands::RunERCResponse>
 API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands::RunERC>& aCtx )
 {
@@ -3198,9 +3242,10 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
     wxLogTrace( "SCHEMATIC", "handleRunERC: CheckAnnotate found %d annotation errors",
                 annotationErrors );
 
-    // Run ERC tests
+    // Run ERC tests with a yielding progress reporter to prevent UI hangs on large projects
     ERC_TESTER tester( &m_frame->Schematic() );
-    tester.RunTests( nullptr, m_frame, nullptr, &m_frame->Prj(), nullptr );
+    YIELDING_PROGRESS_REPORTER progressReporter;
+    tester.RunTests( nullptr, m_frame, nullptr, &m_frame->Prj(), &progressReporter );
 
     // Collect markers from all screens
     int errorCount = 0;

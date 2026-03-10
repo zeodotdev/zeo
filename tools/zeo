@@ -7,6 +7,17 @@
 unset PYTHONHOME
 unset PYTHONPATH
 
+# Resolve the real path of this script (follows symlinks)
+# This ensures the manifest can be found even when run via a symlink
+_zeo_script="$0"
+while [ -L "$_zeo_script" ]; do
+    _zeo_dir="$(cd "$(dirname "$_zeo_script")" && pwd)"
+    _zeo_script="$(readlink "$_zeo_script")"
+    # Handle relative symlinks
+    [[ "$_zeo_script" != /* ]] && _zeo_script="$_zeo_dir/$_zeo_script"
+done
+export ZEO_SCRIPT_DIR="$(cd "$(dirname "$_zeo_script")" && pwd)"
+
 # Create temp file for Python script, keeping stdin available for interactive use
 _ZEO_SCRIPT=$(mktemp)
 trap "rm -f '$_ZEO_SCRIPT'" EXIT
@@ -78,22 +89,71 @@ def cmd_tool(args):
             except FileNotFoundError:
                 return False
 
-    # Available tools with their descriptions and example inputs
-    AVAILABLE_TOOLS = [
-        ("sch_get_summary", "Get schematic overview", {}),
-        ("sch_inspect", "Inspect schematic elements", {"section": "symbols"}),
-        ("sch_add", "Add schematic elements", {"type": "symbol", "lib_id": "Device:R", "at": [100, 100]}),
-        ("sch_update", "Update schematic elements", {"uuid": "", "changes": {}}),
-        ("sch_delete", "Delete schematic elements", {"uuids": []}),
-        ("sch_connect_net", "Connect pins with wires", {"connections": []}),
-        ("sch_run_erc", "Run electrical rules check", {}),
-        ("pcb_get_summary", "Get PCB overview", {}),
-        ("pcb_inspect", "Inspect PCB elements", {"section": "footprints"}),
-        ("pcb_add", "Add PCB elements", {"type": "track", "start": [0, 0], "end": [10, 0]}),
-        ("pcb_update", "Update PCB elements", {"uuid": "", "changes": {}}),
-        ("pcb_delete", "Delete PCB elements", {"uuids": []}),
-        ("check_status", "Get project status", {}),
-    ]
+    def _load_tools_from_manifest():
+        """Load all tools from tool_manifest.json."""
+        # Use ZEO_SCRIPT_DIR env var set by bash wrapper (since script runs from temp file)
+        script_dir = os.environ.get("ZEO_SCRIPT_DIR", os.path.dirname(os.path.abspath(__file__)))
+
+        # Check both possible paths (source tree vs packaged app)
+        candidate_paths = [
+            os.path.join(script_dir, "..", "agent", "tools", "python", "tool_manifest.json"),  # Source tree
+            os.path.join(script_dir, "..", "agent", "python", "tool_manifest.json"),  # Packaged app
+        ]
+
+        manifest_path = None
+        for path in candidate_paths:
+            normalized = os.path.normpath(path)
+            if os.path.exists(normalized):
+                manifest_path = normalized
+                break
+
+        if manifest_path is None:
+            print(f"Warning: tool_manifest.json not found in expected locations", file=sys.stderr)
+            manifest_path = os.path.normpath(candidate_paths[0])  # Fallback for error message
+
+        tools = []
+        if os.path.exists(manifest_path):
+            try:
+                with open(manifest_path, "r") as f:
+                    manifest = json.load(f)
+                for entry in manifest:
+                    name = entry.get("name", "")
+                    if not name:
+                        continue
+                    desc = entry.get("description", "")[:60]  # Truncate for display
+                    # Build example input from input_schema
+                    example = {}
+                    schema = entry.get("input_schema", {})
+                    props = schema.get("properties", {})
+                    required = schema.get("required", [])
+                    for prop_name, prop_def in props.items():
+                        if prop_name in required:
+                            prop_type = prop_def.get("type", "string")
+                            if prop_type == "string":
+                                example[prop_name] = ""
+                            elif prop_type == "integer" or prop_type == "number":
+                                example[prop_name] = 0
+                            elif prop_type == "boolean":
+                                example[prop_name] = False
+                            elif prop_type == "array":
+                                example[prop_name] = []
+                            elif prop_type == "object":
+                                example[prop_name] = {}
+                    tools.append((name, desc, example))
+            except Exception as e:
+                print(f"Warning: Could not load tool manifest: {e}", file=sys.stderr)
+
+        # Fallback if manifest not found or empty
+        if not tools:
+            tools = [
+                ("sch_get_summary", "Get schematic overview", {}),
+                ("sch_inspect", "Inspect schematic elements", {"section": "symbols"}),
+                ("pcb_get_summary", "Get PCB overview", {}),
+                ("check_status", "Get project status", {}),
+            ]
+        return tools
+
+    AVAILABLE_TOOLS = _load_tools_from_manifest()
 
     # =========================================================================
     # Tool Call data structure
@@ -403,7 +463,7 @@ def cmd_tool(args):
 
         @work(thread=True, exit_on_error=False)
         def _execute_tool(self, tc: ToolCall):
-            """Execute a tool call in background."""
+            """Execute a tool call in background using kicad.execute_tool()."""
             if self._shutting_down:
                 return
 
@@ -414,53 +474,36 @@ def cmd_tool(args):
                 if self._shutting_down or self._kicad is None:
                     return
 
-                # Get the appropriate editor
                 tool_name = tc.tool_name
                 input_json = tc.input_json
-
-                if tool_name.startswith("sch_"):
-                    editor = self._kicad.get_schematic()
-                elif tool_name.startswith("pcb_"):
-                    editor = self._kicad.get_board()
-                else:
-                    editor = self._kicad
 
                 if self._shutting_down:
                     return
 
-                # Map tool names to kipy methods
-                result = None
-                if tool_name == "sch_get_summary":
-                    symbols = editor.get_symbols()
-                    result = {"symbol_count": len(symbols), "symbols": [s.to_dict() for s in symbols[:10]]}
-                elif tool_name == "sch_inspect":
-                    section = input_json.get("section", "symbols")
-                    if section == "symbols":
-                        items = editor.get_symbols()
-                    elif section == "wires":
-                        items = editor.get_wires()
-                    else:
-                        items = []
-                    result = {"count": len(items), "items": [i.to_dict() for i in items[:20]]}
-                elif tool_name == "pcb_get_summary":
-                    fps = editor.get_footprints()
-                    result = {"footprint_count": len(fps), "footprints": [f.to_dict() for f in fps[:10]]}
-                elif tool_name == "pcb_inspect":
-                    section = input_json.get("section", "footprints")
-                    if section == "footprints":
-                        items = editor.get_footprints()
-                    elif section == "tracks":
-                        items = editor.get_tracks()
-                    else:
-                        items = []
-                    result = {"count": len(items), "items": [i.to_dict() for i in items[:20]]}
-                elif tool_name == "check_status":
-                    result = {"version": self._kicad.get_version(), "connected": True}
-                else:
-                    result = {"error": f"Tool '{tool_name}' execution not implemented in manual mode"}
+                # Use the generic execute_tool API that routes to C++ tool handlers
+                result = self._kicad.execute_tool(
+                    tool_name=tool_name,
+                    tool_args_json=json.dumps(input_json),
+                )
 
-                tc.result = json.dumps(result, indent=2, default=str)
-                tc.success = True
+                if result.get("success"):
+                    output = result.get("result_json", "").strip()
+                    if output and output != "(no output)":
+                        # Try to parse and re-format as pretty JSON
+                        try:
+                            parsed = json.loads(output)
+                            tc.result = json.dumps(parsed, indent=2, default=str)
+                        except json.JSONDecodeError:
+                            tc.result = output
+                    else:
+                        tc.result = json.dumps({"status": "success", "message": "Tool completed"})
+                    tc.success = True
+                else:
+                    tc.result = json.dumps({
+                        "status": "error",
+                        "message": result.get("error_message", "Unknown error")
+                    }, indent=2)
+                    tc.success = False
 
             except Exception as e:
                 tc.result = json.dumps({"error": str(e)}, indent=2)

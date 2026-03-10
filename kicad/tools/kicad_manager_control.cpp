@@ -48,6 +48,7 @@
 #include <git/git_clone_handler.h>
 #include <gestfich.h>
 #include <paths.h>
+#include <eda_draw_frame.h>
 #include <algorithm>
 #include <wx/dir.h>
 #include <wx/display.h>
@@ -853,13 +854,12 @@ int KICAD_MANAGER_CONTROL::ShowPlayer( const TOOL_EVENT& aEvent )
         wxBusyCursor busy;
         player->Show( true );
 
-        // Position the agent window to the right of the active editor or
-        // project manager so it acts as a side panel.
+        // Position the agent window to the right of an open schematic or PCB
+        // editor.  Only resize actual editors — never the project launcher.
         if( playerType == FRAME_AGENT )
         {
-            wxWindow* editorWin = nullptr;
+            EDA_DRAW_FRAME* editorWin = nullptr;
 
-            // Prefer the schematic or PCB editor if one is visible
             for( FRAME_T ft : { FRAME_SCH, FRAME_PCB_EDITOR } )
             {
                 try
@@ -868,7 +868,7 @@ int KICAD_MANAGER_CONTROL::ShowPlayer( const TOOL_EVENT& aEvent )
 
                     if( ed && ed->IsVisible() && !ed->IsIconized() )
                     {
-                        editorWin = ed;
+                        editorWin = dynamic_cast<EDA_DRAW_FRAME*>( ed );
                         break;
                     }
                 }
@@ -877,16 +877,28 @@ int KICAD_MANAGER_CONTROL::ShowPlayer( const TOOL_EVENT& aEvent )
                 }
             }
 
-            if( !editorWin )
-                editorWin = m_frame;
+            if( editorWin )
+            {
+                wxDisplay display( wxDisplay::GetFromWindow( editorWin ) );
+                wxRect    workArea = display.GetClientArea();
+                int       agentW = std::min( 500, workArea.width / 3 );
+                int       editorW = workArea.width - agentW;
 
-            wxDisplay display( wxDisplay::GetFromWindow( editorWin ) );
-            wxRect    workArea = display.GetClientArea();
-            int       agentW = std::min( 500, workArea.width / 3 );
-            int       editorW = workArea.width - agentW;
+                editorWin->SetSize( workArea.x, workArea.y, editorW, workArea.height );
+                player->SetSize( workArea.x + editorW, workArea.y, agentW, workArea.height );
 
-            editorWin->SetSize( workArea.x, workArea.y, editorW, workArea.height );
-            player->SetSize( workArea.x + editorW, workArea.y, agentW, workArea.height );
+                // Defer the canvas repaint — the resize hasn't
+                // taken effect on screen yet, so DoRePaint() would
+                // bail out if we called ForceRefresh() synchronously.
+                if( editorWin->GetCanvas() )
+                {
+                    editorWin->CallAfter( [editorWin]()
+                    {
+                        if( editorWin->GetCanvas() )
+                            editorWin->GetCanvas()->Refresh();
+                    } );
+                }
+            }
         }
     }
 

@@ -146,6 +146,12 @@ public:
     void ForceRefresh();
 
     /**
+     * Request a single recovery repaint that bypasses the IsVisible() check.
+     * Used when the parent frame is reactivated after being obscured.
+     */
+    void SetNeedsRecoveryPaint() { m_needRecoveryPaint = true; }
+
+    /**
      * Make sure a refresh gets done on the next idle event if it hasn't already.
      */
     void RequestRefresh();
@@ -287,6 +293,9 @@ protected:
 
     /// True when canvas needs to be refreshed from idle handler
     bool                     m_needIdleRefresh;
+
+    /// Bypass IsVisible() once to recover from window obscuring
+    bool                     m_needRecoveryPaint;
 
     /// Last cursor position sent to GAL for drawing
     VECTOR2D                 m_lastCursorPosition;

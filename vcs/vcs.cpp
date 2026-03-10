@@ -60,9 +60,16 @@ private:
 
 KIFACE_VCS KIFACE_VCS::kiface( "vcs", KIWAY::FACE_VCS );
 
-KIFACE_BASE& Kiface()
+// Use a static accessor to avoid RTLD_GLOBAL symbol interposition.
+// See terminal.cpp for the full explanation.
+static KIFACE_BASE& VcsKiface()
 {
     return KIFACE_VCS::Kiface();
+}
+
+KIFACE_BASE& Kiface()
+{
+    return VcsKiface();
 }
 
 extern "C"
@@ -72,6 +79,6 @@ extern "C"
                            PGM_BASE* aProgram )
     {
         *aKifaceVersion = KIFACE_VERSION;
-        return &Kiface();
+        return &VcsKiface();
     }
 }

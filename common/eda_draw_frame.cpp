@@ -1399,7 +1399,27 @@ void EDA_DRAW_FRAME::handleActivateEvent( wxActivateEvent& aEvent )
     // Force a refresh of the message panel to ensure that the text is the right color
     // when the window activates
     if( !IsIconized() )
+    {
         m_messagePanel->Refresh();
+
+        // Schedule a canvas repaint when the frame is activated.  Without a compositor
+        // (e.g. Docker/X11 forwarding), the backing store is lost when the window is
+        // obscured by another top-level window (agent, VCS, terminal, etc.).
+        //
+        // SetNeedsRecoveryPaint() allows DoRePaint() to bypass the IsVisible() check
+        // for exactly one repaint cycle, since IsShownOnScreen() may still return false
+        // when the activate event fires (X11 exposure not yet processed).
+        if( aEvent.GetActive() && GetCanvas() )
+        {
+            GetCanvas()->SetNeedsRecoveryPaint();
+
+            CallAfter( [this]()
+            {
+                if( GetCanvas() )
+                    GetCanvas()->ForceRefresh();
+            } );
+        }
+    }
 }
 
 

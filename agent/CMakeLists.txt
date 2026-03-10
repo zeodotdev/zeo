@@ -273,13 +273,26 @@ install( TARGETS agent_kiface
     COMPONENT binary
     )
 
-if( WIN32 )
-    install( DIRECTORY ${AGENT_PYTHON_DIR}/
-        DESTINATION ${KICAD_BIN}/agent/python
-        COMPONENT binary
-        )
-    install( DIRECTORY ${AGENT_PROMPTS_DIR}/
-        DESTINATION ${KICAD_BIN}/agent/prompts
-        COMPONENT binary
-        )
+if( NOT APPLE )
+    if( WIN32 )
+        install( DIRECTORY ${AGENT_PYTHON_DIR}/
+            DESTINATION ${KICAD_BIN}/agent/python
+            COMPONENT binary
+            )
+        install( DIRECTORY ${AGENT_PROMPTS_DIR}/
+            DESTINATION ${KICAD_BIN}/agent/prompts
+            COMPONENT binary
+            )
+    else()
+        # Linux: install under KICAD_DATA to avoid conflicting with the
+        # "agent" executable in KICAD_BIN (e.g. /usr/bin/agent).
+        install( DIRECTORY ${AGENT_PYTHON_DIR}/
+            DESTINATION ${KICAD_DATA}/agent/python
+            COMPONENT binary
+            )
+        install( DIRECTORY ${AGENT_PROMPTS_DIR}/
+            DESTINATION ${KICAD_DATA}/agent/prompts
+            COMPONENT binary
+            )
+    endif()
 endif()

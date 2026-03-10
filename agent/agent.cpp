@@ -45,9 +45,16 @@ private:
 
 KIFACE_AGENT KIFACE_AGENT::kiface( "agent", KIWAY::FACE_AGENT );
 
-KIFACE_BASE& Kiface()
+// Use a static accessor to avoid RTLD_GLOBAL symbol interposition.
+// See terminal.cpp for the full explanation.
+static KIFACE_BASE& AgentKiface()
 {
     return KIFACE_AGENT::Kiface();
+}
+
+KIFACE_BASE& Kiface()
+{
+    return AgentKiface();
 }
 
 // The C access to the KIFACE
@@ -56,7 +63,7 @@ extern "C"
     KIFACE* KIFACE_GETTER( int* aKifaceVersion, int aKiwayVersion, PGM_BASE* aProgram )
     {
         *aKifaceVersion = KIFACE_VERSION;
-        return &Kiface();
+        return &AgentKiface();
     }
 
 } // extern "C"

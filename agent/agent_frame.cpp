@@ -852,10 +852,6 @@ wxString AGENT_FRAME::BuildStreamingContent()
         m_thinkingHtmlDirty = false;
     }
 
-    // Include thinking HTML if available (streamed directly in updateStreamingContent)
-    if( !m_thinkingHtml.IsEmpty() )
-        streamingContent += m_thinkingHtml;
-
     // Get current response from the active controller
     std::string currentResponse;
 
@@ -864,7 +860,7 @@ wxString AGENT_FRAME::BuildStreamingContent()
     else if( m_chatController )
         currentResponse = m_chatController->GetCurrentResponse();
 
-    // Strip leading newlines to avoid blank line gap after thinking block
+    // Strip leading newlines
     size_t start = currentResponse.find_first_not_of( "\n\r" );
 
     if( start != std::string::npos && start > 0 )
@@ -873,6 +869,10 @@ wxString AGENT_FRAME::BuildStreamingContent()
         currentResponse.clear();
 
     streamingContent += AgentMarkdown::ToHtml( currentResponse );
+
+    // Thinking toggle appears below the response text
+    if( !m_thinkingHtml.IsEmpty() )
+        streamingContent += m_thinkingHtml;
 
     // Include any tool call HTML
     if( !m_toolCallHtml.IsEmpty() )
@@ -2621,12 +2621,17 @@ void AGENT_FRAME::LoadAndSetSystemPrompt()
     {
         wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
         wxFileName dir( exePath.GetPath(), "" );
-#ifdef __WXMSW__
+#if defined( __WXMAC__ )
+        dir.RemoveLastDir();                  // remove MacOS
+        dir.AppendDir( "SharedSupport" );
+        dir.AppendDir( "agent" );
+        dir.AppendDir( "prompts" );
+#elif defined( __WXMSW__ )
         dir.AppendDir( "agent" );
         dir.AppendDir( "prompts" );
 #else
-        dir.RemoveLastDir();
-        dir.AppendDir( "SharedSupport" );
+        // Linux: installed under KICAD_DATA to avoid conflicting with the agent executable
+        dir.AssignDir( PATHS::GetStockDataPath() );
         dir.AppendDir( "agent" );
         dir.AppendDir( "prompts" );
 #endif
@@ -4565,10 +4570,10 @@ void AGENT_FRAME::OnChatStateChanged( wxThreadEvent& aEvent )
             // IMMEDIATE render before clearing (don't wait for timer)
             // Build the streaming content that should be baked in
             wxString streamingContent;
-            if( !m_thinkingHtml.IsEmpty() )
-                streamingContent += m_thinkingHtml;
             std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
             streamingContent += AgentMarkdown::ToHtml( currentResponse );
+            if( !m_thinkingHtml.IsEmpty() )
+                streamingContent += m_thinkingHtml;
             if( !m_toolCallHtml.IsEmpty() )
                 streamingContent += m_toolCallHtml;
 

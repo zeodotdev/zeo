@@ -1,9 +1,8 @@
 #include "tool_schemas.h"
 #include "../agent_llm_client.h"
+#include "handlers/python_tool_handler.h"
 #include <nlohmann/json.hpp>
-#include <wx/filename.h>
 #include <wx/log.h>
-#include <wx/stdpaths.h>
 #include <fstream>
 #include <sstream>
 
@@ -129,18 +128,7 @@ static void AddToolsFromManifest( std::vector<LLM_TOOL>& tools )
     }
     else
     {
-        wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
-        wxFileName dir( exePath.GetPath(), "" );
-#ifdef __WXMSW__
-        dir.AppendDir( "agent" );
-        dir.AppendDir( "python" );
-#else
-        dir.RemoveLastDir();
-        dir.AppendDir( "SharedSupport" );
-        dir.AppendDir( "agent" );
-        dir.AppendDir( "python" );
-#endif
-        pythonDir = dir.GetPath().ToStdString();
+        pythonDir = PYTHON_TOOL_HANDLER::FindPythonDir();
     }
 
     std::string manifestPath = pythonDir + "/tool_manifest.json";

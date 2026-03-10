@@ -41,9 +41,19 @@ private:
 
 KIFACE_TERMINAL KIFACE_TERMINAL::kiface( "terminal", KIWAY::FACE_TERMINAL );
 
-KIFACE_BASE& Kiface()
+// Use a static accessor to avoid RTLD_GLOBAL symbol interposition.
+// When multiple kiface DSOs are loaded with wxDL_GLOBAL, the global
+// Kiface() function from the first-loaded DSO shadows all others.
+// This caused the second kiface to return the wrong KIFACE* from
+// KIFACE_GETTER, making its CreateKiWindow() fail (wrong switch path).
+static KIFACE_BASE& TerminalKiface()
 {
     return KIFACE_TERMINAL::Kiface();
+}
+
+KIFACE_BASE& Kiface()
+{
+    return TerminalKiface();
 }
 
 extern "C"
@@ -51,6 +61,6 @@ extern "C"
     KIFACE* KIFACE_GETTER( int* aKifaceVersion, int aKiwayVersion, PGM_BASE* aProgram )
     {
         *aKifaceVersion = KIFACE_VERSION;
-        return &Kiface();
+        return &TerminalKiface();
     }
 }

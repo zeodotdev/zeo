@@ -76,6 +76,7 @@ EDA_DRAW_PANEL_GAL::EDA_DRAW_PANEL_GAL( wxWindow* aParentWindow, wxWindowID aWin
         m_drawing( false ),
         m_drawingEnabled( false ),
         m_needIdleRefresh( false ),
+        m_needRecoveryPaint( false ),
         m_gal( nullptr ),
         m_view( nullptr ),
         m_painter( nullptr ),
@@ -207,7 +208,10 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
     if( !m_drawingEnabled )
         return false;
 
-    if( !m_gal->IsInitialized() || !m_gal->IsVisible() || m_gal->IsContextLocked() )
+    if( !m_gal->IsInitialized() || m_gal->IsContextLocked() )
+        return false;
+
+    if( !m_gal->IsVisible() && !m_needRecoveryPaint )
         return false;
 
     if( m_drawing )
@@ -360,6 +364,7 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
         );
     }
 
+    m_needRecoveryPaint = false;
     m_lastRepaintEnd = wxGetLocalTimeMillis();
 
     return true;

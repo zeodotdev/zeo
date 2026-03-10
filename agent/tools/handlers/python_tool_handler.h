@@ -29,6 +29,14 @@ public:
     std::string GetIPCCommand( const std::string& aToolName,
                                const nlohmann::json& aInput ) const override;
 
+    /**
+     * Locate the python/ scripts directory.
+     * On macOS: Contents/SharedSupport/agent/python/ relative to the executable.
+     * On Linux: <KICAD_DATA>/agent/python/.
+     * Falls back to AGENT_PYTHON_DIR env var (for development/testing).
+     */
+    static std::string FindPythonDir();
+
 private:
     using DescribeFn = std::function<std::string( const nlohmann::json& )>;
 
@@ -41,13 +49,6 @@ private:
 
     void Register( const std::string& aToolName, const std::string& aApp,
                    const std::string& aScriptPath, DescribeFn aDescribe );
-
-    /**
-     * Locate the python/ scripts directory.
-     * On macOS: Contents/SharedSupport/agent/python/ relative to the executable.
-     * Falls back to AGENT_PYTHON_DIR env var (for development/testing).
-     */
-    static std::string FindPythonDir();
 
     /**
      * Read a file from disk and return its contents.

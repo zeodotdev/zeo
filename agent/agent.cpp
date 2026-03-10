@@ -27,7 +27,14 @@ public:
         {
         case FRAME_AGENT:
         {
+            // Singleton guard: reuse the existing agent frame if it's still alive.
+            // This prevents duplicate windows when KIWAY's cached ID is stale
+            // (e.g., after the frame was hidden rather than destroyed).
+            if( m_agentFrame && !m_agentFrame->IsBeingDeleted() )
+                return m_agentFrame;
+
             AGENT_FRAME* frame = new AGENT_FRAME( aKiway, aParent );
+            m_agentFrame = frame;
             return frame;
         }
         default: return nullptr;
@@ -41,6 +48,7 @@ public:
 
 private:
     static KIFACE_AGENT kiface;
+    AGENT_FRAME*        m_agentFrame = nullptr;
 };
 
 KIFACE_AGENT KIFACE_AGENT::kiface( "agent", KIWAY::FACE_AGENT );

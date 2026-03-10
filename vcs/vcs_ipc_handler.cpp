@@ -46,6 +46,43 @@ VCS_IPC_HANDLER::VCS_IPC_HANDLER( VCS_FRAME* aFrame, WEBVIEW_PANEL* aWebView ) :
 VCS_IPC_HANDLER::~VCS_IPC_HANDLER() = default;
 
 
+void VCS_IPC_HANDLER::AutoInitIfNeeded()
+{
+    KIWAY&   kiway   = m_frame->Kiway();
+    PROJECT& prj     = kiway.Prj();
+    wxString prjPath = prj.GetProjectPath();
+
+    if( prjPath.empty() )
+        return;
+
+    // Reopen repo if project path changed
+    if( prjPath != m_git->GetProjectDir() )
+        m_git->OpenRepo( prjPath );
+
+    if( m_git->HasRepo() )
+    {
+        // Repo already exists — just refresh status
+        m_frame->NotifyProjectChanged();
+        return;
+    }
+
+    // No repo — auto-initialize
+    try
+    {
+        m_git->InitRepo( prjPath );
+        m_frame->StartWatching( prjPath );
+        wxLogInfo( "VCS_IPC_HANDLER: Auto-initialized git repo at %s", prjPath );
+    }
+    catch( const std::exception& e )
+    {
+        wxLogWarning( "VCS_IPC_HANDLER: Auto-init failed: %s", e.what() );
+        return;
+    }
+
+    m_frame->NotifyProjectChanged();
+}
+
+
 void VCS_IPC_HANDLER::OnMessage( const wxString& aMessage )
 {
     json msg;

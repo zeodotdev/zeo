@@ -145,6 +145,14 @@ void VCS_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
         return;
     }
 
+    if( aEvent.GetId() == MAIL_VCS_REFRESH )
+    {
+        // Agent modified project files — auto-init git if needed and refresh
+        if( m_ipcHandler )
+            m_ipcHandler->AutoInitIfNeeded();
+        return;
+    }
+
     // Refresh git status when notified of project changes
     NotifyProjectChanged();
 }

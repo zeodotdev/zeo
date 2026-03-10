@@ -17,6 +17,7 @@
 #include <wx/utils.h>
 #include <wx/textfile.h>
 #include <wx/stdpaths.h>
+#include <wx/menu.h>
 
 #include <memory>
 #include <thread>
@@ -108,6 +109,7 @@ void VCS_IPC_HANDLER::OnMessage( const wxString& aMessage )
         else if( action == "get_gitlab_token" )   HandleGetGitLabToken( msg );
         else if( action == "disconnect_gitlab" )  HandleDisconnectGitLab( msg );
         else if( action == "open_in_editor" )     HandleOpenInEditor( msg );
+        else if( action == "show_context_menu" ) HandleShowContextMenu( msg );
         else if( action == "console_log" )
         {
             std::string logMsg = msg.value( "message", "" );
@@ -796,6 +798,97 @@ void VCS_IPC_HANDLER::SendError( const wxString& aRequestId, const wxString& aEr
             wxString::FromUTF8( response.dump() ) );
 
     m_webView->RunScriptAsync( script );
+}
+
+
+void VCS_IPC_HANDLER::HandleShowContextMenu( const json& aMsg )
+{
+    // Menu item IDs
+    enum
+    {
+        ID_STAGE = wxID_HIGHEST + 1,
+        ID_UNSTAGE,
+        ID_DISCARD,
+        ID_STAGE_SELECTED,
+        ID_UNSTAGE_SELECTED,
+        ID_DISCARD_SELECTED,
+    };
+
+    std::string path    = aMsg.value( "path", "" );
+    bool        isNew   = aMsg.value( "isNew", false );
+    bool        staged  = aMsg.value( "isStaged", false );
+    bool        inGroup = aMsg.value( "inGroup", false );
+    int         groupN  = aMsg.value( "groupSize", 0 );
+    bool        anyUnstageable = aMsg.value( "anyUnstageable", false );
+    bool        anyStageable   = aMsg.value( "anyStageable", false );
+
+    wxMenu menu;
+
+    if( inGroup )
+    {
+        if( anyUnstageable )
+            menu.Append( ID_STAGE_SELECTED,
+                         wxString::Format( "Stage %d Selected Files", groupN ) );
+        if( anyStageable )
+            menu.Append( ID_UNSTAGE_SELECTED,
+                         wxString::Format( "Unstage %d Selected Files", groupN ) );
+        menu.AppendSeparator();
+        menu.Append( ID_DISCARD_SELECTED,
+                     wxString::Format( "Discard %d Selected Files\u2026", groupN ) );
+    }
+    else
+    {
+        if( staged )
+            menu.Append( ID_UNSTAGE, "Unstage" );
+        else
+            menu.Append( ID_STAGE, "Stage" );
+
+        menu.AppendSeparator();
+        menu.Append( ID_DISCARD, isNew ? wxString( "Delete File\u2026" )
+                                       : wxString( "Discard Changes\u2026" ) );
+    }
+
+    // Show the menu synchronously — PopupMenu blocks until user picks or dismisses
+    int selectedId = 0;
+
+    menu.Bind( wxEVT_MENU, [&selectedId]( wxCommandEvent& evt )
+    {
+        selectedId = evt.GetId();
+    } );
+
+    m_frame->PopupMenu( &menu );
+
+    // Dispatch the selected action back to JS
+    wxString jsCall;
+
+    switch( selectedId )
+    {
+    case ID_STAGE:
+        jsCall = wxString::Format( "Actions.stage(['%s'])",
+                                   wxString::FromUTF8( path ) );
+        break;
+    case ID_UNSTAGE:
+        jsCall = wxString::Format( "Actions.unstage(['%s'])",
+                                   wxString::FromUTF8( path ) );
+        break;
+    case ID_DISCARD:
+        jsCall = wxString::Format( "Actions.discard(['%s'])",
+                                   wxString::FromUTF8( path ) );
+        break;
+    case ID_STAGE_SELECTED:
+        jsCall = "Actions.stage([...State.multiSelected])";
+        break;
+    case ID_UNSTAGE_SELECTED:
+        jsCall = "Actions.unstage([...State.multiSelected])";
+        break;
+    case ID_DISCARD_SELECTED:
+        jsCall = "Actions.discardSelected()";
+        break;
+    default:
+        return; // User dismissed the menu
+    }
+
+    m_webView->RunScriptAsync( jsCall );
 }
 
 

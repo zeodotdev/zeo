@@ -194,6 +194,14 @@ void EDA_DRAW_PANEL_GAL::SetFocus()
 
 void EDA_DRAW_PANEL_GAL::onPaint( wxPaintEvent& WXUNUSED( aEvent ) )
 {
+    // System paint events (X11 Expose) indicate the window content was damaged
+    // and needs repainting.  On X11 without a compositor the backing store is
+    // lost when the window is obscured, so DoRePaint()'s optimisation of
+    // skipping drawing when the VIEW isn't dirty would leave the window grey.
+    // Force a full redraw to ensure the content is restored.
+    if( m_view )
+        m_view->MarkDirty();
+
     DoRePaint();
 }
 
@@ -208,11 +216,20 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
     if( !m_drawingEnabled )
         return false;
 
-    if( !m_gal->IsInitialized() || m_gal->IsContextLocked() )
+    if( m_gal->IsContextLocked() )
         return false;
 
-    if( !m_gal->IsVisible() && !m_needRecoveryPaint )
-        return false;
+    // Recovery paint: bypass IsInitialized()/IsVisible() which both check
+    // IsShownOnScreen().  On X11 without a compositor the window may report
+    // as not visible even after the activate event because the exposure
+    // hasn't fully processed.  The GAL context is still valid (it was
+    // initialized before the window was obscured), so rendering will succeed
+    // and the result appears once the window is actually exposed.
+    if( !m_needRecoveryPaint )
+    {
+        if( !m_gal->IsInitialized() || !m_gal->IsVisible() )
+            return false;
+    }
 
     if( m_drawing )
         return false;
@@ -270,6 +287,15 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
         VECTOR2D cursorPos = m_viewControls->GetCursorPosition();
         bool viewDirty = m_view->IsDirty();
         bool cursorMoved = ( cursorPos != m_lastCursorPosition );
+
+        // On X11 without a compositor the backing store is lost when the
+        // window is obscured, so we must force a full redraw even though
+        // the VIEW thinks nothing changed.
+        if( m_needRecoveryPaint )
+        {
+            m_view->MarkDirty();
+            viewDirty = true;
+        }
 
         // Skip the entire GL cycle when nothing has changed. The front buffer
         // still shows the previous frame so there is nothing to redraw.
@@ -444,7 +470,7 @@ void EDA_DRAW_PANEL_GAL::ForceRefresh()
 {
     if( !m_drawingEnabled )
     {
-        if( m_gal && m_gal->IsInitialized() )
+        if( m_gal && ( m_gal->IsInitialized() || m_needRecoveryPaint ) )
         {
             Connect( wxEVT_PAINT, wxPaintEventHandler( EDA_DRAW_PANEL_GAL::onPaint ), nullptr,
                      this );
@@ -461,7 +487,12 @@ void EDA_DRAW_PANEL_GAL::ForceRefresh()
         }
     }
 
-    DoRePaint();
+    if( !DoRePaint() && m_needRecoveryPaint )
+    {
+        // Recovery paint failed (e.g. X11 exposure still not processed).
+        // Retry via idle handler so we don't lose the recovery request.
+        RequestRefresh();
+    }
 }
 
 

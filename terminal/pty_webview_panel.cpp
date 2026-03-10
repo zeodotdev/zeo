@@ -8,6 +8,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <kiplatform/ui.h>
+
 #ifdef __APPLE__
 #include <agent/platform/macos_webview_bg.h>
 #endif
@@ -25,15 +27,11 @@ PTY_WEBVIEW_PANEL::PTY_WEBVIEW_PANEL( wxWindow* aParent ) :
         m_agentCapturing( false ),
         m_agentSentinelStartFound( false )
 {
-#ifdef __APPLE__
     // Match background color to system theme
-    if( IsSystemDarkMode() )
+    if( KIPLATFORM::UI::IsDarkTheme() )
         SetBackgroundColour( wxColour( 30, 30, 30 ) );
     else
         SetBackgroundColour( wxColour( 255, 255, 255 ) );
-#else
-    SetBackgroundColour( wxColour( 30, 30, 30 ) );
-#endif
 
     // Create the webview that will host xterm.js
     m_webView = new WEBVIEW_PANEL( this );
@@ -44,11 +42,7 @@ PTY_WEBVIEW_PANEL::PTY_WEBVIEW_PANEL( wxWindow* aParent ) :
             [this]( const wxString& msg ) { OnMessage( msg ); } );
 
     // Load the xterm.js HTML page
-#ifdef __APPLE__
-    bool lightMode = !IsSystemDarkMode();
-#else
-    bool lightMode = false;
-#endif
+    bool lightMode = !KIPLATFORM::UI::IsDarkTheme();
     m_webView->SetPage( GetTerminalHtml( lightMode ) );
 
     // Layout: webview fills entire panel

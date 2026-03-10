@@ -25,6 +25,7 @@
 #include <kiway.h>
 #include <paths.h>
 #include <kiplatform/environment.h>
+#include <kiplatform/ui.h>
 #include <frame_type.h>
 #include <sstream>
 #include <fstream>
@@ -292,14 +293,13 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Detect system theme and apply it to the HTML template
     wxString htmlContent = GetUnifiedHtmlTemplate();
-#ifdef __APPLE__
-    if( !IsSystemDarkMode() )
+
+    if( !KIPLATFORM::UI::IsDarkTheme() )
     {
         // Apply light theme by adding 'light' class to the html element
         htmlContent.Replace( wxS( "<html class=\"h-full\">" ),
                              wxS( "<html class=\"h-full light\">" ) );
     }
-#endif
 
     m_webView->SetPage( htmlContent );
     mainSizer->Add( m_webView, 1, wxEXPAND );

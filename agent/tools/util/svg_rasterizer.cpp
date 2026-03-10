@@ -1,6 +1,6 @@
-// SVG rasterizer only needed on Windows/Linux where screenshots produce SVGs
-// that need conversion to PNG. macOS uses native screencapture (PNG output).
-#if !defined( __APPLE__ )
+// SVG rasterizer only needed on Windows where vcpkg provides full nanosvg.
+// macOS uses sips; Linux uses rsvg-convert.
+#if defined( _WIN32 )
 
 /**
  * Self-contained SVG rasterizer using vcpkg's nanosvg.
@@ -146,4 +146,4 @@ bool SvgRasterizer::RasterizeSvgToPng( const std::string& aSvgPath,
     return true;
 }
 
-#endif // !__APPLE__
+#endif // _WIN32

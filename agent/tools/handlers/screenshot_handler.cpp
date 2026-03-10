@@ -438,27 +438,32 @@ std::string SCREENSHOT_HANDLER::ExportPcbSvg( const std::string& aFilePath,
 bool SCREENSHOT_HANDLER::ConvertSvgToPng( const std::string& aSvgPath,
                                            const std::string& aPngPath )
 {
+#if defined( _WIN32 )
+    // Windows: use nanosvg to rasterize SVG to PNG
+    return SvgRasterizer::RasterizeSvgToPng( aSvgPath, aPngPath, 4096 );
+#else
+    // macOS and Linux: use command-line tool for SVG rasterization at 4096px
 #ifdef __APPLE__
-    // macOS: use sips for high-quality SVG rasterization at 4096px
     std::string cmd = "sips -s format png -Z 4096"
                       " \"" + aSvgPath + "\" --out \"" + aPngPath + "\"";
+#else
+    std::string cmd = "rsvg-convert -w 4096 -h 4096 --keep-aspect-ratio"
+                      " -o \"" + aPngPath + "\" \"" + aSvgPath + "\"";
+#endif
 
     std::string stdoutStr, stderrStr;
     int exitCode = ProcessUtil::RunCommand( cmd, stdoutStr, stderrStr );
 
     if( !stderrStr.empty() )
-        wxLogWarning( "SCREENSHOT: sips stderr: %s", stderrStr.c_str() );
+        wxLogWarning( "SCREENSHOT: SVG convert stderr: %s", stderrStr.c_str() );
 
     if( exitCode != 0 )
     {
-        wxLogError( "SCREENSHOT: sips failed (exit %d)", exitCode );
+        wxLogError( "SCREENSHOT: SVG to PNG conversion failed (exit %d)", exitCode );
         return false;
     }
 
     return wxFileName::FileExists( wxString::FromUTF8( aPngPath ) );
-#else
-    // Windows/Linux: use nanosvg to rasterize SVG to PNG
-    return SvgRasterizer::RasterizeSvgToPng( aSvgPath, aPngPath, 4096 );
 #endif
 }
 

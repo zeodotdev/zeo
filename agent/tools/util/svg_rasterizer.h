@@ -1,8 +1,8 @@
 #ifndef SVG_RASTERIZER_H
 #define SVG_RASTERIZER_H
 
-// SVG rasterizer only available on Windows/Linux (uses vcpkg nanosvg)
-#if !defined( __APPLE__ )
+// SVG rasterizer only available on Windows (uses vcpkg nanosvg)
+#if defined( _WIN32 )
 
 #include <string>
 
@@ -23,6 +23,6 @@ bool RasterizeSvgToPng( const std::string& aSvgPath, const std::string& aPngPath
 
 } // namespace SvgRasterizer
 
-#endif // !__APPLE__
+#endif // _WIN32
 
 #endif // SVG_RASTERIZER_H

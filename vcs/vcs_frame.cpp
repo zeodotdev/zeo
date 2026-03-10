@@ -6,6 +6,8 @@
 #include <agent/platform/macos_webview_bg.h>
 #endif
 
+#include <kiplatform/ui.h>
+
 #ifndef __WXMAC__
 #include <zeo/auth_callback_server.h>
 #include <wx/file.h>
@@ -98,14 +100,12 @@ VCS_FRAME::VCS_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Load the embedded HTML UI
     wxString htmlContent = GetVcsHtmlTemplate();
 
-#ifdef __APPLE__
     // Apply light theme if system is in light mode
-    if( !IsSystemDarkMode() )
+    if( !KIPLATFORM::UI::IsDarkTheme() )
     {
         htmlContent.Replace( wxS( "<html lang=\"en\">" ),
                              wxS( "<html lang=\"en\" class=\"light\">" ) );
     }
-#endif
 
     m_webView->SetPage( htmlContent );
     mainSizer->Add( m_webView, 1, wxEXPAND );

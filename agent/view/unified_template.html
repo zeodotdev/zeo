@@ -191,6 +191,9 @@ img[src^="data:"] { cursor: pointer; }
 .history-item.active { background: var(--bg-tertiary); }
 .history-item .title { color: var(--text-primary); font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 8px; }
 .history-item .timestamp { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+.history-loading { display: flex; align-items: center; justify-content: center; padding: 24px 12px; color: var(--text-muted); font-size: 13px; gap: 8px; }
+.history-loading .spinner { width: 16px; height: 16px; border: 2px solid var(--border-color); border-top-color: var(--accent-blue); border-radius: 50%; animation: hist-spin 0.6s linear infinite; }
+@keyframes hist-spin { to { transform: rotate(360deg); } }
 
 /* ── Pending changes bar (floats above editor with gap) ───────────── */
 #pending-changes-bar {
@@ -541,7 +544,12 @@ App.TopBar = (function() {
             dropdown.classList.add('visible');
             searchInput.value = '';
             searchInput.focus();
-            renderList('');
+            // Show loading spinner until setHistoryList() is called
+            if (!entries.length) {
+                listEl.innerHTML = '<div class="history-loading"><div class="spinner"></div>Loading chats...</div>';
+            } else {
+                renderList('');
+            }
         } else {
             dropdown.classList.remove('visible');
         }

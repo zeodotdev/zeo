@@ -173,13 +173,21 @@ void VCS_IPC_HANDLER::HandleGetStatus( const json& aMsg )
             ? wxString::FromUTF8( aMsg["requestId"].get<std::string>() )
             : wxString();
 
+    // Always check stored credentials from ~/.git-credentials, even without a repo
+    std::string ghUser = GIT_VCS_BRIDGE::GetUsernameForHost( "github.com" );
+    std::string glUser = GIT_VCS_BRIDGE::GetUsernameForHost( "gitlab.com" );
+
     if( !m_git->HasRepo() )
     {
         SendResponse( reqId, true, json{
-            { "hasRepo",   false },
-            { "staged",    json::array() },
-            { "unstaged",  json::array() },
-            { "untracked", json::array() }
+            { "hasRepo",        false },
+            { "staged",         json::array() },
+            { "unstaged",       json::array() },
+            { "untracked",      json::array() },
+            { "hasGitHubAuth",  !ghUser.empty() },
+            { "githubUsername", ghUser },
+            { "hasGitLabAuth",  !glUser.empty() },
+            { "gitlabUsername", glUser }
         } );
         return;
     }
@@ -187,10 +195,6 @@ void VCS_IPC_HANDLER::HandleGetStatus( const json& aMsg )
     json status  = m_git->GetStatus();
     json ahead   = m_git->GetAheadBehind();
     json remotes = m_git->GetRemotes();
-
-    // Check stored credentials for both GitHub and GitLab directly from ~/.git-credentials
-    std::string ghUser = GIT_VCS_BRIDGE::GetUsernameForHost( "github.com" );
-    std::string glUser = GIT_VCS_BRIDGE::GetUsernameForHost( "gitlab.com" );
 
     status["hasRepo"]        = true;
     status["ahead"]          = ahead["ahead"];
@@ -444,9 +448,13 @@ void VCS_IPC_HANDLER::HandleCommit( const json& aMsg )
     if( authorName.empty() || authorEmail.empty() )
     {
         json cfg = m_git->GetUserConfig();
-        if( authorName.empty() )  authorName  = cfg.value( "name",  "Unknown" );
-        if( authorEmail.empty() ) authorEmail = cfg.value( "email", "unknown@unknown.com" );
+        if( authorName.empty() )  authorName  = cfg.value( "name",  "" );
+        if( authorEmail.empty() ) authorEmail = cfg.value( "email", "" );
     }
+
+    // Final fallback — git_signature_now() rejects empty strings
+    if( authorName.empty() )  authorName  = "Unknown";
+    if( authorEmail.empty() ) authorEmail = "unknown@unknown.com";
 
     json result = m_git->Commit( message, authorName, authorEmail );
     SendResponse( reqId, true, result );

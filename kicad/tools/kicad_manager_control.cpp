@@ -48,7 +48,9 @@
 #include <git/git_clone_handler.h>
 #include <gestfich.h>
 #include <paths.h>
+#include <algorithm>
 #include <wx/dir.h>
+#include <wx/display.h>
 #include <wx/filedlg.h>
 #include <wx/ffile.h>
 #include "dialog_pcm.h"
@@ -850,6 +852,42 @@ int KICAD_MANAGER_CONTROL::ShowPlayer( const TOOL_EVENT& aEvent )
 
         wxBusyCursor busy;
         player->Show( true );
+
+        // Position the agent window to the right of the active editor or
+        // project manager so it acts as a side panel.
+        if( playerType == FRAME_AGENT )
+        {
+            wxWindow* editorWin = nullptr;
+
+            // Prefer the schematic or PCB editor if one is visible
+            for( FRAME_T ft : { FRAME_SCH, FRAME_PCB_EDITOR } )
+            {
+                try
+                {
+                    KIWAY_PLAYER* ed = m_frame->Kiway().Player( ft, false );
+
+                    if( ed && ed->IsVisible() && !ed->IsIconized() )
+                    {
+                        editorWin = ed;
+                        break;
+                    }
+                }
+                catch( ... )
+                {
+                }
+            }
+
+            if( !editorWin )
+                editorWin = m_frame;
+
+            wxDisplay display( wxDisplay::GetFromWindow( editorWin ) );
+            wxRect    workArea = display.GetClientArea();
+            int       agentW = std::min( 500, workArea.width / 3 );
+            int       editorW = workArea.width - agentW;
+
+            editorWin->SetSize( workArea.x, workArea.y, editorW, workArea.height );
+            player->SetSize( workArea.x + editorW, workArea.y, agentW, workArea.height );
+        }
     }
 
     // Needed on Windows, other platforms do not use it, but it creates no issue

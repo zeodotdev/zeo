@@ -7,8 +7,16 @@
 unset PYTHONHOME
 unset PYTHONPATH
 
-# Export the script's directory so Python can find the manifest
-export ZEO_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Resolve the real path of this script (follows symlinks)
+# This ensures the manifest can be found even when run via a symlink
+_zeo_script="$0"
+while [ -L "$_zeo_script" ]; do
+    _zeo_dir="$(cd "$(dirname "$_zeo_script")" && pwd)"
+    _zeo_script="$(readlink "$_zeo_script")"
+    # Handle relative symlinks
+    [[ "$_zeo_script" != /* ]] && _zeo_script="$_zeo_dir/$_zeo_script"
+done
+export ZEO_SCRIPT_DIR="$(cd "$(dirname "$_zeo_script")" && pwd)"
 
 # Create temp file for Python script, keeping stdin available for interactive use
 _ZEO_SCRIPT=$(mktemp)
@@ -85,7 +93,23 @@ def cmd_tool(args):
         """Load all tools from tool_manifest.json."""
         # Use ZEO_SCRIPT_DIR env var set by bash wrapper (since script runs from temp file)
         script_dir = os.environ.get("ZEO_SCRIPT_DIR", os.path.dirname(os.path.abspath(__file__)))
-        manifest_path = os.path.join(script_dir, "..", "agent", "tools", "python", "tool_manifest.json")
+
+        # Check both possible paths (source tree vs packaged app)
+        candidate_paths = [
+            os.path.join(script_dir, "..", "agent", "tools", "python", "tool_manifest.json"),  # Source tree
+            os.path.join(script_dir, "..", "agent", "python", "tool_manifest.json"),  # Packaged app
+        ]
+
+        manifest_path = None
+        for path in candidate_paths:
+            normalized = os.path.normpath(path)
+            if os.path.exists(normalized):
+                manifest_path = normalized
+                break
+
+        if manifest_path is None:
+            print(f"Warning: tool_manifest.json not found in expected locations", file=sys.stderr)
+            manifest_path = os.path.normpath(candidate_paths[0])  # Fallback for error message
 
         tools = []
         if os.path.exists(manifest_path):

@@ -808,6 +808,17 @@ int BOARD_EDITOR_CONTROL::ShowAgent( const TOOL_EVENT& aEvent )
 
     if( frame )
     {
+        // If the agent window is already visible, just bring it to the front
+        if( frame->IsShown() && frame->IsVisible() )
+        {
+            if( frame->IsIconized() )
+                frame->Iconize( false );
+
+            frame->Raise();
+            frame->SetFocus();
+            return 0;
+        }
+
         if( m_frame )
         {
             wxRect parentRect = m_frame->GetRect();

@@ -38,14 +38,14 @@ summary['zones'] = len(zones)
 try:
     nets = board.get_nets()
     summary['nets'] = [{'name': n.name} for n in nets[:50]]  # Limit to 50
-except:
+except Exception:
     pass
 
 # Get layers
 try:
     layers = board.get_enabled_layers()
     summary['layers'] = [BoardLayer.Name(l).replace('BL_', '').replace('_', '.') for l in layers] if layers else []
-except:
+except Exception:
     pass
 
 print(json.dumps(summary, indent=2))

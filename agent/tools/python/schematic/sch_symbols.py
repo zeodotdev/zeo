@@ -169,7 +169,7 @@ try:
                         pin_map[p['pin_number']] = {
                             'position': (rnd(p['position'].x / 1e6), rnd(p['position'].y / 1e6))
                         }
-                except:
+                except Exception:
                     pass
 
             for pin in sym.pins:
@@ -219,7 +219,7 @@ try:
                             sym_data['footprint_filters'] = list(filters)
                         else:
                             sym_data['footprint_filters'] = []
-            except:
+            except Exception:
                 pass
 
         symbols_out.append(sym_data)

@@ -103,7 +103,8 @@ enum MAIL_T
     MAIL_MCP_EXECUTE_AGENT_TOOL,    // ProjectMgr -> Agent: Execute C++ handler tool (payload: JSON {tool_name, tool_args_json}, result written back)
 
     // VCS app communication
-    MAIL_VCS_AUTH_COMPLETE          // Launcher -> VCS: GitHub OAuth complete (JSON: {username})
+    MAIL_VCS_AUTH_COMPLETE,         // Launcher -> VCS: GitHub OAuth complete (JSON: {username})
+    MAIL_VCS_REFRESH                // Agent -> VCS: Project files changed, auto-init if needed and refresh
 };
 
 

@@ -27,6 +27,12 @@ public:
      */
     void OnMessage( const wxString& aMessage );
 
+    /**
+     * Auto-initialize a git repo if one doesn't exist, then refresh status.
+     * Called when the agent modifies project files via MAIL_VCS_REFRESH.
+     */
+    void AutoInitIfNeeded();
+
 private:
     // ── Git read operations ──────────────────────────────────────────────
     void HandleGetStatus( const nlohmann::json& aMsg );
@@ -59,6 +65,7 @@ private:
     void HandleGetGitLabToken( const nlohmann::json& aMsg );
     void HandleDisconnectGitLab( const nlohmann::json& aMsg );
     void HandleOpenInEditor( const nlohmann::json& aMsg );
+    void HandleShowContextMenu( const nlohmann::json& aMsg );
 
     // ── Helpers ──────────────────────────────────────────────────────────
     void SendResponse( const wxString& aRequestId, bool aSuccess,

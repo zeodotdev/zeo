@@ -39,7 +39,7 @@ try:
                         all_pins = sch.symbols.get_all_transformed_pin_positions(sym)
                         for p in all_pins:
                             pin_map[p['pin_number']] = get_pos(p)
-                    except:
+                    except Exception:
                         pass
 
                 for pin in sym.pins:
@@ -51,7 +51,7 @@ try:
                                 abs_pos = pin_pos
                         if abs_pos:
                             pins.append({'number': pin.number, 'name': getattr(pin, 'name', ''), 'pos': abs_pos})
-                    except:
+                    except Exception:
                         pass
             sym_dict = {
                 'uuid': get_uuid_str(sym),

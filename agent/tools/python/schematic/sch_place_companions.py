@@ -269,7 +269,7 @@ def get_next_ref(prefix):
                 try:
                     num = int(ref[len(prefix):])
                     highest = max(highest, num)
-                except:
+                except Exception:
                     pass
         ref_counters[prefix] = highest
     ref_counters[prefix] += 1

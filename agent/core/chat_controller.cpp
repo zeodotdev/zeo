@@ -375,6 +375,7 @@ void CHAT_CONTROLLER::NewChat()
     m_pendingToolCalls = nlohmann::json::array();
     m_serverToolBlocks = nlohmann::json::array();
     m_schematicSnapshot.clear();
+    m_vcsNotified = false;
 
     m_ctx.Reset();
 }
@@ -1078,6 +1079,28 @@ void CHAT_CONTROLLER::ExecuteNextTool()
         wxLogError( "CHAT_CONTROLLER::ExecuteNextTool - unknown exception during tool execution" );
         result = "Error: Tool execution failed with unknown exception";
         success = false;
+    }
+
+    // Notify VCS after a successful write tool so it can auto-init git if needed.
+    // Only fires once per chat session to avoid repeated checks.
+    if( success && !m_vcsNotified && m_vcsNotifyFn )
+    {
+        // Check if this tool modifies files (read_only == false)
+        bool isWriteTool = true;
+        for( const auto& t : m_tools )
+        {
+            if( t.name == tool->tool_name )
+            {
+                isWriteTool = !t.read_only;
+                break;
+            }
+        }
+
+        if( isWriteTool )
+        {
+            m_vcsNotified = true;
+            m_vcsNotifyFn();
+        }
     }
 
     // Background datasheet extraction for symbols with datasheet URLs

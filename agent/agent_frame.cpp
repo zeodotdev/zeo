@@ -110,7 +110,7 @@ static wxString FormatToolResult( const std::string& aRawResult )
         result.Replace( ">", "&gt;" );
         return "<code class=\"language-json\">" + result + "</code>";
     }
-    catch( ... )
+    catch( const nlohmann::json::exception& )
     {
         // Not valid JSON - HTML-escape and return as-is
         wxString result = wxString::FromUTF8( aRawResult );
@@ -162,7 +162,7 @@ static wxString GetToolResultPreview( const std::string& aRawResult, int aMaxLen
             return val;
         }
     }
-    catch( ... )
+    catch( const nlohmann::json::exception& )
     {
         // Not JSON - take first line
         wxString raw = wxString::FromUTF8( aRawResult );
@@ -496,6 +496,25 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             reg.SetOpenEditorFiles( std::move( openFiles ) );
 
             return CHECK_STATUS_HANDLER::BuildStatusJson();
+        } );
+
+    // VCS notification: auto-init git repo and refresh VCS UI after agent writes.
+    // Creates the VCS frame if needed (without showing it) so the mail is delivered.
+    m_chatController->SetVcsNotifyFn(
+        [this]() {
+            try
+            {
+                // Ensure VCS frame exists (create=true) so it can receive the mail.
+                // This does not show the window — only Player + Show() makes it visible.
+                Kiway().Player( FRAME_VCS, true );
+
+                std::string payload;
+                Kiway().ExpressMail( FRAME_VCS, MAIL_VCS_REFRESH, payload );
+            }
+            catch( ... )
+            {
+                // VCS kiface load failure — safe to ignore
+            }
         } );
 
     // Schematic summary callback for user edit detection between turns.

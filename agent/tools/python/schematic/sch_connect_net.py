@@ -305,7 +305,7 @@ try:
         Returns (bbox_dict_or_None, set_of_pin_grid_cells)."""
         try:
             bbox = sch.transform.get_bounding_box(obs_sym, units='mm', include_text=False)
-        except:
+        except Exception:
             return None, set()
         if not bbox:
             return None, set()
@@ -321,7 +321,7 @@ try:
         # Use batch API to get all pin positions in a single IPC call
         try:
             all_pins = sch.symbols.get_all_transformed_pin_positions(obs_sym)
-        except:
+        except Exception:
             all_pins = []
         for tp in all_pins:
             try:
@@ -337,7 +337,7 @@ try:
                 elif po == 2: _edge_bottom.append(py)
                 elif po == 3: _edge_top.append(py)
                 _sym_pin_cells.add((round(px / _grid), round(py / _grid)))
-            except:
+            except Exception:
                 pass
         _shrink = 1.27 / 2
         if _edge_left: bx0 = max(bx0, max(_edge_left) + _shrink)
@@ -356,14 +356,14 @@ try:
                 obs_bbox['_ref'] = getattr(obs_sym, 'reference', '')
                 obstacles.append(obs_bbox)
             pin_cells.update(obs_pins)
-    except:
+    except Exception:
         pass
     _sym_obstacle_count = len(obstacles)
     try:
         for obs_lbl in sch.labels.get_all():
             try:
                 bbox = sch.transform.get_bounding_box(obs_lbl, units='mm')
-            except:
+            except Exception:
                 continue
             if not bbox:
                 continue
@@ -746,7 +746,7 @@ try:
                 if old_bbox:
                     obstacles.append(old_bbox)
                 pin_cells.update(old_pcells)
-            except:
+            except Exception:
                 pass
             return waypoints, p0, p1
 

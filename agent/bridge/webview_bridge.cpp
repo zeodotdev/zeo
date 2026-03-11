@@ -110,66 +110,79 @@ void WEBVIEW_BRIDGE::OnMessage( const wxString& aMessage )
 
 void WEBVIEW_BRIDGE::HandleSubmit( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->OnBridgeSubmit( aMsg );
 }
 
 void WEBVIEW_BRIDGE::HandleAttachClick( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->OnBridgeAttachClick();
 }
 
 void WEBVIEW_BRIDGE::HandleLinkClick( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->OnBridgeLinkClick( aMsg );
 }
 
 void WEBVIEW_BRIDGE::HandleCopy( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->OnBridgeCopy( aMsg );
 }
 
 void WEBVIEW_BRIDGE::HandleCopyImage( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->OnBridgeCopyImage( aMsg );
 }
 
 void WEBVIEW_BRIDGE::HandlePreviewImage( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->OnBridgePreviewImage( aMsg );
 }
 
 void WEBVIEW_BRIDGE::HandlePreviewFile( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->OnBridgePreviewFile( aMsg );
 }
 
 void WEBVIEW_BRIDGE::HandleThinkingToggled( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->OnBridgeThinkingToggled( aMsg );
 }
 
 void WEBVIEW_BRIDGE::HandleToolResultToggled( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->OnBridgeToolResultToggled( aMsg );
 }
 
 void WEBVIEW_BRIDGE::HandleScrollActivity( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->OnBridgeScrollActivity( aMsg );
 }
 
 void WEBVIEW_BRIDGE::HandleNewChat( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->DoNewChat();
 }
 
 void WEBVIEW_BRIDGE::HandleHistoryOpen( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->OnBridgeHistoryOpen();
 }
 
 void WEBVIEW_BRIDGE::HandleHistorySelect( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     std::string id = aMsg.value( "conversation_id", "" );
     if( !id.empty() )
         m_frame->LoadConversation( id );
@@ -177,6 +190,7 @@ void WEBVIEW_BRIDGE::HandleHistorySelect( const nlohmann::json& aMsg )
 
 void WEBVIEW_BRIDGE::HandleHistorySearch( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     std::string query = aMsg.value( "query", "" );
     m_frame->OnBridgeHistorySearch( wxString::FromUTF8( query ) );
 }
@@ -188,6 +202,7 @@ void WEBVIEW_BRIDGE::HandleHistoryClose( const nlohmann::json& aMsg )
 
 void WEBVIEW_BRIDGE::HandleModelChange( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     std::string model = aMsg.value( "model", "" );
     if( !model.empty() )
         m_frame->DoModelChange( model );
@@ -195,46 +210,55 @@ void WEBVIEW_BRIDGE::HandleModelChange( const nlohmann::json& aMsg )
 
 void WEBVIEW_BRIDGE::HandlePlanToggle( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->DoPlanToggle();
 }
 
 void WEBVIEW_BRIDGE::HandlePlanApprove( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->DoPlanApprove();
 }
 
 void WEBVIEW_BRIDGE::HandleSendClick( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->DoSendClick();
 }
 
 void WEBVIEW_BRIDGE::HandleStopClick( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->DoStopClick();
 }
 
 void WEBVIEW_BRIDGE::HandleSelectionPillClick( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->DoSelectionPillClick();
 }
 
 void WEBVIEW_BRIDGE::HandlePendingChangesToggle( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->DoPendingChangesToggle();
 }
 
 void WEBVIEW_BRIDGE::HandlePendingChangesAcceptAll( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->DoPendingChangesAcceptAll();
 }
 
 void WEBVIEW_BRIDGE::HandlePendingChangesRejectAll( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->DoPendingChangesRejectAll();
 }
 
 void WEBVIEW_BRIDGE::HandlePendingChangesView( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     std::string path = aMsg.value( "path", "" );
     bool isPcb = aMsg.value( "is_pcb", false );
     m_frame->DoPendingChangesView( wxString::FromUTF8( path ), isPcb );
@@ -242,6 +266,7 @@ void WEBVIEW_BRIDGE::HandlePendingChangesView( const nlohmann::json& aMsg )
 
 void WEBVIEW_BRIDGE::HandlePendingChangesAcceptSheet( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     std::string path = aMsg.value( "path", "" );
     bool isPcb = aMsg.value( "is_pcb", false );
     m_frame->DoPendingChangesAcceptSheet( wxString::FromUTF8( path ), isPcb );
@@ -249,6 +274,7 @@ void WEBVIEW_BRIDGE::HandlePendingChangesAcceptSheet( const nlohmann::json& aMsg
 
 void WEBVIEW_BRIDGE::HandlePendingChangesRejectSheet( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     std::string path = aMsg.value( "path", "" );
     bool isPcb = aMsg.value( "is_pcb", false );
     m_frame->DoPendingChangesRejectSheet( wxString::FromUTF8( path ), isPcb );
@@ -256,6 +282,7 @@ void WEBVIEW_BRIDGE::HandlePendingChangesRejectSheet( const nlohmann::json& aMsg
 
 void WEBVIEW_BRIDGE::HandleSignInClick( const nlohmann::json& aMsg )
 {
+    if( !m_frame ) return;
     m_frame->DoSignIn();
 }
 
@@ -521,11 +548,18 @@ void WEBVIEW_BRIDGE::RunScript( const wxString& aScript )
         m_pendingScripts.push_back( aScript );
         return;
     }
+    if( !m_webView ) return;
     m_webView->RunScriptAsync( aScript );
 }
 
 void WEBVIEW_BRIDGE::FlushPendingScripts()
 {
+    if( !m_webView )
+    {
+        m_pendingScripts.clear();
+        return;
+    }
+
     for( const auto& script : m_pendingScripts )
         m_webView->RunScriptAsync( script );
 

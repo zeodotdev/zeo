@@ -603,6 +603,16 @@ std::string CC_CONTROLLER::GenerateMcpConfig()
     config["mcpServers"]["zeo"]["args"] = json::array( { "-m", "kipy.mcp" } );
     config["mcpServers"]["zeo"]["env"]["KICAD_API_SOCKET"] = m_apiSocketPath;
 
+    // Pass Supabase credentials for tool usage tracking in MCP server
+    const auto& supabaseUrl = TOOL_REGISTRY::Instance().GetSupabaseUrl();
+    const auto& supabaseKey = TOOL_REGISTRY::Instance().GetSupabaseAnonKey();
+
+    if( !supabaseUrl.empty() && !supabaseKey.empty() )
+    {
+        config["mcpServers"]["zeo"]["env"]["ZEO_SUPABASE_URL"] = supabaseUrl;
+        config["mcpServers"]["zeo"]["env"]["ZEO_SUPABASE_ANON_KEY"] = supabaseKey;
+    }
+
 #ifdef __WXMSW__
     // On Windows, Python is the system interpreter — set PYTHONPATH to the
     // bundled site-packages so it finds the correct kipy version.

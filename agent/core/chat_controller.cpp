@@ -213,6 +213,16 @@ void CHAT_CONTROLLER::Cancel()
     if( m_llmClient )
         m_llmClient->CancelRequest();
 
+    // If we're IDLE with no partial content, there's nothing to cancel or preserve.
+    // This avoids adding spurious "*(Stopped)*" markers when switching chats.
+    if( m_ctx.GetState() == AgentConversationState::IDLE
+        && m_currentResponse.empty()
+        && m_thinkingContent.IsEmpty() )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::Cancel - IDLE with no partial content, skipping" );
+        return;
+    }
+
     // Save any partial response that was being streamed.
     // Skip this if we're in a tool execution state — the assistant message (with tool_use blocks)
     // was already committed to history by AddAssistantToolUseToHistory(). The stale

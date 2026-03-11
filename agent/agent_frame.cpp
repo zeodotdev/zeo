@@ -2856,6 +2856,7 @@ void AGENT_FRAME::DoNewChat()
         m_chatController->SetChatId( m_chatHistoryDb.GetConversationId() );
 
     m_bridge->PushChatTitle( "New Chat" );
+    m_bridge->PushActiveChat( m_chatHistoryDb.GetConversationId() );
 
     // Clear historical thinking state
     m_historicalThinking.clear();
@@ -2903,6 +2904,8 @@ void AGENT_FRAME::LoadConversation( const std::string& aConversationId )
     {
         m_chatController->LoadChat( aConversationId );
     }
+
+    m_bridge->PushActiveChat( aConversationId );
 }
 
 

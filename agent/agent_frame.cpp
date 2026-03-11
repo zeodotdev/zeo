@@ -457,6 +457,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     // Initialize first conversation so it gets an ID for usage tracking
     m_chatHistoryDb.StartNewConversation();
+    m_chatHistoryDb.SetProjectPath( Kiway().Prj().GetProjectPath().ToStdString() );
 
     // Create chat controller
     m_chatController = std::make_unique<CHAT_CONTROLLER>( this );
@@ -2054,7 +2055,8 @@ void AGENT_FRAME::OnBridgeScrollActivity( const nlohmann::json& aMsg )
 
 void AGENT_FRAME::OnBridgeHistoryOpen()
 {
-    auto historyList = m_chatHistoryDb.GetHistoryList();
+    std::string projectPath = Kiway().Prj().GetProjectPath().ToStdString();
+    auto historyList = m_chatHistoryDb.GetHistoryList( projectPath );
 
     nlohmann::json entries = nlohmann::json::array();
     for( const auto& entry : historyList )
@@ -2073,7 +2075,8 @@ void AGENT_FRAME::OnBridgeHistoryOpen()
 
 void AGENT_FRAME::OnBridgeHistorySearch( const wxString& aQuery )
 {
-    auto historyList = m_chatHistoryDb.GetHistoryList();
+    std::string projectPath = Kiway().Prj().GetProjectPath().ToStdString();
+    auto historyList = m_chatHistoryDb.GetHistoryList( projectPath );
 
     nlohmann::json entries = nlohmann::json::array();
     wxString lowerQuery = aQuery.Lower();
@@ -2836,6 +2839,7 @@ void AGENT_FRAME::DoNewChat()
     m_fullHtmlContent = "";
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
+    m_chatHistoryDb.SetProjectPath( Kiway().Prj().GetProjectPath().ToStdString() );
 
     // Sync conversation ID to controller so it can persist streaming snapshots
     if( m_chatController )
@@ -5082,6 +5086,7 @@ void AGENT_FRAME::UploadCurrentChat()
     json wrapper;
     wrapper["id"] = convId;
     wrapper["title"] = m_chatHistoryDb.GetTitle();
+    wrapper["project_path"] = m_chatHistoryDb.GetProjectPath();
     wrapper["created_at"] = m_chatHistoryDb.GetCreatedAt();
     wrapper["last_updated"] = m_chatHistoryDb.GetLastUpdated();
     wrapper["messages"] = m_chatHistory;

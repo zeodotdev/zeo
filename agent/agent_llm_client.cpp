@@ -2,9 +2,12 @@
 #include <zeo/agent_auth.h>
 #include "agent_frame.h"
 #include "agent_events.h"
+#include "tools/tool_registry.h"
 #include <id.h>
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
+#include <wx/dir.h>
+#include <wx/filename.h>
 #include <wx/log.h>
 #include <thread>
 
@@ -81,6 +84,40 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
 
     if( m_agentMode == AgentMode::PLAN && !m_planAddendum.empty() )
         fullPrompt += "\n" + m_planAddendum;
+
+    // If the memories directory is empty or missing, hint the model to skip reading.
+    // This avoids a wasted tool-call round-trip on the first turn.
+    {
+        const std::string& projPath = TOOL_REGISTRY::Instance().GetProjectPath();
+
+        if( !projPath.empty() )
+        {
+            wxFileName memDir( wxString::FromUTF8( projPath ), "" );
+            memDir.AppendDir( "memories" );
+            wxString memDirPath = memDir.GetPath();
+
+            bool hasFiles = false;
+
+            if( wxDir::Exists( memDirPath ) )
+            {
+                wxDir dir( memDirPath );
+
+                if( dir.IsOpened() )
+                {
+                    wxString dummy;
+                    hasFiles = dir.GetFirst( &dummy, wxEmptyString, wxDIR_FILES );
+                }
+            }
+
+            if( !hasFiles )
+            {
+                fullPrompt += "\n\nYour memory directory (/memories) is currently empty. "
+                              "Do not call the memory tool to read it — there is nothing "
+                              "to retrieve. You may use the memory tool to save information "
+                              "when the user asks you to remember something.";
+            }
+        }
+    }
 
     LLM_REQUEST_THREAD* thread = new LLM_REQUEST_THREAD(
         this, aHandler, m_modelName, aMessages, aTools, m_agentMode,

@@ -106,7 +106,7 @@ std::string MEMORY_HANDLER::ExecuteView( const nlohmann::json& aInput )
         // Helper to get human-readable size
         auto humanSize = []( wxULongLong bytes ) -> std::string
         {
-            double val = bytes.IsNullable() ? 0.0 : bytes.ToDouble();
+            double val = bytes.ToDouble();
 
             if( val < 1024.0 )
                 return std::to_string( (int) val ) + "B";

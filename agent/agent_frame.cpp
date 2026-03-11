@@ -2849,6 +2849,7 @@ void AGENT_FRAME::DoNewChat()
     m_historicalToolResultExpanded.clear();
     m_currentThinkingIndex = -1;
     m_toolResultCounter = 0;
+    m_silentToolIds.clear();
     m_queuedBubbleHtml.Clear();
     m_activeRunningHtml.Clear();
     m_activeToolResultIdx = -1;
@@ -2958,6 +2959,7 @@ void AGENT_FRAME::RenderChatHistory()
     // Reset counters - RenderChatHistory updates m_toolResultCounter so that
     // subsequent live tool calls get indices that don't collide with historical ones.
     m_toolResultCounter = 0;
+    m_silentToolIds.clear();
     m_queuedBubbleHtml.Clear();
     m_toolDescByUseId.clear();
     m_toolNameByUseId.clear();
@@ -3890,6 +3892,13 @@ void AGENT_FRAME::OnChatToolGenerating( wxThreadEvent& aEvent )
     if( !data )
         return;
 
+    // Memory tool is silent — don't show generating animation
+    if( data->toolName == "memory" )
+    {
+        delete data;
+        return;
+    }
+
     // Reset streaming markdown flag so tool name shows (not hidden by preceding text)
     m_isStreamingMarkdown = false;
 
@@ -3921,77 +3930,95 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     wxLogInfo( "AGENT_FRAME::OnChatToolStart - tool: %s (id=%s)",
             data->toolName.c_str(), data->toolId.c_str() );
 
+    // Memory "view" is silent (automatic background reads) — track the ID but skip UI.
+    // Other memory commands (create, str_replace, insert, delete, rename) show normally.
+    bool isSilentTool = ( data->toolName == "memory"
+                          && data->input.value( "command", "" ) == "view" );
+
+    if( isSilentTool && !data->toolId.empty() )
+        m_silentToolIds.insert( data->toolId );
+
     // Clear generating tool name (tool is now executing, not generating)
     m_generatingToolName.Clear();
 
-    // Stop animation and finalize thinking
-    StopGeneratingAnimation();
-    m_isThinking = false;
-
-    // Flush streaming content to remove the generating box from the DOM
-    // before finalization bakes the current content permanently
-    FlushStreamingContentUpdate( true );
-
-    // Sync m_fullHtmlContent with clean streaming state.
+    if( isSilentTool )
     {
-        wxString streamingContent = BuildStreamingContent();
-        wxString fullHtml = m_htmlBeforeAgentResponse;
-        fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
-        fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
-        // Preserve queued bubble at the end
-        if( !m_queuedBubbleHtml.IsEmpty() )
-            fullHtml += m_queuedBubbleHtml;
-        m_fullHtmlContent = fullHtml;
+        // Silent tools: skip all UI — keep generating animation running so dots
+        // continue smoothly while the tool executes in the background.
+        delete data;
+        return;
     }
 
-    // Finalize the current streaming div so the agent's response text stays in place
-    m_bridge->PushFinalizeStreaming();
-
-    // Update m_fullHtmlContent to reflect finalized state (no more streaming-content ID)
-    m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
-
-    // Now clear streaming state in controller (text is baked above)
-    if( m_chatController )
-        m_chatController->ClearStreamingState();
-
-    // Preserve thinking content to history before clearing (needed for correct index tracking)
-    if( !m_thinkingContent.IsEmpty() && m_currentThinkingIndex >= 0 )
     {
-        m_historicalThinking.push_back( m_thinkingContent );
-        if( m_thinkingExpanded )
-            m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
-    }
+        // Stop animation and finalize thinking
+        StopGeneratingAnimation();
+        m_isThinking = false;
 
-    // Clear frame's thinking HTML since it's now part of the base HTML (prevents duplication)
-    m_thinkingHtml.Clear();
-    m_thinkingContent.Clear();
+        // Flush streaming content to remove the generating box from the DOM
+        // before finalization bakes the current content permanently
+        FlushStreamingContentUpdate( true );
 
-    // Store tool description for result display
-    m_lastToolDesc = wxString::FromUTF8( data->description );
+        // Sync m_fullHtmlContent with clean streaming state.
+        {
+            wxString streamingContent = BuildStreamingContent();
+            wxString fullHtml = m_htmlBeforeAgentResponse;
+            fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
+            fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
+            // Preserve queued bubble at the end
+            if( !m_queuedBubbleHtml.IsEmpty() )
+                fullHtml += m_queuedBubbleHtml;
+            m_fullHtmlContent = fullHtml;
+        }
 
-    // Place the tool result component in the permanent DOM for ALL tools.
-    // OnChatToolComplete will update the status and populate the body via JS callback.
-    {
-        int idx = m_toolResultCounter++;
-        wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
-        m_activeRunningHtml = BuildRunningToolHtml( idx, desc );
-        m_activeToolResultIdx = idx;
+        // Finalize the current streaming div so the agent's response text stays in place
+        m_bridge->PushFinalizeStreaming();
 
-        // Map tool ID to DOM index so OnChatToolComplete can find the right element
-        // (needed for CC backend where multiple tools execute concurrently)
-        if( !data->toolId.empty() )
-            m_toolIdxByUseId[data->toolId] = idx;
+        // Update m_fullHtmlContent to reflect finalized state (no more streaming-content ID)
+        m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
 
-        wxLogInfo( "AGENT_FRAME::OnChatToolStart - assigned idx=%d (counter now %d)",
-                   idx, m_toolResultCounter );
+        // Now clear streaming state in controller (text is baked above)
+        if( m_chatController )
+            m_chatController->ClearStreamingState();
 
-        // Append running box to permanent DOM
-        AppendHtml( m_activeRunningHtml );
+        // Preserve thinking content to history before clearing (needed for correct index tracking)
+        if( !m_thinkingContent.IsEmpty() && m_currentThinkingIndex >= 0 )
+        {
+            m_historicalThinking.push_back( m_thinkingContent );
+            if( m_thinkingExpanded )
+                m_historicalThinkingExpanded.insert( m_currentThinkingIndex );
+        }
 
-        // Create new streaming div after the running box
-        wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
-        AppendHtml( streamingDiv );
-        m_htmlBeforeAgentResponse = m_fullHtmlContent;
+        // Clear frame's thinking HTML since it's now part of the base HTML (prevents duplication)
+        m_thinkingHtml.Clear();
+        m_thinkingContent.Clear();
+
+        // Store tool description for result display
+        m_lastToolDesc = wxString::FromUTF8( data->description );
+
+        // Place the tool result component in the permanent DOM for ALL tools.
+        // OnChatToolComplete will update the status and populate the body via JS callback.
+        {
+            int idx = m_toolResultCounter++;
+            wxString desc = m_lastToolDesc.IsEmpty() ? wxString( "Tool execution" ) : m_lastToolDesc;
+            m_activeRunningHtml = BuildRunningToolHtml( idx, desc );
+            m_activeToolResultIdx = idx;
+
+            // Map tool ID to DOM index so OnChatToolComplete can find the right element
+            // (needed for CC backend where multiple tools execute concurrently)
+            if( !data->toolId.empty() )
+                m_toolIdxByUseId[data->toolId] = idx;
+
+            wxLogInfo( "AGENT_FRAME::OnChatToolStart - assigned idx=%d (counter now %d)",
+                       idx, m_toolResultCounter );
+
+            // Append running box to permanent DOM
+            AppendHtml( m_activeRunningHtml );
+
+            // Create new streaming div after the running box
+            wxString streamingDiv = wxS( "<div id=\"streaming-content\"></div>" );
+            AppendHtml( streamingDiv );
+            m_htmlBeforeAgentResponse = m_fullHtmlContent;
+        }
     }
 
     // Handle open_editor — requires KIWAY access for player management
@@ -4111,6 +4138,14 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
     wxLogInfo( "AGENT_FRAME::OnChatToolComplete - tool: %s, success: %s",
             data->toolName.c_str(), data->success ? "true" : "false" );
+
+    // Silent tools (e.g. memory) — skip all UI updates
+    if( !data->toolId.empty() && m_silentToolIds.count( data->toolId ) )
+    {
+        m_silentToolIds.erase( data->toolId );
+        delete data;
+        return;
+    }
 
     // CC backend: attach cached screenshot image (CC strips images from tool_result stream)
     if( m_backend == AgentBackend::CLAUDE_CODE && !m_cachedScreenshotBase64.empty()

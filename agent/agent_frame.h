@@ -232,6 +232,7 @@ private:
     std::map<std::string, wxString> m_toolDescByUseId; // tool_use id -> description (for history rendering)
     std::map<std::string, std::string> m_toolNameByUseId; // tool_use id -> tool name (for history rendering)
     std::map<std::string, int> m_toolIdxByUseId;  // tool_use id -> tool result DOM index
+    std::set<std::string>      m_silentToolIds;   // tool_use ids that should not render UI (e.g. memory)
     std::string m_cachedScreenshotBase64;   // CC backend: cached screenshot from MCP execution
     std::string m_cachedScreenshotMimeType;
     bool     m_userScrolledUp;

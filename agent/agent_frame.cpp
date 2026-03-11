@@ -170,19 +170,26 @@ static wxString GetToolResultPreview( const std::string& aRawResult, int aMaxLen
 }
 
 
+static wxString ChevronClass( bool aExpanded )
+{
+    return aExpanded ? "toggle-chevron expanded" : "toggle-chevron";
+}
+
+
 // Helper: Build the full tool result component HTML in "Running..." state.
 // Includes the collapsible body (initially empty/hidden) so the JS callback
 // can populate it on completion without replacing the element.
 static wxString BuildRunningToolHtml( int aIndex, const wxString& aDesc )
 {
     return wxString::Format(
-        "<div id=\"tool-result-%d\" class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
+        "<div id=\"tool-result-%d\" class=\"tool-result-card rounded-lg my-2 max-w-full break-words\">"
         "<div "
-        "class=\"tool-result-header p-3 px-3 flex items-center gap-2\">"
+        "class=\"tool-result-header py-2.5 px-3 flex items-center gap-2\">"
+        "<span class=\"toggle-chevron\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
         "<span class=\"text-text-secondary text-[12px]\">%s</span>"
-        "<span class=\"tool-status text-text-muted text-[12px] ml-auto\"><i>Running...</i></span>"
+        "<span class=\"tool-status text-text-muted text-[12px] ml-auto flex items-center gap-2\"><span class=\"tool-spinner\"></span></span>"
         "</div>"
-        "<div class=\"tool-result-body p-3 pt-0 border-t border-border-dark\" "
+        "<div class=\"tool-result-body p-3 pt-0\" "
         "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
         "</div>"
         "</div>",
@@ -199,16 +206,19 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
 {
     wxString displayStyle = aExpanded ? "block" : "none";
 
+    wxString chevronClass = ChevronClass( aExpanded );
+
     wxString html = wxString::Format(
-        "<div id=\"tool-result-%d\" class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
+        "<div id=\"tool-result-%d\" class=\"tool-result-card rounded-lg my-2 max-w-full break-words\">"
         // Clickable header: same layout as the Running box
         "<a href=\"toggle:toolresult:%d\" "
-        "class=\"tool-result-header p-3 px-3 no-underline flex items-center gap-2\">"
+        "class=\"tool-result-header py-2.5 px-3 no-underline flex items-center gap-2\">"
+        "<span class=\"%s\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
         "<span class=\"text-text-secondary text-[12px]\">%s</span>"
-        "<span class=\"%s text-[12px] ml-auto\"><strong>%s</strong></span>"
+        "<span class=\"%s text-[12px] ml-auto\">%s</span>"
         "</a>"
         // Expanded content (hidden by default)
-        "<div class=\"tool-result-body p-3 pt-0 border-t border-border-dark\" "
+        "<div class=\"tool-result-body p-3 pt-0\" "
         "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:%s;\">"
         "<pre class=\"text-text-secondary font-mono text-[12px] whitespace-pre-wrap break-words m-0 mt-2\">%s</pre>"
         "%s"
@@ -216,6 +226,7 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
         "</div>",
         aIndex,
         aIndex,
+        chevronClass,
         aDesc, aStatusClass, aStatusText,
         aIndex, displayStyle,
         aFullFormatted,
@@ -236,16 +247,17 @@ static wxString BuildToolApprovalHtml( int aIndex, const wxString& aDesc,
                                        const wxString& aTextColor )
 {
     return wxString::Format(
-        "<div id=\"tool-result-%d\" class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
-        "<div class=\"p-3 px-3 flex items-center gap-2\">"
+        "<div id=\"tool-result-%d\" class=\"tool-result-card rounded-lg my-2 max-w-full break-words\">"
+        "<div class=\"py-2.5 px-3 flex items-center gap-2\">"
+        "<span class=\"toggle-chevron\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
         "<span class=\"text-text-secondary text-[12px]\">%s</span>"
         "<span class=\"tool-status text-[12px] ml-auto\">"
         "<a href=\"%s\" style=\"background:%s; color:%s; padding:3px 14px; "
-        "border-radius:6px; font-size:12px; font-weight:600; text-decoration:none; "
+        "border-radius:8px; font-size:12px; font-weight:500; text-decoration:none; "
         "cursor:pointer;\">%s</a>"
         "</span>"
         "</div>"
-        "<div class=\"tool-result-body p-3 pt-0 border-t border-border-dark\" "
+        "<div class=\"tool-result-body p-3 pt-0\" "
         "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
         "</div>"
         "</div>",
@@ -716,6 +728,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         // Push initial title
         m_bridge->PushChatTitle( "New Chat" );
 
+        // Pre-fetch history list so first dropdown open is instant
+        m_bridge->PushActiveChat( m_chatHistoryDb.GetConversationId() );
+        m_bridge->PushHistoryList( BuildHistoryListJson() );
+
         // Push plan mode state
         m_bridge->PushPlanMode( m_agentMode == AgentMode::PLAN );
 
@@ -827,10 +843,10 @@ void AGENT_FRAME::RebuildThinkingHtml()
 
     m_thinkingHtml = wxString::Format(
         "<div class=\"mb-1\">"
-        "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline thinking-link\">%s</a>"
-        "<div class=\"thinking-content text-[#606060] mt-1 mb-0 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
+        "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline thinking-link text-[12px]\"><span class=\"%s\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>%s</a>"
+        "<div class=\"thinking-content text-text-muted text-[12px] mt-1 mb-0 pl-3 border-l border-border-dark whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
         "</div>",
-        m_currentThinkingIndex, thinkingText, expandedClass, m_currentThinkingIndex, displayStyle, displayContent );
+        m_currentThinkingIndex, ChevronClass( m_thinkingExpanded ), thinkingText, expandedClass, m_currentThinkingIndex, displayStyle, displayContent );
 }
 
 void AGENT_FRAME::UpdateAgentResponse()
@@ -911,12 +927,13 @@ wxString AGENT_FRAME::BuildStreamingContent()
         if( !m_generatingToolName.IsEmpty() )
         {
             streamingContent += wxString::Format(
-                "<div class=\"bg-bg-secondary rounded-md my-2 max-w-full break-words\">"
-                "<div class=\"p-3 px-3 flex items-center gap-2\">"
+                "<div class=\"tool-result-card rounded-lg my-2 max-w-full break-words\">"
+                "<div class=\"py-2.5 px-3 flex items-center gap-2\">"
+                "<span class=\"toggle-chevron\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
                 "<span class=\"text-text-secondary text-[12px]\">%s</span>"
-                "<span class=\"text-text-muted text-[12px] ml-auto\"><i>Running%s</i></span>"
+                "<span class=\"text-text-muted text-[12px] ml-auto flex items-center gap-2\"><span class=\"tool-spinner\"></span></span>"
                 "</div></div>",
-                m_generatingToolName, dots );
+                m_generatingToolName );
         }
         else
             streamingContent += "<font color='#888888'>" + dots + "</font>";
@@ -1360,7 +1377,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     wxString bubbleContent = FileAttach::BuildAttachmentBubbleHtml( m_pendingAttachments )
                              + escapedText;
     wxString msgHtml = wxString::Format(
-        "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">%s</div></div>",
+        "<div class=\"user-msg-row my-3\"><div class=\"user-msg py-2 px-3.5 whitespace-pre-wrap break-words\">%s</div></div>",
         bubbleContent );
 
     // Add streaming content container for incremental updates
@@ -1673,9 +1690,8 @@ void AGENT_FRAME::RebuildQueuedBubble()
     }
 
     wxString newHtml = wxString::Format(
-        "<div id=\"queued-msg\" class=\"queued-msg flex justify-end my-3\" style=\"opacity:0.5;\">"
-        "<div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">"
-        "%s</div></div>",
+        "<div id=\"queued-msg\" class=\"queued-msg user-msg-row my-3\" style=\"opacity:0.5;\">"
+        "<div class=\"user-msg py-2 px-3.5 whitespace-pre-wrap break-words\">%s</div></div>",
         combinedContent );
 
     if( !m_queuedBubbleHtml.IsEmpty() )
@@ -2053,14 +2069,23 @@ void AGENT_FRAME::OnBridgeScrollActivity( const nlohmann::json& aMsg )
     m_userScrolledUp = !coupled;
 }
 
-void AGENT_FRAME::OnBridgeHistoryOpen()
+nlohmann::json AGENT_FRAME::BuildHistoryListJson( const wxString& aFilter )
 {
     std::string projectPath = Kiway().Prj().GetProjectPath().ToStdString();
     auto historyList = m_chatHistoryDb.GetHistoryList( projectPath );
 
+    wxString lowerFilter = aFilter.Lower();
     nlohmann::json entries = nlohmann::json::array();
+
     for( const auto& entry : historyList )
     {
+        if( !aFilter.IsEmpty() )
+        {
+            wxString title = wxString::FromUTF8( entry.title );
+            if( !title.Lower().Contains( lowerFilter ) )
+                continue;
+        }
+
         nlohmann::json e;
         e["id"] = entry.id;
         e["title"] = entry.title.empty() ? "Untitled Chat" : entry.title;
@@ -2068,33 +2093,18 @@ void AGENT_FRAME::OnBridgeHistoryOpen()
         entries.push_back( e );
     }
 
+    return entries;
+}
+
+void AGENT_FRAME::OnBridgeHistoryOpen()
+{
     m_bridge->PushActiveChat( m_chatHistoryDb.GetConversationId() );
-    m_bridge->PushHistoryList( entries );
-    m_bridge->PushHistoryShow( true );
+    m_bridge->PushHistoryList( BuildHistoryListJson() );
 }
 
 void AGENT_FRAME::OnBridgeHistorySearch( const wxString& aQuery )
 {
-    std::string projectPath = Kiway().Prj().GetProjectPath().ToStdString();
-    auto historyList = m_chatHistoryDb.GetHistoryList( projectPath );
-
-    nlohmann::json entries = nlohmann::json::array();
-    wxString lowerQuery = aQuery.Lower();
-
-    for( const auto& entry : historyList )
-    {
-        wxString title = wxString::FromUTF8( entry.title );
-        if( aQuery.IsEmpty() || title.Lower().Contains( lowerQuery ) )
-        {
-            nlohmann::json e;
-            e["id"] = entry.id;
-            e["title"] = entry.title.empty() ? "Untitled Chat" : entry.title;
-            e["timestamp"] = entry.lastUpdated;
-            entries.push_back( e );
-        }
-    }
-
-    m_bridge->PushHistoryList( entries );
+    m_bridge->PushHistoryList( BuildHistoryListJson( aQuery ) );
 }
 
 // ── Bridge-triggered actions ────────────────────────────────────────────
@@ -2979,9 +2989,9 @@ void AGENT_FRAME::RenderChatHistory()
         {
             m_fullHtmlContent +=
                 "<div class=\"flex items-center my-4\">"
-                "<div class=\"flex-1 border-t border-[#404040]\"></div>"
-                "<span class=\"mx-3 text-text-muted text-xs\">Context compacted</span>"
-                "<div class=\"flex-1 border-t border-[#404040]\"></div>"
+                "<div class=\"flex-1 border-t border-border-dark\"></div>"
+                "<span class=\"mx-3 text-text-muted text-[11px]\">Context compacted</span>"
+                "<div class=\"flex-1 border-t border-border-dark\"></div>"
                 "</div>";
             continue;
         }
@@ -3014,7 +3024,7 @@ void AGENT_FRAME::RenderChatHistory()
                 display.Replace( ">", "&gt;" );
                 display.Replace( "\n", "<br>" );
                 m_fullHtmlContent += wxString::Format(
-                    "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">%s</div></div>",
+                    "<div class=\"user-msg-row my-3\"><div class=\"user-msg py-2 px-3.5 whitespace-pre-wrap break-words\">%s</div></div>",
                     display );
             }
             else if( role == "assistant" )
@@ -3095,7 +3105,7 @@ void AGENT_FRAME::RenderChatHistory()
                         display.Replace( ">", "&gt;" );
                         display.Replace( "\n", "<br>" );
                         m_fullHtmlContent += wxString::Format(
-                            "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">%s</div></div>",
+                            "<div class=\"user-msg-row my-3\"><div class=\"user-msg py-2 px-3.5 whitespace-pre-wrap break-words\">%s</div></div>",
                             display );
                     }
                 }
@@ -3128,10 +3138,10 @@ void AGENT_FRAME::RenderChatHistory()
 
                         m_fullHtmlContent += wxString::Format(
                             "<div class=\"mb-1\">"
-                            "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline thinking-link\">Thinking</a>"
-                            "<div class=\"thinking-content text-[#606060] mt-1 mb-0 pl-3 border-l-2 border-[#404040] whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
+                            "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline thinking-link text-[12px]\"><span class=\"%s\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>Thinking</a>"
+                            "<div class=\"thinking-content text-text-muted text-[12px] mt-1 mb-0 pl-3 border-l border-border-dark whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
                             "</div>",
-                            thinkingIndex, expandedClass, thinkingIndex, displayStyle, escapedText );
+                            thinkingIndex, ChevronClass( expanded ), expandedClass, thinkingIndex, displayStyle, escapedText );
                     }
                 }
                 else if( blockType == "tool_use" )
@@ -3262,8 +3272,8 @@ void AGENT_FRAME::RenderChatHistory()
                     {
                         m_fullHtmlContent +=
                             "<div class=\"my-1\"><a href=\"agent:open_simulator\" "
-                            "style=\"background:#1a3d1a; color:#4ade80; padding:5px 14px; "
-                            "border-radius:6px; font-size:12px; font-weight:600; "
+                            "style=\"background:rgba(78,201,176,0.12); color:#5bbda6; padding:5px 14px; "
+                            "border-radius:8px; font-size:12px; font-weight:500; "
                             "text-decoration:none; cursor:pointer; "
                             "display:inline-block;\">Open in Simulator</a></div>";
                     }
@@ -4568,8 +4578,8 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     // Display human-readable error message (raw error is already in the log from HandleLLMError)
     wxString friendly = HumanizeErrorMessage( data->message, data->httpCode, data->errorType );
     wxString errorHtml = wxString::Format(
-        "<div class=\"bg-bg-secondary rounded-md p-3 my-2\">"
-        "<p class=\"text-accent-red text-[13px] m-0\"><b>Error:</b> %s</p>"
+        "<div class=\"rounded-lg p-3 my-2\" style=\"background:rgba(232,85,85,0.08); border:1px solid rgba(232,85,85,0.2);\">"
+        "<p class=\"text-accent-red text-[13px] m-0\">%s</p>"
         "</div>",
         friendly );
     AppendHtml( errorHtml );

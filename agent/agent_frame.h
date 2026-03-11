@@ -83,6 +83,7 @@ public:
     // Top bar
     void OnBridgeHistoryOpen();
     void OnBridgeHistorySearch( const wxString& aQuery );
+    nlohmann::json BuildHistoryListJson( const wxString& aFilter = wxEmptyString );
 
     // ── Bridge-triggered actions (called by WEBVIEW_BRIDGE) ──────────────
 

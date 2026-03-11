@@ -1062,6 +1062,7 @@ void CHAT_CONTROLLER::ExecuteNextTool()
     // Execute tool with exception handling to prevent stuck state
     std::string result;
     bool success = false;
+    auto toolStart = std::chrono::steady_clock::now();
 
     try
     {
@@ -1080,6 +1081,10 @@ void CHAT_CONTROLLER::ExecuteNextTool()
         result = "Error: Tool execution failed with unknown exception";
         success = false;
     }
+
+    int durationMs = static_cast<int>( std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - toolStart ).count() );
+    m_llmClient->AddToolDuration( tool->tool_use_id, durationMs );
 
     // Notify VCS after a successful write tool so it can auto-init git if needed.
     // Only fires once per chat session to avoid repeated checks.

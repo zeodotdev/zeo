@@ -1406,53 +1406,50 @@ App.Input = (function() {
         }
     }
 
-    // Arrow up/down to cycle through previous messages
-    function isCursorOnFirstLine() {
-        if (textarea.selectionStart !== textarea.selectionEnd) return false;
-        return textarea.value.substring(0, textarea.selectionStart).indexOf('\n') === -1;
-    }
-
-    function isCursorOnLastLine() {
-        if (textarea.selectionStart !== textarea.selectionEnd) return false;
-        return textarea.value.substring(textarea.selectionStart).indexOf('\n') === -1;
-    }
-
-    function setTextAndSync(text) {
+    // Arrow up/down to cycle through previous messages.
+    // Let the browser handle the keypress first, then check if the cursor moved.
+    // If it didn't, we're at a boundary and can navigate history.
+    function setTextAndSync(text, cursorAtStart) {
         textarea.value = text;
-        textarea.selectionStart = textarea.selectionEnd = text.length;
+        var pos = cursorAtStart ? 0 : text.length;
+        textarea.selectionStart = textarea.selectionEnd = pos;
         autoResize();
     }
 
     function handleArrowHistory(e) {
         if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+        if (textarea.selectionStart !== textarea.selectionEnd) return;
         if (_history.length === 0) return;
 
-        if (e.key === 'ArrowUp') {
-            if (!isCursorOnFirstLine()) return;
-            e.preventDefault();
-            if (_historyIndex === -1) {
-                _draft = textarea.value;
-                _historyIndex = _history.length - 1;
-            } else if (_historyIndex > 0) {
-                _historyIndex--;
-            } else {
-                return;
-            }
-            setTextAndSync(_history[_historyIndex]);
-        }
+        var posBefore = textarea.selectionStart;
+        var dir = e.key === 'ArrowUp' ? -1 : 1;
 
-        if (e.key === 'ArrowDown') {
-            if (_historyIndex === -1) return;
-            if (!isCursorOnLastLine()) return;
-            e.preventDefault();
-            if (_historyIndex < _history.length - 1) {
-                _historyIndex++;
-                setTextAndSync(_history[_historyIndex]);
+        setTimeout(function() {
+            var posAfter = textarea.selectionStart;
+            // Cursor moved — browser handled normal line navigation
+            if (posAfter !== posBefore) return;
+
+            if (dir === -1) {
+                if (_historyIndex === -1) {
+                    _draft = textarea.value;
+                    _historyIndex = _history.length - 1;
+                } else if (_historyIndex > 0) {
+                    _historyIndex--;
+                } else {
+                    return;
+                }
+                setTextAndSync(_history[_historyIndex], true);
             } else {
-                _historyIndex = -1;
-                setTextAndSync(_draft);
+                if (_historyIndex === -1) return;
+                if (_historyIndex < _history.length - 1) {
+                    _historyIndex++;
+                    setTextAndSync(_history[_historyIndex]);
+                } else {
+                    _historyIndex = -1;
+                    setTextAndSync(_draft);
+                }
             }
-        }
+        }, 0);
     }
 
     textarea.addEventListener('input', function(e) {

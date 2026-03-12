@@ -127,6 +127,7 @@ body.visible { opacity: 1; }
 .tool-result-header { cursor: pointer; user-select: none; transition: background 0.15s ease; border-radius: 8px; }
 .tool-result-header:hover { background: var(--bg-hover); }
 .tool-result-header:hover .toggle-chevron { opacity: 1; }
+.tool-status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 
 /* Spinning indicator for running tools */
 @keyframes tool-spin { to { transform: rotate(360deg); } }
@@ -1021,17 +1022,21 @@ App.Chat = (function() {
     function _applyToolResultUpdate(el, statusClass, statusText, bodyHtml) {
         var status = el.querySelector('.tool-status');
         if (status) {
-            status.className = statusClass + ' text-[12px] ml-auto';
-            status.innerHTML = '<strong>' + statusText + '</strong>';
+            var color = (statusClass.indexOf('red') !== -1) ? 'var(--accent-red)' : 'var(--accent-green)';
+            status.className = 'tool-status-dot ml-auto';
+            status.style.background = color;
+            status.innerHTML = '';
         }
         var body = el.querySelector('.tool-result-body');
         if (body) {
             body.innerHTML = bodyHtml;
             highlightCodeBlocks(body);
         }
-        // Convert non-clickable div header to clickable <a> for toggle
+        // Convert non-clickable div header to clickable <a> for toggle,
+        // but only if the body has meaningful content to show
         var header = el.querySelector('.tool-result-header');
-        if (header && header.tagName === 'DIV') {
+        var hasContent = body && body.textContent && body.textContent.trim().length > 0;
+        if (header && header.tagName === 'DIV' && hasContent) {
             var idx = el.id.replace('tool-result-', '');
             var a = document.createElement('a');
             a.href = 'toggle:toolresult:' + idx;

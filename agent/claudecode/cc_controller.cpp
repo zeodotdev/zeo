@@ -53,7 +53,17 @@ void CC_CONTROLLER::Start( const std::string& aWorkingDir, const std::string& aP
     std::string systemPrompt = LoadSystemPrompt();
 
     m_subprocess = std::make_unique<CC_SUBPROCESS>( this );
-    m_subprocess->Start( aWorkingDir, m_mcpConfigPath, "claude-opus-4-6", "", systemPrompt );
+
+    if( !m_subprocess->Start( aWorkingDir, m_mcpConfigPath, "claude-opus-4-6", "", systemPrompt ) )
+    {
+        wxLogError( "CC_CONTROLLER: Failed to start Claude Code subprocess" );
+        ChatErrorData errData( "Claude Code is not installed. Install it from "
+                               "https://docs.anthropic.com/en/docs/claude-code "
+                               "and try again." );
+        PostChatEvent( m_eventSink, EVT_CHAT_ERROR, errData );
+        m_subprocess.reset();
+        return;
+    }
 
     ResetTurnState();
     m_sessionId.clear();
@@ -101,7 +111,17 @@ void CC_CONTROLLER::NewSession()
     std::string systemPrompt = LoadSystemPrompt();
 
     m_subprocess = std::make_unique<CC_SUBPROCESS>( this );
-    m_subprocess->Start( m_workingDir, m_mcpConfigPath, "claude-opus-4-6", "", systemPrompt );
+
+    if( !m_subprocess->Start( m_workingDir, m_mcpConfigPath, "claude-opus-4-6", "", systemPrompt ) )
+    {
+        wxLogError( "CC_CONTROLLER: Failed to start Claude Code subprocess (new session)" );
+        ChatErrorData errData( "Claude Code is not installed. Install it from "
+                               "https://docs.anthropic.com/en/docs/claude-code "
+                               "and try again." );
+        PostChatEvent( m_eventSink, EVT_CHAT_ERROR, errData );
+        m_subprocess.reset();
+        return;
+    }
 
     ResetTurnState();
     m_sessionId.clear();
@@ -119,7 +139,17 @@ void CC_CONTROLLER::ResumeSession( const std::string& aSessionId )
     std::string systemPrompt = LoadSystemPrompt();
 
     m_subprocess = std::make_unique<CC_SUBPROCESS>( this );
-    m_subprocess->Start( m_workingDir, m_mcpConfigPath, "claude-opus-4-6", aSessionId, systemPrompt );
+
+    if( !m_subprocess->Start( m_workingDir, m_mcpConfigPath, "claude-opus-4-6", aSessionId, systemPrompt ) )
+    {
+        wxLogError( "CC_CONTROLLER: Failed to start Claude Code subprocess (resume)" );
+        ChatErrorData errData( "Claude Code is not installed. Install it from "
+                               "https://docs.anthropic.com/en/docs/claude-code "
+                               "and try again." );
+        PostChatEvent( m_eventSink, EVT_CHAT_ERROR, errData );
+        m_subprocess.reset();
+        return;
+    }
 
     ResetTurnState();
     m_sessionId = aSessionId;
@@ -142,6 +172,7 @@ void CC_CONTROLLER::ResetTurnState()
     m_activeBlocks.clear();
     m_pendingToolIds.clear();
     m_pendingToolNames.clear();
+    m_lastStderrLine.clear();
 }
 
 
@@ -173,8 +204,26 @@ void CC_CONTROLLER::OnCCExit( wxThreadEvent& aEvent )
 
     if( exitCode != 0 )
     {
-        ChatErrorData errData( "Claude Code process exited unexpectedly (code "
-                               + std::to_string( exitCode ) + ")", true );
+        std::string errorMsg;
+
+        if( exitCode == 127 )
+        {
+            errorMsg = "Claude Code is not installed. Install it from "
+                       "https://docs.anthropic.com/en/docs/claude-code "
+                       "and try again.";
+        }
+        else if( !m_lastStderrLine.empty() )
+        {
+            // Use the last stderr line for context (often contains auth or config errors)
+            errorMsg = "Claude Code error: " + m_lastStderrLine;
+        }
+        else
+        {
+            errorMsg = "Claude Code process exited unexpectedly (code "
+                       + std::to_string( exitCode ) + ")";
+        }
+
+        ChatErrorData errData( errorMsg, exitCode != 127 );
         PostChatEvent( m_eventSink, EVT_CHAT_ERROR, errData );
     }
     else
@@ -188,7 +237,12 @@ void CC_CONTROLLER::OnCCExit( wxThreadEvent& aEvent )
 
 void CC_CONTROLLER::OnCCError( wxThreadEvent& aEvent )
 {
-    wxLogInfo( "CC_CONTROLLER stderr: %s", aEvent.GetString() );
+    std::string line = aEvent.GetString().ToStdString();
+    wxLogInfo( "CC_CONTROLLER stderr: %s", line.c_str() );
+
+    // Capture the last stderr line for use in exit error messages
+    if( !line.empty() )
+        m_lastStderrLine = line;
 }
 
 

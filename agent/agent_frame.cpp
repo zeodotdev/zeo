@@ -186,7 +186,6 @@ static wxString BuildRunningToolHtml( int aIndex, const wxString& aDesc )
         "<div "
         "class=\"tool-result-header py-2.5 px-3 flex items-center gap-2\">"
         "<span class=\"text-text-secondary text-[12px]\">%s</span>"
-        "<span class=\"toggle-chevron\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
         "<span class=\"tool-status text-text-muted text-[12px] ml-auto flex items-center gap-2\"><span class=\"tool-spinner\"></span></span>"
         "</div>"
         "<div class=\"tool-result-body p-3 pt-0\" "

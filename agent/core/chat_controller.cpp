@@ -1027,6 +1027,26 @@ void CHAT_CONTROLLER::ExecuteAllTools()
     wxLogInfo( "CHAT_CONTROLLER::ExecuteAllTools - launching %zu tools in parallel",
                allTools.size() );
 
+    // Helper to mark a tool as executing and emit start event
+    auto startTool = [&]( PendingToolCall* tool )
+    {
+        tool->is_executing = true;
+        tool->start_time = wxGetUTCTimeMillis();
+
+        wxLogInfo( "CHAT_CONTROLLER::ExecuteAllTools - launching tool: %s (id=%s) input=%s",
+                   tool->tool_name.c_str(), tool->tool_use_id.c_str(),
+                   tool->tool_input.dump().c_str() );
+
+        std::string desc = TOOL_REGISTRY::Instance().GetDescription( tool->tool_name, tool->tool_input );
+        EmitEvent( EVT_CHAT_TOOL_START, ChatToolStartData( tool->tool_use_id, tool->tool_name,
+                                                            desc, tool->tool_input ) );
+        AGENT_MONITOR_LOG::Instance().LogToolStart( tool->tool_use_id, tool->tool_name,
+                                                     desc, tool->tool_input.dump() );
+    };
+
+    // Pass 1: Launch threaded and async tools first so they run in parallel.
+    std::vector<PendingToolCall*> ipcTools;
+
     for( PendingToolCall* tool : allTools )
     {
         // Frame-managed tools require user interaction (approval dialogs).
@@ -1038,20 +1058,16 @@ void CHAT_CONTROLLER::ExecuteAllTools()
             continue;
         }
 
-        // Mark as executing
-        tool->is_executing = true;
-        tool->start_time = wxGetUTCTimeMillis();
+        // IPC tools use SendRequest which calls Kiway().Player() and wxYield() —
+        // both require the main thread. Collect them for pass 2.
+        if( TOOL_REGISTRY::Instance().HasHandler( tool->tool_name ) &&
+            TOOL_REGISTRY::Instance().RequiresIPC( tool->tool_name ) )
+        {
+            ipcTools.push_back( tool );
+            continue;
+        }
 
-        wxLogInfo( "CHAT_CONTROLLER::ExecuteAllTools - launching tool: %s (id=%s) input=%s",
-                   tool->tool_name.c_str(), tool->tool_use_id.c_str(),
-                   tool->tool_input.dump().c_str() );
-
-        // Get tool description and emit start event
-        std::string desc = TOOL_REGISTRY::Instance().GetDescription( tool->tool_name, tool->tool_input );
-        EmitEvent( EVT_CHAT_TOOL_START, ChatToolStartData( tool->tool_use_id, tool->tool_name,
-                                                            desc, tool->tool_input ) );
-        AGENT_MONITOR_LOG::Instance().LogToolStart( tool->tool_use_id, tool->tool_name,
-                                                     desc, tool->tool_input.dump() );
+        startTool( tool );
 
         // Already-async tools (e.g. pcb_autoroute): use existing ExecuteAsync path
         if( TOOL_REGISTRY::Instance().HasHandler( tool->tool_name ) &&
@@ -1063,7 +1079,7 @@ void CHAT_CONTROLLER::ExecuteAllTools()
             continue;
         }
 
-        // All other tools: spawn a thread. Result arrives via EVT_TOOL_EXECUTION_COMPLETE.
+        // All other non-IPC tools: spawn a thread. Result arrives via EVT_TOOL_EXECUTION_COMPLETE.
         std::string toolId = tool->tool_use_id;
         std::string toolName = tool->tool_name;
         nlohmann::json toolInput = tool->tool_input;
@@ -1099,9 +1115,45 @@ void CHAT_CONTROLLER::ExecuteAllTools()
         } ).detach();
     }
 
-    // If ALL tools were frame-managed (nothing was launched in parallel),
-    // start the first deferred tool now.
-    if( !m_ctx.GetExecutingToolCall() )
+    // Pass 2: Run IPC tools sequentially on the main thread.
+    // wxYield() inside SendRequest pumps events, so threaded tool results
+    // from pass 1 get processed while these execute.
+    for( PendingToolCall* tool : ipcTools )
+    {
+        startTool( tool );
+
+        wxLogInfo( "CHAT_CONTROLLER::ExecuteAllTools - IPC tool (main thread): %s",
+                   tool->tool_name.c_str() );
+
+        // Flush pending UI events so the tool status dot appears before we block
+        wxYield();
+
+        std::string result;
+        bool success = false;
+
+        try
+        {
+            result = TOOL_REGISTRY::Instance().ExecuteToolSync( tool->tool_name, tool->tool_input );
+            success = !result.empty() && result.find( "Error:" ) != 0;
+        }
+        catch( const std::exception& e )
+        {
+            result = std::string( "Error: Tool execution failed with exception: " ) + e.what();
+            success = false;
+        }
+        catch( ... )
+        {
+            result = "Error: Tool execution failed with unknown exception";
+            success = false;
+        }
+
+        ProcessToolResult( tool->tool_use_id, result, success );
+    }
+
+    // If no tools are currently executing (all were IPC or frame-managed),
+    // and there are still pending tools, start the next deferred one.
+    // Skip if no pending tools remain — ProcessToolResult already called ContinueChat.
+    if( !m_ctx.GetExecutingToolCall() && m_ctx.HasPendingToolCalls() )
     {
         ExecuteDeferredFrameTool();
     }

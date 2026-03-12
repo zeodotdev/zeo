@@ -111,16 +111,22 @@ body.visible { opacity: 1; }
     transition: color 0.15s ease; display: inline-flex; align-items: center; gap: 4px;
 }
 .thinking-link:hover { color: var(--text-secondary); }
+.thinking-link:hover .toggle-chevron { opacity: 1; }
 
-/* Generic collapsible toggle */
-.toggle-chevron { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; transition: transform 0.2s ease; color: var(--text-muted); flex-shrink: 0; }
+/* Generic collapsible toggle — hidden until parent hover */
+.toggle-chevron {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 12px; height: 12px; transition: transform 0.2s ease, opacity 0.15s ease;
+    color: var(--text-muted); flex-shrink: 0; opacity: 0; margin-left: 3px;
+}
 .toggle-chevron svg { width: 10px; height: 10px; }
-.toggle-chevron.expanded { transform: rotate(90deg); }
+.toggle-chevron.expanded { transform: rotate(90deg); opacity: 1; }
 
 /* Tool result collapsible styles */
 .tool-result-card { background: var(--bg-secondary); border: 1px solid var(--tool-result-border); }
 .tool-result-header { cursor: pointer; user-select: none; transition: background 0.15s ease; border-radius: 8px; }
 .tool-result-header:hover { background: var(--bg-hover); }
+.tool-result-header:hover .toggle-chevron { opacity: 1; }
 
 /* Spinning indicator for running tools */
 @keyframes tool-spin { to { transform: rotate(360deg); } }

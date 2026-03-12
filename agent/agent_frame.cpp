@@ -185,8 +185,8 @@ static wxString BuildRunningToolHtml( int aIndex, const wxString& aDesc )
         "<div id=\"tool-result-%d\" class=\"tool-result-card rounded-lg my-2 max-w-full break-words\">"
         "<div "
         "class=\"tool-result-header py-2.5 px-3 flex items-center gap-2\">"
-        "<span class=\"toggle-chevron\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
         "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+        "<span class=\"toggle-chevron\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
         "<span class=\"tool-status text-text-muted text-[12px] ml-auto flex items-center gap-2\"><span class=\"tool-spinner\"></span></span>"
         "</div>"
         "<div class=\"tool-result-body p-3 pt-0\" "
@@ -213,8 +213,8 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
         // Clickable header: same layout as the Running box
         "<a href=\"toggle:toolresult:%d\" "
         "class=\"tool-result-header py-2.5 px-3 no-underline flex items-center gap-2\">"
-        "<span class=\"%s\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
         "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+        "<span class=\"%s\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
         "<span class=\"%s text-[12px] ml-auto\">%s</span>"
         "</a>"
         // Expanded content (hidden by default)
@@ -226,8 +226,8 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
         "</div>",
         aIndex,
         aIndex,
-        chevronClass,
-        aDesc, aStatusClass, aStatusText,
+        aDesc,
+        chevronClass, aStatusClass, aStatusText,
         aIndex, displayStyle,
         aFullFormatted,
         aImageHtml );
@@ -249,8 +249,8 @@ static wxString BuildToolApprovalHtml( int aIndex, const wxString& aDesc,
     return wxString::Format(
         "<div id=\"tool-result-%d\" class=\"tool-result-card rounded-lg my-2 max-w-full break-words\">"
         "<div class=\"py-2.5 px-3 flex items-center gap-2\">"
-        "<span class=\"toggle-chevron\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
         "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+        "<span class=\"toggle-chevron\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
         "<span class=\"tool-status text-[12px] ml-auto\">"
         "<a href=\"%s\" style=\"background:%s; color:%s; padding:3px 14px; "
         "border-radius:8px; font-size:12px; font-weight:500; text-decoration:none; "
@@ -843,10 +843,10 @@ void AGENT_FRAME::RebuildThinkingHtml()
 
     m_thinkingHtml = wxString::Format(
         "<div class=\"mb-1\">"
-        "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline thinking-link text-[12px]\"><span class=\"%s\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>%s</a>"
+        "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline thinking-link text-[12px]\">%s<span class=\"%s\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span></a>"
         "<div class=\"thinking-content text-text-muted text-[12px] mt-1 mb-0 pl-3 border-l border-border-dark whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
         "</div>",
-        m_currentThinkingIndex, ChevronClass( m_thinkingExpanded ), thinkingText, expandedClass, m_currentThinkingIndex, displayStyle, displayContent );
+        m_currentThinkingIndex, thinkingText, ChevronClass( m_thinkingExpanded ), expandedClass, m_currentThinkingIndex, displayStyle, displayContent );
 }
 
 void AGENT_FRAME::UpdateAgentResponse()
@@ -929,8 +929,8 @@ wxString AGENT_FRAME::BuildStreamingContent()
             streamingContent += wxString::Format(
                 "<div class=\"tool-result-card rounded-lg my-2 max-w-full break-words\">"
                 "<div class=\"py-2.5 px-3 flex items-center gap-2\">"
-                "<span class=\"toggle-chevron\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
                 "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+                "<span class=\"toggle-chevron\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
                 "<span class=\"text-text-muted text-[12px] ml-auto flex items-center gap-2\"><span class=\"tool-spinner\"></span></span>"
                 "</div></div>",
                 m_generatingToolName );
@@ -2642,12 +2642,7 @@ void AGENT_FRAME::InitializeTools()
     m_tools = ToolSchemas::GetToolDefinitions();
 }
 
-// NOTE: ExecuteTool was removed - tools are now executed via CHAT_CONTROLLER::ExecuteNextTool()
-// which sets the project path via the m_getProjectPathFn callback.
 
-// NOTE: HandleLLMEvent and ContinueConversation were removed in Phase 5.3
-// They were dead code - only used in the synchronous path which is no longer called.
-// All LLM streaming now uses the async path: StartAsyncLLMRequest -> OnLLMStream* events
 
 // ============================================================================
 // Async LLM Streaming Event Handlers
@@ -3141,7 +3136,7 @@ void AGENT_FRAME::RenderChatHistory()
 
                         m_fullHtmlContent += wxString::Format(
                             "<div class=\"mb-1\">"
-                            "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline thinking-link text-[12px]\"><span class=\"%s\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>Thinking</a>"
+                            "<a href=\"toggle:thinking:%d\" class=\"text-text-muted cursor-pointer no-underline thinking-link text-[12px]\">Thinking<span class=\"%s\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span></a>"
                             "<div class=\"thinking-content text-text-muted text-[12px] mt-1 mb-0 pl-3 border-l border-border-dark whitespace-pre-wrap%s\" data-toggle-type=\"thinking\" data-toggle-index=\"%d\" style=\"display:%s;\">%s</div>"
                             "</div>",
                             thinkingIndex, ChevronClass( expanded ), expandedClass, thinkingIndex, displayStyle, escapedText );

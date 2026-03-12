@@ -17,13 +17,16 @@ AGENT_MONITOR_LOG& AGENT_MONITOR_LOG::Instance()
 
 AGENT_MONITOR_LOG::AGENT_MONITOR_LOG()
 {
-    wxString homeDir = wxFileName::GetHomeDir();
-    wxString logDir = homeDir + wxS( "/Library/Logs/Zeo" );
+#ifdef __APPLE__
+    wxString logDir = wxFileName::GetHomeDir() + wxS( "/Library/Logs/Zeo" );
+#else
+    wxString logDir = wxStandardPaths::Get().GetUserDataDir() + wxFileName::GetPathSeparator() + wxS( "logs" );
+#endif
 
     if( !wxFileName::DirExists( logDir ) )
         wxFileName::Mkdir( logDir, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
 
-    m_logPath = ( logDir + wxS( "/agent-monitor.jsonl" ) ).ToStdString();
+    m_logPath = ( logDir + wxFileName::GetPathSeparator() + wxS( "agent-monitor.jsonl" ) ).ToStdString();
 }
 
 

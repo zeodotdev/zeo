@@ -11,6 +11,7 @@
 #include <mail_type.h>
 #include <frame_type.h>
 #include <pgm_base.h>
+#include <bitmaps.h>
 #include <wx/app.h>
 #include <wx/sizer.h>
 #include <wx/log.h>
@@ -104,6 +105,23 @@ VCS_FRAME::VCS_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     SetSizer( mainSizer );
     Layout();
+
+    // Set window icon (multiple sizes for title bar + taskbar)
+    {
+        wxIcon icon;
+        wxIconBundle icon_bundle;
+
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_vcs, 48 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_vcs, 64 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_vcs, 128 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_vcs, 256 ) );
+        icon_bundle.AddIcon( icon );
+
+        SetIcons( icon_bundle );
+    }
 
     wxLogDebug( "VCS_FRAME: Created" );
 }

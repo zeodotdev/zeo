@@ -8,6 +8,7 @@
 #endif
 #include <kiway_mail.h>
 #include <mail_type.h>
+#include <bitmaps.h>
 #include <wx/sizer.h>
 #include <wx/settings.h>
 #include <id.h>
@@ -223,6 +224,25 @@ TERMINAL_FRAME::TERMINAL_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     SetSizer( mainSizer );
     SetSize( 800, 600 );
+
+    // Set window icon (multiple sizes for title bar + taskbar)
+    {
+        wxIcon icon;
+        wxIconBundle icon_bundle;
+
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_terminal, 16 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_terminal, 32 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_terminal, 48 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_terminal, 128 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_terminal, 256 ) );
+        icon_bundle.AddIcon( icon );
+
+        SetIcons( icon_bundle );
+    }
 
     // Add initial terminal
     AddTerminal( TERMINAL_PANEL::MODE_SYSTEM );

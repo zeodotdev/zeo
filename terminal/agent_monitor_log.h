@@ -7,7 +7,9 @@
 
 /**
  * Singleton JSONL logger for agent command events.
- * Writes timestamped JSON lines to ~/Library/Logs/Zeo/agent-monitor.jsonl.
+ * Writes timestamped JSON lines to the platform log directory:
+ *   macOS:   ~/Library/Logs/Zeo/agent-monitor.jsonl
+ *   Windows: %APPDATA%/Zeo/logs/agent-monitor.jsonl
  * Used by `zeo monitor` to watch agent shell calls in real-time.
  */
 class AGENT_MONITOR_LOG

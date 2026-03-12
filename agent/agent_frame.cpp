@@ -685,13 +685,35 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Bind async tool execution completion event (for background tools like autorouter)
     Bind( EVT_TOOL_EXECUTION_COMPLETE, &AGENT_FRAME::OnAsyncToolComplete, this );
 
-    // Create menu bar
+    // Create menu bar (on macOS the menu bar lives in the system bar and is required;
+    // on Windows/Linux it adds an unwanted "File" strip at the top of the agent window)
+#ifdef __APPLE__
     wxMenuBar* menuBar = new wxMenuBar();
     wxMenu* fileMenu = new wxMenu();
     fileMenu->Append( wxID_EXIT, "E&xit\tAlt-X", "Exit application" );
 
     menuBar->Append( fileMenu, "&File" );
     SetMenuBar( menuBar );
+#endif
+
+    // Set window icon (multiple sizes for title bar + taskbar)
+    {
+        wxIcon icon;
+        wxIconBundle icon_bundle;
+
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_agent, 16 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_agent, 32 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_agent, 48 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_agent, 128 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_agent, 256 ) );
+        icon_bundle.AddIcon( icon );
+
+        SetIcons( icon_bundle );
+    }
 
     // Push initial UI state to webview after it loads
     // (Auth state, model list, chat title will be pushed once the page finishes loading)

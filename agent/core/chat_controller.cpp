@@ -912,7 +912,7 @@ void CHAT_CONTROLLER::HandleLLMComplete()
     if( m_ctx.GetState() == AgentConversationState::TOOL_USE_DETECTED )
     {
         wxLogInfo( "CHAT_CONTROLLER::HandleLLMComplete - stream complete, starting tool execution" );
-        ExecuteNextTool();
+        ExecuteAllTools();
         return;
     }
 
@@ -999,142 +999,139 @@ void CHAT_CONTROLLER::HandleToolResult( const std::string& aToolId,
 // Internal methods
 // ============================================================================
 
-void CHAT_CONTROLLER::ExecuteNextTool()
+void CHAT_CONTROLLER::ExecuteAllTools()
 {
-    wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool called" );
-    PendingToolCall* tool = m_ctx.GetNextPendingToolCall();
-    if( !tool )
+    wxLogInfo( "CHAT_CONTROLLER::ExecuteAllTools called" );
+
+    auto allTools = m_ctx.GetAllPendingToolCalls();
+    if( allTools.empty() )
     {
-        wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - no more tools, continuing chat" );
+        wxLogInfo( "CHAT_CONTROLLER::ExecuteAllTools - no tools, continuing chat" );
         ContinueChat();
         return;
     }
 
-    wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - executing tool: %s (id=%s) input=%s",
-               tool->tool_name.c_str(), tool->tool_use_id.c_str(),
-               tool->tool_input.dump().c_str() );
+    // Sync editor state and IPC function once before launching all tools
+    if( m_syncEditorStateFn )
+    {
+        m_syncEditorStateFn();
+    }
+    TOOL_REGISTRY::Instance().SetSendRequestFn( m_sendRequestFn );
 
-    // Mark as executing
-    tool->is_executing = true;
-    tool->start_time = wxGetUTCTimeMillis();
-
+    // Transition to EXECUTING_TOOL once for the batch
     AgentConversationState oldState = m_ctx.GetState();
     m_ctx.TransitionTo( AgentConversationState::EXECUTING_TOOL );
     EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
                                                               static_cast<int>( m_ctx.GetState() ) ) );
 
-    // Get tool description
-    std::string desc = TOOL_REGISTRY::Instance().GetDescription( tool->tool_name, tool->tool_input );
+    wxLogInfo( "CHAT_CONTROLLER::ExecuteAllTools - launching %zu tools in parallel",
+               allTools.size() );
 
-    // Emit tool start event
+    for( PendingToolCall* tool : allTools )
+    {
+        // Frame-managed tools require user interaction (approval dialogs).
+        // Defer them until all parallel tools complete to avoid blocking the batch.
+        if( tool->tool_name == "open_editor" || tool->tool_name == "sch_run_erc" )
+        {
+            wxLogInfo( "CHAT_CONTROLLER::ExecuteAllTools - deferring frame-managed tool: %s (id=%s)",
+                       tool->tool_name.c_str(), tool->tool_use_id.c_str() );
+            continue;
+        }
+
+        // Mark as executing
+        tool->is_executing = true;
+        tool->start_time = wxGetUTCTimeMillis();
+
+        wxLogInfo( "CHAT_CONTROLLER::ExecuteAllTools - launching tool: %s (id=%s) input=%s",
+                   tool->tool_name.c_str(), tool->tool_use_id.c_str(),
+                   tool->tool_input.dump().c_str() );
+
+        // Get tool description and emit start event
+        std::string desc = TOOL_REGISTRY::Instance().GetDescription( tool->tool_name, tool->tool_input );
+        EmitEvent( EVT_CHAT_TOOL_START, ChatToolStartData( tool->tool_use_id, tool->tool_name,
+                                                            desc, tool->tool_input ) );
+        AGENT_MONITOR_LOG::Instance().LogToolStart( tool->tool_use_id, tool->tool_name,
+                                                     desc, tool->tool_input.dump() );
+
+        // Already-async tools (e.g. pcb_autoroute): use existing ExecuteAsync path
+        if( TOOL_REGISTRY::Instance().HasHandler( tool->tool_name ) &&
+            TOOL_REGISTRY::Instance().IsAsync( tool->tool_name ) )
+        {
+            wxLogInfo( "CHAT_CONTROLLER::ExecuteAllTools - async tool: %s", tool->tool_name.c_str() );
+            TOOL_REGISTRY::Instance().ExecuteAsync( tool->tool_name, tool->tool_input,
+                                                     tool->tool_use_id, m_eventSink );
+            continue;
+        }
+
+        // All other tools: spawn a thread. Result arrives via EVT_TOOL_EXECUTION_COMPLETE.
+        std::string toolId = tool->tool_use_id;
+        std::string toolName = tool->tool_name;
+        nlohmann::json toolInput = tool->tool_input;
+        wxEvtHandler* sink = m_eventSink;
+
+        std::thread( [toolId, toolName, toolInput, sink]()
+        {
+            std::string result;
+            bool success = false;
+
+            try
+            {
+                result = TOOL_REGISTRY::Instance().ExecuteToolSync( toolName, toolInput );
+                success = !result.empty() && result.find( "Error:" ) != 0;
+            }
+            catch( const std::exception& e )
+            {
+                result = std::string( "Error: Tool execution failed with exception: " ) + e.what();
+                success = false;
+            }
+            catch( ... )
+            {
+                result = "Error: Tool execution failed with unknown exception";
+                success = false;
+            }
+
+            ToolExecutionResult tr;
+            tr.tool_use_id = toolId;
+            tr.tool_name = toolName;
+            tr.result = result;
+            tr.success = success;
+            PostToolResult( sink, tr );
+        } ).detach();
+    }
+
+    // If ALL tools were frame-managed (nothing was launched in parallel),
+    // start the first deferred tool now.
+    if( !m_ctx.GetExecutingToolCall() )
+    {
+        ExecuteDeferredFrameTool();
+    }
+}
+
+
+void CHAT_CONTROLLER::ExecuteDeferredFrameTool()
+{
+    // Find next non-executing pending tool (a deferred frame-managed tool)
+    PendingToolCall* tool = m_ctx.GetNextPendingToolCall();
+    if( !tool )
+    {
+        // No more tools — all done
+        ContinueChat();
+        return;
+    }
+
+    wxLogInfo( "CHAT_CONTROLLER::ExecuteDeferredFrameTool - starting frame-managed tool: %s (id=%s)",
+               tool->tool_name.c_str(), tool->tool_use_id.c_str() );
+
+    tool->is_executing = true;
+    tool->start_time = wxGetUTCTimeMillis();
+
+    std::string desc = TOOL_REGISTRY::Instance().GetDescription( tool->tool_name, tool->tool_input );
     EmitEvent( EVT_CHAT_TOOL_START, ChatToolStartData( tool->tool_use_id, tool->tool_name,
                                                         desc, tool->tool_input ) );
-
-    // Log tool start to monitor log
     AGENT_MONITOR_LOG::Instance().LogToolStart( tool->tool_use_id, tool->tool_name,
                                                  desc, tool->tool_input.dump() );
 
-    // open_editor is frame-managed: it has a deferred approval flow that can't
-    // fit the synchronous Execute() interface. AGENT_FRAME handles it directly.
-    if( tool->tool_name == "open_editor" )
-    {
-        return;
-    }
-
-    // sch_run_erc requires user approval before execution to avoid UI hangs
-    // on large projects. AGENT_FRAME handles the approval flow.
-    if( tool->tool_name == "sch_run_erc" )
-    {
-        return;
-    }
-
-    // Sync editor state to TOOL_REGISTRY before tool execution
-    // This ensures handlers have accurate editor open/closed state
-    if( m_syncEditorStateFn )
-    {
-        m_syncEditorStateFn();
-    }
-
-    // Provide send request function to handlers that need IPC
-    TOOL_REGISTRY::Instance().SetSendRequestFn( m_sendRequestFn );
-
-    // Check if this is an async tool (runs in background thread)
-    if( TOOL_REGISTRY::Instance().HasHandler( tool->tool_name ) &&
-        TOOL_REGISTRY::Instance().IsAsync( tool->tool_name ) )
-    {
-        wxLogInfo( "CHAT_CONTROLLER::ExecuteNextTool - executing async tool: %s", tool->tool_name.c_str() );
-        // Start async execution - result will come via EVT_TOOL_EXECUTION_COMPLETE event
-        TOOL_REGISTRY::Instance().ExecuteAsync( tool->tool_name, tool->tool_input,
-                                                 tool->tool_use_id, m_eventSink );
-        return;
-    }
-
-    // Execute tool with exception handling to prevent stuck state
-    std::string result;
-    bool success = false;
-    auto toolStart = std::chrono::steady_clock::now();
-
-    try
-    {
-        result = TOOL_REGISTRY::Instance().ExecuteToolSync( tool->tool_name, tool->tool_input );
-        success = !result.empty() && result.find( "Error:" ) != 0;
-    }
-    catch( const std::exception& e )
-    {
-        wxLogError( "CHAT_CONTROLLER::ExecuteNextTool - exception during tool execution: %s", e.what() );
-        result = std::string( "Error: Tool execution failed with exception: " ) + e.what();
-        success = false;
-    }
-    catch( ... )
-    {
-        wxLogError( "CHAT_CONTROLLER::ExecuteNextTool - unknown exception during tool execution" );
-        result = "Error: Tool execution failed with unknown exception";
-        success = false;
-    }
-
-    int durationMs = static_cast<int>( std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - toolStart ).count() );
-    m_llmClient->AddToolDuration( tool->tool_use_id, durationMs );
-
-    // Notify VCS after a successful write tool so it can auto-init git if needed.
-    // Only fires once per chat session to avoid repeated checks.
-    if( success && !m_vcsNotified && m_vcsNotifyFn )
-    {
-        // Check if this tool modifies files (read_only == false)
-        bool isWriteTool = true;
-        for( const auto& t : m_tools )
-        {
-            if( t.name == tool->tool_name )
-            {
-                isWriteTool = !t.read_only;
-                break;
-            }
-        }
-
-        if( isWriteTool )
-        {
-            m_vcsNotified = true;
-            m_vcsNotifyFn();
-        }
-    }
-
-    // Background datasheet extraction for symbols with datasheet URLs
-    if( success && ( tool->tool_name == "sch_add"
-                     || tool->tool_name == "sch_get_summary"
-                     || tool->tool_name == "sch_inspect" ) )
-    {
-        try
-        {
-            DATASHEET_HANDLER::MaybeTriggerExtraction( tool->tool_name, result );
-        }
-        catch( ... )
-        {
-            wxLogTrace( "Agent", "DATASHEET_HANDLER: Exception in MaybeTriggerExtraction" );
-        }
-    }
-
-    // Process the result (logging happens in ProcessToolResult)
-    ProcessToolResult( tool->tool_use_id, result, success );
+    // Frame handles this tool and calls HandleToolResult() when done
 }
 
 
@@ -1281,6 +1278,48 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
     long durationMs = static_cast<long>( ( wxGetUTCTimeMillis() - tool->start_time ).GetValue() );
     AGENT_MONITOR_LOG::Instance().LogToolEnd( aToolId, toolName, tr.result, aSuccess, durationMs );
 
+    // Track tool duration for metrics
+    if( m_llmClient )
+    {
+        m_llmClient->AddToolDuration( aToolId, static_cast<int>( durationMs ) );
+    }
+
+    // Notify VCS after a successful write tool so it can auto-init git if needed.
+    // Only fires once per chat session to avoid repeated checks.
+    if( aSuccess && !m_vcsNotified && m_vcsNotifyFn )
+    {
+        bool isWriteTool = true;
+        for( const auto& t : m_tools )
+        {
+            if( t.name == toolName )
+            {
+                isWriteTool = !t.read_only;
+                break;
+            }
+        }
+
+        if( isWriteTool )
+        {
+            m_vcsNotified = true;
+            m_vcsNotifyFn();
+        }
+    }
+
+    // Background datasheet extraction for symbols with datasheet URLs
+    if( aSuccess && ( toolName == "sch_add"
+                      || toolName == "sch_get_summary"
+                      || toolName == "sch_inspect" ) )
+    {
+        try
+        {
+            DATASHEET_HANDLER::MaybeTriggerExtraction( toolName, aResult );
+        }
+        catch( ... )
+        {
+            wxLogTrace( "Agent", "DATASHEET_HANDLER: Exception in MaybeTriggerExtraction" );
+        }
+    }
+
     // Remove from pending
     m_ctx.RemovePendingToolCall( aToolId );
 
@@ -1289,37 +1328,47 @@ void CHAT_CONTROLLER::ProcessToolResult( const std::string& aToolId,
     // message with tool_uses. We collect results in m_ctx.completed_tool_results
     // and add them all at once when all tools are done.
 
-    // Execute next tool or continue chat
+    // If more tools are still pending, check whether they're running or deferred
     if( m_ctx.HasPendingToolCalls() )
     {
-        ExecuteNextTool();
-    }
-    else
-    {
-        // All tools complete - add ALL tool results as ONE user message
-        AddAllToolResultsToHistory();
-
-        // If the frame has a queued user message, interrupt the auto-continue loop
-        // so the queued message gets sent between tool rounds (like Claude Code).
-        if( m_hasQueuedMessageFn && m_hasQueuedMessageFn() )
+        // If there's at least one executing tool, wait for it
+        if( m_ctx.GetExecutingToolCall() )
         {
-            wxLogInfo( "CHAT_CONTROLLER::ProcessToolResult - queued message detected, "
-                       "yielding to frame instead of auto-continuing" );
-            AgentConversationState oldState = m_ctx.GetState();
-            m_ctx.TransitionTo( AgentConversationState::IDLE );
-            EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
-                                                                      static_cast<int>( m_ctx.GetState() ) ) );
-            EmitEvent( EVT_CHAT_TURN_COMPLETE, ChatTurnCompleteData( false ) );
+            wxLogInfo( "CHAT_CONTROLLER::ProcessToolResult - %zu tools still pending, waiting",
+                       m_ctx.GetPendingToolCallCount() );
             return;
         }
 
+        // All executing tools done but deferred frame-managed tools remain — start next one
+        wxLogInfo( "CHAT_CONTROLLER::ProcessToolResult - parallel tools done, "
+                   "starting deferred frame-managed tool" );
+        ExecuteDeferredFrameTool();
+        return;
+    }
+
+    // All tools complete - add ALL tool results as ONE user message
+    AddAllToolResultsToHistory();
+
+    // If the frame has a queued user message, interrupt the auto-continue loop
+    // so the queued message gets sent between tool rounds (like Claude Code).
+    if( m_hasQueuedMessageFn && m_hasQueuedMessageFn() )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::ProcessToolResult - queued message detected, "
+                   "yielding to frame instead of auto-continuing" );
         AgentConversationState oldState = m_ctx.GetState();
-        m_ctx.TransitionTo( AgentConversationState::PROCESSING_TOOL_RESULT );
+        m_ctx.TransitionTo( AgentConversationState::IDLE );
         EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
                                                                   static_cast<int>( m_ctx.GetState() ) ) );
-
-        ContinueChat();
+        EmitEvent( EVT_CHAT_TURN_COMPLETE, ChatTurnCompleteData( false ) );
+        return;
     }
+
+    AgentConversationState oldState = m_ctx.GetState();
+    m_ctx.TransitionTo( AgentConversationState::PROCESSING_TOOL_RESULT );
+    EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
+                                                              static_cast<int>( m_ctx.GetState() ) ) );
+
+    ContinueChat();
 }
 
 

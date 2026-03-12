@@ -250,8 +250,9 @@ private:
     std::set<int>          m_historicalToolResultExpanded;
     int                    m_toolResultCounter;
 
-    // Active tool result - lives in permanent DOM, not streaming div
-    wxString               m_activeRunningHtml;
+    // Active tool results - lives in permanent DOM, not streaming div
+    // With parallel tools, multiple running boxes exist simultaneously.
+    std::map<int, wxString> m_runningHtmlByIdx;   // idx -> running HTML for Replace tracking
     int                    m_activeToolResultIdx;
 
     void                   RenderChatHistory();

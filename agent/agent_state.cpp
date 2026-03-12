@@ -151,6 +151,17 @@ PendingToolCall* AgentConversationContext::GetExecutingToolCall()
 }
 
 
+std::vector<PendingToolCall*> AgentConversationContext::GetAllPendingToolCalls()
+{
+    std::vector<PendingToolCall*> tools;
+    for( auto& tool : m_pendingTools )
+    {
+        tools.push_back( &tool );
+    }
+    return tools;
+}
+
+
 PendingToolCall* AgentConversationContext::FindPendingToolCall( const std::string& aToolUseId )
 {
     for( auto& tool : m_pendingTools )

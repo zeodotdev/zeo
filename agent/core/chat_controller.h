@@ -367,9 +367,18 @@ private:
     std::vector<LLM_TOOL> GetFilteredTools() const;
 
     /**
-     * Execute the next pending tool in the queue.
+     * Execute all pending tools in parallel.
+     * Spawns a thread for each tool; results arrive via EVT_TOOL_EXECUTION_COMPLETE.
+     * Frame-managed tools (open_editor, sch_run_erc) are deferred until parallel tools complete.
      */
-    void ExecuteNextTool();
+    void ExecuteAllTools();
+
+    /**
+     * Execute the next deferred frame-managed tool.
+     * Called after all parallel tools complete. Frame-managed tools require user
+     * interaction (approval dialogs) and must run sequentially.
+     */
+    void ExecuteDeferredFrameTool();
 
     /**
      * Process a tool result and continue the chat.

@@ -405,8 +405,12 @@ void AGENT_CLOUD_SYNC::SaveSyncState()
 
 std::string AGENT_CLOUD_SYNC::GetLogDir()
 {
-    wxString homeDir = wxFileName::GetHomeDir();
-    return ( homeDir + wxS( "/Library/Logs/Zeo" ) ).ToStdString();
+#ifdef __APPLE__
+    wxString logDir = wxFileName::GetHomeDir() + wxS( "/Library/Logs/Zeo" );
+#else
+    wxString logDir = wxStandardPaths::Get().GetUserDataDir() + wxFileName::GetPathSeparator() + wxS( "logs" );
+#endif
+    return logDir.ToStdString();
 }
 
 

@@ -690,13 +690,35 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Bind async tool execution completion event (for background tools like autorouter)
     Bind( EVT_TOOL_EXECUTION_COMPLETE, &AGENT_FRAME::OnAsyncToolComplete, this );
 
-    // Create menu bar
+    // Create menu bar (on macOS the menu bar lives in the system bar and is required;
+    // on Windows/Linux it adds an unwanted "File" strip at the top of the agent window)
+#ifdef __APPLE__
     wxMenuBar* menuBar = new wxMenuBar();
     wxMenu* fileMenu = new wxMenu();
     fileMenu->Append( wxID_EXIT, "E&xit\tAlt-X", "Exit application" );
 
     menuBar->Append( fileMenu, "&File" );
     SetMenuBar( menuBar );
+#endif
+
+    // Set window icon (multiple sizes for title bar + taskbar)
+    {
+        wxIcon icon;
+        wxIconBundle icon_bundle;
+
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_agent, 16 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_agent, 32 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_agent, 48 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_agent, 128 ) );
+        icon_bundle.AddIcon( icon );
+        icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_agent, 256 ) );
+        icon_bundle.AddIcon( icon );
+
+        SetIcons( icon_bundle );
+    }
 
     // Push initial UI state to webview after it loads
     // (Auth state, model list, chat title will be pushed once the page finishes loading)
@@ -1271,28 +1293,6 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
 
             wxLogMessage( "AGENT_FRAME: MCP agent tool '%s' completed, result_len=%zu",
                           toolName, result.length() );
-
-            // Cache screenshot image for CC backend (CC strips images from tool_result stream)
-            if( toolName == "screenshot" && m_backend == AgentBackend::CLAUDE_CODE )
-            {
-                try
-                {
-                    auto resultJson = nlohmann::json::parse( result );
-
-                    if( resultJson.contains( "image" ) && resultJson["image"].is_object() )
-                    {
-                        m_cachedScreenshotBase64 = resultJson["image"].value( "base64", "" );
-                        m_cachedScreenshotMimeType = resultJson["image"].value( "media_type",
-                                                                                "image/png" );
-                        wxLogInfo( "AGENT_FRAME: Cached screenshot image (%zu bytes)",
-                                   m_cachedScreenshotBase64.size() );
-                    }
-                }
-                catch( ... )
-                {
-                    // Not critical — screenshot will just lack image in UI
-                }
-            }
 
             aEvent.SetPayload( result );
         }
@@ -4070,7 +4070,9 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
 
     // Now clear streaming state in controller (text is baked above)
-    if( m_chatController )
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+        m_ccController->ClearCurrentResponse();
+    else if( m_chatController )
         m_chatController->ClearStreamingState();
 
     // Preserve thinking content to history before clearing (needed for correct index tracking)
@@ -4234,18 +4236,6 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
     wxLogInfo( "AGENT_FRAME::OnChatToolComplete - tool: %s, success: %s",
             data->toolName.c_str(), data->success ? "true" : "false" );
-
-    // CC backend: attach cached screenshot image (CC strips images from tool_result stream)
-    if( m_backend == AgentBackend::CLAUDE_CODE && !m_cachedScreenshotBase64.empty()
-        && !data->hasImage )
-    {
-        data->hasImage = true;
-        data->imageBase64 = std::move( m_cachedScreenshotBase64 );
-        data->imageMediaType = std::move( m_cachedScreenshotMimeType );
-        m_cachedScreenshotBase64.clear();
-        m_cachedScreenshotMimeType.clear();
-        wxLogInfo( "AGENT_FRAME::OnChatToolComplete - attached cached screenshot image" );
-    }
 
     // Determine status color for dot indicator
     wxString statusColor;

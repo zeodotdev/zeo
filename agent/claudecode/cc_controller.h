@@ -41,6 +41,7 @@ public:
     bool IsRunning() const;
     std::string GetSessionId() const { return m_sessionId; }
     const std::string& GetCurrentResponse() const { return m_currentResponse; }
+    void ClearCurrentResponse() { m_currentResponse.clear(); }
 
 private:
     // Event handlers for raw CC subprocess events
@@ -79,6 +80,7 @@ private:
     std::string m_sessionId;
     bool        m_busy = false;
     bool        m_intentionalStop = false;  // Suppress error on intentional process kill
+    std::string m_lastStderrLine;             // Last stderr line (for exit error context)
 
     // Accumulation state for current assistant turn
     std::string m_currentResponse;       // Accumulated text content

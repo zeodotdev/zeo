@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <map>
 #include <atomic>
 #include <nlohmann/json.hpp>
 #include <wx/thread.h>
@@ -121,6 +122,15 @@ public:
         m_logStoragePath = aLogStoragePath;
     }
 
+    /**
+     * Record a tool execution duration for the next request's metadata.
+     * Keyed by tool_use_id so the proxy can match it to the tool_result.
+     */
+    void AddToolDuration( const std::string& aToolUseId, int aDurationMs )
+    {
+        m_toolDurations[aToolUseId] = aDurationMs;
+    }
+
 private:
     AGENT_FRAME* m_parent;
     AGENT_AUTH*  m_auth = nullptr;
@@ -136,6 +146,9 @@ private:
     std::string  m_chatTitle;
     std::string  m_chatStoragePath;
     std::string  m_logStoragePath;
+
+    // Tool execution durations (tool_use_id → ms), sent in metadata and cleared per request
+    std::map<std::string, int> m_toolDurations;
 
     // Async request state
     std::atomic<bool> m_requestInProgress;
@@ -160,7 +173,8 @@ public:
                         const std::string& aChatTitle,
                         const std::string& aChatStoragePath,
                         const std::string& aLogStoragePath,
-                        const std::string& aSystemPrompt );
+                        const std::string& aSystemPrompt,
+                        const std::map<std::string, int>& aToolDurations = {} );
 
     virtual ~LLM_REQUEST_THREAD();
 
@@ -183,6 +197,9 @@ private:
     std::string           m_chatTitle;
     std::string           m_chatStoragePath;
     std::string           m_logStoragePath;
+
+    // Tool execution durations from the client (tool_use_id → ms)
+    std::map<std::string, int> m_toolDurations;
 
     // Flag to check if cancellation was requested
     std::atomic<bool>* m_cancelFlag;

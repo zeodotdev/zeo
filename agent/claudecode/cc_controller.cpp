@@ -4,8 +4,11 @@
 #include "../core/chat_events.h"
 
 #include "../tools/tool_registry.h"
+#include <zeo/agent_auth.h>
+#include <kicad_curl/kicad_curl_easy.h>
 
 #include <wx/log.h>
+#include <wx/base64.h>
 #include <wx/dir.h>
 #include <wx/filename.h>
 #include <wx/stdpaths.h>
@@ -14,6 +17,7 @@
 #include <fstream>
 #include <sstream>
 #include <set>
+#include <thread>
 
 using json = nlohmann::json;
 
@@ -603,6 +607,16 @@ std::string CC_CONTROLLER::GenerateMcpConfig()
     config["mcpServers"]["zeo"]["args"] = json::array( { "-m", "kipy.mcp" } );
     config["mcpServers"]["zeo"]["env"]["KICAD_API_SOCKET"] = m_apiSocketPath;
 
+    // Pass Supabase credentials for tool usage tracking in MCP server
+    const auto& supabaseUrl = TOOL_REGISTRY::Instance().GetSupabaseUrl();
+    const auto& supabaseKey = TOOL_REGISTRY::Instance().GetSupabaseAnonKey();
+
+    if( !supabaseUrl.empty() && !supabaseKey.empty() )
+    {
+        config["mcpServers"]["zeo"]["env"]["ZEO_SUPABASE_URL"] = supabaseUrl;
+        config["mcpServers"]["zeo"]["env"]["ZEO_SUPABASE_ANON_KEY"] = supabaseKey;
+    }
+
 #ifdef __WXMSW__
     // On Windows, Python is the system interpreter — set PYTHONPATH to the
     // bundled site-packages so it finds the correct kipy version.
@@ -756,6 +770,117 @@ void CC_CONTROLLER::HandleResultMessage( const json& aMsg )
         PostChatEvent( m_eventSink, EVT_CHAT_TOOL_COMPLETE, data );
     }
     m_pendingToolIds.clear();
+
+    // Record API usage to Supabase (fire-and-forget background thread)
+    if( aMsg.contains( "usage" ) && aMsg["usage"].is_object() )
+    {
+        const auto& usage = aMsg["usage"];
+        int inputTokens = usage.value( "input_tokens", 0 );
+        int outputTokens = usage.value( "output_tokens", 0 );
+        int cacheCreation = usage.value( "cache_creation_input_tokens", 0 );
+        int cacheRead = usage.value( "cache_read_input_tokens", 0 );
+
+        // Get model from modelUsage keys (first entry)
+        std::string model = "claude-code";
+        if( aMsg.contains( "modelUsage" ) && aMsg["modelUsage"].is_object() )
+        {
+            for( const auto& [key, val] : aMsg["modelUsage"].items() )
+            {
+                model = key;
+                break;
+            }
+        }
+
+        auto& registry = TOOL_REGISTRY::Instance();
+        std::string supabaseUrl = registry.GetSupabaseUrl();
+        std::string supabaseKey = registry.GetSupabaseAnonKey();
+        AGENT_AUTH* auth = registry.GetAuth();
+
+        if( !supabaseUrl.empty() && auth && auth->IsAuthenticated() )
+        {
+            std::string accessToken = auth->GetAccessToken();
+            std::string userId = ""; // Extracted from JWT below
+
+            // Decode user_id from JWT sub claim
+            if( !accessToken.empty() )
+            {
+                // Find second dot to extract payload
+                size_t dot1 = accessToken.find( '.' );
+                size_t dot2 = ( dot1 != std::string::npos ) ?
+                              accessToken.find( '.', dot1 + 1 ) : std::string::npos;
+
+                if( dot1 != std::string::npos && dot2 != std::string::npos )
+                {
+                    // wxBase64Decode handles URL-safe base64
+                    std::string payload = accessToken.substr( dot1 + 1, dot2 - dot1 - 1 );
+
+                    // Add padding
+                    while( payload.size() % 4 != 0 )
+                        payload += '=';
+
+                    // Replace URL-safe chars
+                    std::replace( payload.begin(), payload.end(), '-', '+' );
+                    std::replace( payload.begin(), payload.end(), '_', '/' );
+
+                    wxMemoryBuffer decoded = wxBase64Decode( payload );
+
+                    if( decoded.GetDataLen() > 0 )
+                    {
+                        try
+                        {
+                            std::string jsonStr( (const char*) decoded.GetData(),
+                                                 decoded.GetDataLen() );
+                            auto jwt = json::parse( jsonStr );
+                            userId = jwt.value( "sub", "" );
+                        }
+                        catch( ... ) {}
+                    }
+                }
+            }
+
+            if( !userId.empty() )
+            {
+                // Fire-and-forget POST to api_usage
+                json usageRow;
+                usageRow["user_id"] = userId;
+                usageRow["model"] = model;
+                usageRow["input_tokens"] = inputTokens;
+                usageRow["output_tokens"] = outputTokens;
+                usageRow["cache_creation_tokens"] = cacheCreation;
+                usageRow["cache_read_tokens"] = cacheRead;
+                usageRow["cost_cents"] = 0;
+                usageRow["web_search_count"] = 0;
+                usageRow["web_fetch_count"] = 0;
+
+                std::string body = usageRow.dump();
+
+                std::thread( [supabaseUrl, supabaseKey, accessToken, body]()
+                {
+                    try
+                    {
+                        KICAD_CURL_EASY curl;
+                        curl.SetURL( supabaseUrl + "/rest/v1/api_usage" );
+                        curl.SetHeader( "Content-Type", "application/json" );
+                        curl.SetHeader( "apikey", supabaseKey );
+                        curl.SetHeader( "Authorization", "Bearer " + accessToken );
+                        curl.SetHeader( "Prefer", "return=minimal" );
+                        curl.SetPostFields( body );
+                        curl.Perform();
+
+                        int status = curl.GetResponseStatusCode();
+                        if( status >= 200 && status < 300 )
+                            wxLogInfo( "CC_CONTROLLER: Recorded API usage" );
+                        else
+                            wxLogWarning( "CC_CONTROLLER: api_usage insert returned %d", status );
+                    }
+                    catch( ... )
+                    {
+                        wxLogWarning( "CC_CONTROLLER: Failed to record API usage" );
+                    }
+                }).detach();
+            }
+        }
+    }
 
     m_busy = false;
 

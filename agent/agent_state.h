@@ -156,6 +156,13 @@ public:
     PendingToolCall* GetExecutingToolCall();
 
     /**
+     * Get pointers to all pending tool calls (both executing and not-yet-executing).
+     * Used for parallel execution — iterate all tools at once.
+     * @return Vector of pointers to all pending tool calls
+     */
+    std::vector<PendingToolCall*> GetAllPendingToolCalls();
+
+    /**
      * Find a pending tool call by its ID.
      * @param aToolUseId The tool use ID to find
      * @return Pointer to the tool call, or nullptr if not found

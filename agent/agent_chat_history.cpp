@@ -94,6 +94,7 @@ void AGENT_CHAT_HISTORY::Save( const nlohmann::json& aChatHistory )
     nlohmann::json wrapper;
     wrapper["id"] = m_conversationId;
     wrapper["title"] = m_title;
+    wrapper["project_path"] = m_projectPath;
     wrapper["created_at"] = m_createdAt;
     wrapper["last_updated"] = m_lastUpdated;
     wrapper["messages"] = aChatHistory;
@@ -131,6 +132,7 @@ nlohmann::json AGENT_CHAT_HISTORY::Load( const std::string& aConversationId )
             {
                 // New format - extract metadata
                 m_title = data.value( "title", "" );
+                m_projectPath = data.value( "project_path", "" );
                 m_createdAt = data.value( "created_at", "" );
                 m_lastUpdated = data.value( "last_updated", "" );
                 return data["messages"];
@@ -153,7 +155,8 @@ nlohmann::json AGENT_CHAT_HISTORY::Load( const std::string& aConversationId )
     return nlohmann::json::array();
 }
 
-std::vector<AGENT_CHAT_HISTORY::HistoryEntry> AGENT_CHAT_HISTORY::GetHistoryList()
+std::vector<AGENT_CHAT_HISTORY::HistoryEntry> AGENT_CHAT_HISTORY::GetHistoryList(
+        const std::string& aProjectPath )
 {
     std::vector<HistoryEntry> list;
     wxString dirPath = GetHistoryDir();
@@ -189,6 +192,7 @@ std::vector<AGENT_CHAT_HISTORY::HistoryEntry> AGENT_CHAT_HISTORY::GetHistoryList
                 {
                     // New format with metadata
                     entry.title = data.value( "title", "" );
+                    entry.projectPath = data.value( "project_path", "" );
                     entry.createdAt = data.value( "created_at", "" );
                     entry.lastUpdated = data.value( "last_updated", "" );
                 }
@@ -223,6 +227,13 @@ std::vector<AGENT_CHAT_HISTORY::HistoryEntry> AGENT_CHAT_HISTORY::GetHistoryList
             entry.title = "Untitled Chat";
         }
 
+        // Filter by project path if specified
+        if( !aProjectPath.empty() && entry.projectPath != aProjectPath )
+        {
+            cont = dir.GetNext( &filename );
+            continue;
+        }
+
         list.push_back( entry );
         cont = dir.GetNext( &filename );
     }
@@ -243,6 +254,7 @@ void AGENT_CHAT_HISTORY::StartNewConversation()
     wxDateTime now = wxDateTime::Now();
     m_conversationId = now.Format( "%Y-%m-%d_%H-%M-%S" ).ToStdString();
     m_title = "";
+    m_projectPath = "";
     m_createdAt = GetCurrentTimestamp();
     m_lastUpdated = m_createdAt;
 }

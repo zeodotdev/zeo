@@ -33,11 +33,18 @@ public:
     void SetTitle( const std::string& aTitle );
 
     /**
+     * Set the project path associated with this conversation.
+     * @param aPath Absolute path to the project directory.
+     */
+    void SetProjectPath( const std::string& aPath ) { m_projectPath = aPath; }
+
+    /**
      * Get the current chat title.
      */
     std::string GetTitle() const { return m_title; }
     std::string GetCreatedAt() const { return m_createdAt; }
     std::string GetLastUpdated() const { return m_lastUpdated; }
+    std::string GetProjectPath() const { return m_projectPath; }
 
     /**
      * Save the current chat history to disk.
@@ -58,13 +65,15 @@ public:
         std::string title;
         std::string createdAt;
         std::string lastUpdated;
+        std::string projectPath;
     };
 
     /**
-     * Get a list of all saved conversations.
+     * Get a list of all saved conversations, optionally filtered by project path.
+     * @param aProjectPath If non-empty, only return conversations for this project.
      * @return Vector of history entries, sorted by lastUpdated descending (newest first).
      */
-    std::vector<HistoryEntry> GetHistoryList();
+    std::vector<HistoryEntry> GetHistoryList( const std::string& aProjectPath = "" );
 
     /**
      * Start a new conversation with a fresh UUID.
@@ -79,6 +88,7 @@ private:
 
     std::string m_conversationId;
     std::string m_title;
+    std::string m_projectPath;
     std::string m_createdAt;
     std::string m_lastUpdated;
 };

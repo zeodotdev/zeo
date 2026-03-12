@@ -356,8 +356,7 @@ wxString FileAttach::BuildHistoryBubbleHtml( const nlohmann::json& aContentArray
     wxString bubbleContent = attachHtml + escapedText;
 
     return wxString::Format(
-        "<div class=\"flex justify-end my-3\"><div class=\"bg-bg-tertiary "
-        "py-2 px-3.5 rounded-lg max-w-[80%%] whitespace-pre-wrap break-words\">%s"
+        "<div class=\"user-msg-row my-3\"><div class=\"user-msg py-2 px-3.5 whitespace-pre-wrap break-words\">%s"
         "</div></div>",
         bubbleContent );
 }

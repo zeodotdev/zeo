@@ -85,7 +85,8 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
     LLM_REQUEST_THREAD* thread = new LLM_REQUEST_THREAD(
         this, aHandler, m_modelName, aMessages, aTools, m_agentMode,
         m_chatId, m_chatTitle, m_chatStoragePath, m_logStoragePath,
-        fullPrompt );
+        fullPrompt, m_toolDurations );
+    m_toolDurations.clear();
 
     // wxThread requires Create() before Run()
     if( thread->Create() != wxTHREAD_NO_ERROR )
@@ -123,7 +124,8 @@ LLM_REQUEST_THREAD::LLM_REQUEST_THREAD( AGENT_LLM_CLIENT* aClient,
                                          const std::string& aChatTitle,
                                          const std::string& aChatStoragePath,
                                          const std::string& aLogStoragePath,
-                                         const std::string& aSystemPrompt ) :
+                                         const std::string& aSystemPrompt,
+                                         const std::map<std::string, int>& aToolDurations ) :
         wxThread( wxTHREAD_DETACHED ),
         m_client( aClient ),
         m_handler( aHandler ),
@@ -136,7 +138,8 @@ LLM_REQUEST_THREAD::LLM_REQUEST_THREAD( AGENT_LLM_CLIENT* aClient,
         m_chatId( aChatId ),
         m_chatTitle( aChatTitle ),
         m_chatStoragePath( aChatStoragePath ),
-        m_logStoragePath( aLogStoragePath )
+        m_logStoragePath( aLogStoragePath ),
+        m_toolDurations( aToolDurations )
 {
 }
 
@@ -209,6 +212,15 @@ void* LLM_REQUEST_THREAD::Entry()
 
     if( !m_systemPrompt.empty() )
         metadataObj["system_prompt"] = m_systemPrompt;
+
+    if( !m_toolDurations.empty() )
+    {
+        json durations = json::object();
+        for( const auto& [id, ms] : m_toolDurations )
+            durations[id] = ms;
+        metadataObj["tool_durations"] = durations;
+        m_toolDurations.clear();
+    }
 
     requestBody["metadata"] = metadataObj;
 

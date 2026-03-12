@@ -1267,28 +1267,6 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
             wxLogMessage( "AGENT_FRAME: MCP agent tool '%s' completed, result_len=%zu",
                           toolName, result.length() );
 
-            // Cache screenshot image for CC backend (CC strips images from tool_result stream)
-            if( toolName == "screenshot" && m_backend == AgentBackend::CLAUDE_CODE )
-            {
-                try
-                {
-                    auto resultJson = nlohmann::json::parse( result );
-
-                    if( resultJson.contains( "image" ) && resultJson["image"].is_object() )
-                    {
-                        m_cachedScreenshotBase64 = resultJson["image"].value( "base64", "" );
-                        m_cachedScreenshotMimeType = resultJson["image"].value( "media_type",
-                                                                                "image/png" );
-                        wxLogInfo( "AGENT_FRAME: Cached screenshot image (%zu bytes)",
-                                   m_cachedScreenshotBase64.size() );
-                    }
-                }
-                catch( ... )
-                {
-                    // Not critical — screenshot will just lack image in UI
-                }
-            }
-
             aEvent.SetPayload( result );
         }
         catch( const std::exception& e )
@@ -3988,7 +3966,9 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     m_fullHtmlContent.Replace( "<div id=\"streaming-content\">", "<div>" );
 
     // Now clear streaming state in controller (text is baked above)
-    if( m_chatController )
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+        m_ccController->ClearCurrentResponse();
+    else if( m_chatController )
         m_chatController->ClearStreamingState();
 
     // Preserve thinking content to history before clearing (needed for correct index tracking)
@@ -4152,18 +4132,6 @@ void AGENT_FRAME::OnChatToolComplete( wxThreadEvent& aEvent )
 
     wxLogInfo( "AGENT_FRAME::OnChatToolComplete - tool: %s, success: %s",
             data->toolName.c_str(), data->success ? "true" : "false" );
-
-    // CC backend: attach cached screenshot image (CC strips images from tool_result stream)
-    if( m_backend == AgentBackend::CLAUDE_CODE && !m_cachedScreenshotBase64.empty()
-        && !data->hasImage )
-    {
-        data->hasImage = true;
-        data->imageBase64 = std::move( m_cachedScreenshotBase64 );
-        data->imageMediaType = std::move( m_cachedScreenshotMimeType );
-        m_cachedScreenshotBase64.clear();
-        m_cachedScreenshotMimeType.clear();
-        wxLogInfo( "AGENT_FRAME::OnChatToolComplete - attached cached screenshot image" );
-    }
 
     // Determine status color for dot indicator
     wxString statusColor;

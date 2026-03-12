@@ -41,6 +41,7 @@ public:
     bool IsRunning() const;
     std::string GetSessionId() const { return m_sessionId; }
     const std::string& GetCurrentResponse() const { return m_currentResponse; }
+    void ClearCurrentResponse() { m_currentResponse.clear(); }
 
 private:
     // Event handlers for raw CC subprocess events

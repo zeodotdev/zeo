@@ -368,8 +368,12 @@ private:
 
     /**
      * Execute all pending tools in parallel.
-     * Spawns a thread for each tool; results arrive via EVT_TOOL_EXECUTION_COMPLETE.
-     * Frame-managed tools (open_editor, sch_run_erc) are deferred until parallel tools complete.
+     *
+     * Tools are classified by their execution requirements:
+     *  - Threaded: spawned on background threads, results arrive via EVT_TOOL_EXECUTION_COMPLETE
+     *  - Async: handler-managed background execution (e.g. pcb_autoroute)
+     *  - IPC: require main thread (SendRequest uses wxYield), run sequentially in Pass 2
+     *  - Frame-managed: require user interaction (open_editor, sch_run_erc), deferred until others finish
      */
     void ExecuteAllTools();
 
@@ -379,6 +383,13 @@ private:
      * interaction (approval dialogs) and must run sequentially.
      */
     void ExecuteDeferredFrameTool();
+
+    /**
+     * Emit EVT_CHAT_TOOL_START and log to monitor.
+     * Shared by ExecuteAllTools and ExecuteDeferredFrameTool.
+     */
+    void EmitToolStart( const std::string& aToolId, const std::string& aToolName,
+                        const nlohmann::json& aInput );
 
     /**
      * Process a tool result and continue the chat.

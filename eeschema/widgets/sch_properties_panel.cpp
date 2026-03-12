@@ -200,9 +200,14 @@ SCH_PROPERTIES_PANEL::SCH_PROPERTIES_PANEL( wxWindow* aParent, SCH_BASE_FRAME* a
     else
     {
         PG_FPID_EDITOR* fpEditor = new PG_FPID_EDITOR( m_frame,
-                [this]()
+                []( EDA_DRAW_FRAME* aFrame )
                 {
-                    SCH_SELECTION& sel = m_frame->GetToolManager()->GetTool<SCH_SELECTION_TOOL>()->GetSelection();
+                    SCH_BASE_FRAME* schFrame = dynamic_cast<SCH_BASE_FRAME*>( aFrame );
+
+                    if( !schFrame || !schFrame->GetToolManager() )
+                        return std::string( "" );
+
+                    SCH_SELECTION& sel = schFrame->GetToolManager()->GetTool<SCH_SELECTION_TOOL>()->GetSelection();
                     LIB_SYMBOL*    libSymbol = nullptr;
 
                     for( EDA_ITEM* item : sel )

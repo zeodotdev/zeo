@@ -211,10 +211,20 @@ endif()
 target_link_libraries( kicad pcm )
 target_link_libraries( kicad-cli pcm )
 
-install( TARGETS kicad
-    DESTINATION ${KICAD_BIN}
-    COMPONENT binary
-    )
+if( APPLE )
+    # On macOS Sequoia+, cmake's file(INSTALL) fails on files with the immutable
+    # com.apple.provenance extended attribute. Use ditto instead, which handles
+    # xattrs gracefully and is Apple's recommended tool for copying bundles.
+    install( CODE "
+        message( STATUS \"Installing Zeo.app bundle via ditto...\" )
+        execute_process( COMMAND ditto \"${CMAKE_CURRENT_BINARY_DIR}/Zeo.app\" \"${KICAD_BIN}/Zeo.app\" )
+    " COMPONENT binary )
+else()
+    install( TARGETS kicad
+        DESTINATION ${KICAD_BIN}
+        COMPONENT binary
+        )
+endif()
 
 if( NOT APPLE )
     install( TARGETS kicad-cli
@@ -267,8 +277,11 @@ if( APPLE )
             )
 
         # Now install Python framework properly (GET_RUNTIME_DEPENDENCIES can't do this)
+        # Overlay the full Python framework on top of the partial one from file(INSTALL).
+        # Use ditto instead of cp -RP to avoid macOS Sequoia com.apple.provenance failures
+        # (cp -RP tries to preserve the immutable provenance xattr and fails)
         execute_process( COMMAND rm ${OSX_BUNDLE_INSTALL_LIB_DIR}/Python )
-        execute_process( COMMAND cp -RP ${PYTHON_FRAMEWORK} ${OSX_BUNDLE_INSTALL_LIB_DIR}/ )
+        execute_process( COMMAND ditto ${PYTHON_FRAMEWORK} ${OSX_BUNDLE_INSTALL_LIB_DIR}/Python.framework )
     ]] )
 
     # move all individual app bundles into main bundle
@@ -276,9 +289,11 @@ if( APPLE )
         # helper function to move a bundle into main bundle
         function( move_to_main_bundle bundle_name symlink_name )
             message( STATUS \"Moving \${bundle_name} into main bundle...\" )
-            file( MAKE_DIRECTORY ${OSX_BUNDLE_INSTALL_DIR}/${OSX_BUNDLE_APP_DIR} )
-            file( REMOVE_RECURSE ${KICAD_BIN}/\${bundle_name}/${OSX_BUNDLE_LIB_DIR} )
-            file( RENAME ${KICAD_BIN}/\${bundle_name} ${OSX_BUNDLE_INSTALL_DIR}/${OSX_BUNDLE_APP_DIR}/\${bundle_name} )
+            # Use mkdir -p instead of file(MAKE_DIRECTORY) to avoid macOS Sequoia
+            # com.apple.provenance failures with cmake's internal file operations
+            execute_process( COMMAND mkdir -p \"${OSX_BUNDLE_INSTALL_DIR}/${OSX_BUNDLE_APP_DIR}\" )
+            execute_process( COMMAND rm -rf \"${KICAD_BIN}/\${bundle_name}/${OSX_BUNDLE_LIB_DIR}\" )
+            execute_process( COMMAND mv \"${KICAD_BIN}/\${bundle_name}\" \"${OSX_BUNDLE_INSTALL_DIR}/${OSX_BUNDLE_APP_DIR}/\${bundle_name}\" )
             execute_process( COMMAND ${CMAKE_COMMAND} -E create_symlink \"../../../Frameworks\" \"Frameworks\"
                 WORKING_DIRECTORY ${OSX_BUNDLE_INSTALL_DIR}/${OSX_BUNDLE_APP_DIR}/\${bundle_name}/Contents
             )

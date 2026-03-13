@@ -45,6 +45,7 @@
 #include <nlohmann/json.hpp>
 #include <zeo/zeo_constants.h>
 #include <wx/settings.h>
+#include <wx/uri.h>
 #include <wx/base64.h>
 #include <wx/clipbrd.h>
 #include <wx/image.h>
@@ -465,6 +466,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_toolResultCounter = 0;
     m_runningHtmlByIdx.clear();
     m_activeToolResultIdx = -1;
+    m_showingOnboarding = false;
 
     // Bind Size Event
     Bind( wxEVT_SIZE, &AGENT_FRAME::OnSize, this );
@@ -793,6 +795,11 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             m_currentModel = "";  // Force DoModelChange to not early-return
             DoModelChange( savedModel );
         }
+
+        // Show onboarding empty state for new chat
+        m_fullHtmlContent = BuildOnboardingHtml();
+        m_showingOnboarding = true;
+        SetHtml( m_fullHtmlContent );
     } );
 }
 
@@ -919,6 +926,139 @@ void AGENT_FRAME::OnGeneratingTimer( wxTimerEvent& aEvent )
     m_generatingDots = ( m_generatingDots % 3 ) + 1;
     UpdateAgentResponse();
     // Auto-scroll handled by CSS flex-direction: column-reverse
+}
+
+wxString AGENT_FRAME::BuildOnboardingHtml()
+{
+    // Detect project state to show contextual suggestions
+    wxString projPath;
+
+    try
+    {
+        projPath = Kiway().Prj().GetProjectPath();
+    }
+    catch( ... )
+    {
+    }
+
+    bool hasProject = !projPath.IsEmpty();
+
+    // Check for existing schematic/PCB files
+    bool hasSch = false;
+    bool hasPcb = false;
+
+    if( hasProject )
+    {
+        wxDir dir( projPath );
+
+        if( dir.IsOpened() )
+        {
+            wxString filename;
+
+            if( dir.GetFirst( &filename, wxS( "*.kicad_sch" ), wxDIR_FILES ) )
+                hasSch = true;
+
+            if( dir.GetFirst( &filename, wxS( "*.kicad_pcb" ), wxDIR_FILES ) )
+                hasPcb = true;
+        }
+    }
+
+    // Check if user has previous conversations (returning user vs first time)
+    bool hasHistory = false;
+
+    if( hasProject )
+    {
+        auto historyList = m_chatHistoryDb.GetHistoryList( projPath.ToStdString() );
+        hasHistory = historyList.size() > 1; // >1 because current empty chat counts as one
+    }
+
+    // Build the onboarding HTML
+    wxString html;
+    html += wxS( "<div class=\"onboard\">" );
+
+    if( !hasProject )
+    {
+        // No project open
+        html += wxS( "<div class=\"onboard-title\">Welcome to Zeo</div>" );
+        html += wxS( "<div class=\"onboard-sub\">Open a KiCad project to get started, "
+                     "or ask me anything about electronics design.</div>" );
+        html += wxS( "<div class=\"onboard-grid\">" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:What%20can%20you%20help%20me%20with%3F\">"
+                     "What can you help me with?</a>" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Help%20me%20design%20a%20buck%20converter%20circuit\">"
+                     "Design a buck converter</a>" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Explain%20how%20decoupling%20capacitors%20work\">"
+                     "Explain decoupling caps</a>" );
+        html += wxS( "</div>" );
+    }
+    else if( !hasSch && !hasPcb )
+    {
+        // Empty project — no schematic or PCB files yet
+        html += wxS( "<div class=\"onboard-title\">New Project</div>" );
+        html += wxS( "<div class=\"onboard-sub\">This project is empty. "
+                     "I can help you design a schematic, place components, or plan your circuit.</div>" );
+        html += wxS( "<div class=\"onboard-grid\">" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Design%20a%20voltage%20regulator%20circuit\">"
+                     "Design a voltage regulator</a>" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Create%20an%20Arduino-compatible%20microcontroller%20board\">"
+                     "Create a microcontroller board</a>" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Add%20a%20USB-C%20power%20input%20to%20my%20schematic\">"
+                     "Add USB-C power input</a>" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Help%20me%20plan%20a%20sensor%20breakout%20board\">"
+                     "Plan a sensor breakout board</a>" );
+        html += wxS( "</div>" );
+    }
+    else if( hasSch && !hasPcb )
+    {
+        // Has schematic but no PCB
+        html += wxS( "<div class=\"onboard-title\">What's next?</div>" );
+        html += wxS( "<div class=\"onboard-sub\">"
+                     "Your schematic is ready. I can run checks, update it, or help with the PCB layout.</div>" );
+        html += wxS( "<div class=\"onboard-grid\">" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Run%20ERC%20on%20my%20schematic\">"
+                     "Run ERC</a>" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Review%20my%20schematic%20and%20suggest%20improvements\">"
+                     "Review my schematic</a>" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Add%20bypass%20capacitors%20to%20all%20ICs\">"
+                     "Add bypass caps to all ICs</a>" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Start%20the%20PCB%20layout%20for%20this%20schematic\">"
+                     "Start PCB layout</a>" );
+        html += wxS( "</div>" );
+    }
+    else
+    {
+        // Has both schematic and PCB — existing project
+        wxString greeting = hasHistory ? wxS( "New Chat" ) : wxS( "Welcome" );
+        wxString subtitle = hasHistory
+            ? wxS( "Start a new conversation about your design." )
+            : wxS( "I can help you edit your schematic, route your PCB, run checks, and more." );
+
+        html += wxString::Format( wxS( "<div class=\"onboard-title\">%s</div>" ), greeting );
+        html += wxString::Format( wxS( "<div class=\"onboard-sub\">%s</div>" ), subtitle );
+        html += wxS( "<div class=\"onboard-grid\">" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Run%20ERC%20on%20my%20schematic\">"
+                     "Run ERC</a>" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Run%20DRC%20on%20my%20PCB\">"
+                     "Run DRC</a>" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Review%20my%20schematic%20and%20suggest%20improvements\">"
+                     "Review my schematic</a>" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Auto-route%20my%20PCB\">"
+                     "Auto-route PCB</a>" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Take%20a%20screenshot%20of%20my%20schematic\">"
+                     "Screenshot schematic</a>" );
+        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Export%20my%20PCB%20gerbers\">"
+                     "Export gerbers</a>" );
+        html += wxS( "</div>" );
+    }
+
+    // Keyboard shortcut hint
+    html += wxS( "<div class=\"onboard-keys\">"
+                 "<kbd>&#8984;</kbd> + <kbd>N</kbd> new chat"
+                 "</div>" );
+
+    html += wxS( "</div>" );
+
+    return html;
 }
 
 wxString AGENT_FRAME::BuildStreamingContent()
@@ -1405,6 +1545,13 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 
     // Reset scroll state for new user message - user sending indicates engagement at bottom
     m_userScrolledUp = false;
+
+    // Clear onboarding content when user sends first message
+    if( m_showingOnboarding )
+    {
+        m_fullHtmlContent.Clear();
+        m_showingOnboarding = false;
+    }
 
     // Build user message HTML
     wxString escapedText = text;
@@ -2036,6 +2183,15 @@ void AGENT_FRAME::OnBridgeLinkClick( const nlohmann::json& aMsg )
         OnRetryLastMessage();
     else if( href == "agent:cancel_tool" )
         DoCancelOperation( true );
+    else if( href.StartsWith( "agent:suggest:" ) )
+    {
+        // Suggestion chip clicked — populate input and auto-send
+        wxString text = href.Mid( 14 );  // skip "agent:suggest:"
+        text = wxURI::Unescape( text );
+        m_pendingInputText = text;
+        wxCommandEvent evt;
+        OnSend( evt );
+    }
     else if( href.StartsWith( "http://" ) || href.StartsWith( "https://" ) )
         wxLaunchDefaultBrowser( href );
 }
@@ -3046,8 +3202,9 @@ void AGENT_FRAME::DoNewChat()
     m_chatHistory = nlohmann::json::array();
     m_apiContext = nlohmann::json::array();
 
-    // UI reset - m_fullHtmlContent is now just chat area inner HTML (no template wrapper)
-    m_fullHtmlContent = "";
+    // UI reset - show onboarding for empty chat
+    m_fullHtmlContent = BuildOnboardingHtml();
+    m_showingOnboarding = true;
     SetHtml( m_fullHtmlContent );
     m_chatHistoryDb.StartNewConversation();
     m_chatHistoryDb.SetProjectPath( Kiway().Prj().GetProjectPath().ToStdString() );
@@ -5074,6 +5231,7 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
 
     // Render the loaded chat history (also advances m_toolResultCounter past
     // historical tool-result indices so new live tools get non-colliding DOM IDs)
+    m_showingOnboarding = false;
     RenderChatHistory();
 
     // Update DB ID so new messages go to this history

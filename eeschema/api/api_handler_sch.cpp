@@ -3571,10 +3571,13 @@ API_HANDLER_SCH::handleGetNets(
             netInfo = it->second;
         }
 
-        // Add items from this subgraph
-        for( SCH_ITEM* item : subgraphs[0]->GetItems() )
+        // Add items from all subgraphs in this net
+        for( const CONNECTION_SUBGRAPH* subgraph : subgraphs )
         {
-            netInfo->add_item_ids()->set_value( item->m_Uuid.AsStdString() );
+            for( SCH_ITEM* item : subgraph->GetItems() )
+            {
+                netInfo->add_item_ids()->set_value( item->m_Uuid.AsStdString() );
+            }
         }
 
         netInfo->set_connection_count( netInfo->item_ids_size() );

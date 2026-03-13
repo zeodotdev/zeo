@@ -43,17 +43,22 @@ MIN_PERPENDICULAR_SPACING = 5.08  # Minimum spacing between companions (4 grids)
 # ---------------------------------------------------------------------------
 _text_width_cache = {}
 
-def measure_text_width_mm(text_string):
-    """Measure actual text width in mm using KiCad API."""
+def measure_text_size_mm(text_string):
+    """Measure actual text width and height in mm using KiCad API.
+
+    Returns: (width_mm, height_mm) tuple
+    """
     global _text_measure_calls
-    if not hasattr(measure_text_width_mm, 'call_count'):
-        measure_text_width_mm.call_count = 0
-    measure_text_width_mm.call_count += 1
+    if not hasattr(measure_text_size_mm, 'call_count'):
+        measure_text_size_mm.call_count = 0
+    measure_text_size_mm.call_count += 1
 
     if not text_string:
-        return 0.0
-    if text_string in _text_width_cache:
-        return _text_width_cache[text_string]
+        return (0.0, 0.0)
+
+    cache_key = text_string
+    if cache_key in _text_width_cache:
+        return _text_width_cache[cache_key]
 
     try:
         text = Text()
@@ -68,15 +73,43 @@ def measure_text_width_mm(text_string):
         # Box2 size is in nm, convert to mm
         width_mm = bbox.size.x / 1_000_000
         height_mm = bbox.size.y / 1_000_000
-        _text_width_cache[text_string] = width_mm
-        tool_log(f'TextMeasure[{measure_text_width_mm.call_count}]: "{text_string}" = {width_mm:.2f}mm x {height_mm:.2f}mm')
-        return width_mm
+        result = (width_mm, height_mm)
+        _text_width_cache[cache_key] = result
+        tool_log(f'TextMeasure[{measure_text_size_mm.call_count}]: "{text_string}" = {width_mm:.2f}mm x {height_mm:.2f}mm')
+        return result
     except Exception as e:
-        tool_log(f'TextMeasure FAILED[{measure_text_width_mm.call_count}]: "{text_string}" error={type(e).__name__}: {str(e)}')
-        # Fallback: estimate ~1mm per character
-        fallback = len(text_string) * 1.0
-        _text_width_cache[text_string] = fallback
+        tool_log(f'TextMeasure FAILED[{measure_text_size_mm.call_count}]: "{text_string}" error={type(e).__name__}: {str(e)}')
+        # Fallback: estimate ~1mm per character width, 2mm height
+        fallback = (len(text_string) * 1.0, 2.0)
+        _text_width_cache[cache_key] = fallback
         return fallback
+
+def measure_text_width_mm(text_string):
+    """Measure actual text width in mm using KiCad API."""
+    return measure_text_size_mm(text_string)[0]
+
+def _calc_label_buffer(companion):
+    """Calculate extra offset needed for terminal labels on a companion.
+
+    Returns the height of the tallest label plus one grid unit for spacing.
+    This ensures the component is pushed far enough from the IC to leave
+    room for the label between the component pin and the IC.
+    """
+    if not companion:
+        return 0.0
+
+    max_label_height = 0.0
+
+    # Check terminal_labels (e.g., "+3V3", "VDD_SPI")
+    for label_text in companion.get('terminal_labels', {}).values():
+        _, h = measure_text_size_mm(label_text)
+        max_label_height = max(max_label_height, h)
+
+    if max_label_height > 0:
+        # Add grid spacing for visual separation
+        return max_label_height + GRID_MM
+
+    return 0.0
 
 # ---------------------------------------------------------------------------
 # Parse input
@@ -127,29 +160,35 @@ def _calc_companion_bbox(cx, cy, escape_dir, lib_id='', companion=None):
     body_half = COMP_HALF_LEN + BBOX_MARGIN
     width_half = (3.0 if _is_horizontal_pin_component(lib_id) else 1.5) + BBOX_MARGIN
 
-    # Measure actual text widths for labels attached to this companion
+    # Measure actual text widths and heights for labels attached to this companion
     terminal_text_width = 0.0
+    terminal_text_height = 0.0
     if companion:
         # Terminal labels (e.g., "+3V3", "VDD_SPI")
         for label_text in companion.get('terminal_labels', {}).values():
-            w = measure_text_width_mm(label_text)
+            w, h = measure_text_size_mm(label_text)
             terminal_text_width = max(terminal_text_width, w)
+            terminal_text_height = max(terminal_text_height, h)
 
         # Terminal power symbols (e.g., "GND")
         for pwr_name in companion.get('terminal_power', {}).values():
             if ':' in pwr_name:
                 pwr_name = pwr_name.split(':')[-1]
-            w = measure_text_width_mm(pwr_name)
+            w, h = measure_text_size_mm(pwr_name)
             terminal_text_width = max(terminal_text_width, w)
+            terminal_text_height = max(terminal_text_height, h)
 
         # Value text (e.g., "0.1uF", "10uF")
         value_text = companion.get('properties', {}).get('Value', '')
         if value_text:
-            w = measure_text_width_mm(value_text)
+            w, h = measure_text_size_mm(value_text)
             terminal_text_width = max(terminal_text_width, w)
+            terminal_text_height = max(terminal_text_height, h)
 
-    # Terminal extension = component pin length + label text + margin
-    term_extension = COMP_HALF_LEN + max(TERMINAL_EXTENSION, terminal_text_width + 1.0) + BBOX_MARGIN
+    # Terminal extension = component pin length + label text height (for vertical clearance) + margin
+    # The label sits between component and IC, so we need room for label height
+    # Note: terminal_text_width is used for perpendicular spacing, not escape direction extension
+    term_extension = COMP_HALF_LEN + terminal_text_height + GRID_MM + BBOX_MARGIN
 
     # Reference designator adds width perpendicular to component
     ref_height = 2.5  # Typical reference text height
@@ -160,14 +199,20 @@ def _calc_companion_bbox(cx, cy, escape_dir, lib_id='', companion=None):
         lib_short = lib_id.split(':')[-1] if ':' in lib_id else lib_id
         tool_log(f'BBox {lib_short}: text_w={terminal_text_width:.2f}mm, term_ext={term_extension:.2f}mm, width_half={width_half:.2f}mm')
 
+    # term_extension includes label space - labels are on the IC-FACING side (opposite of escape direction)
+    # body_half is just the component body on the AWAY side (same as escape direction)
     if escape_dir == 'left':
-        return {'min_x': cx - term_extension, 'max_x': cx + body_half, 'min_y': cy - width_half, 'max_y': cy + width_half}
-    elif escape_dir == 'right':
+        # Escape left = IC is to the right, so term_extension goes right (toward IC)
         return {'min_x': cx - body_half, 'max_x': cx + term_extension, 'min_y': cy - width_half, 'max_y': cy + width_half}
+    elif escape_dir == 'right':
+        # Escape right = IC is to the left, so term_extension goes left (toward IC)
+        return {'min_x': cx - term_extension, 'max_x': cx + body_half, 'min_y': cy - width_half, 'max_y': cy + width_half}
     elif escape_dir == 'up':
-        return {'min_x': cx - width_half, 'max_x': cx + width_half, 'min_y': cy - term_extension, 'max_y': cy + body_half}
-    else:  # down
+        # Escape up = IC is below, so term_extension goes down (toward IC, positive Y)
         return {'min_x': cx - width_half, 'max_x': cx + width_half, 'min_y': cy - body_half, 'max_y': cy + term_extension}
+    else:  # down
+        # Escape down = IC is above, so term_extension goes up (toward IC, negative Y)
+        return {'min_x': cx - width_half, 'max_x': cx + width_half, 'min_y': cy - term_extension, 'max_y': cy + body_half}
 
 def _calc_center_from_pin(px, py, offset_mm, escape_dir):
     """Calculate companion center given IC pin position, offset, and escape direction."""
@@ -339,17 +384,18 @@ def _get_companion_perp_width(companion, escape_dir):
     if escape_dir in ('up', 'down'):
         # Terminal labels
         for label_text in companion.get('terminal_labels', {}).values():
-            w = measure_text_width_mm(label_text)
+            w, _ = measure_text_size_mm(label_text)
             max_label_width = max(max_label_width, w)
 
         # Value text
         value_text = companion.get('properties', {}).get('Value', '')
         if value_text:
-            w = measure_text_width_mm(value_text)
+            w, _ = measure_text_size_mm(value_text)
             max_label_width = max(max_label_width, w)
 
         # Reference designator estimate (C##)
-        max_label_width = max(max_label_width, 3.5)
+        ref_w, _ = measure_text_size_mm("C99")  # Typical ref length
+        max_label_width = max(max_label_width, ref_w)
 
     # Total width = max of component body or label width
     total_half_width = max(base_width, max_label_width / 2 + 1.0) + BBOX_MARGIN
@@ -432,6 +478,10 @@ def compute_group_layout(group, escape_dir):
         for i, comp in enumerate(cluster):
             comp['final_perp'] = snap_to_grid(offset + positions[i])
 
+        # Calculate label buffer for this cluster (to be added after obstacle avoidance)
+        max_label_buffer = max(_calc_label_buffer(c['companion']) for c in cluster)
+        label_buffer_grids = int(max_label_buffer / GRID_MM) + 1 if max_label_buffer > 0 else 0
+
         # Find minimum offset that clears obstacles for this cluster
         for try_grids in range(MIN_OFFSET_GRIDS, MAX_OFFSET_GRIDS + 1):
             offset_mm = try_grids * GRID_MM
@@ -449,16 +499,20 @@ def compute_group_layout(group, escape_dir):
                     break
 
             if all_clear:
-                # Assign positions and register bboxes
+                # Add label buffer ON TOP of obstacle-clear offset
+                final_offset_grids = try_grids + label_buffer_grids
+                final_offset_mm = final_offset_grids * GRID_MM
+
+                # Assign positions with the final offset (includes label buffer)
                 for comp in cluster:
                     if escape_dir in ('up', 'down'):
-                        cx, cy = _calc_center_from_pin(comp['final_perp'], comp['py'], offset_mm, escape_dir)
+                        cx, cy = _calc_center_from_pin(comp['final_perp'], comp['py'], final_offset_mm, escape_dir)
                     else:
-                        cx, cy = _calc_center_from_pin(comp['px'], comp['final_perp'], offset_mm, escape_dir)
+                        cx, cy = _calc_center_from_pin(comp['px'], comp['final_perp'], final_offset_mm, escape_dir)
 
                     comp['cx'] = cx
                     comp['cy'] = cy
-                    comp['offset'] = offset_mm
+                    comp['offset'] = final_offset_mm
 
                     # Register as obstacle for subsequent clusters
                     comp_bbox = _calc_companion_bbox(cx, cy, escape_dir, comp['lib_id'], comp['companion'])
@@ -612,14 +666,56 @@ def place_companion(layout):
     except Exception:
         pass
 
-    # Draw wire from IC pin to companion pin 2 (facing IC)
+    # Determine companion's IC-facing pin position
     wire_pin = '1' if reverse else '2'
     if wire_pin in comp_pin_map:
         cpwx, cpwy = comp_pin_map[wire_pin]['x'], comp_pin_map[wire_pin]['y']
     else:
         cpwx, cpwy = cx, cy
 
-    draw_orthogonal_wire(px, py, cpwx, cpwy, escape_dir)
+    # Check if we have terminal_labels - if so, place label as part of wire chain
+    terminal_labels = companion.get('terminal_labels', {})
+    label_positions = {}  # pin -> (lbl_x, lbl_y) for labels placed in chain
+
+    for pin_num, label_text in terminal_labels.items():
+        actual_pin = pin_num
+        if reverse:
+            if pin_num == '1': actual_pin = '2'
+            elif pin_num == '2': actual_pin = '1'
+
+        if actual_pin != wire_pin:
+            continue  # Only handle labels on the IC-facing pin here
+
+        # Calculate label position: between IC and cap
+        _, label_height = measure_text_size_mm(label_text)
+        label_buffer = max(label_height + GRID_MM, GRID_MM * 2)
+
+        # Label goes at: cap_pin + label_buffer toward IC
+        if escape_dir == 'up':
+            lbl_x, lbl_y = cpwx, snap_to_grid(cpwy + label_buffer)
+        elif escape_dir == 'down':
+            lbl_x, lbl_y = cpwx, snap_to_grid(cpwy - label_buffer)
+        elif escape_dir == 'left':
+            lbl_x, lbl_y = snap_to_grid(cpwx + label_buffer), cpwy
+        else:  # right
+            lbl_x, lbl_y = snap_to_grid(cpwx - label_buffer), cpwy
+
+        label_positions[actual_pin] = (lbl_x, lbl_y)
+
+        # Draw wire chain: IC → label → cap
+        draw_orthogonal_wire(px, py, lbl_x, lbl_y, escape_dir)
+        _w = sch.wiring.add_wire(
+            Vector2.from_xy_mm(lbl_x, lbl_y),
+            Vector2.from_xy_mm(snap_to_grid(cpwx), snap_to_grid(cpwy))
+        )
+        if _w: placed_wire_objs.append(_w)
+
+        # Place label at the intermediate position
+        sch.labels.add_local(label_text, Vector2.from_xy_mm(lbl_x, lbl_y))
+
+    # If no label on IC-facing pin, draw direct wire from IC to cap
+    if wire_pin not in label_positions:
+        draw_orthogonal_wire(px, py, cpwx, cpwy, escape_dir)
 
     # Register bbox
     comp_bbox = _calc_companion_bbox(cx, cy, escape_dir, lib_id, companion)
@@ -645,19 +741,25 @@ def place_companion(layout):
         except Exception:
             pass
 
-    # Handle terminal_labels
-    terminal_labels = companion.get('terminal_labels', {})
+    # Handle terminal_labels on non-IC-facing pins (IC-facing labels handled above in wire chain)
+    # These are placed directly at the pin position
     for pin_num, label_text in terminal_labels.items():
         actual_pin = pin_num
         if reverse:
             if pin_num == '1': actual_pin = '2'
             elif pin_num == '2': actual_pin = '1'
 
+        # Skip if already placed in wire chain
+        if actual_pin in label_positions:
+            continue
+
         try:
             if actual_pin in comp_pin_map:
                 lbl_px, lbl_py = comp_pin_map[actual_pin]['x'], comp_pin_map[actual_pin]['y']
             else:
                 continue
+
+            # Place label directly at pin (no buffer needed for away-from-IC pins)
             lbl_pos = Vector2.from_xy_mm(snap_to_grid(lbl_px), snap_to_grid(lbl_py))
             sch.labels.add_local(label_text, lbl_pos)
         except Exception:

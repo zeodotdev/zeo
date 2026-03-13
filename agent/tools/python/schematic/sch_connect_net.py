@@ -616,6 +616,18 @@ try:
             raise ValueError(f'No path found from {p0["ref"]}:{p0["pin"]} to {p1["ref"]}:{p1["pin"]}. Try repositioning components to clear the path.')
         return wp
 
+    def _make_target_pin(x, y, approach_dir='h'):
+        """Create a synthetic pin dict for a trunk connection point.
+        approach_dir: 'h' or 'v' — the direction the trunk runs at this point.
+        The escape direction points perpendicular away from the trunk so that
+        _route_pins produces a clean right-angle arrival."""
+        return {
+            'ref': '_trunk', 'pin': '',
+            'x': x, 'y': y, 'raw_x': x, 'raw_y': y,
+            'esc_x': x, 'esc_y': y,
+            'dir': approach_dir, 'out_dx': 0, 'out_dy': 0
+        }
+
     def _path_length(waypoints):
         return sum(abs(waypoints[i+1][0]-waypoints[i][0]) + abs(waypoints[i+1][1]-waypoints[i][1])
                    for i in range(len(waypoints)-1))
@@ -994,7 +1006,11 @@ try:
                 wire_count += 1
                 _add_waypoints_to_wire_sets([_ts, _te])
 
-        # Place branches from escaped position to trunk target (no forced escape)
+        # Route each pin to its trunk connection point via _route_pins.
+        # Uses the same A* + soft escape logic as 2-pin/chain routing,
+        # giving full pin_cells avoidance on the entire path (no unchecked
+        # escape wires).
+        _trunk_dir = 'h' if is_horizontal else 'v'
         for p in pin_positions:
             if is_horizontal:
                 off_trunk = abs(p['esc_y'] - trunk_perp) > 0.01
@@ -1002,32 +1018,24 @@ try:
                 off_trunk = abs(p['esc_x'] - trunk_perp) > 0.01
 
             if off_trunk:
-                esc_x, esc_y = p['esc_x'], p['esc_y']
                 tgt_x, tgt_y = p['_tgt']
-                waypoints = None
-                for _bm in [15, 30, 50]:
-                    waypoints = _astar(esc_x, esc_y, tgt_x, tgt_y, margin=_bm)
-                    if waypoints is not None:
-                        break
-                if waypoints is None:
-                    raise ValueError(f'No path found for branch from {p["ref"]}:{p["pin"]} to trunk. Try repositioning components to clear the path.')
-                hit, loc = _path_hits_obstacle(waypoints)
-                if hit:
-                    raise ValueError(f'Wire from {p["ref"]}:{p["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
-                _n, _ws = _place_path(waypoints)
-                wire_count += _n
-                _all_wires.extend(_ws)
-                _add_waypoints_to_wire_sets(waypoints)
+            else:
+                # On-trunk: target is the escape point (which sits on the trunk)
+                tgt_x, tgt_y = p['esc_x'], p['esc_y']
 
-        # Place pin-to-escape wires for all pins
-        for p in pin_positions:
-            px, py = p['raw_x'], p['raw_y']
-            ex, ey = p['esc_x'], p['esc_y']
-            if abs(px - ex) > 0.001 or abs(py - ey) > 0.001:
-                _tw = sch.wiring.add_wire(Vector2.from_xy_mm(px, py), Vector2.from_xy_mm(ex, ey))
-                _all_wires.append(_tw)
-                wire_count += 1
-                _add_waypoints_to_wire_sets([(px, py), (ex, ey)])
+            # Skip if pin is already at the target (e.g. pin tip is on the trunk)
+            if abs(p['raw_x'] - tgt_x) < 0.001 and abs(p['raw_y'] - tgt_y) < 0.001:
+                continue
+
+            tgt_pin = _make_target_pin(tgt_x, tgt_y, _trunk_dir)
+            waypoints = _route_pins(p, tgt_pin)
+            hit, loc = _path_hits_obstacle(waypoints)
+            if hit:
+                raise ValueError(f'Wire from {p["ref"]}:{p["pin"]} would pass through a component at {loc}. Try repositioning components to clear the path.')
+            _n, _ws = _place_path(waypoints)
+            wire_count += _n
+            _all_wires.extend(_ws)
+            _add_waypoints_to_wire_sets(waypoints)
 
         junction_count = _place_needed_junctions(_all_wires)
 

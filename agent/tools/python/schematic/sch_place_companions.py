@@ -478,10 +478,6 @@ def compute_group_layout(group, escape_dir):
         for i, comp in enumerate(cluster):
             comp['final_perp'] = snap_to_grid(offset + positions[i])
 
-        # Calculate label buffer for this cluster (to be added after obstacle avoidance)
-        max_label_buffer = max(_calc_label_buffer(c['companion']) for c in cluster)
-        label_buffer_grids = int(max_label_buffer / GRID_MM) + 1 if max_label_buffer > 0 else 0
-
         # Find minimum offset that clears obstacles for this cluster
         for try_grids in range(MIN_OFFSET_GRIDS, MAX_OFFSET_GRIDS + 1):
             offset_mm = try_grids * GRID_MM
@@ -499,20 +495,16 @@ def compute_group_layout(group, escape_dir):
                     break
 
             if all_clear:
-                # Add label buffer ON TOP of obstacle-clear offset
-                final_offset_grids = try_grids + label_buffer_grids
-                final_offset_mm = final_offset_grids * GRID_MM
-
-                # Assign positions with the final offset (includes label buffer)
+                # Assign positions (labels are placed close to IC, no extra buffer needed)
                 for comp in cluster:
                     if escape_dir in ('up', 'down'):
-                        cx, cy = _calc_center_from_pin(comp['final_perp'], comp['py'], final_offset_mm, escape_dir)
+                        cx, cy = _calc_center_from_pin(comp['final_perp'], comp['py'], offset_mm, escape_dir)
                     else:
-                        cx, cy = _calc_center_from_pin(comp['px'], comp['final_perp'], final_offset_mm, escape_dir)
+                        cx, cy = _calc_center_from_pin(comp['px'], comp['final_perp'], offset_mm, escape_dir)
 
                     comp['cx'] = cx
                     comp['cy'] = cy
-                    comp['offset'] = final_offset_mm
+                    comp['offset'] = offset_mm
 
                     # Register as obstacle for subsequent clusters
                     comp_bbox = _calc_companion_bbox(cx, cy, escape_dir, comp['lib_id'], comp['companion'])
@@ -686,19 +678,15 @@ def place_companion(layout):
         if actual_pin != wire_pin:
             continue  # Only handle labels on the IC-facing pin here
 
-        # Calculate label position: between IC and cap
-        _, label_height = measure_text_size_mm(label_text)
-        label_buffer = max(label_height + GRID_MM, GRID_MM * 2)
-
-        # Label goes at: cap_pin + label_buffer toward IC
+        # Label goes 1 grid from IC pin (toward cap), keeping it close to IC
         if escape_dir == 'up':
-            lbl_x, lbl_y = cpwx, snap_to_grid(cpwy + label_buffer)
+            lbl_x, lbl_y = snap_to_grid(cpwx), snap_to_grid(py - GRID_MM)
         elif escape_dir == 'down':
-            lbl_x, lbl_y = cpwx, snap_to_grid(cpwy - label_buffer)
+            lbl_x, lbl_y = snap_to_grid(cpwx), snap_to_grid(py + GRID_MM)
         elif escape_dir == 'left':
-            lbl_x, lbl_y = snap_to_grid(cpwx + label_buffer), cpwy
+            lbl_x, lbl_y = snap_to_grid(px - GRID_MM), snap_to_grid(cpwy)
         else:  # right
-            lbl_x, lbl_y = snap_to_grid(cpwx - label_buffer), cpwy
+            lbl_x, lbl_y = snap_to_grid(px + GRID_MM), snap_to_grid(cpwy)
 
         label_positions[actual_pin] = (lbl_x, lbl_y)
 

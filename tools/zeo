@@ -3,9 +3,12 @@
 #
 # Must clear PYTHONHOME/PYTHONPATH set by the Zeo app bundle to avoid
 # conflicts between the bundled Python framework and system Python.
+# Exception: inside AppImage, keep them so the bundled Python finds kipy.
 
-unset PYTHONHOME
-unset PYTHONPATH
+if [ -z "$APPDIR" ]; then
+    unset PYTHONHOME
+    unset PYTHONPATH
+fi
 
 # Resolve the real path of this script (follows symlinks)
 # This ensures the manifest can be found even when run via a symlink

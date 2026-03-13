@@ -244,9 +244,16 @@ def cmd_tool(args):
             else:
                 status_line = f"[red]Failed[/red] ({tc.duration_ms}ms)"
 
+            # Escape result to prevent Rich markup interpretation of brackets in JSON
+            # Use backslash escape: [ -> \[
+            if result_formatted:
+                escaped_result = result_formatted.replace('[', '\\[')
+            else:
+                escaped_result = '[dim](no output yet)[/dim]'
+
             content = f"""[bold]{tc.tool_name}[/bold] - {status_line}
 
-{result_formatted if result_formatted else '[dim](no output yet)[/dim]'}"""
+{escaped_result}"""
 
             self.update(content)
 
@@ -837,17 +844,22 @@ def cmd_monitor(args):
             else:
                 status_line = f"[red]Failed[/red] ({tc.duration_ms}ms)"
 
+            # Escape brackets in JSON to prevent Rich markup interpretation
+            # Use backslash escape: [ -> \[
+            escaped_input = input_formatted.replace('[', '\\[') if input_formatted else '(no input)'
+            escaped_result = result_formatted.replace('[', '\\[') if result_formatted else '(no output yet)'
+
             content = f"""[bold]Tool:[/bold] {tc.tool_name}
 [bold]ID:[/bold] {tc.tool_id}
 [bold]Description:[/bold] {tc.description}
 
 [bold]Input:[/bold]
-[dim]{input_formatted}[/dim]
+[dim]{escaped_input}[/dim]
 
 [bold]Status:[/bold] {status_line}
 
 [bold]Output:[/bold]
-[dim]{result_formatted if result_formatted else '(no output yet)'}[/dim]"""
+[dim]{escaped_result}[/dim]"""
 
             self.update(content)
 

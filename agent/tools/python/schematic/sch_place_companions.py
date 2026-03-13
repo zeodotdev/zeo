@@ -4,30 +4,79 @@ sch_place_companions - Place companion components adjacent to IC pins.
 Companion circuits are small supporting parts (decoupling caps, pull-up/down resistors,
 termination resistors, filter caps, LED indicators) that wire directly to specific IC pins.
 
-The tool calculates optimal positions based on IC pin geometry and orientation:
-- Gets IC pin position and escape direction via get_transformed_pin_position()
-- Places companion symbol adjacent to pin (offset by N grid units in escape direction)
-- Draws short wire stub from IC pin to companion pin
-- Adds power symbols or text labels at companion terminals as specified
-- Supports chaining components (e.g., VCC -> cap -> GND) via recursive chain processing
+NEW ALGORITHM (v2): Group-based unified layout
+1. Group companions by escape direction (up, down, left, right)
+2. Compute unified offset for each group (all companions at same distance from IC)
+3. Each companion's perpendicular position matches its IC pin position
+4. Result: clean parallel rows of components
 """
 import json, sys
-from kipy.geometry import Vector2
+from kipy.geometry import Vector2, Box2
+from kipy.common_types import Text
+from kipy.proto.common import commands as base_commands_pb2
+from kipy.proto.common import types as base_types_pb2
 
 refresh_or_fail(sch)
 
 # ---------------------------------------------------------------------------
+# Get grid settings from API
+# ---------------------------------------------------------------------------
+try:
+    _grid_settings = sch.page.get_grid_settings()
+    GRID_MM = _grid_settings.get('size_mm', 1.27)
+except Exception:
+    GRID_MM = 1.27  # Default 50 mil grid
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-GRID_MM = 1.27           # 50 mil grid
 BBOX_MARGIN = 0.3        # Margin around components for spacing
-MAX_OFFSET_GRIDS = 15    # Max push-out distance
+MAX_OFFSET_GRIDS = 20    # Max push-out distance
 MIN_OFFSET_GRIDS = 3     # Minimum distance from IC (3.81mm)
 COMP_HALF_LEN = 3.81     # Half-length of 2-pin passive (center to pin)
 TERMINAL_EXTENSION = 3.81 # Terminal area for power symbols/labels
-LABEL_CHAR_WIDTH = 1.0   # Approximate width per character in mm
-LABEL_HEIGHT = 2.5       # Approximate label height in mm
-_LABEL_SHRINK = 0.4      # Shrink label bboxes to allow stacking at 2.54mm pitch
+COMP_WIDTH = 1.8         # Width of 2-pin passive perpendicular to pins
+MIN_PERPENDICULAR_SPACING = 5.08  # Minimum spacing between companions (4 grids)
+
+# ---------------------------------------------------------------------------
+# Text measurement cache
+# ---------------------------------------------------------------------------
+_text_width_cache = {}
+
+def measure_text_width_mm(text_string):
+    """Measure actual text width in mm using KiCad API."""
+    global _text_measure_calls
+    if not hasattr(measure_text_width_mm, 'call_count'):
+        measure_text_width_mm.call_count = 0
+    measure_text_width_mm.call_count += 1
+
+    if not text_string:
+        return 0.0
+    if text_string in _text_width_cache:
+        return _text_width_cache[text_string]
+
+    try:
+        text = Text()
+        text.value = text_string
+        text.position = Vector2.from_xy_mm(0, 0)
+
+        cmd = base_commands_pb2.GetTextExtents()
+        cmd.text.CopyFrom(text.proto)
+        reply = sch._kicad.send(cmd, base_types_pb2.Box2)
+        bbox = Box2.from_proto(reply)
+
+        # Box2 size is in nm, convert to mm
+        width_mm = bbox.size.x / 1_000_000
+        height_mm = bbox.size.y / 1_000_000
+        _text_width_cache[text_string] = width_mm
+        tool_log(f'TextMeasure[{measure_text_width_mm.call_count}]: "{text_string}" = {width_mm:.2f}mm x {height_mm:.2f}mm')
+        return width_mm
+    except Exception as e:
+        tool_log(f'TextMeasure FAILED[{measure_text_width_mm.call_count}]: "{text_string}" error={type(e).__name__}: {str(e)}')
+        # Fallback: estimate ~1mm per character
+        fallback = len(text_string) * 1.0
+        _text_width_cache[text_string] = fallback
+        return fallback
 
 # ---------------------------------------------------------------------------
 # Parse input
@@ -48,8 +97,7 @@ if not companions_input:
 # ---------------------------------------------------------------------------
 results = []
 placed_companions = []
-placed_wires = []  # List of wire segments [(x1,y1,x2,y2), ...] to avoid crossings
-placed_wire_objs = []  # Wire objects returned by add_wire (for junction placement)
+placed_wire_objs = []
 _debug = []
 
 # ---------------------------------------------------------------------------
@@ -57,118 +105,72 @@ _debug = []
 # ---------------------------------------------------------------------------
 
 def _is_horizontal_pin_component(lib_id):
-    """Check if component has horizontal pins at 0 rotation (LED, diode).
-    R/C have vertical pins at 0, LED/D have horizontal pins."""
+    """Check if component has horizontal pins at 0 rotation (LED, diode)."""
     lib_lower = lib_id.lower()
     return 'led' in lib_lower or ':d' in lib_lower or lib_lower.endswith(':d') or '_d_' in lib_lower or 'diode' in lib_lower
 
 def _get_component_angle(escape_dir, lib_id):
-    """Get correct rotation angle based on component type and escape direction.
-
-    For vertical-pin components (R, C) at 0: pin 1 at top, pin 2 at bottom
-    For horizontal-pin components (LED, D) at 0: pin 1 at left, pin 2 at right
-
-    We want pin 2 facing toward IC (for wiring), pin 1 away (for terminal).
-    """
+    """Get correct rotation angle based on component type and escape direction."""
     is_horiz = _is_horizontal_pin_component(lib_id)
-
     if is_horiz:
         angles = {'left': 0, 'right': 180, 'down': 270, 'up': 90}
     else:
         angles = {'left': 90, 'right': 270, 'down': 180, 'up': 0}
-
     return angles.get(escape_dir, 270)
 
-def _segments_intersect(seg1, seg2):
-    """Check if two line segments intersect (cross each other).
-    Each segment is (x1, y1, x2, y2).
-    Returns True only for actual crossings, not T-junctions or shared endpoints.
-    """
-    x1, y1, x2, y2 = seg1
-    x3, y3, x4, y4 = seg2
-
-    eps = 0.01
-    def pts_equal(ax, ay, bx, by):
-        return abs(ax - bx) < eps and abs(ay - by) < eps
-
-    # Shared endpoints are OK
-    if (pts_equal(x1, y1, x3, y3) or pts_equal(x1, y1, x4, y4) or
-        pts_equal(x2, y2, x3, y3) or pts_equal(x2, y2, x4, y4)):
-        return False
-
-    # Horizontal segments on same line
-    if abs(y1 - y2) < eps and abs(y3 - y4) < eps:
-        if abs(y1 - y3) < eps:
-            return max(min(x1, x2), min(x3, x4)) < min(max(x1, x2), max(x3, x4))
-        return False
-
-    # Vertical segments on same line
-    if abs(x1 - x2) < eps and abs(x3 - x4) < eps:
-        if abs(x1 - x3) < eps:
-            return max(min(y1, y2), min(y3, y4)) < min(max(y1, y2), max(y3, y4))
-        return False
-
-    # One horizontal, one vertical - check for crossing
-    if abs(y1 - y2) < eps:  # seg1 is horizontal
-        h_y, h_x1, h_x2 = y1, min(x1, x2), max(x1, x2)
-        v_x, v_y1, v_y2 = x3, min(y3, y4), max(y3, y4)
-    elif abs(x1 - x2) < eps:  # seg1 is vertical
-        v_x, v_y1, v_y2 = x1, min(y1, y2), max(y1, y2)
-        h_y, h_x1, h_x2 = y3, min(x3, x4), max(x3, x4)
-    else:
-        return False
-
-    return (h_x1 + eps < v_x < h_x2 - eps) and (v_y1 + eps < h_y < v_y2 - eps)
-
-def _compute_wire_path(px, py, cx, cy, escape_dir):
-    """Compute L-shaped wire path from IC pin (px,py) to companion (cx,cy).
-    Returns list of segments [(x1,y1,x2,y2), ...].
-    """
-    px, py = snap_to_grid(px), snap_to_grid(py)
-    cx, cy = snap_to_grid(cx), snap_to_grid(cy)
-
-    if escape_dir in ('left', 'right'):
-        if abs(py - cy) < 0.01:
-            return [(px, py, cx, cy)]
-        else:
-            return [(px, py, px, cy), (px, cy, cx, cy)]
-    else:
-        if abs(px - cx) < 0.01:
-            return [(px, py, cx, cy)]
-        else:
-            return [(px, py, cx, py), (cx, py, cx, cy)]
-
-def _wire_path_crosses_existing(wire_path, existing_wires):
-    """Check if any segment in wire_path crosses any existing wire."""
-    for new_seg in wire_path:
-        for existing_seg in existing_wires:
-            if _segments_intersect(new_seg, existing_seg):
-                return True
-    return False
-
-def _calc_companion_bbox(cx, cy, escape_dir, lib_id=''):
+def _calc_companion_bbox(cx, cy, escape_dir, lib_id='', companion=None):
     """Calculate companion bbox given center and escape direction.
-    Bbox is asymmetric: larger on pin1 side (away from IC) to include power symbols/labels.
+
+    Includes actual text measurements for terminal labels, power symbols,
+    reference designator, and value text.
     """
     body_half = COMP_HALF_LEN + BBOX_MARGIN
-    term_half = COMP_HALF_LEN + TERMINAL_EXTENSION + BBOX_MARGIN
+    width_half = (3.0 if _is_horizontal_pin_component(lib_id) else 1.5) + BBOX_MARGIN
 
-    if _is_horizontal_pin_component(lib_id):
-        width_half = 3.0 + BBOX_MARGIN
-    else:
-        width_half = 1.5 + BBOX_MARGIN
+    # Measure actual text widths for labels attached to this companion
+    terminal_text_width = 0.0
+    if companion:
+        # Terminal labels (e.g., "+3V3", "VDD_SPI")
+        for label_text in companion.get('terminal_labels', {}).values():
+            w = measure_text_width_mm(label_text)
+            terminal_text_width = max(terminal_text_width, w)
+
+        # Terminal power symbols (e.g., "GND")
+        for pwr_name in companion.get('terminal_power', {}).values():
+            if ':' in pwr_name:
+                pwr_name = pwr_name.split(':')[-1]
+            w = measure_text_width_mm(pwr_name)
+            terminal_text_width = max(terminal_text_width, w)
+
+        # Value text (e.g., "0.1uF", "10uF")
+        value_text = companion.get('properties', {}).get('Value', '')
+        if value_text:
+            w = measure_text_width_mm(value_text)
+            terminal_text_width = max(terminal_text_width, w)
+
+    # Terminal extension = component pin length + label text + margin
+    term_extension = COMP_HALF_LEN + max(TERMINAL_EXTENSION, terminal_text_width + 1.0) + BBOX_MARGIN
+
+    # Reference designator adds width perpendicular to component
+    ref_height = 2.5  # Typical reference text height
+    width_half = max(width_half, ref_height + BBOX_MARGIN)
+
+    # Debug: show calculated bbox dimensions
+    if companion:
+        lib_short = lib_id.split(':')[-1] if ':' in lib_id else lib_id
+        tool_log(f'BBox {lib_short}: text_w={terminal_text_width:.2f}mm, term_ext={term_extension:.2f}mm, width_half={width_half:.2f}mm')
 
     if escape_dir == 'left':
-        return {'min_x': cx - term_half, 'max_x': cx + body_half, 'min_y': cy - width_half, 'max_y': cy + width_half}
+        return {'min_x': cx - term_extension, 'max_x': cx + body_half, 'min_y': cy - width_half, 'max_y': cy + width_half}
     elif escape_dir == 'right':
-        return {'min_x': cx - body_half, 'max_x': cx + term_half, 'min_y': cy - width_half, 'max_y': cy + width_half}
+        return {'min_x': cx - body_half, 'max_x': cx + term_extension, 'min_y': cy - width_half, 'max_y': cy + width_half}
     elif escape_dir == 'up':
-        return {'min_x': cx - width_half, 'max_x': cx + width_half, 'min_y': cy - term_half, 'max_y': cy + body_half}
+        return {'min_x': cx - width_half, 'max_x': cx + width_half, 'min_y': cy - term_extension, 'max_y': cy + body_half}
     else:  # down
-        return {'min_x': cx - width_half, 'max_x': cx + width_half, 'min_y': cy - body_half, 'max_y': cy + term_half}
+        return {'min_x': cx - width_half, 'max_x': cx + width_half, 'min_y': cy - body_half, 'max_y': cy + term_extension}
 
-def _calc_center_from_offset(px, py, offset_mm, escape_dir):
-    """Calculate companion center given IC pin pos, offset, and escape direction."""
+def _calc_center_from_pin(px, py, offset_mm, escape_dir):
+    """Calculate companion center given IC pin position, offset, and escape direction."""
     if escape_dir == 'left':
         return snap_to_grid(px - offset_mm), snap_to_grid(py)
     elif escape_dir == 'right':
@@ -177,103 +179,6 @@ def _calc_center_from_offset(px, py, offset_mm, escape_dir):
         return snap_to_grid(px), snap_to_grid(py - offset_mm)
     else:  # down
         return snap_to_grid(px), snap_to_grid(py + offset_mm)
-
-def _estimate_label_bbox(pos_x, pos_y, text, angle=0):
-    """Estimate bounding box for a label based on text length and position.
-    Used for newly-placed labels where calling the API would add IPC cost.
-    """
-    text_len = len(text) if text else 3
-    width = text_len * LABEL_CHAR_WIDTH + 1.0
-    height = LABEL_HEIGHT
-    margin = 1.0
-    if angle in (0, 180):
-        return {
-            'min_x': pos_x - margin,
-            'max_x': pos_x + width + margin,
-            'min_y': pos_y - height/2 - margin,
-            'max_y': pos_y + height/2 + margin
-        }
-    else:
-        return {
-            'min_x': pos_x - height/2 - margin,
-            'max_x': pos_x + height/2 + margin,
-            'min_y': pos_y - margin,
-            'max_y': pos_y + width + margin
-        }
-
-def _find_clear_position(px, py, escape_dir, lib_id=''):
-    """Find a non-overlapping position by increasing offset distance.
-    Uses spatial index for O(1) average-case overlap checks against all
-    existing schematic items (symbols, labels, sheets, wires, IC bbox,
-    and previously placed companions).
-
-    If no clear position is found along the escape direction, tries
-    perpendicular stagger offsets (e.g., when multiple companions share
-    the same IC pin).
-    """
-    _debug.append(f'_find_clear_position: px={px:.2f}, py={py:.2f}, escape={escape_dir}')
-
-    # Calculate perpendicular stagger step from companion bbox dimensions
-    sample_bbox = _calc_companion_bbox(0, 0, escape_dir, lib_id)
-    if escape_dir in ('left', 'right'):
-        perp_size = sample_bbox['max_y'] - sample_bbox['min_y']
-    else:
-        perp_size = sample_bbox['max_x'] - sample_bbox['min_x']
-    perp_step = snap_to_grid(perp_size + GRID_MM)
-
-    # Try perpendicular stagger offsets: 0, +step, -step, +2*step, -2*step, ...
-    max_perp_steps = 4
-    perp_offsets = [0]
-    for s in range(1, max_perp_steps + 1):
-        perp_offsets.append(s * perp_step)
-        perp_offsets.append(-s * perp_step)
-
-    for perp_off in perp_offsets:
-        # Apply perpendicular offset to the pin position
-        if escape_dir in ('left', 'right'):
-            search_px, search_py = px, snap_to_grid(py + perp_off)
-        else:
-            search_px, search_py = snap_to_grid(px + perp_off), py
-
-        for try_grids in range(MIN_OFFSET_GRIDS, MAX_OFFSET_GRIDS + 10):
-            try_offset = try_grids * GRID_MM
-
-            try_cx, try_cy = _calc_center_from_offset(search_px, search_py, try_offset, escape_dir)
-            try_bbox = _calc_companion_bbox(try_cx, try_cy, escape_dir, lib_id)
-
-            # O(1) average overlap check via spatial index
-            if _spatial.any_overlap(try_bbox):
-                continue
-
-            # Check if wire path would cross existing wires
-            try_wire_path = _compute_wire_path(search_px, search_py, try_cx, try_cy, escape_dir)
-            if _wire_path_crosses_existing(try_wire_path, placed_wires):
-                continue
-
-            _debug.append(f'  FOUND: offset={try_grids} perp={perp_off:.2f} -> ({try_cx:.2f}, {try_cy:.2f})')
-            return try_cx, try_cy, try_offset
-
-    # Fallback
-    _debug.append(f'  FALLBACK: no clear position found')
-    cx, cy = _calc_center_from_offset(px, py, MIN_OFFSET_GRIDS * GRID_MM, escape_dir)
-    return cx, cy, MIN_OFFSET_GRIDS * GRID_MM
-
-# Reference counters for auto-generating refdes (uses cached symbols)
-ref_counters = {}
-def get_next_ref(prefix):
-    if prefix not in ref_counters:
-        highest = 0
-        for sym in _all_symbols_cache:
-            ref = getattr(sym, 'reference', '')
-            if ref.startswith(prefix):
-                try:
-                    num = int(ref[len(prefix):])
-                    highest = max(highest, num)
-                except Exception:
-                    pass
-        ref_counters[prefix] = highest
-    ref_counters[prefix] += 1
-    return f'{prefix}{ref_counters[prefix]}'
 
 # ---------------------------------------------------------------------------
 # Get IC symbol and bounding box
@@ -297,28 +202,17 @@ ic_bbox_expanded = {
 _debug.append(f'IC bbox: ({ic_bbox_expanded["min_x"]:.2f},{ic_bbox_expanded["min_y"]:.2f})-({ic_bbox_expanded["max_x"]:.2f},{ic_bbox_expanded["max_y"]:.2f})')
 
 # ---------------------------------------------------------------------------
-# Pre-collect all obstacles for overlap detection (uses bbox.py utilities)
+# Pre-collect obstacles and build spatial index
 # ---------------------------------------------------------------------------
 _ic_uuid = get_uuid_str(ic_sym)
-
-# Collect all existing symbols, labels, sheets, wires with accurate API bboxes
-_all_obstacle_bboxes = collect_all_obstacle_bboxes(
-    sch,
-    label_shrink=_LABEL_SHRINK,
-    exclude_ids={_ic_uuid}
-)
-
-# Build spatial index for fast O(1) overlap lookups
+_all_obstacle_bboxes = collect_all_obstacle_bboxes(sch, exclude_ids={_ic_uuid})
 _spatial = SpatialIndex(cell_size=10.0)
 for _ob in _all_obstacle_bboxes:
     _spatial.insert(_ob)
-
-# Insert expanded IC bbox into spatial index
 _spatial.insert(ic_bbox_expanded)
+_debug.append(f'Pre-collected {len(_all_obstacle_bboxes)} obstacles')
 
-_debug.append(f'Pre-collected {len(_all_obstacle_bboxes)} obstacles (symbols, labels, sheets, wires)')
-
-# Pre-fetch ALL IC pin positions in one batch IPC call
+# Pre-fetch ALL IC pin positions
 _ic_pin_map = {}
 try:
     _all_ic_pins = sch.symbols.get_all_transformed_pin_positions(ic_sym)
@@ -330,9 +224,9 @@ try:
         }
 except Exception:
     pass
-_debug.append(f'Pre-fetched {len(_ic_pin_map)} IC pin positions in 1 IPC call')
+_debug.append(f'Pre-fetched {len(_ic_pin_map)} IC pin positions')
 
-# Cache all existing symbols for get_next_ref (avoid redundant get_all)
+# Cache all existing symbols for reference counter
 _all_symbols_cache = sch.symbols.get_all()
 
 # Orientation transform for pin escape direction
@@ -343,7 +237,6 @@ def transform_orientation(orient):
     o = orient
     for _ in range(_rot_steps):
         o = _rot90.get(o, o)
-    # mirror_x = vertical flip (up<->down), mirror_y = horizontal flip (left<->right)
     if getattr(ic_sym, 'mirror_x', False):
         if o == 2: o = 3
         elif o == 3: o = 2
@@ -354,186 +247,330 @@ def transform_orientation(orient):
 
 def get_escape_dir(orient):
     """Convert orientation enum to escape direction string."""
-    if orient == 0: return 'left'   # pin points right, escape left
-    elif orient == 1: return 'right' # pin points left, escape right
-    elif orient == 2: return 'down'  # pin points up, escape down
-    elif orient == 3: return 'up'    # pin points down, escape up
+    if orient == 0: return 'left'
+    elif orient == 1: return 'right'
+    elif orient == 2: return 'down'
+    elif orient == 3: return 'up'
     else: return 'right'
 
-def draw_wire_stub(px, py, cpx, cpy, escape_dir, wire_idx):
-    """Draw L-shaped wire stub with staggered corner to avoid crossings."""
-    x0, y0 = snap_to_grid(px), snap_to_grid(py)
-    x1, y1 = snap_to_grid(cpx), snap_to_grid(cpy)
-    wire_len = ((x1 - x0)**2 + (y1 - y0)**2)**0.5
+def _get_ic_pin_data(ic_pin):
+    """Get IC pin position/orientation from pre-fetched map."""
+    pin_data = _ic_pin_map.get(ic_pin)
+    if pin_data:
+        return pin_data
+    for _pnum, _pdata in _ic_pin_map.items():
+        if _pdata.get('pin_name', '') == ic_pin:
+            return _pdata
+    pin_result = sch.symbols.get_transformed_pin_position(ic_sym, ic_pin)
+    if pin_result:
+        return {'position': pin_result['position'], 'orientation': pin_result.get('orientation', 1)}
+    return None
 
-    if wire_len < 0.1:
+# ===========================================================================
+# PHASE 1: Analyze all companions and group by escape direction
+# ===========================================================================
+_debug.append('--- PHASE 1: Grouping companions by escape direction ---')
+
+# Data structure for each companion's computed layout
+companion_layouts = []  # List of {index, companion, px, py, escape_dir, cx, cy, is_power_only, ...}
+
+# Group companions by escape direction
+groups = {'up': [], 'down': [], 'left': [], 'right': []}
+
+for i, companion in enumerate(companions_input):
+    lib_id = companion.get('lib_id', '')
+    ic_pin = companion.get('ic_pin', '')
+
+    if not lib_id:
+        results.append({'index': i, 'error': 'lib_id is required'})
+        continue
+    if not ic_pin:
+        results.append({'index': i, 'error': 'ic_pin is required'})
+        continue
+
+    pin_data = _get_ic_pin_data(ic_pin)
+    if not pin_data:
+        results.append({'index': i, 'error': f'Pin not found: {ic_pin}'})
+        continue
+
+    px = pin_data['position'].x / 1_000_000
+    py = pin_data['position'].y / 1_000_000
+    orient = transform_orientation(pin_data['orientation'])
+    escape_dir = get_escape_dir(orient)
+
+    is_power_only = lib_id.startswith('power:')
+
+    layout = {
+        'index': i,
+        'companion': companion,
+        'lib_id': lib_id,
+        'ic_pin': ic_pin,
+        'px': px,
+        'py': py,
+        'escape_dir': escape_dir,
+        'is_power_only': is_power_only,
+        'cx': None,  # To be computed
+        'cy': None,
+        'offset': None,
+    }
+    companion_layouts.append(layout)
+
+    if not is_power_only:
+        groups[escape_dir].append(layout)
+
+_debug.append(f'Groups: up={len(groups["up"])}, down={len(groups["down"])}, left={len(groups["left"])}, right={len(groups["right"])}')
+
+# ===========================================================================
+# PHASE 2: Compute unified layout for each group
+# ===========================================================================
+_debug.append('--- PHASE 2: Computing unified layouts ---')
+
+def _get_companion_perp_width(companion, escape_dir):
+    """Calculate required perpendicular width for a companion including labels."""
+    # Base component width
+    lib_id = companion.get('lib_id', '')
+    base_width = 3.0 if _is_horizontal_pin_component(lib_id) else 1.5
+
+    # Add label widths (labels extend perpendicular to escape direction)
+    max_label_width = 0.0
+
+    # For up/down escape, labels are horizontal and add to X width
+    # For left/right escape, labels are vertical (rotated) so less width impact
+    if escape_dir in ('up', 'down'):
+        # Terminal labels
+        for label_text in companion.get('terminal_labels', {}).values():
+            w = measure_text_width_mm(label_text)
+            max_label_width = max(max_label_width, w)
+
+        # Value text
+        value_text = companion.get('properties', {}).get('Value', '')
+        if value_text:
+            w = measure_text_width_mm(value_text)
+            max_label_width = max(max_label_width, w)
+
+        # Reference designator estimate (C##)
+        max_label_width = max(max_label_width, 3.5)
+
+    # Total width = max of component body or label width
+    total_half_width = max(base_width, max_label_width / 2 + 1.0) + BBOX_MARGIN
+    return total_half_width * 2  # Full width
+
+def compute_group_layout(group, escape_dir):
+    """Compute positions for all companions in a group.
+
+    Algorithm:
+    1. Sort companions by IC pin perpendicular position
+    2. Cluster by proximity (gap > threshold starts new cluster)
+    3. Within each cluster, place side-by-side with proper spacing based on actual label widths
+    4. Center each cluster above its IC pins
+    5. Find offset that clears obstacles for each cluster
+    """
+    if not group:
         return
 
-    corner_offset = GRID_MM * (1 + wire_idx)
-
-    if escape_dir in ('left', 'right'):
-        if escape_dir == 'right':
-            corner_x = snap_to_grid(x0 + corner_offset)
-        else:
-            corner_x = snap_to_grid(x0 - corner_offset)
-
-        if escape_dir == 'right' and corner_x > x1:
-            corner_x = x1
-        elif escape_dir == 'left' and corner_x < x1:
-            corner_x = x1
-
-        if abs(y0 - y1) < 0.01 and abs(corner_x - x1) < 0.01:
-            _w = sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), Vector2.from_xy_mm(x1, y1))
-            if _w: placed_wire_objs.append(_w)
-            placed_wires.append((x0, y0, x1, y1))
-        else:
-            _w = sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), Vector2.from_xy_mm(corner_x, y0))
-            if _w: placed_wire_objs.append(_w)
-            _w = sch.wiring.add_wire(Vector2.from_xy_mm(corner_x, y0), Vector2.from_xy_mm(corner_x, y1))
-            if _w: placed_wire_objs.append(_w)
-            if abs(corner_x - x1) > 0.01:
-                _w = sch.wiring.add_wire(Vector2.from_xy_mm(corner_x, y1), Vector2.from_xy_mm(x1, y1))
-                if _w: placed_wire_objs.append(_w)
-            placed_wires.append((x0, y0, corner_x, y0))
-            placed_wires.append((corner_x, y0, corner_x, y1))
-            if abs(corner_x - x1) > 0.01:
-                placed_wires.append((corner_x, y1, x1, y1))
+    # Sort by perpendicular position (X for up/down, Y for left/right)
+    if escape_dir in ('up', 'down'):
+        group.sort(key=lambda c: c['px'])
+        get_perp = lambda c: c['px']
     else:
-        if escape_dir == 'down':
-            corner_y = snap_to_grid(y0 + corner_offset)
-        else:
-            corner_y = snap_to_grid(y0 - corner_offset)
+        group.sort(key=lambda c: c['py'])
+        get_perp = lambda c: c['py']
 
-        if escape_dir == 'down' and corner_y > y1:
-            corner_y = y1
-        elif escape_dir == 'up' and corner_y < y1:
-            corner_y = y1
+    # Cluster companions by IC pin proximity
+    # Gap > cluster_gap_threshold starts a new cluster
+    cluster_gap_threshold = MIN_PERPENDICULAR_SPACING * 2  # ~10mm gap = new cluster
+    clusters = []
+    current_cluster = []
 
-        if abs(x0 - x1) < 0.01 and abs(corner_y - y1) < 0.01:
-            _w = sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), Vector2.from_xy_mm(x1, y1))
-            if _w: placed_wire_objs.append(_w)
-            placed_wires.append((x0, y0, x1, y1))
+    for comp in group:
+        if not current_cluster:
+            current_cluster.append(comp)
         else:
-            _w = sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), Vector2.from_xy_mm(x0, corner_y))
-            if _w: placed_wire_objs.append(_w)
-            _w = sch.wiring.add_wire(Vector2.from_xy_mm(x0, corner_y), Vector2.from_xy_mm(x1, corner_y))
-            if _w: placed_wire_objs.append(_w)
-            if abs(corner_y - y1) > 0.01:
-                _w = sch.wiring.add_wire(Vector2.from_xy_mm(x1, corner_y), Vector2.from_xy_mm(x1, y1))
-                if _w: placed_wire_objs.append(_w)
-            placed_wires.append((x0, y0, x0, corner_y))
-            placed_wires.append((x0, corner_y, x1, corner_y))
-            if abs(corner_y - y1) > 0.01:
-                placed_wires.append((x1, corner_y, x1, y1))
+            prev_perp = get_perp(current_cluster[-1])
+            curr_perp = get_perp(comp)
+            if curr_perp - prev_perp > cluster_gap_threshold:
+                # Gap too big, start new cluster
+                clusters.append(current_cluster)
+                current_cluster = [comp]
+            else:
+                current_cluster.append(comp)
+
+    if current_cluster:
+        clusters.append(current_cluster)
+
+    _debug.append(f'  {escape_dir}: {len(group)} companions in {len(clusters)} clusters')
+
+    # Process each cluster
+    for cluster in clusters:
+        # Calculate required spacing for each companion based on actual label widths
+        companion_widths = []
+        for comp in cluster:
+            w = _get_companion_perp_width(comp['companion'], escape_dir)
+            companion_widths.append(w)
+            tool_log(f'  Companion perp width: {w:.2f}mm')
+
+        # Calculate positions with proper spacing between each pair
+        # Spacing between i and i+1 = (width[i] + width[i+1]) / 2
+        positions = []
+        current_pos = 0.0
+        for i, comp in enumerate(cluster):
+            if i == 0:
+                positions.append(0.0)
+            else:
+                # Spacing = half of previous width + half of current width
+                spacing = (companion_widths[i-1] + companion_widths[i]) / 2
+                spacing = max(spacing, MIN_PERPENDICULAR_SPACING)  # Minimum spacing
+                current_pos += spacing
+                positions.append(current_pos)
+
+        # Center the cluster around the midpoint of IC pins
+        pin_perps = [get_perp(c) for c in cluster]
+        cluster_center = (min(pin_perps) + max(pin_perps)) / 2
+        total_span = positions[-1] if positions else 0
+        offset = cluster_center - total_span / 2
+
+        for i, comp in enumerate(cluster):
+            comp['final_perp'] = snap_to_grid(offset + positions[i])
+
+        # Find minimum offset that clears obstacles for this cluster
+        for try_grids in range(MIN_OFFSET_GRIDS, MAX_OFFSET_GRIDS + 1):
+            offset_mm = try_grids * GRID_MM
+            all_clear = True
+
+            for comp in cluster:
+                if escape_dir in ('up', 'down'):
+                    cx, cy = _calc_center_from_pin(comp['final_perp'], comp['py'], offset_mm, escape_dir)
+                else:
+                    cx, cy = _calc_center_from_pin(comp['px'], comp['final_perp'], offset_mm, escape_dir)
+
+                bbox = _calc_companion_bbox(cx, cy, escape_dir, comp['lib_id'], comp['companion'])
+                if _spatial.any_overlap(bbox):
+                    all_clear = False
+                    break
+
+            if all_clear:
+                # Assign positions and register bboxes
+                for comp in cluster:
+                    if escape_dir in ('up', 'down'):
+                        cx, cy = _calc_center_from_pin(comp['final_perp'], comp['py'], offset_mm, escape_dir)
+                    else:
+                        cx, cy = _calc_center_from_pin(comp['px'], comp['final_perp'], offset_mm, escape_dir)
+
+                    comp['cx'] = cx
+                    comp['cy'] = cy
+                    comp['offset'] = offset_mm
+
+                    # Register as obstacle for subsequent clusters
+                    comp_bbox = _calc_companion_bbox(cx, cy, escape_dir, comp['lib_id'], comp['companion'])
+                    _spatial.insert(comp_bbox)
+
+                break
+        else:
+            # Fallback at max offset
+            offset_mm = MAX_OFFSET_GRIDS * GRID_MM
+            for comp in cluster:
+                if escape_dir in ('up', 'down'):
+                    cx, cy = _calc_center_from_pin(comp['final_perp'], comp['py'], offset_mm, escape_dir)
+                else:
+                    cx, cy = _calc_center_from_pin(comp['px'], comp['final_perp'], offset_mm, escape_dir)
+
+                comp['cx'] = cx
+                comp['cy'] = cy
+                comp['offset'] = offset_mm
+
+# Compute layout for each group
+for escape_dir in ['up', 'down', 'left', 'right']:
+    compute_group_layout(groups[escape_dir], escape_dir)
+
+# Handle power-only companions (place directly at pin)
+for layout in companion_layouts:
+    if layout['is_power_only']:
+        layout['cx'] = layout['px']
+        layout['cy'] = layout['py']
+
+# ===========================================================================
+# PHASE 3: Execute placement
+# ===========================================================================
+_debug.append('--- PHASE 3: Placing companions ---')
 
 def place_power_symbol(pin_pos_x, pin_pos_y, power_name, escape_dir):
-    """Place a power symbol at the given pin position and register in spatial index."""
+    """Place a power symbol at the given pin position."""
     pwr_name_upper = power_name.upper()
     is_gnd = 'GND' in pwr_name_upper or 'VSS' in pwr_name_upper
     pwr_offset = GRID_MM
 
     if escape_dir == 'left':
-        pwr_x = snap_to_grid(pin_pos_x - pwr_offset)
-        pwr_y = snap_to_grid(pin_pos_y)
+        pwr_x, pwr_y = snap_to_grid(pin_pos_x - pwr_offset), snap_to_grid(pin_pos_y)
         pwr_angle = 270 if is_gnd else 90
     elif escape_dir == 'right':
-        pwr_x = snap_to_grid(pin_pos_x + pwr_offset)
-        pwr_y = snap_to_grid(pin_pos_y)
+        pwr_x, pwr_y = snap_to_grid(pin_pos_x + pwr_offset), snap_to_grid(pin_pos_y)
         pwr_angle = 90 if is_gnd else 270
     elif escape_dir == 'down':
-        pwr_x = snap_to_grid(pin_pos_x)
-        pwr_y = snap_to_grid(pin_pos_y + pwr_offset)
+        pwr_x, pwr_y = snap_to_grid(pin_pos_x), snap_to_grid(pin_pos_y + pwr_offset)
         pwr_angle = 0 if is_gnd else 180
     else:  # up
-        pwr_x = snap_to_grid(pin_pos_x)
-        pwr_y = snap_to_grid(pin_pos_y - pwr_offset)
+        pwr_x, pwr_y = snap_to_grid(pin_pos_x), snap_to_grid(pin_pos_y - pwr_offset)
         pwr_angle = 180 if is_gnd else 0
 
     pwr_pos = Vector2.from_xy_mm(pwr_x, pwr_y)
     pwr_sym = sch.labels.add_power(power_name, pwr_pos, angle=pwr_angle)
 
-    # Wire from pin to power symbol
     _w = sch.wiring.add_wire(Vector2.from_xy_mm(snap_to_grid(pin_pos_x), snap_to_grid(pin_pos_y)), pwr_pos)
     if _w: placed_wire_objs.append(_w)
 
-    # Register power symbol bbox in spatial index for future collision avoidance
-    _spatial.insert({
-        'kind': 'power_placed',
-        'min_x': pwr_x - 2.0, 'max_x': pwr_x + 2.0,
-        'min_y': pwr_y - 3.0, 'max_y': pwr_y + 3.0,
-    })
-
     return pwr_sym, pwr_x, pwr_y
 
-def _get_ic_pin_data(ic_pin):
-    """Get IC pin position/orientation from pre-fetched map, falling back to IPC call."""
-    pin_data = _ic_pin_map.get(ic_pin)
-    if pin_data:
-        return pin_data
-    # Fallback: try pin by name if number lookup failed
-    for _pnum, _pdata in _ic_pin_map.items():
-        if _pdata.get('pin_name', '') == ic_pin:
-            return _pdata
-    # Last resort: IPC call
-    pin_result = sch.symbols.get_transformed_pin_position(ic_sym, ic_pin)
-    if pin_result:
-        return {
-            'position': pin_result['position'],
-            'orientation': pin_result.get('orientation', 1),
-        }
-    return None
+def draw_orthogonal_wire(px, py, cpx, cpy, escape_dir):
+    """Draw L-shaped orthogonal wire from IC pin to companion pin.
 
-def _place_single_companion(companion, index, parent_pin_x=None, parent_pin_y=None,
-                             parent_escape_dir=None, is_chain=False):
-    """Place a single companion component. Used for both top-level and chain items.
-
-    For top-level companions, reads ic_pin from companion dict and looks up IC pin position.
-    For chain items, uses parent_pin_x/y and parent_escape_dir directly.
-
-    Returns (comp_sym, away_pin_x, away_pin_y, escape_dir) or None on failure.
+    Uses escape direction to determine whether to go horizontal-first or vertical-first.
     """
-    lib_id = companion.get('lib_id', '')
-    ic_pin = companion.get('ic_pin', '')
-    offset_grids = companion.get('offset_grids', 3)
-    reverse = companion.get('reverse', False)
+    x0, y0 = snap_to_grid(px), snap_to_grid(py)
+    x1, y1 = snap_to_grid(cpx), snap_to_grid(cpy)
 
-    if not lib_id:
-        results.append({'index': index, 'error': 'lib_id is required'})
-        return None
+    if abs(x1 - x0) < 0.01 and abs(y1 - y0) < 0.01:
+        return  # No wire needed
 
-    if not is_chain and not ic_pin:
-        results.append({'index': index, 'error': 'ic_pin is required for top-level companions'})
-        return None
+    # If already aligned, draw single straight wire
+    if abs(x1 - x0) < 0.01 or abs(y1 - y0) < 0.01:
+        _w = sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), Vector2.from_xy_mm(x1, y1))
+        if _w: placed_wire_objs.append(_w)
+        return
 
-    # Determine pin position and escape direction
-    if is_chain:
-        px, py = parent_pin_x, parent_pin_y
-        escape_dir = parent_escape_dir
+    # L-shaped routing: choose corner based on escape direction
+    # For up/down escapes: go vertical first (escape), then horizontal
+    # For left/right escapes: go horizontal first (escape), then vertical
+    if escape_dir in ('up', 'down'):
+        # Vertical first, then horizontal
+        corner_x, corner_y = x0, y1
     else:
-        pin_data = _get_ic_pin_data(ic_pin)
-        if not pin_data:
-            raise ValueError(f'Pin not found on IC: {ic_pin}')
-        px = pin_data['position'].x / 1_000_000
-        py = pin_data['position'].y / 1_000_000
-        orient = transform_orientation(pin_data['orientation'])
-        escape_dir = get_escape_dir(orient)
+        # Horizontal first, then vertical
+        corner_x, corner_y = x1, y0
 
-    # Check for power-only companion
-    is_power_only = lib_id.startswith('power:')
-    if is_power_only:
+    # Draw two segments
+    _w1 = sch.wiring.add_wire(Vector2.from_xy_mm(x0, y0), Vector2.from_xy_mm(corner_x, corner_y))
+    if _w1: placed_wire_objs.append(_w1)
+    _w2 = sch.wiring.add_wire(Vector2.from_xy_mm(corner_x, corner_y), Vector2.from_xy_mm(x1, y1))
+    if _w2: placed_wire_objs.append(_w2)
+
+def place_companion(layout):
+    """Place a single companion at its computed position."""
+    companion = layout['companion']
+    lib_id = layout['lib_id']
+    escape_dir = layout['escape_dir']
+    cx, cy = layout['cx'], layout['cy']
+    px, py = layout['px'], layout['py']
+    index = layout['index']
+
+    # Handle power-only
+    if layout['is_power_only']:
         power_name = lib_id[6:]  # Remove "power:" prefix
-
-    offset_mm = snap_to_grid(offset_grids * 1.27)
-
-    # Power-only: place power symbol directly at pin
-    if is_power_only:
         pwr_sym, pwr_x, pwr_y = place_power_symbol(px, py, power_name, escape_dir)
-        _debug.append(f'Power-only: {power_name} at ({pwr_x:.2f},{pwr_y:.2f})')
 
         placed_companions.append({
             'index': index,
             'lib_id': lib_id,
-            'ic_pin': ic_pin,
+            'ic_pin': layout['ic_pin'],
             'ref': pwr_sym.reference if hasattr(pwr_sym, 'reference') else power_name,
             'cx': pwr_x,
             'cy': pwr_y,
@@ -541,23 +578,19 @@ def _place_single_companion(companion, index, parent_pin_x=None, parent_pin_y=No
             'escape_dir': escape_dir,
             'power_only': True
         })
-        # Power-only has no "away" pin for chaining, return position for potential chain
-        return (pwr_sym, pwr_x, pwr_y, escape_dir)
+        return None
 
-    # Find clear position
-    cx, cy, _offset = _find_clear_position(px, py, escape_dir, lib_id)
-    _debug.append(f'Comp{index}: offset={_offset:.2f}mm at ({cx:.2f},{cy:.2f})')
-
-    # Calculate rotation angle
+    # Calculate rotation
+    reverse = companion.get('reverse', False)
     comp_angle = _get_component_angle(escape_dir, lib_id)
     if reverse:
         comp_angle = (comp_angle + 180) % 360
 
-    # Create companion symbol
+    # Create symbol
     comp_pos = Vector2.from_xy_mm(cx, cy)
     comp_sym = sch.symbols.add(lib_id=lib_id, position=comp_pos, angle=comp_angle)
     if not comp_sym:
-        raise ValueError(f'Failed to create companion symbol: {lib_id}')
+        raise ValueError(f'Failed to create symbol: {lib_id}')
 
     # Set properties
     properties = companion.get('properties', {})
@@ -566,11 +599,8 @@ def _place_single_companion(companion, index, parent_pin_x=None, parent_pin_y=No
             sch.symbols.set_value(comp_sym, prop_value)
         elif prop_name == 'Footprint':
             sch.symbols.set_footprint(comp_sym, prop_value)
-        else:
-            comp_sym.set_field(prop_name, prop_value)
-            sch.crud.update_items(comp_sym)
 
-    # Get ALL companion pin positions in 1 IPC call
+    # Get pin positions
     comp_pin_map = {}
     try:
         comp_all_pins = sch.symbols.get_all_transformed_pin_positions(comp_sym)
@@ -582,20 +612,17 @@ def _place_single_companion(companion, index, parent_pin_x=None, parent_pin_y=No
     except Exception:
         pass
 
-    # Get wire pin position (pin 2 toward IC by default, pin 1 if reversed)
+    # Draw wire from IC pin to companion pin 2 (facing IC)
     wire_pin = '1' if reverse else '2'
     if wire_pin in comp_pin_map:
-        cpwx = comp_pin_map[wire_pin]['x']
-        cpwy = comp_pin_map[wire_pin]['y']
+        cpwx, cpwy = comp_pin_map[wire_pin]['x'], comp_pin_map[wire_pin]['y']
     else:
         cpwx, cpwy = cx, cy
 
-    # Draw wire stub from parent pin to companion
-    wire_idx = len(placed_companions)
-    draw_wire_stub(px, py, cpwx, cpwy, escape_dir, wire_idx)
+    draw_orthogonal_wire(px, py, cpwx, cpwy, escape_dir)
 
-    # Register companion bbox in spatial index for future collision avoidance
-    comp_bbox = _calc_companion_bbox(cx, cy, escape_dir, lib_id)
+    # Register bbox
+    comp_bbox = _calc_companion_bbox(cx, cy, escape_dir, lib_id, companion)
     _spatial.insert(comp_bbox)
 
     # Handle terminal_power
@@ -606,24 +633,17 @@ def _place_single_companion(companion, index, parent_pin_x=None, parent_pin_y=No
             if pin_num == '1': actual_pin = '2'
             elif pin_num == '2': actual_pin = '1'
 
-        # Extract power name (remove library prefix if present)
         if ':' in pwr_name:
             pwr_name = pwr_name.split(':')[-1]
 
         try:
             if actual_pin in comp_pin_map:
-                pwr_px = comp_pin_map[actual_pin]['x']
-                pwr_py = comp_pin_map[actual_pin]['y']
+                pwr_px, pwr_py = comp_pin_map[actual_pin]['x'], comp_pin_map[actual_pin]['y']
             else:
-                pwr_pin = sch.symbols.get_transformed_pin_position(comp_sym, actual_pin)
-                if pwr_pin:
-                    pwr_px = pwr_pin['position'].x / 1_000_000
-                    pwr_py = pwr_pin['position'].y / 1_000_000
-                else:
-                    continue
+                continue
             place_power_symbol(pwr_px, pwr_py, pwr_name, escape_dir)
-        except Exception as pwr_e:
-            results.append({'index': index, 'warning': f'Power symbol at pin {pin_num}: {str(pwr_e)}'})
+        except Exception:
+            pass
 
     # Handle terminal_labels
     terminal_labels = companion.get('terminal_labels', {})
@@ -635,29 +655,20 @@ def _place_single_companion(companion, index, parent_pin_x=None, parent_pin_y=No
 
         try:
             if actual_pin in comp_pin_map:
-                lbl_px = comp_pin_map[actual_pin]['x']
-                lbl_py = comp_pin_map[actual_pin]['y']
+                lbl_px, lbl_py = comp_pin_map[actual_pin]['x'], comp_pin_map[actual_pin]['y']
             else:
-                lbl_pin = sch.symbols.get_transformed_pin_position(comp_sym, actual_pin)
-                if lbl_pin:
-                    lbl_px = lbl_pin['position'].x / 1_000_000
-                    lbl_py = lbl_pin['position'].y / 1_000_000
-                else:
-                    continue
+                continue
             lbl_pos = Vector2.from_xy_mm(snap_to_grid(lbl_px), snap_to_grid(lbl_py))
             sch.labels.add_local(label_text, lbl_pos)
-            # Register placed label in spatial index
-            lbl_est_bbox = _estimate_label_bbox(snap_to_grid(lbl_px), snap_to_grid(lbl_py), label_text)
-            _spatial.insert(lbl_est_bbox)
-        except Exception as lbl_e:
-            results.append({'index': index, 'warning': f'Label at pin {pin_num}: {str(lbl_e)}'})
+        except Exception:
+            pass
 
-    # Record placement (include UUID for post-annotation ref lookup)
-    comp_uuid = str(comp_sym.id.value) if hasattr(comp_sym, 'id') and hasattr(comp_sym.id, 'value') else str(getattr(comp_sym, 'id', ''))
+    # Record placement
+    comp_uuid = str(comp_sym.id.value) if hasattr(comp_sym, 'id') and hasattr(comp_sym.id, 'value') else ''
     placed_companions.append({
         'index': index,
         'lib_id': lib_id,
-        'ic_pin': ic_pin,
+        'ic_pin': layout['ic_pin'],
         'ref': comp_sym.reference,
         'uuid': comp_uuid,
         'cx': cx,
@@ -666,102 +677,122 @@ def _place_single_companion(companion, index, parent_pin_x=None, parent_pin_y=No
         'escape_dir': escape_dir
     })
 
-    # Determine "away" pin position for chaining
+    # Return away pin for chaining
     away_pin = '1' if not reverse else '2'
     if away_pin in comp_pin_map:
-        away_x = comp_pin_map[away_pin]['x']
-        away_y = comp_pin_map[away_pin]['y']
-    else:
-        away_x, away_y = cx, cy
+        return (comp_sym, comp_pin_map[away_pin]['x'], comp_pin_map[away_pin]['y'], escape_dir)
+    return (comp_sym, cx, cy, escape_dir)
 
-    return (comp_sym, away_x, away_y, escape_dir)
+# Place all companions
+for layout in companion_layouts:
+    if layout['cx'] is None:
+        continue  # Skip if position couldn't be computed
 
+    try:
+        result = place_companion(layout)
 
-def _process_chain(chain_items, parent_away_x, parent_away_y, escape_dir, depth, parent_index):
-    """Recursively place chained components from a parent's away terminal.
+        # Handle chains
+        chain = layout['companion'].get('chain', [])
+        if chain and result:
+            _, away_x, away_y, esc_dir = result
 
-    Chain items connect to the parent's away terminal. Multiple items at the
-    same level are staggered perpendicular to the escape direction (branches).
-    """
-
-    for idx, chain_item in enumerate(chain_items):
-        # Calculate lateral offset for branches (multiple items = side-by-side)
-        lateral_offset = 0
-        if len(chain_items) > 1:
-            # Compute perpendicular spacing from companion bbox dimensions
-            # so branches don't overlap regardless of component size.
-            # Use the full escape-direction extent (includes terminal extensions
-            # for power symbols/labels) to prevent label overlap too.
-            chain_lib = chain_item.get('lib_id', '')
-            sample_bbox = _calc_companion_bbox(0, 0, escape_dir, chain_lib)
-            if escape_dir in ('left', 'right'):
-                perp_size = sample_bbox['max_y'] - sample_bbox['min_y']
-            else:
-                perp_size = sample_bbox['max_x'] - sample_bbox['min_x']
-            # Space branches by full perpendicular bbox size + 2 grid gaps minimum
-            branch_spacing = snap_to_grid(max(perp_size + GRID_MM * 2, GRID_MM * 6))
-            lateral_offset = (idx - (len(chain_items) - 1) / 2.0) * branch_spacing
-
-        # Apply lateral offset perpendicular to escape direction
-        if lateral_offset != 0:
-            if escape_dir in ('left', 'right'):
-                chain_px = parent_away_x
-                chain_py = snap_to_grid(parent_away_y + lateral_offset)
-            else:
-                chain_px = snap_to_grid(parent_away_x + lateral_offset)
-                chain_py = parent_away_y
-        else:
-            chain_px = parent_away_x
-            chain_py = parent_away_y
-
-        chain_index = f'{parent_index}.chain[{idx}]'
-
-        try:
-            result = _place_single_companion(
-                chain_item, chain_index,
-                parent_pin_x=chain_px, parent_pin_y=chain_py,
-                parent_escape_dir=escape_dir, is_chain=True
+            # Determine if chain items are parallel (all have terminal_power on pin 1)
+            # or series (no terminal_power, they chain together)
+            all_have_gnd_on_pin1 = all(
+                chain_item.get('terminal_power', {}).get('1') for chain_item in chain
             )
 
-            if result and chain_item.get('chain'):
-                _, away_x, away_y, esc_dir = result
-                _process_chain(chain_item['chain'], away_x, away_y, esc_dir, depth + 1, chain_index)
+            if all_have_gnd_on_pin1:
+                # PARALLEL placement: all chain items connect from the same point
+                # Place them perpendicular to escape direction with spacing
+                branch_x, branch_y = away_x, away_y
 
-        except Exception as e:
-            results.append({
-                'index': chain_index,
-                'lib_id': chain_item.get('lib_id', ''),
-                'error': f'Chain placement failed: {str(e)}'
-            })
+                for chain_idx, chain_item in enumerate(chain):
+                    chain_lib = chain_item.get('lib_id', '')
+                    if not chain_lib:
+                        continue
 
+                    # Offset perpendicular to escape direction
+                    perp_offset = chain_idx * MIN_PERPENDICULAR_SPACING
+                    chain_offset = COMP_HALF_LEN + GRID_MM * 2
+
+                    if esc_dir == 'left':
+                        chain_cx = snap_to_grid(branch_x - chain_offset)
+                        chain_cy = snap_to_grid(branch_y + perp_offset)
+                    elif esc_dir == 'right':
+                        chain_cx = snap_to_grid(branch_x + chain_offset)
+                        chain_cy = snap_to_grid(branch_y + perp_offset)
+                    elif esc_dir == 'up':
+                        chain_cx = snap_to_grid(branch_x + perp_offset)
+                        chain_cy = snap_to_grid(branch_y - chain_offset)
+                    else:  # down
+                        chain_cx = snap_to_grid(branch_x + perp_offset)
+                        chain_cy = snap_to_grid(branch_y + chain_offset)
+
+                    chain_layout = {
+                        'index': f'{layout["index"]}.chain[{chain_idx}]',
+                        'companion': chain_item,
+                        'lib_id': chain_lib,
+                        'ic_pin': '',
+                        'px': branch_x,  # All connect from same branch point
+                        'py': branch_y,
+                        'escape_dir': esc_dir,
+                        'is_power_only': chain_lib.startswith('power:'),
+                        'cx': chain_cx,
+                        'cy': chain_cy,
+                    }
+
+                    place_companion(chain_layout)
+
+            else:
+                # SERIES placement: chain items connect end-to-end
+                for chain_idx, chain_item in enumerate(chain):
+                    chain_lib = chain_item.get('lib_id', '')
+                    if not chain_lib:
+                        continue
+
+                    # Compute chain position (continue in escape direction)
+                    chain_offset = (chain_idx + 1) * (COMP_HALF_LEN * 2 + GRID_MM * 2)
+                    if esc_dir == 'left':
+                        chain_cx = snap_to_grid(away_x - chain_offset)
+                        chain_cy = away_y
+                    elif esc_dir == 'right':
+                        chain_cx = snap_to_grid(away_x + chain_offset)
+                        chain_cy = away_y
+                    elif esc_dir == 'up':
+                        chain_cx = away_x
+                        chain_cy = snap_to_grid(away_y - chain_offset)
+                    else:
+                        chain_cx = away_x
+                        chain_cy = snap_to_grid(away_y + chain_offset)
+
+                    chain_layout = {
+                        'index': f'{layout["index"]}.chain[{chain_idx}]',
+                        'companion': chain_item,
+                        'lib_id': chain_lib,
+                        'ic_pin': '',
+                        'px': away_x,
+                        'py': away_y,
+                        'escape_dir': esc_dir,
+                        'is_power_only': chain_lib.startswith('power:'),
+                        'cx': chain_cx,
+                        'cy': chain_cy,
+                    }
+
+                    chain_result = place_companion(chain_layout)
+                    if chain_result:
+                        _, away_x, away_y, esc_dir = chain_result
+
+    except Exception as e:
+        results.append({
+            'index': layout['index'],
+            'lib_id': layout['lib_id'],
+            'ic_pin': layout['ic_pin'],
+            'error': str(e)
+        })
 
 # ---------------------------------------------------------------------------
-# Process each companion
-# ---------------------------------------------------------------------------
-try:
-    for i, companion in enumerate(companions_input):
-        try:
-            result = _place_single_companion(companion, i)
-
-            # Process chain items if present
-            chain = companion.get('chain', [])
-            if chain and result:
-                _, away_x, away_y, esc_dir = result
-                _process_chain(chain, away_x, away_y, esc_dir, depth=0, parent_index=i)
-
-        except Exception as e:
-            results.append({
-                'index': i,
-                'lib_id': companion.get('lib_id', ''),
-                'ic_pin': companion.get('ic_pin', ''),
-                'error': str(e)
-            })
-
-except Exception as e:
-    results.append({'error': f'Unexpected error during companion placement: {str(e)}'})
-
-# ---------------------------------------------------------------------------
-# Auto-place junctions where wires branch or meet
+# Auto-place junctions
 # ---------------------------------------------------------------------------
 _junction_count = 0
 if placed_wire_objs:
@@ -776,7 +807,7 @@ if placed_wire_objs:
         _debug.append(f'Junction placement failed: {str(junc_e)}')
 
 # ---------------------------------------------------------------------------
-# Auto-annotate newly placed companions
+# Auto-annotate
 # ---------------------------------------------------------------------------
 if placed_companions:
     try:
@@ -788,12 +819,10 @@ if placed_companions:
             reset_existing=False,
             recursive=True
         )
-        # Build UUID->ref map from all symbols after annotation
         uuid_to_ref = {}
         for s in sch.symbols.get_all():
-            s_uuid = str(s.id.value) if hasattr(s, 'id') and hasattr(s.id, 'value') else str(getattr(s, 'id', ''))
+            s_uuid = str(s.id.value) if hasattr(s, 'id') and hasattr(s.id, 'value') else ''
             uuid_to_ref[s_uuid] = getattr(s, 'reference', '?')
-        # Update placed companion refs using UUID lookup
         for comp in placed_companions:
             if comp.get('power_only'):
                 continue

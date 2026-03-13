@@ -11,7 +11,7 @@ def collect_placed_bboxes(sch):
     try:
         for sym in sch.symbols.get_all():
             try:
-                bb = sch.transform.get_bounding_box(sym, units='mm', include_text=False)
+                bb = sch.transform.get_bounding_box(sym, units='mm', include_text=True)
             except Exception:
                 continue
             if bb:
@@ -67,14 +67,14 @@ def collect_all_obstacle_bboxes(sch, label_shrink=0.0, exclude_ids=None):
     _exclude = exclude_ids or set()
     bboxes = []
 
-    # Symbols (includes power symbols)
+    # Symbols (includes power symbols) - include_text=True to include Reference and Value labels
     try:
         for sym in sch.symbols.get_all():
             uid = get_uuid_str(sym)
             if uid in _exclude:
                 continue
             try:
-                bb = sch.transform.get_bounding_box(sym, units='mm', include_text=False)
+                bb = sch.transform.get_bounding_box(sym, units='mm', include_text=True)
             except Exception:
                 continue
             if bb:

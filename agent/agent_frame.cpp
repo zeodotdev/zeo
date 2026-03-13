@@ -1383,6 +1383,9 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     if( text.IsEmpty() && m_pendingAttachments.empty() )
         return;
 
+    // Save for retry on error
+    m_lastSentText = text;
+
     // Reset scroll state for new user message - user sending indicates engagement at bottom
     m_userScrolledUp = false;
 
@@ -2012,6 +2015,8 @@ void AGENT_FRAME::OnBridgeLinkClick( const nlohmann::json& aMsg )
         OnRejectRunERC();
     else if( href == "agent:open_simulator" )
         OnOpenSimulator();
+    else if( href == "agent:retry" )
+        OnRetryLastMessage();
     else if( href.StartsWith( "http://" ) || href.StartsWith( "https://" ) )
         wxLaunchDefaultBrowser( href );
 }
@@ -2794,6 +2799,21 @@ void AGENT_FRAME::StartAsyncLLMRequest()
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
         m_bridge->PushActionButtonState( "Send" );
     }
+}
+
+
+void AGENT_FRAME::OnRetryLastMessage()
+{
+    if( m_lastSentText.IsEmpty() )
+        return;
+
+    // Re-send through normal input flow so the message re-appears in chat and history
+    m_pendingInputText = m_lastSentText;
+    m_lastSentText.Clear();
+
+    // Trigger the send path (same as user pressing Send)
+    wxCommandEvent evt;
+    OnSend( evt );
 }
 
 
@@ -4736,13 +4756,21 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     m_toolCallHtml.Clear();
     m_currentThinkingIndex = -1;
 
-    // Display human-readable error message (raw error is already in the log from HandleLLMError)
+    // Display human-readable error message with optional retry button
     wxString friendly = HumanizeErrorMessage( data->message, data->httpCode, data->errorType );
+    wxString retryBtn;
+    if( data->canRetry && !m_lastSentText.IsEmpty() )
+    {
+        retryBtn = wxS( "<a href=\"agent:retry\" style=\"display:inline-block; margin-top:8px; "
+                        "padding:4px 14px; border-radius:6px; font-size:12px; font-weight:500; "
+                        "text-decoration:none; cursor:pointer; "
+                        "background:rgba(232,85,85,0.15); color:var(--accent-red);\">Retry</a>" );
+    }
     wxString errorHtml = wxString::Format(
         "<div class=\"rounded-lg p-3 my-2\" style=\"background:rgba(232,85,85,0.08); border:1px solid rgba(232,85,85,0.2);\">"
-        "<p class=\"text-accent-red text-[13px] m-0\">%s</p>"
+        "<p class=\"text-accent-red text-[13px] m-0\">%s</p>%s"
         "</div>",
-        friendly );
+        friendly, retryBtn );
     AppendHtml( errorHtml );
 
     // Re-insert all queued messages into input on error (don't lose the user's text)

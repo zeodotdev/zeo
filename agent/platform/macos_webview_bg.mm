@@ -38,12 +38,10 @@ void FocusWebView( void* aNativeHandle )
     NSView* view = (__bridge NSView*) aNativeHandle;
     NSWindow* window = [view window];
 
-    if( window )
+    if( window && [window isVisible] && [window isKeyWindow] )
     {
-        // Make the window key and bring it to front
-        [window makeKeyAndOrderFront:nil];
-
-        // Make the webview the first responder
+        // Only set first responder if window is already visible and key
+        // Don't use makeKeyAndOrderFront as it would bring hidden windows to front
         [window makeFirstResponder:view];
     }
 }

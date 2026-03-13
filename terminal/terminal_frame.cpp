@@ -255,33 +255,18 @@ TERMINAL_FRAME::TERMINAL_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         SetIcons( icon_bundle );
     }
 
-    // Add initial terminal
-    AddTerminal( TERMINAL_PANEL::MODE_SYSTEM );
+    // Don't add initial terminal here - it will be added when the frame is shown
+    // This prevents a visible terminal from appearing when the frame is created
+    // just for headless agent command execution
 
-    // Layout after terminal is added to ensure proper sizing
+    // Layout
     Layout();
 
     // Bind size event for proper resize handling
     Bind( wxEVT_SIZE, &TERMINAL_FRAME::OnSize, this );
 
-    // Delayed layout to ensure terminal gets final size after window is shown
-    // Use wxWeakRef to guard against use-after-free if frame is destroyed before CallAfter executes
-    wxWeakRef<TERMINAL_FRAME> weakThis( this );
-    CallAfter( [weakThis]() {
-        if( !weakThis )
-            return;  // Frame was destroyed, abort
-
-        weakThis->Layout();
-        // Notify all terminal panels to resize
-        for( size_t i = 0; i < weakThis->m_notebook->GetPageCount(); i++ )
-        {
-            if( wxWindow* page = weakThis->m_notebook->GetPage( i ) )
-            {
-                wxSizeEvent evt( page->GetSize() );
-                page->ProcessWindowEvent( evt );
-            }
-        }
-    } );
+    // Bind show event to create initial terminal when frame becomes visible
+    Bind( wxEVT_SHOW, &TERMINAL_FRAME::OnShowWindow, this );
 
     // Headless executor for agent Python/shell commands
     m_headlessExecutor = new HEADLESS_PYTHON_EXECUTOR();
@@ -504,6 +489,20 @@ void TERMINAL_FRAME::OnSize( wxSizeEvent& event )
 {
     // Ensure proper layout when frame is resized
     Layout();
+    event.Skip();
+}
+
+
+void TERMINAL_FRAME::OnShowWindow( wxShowEvent& event )
+{
+    // When the frame is shown for the first time, create an initial terminal tab
+    // This prevents creating a visible terminal when the frame is only used for
+    // headless agent command execution
+    if( event.IsShown() && m_notebook->GetPageCount() == 0 )
+    {
+        AddTerminal( TERMINAL_PANEL::MODE_SYSTEM );
+    }
+
     event.Skip();
 }
 

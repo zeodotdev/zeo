@@ -34,6 +34,7 @@ public:
     void OnTerminalTitleChanged( wxCommandEvent& event );
     void OnSize( wxSizeEvent& event ) override;
     void OnSwitchTab( wxCommandEvent& event );
+    void OnShowWindow( wxShowEvent& event );
 
     // Tab Management
     void            AddTerminal( TERMINAL_PANEL::TERMINAL_MODE aMode = TERMINAL_PANEL::MODE_SYSTEM );

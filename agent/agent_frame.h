@@ -261,8 +261,10 @@ private:
     void     SetHtml( const wxString& aHtml );
     void     UpdateAgentResponse();
     wxString BuildStreamingContent();
+    wxString BuildOnboardingHtml();
     void     FlushStreamingContentUpdate( bool aForce = false );
     void     AutoScrollToBottom();
+    bool     m_showingOnboarding;
 
     // Generating animation
     wxTimer  m_generatingTimer;

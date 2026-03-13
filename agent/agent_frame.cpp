@@ -1579,7 +1579,31 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
             m_ccController->SetChatHistory( m_chatHistory );
 
             StartGeneratingAnimation();
-            m_ccController->SendMessage( text.ToStdString() );
+
+            if( !m_ccController->SendMessage( text.ToStdString() ) )
+            {
+                wxLogWarning( "AGENT_FRAME: CC subprocess not running, restarting" );
+                StopGeneratingAnimation();
+
+                // Restart the subprocess — resume if we have a session ID, else new
+                std::string sessionId = m_ccController->GetSessionId();
+
+                if( !sessionId.empty() )
+                    m_ccController->ResumeSession( sessionId );
+                else
+                    m_ccController->NewSession();
+
+                m_ccController->SetChatHistory( m_chatHistory );
+                StartGeneratingAnimation();
+
+                if( !m_ccController->SendMessage( text.ToStdString() ) )
+                {
+                    wxLogError( "AGENT_FRAME: CC subprocess restart failed" );
+                    StopGeneratingAnimation();
+                    m_pendingAttachments.clear();
+                    return;
+                }
+            }
 
             // Sync and save after user message is recorded
             m_chatHistory = m_ccController->GetChatHistory();

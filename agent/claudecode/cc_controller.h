@@ -32,7 +32,7 @@ public:
     void Start( const std::string& aWorkingDir, const std::string& aPromptsDir = "",
                 const std::string& aApiSocketPath = "", const std::string& aPythonPath = "" );
 
-    void SendMessage( const std::string& aText );
+    bool SendMessage( const std::string& aText );
     void Cancel();
     void NewSession();
     void ResumeSession( const std::string& aSessionId );

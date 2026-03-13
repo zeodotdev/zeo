@@ -1436,8 +1436,16 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     {
         if( m_ccController )
         {
+            // Sync frame history into CC controller so it includes prior messages
+            // (from either backend) before appending the new user message
+            m_ccController->SetChatHistory( m_chatHistory );
+
             StartGeneratingAnimation();
             m_ccController->SendMessage( text.ToStdString() );
+
+            // Sync and save after user message is recorded
+            m_chatHistory = m_ccController->GetChatHistory();
+            m_chatHistoryDb.Save( m_chatHistory );
 
             // Generate title on first message (same as Zeo agent path)
             if( m_chatHistoryDb.GetTitle().empty() && m_chatController )
@@ -1577,7 +1585,13 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
     // so we don't need to call UpdateAgentResponse() here (would restart timer with cleared state)
 
     // Sync frame's history from controller (controller handles orphaned tool_use blocks)
-    if( m_chatController )
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+    {
+        m_chatHistory = m_ccController->GetChatHistory();
+        m_chatHistoryDb.Save( m_chatHistory );
+        UploadCurrentChat();
+    }
+    else if( m_chatController )
     {
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
@@ -4372,7 +4386,14 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
     m_isThinking = false;
 
     // Sync history from controller (controller added the assistant message)
-    if( m_chatController )
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController && !continuing )
+    {
+        m_chatHistory = m_ccController->GetChatHistory();
+        m_chatHistoryDb.Save( m_chatHistory );
+        UploadCurrentChat();
+        wxLogInfo( "AGENT_FRAME::OnChatTurnComplete - saved CC history (%zu messages)", m_chatHistory.size() );
+    }
+    else if( m_chatController )
     {
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
@@ -4784,6 +4805,10 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
     {
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
+
+        // If using CC backend, sync loaded history into CC controller
+        if( m_ccController )
+            m_ccController->SetChatHistory( m_chatHistory );
     }
 
     // Clear historical thinking toggle state for new history

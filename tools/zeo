@@ -343,6 +343,7 @@ def cmd_tool(args):
         BINDINGS = [
             Binding("q", "quit", "Quit"),
             Binding("ctrl+r", "run_tool", "Run"),
+            Binding("/", "focus_search", "Search"),
             Binding("i", "copy_input", "Copy Input"),
             Binding("o", "copy_output", "Copy Output"),
             Binding("up", "cursor_up", "Up", show=False),
@@ -381,6 +382,11 @@ def cmd_tool(args):
 
         def on_mount(self):
             self._connect_to_zeo()
+
+        def action_focus_search(self):
+            """Focus the search input."""
+            search_input = self.query_one("#tool-search", Input)
+            search_input.focus()
 
         def action_quit(self):
             """Clean up and quit."""

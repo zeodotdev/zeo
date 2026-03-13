@@ -32,7 +32,8 @@ private:
     struct ToolEntry
     {
         std::string app;
-        std::string script;    // Loaded script content
+        std::string script;      // Loaded script content
+        std::string scriptPath;  // Relative path for hot-reload
         bool        needsBbox;
         bool        readOnly;
     };
@@ -44,6 +45,7 @@ private:
     std::string m_preamble;
     std::string m_bbox;
     std::string m_manifestJson;
+    bool        m_devMode;       // true when AGENT_PYTHON_DIR is set — enables hot-reload
     std::unordered_map<std::string, ToolEntry> m_tools;
 };
 

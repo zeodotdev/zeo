@@ -68,6 +68,9 @@ std::string TOOL_SCRIPT_LOADER::ReadFile( const std::string& aPath )
 TOOL_SCRIPT_LOADER::TOOL_SCRIPT_LOADER()
 {
     m_pythonDir = FindPythonDir();
+    m_devMode = ( std::getenv( "AGENT_PYTHON_DIR" ) != nullptr );
+
+    wxLogInfo( "TOOL_SCRIPT_LOADER: devMode=%d (path=%s)", m_devMode, m_pythonDir );
 
     // Load the tool manifest JSON
     std::string manifestPath = m_pythonDir + "/tool_manifest.json";
@@ -134,7 +137,7 @@ TOOL_SCRIPT_LOADER::TOOL_SCRIPT_LOADER()
                 continue;
             }
 
-            m_tools[name] = { app, std::move( content ), needsBbox, readOnly };
+            m_tools[name] = { app, std::move( content ), scriptRelPath, needsBbox, readOnly };
             wxLogDebug( "TOOL_SCRIPT_LOADER: Loaded tool '%s' (app=%s, bbox=%d, readOnly=%d)",
                         name, app, needsBbox, readOnly );
         }
@@ -192,6 +195,21 @@ std::string TOOL_SCRIPT_LOADER::BuildCommand( const std::string& aName,
 
     const ToolEntry& tool = it->second;
 
+    // In dev mode, re-read scripts from disk on every call for hot-reload
+    std::string preamble = m_preamble;
+    std::string bbox = m_bbox;
+    std::string toolScript = tool.script;
+
+    if( m_devMode )
+    {
+        preamble = ReadFile( m_pythonDir + "/common/preamble.py" );
+        bbox = ReadFile( m_pythonDir + "/common/bbox.py" );
+        toolScript = ReadFile( m_pythonDir + "/" + tool.scriptPath );
+
+        if( toolScript.empty() )
+            wxLogWarning( "TOOL_SCRIPT_LOADER: Hot-reload failed for %s", aName );
+    }
+
     // Escape the JSON string for embedding in a Python single-quoted string literal.
     // json::dump() handles JSON escaping; we additionally escape single-quotes and backslashes.
     std::string escaped;
@@ -208,12 +226,12 @@ std::string TOOL_SCRIPT_LOADER::BuildCommand( const std::string& aName,
     }
 
     // Assemble: preamble + optional bbox + tool script
-    std::string script = m_preamble + "\n";
+    std::string script = preamble + "\n";
 
     if( tool.needsBbox )
-        script += m_bbox + "\n";
+        script += bbox + "\n";
 
-    script += tool.script;
+    script += toolScript;
 
     return "run_shell " + tool.app + " "
            + "import json\nTOOL_ARGS = json.loads('" + escaped + "')\n"
@@ -231,6 +249,21 @@ std::string TOOL_SCRIPT_LOADER::BuildPythonCode( const std::string& aName,
 
     const ToolEntry& tool = it->second;
 
+    // In dev mode, re-read scripts from disk for hot-reload
+    std::string preamble = m_preamble;
+    std::string bbox = m_bbox;
+    std::string toolScript = tool.script;
+
+    if( m_devMode )
+    {
+        preamble = ReadFile( m_pythonDir + "/common/preamble.py" );
+        bbox = ReadFile( m_pythonDir + "/common/bbox.py" );
+        toolScript = ReadFile( m_pythonDir + "/" + tool.scriptPath );
+
+        if( toolScript.empty() )
+            wxLogWarning( "TOOL_SCRIPT_LOADER: Hot-reload failed for %s", aName );
+    }
+
     // Escape the JSON string for embedding in a Python single-quoted string literal.
     std::string escaped;
     escaped.reserve( aArgsJson.size() + 16 );
@@ -246,11 +279,11 @@ std::string TOOL_SCRIPT_LOADER::BuildPythonCode( const std::string& aName,
     }
 
     std::string code = "import json\nTOOL_ARGS = json.loads('" + escaped + "')\n"
-                       + m_preamble + "\n";
+                       + preamble + "\n";
 
     if( tool.needsBbox )
-        code += m_bbox + "\n";
+        code += bbox + "\n";
 
-    code += tool.script;
+    code += toolScript;
     return code;
 }

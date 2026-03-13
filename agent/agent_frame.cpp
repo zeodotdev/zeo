@@ -3186,6 +3186,73 @@ void AGENT_FRAME::RenderChatHistory()
                             thinkingIndex, ChevronClass( expanded ), expandedClass, thinkingIndex, displayStyle, escapedText );
                     }
                 }
+                else if( blockType == "server_tool_use" )
+                {
+                    // Render server-side tool (e.g., web_search) with its result
+                    std::string toolName = block.value( "name", "unknown" );
+                    nlohmann::json toolInput = block.value( "input", nlohmann::json::object() );
+
+                    // Build description from tool input
+                    wxString desc;
+                    if( toolName == "web_search" && toolInput.contains( "query" ) )
+                        desc = "Searching: " + wxString::FromUTF8( toolInput["query"].get<std::string>() );
+                    else if( toolName == "web_search" )
+                        desc = "Searching the web";
+                    else
+                        desc = wxString::FromUTF8( toolName );
+
+                    // Look ahead for matching result block (<name>_tool_result)
+                    std::string expectedResultType = toolName + "_tool_result";
+                    wxString resultText;
+
+                    for( const auto& resultBlock : msg["content"] )
+                    {
+                        if( resultBlock.value( "type", "" ) == expectedResultType
+                            && resultBlock.contains( "content" )
+                            && resultBlock["content"].is_array() )
+                        {
+                            int total = 0;
+                            int shown = 0;
+
+                            for( const auto& entry : resultBlock["content"] )
+                            {
+                                std::string title = entry.value( "title", "" );
+                                std::string url = entry.value( "url", "" );
+                                if( title.empty() )
+                                    continue;
+
+                                total++;
+
+                                if( shown < 2 )
+                                {
+                                    if( !resultText.IsEmpty() )
+                                        resultText += "\n";
+                                    resultText += "- " + wxString::FromUTF8( title );
+                                    if( !url.empty() )
+                                        resultText += " (" + wxString::FromUTF8( url ) + ")";
+                                    shown++;
+                                }
+                            }
+
+                            if( total > shown )
+                                resultText += wxString::Format( "\n+%d more sources", total - shown );
+
+                            break;
+                        }
+                    }
+
+                    if( resultText.IsEmpty() )
+                        resultText = "(completed)";
+
+                    m_fullHtmlContent += BuildToolResultHtml( m_toolResultCounter, desc,
+                                                             "var(--accent-green)",
+                                                             resultText, wxEmptyString, false );
+                    m_toolResultCounter++;
+                }
+                else if( blockType.find( "_tool_result" ) != std::string::npos )
+                {
+                    // Skip server tool result blocks - already rendered with server_tool_use above
+                }
                 else if( blockType == "tool_use" )
                 {
                     // Render tool_use block with human-readable description

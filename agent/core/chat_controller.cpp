@@ -797,42 +797,12 @@ void CHAT_CONTROLLER::HandleLLMChunk( const LLMStreamChunk& aChunk )
     }
 
     case LLMChunkType::SERVER_TOOL_USE:
-    {
-        // Server-side tool invoked (e.g., web_search) - accumulate for API context
-        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - SERVER_TOOL_USE: %s", aChunk.tool_name.c_str() );
-
-        if( !aChunk.content_block_json.empty() )
-        {
-            try
-            {
-                m_serverToolBlocks.push_back( nlohmann::json::parse( aChunk.content_block_json ) );
-            }
-            catch( ... )
-            {
-                wxLogWarning( "CHAT_CONTROLLER - Failed to parse SERVER_TOOL_USE content block" );
-            }
-        }
+        HandleServerToolUse( aChunk );
         break;
-    }
 
     case LLMChunkType::SERVER_TOOL_RESULT:
-    {
-        // Server-side tool completed - accumulate for API context
-        wxLogInfo( "CHAT_CONTROLLER::HandleLLMChunk - SERVER_TOOL_RESULT" );
-
-        if( !aChunk.content_block_json.empty() )
-        {
-            try
-            {
-                m_serverToolBlocks.push_back( nlohmann::json::parse( aChunk.content_block_json ) );
-            }
-            catch( ... )
-            {
-                wxLogWarning( "CHAT_CONTROLLER - Failed to parse SERVER_TOOL_RESULT content block" );
-            }
-        }
+        HandleServerToolResult( aChunk );
         break;
-    }
 
     case LLMChunkType::COMPACTION_START:
     {
@@ -984,6 +954,127 @@ void CHAT_CONTROLLER::HandleLLMError( const std::string& aError, long aHttpCode,
     m_ctx.SetState( AgentConversationState::IDLE );
     EmitEvent( EVT_CHAT_STATE_CHANGED, ChatStateChangedData( static_cast<int>( oldState ),
                                                               static_cast<int>( m_ctx.GetState() ) ) );
+}
+
+
+void CHAT_CONTROLLER::HandleServerToolUse( const LLMStreamChunk& aChunk )
+{
+    wxLogInfo( "CHAT_CONTROLLER::HandleServerToolUse - %s", aChunk.tool_name.c_str() );
+
+    // Accumulate for API context
+    if( !aChunk.content_block_json.empty() )
+    {
+        try
+        {
+            m_serverToolBlocks.push_back( nlohmann::json::parse( aChunk.content_block_json ) );
+        }
+        catch( ... )
+        {
+            wxLogWarning( "CHAT_CONTROLLER - Failed to parse SERVER_TOOL_USE content block" );
+        }
+    }
+
+    // Emit tool start so the UI shows the server tool
+    std::string toolId = "server_tool_" + std::to_string( m_serverToolCounter++ );
+    m_activeServerToolId = toolId;
+    m_activeServerToolName = aChunk.tool_name;
+
+    // Extract input (e.g., search query) for display
+    std::string desc;
+    nlohmann::json toolInput = nlohmann::json::object();
+
+    if( !aChunk.content_block_json.empty() )
+    {
+        try
+        {
+            auto block = nlohmann::json::parse( aChunk.content_block_json );
+            toolInput = block.value( "input", nlohmann::json::object() );
+        }
+        catch( ... ) {}
+    }
+
+    if( aChunk.tool_name == "web_search" && toolInput.contains( "query" ) )
+        desc = "Searching: " + toolInput["query"].get<std::string>();
+    else if( aChunk.tool_name == "web_search" )
+        desc = "Searching the web";
+    else
+        desc = aChunk.tool_name;
+
+    EmitEvent( EVT_CHAT_TOOL_START,
+               ChatToolStartData( toolId, aChunk.tool_name, desc, toolInput ) );
+}
+
+
+void CHAT_CONTROLLER::HandleServerToolResult( const LLMStreamChunk& aChunk )
+{
+    wxLogInfo( "CHAT_CONTROLLER::HandleServerToolResult" );
+
+    // Accumulate for API context
+    if( !aChunk.content_block_json.empty() )
+    {
+        try
+        {
+            m_serverToolBlocks.push_back( nlohmann::json::parse( aChunk.content_block_json ) );
+        }
+        catch( ... )
+        {
+            wxLogWarning( "CHAT_CONTROLLER - Failed to parse SERVER_TOOL_RESULT content block" );
+        }
+    }
+
+    if( m_activeServerToolId.empty() )
+        return;
+
+    // Summarize search results: show top 3 sources, with count of remaining
+    std::string resultText;
+
+    if( !aChunk.content_block_json.empty() )
+    {
+        try
+        {
+            auto resultBlock = nlohmann::json::parse( aChunk.content_block_json );
+
+            if( resultBlock.contains( "content" ) && resultBlock["content"].is_array() )
+            {
+                const auto& results = resultBlock["content"];
+                int total = 0;
+                int shown = 0;
+
+                for( const auto& entry : results )
+                {
+                    std::string title = entry.value( "title", "" );
+                    std::string url = entry.value( "url", "" );
+                    if( title.empty() )
+                        continue;
+
+                    total++;
+
+                    if( shown < 2 )
+                    {
+                        if( !resultText.empty() )
+                            resultText += "\n";
+                        resultText += "- " + title;
+                        if( !url.empty() )
+                            resultText += " (" + url + ")";
+                        shown++;
+                    }
+                }
+
+                if( total > shown )
+                    resultText += "\n+" + std::to_string( total - shown ) + " more sources";
+            }
+        }
+        catch( ... ) {}
+    }
+
+    if( resultText.empty() )
+        resultText = "(completed)";
+
+    EmitEvent( EVT_CHAT_TOOL_COMPLETE,
+               ChatToolCompleteData( m_activeServerToolId, m_activeServerToolName,
+                                     resultText, true ) );
+    m_activeServerToolId.clear();
+    m_activeServerToolName.clear();
 }
 
 

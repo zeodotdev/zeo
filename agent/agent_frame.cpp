@@ -3952,7 +3952,20 @@ void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
 
     // Markdown text is now streaming - hide the waiting dots and compacting indicator
     m_isStreamingMarkdown = true;
-    m_isCompacting = false;
+
+    // If compaction just finished, sync the compaction marker into frame history
+    // so the "Context compacted" divider renders and persists
+    if( m_isCompacting && m_chatController )
+    {
+        m_isCompacting = false;
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_chatHistoryDb.Save( m_chatHistory );
+        RenderChatHistory();
+    }
+    else
+    {
+        m_isCompacting = false;
+    }
 
     // Controller owns the response - UpdateAgentResponse reads from controller
 
@@ -3983,7 +3996,19 @@ void AGENT_FRAME::OnChatThinkingStart( wxThreadEvent& aEvent )
 
     // Initialize thinking state for new block — compaction is done
     m_isThinking = true;
-    m_isCompacting = false;
+
+    // If compaction just finished, sync the compaction marker into frame history
+    if( m_isCompacting && m_chatController )
+    {
+        m_isCompacting = false;
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_chatHistoryDb.Save( m_chatHistory );
+        RenderChatHistory();
+    }
+    else
+    {
+        m_isCompacting = false;
+    }
     m_thinkingContent = "";
     m_thinkingExpanded = false;
 

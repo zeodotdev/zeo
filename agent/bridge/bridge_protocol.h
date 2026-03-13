@@ -15,6 +15,7 @@ namespace BridgeAction
     constexpr const char* ATTACH_CLICK       = "attach_click";
     constexpr const char* TEXT_CHANGED        = "text_changed";
     constexpr const char* INPUT_RESIZE       = "input_resize";
+    constexpr const char* EDIT_QUEUED        = "edit_queued";
 
     // Chat display actions (from chat area)
     constexpr const char* LINK_CLICK         = "link_click";

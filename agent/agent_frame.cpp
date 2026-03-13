@@ -1708,6 +1708,9 @@ void AGENT_FRAME::QueueMessage()
 
     // Clear input (button stays "Stop" during generation)
     m_bridge->PushInputClear();
+
+    // Update JS-side queue count so up-arrow can prioritize editing queued messages
+    m_bridge->PushQueueCount( static_cast<int>( m_queuedMessages.size() ) );
 }
 
 
@@ -1791,6 +1794,7 @@ void AGENT_FRAME::SendQueuedMessage()
         m_fullHtmlContent.Replace( m_queuedBubbleHtml, permanentHtml );
         m_bridge->PushFinalizeFirstQueuedMessage();
         m_queuedBubbleHtml.Clear();
+        m_bridge->PushQueueCount( 0 );
     }
 
     // Add streaming div
@@ -1870,6 +1874,8 @@ void AGENT_FRAME::ClearQueuedMessage()
     m_queuedMessages.clear();
     m_queuedBubbleHtml.Clear();
     m_turnCompleteForQueue = false;
+
+    m_bridge->PushQueueCount( 0 );
 }
 
 
@@ -1886,6 +1892,44 @@ void AGENT_FRAME::OnBridgeSubmit( const nlohmann::json& aMsg )
         wxCommandEvent evt;
         OnSend( evt );
     }
+}
+
+void AGENT_FRAME::OnBridgeEditQueued()
+{
+    if( m_queuedMessages.empty() )
+        return;
+
+    wxLogInfo( "AGENT_FRAME::OnBridgeEditQueued - popping last queued message for editing (queue size=%zu)",
+               m_queuedMessages.size() );
+
+    // Pop the last queued message and put its text back in the input
+    QueuedMessage msg = std::move( m_queuedMessages.back() );
+    m_queuedMessages.pop_back();
+
+    // Set input text to the popped message
+    m_bridge->PushInputSetText( msg.text );
+
+    // Re-add any attachments from the popped message
+    for( const auto& att : msg.attachments )
+        m_bridge->PushAddAttachment( att.base64_data, att.media_type, att.filename );
+
+    // Rebuild or remove the queued bubble
+    if( m_queuedMessages.empty() )
+    {
+        // No more queued messages — remove the bubble entirely
+        if( !m_queuedBubbleHtml.IsEmpty() )
+            m_fullHtmlContent.Replace( m_queuedBubbleHtml, "" );
+
+        m_bridge->PushRemoveAllQueuedMessages();
+        m_queuedBubbleHtml.Clear();
+    }
+    else
+    {
+        // Still have queued messages — rebuild the combined bubble
+        RebuildQueuedBubble();
+    }
+
+    m_bridge->PushQueueCount( static_cast<int>( m_queuedMessages.size() ) );
 }
 
 void AGENT_FRAME::OnBridgeAttachClick()

@@ -52,6 +52,7 @@ public:
     void PushFinalizeFirstQueuedMessage();
     void PushFinalizeAllQueuedMessages();
     void PushRemoveAllQueuedMessages();
+    void PushQueueCount( int aCount );
 
     // Input area
     void PushInputClear();
@@ -86,6 +87,7 @@ private:
     // Chat input
     void HandleSubmit( const nlohmann::json& aMsg );
     void HandleAttachClick( const nlohmann::json& aMsg );
+    void HandleEditQueued( const nlohmann::json& aMsg );
 
     // Chat display
     void HandleLinkClick( const nlohmann::json& aMsg );

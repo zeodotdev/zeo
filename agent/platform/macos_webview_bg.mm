@@ -29,3 +29,21 @@ bool IsSystemDarkMode()
     }
     return false; // Pre-Mojave doesn't have dark mode
 }
+
+void FocusWebView( void* aNativeHandle )
+{
+    if( !aNativeHandle )
+        return;
+
+    NSView* view = (__bridge NSView*) aNativeHandle;
+    NSWindow* window = [view window];
+
+    if( window )
+    {
+        // Make the window key and bring it to front
+        [window makeKeyAndOrderFront:nil];
+
+        // Make the webview the first responder
+        [window makeFirstResponder:view];
+    }
+}

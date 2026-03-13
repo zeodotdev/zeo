@@ -29,6 +29,7 @@
 #ifdef __APPLE__
 #include <libproc.h>
 #include <unistd.h>
+#include "macos_terminal_key_monitor.h"
 #endif
 #include <api/api_server.h>
 
@@ -36,7 +37,16 @@
 enum
 {
     ID_NEW_TAB = wxID_HIGHEST + 1,
-    ID_CLOSE_TAB
+    ID_CLOSE_TAB,
+    ID_SWITCH_TAB_1,
+    ID_SWITCH_TAB_2,
+    ID_SWITCH_TAB_3,
+    ID_SWITCH_TAB_4,
+    ID_SWITCH_TAB_5,
+    ID_SWITCH_TAB_6,
+    ID_SWITCH_TAB_7,
+    ID_SWITCH_TAB_8,
+    ID_SWITCH_TAB_9
 };
 
 
@@ -170,6 +180,7 @@ BEGIN_EVENT_TABLE( TERMINAL_FRAME, KIWAY_PLAYER )
 EVT_MENU( wxID_EXIT, TERMINAL_FRAME::OnExit )
 EVT_MENU( ID_NEW_TAB, TERMINAL_FRAME::OnNewTab )
 EVT_MENU( ID_CLOSE_TAB, TERMINAL_FRAME::OnCloseTab )
+EVT_MENU_RANGE( ID_SWITCH_TAB_1, ID_SWITCH_TAB_9, TERMINAL_FRAME::OnSwitchTab )
 END_EVENT_TABLE()
 
 
@@ -283,7 +294,38 @@ TERMINAL_FRAME::TERMINAL_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     fileMenu->AppendSeparator();
     fileMenu->Append( wxID_EXIT, "Exit" );
     menuBar->Append( fileMenu, "File" );
+
+    // Window menu with tab switching shortcuts
+    wxMenu* windowMenu = new wxMenu();
+    windowMenu->Append( ID_SWITCH_TAB_1, "Terminal 1\tCtrl+1" );
+    windowMenu->Append( ID_SWITCH_TAB_2, "Terminal 2\tCtrl+2" );
+    windowMenu->Append( ID_SWITCH_TAB_3, "Terminal 3\tCtrl+3" );
+    windowMenu->Append( ID_SWITCH_TAB_4, "Terminal 4\tCtrl+4" );
+    windowMenu->Append( ID_SWITCH_TAB_5, "Terminal 5\tCtrl+5" );
+    windowMenu->Append( ID_SWITCH_TAB_6, "Terminal 6\tCtrl+6" );
+    windowMenu->Append( ID_SWITCH_TAB_7, "Terminal 7\tCtrl+7" );
+    windowMenu->Append( ID_SWITCH_TAB_8, "Terminal 8\tCtrl+8" );
+    windowMenu->Append( ID_SWITCH_TAB_9, "Terminal 9\tCtrl+9" );
+    menuBar->Append( windowMenu, "Window" );
+
     SetMenuBar( menuBar );
+
+#ifdef __APPLE__
+    // Install native keyboard monitor to handle Cmd+key shortcuts
+    // This is needed because WKWebView captures these through Cocoa responder chain
+    // Use CallAfter to ensure the window is fully realized before getting its handle
+    wxWeakRef<TERMINAL_FRAME> weakThisForKeyboard( this );
+    CallAfter( [weakThisForKeyboard]() {
+        if( !weakThisForKeyboard )
+            return;
+
+        InstallTerminalKeyboardMonitor( weakThisForKeyboard->GetHandle(),
+            [weakThisForKeyboard]( TERMINAL_KEY_SHORTCUT shortcut ) {
+                if( weakThisForKeyboard )
+                    weakThisForKeyboard->HandleKeyShortcut( static_cast<int>( shortcut ) );
+            } );
+    } );
+#endif
 }
 
 void TERMINAL_FRAME::UpdateTabClosing()
@@ -311,6 +353,10 @@ void TERMINAL_FRAME::UpdateTabClosing()
 TERMINAL_FRAME::~TERMINAL_FRAME()
 {
     wxLogInfo( "TERMINAL_FRAME destructor called" );
+
+#ifdef __APPLE__
+    RemoveTerminalKeyboardMonitor();
+#endif
 
     delete m_headlessExecutor;
     m_headlessExecutor = nullptr;
@@ -376,6 +422,84 @@ void TERMINAL_FRAME::OnTabClosedDone( wxAuiNotebookEvent& event )
 }
 
 
+void TERMINAL_FRAME::OnSwitchTab( wxCommandEvent& event )
+{
+    int tabIndex = event.GetId() - ID_SWITCH_TAB_1;
+
+    if( tabIndex >= 0 && tabIndex < (int) m_notebook->GetPageCount() )
+    {
+        m_notebook->SetSelection( tabIndex );
+        FocusActiveTerminal();
+    }
+}
+
+
+void TERMINAL_FRAME::FocusActiveTerminal()
+{
+#ifndef _WIN32
+    if( wxWindow* page = m_notebook->GetCurrentPage() )
+    {
+        if( PTY_WEBVIEW_PANEL* ptyPanel = dynamic_cast<PTY_WEBVIEW_PANEL*>( page ) )
+        {
+            ptyPanel->FocusTerminal();
+            return;
+        }
+    }
+#endif
+
+    // Fallback for non-PTY panels
+    if( wxWindow* page = m_notebook->GetCurrentPage() )
+        page->SetFocus();
+}
+
+
+void TERMINAL_FRAME::HandleKeyShortcut( int aShortcut )
+{
+#ifdef __APPLE__
+    TERMINAL_KEY_SHORTCUT shortcut = static_cast<TERMINAL_KEY_SHORTCUT>( aShortcut );
+
+    switch( shortcut )
+    {
+    case TERMINAL_KEY_SHORTCUT::NEW_TAB:
+        AddTerminal( TERMINAL_PANEL::MODE_SYSTEM );
+        break;
+
+    case TERMINAL_KEY_SHORTCUT::CLOSE_TAB:
+        if( m_notebook->GetPageCount() > 1 )
+        {
+            int sel = m_notebook->GetSelection();
+            if( sel != wxNOT_FOUND )
+            {
+                m_notebook->DeletePage( sel );
+                UpdateTabClosing();
+                FocusActiveTerminal();
+            }
+        }
+        break;
+
+    case TERMINAL_KEY_SHORTCUT::SWITCH_TAB_1:
+    case TERMINAL_KEY_SHORTCUT::SWITCH_TAB_2:
+    case TERMINAL_KEY_SHORTCUT::SWITCH_TAB_3:
+    case TERMINAL_KEY_SHORTCUT::SWITCH_TAB_4:
+    case TERMINAL_KEY_SHORTCUT::SWITCH_TAB_5:
+    case TERMINAL_KEY_SHORTCUT::SWITCH_TAB_6:
+    case TERMINAL_KEY_SHORTCUT::SWITCH_TAB_7:
+    case TERMINAL_KEY_SHORTCUT::SWITCH_TAB_8:
+    case TERMINAL_KEY_SHORTCUT::SWITCH_TAB_9:
+    {
+        int tabIndex = static_cast<int>( shortcut ) - static_cast<int>( TERMINAL_KEY_SHORTCUT::SWITCH_TAB_1 );
+        if( tabIndex >= 0 && tabIndex < (int) m_notebook->GetPageCount() )
+        {
+            m_notebook->SetSelection( tabIndex );
+            FocusActiveTerminal();
+        }
+        break;
+    }
+    }
+#endif
+}
+
+
 void TERMINAL_FRAME::OnSize( wxSizeEvent& event )
 {
     // Ensure proper layout when frame is resized
@@ -401,6 +525,12 @@ void TERMINAL_FRAME::AddTerminal( TERMINAL_PANEL::TERMINAL_MODE aMode )
     }
 
     UpdateTabClosing();
+
+    // Auto-focus the new terminal so user can start typing immediately
+    // Use CallAfter to ensure focus is set after the panel is fully created
+    CallAfter( [this]() {
+        FocusActiveTerminal();
+    } );
 }
 
 TERMINAL_PANEL* TERMINAL_FRAME::GetActivePanel()

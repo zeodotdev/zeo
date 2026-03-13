@@ -64,7 +64,7 @@ def cmd_tool(args):
     try:
         from textual.app import App, ComposeResult
         from textual.containers import Horizontal, Vertical, VerticalScroll
-        from textual.widgets import Static, ListView, ListItem, Footer, TextArea, Button, Select
+        from textual.widgets import Static, ListView, ListItem, Footer, TextArea, Button, Select, Input
         from textual.reactive import reactive
         from textual.binding import Binding
         from textual import work
@@ -287,9 +287,13 @@ def cmd_tool(args):
             color: $text;
             text-align: center;
         }
+        #tool-search {
+            height: 3;
+            margin: 1 1 0 1;
+        }
         #tool-selector {
             height: 3;
-            margin: 1;
+            margin: 0 1 1 1;
         }
         #input-label {
             height: 1;
@@ -361,6 +365,7 @@ def cmd_tool(args):
                 with Vertical(id="main-panel"):
                     yield Static("Tool Runner", id="detail-title")
                     yield Static("Connecting...", id="connection-status")
+                    yield Input(placeholder="Search tools...", id="tool-search")
                     yield Select(
                         [(f"{name} - {desc}", name) for name, desc, _ in AVAILABLE_TOOLS],
                         prompt="Select a tool",
@@ -423,6 +428,27 @@ def cmd_tool(args):
             else:
                 status.update(f"Not connected - {info}")
                 status.remove_class("connected")
+
+        def on_input_changed(self, event: Input.Changed):
+            """Filter tool dropdown based on search input."""
+            if event.input.id != "tool-search":
+                return
+
+            search_text = event.value.lower().strip()
+            selector = self.query_one("#tool-selector", Select)
+
+            if not search_text:
+                # Show all tools when search is empty
+                options = [(f"{name} - {desc}", name) for name, desc, _ in AVAILABLE_TOOLS]
+            else:
+                # Filter tools by name or description
+                options = [
+                    (f"{name} - {desc}", name)
+                    for name, desc, _ in AVAILABLE_TOOLS
+                    if search_text in name.lower() or search_text in desc.lower()
+                ]
+
+            selector.set_options(options)
 
         def on_select_changed(self, event: Select.Changed):
             """When tool is selected, populate input with example."""

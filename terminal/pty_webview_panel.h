@@ -34,6 +34,9 @@ public:
     int GetTermCols() const { return m_cols; }
     int GetTermRows() const { return m_rows; }
 
+    // Focus the terminal webview so user can start typing immediately
+    void FocusTerminal();
+
 protected:
     WEBVIEW_PANEL*                 m_webView;
     std::unique_ptr<PTY_HANDLER>   m_pty;
@@ -42,6 +45,7 @@ protected:
     int      m_rows;
     bool     m_pageReady;
     bool     m_shellRequested;
+    bool     m_pendingFocus;  // True if FocusTerminal() was called before page ready
     wxString m_termTitle;
 
     // Buffer PTY data received before JS is ready

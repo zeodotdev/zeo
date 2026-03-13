@@ -69,6 +69,7 @@ public:
     // Chat input
     void OnBridgeSubmit( const nlohmann::json& aMsg );
     void OnBridgeAttachClick();
+    void OnBridgeEditQueued();
 
     // Chat display
     void OnBridgeLinkClick( const nlohmann::json& aMsg );
@@ -149,6 +150,7 @@ private:
 
     wxString       m_pendingInputText;   // Text from JS submit message, read by OnSend
     std::vector<FILE_ATTACHMENT> m_pendingAttachments;  // File attachments from JS submit
+    wxString       m_lastSentText;       // Last user message text, kept for retry on error
 
     // Message queue (queued during generation, auto-sent when turn completes)
     struct QueuedMessage
@@ -306,6 +308,7 @@ private:
     // Async LLM streaming helpers
     void StartAsyncLLMRequest();
     void RetryLastRequest();
+    void OnRetryLastMessage();   // Re-send last user message after an error
 
     // ── Concurrent Editing ────────────────────────────────────────────────
 

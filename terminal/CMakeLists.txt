@@ -40,6 +40,7 @@ endif()
 if( APPLE )
     list( APPEND TERMINAL_SRCS
         ${CMAKE_SOURCE_DIR}/agent/platform/macos_webview_bg.mm
+        macos_terminal_key_monitor.mm
     )
 endif()
 

@@ -5,6 +5,7 @@
 #include <wx/sizer.h>
 #include <wx/base64.h>
 #include <wx/log.h>
+#include <wx/toplevel.h>
 
 #include <nlohmann/json.hpp>
 
@@ -24,6 +25,7 @@ PTY_WEBVIEW_PANEL::PTY_WEBVIEW_PANEL( wxWindow* aParent ) :
         m_rows( 24 ),
         m_pageReady( false ),
         m_shellRequested( false ),
+        m_pendingFocus( false ),
         m_agentCapturing( false ),
         m_agentSentinelStartFound( false )
 {
@@ -115,6 +117,38 @@ bool PTY_WEBVIEW_PANEL::StartShell()
 bool PTY_WEBVIEW_PANEL::IsShellRunning() const
 {
     return m_pty && m_pty->IsRunning();
+}
+
+
+void PTY_WEBVIEW_PANEL::FocusTerminal()
+{
+    if( m_webView && m_webView->GetWebView() )
+    {
+#ifdef __APPLE__
+        // Use native macOS API to make webview first responder
+        void* nativeHandle = (void*) m_webView->GetWebView()->GetHandle();
+        if( nativeHandle )
+            FocusWebView( nativeHandle );
+#else
+        // Ensure the top-level window is active/raised
+        wxTopLevelWindow* tlw = wxDynamicCast( wxGetTopLevelParent( this ), wxTopLevelWindow );
+        if( tlw )
+            tlw->Raise();
+
+        m_webView->GetWebView()->SetFocus();
+#endif
+
+        // Also tell xterm.js to focus
+        if( m_pageReady )
+        {
+            m_webView->RunScriptAsync( "if(window.term) window.term.focus();" );
+        }
+        else
+        {
+            // Page not ready yet; queue the focus request
+            m_pendingFocus = true;
+        }
+    }
 }
 
 
@@ -248,6 +282,13 @@ void PTY_WEBVIEW_PANEL::OnMessage( const wxString& aMsg )
                 ExecuteForAgent( m_queuedAgentCmd, m_queuedAgentCallback );
                 m_queuedAgentCmd.clear();
                 m_queuedAgentCallback = nullptr;
+            }
+
+            // Focus terminal if requested before page was ready
+            if( m_pendingFocus )
+            {
+                m_pendingFocus = false;
+                FocusTerminal();
             }
         }
         else if( action == "input" )
@@ -694,18 +735,28 @@ wxString PTY_WEBVIEW_PANEL::GetTerminalHtml( bool aLightMode )
         }
     };
 
+    // Expose term globally for C++ to call focus
+    window.term = term;
+
     // Signal to C++ that the page is ready
     // Use setTimeout to ensure xterm.js is fully initialized
     setTimeout(function() {
         fitAddon.fit();
+        term.focus();  // Auto-focus on ready
         sendMsg('ready', { cols: term.cols, rows: term.rows });
     }, 50);
 
-    // Additional delayed refit to catch late layout changes
+    // Additional delayed refit and focus attempts
     setTimeout(function() {
         fitAddon.fit();
+        term.focus();  // Try focus again after layout settles
         sendMsg('resize', { cols: term.cols, rows: term.rows });
     }, 200);
+
+    // One more focus attempt after everything is definitely loaded
+    setTimeout(function() {
+        term.focus();
+    }, 500);
 
 })();
 </script>

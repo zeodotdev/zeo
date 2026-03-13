@@ -32,7 +32,9 @@ public:
     void OnTabClosed( wxAuiNotebookEvent& event );
     void OnTabClosedDone( wxAuiNotebookEvent& event );
     void OnTerminalTitleChanged( wxCommandEvent& event );
-    void OnSize( wxSizeEvent& event );
+    void OnSize( wxSizeEvent& event ) override;
+    void OnSwitchTab( wxCommandEvent& event );
+    void OnShowWindow( wxShowEvent& event );
 
     // Tab Management
     void            AddTerminal( TERMINAL_PANEL::TERMINAL_MODE aMode = TERMINAL_PANEL::MODE_SYSTEM );
@@ -79,6 +81,12 @@ private:
 
     // Helper to send result back to agent via ExpressMail
     void SendAgentResponse( const std::string& aResult );
+
+    // Focus the active terminal panel
+    void FocusActiveTerminal();
+
+    // Handle keyboard shortcuts from native key monitor
+    void HandleKeyShortcut( int aShortcut );
 };
 
 #endif // TERMINAL_FRAME_H

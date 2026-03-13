@@ -130,7 +130,7 @@ class PG_FPID_EDITOR : public wxPGTextCtrlEditor
 public:
     static const wxString EDITOR_NAME;
 
-    PG_FPID_EDITOR( EDA_DRAW_FRAME* aFrame, const std::function<std::string()>& aNetlistCallback );
+    PG_FPID_EDITOR( EDA_DRAW_FRAME* aFrame, const std::function<std::string(EDA_DRAW_FRAME*)>& aNetlistCallback );
 
     virtual ~PG_FPID_EDITOR() {}
 
@@ -149,7 +149,7 @@ public:
 private:
     EDA_DRAW_FRAME*              m_frame;
     wxString                     m_editorName;
-    std::function<std::string()> m_netlistCallback;
+    std::function<std::string(EDA_DRAW_FRAME*)> m_netlistCallback;
 };
 
 

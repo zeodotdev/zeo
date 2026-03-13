@@ -156,6 +156,7 @@ API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
     registerHandler<AnnotateSymbols, AnnotateSymbolsResponse>( &API_HANDLER_SCH::handleAnnotateSymbols );
     registerHandler<ClearAnnotation, ClearAnnotationResponse>( &API_HANDLER_SCH::handleClearAnnotation );
     registerHandler<CheckAnnotation, CheckAnnotationResponse>( &API_HANDLER_SCH::handleCheckAnnotation );
+    registerHandler<GetUsedReferences, GetUsedReferencesResponse>( &API_HANDLER_SCH::handleGetUsedReferences );
 
     // ERC handlers
     registerHandler<RunERC, RunERCResponse>( &API_HANDLER_SCH::handleRunERC );
@@ -3147,6 +3148,35 @@ API_HANDLER_SCH::handleCheckAnnotation(
             error->add_symbol_ids()->set_value( id1.AsStdString() );
         if( !id2.AsString().IsEmpty() )
             error->add_symbol_ids()->set_value( id2.AsStdString() );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::GetUsedReferencesResponse>
+API_HANDLER_SCH::handleGetUsedReferences(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::GetUsedReferences>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    kiapi::schematic::commands::GetUsedReferencesResponse response;
+
+    SCH_REFERENCE_LIST refs;
+    m_frame->Schematic().Hierarchy().GetSymbols( refs );
+
+    for( size_t i = 0; i < refs.GetCount(); i++ )
+    {
+        wxString ref = refs[i].GetRef();
+        response.add_references( ref.ToStdString() );
     }
 
     return response;

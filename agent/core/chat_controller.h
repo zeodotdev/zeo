@@ -289,6 +289,8 @@ public:
      * @param aResult The tool result
      * @param aSuccess Whether the tool succeeded
      */
+    void HandleServerToolUse( const LLMStreamChunk& aChunk );
+    void HandleServerToolResult( const LLMStreamChunk& aChunk );
     void HandleToolResult( const std::string& aToolId, const std::string& aResult, bool aSuccess );
 
 private:
@@ -310,6 +312,9 @@ private:
     AgentConversationContext m_ctx;           ///< Chat state machine
     nlohmann::json           m_pendingToolCalls;  ///< Tools awaiting execution
     nlohmann::json           m_serverToolBlocks;  ///< Server tool blocks for API context
+    int                      m_serverToolCounter = 0;  ///< Counter for generating server tool IDs
+    std::string              m_activeServerToolId;     ///< ID of currently executing server tool
+    std::string              m_activeServerToolName;   ///< Name of currently executing server tool
     bool                     m_stopRequested;     ///< Cancel flag
     bool                     m_continueAfterComplete; ///< Continue generation after stream completes (for max_tokens)
 
@@ -368,8 +373,12 @@ private:
 
     /**
      * Execute all pending tools in parallel.
-     * Spawns a thread for each tool; results arrive via EVT_TOOL_EXECUTION_COMPLETE.
-     * Frame-managed tools (open_editor, sch_run_erc) are deferred until parallel tools complete.
+     *
+     * Tools are classified by their execution requirements:
+     *  - Threaded: spawned on background threads, results arrive via EVT_TOOL_EXECUTION_COMPLETE
+     *  - Async: handler-managed background execution (e.g. pcb_autoroute)
+     *  - IPC: require main thread (SendRequest uses wxYield), run sequentially in Pass 2
+     *  - Frame-managed: require user interaction (open_editor, sch_run_erc), deferred until others finish
      */
     void ExecuteAllTools();
 
@@ -379,6 +388,13 @@ private:
      * interaction (approval dialogs) and must run sequentially.
      */
     void ExecuteDeferredFrameTool();
+
+    /**
+     * Emit EVT_CHAT_TOOL_START and log to monitor.
+     * Shared by ExecuteAllTools and ExecuteDeferredFrameTool.
+     */
+    void EmitToolStart( const std::string& aToolId, const std::string& aToolName,
+                        const nlohmann::json& aInput );
 
     /**
      * Process a tool result and continue the chat.

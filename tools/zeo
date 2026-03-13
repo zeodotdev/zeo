@@ -67,7 +67,7 @@ def cmd_tool(args):
     try:
         from textual.app import App, ComposeResult
         from textual.containers import Horizontal, Vertical, VerticalScroll
-        from textual.widgets import Static, ListView, ListItem, Footer, TextArea, Button, Select
+        from textual.widgets import Static, ListView, ListItem, Footer, TextArea, Button, Select, Input
         from textual.reactive import reactive
         from textual.binding import Binding
         from textual import work
@@ -247,9 +247,16 @@ def cmd_tool(args):
             else:
                 status_line = f"[red]Failed[/red] ({tc.duration_ms}ms)"
 
+            # Escape result to prevent Rich markup interpretation of brackets in JSON
+            # Use backslash escape: [ -> \[
+            if result_formatted:
+                escaped_result = result_formatted.replace('[', '\\[')
+            else:
+                escaped_result = '[dim](no output yet)[/dim]'
+
             content = f"""[bold]{tc.tool_name}[/bold] - {status_line}
 
-{result_formatted if result_formatted else '[dim](no output yet)[/dim]'}"""
+{escaped_result}"""
 
             self.update(content)
 
@@ -283,9 +290,13 @@ def cmd_tool(args):
             color: $text;
             text-align: center;
         }
+        #tool-search {
+            height: 3;
+            margin: 1 1 0 1;
+        }
         #tool-selector {
             height: 3;
-            margin: 1;
+            margin: 0 1 1 1;
         }
         #input-label {
             height: 1;
@@ -335,6 +346,7 @@ def cmd_tool(args):
         BINDINGS = [
             Binding("q", "quit", "Quit"),
             Binding("ctrl+r", "run_tool", "Run"),
+            Binding("/", "focus_search", "Search"),
             Binding("i", "copy_input", "Copy Input"),
             Binding("o", "copy_output", "Copy Output"),
             Binding("up", "cursor_up", "Up", show=False),
@@ -357,6 +369,7 @@ def cmd_tool(args):
                 with Vertical(id="main-panel"):
                     yield Static("Tool Runner", id="detail-title")
                     yield Static("Connecting...", id="connection-status")
+                    yield Input(placeholder="Search tools...", id="tool-search")
                     yield Select(
                         [(f"{name} - {desc}", name) for name, desc, _ in AVAILABLE_TOOLS],
                         prompt="Select a tool",
@@ -372,6 +385,11 @@ def cmd_tool(args):
 
         def on_mount(self):
             self._connect_to_zeo()
+
+        def action_focus_search(self):
+            """Focus the search input."""
+            search_input = self.query_one("#tool-search", Input)
+            search_input.focus()
 
         def action_quit(self):
             """Clean up and quit."""
@@ -419,6 +437,27 @@ def cmd_tool(args):
             else:
                 status.update(f"Not connected - {info}")
                 status.remove_class("connected")
+
+        def on_input_changed(self, event: Input.Changed):
+            """Filter tool dropdown based on search input."""
+            if event.input.id != "tool-search":
+                return
+
+            search_text = event.value.lower().strip()
+            selector = self.query_one("#tool-selector", Select)
+
+            if not search_text:
+                # Show all tools when search is empty
+                options = [(f"{name} - {desc}", name) for name, desc, _ in AVAILABLE_TOOLS]
+            else:
+                # Filter tools by name or description
+                options = [
+                    (f"{name} - {desc}", name)
+                    for name, desc, _ in AVAILABLE_TOOLS
+                    if search_text in name.lower() or search_text in desc.lower()
+                ]
+
+            selector.set_options(options)
 
         def on_select_changed(self, event: Select.Changed):
             """When tool is selected, populate input with example."""
@@ -840,17 +879,22 @@ def cmd_monitor(args):
             else:
                 status_line = f"[red]Failed[/red] ({tc.duration_ms}ms)"
 
+            # Escape brackets in JSON to prevent Rich markup interpretation
+            # Use backslash escape: [ -> \[
+            escaped_input = input_formatted.replace('[', '\\[') if input_formatted else '(no input)'
+            escaped_result = result_formatted.replace('[', '\\[') if result_formatted else '(no output yet)'
+
             content = f"""[bold]Tool:[/bold] {tc.tool_name}
 [bold]ID:[/bold] {tc.tool_id}
 [bold]Description:[/bold] {tc.description}
 
 [bold]Input:[/bold]
-[dim]{input_formatted}[/dim]
+[dim]{escaped_input}[/dim]
 
 [bold]Status:[/bold] {status_line}
 
 [bold]Output:[/bold]
-[dim]{result_formatted if result_formatted else '(no output yet)'}[/dim]"""
+[dim]{escaped_result}[/dim]"""
 
             self.update(content)
 

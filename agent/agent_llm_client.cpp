@@ -557,12 +557,6 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     ctx->serverToolName = contentBlock.value( "name", "" );
                     ctx->serverToolInput = "";
                     ctx->inServerTool = true;
-
-                    // Post event immediately for logging/UI
-                    LLMStreamChunk chunk;
-                    chunk.type = LLMChunkType::SERVER_TOOL_USE;
-                    chunk.tool_name = ctx->serverToolName;
-                    PostLLMChunk( ctx->handler, chunk );
                 }
                 else if( blockType == "web_search_tool_result" )
                 {
@@ -631,6 +625,16 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
                     // Accumulate compaction content
                     std::string compaction = delta.value( "content", "" );
                     ctx->currentCompaction += compaction;
+                }
+                else if( deltaType == "citations_delta" )
+                {
+                    // Citations from web search — log for now
+                    wxLogInfo( "LLM_STREAM: citations_delta: %s", delta.dump().c_str() );
+                }
+                else
+                {
+                    wxLogInfo( "LLM_STREAM: unhandled delta type: %s - %s",
+                               deltaType.c_str(), delta.dump().c_str() );
                 }
             }
             else if( eventType == "content_block_stop" )

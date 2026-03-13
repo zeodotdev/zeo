@@ -13,4 +13,10 @@ void SetWebViewDarkBackground( void* aNativeHandle );
  */
 bool IsSystemDarkMode();
 
+/**
+ * Make the WKWebView the first responder so it can receive keyboard input.
+ * @param aNativeHandle The native handle from wxWebView::GetHandle()
+ */
+void FocusWebView( void* aNativeHandle );
+
 #endif // MACOS_WEBVIEW_BG_H

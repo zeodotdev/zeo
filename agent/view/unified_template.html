@@ -137,6 +137,19 @@ body.visible { opacity: 1; }
     flex-shrink: 0;
 }
 
+/* Jump-to-bottom floating button */
+#jump-to-bottom {
+    position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+    z-index: 50; padding: 5px 14px; border-radius: 16px; cursor: pointer;
+    background: var(--bg-tertiary); color: var(--text-secondary);
+    border: 1px solid var(--tool-result-border); font-size: 12px; font-weight: 500;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3); backdrop-filter: blur(8px);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+#jump-to-bottom.visible { opacity: 1; pointer-events: auto; }
+#jump-to-bottom:hover { background: var(--bg-hover); color: var(--text-primary); }
+
 /* Code block styling for highlight.js */
 pre code.hljs {
     background: var(--bg-secondary); padding: 12px; border-radius: 8px;
@@ -488,9 +501,12 @@ mark.search-highlight.current { background: rgba(255,152,0,0.55); }
 <!-- ═══════════════════════════════════════════════════════════════════
      CHAT AREA (scrollable, flex-col-reverse for auto-scroll)
      ═══════════════════════════════════════════════════════════════════ -->
+<div style="position:relative;flex:1;min-height:0;display:flex;flex-direction:column;">
 <div id="chat-area" class="flex-1 overflow-y-scroll flex flex-col-reverse" style="min-height:0;">
-    <div class="content-wrapper p-2.5" style="padding-left:24px;padding-right:12px;">
+    <div class="content-wrapper p-2.5" style="padding-left:24px;padding-right:16px;">
     </div>
+</div>
+<button id="jump-to-bottom">&#8595; New content</button>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -1183,6 +1199,13 @@ App.Chat = (function() {
             // Other links
             if (href && href !== '#') {
                 e.preventDefault();
+                // Agent action buttons: show loading state immediately on click
+                if (href.startsWith('agent:') && target.tagName === 'A') {
+                    var origText = target.textContent;
+                    target.style.pointerEvents = 'none';
+                    target.style.opacity = '0.7';
+                    target.innerHTML = '<span class="tool-spinner" style="width:10px;height:10px;border-width:1.5px;vertical-align:middle;margin-right:6px;"></span>' + origText + '…';
+                }
                 App.Bridge.sendMsg('link_click', { href: href });
             }
         }
@@ -1201,13 +1224,22 @@ App.Chat = (function() {
         }
     });
 
-    // Scroll activity tracking
+    // Scroll activity tracking + jump-to-bottom button
+    var jumpBtn = document.getElementById('jump-to-bottom');
     chatArea.addEventListener('scroll', function() {
-        // coupled=true means the user is at the bottom (content bottom visible)
-        var el = chatArea;
         // flex-col-reverse: scrollTop is 0 at bottom, negative going up
-        var coupled = el.scrollTop >= -5;
+        var coupled = chatArea.scrollTop >= -5;
         App.Bridge.sendMsg('scroll_activity', { active: true, coupled: coupled });
+        // Show/hide jump-to-bottom button
+        if (coupled) {
+            jumpBtn.classList.remove('visible');
+        } else if (chatArea.scrollTop < -200) {
+            jumpBtn.classList.add('visible');
+        }
+    });
+    jumpBtn.addEventListener('click', function() {
+        chatArea.scrollTop = 0; // flex-col-reverse: 0 = bottom
+        jumpBtn.classList.remove('visible');
     });
 
     function showPlanApproval() {
@@ -1218,7 +1250,13 @@ App.Chat = (function() {
         btn.className = 'ctrl-btn';
         btn.style.cssText = 'position:fixed;bottom:120px;right:12px;z-index:100;padding:6px 20px;background:rgba(74,222,128,0.25);color:#fff;border:1px solid rgba(74,222,128,0.4);box-shadow:0 4px 12px rgba(0,0,0,0.4);backdrop-filter:blur(8px);';
         btn.textContent = 'Approve Plan';
-        btn.onclick = function() { App.Bridge.sendMsg('plan_approve'); };
+        btn.onclick = function() {
+            btn.disabled = true;
+            btn.style.opacity = '0.7';
+            btn.style.pointerEvents = 'none';
+            btn.innerHTML = '<span class="tool-spinner" style="width:10px;height:10px;border-width:1.5px;vertical-align:middle;margin-right:6px;"></span>Approving…';
+            App.Bridge.sendMsg('plan_approve');
+        };
         document.body.appendChild(btn);
     }
 
@@ -1281,6 +1319,7 @@ App.Input = (function() {
     var _history = [];
     var _historyIndex = -1;
     var _draft = '';
+    var _queueCount = 0;
 
     // ── Undo / Redo stack ──
     var _undoStack = [{ text: '', start: 0, end: 0 }];
@@ -1428,10 +1467,18 @@ App.Input = (function() {
     function handleArrowHistory(e) {
         if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
         if (textarea.selectionStart !== textarea.selectionEnd) return;
-        if (_history.length === 0) return;
 
         var posBefore = textarea.selectionStart;
         var dir = e.key === 'ArrowUp' ? -1 : 1;
+
+        // Up arrow with queued messages: pop last queued message back into input for editing
+        if (dir === -1 && _queueCount > 0 && textarea.value.trim() === '') {
+            e.preventDefault();
+            App.Bridge.sendMsg('edit_queued');
+            return;
+        }
+
+        if (_history.length === 0) return;
 
         setTimeout(function() {
             var posAfter = textarea.selectionStart;
@@ -1680,6 +1727,10 @@ App.Input = (function() {
         _draft = '';
     }
 
+    function setQueueCount(n) {
+        _queueCount = n;
+    }
+
     // Init — defer so layout is settled and scrollHeight is accurate
     requestAnimationFrame(function() { autoResize(); });
 
@@ -1694,6 +1745,7 @@ App.Input = (function() {
         redo: redo,
         addAttachment: addAttachment,
         clearHistory: clearHistory,
+        setQueueCount: setQueueCount,
         // Exposed for onclick handlers in rendered HTML
         _removeAtt: removeAttachment,
         _previewAtt: previewAttachment
@@ -2002,10 +2054,16 @@ App.PendingChanges = (function() {
     }
 
     acceptAllBtn.addEventListener('click', function() {
+        acceptAllBtn.disabled = true;
+        acceptAllBtn.style.opacity = '0.7';
+        acceptAllBtn.textContent = 'Accepting…';
         App.Bridge.sendMsg('pending_changes_accept_all');
     });
 
     rejectAllBtn.addEventListener('click', function() {
+        rejectAllBtn.disabled = true;
+        rejectAllBtn.style.opacity = '0.7';
+        rejectAllBtn.textContent = 'Rejecting…';
         App.Bridge.sendMsg('pending_changes_reject_all');
     });
 

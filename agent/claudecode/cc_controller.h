@@ -43,6 +43,11 @@ public:
     const std::string& GetCurrentResponse() const { return m_currentResponse; }
     void ClearCurrentResponse() { m_currentResponse.clear(); }
 
+    // Chat history persistence (same format as Zeo agent)
+    const nlohmann::json& GetChatHistory() const { return m_chatHistory; }
+    void SetChatHistory( const nlohmann::json& aHistory ) { m_chatHistory = aHistory; }
+    void CommitAssistantMessage();
+
 private:
     // Event handlers for raw CC subprocess events
     void OnCCLine( wxThreadEvent& aEvent );
@@ -81,6 +86,7 @@ private:
     bool        m_busy = false;
     bool        m_intentionalStop = false;  // Suppress error on intentional process kill
     std::string m_lastStderrLine;             // Last stderr line (for exit error context)
+    int         m_ccTurnCount = 0;            // Turns in current CC subprocess (for context injection)
 
     // Accumulation state for current assistant turn
     std::string m_currentResponse;       // Accumulated text content
@@ -102,6 +108,10 @@ private:
     };
 
     std::map<int, ContentBlock> m_activeBlocks;
+
+    // Chat history (Anthropic API message format, same as Zeo agent)
+    nlohmann::json m_chatHistory = nlohmann::json::array();
+    nlohmann::json m_currentAssistantContent = nlohmann::json::array();  // Content blocks for current msg
 
     // Tool tracking across turns
     int m_toolResultCounter = 0;

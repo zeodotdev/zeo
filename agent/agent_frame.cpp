@@ -996,24 +996,26 @@ void AGENT_FRAME::FlushStreamingContentUpdate( bool aForce )
 
 void AGENT_FRAME::OnHtmlUpdateTimer( wxTimerEvent& aEvent )
 {
-    // Throttled HTML update - only update if needed AND user hasn't scrolled up
-    if( m_htmlUpdateNeeded && !m_userScrolledUp )
+    if( !m_htmlUpdateNeeded )
+        return;
+
+    wxString streamingContent = BuildStreamingContent();
+
+    // Always keep m_fullHtmlContent current so it's ready when user scrolls back
+    wxString fullHtml = m_htmlBeforeAgentResponse;
+    fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
+    fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
+    if( !m_queuedBubbleHtml.IsEmpty() )
+        fullHtml += m_queuedBubbleHtml;
+    m_fullHtmlContent = fullHtml;
+
+    // Only push to DOM if user is at the bottom
+    if( !m_userScrolledUp )
     {
         m_htmlUpdateNeeded = false;
-
-        wxString streamingContent = BuildStreamingContent();
         m_bridge->PushStreamingContent( streamingContent );
-
-        // Update full HTML content for when we need to do a full render later
-        wxString fullHtml = m_htmlBeforeAgentResponse;
-        fullHtml.Replace( wxS( "<div id=\"streaming-content\"></div>" ), wxS( "" ) );
-        fullHtml += wxS( "<div id=\"streaming-content\">" ) + streamingContent + wxS( "</div>" );
-        // Preserve queued bubble at the end
-        if( !m_queuedBubbleHtml.IsEmpty() )
-            fullHtml += m_queuedBubbleHtml;
-        m_fullHtmlContent = fullHtml;
     }
-    // If user scrolled up, leave m_htmlUpdateNeeded=true so update happens when they scroll back
+    // If user scrolled up, leave m_htmlUpdateNeeded=true so DOM updates when they scroll back
 }
 
 void AGENT_FRAME::StartGeneratingAnimation()
@@ -2150,11 +2152,12 @@ void AGENT_FRAME::OnBridgeScrollActivity( const nlohmann::json& aMsg )
     bool coupled = aMsg.value( "coupled", true );
 
     m_lastScrollActivityMs = wxGetLocalTimeMillis().GetValue();
-    // Only suppress streaming updates if user has scrolled away from the bottom.
-    // The 'active' flag is always true (scroll events only fire during activity),
-    // so basing m_userScrolledUp on it would suppress updates even when the user
-    // is at the bottom (e.g., after a layout reflow from tool result rendering).
+    bool wasScrolledUp = m_userScrolledUp;
     m_userScrolledUp = !coupled;
+
+    // When user scrolls back to bottom, immediately flush any pending DOM updates
+    if( wasScrolledUp && coupled && m_htmlUpdateNeeded )
+        FlushStreamingContentUpdate( true );
 }
 
 nlohmann::json AGENT_FRAME::BuildHistoryListJson( const wxString& aFilter )
@@ -2738,11 +2741,10 @@ void AGENT_FRAME::InitializeTools()
 
 void AGENT_FRAME::StartAsyncLLMRequest()
 {
-    // Reset scroll guard so new streaming content (thinking, text) is visible.
-    // Without this, m_userScrolledUp can remain true after a tool call if the user
-    // scrolled during tool execution, causing FlushStreamingContentUpdate and the
-    // timer to skip all DOM updates for the new response.
-    m_userScrolledUp = false;
+    // Don't reset m_userScrolledUp here — respect the user's scroll position.
+    // If they scrolled up to read, let them stay there. The "Jump to bottom"
+    // button in the UI lets them re-engage when ready. Streaming content is
+    // still accumulated in m_fullHtmlContent even when DOM updates are skipped.
 
     // Start the generating animation
     StartGeneratingAnimation();

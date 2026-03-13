@@ -69,6 +69,7 @@ public:
     // Chat input
     void OnBridgeSubmit( const nlohmann::json& aMsg );
     void OnBridgeAttachClick();
+    void OnBridgeEditQueued();
 
     // Chat display
     void OnBridgeLinkClick( const nlohmann::json& aMsg );

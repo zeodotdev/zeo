@@ -315,6 +315,18 @@ message CheckAnnotationResponse
   repeated AnnotationError errors = 2;
 }
 
+/// Returns all used reference designators across the full sheet hierarchy
+message GetUsedReferences
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetUsedReferencesResponse
+{
+  // All reference strings in use across all sheets (e.g., "R1", "R2", "C1", "#PWR01")
+  repeated string references = 1;
+}
+
 //
 // ERC (Electrical Rules Check) Commands
 //

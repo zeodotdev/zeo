@@ -1436,8 +1436,16 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     {
         if( m_ccController )
         {
+            // Sync frame history into CC controller so it includes prior messages
+            // (from either backend) before appending the new user message
+            m_ccController->SetChatHistory( m_chatHistory );
+
             StartGeneratingAnimation();
             m_ccController->SendMessage( text.ToStdString() );
+
+            // Sync and save after user message is recorded
+            m_chatHistory = m_ccController->GetChatHistory();
+            m_chatHistoryDb.Save( m_chatHistory );
 
             // Generate title on first message (same as Zeo agent path)
             if( m_chatHistoryDb.GetTitle().empty() && m_chatController )
@@ -1577,7 +1585,13 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
     // so we don't need to call UpdateAgentResponse() here (would restart timer with cleared state)
 
     // Sync frame's history from controller (controller handles orphaned tool_use blocks)
-    if( m_chatController )
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+    {
+        m_chatHistory = m_ccController->GetChatHistory();
+        m_chatHistoryDb.Save( m_chatHistory );
+        UploadCurrentChat();
+    }
+    else if( m_chatController )
     {
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
@@ -1694,6 +1708,9 @@ void AGENT_FRAME::QueueMessage()
 
     // Clear input (button stays "Stop" during generation)
     m_bridge->PushInputClear();
+
+    // Update JS-side queue count so up-arrow can prioritize editing queued messages
+    m_bridge->PushQueueCount( static_cast<int>( m_queuedMessages.size() ) );
 }
 
 
@@ -1777,6 +1794,7 @@ void AGENT_FRAME::SendQueuedMessage()
         m_fullHtmlContent.Replace( m_queuedBubbleHtml, permanentHtml );
         m_bridge->PushFinalizeFirstQueuedMessage();
         m_queuedBubbleHtml.Clear();
+        m_bridge->PushQueueCount( 0 );
     }
 
     // Add streaming div
@@ -1856,6 +1874,8 @@ void AGENT_FRAME::ClearQueuedMessage()
     m_queuedMessages.clear();
     m_queuedBubbleHtml.Clear();
     m_turnCompleteForQueue = false;
+
+    m_bridge->PushQueueCount( 0 );
 }
 
 
@@ -1872,6 +1892,44 @@ void AGENT_FRAME::OnBridgeSubmit( const nlohmann::json& aMsg )
         wxCommandEvent evt;
         OnSend( evt );
     }
+}
+
+void AGENT_FRAME::OnBridgeEditQueued()
+{
+    if( m_queuedMessages.empty() )
+        return;
+
+    wxLogInfo( "AGENT_FRAME::OnBridgeEditQueued - popping last queued message for editing (queue size=%zu)",
+               m_queuedMessages.size() );
+
+    // Pop the last queued message and put its text back in the input
+    QueuedMessage msg = std::move( m_queuedMessages.back() );
+    m_queuedMessages.pop_back();
+
+    // Set input text to the popped message
+    m_bridge->PushInputSetText( msg.text );
+
+    // Re-add any attachments from the popped message
+    for( const auto& att : msg.attachments )
+        m_bridge->PushAddAttachment( att.base64_data, att.media_type, att.filename );
+
+    // Rebuild or remove the queued bubble
+    if( m_queuedMessages.empty() )
+    {
+        // No more queued messages — remove the bubble entirely
+        if( !m_queuedBubbleHtml.IsEmpty() )
+            m_fullHtmlContent.Replace( m_queuedBubbleHtml, "" );
+
+        m_bridge->PushRemoveAllQueuedMessages();
+        m_queuedBubbleHtml.Clear();
+    }
+    else
+    {
+        // Still have queued messages — rebuild the combined bubble
+        RebuildQueuedBubble();
+    }
+
+    m_bridge->PushQueueCount( static_cast<int>( m_queuedMessages.size() ) );
 }
 
 void AGENT_FRAME::OnBridgeAttachClick()
@@ -3172,6 +3230,73 @@ void AGENT_FRAME::RenderChatHistory()
                             thinkingIndex, ChevronClass( expanded ), expandedClass, thinkingIndex, displayStyle, escapedText );
                     }
                 }
+                else if( blockType == "server_tool_use" )
+                {
+                    // Render server-side tool (e.g., web_search) with its result
+                    std::string toolName = block.value( "name", "unknown" );
+                    nlohmann::json toolInput = block.value( "input", nlohmann::json::object() );
+
+                    // Build description from tool input
+                    wxString desc;
+                    if( toolName == "web_search" && toolInput.contains( "query" ) )
+                        desc = "Searching: " + wxString::FromUTF8( toolInput["query"].get<std::string>() );
+                    else if( toolName == "web_search" )
+                        desc = "Searching the web";
+                    else
+                        desc = wxString::FromUTF8( toolName );
+
+                    // Look ahead for matching result block (<name>_tool_result)
+                    std::string expectedResultType = toolName + "_tool_result";
+                    wxString resultText;
+
+                    for( const auto& resultBlock : msg["content"] )
+                    {
+                        if( resultBlock.value( "type", "" ) == expectedResultType
+                            && resultBlock.contains( "content" )
+                            && resultBlock["content"].is_array() )
+                        {
+                            int total = 0;
+                            int shown = 0;
+
+                            for( const auto& entry : resultBlock["content"] )
+                            {
+                                std::string title = entry.value( "title", "" );
+                                std::string url = entry.value( "url", "" );
+                                if( title.empty() )
+                                    continue;
+
+                                total++;
+
+                                if( shown < 2 )
+                                {
+                                    if( !resultText.IsEmpty() )
+                                        resultText += "\n";
+                                    resultText += "- " + wxString::FromUTF8( title );
+                                    if( !url.empty() )
+                                        resultText += " (" + wxString::FromUTF8( url ) + ")";
+                                    shown++;
+                                }
+                            }
+
+                            if( total > shown )
+                                resultText += wxString::Format( "\n+%d more sources", total - shown );
+
+                            break;
+                        }
+                    }
+
+                    if( resultText.IsEmpty() )
+                        resultText = "(completed)";
+
+                    m_fullHtmlContent += BuildToolResultHtml( m_toolResultCounter, desc,
+                                                             "var(--accent-green)",
+                                                             resultText, wxEmptyString, false );
+                    m_toolResultCounter++;
+                }
+                else if( blockType.find( "_tool_result" ) != std::string::npos )
+                {
+                    // Skip server tool result blocks - already rendered with server_tool_use above
+                }
                 else if( blockType == "tool_use" )
                 {
                     // Render tool_use block with human-readable description
@@ -3827,6 +3952,15 @@ void AGENT_FRAME::OnChatTextDelta( wxThreadEvent& aEvent )
 
     // Markdown text is now streaming - hide the waiting dots and compacting indicator
     m_isStreamingMarkdown = true;
+
+    // If compaction just finished, sync the compaction marker into frame history
+    // so the "Context compacted" divider renders and persists
+    if( m_isCompacting && m_chatController )
+    {
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_chatHistoryDb.Save( m_chatHistory );
+        RenderChatHistory();
+    }
     m_isCompacting = false;
 
     // Controller owns the response - UpdateAgentResponse reads from controller
@@ -3858,6 +3992,14 @@ void AGENT_FRAME::OnChatThinkingStart( wxThreadEvent& aEvent )
 
     // Initialize thinking state for new block — compaction is done
     m_isThinking = true;
+
+    // If compaction just finished, sync the compaction marker into frame history
+    if( m_isCompacting && m_chatController )
+    {
+        m_chatHistory = m_chatController->GetChatHistory();
+        m_chatHistoryDb.Save( m_chatHistory );
+        RenderChatHistory();
+    }
     m_isCompacting = false;
     m_thinkingContent = "";
     m_thinkingExpanded = false;
@@ -4372,7 +4514,14 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
     m_isThinking = false;
 
     // Sync history from controller (controller added the assistant message)
-    if( m_chatController )
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController && !continuing )
+    {
+        m_chatHistory = m_ccController->GetChatHistory();
+        m_chatHistoryDb.Save( m_chatHistory );
+        UploadCurrentChat();
+        wxLogInfo( "AGENT_FRAME::OnChatTurnComplete - saved CC history (%zu messages)", m_chatHistory.size() );
+    }
+    else if( m_chatController )
     {
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
@@ -4784,6 +4933,10 @@ void AGENT_FRAME::OnChatHistoryLoaded( wxThreadEvent& aEvent )
     {
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
+
+        // If using CC backend, sync loaded history into CC controller
+        if( m_ccController )
+            m_ccController->SetChatHistory( m_chatHistory );
     }
 
     // Clear historical thinking toggle state for new history

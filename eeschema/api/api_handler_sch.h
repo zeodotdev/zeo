@@ -60,6 +60,8 @@ namespace kiapi { namespace schematic { namespace commands {
     class ClearAnnotationResponse;
     class CheckAnnotation;
     class CheckAnnotationResponse;
+    class GetUsedReferences;
+    class GetUsedReferencesResponse;
     // ERC commands
     class RunERC;
     class RunERCResponse;
@@ -314,6 +316,9 @@ private:
 
     HANDLER_RESULT<schematic::commands::CheckAnnotationResponse>
     handleCheckAnnotation( const HANDLER_CONTEXT<schematic::commands::CheckAnnotation>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetUsedReferencesResponse>
+    handleGetUsedReferences( const HANDLER_CONTEXT<schematic::commands::GetUsedReferences>& aCtx );
 
     // ERC handlers
     HANDLER_RESULT<schematic::commands::RunERCResponse>

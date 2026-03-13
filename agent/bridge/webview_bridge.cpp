@@ -36,6 +36,7 @@ void WEBVIEW_BRIDGE::OnMessage( const wxString& aMessage )
         if( action == BridgeAction::SUBMIT )              HandleSubmit( msg );
         else if( action == BridgeAction::ATTACH_CLICK )   HandleAttachClick( msg );
         else if( action == BridgeAction::TEXT_CHANGED )    {} // tracked in JS, no C++ handling needed yet
+        else if( action == BridgeAction::EDIT_QUEUED )    HandleEditQueued( msg );
 
         // Chat display actions
         else if( action == BridgeAction::LINK_CLICK )         HandleLinkClick( msg );
@@ -118,6 +119,12 @@ void WEBVIEW_BRIDGE::HandleAttachClick( const nlohmann::json& aMsg )
 {
     if( !m_frame ) return;
     m_frame->OnBridgeAttachClick();
+}
+
+void WEBVIEW_BRIDGE::HandleEditQueued( const nlohmann::json& aMsg )
+{
+    if( !m_frame ) return;
+    m_frame->OnBridgeEditQueued();
 }
 
 void WEBVIEW_BRIDGE::HandleLinkClick( const nlohmann::json& aMsg )
@@ -430,6 +437,11 @@ void WEBVIEW_BRIDGE::PushRemoveAllQueuedMessages()
 {
     LogBridge( "C++->JS", "removeAllQueuedMessages" );
     RunScript( "document.querySelectorAll('.queued-msg').forEach(function(el){el.remove();});" );
+}
+
+void WEBVIEW_BRIDGE::PushQueueCount( int aCount )
+{
+    RunScript( wxString::Format( "App.Input.setQueueCount(%d);", aCount ) );
 }
 
 void WEBVIEW_BRIDGE::PushInputClear()

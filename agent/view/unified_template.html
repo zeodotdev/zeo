@@ -486,7 +486,7 @@ mark.search-highlight.current { background: rgba(255,152,0,0.55); }
      CHAT AREA (scrollable, flex-col-reverse for auto-scroll)
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="chat-area" class="flex-1 overflow-y-scroll flex flex-col-reverse" style="min-height:0;">
-    <div class="content-wrapper p-2.5" style="padding-left:24px;padding-right:12px;">
+    <div class="content-wrapper p-2.5" style="padding-left:24px;padding-right:16px;">
     </div>
 </div>
 
@@ -1272,6 +1272,7 @@ App.Input = (function() {
     var _history = [];
     var _historyIndex = -1;
     var _draft = '';
+    var _queueCount = 0;
 
     // ── Undo / Redo stack ──
     var _undoStack = [{ text: '', start: 0, end: 0 }];
@@ -1419,10 +1420,18 @@ App.Input = (function() {
     function handleArrowHistory(e) {
         if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
         if (textarea.selectionStart !== textarea.selectionEnd) return;
-        if (_history.length === 0) return;
 
         var posBefore = textarea.selectionStart;
         var dir = e.key === 'ArrowUp' ? -1 : 1;
+
+        // Up arrow with queued messages: pop last queued message back into input for editing
+        if (dir === -1 && _queueCount > 0 && textarea.value.trim() === '') {
+            e.preventDefault();
+            App.Bridge.sendMsg('edit_queued');
+            return;
+        }
+
+        if (_history.length === 0) return;
 
         setTimeout(function() {
             var posAfter = textarea.selectionStart;
@@ -1671,6 +1680,10 @@ App.Input = (function() {
         _draft = '';
     }
 
+    function setQueueCount(n) {
+        _queueCount = n;
+    }
+
     // Init
     autoResize();
 
@@ -1685,6 +1698,7 @@ App.Input = (function() {
         redo: redo,
         addAttachment: addAttachment,
         clearHistory: clearHistory,
+        setQueueCount: setQueueCount,
         // Exposed for onclick handlers in rendered HTML
         _removeAtt: removeAttachment,
         _previewAtt: previewAttachment

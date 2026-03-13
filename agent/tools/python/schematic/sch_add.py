@@ -4,10 +4,9 @@ from kipy.proto.common.types.enums_pb2 import HA_LEFT, HA_RIGHT, VA_TOP, VA_BOTT
 
 refresh_or_fail(sch)
 
-# Build map of used references for auto-numbering
+# Build map of used references for auto-numbering (all sheets, not just current)
 used_refs = {}
-for _s in sch.symbols.get_all():
-    _r = getattr(_s, 'reference', '')
+for _r in sch.symbols.get_used_references():
     _m = re.match(r'^([A-Za-z#]+)(\d+)$', _r)
     if _m:
         used_refs.setdefault(_m.group(1), set()).add(int(_m.group(2)))

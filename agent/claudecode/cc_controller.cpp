@@ -68,6 +68,7 @@ void CC_CONTROLLER::Start( const std::string& aWorkingDir, const std::string& aP
     ResetTurnState();
     m_sessionId.clear();
     m_toolResultCounter = 0;
+    m_ccTurnCount = 0;
 
     wxLogInfo( "CC_CONTROLLER: Started in %s (MCP config: %s, prompt: %zu bytes)",
                aWorkingDir.c_str(), m_mcpConfigPath.c_str(), systemPrompt.size() );
@@ -85,7 +86,62 @@ void CC_CONTROLLER::SendMessage( const std::string& aText )
     m_busy = true;
     ResetTurnState();
 
-    m_subprocess->SendUserMessage( aText );
+    // Record user message in history (always the raw text)
+    m_chatHistory.push_back( { { "role", "user" }, { "content", aText } } );
+
+    // If there are prior messages the CC subprocess hasn't seen (from a different
+    // backend or a loaded conversation), prepend them as context so CC is aware
+    // of the conversation history.
+    std::string messageToSend = aText;
+
+    if( m_ccTurnCount == 0 && m_chatHistory.size() > 1 )
+    {
+        std::string context = "<prior_conversation>\n";
+
+        // All messages except the one we just appended
+        for( size_t i = 0; i < m_chatHistory.size() - 1; i++ )
+        {
+            const auto& msg = m_chatHistory[i];
+            std::string role = msg.value( "role", "" );
+
+            context += "[" + role + "]: ";
+
+            if( msg["content"].is_string() )
+            {
+                context += msg["content"].get<std::string>();
+            }
+            else if( msg["content"].is_array() )
+            {
+                for( const auto& block : msg["content"] )
+                {
+                    std::string type = block.value( "type", "" );
+
+                    if( type == "text" )
+                        context += block.value( "text", "" );
+                    else if( type == "tool_use" )
+                        context += "[tool_use: " + block.value( "name", "" ) + "]";
+                    else if( type == "tool_result" )
+                    {
+                        std::string content = block.value( "content", "" );
+                        if( content.size() > 500 )
+                            content = content.substr( 0, 500 ) + "...";
+                        context += "[tool_result: " + content + "]";
+                    }
+                }
+            }
+
+            context += "\n";
+        }
+
+        context += "</prior_conversation>\n\n";
+        messageToSend = context + aText;
+
+        wxLogInfo( "CC_CONTROLLER: Prepended %zu prior messages as context (%zu bytes)",
+                   m_chatHistory.size() - 1, context.size() );
+    }
+
+    m_ccTurnCount++;
+    m_subprocess->SendUserMessage( messageToSend );
 
     wxLogInfo( "CC_CONTROLLER: Sent user message (%zu chars)", aText.size() );
 }
@@ -127,6 +183,8 @@ void CC_CONTROLLER::NewSession()
     m_sessionId.clear();
     m_toolResultCounter = 0;
     m_thinkingIndex = 0;
+    m_ccTurnCount = 0;
+    m_chatHistory = json::array();
 
     wxLogInfo( "CC_CONTROLLER: New session started" );
 }
@@ -173,6 +231,17 @@ void CC_CONTROLLER::ResetTurnState()
     m_pendingToolIds.clear();
     m_pendingToolNames.clear();
     m_lastStderrLine.clear();
+    m_currentAssistantContent = json::array();
+}
+
+
+void CC_CONTROLLER::CommitAssistantMessage()
+{
+    if( m_currentAssistantContent.empty() )
+        return;
+
+    m_chatHistory.push_back( { { "role", "assistant" }, { "content", m_currentAssistantContent } } );
+    m_currentAssistantContent = json::array();
 }
 
 
@@ -330,8 +399,7 @@ void CC_CONTROLLER::HandleStreamEvent( const json& aMsg )
     }
     else if( eventType == "message_stop" )
     {
-        // Message complete — if there were tool calls, they're now executing
-        // Turn complete will come from "result" message or next message_start
+        // History recording handled by HandleAssistantMessage (complete message)
     }
 }
 
@@ -439,12 +507,18 @@ void CC_CONTROLLER::HandleContentBlockStop( const json& aEvent )
     int index = aEvent.value( "index", -1 );
     auto it = m_activeBlocks.find( index );
 
+    wxLogInfo( "CC_CONTROLLER::HandleContentBlockStop - index=%d, found=%d", index, it != m_activeBlocks.end() );
+
     if( it == m_activeBlocks.end() )
         return;
 
     ContentBlock& block = it->second;
 
-    if( block.type == BlockType::THINKING )
+    if( block.type == BlockType::TEXT )
+    {
+        // History recording handled by HandleAssistantMessage (complete message)
+    }
+    else if( block.type == BlockType::THINKING )
     {
         m_inThinking = false;
 
@@ -508,6 +582,8 @@ void CC_CONTROLLER::HandleContentBlockStop( const json& aEvent )
             "TaskUpdate", "TeamCreate", "TeamDelete", "LSP"
         };
 
+        // History recording handled by HandleAssistantMessage (complete message)
+
         if( hiddenTools.count( block.toolName ) == 0 )
         {
             m_toolResultCounter++;
@@ -530,9 +606,57 @@ void CC_CONTROLLER::HandleContentBlockStop( const json& aEvent )
 
 void CC_CONTROLLER::HandleAssistantMessage( const json& aMsg )
 {
-    // Complete assistant message (after streaming). We already handled
-    // content via stream events, so this is mostly informational.
-    wxLogInfo( "CC_CONTROLLER: Complete assistant message received" );
+    // Complete assistant message — this contains the full content blocks.
+    // Stream events (content_block_stop, message_stop) may not be emitted by
+    // Claude Code's stream-json format, so we build history from this message.
+
+    if( !aMsg.contains( "message" ) )
+    {
+        wxLogInfo( "CC_CONTROLLER: Assistant message with no 'message' field" );
+        return;
+    }
+
+    const json& message = aMsg["message"];
+
+    if( !message.contains( "content" ) || !message["content"].is_array() )
+    {
+        wxLogInfo( "CC_CONTROLLER: Assistant message with no content array" );
+        return;
+    }
+
+    // Build history content from the complete message
+    json historyContent = json::array();
+
+    for( const auto& block : message["content"] )
+    {
+        std::string blockType = block.value( "type", "" );
+
+        if( blockType == "text" )
+        {
+            historyContent.push_back( { { "type", "text" }, { "text", block.value( "text", "" ) } } );
+        }
+        else if( blockType == "tool_use" )
+        {
+            json toolBlock = {
+                { "type", "tool_use" },
+                { "id", block.value( "id", "" ) },
+                { "name", block.value( "name", "" ) },
+                { "input", block.value( "input", json::object() ) }
+            };
+            historyContent.push_back( toolBlock );
+        }
+        // Skip thinking/signature blocks — not needed for history
+    }
+
+    if( !historyContent.empty() )
+    {
+        m_chatHistory.push_back( { { "role", "assistant" }, { "content", historyContent } } );
+        wxLogInfo( "CC_CONTROLLER: Recorded assistant message with %zu content blocks in history",
+                   historyContent.size() );
+    }
+
+    // Clear streaming accumulation state since we got the complete message
+    m_currentAssistantContent = json::array();
 }
 
 
@@ -549,6 +673,59 @@ void CC_CONTROLLER::HandleUserMessage( const json& aMsg )
 
     if( !message.contains( "content" ) || !message["content"].is_array() )
         return;
+
+    // Record tool_result user message in history
+    {
+        json toolResultContent = json::array();
+
+        for( const auto& block : message["content"] )
+        {
+            if( block.value( "type", "" ) == "tool_result" )
+            {
+                json histBlock = {
+                    { "type", "tool_result" },
+                    { "tool_use_id", block.value( "tool_use_id", "" ) }
+                };
+
+                // Store content as string (truncated for history size)
+                if( block.contains( "content" ) )
+                {
+                    if( block["content"].is_string() )
+                    {
+                        std::string content = block["content"].get<std::string>();
+                        if( content.size() > 4000 )
+                            content = content.substr( 0, 4000 ) + "\n... (truncated)";
+                        histBlock["content"] = content;
+                    }
+                    else
+                    {
+                        // Array content — store text parts only (skip images for size)
+                        std::string content;
+                        for( const auto& part : block["content"] )
+                        {
+                            if( part.value( "type", "" ) == "text" )
+                            {
+                                if( !content.empty() )
+                                    content += "\n";
+                                content += part.value( "text", "" );
+                            }
+                        }
+                        if( content.size() > 4000 )
+                            content = content.substr( 0, 4000 ) + "\n... (truncated)";
+                        histBlock["content"] = content;
+                    }
+                }
+
+                if( block.value( "is_error", false ) )
+                    histBlock["is_error"] = true;
+
+                toolResultContent.push_back( histBlock );
+            }
+        }
+
+        if( !toolResultContent.empty() )
+            m_chatHistory.push_back( { { "role", "user" }, { "content", toolResultContent } } );
+    }
 
     for( const auto& block : message["content"] )
     {
@@ -796,7 +973,7 @@ std::string CC_CONTROLLER::LoadSystemPrompt()
 void CC_CONTROLLER::HandleResultMessage( const json& aMsg )
 {
     // Final result — conversation turn is complete
-    wxLogInfo( "CC_CONTROLLER: Result message received" );
+    wxLogInfo( "CC_CONTROLLER: Result message received (historySize=%zu)", m_chatHistory.size() );
 
     // Extract session_id if present
     if( aMsg.contains( "session_id" ) )

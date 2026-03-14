@@ -454,6 +454,10 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
 
     Register( "sch_add",          "sch", "schematic/sch_add.py",          DescribeSchAdd );
     Register( "sch_update",       "sch", "schematic/sch_update.py",       DescribeSchUpdate );
+    Register( "sch_update_sheet", "sch", "schematic/sch_update_sheet.py", []( const nlohmann::json& a ) {
+        std::string target = a.value( "target", "?" );
+        return "Updating sheet " + target;
+    } );
     Register( "sch_delete",       "sch", "schematic/sch_delete.py",       DescribeSchDelete );
 
     Register( "sch_switch_sheet", "sch", "schematic/sch_switch_sheet.py", []( const nlohmann::json& a ) {

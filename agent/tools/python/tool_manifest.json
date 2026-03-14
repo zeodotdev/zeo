@@ -1258,6 +1258,36 @@
     "deferred": false
   },
   {
+    "name": "sch_update_sheet",
+    "description": "Update a hierarchical sheet symbol. Can resize and reposition sheets.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "Sheet name (e.g., 'MCU', 'Power Supply')"
+        },
+        "size": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "New size [width, height] in mm"
+        },
+        "position": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "New position [x, y] in mm"
+        }
+      },
+      "required": ["target"]
+    },
+    "app": "sch",
+    "script": "schematic/sch_update_sheet.py",
+    "needs_bbox": false,
+    "read_only": false,
+    "group": "SCHEMATIC",
+    "deferred": false
+  },
+  {
     "name": "sch_delete",
     "description": "Delete elements from the schematic. Accepts an array of targets - use for single or batch operations. Each target can be a string (reference designator like 'R1' or UUID) or a query object to match items by properties:\n  {type: 'wire', start: [x,y], end: [x,y]} - match wire by endpoints\n  {type: 'wire', position: [x,y]} - match wires touching this point\n  {type: 'label', text: 'NET_NAME'} - match local label by text\n  {type: 'label', text: 'NET_NAME', ref: 'R3'} - match label by text on a specific symbol's pin\n  {type: 'label', text: 'NET_NAME', position: [x,y]} - match label by text and position\n  {type: 'global_label', text: 'SPI_CLK'} - match global label\n  {type: 'hierarchical_label', text: 'DATA'} - match hierarchical label\n  {type: 'junction', position: [x,y]} - match junction at position\n  {type: 'no_connect', position: [x,y]} - match no-connect at position\n  {type: 'bus_entry', position: [x,y]} - match bus entry at position\nQuery: type is required. text/position/start/end are optional filters. All specified must match. Position tolerance: 0.01mm. By default, recursively removes orphaned wires, junctions, and power symbols (#PWR) connected to deleted symbol pins. Set chain_delete: true to expand wire/junction/label targets to delete the ENTIRE connected net (all wires, junctions, labels on the same net). Does not delete symbols.",
     "input_schema": {

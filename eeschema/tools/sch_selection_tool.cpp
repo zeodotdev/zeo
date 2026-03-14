@@ -3961,6 +3961,16 @@ void SCH_SELECTION_TOOL::syncSelectionWithAgent()
 
     nlohmann::json netsArray = nlohmann::json::array();
 
+    // Build set of valid sheet path hashes from current hierarchy.
+    // The connection graph may hold stale subgraphs referencing deleted sheets
+    // (e.g., after the agent deletes a sheet). Accessing items from those
+    // subgraphs is a use-after-free. Filter them out by hash comparison,
+    // which is safe even with dangling SCH_SHEET pointers.
+    std::unordered_set<size_t> validSheetHashes;
+
+    for( const SCH_SHEET_PATH& path : editFrame->Schematic().Hierarchy() )
+        validSheetHashes.insert( path.GetCurrentHash() );
+
     // Iterate through all nets in the graph
     for( const auto& [key, subgraphs] : graph->GetNetMap() )
     {
@@ -3977,6 +3987,13 @@ void SCH_SELECTION_TOOL::syncSelectionWithAgent()
         // Iterate subgraphs for this net
         for( CONNECTION_SUBGRAPH* subgraph : subgraphs )
         {
+            // Skip subgraphs from deleted/stale sheets
+            if( validSheetHashes.find( subgraph->GetSheet().GetCurrentHash() )
+                == validSheetHashes.end() )
+            {
+                continue;
+            }
+
             // Iterate items in subgraph
             for( SCH_ITEM* item : subgraph->GetItems() )
             {

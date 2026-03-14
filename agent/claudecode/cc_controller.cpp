@@ -75,12 +75,12 @@ void CC_CONTROLLER::Start( const std::string& aWorkingDir, const std::string& aP
 }
 
 
-void CC_CONTROLLER::SendMessage( const std::string& aText )
+bool CC_CONTROLLER::SendMessage( const std::string& aText )
 {
     if( !m_subprocess || !m_subprocess->IsRunning() )
     {
         wxLogWarning( "CC_CONTROLLER: Cannot send message, subprocess not running" );
-        return;
+        return false;
     }
 
     m_busy = true;
@@ -144,6 +144,7 @@ void CC_CONTROLLER::SendMessage( const std::string& aText )
     m_subprocess->SendUserMessage( messageToSend );
 
     wxLogInfo( "CC_CONTROLLER: Sent user message (%zu chars)", aText.size() );
+    return true;
 }
 
 

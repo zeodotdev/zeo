@@ -81,7 +81,40 @@ try:
 
     if section in ('sheets', 'all'):
         sheets = sch.crud.get_sheets()
-        result['sheets'] = [{'uuid': get_uuid_str(s), 'name': s.name if hasattr(s, 'name') else '', 'file': s.filename if hasattr(s, 'filename') else ''} for s in sheets]
+        sheet_data = []
+        for s in sheets:
+            pins = []
+            try:
+                sheet_pins = s.pins
+                for p in sheet_pins:
+                    pin_info = {'name': getattr(p, 'name', '')}
+                    pin_pos = get_pos(getattr(p, 'position', None))
+                    if pin_pos:
+                        pin_info['pos'] = pin_pos
+                    side_val = getattr(p, 'side', 0)
+                    if side_val:
+                        side_map = {1: 'left', 2: 'right', 3: 'top', 4: 'bottom'}
+                        pin_info['side'] = side_map.get(side_val, str(side_val))
+                    shape_val = getattr(p, 'shape', 0)
+                    if shape_val:
+                        shape_map = {1: 'input', 2: 'output', 3: 'bidirectional', 4: 'tristate', 5: 'unspecified'}
+                        pin_info['shape'] = shape_map.get(shape_val, str(shape_val))
+                    try:
+                        pin_info['uuid'] = get_uuid_str(p)
+                    except Exception:
+                        pass
+                    pins.append(pin_info)
+            except Exception as e:
+                pins = [{'error': str(e)}]
+            sheet_info = {
+                'uuid': get_uuid_str(s),
+                'name': s.name if hasattr(s, 'name') else '',
+                'file': s.filename if hasattr(s, 'filename') else '',
+            }
+            if pins:
+                sheet_info['pins'] = pins
+            sheet_data.append(sheet_info)
+        result['sheets'] = sheet_data
 
     if section == 'header':
         doc = sch.document

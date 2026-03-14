@@ -735,7 +735,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         UpdateAuthUI();
 
         // Push model list — include Claude Code if available
-        std::vector<std::string> models = { "Claude 4.6 Opus", "Claude 4.6 Opus (1M)", "Gemini 3.1 Pro" };
+        std::vector<std::string> models = { "Claude 4.6 Opus", "Gemini 3.1 Pro" };
 
         // Check if claude CLI is installed
         {
@@ -982,14 +982,7 @@ wxString AGENT_FRAME::BuildOnboardingHtml()
         html += wxS( "<div class=\"onboard-title\">Welcome to Zeo</div>" );
         html += wxS( "<div class=\"onboard-sub\">Open a KiCad project to get started, "
                      "or ask me anything about electronics design.</div>" );
-        html += wxS( "<div class=\"onboard-grid\">" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:What%20can%20you%20help%20me%20with%3F\">"
-                     "What can you help me with?</a>" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Help%20me%20design%20a%20buck%20converter%20circuit\">"
-                     "Design a buck converter</a>" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Explain%20how%20decoupling%20capacitors%20work\">"
-                     "Explain decoupling caps</a>" );
-        html += wxS( "</div>" );
+        // fall through to shared chips
     }
     else if( !hasSch && !hasPcb )
     {
@@ -997,16 +990,7 @@ wxString AGENT_FRAME::BuildOnboardingHtml()
         html += wxS( "<div class=\"onboard-title\">New Project</div>" );
         html += wxS( "<div class=\"onboard-sub\">This project is empty. "
                      "I can help you design a schematic, place components, or plan your circuit.</div>" );
-        html += wxS( "<div class=\"onboard-grid\">" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Design%20a%20voltage%20regulator%20circuit\">"
-                     "Design a voltage regulator</a>" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Create%20an%20Arduino-compatible%20microcontroller%20board\">"
-                     "Create a microcontroller board</a>" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Add%20a%20USB-C%20power%20input%20to%20my%20schematic\">"
-                     "Add USB-C power input</a>" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Help%20me%20plan%20a%20sensor%20breakout%20board\">"
-                     "Plan a sensor breakout board</a>" );
-        html += wxS( "</div>" );
+        // fall through to shared chips
     }
     else if( hasSch && !hasPcb )
     {
@@ -1014,16 +998,7 @@ wxString AGENT_FRAME::BuildOnboardingHtml()
         html += wxS( "<div class=\"onboard-title\">What's next?</div>" );
         html += wxS( "<div class=\"onboard-sub\">"
                      "Your schematic is ready. I can run checks, update it, or help with the PCB layout.</div>" );
-        html += wxS( "<div class=\"onboard-grid\">" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Run%20ERC%20on%20my%20schematic\">"
-                     "Run ERC</a>" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Review%20my%20schematic%20and%20suggest%20improvements\">"
-                     "Review my schematic</a>" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Add%20bypass%20capacitors%20to%20all%20ICs\">"
-                     "Add bypass caps to all ICs</a>" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Start%20the%20PCB%20layout%20for%20this%20schematic\">"
-                     "Start PCB layout</a>" );
-        html += wxS( "</div>" );
+        // fall through to shared chips
     }
     else
     {
@@ -1035,21 +1010,20 @@ wxString AGENT_FRAME::BuildOnboardingHtml()
 
         html += wxString::Format( wxS( "<div class=\"onboard-title\">%s</div>" ), greeting );
         html += wxString::Format( wxS( "<div class=\"onboard-sub\">%s</div>" ), subtitle );
-        html += wxS( "<div class=\"onboard-grid\">" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Run%20ERC%20on%20my%20schematic\">"
-                     "Run ERC</a>" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Run%20DRC%20on%20my%20PCB\">"
-                     "Run DRC</a>" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Review%20my%20schematic%20and%20suggest%20improvements\">"
-                     "Review my schematic</a>" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Auto-route%20my%20PCB\">"
-                     "Auto-route PCB</a>" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Take%20a%20screenshot%20of%20my%20schematic\">"
-                     "Screenshot schematic</a>" );
-        html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Export%20my%20PCB%20gerbers\">"
-                     "Export gerbers</a>" );
-        html += wxS( "</div>" );
+        // fall through to shared chips
     }
+
+    // Same four suggestion chips for all states
+    html += wxS( "<div class=\"onboard-grid\">" );
+    html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Review%20my%20schematic\">"
+                 "Review my schematic</a>" );
+    html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Review%20my%20board\">"
+                 "Review my board</a>" );
+    html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Help%20me%20create%20something%20new\">"
+                 "Help me create something new</a>" );
+    html += wxS( "<a class=\"onboard-chip\" href=\"agent:suggest:Help%20me%20get%20ready%20for%20fabrication\">"
+                 "Help me get ready for fabrication</a>" );
+    html += wxS( "</div>" );
 
     // Keyboard shortcut hint
     html += wxS( "<div class=\"onboard-keys\">"
@@ -1610,7 +1584,31 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
             m_ccController->SetChatHistory( m_chatHistory );
 
             StartGeneratingAnimation();
-            m_ccController->SendMessage( text.ToStdString() );
+
+            if( !m_ccController->SendMessage( text.ToStdString() ) )
+            {
+                wxLogWarning( "AGENT_FRAME: CC subprocess not running, restarting" );
+                StopGeneratingAnimation();
+
+                // Restart the subprocess — resume if we have a session ID, else new
+                std::string sessionId = m_ccController->GetSessionId();
+
+                if( !sessionId.empty() )
+                    m_ccController->ResumeSession( sessionId );
+                else
+                    m_ccController->NewSession();
+
+                m_ccController->SetChatHistory( m_chatHistory );
+                StartGeneratingAnimation();
+
+                if( !m_ccController->SendMessage( text.ToStdString() ) )
+                {
+                    wxLogError( "AGENT_FRAME: CC subprocess restart failed" );
+                    StopGeneratingAnimation();
+                    m_pendingAttachments.clear();
+                    return;
+                }
+            }
 
             // Sync and save after user message is recorded
             m_chatHistory = m_ccController->GetChatHistory();

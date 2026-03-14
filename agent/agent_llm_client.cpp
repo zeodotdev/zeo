@@ -173,8 +173,6 @@ void* LLM_REQUEST_THREAD::Entry()
     std::string apiModel;
     if( m_model == "Gemini 3.1 Pro" )
         apiModel = "gemini-3.1-pro-preview-customtools";
-    else if( m_model == "Claude 4.6 Opus (1M)" )
-        apiModel = "claude-opus-4-6-1m";
     else
         apiModel = "claude-opus-4-6";
 

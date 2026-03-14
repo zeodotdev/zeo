@@ -392,8 +392,8 @@
     "deferred": false
   },
   {
-    "name": "sch_label_pins",
-    "description": "Batch-label pins on a symbol or hierarchical sheet. Places labels at pin tips with auto-justified text based on pin orientation. For sheets, pass the sheet name as ref and use sheet pin names as label keys.",
+    "name": "sch_label",
+    "description": "Place labels on symbol or sheet pins. Auto-justifies text and orientation based on pin direction. For sheets, pass the sheet name as ref and use sheet pin names as label keys.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -416,22 +416,6 @@
             "hierarchical"
           ],
           "description": "Label type. 'local' for intra-sheet (default). 'hierarchical' for inter-sheet signals. 'global' only when genuinely needed everywhere."
-        },
-        "h_align": {
-          "type": "string",
-          "enum": [
-            "left",
-            "right"
-          ],
-          "description": "Horizontal alignment of the label connection point. 'left' places the pin on the left side, 'right' on the right. Overrides auto-justification when set."
-        },
-        "v_align": {
-          "type": "string",
-          "enum": [
-            "top",
-            "bottom"
-          ],
-          "description": "Vertical alignment of the label connection point. 'top' places the pin on the top, 'bottom' on the bottom. Overrides auto-justification when set."
         }
       },
       "required": [
@@ -440,7 +424,7 @@
       ]
     },
     "app": "sch",
-    "script": "schematic/sch_label_pins.py",
+    "script": "schematic/sch_label.py",
     "needs_bbox": false,
     "read_only": false,
     "group": "SCHEMATIC",
@@ -1120,7 +1104,6 @@
                   "symbol",
                   "power",
                   "wire",
-                  "label",
                   "no_connect",
                   "bus_entry"
                 ],
@@ -1163,19 +1146,6 @@
                   "type": "array"
                 },
                 "description": "Wire coordinates: [[x1,y1], [x2,y2], ...]. Segments are drawn between consecutive points."
-              },
-              "text": {
-                "type": "string",
-                "description": "Label text"
-              },
-              "label_type": {
-                "type": "string",
-                "enum": [
-                  "local",
-                  "global",
-                  "hierarchical"
-                ],
-                "description": "Label type. 'local' for intra-sheet net labels (default). 'hierarchical' for inter-sheet signals (creates sheet pins). 'global' only when a signal genuinely needs to be visible everywhere."
               },
               "direction": {
                 "type": "string",

@@ -8,8 +8,6 @@ refresh_or_fail(sch)
 ref = TOOL_ARGS.get("ref", "")
 label_type = TOOL_ARGS.get("label_type", "local")
 pin_labels = TOOL_ARGS.get("labels", {})
-h_align_override = TOOL_ARGS.get("h_align", None)
-v_align_override = TOOL_ARGS.get("v_align", None)
 
 def build_label(text, position, h_align, v_align, rotation=0):
     """Build a label proto in memory (no IPC call)."""
@@ -81,11 +79,6 @@ elif _is_sheet:
             else:
                 h_align, v_align = HA_LEFT, VA_BOTTOM
                 direction = 'right'
-
-            if h_align_override is not None:
-                h_align = HA_LEFT if h_align_override == 'left' else HA_RIGHT
-            if v_align_override is not None:
-                v_align = VA_TOP if v_align_override == 'top' else VA_BOTTOM
 
             lbl_x, lbl_y = px, py
             label_pos = Vector2.from_xy_mm(lbl_x, lbl_y)
@@ -167,11 +160,6 @@ else:
                     direction = 'left'
                     out_dx, out_dy = -1, 0
 
-            if h_align_override is not None:
-                h_align = HA_LEFT if h_align_override == 'left' else HA_RIGHT
-            if v_align_override is not None:
-                v_align = VA_TOP if v_align_override == 'top' else VA_BOTTOM
-
             lbl_x, lbl_y = px, py
             label_pos = Vector2.from_xy_mm(lbl_x, lbl_y)
             lbl = build_label(label_text, label_pos, h_align, v_align, rotation)
@@ -200,6 +188,6 @@ if label_type == 'hierarchical':
     try:
         sch.sheets.sync_pins()
     except Exception as _e:
-        tool_log(f'[sch_label_pins] sheet pin sync failed: {_e}')
+        tool_log(f'[sch_label] sheet pin sync failed: {_e}')
 
 print(json.dumps({'status': 'success', 'ref': ref, 'labels_placed': len([r for r in results if 'error' not in r]), 'labels_failed': len([r for r in results if 'error' in r]), 'results': results}, indent=2))

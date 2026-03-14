@@ -1,6 +1,5 @@
 import json, sys, re, math
 from kipy.geometry import Vector2
-from kipy.proto.common.types.enums_pb2 import HA_LEFT, HA_RIGHT, VA_TOP, VA_BOTTOM
 
 refresh_or_fail(sch)
 
@@ -180,7 +179,6 @@ def _slide_off(item, raw_bb, margined_bb):
     return (False, total_dx, total_dy)
 
 elements = TOOL_ARGS.get("elements", [])
-has_hierarchical_label = False
 
 try:
     for i, elem in enumerate(elements):
@@ -330,57 +328,6 @@ try:
                         _res['shift_mm'] = [round(_shift_dx, 2), round(_shift_dy, 2)]
                     results.append(_res)
 
-            elif element_type == "label":
-                text = elem.get("text", "")
-                label_type = elem.get("label_type", "local")
-                pos = elem.get("position", [0, 0])
-                pos_x = snap_to_grid(pos[0]) if len(pos) >= 2 else 0
-                pos_y = snap_to_grid(pos[1]) if len(pos) >= 2 else 0
-
-                _check_bounds(pos_x, pos_y, i)
-                pos_vec = Vector2.from_xy_mm(pos_x, pos_y)
-
-                if label_type == "global":
-                    lbl = sch.labels.add_global(text, pos_vec)
-                elif label_type == "hierarchical":
-                    lbl = sch.labels.add_hierarchical(text, pos_vec)
-                    has_hierarchical_label = True
-                else:
-                    lbl = sch.labels.add_local(text, pos_vec)
-
-                # Map angle to label alignment
-                angle = int(elem.get("angle", 0.0)) % 360
-                if angle != 0:
-                    if angle == 180 or angle == 270:
-                        lbl._proto.text.attributes.horizontal_alignment = HA_RIGHT
-                    if angle == 90 or angle == 270:
-                        lbl._proto.text.attributes.vertical_alignment = VA_TOP
-                    sch.crud.update_items([lbl])
-
-                # Overlap check for label (no slide-off — moving labels disconnects them)
-                _rejected = False
-                _bb = None
-                _new_bbox = None
-                try:
-                    _bb = sch.transform.get_bounding_box(lbl, units='mm')
-                    if _bb:
-                        _new_bbox = {'min_x': _bb['min_x'] + _LABEL_SHRINK, 'max_x': _bb['max_x'] - _LABEL_SHRINK, 'min_y': _bb['min_y'] + _LABEL_SHRINK, 'max_y': _bb['max_y'] - _LABEL_SHRINK}
-                        _has_conflict = any(_bboxes_overlap_add(_new_bbox, _pb) for _pb in placed_bboxes) or (_find_crossing_wire(_bb) is not None)
-                        if _has_conflict:
-                            _rejected = True
-                except Exception as _e:
-                    tool_log(f'[sch_add] label overlap check failed: {_e}')
-                if _rejected:
-                    sch.crud.remove_items([lbl])
-                    results.append({'index': i, 'error': f'Placement rejected: {_overlap_info(_new_bbox)}. Moving labels would disconnect them \u2014 place the label at a clear position.'})
-                else:
-                    if _bb:
-                        placed_bboxes.append({'ref': text, **_new_bbox})
-                    _res = {'index': i, 'element_type': 'label'}
-                    if _bb:
-                        _res['bbox_mm'] = {'min_x': round(_new_bbox['min_x'], 2), 'max_x': round(_new_bbox['max_x'], 2), 'min_y': round(_new_bbox['min_y'], 2), 'max_y': round(_new_bbox['max_y'], 2)}
-                    results.append(_res)
-
             elif element_type == "wire":
                 raw_points = elem.get("points", [])
                 if len(raw_points) >= 2:
@@ -479,12 +426,5 @@ try:
 
 except Exception as batch_error:
     result = {'status': 'error', 'message': str(batch_error), 'results': results}
-
-# Sync sheet pins on parent sheet to match hierarchical labels
-if has_hierarchical_label:
-    try:
-        sch.sheets.sync_pins()
-    except Exception as _e:
-        tool_log(f'[sch_add] sheet pin sync failed: {_e}')
 
 print(json.dumps(result, indent=2))

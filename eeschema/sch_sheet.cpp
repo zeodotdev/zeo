@@ -247,6 +247,9 @@ bool SCH_SHEET::Deserialize( const google::protobuf::Any& aContainer )
     if( !aContainer.UnpackTo( &sheet ) )
         return false;
 
+    if( !sheet.id().value().empty() )
+        const_cast<KIID&>( m_Uuid ) = KIID( sheet.id().value() );
+
     if( sheet.has_position() )
         SetPosition( kiapi::common::UnpackVector2Sch( sheet.position() ) );
 
@@ -282,6 +285,47 @@ bool SCH_SHEET::Deserialize( const google::protobuf::Any& aContainer )
 
     if( sheet.has_background_color() )
         SetBackgroundColor( kiapi::common::UnpackColor( sheet.background_color() ) );
+
+    // Deserialize sheet pins - rebuild from proto
+    if( sheet.pins_size() > 0 )
+    {
+        // Clear existing pins and rebuild from proto
+        for( SCH_SHEET_PIN* pin : m_pins )
+            delete pin;
+        m_pins.clear();
+
+        for( const auto& protoPin : sheet.pins() )
+        {
+            SCH_SHEET_PIN* pin = new SCH_SHEET_PIN( this );
+
+            if( !protoPin.id().value().empty() )
+                const_cast<KIID&>( pin->m_Uuid ) = KIID( protoPin.id().value() );
+
+            pin->SetText( wxString::FromUTF8( protoPin.name() ) );
+            pin->SetPosition( kiapi::common::UnpackVector2Sch( protoPin.position() ) );
+
+            switch( protoPin.side() )
+            {
+            case kiapi::schematic::types::SPS_LEFT:   pin->SetSide( SHEET_SIDE::LEFT ); break;
+            case kiapi::schematic::types::SPS_RIGHT:  pin->SetSide( SHEET_SIDE::RIGHT ); break;
+            case kiapi::schematic::types::SPS_TOP:    pin->SetSide( SHEET_SIDE::TOP ); break;
+            case kiapi::schematic::types::SPS_BOTTOM: pin->SetSide( SHEET_SIDE::BOTTOM ); break;
+            default: break;
+            }
+
+            switch( protoPin.shape() )
+            {
+            case kiapi::schematic::types::LS_INPUT:       pin->SetShape( L_INPUT ); break;
+            case kiapi::schematic::types::LS_OUTPUT:      pin->SetShape( L_OUTPUT ); break;
+            case kiapi::schematic::types::LS_BIDI:        pin->SetShape( L_BIDI ); break;
+            case kiapi::schematic::types::LS_TRISTATE:    pin->SetShape( L_TRISTATE ); break;
+            case kiapi::schematic::types::LS_UNSPECIFIED: pin->SetShape( L_UNSPECIFIED ); break;
+            default: break;
+            }
+
+            m_pins.push_back( pin );
+        }
+    }
 
     // Deserialize fields - update existing fields by their field ID
     for( const auto& protoField : sheet.fields() )

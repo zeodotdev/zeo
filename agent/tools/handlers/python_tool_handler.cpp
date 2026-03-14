@@ -181,7 +181,7 @@ static std::string DescribeSchConnectNet( const nlohmann::json& a )
 }
 
 
-static std::string DescribeSchLabelPins( const nlohmann::json& a )
+static std::string DescribeSchLabel( const nlohmann::json& a )
 {
     std::string ref = a.value( "ref", "?" );
     int         count = 0;
@@ -454,7 +454,7 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
     } );
 
     Register( "sch_connect_net", "sch", "schematic/sch_connect_net.py", DescribeSchConnectNet );
-    Register( "sch_label_pins",  "sch", "schematic/sch_label_pins.py",  DescribeSchLabelPins );
+    Register( "sch_label",  "sch", "schematic/sch_label.py",  DescribeSchLabel );
 
     Register( "sch_setup", "sch", "schematic/sch_setup.py", []( const nlohmann::json& a ) {
         std::string action = a.value( "action", "get" );
@@ -464,6 +464,10 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
 
     Register( "sch_add",          "sch", "schematic/sch_add.py",          DescribeSchAdd );
     Register( "sch_update",       "sch", "schematic/sch_update.py",       DescribeSchUpdate );
+    Register( "sch_update_sheet", "sch", "schematic/sch_update_sheet.py", []( const nlohmann::json& a ) {
+        std::string target = a.value( "target", "?" );
+        return "Updating sheet " + target;
+    } );
     Register( "sch_delete",       "sch", "schematic/sch_delete.py",       DescribeSchDelete );
 
     Register( "sch_switch_sheet", "sch", "schematic/sch_switch_sheet.py", []( const nlohmann::json& a ) {

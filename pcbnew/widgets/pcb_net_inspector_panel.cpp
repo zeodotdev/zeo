@@ -106,6 +106,10 @@ PCB_NET_INSPECTOR_PANEL::~PCB_NET_INSPECTOR_PANEL()
 
 void PCB_NET_INSPECTOR_PANEL::buildColumns()
 {
+    // Safety check: ensure board exists and has valid design settings
+    if( !m_board )
+        return;
+
     m_columns.clear();
 
     // Set up the column display vector

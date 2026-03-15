@@ -2146,7 +2146,7 @@ void AGENT_FRAME::OnBridgeAttachClick()
             }
             else if( !error.empty() )
             {
-                m_bridge->PushShowToast( error );
+                m_bridge->PushShowToast( error, "error" );
             }
             else
             {

@@ -439,6 +439,8 @@ img[src^="data:"] { cursor: pointer; }
     animation: toast-in 0.25s ease forwards;
     max-width: 300px; display: flex; align-items: center; gap: 8px;
 }
+.toast.toast-error { background: rgba(232,85,85,0.12); border-color: rgba(232,85,85,0.3); color: var(--accent-red); }
+.toast.toast-warning { background: rgba(240,198,116,0.12); border-color: rgba(240,198,116,0.3); }
 .toast span:last-child {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -666,13 +668,14 @@ App.Theme = (function() {
     };
 })();
 
-App.showToast = function(message, durationMs) {
+App.showToast = function(message, durationMs, type) {
     var container = document.getElementById('toast-container');
     var el = document.createElement('div');
-    el.className = 'toast';
+    el.className = 'toast' + (type === 'error' ? ' toast-error' : type === 'warning' ? ' toast-warning' : '');
     var icon = document.createElement('span');
-    icon.textContent = '\u26A0';
-    icon.style.cssText = 'font-size:14px; flex-shrink:0; color:#f0c674;';
+    icon.textContent = type === 'error' ? '\u2717' : '\u26A0';
+    icon.style.cssText = 'font-size:14px; flex-shrink:0;'
+        + (type === 'error' ? ' color:var(--accent-red);' : ' color:#f0c674;');
     var text = document.createElement('span');
     text.textContent = message;
     el.appendChild(icon);
@@ -1602,10 +1605,10 @@ App.Input = (function() {
             })(files[i]);
         }
         if (skippedTypes.length > 0) {
-            App.showToast('Unsupported file type: ' + skippedTypes.join(', '));
+            App.showToast('Unsupported file type: ' + skippedTypes.join(', '), 2500, 'error');
         }
         if (skippedSize.length > 0) {
-            App.showToast('File too large (max 32 MB): ' + skippedSize.join(', '));
+            App.showToast('File too large (max 32 MB): ' + skippedSize.join(', '), 2500, 'error');
         }
     });
 

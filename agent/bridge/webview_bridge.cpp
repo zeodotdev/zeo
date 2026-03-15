@@ -479,10 +479,15 @@ void WEBVIEW_BRIDGE::PushAddAttachment( const wxString& aBase64, const wxString&
                                  EscapeJs( aFilename ) ) );
 }
 
-void WEBVIEW_BRIDGE::PushShowToast( const wxString& aMessage )
+void WEBVIEW_BRIDGE::PushShowToast( const wxString& aMessage, const wxString& aType )
 {
     LogBridge( "C++->JS", wxString::Format( "showToast(%s)", aMessage ) );
-    RunScript( wxString::Format( "App.showToast('%s');", EscapeJs( aMessage ) ) );
+
+    if( aType.IsEmpty() )
+        RunScript( wxString::Format( "App.showToast('%s');", EscapeJs( aMessage ) ) );
+    else
+        RunScript( wxString::Format( "App.showToast('%s', 2500, '%s');",
+                                     EscapeJs( aMessage ), EscapeJs( aType ) ) );
 }
 
 void WEBVIEW_BRIDGE::PushActionButtonState( const wxString& aLabel, bool aEnabled )

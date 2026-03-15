@@ -64,7 +64,7 @@ public:
                             const wxString& aFilename );
 
     // Notifications
-    void PushShowToast( const wxString& aMessage );
+    void PushShowToast( const wxString& aMessage, const wxString& aType = wxEmptyString );
 
     // Controls
     void PushActionButtonState( const wxString& aLabel, bool aEnabled = true );

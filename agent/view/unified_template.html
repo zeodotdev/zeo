@@ -136,6 +136,7 @@ body.visible { opacity: 1; }
     border-top-color: transparent; border-radius: 50%; animation: tool-spin 0.8s linear infinite;
     flex-shrink: 0;
 }
+.tool-elapsed { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 /* Jump-to-bottom floating button */
 #jump-to-bottom {
@@ -1315,6 +1316,45 @@ App.Chat = (function() {
         removePlanApproval: removePlanApproval,
         setDebug: function(on) { _debug = on; }
     };
+})();
+
+// =====================================================================
+// App.ToolTimer — elapsed time display for running tools
+// =====================================================================
+(function() {
+    var _interval = null;
+
+    function tick() {
+        var els = document.querySelectorAll('.tool-elapsed[data-start]');
+        if (els.length === 0) {
+            clearInterval(_interval);
+            _interval = null;
+            return;
+        }
+        var now = Date.now();
+        for (var i = 0; i < els.length; i++) {
+            var start = parseInt(els[i].getAttribute('data-start'), 10);
+            var secs = Math.floor((now - start) / 1000);
+            if (secs < 1) {
+                els[i].textContent = '';
+            } else if (secs < 60) {
+                els[i].textContent = secs + 's';
+            } else {
+                var m = Math.floor(secs / 60);
+                var s = secs % 60;
+                els[i].textContent = m + ':' + (s < 10 ? '0' : '') + s;
+            }
+        }
+    }
+
+    // Observe DOM for new tool-elapsed elements
+    var observer = new MutationObserver(function() {
+        if (document.querySelector('.tool-elapsed[data-start]') && !_interval) {
+            _interval = setInterval(tick, 1000);
+            tick();
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
 })();
 
 // =====================================================================

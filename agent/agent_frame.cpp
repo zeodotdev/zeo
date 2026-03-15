@@ -194,6 +194,7 @@ static wxString BuildRunningToolHtml( int aIndex, const wxString& aDesc )
         "class=\"tool-result-header py-2.5 px-3 flex items-center gap-2\">"
         "<span class=\"text-text-secondary text-[12px]\">%s</span>"
         "<span class=\"tool-status text-text-muted text-[12px] ml-auto flex items-center gap-2\">"
+        "<span class=\"tool-elapsed\" data-start=\"%ld\"></span>"
         "<a href=\"agent:cancel_tool\" style=\"color:var(--text-muted); font-size:11px; "
         "text-decoration:none; opacity:0.7; cursor:pointer;\" "
         "onmouseover=\"this.style.opacity='1';this.style.color='var(--accent-red)'\" "
@@ -205,7 +206,7 @@ static wxString BuildRunningToolHtml( int aIndex, const wxString& aDesc )
         "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
         "</div>"
         "</div>",
-        aIndex, aDesc, aIndex );
+        aIndex, aDesc, (long) wxGetUTCTimeMillis().GetValue(), aIndex );
 }
 
 
@@ -2151,7 +2152,7 @@ void AGENT_FRAME::OnBridgeAttachClick()
             }
             else if( !error.empty() )
             {
-                m_bridge->PushShowToast( error );
+                m_bridge->PushShowToast( error, "error" );
             }
             else
             {

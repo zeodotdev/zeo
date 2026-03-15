@@ -227,8 +227,10 @@ std::vector<AGENT_CHAT_HISTORY::HistoryEntry> AGENT_CHAT_HISTORY::GetHistoryList
             entry.title = "Untitled Chat";
         }
 
-        // Filter by project path if specified
-        if( !aProjectPath.empty() && entry.projectPath != aProjectPath )
+        // Filter by project path if specified.
+        // Also include chats with no project_path (legacy chats from before filtering was added).
+        if( !aProjectPath.empty() && !entry.projectPath.empty()
+            && entry.projectPath != aProjectPath )
         {
             cont = dir.GetNext( &filename );
             continue;

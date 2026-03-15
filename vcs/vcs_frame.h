@@ -25,6 +25,9 @@ public:
     void      KiwayMailIn( KIWAY_MAIL_EVENT& aEvent ) override;
     wxWindow* GetToolCanvas() const override { return (wxWindow*) this; }
 
+    // Override CommonSettingsChanged to avoid toolbar recreation (VCS_FRAME has no toolbars)
+    void      CommonSettingsChanged( int aFlags ) override;
+
     // Send a JSON message to the web UI
     void SendToWebView( const wxString& aAction, const nlohmann::json& aData );
 

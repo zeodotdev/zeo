@@ -413,3 +413,11 @@ void VCS_FRAME::OnClose( wxCloseEvent& aEvent )
     // Allow the frame to close - it will be re-created next time via KIWAY::Player()
     aEvent.Skip();
 }
+
+
+void VCS_FRAME::CommonSettingsChanged( int aFlags )
+{
+    // VCS_FRAME doesn't have toolbars or most of the infrastructure that
+    // EDA_BASE_FRAME::CommonSettingsChanged expects.
+    // Don't call base class to avoid RecreateToolbars() crash (m_toolbarSettings is null).
+}

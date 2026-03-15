@@ -136,6 +136,7 @@ body.visible { opacity: 1; }
     border-top-color: transparent; border-radius: 50%; animation: tool-spin 0.8s linear infinite;
     flex-shrink: 0;
 }
+.tool-elapsed { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 /* Jump-to-bottom floating button */
 #jump-to-bottom {
@@ -442,6 +443,8 @@ img[src^="data:"] { cursor: pointer; }
     animation: toast-in 0.25s ease forwards;
     max-width: 300px; display: flex; align-items: center; gap: 8px;
 }
+.toast.toast-error { background: rgba(232,85,85,0.12); border-color: rgba(232,85,85,0.3); color: var(--accent-red); }
+.toast.toast-warning { background: rgba(240,198,116,0.12); border-color: rgba(240,198,116,0.3); }
 .toast span:last-child {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -669,13 +672,14 @@ App.Theme = (function() {
     };
 })();
 
-App.showToast = function(message, durationMs) {
+App.showToast = function(message, durationMs, type) {
     var container = document.getElementById('toast-container');
     var el = document.createElement('div');
-    el.className = 'toast';
+    el.className = 'toast' + (type === 'error' ? ' toast-error' : type === 'warning' ? ' toast-warning' : '');
     var icon = document.createElement('span');
-    icon.textContent = '\u26A0';
-    icon.style.cssText = 'font-size:14px; flex-shrink:0; color:#f0c674;';
+    icon.textContent = type === 'error' ? '\u2717' : '\u26A0';
+    icon.style.cssText = 'font-size:14px; flex-shrink:0;'
+        + (type === 'error' ? ' color:var(--accent-red);' : ' color:#f0c674;');
     var text = document.createElement('span');
     text.textContent = message;
     el.appendChild(icon);
@@ -834,6 +838,11 @@ App.Search = (function() {
     var _marks = [];
     var _currentIdx = -1;
     var _debounceTimer = null;
+    var _pendingQuery = null;
+
+    function _isStreaming() {
+        return !!document.getElementById('streaming-content');
+    }
 
     function open() {
         bar.classList.add('visible');
@@ -844,12 +853,21 @@ App.Search = (function() {
     function close() {
         bar.classList.remove('visible');
         input.value = '';
+        _pendingQuery = null;
         clearHighlights();
         App.Input.focus();
     }
 
     function isOpen() {
         return bar.classList.contains('visible');
+    }
+
+    // Called by App.Chat.finalizeStreaming to re-run deferred search
+    function onStreamingEnd() {
+        if (_pendingQuery && isOpen()) {
+            doSearch(_pendingQuery);
+            _pendingQuery = null;
+        }
     }
 
     function clearHighlights() {
@@ -875,8 +893,18 @@ App.Search = (function() {
         var wrapper = document.querySelector('.content-wrapper');
         if (!wrapper) return;
 
+        // Skip the streaming div to avoid race conditions — highlights inside
+        // it would be destroyed by the next innerHTML update (~20Hz).
+        var streamingEl = document.getElementById('streaming-content');
+
         var lowerQuery = query.toLowerCase();
-        var walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT, null, false);
+        var walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT, {
+            acceptNode: function(node) {
+                if (streamingEl && streamingEl.contains(node))
+                    return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
+            }
+        }, false);
         var textNodes = [];
         var node;
         while (node = walker.nextNode()) {
@@ -890,13 +918,22 @@ App.Search = (function() {
         }
 
         _marks = wrapper.querySelectorAll('mark.search-highlight');
+
+        // If streaming is active, save query to re-run when streaming ends
+        if (streamingEl) {
+            _pendingQuery = query;
+            countEl.textContent = _marks.length > 0
+                ? (_marks.length + '+ (streaming\u2026)')
+                : '(streaming\u2026)';
+        }
+
         if (_marks.length > 0) {
             _currentIdx = 0;
             _marks[0].classList.add('current');
             scrollToMark(_marks[0]);
-            updateCount();
+            if (!streamingEl) updateCount();
         } else {
-            updateCount();
+            if (!streamingEl) updateCount();
         }
     }
 
@@ -984,7 +1021,7 @@ App.Search = (function() {
     nextBtn.addEventListener('click', function() { goNext(); });
     closeBtn.addEventListener('click', function() { close(); });
 
-    return { open: open, close: close, isOpen: isOpen };
+    return { open: open, close: close, isOpen: isOpen, onStreamingEnd: onStreamingEnd };
 })();
 
 // =====================================================================
@@ -1028,6 +1065,10 @@ App.Chat = (function() {
         var container = document.getElementById('streaming-content');
         if (container) {
             container.removeAttribute('id');
+        }
+        // Re-run pending search now that streaming content is finalized
+        if (App.Search && App.Search.onStreamingEnd) {
+            App.Search.onStreamingEnd();
         }
     }
 
@@ -1324,6 +1365,45 @@ App.Chat = (function() {
 })();
 
 // =====================================================================
+// App.ToolTimer — elapsed time display for running tools
+// =====================================================================
+(function() {
+    var _interval = null;
+
+    function tick() {
+        var els = document.querySelectorAll('.tool-elapsed[data-start]');
+        if (els.length === 0) {
+            clearInterval(_interval);
+            _interval = null;
+            return;
+        }
+        var now = Date.now();
+        for (var i = 0; i < els.length; i++) {
+            var start = parseInt(els[i].getAttribute('data-start'), 10);
+            var secs = Math.floor((now - start) / 1000);
+            if (secs < 1) {
+                els[i].textContent = '';
+            } else if (secs < 60) {
+                els[i].textContent = secs + 's';
+            } else {
+                var m = Math.floor(secs / 60);
+                var s = secs % 60;
+                els[i].textContent = m + ':' + (s < 10 ? '0' : '') + s;
+            }
+        }
+    }
+
+    // Observe DOM for new tool-elapsed elements
+    var observer = new MutationObserver(function() {
+        if (document.querySelector('.tool-elapsed[data-start]') && !_interval) {
+            _interval = setInterval(tick, 1000);
+            tick();
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+})();
+
+// =====================================================================
 // App.Input — textarea, attachments
 // =====================================================================
 App.Input = (function() {
@@ -1611,10 +1691,10 @@ App.Input = (function() {
             })(files[i]);
         }
         if (skippedTypes.length > 0) {
-            App.showToast('Unsupported file type: ' + skippedTypes.join(', '));
+            App.showToast('Unsupported file type: ' + skippedTypes.join(', '), 2500, 'error');
         }
         if (skippedSize.length > 0) {
-            App.showToast('File too large (max 32 MB): ' + skippedSize.join(', '));
+            App.showToast('File too large (max 32 MB): ' + skippedSize.join(', '), 2500, 'error');
         }
     });
 

@@ -17,6 +17,8 @@
 #include <thread>
 #include <kiway.h>
 #include <wx/log.h>
+#include <wx/app.h>
+#include <wx/evtloop.h>
 #include <kicad_curl/kicad_curl_easy.h>
 
 // ============================================================================
@@ -1105,6 +1107,30 @@ void CHAT_CONTROLLER::EmitToolStart( const std::string& aToolId, const std::stri
 void CHAT_CONTROLLER::ExecuteAllTools()
 {
     wxLogInfo( "CHAT_CONTROLLER::ExecuteAllTools called" );
+
+    // Check if we're being called from a nested/modal event loop context.
+    // This can happen when a modal dialog (e.g., symbol properties) is open and
+    // its event loop processes pending events including LLM completion events.
+    // Executing IPC tools in this context causes a deadlock because SendRequest
+    // blocks with wxYield while the target frame can't process the request.
+    //
+    // Detect this by checking if the current event loop is not the main loop.
+    wxEventLoopBase* currentLoop = wxEventLoopBase::GetActive();
+    wxEventLoopBase* mainLoop = wxTheApp ? wxTheApp->GetMainLoop() : nullptr;
+
+    if( currentLoop && mainLoop && currentLoop != mainLoop )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::ExecuteAllTools - deferring (nested event loop detected)" );
+
+        // Defer execution to after the modal dialog closes
+        if( m_eventSink )
+        {
+            m_eventSink->CallAfter( [this]() {
+                ExecuteAllTools();
+            } );
+        }
+        return;
+    }
 
     auto allTools = m_ctx.GetAllPendingToolCalls();
     if( allTools.empty() )

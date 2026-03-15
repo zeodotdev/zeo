@@ -177,17 +177,12 @@ void SESSION_MANAGER::Initialize()
 {
     // Load Supabase configuration
     std::string supabaseUrl, supabaseKey;
-    
-    // Try loading from supabase_config.json in agent source directory
-    // We assume the source structure is maintained
-    wxFileName configPath( __FILE__ );
-    configPath.RemoveLastDir(); // kicad
-    configPath.AppendDir( "agent" );
-    configPath.SetFullName( "supabase_config.json" );
-    
-    if( wxFileExists( configPath.GetFullPath() ) )
+
+    std::string configPath = AGENT_AUTH::GetSupabaseConfigPath();
+
+    if( !configPath.empty() )
     {
-        std::ifstream configFile( configPath.GetFullPath().ToStdString() );
+        std::ifstream configFile( configPath );
         if( configFile.is_open() )
         {
             try
@@ -200,7 +195,7 @@ void SESSION_MANAGER::Initialize()
             configFile.close();
         }
     }
-    
+
     if( !supabaseUrl.empty() && !supabaseKey.empty() )
     {
         m_auth->Configure( supabaseUrl, supabaseKey );

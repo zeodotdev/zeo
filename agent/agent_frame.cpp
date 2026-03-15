@@ -3742,12 +3742,11 @@ void AGENT_FRAME::EnsureAuth()
     // Load Supabase configuration from JSON file
     std::string supabaseUrl, supabaseKey;
 
-    wxFileName configPath( __FILE__ );
-    configPath.SetFullName( "supabase_config.json" );
+    std::string configPath = AGENT_AUTH::GetSupabaseConfigPath();
 
-    if( wxFileExists( configPath.GetFullPath() ) )
+    if( !configPath.empty() )
     {
-        std::ifstream configFile( configPath.GetFullPath().ToStdString() );
+        std::ifstream configFile( configPath );
 
         if( configFile.is_open() )
         {
@@ -5492,12 +5491,11 @@ void AGENT_FRAME::ConfigureCloudSync()
     // Load Supabase configuration
     std::string supabaseUrl, supabaseKey;
 
-    wxFileName configPath( __FILE__ );
-    configPath.SetFullName( "supabase_config.json" );
+    std::string configPathStr = AGENT_AUTH::GetSupabaseConfigPath();
 
-    if( wxFileExists( configPath.GetFullPath() ) )
+    if( !configPathStr.empty() )
     {
-        std::ifstream configFile( configPath.GetFullPath().ToStdString() );
+        std::ifstream configFile( configPathStr );
 
         if( configFile.is_open() )
         {

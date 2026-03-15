@@ -18,13 +18,13 @@
 #include <sys/stat.h>
 #include <map>
 
-#ifndef __WXMAC__
 #include <cstdlib>
-#endif
 
 using json = nlohmann::json;
 
 static const size_t MAX_SESSION_FILE_SIZE = 1024 * 1024;  // 1MB safety limit
+
+AGENT_AUTH* AGENT_AUTH::s_activeInstance = nullptr;
 
 AGENT_AUTH::AGENT_AUTH() :
         m_authWebUrl( ZEO_BASE_URL + "/auth" ),
@@ -34,12 +34,15 @@ AGENT_AUTH::AGENT_AUTH() :
 
 AGENT_AUTH::~AGENT_AUTH()
 {
+    if( s_activeInstance == this )
+        s_activeInstance = nullptr;
 }
 
 void AGENT_AUTH::Configure( const std::string& aProjectUrl, const std::string& aAnonKey )
 {
     m_projectUrl = aProjectUrl;
     m_anonKey = aAnonKey;
+    s_activeInstance = this;
     LoadSession();
 }
 
@@ -332,14 +335,31 @@ void AGENT_AUTH::SaveSession()
     session["avatar_url"] = m_avatarUrl;
     session["token_expiry"] = m_tokenExpiry;
 
-    WriteSessionFile( session.dump() );
-    wxLogTrace( "Agent", "Saved session to secure storage" );
+    // Publish token to process environment so all DSOs (kifaces) can access it.
+    // Each kiface links its own copy of the common static library, so C++ statics
+    // are per-DSO.  The process environment is the simplest cross-DSO channel.
+    if( !m_accessToken.empty() )
+    {
+        std::string envVal = m_accessToken + "|" + std::to_string( m_tokenExpiry );
+        setenv( "_ZEO_AUTH_TOKEN", envVal.c_str(), 1 );
+    }
+
+    if( WriteSessionFile( session.dump() ) )
+    {
+        wxLogTrace( "Agent", "Saved session to secure storage" );
+    }
+    else
+    {
+        wxLogTrace( "Agent", "FAILED to save session to disk (path: %s)",
+                    GetSessionFilePath().c_str() );
+    }
 }
 
 void AGENT_AUTH::ClearSession()
 {
     std::string path = GetSessionFilePath();
     std::remove( path.c_str() );
+    unsetenv( "_ZEO_AUTH_TOKEN" );
     wxLogTrace( "Agent", "Cleared session from secure storage" );
 }
 
@@ -387,11 +407,77 @@ bool AGENT_AUTH::IsTokenHardExpired()
 
 
 // ============================================================================
+// Config File Discovery
+// ============================================================================
+
+std::string AGENT_AUTH::GetSupabaseConfigPath()
+{
+    // 1. Dev build: config next to source (works when source is mounted)
+    wxFileName devPath( wxString::FromUTF8( __FILE__ ) );
+    devPath.RemoveLastDir();  // common/zeo -> common
+    devPath.RemoveLastDir();  // common -> (source root)
+    devPath.AppendDir( "agent" );
+    devPath.SetFullName( "supabase_config.json" );
+
+    if( wxFileExists( devPath.GetFullPath() ) )
+        return devPath.GetFullPath().ToStdString();
+
+    // 2. Installed/AppImage: config in the stock data directory
+    wxString stockData = wxGetenv( "KICAD_STOCK_DATA_HOME" );
+
+    if( !stockData.empty() )
+    {
+        wxFileName installedPath( stockData, "supabase_config.json" );
+
+        if( wxFileExists( installedPath.GetFullPath() ) )
+            return installedPath.GetFullPath().ToStdString();
+    }
+
+    // 3. Standard install path
+    wxFileName stdPath( "/usr/share/kicad", "supabase_config.json" );
+
+    if( wxFileExists( stdPath.GetFullPath() ) )
+        return stdPath.GetFullPath().ToStdString();
+
+    return "";
+}
+
+
+// ============================================================================
 // Static Token Reader
 // ============================================================================
 
 std::string AGENT_AUTH::ReadAccessTokenFromDisk()
 {
+    // 1. Try the same-DSO instance (works when caller is in the same kiface)
+    if( s_activeInstance && !s_activeInstance->m_accessToken.empty()
+        && !s_activeInstance->IsTokenHardExpired() )
+    {
+        return s_activeInstance->m_accessToken;
+    }
+
+    // 2. Try the process environment (works across DSO / kiface boundaries)
+    const char* envVal = getenv( "_ZEO_AUTH_TOKEN" );
+
+    if( envVal && *envVal )
+    {
+        std::string val( envVal );
+        size_t      sep = val.find( '|' );
+
+        if( sep != std::string::npos )
+        {
+            std::string token = val.substr( 0, sep );
+            long long   expiry = 0;
+
+            try { expiry = std::stoll( val.substr( sep + 1 ) ); }
+            catch( ... ) {}
+
+            if( !token.empty() && wxDateTime::GetTimeNow() < expiry )
+                return token;
+        }
+    }
+
+    // 3. Fall back to reading from disk
     std::string sessionData;
 
     if( !ReadSessionFile( sessionData ) )
@@ -457,7 +543,11 @@ bool AGENT_AUTH::WriteSessionFile( const std::string& aData )
     std::ofstream file( tempPath, std::ios::binary | std::ios::trunc );
 
     if( !file.is_open() )
+    {
+        wxLogTrace( "Agent", "WriteSessionFile: cannot open %s for writing (errno=%d)",
+                    tempPath.c_str(), errno );
         return false;
+    }
 
     file.write( aData.data(), aData.size() );
     file.close();

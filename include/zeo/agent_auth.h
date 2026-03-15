@@ -102,7 +102,8 @@ public:
     bool StartOAuthFlow( const std::string& aSource = "", std::string* aAuthUrlOut = nullptr );
 
     /**
-     * Read the access token directly from the session file on disk.
+     * Get the current access token.  Checks the running AGENT_AUTH instance first
+     * (if one exists), then falls back to reading the session file from disk.
      * Returns empty string if no session, token expired, or file unreadable.
      * Does NOT attempt token refresh — caller should prompt user to sign in if empty.
      *
@@ -110,6 +111,13 @@ public:
      * needing a configured AGENT_AUTH instance.
      */
     static std::string ReadAccessTokenFromDisk();
+
+    /**
+     * Find the supabase_config.json file.  Checks the source tree first
+     * (for dev builds), then the installed data path (for AppImage/packages).
+     * @return Full path to config file, or empty string if not found.
+     */
+    static std::string GetSupabaseConfigPath();
 
 #ifndef __WXMAC__
     /**
@@ -155,6 +163,10 @@ private:
     std::string UrlDecode( const std::string& value );
 
     AuthStateCallback m_authStateCallback;
+
+    // Static pointer to the active configured instance, so ReadAccessTokenFromDisk()
+    // can return in-memory tokens even when the session file wasn't written.
+    static AGENT_AUTH* s_activeInstance;
 
 #ifndef __WXMAC__
     std::unique_ptr<AUTH_CALLBACK_SERVER> m_callbackServer;

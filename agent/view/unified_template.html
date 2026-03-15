@@ -829,6 +829,11 @@ App.Search = (function() {
     var _marks = [];
     var _currentIdx = -1;
     var _debounceTimer = null;
+    var _pendingQuery = null;
+
+    function _isStreaming() {
+        return !!document.getElementById('streaming-content');
+    }
 
     function open() {
         bar.classList.add('visible');
@@ -839,12 +844,21 @@ App.Search = (function() {
     function close() {
         bar.classList.remove('visible');
         input.value = '';
+        _pendingQuery = null;
         clearHighlights();
         App.Input.focus();
     }
 
     function isOpen() {
         return bar.classList.contains('visible');
+    }
+
+    // Called by App.Chat.finalizeStreaming to re-run deferred search
+    function onStreamingEnd() {
+        if (_pendingQuery && isOpen()) {
+            doSearch(_pendingQuery);
+            _pendingQuery = null;
+        }
     }
 
     function clearHighlights() {
@@ -870,8 +884,18 @@ App.Search = (function() {
         var wrapper = document.querySelector('.content-wrapper');
         if (!wrapper) return;
 
+        // Skip the streaming div to avoid race conditions — highlights inside
+        // it would be destroyed by the next innerHTML update (~20Hz).
+        var streamingEl = document.getElementById('streaming-content');
+
         var lowerQuery = query.toLowerCase();
-        var walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT, null, false);
+        var walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT, {
+            acceptNode: function(node) {
+                if (streamingEl && streamingEl.contains(node))
+                    return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
+            }
+        }, false);
         var textNodes = [];
         var node;
         while (node = walker.nextNode()) {
@@ -885,13 +909,22 @@ App.Search = (function() {
         }
 
         _marks = wrapper.querySelectorAll('mark.search-highlight');
+
+        // If streaming is active, save query to re-run when streaming ends
+        if (streamingEl) {
+            _pendingQuery = query;
+            countEl.textContent = _marks.length > 0
+                ? (_marks.length + '+ (streaming\u2026)')
+                : '(streaming\u2026)';
+        }
+
         if (_marks.length > 0) {
             _currentIdx = 0;
             _marks[0].classList.add('current');
             scrollToMark(_marks[0]);
-            updateCount();
+            if (!streamingEl) updateCount();
         } else {
-            updateCount();
+            if (!streamingEl) updateCount();
         }
     }
 
@@ -979,7 +1012,7 @@ App.Search = (function() {
     nextBtn.addEventListener('click', function() { goNext(); });
     closeBtn.addEventListener('click', function() { close(); });
 
-    return { open: open, close: close, isOpen: isOpen };
+    return { open: open, close: close, isOpen: isOpen, onStreamingEnd: onStreamingEnd };
 })();
 
 // =====================================================================
@@ -1023,6 +1056,10 @@ App.Chat = (function() {
         var container = document.getElementById('streaming-content');
         if (container) {
             container.removeAttribute('id');
+        }
+        // Re-run pending search now that streaming content is finalized
+        if (App.Search && App.Search.onStreamingEnd) {
+            App.Search.onStreamingEnd();
         }
     }
 

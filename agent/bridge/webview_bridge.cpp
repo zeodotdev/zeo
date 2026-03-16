@@ -588,6 +588,8 @@ wxString WEBVIEW_BRIDGE::EscapeJs( const wxString& aStr )
     wxString escaped = aStr;
     escaped.Replace( "\\", "\\\\" );
     escaped.Replace( "'", "\\'" );
+    escaped.Replace( "\"", "\\\"" );
+    escaped.Replace( "`", "\\`" );
     escaped.Replace( "\n", "\\n" );
     escaped.Replace( "\r", "\\r" );
     escaped.Replace( "</", "<\\/" );  // Prevent </script> injection

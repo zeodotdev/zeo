@@ -176,7 +176,7 @@ pre.code-block {
 }
 .code-block-wrap:hover .code-copy-btn { opacity: 1; }
 .code-copy-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
-.code-copy-btn.copied { color: var(--accent-green); }
+.code-copy-btn.copied { color: var(--accent-green); opacity: 1; }
 
 /* Onboarding empty state */
 .onboard { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 24px; text-align: center; }
@@ -1119,8 +1119,9 @@ App.Chat = (function() {
             btn.addEventListener('click', function() {
                 var text = pre.textContent;
                 navigator.clipboard.writeText(text).then(function() {
-                    btn.textContent = 'Copied!';
+                    btn.textContent = '\u2713 Copied';
                     btn.classList.add('copied');
+                    App.showToast('Copied to clipboard', 1500);
                     setTimeout(function() {
                         btn.textContent = 'Copy';
                         btn.classList.remove('copied');

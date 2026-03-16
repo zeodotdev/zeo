@@ -3917,6 +3917,8 @@ void AGENT_FRAME::ShowOpenEditorApproval( const wxString& aEditorType )
     {
         wxLogInfo( "AGENT_FRAME: Auto-approving open editor (%s)", aEditorType );
         OnApproveOpenEditor();
+        // Re-raise agent frame so it stays on top of the newly opened editor
+        Raise();
         return;
     }
 
@@ -4044,6 +4046,7 @@ void AGENT_FRAME::ShowERCApproval()
     {
         wxLogInfo( "AGENT_FRAME: Auto-approving run ERC" );
         OnApproveRunERC();
+        Raise();
         return;
     }
 

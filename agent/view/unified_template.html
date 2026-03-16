@@ -1394,8 +1394,10 @@ App.Chat = (function() {
         var btn = document.createElement('button');
         btn.id = 'plan-approval';
         btn.className = 'ctrl-btn';
-        btn.style.cssText = 'position:fixed;bottom:120px;right:12px;z-index:100;padding:6px 20px;background:rgba(74,222,128,0.25);color:#fff;border:1px solid rgba(74,222,128,0.4);box-shadow:0 4px 12px rgba(0,0,0,0.4);backdrop-filter:blur(8px);';
+        btn.style.cssText = 'position:fixed;bottom:128px;right:12px;z-index:100;padding:4px 14px;font-size:12px;background:rgba(74,222,128,0.25);color:#fff;border:1px solid rgba(74,222,128,0.4);box-shadow:0 4px 12px rgba(0,0,0,0.4);backdrop-filter:blur(8px);transition:background 0.15s,border-color 0.15s;';
         btn.textContent = 'Approve Plan';
+        btn.onmouseenter = function() { btn.style.background='rgba(74,222,128,0.45)'; btn.style.borderColor='rgba(74,222,128,0.7)'; };
+        btn.onmouseleave = function() { btn.style.background='rgba(74,222,128,0.25)'; btn.style.borderColor='rgba(74,222,128,0.4)'; };
         btn.onclick = function() {
             btn.disabled = true;
             btn.style.opacity = '0.7';

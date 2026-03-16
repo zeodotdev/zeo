@@ -2562,6 +2562,14 @@ void AGENT_FRAME::DoPlanApprove()
     OnSend( evt );
 }
 
+void AGENT_FRAME::DoAutoApproveToggle()
+{
+    m_autoApprove = !m_autoApprove;
+    m_bridge->PushAutoApprove( m_autoApprove );
+
+    wxLogInfo( "AGENT_FRAME: Auto-approve mode %s", m_autoApprove ? "enabled" : "disabled" );
+}
+
 void AGENT_FRAME::DoPendingChangesToggle()
 {
     // Re-query and push updated pending changes (update auto-shows/hides)
@@ -3904,6 +3912,14 @@ void AGENT_FRAME::SetAgentTargetSheet( const KIID& aSheetId, const wxString& aSh
 
 void AGENT_FRAME::ShowOpenEditorApproval( const wxString& aEditorType )
 {
+    // Auto-approve mode: skip the approval UI and approve directly
+    if( m_autoApprove )
+    {
+        wxLogInfo( "AGENT_FRAME: Auto-approving open editor (%s)", aEditorType );
+        OnApproveOpenEditor();
+        return;
+    }
+
     int idx = m_activeToolResultIdx;
     if( idx < 0 )
         return;
@@ -4023,6 +4039,14 @@ void AGENT_FRAME::OnRejectOpenEditor()
 
 void AGENT_FRAME::ShowERCApproval()
 {
+    // Auto-approve mode: skip the approval UI and approve directly
+    if( m_autoApprove )
+    {
+        wxLogInfo( "AGENT_FRAME: Auto-approving run ERC" );
+        OnApproveRunERC();
+        return;
+    }
+
     int idx = m_activeToolResultIdx;
     if( idx < 0 )
         return;
@@ -4814,7 +4838,15 @@ void AGENT_FRAME::OnChatTurnComplete( wxThreadEvent& aEvent )
     // Show plan approval button when plan mode turn completes
     if( !continuing && m_agentMode == AgentMode::PLAN )
     {
-        m_bridge->PushPlanApproval();
+        if( m_autoApprove )
+        {
+            wxLogInfo( "AGENT_FRAME: Auto-approving plan" );
+            DoPlanApprove();
+        }
+        else
+        {
+            m_bridge->PushPlanApproval();
+        }
     }
 
     // Preserve thinking content for index tracking (so next message gets index+1)

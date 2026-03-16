@@ -92,6 +92,7 @@ public:
     void DoModelChange( const std::string& aModel );
     void DoPlanToggle();
     void DoPlanApprove();
+    void DoAutoApproveToggle();
     void DoSendClick();
     void DoStopClick();
     void DoSelectionPillClick();
@@ -169,6 +170,9 @@ private:
 
     // Plan mode state
     AgentMode   m_agentMode = AgentMode::EXECUTE;
+
+    // Auto-approve mode: when true, approval-gated tool calls are auto-approved
+    bool        m_autoApprove = false;
 
     // Pending changes state (business logic moved from PENDING_CHANGES_PANEL)
     std::set<wxString> m_pendingSchSheets;  // Sheets with schematic changes

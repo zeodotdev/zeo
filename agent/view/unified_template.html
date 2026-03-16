@@ -424,6 +424,42 @@ img[src^="data:"] { cursor: pointer; }
 .mode-menu-item .mode-check { margin-left: auto; color: var(--accent-blue); font-size: 11px; opacity: 0; }
 .mode-menu-item.selected .mode-check { opacity: 1; }
 
+/* ── Autonomy selector (Supervised/Full Auto) ─────────────────── */
+.auto-trigger {
+    display: inline-flex; align-items: center; gap: 3px; cursor: pointer;
+    color: var(--text-muted); font-size: 12px; padding: 3px 6px; border-radius: 6px;
+    -webkit-user-select: none; user-select: none; position: relative;
+    transition: color 0.15s ease, background 0.15s ease; font-weight: 500;
+}
+.auto-trigger:hover { color: var(--text-secondary); background: var(--bg-hover); }
+.auto-trigger .auto-icon { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; flex-shrink: 0; }
+.auto-trigger .auto-icon svg { width: 13px; height: 13px; }
+.auto-trigger .auto-chevron { opacity: 0.5; transition: transform 0.2s ease; flex-shrink: 0; }
+.auto-trigger.open .auto-chevron { transform: rotate(180deg); }
+.auto-trigger.auto-active { color: #60a5fa; }
+.auto-menu {
+    position: absolute; bottom: 100%; left: 0;
+    background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px;
+    box-shadow: 0 4px 16px var(--shadow-color); z-index: 50; overflow: hidden;
+    margin-bottom: 6px; white-space: nowrap; min-width: 140px;
+    visibility: hidden; opacity: 0; pointer-events: none;
+    transform: translateY(4px) scale(0.98); transform-origin: bottom left;
+    transition: opacity 0.12s ease, transform 0.12s ease, visibility 0s 0.12s;
+}
+.auto-menu.visible {
+    visibility: visible; opacity: 1; pointer-events: auto;
+    transform: translateY(0) scale(1);
+    transition: opacity 0.12s ease, transform 0.12s ease, visibility 0s;
+}
+.auto-menu-item {
+    padding: 7px 12px; font-size: 12px; color: var(--text-secondary); cursor: pointer;
+    display: flex; align-items: center; gap: 8px; transition: background 0.1s ease;
+}
+.auto-menu-item:hover { background: var(--bg-tertiary); }
+.auto-menu-item.selected { color: var(--text-primary); }
+.auto-menu-item .auto-check { margin-left: auto; color: var(--accent-blue); font-size: 11px; opacity: 0; }
+.auto-menu-item.selected .auto-check { opacity: 1; }
+
 /* Selection pill */
 .selection-pill {
     display: none; padding: 4px 10px; border-radius: 12px; font-size: 13px;
@@ -591,6 +627,25 @@ mark.search-highlight.current { background: rgba(255,152,0,0.55); }
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
                     <span>Plan</span>
                     <span class="mode-check">&#10003;</span>
+                </div>
+            </div>
+        </div>
+        <div class="auto-trigger" id="auto-trigger">
+            <span class="auto-icon" id="auto-icon">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </span>
+            <span id="auto-label">Supervised</span>
+            <svg class="auto-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            <div class="auto-menu" id="auto-menu">
+                <div class="auto-menu-item selected" data-auto="supervised">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    <span>Supervised</span>
+                    <span class="auto-check">&#10003;</span>
+                </div>
+                <div class="auto-menu-item" data-auto="full-auto">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                    <span>Full Auto</span>
+                    <span class="auto-check">&#10003;</span>
                 </div>
             </div>
         </div>
@@ -1894,11 +1949,16 @@ App.Controls = (function() {
     var modelLabel = document.getElementById('model-label');
     var modelIcon = document.getElementById('model-icon');
     var modelMenu = document.getElementById('model-menu');
+    var autoTrigger = document.getElementById('auto-trigger');
+    var autoLabel = document.getElementById('auto-label');
+    var autoIcon = document.getElementById('auto-icon');
+    var autoMenu = document.getElementById('auto-menu');
     var selectionPill = document.getElementById('selection-pill');
     var _models = [];
     var _selected = '';
     var _isStopped = true;
     var _planMode = false;
+    var _autoApprove = false;
 
     // SVG icons for model providers — from simple-icons
     // Claude sparkle logo
@@ -1986,6 +2046,31 @@ App.Controls = (function() {
     var PLAN_MODE_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
     var modeIcon = document.getElementById('mode-icon');
 
+    // Autonomy icons
+    var SUPERVISED_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>';
+    var FULL_AUTO_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
+
+    function setAutoApprove(active) {
+        _autoApprove = active;
+        autoLabel.textContent = active ? 'Full Auto' : 'Supervised';
+        autoIcon.innerHTML = active ? FULL_AUTO_ICON : SUPERVISED_ICON;
+        autoTrigger.classList.toggle('auto-active', active);
+        var items = autoMenu.querySelectorAll('.auto-menu-item');
+        items.forEach(function(item) {
+            var mode = item.getAttribute('data-auto');
+            if ((mode === 'full-auto' && active) || (mode === 'supervised' && !active)) {
+                item.classList.add('selected');
+            } else {
+                item.classList.remove('selected');
+            }
+        });
+    }
+
+    function closeAutoMenu() {
+        autoMenu.classList.remove('visible');
+        autoTrigger.classList.remove('open');
+    }
+
     function setPlanMode(active) {
         _planMode = active;
         modeLabel.textContent = active ? 'Plan' : 'Agent';
@@ -2022,6 +2107,7 @@ App.Controls = (function() {
     modeTrigger.addEventListener('click', function(e) {
         e.stopPropagation();
         closeMenu();
+        closeAutoMenu();
         App.TopBar.showHistory(false);
         var wasOpen = modeMenu.classList.contains('visible');
         modeMenu.classList.toggle('visible', !wasOpen);
@@ -2042,10 +2128,37 @@ App.Controls = (function() {
         }
     });
 
+    // Autonomy selector (Supervised/Full Auto)
+    autoTrigger.addEventListener('click', function(e) {
+        e.stopPropagation();
+        closeMenu();
+        modeMenu.classList.remove('visible');
+        modeTrigger.classList.remove('open');
+        App.TopBar.showHistory(false);
+        var wasOpen = autoMenu.classList.contains('visible');
+        autoMenu.classList.toggle('visible', !wasOpen);
+        autoTrigger.classList.toggle('open', !wasOpen);
+    });
+
+    autoMenu.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var item = e.target.closest('.auto-menu-item');
+        if (item) {
+            var mode = item.getAttribute('data-auto');
+            var wantAuto = (mode === 'full-auto');
+            if (wantAuto !== _autoApprove) {
+                App.Bridge.sendMsg('auto_approve_toggle');
+            }
+            autoMenu.classList.remove('visible');
+            autoTrigger.classList.remove('open');
+        }
+    });
+
     modelTrigger.addEventListener('click', function(e) {
         e.stopPropagation();
         modeMenu.classList.remove('visible');
         modeTrigger.classList.remove('open');
+        closeAutoMenu();
         App.TopBar.showHistory(false);
         toggleMenu();
     });
@@ -2075,6 +2188,9 @@ App.Controls = (function() {
             modeMenu.classList.remove('visible');
             modeTrigger.classList.remove('open');
         }
+        if (!autoTrigger.contains(e.target) && !autoMenu.contains(e.target)) {
+            closeAutoMenu();
+        }
     });
 
     selectionPill.addEventListener('click', function() {
@@ -2085,12 +2201,14 @@ App.Controls = (function() {
         closeMenu();
         modeMenu.classList.remove('visible');
         modeTrigger.classList.remove('open');
+        closeAutoMenu();
     }
 
     return {
         setActionButton: setActionButton,
         setModelList: setModelList,
         setPlanMode: setPlanMode,
+        setAutoApprove: setAutoApprove,
         closeAllMenus: closeAllMenus,
         setSelectionPill: setSelectionPill
     };

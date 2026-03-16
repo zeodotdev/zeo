@@ -722,6 +722,7 @@ App.TopBar = (function() {
     function showHistory(show) {
         if (show) {
             searchInput.value = '';
+            requestAnimationFrame(function() { searchInput.focus(); });
             searchInput.focus();
             // Show loading spinner until setHistoryList() is called
             if (!entries.length) {
@@ -785,12 +786,7 @@ App.TopBar = (function() {
         var isOpen = dropdown.classList.contains('visible');
         showHistory(!isOpen);
         if (!isOpen) {
-            requestAnimationFrame(function() {
-                requestAnimationFrame(function() {
-                    searchInput.focus();
-                    App.Bridge.sendMsg('history_open');
-                });
-            });
+            App.Bridge.sendMsg('history_open');
         }
     });
 
@@ -2222,6 +2218,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('keydown', function(e) {
         var mod = e.ctrlKey || e.metaKey;
         if (mod && e.key === 'n') { e.preventDefault(); App.Bridge.sendMsg('new_chat'); }
+        else if (mod && e.key === 'f') { e.preventDefault(); App.Search.open(); }
         else if (mod && e.key === 'l') { e.preventDefault(); App.Input.focus(); }
         else if (e.key === 'Escape') { App.Bridge.sendMsg('stop_click'); App.Search.close(); }
     });

@@ -310,7 +310,8 @@ img[src^="data:"] { cursor: pointer; }
 .pc-accept:hover { background: rgba(78,201,176,0.25); }
 .pc-reject { background: rgba(244,71,71,0.15); color: var(--accent-red); }
 .pc-reject:hover { background: rgba(244,71,71,0.25); }
-.pc-row { position: relative; }
+.pc-row { position: relative; font-size: 12px; color: var(--text-muted); cursor: pointer; transition: background 0.15s ease; }
+.pc-row:hover { background: var(--bg-hover); }
 .pc-row-actions { display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); gap: 4px; }
 .pc-row:hover .pc-row-actions { display: flex; }
 .pc-row-btn { padding: 1px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; border: none; -webkit-user-select: none; user-select: none; }
@@ -2097,7 +2098,7 @@ App.PendingChanges = (function() {
 
     function _rowHtml(label, path, isPcb) {
         var esc = _escPath(path);
-        return '<div class="pc-row px-3 py-1 text-[12px] text-[#aaa] cursor-pointer hover:bg-[#4d4d4d]">'
+        return '<div class="pc-row px-3 py-1">'
              + '<span>' + label + '</span>'
              + '<div class="pc-row-actions">'
              + '<button class="pc-row-btn pc-row-accept" onclick="event.stopPropagation();App.PendingChanges._acceptSheet(\'' + esc + '\',' + isPcb + ')">Accept</button>'

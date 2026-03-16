@@ -165,6 +165,18 @@ pre.code-block {
     color: var(--text-secondary); margin: 12px 0;
     border: 1px solid var(--border-color);
 }
+/* Code block copy button */
+.code-block-wrap { position: relative; }
+.code-copy-btn {
+    position: absolute; top: 6px; right: 6px; padding: 3px 8px;
+    font-size: 11px; border-radius: 4px; cursor: pointer; border: none;
+    background: var(--bg-tertiary); color: var(--text-muted);
+    opacity: 0; transition: opacity 0.15s ease, background 0.15s ease;
+    -webkit-user-select: none; user-select: none; z-index: 1;
+}
+.code-block-wrap:hover .code-copy-btn { opacity: 1; }
+.code-copy-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.code-copy-btn.copied { color: var(--accent-green); }
 
 /* Onboarding empty state */
 .onboard { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 24px; text-align: center; }
@@ -1039,6 +1051,29 @@ App.Chat = (function() {
                 }
             });
         }
+        // Add copy button to code blocks that don't already have one
+        element.querySelectorAll('pre').forEach(function(pre) {
+            if (pre.parentNode.classList.contains('code-block-wrap')) return;
+            var wrap = document.createElement('div');
+            wrap.className = 'code-block-wrap';
+            pre.parentNode.insertBefore(wrap, pre);
+            wrap.appendChild(pre);
+            var btn = document.createElement('button');
+            btn.className = 'code-copy-btn';
+            btn.textContent = 'Copy';
+            btn.addEventListener('click', function() {
+                var text = pre.textContent;
+                navigator.clipboard.writeText(text).then(function() {
+                    btn.textContent = 'Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(function() {
+                        btn.textContent = 'Copy';
+                        btn.classList.remove('copied');
+                    }, 1500);
+                });
+            });
+            wrap.appendChild(btn);
+        });
     }
 
     function updateStreamingContent(html) {

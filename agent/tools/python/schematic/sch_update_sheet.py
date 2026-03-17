@@ -42,6 +42,33 @@ if isinstance(new_size, list) and len(new_size) >= 2:
     sh = new_size[1]
     sheet._proto.size.x_nm = round(sw * 1_000_000)
     sheet._proto.size.y_nm = round(sh * 1_000_000)
+    # Redistribute pins evenly along their edges
+    _sheet_x = sheet._proto.position.x_nm / 1_000_000
+    _sheet_y = sheet._proto.position.y_nm / 1_000_000
+    _pin_margin = 2.54
+    _raw_pins = list(sheet._proto.pins)
+    if _raw_pins:
+        _sides = {}
+        for _rp in _raw_pins:
+            _sides.setdefault(_rp.side, []).append(_rp)
+        for _side, _side_pins in _sides.items():
+            n = len(_side_pins)
+            if _side in (1, 'left') or _side in (2, 'right'):
+                _x_nm = round((_sheet_x if _side in (1, 'left') else _sheet_x + sw) * 1_000_000)
+                _y_start = _sheet_y + _pin_margin
+                _y_end = _sheet_y + sh - _pin_margin
+                _step = (_y_end - _y_start) / max(n - 1, 1) if n > 1 else 0
+                for _idx, _rp in enumerate(_side_pins):
+                    _rp.position.x_nm = _x_nm
+                    _rp.position.y_nm = round(snap_to_grid(_y_start + _idx * _step) * 1_000_000)
+            elif _side in (3, 'top') or _side in (4, 'bottom'):
+                _y_nm = round((_sheet_y if _side in (3, 'top') else _sheet_y + sh) * 1_000_000)
+                _x_start = _sheet_x + _pin_margin
+                _x_end = _sheet_x + sw - _pin_margin
+                _step = (_x_end - _x_start) / max(n - 1, 1) if n > 1 else 0
+                for _idx, _rp in enumerate(_side_pins):
+                    _rp.position.x_nm = round(snap_to_grid(_x_start + _idx * _step) * 1_000_000)
+                    _rp.position.y_nm = _y_nm
     # Autoplace fields to match KiCad native behavior:
     # Sheet name: above sheet at pos + (0, -margin)
     # Sheet file: below sheet at pos + (0, size.y + margin)

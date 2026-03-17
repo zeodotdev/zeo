@@ -62,6 +62,7 @@ void WEBVIEW_BRIDGE::OnMessage( const wxString& aMessage )
         else if( action == BridgeAction::SELECTION_PILL_CLICK ) HandleSelectionPillClick( msg );
         else if( action == BridgeAction::PLAN_TOGGLE )           HandlePlanToggle( msg );
         else if( action == BridgeAction::PLAN_APPROVE )          HandlePlanApprove( msg );
+        else if( action == BridgeAction::AUTO_APPROVE_TOGGLE )   HandleAutoApproveToggle( msg );
 
         // Pending changes actions
         else if( action == BridgeAction::PENDING_CHANGES_TOGGLE )       HandlePendingChangesToggle( msg );
@@ -225,6 +226,12 @@ void WEBVIEW_BRIDGE::HandlePlanApprove( const nlohmann::json& aMsg )
 {
     if( !m_frame ) return;
     m_frame->DoPlanApprove();
+}
+
+void WEBVIEW_BRIDGE::HandleAutoApproveToggle( const nlohmann::json& aMsg )
+{
+    if( !m_frame ) return;
+    m_frame->DoAutoApproveToggle();
 }
 
 void WEBVIEW_BRIDGE::HandleSendClick( const nlohmann::json& aMsg )
@@ -516,6 +523,14 @@ void WEBVIEW_BRIDGE::PushPlanMode( bool aPlanMode )
                                  aPlanMode ? "true" : "false" ) );
 }
 
+void WEBVIEW_BRIDGE::PushAutoApprove( bool aAutoApprove )
+{
+    LogBridge( "C++->JS", wxString::Format( "setAutoApprove(%s)",
+                                            aAutoApprove ? "true" : "false" ) );
+    RunScript( wxString::Format( "App.Controls.setAutoApprove(%s);",
+                                 aAutoApprove ? "true" : "false" ) );
+}
+
 void WEBVIEW_BRIDGE::PushPlanApproval()
 {
     LogBridge( "C++->JS", "showPlanApproval" );
@@ -588,6 +603,8 @@ wxString WEBVIEW_BRIDGE::EscapeJs( const wxString& aStr )
     wxString escaped = aStr;
     escaped.Replace( "\\", "\\\\" );
     escaped.Replace( "'", "\\'" );
+    escaped.Replace( "\"", "\\\"" );
+    escaped.Replace( "`", "\\`" );
     escaped.Replace( "\n", "\\n" );
     escaped.Replace( "\r", "\\r" );
     escaped.Replace( "</", "<\\/" );  // Prevent </script> injection

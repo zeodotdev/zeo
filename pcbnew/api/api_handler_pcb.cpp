@@ -687,6 +687,19 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_PCB::handleCreateUpdateItemsIntern
         {
             if( item->Type() == PCB_FOOTPRINT_T )
             {
+                FOOTPRINT* fp = static_cast<FOOTPRINT*>( item.get() );
+
+                // If the footprint is targeting B_Cu, perform a full flip so that
+                // children (pads, silkscreen, mask, courtyard) are properly mirrored.
+                // Deserialization only calls SetLayer() which doesn't flip children.
+                if( fp->GetLayer() == B_Cu )
+                {
+                    EDA_ANGLE savedOrient = fp->GetOrientation();
+                    fp->BOARD_ITEM::SetLayer( F_Cu );
+                    fp->Flip( fp->GetPosition(), FLIP_DIRECTION::LEFT_RIGHT );
+                    fp->SetOrientation( savedOrient );
+                }
+
                 // Ensure children have unique identifiers; in case the API client created this new
                 // footprint by cloning an existing one and only changing the parent UUID.
                 item->RunOnChildren(
@@ -714,6 +727,25 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_PCB::handleCreateUpdateItemsIntern
             {
                 // Save group membership before removal, since Remove() severs the relationship
                 PCB_GROUP* parentGroup = dynamic_cast<PCB_GROUP*>( boardItem->GetParentGroup() );
+
+                // For footprints, detect layer change and perform a full flip so that
+                // children (pads, silkscreen, mask, courtyard) are properly mirrored.
+                if( boardItem->Type() == PCB_FOOTPRINT_T )
+                {
+                    FOOTPRINT* fp = static_cast<FOOTPRINT*>( item.get() );
+                    PCB_LAYER_ID oldLayer = boardItem->GetLayer();
+                    PCB_LAYER_ID newLayer = fp->GetLayer();
+
+                    if( oldLayer != newLayer
+                            && ( oldLayer == F_Cu || oldLayer == B_Cu )
+                            && ( newLayer == F_Cu || newLayer == B_Cu ) )
+                    {
+                        EDA_ANGLE savedOrient = fp->GetOrientation();
+                        fp->BOARD_ITEM::SetLayer( oldLayer );
+                        fp->Flip( fp->GetPosition(), FLIP_DIRECTION::LEFT_RIGHT );
+                        fp->SetOrientation( savedOrient );
+                    }
+                }
 
                 commit->Remove( boardItem );
                 item->Serialize( newItem );

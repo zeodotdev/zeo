@@ -99,7 +99,7 @@ public:
      *
      * @return false if the user cancelled.
      */
-    virtual bool KeepRefreshing( bool aWait = false ) override { return false; }
+    virtual bool KeepRefreshing( bool aWait = false ) override { return true; }
 
     /**
      * Change the title displayed on the window caption.

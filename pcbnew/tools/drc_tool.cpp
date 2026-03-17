@@ -152,31 +152,29 @@ void DRC_TOOL::RunTests( PROGRESS_REPORTER* aProgressReporter, bool aRefillZones
 
     m_drcRunning = true;
 
-    if( m_drcDialog )
+    if( aRefillZones && aProgressReporter )
     {
-        if( aRefillZones )
-        {
-            aProgressReporter->AdvancePhase( _( "Refilling all zones..." ) );
+        aProgressReporter->AdvancePhase( _( "Refilling all zones..." ) );
 
-            zoneFiller->FillAllZones( m_drcDialog, aProgressReporter );
-        }
+        zoneFiller->FillAllZones( m_drcDialog, aProgressReporter );
+    }
 
+    if( m_editFrame->GetCanvas() && m_editFrame->GetCanvas()->GetDrawingSheet() )
         m_drcEngine->SetDrawingSheet( m_editFrame->GetCanvas()->GetDrawingSheet() );
 
-        if( aTestFootprints && !Kiface().IsSingle() )
+    if( aTestFootprints && !Kiface().IsSingle() )
+    {
+        if( m_editFrame->FetchNetlistFromSchematic( netlist,
+                                                    _( "Schematic parity tests require a "
+                                                       "fully annotated schematic." ) ) )
         {
-            if( m_editFrame->FetchNetlistFromSchematic( netlist,
-                                                        _( "Schematic parity tests require a "
-                                                           "fully annotated schematic." ) ) )
-            {
-                netlistFetched = true;
-            }
-
-            if( m_drcDialog )
-                m_drcDialog->Raise();
-
-            m_drcEngine->SetSchematicNetlist( &netlist );
+            netlistFetched = true;
         }
+
+        if( m_drcDialog )
+            m_drcDialog->Raise();
+
+        m_drcEngine->SetSchematicNetlist( &netlist );
     }
 
     m_drcEngine->SetProgressReporter( aProgressReporter );

@@ -162,8 +162,6 @@ message LaunchEditor
 
 message LaunchEditorResponse
 {
-  bool already_open = 1;      // True if the editor was already open
-  string socket_path = 2;     // API socket path of the launched editor
 }
 
 

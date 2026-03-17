@@ -604,6 +604,16 @@ void SCH_EDIT_FRAME::OnCrossProbeFlashTimer( wxTimerEvent& aEvent )
 
 SCH_EDIT_FRAME::~SCH_EDIT_FRAME()
 {
+#ifdef KICAD_IPC_API
+    // Safety net: ensure handler is deregistered even if doCloseWindow() was not called
+    // (e.g. frame destroyed via Destroy() instead of Close()). Double-deregistration is
+    // safe because std::set::erase on a non-existent key is a no-op.
+    Pgm().GetApiServer().DeregisterHandler( m_apiHandler.get() );
+
+    if( m_apiHandlerCommon )
+        Pgm().GetApiServer().DeregisterHandler( m_apiHandlerCommon.get() );
+#endif
+
     m_hierarchy->Unbind( wxEVT_SIZE, &SCH_EDIT_FRAME::OnResizeHierarchyNavigator, this );
 
     // Ensure m_canvasType is up to date, to save it in config

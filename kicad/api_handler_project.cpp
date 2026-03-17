@@ -213,7 +213,6 @@ HANDLER_RESULT<LaunchEditorResponse> API_HANDLER_PROJECT::handleLaunchEditor(
     {
         wxLogMessage( "API_HANDLER_PROJECT: Editor already open, raising" );
         player->Raise();
-        response.set_already_open( true );
     }
     else
     {
@@ -255,14 +254,9 @@ HANDLER_RESULT<LaunchEditorResponse> API_HANDLER_PROJECT::handleLaunchEditor(
 
         player->Show( true );
         player->Raise();
-        response.set_already_open( false );
 
         wxLogMessage( "API_HANDLER_PROJECT: Editor launched successfully" );
     }
-
-    // Editors launched via KIWAY share the project manager's API server —
-    // no separate socket to discover.
-    response.set_socket_path( "" );
 
     return response;
 }

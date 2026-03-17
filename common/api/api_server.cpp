@@ -222,6 +222,8 @@ void KICAD_API_SERVER::RegisterHandler( API_HANDLER* aHandler )
 
 void KICAD_API_SERVER::DeregisterHandler( API_HANDLER* aHandler )
 {
+    wxLogMessage( "API_SERVER[%p]: Deregistering handler %p, total handlers before: %zu",
+                  this, aHandler, m_handlers.size() );
     m_handlers.erase( aHandler );
 }
 
@@ -418,9 +420,25 @@ void KICAD_API_SERVER::processApiRequest( uint64_t aRequestId, const std::string
             wxLogMessage( "API_SERVER[%p]: Processing request %lu type='%s', checking %zu handlers",
                           this, aRequestId, requestTypeName, m_handlers.size() );
 
+            // Copy m_handlers before iterating — a handler's Handle() call may
+            // pump the event loop (e.g. wxWindow::Raise() on macOS), which can
+            // trigger re-entrant DeregisterHandler() and invalidate iterators.
+            std::set<API_HANDLER*> handlersCopy = m_handlers;
+
             int handlerIndex = 0;
-            for( API_HANDLER* handler : m_handlers )
+            for( API_HANDLER* handler : handlersCopy )
             {
+                // Verify handler is still registered (may have been deregistered
+                // by a re-entrant event during a previous Handle() call).
+                if( m_handlers.find( handler ) == m_handlers.end() )
+                {
+                    wxLogMessage( "API_SERVER[%p]: Handler %d at %p was deregistered "
+                                  "during iteration, skipping",
+                                  this, handlerIndex, handler );
+                    handlerIndex++;
+                    continue;
+                }
+
                 wxLogMessage( "API_SERVER[%p]: Trying handler %d at %p",
                               this, handlerIndex, handler );
 

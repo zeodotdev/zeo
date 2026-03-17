@@ -748,6 +748,13 @@ void PCB_EDIT_FRAME::OnCrossProbeFlashTimer( wxTimerEvent& aEvent )
 
 PCB_EDIT_FRAME::~PCB_EDIT_FRAME()
 {
+#ifdef KICAD_IPC_API
+    // Safety net: ensure handler is deregistered even if doCloseWindow() was not called
+    // (e.g. frame destroyed via Destroy() instead of Close()). Double-deregistration is
+    // safe because std::set::erase on a non-existent key is a no-op.
+    Pgm().GetApiServer().DeregisterHandler( m_apiHandler.get() );
+#endif
+
     ScriptingOnDestructPcbEditFrame( this );
 
     if( ADVANCED_CFG::GetCfg().m_ShowEventCounters )

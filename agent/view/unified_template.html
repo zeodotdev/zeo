@@ -2105,7 +2105,19 @@ App.PendingChanges = (function() {
              + '</div></div>';
     }
 
+    function _resetButtons() {
+        acceptAllBtn.disabled = false;
+        acceptAllBtn.style.opacity = '';
+        acceptAllBtn.textContent = 'Accept All';
+        rejectAllBtn.disabled = false;
+        rejectAllBtn.style.opacity = '';
+        rejectAllBtn.textContent = 'Reject All';
+    }
+
     function update(data) {
+        // Reset button states in case they were stuck in "Accepting..." or "Rejecting..."
+        _resetButtons();
+
         var sheets = data.sheets || [];
         var hasPcb = data.has_pcb || false;
         var html = '';

@@ -3259,6 +3259,15 @@ void AGENT_FRAME::DoNewChat()
     m_runningHtmlByIdx.clear();
     m_activeToolResultIdx = -1;
 
+    // Clear active streaming/thinking state
+    m_thinkingContent.Clear();
+    m_thinkingHtml.Clear();
+    m_toolCallHtml.Clear();
+    m_thinkingExpanded = false;
+    m_thinkingHtmlDirty = false;
+    m_isThinking = false;
+    m_currentResponse.clear();
+
     // Focus the input textarea so the user can start typing immediately
     m_bridge->PushInputFocus();
 }

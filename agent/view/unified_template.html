@@ -2116,6 +2116,7 @@ App.Controls = (function() {
 
     function setSelectionPill(label, visible) {
         selectionPill.textContent = label;
+        selectionPill.title = visible ? 'Selected context \u2014 click to include in message' : '';
         selectionPill.className = 'selection-pill' + (visible ? ' visible' : '');
         var row = document.getElementById('selection-pill-row');
         if (row) row.style.display = visible ? 'flex' : 'none';

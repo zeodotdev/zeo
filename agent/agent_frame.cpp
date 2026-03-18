@@ -5621,11 +5621,11 @@ void AGENT_FRAME::ConfigureCloudSync()
     m_cloudSync->SetAuth( m_auth );
     m_cloudSync->Configure( supabaseUrl, supabaseKey );
 
-    // Tag Sentry with the authenticated user's email for crash attribution
+    // Set Sentry user so crashes are attributed to the authenticated user
     std::string email = m_auth->GetUserEmail();
     if( !email.empty() )
     {
-        APP_MONITOR::SENTRY::Instance()->AddTag( "zeo.user", email );
+        APP_MONITOR::SENTRY::Instance()->SetUser( email );
     }
 
     // Also configure tool registry with Supabase credentials (for datasheet extraction)

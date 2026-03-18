@@ -122,6 +122,7 @@ namespace APP_MONITOR
 
         bool            IsOptedIn();
         void            AddTag( const wxString& aKey, const wxString& aValue );
+        void            SetUser( const wxString& aEmail );
         void            SetSentryOptIn( bool aOptIn );
         const wxString& GetSentryId();
         void            ResetSentryId();

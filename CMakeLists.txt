@@ -302,6 +302,11 @@ option( KICAD_IDF_TOOLS
 
 if( ZEO_RELEASE )
     add_compile_definitions( ZEO_RELEASE_BUILD )
+else()
+    # Vercel deployment protection bypass for staging builds
+    if( VERCEL_BYPASS_SECRET )
+        add_compile_definitions( VERCEL_BYPASS_SECRET="${VERCEL_BYPASS_SECRET}" )
+    endif()
 endif()
 
 # Global setting: exports are explicit
@@ -1186,7 +1191,12 @@ endif()
 
 
 if( KICAD_USE_SENTRY )
-    set( KICAD_SENTRY_DSN "" CACHE STRING "The sentry DSN used with sentry integration" )
+    # Allow DSN from environment variable (avoids shell-quoting issues with URLs)
+    if( NOT KICAD_SENTRY_DSN AND DEFINED ENV{KICAD_SENTRY_DSN} )
+        set( KICAD_SENTRY_DSN "$ENV{KICAD_SENTRY_DSN}" CACHE STRING "The sentry DSN used with sentry integration" FORCE )
+    else()
+        set( KICAD_SENTRY_DSN "" CACHE STRING "The sentry DSN used with sentry integration" )
+    endif()
     if ( KICAD_SENTRY_DSN STREQUAL "")
         message( FATAL_ERROR "Sentry DSN must be configured with KICAD_USE_SENTRY" )
     endif()

@@ -3312,6 +3312,17 @@ const Actions = {
       UI.renderChanges();
       UI.renderBranchBar();
 
+      // If a working-tree diff is open but the file is no longer changed, dismiss it
+      if (State.selectedFile && State.selectedFile.context !== 'commit') {
+        const selPath = State.selectedFile.path;
+        const stillChanged = State.staged.some(f => f.path === selPath)
+                          || State.unstaged.some(f => f.path === selPath)
+                          || State.untracked.some(f => f === selPath || f.path === selPath);
+        if (!stillChanged) {
+          State.selectedFile = null;
+        }
+      }
+
       // If nothing is selected, show placeholder
       if (!State.selectedFile && !State.selectedCommit) {
         UI.showView('placeholder');

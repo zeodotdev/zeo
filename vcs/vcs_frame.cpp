@@ -35,8 +35,11 @@ using json = nlohmann::json;
 
 /**
  * Called by macOS FSEvents when files change under the watched directory.
- * Filters out git internals and backup files, then pushes a status_changed
- * notification to the web UI (debounced by the stream's 1.5 s latency).
+ * Detects two kinds of changes:
+ *  1. Working-tree changes to .kicad_sch/.kicad_pcb → sends status_changed
+ *     (for visual diff support).
+ *  2. Git-internal changes (.git/index, .git/HEAD, .git/refs/) → sends
+ *     project_changed so the panel refreshes after external commits.
  */
 static void FsEventsCallback( ConstFSEventStreamRef  /*streamRef*/,
                                void*                  aClientInfo,
@@ -48,26 +51,47 @@ static void FsEventsCallback( ConstFSEventStreamRef  /*streamRef*/,
     VCS_FRAME* frame = static_cast<VCS_FRAME*>( aClientInfo );
     auto**     paths = reinterpret_cast<char**>( aEventPaths );
 
-    json changedPaths = json::array();
+    json changedPaths   = json::array();
+    bool gitStateChanged = false;
 
     for( size_t i = 0; i < aNumEvents; ++i )
     {
         wxString p = wxString::FromUTF8( paths[i] );
 
-        // Only care about files with visual diff support
-        if( !p.EndsWith( wxS( ".kicad_sch" ) ) && !p.EndsWith( wxS( ".kicad_pcb" ) ) )
+        // Detect git-internal changes (external commits, branch switches, etc.)
+        if( p.Contains( wxS( "/.git/" ) ) )
+        {
+            // Only trigger on meaningful state files, not lock files or temp objects
+            if( p.Contains( wxS( "/.git/index" ) )
+                || p.Contains( wxS( "/.git/HEAD" ) )
+                || p.Contains( wxS( "/.git/refs/" ) )
+                || p.Contains( wxS( "/.git/MERGE_HEAD" ) ) )
+            {
+                gitStateChanged = true;
+            }
             continue;
+        }
 
-        changedPaths.push_back( paths[i] );
+        // Working-tree files with visual diff support
+        if( p.EndsWith( wxS( ".kicad_sch" ) ) || p.EndsWith( wxS( ".kicad_pcb" ) ) )
+            changedPaths.push_back( paths[i] );
     }
 
-    if( changedPaths.empty() )
-        return;
-
-    wxTheApp->CallAfter( [frame, changedPaths]()
+    if( !changedPaths.empty() )
     {
-        frame->SendToWebView( wxS( "status_changed" ), json{ { "paths", changedPaths } } );
-    } );
+        wxTheApp->CallAfter( [frame, changedPaths]()
+        {
+            frame->SendToWebView( wxS( "status_changed" ), json{ { "paths", changedPaths } } );
+        } );
+    }
+
+    if( gitStateChanged )
+    {
+        wxTheApp->CallAfter( [frame]()
+        {
+            frame->NotifyProjectChanged();
+        } );
+    }
 }
 #endif // __APPLE__
 

@@ -1157,6 +1157,10 @@ void AGENT_FRAME::StartGeneratingAnimation()
     m_generatingDots = 1;
     m_generatingTimer.Start( 400 ); // Update every 400ms
     m_bridge->PushActionButtonState( "Stop" );
+
+    // Immediately show the first frame of dots so there's no visual gap
+    // between sending and the first timer tick
+    FlushStreamingContentUpdate( true );
 }
 
 void AGENT_FRAME::StopGeneratingAnimation()

@@ -14,6 +14,19 @@ try:
         dry_run=dry_run
     )
 
+    # Only include warnings and errors — counts already summarize the rest
+    messages = []
+    for c in result.changes:
+        if c.type not in (8, 9):  # CT_WARNING, CT_ERROR
+            continue
+        entry = {
+            'severity': 'error' if c.type == 9 else 'warning',
+            'message': c.message
+        }
+        if c.reference:
+            entry['ref'] = c.reference
+        messages.append(entry)
+
     output = {
         'footprints_added': result.footprints_added,
         'footprints_replaced': result.footprints_replaced,
@@ -22,7 +35,8 @@ try:
         'nets_changed': result.nets_changed,
         'warnings': result.warnings,
         'errors': result.errors,
-        'changes_applied': result.changes_applied
+        'changes_applied': result.changes_applied,
+        'messages': messages
     }
     print(json.dumps(output, indent=2))
 except Exception as e:

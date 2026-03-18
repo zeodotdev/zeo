@@ -262,8 +262,14 @@ void* LLM_REQUEST_THREAD::Entry()
         return nullptr;
     }
 
+    // Vercel deployment protection bypass via query param
+    const char* bypassSecret = std::getenv( "VERCEL_AUTOMATION_BYPASS_SECRET" );
+    std::string requestUrl = ZEO_API_URL;
+    if( bypassSecret && bypassSecret[0] != '\0' )
+        requestUrl += "?x-vercel-protection-bypass=" + std::string( bypassSecret );
+
     // Set up curl options - use zeo proxy
-    curl_easy_setopt( curl, CURLOPT_URL, ZEO_API_URL.c_str() );
+    curl_easy_setopt( curl, CURLOPT_URL, requestUrl.c_str() );
     curl_easy_setopt( curl, CURLOPT_POST, 1L );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDS, requestBodyStr.c_str() );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDSIZE, requestBodyStr.size() );

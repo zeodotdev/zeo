@@ -299,6 +299,13 @@ img[src^="data:"] { cursor: pointer; }
 .history-item.active { background: var(--bg-tertiary); }
 .history-item .title { color: var(--text-primary); font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 8px; }
 .history-item .timestamp { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+.history-item .history-delete {
+    display: none; padding: 2px 4px; margin-left: 6px; border: none; background: none;
+    color: var(--text-muted); cursor: pointer; font-size: 13px; line-height: 1; border-radius: 4px;
+    flex-shrink: 0; opacity: 0.6; transition: opacity 0.1s, color 0.1s;
+}
+.history-item:hover .history-delete { display: inline-flex; }
+.history-item .history-delete:hover { opacity: 1; color: var(--accent-red); }
 .history-loading { display: flex; align-items: center; justify-content: center; padding: 24px 12px; color: var(--text-muted); font-size: 13px; gap: 8px; }
 .history-loading .spinner { width: 16px; height: 16px; border: 2px solid var(--border-color); border-top-color: var(--accent-blue); border-radius: 50%; animation: hist-spin 0.6s linear infinite; }
 @keyframes hist-spin { to { transform: rotate(360deg); } }
@@ -823,6 +830,7 @@ App.TopBar = (function() {
                 html += '<div class="' + cls + '" data-id="' + e.id + '">'
                      + '<span class="title">' + escapeHtml(e.title || 'Untitled Chat') + '</span>'
                      + '<span class="timestamp">' + relativeTime(e.timestamp, now) + '</span>'
+                     + '<button class="history-delete" data-delete-id="' + e.id + '" title="Delete chat">&times;</button>'
                      + '</div>';
             }
         }
@@ -868,8 +876,17 @@ App.TopBar = (function() {
         renderList(searchInput.value);
     });
 
-    // Event: click history item
+    // Event: click history item or delete button
     listEl.addEventListener('click', function(e) {
+        var deleteBtn = e.target.closest('.history-delete');
+        if (deleteBtn) {
+            e.stopPropagation();
+            var id = deleteBtn.getAttribute('data-delete-id');
+            if (id) {
+                App.Bridge.sendMsg('history_delete', { conversation_id: id });
+            }
+            return;
+        }
         var item = e.target.closest('.history-item');
         if (item) {
             var id = item.getAttribute('data-id');

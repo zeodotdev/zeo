@@ -33,6 +33,7 @@ namespace BridgeAction
     constexpr const char* HISTORY_SELECT     = "history_select";
     constexpr const char* HISTORY_SEARCH     = "history_search";
     constexpr const char* HISTORY_CLOSE      = "history_close";
+    constexpr const char* HISTORY_DELETE     = "history_delete";
 
     // Control row actions
     constexpr const char* MODEL_CHANGE       = "model_change";

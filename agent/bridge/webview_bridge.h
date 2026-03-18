@@ -106,6 +106,7 @@ private:
     void HandleHistorySelect( const nlohmann::json& aMsg );
     void HandleHistorySearch( const nlohmann::json& aMsg );
     void HandleHistoryClose( const nlohmann::json& aMsg );
+    void HandleHistoryDelete( const nlohmann::json& aMsg );
 
     // Controls
     void HandleModelChange( const nlohmann::json& aMsg );

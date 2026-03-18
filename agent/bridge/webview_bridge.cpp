@@ -54,6 +54,7 @@ void WEBVIEW_BRIDGE::OnMessage( const wxString& aMessage )
         else if( action == BridgeAction::HISTORY_SELECT )  HandleHistorySelect( msg );
         else if( action == BridgeAction::HISTORY_SEARCH )  HandleHistorySearch( msg );
         else if( action == BridgeAction::HISTORY_CLOSE )   HandleHistoryClose( msg );
+        else if( action == BridgeAction::HISTORY_DELETE )  HandleHistoryDelete( msg );
 
         // Control row actions
         else if( action == BridgeAction::MODEL_CHANGE )         HandleModelChange( msg );
@@ -206,6 +207,14 @@ void WEBVIEW_BRIDGE::HandleHistorySearch( const nlohmann::json& aMsg )
 void WEBVIEW_BRIDGE::HandleHistoryClose( const nlohmann::json& aMsg )
 {
     PushHistoryShow( false );
+}
+
+void WEBVIEW_BRIDGE::HandleHistoryDelete( const nlohmann::json& aMsg )
+{
+    if( !m_frame ) return;
+    std::string id = aMsg.value( "conversation_id", "" );
+    if( !id.empty() )
+        m_frame->DoHistoryDelete( id );
 }
 
 void WEBVIEW_BRIDGE::HandleModelChange( const nlohmann::json& aMsg )

@@ -84,6 +84,7 @@ public:
     // Top bar
     void OnBridgeHistoryOpen();
     void OnBridgeHistorySearch( const wxString& aQuery );
+    void DoHistoryDelete( const std::string& aConversationId );
     nlohmann::json BuildHistoryListJson( const wxString& aFilter = wxEmptyString );
 
     // ── Bridge-triggered actions (called by WEBVIEW_BRIDGE) ──────────────

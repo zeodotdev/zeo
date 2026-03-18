@@ -76,6 +76,13 @@ public:
     std::vector<HistoryEntry> GetHistoryList( const std::string& aProjectPath = "" );
 
     /**
+     * Delete a saved conversation from disk.
+     * @param aConversationId The conversation ID to delete.
+     * @return True if the file was successfully deleted.
+     */
+    bool DeleteConversation( const std::string& aConversationId );
+
+    /**
      * Start a new conversation with a fresh UUID.
      */
     void StartNewConversation();

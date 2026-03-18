@@ -249,6 +249,18 @@ std::vector<AGENT_CHAT_HISTORY::HistoryEntry> AGENT_CHAT_HISTORY::GetHistoryList
 }
 
 
+bool AGENT_CHAT_HISTORY::DeleteConversation( const std::string& aConversationId )
+{
+    wxFileName fn( GetHistoryDir(), wxString::FromUTF8( aConversationId ), "json" );
+    wxString path = fn.GetFullPath();
+
+    if( wxFileName::FileExists( path ) )
+        return wxRemoveFile( path );
+
+    return false;
+}
+
+
 void AGENT_CHAT_HISTORY::StartNewConversation()
 {
     // Use timestamp as conversation ID so filenames are human-readable

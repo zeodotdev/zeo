@@ -2377,6 +2377,25 @@ void AGENT_FRAME::OnBridgeHistorySearch( const wxString& aQuery )
     m_bridge->PushHistoryList( BuildHistoryListJson( aQuery ) );
 }
 
+void AGENT_FRAME::DoHistoryDelete( const std::string& aConversationId )
+{
+    wxLogInfo( "AGENT_FRAME::DoHistoryDelete - id: %s", aConversationId.c_str() );
+
+    bool deleted = m_chatHistoryDb.DeleteConversation( aConversationId );
+
+    if( deleted )
+    {
+        // If we just deleted the active chat, start a new one
+        if( aConversationId == m_chatHistoryDb.GetConversationId() )
+        {
+            DoNewChat();
+        }
+
+        // Refresh the history list
+        m_bridge->PushHistoryList( BuildHistoryListJson() );
+    }
+}
+
 // ── Bridge-triggered actions ────────────────────────────────────────────
 
 void AGENT_FRAME::DoModelChange( const std::string& aModel )

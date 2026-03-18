@@ -66,7 +66,7 @@ try:
                     matched.append(w)
 
         elif q_type in ('label', 'global_label', 'hierarchical_label'):
-            type_map = {'label': 'NetLabel', 'global_label': 'GlobalLabel', 'hierarchical_label': 'HierarchicalLabel'}
+            type_map = {'label': 'LocalLabel', 'global_label': 'GlobalLabel', 'hierarchical_label': 'HierarchicalLabel'}
             expected_class = type_map.get(q_type, '')
             q_ref = q.get('ref', None)
 

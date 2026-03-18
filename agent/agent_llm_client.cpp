@@ -263,8 +263,13 @@ void* LLM_REQUEST_THREAD::Entry()
     }
 
     // Vercel deployment protection bypass via query param
-    const char* bypassSecret = std::getenv( "VERCEL_AUTOMATION_BYPASS_SECRET" );
+    // Compile-time define for dev builds; env var fallback for local overrides
     std::string requestUrl = ZEO_API_URL;
+#ifdef VERCEL_BYPASS_SECRET
+    const char* bypassSecret = VERCEL_BYPASS_SECRET;
+#else
+    const char* bypassSecret = std::getenv( "VERCEL_AUTOMATION_BYPASS_SECRET" );
+#endif
     if( bypassSecret && bypassSecret[0] != '\0' )
         requestUrl += "?x-vercel-protection-bypass=" + std::string( bypassSecret );
 

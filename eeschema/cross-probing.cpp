@@ -1092,8 +1092,15 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
             SCH_SHEET_LIST sheets = Schematic().Hierarchy();
             for( const SCH_SHEET_PATH& sheet : sheets )
             {
-                response["sheets"].push_back( { { "path", sheet.PathHumanReadable().ToStdString() },
-                                                { "name", sheet.Last()->GetName().ToStdString() } } );
+                nlohmann::json entry;
+                entry["path"] = sheet.PathHumanReadable().ToStdString();
+                entry["name"] = sheet.Last()->GetName().ToStdString();
+
+                SCH_SCREEN* screen = sheet.LastScreen();
+                if( screen )
+                    entry["file"] = screen->GetFileName().ToStdString();
+
+                response["sheets"].push_back( entry );
             }
         }
         else if( request.rfind( "get_sch_components", 0 ) == 0 )

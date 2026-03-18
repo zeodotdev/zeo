@@ -1,5 +1,6 @@
 #include "check_status_handler.h"
 #include "tools/tool_registry.h"
+#include <frame_type.h>
 #include <nlohmann/json.hpp>
 #include <wx/log.h>
 
@@ -33,6 +34,32 @@ std::string CHECK_STATUS_HANDLER::BuildStatusJson()
         for( const auto& f : openFiles )
             arr.push_back( f );
         status["open_editor_files"] = arr;
+    }
+
+    // Query sheet hierarchy from schematic editor if open
+    if( schOpen && reg.GetSendRequestFn() )
+    {
+        try
+        {
+            std::string resp = reg.GetSendRequestFn()( FRAME_SCH, "get_sch_sheets" );
+
+            if( !resp.empty() )
+            {
+                auto respJson = nlohmann::json::parse( resp, nullptr, false );
+
+                if( !respJson.is_discarded() && respJson.contains( "sheets" ) )
+                {
+                    status["schematic_sheets"] = respJson["sheets"];
+
+                    wxLogInfo( "CHECK_STATUS_HANDLER: Got %zu sheets from hierarchy",
+                               respJson["sheets"].size() );
+                }
+            }
+        }
+        catch( const std::exception& e )
+        {
+            wxLogInfo( "CHECK_STATUS_HANDLER: Failed to get sheet hierarchy: %s", e.what() );
+        }
     }
 
     wxLogInfo( "CHECK_STATUS_HANDLER: project='%s', sch=%s, pcb=%s, open_files=%zu",

@@ -2356,13 +2356,29 @@ nlohmann::json CHAT_CONTROLLER::BuildApiContext() const
     }
 
     if( compactionIdx < 0 )
-        return m_chatHistory;  // No compaction — send full history
+    {
+        // No compaction — send full history, but skip error-only entries
+        nlohmann::json context = nlohmann::json::array();
+
+        for( const auto& msg : m_chatHistory )
+        {
+            if( msg.contains( "_error" ) && msg["_error"] == true )
+                continue;
+            context.push_back( msg );
+        }
+
+        return context;
+    }
 
     // Return [compaction_marker] + all messages after it
     nlohmann::json context = nlohmann::json::array();
 
     for( size_t i = static_cast<size_t>( compactionIdx ); i < m_chatHistory.size(); ++i )
     {
+        // Skip error-only entries (display metadata, not API messages)
+        if( m_chatHistory[i].contains( "_error" ) && m_chatHistory[i]["_error"] == true )
+            continue;
+
         // Strip the internal _compaction flag before sending to API
         nlohmann::json msg = m_chatHistory[i];
         msg.erase( "_compaction" );

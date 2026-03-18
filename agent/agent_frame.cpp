@@ -3368,6 +3368,19 @@ void AGENT_FRAME::RenderChatHistory()
 
     for( const auto& msg : m_chatHistory )
     {
+        // Render saved error messages
+        if( msg.contains( "_error" ) && msg["_error"] == true )
+        {
+            std::string errorMsg = msg.value( "message", "An error occurred." );
+            m_fullHtmlContent += wxString::Format(
+                "<div class=\"rounded-lg p-3 my-2\" style=\"background:rgba(232,85,85,0.08); "
+                "border:1px solid rgba(232,85,85,0.2);\">"
+                "<p class=\"text-accent-red text-[13px] m-0\">%s</p>"
+                "</div>",
+                wxString::FromUTF8( errorMsg ) );
+            continue;
+        }
+
         if( !msg.contains( "role" ) || !msg.contains( "content" ) )
             continue;
 
@@ -5106,6 +5119,20 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     {
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
+    }
+
+    // Store the error in chat history so it's visible when the chat is reloaded.
+    // The _error flag tells BuildApiContext() to skip this entry.
+    {
+        nlohmann::json errorEntry;
+        errorEntry["_error"] = true;
+        errorEntry["message"] = friendly.ToStdString();
+        errorEntry["can_retry"] = data->canRetry;
+        m_chatHistory.push_back( errorEntry );
+
+        // Sync back to controller so its history stays in sync
+        if( m_chatController )
+            m_chatController->SetHistory( m_chatHistory );
     }
 
     // Sync frame's state machine with controller (now IDLE after error recovery)

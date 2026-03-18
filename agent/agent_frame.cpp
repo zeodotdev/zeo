@@ -1560,6 +1560,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
 
     // Clear Input and Update UI
     m_bridge->PushInputClear();
+    m_bridge->PushInputFocus();
     m_bridge->PushActionButtonState( "Stop" );
 
     // Reset frame streaming state
@@ -1879,8 +1880,9 @@ void AGENT_FRAME::QueueMessage()
     // Rebuild the single combined queued bubble from all queued messages
     RebuildQueuedBubble();
 
-    // Clear input (button stays "Stop" during generation)
+    // Clear input and refocus (button stays "Stop" during generation)
     m_bridge->PushInputClear();
+    m_bridge->PushInputFocus();
 
     // Update JS-side queue count so up-arrow can prioritize editing queued messages
     m_bridge->PushQueueCount( static_cast<int>( m_queuedMessages.size() ) );

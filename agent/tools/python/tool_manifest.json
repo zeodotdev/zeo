@@ -1295,7 +1295,7 @@
       "properties": {
         "targets": {
           "type": "array",
-          "description": "Array of targets to delete. Each item is a string (reference like 'R1' or UUID) or a query object. Query format: {type, text?, position?, ref?, start?, end?}. Types: wire, label, global_label, hierarchical_label, junction, no_connect, bus_entry. Examples: {type: 'wire', position: [x,y]}, {type: 'label', text: 'VCC', ref: 'R3'}, {type: 'junction', position: [x,y]}"
+          "description": "Array of targets to delete. Each item is a string (reference like 'R1' or UUID) or a query object. Query format: {type, text?, position?, ref?, start?, end?}. Types: wire, label, global_label, hierarchical_label, junction, no_connect, bus_entry. For labels, 'ref' is a symbol reference — matches labels located on that symbol's pins. Use 'position' only to disambiguate when multiple labels share the same text."
         },
         "delete_net": {
           "type": "boolean",

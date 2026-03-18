@@ -1289,21 +1289,17 @@
   },
   {
     "name": "sch_delete",
-    "description": "Delete elements from the schematic. Accepts an array of targets - use for single or batch operations. Each target can be a string (reference designator like 'R1' or UUID) or a query object to match items by properties:\n  {type: 'wire', start: [x,y], end: [x,y]} - match wire by endpoints\n  {type: 'wire', position: [x,y]} - match wires touching this point\n  {type: 'label', text: 'NET_NAME'} - match local label by text\n  {type: 'label', text: 'NET_NAME', ref: 'R3'} - match label by text on a specific symbol's pin\n  {type: 'label', text: 'NET_NAME', position: [x,y]} - match label by text and position\n  {type: 'global_label', text: 'SPI_CLK'} - match global label\n  {type: 'hierarchical_label', text: 'DATA'} - match hierarchical label\n  {type: 'junction', position: [x,y]} - match junction at position\n  {type: 'no_connect', position: [x,y]} - match no-connect at position\n  {type: 'bus_entry', position: [x,y]} - match bus entry at position\nQuery: type is required. text/position/start/end are optional filters. All specified must match. Position tolerance: 0.01mm. By default, recursively removes orphaned wires, junctions, and power symbols (#PWR) connected to deleted symbol pins. Set chain_delete: true to expand wire/junction/label targets to delete the ENTIRE connected net (all wires, junctions, labels on the same net). Does not delete symbols.",
+    "description": "Delete elements from the schematic. Targets can be reference designators ('R1'), UUIDs, or query objects to match by type/position/text. Automatically cleans up orphaned labels, wires, junctions, and power symbols on deleted symbol pins.",
     "input_schema": {
       "type": "object",
       "properties": {
         "targets": {
           "type": "array",
-          "description": "Array of targets to delete. Each item is either a string (reference/UUID) or a query object with: type (required), text (optional), position [x,y] (optional), ref (optional, labels - match label on a specific symbol's pin), start [x,y] (optional, wires), end [x,y] (optional, wires)"
+          "description": "Array of targets to delete. Each item is a string (reference like 'R1' or UUID) or a query object. Query format: {type, text?, position?, ref?, start?, end?}. Types: wire, label, global_label, hierarchical_label, junction, no_connect, bus_entry. Examples: {type: 'wire', position: [x,y]}, {type: 'label', text: 'VCC', ref: 'R3'}, {type: 'junction', position: [x,y]}"
         },
-        "cleanup_wires": {
+        "delete_net": {
           "type": "boolean",
-          "description": "Recursively remove orphaned wires, junctions, and power symbols (#PWR) connected to deleted symbol pins. Default: true."
-        },
-        "chain_delete": {
-          "type": "boolean",
-          "description": "When true, expand each wire/junction/label target to delete ALL wires, junctions, and labels on the same net. Does not delete symbols or pins. Default: false."
+          "description": "When true, expand each wire/junction/label target to delete the entire connected net segment (all wires, junctions, and labels). Stops at symbol pins. Does not delete symbols. Default: false."
         }
       },
       "required": [

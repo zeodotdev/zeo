@@ -4,8 +4,7 @@ refresh_or_fail(sch)
 
 targets = TOOL_ARGS.get("targets", [])
 file_path = TOOL_ARGS.get("file_path", "")
-cleanup_wires = TOOL_ARGS.get("cleanup_wires", True)
-chain_delete = TOOL_ARGS.get("chain_delete", False)
+delete_net = TOOL_ARGS.get("delete_net", False)
 
 # Separate string targets from query targets
 string_targets = [t for t in targets if isinstance(t, str)]
@@ -135,8 +134,8 @@ try:
             query_not_found.append(q)
 
     # Chain delete: geometric BFS from initial items through connected wires/junctions/labels
-    chain_deleted_count = 0
-    if chain_delete:
+    net_deleted_count = 0
+    if delete_net:
         from collections import defaultdict, deque
 
         def _get_points(it):
@@ -207,35 +206,49 @@ try:
                 if ni and type(ni).__name__ in deletable_types:
                     items_to_delete.append(ni)
                     target_uuids.append(neighbor_uid)
-                    chain_deleted_count += 1
+                    net_deleted_count += 1
                     for p2 in uid_to_points.get(neighbor_uid, []):
                         queue.append(p2)
 
-    # Record pin positions before deletion (for optional orphan cleanup)
+    # Record pin positions before deletion and collect orphaned labels in the same pass
     deleted_pin_positions = []
-    if cleanup_wires:
-        for item in items_to_delete:
-            if hasattr(item, 'pins'):
-                # Use batch API for efficiency
-                try:
-                    all_pins = sch.symbols.get_all_transformed_pin_positions(item)
-                    for tp in all_pins:
-                        dpx = round(tp['position'].x / 1_000_000, 4)
-                        dpy = round(tp['position'].y / 1_000_000, 4)
-                        deleted_pin_positions.append((dpx, dpy))
-                except Exception:
-                    pass
+    orphaned_labels = []
+    orphaned_wires = []
+    orphaned_junctions = []
+    orphaned_power = []
+    rnd = lambda v: round(v, 2)
+
+    for item in items_to_delete:
+        if hasattr(item, 'pins'):
+            try:
+                all_pins = sch.symbols.get_all_transformed_pin_positions(item)
+                for tp in all_pins:
+                    dpx = round(tp['position'].x / 1_000_000, 4)
+                    dpy = round(tp['position'].y / 1_000_000, 4)
+                    deleted_pin_positions.append((dpx, dpy))
+            except Exception:
+                pass
+
+    # Collect labels at pin positions before deletion so we can batch-delete with the symbols
+    if deleted_pin_positions:
+        dead = set((rnd(px), rnd(py)) for px, py in deleted_pin_positions)
+        for lbl in sch.labels.get_all():
+            try:
+                lp = (rnd(lbl.position.x/1e6), rnd(lbl.position.y/1e6))
+                if lp in dead:
+                    items_to_delete.append(lbl)
+                    uid = str(lbl.id.value) if hasattr(lbl, 'id') and hasattr(lbl.id, 'value') else str(getattr(lbl, 'id', ''))
+                    orphaned_labels.append({'uuid': uid, 'text': getattr(lbl, 'text', ''), 'type': type(lbl).__name__, 'position': list(lp)})
+            except Exception:
+                pass
 
     if items_to_delete:
         sch.crud.remove_items(items_to_delete)
 
-    # Recursively clean up orphaned wires, junctions, and power symbols
-    orphaned_wires = []
-    orphaned_junctions = []
-    orphaned_power = []
+    # Clean up orphaned wires, junctions, and power symbols at deleted pin positions
     if deleted_pin_positions:
         try:
-            rnd = lambda v: round(v, 2)
+
             def wire_ep(w):
                 return (rnd(w.start.x/1e6), rnd(w.start.y/1e6)), (rnd(w.end.x/1e6), rnd(w.end.y/1e6))
 
@@ -253,8 +266,6 @@ try:
                     conn_pts.add((rnd(lbl.position.x/1e6), rnd(lbl.position.y/1e6)))
                 except Exception:
                     pass
-
-            dead = set((rnd(px), rnd(py)) for px, py in deleted_pin_positions)
             checked = set()
 
             for _iter in range(10):  # safety cap
@@ -356,6 +367,9 @@ try:
             print(f'Orphan cleanup warning: {cleanup_err}', file=sys.stderr)
 
     result = {'status': 'success', 'source': 'ipc', 'deleted': len(items_to_delete)}
+    if orphaned_labels:
+        result['orphaned_labels_removed'] = len(orphaned_labels)
+        result['orphaned_labels'] = orphaned_labels
     if orphaned_wires:
         result['orphaned_wires_removed'] = len(orphaned_wires)
         result['orphaned_wires'] = orphaned_wires
@@ -368,8 +382,8 @@ try:
         result['not_found'] = not_found
     if query_not_found:
         result['queries_not_matched'] = query_not_found
-    if chain_deleted_count:
-        result['chain_deleted_extra'] = chain_deleted_count
+    if net_deleted_count:
+        result['net_deleted_extra'] = net_deleted_count
 
 except Exception as ipc_error:
     use_ipc = False

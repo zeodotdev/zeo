@@ -1,6 +1,7 @@
 #include "agent_frame.h"
 #include "agent_chat_history.h"
 #include <zeo/agent_auth.h>
+#include <app_monitor.h>
 #ifndef __WXMAC__
 #include <zeo/auth_callback_server.h>
 #endif
@@ -1064,11 +1065,11 @@ wxString AGENT_FRAME::BuildStreamingContent()
     else if( start == std::string::npos )
         currentResponse.clear();
 
-    streamingContent += AgentMarkdown::ToHtml( currentResponse );
-
-    // Thinking toggle appears below the response text
+    // Thinking toggle appears above the response text
     if( !m_thinkingHtml.IsEmpty() )
         streamingContent += m_thinkingHtml;
+
+    streamingContent += AgentMarkdown::ToHtml( currentResponse );
 
     // Include any tool call HTML
     if( !m_toolCallHtml.IsEmpty() )
@@ -5181,9 +5182,9 @@ void AGENT_FRAME::OnChatStateChanged( wxThreadEvent& aEvent )
             // Build the streaming content that should be baked in
             wxString streamingContent;
             std::string currentResponse = m_chatController ? m_chatController->GetCurrentResponse() : "";
-            streamingContent += AgentMarkdown::ToHtml( currentResponse );
             if( !m_thinkingHtml.IsEmpty() )
                 streamingContent += m_thinkingHtml;
+            streamingContent += AgentMarkdown::ToHtml( currentResponse );
             if( !m_toolCallHtml.IsEmpty() )
                 streamingContent += m_toolCallHtml;
 
@@ -5608,6 +5609,13 @@ void AGENT_FRAME::ConfigureCloudSync()
 
     m_cloudSync->SetAuth( m_auth );
     m_cloudSync->Configure( supabaseUrl, supabaseKey );
+
+    // Tag Sentry with the authenticated user's email for crash attribution
+    std::string email = m_auth->GetUserEmail();
+    if( !email.empty() )
+    {
+        APP_MONITOR::SENTRY::Instance()->AddTag( "zeo.user", email );
+    }
 
     // Also configure tool registry with Supabase credentials (for datasheet extraction)
     TOOL_REGISTRY::Instance().SetSupabaseUrl( supabaseUrl );

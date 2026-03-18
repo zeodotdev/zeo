@@ -306,6 +306,7 @@ img[src^="data:"] { cursor: pointer; }
 }
 .history-item:hover .history-delete { display: inline-flex; }
 .history-item .history-delete:hover { opacity: 1; color: var(--accent-red); }
+.history-item .history-delete.confirm { display: inline-flex; opacity: 1; color: var(--accent-red); font-size: 11px; font-weight: 600; padding: 2px 6px; }
 .history-loading { display: flex; align-items: center; justify-content: center; padding: 24px 12px; color: var(--text-muted); font-size: 13px; gap: 8px; }
 .history-loading .spinner { width: 16px; height: 16px; border: 2px solid var(--border-color); border-top-color: var(--accent-blue); border-radius: 50%; animation: hist-spin 0.6s linear infinite; }
 @keyframes hist-spin { to { transform: rotate(360deg); } }
@@ -882,13 +883,35 @@ App.TopBar = (function() {
     });
 
     // Event: click history item or delete button
+    var _pendingDeleteId = null;
+    var _pendingDeleteTimer = null;
     listEl.addEventListener('click', function(e) {
         var deleteBtn = e.target.closest('.history-delete');
         if (deleteBtn) {
             e.stopPropagation();
             var id = deleteBtn.getAttribute('data-delete-id');
-            if (id) {
+            if (!id) return;
+            // Two-step confirm: first click shows "Delete?", second click executes
+            if (_pendingDeleteId === id) {
+                clearTimeout(_pendingDeleteTimer);
+                _pendingDeleteId = null;
                 App.Bridge.sendMsg('history_delete', { conversation_id: id });
+            } else {
+                // Reset any previous pending confirm
+                if (_pendingDeleteId) {
+                    var prev = listEl.querySelector('.history-delete.confirm');
+                    if (prev) { prev.classList.remove('confirm'); prev.innerHTML = '&times;'; }
+                    clearTimeout(_pendingDeleteTimer);
+                }
+                _pendingDeleteId = id;
+                deleteBtn.classList.add('confirm');
+                deleteBtn.textContent = 'Delete?';
+                // Auto-reset after 3 seconds
+                _pendingDeleteTimer = setTimeout(function() {
+                    _pendingDeleteId = null;
+                    deleteBtn.classList.remove('confirm');
+                    deleteBtn.innerHTML = '&times;';
+                }, 3000);
             }
             return;
         }

@@ -2054,7 +2054,11 @@ App.Controls = (function() {
             modelMenu.classList.remove('visible');
             modelTrigger.classList.remove('open');
         } else {
-            renderMenu();
+            if (_models.length === 0) {
+                modelMenu.innerHTML = '<div style="padding:10px 14px;color:var(--text-muted);font-size:12px;">Loading models\u2026</div>';
+            } else {
+                renderMenu();
+            }
             modelMenu.classList.add('visible');
             modelTrigger.classList.add('open');
         }

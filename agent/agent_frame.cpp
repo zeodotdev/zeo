@@ -5092,6 +5092,9 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     // Sync frame's state machine with controller (now IDLE after error recovery)
     m_conversationCtx.SetState( AgentConversationState::IDLE );
 
+    // Save the chat so error interactions are preserved in history
+    m_chatHistoryDb.Save( m_chatHistory );
+
     // On auth errors (401 / authentication_error), show the sign-in overlay
     if( data->httpCode == 401 || data->errorType == "authentication_error" )
         UpdateAuthUI();

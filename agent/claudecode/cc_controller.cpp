@@ -232,6 +232,7 @@ void CC_CONTROLLER::ResetTurnState()
     m_pendingToolIds.clear();
     m_pendingToolNames.clear();
     m_lastStderrLine.clear();
+    m_stderrBuffer.clear();
     m_currentAssistantContent = json::array();
 }
 
@@ -254,6 +255,22 @@ void CC_CONTROLLER::OnCCLine( wxThreadEvent& aEvent )
 {
     std::string line = aEvent.GetString().ToStdString();
     ParseLine( line );
+}
+
+
+bool CC_CONTROLLER::IsAuthError( const std::string& aStderr )
+{
+    // Check for common auth-related error patterns from Claude CLI
+    std::string lower = aStderr;
+    std::transform( lower.begin(), lower.end(), lower.begin(), ::tolower );
+
+    return lower.find( "not authenticated" ) != std::string::npos
+           || lower.find( "not logged in" ) != std::string::npos
+           || lower.find( "authentication" ) != std::string::npos
+           || lower.find( "log in" ) != std::string::npos
+           || lower.find( "api key" ) != std::string::npos
+           || lower.find( "unauthorized" ) != std::string::npos
+           || lower.find( "/login" ) != std::string::npos;
 }
 
 
@@ -281,6 +298,11 @@ void CC_CONTROLLER::OnCCExit( wxThreadEvent& aEvent )
             errorMsg = "Claude Code is not installed. Install it from "
                        "https://docs.anthropic.com/en/docs/claude-code "
                        "and try again.";
+        }
+        else if( IsAuthError( m_stderrBuffer ) )
+        {
+            errorMsg = "Claude Code is not logged in. Please open a terminal and run "
+                       "'claude login' to authenticate, then try again.";
         }
         else if( !m_lastStderrLine.empty() )
         {
@@ -310,9 +332,15 @@ void CC_CONTROLLER::OnCCError( wxThreadEvent& aEvent )
     std::string line = aEvent.GetString().ToStdString();
     wxLogInfo( "CC_CONTROLLER stderr: %s", line.c_str() );
 
-    // Capture the last stderr line for use in exit error messages
+    // Capture stderr for use in exit error messages
     if( !line.empty() )
+    {
         m_lastStderrLine = line;
+
+        if( !m_stderrBuffer.empty() )
+            m_stderrBuffer += "\n";
+        m_stderrBuffer += line;
+    }
 }
 
 

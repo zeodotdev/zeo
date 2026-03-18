@@ -72,6 +72,7 @@ private:
     // MCP config and prompt helpers
     std::string GenerateMcpConfig();
     std::string LoadSystemPrompt();
+    static bool IsAuthError( const std::string& aStderr );
 
     wxEvtHandler*                  m_eventSink;
     std::unique_ptr<CC_SUBPROCESS> m_subprocess;
@@ -86,6 +87,7 @@ private:
     bool        m_busy = false;
     bool        m_intentionalStop = false;  // Suppress error on intentional process kill
     std::string m_lastStderrLine;             // Last stderr line (for exit error context)
+    std::string m_stderrBuffer;               // Accumulated stderr (for auth error detection)
     int         m_ccTurnCount = 0;            // Turns in current CC subprocess (for context injection)
 
     // Accumulation state for current assistant turn

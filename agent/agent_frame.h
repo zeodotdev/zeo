@@ -175,6 +175,11 @@ private:
     // Auto-approve mode: when true, approval-gated tool calls are auto-approved
     bool        m_autoApprove = false;
 
+    // MCP async tool state: when an MCP-routed tool is async (e.g. pcb_autoroute),
+    // we pump events until the result arrives instead of blocking the UI thread.
+    bool        m_mcpAsyncPending = false;
+    std::string m_mcpAsyncResult;
+
     // Pending changes state (business logic moved from PENDING_CHANGES_PANEL)
     std::set<wxString> m_pendingSchSheets;  // Sheets with schematic changes
     bool               m_hasPcbChanges;

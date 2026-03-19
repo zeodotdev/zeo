@@ -831,7 +831,10 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                 fprintf( stderr, "PCB_EDIT_FRAME: Received take_snapshot request\n" );
                 fflush( stderr );
                 BeginAgentSnapshot();
-                break;  // No response needed
+
+                std::string ack = "{\"success\":true}";
+                Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, ack, this );
+                break;
             }
             else if( j_in.contains( "type" ) && j_in["type"] == "detect_changes" )
             {
@@ -839,7 +842,10 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                 fprintf( stderr, "PCB_EDIT_FRAME: Received detect_changes request\n" );
                 fflush( stderr );
                 DetectAgentChanges();
-                break;  // No response needed
+
+                std::string ack = "{\"success\":true}";
+                Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, ack, this );
+                break;
             }
             else if( j_in.contains( "type" ) && j_in["type"] == "export_screenshot" )
             {

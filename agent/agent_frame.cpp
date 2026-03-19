@@ -1424,12 +1424,45 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
             else
                 toolInput = nlohmann::json::object();
 
-            std::string result = TOOL_REGISTRY::Instance().Execute( toolName, toolInput );
+            auto& reg = TOOL_REGISTRY::Instance();
 
-            wxLogMessage( "AGENT_FRAME: MCP agent tool '%s' completed, result_len=%zu",
-                          toolName, result.length() );
+            if( reg.IsAsync( toolName ) )
+            {
+                // Async tool (e.g. pcb_autoroute): run via ExecuteAsync() and pump
+                // the event loop so the UI stays responsive while Freerouting runs
+                // in a background thread.  The result arrives via
+                // EVT_TOOL_EXECUTION_COMPLETE → OnAsyncToolComplete, which sets
+                // m_mcpAsyncResult when m_mcpAsyncPending is true.
+                wxLogMessage( "AGENT_FRAME: MCP async execution for '%s'", toolName );
 
-            aEvent.SetPayload( result );
+                m_mcpAsyncPending = true;
+                m_mcpAsyncResult.clear();
+
+                reg.ExecuteAsync( toolName, toolInput, /*toolUseId=*/"mcp", this );
+
+                // Pump events until the async handler signals completion.
+                // wxYield() processes pending events (including CallAfter callbacks
+                // from the background thread) without blocking.
+                while( m_mcpAsyncPending )
+                {
+                    wxYield();
+                    wxMilliSleep( 10 );
+                }
+
+                wxLogMessage( "AGENT_FRAME: MCP async tool '%s' completed, result_len=%zu",
+                              toolName, m_mcpAsyncResult.length() );
+
+                aEvent.SetPayload( m_mcpAsyncResult );
+            }
+            else
+            {
+                std::string result = reg.Execute( toolName, toolInput );
+
+                wxLogMessage( "AGENT_FRAME: MCP agent tool '%s' completed, result_len=%zu",
+                              toolName, result.length() );
+
+                aEvent.SetPayload( result );
+            }
         }
         catch( const std::exception& e )
         {
@@ -4840,10 +4873,21 @@ void AGENT_FRAME::OnAsyncToolComplete( wxCommandEvent& aEvent )
     wxLogInfo( "AGENT_FRAME::OnAsyncToolComplete - tool=%s, success=%s",
                result->tool_name.c_str(), result->success ? "true" : "false" );
 
-    // Forward the result to the chat controller
-    if( m_chatController )
+    if( m_mcpAsyncPending )
     {
-        m_chatController->HandleToolResult( result->tool_use_id, result->result, result->success );
+        // MCP path: store the result and signal the event-pump loop in the
+        // MAIL_MCP_EXECUTE_AGENT_TOOL handler to stop spinning.
+        m_mcpAsyncResult = result->result;
+        m_mcpAsyncPending = false;
+    }
+    else
+    {
+        // Normal agent chat path: forward to the chat controller
+        if( m_chatController )
+        {
+            m_chatController->HandleToolResult( result->tool_use_id, result->result,
+                                                result->success );
+        }
     }
 
     // Clean up - event data is owned by the event

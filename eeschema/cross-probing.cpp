@@ -979,13 +979,19 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                 {
                     // Take a whole-file snapshot before agent execution
                     BeginAgentSnapshot();
-                    break;  // No response needed
+
+                    std::string ack = "{\"success\":true}";
+                    Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, ack, this );
+                    break;
                 }
                 else if( j_in.contains( "type" ) && j_in["type"] == "detect_changes" )
                 {
                     // Detect changes after agent execution and show diff overlay
                     DetectAgentChanges();
-                    break;  // No response needed
+
+                    std::string ack = "{\"success\":true}";
+                    Kiway().ExpressMail( FRAME_AGENT, MAIL_AGENT_RESPONSE, ack, this );
+                    break;
                 }
                 else if( j_in.contains( "type" ) && j_in["type"] == "export_screenshot" )
                 {

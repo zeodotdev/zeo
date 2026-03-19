@@ -77,7 +77,7 @@ void SENTRY::SetUser( const wxString& aEmail )
         return;
 
     sentry_value_t user = sentry_value_new_object();
-    sentry_value_set_by_key( user, "id", sentry_value_new_string( m_sentryUid.c_str() ) );
+    sentry_value_set_by_key( user, "id", sentry_value_new_string( aEmail.c_str() ) );
     sentry_value_set_by_key( user, "email", sentry_value_new_string( aEmail.c_str() ) );
     sentry_set_user( user );
 #endif

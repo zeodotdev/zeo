@@ -302,11 +302,6 @@ option( KICAD_IDF_TOOLS
 
 if( ZEO_RELEASE )
     add_compile_definitions( ZEO_RELEASE_BUILD )
-else()
-    # Vercel deployment protection bypass for staging builds
-    if( VERCEL_BYPASS_SECRET )
-        add_compile_definitions( VERCEL_BYPASS_SECRET="${VERCEL_BYPASS_SECRET}" )
-    endif()
 endif()
 
 # Global setting: exports are explicit

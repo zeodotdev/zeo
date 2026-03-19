@@ -55,11 +55,11 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
         if( m_requestInProgress.load() )
         {
             // The old thread is stuck (curl blocked in recv with no progress callbacks).
-            // Force-clear the flag so the new request can proceed. The stale thread will
-            // eventually finish and its cleanup is harmless: it won't post events
-            // (wasCancelled is true) and its redundant store(false) is a no-op.
+            // Bump the generation so the stale thread's writes become no-ops, then
+            // force-clear the flag so the new request can proceed.
             wxLogWarning( "Cancelled LLM request did not finish within %dms — force-clearing",
                           maxWaitMs );
+            m_requestGeneration.fetch_add( 1 );
             m_requestInProgress.store( false );
         }
     }
@@ -82,10 +82,13 @@ bool AGENT_LLM_CLIENT::AskStreamWithToolsAsync( const nlohmann::json& aMessages,
     if( m_agentMode == AgentMode::PLAN && !m_planAddendum.empty() )
         fullPrompt += "\n" + m_planAddendum;
 
+    // Capture current generation so the thread can guard its writes
+    uint64_t gen = m_requestGeneration.load();
+
     LLM_REQUEST_THREAD* thread = new LLM_REQUEST_THREAD(
         this, aHandler, m_modelName, aMessages, aTools, m_agentMode,
         m_chatId, m_chatTitle, m_chatStoragePath, m_logStoragePath,
-        fullPrompt, m_toolDurations );
+        fullPrompt, m_toolDurations, gen );
     m_toolDurations.clear();
 
     // wxThread requires Create() before Run()
@@ -125,7 +128,8 @@ LLM_REQUEST_THREAD::LLM_REQUEST_THREAD( AGENT_LLM_CLIENT* aClient,
                                          const std::string& aChatStoragePath,
                                          const std::string& aLogStoragePath,
                                          const std::string& aSystemPrompt,
-                                         const std::map<std::string, int>& aToolDurations ) :
+                                         const std::map<std::string, int>& aToolDurations,
+                                         uint64_t aGeneration ) :
         wxThread( wxTHREAD_DETACHED ),
         m_client( aClient ),
         m_handler( aHandler ),
@@ -135,6 +139,7 @@ LLM_REQUEST_THREAD::LLM_REQUEST_THREAD( AGENT_LLM_CLIENT* aClient,
         m_agentMode( aAgentMode ),
         m_systemPrompt( aSystemPrompt ),
         m_cancelFlag( nullptr ),
+        m_generation( aGeneration ),
         m_chatId( aChatId ),
         m_chatTitle( aChatTitle ),
         m_chatStoragePath( aChatStoragePath ),
@@ -146,8 +151,10 @@ LLM_REQUEST_THREAD::LLM_REQUEST_THREAD( AGENT_LLM_CLIENT* aClient,
 
 LLM_REQUEST_THREAD::~LLM_REQUEST_THREAD()
 {
-    // Mark request as no longer in progress
-    if( m_client )
+    // Mark request as no longer in progress, but only if this thread's generation
+    // still matches the client's current generation. If the client force-abandoned
+    // this thread (bumped the generation), this write is a stale no-op.
+    if( m_client && m_generation == m_client->m_requestGeneration.load() )
     {
         m_client->m_requestInProgress.store( false );
     }
@@ -164,7 +171,7 @@ void* LLM_REQUEST_THREAD::Entry()
     if( !curl )
     {
         PostLLMError( m_handler, "Failed to initialize curl" );
-        if( m_client )
+        if( m_client && m_generation == m_client->m_requestGeneration.load() )
             m_client->m_requestInProgress.store( false );
         return nullptr;
     }
@@ -256,7 +263,7 @@ void* LLM_REQUEST_THREAD::Entry()
     if( accessToken.empty() )
     {
         PostLLMError( m_handler, "Not authenticated. Please sign in." );
-        if( m_client )
+        if( m_client && m_generation == m_client->m_requestGeneration.load() )
             m_client->m_requestInProgress.store( false );
         curl_easy_cleanup( curl );
         return nullptr;
@@ -386,7 +393,7 @@ void* LLM_REQUEST_THREAD::Entry()
         // Clear in-progress flag before returning so the next request isn't blocked.
         // The destructor also clears this, but detached-thread destruction timing is
         // non-deterministic and can race with the next AskStreamWithToolsAsync call.
-        if( m_client )
+        if( m_client && m_generation == m_client->m_requestGeneration.load() )
             m_client->m_requestInProgress.store( false );
         curl_easy_cleanup( curl );
         return nullptr;
@@ -398,7 +405,7 @@ void* LLM_REQUEST_THREAD::Entry()
         std::string responseBody = ctx.buffer.substr( 0, 500 ); // Limit to 500 chars
         if( !wasCancelled )
             PostLLMError( m_handler, responseBody, http_code );
-        if( m_client )
+        if( m_client && m_generation == m_client->m_requestGeneration.load() )
             m_client->m_requestInProgress.store( false );
         curl_easy_cleanup( curl );
         return nullptr;
@@ -406,7 +413,7 @@ void* LLM_REQUEST_THREAD::Entry()
 
     // Mark request as complete BEFORE posting completion event
     // This ensures the flag is clear when the handler processes the event
-    if( m_client )
+    if( m_client && m_generation == m_client->m_requestGeneration.load() )
     {
         m_client->m_requestInProgress.store( false );
     }

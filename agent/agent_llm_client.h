@@ -153,6 +153,11 @@ private:
     // Async request state
     std::atomic<bool> m_requestInProgress;
     std::atomic<bool> m_cancelRequested;
+
+    // Monotonically increasing request generation counter.
+    // When a stale thread is force-abandoned, the generation is bumped so the
+    // old thread's writes to m_requestInProgress become no-ops.
+    std::atomic<uint64_t> m_requestGeneration{ 0 };
 };
 
 
@@ -174,7 +179,8 @@ public:
                         const std::string& aChatStoragePath,
                         const std::string& aLogStoragePath,
                         const std::string& aSystemPrompt,
-                        const std::map<std::string, int>& aToolDurations = {} );
+                        const std::map<std::string, int>& aToolDurations = {},
+                        uint64_t aGeneration = 0 );
 
     virtual ~LLM_REQUEST_THREAD();
 
@@ -203,6 +209,10 @@ private:
 
     // Flag to check if cancellation was requested
     std::atomic<bool>* m_cancelFlag;
+
+    // Generation counter snapshot — thread only writes m_requestInProgress if its
+    // generation matches the client's current generation (prevents stale writes).
+    uint64_t m_generation;
 
     // Curl write callback that posts events
     static size_t StreamWriteCallback( void* contents, size_t size, size_t nmemb, void* userp );

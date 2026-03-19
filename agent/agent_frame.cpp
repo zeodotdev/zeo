@@ -5198,9 +5198,19 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     // Save the chat so error interactions are preserved in history
     m_chatHistoryDb.Save( m_chatHistory );
 
-    // On auth errors (401 / authentication_error), show the sign-in overlay
-    if( data->httpCode == 401 || data->errorType == "authentication_error" )
+    // On genuine auth errors, invalidate the local session and show the sign-in
+    // overlay.  Without SignOut() the local token still looks valid (hasn't hit its
+    // expiry time), so IsAuthenticated() returns true and the sign-in button never
+    // appears.  Skip SignOut for Vercel deployment-protection 401s (identified by
+    // "bypass" in the error body) — those aren't auth failures.
+    if( data->errorType == "authentication_error"
+        || ( data->httpCode == 401 && data->message.find( "bypass" ) == std::string::npos ) )
+    {
+        if( m_auth )
+            m_auth->SignOut();
+
         UpdateAuthUI();
+    }
 
     delete data;
 }

@@ -31,13 +31,11 @@ public:
      * @param aMcpConfigPath  Path to MCP config JSON file (can be empty)
      * @param aModel  Claude model to use (e.g. "claude-opus-4-6")
      * @param aSessionId  Optional session ID to resume
-     * @param aSystemPrompt  Optional system prompt to append via --append-system-prompt
      * @return true if process started successfully
      */
     bool Start( const std::string& aWorkingDir, const std::string& aMcpConfigPath,
                 const std::string& aModel = "claude-opus-4-6",
-                const std::string& aSessionId = "",
-                const std::string& aSystemPrompt = "" );
+                const std::string& aSessionId = "" );
 
     void Stop();
     bool IsRunning() const { return m_running.load(); }

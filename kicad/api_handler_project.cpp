@@ -58,9 +58,10 @@ static std::string GetAgentDir()
 
     if( envDir && envDir[0] )
     {
-        // AGENT_PYTHON_DIR points to the python/ subdirectory — go up one level to agent/
+        // AGENT_PYTHON_DIR points to agent/tools/python/ — go up two levels to agent/
         wxFileName dir( wxString::FromUTF8( envDir ), "" );
-        dir.RemoveLastDir();
+        dir.RemoveLastDir();  // python/ -> tools/
+        dir.RemoveLastDir();  // tools/  -> agent/
         return dir.GetPath().ToStdString();
     }
 

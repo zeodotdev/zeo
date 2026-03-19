@@ -73,8 +73,7 @@ static std::string FindClaudeExe()
 
 
 bool CC_SUBPROCESS::Start( const std::string& aWorkingDir, const std::string& aMcpConfigPath,
-                           const std::string& aModel, const std::string& aSessionId,
-                           const std::string& aSystemPrompt )
+                           const std::string& aModel, const std::string& aSessionId )
 {
     if( m_running.load() )
         Stop();
@@ -141,9 +140,6 @@ bool CC_SUBPROCESS::Start( const std::string& aWorkingDir, const std::string& aM
 
     if( !aSessionId.empty() )
         cmdLine += " --resume " + aSessionId;
-
-    if( !aSystemPrompt.empty() )
-        cmdLine += " --append-system-prompt \"" + aSystemPrompt + "\"";
 
     // Set up STARTUPINFO with redirected handles
     STARTUPINFOA si;
@@ -483,8 +479,7 @@ CC_SUBPROCESS::~CC_SUBPROCESS()
 
 
 bool CC_SUBPROCESS::Start( const std::string& aWorkingDir, const std::string& aMcpConfigPath,
-                           const std::string& aModel, const std::string& aSessionId,
-                           const std::string& aSystemPrompt )
+                           const std::string& aModel, const std::string& aSessionId )
 {
     if( m_running.load() )
         Stop();
@@ -567,12 +562,6 @@ bool CC_SUBPROCESS::Start( const std::string& aWorkingDir, const std::string& aM
         {
             args.push_back( "--resume" );
             args.push_back( aSessionId );
-        }
-
-        if( !aSystemPrompt.empty() )
-        {
-            args.push_back( "--append-system-prompt" );
-            args.push_back( aSystemPrompt );
         }
 
         // Convert to C-style argv

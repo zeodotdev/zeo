@@ -25,11 +25,10 @@ public:
     /**
      * Start a new Claude Code session.
      * @param aWorkingDir  Working directory for the subprocess
-     * @param aPromptsDir  Path to agent prompts directory (for system prompt injection)
      * @param aApiSocketPath  Path to KiCad API socket (for MCP config generation)
      * @param aPythonPath  Path to bundled Python3 binary (for MCP server command)
      */
-    void Start( const std::string& aWorkingDir, const std::string& aPromptsDir = "",
+    void Start( const std::string& aWorkingDir,
                 const std::string& aApiSocketPath = "", const std::string& aPythonPath = "" );
 
     bool SendMessage( const std::string& aText );
@@ -69,15 +68,13 @@ private:
     // State reset
     void ResetTurnState();
 
-    // MCP config and prompt helpers
+    // MCP config helper
     std::string GenerateMcpConfig();
-    std::string LoadSystemPrompt();
     static bool IsAuthError( const std::string& aStderr );
 
     wxEvtHandler*                  m_eventSink;
     std::unique_ptr<CC_SUBPROCESS> m_subprocess;
     std::string                    m_workingDir;
-    std::string                    m_promptsDir;
     std::string                    m_apiSocketPath;
     std::string                    m_pythonPath;
     std::string                    m_mcpConfigPath;  // Generated temp file path

@@ -2477,34 +2477,6 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
         }
         catch( ... ) {}
 
-        // Resolve prompts directory (same logic as LoadAndSetSystemPrompt)
-        std::string promptsDir;
-        const char* envDir = std::getenv( "AGENT_PYTHON_DIR" );
-
-        if( envDir && envDir[0] )
-        {
-            wxFileName dir( wxString::FromUTF8( envDir ), "" );
-            dir.RemoveLastDir();  // python/ -> tools/
-            dir.RemoveLastDir();  // tools/  -> agent/
-            dir.AppendDir( "prompts" );
-            promptsDir = dir.GetPath().ToStdString();
-        }
-        else
-        {
-            wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
-            wxFileName dir( exePath.GetPath(), "" );
-#ifdef __WXMSW__
-            dir.AppendDir( "agent" );
-            dir.AppendDir( "prompts" );
-#else
-            dir.RemoveLastDir();
-            dir.AppendDir( "SharedSupport" );
-            dir.AppendDir( "agent" );
-            dir.AppendDir( "prompts" );
-#endif
-            promptsDir = dir.GetPath().ToStdString();
-        }
-
         // Get API socket path for MCP config
         std::string apiSocketPath;
         try
@@ -2555,10 +2527,10 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
 #endif
         }
 
-        wxLogInfo( "AGENT_FRAME: CC start - prompts=%s, socket=%s, python=%s",
-                   promptsDir.c_str(), apiSocketPath.c_str(), pythonPath.c_str() );
+        wxLogInfo( "AGENT_FRAME: CC start - socket=%s, python=%s",
+                   apiSocketPath.c_str(), pythonPath.c_str() );
 
-        m_ccController->Start( workDir.ToStdString(), promptsDir, apiSocketPath, pythonPath );
+        m_ccController->Start( workDir.ToStdString(), apiSocketPath, pythonPath );
 
         // Hide plan button in Claude Code mode (CC manages its own planning)
         m_bridge->PushPlanMode( false );

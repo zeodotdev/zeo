@@ -38,23 +38,19 @@ CC_CONTROLLER::~CC_CONTROLLER()
 }
 
 
-void CC_CONTROLLER::Start( const std::string& aWorkingDir, const std::string& aPromptsDir,
+void CC_CONTROLLER::Start( const std::string& aWorkingDir,
                            const std::string& aApiSocketPath, const std::string& aPythonPath )
 {
     m_workingDir = aWorkingDir;
-    m_promptsDir = aPromptsDir;
     m_apiSocketPath = aApiSocketPath;
     m_pythonPath = aPythonPath;
 
     // Generate MCP config for Zeo tools
     m_mcpConfigPath = GenerateMcpConfig();
 
-    // Load system prompt (core.md + addendum)
-    std::string systemPrompt = LoadSystemPrompt();
-
     m_subprocess = std::make_unique<CC_SUBPROCESS>( this );
 
-    if( !m_subprocess->Start( aWorkingDir, m_mcpConfigPath, "claude-opus-4-6", "", systemPrompt ) )
+    if( !m_subprocess->Start( aWorkingDir, m_mcpConfigPath, "claude-opus-4-6" ) )
     {
         wxLogError( "CC_CONTROLLER: Failed to start Claude Code subprocess" );
         ChatErrorData errData( "Claude Code is not installed. Install it from "
@@ -70,8 +66,8 @@ void CC_CONTROLLER::Start( const std::string& aWorkingDir, const std::string& aP
     m_toolResultCounter = 0;
     m_ccTurnCount = 0;
 
-    wxLogInfo( "CC_CONTROLLER: Started in %s (MCP config: %s, prompt: %zu bytes)",
-               aWorkingDir.c_str(), m_mcpConfigPath.c_str(), systemPrompt.size() );
+    wxLogInfo( "CC_CONTROLLER: Started in %s (MCP config: %s)",
+               aWorkingDir.c_str(), m_mcpConfigPath.c_str() );
 }
 
 
@@ -165,11 +161,9 @@ void CC_CONTROLLER::NewSession()
 {
     Cancel();
 
-    std::string systemPrompt = LoadSystemPrompt();
-
     m_subprocess = std::make_unique<CC_SUBPROCESS>( this );
 
-    if( !m_subprocess->Start( m_workingDir, m_mcpConfigPath, "claude-opus-4-6", "", systemPrompt ) )
+    if( !m_subprocess->Start( m_workingDir, m_mcpConfigPath, "claude-opus-4-6" ) )
     {
         wxLogError( "CC_CONTROLLER: Failed to start Claude Code subprocess (new session)" );
         ChatErrorData errData( "Claude Code is not installed. Install it from "
@@ -195,11 +189,9 @@ void CC_CONTROLLER::ResumeSession( const std::string& aSessionId )
 {
     Cancel();
 
-    std::string systemPrompt = LoadSystemPrompt();
-
     m_subprocess = std::make_unique<CC_SUBPROCESS>( this );
 
-    if( !m_subprocess->Start( m_workingDir, m_mcpConfigPath, "claude-opus-4-6", aSessionId, systemPrompt ) )
+    if( !m_subprocess->Start( m_workingDir, m_mcpConfigPath, "claude-opus-4-6", aSessionId ) )
     {
         wxLogError( "CC_CONTROLLER: Failed to start Claude Code subprocess (resume)" );
         ChatErrorData errData( "Claude Code is not installed. Install it from "
@@ -910,16 +902,6 @@ std::string CC_CONTROLLER::GenerateMcpConfig()
     return path;
 }
 
-
-std::string CC_CONTROLLER::LoadSystemPrompt()
-{
-    // Instructions are served by the Zeo MCP server's "zeo-instructions" prompt.
-    // We just tell Claude Code to load it on first message.
-    return "IMPORTANT: Before responding to the user's first message, you MUST load the "
-           "'zeo-instructions' MCP prompt from the 'zeo' server using the Skill tool "
-           "(skill: \"zeo:zeo-instructions\"). These instructions contain critical tool "
-           "usage guidelines. Do not skip this step.";
-}
 
 
 void CC_CONTROLLER::HandleResultMessage( const json& aMsg )

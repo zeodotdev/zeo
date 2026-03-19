@@ -2480,7 +2480,8 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
         if( envDir && envDir[0] )
         {
             wxFileName dir( wxString::FromUTF8( envDir ), "" );
-            dir.RemoveLastDir();  // python/ -> agent/
+            dir.RemoveLastDir();  // python/ -> tools/
+            dir.RemoveLastDir();  // tools/  -> agent/
             dir.AppendDir( "prompts" );
             promptsDir = dir.GetPath().ToStdString();
         }
@@ -2993,7 +2994,8 @@ void AGENT_FRAME::LoadAndSetSystemPrompt()
     if( envDir && envDir[0] )
     {
         wxFileName dir( wxString::FromUTF8( envDir ), "" );
-        dir.RemoveLastDir();  // python/ → agent/
+        dir.RemoveLastDir();  // python/ -> tools/
+        dir.RemoveLastDir();  // tools/  -> agent/
         dir.AppendDir( "prompts" );
         promptsDir = dir.GetPath().ToStdString();
     }

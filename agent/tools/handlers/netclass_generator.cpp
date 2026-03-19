@@ -75,22 +75,83 @@ void NETCLASS_GENERATOR::ExecuteAsync( const std::string& aToolName,
 
     bool apply = aInput.value( "apply", true );
 
-    wxLogInfo( "NETCLASS_GENERATOR: Starting (apply=%s)", apply ? "true" : "false" );
+    wxLogInfo( "NETCLASS_GENERATOR: Starting async (apply=%s)", apply ? "true" : "false" );
 
+    // ── Main-thread IPC: gather net names and setup data ──────────────
+    // These call ExecuteToolSync → SendRequest → ExpressMail which require
+    // the main thread.  Do them here before spawning the background thread.
+    wxLogInfo( "NETCLASS_GENERATOR: Gathering net names (main thread)..." );
+    json netData = GatherNetNames();
+
+    if( netData.contains( "error" ) )
+    {
+        ToolExecutionResult result;
+        result.tool_use_id = aToolUseId;
+        result.tool_name = aToolName;
+        result.result = netData.dump();
+        result.success = false;
+        PostToolResult( aEventHandler, result );
+        return;
+    }
+
+    json netNames = json::array();
+    if( netData.contains( "nets" ) && netData["nets"].is_array() )
+    {
+        for( const auto& net : netData["nets"] )
+        {
+            if( net.contains( "name" ) && !net["name"].get<std::string>().empty() )
+                netNames.push_back( net["name"].get<std::string>() );
+        }
+    }
+
+    if( netNames.empty() )
+    {
+        ToolExecutionResult result;
+        result.tool_use_id = aToolUseId;
+        result.tool_name = aToolName;
+        result.result = R"({"error": "No nets found in the PCB. Add components and create a netlist first."})";
+        result.success = false;
+        PostToolResult( aEventHandler, result );
+        return;
+    }
+
+    wxLogInfo( "NETCLASS_GENERATOR: Found %zu nets", netNames.size() );
+
+    wxLogInfo( "NETCLASS_GENERATOR: Gathering setup data (main thread)..." );
+    json setupData = GatherSetupData();
+
+    if( setupData.contains( "error" ) )
+    {
+        ToolExecutionResult result;
+        result.tool_use_id = aToolUseId;
+        result.tool_name = aToolName;
+        result.result = setupData.dump();
+        result.success = false;
+        PostToolResult( aEventHandler, result );
+        return;
+    }
+
+    // ── Background thread: LLM call (the slow part) ──────────────────
+    // Only the HTTP request to the LLM endpoint runs on the background thread.
+    // The apply step uses IPC and must run on the main thread via CallAfter.
     std::thread( [=, this]()
     {
-        std::string resultStr = DoGenerate( apply );
+        // Build request from pre-gathered data and call LLM endpoint
+        std::string llmResponse = BuildAndCallLLM( netNames, setupData );
 
-        bool success = false;
-        try
+        // Post back to main thread for IPC-dependent apply + result posting
+        wxTheApp->CallAfter( [=, this]()
         {
-            auto resultJson = json::parse( resultStr );
-            success = !resultJson.contains( "error" );
-        }
-        catch( ... ) {}
+            std::string resultStr = FinishGenerate( llmResponse, netNames, apply );
 
-        wxTheApp->CallAfter( [=]()
-        {
+            bool success = false;
+            try
+            {
+                auto resultJson = json::parse( resultStr );
+                success = !resultJson.contains( "error" );
+            }
+            catch( ... ) {}
+
             ToolExecutionResult result;
             result.tool_use_id = aToolUseId;
             result.tool_name = "generate_net_classes";
@@ -256,6 +317,177 @@ std::string NETCLASS_GENERATOR::DoGenerate( bool aApply )
         classesApplied = true;
 
         // Apply assignments via project-level API (through pcb_setup)
+        if( responseJson.contains( "assignments" ) && responseJson["assignments"].is_array()
+            && !responseJson["assignments"].empty() )
+        {
+            assignmentsApplied = ApplyAssignments( responseJson["assignments"] );
+
+            if( !assignmentsApplied )
+            {
+                wxLogInfo( "NETCLASS_GENERATOR: Failed to apply assignments. "
+                           "Returning assignments for manual application." );
+            }
+        }
+    }
+
+    // Step 9: Build success response
+    json result;
+    result["status"] = "success";
+    result["classes_applied"] = classesApplied;
+    result["assignments_applied"] = assignmentsApplied;
+    result["netclasses"] = responseJson["netclasses"];
+    result["assignments"] = responseJson["assignments"];
+
+    int ncCount = responseJson["netclasses"].size();
+    int assignCount = responseJson["assignments"].size();
+
+    std::string msg = "Generated " + std::to_string( ncCount ) + " net class"
+                      + ( ncCount != 1 ? "es" : "" ) + " with "
+                      + std::to_string( assignCount ) + " assignment"
+                      + ( assignCount != 1 ? "s" : "" );
+
+    if( classesApplied )
+    {
+        msg += ". Net classes applied to board";
+
+        if( assignmentsApplied )
+            msg += " and assignments applied";
+        else if( assignCount > 0 )
+            msg += ". Assignments could not be applied automatically — "
+                   "apply via Board Setup > Net Classes";
+    }
+    else
+    {
+        msg += " (preview only)";
+    }
+
+    result["message"] = msg;
+    wxLogInfo( "NETCLASS_GENERATOR: %s", msg.c_str() );
+    return result.dump( 2 );
+}
+
+
+// ---------------------------------------------------------------------------
+// BuildAndCallLLM — steps 3-7 from DoGenerate, thread-safe (no IPC)
+// ---------------------------------------------------------------------------
+std::string NETCLASS_GENERATOR::BuildAndCallLLM( const json& aNetNames,
+                                                   const json& aSetupData )
+{
+    // Step 3: Build existing net classes array
+    json existingNetclasses = json::array();
+    if( aSetupData.contains( "net_classes" ) && aSetupData["net_classes"].is_array() )
+    {
+        for( const auto& nc : aSetupData["net_classes"] )
+        {
+            json ncObj;
+            ncObj["name"] = nc.value( "name", "" );
+
+            auto addIfPresent = [&]( const char* key )
+            {
+                if( nc.contains( key ) && !nc[key].is_null() )
+                    ncObj[key] = nc[key];
+            };
+
+            addIfPresent( "clearance" );
+            addIfPresent( "track_width" );
+            addIfPresent( "via_diameter" );
+            addIfPresent( "via_drill" );
+            addIfPresent( "diff_pair_width" );
+            addIfPresent( "diff_pair_gap" );
+
+            existingNetclasses.push_back( ncObj );
+        }
+    }
+
+    // Step 4: Build existing assignments array
+    json existingAssignments = json::array();
+    if( aSetupData.contains( "net_class_assignments" )
+        && aSetupData["net_class_assignments"].is_array() )
+    {
+        for( const auto& assign : aSetupData["net_class_assignments"] )
+        {
+            json a;
+            a["pattern"] = assign.value( "pattern", "" );
+            a["netclass"] = assign.value( "netclass", "" );
+            existingAssignments.push_back( a );
+        }
+    }
+
+    // Step 5: Build design context with component data
+    json designContext = BuildDesignContext( aSetupData );
+
+    // Step 6: Build request body
+    json requestBody;
+    requestBody["net_names"] = aNetNames;
+    requestBody["existing_netclasses"] = existingNetclasses;
+    requestBody["existing_assignments"] = existingAssignments;
+    requestBody["design_context"] = designContext.dump();
+    requestBody["editor_type"] = "pcb";
+
+    wxLogInfo( "NETCLASS_GENERATOR: Calling /api/llm/netclasses with %zu nets, %zu existing classes",
+               aNetNames.size(), existingNetclasses.size() );
+
+    // Step 7: Call endpoint (HTTP — thread-safe)
+    return CallNetclassEndpoint( requestBody );
+}
+
+
+// ---------------------------------------------------------------------------
+// FinishGenerate — process LLM response + apply (main thread, uses IPC)
+// ---------------------------------------------------------------------------
+std::string NETCLASS_GENERATOR::FinishGenerate( const std::string& aLLMResponse,
+                                                  const json& aNetNames, bool aApply )
+{
+    json responseJson;
+    try
+    {
+        responseJson = json::parse( aLLMResponse );
+    }
+    catch( const std::exception& e )
+    {
+        json err;
+        err["error"] = std::string( "Failed to parse server response: " ) + e.what();
+        return err.dump();
+    }
+
+    if( responseJson.contains( "error" ) )
+    {
+        wxLogInfo( "NETCLASS_GENERATOR: Server error: %s",
+                   responseJson["error"].get<std::string>().c_str() );
+        return responseJson.dump();
+    }
+
+    wxLogInfo( "NETCLASS_GENERATOR: Got %zu net classes, %zu assignments",
+               responseJson.contains( "netclasses" ) ? responseJson["netclasses"].size() : 0,
+               responseJson.contains( "assignments" ) ? responseJson["assignments"].size() : 0 );
+
+    // Step 8: Apply if requested (IPC — must be on main thread)
+    bool classesApplied = false;
+    bool assignmentsApplied = false;
+
+    if( aApply )
+    {
+        wxLogInfo( "NETCLASS_GENERATOR: Applying net classes..." );
+        std::string applyResult = ApplyNetclasses( responseJson );
+
+        json applyJson;
+        try
+        {
+            applyJson = json::parse( applyResult );
+        }
+        catch( ... ) {}
+
+        if( applyJson.contains( "error" ) )
+        {
+            json err;
+            err["error"] = "Generated net classes but failed to apply: "
+                           + applyJson.value( "error", "unknown" );
+            err["generated"] = responseJson;
+            return err.dump();
+        }
+
+        classesApplied = true;
+
         if( responseJson.contains( "assignments" ) && responseJson["assignments"].is_array()
             && !responseJson["assignments"].empty() )
         {

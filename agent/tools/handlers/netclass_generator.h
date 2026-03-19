@@ -36,18 +36,33 @@ public:
 
 private:
     /**
-     * Full generate workflow (runs on background thread).
+     * Full generate workflow (synchronous, main thread only).
      * Returns JSON string with status/error.
      */
     std::string DoGenerate( bool aApply );
 
     /**
-     * Gather net names from pcb_get_nets.
+     * Build LLM request from pre-gathered data and call the endpoint.
+     * Thread-safe — no IPC calls.  Used by ExecuteAsync's background thread.
+     */
+    std::string BuildAndCallLLM( const nlohmann::json& aNetNames,
+                                  const nlohmann::json& aSetupData );
+
+    /**
+     * Process LLM response, optionally apply net classes (IPC), and build
+     * the final result JSON.  Must run on the main thread.
+     */
+    std::string FinishGenerate( const std::string& aLLMResponse,
+                                 const nlohmann::json& aNetNames, bool aApply );
+
+    /**
+     * Gather net names from pcb_get_nets.  Main thread only.
      */
     nlohmann::json GatherNetNames();
 
     /**
      * Gather existing net classes, assignments, and component data from pcb_setup.
+     * Main thread only.
      */
     nlohmann::json GatherSetupData();
 

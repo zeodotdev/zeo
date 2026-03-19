@@ -1587,6 +1587,10 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     {
         if( m_ccController )
         {
+            // Clear stale response before UI renders — otherwise the html update timer
+            // can flash the previous turn's text in the new streaming div.
+            m_ccController->ClearCurrentResponse();
+
             // Sync frame history into CC controller so it includes prior messages
             // (from either backend) before appending the new user message
             m_ccController->SetChatHistory( m_chatHistory );

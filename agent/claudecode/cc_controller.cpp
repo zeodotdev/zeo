@@ -913,89 +913,12 @@ std::string CC_CONTROLLER::GenerateMcpConfig()
 
 std::string CC_CONTROLLER::LoadSystemPrompt()
 {
-    if( m_promptsDir.empty() )
-        return "";
-
-    auto readFile = []( const std::string& path ) -> std::string
-    {
-        std::ifstream file( path );
-        if( !file.is_open() )
-            return "";
-
-        std::ostringstream ss;
-        ss << file.rdbuf();
-        return ss.str();
-    };
-
-    // Load core.md from the prompts directory
-    std::string prompt = readFile( m_promptsDir + "/core.md" );
-
-    if( prompt.empty() )
-    {
-        wxLogWarning( "CC_CONTROLLER: Could not load core.md from %s", m_promptsDir.c_str() );
-        return "";
-    }
-
-    // Load MCP addendum from kipy package
-    if( !m_pythonPath.empty() )
-    {
-        std::string addendum;
-
-#ifdef __WXMSW__
-        // Windows: bin/Lib/site-packages/kipy/mcp/addendum.md
-        {
-            wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
-            wxFileName siteDir( exePath.GetPath(), "" );
-            siteDir.AppendDir( "Lib" );
-            siteDir.AppendDir( "site-packages" );
-            siteDir.AppendDir( "kipy" );
-            siteDir.AppendDir( "mcp" );
-            wxString addendumPath = siteDir.GetPath() + wxFileName::GetPathSeparator() + "addendum.md";
-            addendum = readFile( addendumPath.ToStdString() );
-        }
-#else
-        // macOS: Use Python to resolve the path — handles both editable and regular installs.
-        // Must unset PYTHONHOME since the app bundle sets it for bundled Python 3.9.
-        {
-            std::string cmd = "unset PYTHONHOME PYTHONPATH; " + m_pythonPath
-                              + " -c \"import kipy.mcp, os; print(os.path.join("
-                                "os.path.dirname(kipy.mcp.__file__), 'addendum.md'))\" 2>/dev/null";
-
-            FILE* pipe = popen( cmd.c_str(), "r" );
-            if( pipe )
-            {
-                char buf[1024];
-                std::string addendumPath;
-
-                if( fgets( buf, sizeof( buf ), pipe ) )
-                {
-                    addendumPath = buf;
-                    while( !addendumPath.empty()
-                           && ( addendumPath.back() == '\n' || addendumPath.back() == '\r' ) )
-                        addendumPath.pop_back();
-                }
-
-                pclose( pipe );
-
-                if( !addendumPath.empty() )
-                    addendum = readFile( addendumPath );
-            }
-        }
-#endif
-
-        if( !addendum.empty() )
-        {
-            prompt += "\n" + addendum;
-            wxLogInfo( "CC_CONTROLLER: Appended MCP addendum (%zu bytes)", addendum.size() );
-        }
-        else
-        {
-            wxLogWarning( "CC_CONTROLLER: Could not find kipy/mcp/addendum.md" );
-        }
-    }
-
-    wxLogInfo( "CC_CONTROLLER: Loaded system prompt (%zu bytes)", prompt.size() );
-    return prompt;
+    // Instructions are served by the Zeo MCP server's "zeo-instructions" prompt.
+    // We just tell Claude Code to load it on first message.
+    return "IMPORTANT: Before responding to the user's first message, you MUST load the "
+           "'zeo-instructions' MCP prompt from the 'zeo' server using the Skill tool "
+           "(skill: \"zeo:zeo-instructions\"). These instructions contain critical tool "
+           "usage guidelines. Do not skip this step.";
 }
 
 

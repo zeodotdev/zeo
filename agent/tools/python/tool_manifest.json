@@ -1649,6 +1649,21 @@
     "deferred": false
   },
   {
+    "name": "pcb_refill_zones",
+    "description": "Refill all copper zones on the open PCB. Equivalent to pressing 'B' in KiCad. Run this after adding vias, moving components, or modifying traces to update the copper pour. Blocks until refill is complete.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "app": "pcb",
+    "script": "pcb/pcb_refill_zones.py",
+    "needs_bbox": false,
+    "read_only": false,
+    "group": "PCB",
+    "deferred": true
+  },
+  {
     "name": "pcb_run_drc",
     "description": "Run Design Rule Check (DRC) on the open PCB. Detects clearance violations, unconnected items, track/via issues, and other errors. Returns error/warning counts and violation details.",
     "input_schema": {

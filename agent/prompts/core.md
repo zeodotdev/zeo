@@ -101,8 +101,9 @@ Rotation is **counterclockwise** in degrees (0, 90, 180, 270). It rotates the en
 4. `pcb_place_companions` — place companion footprints near their associated ICs
 5. `pcb_add` — route connections (tracks, vias)
 6. `pcb_add` with zones — add copper pours
-7. `pcb_run_drc` — check for design rule violations
-8. `pcb_export` — generate manufacturing files
+7. `pcb_refill_zones` — refill all zones after any board modifications (adding vias, moving components, editing traces)
+8. `pcb_run_drc` — check for design rule violations
+9. `pcb_export` — generate manufacturing files
 
 ## Key Conventions
 

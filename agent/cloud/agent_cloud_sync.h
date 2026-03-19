@@ -82,6 +82,11 @@ private:
      * @return true on success
      */
     bool UploadToStorage( const std::string& aStoragePath, const std::string& aContent );
+    bool UploadToStorageWithToken( const std::string& aStoragePath,
+                                    const std::string& aContent,
+                                    const std::string& aAccessToken,
+                                    const std::string& aSupabaseUrl,
+                                    const std::string& aAnonKey );
 
     /**
      * Build the storage path prefix for the current user.
@@ -134,6 +139,10 @@ private:
      * @return JSON array of file objects from Supabase Storage list API.
      */
     nlohmann::json ListRemoteChats();
+    nlohmann::json ListRemoteChatsWith( const std::string& aAccessToken,
+                                         const std::string& aSupabaseUrl,
+                                         const std::string& aAnonKey,
+                                         const std::string& aPrefix );
 
     /**
      * Download a file from Supabase Storage (blocking).
@@ -142,14 +151,33 @@ private:
      * @return true on success
      */
     bool DownloadFromStorage( const std::string& aStoragePath, std::string& aContent );
+    bool DownloadFromStorageWithToken( const std::string& aStoragePath,
+                                        std::string& aContent,
+                                        const std::string& aAccessToken,
+                                        const std::string& aSupabaseUrl,
+                                        const std::string& aAnonKey );
+    void DownloadChatsWithToken( const std::string& aAccessToken,
+                                  const std::string& aSupabaseUrl,
+                                  const std::string& aAnonKey );
 
     AGENT_AUTH*        m_auth;
+    std::mutex         m_authMutex;      // Protects m_auth access across threads
     std::string        m_supabaseUrl;
     std::string        m_anonKey;
 
     nlohmann::json     m_syncState;      // Tracks uploaded files { "chats": {}, "logs": {} }
     std::mutex         m_syncStateMutex; // Protects m_syncState reads/writes
     std::atomic<bool>  m_configured;
+
+    // Snapshot auth credentials on the main thread for use by background threads.
+    // This avoids accessing m_auth from detached threads (use-after-free risk).
+    struct AuthSnapshot
+    {
+        std::string accessToken;
+        std::string email;
+        bool        valid = false;
+    };
+    AuthSnapshot SnapshotAuth();
 };
 
 #endif // AGENT_CLOUD_SYNC_H

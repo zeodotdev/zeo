@@ -39,7 +39,24 @@ void AGENT_CLOUD_SYNC::Configure( const std::string& aSupabaseUrl, const std::st
 
 void AGENT_CLOUD_SYNC::SetAuth( AGENT_AUTH* aAuth )
 {
+    std::lock_guard<std::mutex> lock( m_authMutex );
     m_auth = aAuth;
+}
+
+
+AGENT_CLOUD_SYNC::AuthSnapshot AGENT_CLOUD_SYNC::SnapshotAuth()
+{
+    std::lock_guard<std::mutex> lock( m_authMutex );
+    AuthSnapshot snap;
+
+    if( m_auth && m_auth->IsAuthenticated() )
+    {
+        snap.accessToken = m_auth->GetAccessToken();
+        snap.email = m_auth->GetUserEmail();
+        snap.valid = !snap.accessToken.empty() && !snap.email.empty();
+    }
+
+    return snap;
 }
 
 
@@ -50,7 +67,7 @@ void AGENT_CLOUD_SYNC::SetAuth( AGENT_AUTH* aAuth )
 void AGENT_CLOUD_SYNC::UploadChat( const std::string& aConversationId,
                                     const std::string& aJsonContent )
 {
-    if( !m_configured || !m_auth || !m_auth->IsAuthenticated() )
+    if( !m_configured )
         return;
 
     if( aJsonContent.empty() || aJsonContent.size() > MAX_UPLOAD_SIZE )
@@ -62,22 +79,28 @@ void AGENT_CLOUD_SYNC::UploadChat( const std::string& aConversationId,
     if( IsAlreadyUploaded( key, aJsonContent.size() ) )
         return;
 
+    // Snapshot auth on the main thread so background thread never touches m_auth
+    AuthSnapshot auth = SnapshotAuth();
+
+    if( !auth.valid )
+        return;
+
     // Capture values for the background thread
     std::string content = aJsonContent;
     std::string convId = aConversationId;
-    std::string prefix = GetUserPrefix();
+    std::string prefix = auth.email;
+    std::string supabaseUrl = m_supabaseUrl;
+    std::string anonKey = m_anonKey;
 
-    if( prefix.empty() )
-        return;
-
-    std::thread( [this, prefix, convId, content, key]()
+    std::thread( [this, prefix, convId, content, key, auth, supabaseUrl, anonKey]()
     {
         std::string storagePath = prefix + "/chats/" + convId + ".json";
 
         wxLogTrace( "Agent", "CLOUD_SYNC: Uploading chat %s (%zu bytes)",
                     convId.c_str(), content.size() );
 
-        if( UploadToStorage( storagePath, content ) )
+        if( UploadToStorageWithToken( storagePath, content, auth.accessToken,
+                                       supabaseUrl, anonKey ) )
         {
             MarkUploaded( key, content.size() );
             wxLogTrace( "Agent", "CLOUD_SYNC: Chat %s uploaded successfully", convId.c_str() );
@@ -92,7 +115,7 @@ void AGENT_CLOUD_SYNC::UploadChat( const std::string& aConversationId,
 
 void AGENT_CLOUD_SYNC::UploadLog( const std::string& aLogFilePath )
 {
-    if( !m_configured || !m_auth || !m_auth->IsAuthenticated() )
+    if( !m_configured )
         return;
 
     wxFileName fn( wxString::FromUTF8( aLogFilePath ) );
@@ -123,19 +146,25 @@ void AGENT_CLOUD_SYNC::UploadLog( const std::string& aLogFilePath )
     if( IsAlreadyUploaded( key, content.size() ) )
         return;
 
-    std::string prefix = GetUserPrefix();
+    // Snapshot auth on the main thread so background thread never touches m_auth
+    AuthSnapshot auth = SnapshotAuth();
 
-    if( prefix.empty() )
+    if( !auth.valid )
         return;
 
-    std::thread( [this, prefix, filename, content, key]()
+    std::string prefix = auth.email;
+    std::string supabaseUrl = m_supabaseUrl;
+    std::string anonKey = m_anonKey;
+
+    std::thread( [this, prefix, filename, content, key, auth, supabaseUrl, anonKey]()
     {
         std::string storagePath = prefix + "/logs/" + filename;
 
         wxLogTrace( "Agent", "CLOUD_SYNC: Uploading log %s (%zu bytes)",
                     filename.c_str(), content.size() );
 
-        if( UploadToStorage( storagePath, content ) )
+        if( UploadToStorageWithToken( storagePath, content, auth.accessToken,
+                                       supabaseUrl, anonKey ) )
         {
             MarkUploaded( key, content.size() );
             wxLogTrace( "Agent", "CLOUD_SYNC: Log %s uploaded successfully", filename.c_str() );
@@ -150,15 +179,20 @@ void AGENT_CLOUD_SYNC::UploadLog( const std::string& aLogFilePath )
 
 void AGENT_CLOUD_SYNC::SyncAll()
 {
-    if( !m_configured || !m_auth || !m_auth->IsAuthenticated() )
+    if( !m_configured )
         return;
 
-    std::string prefix = GetUserPrefix();
+    // Snapshot auth on the main thread so background thread never touches m_auth
+    AuthSnapshot auth = SnapshotAuth();
 
-    if( prefix.empty() )
+    if( !auth.valid )
         return;
 
-    std::thread( [this, prefix]()
+    std::string prefix = auth.email;
+    std::string supabaseUrl = m_supabaseUrl;
+    std::string anonKey = m_anonKey;
+
+    std::thread( [this, prefix, auth, supabaseUrl, anonKey]()
     {
         wxLogTrace( "Agent", "CLOUD_SYNC: Starting full sync for %s", prefix.c_str() );
 
@@ -190,7 +224,8 @@ void AGENT_CLOUD_SYNC::SyncAll()
                     wxLogTrace( "Agent", "CLOUD_SYNC: Syncing chat %s (%zu bytes)",
                                 convId.c_str(), content.size() );
 
-                    if( UploadToStorage( storagePath, content ) )
+                    if( UploadToStorageWithToken( storagePath, content, auth.accessToken,
+                                                   supabaseUrl, anonKey ) )
                     {
                         MarkUploaded( key, content.size() );
                     }
@@ -233,7 +268,8 @@ void AGENT_CLOUD_SYNC::SyncAll()
                         wxLogTrace( "Agent", "CLOUD_SYNC: Syncing log %s (%zu bytes)",
                                     fname.c_str(), content.size() );
 
-                        if( UploadToStorage( storagePath, content ) )
+                        if( UploadToStorageWithToken( storagePath, content, auth.accessToken,
+                                                       supabaseUrl, anonKey ) )
                         {
                             MarkUploaded( key, content.size() );
                         }
@@ -245,7 +281,7 @@ void AGENT_CLOUD_SYNC::SyncAll()
         }
 
         // 3. Download remote-only chats to local storage
-        DownloadChats();
+        DownloadChatsWithToken( auth.accessToken, supabaseUrl, anonKey );
 
         wxLogTrace( "Agent", "CLOUD_SYNC: Full sync complete" );
     } ).detach();
@@ -259,25 +295,37 @@ void AGENT_CLOUD_SYNC::SyncAll()
 bool AGENT_CLOUD_SYNC::UploadToStorage( const std::string& aStoragePath,
                                          const std::string& aContent )
 {
-    if( !m_auth )
+    // Main-thread version: snapshot auth and delegate
+    AuthSnapshot auth = SnapshotAuth();
+
+    if( !auth.valid )
         return false;
 
-    std::string accessToken = m_auth->GetAccessToken();
+    return UploadToStorageWithToken( aStoragePath, aContent, auth.accessToken,
+                                     m_supabaseUrl, m_anonKey );
+}
 
-    if( accessToken.empty() )
+
+bool AGENT_CLOUD_SYNC::UploadToStorageWithToken( const std::string& aStoragePath,
+                                                   const std::string& aContent,
+                                                   const std::string& aAccessToken,
+                                                   const std::string& aSupabaseUrl,
+                                                   const std::string& aAnonKey )
+{
+    if( aAccessToken.empty() )
         return false;
 
     // Supabase Storage REST API:
     // PUT /storage/v1/object/{bucket}/{path}
-    std::string url = m_supabaseUrl + "/storage/v1/object/" + BUCKET_NAME + "/" + aStoragePath;
+    std::string url = aSupabaseUrl + "/storage/v1/object/" + BUCKET_NAME + "/" + aStoragePath;
 
     try
     {
         KICAD_CURL_EASY curl;
         curl.SetURL( url );
         curl.SetFollowRedirects( true );
-        curl.SetHeader( "Authorization", "Bearer " + accessToken );
-        curl.SetHeader( "apikey", m_anonKey );
+        curl.SetHeader( "Authorization", "Bearer " + aAccessToken );
+        curl.SetHeader( "apikey", aAnonKey );
         curl.SetHeader( "Content-Type", "application/octet-stream" );
         curl.SetHeader( "x-upsert", "true" );
         curl.SetPostFields( aContent );
@@ -311,6 +359,8 @@ bool AGENT_CLOUD_SYNC::UploadToStorage( const std::string& aStoragePath,
 
 std::string AGENT_CLOUD_SYNC::GetUserPrefix()
 {
+    std::lock_guard<std::mutex> lock( m_authMutex );
+
     if( !m_auth )
         return "";
 
@@ -491,9 +541,23 @@ bool AGENT_CLOUD_SYNC::ReadFile( const std::string& aPath, std::string& aContent
 
 void AGENT_CLOUD_SYNC::DownloadChats()
 {
-    if( !m_configured || !m_auth || !m_auth->IsAuthenticated() )
+    AuthSnapshot auth = SnapshotAuth();
+
+    if( !auth.valid )
         return;
 
+    DownloadChatsWithToken( auth.accessToken, m_supabaseUrl, m_anonKey );
+}
+
+
+void AGENT_CLOUD_SYNC::DownloadChatsWithToken( const std::string& aAccessToken,
+                                                 const std::string& aSupabaseUrl,
+                                                 const std::string& aAnonKey )
+{
+    if( !m_configured || aAccessToken.empty() )
+        return;
+
+    // Use SnapshotAuth for prefix (email) — safe, uses mutex
     std::string prefix = GetUserPrefix();
 
     if( prefix.empty() )
@@ -502,7 +566,7 @@ void AGENT_CLOUD_SYNC::DownloadChats()
     wxLogTrace( "Agent", "CLOUD_SYNC: Checking for remote-only chats" );
 
     // 1. List remote chat files
-    json remoteFiles = ListRemoteChats();
+    json remoteFiles = ListRemoteChatsWith( aAccessToken, aSupabaseUrl, aAnonKey, prefix );
 
     if( remoteFiles.empty() || !remoteFiles.is_array() )
         return;
@@ -564,7 +628,9 @@ void AGENT_CLOUD_SYNC::DownloadChats()
         std::string storagePath = prefix + "/chats/" + remoteName;
         std::string content;
 
-        if( DownloadFromStorage( storagePath, content ) && !content.empty() )
+        if( DownloadFromStorageWithToken( storagePath, content, aAccessToken,
+                                           aSupabaseUrl, aAnonKey )
+            && !content.empty() )
         {
             std::string localPath = chatDir + "/" + remoteName;
             std::ofstream outFile( localPath, std::ios::binary );
@@ -594,25 +660,29 @@ void AGENT_CLOUD_SYNC::DownloadChats()
 
 json AGENT_CLOUD_SYNC::ListRemoteChats()
 {
-    if( !m_auth )
+    AuthSnapshot auth = SnapshotAuth();
+
+    if( !auth.valid )
         return json::array();
 
-    std::string accessToken = m_auth->GetAccessToken();
+    return ListRemoteChatsWith( auth.accessToken, m_supabaseUrl, m_anonKey, auth.email );
+}
 
-    if( accessToken.empty() )
-        return json::array();
 
-    std::string prefix = GetUserPrefix();
-
-    if( prefix.empty() )
+json AGENT_CLOUD_SYNC::ListRemoteChatsWith( const std::string& aAccessToken,
+                                              const std::string& aSupabaseUrl,
+                                              const std::string& aAnonKey,
+                                              const std::string& aPrefix )
+{
+    if( aAccessToken.empty() || aPrefix.empty() )
         return json::array();
 
     // Supabase Storage list API:
     // POST /storage/v1/object/list/{bucket}
-    std::string url = m_supabaseUrl + "/storage/v1/object/list/" + BUCKET_NAME;
+    std::string url = aSupabaseUrl + "/storage/v1/object/list/" + BUCKET_NAME;
 
     json body;
-    body["prefix"] = prefix + "/chats/";
+    body["prefix"] = aPrefix + "/chats/";
     body["limit"] = 1000;
 
     try
@@ -620,8 +690,8 @@ json AGENT_CLOUD_SYNC::ListRemoteChats()
         KICAD_CURL_EASY curl;
         curl.SetURL( url );
         curl.SetFollowRedirects( true );
-        curl.SetHeader( "Authorization", "Bearer " + accessToken );
-        curl.SetHeader( "apikey", m_anonKey );
+        curl.SetHeader( "Authorization", "Bearer " + aAccessToken );
+        curl.SetHeader( "apikey", aAnonKey );
         curl.SetHeader( "Content-Type", "application/json" );
         curl.SetPostFields( body.dump() );
         curl.Perform();
@@ -650,25 +720,36 @@ json AGENT_CLOUD_SYNC::ListRemoteChats()
 bool AGENT_CLOUD_SYNC::DownloadFromStorage( const std::string& aStoragePath,
                                              std::string& aContent )
 {
-    if( !m_auth )
+    AuthSnapshot auth = SnapshotAuth();
+
+    if( !auth.valid )
         return false;
 
-    std::string accessToken = m_auth->GetAccessToken();
+    return DownloadFromStorageWithToken( aStoragePath, aContent, auth.accessToken,
+                                         m_supabaseUrl, m_anonKey );
+}
 
-    if( accessToken.empty() )
+
+bool AGENT_CLOUD_SYNC::DownloadFromStorageWithToken( const std::string& aStoragePath,
+                                                       std::string& aContent,
+                                                       const std::string& aAccessToken,
+                                                       const std::string& aSupabaseUrl,
+                                                       const std::string& aAnonKey )
+{
+    if( aAccessToken.empty() )
         return false;
 
     // Supabase Storage download:
     // GET /storage/v1/object/{bucket}/{path}
-    std::string url = m_supabaseUrl + "/storage/v1/object/" + BUCKET_NAME + "/" + aStoragePath;
+    std::string url = aSupabaseUrl + "/storage/v1/object/" + BUCKET_NAME + "/" + aStoragePath;
 
     try
     {
         KICAD_CURL_EASY curl;
         curl.SetURL( url );
         curl.SetFollowRedirects( true );
-        curl.SetHeader( "Authorization", "Bearer " + accessToken );
-        curl.SetHeader( "apikey", m_anonKey );
+        curl.SetHeader( "Authorization", "Bearer " + aAccessToken );
+        curl.SetHeader( "apikey", aAnonKey );
         curl.Perform();
 
         long httpCode = curl.GetResponseStatusCode();

@@ -1090,6 +1090,12 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
         {
             response["sheets"] = nlohmann::json::array();
             SCH_SHEET_LIST sheets = Schematic().Hierarchy();
+
+            // Include the user's currently active sheet so the agent can sync to it
+            const SCH_SHEET_PATH& currentSheet = GetCurrentSheet();
+            response["current_sheet"] = currentSheet.PathHumanReadable().ToStdString();
+            response["current_sheet_uuid"] = currentSheet.Last()->m_Uuid.AsStdString();
+
             for( const SCH_SHEET_PATH& sheet : sheets )
             {
                 nlohmann::json entry;

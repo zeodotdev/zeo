@@ -28,6 +28,7 @@
 #include <kiplatform/environment.h>
 #include <kiplatform/ui.h>
 #include <frame_type.h>
+#include <algorithm>
 #include <sstream>
 #include <fstream>
 #include <set>
@@ -1654,9 +1655,49 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
     // Configure LLM client with selected model
     m_llmClient->SetModel( m_currentModel );
 
-    // Reset target sheet for new conversation turn
-    std::string emptyPayload;
-    Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_RESET_TARGET_SHEET, emptyPayload );
+    // Sync agent target sheet with the user's current sheet on first message,
+    // reset on subsequent messages so the agent can navigate freely
+    {
+        bool isFirstMessage = m_chatHistory.empty()
+                              || std::none_of( m_chatHistory.begin(), m_chatHistory.end(),
+                                               []( const nlohmann::json& msg )
+                                               {
+                                                   return msg.value( "role", "" ) == "user";
+                                               } );
+
+        if( isFirstMessage )
+        {
+            // Query the user's current sheet from the schematic editor and set it as target
+            try
+            {
+                std::string resp = SendRequest( FRAME_SCH, "get_sch_sheets" );
+                if( !resp.empty() )
+                {
+                    auto respJson = nlohmann::json::parse( resp, nullptr, false );
+                    if( !respJson.is_discarded() && respJson.contains( "current_sheet_uuid" ) )
+                    {
+                        nlohmann::json payload;
+                        payload["sheet_uuid"] = respJson["current_sheet_uuid"];
+                        std::string payloadStr = payload.dump();
+
+                        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_TARGET_SHEET, payloadStr );
+
+                        wxLogInfo( "AGENT_FRAME: Synced target sheet to user's current sheet: %s",
+                                   respJson.value( "current_sheet", "unknown" ) );
+                    }
+                }
+            }
+            catch( const std::exception& e )
+            {
+                wxLogInfo( "AGENT_FRAME: Failed to sync target sheet on first msg: %s", e.what() );
+            }
+        }
+        else
+        {
+            std::string emptyPayload;
+            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_RESET_TARGET_SHEET, emptyPayload );
+        }
+    }
 
     // Send message via controller (handles history, starts LLM request)
     if( m_chatController )

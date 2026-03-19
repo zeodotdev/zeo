@@ -5159,7 +5159,7 @@ void SCH_EDIT_FRAME::RefreshWiringGuides()
 
     int total, completed;
     m_wiringGuideManager->GetProgress( total, completed );
-    wxLogMessage( "WIRING_GUIDE: After scan: %d total guides, %d completed, %d active",
+    wxLogMessage( "WIRING_GUIDE: After scan: %d total guides, %d completed, %zu active",
                   total, completed, m_wiringGuideManager->GetActiveGuides().size() );
 
     // Refresh the canvas to show updated guides

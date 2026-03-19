@@ -392,10 +392,8 @@ schematic::types::SchematicLayer ToProtoEnum( SCH_LAYER_ID aValue )
 {
     switch( aValue )
     {
-
     default:
-        wxCHECK_MSG( false, schematic::types::SchematicLayer::SL_UNKNOWN,
-                     "Unhandled case in ToProtoEnum<SCH_LAYER_ID>");
+        return schematic::types::SchematicLayer::SL_UNKNOWN;
     }
 }
 

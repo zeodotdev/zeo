@@ -219,15 +219,22 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
     if( m_gal->IsContextLocked() )
         return false;
 
-    // Recovery paint: bypass IsInitialized()/IsVisible() which both check
-    // IsShownOnScreen().  On X11 without a compositor the window may report
-    // as not visible even after the activate event because the exposure
-    // hasn't fully processed.  The GAL context is still valid (it was
-    // initialized before the window was obscured), so rendering will succeed
-    // and the result appears once the window is actually exposed.
+    // Recovery paint: bypass IsVisible() (which checks IsShownOnScreen()).
+    // On X11 without a compositor the window may report as not visible even
+    // after the activate event because the exposure hasn't fully processed.
+    // The GAL context is still valid (it was initialized before the window
+    // was obscured), so rendering will succeed and the result appears once
+    // the window is actually exposed.
+    //
+    // We still require IsInitialized() even during recovery paint — the
+    // activate event can fire during initial window construction (e.g. via
+    // wxYieldFor in a progress reporter) before the GAL has been set up.
+    if( !m_gal->IsInitialized() )
+        return false;
+
     if( !m_needRecoveryPaint )
     {
-        if( !m_gal->IsInitialized() || !m_gal->IsVisible() )
+        if( !m_gal->IsVisible() )
             return false;
     }
 

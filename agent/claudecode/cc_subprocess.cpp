@@ -316,6 +316,40 @@ CC_SUBPROCESS::ReaderThread::ReaderThread( CC_SUBPROCESS* aOwner,
 }
 
 
+void CC_SUBPROCESS::ReaderThread::PostLines( std::string& aBuf, wxEventType aType,
+                                              bool aFlushPartial )
+{
+    size_t pos;
+
+    while( ( pos = aBuf.find( '\n' ) ) != std::string::npos )
+    {
+        std::string line = aBuf.substr( 0, pos );
+        aBuf.erase( 0, pos + 1 );
+
+        if( !line.empty() )
+        {
+            if( aType == EVT_CC_ERROR )
+                wxLogInfo( "CC_SUBPROCESS stderr: %s", line.c_str() );
+
+            wxThreadEvent* evt = new wxThreadEvent( aType );
+            evt->SetString( wxString::FromUTF8( line.c_str(), line.size() ) );
+            wxQueueEvent( m_owner->m_eventSink, evt );
+        }
+    }
+
+    if( aFlushPartial && !aBuf.empty() )
+    {
+        if( aType == EVT_CC_ERROR )
+            wxLogInfo( "CC_SUBPROCESS stderr: %s", aBuf.c_str() );
+
+        wxThreadEvent* evt = new wxThreadEvent( aType );
+        evt->SetString( wxString::FromUTF8( aBuf.c_str(), aBuf.size() ) );
+        wxQueueEvent( m_owner->m_eventSink, evt );
+        aBuf.clear();
+    }
+}
+
+
 wxThread::ExitCode CC_SUBPROCESS::ReaderThread::Entry()
 {
     std::string stdoutBuf;
@@ -339,22 +373,7 @@ wxThread::ExitCode CC_SUBPROCESS::ReaderThread::Entry()
                 {
                     stdoutBuf.append( buf, bytesRead );
                     didWork = true;
-
-                    // Extract complete NDJSON lines
-                    size_t pos;
-
-                    while( ( pos = stdoutBuf.find( '\n' ) ) != std::string::npos )
-                    {
-                        std::string line = stdoutBuf.substr( 0, pos );
-                        stdoutBuf.erase( 0, pos + 1 );
-
-                        if( !line.empty() )
-                        {
-                            wxThreadEvent* evt = new wxThreadEvent( EVT_CC_LINE );
-                            evt->SetString( wxString::FromUTF8( line.c_str(), line.size() ) );
-                            wxQueueEvent( m_owner->m_eventSink, evt );
-                        }
-                    }
+                    PostLines( stdoutBuf, EVT_CC_LINE );
                 }
             }
             else if( !PeekNamedPipe( m_stdoutRead, NULL, 0, NULL, &avail, NULL ) )
@@ -376,23 +395,7 @@ wxThread::ExitCode CC_SUBPROCESS::ReaderThread::Entry()
                 {
                     stderrBuf.append( buf, bytesRead );
                     didWork = true;
-
-                    size_t pos;
-
-                    while( ( pos = stderrBuf.find( '\n' ) ) != std::string::npos )
-                    {
-                        std::string line = stderrBuf.substr( 0, pos );
-                        stderrBuf.erase( 0, pos + 1 );
-
-                        if( !line.empty() )
-                        {
-                            wxLogInfo( "CC_SUBPROCESS stderr: %s", line.c_str() );
-
-                            wxThreadEvent* evt = new wxThreadEvent( EVT_CC_ERROR );
-                            evt->SetString( wxString::FromUTF8( line.c_str(), line.size() ) );
-                            wxQueueEvent( m_owner->m_eventSink, evt );
-                        }
-                    }
+                    PostLines( stderrBuf, EVT_CC_ERROR );
                 }
             }
             else if( !PeekNamedPipe( m_stderrRead, NULL, 0, NULL, &avail, NULL ) )
@@ -412,7 +415,7 @@ wxThread::ExitCode CC_SUBPROCESS::ReaderThread::Entry()
             if( GetExitCodeProcess( m_owner->m_hProcess, &exitCode )
                 && exitCode != STILL_ACTIVE )
             {
-                // Drain remaining data
+                // Drain remaining stdout
                 if( m_stdoutRead )
                 {
                     while( ReadFile( m_stdoutRead, buf, sizeof( buf ) - 1, &bytesRead, NULL )
@@ -421,20 +424,19 @@ wxThread::ExitCode CC_SUBPROCESS::ReaderThread::Entry()
                         stdoutBuf.append( buf, bytesRead );
                     }
 
-                    size_t pos;
+                    PostLines( stdoutBuf, EVT_CC_LINE, true );
+                }
 
-                    while( ( pos = stdoutBuf.find( '\n' ) ) != std::string::npos )
+                // Drain remaining stderr
+                if( m_stderrRead )
+                {
+                    while( ReadFile( m_stderrRead, buf, sizeof( buf ) - 1, &bytesRead, NULL )
+                           && bytesRead > 0 )
                     {
-                        std::string line = stdoutBuf.substr( 0, pos );
-                        stdoutBuf.erase( 0, pos + 1 );
-
-                        if( !line.empty() )
-                        {
-                            wxThreadEvent* evt = new wxThreadEvent( EVT_CC_LINE );
-                            evt->SetString( wxString::FromUTF8( line.c_str(), line.size() ) );
-                            wxQueueEvent( m_owner->m_eventSink, evt );
-                        }
+                        stderrBuf.append( buf, bytesRead );
                     }
+
+                    PostLines( stderrBuf, EVT_CC_ERROR, true );
                 }
 
                 break;
@@ -731,6 +733,40 @@ CC_SUBPROCESS::ReaderThread::ReaderThread( CC_SUBPROCESS* aOwner, int aStdoutFd,
 }
 
 
+void CC_SUBPROCESS::ReaderThread::PostLines( std::string& aBuf, wxEventType aType,
+                                              bool aFlushPartial )
+{
+    size_t pos;
+
+    while( ( pos = aBuf.find( '\n' ) ) != std::string::npos )
+    {
+        std::string line = aBuf.substr( 0, pos );
+        aBuf.erase( 0, pos + 1 );
+
+        if( !line.empty() )
+        {
+            if( aType == EVT_CC_ERROR )
+                wxLogInfo( "CC_SUBPROCESS stderr: %s", line.c_str() );
+
+            wxThreadEvent* evt = new wxThreadEvent( aType );
+            evt->SetString( wxString::FromUTF8( line.c_str(), line.size() ) );
+            wxQueueEvent( m_owner->m_eventSink, evt );
+        }
+    }
+
+    if( aFlushPartial && !aBuf.empty() )
+    {
+        if( aType == EVT_CC_ERROR )
+            wxLogInfo( "CC_SUBPROCESS stderr: %s", aBuf.c_str() );
+
+        wxThreadEvent* evt = new wxThreadEvent( aType );
+        evt->SetString( wxString::FromUTF8( aBuf.c_str(), aBuf.size() ) );
+        wxQueueEvent( m_owner->m_eventSink, evt );
+        aBuf.clear();
+    }
+}
+
+
 wxThread::ExitCode CC_SUBPROCESS::ReaderThread::Entry()
 {
     struct pollfd fds[2] = {
@@ -765,25 +801,10 @@ wxThread::ExitCode CC_SUBPROCESS::ReaderThread::Entry()
             if( n > 0 )
             {
                 stdoutBuf.append( buf, n );
-
-                // Extract complete lines (NDJSON: one JSON object per line)
-                size_t pos;
-                while( ( pos = stdoutBuf.find( '\n' ) ) != std::string::npos )
-                {
-                    std::string line = stdoutBuf.substr( 0, pos );
-                    stdoutBuf.erase( 0, pos + 1 );
-
-                    if( !line.empty() )
-                    {
-                        wxThreadEvent* evt = new wxThreadEvent( EVT_CC_LINE );
-                        evt->SetString( wxString::FromUTF8( line.c_str(), line.size() ) );
-                        wxQueueEvent( m_owner->m_eventSink, evt );
-                    }
-                }
+                PostLines( stdoutBuf, EVT_CC_LINE );
             }
             else if( n == 0 )
             {
-                // EOF on stdout
                 close( fds[0].fd );
                 fds[0].fd = -1;
                 activeFds--;
@@ -798,23 +819,7 @@ wxThread::ExitCode CC_SUBPROCESS::ReaderThread::Entry()
             if( n > 0 )
             {
                 stderrBuf.append( buf, n );
-
-                // Post stderr lines
-                size_t pos;
-                while( ( pos = stderrBuf.find( '\n' ) ) != std::string::npos )
-                {
-                    std::string line = stderrBuf.substr( 0, pos );
-                    stderrBuf.erase( 0, pos + 1 );
-
-                    if( !line.empty() )
-                    {
-                        wxLogInfo( "CC_SUBPROCESS stderr: %s", line.c_str() );
-
-                        wxThreadEvent* evt = new wxThreadEvent( EVT_CC_ERROR );
-                        evt->SetString( wxString::FromUTF8( line.c_str(), line.size() ) );
-                        wxQueueEvent( m_owner->m_eventSink, evt );
-                    }
-                }
+                PostLines( stderrBuf, EVT_CC_ERROR );
             }
             else if( n == 0 )
             {

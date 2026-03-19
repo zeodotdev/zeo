@@ -270,7 +270,7 @@ void* LLM_REQUEST_THREAD::Entry()
     }
 
     // Set up curl options - use zeo proxy
-    curl_easy_setopt( curl, CURLOPT_URL, ZEO_API_URL );
+    curl_easy_setopt( curl, CURLOPT_URL, ZEO_API_URL.c_str() );
     curl_easy_setopt( curl, CURLOPT_POST, 1L );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDS, requestBodyStr.c_str() );
     curl_easy_setopt( curl, CURLOPT_POSTFIELDSIZE, requestBodyStr.size() );

@@ -57,6 +57,8 @@ private:
         wxThread::ExitCode Entry() override;
 
     private:
+        void PostLines( std::string& aBuf, wxEventType aType, bool aFlushPartial = false );
+
         CC_SUBPROCESS* m_owner;
         HANDLE         m_stdoutRead;
         HANDLE         m_stderrRead;
@@ -77,6 +79,8 @@ private:
         wxThread::ExitCode Entry() override;
 
     private:
+        void PostLines( std::string& aBuf, wxEventType aType, bool aFlushPartial = false );
+
         CC_SUBPROCESS* m_owner;
         int            m_stdoutFd;
         int            m_stderrFd;

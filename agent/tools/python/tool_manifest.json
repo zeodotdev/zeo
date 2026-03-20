@@ -1838,49 +1838,6 @@
     "deferred": false
   },
   {
-    "name": "pcb_place_companions",
-    "description": "Place companion footprints (bypass caps, pull-up/down resistors, filter caps) near their associated IC on the PCB. Uses net connectivity to identify which companion pads connect to which IC pads, then finds optimal positions minimizing ratsnest distance.",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "ic_ref": {
-          "type": "string",
-          "description": "Reference designator of the IC to place companions near (e.g., 'U1')"
-        },
-        "companions": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "ref": {
-                "type": "string",
-                "description": "Reference designator of the companion footprint (e.g., 'C1', 'R3')"
-              },
-              "angle": {
-                "type": "number",
-                "description": "Optional rotation angle in degrees (0, 90, 180, 270)"
-              }
-            },
-            "required": [
-              "ref"
-            ]
-          },
-          "description": "Array of companion footprints to place near the IC"
-        }
-      },
-      "required": [
-        "ic_ref",
-        "companions"
-      ]
-    },
-    "app": "pcb",
-    "script": "pcb/pcb_place_companions.py",
-    "needs_bbox": true,
-    "read_only": false,
-    "group": "PCB",
-    "deferred": false
-  },
-  {
     "name": "pcb_add",
     "description": "Add elements to the PCB. Accepts an array of elements - use for single or batch operations. Returns IDs for all created elements.",
     "input_schema": {

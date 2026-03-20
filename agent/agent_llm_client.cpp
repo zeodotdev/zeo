@@ -179,6 +179,9 @@ void* LLM_REQUEST_THREAD::Entry()
     // Map display name to API model ID
     std::string apiModel = "claude-opus-4-6";
 
+    if( m_model == "Claude 4.6 Sonnet" )
+        apiModel = "claude-sonnet-4-6";
+
     json requestBody;
     requestBody["model"] = apiModel;
     requestBody["messages"] = m_messages;

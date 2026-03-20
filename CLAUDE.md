@@ -58,6 +58,10 @@ Tools follow a layered architecture:
 
 For detailed process on adding/updating tools, see `/zeo-python/CLAUDE.md`
 
+## LLM Models
+
+The agent supports multiple Claude models. **Opus (`claude-opus-4-6`) is the preferred model** — all testing and development is done against Opus. Sonnet (`claude-sonnet-4-6`) is available as a cheaper alternative but has not been fully validated for EDA tool-calling competency.
+
 ## Lint / LSP Errors
 
 Ignore clang LSP diagnostic errors. The LSP cannot resolve CMake include paths, so it reports false positives (e.g. `'nlohmann/json.hpp' file not found`). If the build script succeeds, the code is correct.

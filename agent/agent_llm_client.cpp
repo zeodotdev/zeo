@@ -177,25 +177,18 @@ void* LLM_REQUEST_THREAD::Entry()
     }
 
     // Map display name to API model ID
-    std::string apiModel;
-    if( m_model == "Gemini 3.1 Pro" )
-        apiModel = "gemini-3.1-pro-preview-customtools";
-    else
-        apiModel = "claude-opus-4-6";
+    std::string apiModel = "claude-opus-4-6";
 
     json requestBody;
     requestBody["model"] = apiModel;
     requestBody["messages"] = m_messages;
     requestBody["stream"] = true;
 
-    // Set max_tokens for Anthropic models (Gemini doesn't need it — proxy handles)
-    if( apiModel.find( "gemini" ) == std::string::npos )
-    {
-        if( apiModel.find( "claude-opus-4-6" ) == 0 )
-            requestBody["max_tokens"] = 128000;
-        else
-            requestBody["max_tokens"] = 131072;
-    }
+    // Set max_tokens
+    if( apiModel.find( "claude-opus-4-6" ) == 0 )
+        requestBody["max_tokens"] = 128000;
+    else
+        requestBody["max_tokens"] = 131072;
 
     // Signal agent mode and conversation metadata to server
     // (proxy strips these before forwarding to LLM provider)

@@ -92,19 +92,17 @@ try:
 
     # Handle sheet_path - can be '/' for root, or '/uuid1/uuid2' format, or sheet name
     if sheet_path:
-        if sheet_path == '/':
-            # Navigate to root sheet
-            if hasattr(sch.sheets, 'navigate_to_root'):
-                sch.sheets.navigate_to_root()
-                navigated = True
-            elif hasattr(sch.sheets, 'leave') and hasattr(sch.sheets, 'get_current_path'):
-                # Leave all sheets until at root
-                while True:
-                    path = sch.sheets.get_current_path() if hasattr(sch.sheets, 'get_current_path') else '/'
-                    if path == '/' or not hasattr(sch.sheets, 'leave'):
-                        break
-                    sch.sheets.leave()
-                navigated = True
+        if sheet_path == '/' or sheet_path.lower() == 'root':
+            # Navigate to root sheet using the hierarchy root node's path
+            if hierarchy_nodes:
+                # First node is the root (empty name, path '/')
+                root_node = hierarchy_nodes[0][0]
+                if hasattr(root_node, 'path') and root_node.path and hasattr(sch.sheets, 'navigate_to'):
+                    try:
+                        sch.sheets.navigate_to(root_node.path)
+                        navigated = True
+                    except Exception as e:
+                        tool_log(f'[sch_switch_sheet] navigate_to root failed: {e}')
             target_info = {'name': 'Root', 'file': '', 'sheet_path': '/'}
         elif sheet_path.startswith('/'):
             # Path format - could be '/uuid1/uuid2' or '/name' or '/name/'

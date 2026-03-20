@@ -1264,7 +1264,7 @@
   },
   {
     "name": "sch_update_sheet",
-    "description": "Update a hierarchical sheet symbol. Can resize and reposition sheets.",
+    "description": "Update a hierarchical sheet symbol. Can resize and reposition sheets. IMPORTANT: You must be on the parent sheet that contains the sheet symbol (use sch_switch_sheet to navigate first).",
     "input_schema": {
       "type": "object",
       "properties": {

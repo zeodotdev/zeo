@@ -1392,7 +1392,9 @@ App.Chat = (function() {
             if (href && href !== '#') {
                 e.preventDefault();
                 // Agent action buttons: show loading state immediately on click
-                if (href.startsWith('agent:') && target.tagName === 'A') {
+                // Skip instant actions (open_simulator) that don't replace the button
+                if (href.startsWith('agent:') && target.tagName === 'A'
+                    && href !== 'agent:open_simulator') {
                     var origText = target.textContent;
                     target.style.pointerEvents = 'none';
                     target.style.opacity = '0.7';

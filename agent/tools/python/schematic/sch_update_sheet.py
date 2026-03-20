@@ -1,4 +1,4 @@
-import json
+import json, sys
 from kipy.geometry import Vector2
 
 refresh_or_fail(sch)
@@ -7,7 +7,33 @@ target = TOOL_ARGS.get("target", "")
 new_size = TOOL_ARGS.get("size", None)
 new_pos = TOOL_ARGS.get("position", None)
 
-# Find the sheet by name
+# Use hierarchy to find the target sheet's parent, then navigate there
+# so get_sheets() can see the sheet symbol regardless of current location.
+def _find_parent_path(node, target_name, parent_path=None):
+    """Recursively search hierarchy for target sheet, return parent's path."""
+    name = getattr(node, 'name', '') or ''
+    if name == target_name and parent_path is not None:
+        return parent_path
+    node_path = getattr(node, 'path', None)
+    if hasattr(node, 'children'):
+        for child in node.children:
+            found = _find_parent_path(child, target_name, node_path)
+            if found is not None:
+                return found
+    return None
+
+parent_nav_path = None
+if hasattr(sch.sheets, 'get_hierarchy') and hasattr(sch.sheets, 'navigate_to'):
+    try:
+        hierarchy = sch.sheets.get_hierarchy()
+        parent_nav_path = _find_parent_path(hierarchy, target)
+        if parent_nav_path is not None:
+            tool_log(f'[sch_update_sheet] Navigating to parent sheet of "{target}"')
+            sch.sheets.navigate_to(parent_nav_path)
+    except Exception as e:
+        tool_log(f'[sch_update_sheet] Hierarchy navigation failed: {e}')
+
+# Find the sheet by name on the current (now parent) sheet
 sheet = None
 for _s in sch.crud.get_sheets():
     if _s.name == target:
@@ -15,8 +41,8 @@ for _s in sch.crud.get_sheets():
         break
 
 if not sheet:
-    print(json.dumps({'status': 'error', 'message': f'Sheet not found: {target}'}))
-    import sys; sys.exit(0)
+    print(json.dumps({'status': 'error', 'message': f'Sheet not found: {target}. Make sure the sheet exists in the hierarchy.'}))
+    sys.exit(0)
 
 changed = False
 
@@ -86,7 +112,7 @@ if isinstance(new_size, list) and len(new_size) >= 2:
 
 if not changed:
     print(json.dumps({'status': 'error', 'message': 'No size or position provided'}))
-    import sys; sys.exit(0)
+    sys.exit(0)
 
 # Send update to editor
 result_items = sch.crud.update_items([sheet])

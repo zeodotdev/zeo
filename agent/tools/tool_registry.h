@@ -44,6 +44,12 @@ public:
                               const std::string& aToolUseId, wxEvtHandler* aEventHandler );
 
     /**
+     * Cancel all in-flight tool executions across all handlers.
+     * Calls Cancel() on every registered handler.
+     */
+    void CancelAll();
+
+    /**
      * Execute a tool synchronously.  Routes IPC tools through the terminal frame
      * via m_sendRequestFn, and dispatches direct tools to the handler.
      * Also handles the built-in run_terminal tool.

@@ -8,6 +8,12 @@
 #include <atomic>
 #include <functional>
 
+#ifndef _WIN32
+#include <sys/types.h>   // pid_t
+#else
+typedef int pid_t;        // Windows placeholder
+#endif
+
 class PYTHON_EXEC_THREAD;
 
 class HEADLESS_PYTHON_EXECUTOR : public wxEvtHandler
@@ -31,8 +37,22 @@ public:
      */
     std::string RunSystemCommand( const wxString& aCmd );
 
+    /**
+     * Cancel any in-flight Python execution by raising KeyboardInterrupt
+     * in the running Python thread. Also kills any tracked child process
+     * (e.g., Java Freerouting autorouter). Safe to call when nothing is running.
+     */
+    void CancelExecution();
+
     bool        IsPythonRunning() const { return m_pythonRunning.load(); }
     std::string GetLastPythonResult() const { return m_lastPythonResult; }
+
+    /**
+     * Register an external child process PID to be killed on cancel.
+     * Called by tool handlers that spawn subprocesses (e.g., autorouter).
+     * Set to 0 to clear.
+     */
+    void SetChildProcessPid( pid_t aPid ) { m_childProcessPid.store( aPid ); }
 
 private:
     bool EnsurePython();
@@ -40,6 +60,8 @@ private:
     // Python thread execution
     PYTHON_EXEC_THREAD* m_pythonThread;
     std::atomic<bool>   m_pythonRunning;
+    std::atomic<pid_t>  m_childProcessPid;   // External subprocess to kill on cancel (e.g. Freerouting)
+    bool                m_pythonCancelled;   // True when CancelExecution() was called
     std::string         m_lastPythonResult;
     wxTimer             m_pythonPollTimer;
     wxLongLong          m_pythonStartTime;

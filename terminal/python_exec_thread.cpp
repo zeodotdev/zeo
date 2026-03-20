@@ -20,7 +20,8 @@ PYTHON_EXEC_THREAD::PYTHON_EXEC_THREAD( wxEvtHandler* aHandler, const std::strin
         wxThread( wxTHREAD_JOINABLE ),
         m_handler( aHandler ),
         m_code( aCode ),
-        m_stopRequested( false )
+        m_stopRequested( false ),
+        m_pythonThreadId( 0 )
 {
 }
 
@@ -37,6 +38,10 @@ void* PYTHON_EXEC_THREAD::Entry()
 
     // Acquire GIL for this thread
     PyGILState_STATE gilState = PyGILState_Ensure();
+
+    // Store Python thread ID so InterruptPython() can target this thread
+    m_pythonThreadId.store( PyThread_get_thread_ident() );
+    wxLogInfo( "HEADLESS_EXEC: Python thread acquired GIL, thread_id=%lu", m_pythonThreadId.load() );
 
     std::string resultStr;
     bool        success = true;
@@ -202,6 +207,9 @@ void* PYTHON_EXEC_THREAD::Entry()
         resultStr = "Exception during Python execution\n";
     }
 
+    // Clear thread ID before releasing GIL
+    m_pythonThreadId.store( 0 );
+
     // Release GIL before posting events
     PyGILState_Release( gilState );
 
@@ -223,4 +231,34 @@ void* PYTHON_EXEC_THREAD::Entry()
     }
 
     return nullptr;
+}
+
+
+bool PYTHON_EXEC_THREAD::InterruptPython()
+{
+    unsigned long threadId = m_pythonThreadId.load();
+
+    if( threadId == 0 )
+    {
+        wxLogInfo( "HEADLESS_EXEC: InterruptPython called but no Python thread ID — "
+                   "thread may not have started yet" );
+        return false;
+    }
+
+    wxLogInfo( "HEADLESS_EXEC: InterruptPython — setting stop flag for thread %lu", threadId );
+
+    // We intentionally do NOT call PyThreadState_SetAsyncExc here.
+    // That function requires the GIL, but acquiring the GIL from the main thread
+    // can deadlock: the Python thread may be blocked in an IPC call waiting for
+    // the main thread to process it via wxYield, while the main thread blocks
+    // waiting for the GIL.
+    //
+    // Instead, we set m_stopRequested so the thread knows it was cancelled.
+    // The Python thread will finish its current operation naturally.
+    // The caller (CancelExecution) handles force-completing the execution state
+    // so the app doesn't hang waiting for the thread.
+    m_stopRequested.store( true );
+
+    wxLogInfo( "HEADLESS_EXEC: InterruptPython — stop requested" );
+    return true;
 }

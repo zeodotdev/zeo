@@ -63,6 +63,12 @@ public:
     }
 
     /**
+     * Cancel any in-flight execution. Called when the user cancels an operation.
+     * Default is a no-op. Override in handlers that manage long-running subprocesses.
+     */
+    virtual void Cancel() {}
+
+    /**
      * Return tool schemas fetched dynamically (e.g. from an MCP server).
      * Called before each LLM request to merge into the tool list.
      * Default returns empty — override in handlers that provide dynamic schemas.

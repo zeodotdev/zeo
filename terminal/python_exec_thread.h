@@ -5,6 +5,7 @@
 #include <wx/event.h>
 #include <string>
 #include <atomic>
+#include <Python.h>
 
 // Custom events for Python execution
 wxDECLARE_EVENT( wxEVT_PYTHON_OUTPUT, wxThreadEvent );
@@ -41,10 +42,24 @@ public:
      */
     void RequestStop() { m_stopRequested.store( true ); }
 
+    /**
+     * Get the Python thread identifier (set after GIL acquisition in Entry()).
+     * Returns 0 if the thread hasn't started or hasn't acquired the GIL yet.
+     */
+    unsigned long GetPythonThreadId() const { return m_pythonThreadId.load(); }
+
+    /**
+     * Raise an asynchronous exception in the running Python code.
+     * Uses PyThreadState_SetAsyncExc to inject KeyboardInterrupt at the next
+     * bytecode instruction boundary. Returns true if the exception was set.
+     */
+    bool InterruptPython();
+
 private:
-    wxEvtHandler*     m_handler;
-    std::string       m_code;
-    std::atomic<bool> m_stopRequested;
+    wxEvtHandler*              m_handler;
+    std::string                m_code;
+    std::atomic<bool>          m_stopRequested;
+    std::atomic<unsigned long> m_pythonThreadId;
 };
 
 #endif // PYTHON_EXEC_THREAD_H

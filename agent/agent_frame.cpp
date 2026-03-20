@@ -673,6 +673,19 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             for( const auto& f : GetOpenEditorFiles() )
                 openFiles.push_back( f.ToStdString() );
             reg.SetOpenEditorFiles( std::move( openFiles ) );
+
+            // Provide IPC functions so handlers (pcb_autoroute, generate_net_classes)
+            // can communicate with editor frames.
+            reg.SetSendRequestFn(
+                [this]( int aFrameType, const std::string& aPayload ) -> std::string {
+                    return SendRequest( aFrameType, aPayload );
+                } );
+            reg.SetSendFireAndForgetFn(
+                [this]( int aFrameType, const std::string& aPayload ) {
+                    std::string payloadCopy = aPayload;
+                    Kiway().ExpressMail( static_cast<FRAME_T>( aFrameType ),
+                                         MAIL_AGENT_REQUEST, payloadCopy );
+                } );
         } );
 
     m_chatController->SetHasQueuedMessageFn(
@@ -1839,6 +1852,14 @@ void AGENT_FRAME::DoCancelOperation( bool aShowStopped )
         m_llmClient->CancelRequest();
     }
 
+    // Cancel any in-flight Python tool scripts and child processes (e.g., Freerouting)
+    {
+        TOOL_REGISTRY::Instance().CancelAll();
+        std::string emptyPayload;
+        Kiway().ExpressMail( FRAME_TERMINAL, MAIL_CANCEL_TOOL_EXECUTION, emptyPayload );
+        wxLogInfo( "AGENT: Sent MAIL_CANCEL_TOOL_EXECUTION to terminal" );
+    }
+
     // Signal to stop - affects tool execution loops and streaming callbacks (legacy)
     m_stopRequested = true;
 
@@ -2605,6 +2626,13 @@ void AGENT_FRAME::DoStopClick()
     if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
     {
         m_ccController->Cancel();
+
+        // Cancel any in-flight Python tool scripts and child processes
+        TOOL_REGISTRY::Instance().CancelAll();
+        std::string emptyPayload;
+        Kiway().ExpressMail( FRAME_TERMINAL, MAIL_CANCEL_TOOL_EXECUTION, emptyPayload );
+        wxLogInfo( "AGENT: DoStopClick — sent MAIL_CANCEL_TOOL_EXECUTION to terminal" );
+
         StopGeneratingAnimation();
         m_bridge->PushActionButtonState( "Send", true );
         return;

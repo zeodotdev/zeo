@@ -720,6 +720,20 @@ void TERMINAL_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
             aEvent.SetPayload( "" );
         }
     }
+    else if( aEvent.Command() == MAIL_CANCEL_TOOL_EXECUTION )
+    {
+        wxLogInfo( "TERMINAL: Received MAIL_CANCEL_TOOL_EXECUTION" );
+        CancelToolExecution();
+    }
+}
+
+
+void TERMINAL_FRAME::CancelToolExecution()
+{
+    wxLogInfo( "TERMINAL: CancelToolExecution called" );
+
+    if( m_headlessExecutor )
+        m_headlessExecutor->CancelExecution();
 }
 
 

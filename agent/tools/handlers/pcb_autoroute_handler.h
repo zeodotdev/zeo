@@ -2,6 +2,14 @@
 #define PCB_AUTOROUTE_HANDLER_H
 
 #include "../tool_handler.h"
+#include <atomic>
+
+#ifndef _WIN32
+#include <sys/types.h>
+#include <signal.h>
+#else
+typedef int pid_t;
+#endif
 
 /**
  * Handler for PCB autorouting via Freerouting.
@@ -25,6 +33,17 @@ public:
 
     void ExecuteAsync( const std::string& aToolName, const nlohmann::json& aInput,
                        const std::string& aToolUseId, wxEvtHandler* aEventHandler ) override;
+
+    /**
+     * Cancel the in-flight Freerouting process. Sends SIGTERM then SIGKILL.
+     */
+    void Cancel() override;
+
+    /**
+     * Atomic PID of the running Freerouting child process.
+     * Set by RunCommand via aChildPid, cleared after process exits.
+     */
+    std::atomic<pid_t> m_freeroutingPid{ 0 };
 
 private:
     /**

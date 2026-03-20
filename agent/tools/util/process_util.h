@@ -3,6 +3,7 @@
 
 #include <string>
 #include <chrono>
+#include <atomic>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -10,6 +11,7 @@
 #include <errno.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -69,10 +71,15 @@ inline std::string MakeTempDir( const std::string& aPrefix )
  * @param aStdout      [out] Captured stdout.
  * @param aStderr      [out] Captured stderr.
  * @param aTimeoutSec  Timeout in seconds (default 120). Returns -1 on timeout.
+ * @param aChildPid    [optional] Atomic to receive the child PID while running.
+ *                     Set to the child PID after fork, cleared to 0 after wait.
+ *                     If non-null and the value is set to -1 externally, the child
+ *                     will be killed (cancel support).
  * @return Exit code, or -1 on timeout/error.
  */
 inline int RunCommand( const std::string& aCommand, std::string& aStdout,
-                       std::string& aStderr, int aTimeoutSec = 120 )
+                       std::string& aStderr, int aTimeoutSec = 120,
+                       std::atomic<pid_t>* aChildPid = nullptr )
 {
     aStdout.clear();
     aStderr.clear();
@@ -279,6 +286,10 @@ inline int RunCommand( const std::string& aCommand, std::string& aStdout,
         _exit( 127 );
     }
 
+    // Expose child PID for external cancel support
+    if( aChildPid )
+        aChildPid->store( pid );
+
     close( stdoutPipe[1] );
     close( stderrPipe[1] );
 
@@ -353,12 +364,20 @@ inline int RunCommand( const std::string& aCommand, std::string& aStdout,
     {
         kill( pid, SIGKILL );
         waitpid( pid, nullptr, 0 );
+
+        if( aChildPid )
+            aChildPid->store( 0 );
+
         wxLogError( "ProcessUtil: Command timed out after %d seconds", aTimeoutSec );
         return -1;
     }
 
     int status;
     waitpid( pid, &status, 0 );
+
+    if( aChildPid )
+        aChildPid->store( 0 );
+
     int exitCode = -1;
 
     if( WIFEXITED( status ) )

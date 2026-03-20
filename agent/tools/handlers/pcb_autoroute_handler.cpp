@@ -8,6 +8,10 @@
 #include <fstream>
 #include <functional>
 
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
 #include <nlohmann/json.hpp>
 #include <wx/app.h>
 #include <wx/dir.h>
@@ -316,6 +320,30 @@ std::string PCB_AUTOROUTE_HANDLER::RunFreerouting( const std::string& aDsnPath,
 
 
 
+void PCB_AUTOROUTE_HANDLER::Cancel()
+{
+    pid_t pid = m_freeroutingPid.load();
+
+    if( pid <= 0 )
+        return;
+
+    wxLogInfo( "AUTOROUTE: Cancel — killing Freerouting PID %d", (int) pid );
+
+#ifndef _WIN32
+    kill( pid, SIGTERM );
+    usleep( 300000 );  // 300ms grace period
+
+    if( kill( pid, 0 ) == 0 )
+    {
+        wxLogInfo( "AUTOROUTE: Freerouting PID %d still alive, sending SIGKILL", (int) pid );
+        kill( pid, SIGKILL );
+    }
+#endif
+
+    m_freeroutingPid.store( 0 );
+}
+
+
 void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
                                            const nlohmann::json& aInput,
                                            const std::string& aToolUseId,
@@ -442,6 +470,9 @@ void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
     auto sendFireAndForgetFn = TOOL_REGISTRY::Instance().GetSendFireAndForgetFn();
 
     // Step 2: Spawn background thread for Freerouting
+    // Capture a pointer to our PID tracker for the background thread
+    auto* freeroutingPid = &m_freeroutingPid;
+
     std::thread( [=]()
     {
         wxLogInfo( "AUTOROUTE ASYNC: Background thread started" );
@@ -457,7 +488,7 @@ void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
         wxLogInfo( "AUTOROUTE ASYNC: Executing: %s", cmd.c_str() );
 
         std::string stdoutStr, stderrStr;
-        int exitCode = ProcessUtil::RunCommand( cmd, stdoutStr, stderrStr, timeout );
+        int exitCode = ProcessUtil::RunCommand( cmd, stdoutStr, stderrStr, timeout, freeroutingPid );
 
         wxLogInfo( "AUTOROUTE ASYNC: Freerouting finished with exit code %d", exitCode );
 

@@ -153,6 +153,15 @@ void TOOL_REGISTRY::ExecuteAsync( const std::string& aToolName, const nlohmann::
 }
 
 
+void TOOL_REGISTRY::CancelAll()
+{
+    wxLogInfo( "TOOL_REGISTRY::CancelAll — cancelling all handlers" );
+
+    for( auto& handler : m_handlers )
+        handler->Cancel();
+}
+
+
 std::string TOOL_REGISTRY::ExecuteToolSync( const std::string& aToolName,
                                              const nlohmann::json& aInput )
 {

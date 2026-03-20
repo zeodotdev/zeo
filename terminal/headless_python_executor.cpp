@@ -8,10 +8,17 @@
 #include <python_scripting.h>
 #include <api/api_handler_editor.h>
 
+#ifndef _WIN32
+#include <signal.h>
+#include <unistd.h>
+#endif
+
 
 HEADLESS_PYTHON_EXECUTOR::HEADLESS_PYTHON_EXECUTOR() :
         m_pythonThread( nullptr ),
         m_pythonRunning( false ),
+        m_childProcessPid( 0 ),
+        m_pythonCancelled( false ),
         m_pythonTimedOut( false ),
         m_pythonInitialized( false ),
         m_process( nullptr ),
@@ -41,6 +48,57 @@ HEADLESS_PYTHON_EXECUTOR::~HEADLESS_PYTHON_EXECUTOR()
     }
 
     CleanupShell();
+}
+
+
+void HEADLESS_PYTHON_EXECUTOR::CancelExecution()
+{
+    if( !m_pythonRunning.load() )
+    {
+        wxLogInfo( "HEADLESS_EXEC: CancelExecution called but nothing running — no-op" );
+        return;
+    }
+
+    wxLogInfo( "HEADLESS_EXEC: CancelExecution — interrupting in-flight Python execution" );
+
+    // Step 1: Kill any tracked external child process (e.g., Freerouting Java)
+    pid_t childPid = m_childProcessPid.load();
+    if( childPid > 0 )
+    {
+        wxLogInfo( "HEADLESS_EXEC: Killing child process PID %d", (int) childPid );
+#ifndef _WIN32
+        kill( childPid, SIGTERM );
+
+        // Give it a moment to exit gracefully, then force-kill
+        usleep( 200000 );  // 200ms
+
+        if( kill( childPid, 0 ) == 0 )  // Still alive?
+        {
+            wxLogInfo( "HEADLESS_EXEC: Child PID %d still alive, sending SIGKILL", (int) childPid );
+            kill( childPid, SIGKILL );
+        }
+#else
+        // On Windows, TerminateProcess would be used — not yet implemented
+#endif
+        m_childProcessPid.store( 0 );
+    }
+
+    // Step 2: Signal the Python thread to stop
+    if( m_pythonThread )
+        m_pythonThread->InterruptPython();
+
+    // Step 3: Force-complete the execution state immediately.
+    // We can't block waiting for the Python thread (it may be in a C extension
+    // IPC call that needs the main thread to respond — deadlock). Instead, we
+    // mark execution as done so the poll timer triggers FinishPythonExecution
+    // on the next tick and the agent can proceed.
+    // The Python thread will finish on its own in the background; its
+    // m_stopRequested flag prevents it from posting the completion event.
+    wxLogInfo( "HEADLESS_EXEC: CancelExecution — force-marking execution as done" );
+    m_lastPythonResult = "Cancelled";
+    m_pythonRunning.store( false );
+    m_pythonCancelled = true;
+    m_pythonTimedOut = true;
 }
 
 
@@ -164,11 +222,24 @@ void HEADLESS_PYTHON_EXECUTOR::FinishPythonExecution()
 
     if( m_pythonThread )
     {
-        wxLogInfo( "HEADLESS_EXEC: Waiting for Python thread to finish" );
-        m_pythonThread->Wait();
-        delete m_pythonThread;
-        m_pythonThread = nullptr;
-        wxLogInfo( "HEADLESS_EXEC: Python thread cleaned up" );
+        if( m_pythonCancelled )
+        {
+            // Thread may still be running (blocked in C code). Don't Wait() —
+            // that would block the main thread and potentially deadlock if the
+            // Python thread needs the main thread for IPC.
+            // The thread has m_stopRequested set, so it won't post events.
+            // We intentionally leak the thread object rather than hang the app.
+            wxLogInfo( "HEADLESS_EXEC: Cancelled — detaching Python thread (not waiting)" );
+            m_pythonThread = nullptr;
+        }
+        else
+        {
+            wxLogInfo( "HEADLESS_EXEC: Waiting for Python thread to finish" );
+            m_pythonThread->Wait();
+            delete m_pythonThread;
+            m_pythonThread = nullptr;
+            wxLogInfo( "HEADLESS_EXEC: Python thread cleaned up" );
+        }
     }
 
     wxLogInfo( "HEADLESS_EXEC: Calling SetIPCShellBlocking(false)" );
@@ -195,6 +266,7 @@ void HEADLESS_PYTHON_EXECUTOR::FinishPythonExecution()
     }
 
     m_pythonTimedOut = false;
+    m_pythonCancelled = false;
 }
 
 

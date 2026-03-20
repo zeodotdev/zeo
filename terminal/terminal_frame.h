@@ -58,6 +58,12 @@ public:
     std::string ExecuteMCPTool( const std::string& aToolName, const std::string& aArgsJson );
 
     /**
+     * Cancel any in-flight Python tool execution and kill child processes.
+     * Safe to call when nothing is running (no-op).
+     */
+    void CancelToolExecution();
+
+    /**
      * Lazy-init accessor for the tool script loader.
      */
     TOOL_SCRIPT_LOADER* GetToolLoader();

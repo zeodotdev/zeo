@@ -64,6 +64,13 @@ try:
                 'unit': getattr(sym, 'unit', 1),
                 'pins': pins
             }
+            # Include datasheet URL if present
+            try:
+                ds = sym.datasheet
+                if ds:
+                    sym_dict['datasheet'] = ds
+            except Exception:
+                pass
             symbol_data.append(sym_dict)
         result['symbols'] = symbol_data
 

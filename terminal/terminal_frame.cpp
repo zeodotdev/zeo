@@ -103,13 +103,20 @@ static std::string BuildModeInitCode( const wxString& aMode, const std::string& 
     if( aMode == "sch" )
     {
         initCode +=
-            "sch = kicad.get_schematic()\n"
-            "if hasattr(sch, 'refresh_document'):\n"
-            "    sch.refresh_document()\n";
+            "try:\n"
+            "    sch = kicad.get_schematic()\n"
+            "    if hasattr(sch, 'refresh_document'):\n"
+            "        sch.refresh_document()\n"
+            "except Exception:\n"
+            "    raise RuntimeError('Schematic editor is not open. Use launch_editor to open it first.')\n";
     }
     else if( aMode == "pcb" )
     {
-        initCode += "board = kicad.get_board()\n";
+        initCode +=
+            "try:\n"
+            "    board = kicad.get_board()\n"
+            "except Exception:\n"
+            "    raise RuntimeError('PCB editor is not open. Use launch_editor to open it first.')\n";
     }
 
     return initCode;

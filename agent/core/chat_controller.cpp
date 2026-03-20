@@ -976,6 +976,14 @@ void CHAT_CONTROLLER::HandleServerToolUse( const LLMStreamChunk& aChunk )
         }
     }
 
+    // Hide internal server tools (e.g., tool_search_tool_regex) from the UI
+    if( aChunk.tool_name.find( "tool_search" ) != std::string::npos )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::HandleServerToolUse - hiding internal tool: %s",
+                   aChunk.tool_name.c_str() );
+        return;
+    }
+
     // Emit tool start so the UI shows the server tool
     std::string toolId = "server_tool_" + std::to_string( m_serverToolCounter++ );
     m_activeServerToolId = toolId;

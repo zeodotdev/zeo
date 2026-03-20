@@ -36,6 +36,9 @@
 
 #ifdef KICAD_USE_SENTRY
 #include <sentry.h>
+#include <atomic>
+#include <chrono>
+#include <thread>
 #endif
 
 using namespace APP_MONITOR;
@@ -57,7 +60,8 @@ void SENTRY::Init()
 void SENTRY::Cleanup()
 {
 #ifdef KICAD_USE_SENTRY
-    sentry_close();
+    if( m_sentryInitialized )
+        sentry_close();
 #endif
 }
 
@@ -198,13 +202,58 @@ void SENTRY::sentryInit()
         // environments.
         sentry_options_set_environment( options, GetMajorMinorVersion().c_str() );
 
-        sentry_init( options );
+        // Run sentry_init with a timeout to prevent blocking the main thread.
+        // Crashpad's handler handshake can hang indefinitely if stale crashpad
+        // processes are stuck in uninterruptible kernel state (macOS UE).
+        {
+            std::atomic<bool> initDone{ false };
+            std::atomic<int>  initResult{ -1 };
 
-        sentry_value_t user = sentry_value_new_object();
-        sentry_value_set_by_key( user, "id", sentry_value_new_string( m_sentryUid.c_str() ) );
-        sentry_set_user( user );
+            std::thread initThread( [&]()
+            {
+                initResult = sentry_init( options );
+                initDone = true;
+            } );
 
-        sentry_set_tag( "kicad.version", GetBuildVersion().ToStdString().c_str() );
+            // Wait up to 5 seconds for sentry to initialize
+            auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds( 5 );
+
+            while( !initDone && std::chrono::steady_clock::now() < deadline )
+                std::this_thread::sleep_for( std::chrono::milliseconds( 50 ) );
+
+            if( initDone )
+            {
+                initThread.join();
+
+                if( initResult != 0 )
+                {
+                    wxLogWarning( "Sentry init failed (code %d), crash reporting disabled",
+                                  initResult.load() );
+                    m_sentryInitialized = false;
+                }
+                else
+                {
+                    m_sentryInitialized = true;
+                }
+            }
+            else
+            {
+                wxLogWarning( "Sentry init timed out after 5s, crash reporting disabled" );
+                // Detach the thread — it may eventually complete or be cleaned up at exit
+                initThread.detach();
+                m_sentryInitialized = false;
+            }
+        }
+
+        if( m_sentryInitialized )
+        {
+            sentry_value_t user = sentry_value_new_object();
+            sentry_value_set_by_key( user, "id",
+                                     sentry_value_new_string( m_sentryUid.c_str() ) );
+            sentry_set_user( user );
+
+            sentry_set_tag( "kicad.version", GetBuildVersion().ToStdString().c_str() );
+        }
     }
 #endif
 }

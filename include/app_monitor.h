@@ -141,6 +141,7 @@ namespace APP_MONITOR
         static SENTRY* m_instance;
 
         bool       m_isOptedIn;
+        bool       m_sentryInitialized = false;
         wxFileName m_sentry_optin_fn;
         wxFileName m_sentry_uid_fn;
         wxString   m_sentryUid;

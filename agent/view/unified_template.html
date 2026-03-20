@@ -1177,9 +1177,15 @@ App.Chat = (function() {
         });
     }
 
+    var _lastStreamingHtml = '';
     function updateStreamingContent(html) {
         var container = document.getElementById('streaming-content');
         if (container) {
+            // Skip DOM update if content hasn't changed — avoids destroying and
+            // recreating DOM nodes every 50ms which resets CSS animations (spinners).
+            if (html === _lastStreamingHtml) return;
+            _lastStreamingHtml = html;
+
             // Pre-apply cached toggle states to the HTML string before setting innerHTML.
             // This avoids any flicker from creating DOM nodes with stale state.
             for (var key in _expandedToggles) {
@@ -1195,6 +1201,7 @@ App.Chat = (function() {
     }
 
     function finalizeStreaming() {
+        _lastStreamingHtml = '';
         var container = document.getElementById('streaming-content');
         if (container) {
             container.removeAttribute('id');

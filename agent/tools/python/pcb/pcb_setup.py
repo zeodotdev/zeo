@@ -328,14 +328,13 @@ def _get():
             ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else ''
             value = fp.value_field.text.value if hasattr(fp, 'value_field') else ''
             comp = {'ref': ref, 'value': value}
-            # Extract datasheet from fields
-            if hasattr(fp, 'definition') and hasattr(fp.definition, 'fields'):
-                for field in fp.definition.fields:
-                    if hasattr(field, 'name') and field.name == 'Datasheet':
-                        ds = field.text.value if hasattr(field.text, 'value') else ''
-                        if ds:
-                            comp['datasheet'] = ds
-                        break
+            # Extract datasheet URL from the footprint's datasheet field
+            try:
+                ds = fp.datasheet_field.text.value if hasattr(fp, 'datasheet_field') else ''
+                if ds:
+                    comp['datasheet'] = ds
+            except Exception:
+                pass
             comp_list.append(comp)
         result['components'] = comp_list
     except Exception as e:

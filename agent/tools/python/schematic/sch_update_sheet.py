@@ -23,8 +23,13 @@ def _find_parent_path(node, target_name, parent_path=None):
     return None
 
 parent_nav_path = None
+_original_sheet_path = None
 if hasattr(sch.sheets, 'get_hierarchy') and hasattr(sch.sheets, 'navigate_to'):
     try:
+        # Save current sheet so we can restore it after the update
+        if hasattr(sch.sheets, 'get_current'):
+            _original_sheet_path, _ = sch.sheets.get_current()
+
         hierarchy = sch.sheets.get_hierarchy()
         parent_nav_path = _find_parent_path(hierarchy, target)
         if parent_nav_path is not None:
@@ -116,6 +121,13 @@ if not changed:
 
 # Send update to editor
 result_items = sch.crud.update_items([sheet])
+
+# Restore original sheet so the tool doesn't change the user's view
+if _original_sheet_path is not None and parent_nav_path is not None:
+    try:
+        sch.sheets.navigate_to(_original_sheet_path)
+    except Exception as e:
+        tool_log(f'[sch_update_sheet] Failed to restore original sheet: {e}')
 
 # Build response
 sheet_x = sheet._proto.position.x_nm / 1_000_000

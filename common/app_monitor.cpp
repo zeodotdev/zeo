@@ -504,7 +504,7 @@ private:
 TRANSACTION::TRANSACTION( const std::string& aName, const std::string& aOperation )
 {
 #ifdef KICAD_USE_SENTRY
-    if( SENTRY::Instance()->IsOptedIn() )
+    if( SENTRY::Instance()->IsSentryInitialized() && SENTRY::Instance()->IsOptedIn() )
     {
         m_impl = new TRANSACTION_IMPL( aName, aOperation );
     }

@@ -2552,6 +2552,9 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
         }
 
         // Resolve Python3 path for MCP server.
+        // Prefer the bundled Python 3.10 (has kipy + mcp SDK installed),
+        // fall back to system Python. If neither found, GenerateMcpConfig()
+        // will fall back to uvx zeo-mcp.
         std::string pythonPath;
         {
 #ifdef __WXMSW__
@@ -2568,9 +2571,12 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
             else
                 wxLogInfo( "AGENT_FRAME: Found Python at %s", pythonPath.c_str() );
 #else
-            // macOS: Must use system Python (>=3.10), not the bundled 3.9, because
-            // the mcp SDK requires Python >=3.10 and wxPython pins us to 3.9 in the bundle.
+            // macOS: try bundled Python first, then system Python
+            wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+            wxString bundledPython = exePath.GetPath() + "/../Frameworks/Python.framework/Versions/3.10/bin/python3";
+
             std::vector<wxString> candidates = {
+                bundledPython,
                 "/opt/homebrew/bin/python3",
                 "/usr/local/bin/python3",
                 "/usr/bin/python3"
@@ -2587,6 +2593,8 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
 
             if( pythonPath.empty() )
                 wxLogWarning( "AGENT_FRAME: No Python3 found for CC MCP config" );
+            else
+                wxLogInfo( "AGENT_FRAME: Found Python at %s", pythonPath.c_str() );
 #endif
         }
 

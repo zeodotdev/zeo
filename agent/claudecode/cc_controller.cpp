@@ -845,18 +845,38 @@ std::string CC_CONTROLLER::GenerateMcpConfig()
         return "";
     }
 
-    if( m_pythonPath.empty() )
+    json config;
+
+    if( !m_pythonPath.empty() )
     {
-        wxLogWarning( "CC_CONTROLLER: Skipping MCP config (no Python3 found)" );
-        return "";
+        // Primary path: use Python with kipy.mcp (bundled or system Python)
+        config["mcpServers"]["zeo"]["command"] = m_pythonPath;
+        config["mcpServers"]["zeo"]["args"] = json::array( { "-m", "kipy.mcp" } );
+        wxLogInfo( "CC_CONTROLLER: MCP server via Python: %s", m_pythonPath.c_str() );
+
+#ifdef __WXMSW__
+        // On Windows, Python is the system interpreter — set PYTHONPATH to the
+        // bundled site-packages so it finds the correct kipy version.
+        wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+        wxFileName siteDir( exePath.GetPath(), "" );
+        siteDir.AppendDir( "Lib" );
+        siteDir.AppendDir( "site-packages" );
+
+        if( wxDir::Exists( siteDir.GetPath() ) )
+        {
+            config["mcpServers"]["zeo"]["env"]["PYTHONPATH"] = siteDir.GetPath().ToStdString();
+            wxLogInfo( "CC_CONTROLLER: Set PYTHONPATH=%s", siteDir.GetPath() );
+        }
+#endif
+    }
+    else
+    {
+        // Fallback: use uvx to run zeo-mcp from PyPI (no local Python needed)
+        config["mcpServers"]["zeo"]["command"] = "uvx";
+        config["mcpServers"]["zeo"]["args"] = json::array( { "zeo-mcp" } );
+        wxLogInfo( "CC_CONTROLLER: MCP server via uvx fallback (no Python found)" );
     }
 
-    // Build MCP config JSON pointing to kipy.mcp as an stdio server.
-    // Uses system Python (not bundled 3.9) because the mcp SDK requires >=3.10.
-    // kipy is installed as editable (`pip install -e`) so it uses the source tree.
-    json config;
-    config["mcpServers"]["zeo"]["command"] = m_pythonPath;
-    config["mcpServers"]["zeo"]["args"] = json::array( { "-m", "kipy.mcp" } );
     config["mcpServers"]["zeo"]["env"]["KICAD_API_SOCKET"] = m_apiSocketPath;
 
     // Pass Supabase credentials for tool usage tracking in MCP server
@@ -868,21 +888,6 @@ std::string CC_CONTROLLER::GenerateMcpConfig()
         config["mcpServers"]["zeo"]["env"]["ZEO_SUPABASE_URL"] = supabaseUrl;
         config["mcpServers"]["zeo"]["env"]["ZEO_SUPABASE_ANON_KEY"] = supabaseKey;
     }
-
-#ifdef __WXMSW__
-    // On Windows, Python is the system interpreter — set PYTHONPATH to the
-    // bundled site-packages so it finds the correct kipy version.
-    wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
-    wxFileName siteDir( exePath.GetPath(), "" );
-    siteDir.AppendDir( "Lib" );
-    siteDir.AppendDir( "site-packages" );
-
-    if( wxDir::Exists( siteDir.GetPath() ) )
-    {
-        config["mcpServers"]["zeo"]["env"]["PYTHONPATH"] = siteDir.GetPath().ToStdString();
-        wxLogInfo( "CC_CONTROLLER: Set PYTHONPATH=%s", siteDir.GetPath() );
-    }
-#endif
 
     // Write to temp file
     wxString tempPath = wxFileName::GetTempDir() + "/zeo_cc_mcp.json";

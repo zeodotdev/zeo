@@ -825,6 +825,22 @@ AGENT_FRAME::~AGENT_FRAME()
     RemoveKeyboardMonitor();
 #endif
 
+    // Save CC chat history before destruction — the CC controller accumulates
+    // messages in memory and they are only synced at turn boundaries. If the frame
+    // is destroyed mid-conversation (e.g. project switch), we must persist now.
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+    {
+        nlohmann::json ccHistory = m_ccController->GetChatHistory();
+
+        if( !ccHistory.empty() )
+        {
+            m_chatHistory = ccHistory;
+            m_chatHistoryDb.Save( m_chatHistory );
+            wxLogInfo( "AGENT_FRAME::~AGENT_FRAME - saved CC history (%zu messages) before destruction",
+                       m_chatHistory.size() );
+        }
+    }
+
     // Stop the generating animation timer to prevent timer events
     m_generatingTimer.Stop();
 
@@ -3324,10 +3340,26 @@ void AGENT_FRAME::DoNewChat()
         return;
     }
 
+    // Save current CC history before starting a new session — CC accumulates
+    // messages in memory and they may not have been persisted yet.
     if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+    {
+        nlohmann::json ccHistory = m_ccController->GetChatHistory();
+
+        if( !ccHistory.empty() )
+        {
+            m_chatHistory = ccHistory;
+            m_chatHistoryDb.Save( m_chatHistory );
+            wxLogInfo( "AGENT_FRAME::DoNewChat - saved CC history (%zu messages) before new chat",
+                       m_chatHistory.size() );
+        }
+
         m_ccController->NewSession();
+    }
     else if( m_chatController )
+    {
         m_chatController->NewChat();
+    }
 
     m_chatHistory = nlohmann::json::array();
     m_apiContext = nlohmann::json::array();
@@ -5245,7 +5277,11 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     m_isThinking = false;
 
     // Sync history from controller - it may have removed orphaned user messages
-    if( m_chatController )
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+    {
+        m_chatHistory = m_ccController->GetChatHistory();
+    }
+    else if( m_chatController )
     {
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
@@ -5408,7 +5444,13 @@ void AGENT_FRAME::OnChatTitleGenerated( wxThreadEvent& aEvent )
     // Update persistence with the new title
     m_chatHistoryDb.SetTitle( data->title );
 
-    if( m_chatController )
+    if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+    {
+        m_chatHistory = m_ccController->GetChatHistory();
+        m_chatHistoryDb.Save( m_chatHistory );
+        UploadCurrentChat();
+    }
+    else if( m_chatController )
     {
         m_chatHistory = m_chatController->GetChatHistory();
         m_chatHistoryDb.Save( m_chatHistory );

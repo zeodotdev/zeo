@@ -123,7 +123,7 @@ std::string PCB_AUTOROUTE_HANDLER::ExecuteAutoroute( const nlohmann::json& aInpu
 
     nlohmann::json snapshotCmd;
     snapshotCmd["type"] = "take_snapshot";
-    TOOL_REGISTRY::Instance().GetSendRequestFn()( FRAME_PCB_EDITOR, snapshotCmd.dump() );
+    TOOL_REGISTRY::Instance().GetSendFireAndForgetFn()( FRAME_PCB_EDITOR, snapshotCmd.dump() );
 
     // Step 1: Export DSN via IPC
     wxLogInfo( "AUTOROUTE: Requesting DSN export via IPC" );
@@ -203,7 +203,7 @@ std::string PCB_AUTOROUTE_HANDLER::ExecuteAutoroute( const nlohmann::json& aInpu
 
     nlohmann::json detectCmd;
     detectCmd["type"] = "detect_changes";
-    TOOL_REGISTRY::Instance().GetSendRequestFn()( FRAME_PCB_EDITOR, detectCmd.dump() );
+    TOOL_REGISTRY::Instance().GetSendFireAndForgetFn()( FRAME_PCB_EDITOR, detectCmd.dump() );
 
     // Build final result
     nlohmann::json result;
@@ -391,7 +391,7 @@ void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
 
     nlohmann::json snapshotCmd;
     snapshotCmd["type"] = "take_snapshot";
-    TOOL_REGISTRY::Instance().GetSendRequestFn()( FRAME_PCB_EDITOR, snapshotCmd.dump() );
+    TOOL_REGISTRY::Instance().GetSendFireAndForgetFn()( FRAME_PCB_EDITOR, snapshotCmd.dump() );
 
     // Step 1: Export DSN via IPC (on main thread - fast operation)
     wxLogInfo( "AUTOROUTE ASYNC: Requesting DSN export via IPC" );
@@ -439,6 +439,7 @@ void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
     // NOTE: sendRequestFn captured by value won't work from another thread (KIWAY is main-thread only)
     // So we capture it and use CallAfter to execute on main thread
     auto sendRequestFn = TOOL_REGISTRY::Instance().GetSendRequestFn();
+    auto sendFireAndForgetFn = TOOL_REGISTRY::Instance().GetSendFireAndForgetFn();
 
     // Step 2: Spawn background thread for Freerouting
     std::thread( [=]()
@@ -620,7 +621,7 @@ void PCB_AUTOROUTE_HANDLER::ExecuteAsync( const std::string& aToolName,
 
             nlohmann::json detectCmd;
             detectCmd["type"] = "detect_changes";
-            sendRequestFn( FRAME_PCB_EDITOR, detectCmd.dump() );
+            sendFireAndForgetFn( FRAME_PCB_EDITOR, detectCmd.dump() );
 
             // Build final success result
             nlohmann::json finalResult;

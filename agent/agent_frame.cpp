@@ -1407,6 +1407,15 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
                 [this]( int aFrameType, const std::string& aPayload ) -> std::string {
                     return SendRequest( aFrameType, aPayload );
                 } );
+
+            // Fire-and-forget IPC for commands that don't send MAIL_AGENT_RESPONSE
+            // (take_snapshot, detect_changes).  Uses ExpressMail directly.
+            reg.SetSendFireAndForgetFn(
+                [this]( int aFrameType, const std::string& aPayload ) {
+                    std::string payloadCopy = aPayload;
+                    Kiway().ExpressMail( static_cast<FRAME_T>( aFrameType ),
+                                         MAIL_AGENT_REQUEST, payloadCopy );
+                } );
         }
 
         try
@@ -4202,6 +4211,12 @@ void AGENT_FRAME::OnApproveRunERC()
     TOOL_REGISTRY::Instance().SetSendRequestFn(
         [this]( int aFrameType, const std::string& aPayload ) -> std::string {
             return SendRequest( aFrameType, aPayload );
+        } );
+    TOOL_REGISTRY::Instance().SetSendFireAndForgetFn(
+        [this]( int aFrameType, const std::string& aPayload ) {
+            std::string payloadCopy = aPayload;
+            Kiway().ExpressMail( static_cast<FRAME_T>( aFrameType ),
+                                 MAIL_AGENT_REQUEST, payloadCopy );
         } );
 
     std::string result;

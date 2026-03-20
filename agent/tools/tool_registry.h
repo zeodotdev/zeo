@@ -71,6 +71,12 @@ public:
     void SetSendRequestFn( SendRequestFn aFn )            { m_sendRequestFn = std::move( aFn ); }
     const SendRequestFn& GetSendRequestFn() const         { return m_sendRequestFn; }
 
+    /// Fire-and-forget IPC: sends to an editor frame without waiting for a response.
+    /// Used for take_snapshot / detect_changes which don't send MAIL_AGENT_RESPONSE.
+    using SendFireAndForgetFn = std::function<void( int, const std::string& )>;
+    void SetSendFireAndForgetFn( SendFireAndForgetFn aFn ) { m_sendFireAndForgetFn = std::move( aFn ); }
+    const SendFireAndForgetFn& GetSendFireAndForgetFn() const { return m_sendFireAndForgetFn; }
+
     void SetAuth( AGENT_AUTH* aAuth )                      { m_auth = aAuth; }
     AGENT_AUTH* GetAuth() const                            { return m_auth; }
 
@@ -120,6 +126,7 @@ private:
     std::string   m_projectName;
     std::vector<std::string> m_openEditorFiles;
     SendRequestFn m_sendRequestFn;
+    SendFireAndForgetFn m_sendFireAndForgetFn;
 
     // Auth and Supabase config (for datasheet extraction)
     AGENT_AUTH*    m_auth = nullptr;

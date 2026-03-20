@@ -121,6 +121,7 @@ namespace APP_MONITOR
         void Cleanup();
 
         bool            IsOptedIn();
+        bool            IsSentryInitialized() const { return m_sentryInitialized; }
         void            AddTag( const wxString& aKey, const wxString& aValue );
         void            SetUser( const wxString& aEmail );
         void            SetSentryOptIn( bool aOptIn );

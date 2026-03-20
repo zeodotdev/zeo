@@ -69,6 +69,9 @@ void SENTRY::Cleanup()
 void SENTRY::AddTag( const wxString& aKey, const wxString& aValue )
 {
 #ifdef KICAD_USE_SENTRY
+    if( !m_sentryInitialized )
+        return;
+
     sentry_set_tag( aKey.c_str(), aValue.c_str() );
 #endif
 }
@@ -77,7 +80,7 @@ void SENTRY::AddTag( const wxString& aKey, const wxString& aValue )
 void SENTRY::SetUser( const wxString& aEmail )
 {
 #ifdef KICAD_USE_SENTRY
-    if( !IsOptedIn() || aEmail.empty() )
+    if( !m_sentryInitialized || !IsOptedIn() || aEmail.empty() )
         return;
 
     sentry_value_t user = sentry_value_new_object();
@@ -295,7 +298,7 @@ bool SENTRY::IsOptedIn()
 void SENTRY::LogAssert( const ASSERT_CACHE_KEY& aKey, const wxString& aAssertMsg )
 {
 #ifdef KICAD_USE_SENTRY
-    if( !APP_MONITOR::SENTRY::Instance()->IsOptedIn() )
+    if( !m_sentryInitialized || !APP_MONITOR::SENTRY::Instance()->IsOptedIn() )
     {
         return;
     }
@@ -319,7 +322,7 @@ void SENTRY::LogAssert( const ASSERT_CACHE_KEY& aKey, const wxString& aAssertMsg
 void SENTRY::LogException( const wxString& aMsg, bool aUnhandled )
 {
 #ifdef KICAD_USE_SENTRY
-    if( !APP_MONITOR::SENTRY::Instance()->IsOptedIn() )
+    if( !m_sentryInitialized || !APP_MONITOR::SENTRY::Instance()->IsOptedIn() )
     {
         return;
     }
@@ -402,7 +405,7 @@ bool operator<( const ASSERT_CACHE_KEY& aKey1, const ASSERT_CACHE_KEY& aKey2 )
 void AddBreadcrumb( BREADCRUMB_TYPE aType, const wxString& aMsg, const wxString& aCategory, BREADCRUMB_LEVEL aLevel )
 {
 #ifdef KICAD_USE_SENTRY
-    if( !SENTRY::Instance()->IsOptedIn() )
+    if( !SENTRY::Instance()->IsSentryInitialized() || !SENTRY::Instance()->IsOptedIn() )
     {
         return;
     }

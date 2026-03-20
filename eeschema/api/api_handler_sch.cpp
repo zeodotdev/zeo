@@ -80,6 +80,7 @@
 #include <sim/simulator_frame.h>
 #include <sim/spice_simulator.h>
 #include <sim/spice_circuit_model.h>
+#include <sim/simulator_reporter.h>
 #include <advanced_config.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <view/view.h>
@@ -5943,6 +5944,72 @@ API_HANDLER_SCH::handleGetNeededJunctions(
 // Simulation Handlers
 // ============================================================================
 
+/**
+ * A SIMULATOR_REPORTER that collects all ngspice output and optionally forwards
+ * to an existing reporter.  Used by the API handler to capture warnings/errors
+ * that ngspice emits during simulation (e.g. "can't find model").
+ */
+class SIM_COLLECTING_REPORTER : public SIMULATOR_REPORTER
+{
+public:
+    SIM_COLLECTING_REPORTER( SIMULATOR_REPORTER* aForwardTo = nullptr ) :
+            m_forwardTo( aForwardTo )
+    {}
+
+    REPORTER& Report( const wxString& aText, SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override
+    {
+        m_messages.push_back( aText );
+
+        if( m_forwardTo )
+            m_forwardTo->Report( aText, aSeverity );
+
+        return *this;
+    }
+
+    bool HasMessage() const override { return !m_messages.empty(); }
+
+    void OnSimStateChange( SIMULATOR* aObject, SIM_STATE aNewState ) override
+    {
+        if( m_forwardTo )
+            m_forwardTo->OnSimStateChange( aObject, aNewState );
+    }
+
+    /**
+     * Scan collected messages for ngspice error/warning patterns that indicate
+     * the simulation produced invalid results (missing models, syntax errors, etc.).
+     *
+     * @return A string with the collected errors/warnings, or empty if none found.
+     */
+    wxString GetErrorMessages() const
+    {
+        wxString errors;
+
+        for( const wxString& msg : m_messages )
+        {
+            wxString lower = msg.Lower();
+
+            if( lower.Contains( "can't find model" )
+                || lower.Contains( "unable to find definition" )
+                || lower.Contains( "error on line" )
+                || lower.Contains( "missing tokens" )
+                || lower.StartsWith( "error" ) )
+            {
+                if( !errors.IsEmpty() )
+                    errors += "\n";
+
+                errors += msg;
+            }
+        }
+
+        return errors;
+    }
+
+private:
+    SIMULATOR_REPORTER*       m_forwardTo;
+    std::vector<wxString>     m_messages;
+};
+
+
 HANDLER_RESULT<schematic::commands::RunSimulationResponse>
 API_HANDLER_SCH::handleRunSimulation(
         const HANDLER_CONTEXT<schematic::commands::RunSimulation>& aCtx )
@@ -6115,12 +6182,20 @@ API_HANDLER_SCH::handleRunSimulation(
         return response;
     }
 
+    // Install a collecting reporter to capture ngspice warnings/errors during simulation
+    // (e.g. "can't find model", "Error on line"). The simulator's existing reporter (from
+    // SIMULATOR_FRAME) is not forwarded to — it will be re-set by the sim frame as needed.
+    SIM_COLLECTING_REPORTER collectingReporter;
+    simulator->SetReporter( &collectingReporter );
+
     // Run the simulation
     wxLogInfo( "SIM API: Calling simulator->Run()" );
 
     if( !simulator->Run() )
     {
         wxLogWarning( "SIM API: Run() returned false" );
+        // Restore original reporter before returning
+        simulator->SetReporter( nullptr );
         response.set_success( false );
         response.set_error_message( "Failed to start simulation" );
         return response;
@@ -6146,10 +6221,28 @@ API_HANDLER_SCH::handleRunSimulation(
         {
             wxLogWarning( "SIM API: Simulation timed out" );
             simulator->Stop();
+            simulator->SetReporter( nullptr );
             response.set_success( false );
             response.set_error_message( "Simulation timed out after 30 seconds" );
             return response;
         }
+    }
+
+    // Check for ngspice errors/warnings (missing models, syntax errors, etc.)
+    wxString simErrors = collectingReporter.GetErrorMessages();
+
+    // Restore reporter (the sim frame's SIM_THREAD_REPORTER will be re-set
+    // next time the sim frame runs a simulation, so nullptr is fine here)
+    simulator->SetReporter( nullptr );
+
+    if( !simErrors.IsEmpty() )
+    {
+        wxLogWarning( "SIM API: ngspice reported errors:\n%s", simErrors );
+        response.set_success( false );
+        response.set_error_message(
+                fmt::format( "Simulation failed with errors:\n{}",
+                             simErrors.ToStdString() ) );
+        return response;
     }
 
     // Collect results

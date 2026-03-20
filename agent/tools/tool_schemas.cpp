@@ -183,6 +183,8 @@ static void AddToolsFromManifest( std::vector<LLM_TOOL>& tools )
             continue;
 
         // Skip tools with no app and no script — these are MCP-only
+        // (e.g. launch_editor, save_document, screenshot have dedicated
+        // native agent equivalents or C++ handlers)
         std::string app = strVal( entry, "app" );
         std::string script = strVal( entry, "script" );
 

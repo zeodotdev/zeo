@@ -557,6 +557,10 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
         return "Exporting " + a.value( "format", "gerber" );
     } );
 
+    Register( "pcb_refill_zones", "pcb", "pcb/pcb_refill_zones.py", []( const nlohmann::json& ) {
+        return std::string( "Refilling copper zones" );
+    } );
+
     Register( "pcb_setup", "pcb", "pcb/pcb_setup.py", DescribePcbSetup );
 
     wxLogInfo( "PYTHON_TOOL_HANDLER: Loaded %zu tools from %s",

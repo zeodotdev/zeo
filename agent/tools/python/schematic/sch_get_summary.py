@@ -142,8 +142,21 @@ def collect_sheet_summary(include_audit=True):
         for lbl in labels:
             try:
                 lp = (rnd(lbl.position.x/1e6), rnd(lbl.position.y/1e6))
-                if lp not in conn_pts:
-                    orphaned_labels.append({'text': lbl.text, 'type': type(lbl).__name__, 'pos': list(lp)})
+                # First check coordinate-based connection (fast path)
+                if lp in conn_pts:
+                    continue
+                # If not on a wire/pin coordinate, check KiCad's connectivity graph
+                # Labels placed directly on pins are connected even without matching coords
+                try:
+                    if hasattr(lbl, 'id') and hasattr(sch, 'connectivity'):
+                        net_info = sch.connectivity.get_net_for_item(lbl.id.value)
+                        if hasattr(net_info, 'is_connected') and net_info.is_connected:
+                            # Label is connected according to KiCad's graph
+                            continue
+                except Exception as _conn_err:
+                    tool_log(f'[sch_get_summary] connectivity check failed for label "{lbl.text}": {_conn_err}')
+                # Label is not connected by either method - mark as orphaned
+                orphaned_labels.append({'text': lbl.text, 'type': type(lbl).__name__, 'pos': list(lp)})
             except Exception as _e:
                 tool_log(f'[sch_get_summary] orphaned label detection failed: {_e}')
 

@@ -41,6 +41,12 @@
  */
 static const wxChar* const traceGalOpenGlError = wxT( "KICAD_GAL_OPENGL_ERROR" );
 
+// Rate-limit error dialogs to prevent floods (e.g., after sleep/wake)
+static wxDateTime s_lastErrorDialogTime;
+static wxString   s_lastErrorMsg;
+static int        s_suppressedErrorCount = 0;
+static const int  ERROR_DIALOG_COOLDOWN_MS = 2000;  // 2 seconds between dialogs
+
 
 int checkGlError( const std::string& aInfo, const char* aFile, int aLine, bool aThrow )
 {
@@ -107,6 +113,12 @@ int checkGlError( const std::string& aInfo, const char* aFile, int aLine, bool a
                 errorMsg = "Framebuffer attachments have different dimensions";
                 break;
 
+            case GL_FRAMEBUFFER_UNDEFINED:
+                // This typically happens after sleep/wake when the GL context is lost.
+                // It's recoverable - the next frame will recreate the context.
+                errorMsg = "Framebuffer undefined (graphics context lost, will recover)";
+                break;
+
             default:
                 errorMsg.Printf( "Unknown incomplete framebuffer error id %X", status );
             }
@@ -154,7 +166,39 @@ int checkGlError( const std::string& aInfo, const char* aFile, int aLine, bool a
                                              aFile,
                                              aLine );
 
-            DisplayErrorMessage( nullptr, "OpenGL Error", msg );
+            // Rate-limit error dialogs to prevent floods (e.g., after sleep/wake).
+            // GL_FRAMEBUFFER_UNDEFINED errors are especially common after context loss
+            // and will spam dozens of dialogs if not limited.
+            wxDateTime now = wxDateTime::UNow();
+            bool showDialog = true;
+
+            if( s_lastErrorDialogTime.IsValid() )
+            {
+                wxTimeSpan elapsed = now - s_lastErrorDialogTime;
+
+                if( elapsed.GetMilliseconds() < ERROR_DIALOG_COOLDOWN_MS )
+                {
+                    // Still in cooldown - suppress this dialog
+                    showDialog = false;
+                    s_suppressedErrorCount++;
+                    wxLogTrace( traceGalOpenGlError, wxT( "Suppressed OpenGL error dialog "
+                                                          "(cooldown): %s" ), msg );
+                }
+                else if( msg == s_lastErrorMsg && s_suppressedErrorCount > 0 )
+                {
+                    // Same error repeated - show count and reset
+                    msg += wxString::Format( wxT( "\n\n(%d similar errors suppressed)"),
+                                             s_suppressedErrorCount );
+                    s_suppressedErrorCount = 0;
+                }
+            }
+
+            if( showDialog )
+            {
+                s_lastErrorDialogTime = now;
+                s_lastErrorMsg = msg;
+                DisplayErrorMessage( nullptr, "OpenGL Error", msg );
+            }
         }
     }
 

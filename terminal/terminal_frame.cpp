@@ -56,6 +56,7 @@ static const std::string KIPY_BOOTSTRAP =
     "import sys\n"
     "import os\n"
     "_kipy_found = False\n"
+    "_kipy_error = ''\n"
     "_search_paths = []\n"
     "if os.environ.get('KICAD_PYTHON_PATH'):\n"
     "    _search_paths.append(os.environ['KICAD_PYTHON_PATH'])\n"
@@ -77,8 +78,19 @@ static const std::string KIPY_BOOTSTRAP =
     "    try:\n"
     "        import kipy\n"
     "        _kipy_found = True\n"
-    "    except ImportError:\n"
-    "        pass\n";
+    "    except ImportError as e:\n"
+    "        _kipy_error = str(e)\n"
+    "if not _kipy_found:\n"
+    "    import json\n"
+    "    _diag = {\n"
+    "        'error': f'Failed to import kipy: {_kipy_error}',\n"
+    "        'python_version': sys.version,\n"
+    "        'python_executable': sys.executable,\n"
+    "        'sys_path': sys.path[:10],\n"
+    "        'pythonhome': os.environ.get('PYTHONHOME', ''),\n"
+    "        'pythonpath': os.environ.get('PYTHONPATH', ''),\n"
+    "    }\n"
+    "    raise ImportError(json.dumps(_diag, indent=2))\n";
 
 
 // Build mode-specific Python init code (kipy imports + editor connection).

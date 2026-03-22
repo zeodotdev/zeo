@@ -41,6 +41,9 @@ public:
 
     bool Running() const;
 
+    /// Returns true if the socket listener was created and started successfully
+    bool Listening() const { return m_listening.load(); }
+
     void SetCallback( std::function<void(std::string*)> aFunc ) { m_callback = aFunc; }
 
     void Reply( const std::string& aReply );
@@ -53,6 +56,8 @@ private:
     std::thread m_thread;
 
     std::atomic<bool> m_shutdown;
+
+    std::atomic<bool> m_listening;
 
     std::string m_socketUrl;
 

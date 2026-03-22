@@ -39,6 +39,7 @@
 
 #ifdef __UNIX__
 #include <sys/file.h>
+#include <sys/stat.h>
 #endif
 
 using kiapi::common::ApiRequest, kiapi::common::ApiResponse, kiapi::common::ApiStatusCode;
@@ -93,6 +94,32 @@ void KICAD_API_SERVER::Start()
         return;
     }
 
+#ifdef __UNIX__
+    // Ensure the socket directory is world-writable (like /tmp itself) so multiple users
+    // can create their own sockets when Zeo is installed system-wide or shared.
+    // Mode 1777 = sticky bit + rwxrwxrwx (users can create/delete only their own files)
+    std::string sockDir = socket.GetPath().ToStdString();
+    struct stat dirStat;
+    if( stat( sockDir.c_str(), &dirStat ) == 0 )
+    {
+        mode_t desiredMode = S_IRWXU | S_IRWXG | S_IRWXO | S_ISVTX;  // 1777
+        if( ( dirStat.st_mode & 07777 ) != desiredMode )
+        {
+            // Try to fix permissions - this may fail if we're not the owner
+            if( chmod( sockDir.c_str(), desiredMode ) == 0 )
+            {
+                wxLogTrace( traceApi, "Server: fixed socket directory permissions to 1777" );
+            }
+            else
+            {
+                wxLogTrace( traceApi, wxString::Format(
+                    "Server: could not fix socket directory permissions (owned by another user?), mode=%o",
+                    dirStat.st_mode & 07777 ) );
+            }
+        }
+    }
+#endif
+
 #ifndef __WINDOWS__
     // We use non-abstract sockets because macOS and some other non-Linux platforms don't support
     // abstract sockets, which means there might be an old socket to unlink.  In order to try to
@@ -126,6 +153,17 @@ void KICAD_API_SERVER::Start()
     }
 
     m_server = std::make_unique<KINNG_REQUEST_SERVER>( fmt::format( "ipc://{}", socket.GetFullPath().ToStdString() ) );
+
+    // Give the listener thread a moment to start, then verify it's actually listening
+    wxMilliSleep( 50 );
+    if( !m_server->Listening() )
+    {
+        wxLogWarning( "Server: failed to start listener at %s — check directory permissions on %s",
+                      socket.GetFullPath(), socket.GetPath() );
+        m_server.reset();
+        return;
+    }
+
     m_server->SetCallback(
             [this]( std::string* aRequest )
             {
@@ -144,11 +182,22 @@ void KICAD_API_SERVER::Start()
 
     m_execServer = std::make_unique<KINNG_REQUEST_SERVER>(
             fmt::format( "ipc://{}", execSocket.GetFullPath().ToStdString() ) );
-    m_execServer->SetCallback(
-            [this]( std::string* aRequest )
-            {
-                onApiRequest( aRequest, m_execServer.get() );
-            } );
+
+    wxMilliSleep( 50 );
+    if( !m_execServer->Listening() )
+    {
+        wxLogWarning( "Server: failed to start exec listener at %s", execSocket.GetFullPath() );
+        m_execServer.reset();
+        // Continue without exec server - main server may still work
+    }
+    else
+    {
+        m_execServer->SetCallback(
+                [this]( std::string* aRequest )
+                {
+                    onApiRequest( aRequest, m_execServer.get() );
+                } );
+    }
 
     m_logFilePath.AssignDir( PATHS::GetLogsPath() );
     m_logFilePath.SetName( s_logFileName );

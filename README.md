@@ -12,6 +12,26 @@ Zeo is a fork of [KiCad](https://www.kicad.org/) with an integrated AI agent sid
 
 See the [KiCad Developer Documentation](https://dev-docs.kicad.org/en/build/) for base build instructions.
 
+### Zeo Python (Required for Agent)
+
+The AI agent requires the `kipy` Python package to communicate with KiCad via IPC. After building Zeo, install the Python bindings:
+
+```sh
+cd ../zeo-python
+pip install -e .
+```
+
+This installs the `kipy` package in editable mode. The agent will use this to execute tool commands against the running KiCad instance.
+
+**Requirements:**
+- Python 3.9+
+- protobuf and pynng packages (installed automatically with pip)
+
+**Verify installation:**
+```sh
+python3 -c "import kipy; print('kipy installed successfully')"
+```
+
 ## License
 
 Zeo is licensed under the [GNU General Public License v3.0](LICENSE) (or later), the same license as KiCad. See [LICENSE.README](LICENSE.README) for details on third-party components.

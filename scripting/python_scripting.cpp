@@ -336,8 +336,14 @@ bool SCRIPTING::scriptingSetup()
         pyhome = wxString( wxT( PYTHON_SITE_PACKAGE_PATH ) ) + wxT( "/../../../" );
     }
 
-    // set $PYTHONHOME
+    // Set PYTHONHOME both via environment variable and direct API call.
+    // The API call is required because some pybind11 versions don't respect the env var.
     wxSetEnv( wxT( "PYTHONHOME" ), pyhome );
+
+    // Also call Py_SetPythonHome directly (must be called before Py_Initialize)
+    static std::wstring pyhome_wstr;
+    pyhome_wstr = pyhome.ToStdWstring();
+    Py_SetPythonHome( pyhome_wstr.c_str() );
 #else
     wxString pypath;
 

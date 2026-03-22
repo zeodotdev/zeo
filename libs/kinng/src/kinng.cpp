@@ -33,7 +33,8 @@ static const wxChar TraceNng[] = wxT( "KINNG" );
 
 KINNG_REQUEST_SERVER::KINNG_REQUEST_SERVER( const std::string& aSocketUrl ) :
         m_socketUrl( aSocketUrl ),
-        m_callback()
+        m_callback(),
+        m_listening( false )
 {
     Start();
 }
@@ -62,6 +63,8 @@ bool KINNG_REQUEST_SERVER::Start()
 void KINNG_REQUEST_SERVER::Stop()
 {
     wxLogTrace( TraceNng, wxS( "KINNG_REQUEST_SERVER::Stop() called" ) );
+
+    m_listening.store( false );
 
     if( !m_thread.joinable() )
     {
@@ -119,13 +122,24 @@ void KINNG_REQUEST_SERVER::listenThread()
         wxLogTrace( TraceNng,
                     wxString::Format( wxS( "Got error code %d from nng_listener_create!" ),
                                       retCode ) );
+        nng_close( socket );
         return;
     }
 
     nng_socket_set_ms( socket, NNG_OPT_RECVTIMEO, 500 );
 
-    nng_listener_start( listener, 0 );
+    retCode = nng_listener_start( listener, 0 );
 
+    if( retCode != 0 )
+    {
+        wxLogTrace( TraceNng,
+                    wxString::Format( wxS( "Got error code %d from nng_listener_start!" ),
+                                      retCode ) );
+        nng_close( socket );
+        return;
+    }
+
+    m_listening.store( true );
     wxLogTrace( TraceNng, wxS( "KINNG_REQUEST_SERVER listener has started" ) );
 
     while( !m_shutdown.load() )
@@ -174,6 +188,7 @@ void KINNG_REQUEST_SERVER::listenThread()
         m_pendingReply.clear();
     }
 
+    m_listening.store( false );
     wxLogTrace( TraceNng, wxS( "KINNG_REQUEST_SERVER shutting down" ) );
 
     nng_close( socket );

@@ -1,14 +1,12 @@
 #!/bin/bash
 # zeo - CLI tool for Zeo
 #
-# Must clear PYTHONHOME/PYTHONPATH set by the Zeo app bundle to avoid
-# conflicts between the bundled Python framework and system Python.
-# Exception: inside AppImage, keep them so the bundled Python finds kipy.
-
-if [ -z "$APPDIR" ]; then
-    unset PYTHONHOME
-    unset PYTHONPATH
-fi
+# This script detects whether it's running from a macOS app bundle and uses
+# the bundled Python framework if available. Otherwise falls back to system Python.
+#
+# App bundle structure:
+#   Zeo.app/Contents/SharedSupport/bin/zeo       <- this script
+#   Zeo.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
 
 # Resolve the real path of this script (follows symlinks)
 # This ensures the manifest can be found even when run via a symlink
@@ -20,6 +18,38 @@ while [ -L "$_zeo_script" ]; do
     [[ "$_zeo_script" != /* ]] && _zeo_script="$_zeo_dir/$_zeo_script"
 done
 export ZEO_SCRIPT_DIR="$(cd "$(dirname "$_zeo_script")" && pwd)"
+
+# Determine which Python to use
+_ZEO_PYTHON=""
+
+# Check if we're in a macOS app bundle (SharedSupport/bin/zeo -> Contents/SharedSupport/bin)
+if [[ "$ZEO_SCRIPT_DIR" == *"/Contents/SharedSupport/bin" ]]; then
+    # We're in an app bundle - use the bundled Python framework
+    _APP_CONTENTS="${ZEO_SCRIPT_DIR%/SharedSupport/bin}"
+    _BUNDLED_PYTHON="$_APP_CONTENTS/Frameworks/Python.framework/Versions/Current/bin/python3"
+
+    if [ -x "$_BUNDLED_PYTHON" ]; then
+        _ZEO_PYTHON="$_BUNDLED_PYTHON"
+        # Set PYTHONHOME to the framework so it finds its standard library
+        export PYTHONHOME="$_APP_CONTENTS/Frameworks/Python.framework/Versions/Current"
+        # Clear any conflicting PYTHONPATH from the environment
+        unset PYTHONPATH
+    fi
+fi
+
+# Check if we're in a Linux AppImage
+if [ -n "$APPDIR" ]; then
+    # Inside AppImage - keep PYTHONHOME/PYTHONPATH so bundled Python finds kipy
+    _ZEO_PYTHON="${APPDIR}/usr/bin/python3"
+fi
+
+# Fall back to system Python if no bundled Python found
+if [ -z "$_ZEO_PYTHON" ]; then
+    # Clear any lingering Python environment from app bundle
+    unset PYTHONHOME
+    unset PYTHONPATH
+    _ZEO_PYTHON="/usr/bin/env python3"
+fi
 
 # Create temp file for Python script, keeping stdin available for interactive use
 _ZEO_SCRIPT=$(mktemp)
@@ -1279,4 +1309,4 @@ if __name__ == "__main__":
     main()
 PYTHON_EOF
 
-exec /usr/bin/env python3 "$_ZEO_SCRIPT" "$@"
+exec $_ZEO_PYTHON "$_ZEO_SCRIPT" "$@"

@@ -6,8 +6,40 @@ ref = TOOL_ARGS.get("ref", "")
 unit_filter = TOOL_ARGS.get("unit", None)  # Optional: filter pins by unit
 
 try:
-    sym = sch.symbols.get_by_ref(ref)
-    if not sym:
+    # When unit is specified, find the specific symbol instance with that unit
+    # (for multi-unit symbols like U1 with units 10-14 on same sheet)
+    sym = None
+    _error_printed = False
+
+    if unit_filter is not None:
+        all_symbols = sch.symbols.get_all()
+        matching_symbols = [s for s in all_symbols if getattr(s, 'reference', '') == ref]
+        for s in matching_symbols:
+            if getattr(s, 'unit', 1) == unit_filter:
+                sym = s
+                break
+        if not sym:
+            if matching_symbols:
+                # Unit not found - report available units
+                available_units = sorted(set(getattr(s, 'unit', 1) for s in matching_symbols))
+                print(json.dumps({
+                    'status': 'error',
+                    'message': f'Unit {unit_filter} of {ref} not found on this sheet. Available units: {available_units}'
+                }))
+            else:
+                # Symbol ref not found at all
+                all_syms = sch.symbols.get_all()
+                available = [s.reference for s in all_syms[:20] if hasattr(s, 'reference')]
+                print(json.dumps({
+                    'status': 'error',
+                    'message': f'Symbol not found: {ref}',
+                    'available': available
+                }))
+            _error_printed = True
+    else:
+        sym = sch.symbols.get_by_ref(ref)
+
+    if not sym and not _error_printed:
         # List available symbols
         all_syms = sch.symbols.get_all()
         available = [s.reference for s in all_syms[:20] if hasattr(s, 'reference')]
@@ -16,7 +48,7 @@ try:
             'message': f'Symbol not found: {ref}',
             'available': available
         }))
-    else:
+    elif sym:
         # Get symbol's unit info
         sym_unit = getattr(sym, 'unit', 1)
 

@@ -347,7 +347,7 @@
   },
   {
     "name": "sch_get_nets",
-    "description": "Query schematic net connectivity. Returns which symbol pins are connected to which nets.",
+    "description": "Query schematic net connectivity. Returns which symbol pins are connected to which nets. Supports multi-unit symbols (e.g., quad op-amps) with sym_unit/pin_unit info.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -358,6 +358,10 @@
         "include_unconnected": {
           "type": "boolean",
           "description": "Include pins not connected to any net. Default false."
+        },
+        "unit": {
+          "type": "integer",
+          "description": "Filter pins to specific unit number (1-based). Useful for multi-unit symbols like quad op-amps. Unit 0 pins (shared/power) are always included."
         }
       },
       "required": []
@@ -406,7 +410,7 @@
   },
   {
     "name": "sch_label",
-    "description": "Place labels on symbol or sheet pins. Auto-justifies text and orientation based on pin direction. For sheets, pass the sheet name as ref and use sheet pin names as label keys.",
+    "description": "Place labels on symbol or sheet pins. Auto-justifies text and orientation based on pin direction. For sheets, pass the sheet name as ref and use sheet pin names as label keys. Supports multi-unit symbols with optional unit filter.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -429,6 +433,10 @@
             "hierarchical"
           ],
           "description": "Label type. 'local' for intra-sheet (default). 'hierarchical' for inter-sheet signals. 'global' only when genuinely needed everywhere."
+        },
+        "unit": {
+          "type": "integer",
+          "description": "Filter to only label pins belonging to this unit (1-based). Pins from other units are skipped. Unit 0 pins (shared/power) are always included."
         }
       },
       "required": [

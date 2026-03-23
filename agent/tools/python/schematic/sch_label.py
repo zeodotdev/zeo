@@ -8,6 +8,7 @@ refresh_or_fail(sch)
 ref = TOOL_ARGS.get("ref", "")
 label_type = TOOL_ARGS.get("label_type", "local")
 pin_labels = TOOL_ARGS.get("labels", {})
+unit_filter = TOOL_ARGS.get("unit", None)  # Filter pins to specific unit (None = all pins)
 
 def build_label(text, position, h_align, v_align, rotation=0):
     """Build a label proto in memory (no IPC call)."""
@@ -29,21 +30,37 @@ labels_to_create = []  # Collect all label protos for batch creation
 _is_sheet = False
 sym = None
 sheet = None
-try:
-    sym = sch.symbols.get_by_ref(ref)
-    if not sym:
-        raise ValueError('not found')
-except Exception:
-    sym = None
 
-if not sym:
+# When unit is specified, we need to find the specific symbol instance with that unit
+# because multiple units of the same ref can be on the same sheet (e.g., U1 units 10-14)
+if unit_filter is not None:
+    # Find all symbols with this ref and select the one with matching unit
+    all_symbols = sch.symbols.get_all()
+    matching_symbols = [s for s in all_symbols if getattr(s, 'reference', '') == ref]
+    for s in matching_symbols:
+        if getattr(s, 'unit', 1) == unit_filter:
+            sym = s
+            break
+    if not sym and matching_symbols:
+        # Unit not found - report available units
+        available_units = sorted(set(getattr(s, 'unit', 1) for s in matching_symbols))
+        results = [{'error': f'Unit {unit_filter} of {ref} not found on this sheet. Available units: {available_units}'}]
+else:
+    try:
+        sym = sch.symbols.get_by_ref(ref)
+        if not sym:
+            raise ValueError('not found')
+    except Exception:
+        sym = None
+
+if not sym and not results:
     for _s in sch.crud.get_sheets():
         if _s.name == ref:
             sheet = _s
             _is_sheet = True
             break
 
-if not sym and not sheet:
+if not sym and not sheet and not results:
     results = [{'error': f'No symbol or sheet found matching: {ref}'}]
 
 elif _is_sheet:
@@ -90,6 +107,17 @@ elif _is_sheet:
             results.append({'pin': pin_id, 'label': label_text, 'error': str(e)})
 
 else:
+    # Get library info for pin unit assignments if unit filter is specified
+    lib_pin_units = {}
+    if unit_filter is not None:
+        try:
+            lib_id = get_lib_id_str(sym)
+            lib_sym = sch.library.get_symbol_info(lib_id)
+            if lib_sym:
+                lib_pin_units = {p.number: getattr(p, 'unit', 0) for p in getattr(lib_sym, 'pins', [])}
+        except Exception:
+            pass
+
     # Orientation transform: apply symbol rotation and mirroring
     _rot90 = {0: 2, 1: 3, 2: 1, 3: 0}
     _rot_steps = round(getattr(sym, 'angle', 0) / 90) % 4
@@ -107,6 +135,12 @@ else:
         return o
 
     for pin_id, label_text in pin_labels.items():
+        # Filter by unit if requested (pin_unit 0 = shared, always include)
+        if unit_filter is not None and lib_pin_units:
+            pin_unit = lib_pin_units.get(pin_id, 0)
+            if pin_unit != 0 and pin_unit != unit_filter:
+                results.append({'pin': pin_id, 'label': label_text, 'skipped': True, 'reason': f'Pin belongs to unit {pin_unit}, not unit {unit_filter}'})
+                continue
         try:
             pin_result = sch.symbols.get_transformed_pin_position(sym, pin_id)
             if not pin_result:
@@ -190,4 +224,4 @@ if label_type == 'hierarchical':
     except Exception as _e:
         tool_log(f'[sch_label] sheet pin sync failed: {_e}')
 
-print(json.dumps({'status': 'success', 'ref': ref, 'labels_placed': len([r for r in results if 'error' not in r]), 'labels_failed': len([r for r in results if 'error' in r]), 'results': results}, indent=2))
+print(json.dumps({'status': 'success', 'ref': ref, 'labels_placed': len([r for r in results if 'error' not in r and 'skipped' not in r]), 'labels_skipped': len([r for r in results if r.get('skipped')]), 'labels_failed': len([r for r in results if 'error' in r]), 'results': results}, indent=2))

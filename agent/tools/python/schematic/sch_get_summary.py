@@ -40,18 +40,55 @@ def collect_sheet_summary(include_audit=True):
     except Exception as _e:
         tool_log(f'[sch_get_summary] bus entries fetch failed: {_e}')
 
+    # Cache library info for unit counts and pin units
+    lib_info_cache = {}
+
+    def get_lib_info(lib_id):
+        """Get cached library symbol info (unit_count, pin_units)."""
+        if lib_id not in lib_info_cache:
+            try:
+                lib_sym = sch.library.get_symbol_info(lib_id)
+                if lib_sym:
+                    lib_info_cache[lib_id] = {
+                        'unit_count': getattr(lib_sym, 'unit_count', 1),
+                        'pin_units': {p.number: getattr(p, 'unit', 0) for p in getattr(lib_sym, 'pins', [])}
+                    }
+                else:
+                    lib_info_cache[lib_id] = {'unit_count': 1, 'pin_units': {}}
+            except Exception:
+                lib_info_cache[lib_id] = {'unit_count': 1, 'pin_units': {}}
+        return lib_info_cache[lib_id]
+
     # Format symbols
     symbol_data = []
     for sym in symbols:
         lib_id_str = get_lib_id_str(sym)
-        pin_count = len(sym.pins) if hasattr(sym, 'pins') else 0
-        symbol_data.append({
+        sym_unit = getattr(sym, 'unit', 1)
+        lib_info = get_lib_info(lib_id_str)
+        unit_count = lib_info['unit_count']
+        pin_units = lib_info['pin_units']
+
+        # Count only pins that belong to this unit (or are shared, unit 0)
+        if hasattr(sym, 'pins'):
+            unit_pin_count = sum(1 for pin in sym.pins
+                                 if pin_units.get(pin.number, 0) in (0, sym_unit))
+        else:
+            unit_pin_count = 0
+
+        sym_entry = {
             'ref': sym.reference if hasattr(sym, 'reference') else '',
             'value': sym.value if hasattr(sym, 'value') else '',
             'lib_id': lib_id_str,
             'pos': get_pos(getattr(sym, 'position', None)),
-            'pin_count': pin_count
-        })
+            'pin_count': unit_pin_count
+        }
+
+        # Add unit info for multi-unit symbols
+        if unit_count > 1:
+            sym_entry['unit'] = sym_unit
+            sym_entry['unit_count'] = unit_count
+
+        symbol_data.append(sym_entry)
 
     # Format labels
     label_data = []

@@ -3332,7 +3332,12 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
     wxLogTrace( "SCHEMATIC", "handleRunERC: %d errors, %d warnings (%d annotation errors)",
                 errorCount, warningCount, annotationErrors );
 
-    m_frame->GetCanvas()->Refresh();
+    // Defer Refresh() to avoid nested event processing issues on macOS
+    m_frame->CallAfter( [this]()
+    {
+        if( m_frame->GetCanvas() )
+            m_frame->GetCanvas()->Refresh();
+    } );
 
     return response;
 }
@@ -3465,7 +3470,12 @@ API_HANDLER_SCH::handleClearERCMarkers(
 
     response.set_markers_cleared( markersCleared );
 
-    m_frame->GetCanvas()->Refresh();
+    // Defer Refresh() to avoid nested event processing issues on macOS
+    m_frame->CallAfter( [this]()
+    {
+        if( m_frame->GetCanvas() )
+            m_frame->GetCanvas()->Refresh();
+    } );
 
     return response;
 }
@@ -3497,7 +3507,12 @@ API_HANDLER_SCH::handleExcludeERCViolation(
             if( marker->m_Uuid == markerId )
             {
                 marker->SetExcluded( true );
-                m_frame->GetCanvas()->Refresh();
+                // Defer Refresh() to avoid nested event processing issues on macOS
+                m_frame->CallAfter( [this]()
+                {
+                    if( m_frame->GetCanvas() )
+                        m_frame->GetCanvas()->Refresh();
+                } );
                 return Empty();
             }
         }
@@ -4124,7 +4139,12 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetGridSettings(
         gal->SetGridSize( VECTOR2D( newX, newY ) );
     }
 
-    m_frame->GetCanvas()->Refresh();
+    // Defer Refresh() to avoid nested event processing issues on macOS
+    m_frame->CallAfter( [this]()
+    {
+        if( m_frame->GetCanvas() )
+            m_frame->GetCanvas()->Refresh();
+    } );
 
     return Empty();
 }
@@ -4303,7 +4323,12 @@ void API_HANDLER_SCH::refreshNetclasses()
     m_frame->Prj().IncrementNetclassesTicker();
     m_frame->OnModify();
     m_frame->GetCanvas()->GetView()->UpdateAllItems( KIGFX::REPAINT );
-    m_frame->GetCanvas()->Refresh();
+    // Defer Refresh() to avoid nested event processing issues on macOS
+    m_frame->CallAfter( [this]()
+    {
+        if( m_frame->GetCanvas() )
+            m_frame->GetCanvas()->Refresh();
+    } );
 }
 
 
@@ -4954,7 +4979,12 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetEditorPreferences(
             commonSettings->m_Input.center_on_zoom = prefs.center_on_zoom();
     }
 
-    m_frame->GetCanvas()->Refresh();
+    // Defer Refresh() to avoid nested event processing issues on macOS
+    m_frame->CallAfter( [this]()
+    {
+        if( m_frame->GetCanvas() )
+            m_frame->GetCanvas()->Refresh();
+    } );
 
     return Empty();
 }
@@ -5077,9 +5107,9 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetFormattingSettings(
     if( !settings.opo_current_range().empty() )
         schSettings.m_OPO_IRange = wxString::FromUTF8( settings.opo_current_range() );
 
-    // Mark the schematic as modified and refresh
+    // Mark the schematic as modified
+    // Note: OnModify() now defers Refresh() via CallAfter() to avoid nested event processing
     m_frame->OnModify();
-    m_frame->GetCanvas()->Refresh();
 
     return Empty();
 }
@@ -6643,7 +6673,12 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetViewport(
             view->SetScale( aCtx.Request.scale() );
         }
 
-        m_frame->GetCanvas()->Refresh();
+        // Defer Refresh() to avoid nested event processing issues on macOS
+        m_frame->CallAfter( [this]()
+        {
+            if( m_frame->GetCanvas() )
+                m_frame->GetCanvas()->Refresh();
+        } );
     }
 
     return Empty();
@@ -6734,7 +6769,12 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleZoomToItems(
         double newScale = std::min( scaleX, scaleY ) * view->GetScale();
         view->SetScale( newScale );
 
-        m_frame->GetCanvas()->Refresh();
+        // Defer Refresh() to avoid nested event processing issues on macOS
+        m_frame->CallAfter( [this]()
+        {
+            if( m_frame->GetCanvas() )
+                m_frame->GetCanvas()->Refresh();
+        } );
     }
 
     return Empty();
@@ -6757,7 +6797,12 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleHighlightNet(
 
     // Set the highlighted net
     m_frame->SetHighlightedConnection( netName, {} );
-    m_frame->GetCanvas()->Refresh();
+    // Defer Refresh() to avoid nested event processing issues on macOS
+    m_frame->CallAfter( [this]()
+    {
+        if( m_frame->GetCanvas() )
+            m_frame->GetCanvas()->Refresh();
+    } );
 
     return Empty();
 }
@@ -6773,7 +6818,12 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleClearHighlight(
 
     // Clear any highlighted net
     m_frame->SetHighlightedConnection( wxEmptyString, {} );
-    m_frame->GetCanvas()->Refresh();
+    // Defer Refresh() to avoid nested event processing issues on macOS
+    m_frame->CallAfter( [this]()
+    {
+        if( m_frame->GetCanvas() )
+            m_frame->GetCanvas()->Refresh();
+    } );
 
     return Empty();
 }
@@ -6978,7 +7028,12 @@ API_HANDLER_SCH::handleCrossProbeFromBoard(
         }
     }
 
-    m_frame->GetCanvas()->Refresh();
+    // Defer Refresh() to avoid nested event processing issues on macOS
+    m_frame->CallAfter( [this]()
+    {
+        if( m_frame->GetCanvas() )
+            m_frame->GetCanvas()->Refresh();
+    } );
 
     return response;
 }

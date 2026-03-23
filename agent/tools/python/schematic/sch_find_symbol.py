@@ -55,6 +55,7 @@ def format_symbol(info):
                 pin_info = {
                     'number': getattr(pin, 'number', ''),
                     'name': getattr(pin, 'name', ''),
+                    'unit': getattr(pin, 'unit', 0),  # 0 = shared, 1+ = specific unit
                 }
                 pos_x = getattr(pin, 'position_x', 0)
                 pos_y = getattr(pin, 'position_y', 0)

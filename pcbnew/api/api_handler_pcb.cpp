@@ -2621,8 +2621,12 @@ HANDLER_RESULT<Empty> API_HANDLER_PCB::handleClearDRCMarkers(
     // DeleteMARKERs( warnings_and_errors, exclusions )
     board->DeleteMARKERs( aCtx.Request.clear_violations(), aCtx.Request.clear_exclusions() );
 
-    // Refresh the view
-    frame()->GetCanvas()->Refresh();
+    // Defer Refresh() to avoid nested event processing issues on macOS
+    frame()->CallAfter( [this]()
+    {
+        if( frame()->GetCanvas() )
+            frame()->GetCanvas()->Refresh();
+    } );
 
     return Empty();
 }
@@ -3070,13 +3074,16 @@ HANDLER_RESULT<Empty> API_HANDLER_PCB::handleSetPCBGridSettings(
         frame()->GetCanvas()->GetGAL()->SetGridVisibility( aCtx.Request.show_grid() );
     }
 
-    // Refresh the view
-    if( frame()->GetCanvas() )
+    // Defer Refresh() to avoid nested event processing issues on macOS
+    frame()->CallAfter( [this]()
     {
-        if( frame()->GetCanvas()->GetView() )
-            frame()->GetCanvas()->GetView()->MarkTargetDirty( KIGFX::TARGET_NONCACHED );
-        frame()->GetCanvas()->Refresh();
-    }
+        if( frame()->GetCanvas() )
+        {
+            if( frame()->GetCanvas()->GetView() )
+                frame()->GetCanvas()->GetView()->MarkTargetDirty( KIGFX::TARGET_NONCACHED );
+            frame()->GetCanvas()->Refresh();
+        }
+    } );
 
     return Empty();
 }
@@ -3603,7 +3610,11 @@ HANDLER_RESULT<UpdatePCBFromSchematicResponse> API_HANDLER_PCB::handleUpdatePCBF
     {
         bool dummy = false;
         frame()->OnNetlistChanged( updater, &dummy );
-        frame()->Refresh();
+        // Defer Refresh() to avoid nested event processing issues on macOS
+        frame()->CallAfter( [this]()
+        {
+            frame()->Refresh();
+        } );
     }
 
     return response;

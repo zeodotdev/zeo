@@ -19,6 +19,27 @@ for spec in raw_pins:
 
 routing_mode = TOOL_ARGS.get("mode", "chain")
 
+
+def find_symbol_with_pin(ref, pin_id):
+    """Find the symbol instance that actually has the specified pin.
+    For multi-unit symbols (e.g., U1 units 10-14 on same sheet), different
+    units have different pins, so we need to find the right instance."""
+    all_symbols = sch.symbols.get_all()
+    matching_symbols = [s for s in all_symbols if getattr(s, 'reference', '') == ref]
+    if not matching_symbols:
+        return None
+    if len(matching_symbols) == 1:
+        return matching_symbols[0]
+    # Multiple instances - find the one that has this pin
+    for sym in matching_symbols:
+        if hasattr(sym, 'pins'):
+            for pin in sym.pins:
+                if pin.number == pin_id:
+                    return sym
+    # Pin not found on any instance - return first match for error handling
+    return matching_symbols[0]
+
+
 try:
     # Phase 1: Resolve pin/label positions
     pin_positions = []
@@ -37,7 +58,7 @@ try:
             pin_dir = 'h'
         else:
             ref = name
-            sym = sch.symbols.get_by_ref(ref)
+            sym = find_symbol_with_pin(ref, pin_id)
             if not sym:
                 raise ValueError(f'Symbol not found: {ref}')
             pin_result = sch.symbols.get_transformed_pin_position(sym, pin_id)
@@ -106,7 +127,7 @@ try:
         _net = None
         try:
             if p.get('pin'):  # pin spec (not label)
-                _sym = sch.symbols.get_by_ref(p['ref'])
+                _sym = find_symbol_with_pin(p['ref'], p['pin'])
                 if _sym:
                     _net = sch.labels.get_pin_net(_sym, p['pin'])
                     if _net and 'unconnected' in _net.lower():
@@ -673,7 +694,7 @@ try:
         if not flip_p:
             return waypoints, p0, p1
 
-        sym = sch.symbols.get_by_ref(flip_p['ref'])
+        sym = find_symbol_with_pin(flip_p['ref'], flip_p['pin'])
         if not sym:
             return waypoints, p0, p1
 

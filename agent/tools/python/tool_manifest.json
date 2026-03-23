@@ -278,13 +278,17 @@
   },
   {
     "name": "sch_get_pins",
-    "description": "Get pin positions for a single placed symbol by reference designator. Returns exact transformed positions (after rotation/mirror) in mm.",
+    "description": "Get pin positions for a single placed symbol by reference designator. Returns exact transformed positions (after rotation/mirror) in mm. For multi-unit symbols, includes unit info and can filter pins by unit.",
     "input_schema": {
       "type": "object",
       "properties": {
         "ref": {
           "type": "string",
           "description": "Reference designator of the placed symbol (e.g., 'R1', 'U3', 'C5')"
+        },
+        "unit": {
+          "type": "integer",
+          "description": "Filter pins to specific unit number (1-based). Omit to get all pins. Unit 0 pins (shared/power) are always included."
         }
       },
       "required": [
@@ -300,7 +304,7 @@
   },
   {
     "name": "sch_symbols",
-    "description": "Query schematic symbols with comprehensive data including footprint and pin connectivity. Returns for each symbol: ref, value, footprint, position, and pins with connection status. Pin connectivity shows which pins are connected to wires/labels and their net names.",
+    "description": "Query schematic symbols with comprehensive data including footprint and pin connectivity. Returns for each symbol: ref, value, footprint, position, unit info, and pins with connection status. For multi-unit symbols (e.g., quad op-amps, large MCUs), each placed unit shows its unit number and unit_count. Pin data includes which unit each pin belongs to (unit 0 = shared/power pins).",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -326,6 +330,10 @@
         "include_connectivity": {
           "type": "boolean",
           "description": "Include pin connection status. Default: true"
+        },
+        "unit": {
+          "type": "integer",
+          "description": "Filter pins to specific unit number (1-based). Useful for large multi-unit symbols to reduce output. Unit 0 pins (shared/power) are always included."
         }
       },
       "required": []

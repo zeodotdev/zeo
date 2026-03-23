@@ -8,6 +8,7 @@ library_filter = TOOL_ARGS.get("library", "")
 refs_list = TOOL_ARGS.get("refs", [])
 include_library_info = TOOL_ARGS.get("include_library_info", False)
 include_connectivity = TOOL_ARGS.get("include_connectivity", True)
+unit_filter = TOOL_ARGS.get("unit", None)  # Filter pins to specific unit (None = all pins)
 
 try:
     # Get all symbols
@@ -143,6 +144,9 @@ try:
     symbols_out = []
     rnd = lambda v: round(v, 2)
 
+    # Cache library symbol info for unit counts and pin unit assignments
+    lib_info_cache = {}
+
     for sym in filtered_symbols:
         ref = getattr(sym, 'reference', '')
         value = getattr(sym, 'value', '')
@@ -150,6 +154,25 @@ try:
         pos = get_pos(getattr(sym, 'position', None))
         angle = getattr(sym, 'angle', 0) or 0
         dnp = getattr(sym, 'dnp', False)
+        sym_unit = getattr(sym, 'unit', 1)  # Which unit this symbol instance is
+
+        # Get library info for unit_count and pin units
+        unit_count = 1
+        lib_pin_units = {}  # pin_number -> unit (0 = shared)
+        if lib_id not in lib_info_cache:
+            try:
+                lib_sym = sch.library.get_symbol_info(lib_id)
+                if lib_sym:
+                    lib_info_cache[lib_id] = {
+                        'unit_count': getattr(lib_sym, 'unit_count', 1),
+                        'pin_units': {p.number: getattr(p, 'unit', 0) for p in getattr(lib_sym, 'pins', [])}
+                    }
+            except Exception:
+                lib_info_cache[lib_id] = {'unit_count': 1, 'pin_units': {}}
+
+        if lib_id in lib_info_cache:
+            unit_count = lib_info_cache[lib_id]['unit_count']
+            lib_pin_units = lib_info_cache[lib_id]['pin_units']
 
         # Get footprint from properties
         footprint = ''
@@ -166,7 +189,9 @@ try:
             'footprint': footprint,
             'position': [rnd(pos[0]), rnd(pos[1])],
             'angle': angle,
-            'dnp': dnp
+            'dnp': dnp,
+            'unit': sym_unit,
+            'unit_count': unit_count
         }
 
         # Get pins with positions
@@ -187,6 +212,12 @@ try:
             for pin in sym.pins:
                 pin_num = pin.number
                 pin_name = getattr(pin, 'name', '')
+                pin_unit = lib_pin_units.get(pin_num, 0)  # 0 = shared across units
+
+                # Filter by unit if requested (unit 0 = shared, always include)
+                if unit_filter is not None:
+                    if pin_unit != 0 and pin_unit != unit_filter:
+                        continue
 
                 # Get position from map or fallback
                 if pin_num in pin_map:
@@ -198,7 +229,8 @@ try:
                 pin_data = {
                     'number': pin_num,
                     'name': pin_name,
-                    'position': list(pin_pos)
+                    'position': list(pin_pos),
+                    'unit': pin_unit  # 0 = shared across all units, 1+ = specific unit
                 }
 
                 # Add connectivity info

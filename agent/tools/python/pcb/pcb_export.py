@@ -56,5 +56,35 @@ else:
         except Exception as e:
             print(json.dumps({'status': 'error', 'message': str(e)}))
 
+    elif format == "svg":
+        try:
+            layers = TOOL_ARGS.get("layers", None)
+            if not layers:
+                layers = ["F.Cu", "B.Cu", "F.SilkS", "B.SilkS", "F.Mask", "B.Mask", "Edge.Cuts"]
+            files = board.export.generate_svg(output_dir, layers=layers)
+            print(json.dumps({'status': 'success', 'format': 'svg', 'files': files}, indent=2))
+        except Exception as e:
+            print(json.dumps({'status': 'error', 'message': str(e)}))
+
+    elif format == "pdf":
+        try:
+            layers = TOOL_ARGS.get("layers", None)
+            if not layers:
+                layers = ["F.Cu", "B.Cu", "F.SilkS", "B.SilkS", "F.Mask", "B.Mask", "Edge.Cuts"]
+            files = board.export.generate_pdf(output_dir, layers=layers)
+            print(json.dumps({'status': 'success', 'format': 'pdf', 'files': files}, indent=2))
+        except Exception as e:
+            print(json.dumps({'status': 'error', 'message': str(e)}))
+
+    elif format == "dxf":
+        try:
+            layers = TOOL_ARGS.get("layers", None)
+            if not layers:
+                layers = ["F.Cu", "B.Cu", "F.SilkS", "B.SilkS", "Edge.Cuts"]
+            files = board.export.generate_dxf(output_dir, layers=layers)
+            print(json.dumps({'status': 'success', 'format': 'dxf', 'files': files}, indent=2))
+        except Exception as e:
+            print(json.dumps({'status': 'error', 'message': str(e)}))
+
     else:
         print(json.dumps({'status': 'error', 'message': f'Unsupported export format: {format}'}))

@@ -2587,16 +2587,20 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
             else
                 wxLogInfo( "AGENT_FRAME: Found Python at %s", pythonPath.c_str() );
 #else
-            // macOS: try bundled Python first, then system Python
-            wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
-            wxString bundledPython = exePath.GetPath() + "/../Frameworks/Python.framework/Versions/3.10/bin/python3";
+            // Unix (macOS + Linux): search candidate paths
+            std::vector<wxString> candidates;
 
-            std::vector<wxString> candidates = {
-                bundledPython,
-                "/opt/homebrew/bin/python3",
-                "/usr/local/bin/python3",
-                "/usr/bin/python3"
-            };
+#if defined(__WXOSX__)
+            // macOS: try bundled Python first, then Homebrew, then system
+            {
+                wxFileName exePath( wxStandardPaths::Get().GetExecutablePath() );
+                wxString bundledPython = exePath.GetPath() + "/../Frameworks/Python.framework/Versions/3.10/bin/python3";
+                candidates = { bundledPython, "/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3" };
+            }
+#else
+            // Linux: system Python (available in Docker and AppImage environments)
+            candidates = { "/usr/bin/python3", "/usr/local/bin/python3" };
+#endif
 
             for( const auto& candidate : candidates )
             {

@@ -116,7 +116,19 @@ def collect_sheet_summary(include_audit=True):
                 except Exception as _e:
                     tool_log(f'[sch_get_summary] pin position fetch failed: {_e}')
 
-        conn_pts = wire_pts | all_pin_pts
+        # Collect hierarchical sheet pin positions - labels on sheet pins are valid connections
+        sheet_pin_pts = set()
+        for sheet in sheets:
+            if hasattr(sheet, 'pins'):
+                try:
+                    for pin in sheet.pins:
+                        if hasattr(pin, 'position'):
+                            pp = (rnd(pin.position.x/1e6), rnd(pin.position.y/1e6))
+                            sheet_pin_pts.add(pp)
+                except Exception as _e:
+                    tool_log(f'[sch_get_summary] sheet pin position fetch failed: {_e}')
+
+        conn_pts = wire_pts | all_pin_pts | sheet_pin_pts
 
         orphaned_power = []
         for sym in symbols:
@@ -138,24 +150,49 @@ def collect_sheet_summary(include_audit=True):
             except Exception as _e:
                 tool_log(f'[sch_get_summary] orphaned power detection failed: {_e}')
 
+        def _point_on_wire_segment(pt, wire_list):
+            """Check if point lies on any wire segment (including interior, not just endpoints)."""
+            px, py = pt
+            for (sx, sy), (ex, ey) in wire_list:
+                # Check endpoints
+                if (px, py) == (sx, sy) or (px, py) == (ex, ey):
+                    return True
+                # Check wire interior
+                if sx == ex == px:  # vertical wire
+                    if min(sy, ey) <= py <= max(sy, ey):
+                        return True
+                elif sy == ey == py:  # horizontal wire
+                    if min(sx, ex) <= px <= max(sx, ex):
+                        return True
+            return False
+
+        def _near_any_point(pt, point_set, tolerance=0.05):
+            """Check if pt is within tolerance (in mm) of any point in the set."""
+            px, py = pt
+            for (cx, cy) in point_set:
+                if abs(px - cx) <= tolerance and abs(py - cy) <= tolerance:
+                    return True
+            return False
+
         orphaned_labels = []
         for lbl in labels:
             try:
                 lp = (rnd(lbl.position.x/1e6), rnd(lbl.position.y/1e6))
-                # First check coordinate-based connection (fast path)
+
+                # Check 1: Exact coordinate match with wire endpoint, pin, or sheet pin
                 if lp in conn_pts:
                     continue
-                # If not on a wire/pin coordinate, check KiCad's connectivity graph
-                # Labels placed directly on pins are connected even without matching coords
-                try:
-                    if hasattr(lbl, 'id') and hasattr(sch, 'connectivity'):
-                        net_info = sch.connectivity.get_net_for_item(lbl.id.value)
-                        if hasattr(net_info, 'is_connected') and net_info.is_connected:
-                            # Label is connected according to KiCad's graph
-                            continue
-                except Exception as _conn_err:
-                    tool_log(f'[sch_get_summary] connectivity check failed for label "{lbl.text}": {_conn_err}')
-                # Label is not connected by either method - mark as orphaned
+
+                # Check 2: Label is on a wire segment (including wire interior)
+                if _point_on_wire_segment(lp, wire_ep_list):
+                    continue
+
+                # Check 3: Proximity check - label within 0.05mm of any connection point
+                # This catches labels placed on pins where coordinates don't exactly match
+                if _near_any_point(lp, conn_pts, tolerance=0.05):
+                    continue
+
+                # Label is not connected by any method - mark as orphaned
                 orphaned_labels.append({'text': lbl.text, 'type': type(lbl).__name__, 'pos': list(lp)})
             except Exception as _e:
                 tool_log(f'[sch_get_summary] orphaned label detection failed: {_e}')
@@ -181,15 +218,42 @@ def collect_sheet_summary(include_audit=True):
             except Exception as _e:
                 tool_log(f'[sch_get_summary] orphaned junction detection failed: {_e}')
 
-        audit = {}
-        if orphaned_power:
-            audit['orphaned_power_symbols'] = orphaned_power
-        if orphaned_labels:
-            audit['orphaned_labels'] = orphaned_labels
-        if orphaned_junctions:
-            audit['orphaned_junctions'] = orphaned_junctions
-        if audit:
-            result['audit'] = audit
+        # Detect unmatched labels (labels that appear only once on this sheet)
+        # Only flag local labels (NetLabel) since global/hierarchical labels connect across sheets
+        unmatched_labels = []
+        label_counts = {}
+        for lbl in labels:
+            try:
+                lbl_type = type(lbl).__name__
+                # Only check local labels - global and hierarchical labels connect across sheets
+                if lbl_type not in ('NetLabel', 'Label'):
+                    continue
+                text = getattr(lbl, 'text', '')
+                if text:
+                    label_counts[text] = label_counts.get(text, 0) + 1
+            except Exception as _e:
+                tool_log(f'[sch_get_summary] label counting failed: {_e}')
+
+        for lbl in labels:
+            try:
+                lbl_type = type(lbl).__name__
+                if lbl_type not in ('NetLabel', 'Label'):
+                    continue
+                text = getattr(lbl, 'text', '')
+                if text and label_counts.get(text, 0) == 1:
+                    lp = (rnd(lbl.position.x/1e6), rnd(lbl.position.y/1e6))
+                    unmatched_labels.append({'text': text, 'type': lbl_type, 'pos': list(lp)})
+            except Exception as _e:
+                tool_log(f'[sch_get_summary] unmatched label detection failed: {_e}')
+
+        # Always include audit section so the agent knows the audit ran
+        audit = {
+            'orphaned_power_symbols': orphaned_power if orphaned_power else [],
+            'orphaned_labels': orphaned_labels if orphaned_labels else [],
+            'unmatched_labels': unmatched_labels if unmatched_labels else [],
+            'orphaned_junctions': orphaned_junctions if orphaned_junctions else []
+        }
+        result['audit'] = audit
 
     return result
 

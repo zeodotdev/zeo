@@ -85,6 +85,18 @@ try:
                     return True
         return False
 
+    def point_has_label(pt):
+        """Check if a label is placed directly at this point."""
+        return pt in label_positions
+
+    def is_connected(pt):
+        """Check if point is connected via wire OR has a label directly on it.
+
+        In KiCad, a label placed directly on a pin (without a wire stub) is a
+        valid connection - the netlist engine resolves it correctly.
+        """
+        return point_on_wire(pt) or point_has_label(pt)
+
     def find_net_name(start_pt):
         """BFS through wire network to find connected label (net name)."""
         if start_pt in label_positions:
@@ -191,13 +203,18 @@ try:
 
                 # Add connectivity info
                 if include_connectivity:
-                    connected = point_on_wire(pin_pos)
+                    connected = is_connected(pin_pos)
                     pin_data['connected'] = connected
 
                     if connected:
-                        net = find_net_name(pin_pos)
-                        if net:
-                            pin_data['net'] = net
+                        # First check for label directly at pin (label-only connection)
+                        if pin_pos in label_positions:
+                            pin_data['net'] = label_positions[pin_pos]
+                        else:
+                            # Otherwise BFS through wire network
+                            net = find_net_name(pin_pos)
+                            if net:
+                                pin_data['net'] = net
                     else:
                         # Check if it has a no-connect
                         pin_data['no_connect'] = pin_pos in no_connect_positions

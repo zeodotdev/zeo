@@ -7,6 +7,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+typedef int pid_t;
 #else
 #include <errno.h>
 #include <poll.h>

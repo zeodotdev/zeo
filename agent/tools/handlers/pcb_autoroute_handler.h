@@ -2,14 +2,8 @@
 #define PCB_AUTOROUTE_HANDLER_H
 
 #include "../tool_handler.h"
+#include "../util/process_util.h"
 #include <atomic>
-
-#ifndef _WIN32
-#include <sys/types.h>
-#include <signal.h>
-#else
-typedef int pid_t;
-#endif
 
 /**
  * Handler for PCB autorouting via Freerouting.

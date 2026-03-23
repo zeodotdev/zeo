@@ -223,7 +223,7 @@ void VCS_FRAME::OnVcsAuthCallback( wxCommandEvent& aEvent )
     wxString token    = params["provider_token"];
     wxString username = !params["username"].IsEmpty() ? params["username"]
                                                       : params["github_username"];
-    wxString provider = !params["provider"].IsEmpty() ? params["provider"] : "github";
+    wxString provider = !params["provider"].IsEmpty() ? params["provider"] : wxString( "github" );
     std::string host  = ( provider == "gitlab" ) ? "gitlab.com" : "github.com";
 
     if( token.IsEmpty() || username.IsEmpty() )

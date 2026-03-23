@@ -341,7 +341,11 @@ void AGENT_AUTH::SaveSession()
     if( !m_accessToken.empty() )
     {
         std::string envVal = m_accessToken + "|" + std::to_string( m_tokenExpiry );
+#ifdef __WXMSW__
+        _putenv_s( "_ZEO_AUTH_TOKEN", envVal.c_str() );
+#else
         setenv( "_ZEO_AUTH_TOKEN", envVal.c_str(), 1 );
+#endif
     }
 
     if( WriteSessionFile( session.dump() ) )
@@ -359,7 +363,11 @@ void AGENT_AUTH::ClearSession()
 {
     std::string path = GetSessionFilePath();
     std::remove( path.c_str() );
+#ifdef __WXMSW__
+    _putenv_s( "_ZEO_AUTH_TOKEN", "" );
+#else
     unsetenv( "_ZEO_AUTH_TOKEN" );
+#endif
     wxLogTrace( "Agent", "Cleared session from secure storage" );
 }
 

@@ -3718,14 +3718,16 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
             m_agentChangedSheetPath = GetCurrentSheet();
     }
 
-    // Only show the diff overlay if we're currently on the target sheet.
-    // If the agent changed a different sheet, the overlay will appear when
-    // the user navigates to that sheet (handled by SetCurrentSheet).
-    bool isOnTargetSheet = ( GetCurrentSheet() == m_agentChangedSheetPath );
+    // Show the diff overlay if the CURRENT sheet has any tracked items.
+    // This handles multi-sheet scenarios where the agent modifies multiple sheets.
+    // If the current sheet has no tracked items, the overlay will appear when
+    // the user navigates to a sheet that does (handled by SetCurrentSheet).
+    wxString currentSheetPath = GetCurrentSheet().PathHumanReadable( false );
+    std::set<KIID> itemsOnCurrentSheet = m_agentChangeTracker->GetTrackedItemsOnSheet( currentSheetPath );
 
-    if( isOnTargetSheet )
+    if( !itemsOnCurrentSheet.empty() )
     {
-        wxString capturedSheetPath = GetCurrentSheet().PathHumanReadable( false );
+        wxString capturedSheetPath = currentSheetPath;
         DIFF_CALLBACKS callbacks;
         callbacks.onApprove = [this, capturedSheetPath]() {
             ApproveAgentChangesOnSheet( capturedSheetPath );

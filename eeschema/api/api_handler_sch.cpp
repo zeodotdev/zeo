@@ -2268,10 +2268,11 @@ API_HANDLER_SCH::handleCreateSheet(
     commit.Push( _( "API: Create Sheet" ) );
 
     // Track for agent change detection — use the resolved parent path for accurate tracking
+    // Must use PathHumanReadable(false) to match the query format used in GetTrackedItemsOnSheet
     if( AGENT_CHANGE_TRACKER* tracker = m_frame->GetAgentChangeTracker() )
     {
         tracker->TrackItem( newSheet->m_Uuid,
-                            parentPath.PathHumanReadable(),
+                            parentPath.PathHumanReadable( false ),
                             AGENT_CHANGE_TYPE::ADDED );
     }
 

@@ -3334,10 +3334,12 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
                 errorCount, warningCount, annotationErrors );
 
     // Defer Refresh() to avoid nested event processing issues on macOS
-    m_frame->CallAfter( [this]()
+    // Capture frame pointer directly to avoid dangling API handler reference
+    SCH_EDIT_FRAME* frame = m_frame;
+    frame->CallAfter( [frame]()
     {
-        if( m_frame->GetCanvas() )
-            m_frame->GetCanvas()->Refresh();
+        if( frame->GetCanvas() )
+            frame->GetCanvas()->Refresh();
     } );
 
     return response;
@@ -3472,10 +3474,11 @@ API_HANDLER_SCH::handleClearERCMarkers(
     response.set_markers_cleared( markersCleared );
 
     // Defer Refresh() to avoid nested event processing issues on macOS
-    m_frame->CallAfter( [this]()
+    SCH_EDIT_FRAME* frame = m_frame;
+    frame->CallAfter( [frame]()
     {
-        if( m_frame->GetCanvas() )
-            m_frame->GetCanvas()->Refresh();
+        if( frame->GetCanvas() )
+            frame->GetCanvas()->Refresh();
     } );
 
     return response;
@@ -3509,10 +3512,11 @@ API_HANDLER_SCH::handleExcludeERCViolation(
             {
                 marker->SetExcluded( true );
                 // Defer Refresh() to avoid nested event processing issues on macOS
-                m_frame->CallAfter( [this]()
+                SCH_EDIT_FRAME* frame = m_frame;
+                frame->CallAfter( [frame]()
                 {
-                    if( m_frame->GetCanvas() )
-                        m_frame->GetCanvas()->Refresh();
+                    if( frame->GetCanvas() )
+                        frame->GetCanvas()->Refresh();
                 } );
                 return Empty();
             }
@@ -4141,10 +4145,11 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetGridSettings(
     }
 
     // Defer Refresh() to avoid nested event processing issues on macOS
-    m_frame->CallAfter( [this]()
+    SCH_EDIT_FRAME* frame = m_frame;
+    frame->CallAfter( [frame]()
     {
-        if( m_frame->GetCanvas() )
-            m_frame->GetCanvas()->Refresh();
+        if( frame->GetCanvas() )
+            frame->GetCanvas()->Refresh();
     } );
 
     return Empty();
@@ -4325,10 +4330,11 @@ void API_HANDLER_SCH::refreshNetclasses()
     m_frame->OnModify();
     m_frame->GetCanvas()->GetView()->UpdateAllItems( KIGFX::REPAINT );
     // Defer Refresh() to avoid nested event processing issues on macOS
-    m_frame->CallAfter( [this]()
+    SCH_EDIT_FRAME* frame = m_frame;
+    frame->CallAfter( [frame]()
     {
-        if( m_frame->GetCanvas() )
-            m_frame->GetCanvas()->Refresh();
+        if( frame->GetCanvas() )
+            frame->GetCanvas()->Refresh();
     } );
 }
 
@@ -4981,10 +4987,11 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetEditorPreferences(
     }
 
     // Defer Refresh() to avoid nested event processing issues on macOS
-    m_frame->CallAfter( [this]()
+    SCH_EDIT_FRAME* frame = m_frame;
+    frame->CallAfter( [frame]()
     {
-        if( m_frame->GetCanvas() )
-            m_frame->GetCanvas()->Refresh();
+        if( frame->GetCanvas() )
+            frame->GetCanvas()->Refresh();
     } );
 
     return Empty();
@@ -6675,10 +6682,11 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleSetViewport(
         }
 
         // Defer Refresh() to avoid nested event processing issues on macOS
-        m_frame->CallAfter( [this]()
+        SCH_EDIT_FRAME* frame = m_frame;
+        frame->CallAfter( [frame]()
         {
-            if( m_frame->GetCanvas() )
-                m_frame->GetCanvas()->Refresh();
+            if( frame->GetCanvas() )
+                frame->GetCanvas()->Refresh();
         } );
     }
 
@@ -6771,10 +6779,11 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleZoomToItems(
         view->SetScale( newScale );
 
         // Defer Refresh() to avoid nested event processing issues on macOS
-        m_frame->CallAfter( [this]()
+        SCH_EDIT_FRAME* frame = m_frame;
+        frame->CallAfter( [frame]()
         {
-            if( m_frame->GetCanvas() )
-                m_frame->GetCanvas()->Refresh();
+            if( frame->GetCanvas() )
+                frame->GetCanvas()->Refresh();
         } );
     }
 
@@ -6799,10 +6808,11 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleHighlightNet(
     // Set the highlighted net
     m_frame->SetHighlightedConnection( netName, {} );
     // Defer Refresh() to avoid nested event processing issues on macOS
-    m_frame->CallAfter( [this]()
+    SCH_EDIT_FRAME* frame = m_frame;
+    frame->CallAfter( [frame]()
     {
-        if( m_frame->GetCanvas() )
-            m_frame->GetCanvas()->Refresh();
+        if( frame->GetCanvas() )
+            frame->GetCanvas()->Refresh();
     } );
 
     return Empty();
@@ -6820,10 +6830,11 @@ HANDLER_RESULT<Empty> API_HANDLER_SCH::handleClearHighlight(
     // Clear any highlighted net
     m_frame->SetHighlightedConnection( wxEmptyString, {} );
     // Defer Refresh() to avoid nested event processing issues on macOS
-    m_frame->CallAfter( [this]()
+    SCH_EDIT_FRAME* frame = m_frame;
+    frame->CallAfter( [frame]()
     {
-        if( m_frame->GetCanvas() )
-            m_frame->GetCanvas()->Refresh();
+        if( frame->GetCanvas() )
+            frame->GetCanvas()->Refresh();
     } );
 
     return Empty();
@@ -7030,10 +7041,11 @@ API_HANDLER_SCH::handleCrossProbeFromBoard(
     }
 
     // Defer Refresh() to avoid nested event processing issues on macOS
-    m_frame->CallAfter( [this]()
+    SCH_EDIT_FRAME* frame = m_frame;
+    frame->CallAfter( [frame]()
     {
-        if( m_frame->GetCanvas() )
-            m_frame->GetCanvas()->Refresh();
+        if( frame->GetCanvas() )
+            frame->GetCanvas()->Refresh();
     } );
 
     return response;

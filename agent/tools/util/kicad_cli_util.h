@@ -104,20 +104,33 @@ inline std::string GetFreeroutingJarPath()
 
 /**
  * Get the path to the Java executable.
- * Uses system Java on macOS, PATH lookup on Windows.
+ * Windows: Check for bundled JRE first (bin/freerouting/jre/bin/java.exe),
+ *          then fall back to system PATH.
+ * macOS:   Use /usr/bin/java stub (shows install dialog if missing).
  *
  * @return Path to java executable, or "java" if not found explicitly.
  */
 inline std::string GetJavaPath()
 {
-#ifndef __WXMSW__
+#ifdef __WXMSW__
+    // Check for bundled JRE next to the freerouting JAR
+    wxString exePathStr = wxStandardPaths::Get().GetExecutablePath();
+    wxFileName bundledJava( wxFileName( exePathStr ).GetPath(), "" );
+    bundledJava.AppendDir( "freerouting" );
+    bundledJava.AppendDir( "jre" );
+    bundledJava.AppendDir( "bin" );
+    bundledJava.SetFullName( "java.exe" );
+
+    if( bundledJava.FileExists() )
+        return bundledJava.GetFullPath().ToStdString();
+#else
     // On macOS, /usr/bin/java is a stub that invokes the real Java
     // It will show the "install Java" dialog if Java isn't installed
     if( wxFileName::FileExists( "/usr/bin/java" ) )
         return "/usr/bin/java";
 #endif
 
-    // Fall back to PATH lookup (works on Windows and Linux)
+    // Fall back to PATH lookup
     return "java";
 }
 

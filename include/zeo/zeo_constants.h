@@ -4,7 +4,7 @@
 #include <string>
 
 #ifdef ZEO_RELEASE_BUILD
-static const std::string ZEO_BASE_URL = "https://zeo.dev";
+static const std::string ZEO_BASE_URL = "https://www.zeo.dev";
 #else
 static const std::string ZEO_BASE_URL = "https://zeo-staging.vercel.app";
 #endif

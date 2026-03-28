@@ -32,6 +32,43 @@ This installs the `kipy` package in editable mode. The agent will use this to ex
 python3 -c "import kipy; print('kipy installed successfully')"
 ```
 
+## MCP Server (Claude Code Integration)
+
+Zeo includes an MCP (Model Context Protocol) server that gives [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) direct access to the schematic and PCB editors — the same 46 tools available in Zeo's built-in agent sidebar.
+
+### Setup
+
+**macOS:**
+
+```bash
+claude mcp add zeo \
+  -s user \
+  -- /Applications/Zeo.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3 \
+  -m kipy.mcp
+```
+
+**Windows:**
+
+```bash
+claude mcp add zeo -s user -- "C:\Program Files\Zeo\0.1\bin\zeo" mcp
+```
+
+**Linux:**
+
+```bash
+claude mcp add zeo \
+  -s user \
+  -- python3 -m kipy.mcp
+```
+
+This adds the server at user scope (`-s user`), so it's available in all projects.
+
+### Usage
+
+Make sure Zeo is running with a project open, then use Claude Code as normal. It will call `check_status` to verify the editor state and use tools like `sch_add`, `pcb_place`, `pcb_autoroute`, `screenshot`, and more.
+
+For full documentation, see [docs.zeocad.com](https://docs.zeocad.com/docs/features/agent/integrations/claude-code).
+
 ## License
 
 Zeo is licensed under the [GNU General Public License v3.0](LICENSE) (or later), the same license as KiCad. See [LICENSE.README](LICENSE.README) for details on third-party components.

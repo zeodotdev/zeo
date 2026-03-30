@@ -115,6 +115,7 @@ def _calc_label_buffer(companion):
 # Parse input
 # ---------------------------------------------------------------------------
 ic_ref = TOOL_ARGS.get('ic_ref', '')
+ic_unit = TOOL_ARGS.get('unit', None)  # Optional: specify which unit of multi-unit symbol
 companions_input = TOOL_ARGS.get('companions', [])
 
 if not ic_ref:
@@ -228,7 +229,23 @@ def _calc_center_from_pin(px, py, offset_mm, escape_dir):
 # ---------------------------------------------------------------------------
 # Get IC symbol and bounding box
 # ---------------------------------------------------------------------------
-ic_sym = sch.symbols.get_by_ref(ic_ref)
+# When unit is specified, find the specific symbol instance with that unit
+# (for multi-unit symbols like U1 with units 10-14 on same sheet)
+ic_sym = None
+if ic_unit is not None:
+    all_symbols = sch.symbols.get_all()
+    matching_symbols = [s for s in all_symbols if getattr(s, 'reference', '') == ic_ref]
+    for s in matching_symbols:
+        if getattr(s, 'unit', 1) == ic_unit:
+            ic_sym = s
+            break
+    if not ic_sym and matching_symbols:
+        available_units = sorted(set(getattr(s, 'unit', 1) for s in matching_symbols))
+        print(json.dumps({'status': 'error', 'message': f'Unit {ic_unit} of {ic_ref} not found on this sheet. Available units: {available_units}'}))
+        raise SystemExit()
+else:
+    ic_sym = sch.symbols.get_by_ref(ic_ref)
+
 if not ic_sym:
     print(json.dumps({'status': 'error', 'message': f'IC not found: {ic_ref}'}))
     raise SystemExit()
@@ -566,6 +583,15 @@ def place_power_symbol(pin_pos_x, pin_pos_y, power_name, escape_dir):
 
     return pwr_sym, pwr_x, pwr_y
 
+def add_label(text, position, label_type='local'):
+    """Place a label of the specified type at the given position."""
+    if label_type == 'global':
+        return sch.labels.add_global(text, position)
+    elif label_type == 'hierarchical':
+        return sch.labels.add_hierarchical(text, position)
+    else:
+        return sch.labels.add_local(text, position)
+
 def draw_orthogonal_wire(px, py, cpx, cpy, escape_dir):
     """Draw L-shaped orthogonal wire from IC pin to companion pin.
 
@@ -667,6 +693,7 @@ def place_companion(layout):
 
     # Check if we have terminal_labels - if so, place label as part of wire chain
     terminal_labels = companion.get('terminal_labels', {})
+    label_type = companion.get('label_type', 'local')  # 'local', 'global', or 'hierarchical'
     label_positions = {}  # pin -> (lbl_x, lbl_y) for labels placed in chain
 
     for pin_num, label_text in terminal_labels.items():
@@ -699,7 +726,7 @@ def place_companion(layout):
         if _w: placed_wire_objs.append(_w)
 
         # Place label at the intermediate position
-        sch.labels.add_local(label_text, Vector2.from_xy_mm(lbl_x, lbl_y))
+        add_label(label_text, Vector2.from_xy_mm(lbl_x, lbl_y), label_type)
 
     # If no label on IC-facing pin, draw direct wire from IC to cap
     if wire_pin not in label_positions:
@@ -749,7 +776,7 @@ def place_companion(layout):
 
             # Place label directly at pin (no buffer needed for away-from-IC pins)
             lbl_pos = Vector2.from_xy_mm(snap_to_grid(lbl_px), snap_to_grid(lbl_py))
-            sch.labels.add_local(label_text, lbl_pos)
+            add_label(label_text, lbl_pos, label_type)
         except Exception:
             pass
 

@@ -1404,6 +1404,10 @@
           "type": "string",
           "description": "Reference designator of anchor IC (e.g., 'U1')"
         },
+        "unit": {
+          "type": "integer",
+          "description": "Unit number for multi-unit symbols (e.g., unit 10 of U1). Required when multiple units of the same IC are on the same sheet."
+        },
         "companions": {
           "type": "array",
           "items": {
@@ -1434,6 +1438,11 @@
                 "additionalProperties": {
                   "type": "string"
                 }
+              },
+              "label_type": {
+                "type": "string",
+                "enum": ["local", "global", "hierarchical"],
+                "description": "Label type for terminal_labels. 'local' (default) for intra-sheet, 'hierarchical' for inter-sheet signals, 'global' for power rails."
               },
               "terminal_power": {
                 "type": "object",

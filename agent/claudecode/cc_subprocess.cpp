@@ -230,10 +230,17 @@ void CC_SUBPROCESS::Stop()
 
     m_running.store( false );
 
+    // Close stdin first so the child sees EOF and exits cleanly
+    if( m_hStdinWrite )
+    {
+        CloseHandle( m_hStdinWrite );
+        m_hStdinWrite = nullptr;
+    }
+
     if( m_hProcess )
     {
-        // Give the process a chance to exit gracefully
-        if( WaitForSingleObject( m_hProcess, 500 ) == WAIT_TIMEOUT )
+        // Give the process a chance to exit gracefully (reduced from 500ms)
+        if( WaitForSingleObject( m_hProcess, 200 ) == WAIT_TIMEOUT )
         {
             TerminateProcess( m_hProcess, 1 );
             WaitForSingleObject( m_hProcess, 5000 );
@@ -635,6 +642,14 @@ void CC_SUBPROCESS::Stop()
 
     m_running.store( false );
 
+    // Close stdin first so the child sees EOF and exits cleanly
+    // (unblocks Node.js if it's waiting on stdin)
+    if( m_stdinFd >= 0 )
+    {
+        close( m_stdinFd );
+        m_stdinFd = -1;
+    }
+
     if( m_pid > 0 )
     {
         kill( m_pid, SIGTERM );
@@ -645,7 +660,7 @@ void CC_SUBPROCESS::Stop()
 
         if( result == 0 )
         {
-            usleep( 500000 ); // 500ms grace period
+            usleep( 200000 ); // 200ms grace period (reduced from 500ms)
             result = waitpid( m_pid, &status, WNOHANG );
 
             if( result == 0 )

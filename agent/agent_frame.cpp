@@ -99,6 +99,19 @@ static wxString ExtractPythonErrorLine( const std::string& traceback )
 }
 
 
+// Helper: Escape a string for safe embedding in HTML content.
+static wxString EscapeHtml( const wxString& aStr )
+{
+    wxString result = aStr;
+    result.Replace( "&", "&amp;" );
+    result.Replace( "<", "&lt;" );
+    result.Replace( ">", "&gt;" );
+    result.Replace( "\"", "&quot;" );
+    result.Replace( "'", "&#39;" );
+    return result;
+}
+
+
 // Helper: Try to parse raw tool result as JSON and pretty-print it.
 // Falls back to HTML-escaped raw string if not valid JSON.
 static wxString FormatToolResult( const std::string& aRawResult )
@@ -107,20 +120,12 @@ static wxString FormatToolResult( const std::string& aRawResult )
     {
         nlohmann::json parsed = nlohmann::json::parse( aRawResult );
         std::string pretty = parsed.dump( 2 );
-        wxString result = wxString::FromUTF8( pretty );
-        result.Replace( "&", "&amp;" );
-        result.Replace( "<", "&lt;" );
-        result.Replace( ">", "&gt;" );
-        return "<code class=\"language-json\">" + result + "</code>";
+        return "<code class=\"language-json\">" + EscapeHtml( wxString::FromUTF8( pretty ) ) + "</code>";
     }
     catch( const nlohmann::json::exception& )
     {
         // Not valid JSON - HTML-escape and return as-is
-        wxString result = wxString::FromUTF8( aRawResult );
-        result.Replace( "&", "&amp;" );
-        result.Replace( "<", "&lt;" );
-        result.Replace( ">", "&gt;" );
-        return result;
+        return EscapeHtml( wxString::FromUTF8( aRawResult ) );
     }
 }
 
@@ -194,7 +199,7 @@ static wxString BuildRunningToolHtml( int aIndex, const wxString& aDesc )
         "<div id=\"tool-result-%d\" class=\"tool-result-card rounded-lg my-2 max-w-full break-words\">"
         "<div "
         "class=\"tool-result-header py-2.5 px-3 flex items-center gap-2\">"
-        "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+        "<span class=\"text-text-secondary text-[12px]\" title=\"%s\">%s</span>"
         "<span class=\"tool-status text-text-muted text-[12px] ml-auto flex items-center gap-2\">"
         "<span class=\"tool-elapsed\" data-start=\"%lld\"></span>"
         "<a href=\"agent:cancel_tool\" style=\"color:var(--text-muted); font-size:11px; "
@@ -208,7 +213,7 @@ static wxString BuildRunningToolHtml( int aIndex, const wxString& aDesc )
         "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
         "</div>"
         "</div>",
-        aIndex, aDesc, (long long) wxGetUTCTimeMillis().GetValue(), aIndex );
+        aIndex, EscapeHtml( aDesc ), EscapeHtml( aDesc ), (long long) wxGetUTCTimeMillis().GetValue(), aIndex );
 }
 
 
@@ -228,14 +233,14 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
             "<div id=\"tool-result-%d\" class=\"tool-result-card rounded-lg my-2 max-w-full break-words\">"
             "<div "
             "class=\"tool-result-header py-2.5 px-3 flex items-center gap-2\">"
-            "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+            "<span class=\"text-text-secondary text-[12px]\" title=\"%s\">%s</span>"
             "<span class=\"tool-status-dot ml-auto\" style=\"background:%s;\"></span>"
             "</div>"
             "<div class=\"tool-result-body p-3 pt-0\" "
             "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
             "</div>"
             "</div>",
-            aIndex, aDesc, aStatusColor, aIndex );
+            aIndex, EscapeHtml( aDesc ), EscapeHtml( aDesc ), aStatusColor, aIndex );
     }
 
     wxString displayStyle = aExpanded ? "block" : "none";
@@ -246,7 +251,7 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
         // Clickable header: same layout as the Running box
         "<a href=\"toggle:toolresult:%d\" "
         "class=\"tool-result-header py-2.5 px-3 no-underline flex items-center gap-2\">"
-        "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+        "<span class=\"text-text-secondary text-[12px]\" title=\"%s\">%s</span>"
         "<span class=\"%s\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
         "<span class=\"tool-status-dot ml-auto\" style=\"background:%s;\"></span>"
         "</a>"
@@ -259,7 +264,7 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
         "</div>",
         aIndex,
         aIndex,
-        aDesc,
+        EscapeHtml( aDesc ), EscapeHtml( aDesc ),
         chevronClass, aStatusColor,
         aIndex, displayStyle,
         aFullFormatted,
@@ -294,7 +299,7 @@ static wxString BuildToolApprovalHtml( int aIndex, const wxString& aDesc,
         "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
         "</div>"
         "</div>",
-        aIndex, aDesc, aActionHref, aBgColor, aTextColor, aButtonText, aIndex );
+        aIndex, EscapeHtml( aDesc ), aActionHref, aBgColor, aTextColor, EscapeHtml( aButtonText ), aIndex );
 }
 
 BEGIN_EVENT_TABLE( AGENT_FRAME, KIWAY_PLAYER )
@@ -787,6 +792,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                     || wxFileName::FileExists( "/opt/homebrew/bin/claude" )
                     || wxFileName::FileExists( wxString( wxGetHomeDir() + "/.local/bin/claude" ) );
 #endif
+            m_ccPromoClaudeCodeAvailable = found;
+
             if( found )
                 models.push_back( "Claude Code (Opus)" );
         }
@@ -816,6 +823,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_fullHtmlContent = BuildOnboardingHtml();
         m_showingOnboarding = true;
         SetHtml( m_fullHtmlContent );
+
+        // Show Claude Code promo (detection is now complete)
+        MaybeShowCcPromo();
     } );
 }
 
@@ -1111,7 +1121,7 @@ wxString AGENT_FRAME::BuildStreamingContent()
         wxString dots;
         for( int i = 0; i < m_generatingDots; i++ )
             dots += ".";
-        streamingContent += "<font color='#FFA500'>Compacting" + dots + "</font>";
+        streamingContent += "<span style=\"color:#FFA500\">Compacting" + dots + "</span>";
     }
     else if( m_isGenerating && !m_isStreamingMarkdown )
     {
@@ -1135,10 +1145,10 @@ wxString AGENT_FRAME::BuildStreamingContent()
                 "<span class=\"tool-spinner\"></span>"
                 "</span>"
                 "</div></div>",
-                m_generatingToolName );
+                EscapeHtml( m_generatingToolName ) );
         }
         else
-            streamingContent += "<font color='#888888'>" + dots + "</font>";
+            streamingContent += "<span style=\"color:#888888\">" + dots + "</span>";
     }
 
     return streamingContent;
@@ -2630,9 +2640,13 @@ void AGENT_FRAME::DoModelChange( const std::string& aModel )
     }
     else
     {
-        // Switching away from Claude Code
+        // Switching away from Claude Code — commit history before killing CC
         if( m_backend == AgentBackend::CLAUDE_CODE && m_ccController )
+        {
+            m_chatHistory = m_ccController->GetChatHistory();
+            m_chatHistoryDb.Save( m_chatHistory );
             m_ccController->Cancel();
+        }
 
         m_backend = AgentBackend::ZEO_AGENT;
 
@@ -2974,6 +2988,26 @@ void AGENT_FRAME::OnExit( wxCommandEvent& event )
 
 std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayload )
 {
+    // Reentrancy guard: wxYield() in the polling loop below can process events that
+    // trigger ExecuteAllTools() → another SendRequest(). The shared m_toolResponse
+    // variable would be clobbered. Block the inner call with a clear error instead.
+    static bool s_inSendRequest = false;
+
+    struct ReentrancyGuard
+    {
+        bool& flag;
+        ReentrancyGuard( bool& f ) : flag( f ) { flag = true; }
+        ~ReentrancyGuard() { flag = false; }
+    };
+
+    if( s_inSendRequest )
+    {
+        wxLogWarning( "AGENT: SendRequest - reentrant call blocked (frame %d)", aDestFrame );
+        return "Error: Concurrent tool execution blocked. Please retry.";
+    }
+
+    ReentrancyGuard guard( s_inSendRequest );
+
     // Check if the target frame exists.
     // For the terminal frame, create it on demand (needed for shell commands).
     // For editor frames, don't create — the editor must already be open.
@@ -3197,7 +3231,7 @@ void AGENT_FRAME::StartAsyncLLMRequest()
     {
         wxLogInfo( "AGENT: Failed to start async LLM request" );
         StopGeneratingAnimation();
-        AppendHtml( "<p><font color='red'>Error: Failed to start LLM request</font></p>" );
+        AppendHtml( "<p><span style=\"color:var(--accent-red)\">Error: Failed to start LLM request</span></p>" );
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
         m_bridge->PushActionButtonState( "Send" );
     }
@@ -3905,6 +3939,9 @@ void AGENT_FRAME::UpdateAuthUI()
 {
     bool authenticated = m_auth && m_auth->IsAuthenticated();
     m_bridge->PushAuthState( authenticated );
+
+    if( authenticated )
+        MaybeShowCcPromo();
 }
 
 bool AGENT_FRAME::CheckAuthentication()
@@ -5751,6 +5788,113 @@ std::string AGENT_FRAME::LoadModelPreference()
     }
 
     return "Claude 4.6 Opus";
+}
+
+
+// ============================================================================
+// Claude Code Promotion Popup
+// ============================================================================
+
+void AGENT_FRAME::MaybeShowCcPromo()
+{
+    if( !m_auth || !m_auth->IsAuthenticated() )
+        return;
+
+    if( !m_ccPromoClaudeCodeAvailable )
+        return;
+
+    if( m_currentModel == "Claude Code (Opus)" )
+        return;
+
+    if( IsCcPromoDismissed() )
+        return;
+
+    m_bridge->PushShowCcPromo();
+}
+
+
+void AGENT_FRAME::OnCcPromoAccept()
+{
+    SaveCcPromoDismissed();
+
+    // Switch to Claude Code model
+    DoModelChange( "Claude Code (Opus)" );
+
+    // Rebuild model list to reflect new selection
+    std::vector<std::string> models = { "Claude 4.6 Opus", "Claude 4.6 Sonnet" };
+
+    if( m_ccPromoClaudeCodeAvailable )
+        models.push_back( "Claude Code (Opus)" );
+
+    m_bridge->PushModelList( models, m_currentModel );
+
+    // Glow animation on the model dropdown
+    m_bridge->PushGlowModelDropdown();
+
+    // Prefill setup message
+    m_bridge->PushInputSetText(
+        "Set up the Zeo MCP (https://www.zeo.dev/docs/features/agent/integrations/claude-code)" );
+    m_bridge->PushInputFocus();
+}
+
+
+void AGENT_FRAME::OnCcPromoDismiss()
+{
+    SaveCcPromoDismissed();
+}
+
+
+void AGENT_FRAME::SaveCcPromoDismissed()
+{
+    wxString path = GetPreferencesPath();
+
+    wxFileName fn( path );
+
+    if( !wxFileName::DirExists( fn.GetPath() ) )
+        wxFileName::Mkdir( fn.GetPath(), wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
+
+    nlohmann::json prefs;
+    std::ifstream inFile( path.ToStdString() );
+
+    if( inFile.is_open() )
+    {
+        try { inFile >> prefs; }
+        catch( ... ) { prefs = nlohmann::json::object(); }
+        inFile.close();
+    }
+
+    prefs["cc_promo_dismissed"] = true;
+
+    std::ofstream outFile( path.ToStdString() );
+
+    if( outFile.is_open() )
+    {
+        outFile << prefs.dump( 2 );
+        outFile.close();
+    }
+}
+
+
+bool AGENT_FRAME::IsCcPromoDismissed()
+{
+    wxString path = GetPreferencesPath();
+
+    std::ifstream file( path.ToStdString() );
+
+    if( file.is_open() )
+    {
+        try
+        {
+            nlohmann::json prefs;
+            file >> prefs;
+
+            if( prefs.contains( "cc_promo_dismissed" ) && prefs["cc_promo_dismissed"].is_boolean() )
+                return prefs["cc_promo_dismissed"].get<bool>();
+        }
+        catch( ... ) {}
+    }
+
+    return false;
 }
 
 

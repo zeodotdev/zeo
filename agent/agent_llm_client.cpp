@@ -452,6 +452,15 @@ size_t LLM_REQUEST_THREAD::StreamWriteCallback( void* contents, size_t size, siz
     ctx->buffer.append( static_cast<char*>( contents ), realsize );
     if( dbgFile ) { fprintf( dbgFile, "CB: buffer appended, size=%zu\n", ctx->buffer.size() ); fflush( dbgFile ); }
 
+    // Safety: abort if buffer grows beyond 10 MB (e.g., malformed SSE without \n\n delimiters)
+    static constexpr size_t MAX_SSE_BUFFER = 10 * 1024 * 1024;
+    if( ctx->buffer.size() > MAX_SSE_BUFFER )
+    {
+        wxLogError( "LLM stream: SSE buffer exceeded %zu bytes, aborting", MAX_SSE_BUFFER );
+        ctx->buffer.clear();
+        return 0; // Tell curl to abort
+    }
+
     // Process complete SSE events (lines ending with \n\n)
     size_t pos;
     while( ( pos = ctx->buffer.find( "\n\n" ) ) != std::string::npos )

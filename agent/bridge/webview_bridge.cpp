@@ -76,6 +76,10 @@ void WEBVIEW_BRIDGE::OnMessage( const wxString& aMessage )
         // Auth actions
         else if( action == BridgeAction::SIGN_IN_CLICK )  HandleSignInClick( msg );
 
+        // Claude Code promotion
+        else if( action == BridgeAction::CC_PROMO_ACCEPT )  HandleCcPromoAccept( msg );
+        else if( action == BridgeAction::CC_PROMO_DISMISS ) HandleCcPromoDismiss( msg );
+
         // Lifecycle
         else if( action == BridgeAction::PAGE_READY )
         {
@@ -577,6 +581,30 @@ void WEBVIEW_BRIDGE::PushAuthState( bool aAuthenticated )
                                             aAuthenticated ? "true" : "false" ) );
     RunScript( wxString::Format( "App.Auth.setState(%s);",
                                  aAuthenticated ? "true" : "false" ) );
+}
+
+void WEBVIEW_BRIDGE::PushShowCcPromo()
+{
+    LogBridge( "C++->JS", "showCcPromo" );
+    RunScript( "App.CcPromo.show();" );
+}
+
+void WEBVIEW_BRIDGE::PushGlowModelDropdown()
+{
+    LogBridge( "C++->JS", "glowModelDropdown" );
+    RunScript( "App.CcPromo.glowModelDropdown();" );
+}
+
+void WEBVIEW_BRIDGE::HandleCcPromoAccept( const nlohmann::json& aMsg )
+{
+    if( m_frame )
+        m_frame->OnCcPromoAccept();
+}
+
+void WEBVIEW_BRIDGE::HandleCcPromoDismiss( const nlohmann::json& aMsg )
+{
+    if( m_frame )
+        m_frame->OnCcPromoDismiss();
 }
 
 

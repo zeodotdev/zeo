@@ -489,6 +489,40 @@ img[src^="data:"] { cursor: pointer; }
 #sign-in-overlay.visible { display: flex; }
 #sign-in-overlay .ctrl-btn.primary { padding: 8px 28px; font-size: 13px; border-radius: 10px; white-space: nowrap; }
 
+/* ── Claude Code promotion popup ──────────────────────────────────── */
+#cc-promo-overlay {
+    display: none; position: absolute; inset: 0; z-index: 190;
+    background: rgba(0,0,0,0.55); align-items: center; justify-content: center;
+    flex-direction: column;
+}
+#cc-promo-overlay.visible { display: flex; }
+#cc-promo-card {
+    background: var(--bg-secondary); border: 1px solid var(--border-color);
+    border-radius: 16px; padding: 28px 32px; max-width: 340px; width: 88%;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45); text-align: center;
+}
+#cc-promo-card .promo-icon { font-size: 28px; margin-bottom: 12px; }
+#cc-promo-card .promo-title { font-size: 15px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
+#cc-promo-card .promo-body { font-size: 12px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 22px; }
+#cc-promo-card .promo-btn-primary {
+    display: block; width: 100%; background: #fff; color: #111; border: none;
+    border-radius: 10px; padding: 10px 24px; font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: opacity 0.15s; margin-bottom: 8px;
+}
+#cc-promo-card .promo-btn-primary:hover { opacity: 0.85; }
+#cc-promo-card .promo-btn-secondary {
+    display: block; width: 100%; background: none; color: var(--text-muted);
+    border: none; padding: 8px 24px; font-size: 11px; cursor: pointer;
+    transition: color 0.15s;
+}
+#cc-promo-card .promo-btn-secondary:hover { color: var(--text-secondary); }
+
+@keyframes model-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
+    50% { box-shadow: 0 0 12px 4px rgba(74,222,128,0.35); }
+}
+.model-trigger.glow { animation: model-glow 1.5s ease-in-out 3; border-radius: 6px; }
+
 /* ── Toast notification ───────────────────────────────────────────── */
 #toast-container {
     position: fixed; top: 48px; right: 12px;
@@ -684,6 +718,22 @@ mark.search-highlight.current { background: rgba(255,152,0,0.55); }
 <div id="sign-in-overlay">
     <div class="text-text-muted text-[14px]">Sign in to start using Zeo</div>
     <button class="ctrl-btn primary text-[13px] px-6 py-2" id="sign-in-btn">Sign In</button>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     CLAUDE CODE PROMOTION POPUP
+     ═══════════════════════════════════════════════════════════════════ -->
+<div id="cc-promo-overlay">
+    <div id="cc-promo-card">
+        <div class="promo-icon">&#9889;</div>
+        <div class="promo-title">Use Claude Code with Zeo</div>
+        <div class="promo-body">
+            We detected Claude Code on your machine. Use your existing
+            Claude subscription with Zeo &mdash; at no additional cost.
+        </div>
+        <button class="promo-btn-primary" id="cc-promo-accept">Get Started</button>
+        <button class="promo-btn-secondary" id="cc-promo-dismiss">No thanks</button>
+    </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -2415,6 +2465,38 @@ App.Auth = (function() {
     });
 
     return { setState: setState };
+})();
+
+// =====================================================================
+// App.CcPromo — Claude Code promotion popup
+// =====================================================================
+App.CcPromo = (function() {
+    var overlay = document.getElementById('cc-promo-overlay');
+    var acceptBtn = document.getElementById('cc-promo-accept');
+    var dismissBtn = document.getElementById('cc-promo-dismiss');
+
+    function show() { overlay.classList.add('visible'); }
+    function hide() { overlay.classList.remove('visible'); }
+
+    function glowModelDropdown() {
+        var trigger = document.getElementById('model-trigger');
+        if (trigger) {
+            trigger.classList.add('glow');
+            setTimeout(function() { trigger.classList.remove('glow'); }, 4500);
+        }
+    }
+
+    acceptBtn.addEventListener('click', function() {
+        hide();
+        App.Bridge.sendMsg('cc_promo_accept');
+    });
+
+    dismissBtn.addEventListener('click', function() {
+        hide();
+        App.Bridge.sendMsg('cc_promo_dismiss');
+    });
+
+    return { show: show, hide: hide, glowModelDropdown: glowModelDropdown };
 })();
 
 // =====================================================================

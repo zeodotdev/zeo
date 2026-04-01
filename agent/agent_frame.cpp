@@ -787,6 +787,8 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                     || wxFileName::FileExists( "/opt/homebrew/bin/claude" )
                     || wxFileName::FileExists( wxString( wxGetHomeDir() + "/.local/bin/claude" ) );
 #endif
+            m_ccPromoClaudeCodeAvailable = found;
+
             if( found )
                 models.push_back( "Claude Code (Opus)" );
         }
@@ -3905,6 +3907,9 @@ void AGENT_FRAME::UpdateAuthUI()
 {
     bool authenticated = m_auth && m_auth->IsAuthenticated();
     m_bridge->PushAuthState( authenticated );
+
+    if( authenticated )
+        MaybeShowCcPromo();
 }
 
 bool AGENT_FRAME::CheckAuthentication()
@@ -5751,6 +5756,113 @@ std::string AGENT_FRAME::LoadModelPreference()
     }
 
     return "Claude 4.6 Opus";
+}
+
+
+// ============================================================================
+// Claude Code Promotion Popup
+// ============================================================================
+
+void AGENT_FRAME::MaybeShowCcPromo()
+{
+    if( !m_auth || !m_auth->IsAuthenticated() )
+        return;
+
+    if( !m_ccPromoClaudeCodeAvailable )
+        return;
+
+    if( m_currentModel == "Claude Code (Opus)" )
+        return;
+
+    if( IsCcPromoDismissed() )
+        return;
+
+    m_bridge->PushShowCcPromo();
+}
+
+
+void AGENT_FRAME::OnCcPromoAccept()
+{
+    SaveCcPromoDismissed();
+
+    // Switch to Claude Code model
+    DoModelChange( "Claude Code (Opus)" );
+
+    // Rebuild model list to reflect new selection
+    std::vector<std::string> models = { "Claude 4.6 Opus", "Claude 4.6 Sonnet" };
+
+    if( m_ccPromoClaudeCodeAvailable )
+        models.push_back( "Claude Code (Opus)" );
+
+    m_bridge->PushModelList( models, m_currentModel );
+
+    // Glow animation on the model dropdown
+    m_bridge->PushGlowModelDropdown();
+
+    // Prefill setup message
+    m_bridge->PushInputSetText(
+        "Set up the Zeo MCP (https://www.zeo.dev/docs/features/agent/integrations/claude-code)" );
+    m_bridge->PushInputFocus();
+}
+
+
+void AGENT_FRAME::OnCcPromoDismiss()
+{
+    SaveCcPromoDismissed();
+}
+
+
+void AGENT_FRAME::SaveCcPromoDismissed()
+{
+    wxString path = GetPreferencesPath();
+
+    wxFileName fn( path );
+
+    if( !wxFileName::DirExists( fn.GetPath() ) )
+        wxFileName::Mkdir( fn.GetPath(), wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
+
+    nlohmann::json prefs;
+    std::ifstream inFile( path.ToStdString() );
+
+    if( inFile.is_open() )
+    {
+        try { inFile >> prefs; }
+        catch( ... ) { prefs = nlohmann::json::object(); }
+        inFile.close();
+    }
+
+    prefs["cc_promo_dismissed"] = true;
+
+    std::ofstream outFile( path.ToStdString() );
+
+    if( outFile.is_open() )
+    {
+        outFile << prefs.dump( 2 );
+        outFile.close();
+    }
+}
+
+
+bool AGENT_FRAME::IsCcPromoDismissed()
+{
+    wxString path = GetPreferencesPath();
+
+    std::ifstream file( path.ToStdString() );
+
+    if( file.is_open() )
+    {
+        try
+        {
+            nlohmann::json prefs;
+            file >> prefs;
+
+            if( prefs.contains( "cc_promo_dismissed" ) && prefs["cc_promo_dismissed"].is_boolean() )
+                return prefs["cc_promo_dismissed"].get<bool>();
+        }
+        catch( ... ) {}
+    }
+
+    return false;
 }
 
 

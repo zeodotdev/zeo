@@ -55,6 +55,10 @@ namespace BridgeAction
     // Auth actions
     constexpr const char* SIGN_IN_CLICK      = "sign_in_click";
 
+    // Claude Code promotion popup
+    constexpr const char* CC_PROMO_ACCEPT    = "cc_promo_accept";
+    constexpr const char* CC_PROMO_DISMISS   = "cc_promo_dismiss";
+
     // Lifecycle
     constexpr const char* PAGE_READY         = "page_ready";
 

@@ -105,6 +105,10 @@ public:
     void DoPendingChangesRejectSheet( const wxString& aPath, bool aIsPcb );
     void DoSignIn();
 
+    // Claude Code promotion popup
+    void OnCcPromoAccept();
+    void OnCcPromoDismiss();
+
     // Agent change approval
     void OnSchematicChangeHandled( bool aAccepted );
     void OnPcbChangeHandled( bool aAccepted );
@@ -198,6 +202,12 @@ private:
     void OnAuthCallback( wxCommandEvent& aEvent );
     bool m_authCallbackBound = false;
 #endif
+
+    // ── Claude Code Promotion ─────────────────────────────────────────────
+    bool m_ccPromoClaudeCodeAvailable = false;
+    void MaybeShowCcPromo();
+    void SaveCcPromoDismissed();
+    bool IsCcPromoDismissed();
 
     // ── Cloud Sync ───────────────────────────────────────────────────────
     std::unique_ptr<AGENT_CLOUD_SYNC> m_cloudSync;

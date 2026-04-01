@@ -160,7 +160,15 @@ wxString ProcessInline( const wxString& aText )
         wxString url = processed.Mid( bracketEnd + 2, parenEnd - bracketEnd - 2 );
         wxString after = processed.Mid( parenEnd + 1 );
 
-        processed = before + "<a href=\"" + url + "\">" + linkText + "</a>" + after;
+        // Escape HTML entities in link text and URL
+        wxString safeUrl = url;
+        safeUrl.Replace( "&", "&amp;" );
+        safeUrl.Replace( "\"", "&quot;" );
+        wxString safeLinkText = linkText;
+        safeLinkText.Replace( "&", "&amp;" );
+        safeLinkText.Replace( "<", "&lt;" );
+        safeLinkText.Replace( ">", "&gt;" );
+        processed = before + "<a href=\"" + safeUrl + "\">" + safeLinkText + "</a>" + after;
     }
 
     return processed;
@@ -190,6 +198,7 @@ wxString ToHtml( const wxString& aMarkdown )
 
     bool inCodeBlock = false;
     bool inList = false;
+    bool inOrderedList = false;
     bool inTable = false;
     wxString codeBlockContent;
     wxString codeBlockLanguage;
@@ -212,8 +221,9 @@ wxString ToHtml( const wxString& aMarkdown )
                 // Close any open list
                 if( inList )
                 {
-                    result += "</ul>";
+                    result += inOrderedList ? "</ol>" : "</ul>";
                     inList = false;
+                    inOrderedList = false;
                 }
             }
             else
@@ -269,7 +279,7 @@ wxString ToHtml( const wxString& aMarkdown )
 
             if( !inTable )
             {
-                if( inList ) { result += "</ul>"; inList = false; }
+                if( inList ) { result += inOrderedList ? "</ol>" : "</ul>"; inList = false; inOrderedList = false; }
                 result += "<div class=\"table-scroll-wrapper\"><table>";
                 inTable = true;
             }
@@ -340,13 +350,37 @@ wxString ToHtml( const wxString& aMarkdown )
             inTable = false;
         }
 
-        // Close list if we hit a non-list line
-        if( inList && !trimmed.StartsWith( "-" ) && !trimmed.StartsWith( "*" ) &&
-            !trimmed.StartsWith( "1." ) && !trimmed.StartsWith( "2." ) && !trimmed.StartsWith( "3." ) &&
-            !trimmed.IsEmpty() )
+        // Detect if this line is a list item
+        bool isUnorderedItem = trimmed.StartsWith( "- " ) || trimmed.StartsWith( "* " );
+        bool isOrderedItem = false;
+
+        if( !isUnorderedItem )
         {
-            result += "</ul>";
+            // Match N. where N is one or more digits followed by ". "
+            size_t dotPos = trimmed.find( '.' );
+
+            if( dotPos != wxString::npos && dotPos > 0 && dotPos < 10
+                && dotPos + 1 < trimmed.length() && trimmed[dotPos + 1] == ' ' )
+            {
+                isOrderedItem = true;
+
+                for( size_t c = 0; c < dotPos; c++ )
+                {
+                    if( trimmed[c] < '0' || trimmed[c] > '9' )
+                    {
+                        isOrderedItem = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Close list if we hit a non-list line
+        if( inList && !isUnorderedItem && !isOrderedItem && !trimmed.IsEmpty() )
+        {
+            result += inOrderedList ? "</ol>" : "</ul>";
             inList = false;
+            inOrderedList = false;
         }
 
         // Empty lines
@@ -354,8 +388,9 @@ wxString ToHtml( const wxString& aMarkdown )
         {
             if( inList )
             {
-                result += "</ul>";
+                result += inOrderedList ? "</ol>" : "</ul>";
                 inList = false;
+                inOrderedList = false;
             }
             result += "<br>";
             continue;
@@ -402,26 +437,37 @@ wxString ToHtml( const wxString& aMarkdown )
         }
 
         // Unordered lists
-        if( trimmed.StartsWith( "- " ) || trimmed.StartsWith( "* " ) )
+        if( isUnorderedItem )
         {
-            if( !inList )
+            if( !inList || inOrderedList )
             {
+                if( inList )
+                    result += "</ol>";
+
                 result += "<ul>";
                 inList = true;
+                inOrderedList = false;
             }
+
             result += "<li>" + ProcessInline( trimmed.Mid( 2 ) ) + "</li>";
             continue;
         }
 
-        // Ordered lists (simple check for 1. 2. 3. etc)
-        if( trimmed.length() > 2 && trimmed[1] == '.' && trimmed[0] >= '0' && trimmed[0] <= '9' )
+        // Ordered lists (N. where N is one or more digits)
+        if( isOrderedItem )
         {
-            if( !inList )
+            if( !inList || !inOrderedList )
             {
-                result += "<ul>";
+                if( inList )
+                    result += "</ul>";
+
+                result += "<ol>";
                 inList = true;
+                inOrderedList = true;
             }
-            result += "<li>" + ProcessInline( trimmed.Mid( 2 ).Trim( false ) ) + "</li>";
+
+            size_t dotPos = trimmed.find( '.' );
+            result += "<li>" + ProcessInline( trimmed.Mid( dotPos + 1 ).Trim( false ) ) + "</li>";
             continue;
         }
 
@@ -438,7 +484,7 @@ wxString ToHtml( const wxString& aMarkdown )
 
     // Close any open elements
     if( inList )
-        result += "</ul>";
+        result += inOrderedList ? "</ol>" : "</ul>";
     if( inTable )
         result += "</table></div>";
     if( inCodeBlock )

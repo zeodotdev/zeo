@@ -375,8 +375,8 @@ img[src^="data:"] { cursor: pointer; }
 .model-menu {
     position: absolute; bottom: 100%; left: 0;
     background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px;
-    box-shadow: 0 4px 16px var(--shadow-color); z-index: 50; overflow: hidden;
-    margin-bottom: 6px; white-space: nowrap; min-width: 180px;
+    box-shadow: 0 4px 16px var(--shadow-color); z-index: 50; overflow-y: auto; overflow-x: hidden;
+    margin-bottom: 6px; white-space: nowrap; min-width: 180px; max-height: calc(100vh - 120px);
     visibility: hidden; opacity: 0; pointer-events: none;
     transform: translateY(4px) scale(0.98); transform-origin: bottom left;
     transition: opacity 0.12s ease, transform 0.12s ease, visibility 0s 0.12s;
@@ -412,8 +412,8 @@ img[src^="data:"] { cursor: pointer; }
 .mode-menu {
     position: absolute; bottom: 100%; left: 0;
     background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px;
-    box-shadow: 0 4px 16px var(--shadow-color); z-index: 50; overflow: hidden;
-    margin-bottom: 6px; white-space: nowrap; min-width: 120px;
+    box-shadow: 0 4px 16px var(--shadow-color); z-index: 50; overflow-y: auto; overflow-x: hidden;
+    margin-bottom: 6px; white-space: nowrap; min-width: 120px; max-height: calc(100vh - 120px);
     visibility: hidden; opacity: 0; pointer-events: none;
     transform: translateY(4px) scale(0.98); transform-origin: bottom left;
     transition: opacity 0.12s ease, transform 0.12s ease, visibility 0s 0.12s;
@@ -450,8 +450,8 @@ img[src^="data:"] { cursor: pointer; }
 .auto-menu {
     position: absolute; bottom: 100%; left: 0;
     background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px;
-    box-shadow: 0 4px 16px var(--shadow-color); z-index: 50; overflow: hidden;
-    margin-bottom: 6px; white-space: nowrap; min-width: 140px;
+    box-shadow: 0 4px 16px var(--shadow-color); z-index: 50; overflow-y: auto; overflow-x: hidden;
+    margin-bottom: 6px; white-space: nowrap; min-width: 140px; max-height: calc(100vh - 120px);
     visibility: hidden; opacity: 0; pointer-events: none;
     transform: translateY(4px) scale(0.98); transform-origin: bottom left;
     transition: opacity 0.12s ease, transform 0.12s ease, visibility 0s 0.12s;

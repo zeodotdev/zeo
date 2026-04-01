@@ -82,6 +82,10 @@ public:
     // Auth
     void PushAuthState( bool aAuthenticated );
 
+    // Claude Code promotion
+    void PushShowCcPromo();
+    void PushGlowModelDropdown();
+
 private:
     // ── JS → C++ action handlers ───────────────────────────────────────
 
@@ -127,6 +131,10 @@ private:
 
     // Auth
     void HandleSignInClick( const nlohmann::json& aMsg );
+
+    // Claude Code promotion
+    void HandleCcPromoAccept( const nlohmann::json& aMsg );
+    void HandleCcPromoDismiss( const nlohmann::json& aMsg );
 
     // Debug
     void HandleDebug( const nlohmann::json& aMsg );

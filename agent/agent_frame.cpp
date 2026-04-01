@@ -199,7 +199,7 @@ static wxString BuildRunningToolHtml( int aIndex, const wxString& aDesc )
         "<div id=\"tool-result-%d\" class=\"tool-result-card rounded-lg my-2 max-w-full break-words\">"
         "<div "
         "class=\"tool-result-header py-2.5 px-3 flex items-center gap-2\">"
-        "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+        "<span class=\"text-text-secondary text-[12px]\" title=\"%s\">%s</span>"
         "<span class=\"tool-status text-text-muted text-[12px] ml-auto flex items-center gap-2\">"
         "<span class=\"tool-elapsed\" data-start=\"%lld\"></span>"
         "<a href=\"agent:cancel_tool\" style=\"color:var(--text-muted); font-size:11px; "
@@ -213,7 +213,7 @@ static wxString BuildRunningToolHtml( int aIndex, const wxString& aDesc )
         "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
         "</div>"
         "</div>",
-        aIndex, EscapeHtml( aDesc ), (long long) wxGetUTCTimeMillis().GetValue(), aIndex );
+        aIndex, EscapeHtml( aDesc ), EscapeHtml( aDesc ), (long long) wxGetUTCTimeMillis().GetValue(), aIndex );
 }
 
 
@@ -233,14 +233,14 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
             "<div id=\"tool-result-%d\" class=\"tool-result-card rounded-lg my-2 max-w-full break-words\">"
             "<div "
             "class=\"tool-result-header py-2.5 px-3 flex items-center gap-2\">"
-            "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+            "<span class=\"text-text-secondary text-[12px]\" title=\"%s\">%s</span>"
             "<span class=\"tool-status-dot ml-auto\" style=\"background:%s;\"></span>"
             "</div>"
             "<div class=\"tool-result-body p-3 pt-0\" "
             "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
             "</div>"
             "</div>",
-            aIndex, EscapeHtml( aDesc ), aStatusColor, aIndex );
+            aIndex, EscapeHtml( aDesc ), EscapeHtml( aDesc ), aStatusColor, aIndex );
     }
 
     wxString displayStyle = aExpanded ? "block" : "none";
@@ -251,7 +251,7 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
         // Clickable header: same layout as the Running box
         "<a href=\"toggle:toolresult:%d\" "
         "class=\"tool-result-header py-2.5 px-3 no-underline flex items-center gap-2\">"
-        "<span class=\"text-text-secondary text-[12px]\">%s</span>"
+        "<span class=\"text-text-secondary text-[12px]\" title=\"%s\">%s</span>"
         "<span class=\"%s\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"9 6 15 12 9 18\"/></svg></span>"
         "<span class=\"tool-status-dot ml-auto\" style=\"background:%s;\"></span>"
         "</a>"
@@ -264,7 +264,7 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
         "</div>",
         aIndex,
         aIndex,
-        EscapeHtml( aDesc ),
+        EscapeHtml( aDesc ), EscapeHtml( aDesc ),
         chevronClass, aStatusColor,
         aIndex, displayStyle,
         aFullFormatted,
@@ -1121,7 +1121,7 @@ wxString AGENT_FRAME::BuildStreamingContent()
         wxString dots;
         for( int i = 0; i < m_generatingDots; i++ )
             dots += ".";
-        streamingContent += "<font color='#FFA500'>Compacting" + dots + "</font>";
+        streamingContent += "<span style=\"color:#FFA500\">Compacting" + dots + "</span>";
     }
     else if( m_isGenerating && !m_isStreamingMarkdown )
     {
@@ -1148,7 +1148,7 @@ wxString AGENT_FRAME::BuildStreamingContent()
                 EscapeHtml( m_generatingToolName ) );
         }
         else
-            streamingContent += "<font color='#888888'>" + dots + "</font>";
+            streamingContent += "<span style=\"color:#888888\">" + dots + "</span>";
     }
 
     return streamingContent;
@@ -3207,7 +3207,7 @@ void AGENT_FRAME::StartAsyncLLMRequest()
     {
         wxLogInfo( "AGENT: Failed to start async LLM request" );
         StopGeneratingAnimation();
-        AppendHtml( "<p><font color='red'>Error: Failed to start LLM request</font></p>" );
+        AppendHtml( "<p><span style=\"color:var(--accent-red)\">Error: Failed to start LLM request</span></p>" );
         m_conversationCtx.TransitionTo( AgentConversationState::IDLE );
         m_bridge->PushActionButtonState( "Send" );
     }

@@ -99,6 +99,19 @@ static wxString ExtractPythonErrorLine( const std::string& traceback )
 }
 
 
+// Helper: Escape a string for safe embedding in HTML content.
+static wxString EscapeHtml( const wxString& aStr )
+{
+    wxString result = aStr;
+    result.Replace( "&", "&amp;" );
+    result.Replace( "<", "&lt;" );
+    result.Replace( ">", "&gt;" );
+    result.Replace( "\"", "&quot;" );
+    result.Replace( "'", "&#39;" );
+    return result;
+}
+
+
 // Helper: Try to parse raw tool result as JSON and pretty-print it.
 // Falls back to HTML-escaped raw string if not valid JSON.
 static wxString FormatToolResult( const std::string& aRawResult )
@@ -107,20 +120,12 @@ static wxString FormatToolResult( const std::string& aRawResult )
     {
         nlohmann::json parsed = nlohmann::json::parse( aRawResult );
         std::string pretty = parsed.dump( 2 );
-        wxString result = wxString::FromUTF8( pretty );
-        result.Replace( "&", "&amp;" );
-        result.Replace( "<", "&lt;" );
-        result.Replace( ">", "&gt;" );
-        return "<code class=\"language-json\">" + result + "</code>";
+        return "<code class=\"language-json\">" + EscapeHtml( wxString::FromUTF8( pretty ) ) + "</code>";
     }
     catch( const nlohmann::json::exception& )
     {
         // Not valid JSON - HTML-escape and return as-is
-        wxString result = wxString::FromUTF8( aRawResult );
-        result.Replace( "&", "&amp;" );
-        result.Replace( "<", "&lt;" );
-        result.Replace( ">", "&gt;" );
-        return result;
+        return EscapeHtml( wxString::FromUTF8( aRawResult ) );
     }
 }
 
@@ -208,7 +213,7 @@ static wxString BuildRunningToolHtml( int aIndex, const wxString& aDesc )
         "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
         "</div>"
         "</div>",
-        aIndex, aDesc, (long long) wxGetUTCTimeMillis().GetValue(), aIndex );
+        aIndex, EscapeHtml( aDesc ), (long long) wxGetUTCTimeMillis().GetValue(), aIndex );
 }
 
 
@@ -235,7 +240,7 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
             "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
             "</div>"
             "</div>",
-            aIndex, aDesc, aStatusColor, aIndex );
+            aIndex, EscapeHtml( aDesc ), aStatusColor, aIndex );
     }
 
     wxString displayStyle = aExpanded ? "block" : "none";
@@ -259,7 +264,7 @@ static wxString BuildToolResultHtml( int aIndex, const wxString& aDesc,
         "</div>",
         aIndex,
         aIndex,
-        aDesc,
+        EscapeHtml( aDesc ),
         chevronClass, aStatusColor,
         aIndex, displayStyle,
         aFullFormatted,
@@ -294,7 +299,7 @@ static wxString BuildToolApprovalHtml( int aIndex, const wxString& aDesc,
         "data-toggle-type=\"toolresult\" data-toggle-index=\"%d\" style=\"display:none;\">"
         "</div>"
         "</div>",
-        aIndex, aDesc, aActionHref, aBgColor, aTextColor, aButtonText, aIndex );
+        aIndex, EscapeHtml( aDesc ), aActionHref, aBgColor, aTextColor, EscapeHtml( aButtonText ), aIndex );
 }
 
 BEGIN_EVENT_TABLE( AGENT_FRAME, KIWAY_PLAYER )
@@ -1140,7 +1145,7 @@ wxString AGENT_FRAME::BuildStreamingContent()
                 "<span class=\"tool-spinner\"></span>"
                 "</span>"
                 "</div></div>",
-                m_generatingToolName );
+                EscapeHtml( m_generatingToolName ) );
         }
         else
             streamingContent += "<font color='#888888'>" + dots + "</font>";

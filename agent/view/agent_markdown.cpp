@@ -160,7 +160,15 @@ wxString ProcessInline( const wxString& aText )
         wxString url = processed.Mid( bracketEnd + 2, parenEnd - bracketEnd - 2 );
         wxString after = processed.Mid( parenEnd + 1 );
 
-        processed = before + "<a href=\"" + url + "\">" + linkText + "</a>" + after;
+        // Escape HTML entities in link text and URL
+        wxString safeUrl = url;
+        safeUrl.Replace( "&", "&amp;" );
+        safeUrl.Replace( "\"", "&quot;" );
+        wxString safeLinkText = linkText;
+        safeLinkText.Replace( "&", "&amp;" );
+        safeLinkText.Replace( "<", "&lt;" );
+        safeLinkText.Replace( ">", "&gt;" );
+        processed = before + "<a href=\"" + safeUrl + "\">" + safeLinkText + "</a>" + after;
     }
 
     return processed;

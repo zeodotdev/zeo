@@ -818,6 +818,9 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         m_fullHtmlContent = BuildOnboardingHtml();
         m_showingOnboarding = true;
         SetHtml( m_fullHtmlContent );
+
+        // Show Claude Code promo (detection is now complete)
+        MaybeShowCcPromo();
     } );
 }
 

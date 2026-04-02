@@ -5194,9 +5194,7 @@ static wxString HumanizeErrorMessage( const std::string& aMessage, long aHttpCod
             wxString msg = !apiMessage.empty()
                     ? wxString::FromUTF8( apiMessage )
                     : wxString( "You've reached your usage limit." );
-            return wxString::Format(
-                    "<a href=\"%s/dashboard/billing\">%s</a> (%ld)",
-                    ZEO_BASE_URL, msg, aHttpCode );
+            return wxString::Format( "%s", msg );
         }
 
         case 400:
@@ -5287,21 +5285,43 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
     m_toolCallHtml.Clear();
     m_currentThinkingIndex = -1;
 
-    // Display human-readable error message with optional retry button
+    // Display human-readable error message with action buttons
     wxString friendly = HumanizeErrorMessage( data->message, data->httpCode, data->errorType );
-    wxString retryBtn;
-    if( data->canRetry && !m_lastSentText.IsEmpty() )
+
+    wxString actionBtns;
+    bool isBillingError = ( data->httpCode == 429 );
+
+    if( isBillingError )
     {
-        retryBtn = wxS( "<a href=\"agent:retry\" style=\"display:inline-block; margin-top:8px; "
-                        "padding:4px 14px; border-radius:6px; font-size:12px; font-weight:500; "
-                        "text-decoration:none; cursor:pointer; "
-                        "background:rgba(232,85,85,0.15); color:var(--accent-red);\">Retry</a>" );
+        actionBtns = wxString::Format(
+            "<div style=\"display:flex; gap:8px; margin-top:8px;\">"
+            "<a href=\"%s/dashboard/billing\" style=\"display:inline-block; "
+            "padding:4px 14px; border-radius:6px; font-size:12px; font-weight:500; "
+            "text-decoration:none; cursor:pointer; "
+            "background:var(--text-primary); color:var(--bg-primary);\">Update Billing</a>"
+            "%s"
+            "</div>",
+            ZEO_BASE_URL,
+            ( data->canRetry && !m_lastSentText.IsEmpty() )
+                ? wxS( "<a href=\"agent:retry\" style=\"display:inline-block; "
+                       "padding:4px 14px; border-radius:6px; font-size:12px; font-weight:500; "
+                       "text-decoration:none; cursor:pointer; "
+                       "background:rgba(232,85,85,0.15); color:var(--accent-red);\">Retry</a>" )
+                : wxString() );
     }
+    else if( data->canRetry && !m_lastSentText.IsEmpty() )
+    {
+        actionBtns = wxS( "<a href=\"agent:retry\" style=\"display:inline-block; margin-top:8px; "
+                          "padding:4px 14px; border-radius:6px; font-size:12px; font-weight:500; "
+                          "text-decoration:none; cursor:pointer; "
+                          "background:rgba(232,85,85,0.15); color:var(--accent-red);\">Retry</a>" );
+    }
+
     wxString errorHtml = wxString::Format(
         "<div class=\"rounded-lg p-3 my-2\" style=\"background:rgba(232,85,85,0.08); border:1px solid rgba(232,85,85,0.2);\">"
         "<p class=\"text-accent-red text-[13px] m-0\">%s</p>%s"
         "</div>",
-        friendly, retryBtn );
+        friendly, actionBtns );
     AppendHtml( errorHtml );
 
     // Re-insert all queued messages into input on error (don't lose the user's text)

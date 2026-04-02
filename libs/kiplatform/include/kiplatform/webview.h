@@ -65,6 +65,22 @@ namespace WEBVIEW
      */
     bool DeleteCookies( wxWebView* aWebView );
 
+    /**
+     * Allow the WebView to load remote (http/https) resources from file:// pages.
+     *
+     * Content loaded via SetPage() uses a file:// base URL.  By default,
+     * WebKit2GTK blocks cross-origin requests from file:// origins, which
+     * prevents loading CDN resources (Tailwind CSS, xterm.js, etc.).
+     * This function enables universal access so that inline HTML can
+     * reference external scripts and stylesheets.
+     *
+     * Call this after Create() but before loading any content.
+     *
+     * @param aWebView The WebView to configure. Must not be null.
+     * @return true if the setting was applied, false otherwise.
+     */
+    bool AllowUniversalAccess( wxWebView* aWebView );
+
 } // namespace WEBVIEW
 } // namespace KIPLATFORM
 

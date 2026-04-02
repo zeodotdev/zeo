@@ -95,5 +95,48 @@ bool DeleteCookies( wxWebView* aWebView )
     return true;
 }
 
+bool AllowUniversalAccess( wxWebView* aWebView )
+{
+    if( !aWebView )
+        return false;
+
+    void* nativeBackend = aWebView->GetNativeBackend();
+
+    if( !nativeBackend )
+        return false;
+
+    // WebKitSettings* webkit_web_view_get_settings(WebKitWebView*)
+    typedef void* (*get_settings_t)( void* );
+    // void webkit_settings_set_allow_universal_access_from_file_urls(WebKitSettings*, gboolean)
+    typedef void (*set_universal_access_t)( void*, int );
+    // void webkit_settings_set_allow_file_access_from_file_urls(WebKitSettings*, gboolean)
+    typedef void (*set_file_access_t)( void*, int );
+
+    auto get_settings = (get_settings_t) dlsym( RTLD_DEFAULT, "webkit_web_view_get_settings" );
+    auto set_universal = (set_universal_access_t) dlsym( RTLD_DEFAULT,
+            "webkit_settings_set_allow_universal_access_from_file_urls" );
+    auto set_file = (set_file_access_t) dlsym( RTLD_DEFAULT,
+            "webkit_settings_set_allow_file_access_from_file_urls" );
+
+    if( !get_settings )
+    {
+        wxLogTrace( "webview", "Failed to load webkit_web_view_get_settings" );
+        return false;
+    }
+
+    void* settings = get_settings( nativeBackend );
+
+    if( !settings )
+        return false;
+
+    if( set_universal )
+        set_universal( settings, 1 );
+
+    if( set_file )
+        set_file( settings, 1 );
+
+    return set_universal != nullptr;
+}
+
 } // namespace KIPLATFORM::WEBVIEW
 

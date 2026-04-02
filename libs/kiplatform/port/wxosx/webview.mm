@@ -223,4 +223,10 @@ bool DeleteCookies( wxWebView* aWebView )
     return true;
 }
 
+bool AllowUniversalAccess( wxWebView* aWebView )
+{
+    // WKWebView does not restrict file:// → http:// by default
+    return true;
+}
+
 } // namespace KIPLATFORM::WEBVIEW

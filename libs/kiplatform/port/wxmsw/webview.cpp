@@ -345,4 +345,10 @@ bool DeleteCookies( wxWebView* aWebView )
 #endif
 }
 
+bool AllowUniversalAccess( wxWebView* aWebView )
+{
+    // WebView2/Edge does not restrict file:// → http:// by default
+    return true;
+}
+
 } // namespace KIPLATFORM::WEBVIEW

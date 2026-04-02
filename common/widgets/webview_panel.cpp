@@ -23,6 +23,7 @@
 #include <tool/tool_base.h>
 
 #include <widgets/webview_panel.h>
+#include <kiplatform/webview.h>
 #include <wx/sizer.h>
 #include <wx/webviewarchivehandler.h>
 #include <wx/webviewfshandler.h>
@@ -91,6 +92,12 @@ WEBVIEW_PANEL::WEBVIEW_PANEL( wxWindow* aParent, wxWindowID aId, const wxPoint& 
 #endif
     m_browser->SetUserAgent( wxString::Format( "KiCad/%s WebView/%s", GetMajorMinorPatchVersion(), wxGetOsDescription() ) );
     m_browser->Create( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize );
+
+    // Allow loading CDN resources (Tailwind CSS, xterm.js, etc.) from file:// pages.
+    // SetPage() uses file:// as the base URL; WebKit2GTK blocks cross-origin requests
+    // from file:// origins by default.
+    KIPLATFORM::WEBVIEW::AllowUniversalAccess( m_browser );
+
     sizer->Add( m_browser, 1, wxEXPAND );
     SetSizer( sizer );
 

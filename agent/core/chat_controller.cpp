@@ -303,13 +303,14 @@ void CHAT_CONTROLLER::Cancel()
             }
         }
 
-        // Also check the state machine's pending tools
-        for( size_t i = 0; i < m_ctx.GetPendingToolCallCount(); i++ )
+        // Also check the state machine's pending tools (including those marked
+        // as executing — GetNextPendingToolCall() skips executing tools, so use
+        // GetAllPendingToolCalls() to catch everything)
+        auto allPending = m_ctx.GetAllPendingToolCalls();
+        for( PendingToolCall* pending : allPending )
         {
-            PendingToolCall* pending = m_ctx.GetNextPendingToolCall();
             if( pending && !pending->tool_use_id.empty() )
             {
-                // Only add if not already in the list
                 if( std::find( orphanedToolIds.begin(), orphanedToolIds.end(),
                                pending->tool_use_id ) == orphanedToolIds.end() )
                 {

@@ -150,7 +150,9 @@ void CC_CONTROLLER::Cancel()
     {
         m_intentionalStop = true;
         m_subprocess->Stop();
-        m_subprocess.reset();
+        // Don't reset() immediately — the detached reader thread may still be
+        // accessing the subprocess. It exits within 100ms after m_running=false.
+        // The subprocess will be cleaned up on next Start()/NewSession()/destructor.
     }
 
     m_busy = false;
@@ -179,7 +181,8 @@ void CC_CONTROLLER::NewSession()
     m_toolResultCounter = 0;
     m_thinkingIndex = 0;
     m_ccTurnCount = 0;
-    m_chatHistory = json::array();
+    // Don't clear m_chatHistory — the caller (OnSend) always sets it
+    // explicitly via SetChatHistory() after NewSession().
 
     wxLogInfo( "CC_CONTROLLER: New session started" );
 }

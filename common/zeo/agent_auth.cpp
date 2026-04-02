@@ -49,6 +49,8 @@ void AGENT_AUTH::Configure( const std::string& aProjectUrl, const std::string& a
 
 void AGENT_AUTH::SignOut()
 {
+    std::lock_guard<std::recursive_mutex> lock( m_tokenMutex );
+
     m_accessToken.clear();
     m_refreshToken.clear();
     m_userEmail.clear();
@@ -145,6 +147,8 @@ void AGENT_AUTH::SetCallbackHandler( wxEvtHandler* aHandler )
 
 bool AGENT_AUTH::IsAuthenticated()
 {
+    std::lock_guard<std::recursive_mutex> lock( m_tokenMutex );
+
     if( m_accessToken.empty() )
         return false;
 
@@ -180,6 +184,8 @@ std::string AGENT_AUTH::GetUserEmail()
 
 std::string AGENT_AUTH::GetAccessToken()
 {
+    std::lock_guard<std::recursive_mutex> lock( m_tokenMutex );
+
     if( m_accessToken.empty() )
         return "";
 
@@ -202,6 +208,8 @@ std::string AGENT_AUTH::GetAccessToken()
 
 bool AGENT_AUTH::RefreshToken()
 {
+    std::lock_guard<std::recursive_mutex> lock( m_tokenMutex );
+
     // Reload from disk first - another instance (e.g., launcher) may have already
     // refreshed the token. Supabase rotates refresh tokens, so using a stale one fails.
     TryReloadSession();
@@ -294,6 +302,8 @@ bool AGENT_AUTH::RefreshToken()
 
 void AGENT_AUTH::LoadSession()
 {
+    std::lock_guard<std::recursive_mutex> lock( m_tokenMutex );
+
     // Clear in-memory state first - this ensures that if storage is empty
     // (e.g., after sign-out from another app), we don't keep stale tokens
     m_accessToken.clear();
@@ -327,6 +337,8 @@ void AGENT_AUTH::LoadSession()
 
 void AGENT_AUTH::SaveSession()
 {
+    std::lock_guard<std::recursive_mutex> lock( m_tokenMutex );
+
     nlohmann::json session;
     session["access_token"] = m_accessToken;
     session["refresh_token"] = m_refreshToken;
@@ -373,6 +385,7 @@ void AGENT_AUTH::ClearSession()
 
 bool AGENT_AUTH::TryReloadSession()
 {
+    // Note: caller already holds m_tokenMutex (recursive_mutex allows re-locking)
     std::string sessionData;
 
     if( !ReadSessionFile( sessionData ) )

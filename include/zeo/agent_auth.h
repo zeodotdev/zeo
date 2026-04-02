@@ -5,6 +5,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 
 #ifndef __WXMAC__
 class AUTH_CALLBACK_SERVER;
@@ -137,6 +138,9 @@ private:
     std::string m_firstName;
     std::string m_avatarUrl;
     long long   m_tokenExpiry; // Unix timestamp
+
+    // Guards all token fields above — recursive because GetAccessToken() calls RefreshToken()
+    mutable std::recursive_mutex m_tokenMutex;
 
     // Session persistence
     void SaveSession();

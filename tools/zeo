@@ -67,7 +67,7 @@ LOG_DIR = os.path.expanduser("~/Library/Logs/Zeo")
 MONITOR_LOG = os.path.join(LOG_DIR, "agent-monitor.jsonl")
 
 # Zeo version - read from cmake/ZeoVersion.cmake as single source of truth
-ZEO_VERSION = "0.1.0"  # Fallback if cmake file not found
+ZEO_VERSION = "0.1.1"  # Fallback if cmake file not found
 
 def _get_zeo_version():
     """Get Zeo version from cmake/ZeoVersion.cmake."""

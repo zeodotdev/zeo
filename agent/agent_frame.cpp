@@ -2333,29 +2333,6 @@ void AGENT_FRAME::OnBridgeLinkClick( const nlohmann::json& aMsg )
         OnRetryLastMessage();
     else if( href == "agent:cancel_tool" )
         DoCancelOperation( true );
-    else if( href.StartsWith( "agent:select:" ) )
-    {
-        // Reference badge clicked — select component in the active editor
-        wxString ref = href.Mid( 13 );  // skip "agent:select:"
-
-        // Build a selection request and send to the schematic or PCB editor
-        nlohmann::json selectCmd;
-        selectCmd["command"] = "select_by_reference";
-        selectCmd["reference"] = ref.ToStdString();
-
-        std::string payload = selectCmd.dump();
-
-        // Try schematic first, fall back to PCB
-        KIWAY_PLAYER* schFrame = Kiway().Player( FRAME_SCH, false );
-        KIWAY_PLAYER* pcbFrame = Kiway().Player( FRAME_PCB_EDITOR, false );
-
-        if( schFrame )
-            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REQUEST, payload );
-        else if( pcbFrame )
-            Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_REQUEST, payload );
-        else
-            m_bridge->PushShowToast( "No editor open", "error" );
-    }
     else if( href.StartsWith( "agent:suggest:" ) )
     {
         // Suggestion chip clicked — populate input and auto-send

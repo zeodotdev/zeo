@@ -1,6 +1,5 @@
 #include "agent_markdown.h"
 #include <wx/arrstr.h>
-#include <wctype.h>
 
 namespace AgentMarkdown
 {
@@ -170,105 +169,6 @@ wxString ProcessInline( const wxString& aText )
         safeLinkText.Replace( "<", "&lt;" );
         safeLinkText.Replace( ">", "&gt;" );
         processed = before + "<a href=\"" + safeUrl + "\">" + safeLinkText + "</a>" + after;
-    }
-
-    // Component reference designator badges (R1, C3, U1, D4, Q2, L1, etc.)
-    // Matches word-boundary patterns like R1, R12, C100, U3A — but not inside
-    // HTML tags, code blocks, or URLs (which already have <a>/<code> wrappers).
-    {
-        wxString result;
-        size_t i = 0;
-        bool insideTag = false;
-
-        while( i < processed.length() )
-        {
-            wxChar ch = processed[i];
-
-            // Skip HTML tags entirely
-            if( ch == '<' )
-            {
-                insideTag = true;
-                result += ch;
-                i++;
-                continue;
-            }
-
-            if( insideTag )
-            {
-                result += ch;
-                if( ch == '>' )
-                    insideTag = false;
-                i++;
-                continue;
-            }
-
-            // Check for reference designator pattern at word boundary
-            // Prefixes: R, C, U, D, Q, L, J, P, F, T, SW, BT, TP, FB, RN, IC, LED
-            bool isWordStart = ( i == 0 || !iswalnum( processed[i - 1] ) );
-
-            if( isWordStart && iswupper( ch ) )
-            {
-                // Collect the alpha prefix
-                size_t prefixStart = i;
-                size_t j = i;
-
-                while( j < processed.length() && iswupper( processed[j] ) )
-                    j++;
-
-                // Must have at least 1 digit after the prefix
-                if( j < processed.length() && iswdigit( processed[j] ) )
-                {
-                    size_t digitStart = j;
-
-                    while( j < processed.length() && iswdigit( processed[j] ) )
-                        j++;
-
-                    // Optional alpha suffix (e.g., U3A, Q1B)
-                    if( j < processed.length() && iswupper( processed[j] )
-                        && ( j + 1 >= processed.length() || !iswalnum( processed[j + 1] ) ) )
-                        j++;
-
-                    // Must end at a word boundary
-                    bool isWordEnd = ( j >= processed.length() || !iswalnum( processed[j] ) );
-
-                    wxString prefix = processed.Mid( prefixStart, digitStart - prefixStart );
-
-                    // Only match known EDA prefixes
-                    static const wxString knownPrefixes[] = {
-                        "R", "C", "U", "D", "Q", "L", "J", "P", "F", "T",
-                        "SW", "BT", "TP", "FB", "RN", "IC", "LED", "M", "K",
-                        "Y", "X", "H", "FL"
-                    };
-
-                    bool isKnownPrefix = false;
-
-                    for( const auto& kp : knownPrefixes )
-                    {
-                        if( prefix == kp )
-                        {
-                            isKnownPrefix = true;
-                            break;
-                        }
-                    }
-
-                    if( isKnownPrefix && isWordEnd )
-                    {
-                        wxString ref = processed.Mid( prefixStart, j - prefixStart );
-                        result += "<a href=\"agent:select:" + ref
-                                + "\" class=\"ref-badge\">" + ref + "</a>";
-                        i = j;
-                        continue;
-                    }
-                }
-
-                // Not a valid ref — output the character normally
-            }
-
-            result += ch;
-            i++;
-        }
-
-        processed = result;
     }
 
     return processed;

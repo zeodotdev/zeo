@@ -68,6 +68,7 @@ class BOARD_NETLIST_UPDATER;
 class ACTION_MENU;
 class TOOL_ACTION;
 class DIALOG_BOARD_SETUP;
+class BOARD_HIERARCHY_PANE;
 class PCB_DESIGN_BLOCK_PANE;
 
 #ifdef KICAD_IPC_API
@@ -346,6 +347,16 @@ public:
 
     void ToggleLibraryTree() override;
 
+    void ToggleBoardHierarchy();
+
+    /**
+     * Switch to a different board in a multi-board project.
+     *
+     * @param aBoardUuid The UUID of the board to switch to
+     * @return true if the switch was successful
+     */
+    bool SwitchToBoard( const KIID& aBoardUuid );
+
     /**
      * Create an ASCII footprint position file.
      *
@@ -451,6 +462,13 @@ public:
     bool UpdateDesignBlockFromSelection( const LIB_ID& aLibId );
 
     PCB_DESIGN_BLOCK_PANE* GetDesignBlockPane() const { return m_designBlocksPane; }
+
+    BOARD_HIERARCHY_PANE* GetBoardHierarchyPane() const { return m_boardHierarchyPane; }
+
+    /**
+     * Get the name used for the board hierarchy pane in the AUI manager.
+     */
+    static wxString BoardHierarchyPaneName() { return wxS( "BoardHierarchy" ); }
 
     /**
      * Save footprints in a library:
@@ -883,6 +901,7 @@ private:
 
     std::vector<LIB_ID>    m_designBlockHistoryList;
     PCB_DESIGN_BLOCK_PANE* m_designBlocksPane;
+    BOARD_HIERARCHY_PANE*  m_boardHierarchyPane;
 
     const std::map<std::string, UTF8>* m_importProperties; // Properties used for non-KiCad import.
 

@@ -29,6 +29,7 @@
 
 #include <core/typeinfo.h>
 #include <core/spinlock.h>
+#include <kiid.h>
 
 #include <memory>
 #include <mutex>
@@ -39,6 +40,7 @@
 #include <zone.h>
 
 class FROM_TO_CACHE;
+class PROJECT;
 class NET_SETTINGS;
 class CN_CLUSTER;
 class CN_CONNECTIVITY_ALGO;
@@ -290,6 +292,61 @@ public:
 
     std::shared_ptr<FROM_TO_CACHE> GetFromToCache() { return m_fromToCache; }
 
+    // -------------------------------------------------------------------------
+    // Multi-board connectivity extensions
+    // -------------------------------------------------------------------------
+
+    /**
+     * Set the board and project context for multi-board connectivity analysis.
+     * @param aBoard The current board
+     * @param aProject The project containing board definitions
+     */
+    void SetMultiBoardContext( BOARD* aBoard, PROJECT* aProject );
+
+    /**
+     * Clear the multi-board context.
+     */
+    void ClearMultiBoardContext();
+
+    /**
+     * Check if multi-board context is set.
+     */
+    bool HasMultiBoardContext() const { return m_multiBoardProject != nullptr; }
+
+    /**
+     * Get nets that span multiple boards via cross-board connectors.
+     * @return Vector of net codes that have cross-board connections
+     */
+    std::vector<int> GetCrossBoardNets() const;
+
+    /**
+     * Check if a net is complete across all boards it spans.
+     * A net is complete if all expected cross-board connections are established.
+     * @param aNetCode The net code to check
+     * @return true if the net is complete across boards
+     */
+    bool IsNetCompleteAcrossBoards( int aNetCode ) const;
+
+    /**
+     * Get pads that are marked as cross-board connectors but are unconnected.
+     * @return Vector of unconnected cross-board connector pads
+     */
+    std::vector<PAD*> GetUnconnectedCrossBoardPads() const;
+
+    /**
+     * Get the remote nets connected to a local net via cross-board connectors.
+     * @param aNetCode The local net code
+     * @return Vector of (board UUID, net name) pairs for remote connections
+     */
+    std::vector<std::pair<KIID, wxString>> GetRemoteNetsForNet( int aNetCode ) const;
+
+    /**
+     * Check if a pad is a cross-board connector pad.
+     * @param aPad The pad to check
+     * @return true if the pad is marked as a cross-board connector
+     */
+    bool IsCrossBoardConnectorPad( const PAD* aPad ) const;
+
 private:
 
     /**
@@ -320,6 +377,10 @@ private:
 
     /// @brief Used to map netcode to net name
     std::map<int, wxString> m_netcodeMap;
+
+    // Multi-board context
+    BOARD*      m_multiBoardContext;    ///< Current board in multi-board project
+    PROJECT*    m_multiBoardProject;    ///< Project containing all boards
 };
 
 #endif

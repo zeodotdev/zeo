@@ -3106,5 +3106,166 @@
     "read_only": false,
     "group": "GENERAL",
     "deferred": false
+  },
+  {
+    "name": "pcb_boards",
+    "description": "List and manage boards in a multi-board project. Actions: 'list' (get all boards), 'create' (create new board), 'set_active' (switch active board), 'get_active' (get current board), 'assign_component' (assign component to board).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["list", "create", "set_active", "get_active", "assign_component"],
+          "description": "Action to perform (default: list)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name for new board (for create action)"
+        },
+        "uuid": {
+          "type": "string",
+          "description": "Board UUID (for set_active action)"
+        },
+        "ref": {
+          "type": "string",
+          "description": "Component reference designator (for assign_component action)"
+        },
+        "board_uuid": {
+          "type": "string",
+          "description": "Target board UUID (for assign_component action)"
+        }
+      },
+      "required": []
+    },
+    "app": "pcb",
+    "script": "pcb/pcb_boards.py",
+    "needs_bbox": false,
+    "read_only": true,
+    "group": "PCB",
+    "deferred": false
+  },
+  {
+    "name": "pcb_cross_board",
+    "description": "Manage cross-board connections in a multi-board project. Actions: 'list' (list all connections), 'link' (connect pads on different boards), 'unlink' (remove connection), 'validate' (run cross-board DRC).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["list", "link", "unlink", "validate"],
+          "description": "Action to perform (default: list)"
+        },
+        "board1_uuid": {
+          "type": "string",
+          "description": "First board UUID (for link action)"
+        },
+        "pad1_id": {
+          "type": "string",
+          "description": "First pad UUID (for link action)"
+        },
+        "board2_uuid": {
+          "type": "string",
+          "description": "Second board UUID (for link action)"
+        },
+        "pad2_id": {
+          "type": "string",
+          "description": "Second pad UUID (for link action)"
+        },
+        "connection_id": {
+          "type": "string",
+          "description": "Connection ID (for unlink action)"
+        }
+      },
+      "required": []
+    },
+    "app": "pcb",
+    "script": "pcb/pcb_cross_board.py",
+    "needs_bbox": false,
+    "read_only": true,
+    "group": "PCB",
+    "deferred": false
+  },
+  {
+    "name": "pcb_panel",
+    "description": "Create and manage manufacturing panels. Panels contain multiple board instances with tabs (mousebite/V-groove/solid), rails, tooling holes, and fiducials. Actions: 'create', 'list', 'add_instance', 'generate_tabs', 'add_rails', 'add_tooling', 'export'.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["create", "list", "add_instance", "generate_tabs", "add_rails", "add_tooling", "export"],
+          "description": "Action to perform (default: create)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Panel name (for create action)"
+        },
+        "boards": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "board_id": { "type": "string" },
+              "copies": { "type": "integer" },
+              "rotation": { "type": "number" }
+            }
+          },
+          "description": "Boards to include in panel (for create action)"
+        },
+        "layout": {
+          "type": "string",
+          "enum": ["grid", "auto"],
+          "description": "Layout strategy (default: grid)"
+        },
+        "spacing_mm": {
+          "type": "number",
+          "description": "Board spacing in mm (default: 3.0)"
+        },
+        "tab_type": {
+          "type": "string",
+          "enum": ["none", "mousebite", "v_groove", "solid"],
+          "description": "Tab type (default: mousebite)"
+        },
+        "tab_width_mm": {
+          "type": "number",
+          "description": "Tab width in mm (default: 3.0)"
+        },
+        "tab_spacing_mm": {
+          "type": "number",
+          "description": "Tab spacing in mm (default: 50)"
+        },
+        "add_rails": {
+          "type": "boolean",
+          "description": "Add manufacturing rails (default: true)"
+        },
+        "rail_width_mm": {
+          "type": "number",
+          "description": "Rail width in mm (default: 5.0)"
+        },
+        "add_tooling_holes": {
+          "type": "boolean",
+          "description": "Add tooling holes (default: true)"
+        },
+        "add_fiducials": {
+          "type": "boolean",
+          "description": "Add fiducial markers (default: true)"
+        },
+        "panel_id": {
+          "type": "string",
+          "description": "Panel ID (for operations on existing panel)"
+        },
+        "output_dir": {
+          "type": "string",
+          "description": "Output directory (for export action)"
+        }
+      },
+      "required": []
+    },
+    "app": "pcb",
+    "script": "pcb/pcb_panel.py",
+    "needs_bbox": false,
+    "read_only": false,
+    "group": "PCB",
+    "deferred": false
   }
 ]

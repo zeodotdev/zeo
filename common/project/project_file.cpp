@@ -43,10 +43,14 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
         JSON_SETTINGS( aFullPath, SETTINGS_LOC::PROJECT, projectFileSchemaVersion ),
         m_ErcSettings( nullptr ),
         m_SchematicSettings( nullptr ),
-        m_BoardSettings(),
+        m_BoardSettings( nullptr ),
+        m_MultiBoardSettings(),
         m_sheets(),
         m_topLevelSheets(),
         m_boards(),
+        m_boardInfos(),
+        m_crossBoardConnections(),
+        m_componentAssignments(),
         m_project( nullptr ),
         m_wasMigrated( false )
 {
@@ -59,6 +63,15 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
             &m_topLevelSheets, {} ) );
 
     m_params.emplace_back( new PARAM_LIST<FILE_INFO_PAIR>( "boards", &m_boards, {} ) );
+
+    // Multi-board project support
+    m_params.emplace_back( new PARAM_LIST<BOARD_INFO>( "multi_board.boards", &m_boardInfos, {} ) );
+
+    m_params.emplace_back( new PARAM_LIST<CROSS_BOARD_CONNECTION>(
+            "multi_board.cross_board_connections", &m_crossBoardConnections, {} ) );
+
+    m_params.emplace_back( new PARAM_LIST<COMPONENT_BOARD_ASSIGNMENT>(
+            "multi_board.component_assignments", &m_componentAssignments, {} ) );
 
     m_params.emplace_back( new PARAM_WXSTRING_MAP( "text_variables",
             &m_TextVars, {}, false, true /* array behavior, even though stored as a map */ ) );
@@ -866,4 +879,351 @@ void from_json( const nlohmann::json& aJson, TOP_LEVEL_SHEET_INFO& aInfo )
 
     if( aJson.contains( "filename" ) )
         aInfo.filename = wxString( aJson["filename"].get<std::string>().c_str(), wxConvUTF8 );
+}
+
+
+// =============================================================================
+// Multi-board support implementations
+// =============================================================================
+
+BOARD_INFO* PROJECT_FILE::GetBoardInfo( const KIID& aUuid )
+{
+    for( BOARD_INFO& info : m_boardInfos )
+    {
+        if( info.uuid == aUuid )
+            return &info;
+    }
+    return nullptr;
+}
+
+
+const BOARD_INFO* PROJECT_FILE::GetBoardInfo( const KIID& aUuid ) const
+{
+    for( const BOARD_INFO& info : m_boardInfos )
+    {
+        if( info.uuid == aUuid )
+            return &info;
+    }
+    return nullptr;
+}
+
+
+BOARD_INFO* PROJECT_FILE::GetActiveBoardInfo()
+{
+    for( BOARD_INFO& info : m_boardInfos )
+    {
+        if( info.isActive )
+            return &info;
+    }
+
+    // If no board is marked active but we have boards, return the first one
+    if( !m_boardInfos.empty() )
+        return &m_boardInfos.front();
+
+    return nullptr;
+}
+
+
+bool PROJECT_FILE::SetActiveBoard( const KIID& aUuid )
+{
+    bool found = false;
+
+    for( BOARD_INFO& info : m_boardInfos )
+    {
+        if( info.uuid == aUuid )
+        {
+            info.isActive = true;
+            found = true;
+        }
+        else
+        {
+            info.isActive = false;
+        }
+    }
+
+    return found;
+}
+
+
+void PROJECT_FILE::AddBoard( const BOARD_INFO& aInfo )
+{
+    // Check if board with same UUID already exists
+    for( const BOARD_INFO& existing : m_boardInfos )
+    {
+        if( existing.uuid == aInfo.uuid )
+            return;  // Already exists
+    }
+
+    m_boardInfos.push_back( aInfo );
+
+    // If this is the first board, make it active
+    if( m_boardInfos.size() == 1 )
+        m_boardInfos.back().isActive = true;
+}
+
+
+bool PROJECT_FILE::RemoveBoard( const KIID& aUuid )
+{
+    auto it = std::find_if( m_boardInfos.begin(), m_boardInfos.end(),
+            [&aUuid]( const BOARD_INFO& info ) { return info.uuid == aUuid; } );
+
+    if( it == m_boardInfos.end() )
+        return false;
+
+    bool wasActive = it->isActive;
+    m_boardInfos.erase( it );
+
+    // If we removed the active board, make the first remaining board active
+    if( wasActive && !m_boardInfos.empty() )
+        m_boardInfos.front().isActive = true;
+
+    // Also remove any cross-board connections involving this board
+    m_crossBoardConnections.erase(
+            std::remove_if( m_crossBoardConnections.begin(), m_crossBoardConnections.end(),
+                    [&aUuid]( const CROSS_BOARD_CONNECTION& conn )
+                    {
+                        return conn.board1Uuid == aUuid || conn.board2Uuid == aUuid;
+                    } ),
+            m_crossBoardConnections.end() );
+
+    // Also remove component assignments to this board
+    for( COMPONENT_BOARD_ASSIGNMENT& assignment : m_componentAssignments )
+    {
+        assignment.boardUuids.erase(
+                std::remove( assignment.boardUuids.begin(), assignment.boardUuids.end(), aUuid ),
+                assignment.boardUuids.end() );
+    }
+
+    // Clean up empty assignments
+    m_componentAssignments.erase(
+            std::remove_if( m_componentAssignments.begin(), m_componentAssignments.end(),
+                    []( const COMPONENT_BOARD_ASSIGNMENT& a ) { return a.boardUuids.empty(); } ),
+            m_componentAssignments.end() );
+
+    return true;
+}
+
+
+void PROJECT_FILE::AddCrossBoardConnection( const CROSS_BOARD_CONNECTION& aConnection )
+{
+    // Check for duplicates (including reverse direction)
+    for( const CROSS_BOARD_CONNECTION& existing : m_crossBoardConnections )
+    {
+        if( existing == aConnection )
+            return;
+
+        // Also check reverse direction
+        if( existing.board1Uuid == aConnection.board2Uuid &&
+            existing.pad1Uuid == aConnection.pad2Uuid &&
+            existing.board2Uuid == aConnection.board1Uuid &&
+            existing.pad2Uuid == aConnection.pad1Uuid )
+            return;
+    }
+
+    m_crossBoardConnections.push_back( aConnection );
+}
+
+
+bool PROJECT_FILE::RemoveCrossBoardConnection( const KIID& aBoard1, const KIID& aPad1,
+                                                const KIID& aBoard2, const KIID& aPad2 )
+{
+    auto it = std::find_if( m_crossBoardConnections.begin(), m_crossBoardConnections.end(),
+            [&]( const CROSS_BOARD_CONNECTION& conn )
+            {
+                // Match in either direction
+                return ( conn.board1Uuid == aBoard1 && conn.pad1Uuid == aPad1 &&
+                         conn.board2Uuid == aBoard2 && conn.pad2Uuid == aPad2 ) ||
+                       ( conn.board1Uuid == aBoard2 && conn.pad1Uuid == aPad2 &&
+                         conn.board2Uuid == aBoard1 && conn.pad2Uuid == aPad1 );
+            } );
+
+    if( it == m_crossBoardConnections.end() )
+        return false;
+
+    m_crossBoardConnections.erase( it );
+    return true;
+}
+
+
+COMPONENT_BOARD_ASSIGNMENT* PROJECT_FILE::GetComponentAssignment( const wxString& aReference )
+{
+    for( COMPONENT_BOARD_ASSIGNMENT& assignment : m_componentAssignments )
+    {
+        if( assignment.reference == aReference )
+            return &assignment;
+    }
+    return nullptr;
+}
+
+
+void PROJECT_FILE::AssignComponentToBoard( const wxString& aReference, const KIID& aBoardUuid,
+                                            bool aReplace )
+{
+    COMPONENT_BOARD_ASSIGNMENT* existing = GetComponentAssignment( aReference );
+
+    if( existing )
+    {
+        if( aReplace )
+        {
+            existing->boardUuids.clear();
+            existing->boardUuids.push_back( aBoardUuid );
+        }
+        else
+        {
+            // Add to existing assignment if not already present
+            if( !existing->IsAssignedTo( aBoardUuid ) )
+                existing->boardUuids.push_back( aBoardUuid );
+        }
+    }
+    else
+    {
+        m_componentAssignments.emplace_back( aReference, aBoardUuid );
+    }
+}
+
+
+void PROJECT_FILE::UnassignComponentFromBoard( const wxString& aReference, const KIID& aBoardUuid )
+{
+    COMPONENT_BOARD_ASSIGNMENT* existing = GetComponentAssignment( aReference );
+
+    if( existing )
+    {
+        existing->boardUuids.erase(
+                std::remove( existing->boardUuids.begin(), existing->boardUuids.end(), aBoardUuid ),
+                existing->boardUuids.end() );
+
+        // If no boards left, remove the assignment entirely
+        if( existing->boardUuids.empty() )
+        {
+            m_componentAssignments.erase(
+                    std::remove_if( m_componentAssignments.begin(), m_componentAssignments.end(),
+                            [&aReference]( const COMPONENT_BOARD_ASSIGNMENT& a )
+                            {
+                                return a.reference == aReference;
+                            } ),
+                    m_componentAssignments.end() );
+        }
+    }
+}
+
+
+// =============================================================================
+// Multi-board design settings management
+// =============================================================================
+
+void PROJECT_FILE::RegisterBoardSettings( const KIID& aBoardUuid, BOARD_DESIGN_SETTINGS* aSettings )
+{
+    if( aBoardUuid == niluuid || !aSettings )
+        return;
+
+    m_MultiBoardSettings[aBoardUuid] = aSettings;
+}
+
+
+void PROJECT_FILE::UnregisterBoardSettings( const KIID& aBoardUuid )
+{
+    m_MultiBoardSettings.erase( aBoardUuid );
+}
+
+
+BOARD_DESIGN_SETTINGS* PROJECT_FILE::GetBoardSettings( const KIID& aBoardUuid ) const
+{
+    auto it = m_MultiBoardSettings.find( aBoardUuid );
+
+    if( it != m_MultiBoardSettings.end() )
+        return it->second;
+
+    return nullptr;
+}
+
+
+// =============================================================================
+// JSON serialization for multi-board types
+// =============================================================================
+
+void to_json( nlohmann::json& aJson, const BOARD_INFO& aInfo )
+{
+    aJson = nlohmann::json::object();
+    aJson["uuid"] = aInfo.uuid.AsString().ToUTF8();
+    aJson["filename"] = aInfo.filename.ToUTF8();
+    aJson["display_name"] = aInfo.displayName.ToUTF8();
+    aJson["is_active"] = aInfo.isActive;
+}
+
+
+void from_json( const nlohmann::json& aJson, BOARD_INFO& aInfo )
+{
+    wxCHECK( aJson.is_object(), /* void */ );
+
+    if( aJson.contains( "uuid" ) )
+        aInfo.uuid = KIID( wxString( aJson["uuid"].get<std::string>().c_str(), wxConvUTF8 ) );
+
+    if( aJson.contains( "filename" ) )
+        aInfo.filename = wxString( aJson["filename"].get<std::string>().c_str(), wxConvUTF8 );
+
+    if( aJson.contains( "display_name" ) )
+        aInfo.displayName = wxString( aJson["display_name"].get<std::string>().c_str(), wxConvUTF8 );
+
+    if( aJson.contains( "is_active" ) )
+        aInfo.isActive = aJson["is_active"].get<bool>();
+}
+
+
+void to_json( nlohmann::json& aJson, const CROSS_BOARD_CONNECTION& aConnection )
+{
+    aJson = nlohmann::json::object();
+    aJson["board1_uuid"] = aConnection.board1Uuid.AsString().ToUTF8();
+    aJson["pad1_uuid"] = aConnection.pad1Uuid.AsString().ToUTF8();
+    aJson["board2_uuid"] = aConnection.board2Uuid.AsString().ToUTF8();
+    aJson["pad2_uuid"] = aConnection.pad2Uuid.AsString().ToUTF8();
+}
+
+
+void from_json( const nlohmann::json& aJson, CROSS_BOARD_CONNECTION& aConnection )
+{
+    wxCHECK( aJson.is_object(), /* void */ );
+
+    if( aJson.contains( "board1_uuid" ) )
+        aConnection.board1Uuid = KIID( wxString( aJson["board1_uuid"].get<std::string>().c_str(), wxConvUTF8 ) );
+
+    if( aJson.contains( "pad1_uuid" ) )
+        aConnection.pad1Uuid = KIID( wxString( aJson["pad1_uuid"].get<std::string>().c_str(), wxConvUTF8 ) );
+
+    if( aJson.contains( "board2_uuid" ) )
+        aConnection.board2Uuid = KIID( wxString( aJson["board2_uuid"].get<std::string>().c_str(), wxConvUTF8 ) );
+
+    if( aJson.contains( "pad2_uuid" ) )
+        aConnection.pad2Uuid = KIID( wxString( aJson["pad2_uuid"].get<std::string>().c_str(), wxConvUTF8 ) );
+}
+
+
+void to_json( nlohmann::json& aJson, const COMPONENT_BOARD_ASSIGNMENT& aAssignment )
+{
+    aJson = nlohmann::json::object();
+    aJson["reference"] = aAssignment.reference.ToUTF8();
+
+    nlohmann::json boards = nlohmann::json::array();
+    for( const KIID& uuid : aAssignment.boardUuids )
+        boards.push_back( uuid.AsString().ToUTF8() );
+
+    aJson["board_uuids"] = boards;
+}
+
+
+void from_json( const nlohmann::json& aJson, COMPONENT_BOARD_ASSIGNMENT& aAssignment )
+{
+    wxCHECK( aJson.is_object(), /* void */ );
+
+    if( aJson.contains( "reference" ) )
+        aAssignment.reference = wxString( aJson["reference"].get<std::string>().c_str(), wxConvUTF8 );
+
+    if( aJson.contains( "board_uuids" ) && aJson["board_uuids"].is_array() )
+    {
+        aAssignment.boardUuids.clear();
+        for( const auto& uuid : aJson["board_uuids"] )
+        {
+            aAssignment.boardUuids.emplace_back(
+                    wxString( uuid.get<std::string>().c_str(), wxConvUTF8 ) );
+        }
+    }
 }

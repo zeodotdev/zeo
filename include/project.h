@@ -212,6 +212,120 @@ public:
         return *m_localSettings;
     }
 
+    // =========================================================================
+    // Multi-board project support
+    // =========================================================================
+
+    /**
+     * Check if this is a multi-board project (has more than one board).
+     *
+     * @return true if the project has multiple boards defined
+     */
+    virtual bool IsMultiBoardProject() const;
+
+    /**
+     * Get the number of boards in this project.
+     *
+     * @return The count of boards (0 if single-board legacy project)
+     */
+    virtual size_t GetBoardCount() const;
+
+    /**
+     * Get board info by UUID.
+     *
+     * @param aUuid The UUID of the board to find
+     * @return Pointer to BOARD_INFO if found, nullptr otherwise
+     */
+    virtual struct BOARD_INFO* GetBoardInfo( const KIID& aUuid );
+
+    /**
+     * Get board info by filename.
+     *
+     * @param aFilename The filename of the board (can be relative or absolute)
+     * @return Pointer to BOARD_INFO if found, nullptr otherwise
+     */
+    virtual struct BOARD_INFO* GetBoardInfoByFilename( const wxString& aFilename );
+
+    /**
+     * Get the currently active board info.
+     *
+     * @return Pointer to the active BOARD_INFO, or nullptr if none active
+     */
+    virtual struct BOARD_INFO* GetActiveBoardInfo();
+
+    /**
+     * Set the active board by UUID.
+     *
+     * @param aUuid The UUID of the board to make active
+     * @return true if the board was found and set active
+     */
+    virtual bool SetActiveBoard( const KIID& aUuid );
+
+    /**
+     * Create a new board in the project.
+     *
+     * @param aDisplayName User-friendly display name for the board
+     * @param aFilename Optional filename (will be generated if empty)
+     * @return The UUID of the newly created board
+     */
+    virtual KIID CreateBoard( const wxString& aDisplayName,
+                               const wxString& aFilename = wxEmptyString );
+
+    /**
+     * Delete a board from the project.
+     *
+     * @param aUuid The UUID of the board to delete
+     * @param aDeleteFile If true, also delete the .kicad_pcb file from disk
+     * @return true if the board was found and deleted
+     */
+    virtual bool DeleteBoard( const KIID& aUuid, bool aDeleteFile = false );
+
+    /**
+     * Duplicate an existing board.
+     *
+     * @param aSourceUuid The UUID of the board to duplicate
+     * @param aNewDisplayName Display name for the duplicate
+     * @return The UUID of the new board, or niluuid if failed
+     */
+    virtual KIID DuplicateBoard( const KIID& aSourceUuid, const wxString& aNewDisplayName );
+
+    /**
+     * Get the absolute path to a board file.
+     *
+     * @param aBoardInfo The board info containing the filename
+     * @return Full absolute path to the board file
+     */
+    virtual wxString GetBoardFullPath( const struct BOARD_INFO& aBoardInfo ) const;
+
+    /**
+     * Assign a component to a board.
+     *
+     * @param aReference The component reference designator
+     * @param aBoardUuid The board UUID to assign to
+     * @param aReplace If true, replace existing assignment; if false, add to existing
+     */
+    virtual void AssignComponentToBoard( const wxString& aReference, const KIID& aBoardUuid,
+                                          bool aReplace = true );
+
+    /**
+     * Get the board assignments for a component.
+     *
+     * @param aReference The component reference designator
+     * @return Vector of board UUIDs the component is assigned to
+     */
+    virtual std::vector<KIID> GetComponentBoardAssignments( const wxString& aReference ) const;
+
+    /**
+     * Add a cross-board connection between two pads.
+     *
+     * @param aBoard1 UUID of the first board
+     * @param aPad1 UUID of the pad on board 1
+     * @param aBoard2 UUID of the second board
+     * @param aPad2 UUID of the pad on board 2
+     */
+    virtual void AddCrossBoardConnection( const KIID& aBoard1, const KIID& aPad1,
+                                           const KIID& aBoard2, const KIID& aPad2 );
+
     /// Retain a number of project specific wxStrings, enumerated here:
     enum RSTRING_T
     {

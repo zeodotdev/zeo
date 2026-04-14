@@ -57,6 +57,7 @@
 #include <kiplatform/app.h>
 #include <kiplatform/ui.h>
 #include <widgets/appearance_controls.h>
+#include <widgets/board_hierarchy_pane.h>
 #include <widgets/wx_infobar.h>
 #include <widgets/wx_progress_reporters.h>
 #include <settings/settings_manager.h>
@@ -1069,6 +1070,84 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
         statusBar->SetLoadWarningMessages( loadReporter.GetMessages() );
 
     return true;
+}
+
+
+bool PCB_EDIT_FRAME::SwitchToBoard( const KIID& aBoardUuid )
+{
+    PROJECT* project = &Prj();
+
+    if( !project )
+        return false;
+
+    PROJECT_FILE& projectFile = project->GetProjectFile();
+
+    // Find the board info for the requested board
+    BOARD_INFO* boardInfo = projectFile.GetBoardInfo( aBoardUuid );
+
+    if( !boardInfo )
+    {
+        DisplayError( this, _( "Board not found in project." ) );
+        return false;
+    }
+
+    // Don't switch if already on this board
+    if( boardInfo->isActive )
+        return true;
+
+    // Check for unsaved changes
+    if( IsContentModified() )
+    {
+        if( !HandleUnsavedChanges( this, _( "The current PCB has been modified. Save changes?" ),
+                                   [&]() -> bool
+                                   {
+                                       return SavePcbFile( GetBoard()->GetFileName() );
+                                   } ) )
+        {
+            return false;
+        }
+    }
+
+    // Get the full path to the new board
+    wxString boardPath = project->GetBoardFullPath( *boardInfo );
+
+    // Check if board file exists
+    if( !wxFileName::FileExists( boardPath ) )
+    {
+        wxString msg = wxString::Format(
+                _( "Board file '%s' does not exist.\n\nCreate a new board?" ),
+                boardPath );
+
+        if( !IsOK( this, msg ) )
+            return false;
+
+        // Will create a new board
+    }
+
+    // Update active board in project file
+    projectFile.SetActiveBoard( aBoardUuid );
+
+    // Load the new board
+    std::vector<wxString> files;
+    files.push_back( boardPath );
+
+    bool success = OpenProjectFiles( files, wxFileName::FileExists( boardPath ) ? 0 : KICTL_CREATE );
+
+    if( success )
+    {
+        // Sync the board's identity from the project file
+        if( GetBoard() )
+        {
+            GetBoard()->SetProjectBoardUuid( aBoardUuid );
+            GetBoard()->SetDisplayName( boardInfo->displayName );
+        }
+
+        // Update the hierarchy pane
+        if( m_boardHierarchyPane )
+            m_boardHierarchyPane->UpdateHierarchyTree();
+    }
+
+    return success;
 }
 
 

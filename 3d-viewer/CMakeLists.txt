@@ -88,6 +88,7 @@ set(3D-VIEWER_SRCS
     3d_viewer/tools/eda_3d_controller.cpp
     3d_viewer/eda_3d_viewer_frame.cpp
     3d_viewer/eda_3d_viewer_settings.cpp
+    3d_viewer/3d_viewer_assembly.cpp
     common_ogl/ogl_attr_list.cpp
     common_ogl/ogl_utils.cpp
     3d_fastmath.cpp
@@ -105,6 +106,7 @@ set(3D-VIEWER_SRCS
     dialogs/panel_3D_opengl_options_base.cpp
     dialogs/panel_3D_raytracing_options.cpp
     dialogs/panel_3D_raytracing_options_base.cpp
+    dialogs/panel_3d_assembly.cpp
     )
 
 add_library(3d-viewer STATIC ${3D-VIEWER_SRCS})

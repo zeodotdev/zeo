@@ -49,6 +49,11 @@ public:
     int PadTable( const TOOL_EVENT& aEvent );
 
     /**
+     * Toggle pad as cross-board connector.
+     */
+    int ToggleConnectorPad( const TOOL_EVENT& aEvent );
+
+    /**
      * Place a pad in footprint editor.
      */
     int PlacePad( const TOOL_EVENT& aEvent );

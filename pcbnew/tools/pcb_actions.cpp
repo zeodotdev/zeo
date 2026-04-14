@@ -939,6 +939,13 @@ TOOL_ACTION PCB_ACTIONS::padTable( TOOL_ACTION_ARGS()
         .Tooltip( _( "Displays pad table for bulk editing of pads" ) )
         .Icon( BITMAPS::pin_table ) );
 
+TOOL_ACTION PCB_ACTIONS::toggleConnectorPad( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.PadTool.toggleConnectorPad" )
+        .Scope( AS_CONTEXT )
+        .FriendlyName( _( "Toggle Cross-Board Connector" ) )
+        .Tooltip( _( "Mark/unmark pad as a cross-board connector for multi-board projects" ) )
+        .Icon( BITMAPS::add_bus ) );
+
 TOOL_ACTION PCB_ACTIONS::checkFootprint( TOOL_ACTION_ARGS()
         .Name( "pcbnew.ModuleEditor.checkFootprint" )
         .Scope( AS_GLOBAL )

@@ -41,7 +41,9 @@
 #include <shared_mutex>
 #include <unordered_set>
 #include <project.h>
+#include <project/project_file.h>
 #include <list>
+#include <set>
 
 class BOARD_DESIGN_SETTINGS;
 class BOARD_CONNECTED_ITEM;
@@ -316,6 +318,25 @@ enum class BOARD_USE
 
 
 /**
+ * Represents a net that connects to other boards in a multi-board project.
+ * Used to track cross-board electrical connections through connectors.
+ */
+struct CROSS_BOARD_NET
+{
+    NETINFO_ITEM*                           localNet;     ///< The net on this board
+    std::vector<std::pair<KIID, wxString>>  remoteNets;   ///< Board UUID + net name pairs on other boards
+
+    CROSS_BOARD_NET() : localNet( nullptr ) {}
+    explicit CROSS_BOARD_NET( NETINFO_ITEM* aNet ) : localNet( aNet ) {}
+
+    void AddRemoteNet( const KIID& aBoardUuid, const wxString& aNetName )
+    {
+        remoteNets.emplace_back( aBoardUuid, aNetName );
+    }
+};
+
+
+/**
  * Information pertinent to a Pcbnew printed circuit board.
  */
 class BOARD : public BOARD_ITEM_CONTAINER, public EMBEDDED_FILES, public PROJECT::_ELEM
@@ -427,6 +448,106 @@ public:
 
     void GetContextualTextVars( wxArrayString* aVars ) const;
     bool ResolveTextVar( wxString* token, int aDepth ) const;
+
+    // =========================================================================
+    // Multi-board project support
+    // =========================================================================
+
+    /**
+     * Get the board's UUID within the project (distinct from the item UUID).
+     * This identifies which board in a multi-board project this BOARD represents.
+     * @return The project board UUID, or niluuid if not set
+     */
+    const KIID& GetProjectBoardUuid() const { return m_projectBoardUuid; }
+
+    /**
+     * Set the board's UUID within the project.
+     * @param aUuid The UUID to set (should match a BOARD_INFO in PROJECT_FILE)
+     */
+    void SetProjectBoardUuid( const KIID& aUuid ) { m_projectBoardUuid = aUuid; }
+
+    /**
+     * Get the user-friendly display name of this board.
+     * @return The display name, or empty string if not set
+     */
+    const wxString& GetDisplayName() const { return m_displayName; }
+
+    /**
+     * Set the user-friendly display name of this board.
+     * @param aName The display name to set
+     */
+    void SetDisplayName( const wxString& aName ) { m_displayName = aName; }
+
+    /**
+     * Check if this board is part of a multi-board project.
+     * @return true if the project board UUID is set
+     */
+    bool IsMultiBoardMember() const { return m_projectBoardUuid != niluuid; }
+
+    /**
+     * Get the cross-board net mappings for this board.
+     * @return Map of net codes to their cross-board connections
+     */
+    const std::map<int, CROSS_BOARD_NET>& GetCrossBoardNets() const { return m_crossBoardNets; }
+
+    /**
+     * Add a cross-board net connection.
+     * @param aNetCode The local net code
+     * @param aBoardUuid The remote board's UUID
+     * @param aRemoteNetName The name of the net on the remote board
+     */
+    void AddCrossBoardNet( int aNetCode, const KIID& aBoardUuid, const wxString& aRemoteNetName );
+
+    /**
+     * Remove all cross-board net connections for a given net.
+     * @param aNetCode The local net code
+     */
+    void RemoveCrossBoardNet( int aNetCode );
+
+    /**
+     * Clear all cross-board net mappings.
+     */
+    void ClearCrossBoardNets() { m_crossBoardNets.clear(); }
+
+    /**
+     * Check if a pad is marked as a connector pad (connects to another board).
+     * @param aPadUuid The UUID of the pad to check
+     * @return true if the pad is a connector pad
+     */
+    bool IsConnectorPad( const KIID& aPadUuid ) const
+    {
+        return m_connectorPads.find( aPadUuid ) != m_connectorPads.end();
+    }
+
+    /**
+     * Mark a pad as a connector pad (connects to another board).
+     * @param aPadUuid The UUID of the pad to mark
+     */
+    void MarkAsConnectorPad( const KIID& aPadUuid ) { m_connectorPads.insert( aPadUuid ); }
+
+    /**
+     * Unmark a pad as a connector pad.
+     * @param aPadUuid The UUID of the pad to unmark
+     */
+    void UnmarkConnectorPad( const KIID& aPadUuid ) { m_connectorPads.erase( aPadUuid ); }
+
+    /**
+     * Get all connector pad UUIDs.
+     * @return Set of UUIDs for all pads marked as connectors
+     */
+    const std::set<KIID>& GetConnectorPads() const { return m_connectorPads; }
+
+    /**
+     * Clear all connector pad markings.
+     */
+    void ClearConnectorPads() { m_connectorPads.clear(); }
+
+    /**
+     * Synchronize board identity from project file.
+     * Loads the project board UUID and display name from the project's BOARD_INFO.
+     * @return true if a matching BOARD_INFO was found
+     */
+    bool SyncFromProjectFile();
 
     /// Visibility settings stored in board prior to 6.0, only used for loading legacy files
     LSET    m_LegacyVisibleLayers;
@@ -1588,6 +1709,12 @@ private:
 
     std::unique_ptr<COMPONENT_CLASS_MANAGER>  m_componentClassManager;
     std::unique_ptr<LENGTH_DELAY_CALCULATION> m_lengthDelayCalc;
+
+    // Multi-board project support
+    KIID                            m_projectBoardUuid;   ///< Board identity within the project
+    wxString                        m_displayName;        ///< User-friendly board display name
+    std::map<int, CROSS_BOARD_NET>  m_crossBoardNets;     ///< Cross-board net connections
+    std::set<KIID>                  m_connectorPads;      ///< Pads that connect to other boards
 };
 
 

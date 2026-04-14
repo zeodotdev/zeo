@@ -56,6 +56,18 @@ public:
         return m_parent;
     }
 
+    /**
+     * Get the JSON pointer path where this settings object is stored.
+     */
+    const std::string& GetPath() const { return m_path; }
+
+    /**
+     * Set the JSON pointer path where this settings object is stored.
+     * This should be called before SetParent() to change the storage location.
+     * @param aPath The new JSON pointer path (e.g., "boards.12345678.design_settings")
+     */
+    void SetPath( const std::string& aPath ) { m_path = aPath; }
+
 protected:
 
     /// A pointer to the parent object to load and store from

@@ -59,6 +59,9 @@ set( PCBNEW_DIALOGS
     dialogs/dialog_drc.cpp
     dialogs/dialog_drc_base.cpp
     dialogs/dialog_drc_job_config.cpp
+    dialogs/dialog_multi_board_sync.cpp
+    dialogs/dialog_cross_board_connectors.cpp
+    dialogs/dialog_create_panel.cpp
     dialogs/dialog_board_stats_job.cpp
     dialogs/dialog_board_stats_job_base.cpp
     dialogs/dialog_footprint_associations.cpp
@@ -318,6 +321,7 @@ set( PCBNEW_DRC_SRCS
     drc/drc_test_provider_diff_pair_coupling.cpp
     drc/drc_test_provider_sliver_checker.cpp
     drc/drc_test_provider_text_mirroring.cpp
+    drc/drc_engine_cross_board.cpp
 
     drc/rule_editor/drc_rule_editor_utils.cpp
     drc/rule_editor/drc_re_panel_matcher.cpp
@@ -352,6 +356,7 @@ set( PCBNEW_DRC_SRCS
 
 set( PCBNEW_NETLIST_SRCS
     netlist_reader/board_netlist_updater.cpp
+    netlist_reader/multi_board_netlist_updater.cpp
     netlist_reader/netlist.cpp
     )
 
@@ -483,6 +488,7 @@ set( PCBNEW_CLASS_SRCS
     widgets/panel_footprint_chooser.cpp
     widgets/panel_selection_filter.cpp
     widgets/panel_selection_filter_base.cpp
+    widgets/board_hierarchy_pane.cpp
     widgets/pcb_design_block_pane.cpp
     widgets/pcb_design_block_preview_widget.cpp
     widgets/pcb_properties_panel.cpp
@@ -491,6 +497,9 @@ set( PCBNEW_CLASS_SRCS
     widgets/net_inspector_panel.cpp
     widgets/pcb_net_inspector_panel.cpp
     widgets/vertex_editor_pane.cpp
+
+    multi_board/component_assignment.cpp
+    multi_board/panel_board.cpp
 
     component_classes/component_class.cpp
     component_classes/component_class_cache_proxy.cpp

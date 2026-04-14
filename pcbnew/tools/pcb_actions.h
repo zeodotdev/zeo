@@ -506,6 +506,9 @@ public:
     static TOOL_ACTION defaultPadProperties;
     static TOOL_ACTION padTable;
 
+    /// Mark/unmark pad as a cross-board connector
+    static TOOL_ACTION toggleConnectorPad;
+
     static TOOL_ACTION checkFootprint;
 
     static TOOL_ACTION loadFpFromBoard;

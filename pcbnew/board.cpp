@@ -208,12 +208,27 @@ void BOARD::SetProject( PROJECT* aProject, bool aReferenceOnly )
     {
         PROJECT_FILE& project = aProject->GetProjectFile();
 
-        // Link the design settings object to the project file
-        project.m_BoardSettings = &GetDesignSettings();
+        // Check if this is a multi-board project with a valid board UUID
+        bool isMultiBoardMember = m_projectBoardUuid != niluuid && project.IsMultiBoardProject();
+
+        if( isMultiBoardMember )
+        {
+            // Multi-board project: use board-specific path for design settings
+            std::string boardPath = "boards." + m_projectBoardUuid.AsStdString() + ".design_settings";
+            GetDesignSettings().SetPath( boardPath );
+
+            // Register with the multi-board settings map
+            project.RegisterBoardSettings( m_projectBoardUuid, &GetDesignSettings() );
+        }
+        else
+        {
+            // Legacy single-board mode: use the classic path
+            project.m_BoardSettings = &GetDesignSettings();
+        }
 
         // Set parent, which also will load the values from JSON stored in the project if we don't
         // have legacy design settings loaded already
-        project.m_BoardSettings->SetParent( &project, !m_LegacyDesignSettingsLoaded );
+        GetDesignSettings().SetParent( &project, !m_LegacyDesignSettingsLoaded );
 
         // The DesignSettings' netclasses pointer will be pointing to its internal netclasses
         // list at this point. If we loaded anything into it from a legacy board file then we
@@ -242,8 +257,20 @@ void BOARD::ClearProject()
 
     PROJECT_FILE& project = m_project->GetProjectFile();
 
-    // Owned by the BOARD
-    if( project.m_BoardSettings )
+    // Handle multi-board project cleanup
+    if( m_projectBoardUuid != niluuid )
+    {
+        BOARD_DESIGN_SETTINGS* boardSettings = project.GetBoardSettings( m_projectBoardUuid );
+
+        if( boardSettings )
+        {
+            project.ReleaseNestedSettings( boardSettings );
+            project.UnregisterBoardSettings( m_projectBoardUuid );
+        }
+    }
+
+    // Handle legacy single-board cleanup (owned by the BOARD)
+    if( project.m_BoardSettings == &GetDesignSettings() )
     {
         project.ReleaseNestedSettings( project.m_BoardSettings );
         project.m_BoardSettings = nullptr;
@@ -2665,6 +2692,65 @@ wxArrayString BOARD::GetVariantNamesForUI() const
     names.Sort( SortVariantNames );
 
     return names;
+}
+
+
+// =========================================================================
+// Multi-board project support
+// =========================================================================
+
+void BOARD::AddCrossBoardNet( int aNetCode, const KIID& aBoardUuid, const wxString& aRemoteNetName )
+{
+    NETINFO_ITEM* net = FindNet( aNetCode );
+
+    if( !net )
+        return;
+
+    auto it = m_crossBoardNets.find( aNetCode );
+
+    if( it == m_crossBoardNets.end() )
+    {
+        CROSS_BOARD_NET cbNet( net );
+        cbNet.AddRemoteNet( aBoardUuid, aRemoteNetName );
+        m_crossBoardNets[aNetCode] = cbNet;
+    }
+    else
+    {
+        it->second.AddRemoteNet( aBoardUuid, aRemoteNetName );
+    }
+}
+
+
+void BOARD::RemoveCrossBoardNet( int aNetCode )
+{
+    m_crossBoardNets.erase( aNetCode );
+}
+
+
+bool BOARD::SyncFromProjectFile()
+{
+    if( !m_project )
+        return false;
+
+    PROJECT_FILE& projectFile = m_project->GetProjectFile();
+
+    // Try to find a matching BOARD_INFO by filename
+    wxFileName boardFileName( m_fileName );
+    wxString relativeName = boardFileName.GetFullName();
+
+    for( const BOARD_INFO& info : projectFile.GetBoardInfos() )
+    {
+        wxFileName infoFileName( info.filename );
+
+        if( infoFileName.GetFullName() == relativeName )
+        {
+            m_projectBoardUuid = info.uuid;
+            m_displayName = info.displayName;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 

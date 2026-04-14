@@ -59,6 +59,7 @@
 #include <tools/pcb_actions.h>
 #include <tools/pcb_selection_tool.h>
 #include <widgets/appearance_controls.h>
+#include <widgets/board_hierarchy_pane.h>
 #include <widgets/pcb_design_block_pane.h>
 #include <widgets/layer_box_selector.h>
 #include <widgets/layer_presentation.h>
@@ -893,4 +894,18 @@ void PCB_EDIT_FRAME::ToggleLibraryTree()
 
         m_auimgr.Update();
     }
+}
+
+
+void PCB_EDIT_FRAME::ToggleBoardHierarchy()
+{
+    wxAuiPaneInfo& boardHierarchyPane = m_auimgr.GetPane( BoardHierarchyPaneName() );
+
+    boardHierarchyPane.Show( !boardHierarchyPane.IsShown() );
+
+    m_auimgr.Update();
+
+    // Refresh the tree when shown
+    if( boardHierarchyPane.IsShown() && m_boardHierarchyPane )
+        m_boardHierarchyPane->UpdateHierarchyTree();
 }

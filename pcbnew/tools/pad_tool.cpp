@@ -120,6 +120,10 @@ bool PAD_TOOL::Init()
         menu.AddItem( PCB_ACTIONS::copyPadSettings,        singlePadSel, 400 );
         menu.AddItem( PCB_ACTIONS::applyPadSettings,       padSel, 400 );
         menu.AddItem( PCB_ACTIONS::pushPadSettings,        singlePadSel, 400 );
+
+        // Multi-board connector pad option (only in board editor, not footprint editor)
+        if( !m_isFootprintEditor )
+            menu.AddItem( PCB_ACTIONS::toggleConnectorPad, padSel, 400 );
     }
 
     auto& ctxMenu = m_menu->GetMenu();
@@ -900,6 +904,43 @@ int PAD_TOOL::PadTable( const TOOL_EVENT& aEvent )
 }
 
 
+int PAD_TOOL::ToggleConnectorPad( const TOOL_EVENT& aEvent )
+{
+    PCB_SELECTION_TOOL* selTool = m_toolMgr->GetTool<PCB_SELECTION_TOOL>();
+    const PCB_SELECTION& selection = selTool->GetSelection();
+
+    if( selection.Empty() )
+        return 0;
+
+    BOARD* brd = board();
+    bool   anyToggled = false;
+
+    for( EDA_ITEM* item : selection )
+    {
+        if( item->Type() == PCB_PAD_T )
+        {
+            PAD* pad = static_cast<PAD*>( item );
+
+            if( brd->IsConnectorPad( pad->m_Uuid ) )
+                brd->UnmarkConnectorPad( pad->m_Uuid );
+            else
+                brd->MarkAsConnectorPad( pad->m_Uuid );
+
+            anyToggled = true;
+        }
+    }
+
+    if( anyToggled )
+    {
+        // Refresh the display to show updated connector pad indicators
+        canvas()->Refresh();
+        frame()->OnModify();
+    }
+
+    return 0;
+}
+
+
 void PAD_TOOL::setTransitions()
 {
     Go( &PAD_TOOL::pastePadProperties,      PCB_ACTIONS::applyPadSettings.MakeEvent() );
@@ -909,6 +950,7 @@ void PAD_TOOL::setTransitions()
     Go( &PAD_TOOL::PlacePad,                PCB_ACTIONS::placePad.MakeEvent() );
     Go( &PAD_TOOL::EnumeratePads,           PCB_ACTIONS::enumeratePads.MakeEvent() );
     Go( &PAD_TOOL::PadTable,                PCB_ACTIONS::padTable.MakeEvent() );
+    Go( &PAD_TOOL::ToggleConnectorPad,      PCB_ACTIONS::toggleConnectorPad.MakeEvent() );
 
     Go( &PAD_TOOL::EditPad,                 PCB_ACTIONS::explodePad.MakeEvent() );
     Go( &PAD_TOOL::EditPad,                 PCB_ACTIONS::recombinePad.MakeEvent() );

@@ -503,3 +503,237 @@ void PROJECT::SaveToHistory( const wxString& aProjectPath, std::vector<wxString>
         aFiles.push_back( historyPrlFile.GetFullPath() );
     }
 }
+
+
+// =============================================================================
+// Multi-board project support
+// =============================================================================
+
+bool PROJECT::IsMultiBoardProject() const
+{
+    if( !m_projectFile )
+        return false;
+
+    return m_projectFile->IsMultiBoardProject();
+}
+
+
+size_t PROJECT::GetBoardCount() const
+{
+    if( !m_projectFile )
+        return 0;
+
+    return m_projectFile->GetBoardInfos().size();
+}
+
+
+BOARD_INFO* PROJECT::GetBoardInfo( const KIID& aUuid )
+{
+    if( !m_projectFile )
+        return nullptr;
+
+    return m_projectFile->GetBoardInfo( aUuid );
+}
+
+
+BOARD_INFO* PROJECT::GetBoardInfoByFilename( const wxString& aFilename )
+{
+    if( !m_projectFile )
+        return nullptr;
+
+    wxFileName searchName( aFilename );
+
+    for( BOARD_INFO& info : m_projectFile->GetBoardInfos() )
+    {
+        wxFileName infoName( info.filename );
+
+        // Compare just the filename if no path is given, otherwise compare full paths
+        if( searchName.GetPath().IsEmpty() )
+        {
+            if( infoName.GetFullName() == searchName.GetFullName() )
+                return &info;
+        }
+        else
+        {
+            // Normalize and compare full paths
+            wxFileName absInfo = wxFileName( GetProjectPath() + info.filename );
+            wxFileName absSearch = wxFileName( aFilename );
+
+            if( absInfo.GetFullPath() == absSearch.GetFullPath() )
+                return &info;
+        }
+    }
+
+    return nullptr;
+}
+
+
+BOARD_INFO* PROJECT::GetActiveBoardInfo()
+{
+    if( !m_projectFile )
+        return nullptr;
+
+    return m_projectFile->GetActiveBoardInfo();
+}
+
+
+bool PROJECT::SetActiveBoard( const KIID& aUuid )
+{
+    if( !m_projectFile )
+        return false;
+
+    return m_projectFile->SetActiveBoard( aUuid );
+}
+
+
+KIID PROJECT::CreateBoard( const wxString& aDisplayName, const wxString& aFilename )
+{
+    if( !m_projectFile )
+        return niluuid;
+
+    // Generate a unique UUID for this board
+    KIID boardUuid;
+
+    // Generate filename if not provided
+    wxString filename = aFilename;
+    if( filename.IsEmpty() )
+    {
+        // Create a filename based on the display name
+        wxString safeName = aDisplayName;
+        safeName.Replace( wxT( " " ), wxT( "_" ) );
+        safeName.Replace( wxT( "/" ), wxT( "_" ) );
+        safeName.Replace( wxT( "\\" ), wxT( "_" ) );
+
+        filename = safeName + wxT( "." ) + FILEEXT::KiCadPcbFileExtension;
+
+        // Check for duplicates and add a number if needed
+        int suffix = 1;
+        wxString baseFilename = filename;
+
+        while( GetBoardInfoByFilename( filename ) != nullptr )
+        {
+            filename = wxString::Format( wxT( "%s_%d.%s" ),
+                    safeName, suffix++, FILEEXT::KiCadPcbFileExtension );
+        }
+    }
+
+    BOARD_INFO info( boardUuid, filename, aDisplayName, m_projectFile->GetBoardInfos().empty() );
+    m_projectFile->AddBoard( info );
+
+    return boardUuid;
+}
+
+
+bool PROJECT::DeleteBoard( const KIID& aUuid, bool aDeleteFile )
+{
+    if( !m_projectFile )
+        return false;
+
+    BOARD_INFO* info = GetBoardInfo( aUuid );
+
+    if( !info )
+        return false;
+
+    // Optionally delete the file from disk
+    if( aDeleteFile )
+    {
+        wxString fullPath = GetBoardFullPath( *info );
+
+        if( wxFileExists( fullPath ) )
+        {
+            if( !wxRemoveFile( fullPath ) )
+            {
+                wxLogWarning( wxT( "Could not delete board file: %s" ), fullPath );
+            }
+        }
+    }
+
+    return m_projectFile->RemoveBoard( aUuid );
+}
+
+
+KIID PROJECT::DuplicateBoard( const KIID& aSourceUuid, const wxString& aNewDisplayName )
+{
+    if( !m_projectFile )
+        return niluuid;
+
+    BOARD_INFO* source = GetBoardInfo( aSourceUuid );
+
+    if( !source )
+        return niluuid;
+
+    // Create a new board entry
+    KIID newUuid = CreateBoard( aNewDisplayName );
+
+    if( newUuid == niluuid )
+        return niluuid;
+
+    BOARD_INFO* newInfo = GetBoardInfo( newUuid );
+
+    if( !newInfo )
+        return niluuid;
+
+    // Copy the source file to the new location
+    wxString sourcePath = GetBoardFullPath( *source );
+    wxString destPath = GetBoardFullPath( *newInfo );
+
+    if( wxFileExists( sourcePath ) )
+    {
+        if( !wxCopyFile( sourcePath, destPath ) )
+        {
+            wxLogWarning( wxT( "Could not copy board file from %s to %s" ), sourcePath, destPath );
+            // Still return the UUID - the board entry exists even if file copy failed
+        }
+    }
+
+    return newUuid;
+}
+
+
+wxString PROJECT::GetBoardFullPath( const BOARD_INFO& aBoardInfo ) const
+{
+    wxFileName fn( aBoardInfo.filename );
+
+    if( !fn.IsAbsolute() )
+    {
+        fn.SetPath( GetProjectPath() );
+    }
+
+    return fn.GetFullPath();
+}
+
+
+void PROJECT::AssignComponentToBoard( const wxString& aReference, const KIID& aBoardUuid,
+                                       bool aReplace )
+{
+    if( !m_projectFile )
+        return;
+
+    m_projectFile->AssignComponentToBoard( aReference, aBoardUuid, aReplace );
+}
+
+
+std::vector<KIID> PROJECT::GetComponentBoardAssignments( const wxString& aReference ) const
+{
+    if( !m_projectFile )
+        return {};
+
+    COMPONENT_BOARD_ASSIGNMENT* assignment =
+            const_cast<PROJECT_FILE*>( m_projectFile )->GetComponentAssignment( aReference );
+
+    if( assignment )
+        return assignment->boardUuids;
+
+    return {};
+}
+
+
+void PROJECT::AddCrossBoardConnection( const KIID& aBoard1, const KIID& aPad1,
+                                        const KIID& aBoard2, const KIID& aPad2 )
+{
+    if( !m_projectFile )
+        return;
+
+    m_projectFile->AddCrossBoardConnection(
+            CROSS_BOARD_CONNECTION( aBoard1, aPad1, aBoard2, aPad2 ) );
+}

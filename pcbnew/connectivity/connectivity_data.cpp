@@ -35,7 +35,11 @@
 #include <connectivity/connectivity_algo.h>
 #include <properties/property.h>
 #include <connectivity/from_to_cache.h>
+#include <board.h>
 #include <board_item.h>
+#include <footprint.h>
+#include <pad.h>
+#include <project.h>
 #include <project/net_settings.h>
 #include <board_design_settings.h>
 #include <geometry/shape_segment.h>
@@ -48,7 +52,9 @@
 #include <properties/property_mgr.h>
 
 CONNECTIVITY_DATA::CONNECTIVITY_DATA() :
-        m_skipRatsnestUpdate( false )
+        m_skipRatsnestUpdate( false ),
+        m_multiBoardContext( nullptr ),
+        m_multiBoardProject( nullptr )
 {
     m_connAlgo.reset( new CN_CONNECTIVITY_ALGO( this ) );
     m_progressReporter = nullptr;
@@ -59,7 +65,9 @@ CONNECTIVITY_DATA::CONNECTIVITY_DATA() :
 CONNECTIVITY_DATA::CONNECTIVITY_DATA( std::shared_ptr<CONNECTIVITY_DATA> aGlobalConnectivity,
                                       const std::vector<BOARD_ITEM*>& aLocalItems,
                                       bool aSkipRatsnestUpdate ) :
-        m_skipRatsnestUpdate( aSkipRatsnestUpdate )
+        m_skipRatsnestUpdate( aSkipRatsnestUpdate ),
+        m_multiBoardContext( nullptr ),
+        m_multiBoardProject( nullptr )
 {
     Build( aGlobalConnectivity, aLocalItems );
     m_progressReporter = nullptr;
@@ -1122,4 +1130,117 @@ const NET_SETTINGS* CONNECTIVITY_DATA::GetNetSettings() const
         return netSettings.get();
     else
         return nullptr;
+}
+
+
+// -------------------------------------------------------------------------
+// Multi-board connectivity extensions
+// -------------------------------------------------------------------------
+
+void CONNECTIVITY_DATA::SetMultiBoardContext( BOARD* aBoard, PROJECT* aProject )
+{
+    m_multiBoardContext = aBoard;
+    m_multiBoardProject = aProject;
+}
+
+
+void CONNECTIVITY_DATA::ClearMultiBoardContext()
+{
+    m_multiBoardContext = nullptr;
+    m_multiBoardProject = nullptr;
+}
+
+
+std::vector<int> CONNECTIVITY_DATA::GetCrossBoardNets() const
+{
+    std::vector<int> crossBoardNets;
+
+    if( !m_multiBoardContext || !m_multiBoardProject )
+        return crossBoardNets;
+
+    // Get cross-board nets from the board's tracking data
+    const auto& crossBoardNetMap = m_multiBoardContext->GetCrossBoardNets();
+
+    for( const auto& [netCode, crossBoardNet] : crossBoardNetMap )
+    {
+        if( !crossBoardNet.remoteNets.empty() )
+            crossBoardNets.push_back( netCode );
+    }
+
+    return crossBoardNets;
+}
+
+
+bool CONNECTIVITY_DATA::IsNetCompleteAcrossBoards( int aNetCode ) const
+{
+    if( !m_multiBoardContext || !m_multiBoardProject )
+        return true;  // No multi-board context, assume complete
+
+    // Check if this net has cross-board connections
+    const auto& crossBoardNetMap = m_multiBoardContext->GetCrossBoardNets();
+    auto it = crossBoardNetMap.find( aNetCode );
+
+    if( it == crossBoardNetMap.end() )
+        return true;  // Not a cross-board net, assume complete
+
+    const CROSS_BOARD_NET& crossNet = it->second;
+
+    // A net is complete if all remote connections are established
+    // For now, we just check if there are remote nets defined
+    // TODO: Implement full cross-board connectivity verification
+    return !crossNet.remoteNets.empty();
+}
+
+
+std::vector<PAD*> CONNECTIVITY_DATA::GetUnconnectedCrossBoardPads() const
+{
+    std::vector<PAD*> unconnectedPads;
+
+    if( !m_multiBoardContext )
+        return unconnectedPads;
+
+    // Get connector pad UUIDs from the board
+    const auto& connectorPads = m_multiBoardContext->GetConnectorPads();
+
+    // Find pads that are marked as connectors but have no net
+    for( FOOTPRINT* fp : m_multiBoardContext->Footprints() )
+    {
+        for( PAD* pad : fp->Pads() )
+        {
+            if( connectorPads.count( pad->m_Uuid ) > 0 )
+            {
+                // Check if pad has a valid net connection
+                if( pad->GetNetCode() <= 0 )
+                    unconnectedPads.push_back( pad );
+            }
+        }
+    }
+
+    return unconnectedPads;
+}
+
+
+std::vector<std::pair<KIID, wxString>> CONNECTIVITY_DATA::GetRemoteNetsForNet( int aNetCode ) const
+{
+    std::vector<std::pair<KIID, wxString>> remoteNets;
+
+    if( !m_multiBoardContext )
+        return remoteNets;
+
+    const auto& crossBoardNetMap = m_multiBoardContext->GetCrossBoardNets();
+    auto it = crossBoardNetMap.find( aNetCode );
+
+    if( it != crossBoardNetMap.end() )
+        remoteNets = it->second.remoteNets;
+
+    return remoteNets;
+}
+
+
+bool CONNECTIVITY_DATA::IsCrossBoardConnectorPad( const PAD* aPad ) const
+{
+    if( !m_multiBoardContext || !aPad )
+        return false;
+
+    return m_multiBoardContext->IsConnectorPad( aPad->m_Uuid );
 }

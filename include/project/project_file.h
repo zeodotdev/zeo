@@ -70,6 +70,93 @@ struct TOP_LEVEL_SHEET_INFO
 };
 
 /**
+ * Information about a board in a multi-board project.
+ * Each board has its own design settings and can be active or inactive.
+ */
+struct KICOMMON_API BOARD_INFO
+{
+    KIID     uuid;              ///< Unique identifier for this board within the project
+    wxString filename;          ///< Relative path to the .kicad_pcb file
+    wxString displayName;       ///< User-friendly name for the board
+    bool     isActive = false;  ///< True if this is the currently active board
+
+    BOARD_INFO() = default;
+
+    BOARD_INFO( const KIID& aUuid, const wxString& aFilename,
+                const wxString& aDisplayName = wxEmptyString, bool aActive = false )
+        : uuid( aUuid ), filename( aFilename ), displayName( aDisplayName ), isActive( aActive )
+    {}
+
+    bool operator==( const BOARD_INFO& aOther ) const
+    {
+        return uuid == aOther.uuid;
+    }
+
+    bool operator!=( const BOARD_INFO& aOther ) const
+    {
+        return !( *this == aOther );
+    }
+};
+
+/**
+ * Represents a connection between pads on two different boards.
+ * Used for cross-board connectors (e.g., board-to-board headers, flex cables).
+ */
+struct KICOMMON_API CROSS_BOARD_CONNECTION
+{
+    KIID board1Uuid;    ///< UUID of the first board
+    KIID pad1Uuid;      ///< UUID of the pad on board 1
+    KIID board2Uuid;    ///< UUID of the second board
+    KIID pad2Uuid;      ///< UUID of the pad on board 2
+
+    CROSS_BOARD_CONNECTION() = default;
+
+    CROSS_BOARD_CONNECTION( const KIID& aBoard1, const KIID& aPad1,
+                            const KIID& aBoard2, const KIID& aPad2 )
+        : board1Uuid( aBoard1 ), pad1Uuid( aPad1 ),
+          board2Uuid( aBoard2 ), pad2Uuid( aPad2 )
+    {}
+
+    bool operator==( const CROSS_BOARD_CONNECTION& aOther ) const
+    {
+        return board1Uuid == aOther.board1Uuid && pad1Uuid == aOther.pad1Uuid &&
+               board2Uuid == aOther.board2Uuid && pad2Uuid == aOther.pad2Uuid;
+    }
+};
+
+/**
+ * Assignment of a component reference to one or more boards.
+ * Components can exist on multiple boards (e.g., connectors that bridge boards).
+ */
+struct KICOMMON_API COMPONENT_BOARD_ASSIGNMENT
+{
+    wxString           reference;   ///< Component reference designator (e.g., "U1", "J5")
+    std::vector<KIID>  boardUuids;  ///< List of board UUIDs this component is assigned to
+
+    COMPONENT_BOARD_ASSIGNMENT() = default;
+
+    COMPONENT_BOARD_ASSIGNMENT( const wxString& aRef, const std::vector<KIID>& aBoards )
+        : reference( aRef ), boardUuids( aBoards )
+    {}
+
+    COMPONENT_BOARD_ASSIGNMENT( const wxString& aRef, const KIID& aSingleBoard )
+        : reference( aRef ), boardUuids( { aSingleBoard } )
+    {}
+
+    bool IsMultiBoard() const { return boardUuids.size() > 1; }
+
+    bool IsAssignedTo( const KIID& aBoardUuid ) const
+    {
+        return std::find( boardUuids.begin(), boardUuids.end(), aBoardUuid ) != boardUuids.end();
+    }
+
+    bool operator==( const COMPONENT_BOARD_ASSIGNMENT& aOther ) const
+    {
+        return reference == aOther.reference && boardUuids == aOther.boardUuids;
+    }
+};
+
+/**
  * For storing PcbNew MRU paths of various types
  */
 enum LAST_PATH_TYPE : unsigned int
@@ -123,6 +210,122 @@ public:
     {
         return m_boards;
     }
+
+    /**
+     * Get the list of board information for multi-board projects.
+     * @return Reference to the vector of BOARD_INFO structures
+     */
+    std::vector<BOARD_INFO>& GetBoardInfos()
+    {
+        return m_boardInfos;
+    }
+
+    const std::vector<BOARD_INFO>& GetBoardInfos() const
+    {
+        return m_boardInfos;
+    }
+
+    /**
+     * Get board info by UUID.
+     * @param aUuid The UUID of the board to find
+     * @return Pointer to BOARD_INFO if found, nullptr otherwise
+     */
+    BOARD_INFO* GetBoardInfo( const KIID& aUuid );
+
+    const BOARD_INFO* GetBoardInfo( const KIID& aUuid ) const;
+
+    /**
+     * Get the currently active board info.
+     * @return Pointer to the active BOARD_INFO, or nullptr if none active
+     */
+    BOARD_INFO* GetActiveBoardInfo();
+
+    /**
+     * Set the active board by UUID.
+     * @param aUuid The UUID of the board to make active
+     * @return true if the board was found and set active
+     */
+    bool SetActiveBoard( const KIID& aUuid );
+
+    /**
+     * Add a new board to the project.
+     * @param aInfo The board information to add
+     */
+    void AddBoard( const BOARD_INFO& aInfo );
+
+    /**
+     * Remove a board from the project by UUID.
+     * @param aUuid The UUID of the board to remove
+     * @return true if the board was found and removed
+     */
+    bool RemoveBoard( const KIID& aUuid );
+
+    /**
+     * Get cross-board connections (connector mappings).
+     * @return Reference to the vector of cross-board connections
+     */
+    std::vector<CROSS_BOARD_CONNECTION>& GetCrossBoardConnections()
+    {
+        return m_crossBoardConnections;
+    }
+
+    const std::vector<CROSS_BOARD_CONNECTION>& GetCrossBoardConnections() const
+    {
+        return m_crossBoardConnections;
+    }
+
+    /**
+     * Add a cross-board connection between two pads.
+     */
+    void AddCrossBoardConnection( const CROSS_BOARD_CONNECTION& aConnection );
+
+    /**
+     * Remove a cross-board connection.
+     */
+    bool RemoveCrossBoardConnection( const KIID& aBoard1, const KIID& aPad1,
+                                      const KIID& aBoard2, const KIID& aPad2 );
+
+    /**
+     * Get component-to-board assignments.
+     * @return Reference to the vector of component assignments
+     */
+    std::vector<COMPONENT_BOARD_ASSIGNMENT>& GetComponentAssignments()
+    {
+        return m_componentAssignments;
+    }
+
+    const std::vector<COMPONENT_BOARD_ASSIGNMENT>& GetComponentAssignments() const
+    {
+        return m_componentAssignments;
+    }
+
+    /**
+     * Get the board assignment for a specific component reference.
+     * @param aReference The component reference designator
+     * @return Pointer to assignment if found, nullptr otherwise
+     */
+    COMPONENT_BOARD_ASSIGNMENT* GetComponentAssignment( const wxString& aReference );
+
+    /**
+     * Assign a component to a board.
+     * @param aReference The component reference designator
+     * @param aBoardUuid The board UUID to assign to
+     * @param aReplace If true, replace existing assignment; if false, add to existing
+     */
+    void AssignComponentToBoard( const wxString& aReference, const KIID& aBoardUuid,
+                                  bool aReplace = true );
+
+    /**
+     * Unassign a component from a specific board.
+     * @param aReference The component reference designator
+     * @param aBoardUuid The board UUID to unassign from
+     */
+    void UnassignComponentFromBoard( const wxString& aReference, const KIID& aBoardUuid );
+
+    /**
+     * Check if this is a multi-board project (has more than one board).
+     */
+    bool IsMultiBoardProject() const { return m_boardInfos.size() > 1; }
 
     std::vector<TOP_LEVEL_SHEET_INFO>& GetTopLevelSheets()
     {
@@ -211,11 +414,41 @@ public:
     wxString m_PcbLastPath[LAST_PATH_SIZE];
 
     /**
-     * Board design settings for this project's board.  This will be initialized by PcbNew after
-     * loading a board so that BOARD_DESIGN_SETTINGS doesn't need to live in common for now.
-     * Owned by the BOARD; may be null if a board isn't loaded: be careful
+     * Board design settings for this project's board (legacy single-board mode).
+     * This will be initialized by PcbNew after loading a board so that
+     * BOARD_DESIGN_SETTINGS doesn't need to live in common for now.
+     * Owned by the BOARD; may be null if a board isn't loaded: be careful.
+     *
+     * For multi-board projects, use m_MultiBoardSettings instead.
      */
     BOARD_DESIGN_SETTINGS* m_BoardSettings;
+
+    /**
+     * Board design settings for multi-board projects, keyed by board UUID.
+     * Each board in a multi-board project has its own design settings stored here.
+     * The BOARD_DESIGN_SETTINGS objects are owned by their respective BOARD objects.
+     */
+    std::map<KIID, BOARD_DESIGN_SETTINGS*> m_MultiBoardSettings;
+
+    /**
+     * Register a board's design settings for a multi-board project.
+     * @param aBoardUuid The UUID of the board
+     * @param aSettings Pointer to the board's design settings (owned by BOARD)
+     */
+    void RegisterBoardSettings( const KIID& aBoardUuid, BOARD_DESIGN_SETTINGS* aSettings );
+
+    /**
+     * Unregister a board's design settings.
+     * @param aBoardUuid The UUID of the board to unregister
+     */
+    void UnregisterBoardSettings( const KIID& aBoardUuid );
+
+    /**
+     * Get the design settings for a specific board.
+     * @param aBoardUuid The UUID of the board
+     * @return Pointer to the board's design settings, or nullptr if not found
+     */
+    BOARD_DESIGN_SETTINGS* GetBoardSettings( const KIID& aBoardUuid ) const;
 
     /**
      * Net settings for this project (owned here)
@@ -264,8 +497,17 @@ private:
     /// A list of top-level schematic sheets in this project
     std::vector<TOP_LEVEL_SHEET_INFO> m_topLevelSheets;
 
-    /// A list of board files in this project
+    /// A list of board files in this project (legacy, for backwards compatibility)
     std::vector<FILE_INFO_PAIR> m_boards;
+
+    /// Rich board information for multi-board projects
+    std::vector<BOARD_INFO> m_boardInfos;
+
+    /// Cross-board connections (connector pad mappings between boards)
+    std::vector<CROSS_BOARD_CONNECTION> m_crossBoardConnections;
+
+    /// Component-to-board assignments
+    std::vector<COMPONENT_BOARD_ASSIGNMENT> m_componentAssignments;
 
     /// A link to the owning PROJECT
     PROJECT* m_project;
@@ -284,5 +526,23 @@ void from_json( const nlohmann::json& aJson, FILE_INFO_PAIR& aPair );
 void to_json( nlohmann::json& aJson, const TOP_LEVEL_SHEET_INFO& aInfo );
 
 void from_json( const nlohmann::json& aJson, TOP_LEVEL_SHEET_INFO& aInfo );
+
+// Specializations for BOARD_INFO
+
+void to_json( nlohmann::json& aJson, const BOARD_INFO& aInfo );
+
+void from_json( const nlohmann::json& aJson, BOARD_INFO& aInfo );
+
+// Specializations for CROSS_BOARD_CONNECTION
+
+void to_json( nlohmann::json& aJson, const CROSS_BOARD_CONNECTION& aConnection );
+
+void from_json( const nlohmann::json& aJson, CROSS_BOARD_CONNECTION& aConnection );
+
+// Specializations for COMPONENT_BOARD_ASSIGNMENT
+
+void to_json( nlohmann::json& aJson, const COMPONENT_BOARD_ASSIGNMENT& aAssignment );
+
+void from_json( const nlohmann::json& aJson, COMPONENT_BOARD_ASSIGNMENT& aAssignment );
 
 #endif

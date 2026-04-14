@@ -113,6 +113,7 @@
 #include <dialog_drc.h>     // for DIALOG_DRC_WINDOW_NAME definition
 #include <ratsnest/ratsnest_view_item.h>
 #include <widgets/appearance_controls.h>
+#include <widgets/board_hierarchy_pane.h>
 #include <widgets/pcb_design_block_pane.h>
 #include <widgets/pcb_search_pane.h>
 #include <widgets/wx_infobar.h>
@@ -299,6 +300,7 @@ PCB_EDIT_FRAME::PCB_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_searchPane = new PCB_SEARCH_PANE( this );
     m_netInspectorPanel = new PCB_NET_INSPECTOR_PANEL( this, this );
     m_designBlocksPane = new PCB_DESIGN_BLOCK_PANE( this, nullptr, m_designBlockHistoryList );
+    m_boardHierarchyPane = new BOARD_HIERARCHY_PANE( this );
 
     m_auimgr.SetManagedWindow( this );
 
@@ -371,6 +373,15 @@ PCB_EDIT_FRAME::PCB_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                       .BestSize( FromDIP( wxSize( 300, 200 ) ) )
                       .FloatingSize( wxSize( 300, 200 ) )
                       .CloseButton( true ) );
+
+    m_auimgr.AddPane( m_boardHierarchyPane, EDA_PANE().Name( BoardHierarchyPaneName() )
+                      .Left().Layer( 4 )
+                      .Caption( _( "Boards" ) ).PaneBorder( false )
+                      .MinSize( FromDIP( wxSize( 180, 100 ) ) )
+                      .BestSize( FromDIP( wxSize( 220, 200 ) ) )
+                      .FloatingSize( wxSize( 250, 300 ) )
+                      .CloseButton( true )
+                      .Show( false ) );  // Hidden by default, show when multi-board project
 
     // Center
     m_auimgr.AddPane( GetCanvas(), EDA_PANE().Canvas().Name( wxS( "DrawFrame" ) )

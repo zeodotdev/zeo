@@ -4019,6 +4019,7 @@ SCH_MODULE_BLOCK* SCH_IO_KICAD_SEXPR_PARSER::parseModuleBlock()
         case T_pin:
         {
             KIID     pinUuid;
+            wxString pinComponent;
             wxString pinNumber;
             wxString pinName;
             VECTOR2I localPosition;
@@ -4035,6 +4036,12 @@ SCH_MODULE_BLOCK* SCH_IO_KICAD_SEXPR_PARSER::parseModuleBlock()
                 case T_uuid:
                     NeedSYMBOL();
                     pinUuid = KIID( FromUTF8() );
+                    NeedRIGHT();
+                    break;
+
+                case T_component:
+                    NeedSYMBOL();
+                    pinComponent = FromUTF8();
                     NeedRIGHT();
                     break;
 
@@ -4056,7 +4063,7 @@ SCH_MODULE_BLOCK* SCH_IO_KICAD_SEXPR_PARSER::parseModuleBlock()
                     break;
 
                 default:
-                    Expecting( "uuid, number, name, at" );
+                    Expecting( "uuid, component, number, name, at" );
                 }
             }
 
@@ -4064,6 +4071,7 @@ SCH_MODULE_BLOCK* SCH_IO_KICAD_SEXPR_PARSER::parseModuleBlock()
 
             SCH_MODULE_PIN* pin = new SCH_MODULE_PIN( block.get(), absPos, pinName );
             pin->SetPinUuid( pinUuid );
+            pin->SetComponentRef( pinComponent );
             pin->SetPinNumber( pinNumber );
             pin->ConstrainOnEdge( absPos, true );  // picks nearest edge + clamps
 

@@ -1225,6 +1225,10 @@ void SCH_IO_KICAD_SEXPR::saveModuleBlock( SCH_MODULE_BLOCK* aModuleBlock )
 
         m_out->Print( "(pin" );
         m_out->Print( "(uuid %s)", m_out->Quotew( pin->GetPinUuid().AsString() ).c_str() );
+
+        if( !pin->GetComponentRef().IsEmpty() )
+            m_out->Print( "(component %s)", m_out->Quotew( pin->GetComponentRef() ).c_str() );
+
         m_out->Print( "(number %s)", m_out->Quotew( pin->GetPinNumber() ).c_str() );
         m_out->Print( "(name %s)", m_out->Quotew( pin->GetText() ).c_str() );
         m_out->Print( "(at %s %s)",

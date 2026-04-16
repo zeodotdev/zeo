@@ -174,6 +174,7 @@ set( KICOMMON_SRCS
     project/project_file.cpp
     project/project_local_settings.cpp
     project/multi_board_project.cpp
+    project/cross_board_pcb_sync.cpp
     project/tuning_profiles.cpp
 
     text_eval/text_eval_wrapper.cpp

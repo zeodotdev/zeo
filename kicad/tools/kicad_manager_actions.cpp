@@ -74,6 +74,14 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::manageSubBoards( TOOL_ACTION_ARGS()
                                                             .Icon( BITMAPS::new_project_from_template ) );
 
 
+TOOL_ACTION KICAD_MANAGER_ACTIONS::syncCrossBoardNets( TOOL_ACTION_ARGS()
+                                                               .Name( "kicad.Control.syncCrossBoardNets" )
+                                                               .Scope( AS_GLOBAL )
+                                                               .FriendlyName( _( "Sync Cross-Board Nets to PCBs" ) )
+                                                               .Tooltip( _( "Write the multi-board schematic's cross-board nets into each sub-project's PCB connector pads" ) )
+                                                               .Icon( BITMAPS::net_highlight ) );
+
+
 TOOL_ACTION KICAD_MANAGER_ACTIONS::switchSubBoard( TOOL_ACTION_ARGS()
                                                            .Name( "kicad.Control.switchSubBoard" )
                                                            .Scope( AS_GLOBAL )

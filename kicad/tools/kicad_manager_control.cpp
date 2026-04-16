@@ -32,6 +32,7 @@
 #include <confirm.h>
 #include <kidialog.h>
 #include <project/multi_board_project.h>
+#include <project/cross_board_pcb_sync.h>
 #include <project/project_file.h>
 #include <project/project_local_settings.h>
 #include <settings/common_settings.h>
@@ -759,6 +760,36 @@ int KICAD_MANAGER_CONTROL::ManageSubBoards( const TOOL_EVENT& aEvent )
 }
 
 
+int KICAD_MANAGER_CONTROL::SyncCrossBoardNets( const TOOL_EVENT& aEvent )
+{
+    MULTI_BOARD_PROJECT* multi = m_frame->GetMultiBoardProject();
+
+    if( !multi )
+    {
+        wxMessageBox( _( "The current session is not a multi-board project." ),
+                      _( "No Multi-Board Project" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    if( multi->GetCrossBoardNets().empty() )
+    {
+        wxMessageBox( _( "No cross-board nets are defined yet.\n\n"
+                         "Open the multi-board schematic, wire pins between module "
+                         "blocks, then save — the nets will be extracted "
+                         "automatically." ),
+                      _( "Nothing to Sync" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    CROSS_BOARD_SYNC_RESULT result = ApplyCrossBoardNetsToSubProjectPCBs( *multi );
+
+    wxMessageBox( result.summary, _( "Cross-Board Net Sync" ),
+                  wxOK | wxICON_INFORMATION, m_frame );
+
+    return 0;
+}
+
+
 int KICAD_MANAGER_CONTROL::NewFromRepository( const TOOL_EVENT& aEvent )
 {
     DIALOG_GIT_REPOSITORY dlg( m_frame, nullptr );
@@ -1389,6 +1420,8 @@ void KICAD_MANAGER_CONTROL::setTransitions()
     Go( &KICAD_MANAGER_CONTROL::NewProject, KICAD_MANAGER_ACTIONS::newProject.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::NewFromRepository, KICAD_MANAGER_ACTIONS::newFromRepository.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::ManageSubBoards, KICAD_MANAGER_ACTIONS::manageSubBoards.MakeEvent() );
+    Go( &KICAD_MANAGER_CONTROL::SyncCrossBoardNets,
+        KICAD_MANAGER_ACTIONS::syncCrossBoardNets.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::SwitchSubBoard, KICAD_MANAGER_ACTIONS::switchSubBoard.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::EditMultiBoardSchematic,
         KICAD_MANAGER_ACTIONS::editMultiBoardSchematic.MakeEvent() );

@@ -409,6 +409,144 @@ wxFileName mainSchematicForSubProject( const wxFileName& aProFile )
 }
 
 
+wxFileName mainPcbForSubProject( const wxFileName& aProFile )
+{
+    wxFileName pcb = aProFile;
+    pcb.SetExt( wxT( "kicad_pcb" ) );
+    return pcb;
+}
+
+
+/**
+ * Locate the matching closing paren for an s-expression that begins at
+ * `aStart` (which must point AT the opening `(`). Returns std::string::npos
+ * on imbalance.
+ */
+size_t findMatchingClose( const wxString& aText, size_t aStart )
+{
+    int depth = 0;
+    bool inString = false;
+
+    for( size_t i = aStart; i < aText.length(); ++i )
+    {
+        wxChar c = aText[i];
+
+        if( inString )
+        {
+            if( c == '\\' && i + 1 < aText.length() )
+            {
+                ++i;
+                continue;
+            }
+
+            if( c == '"' )
+                inString = false;
+        }
+        else
+        {
+            if( c == '"' )
+                inString = true;
+            else if( c == '(' )
+                ++depth;
+            else if( c == ')' )
+            {
+                --depth;
+                if( depth == 0 )
+                    return i;
+            }
+        }
+    }
+
+    return wxString::npos;
+}
+
+
+/**
+ * Scan a .kicad_pcb file for connector footprints and return, per reference,
+ * the ordered list of pad numbers. The pad numbers are strings (e.g. "1",
+ * "A12", "GND") to accommodate non-integer pad names used by USB-C / edge
+ * connectors. Order preserves the order they appear in the file.
+ */
+std::map<wxString, std::vector<wxString>>
+scanConnectorPads( const wxFileName& aPcbFile )
+{
+    std::map<wxString, std::vector<wxString>> out;
+
+    if( !aPcbFile.FileExists() )
+        return out;
+
+    wxFFile f( aPcbFile.GetFullPath(), wxT( "r" ) );
+
+    if( !f.IsOpened() )
+        return out;
+
+    wxString text;
+
+    if( !f.ReadAll( &text ) )
+        return out;
+
+    f.Close();
+
+    static wxRegEx refRe( wxT( "\\(property\\s+\"Reference\"\\s+\"([^\"]*)\"" ),
+                          wxRE_DEFAULT );
+    static wxRegEx padRe( wxT( "\\(pad\\s+\"([^\"]*)\"" ), wxRE_DEFAULT );
+
+    if( !refRe.IsValid() || !padRe.IsValid() )
+        return out;
+
+    size_t pos = 0;
+    const wxString fpOpen = wxT( "(footprint" );
+
+    while( pos < text.length() )
+    {
+        size_t fpStart = text.find( fpOpen, pos );
+
+        if( fpStart == wxString::npos )
+            break;
+
+        size_t fpEnd = findMatchingClose( text, fpStart );
+
+        if( fpEnd == wxString::npos )
+            break;
+
+        wxString block = text.Mid( fpStart, fpEnd - fpStart + 1 );
+        pos = fpEnd + 1;
+
+        if( !refRe.Matches( block ) )
+            continue;
+
+        wxString ref = refRe.GetMatch( block, 1 );
+
+        if( !isConnectorRef( ref ) )
+            continue;
+
+        std::vector<wxString>& pads = out[ref];
+
+        size_t scan = 0;
+
+        while( scan < block.length() )
+        {
+            wxString remaining = block.Mid( scan );
+
+            if( !padRe.Matches( remaining ) )
+                break;
+
+            size_t matchStart, matchLen;
+            padRe.GetMatch( &matchStart, &matchLen, 0 );
+
+            wxString padNum = padRe.GetMatch( remaining, 1 );
+
+            if( std::find( pads.begin(), pads.end(), padNum ) == pads.end() )
+                pads.push_back( padNum );
+
+            scan += matchStart + matchLen;
+        }
+    }
+
+    return out;
+}
+
+
 /**
  * Scan a single .kicad_sch for Reference properties matching the connector
  * heuristic. Does NOT recurse — caller handles sub-sheets.
@@ -590,12 +728,41 @@ wxFileName MULTI_BOARD_PROJECT::EnsureMbsFile( const wxString& aContainerBasenam
             wxString blockName = info.displayName.IsEmpty() ? info.name : info.displayName;
 
             // Scan the sub-project's main .kicad_sch for connector-class
-            // symbols. Each one becomes a port on this block.
+            // symbols. Each one becomes a group of pins on this block.
             wxFileName proFile = ResolveSubProjectPath( info );
             wxFileName schFile = mainSchematicForSubProject( proFile );
+            wxFileName pcbFile = mainPcbForSubProject( proFile );
             std::vector<wxString> connectors = scanConnectorReferences( schFile );
+            std::map<wxString, std::vector<wxString>> pads = scanConnectorPads( pcbFile );
 
-            // Dynamically grow the block so tall connector lists fit.
+            // Flatten: one entry per connector-pad pair, preserving connector
+            // order (from schematic scan) and pad order (from PCB scan).
+            struct PinEntry
+            {
+                wxString componentRef;   ///< "J1"
+                wxString padNumber;      ///< "A1", "3", etc.
+            };
+
+            std::vector<PinEntry> pinEntries;
+
+            for( const wxString& ref : connectors )
+            {
+                auto it = pads.find( ref );
+
+                if( it == pads.end() || it->second.empty() )
+                {
+                    // Connector exists on schematic but has no footprint /
+                    // pads on PCB yet — emit a single placeholder pin so the
+                    // connector is still visible on the module block.
+                    pinEntries.push_back( { ref, wxEmptyString } );
+                    continue;
+                }
+
+                for( const wxString& padNum : it->second )
+                    pinEntries.push_back( { ref, padNum } );
+            }
+
+            // Dynamically grow the block so tall pad lists fit.
             double       thisHeight = blockHeight;
             const double minHeight  = 32 * grid;   // ~40.6 mm
             const double perPin     = 5 * grid;    // 6.35 mm per pin (on-grid)
@@ -603,10 +770,10 @@ wxFileName MULTI_BOARD_PROJECT::EnsureMbsFile( const wxString& aContainerBasenam
             const double padBot     = 8 * grid;    // 10.16 mm
 
             // Half the pins go on the left edge, half on the right.
-            size_t pinCount  = connectors.size();
+            size_t pinCount   = pinEntries.size();
             size_t leftCount  = ( pinCount + 1 ) / 2;
             size_t rightCount = pinCount - leftCount;
-            size_t maxSide   = std::max( leftCount, rightCount );
+            size_t maxSide    = std::max( leftCount, rightCount );
 
             double needed = padTop + padBot + perPin * std::max<size_t>( maxSide, 1 );
             if( needed > thisHeight )
@@ -616,18 +783,26 @@ wxFileName MULTI_BOARD_PROJECT::EnsureMbsFile( const wxString& aContainerBasenam
 
             wxString pinsSection;
             auto emitPin =
-                    [&]( const wxString& aPinName, double aLocalX, double aLocalY )
+                    [&]( const PinEntry& aEntry, double aLocalX, double aLocalY )
                     {
+                        // Pin display name "J1.3" — number = pad, component = ref.
+                        wxString label = aEntry.padNumber.IsEmpty()
+                                                ? aEntry.componentRef
+                                                : aEntry.componentRef + wxT( "." )
+                                                          + aEntry.padNumber;
+
                         pinsSection += wxString::Format(
                                 wxT( "\t\t(pin\n"
                                      "\t\t\t(uuid \"%s\")\n"
+                                     "\t\t\t(component \"%s\")\n"
                                      "\t\t\t(number \"%s\")\n"
                                      "\t\t\t(name \"%s\")\n"
                                      "\t\t\t(at %.2f %.2f)\n"
                                      "\t\t)\n" ),
                                 KIID().AsString(),
-                                aPinName,
-                                aPinName,
+                                aEntry.componentRef,
+                                aEntry.padNumber,
+                                label,
                                 aLocalX, aLocalY );
                     };
 
@@ -636,13 +811,13 @@ wxFileName MULTI_BOARD_PROJECT::EnsureMbsFile( const wxString& aContainerBasenam
             for( size_t i = 0; i < leftCount; ++i )
             {
                 double localY = padTop + perPin * (double) i;
-                emitPin( connectors[i], 0.0, localY );
+                emitPin( pinEntries[i], 0.0, localY );
             }
 
             for( size_t i = 0; i < rightCount; ++i )
             {
                 double localY = padTop + perPin * (double) i;
-                emitPin( connectors[leftCount + i], blockWidth, localY );
+                emitPin( pinEntries[leftCount + i], blockWidth, localY );
             }
 
             blocksSection += wxString::Format(

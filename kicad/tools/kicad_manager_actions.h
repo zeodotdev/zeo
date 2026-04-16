@@ -34,6 +34,7 @@ public:
     static TOOL_ACTION newProject;
     static TOOL_ACTION newFromRepository;
     static TOOL_ACTION manageSubBoards;
+    static TOOL_ACTION syncCrossBoardNets;
     static TOOL_ACTION switchSubBoard;
     static TOOL_ACTION editMultiBoardSchematic;
     static TOOL_ACTION newJobsetFile;

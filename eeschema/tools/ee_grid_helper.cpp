@@ -379,6 +379,7 @@ GRID_HELPER_GRIDS EE_GRID_HELPER::GetItemGrid( const EDA_ITEM* aItem ) const
     case SCH_PIN_T:
     case SCH_SHEET_PIN_T:
     case SCH_SHEET_T:
+    case SCH_MODULE_BLOCK_T:
     case SCH_NO_CONNECT_T:
     case SCH_GLOBAL_LABEL_T:
     case SCH_HIER_LABEL_T:
@@ -498,6 +499,7 @@ void EE_GRID_HELPER::computeAnchors( SCH_ITEM *aItem, const VECTOR2I &aRefPos, b
     case SCH_DIRECTIVE_LABEL_T:
     case SCH_BUS_WIRE_ENTRY_T:
     case SCH_SHEET_PIN_T:
+    case SCH_MODULE_BLOCK_T:
     {
         std::vector<VECTOR2I> pts = aItem->GetConnectionPoints();
 

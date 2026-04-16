@@ -100,6 +100,7 @@ margins
 members
 mid
 mirror
+module_block
 name
 netclass_flag
 no
@@ -156,6 +157,7 @@ size
 span
 start
 stroke
+sub_project
 symbol
 symbol_instances
 table

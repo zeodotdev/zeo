@@ -31,6 +31,7 @@
 #include <kiplatform/ui.h>
 #include <confirm.h>
 #include <kidialog.h>
+#include <project/multi_board_project.h>
 #include <project/project_file.h>
 #include <project/project_local_settings.h>
 #include <settings/common_settings.h>
@@ -43,6 +44,7 @@
 #include <tools/kicad_manager_actions.h>
 #include <tools/kicad_manager_control.h>
 #include <dialogs/panel_design_block_lib_table.h>
+#include <dialogs/dialog_multi_board_setup.h>
 #include <dialogs/dialog_template_selector.h>
 #include <dialogs/git/dialog_git_repository.h>
 #include <git/git_clone_handler.h>
@@ -50,6 +52,7 @@
 #include <paths.h>
 #include <eda_draw_frame.h>
 #include <algorithm>
+#include <wx/choicdlg.h>
 #include <wx/dir.h>
 #include <wx/display.h>
 #include <wx/filedlg.h>
@@ -196,15 +199,183 @@ static wxFileName ensureDefaultProjectTemplate()
         proj.Close();
     }
 
+    // Stub .kicad_sch so the schematic editor can open the new project
+    // without prompting the user to create a file first.
+    wxFileName schFile = templatePath;
+    schFile.SetFullName( wxT( "default.kicad_sch" ) );
+
+    if( !schFile.FileExists() )
+    {
+        wxFFile sch( schFile.GetFullPath(), wxT( "w" ) );
+
+        if( sch.IsOpened() )
+        {
+            sch.Write( wxString::Format(
+                    wxT( "(kicad_sch\n"
+                         "\t(version 20250610)\n"
+                         "\t(generator \"zeo\")\n"
+                         "\t(generator_version \"9.99\")\n"
+                         "\t(uuid \"%s\")\n"
+                         "\t(paper \"A4\")\n"
+                         "\t(lib_symbols)\n"
+                         "\t(sheet_instances\n"
+                         "\t\t(path \"/\"\n"
+                         "\t\t\t(page \"1\")\n"
+                         "\t\t)\n"
+                         "\t)\n"
+                         ")\n" ),
+                    KIID().AsString() ) );
+            sch.Close();
+        }
+    }
+
+    // Stub .kicad_pcb so the board editor can open the new project.
+    wxFileName pcbFile = templatePath;
+    pcbFile.SetFullName( wxT( "default.kicad_pcb" ) );
+
+    if( !pcbFile.FileExists() )
+    {
+        wxFFile pcb( pcbFile.GetFullPath(), wxT( "w" ) );
+
+        if( pcb.IsOpened() )
+        {
+            pcb.Write(
+                    wxT( "(kicad_pcb\n"
+                         "\t(version 20250610)\n"
+                         "\t(generator \"zeo\")\n"
+                         "\t(generator_version \"9.99\")\n"
+                         "\t(general\n"
+                         "\t\t(thickness 1.6)\n"
+                         "\t\t(legacy_teardrops no)\n"
+                         "\t)\n"
+                         "\t(paper \"A4\")\n"
+                         "\t(layers\n"
+                         "\t\t(0 \"F.Cu\" signal)\n"
+                         "\t\t(2 \"B.Cu\" signal)\n"
+                         "\t\t(9 \"F.Adhes\" user \"F.Adhesive\")\n"
+                         "\t\t(11 \"B.Adhes\" user \"B.Adhesive\")\n"
+                         "\t\t(13 \"F.Paste\" user)\n"
+                         "\t\t(15 \"B.Paste\" user)\n"
+                         "\t\t(5 \"F.SilkS\" user \"F.Silkscreen\")\n"
+                         "\t\t(7 \"B.SilkS\" user \"B.Silkscreen\")\n"
+                         "\t\t(1 \"F.Mask\" user)\n"
+                         "\t\t(3 \"B.Mask\" user)\n"
+                         "\t\t(17 \"Dwgs.User\" user \"User.Drawings\")\n"
+                         "\t\t(19 \"Cmts.User\" user \"User.Comments\")\n"
+                         "\t\t(21 \"Eco1.User\" user \"User.Eco1\")\n"
+                         "\t\t(23 \"Eco2.User\" user \"User.Eco2\")\n"
+                         "\t\t(25 \"Edge.Cuts\" user)\n"
+                         "\t\t(27 \"Margin\" user)\n"
+                         "\t\t(31 \"F.CrtYd\" user \"F.Courtyard\")\n"
+                         "\t\t(29 \"B.CrtYd\" user \"B.Courtyard\")\n"
+                         "\t\t(35 \"F.Fab\" user)\n"
+                         "\t\t(33 \"B.Fab\" user)\n"
+                         "\t)\n"
+                         ")\n" ) );
+            pcb.Close();
+        }
+    }
+
     if( infoFile.FileExists() && proFile.FileExists() )
         return templatePath;
     else
         return wxFileName();
 }
 
+
+/**
+ * Ensure the built-in "Multi-Board" template exists in the user template directory.
+ *
+ * The template is a bare directory containing `meta/info.html` and a minimal
+ * `multi_board.kicad_multi` stub. When the user picks this template and clicks
+ * Create, the normal template-copy flow runs (renaming the .kicad_multi to match
+ * the new project name); a post-create hook in NewProject() then launches the
+ * Multi-Board Setup dialog so the user can add sub-projects.
+ */
+static wxFileName ensureMultiBoardProjectTemplate()
+{
+    ENV_VAR_MAP_CITER it = Pgm().GetLocalEnvVariables().find( "KICAD_USER_TEMPLATE_DIR" );
+
+    if( it == Pgm().GetLocalEnvVariables().end() || it->second.GetValue() == wxEmptyString )
+        return wxFileName();
+
+    wxFileName templatePath;
+    templatePath.AssignDir( it->second.GetValue() );
+    templatePath.AppendDir( "multi_board" );
+
+    if( !templatePath.DirExists() && !templatePath.Mkdir( wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL ) )
+        return wxFileName();
+
+    wxFileName metaDir = templatePath;
+    metaDir.AppendDir( METADIR );
+
+    if( !metaDir.DirExists() && !metaDir.Mkdir( wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL ) )
+        return wxFileName();
+
+    wxFileName infoFile = metaDir;
+    infoFile.SetFullName( METAFILE_INFO_HTML );
+
+    if( !infoFile.FileExists() )
+    {
+        wxFFile info( infoFile.GetFullPath(), wxT( "w" ) );
+
+        if( !info.IsOpened() )
+            return wxFileName();
+
+        info.Write(
+                wxT( "<html><head><title>Multi-Board</title></head><body>"
+                     "<h3>Multi-Board Project</h3>"
+                     "<p>Groups several single-board projects under one container. "
+                     "After creation you will be prompted to import existing boards "
+                     "or create new ones.</p>"
+                     "</body></html>" ) );
+        info.Close();
+    }
+
+    wxFileName multiFile = templatePath;
+    multiFile.SetFullName( wxT( "multi_board.kicad_multi" ) );
+
+    if( !multiFile.FileExists() )
+    {
+        wxFFile mb( multiFile.GetFullPath(), wxT( "w" ) );
+
+        if( !mb.IsOpened() )
+            return wxFileName();
+
+        mb.Write( wxT( "{\n"
+                       "  \"version\": 1,\n"
+                       "  \"sub_projects\": []\n"
+                       "}\n" ) );
+        mb.Close();
+    }
+
+    if( infoFile.FileExists() && multiFile.FileExists() )
+        return templatePath;
+    else
+        return wxFileName();
+}
+
+
+/**
+ * Return true if the template contains a .kicad_multi file (i.e., is a
+ * multi-board template).
+ */
+static bool isMultiBoardTemplate( PROJECT_TEMPLATE& aTemplate )
+{
+    for( wxFileName& file : aTemplate.GetFileList() )
+    {
+        if( file.GetExt() == FILEEXT::MultiBoardProjectFileExtension )
+            return true;
+    }
+
+    return false;
+}
+
+
 int KICAD_MANAGER_CONTROL::NewProject( const TOOL_EVENT& aEvent )
 {
     wxFileName defaultTemplate = ensureDefaultProjectTemplate();
+    ensureMultiBoardProjectTemplate();   // best-effort; picker still works if this fails
 
     if( !defaultTemplate.IsOk() )
     {
@@ -302,9 +473,13 @@ int KICAD_MANAGER_CONTROL::NewProject( const TOOL_EVENT& aEvent )
     // Recreate the template object from the saved path
     PROJECT_TEMPLATE selectedTemplate( selectedTemplatePath );
 
+    bool isMultiBoard = isMultiBoardTemplate( selectedTemplate );
+
     wxString        default_dir = wxFileName( Prj().GetProjectFullName() ).GetPathWithSep();
     wxString        title = _( "New Project Folder" );
-    wxFileDialog    dlg( m_frame, title, default_dir, wxEmptyString, FILEEXT::ProjectFileWildcard(),
+    wxString        wildcard = isMultiBoard ? FILEEXT::MultiBoardProjectFileWildcard()
+                                            : FILEEXT::ProjectFileWildcard();
+    wxFileDialog    dlg( m_frame, title, default_dir, wxEmptyString, wildcard,
                          wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
     dlg.AddShortcut( PATHS::GetDefaultUserProjectsPath() );
@@ -319,10 +494,13 @@ int KICAD_MANAGER_CONTROL::NewProject( const TOOL_EVENT& aEvent )
 
     wxFileName fn( dlg.GetPath() );
 
-    if( !fn.GetExt().IsEmpty() && fn.GetExt().ToStdString() != FILEEXT::ProjectFileExtension )
+    const std::string& targetExt = isMultiBoard ? FILEEXT::MultiBoardProjectFileExtension
+                                                : FILEEXT::ProjectFileExtension;
+
+    if( !fn.GetExt().IsEmpty() && fn.GetExt().ToStdString() != targetExt )
         fn.SetName( fn.GetName() + wxT( "." ) + fn.GetExt() );
 
-    fn.SetExt( FILEEXT::ProjectFileExtension );
+    fn.SetExt( wxString::FromUTF8( targetExt ) );
 
     if( !fn.IsAbsolute() )
         fn.MakeAbsolute();
@@ -402,8 +580,181 @@ int KICAD_MANAGER_CONTROL::NewProject( const TOOL_EVENT& aEvent )
     if( recentTemplates.size() > 5 )
         recentTemplates.resize( 5 );
 
+    if( isMultiBoard )
+    {
+        // Delegate to the frame loader, which handles the Setup dialog (for
+        // populating sub-projects), loads the first sub-project so editors
+        // have a PROJECT, and stores the multi-board container on the frame.
+        m_frame->LoadMultiBoardProject( fn );
+        return 0;
+    }
+
     m_frame->CreateNewProject( fn.GetFullPath() );
     m_frame->LoadProject( fn );
+    return 0;
+}
+
+
+int KICAD_MANAGER_CONTROL::EditMultiBoardSchematic( const TOOL_EVENT& aEvent )
+{
+    MULTI_BOARD_PROJECT* multi = m_frame->GetMultiBoardProject();
+
+    if( !multi )
+    {
+        wxMessageBox( _( "The current session is not a multi-board project." ),
+                      _( "No Multi-Board Project" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    wxFileName mbs = multi->EnsureMbsFile( multi->GetName() );
+
+    if( !mbs.IsOk() || !mbs.FileExists() )
+    {
+        DisplayErrorMessage( m_frame,
+                             _( "Could not create or locate the multi-board schematic file." ) );
+        return 0;
+    }
+
+    // Persist the MBS filename (in case EnsureMbsFile just populated it)
+    wxFileName multiFile = multi->GetRootDir();
+    multiFile.SetName( multi->GetName() );
+    multiFile.SetExt( wxString::FromUTF8( FILEEXT::MultiBoardProjectFileExtension ) );
+    multi->SaveToFile( multiFile.GetFullPath() );
+
+    // Launch the schematic editor via Kiway (in-process; Zeo does not ship a
+    // stand-alone eeschema executable) and open the MBS file in it.
+    if( m_inShowPlayer )
+        return -1;
+
+    REENTRANCY_GUARD guard( &m_inShowPlayer );
+
+    KIWAY_PLAYER* player = nullptr;
+
+    try
+    {
+        player = m_frame->Kiway().Player( FRAME_SCH, true );
+    }
+    catch( const IO_ERROR& err )
+    {
+        wxLogError( _( "Application failed to load:\n" ) + err.What() );
+        return -1;
+    }
+
+    if( !player )
+    {
+        wxLogError( _( "Schematic editor could not start." ) );
+        return -1;
+    }
+
+    std::vector<wxString> file_list{ mbs.GetFullPath() };
+
+    if( !player->OpenProjectFiles( file_list ) )
+    {
+        player->Destroy();
+        return -1;
+    }
+
+    wxBusyCursor busy;
+    player->Show( true );
+
+    if( player->IsIconized() )
+        player->Iconize( false );
+
+    player->Raise();
+    player->SetFocus();
+
+    return 0;
+}
+
+
+int KICAD_MANAGER_CONTROL::SwitchSubBoard( const TOOL_EVENT& aEvent )
+{
+    MULTI_BOARD_PROJECT* multi = m_frame->GetMultiBoardProject();
+
+    if( !multi )
+    {
+        wxMessageBox( _( "The current session is not a multi-board project." ),
+                      _( "No Multi-Board Project" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    const auto& subs = multi->GetSubProjects();
+
+    if( subs.empty() )
+    {
+        wxMessageBox(
+                _( "This multi-board project has no sub-boards yet.\n"
+                   "Use 'File > Manage Sub-Boards...' to add one." ),
+                _( "No Sub-Boards" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    wxArrayString         choices;
+    std::vector<KIID>     uuids;
+    wxString              currentProPath = m_frame->GetProjectFileName();
+    int                   initial = 0;
+
+    for( size_t i = 0; i < subs.size(); i++ )
+    {
+        const SUB_PROJECT_INFO& info = subs[i];
+
+        wxString label = info.displayName.IsEmpty() ? info.name : info.displayName;
+        label += wxT( "   " );
+        label += info.relativePath;
+
+        wxFileName resolved = multi->ResolveSubProjectPath( info );
+
+        if( resolved.GetFullPath() == currentProPath )
+        {
+            label = wxT( "\u2022  " ) + label;  // bullet indicates active
+            initial = (int) i;
+        }
+
+        choices.Add( label );
+        uuids.push_back( info.uuid );
+    }
+
+    wxSingleChoiceDialog dlg( m_frame, _( "Choose the sub-board to activate:" ),
+                              _( "Switch Sub-Board" ), choices );
+    dlg.SetSelection( initial );
+
+    if( dlg.ShowModal() != wxID_OK )
+        return 0;
+
+    int picked = dlg.GetSelection();
+
+    if( picked < 0 || picked >= (int) uuids.size() )
+        return 0;
+
+    if( picked == initial )
+        return 0;  // no-op
+
+    m_frame->SwitchActiveSubProject( uuids[picked] );
+    return 0;
+}
+
+
+int KICAD_MANAGER_CONTROL::ManageSubBoards( const TOOL_EVENT& aEvent )
+{
+    MULTI_BOARD_PROJECT* multi = m_frame->GetMultiBoardProject();
+
+    if( !multi )
+    {
+        wxMessageBox( _( "The current session is not a multi-board project." ),
+                      _( "No Multi-Board Project" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    wxFileName multiFile = multi->GetRootDir();
+    multiFile.SetName( multi->GetName() );
+    multiFile.SetExt( wxString::FromUTF8( FILEEXT::MultiBoardProjectFileExtension ) );
+
+    DIALOG_MULTI_BOARD_SETUP dlg( m_frame, multi, multiFile );
+    dlg.ShowModal();
+
+    // Safety save (the dialog's Done handler also saves)
+    multi->SaveToFile( multiFile.GetFullPath() );
+
     return 0;
 }
 
@@ -506,8 +857,10 @@ int KICAD_MANAGER_CONTROL::NewJobsetFile( const TOOL_EVENT& aEvent )
 
 int KICAD_MANAGER_CONTROL::openProject( const wxString& aDefaultDir )
 {
-    wxString wildcard = FILEEXT::AllProjectFilesWildcard() + "|" + FILEEXT::ProjectFileWildcard() + "|"
-                        + FILEEXT::LegacyProjectFileWildcard();
+    wxString wildcard = FILEEXT::AllProjectFilesWildcard() + "|"
+                      + FILEEXT::ProjectFileWildcard() + "|"
+                      + FILEEXT::MultiBoardProjectFileWildcard() + "|"
+                      + FILEEXT::LegacyProjectFileWildcard();
 
     wxFileDialog dlg( m_frame, _( "Open Existing Project" ), aDefaultDir, wxEmptyString, wildcard,
                       wxFD_OPEN | wxFD_FILE_MUST_EXIST );
@@ -527,12 +880,17 @@ int KICAD_MANAGER_CONTROL::openProject( const wxString& aDefaultDir )
     // You'd think wxFD_FILE_MUST_EXIST and the wild-cards would enforce these.  Sentry
     // indicates otherwise (at least on MSW).
     if( !pro.Exists()
-        || ( pro.GetExt() != FILEEXT::ProjectFileExtension && pro.GetExt() != FILEEXT::LegacyProjectFileExtension ) )
+        || ( pro.GetExt() != FILEEXT::ProjectFileExtension
+             && pro.GetExt() != FILEEXT::LegacyProjectFileExtension
+             && pro.GetExt() != FILEEXT::MultiBoardProjectFileExtension ) )
     {
         return -1;
     }
 
-    m_frame->LoadProject( pro );
+    if( pro.GetExt() == FILEEXT::MultiBoardProjectFileExtension )
+        m_frame->LoadMultiBoardProject( pro );
+    else
+        m_frame->LoadProject( pro );
 
     return 0;
 }
@@ -1030,6 +1388,10 @@ void KICAD_MANAGER_CONTROL::setTransitions()
 {
     Go( &KICAD_MANAGER_CONTROL::NewProject, KICAD_MANAGER_ACTIONS::newProject.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::NewFromRepository, KICAD_MANAGER_ACTIONS::newFromRepository.MakeEvent() );
+    Go( &KICAD_MANAGER_CONTROL::ManageSubBoards, KICAD_MANAGER_ACTIONS::manageSubBoards.MakeEvent() );
+    Go( &KICAD_MANAGER_CONTROL::SwitchSubBoard, KICAD_MANAGER_ACTIONS::switchSubBoard.MakeEvent() );
+    Go( &KICAD_MANAGER_CONTROL::EditMultiBoardSchematic,
+        KICAD_MANAGER_ACTIONS::editMultiBoardSchematic.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::NewJobsetFile, KICAD_MANAGER_ACTIONS::newJobsetFile.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::OpenDemoProject, KICAD_MANAGER_ACTIONS::openDemoProject.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::OpenProject, KICAD_MANAGER_ACTIONS::openProject.MakeEvent() );

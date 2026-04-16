@@ -92,6 +92,10 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     wxMenuItem* item = fileMenu->Add( openRecentMenu->Clone() );
 
     fileMenu->AppendSeparator();
+    fileMenu->Add( KICAD_MANAGER_ACTIONS::switchSubBoard );
+    fileMenu->Add( KICAD_MANAGER_ACTIONS::manageSubBoards );
+
+    fileMenu->AppendSeparator();
     fileMenu->Add( KICAD_MANAGER_ACTIONS::newJobsetFile );
     fileMenu->Add( KICAD_MANAGER_ACTIONS::openJobsetFile );
 

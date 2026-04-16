@@ -510,6 +510,13 @@ public:
      */
     virtual bool SaveProject( bool aSaveAs = false );
 
+    /**
+     * If this schematic is the multi-board schematic (MBS) referenced from an
+     * enclosing .kicad_multi container, extract its cross-board nets from
+     * topology and write them back to the .kicad_multi. No-op otherwise.
+     */
+    void syncCrossBoardNetsIfMbs();
+
     bool OpenProjectFiles( const std::vector<wxString>& aFileSet, int aCtl = 0 ) override;
 
     void SetSchematic( SCHEMATIC* aSchematic );

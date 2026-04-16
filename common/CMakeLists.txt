@@ -173,6 +173,7 @@ set( KICOMMON_SRCS
     project/project_archiver.cpp
     project/project_file.cpp
     project/project_local_settings.cpp
+    project/multi_board_project.cpp
     project/tuning_profiles.cpp
 
     text_eval/text_eval_wrapper.cpp

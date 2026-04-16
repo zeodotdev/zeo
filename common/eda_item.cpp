@@ -474,6 +474,8 @@ static struct EDA_ITEM_DESC
             .Map( SCH_SHEET_PIN_T,         _HKI( "Sheet Pin" ) )
             .Map( SCH_SHEET_T,             _HKI( "Sheet" ) )
             .Map( SCH_GROUP_T,             _HKI( "Group" ) )
+            .Map( SCH_MODULE_BLOCK_T,      _HKI( "Multi-Board Module Block" ) )
+            .Map( SCH_MODULE_PIN_T,        _HKI( "Module Block Pin" ) )
 
             // Synthetic search tokens don't need to be included...
             //.Map( SCH_FIELD_LOCATE_REFERENCE_T, _HKI( "Field Locate Reference" ) )

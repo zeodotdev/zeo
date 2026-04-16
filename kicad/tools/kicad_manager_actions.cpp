@@ -66,6 +66,30 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::openDemoProject( TOOL_ACTION_ARGS()
                                                             .FriendlyName( _( "Open Demo Project..." ) )
                                                             .Icon( BITMAPS::open_project_demo ) );
 
+TOOL_ACTION KICAD_MANAGER_ACTIONS::manageSubBoards( TOOL_ACTION_ARGS()
+                                                            .Name( "kicad.Control.manageSubBoards" )
+                                                            .Scope( AS_GLOBAL )
+                                                            .FriendlyName( _( "Manage Sub-Boards..." ) )
+                                                            .Tooltip( _( "Add, remove, or inspect sub-boards in this multi-board project" ) )
+                                                            .Icon( BITMAPS::new_project_from_template ) );
+
+
+TOOL_ACTION KICAD_MANAGER_ACTIONS::switchSubBoard( TOOL_ACTION_ARGS()
+                                                           .Name( "kicad.Control.switchSubBoard" )
+                                                           .Scope( AS_GLOBAL )
+                                                           .FriendlyName( _( "Switch Sub-Board..." ) )
+                                                           .Tooltip( _( "Switch the active sub-project within this multi-board project" ) )
+                                                           .Icon( BITMAPS::open_project ) );
+
+
+TOOL_ACTION KICAD_MANAGER_ACTIONS::editMultiBoardSchematic( TOOL_ACTION_ARGS()
+                                                                    .Name( "kicad.Control.editMultiBoardSchematic" )
+                                                                    .Scope( AS_GLOBAL )
+                                                                    .FriendlyName( _( "Multi-Board Schematic" ) )
+                                                                    .Tooltip( _( "Open the multi-board schematic (module blocks for each sub-project)" ) )
+                                                                    .Icon( BITMAPS::icon_eeschema ) );
+
+
 TOOL_ACTION KICAD_MANAGER_ACTIONS::openProject( TOOL_ACTION_ARGS()
                                                         .Name( "kicad.Control.openProject" )
                                                         .Scope( AS_GLOBAL )

@@ -65,6 +65,7 @@ enum class TREE_FILE_TYPE
     DESIGN_RULES,          // design rules (.kicad_dru)
     ZIP_ARCHIVE,           // .zip file
     JOBSET_FILE,             // jobs (.kicad_jobs)
+    MULTI_BOARD_PROJECT,     // multi-board container (.kicad_multi)
     MAX                    // Sentinel
 };
 

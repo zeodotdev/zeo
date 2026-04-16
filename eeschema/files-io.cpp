@@ -35,6 +35,9 @@
 #include <id.h>
 #include <kiface_base.h>
 #include <kiplatform/app.h>
+#include <multi_board_net_extractor.h>
+#include <project/multi_board_project.h>
+#include <wx/dir.h>
 #include <kiplatform/ui.h>
 #include <libraries/legacy_symbol_library.h>
 #include <libraries/symbol_library_adapter.h>
@@ -1575,7 +1578,62 @@ bool SCH_EDIT_FRAME::SaveProject( bool aSaveAs )
     if( m_infoBar->GetMessageType() == WX_INFOBAR::MESSAGE_TYPE::OUTDATED_SAVE )
         m_infoBar->Dismiss();
 
+    // If this schematic is the MBS of an enclosing multi-board project,
+    // rebuild the cross-board net list and persist it to the .kicad_multi.
+    if( success )
+        syncCrossBoardNetsIfMbs();
+
     return success;
+}
+
+
+void SCH_EDIT_FRAME::syncCrossBoardNetsIfMbs()
+{
+    wxFileName schFn( Prj().AbsolutePath( Schematic().Root().GetFileName() ) );
+
+    // Walk upward from the schematic's directory looking for a .kicad_multi file.
+    wxFileName multiFile;
+    wxFileName searchDir( schFn );
+    searchDir.SetFullName( wxEmptyString );
+
+    for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
+    {
+        wxArrayString files;
+        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_multi" ),
+                            wxDIR_FILES );
+
+        if( !files.IsEmpty() )
+        {
+            multiFile = wxFileName( files[0] );
+            break;
+        }
+
+        searchDir.RemoveLastDir();
+    }
+
+    if( !multiFile.IsOk() || !multiFile.FileExists() )
+        return;
+
+    MULTI_BOARD_PROJECT multi;
+
+    if( !multi.LoadFromFile( multiFile.GetFullPath() ) )
+        return;
+
+    // Only sync if the schematic we just saved is the MBS file registered
+    // in the multi-board container.
+    wxFileName expectedMbs = multi.ResolveMbsPath();
+
+    if( !expectedMbs.IsOk() || expectedMbs.GetFullPath() != schFn.GetFullPath() )
+        return;
+
+    SCH_SCREEN* rootScreen = Schematic().RootScreen();
+
+    if( !rootScreen )
+        return;
+
+    std::vector<CROSS_BOARD_NET> nets = ExtractCrossBoardNets( *rootScreen, multi );
+    multi.SetCrossBoardNets( std::move( nets ) );
+    multi.SaveToFile( multiFile.GetFullPath() );
 }
 
 

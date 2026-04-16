@@ -33,6 +33,9 @@ class KICAD_MANAGER_ACTIONS : public ACTIONS
 public:
     static TOOL_ACTION newProject;
     static TOOL_ACTION newFromRepository;
+    static TOOL_ACTION manageSubBoards;
+    static TOOL_ACTION switchSubBoard;
+    static TOOL_ACTION editMultiBoardSchematic;
     static TOOL_ACTION newJobsetFile;
     static TOOL_ACTION openDemoProject;
     static TOOL_ACTION openProject;

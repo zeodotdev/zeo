@@ -125,6 +125,7 @@ public:
     static const std::string VrmlFileExtension;
     static const std::string ProjectFileExtension;
     static const std::string LegacyProjectFileExtension;
+    static const std::string MultiBoardProjectFileExtension;
     static const std::string ProjectLocalSettingsFileExtension;
     static const std::string LegacySchematicFileExtension;
     static const std::string CadstarSchematicFileExtension;
@@ -236,6 +237,7 @@ public:
     static wxString KiCadSymbolLibFileWildcard();
     static wxString ProjectFileWildcard();
     static wxString LegacyProjectFileWildcard();
+    static wxString MultiBoardProjectFileWildcard();
     static wxString AllProjectFilesWildcard();
     static wxString AllSchematicFilesWildcard();
     static wxString KiCadSchematicFileWildcard();

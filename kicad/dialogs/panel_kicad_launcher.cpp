@@ -22,10 +22,12 @@
 #include <kicad_manager_frame.h>
 #include <kiplatform/policy.h>
 #include <policy_keys.h>
+#include <project/multi_board_project.h>
 #include <tool/tool_manager.h>
 #include <tools/kicad_manager_actions.h>
 #include <tools/kicad_manager_control.h>
 #include <widgets/bitmap_button.h>
+#include <wx/filename.h>
 #include <wx/stattext.h>
 
 #include "panel_kicad_launcher.h"
@@ -144,6 +146,102 @@ void PANEL_KICAD_LAUNCHER::CreateLaunchers()
                 return btn;
             };
 
+    // -------- Multi-board header --------
+    // When a multi-board project is active, prepend a section that lists
+    // each sub-project and lets the user switch between them with one click.
+    // The section is hidden for single-board sessions so the classic launcher
+    // layout is unchanged.
+    MULTI_BOARD_PROJECT* multi = m_frame->GetMultiBoardProject();
+
+    if( multi )
+    {
+        // Header label: "Multi-Board: <name>"  (spans col 2; col 1 gets a
+        // small spacer so the grid stays aligned)
+        m_toolsSizer->AddSpacer( 1 );
+
+        m_scrolledWindow->SetFont( titleFont );
+        wxStaticText* headerLbl = new wxStaticText(
+                m_scrolledWindow, wxID_ANY,
+                wxString::Format( _( "Multi-Board: %s" ), multi->GetName() ) );
+        m_scrolledWindow->SetFont( helpFont );
+        wxStaticText* headerHelp = new wxStaticText(
+                m_scrolledWindow, wxID_ANY,
+                _( "Click a board below to switch the active sub-project." ) );
+
+        wxBoxSizer* headerText = new wxBoxSizer( wxVERTICAL );
+        headerText->Add( headerLbl );
+        headerText->Add( headerHelp );
+        m_toolsSizer->Add( headerText, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL );
+
+        // One clickable row per sub-project
+        wxString activePath = m_frame->GetProjectFileName();
+
+        for( const SUB_PROJECT_INFO& info : multi->GetSubProjects() )
+        {
+            wxFileName resolved = multi->ResolveSubProjectPath( info );
+            bool       isActive = ( resolved.GetFullPath() == activePath );
+
+            BITMAP_BUTTON* btn = new BITMAP_BUTTON( m_scrolledWindow, wxID_ANY );
+            btn->SetBitmap( KiBitmapBundle( BITMAPS::project_kicad ) );
+            btn->SetDisabledBitmap( KiDisabledBitmapBundle( BITMAPS::project_kicad ) );
+            btn->SetPadding( 4 );
+            btn->SetToolTip( resolved.GetFullPath() );
+
+            wxString labelText = info.displayName.IsEmpty() ? info.name : info.displayName;
+
+            if( isActive )
+                labelText = wxT( "\u25CF  " ) + labelText;  // ● active marker
+            else
+                labelText = wxT( "\u25CB  " ) + labelText;  // ○ inactive marker
+
+            m_scrolledWindow->SetFont( titleFont );
+            wxStaticText* label = new wxStaticText( m_scrolledWindow, wxID_ANY, labelText );
+            label->SetToolTip( resolved.GetFullPath() );
+
+            m_scrolledWindow->SetFont( helpFont );
+            wxStaticText* help = new wxStaticText( m_scrolledWindow, wxID_ANY,
+                                                   info.relativePath );
+
+            KIID uuid = info.uuid;
+            btn->Bind( wxEVT_BUTTON,
+                       [this, uuid]( wxCommandEvent& )
+                       {
+                           m_frame->SwitchActiveSubProject( uuid );
+                           // Re-render the launcher so the active marker moves
+                           CreateLaunchers();
+                       } );
+
+            m_toolsSizer->Add( btn, 1, wxALIGN_CENTER_VERTICAL );
+
+            wxBoxSizer* textSizer = new wxBoxSizer( wxVERTICAL );
+            textSizer->Add( label );
+            textSizer->Add( help );
+            m_toolsSizer->Add( textSizer, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL );
+
+            if( isActive )
+            {
+                // Disable the button for the currently-active board so the
+                // user gets visual feedback that there's nothing to do here.
+                btn->Disable();
+            }
+        }
+
+        // "Multi-Board Schematic" — opens the MBS stub in eeschema
+        addLauncher( KICAD_MANAGER_ACTIONS::editMultiBoardSchematic,
+                     BITMAPS::icon_eeschema,
+                     _( "Open the multi-board schematic (module blocks for each sub-project)" ) );
+
+        // "Manage Sub-Boards…" button uses the standard action-button helper
+        addLauncher( KICAD_MANAGER_ACTIONS::manageSubBoards,
+                     BITMAPS::new_project_from_template,
+                     _( "Add, remove, or inspect sub-boards in this multi-board project" ) );
+
+        // Visual divider row: two empty spacers so the grid keeps rolling
+        m_toolsSizer->AddSpacer( 1 );
+        m_toolsSizer->AddSpacer( 12 );
+    }
+
+    // -------- Standard per-project tools --------
     addLauncher( KICAD_MANAGER_ACTIONS::showAiAssistant, BITMAPS::icon_agent_launcher,
                  _( "Edit the project with an AI assistant" ) );
 

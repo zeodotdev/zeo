@@ -40,6 +40,7 @@ class SCH_SHEET;
 struct SCH_SHEET_INSTANCE;
 class SCH_BITMAP;
 class SCH_JUNCTION;
+class SCH_MODULE_BLOCK;
 class SCH_NO_CONNECT;
 class SCH_LINE;
 class SCH_SHAPE;
@@ -150,6 +151,7 @@ private:
     void saveField( SCH_FIELD* aField );
     void saveBitmap( const SCH_BITMAP& aBitmap );
     void saveSheet( SCH_SHEET* aSheet, const SCH_SHEET_LIST& aSheetList );
+    void saveModuleBlock( SCH_MODULE_BLOCK* aModuleBlock );
     void saveJunction( SCH_JUNCTION* aJunction );
     void saveNoConnect( SCH_NO_CONNECT* aNoConnect );
     void saveBusEntry( SCH_BUS_ENTRY_BASE* aBusEntry );

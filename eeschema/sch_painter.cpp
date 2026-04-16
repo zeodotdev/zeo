@@ -47,6 +47,10 @@
 #include <sch_edit_frame.h>
 #include <sch_field.h>
 #include <sch_group.h>
+#include "sch_module_block.h"
+#include "sch_module_pin.h"
+
+#include <deque>
 #include <sch_junction.h>
 #include <sch_line.h>
 #include <sch_shape.h>
@@ -202,6 +206,9 @@ void SCH_PAINTER::draw( const EDA_ITEM* aItem, int aLayer, bool aDimmed )
     case SCH_SHEET_PIN_T:
         draw( static_cast<const SCH_HIERLABEL*>( aItem ), aLayer, aDimmed );
         break;
+    case SCH_MODULE_PIN_T:
+        draw( static_cast<const SCH_HIERLABEL*>( aItem ), aLayer, aDimmed );
+        break;
     case SCH_NO_CONNECT_T:
         draw( static_cast<const SCH_NO_CONNECT*>( aItem ), aLayer );
         break;
@@ -219,6 +226,9 @@ void SCH_PAINTER::draw( const EDA_ITEM* aItem, int aLayer, bool aDimmed )
         break;
     case SCH_GROUP_T:
         draw( static_cast<const SCH_GROUP*>( aItem ), aLayer );
+        break;
+    case SCH_MODULE_BLOCK_T:
+        draw( static_cast<const SCH_MODULE_BLOCK*>( aItem ), aLayer );
         break;
     default:
         return;
@@ -543,6 +553,7 @@ float SCH_PAINTER::getTextThickness( const SCH_ITEM* aItem ) const
     case SCH_GLOBAL_LABEL_T:
     case SCH_HIER_LABEL_T:
     case SCH_SHEET_PIN_T:
+    case SCH_MODULE_PIN_T:
         pen = static_cast<const SCH_LABEL_BASE*>( aItem )->GetEffectiveTextPenWidth( pen );
         break;
 
@@ -2204,6 +2215,7 @@ void SCH_PAINTER::draw( const SCH_TEXT* aText, int aLayer, bool aDimmed )
     switch( aText->Type() )
     {
     case SCH_SHEET_PIN_T:       aLayer = LAYER_SHEETLABEL;                        break;
+    case SCH_MODULE_PIN_T:      aLayer = LAYER_SHEETLABEL;                        break;
     case SCH_HIER_LABEL_T:      aLayer = LAYER_HIERLABEL;                         break;
     case SCH_GLOBAL_LABEL_T:    aLayer = LAYER_GLOBLABEL;                         break;
     case SCH_DIRECTIVE_LABEL_T: aLayer = LAYER_NETCLASS_REFS;                     break;
@@ -2413,6 +2425,7 @@ void SCH_PAINTER::draw( const SCH_TEXT* aText, int aLayer, bool aDimmed )
         case SCH_HIER_LABEL_T:
         case SCH_GLOBAL_LABEL_T:
         case SCH_SHEET_PIN_T:
+        case SCH_MODULE_PIN_T:
             // These all have shapes and so don't need anchors
             showAnchor = false;
             break;
@@ -3701,6 +3714,104 @@ void SCH_PAINTER::draw( const SCH_GROUP* aGroup, int aLayer )
             KIFONT::FONT::GetFont()->Draw( m_gal, aGroup->GetName(), topLeft + textOffset, attrs,
                                            aGroup->GetFontMetrics() );
         }
+    }
+}
+
+
+void SCH_PAINTER::draw( const SCH_MODULE_BLOCK* aBlock, int aLayer )
+{
+    const bool drawingShadows = ( aLayer == LAYER_SELECTION_SHADOWS );
+
+    if( m_schSettings.IsPrinting() && drawingShadows )
+        return;
+
+    const VECTOR2D pos  = aBlock->GetPosition();
+    const VECTOR2D size = aBlock->GetSize();
+
+    // ---- Background fill (matches hierarchical sheet style) ----
+    if( aLayer == LAYER_SHEET_BACKGROUND )
+    {
+        if( !m_schSettings.PrintBlackAndWhiteReq() )
+        {
+            COLOR4D bg = m_schSettings.GetLayerColor( LAYER_SHEET_BACKGROUND );
+
+            if( bg.a > 0.0 )
+            {
+                m_gal->SetFillColor( getRenderColor( aBlock, LAYER_SHEET_BACKGROUND, false ) );
+                m_gal->SetIsFill( true );
+                m_gal->SetIsStroke( false );
+                m_gal->DrawRectangle( pos, pos + size );
+            }
+        }
+        return;
+    }
+
+    // ---- Outline ----
+    if( aLayer == LAYER_SHEET || aLayer == LAYER_SELECTION_SHADOWS )
+    {
+        m_gal->SetStrokeColor( getRenderColor( aBlock, LAYER_SHEET, drawingShadows ) );
+        m_gal->SetIsStroke( true );
+        m_gal->SetIsFill( false );
+        m_gal->SetLineWidth( getLineWidth( aBlock, drawingShadows ) );
+        m_gal->DrawRectangle( pos, pos + size );
+    }
+
+    if( drawingShadows )
+        return;
+
+    // ---- Display name (above the block, bold) ----
+    if( aLayer == LAYER_SHEETNAME )
+    {
+        const wxString& name = aBlock->GetDisplayName();
+
+        if( !name.IsEmpty() )
+        {
+            const int textSize = schIUScale.MilsToIU( 60 );
+
+            TEXT_ATTRIBUTES attrs;
+            attrs.m_Halign = GR_TEXT_H_ALIGN_LEFT;
+            attrs.m_Valign = GR_TEXT_V_ALIGN_BOTTOM;
+            attrs.m_Bold = true;
+            attrs.m_Size = VECTOR2I( textSize, textSize );
+            attrs.m_StrokeWidth = GetPenSizeForBold( textSize );
+            attrs.m_Color = m_schSettings.GetLayerColor( LAYER_SHEETNAME );
+
+            VECTOR2I anchor( (int) pos.x, (int) pos.y - schIUScale.MilsToIU( 20 ) );
+            KIFONT::FONT::GetFont()->Draw( m_gal, wxT( "Module: " ) + name, anchor, attrs,
+                                           aBlock->GetFontMetrics() );
+        }
+    }
+
+    // ---- Sub-project path (below the block, italic) ----
+    if( aLayer == LAYER_SHEETFILENAME )
+    {
+        const wxString& path = aBlock->GetSubProjectPath();
+
+        if( !path.IsEmpty() )
+        {
+            const int textSize = schIUScale.MilsToIU( 50 );
+
+            TEXT_ATTRIBUTES attrs;
+            attrs.m_Halign = GR_TEXT_H_ALIGN_LEFT;
+            attrs.m_Valign = GR_TEXT_V_ALIGN_TOP;
+            attrs.m_Italic = true;
+            attrs.m_Size = VECTOR2I( textSize, textSize );
+            attrs.m_StrokeWidth = GetPenSizeForNormal( textSize );
+            attrs.m_Color = m_schSettings.GetLayerColor( LAYER_SHEETFILENAME );
+
+            VECTOR2I anchor( (int) pos.x, (int) ( pos.y + size.y ) + schIUScale.MilsToIU( 20 ) );
+            KIFONT::FONT::GetFont()->Draw( m_gal, wxT( "Project: " ) + path, anchor, attrs,
+                                           aBlock->GetFontMetrics() );
+        }
+    }
+
+    // ---- Pin port markers + inboard labels ----
+    // Each SCH_MODULE_PIN is a SCH_HIERLABEL — let the label draw path render
+    // the arrow graphic and pin text, same as SCH_SHEET does with its pins.
+    if( !drawingShadows || eeconfig()->m_Selection.draw_selected_children )
+    {
+        for( SCH_MODULE_PIN* pin : aBlock->GetPins() )
+            draw( static_cast<SCH_HIERLABEL*>( pin ), aLayer, false );
     }
 }
 

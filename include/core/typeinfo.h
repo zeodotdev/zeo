@@ -177,6 +177,8 @@ enum KICAD_T
     SCH_GROUP_T,
     SCH_SHEET_PIN_T,
     SCH_SHEET_T,
+    SCH_MODULE_BLOCK_T,     ///< SCH_MODULE_BLOCK: sub-project placeholder on a multi-board schematic
+    SCH_MODULE_PIN_T,       ///< SCH_MODULE_PIN: one pin of a SCH_MODULE_BLOCK (subclass of SCH_HIERLABEL)
 
     // Be prudent with these types:
     // they should be used only to locate a specific field type among SCH_FIELD_Ts
@@ -396,6 +398,8 @@ constexpr bool IsEeschemaType( const KICAD_T aType )
     case SCH_SHEET_PIN_T:
     case SCH_GROUP_T:
     case SCH_SHEET_T:
+    case SCH_MODULE_BLOCK_T:
+    case SCH_MODULE_PIN_T:
     case SCH_PIN_T:
 
     case SCH_FIELD_LOCATE_REFERENCE_T:

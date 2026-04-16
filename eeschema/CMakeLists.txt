@@ -407,6 +407,9 @@ set( EESCHEMA_SRCS
     sch_label.cpp
     sch_line.cpp
     sch_marker.cpp
+    multi_board_net_extractor.cpp
+    sch_module_block.cpp
+    sch_module_pin.cpp
     sch_no_connect.cpp
     sch_painter.cpp
     sch_pin.cpp

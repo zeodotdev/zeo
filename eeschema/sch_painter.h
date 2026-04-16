@@ -39,6 +39,7 @@ class SCH_SYMBOL;
 class SCH_FIELD;
 class SCH_GROUP;
 class SCH_JUNCTION;
+class SCH_MODULE_BLOCK;
 class SCH_LABEL;
 class SCH_TEXT;
 class SCH_TEXTBOX;
@@ -102,6 +103,7 @@ private:
     void draw( const SCH_LINE* aLine, int aLayer );
     void draw( const SCH_BUS_ENTRY_BASE* aEntry, int aLayer );
     void draw( const SCH_GROUP* aGroup, int aLayer );
+    void draw( const SCH_MODULE_BLOCK* aBlock, int aLayer );
 
     void drawPinDanglingIndicator( const SCH_PIN& aPin, const COLOR4D& aColor, bool aDrawingShadows,
                                    bool aBrightened );

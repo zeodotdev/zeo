@@ -46,6 +46,9 @@ public:
 
     int NewProject( const TOOL_EVENT& aEvent );
     int NewFromRepository( const TOOL_EVENT& aEvent );
+    int ManageSubBoards( const TOOL_EVENT& aEvent );
+    int SwitchSubBoard( const TOOL_EVENT& aEvent );
+    int EditMultiBoardSchematic( const TOOL_EVENT& aEvent );
     int NewJobsetFile( const TOOL_EVENT& aEvent );
     int OpenProject( const TOOL_EVENT& aEvent );
     int OpenDemoProject( const TOOL_EVENT& aEvent );

@@ -52,6 +52,7 @@ class SCH_LINE;
 class SCH_NO_CONNECT;
 class SCH_SCREEN;
 class SCH_SHEET;
+class SCH_MODULE_BLOCK;
 class SCH_SHEET_PIN;
 class SCH_TEXT;
 class SCH_TEXTBOX;
@@ -239,6 +240,7 @@ private:
     SCH_SYMBOL* parseSchematicSymbol();
     SCH_BITMAP* parseImage();
     SCH_SHEET* parseSheet();
+    SCH_MODULE_BLOCK* parseModuleBlock();
     SCH_JUNCTION* parseJunction();
     SCH_NO_CONNECT* parseNoConnect();
     SCH_BUS_WIRE_ENTRY* parseBusEntry();

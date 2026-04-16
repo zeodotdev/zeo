@@ -58,6 +58,8 @@
 #include <sch_tablecell.h>
 #include <sch_label.h>
 #include <sch_junction.h>
+#include <sch_module_block.h>
+#include <sch_module_pin.h>
 #include <sch_no_connect.h>
 #include <sch_screen.h>
 #include <sch_shape.h>
@@ -2910,6 +2912,14 @@ void SCH_IO_KICAD_SEXPR_PARSER::ParseSchematic( SCH_SHEET* aSheet, bool aIsCopya
             break;
         }
 
+        case T_module_block:
+        {
+            SCH_MODULE_BLOCK* moduleBlock = parseModuleBlock();
+            moduleBlock->SetParent( aSheet );
+            screen->Append( moduleBlock );
+            break;
+        }
+
         case T_junction:
             screen->Append( parseJunction() );
             break;
@@ -3056,8 +3066,8 @@ void SCH_IO_KICAD_SEXPR_PARSER::ParseSchematic( SCH_SHEET* aSheet, bool aIsCopya
 
         default:
             Expecting( "bitmap, bus, bus_alias, bus_entry, class_label, embedded_files, global_label, "
-                       "hierarchical_label, junction, label, line, no_connect, page, paper, rule_area, "
-                       "sheet, symbol, symbol_instances, text, title_block" );
+                       "hierarchical_label, junction, label, line, module_block, no_connect, page, paper, "
+                       "rule_area, sheet, symbol, symbol_instances, text, title_block" );
         }
     }
 
@@ -3953,6 +3963,120 @@ SCH_SHEET* SCH_IO_KICAD_SEXPR_PARSER::parseSheet()
     sheet->SetFields( fields );
 
     return sheet.release();
+}
+
+
+SCH_MODULE_BLOCK* SCH_IO_KICAD_SEXPR_PARSER::parseModuleBlock()
+{
+    wxCHECK_MSG( CurTok() == T_module_block, nullptr,
+                 wxT( "Cannot parse " ) + GetTokenString( CurTok() ) + wxT( " as a module_block." ) );
+
+    T token;
+    std::unique_ptr<SCH_MODULE_BLOCK> block = std::make_unique<SCH_MODULE_BLOCK>();
+
+    for( token = NextTok(); token != T_RIGHT; token = NextTok() )
+    {
+        if( token != T_LEFT )
+            Expecting( T_LEFT );
+
+        token = NextTok();
+
+        switch( token )
+        {
+        case T_uuid:
+        {
+            NeedSYMBOL();
+            const_cast<KIID&>( block->m_Uuid ) = KIID( FromUTF8() );
+            NeedRIGHT();
+            break;
+        }
+
+        case T_at:
+            block->SetPosition( parseXY() );
+            NeedRIGHT();
+            break;
+
+        case T_size:
+        {
+            VECTOR2I sz = parseXY();
+            block->SetSize( sz );
+            NeedRIGHT();
+            break;
+        }
+
+        case T_sub_project:
+            NeedSYMBOL();
+            block->SetSubProjectPath( FromUTF8() );
+            NeedRIGHT();
+            break;
+
+        case T_name:
+            NeedSYMBOL();
+            block->SetDisplayName( FromUTF8() );
+            NeedRIGHT();
+            break;
+
+        case T_pin:
+        {
+            KIID     pinUuid;
+            wxString pinNumber;
+            wxString pinName;
+            VECTOR2I localPosition;
+
+            for( token = NextTok(); token != T_RIGHT; token = NextTok() )
+            {
+                if( token != T_LEFT )
+                    Expecting( T_LEFT );
+
+                token = NextTok();
+
+                switch( token )
+                {
+                case T_uuid:
+                    NeedSYMBOL();
+                    pinUuid = KIID( FromUTF8() );
+                    NeedRIGHT();
+                    break;
+
+                case T_number:
+                    NeedSYMBOL();
+                    pinNumber = FromUTF8();
+                    NeedRIGHT();
+                    break;
+
+                case T_name:
+                    NeedSYMBOL();
+                    pinName = FromUTF8();
+                    NeedRIGHT();
+                    break;
+
+                case T_at:
+                    localPosition = parseXY();
+                    NeedRIGHT();
+                    break;
+
+                default:
+                    Expecting( "uuid, number, name, at" );
+                }
+            }
+
+            const VECTOR2I absPos = block->GetPosition() + localPosition;
+
+            SCH_MODULE_PIN* pin = new SCH_MODULE_PIN( block.get(), absPos, pinName );
+            pin->SetPinUuid( pinUuid );
+            pin->SetPinNumber( pinNumber );
+            pin->ConstrainOnEdge( absPos, true );  // picks nearest edge + clamps
+
+            block->AddPin( pin );
+            break;
+        }
+
+        default:
+            Expecting( "uuid, at, size, sub_project, name, pin" );
+        }
+    }
+
+    return block.release();
 }
 
 

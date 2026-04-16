@@ -690,6 +690,7 @@ bool SCH_LINE::CanConnect( const SCH_ITEM* aItem ) const
     case SCH_BUS_WIRE_ENTRY_T:
     case SCH_SHEET_T:
     case SCH_SHEET_PIN_T:
+    case SCH_MODULE_BLOCK_T:
         return IsWire() || IsBus();
 
     default:

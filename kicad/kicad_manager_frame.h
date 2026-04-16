@@ -165,6 +165,46 @@ public:
      */
     bool LoadProject( const wxFileName& aProjectFileName );
 
+    /**
+     * Load a multi-board project (`.kicad_multi` container) and switch the
+     * launcher into multi-board mode.
+     *
+     * Loads the container, stores it on the frame so subsequent UI queries
+     * can detect multi-board state, and then calls LoadProject() on the
+     * first sub-project so the rest of the application has a usable PROJECT
+     * context. If the container has no sub-projects, the Setup dialog is
+     * shown and the first sub-project added there is loaded afterwards.
+     *
+     * @param aMultiProjectFile path to the `.kicad_multi` container
+     * @return true on success
+     */
+    bool LoadMultiBoardProject( const wxFileName& aMultiProjectFile );
+
+    /**
+     * Switch the active sub-project within the current multi-board session.
+     *
+     * Calls LoadProject() on the selected sub-project's `.kicad_pro` while
+     * preserving the multi-board container state, so the title, status bar,
+     * and "Manage Sub-Boards…" action continue to reflect the multi-board
+     * context.
+     *
+     * No-op (returns false) if the current session is not multi-board or the
+     * UUID does not resolve to a known sub-project.
+     *
+     * @param aSubProjectUuid UUID of the sub-project to activate
+     * @return true on success
+     */
+    bool SwitchActiveSubProject( const KIID& aSubProjectUuid );
+
+    /**
+     * @return the active multi-board container, or nullptr if the current
+     * session is a plain single-board project.
+     */
+    class MULTI_BOARD_PROJECT* GetMultiBoardProject() const
+    {
+        return m_multiBoardProject.get();
+    }
+
     PANEL_KICAD_LAUNCHER* GetLauncherPanel() const { return m_launcher; }
 
     void OpenJobsFile( const wxFileName& aFileName, bool aCreate = false,
@@ -265,6 +305,11 @@ private:
     int                                     m_pcmUpdateCount;
     std::unique_ptr<UPDATE_MANAGER>         m_updateManager;
     std::unique_ptr<SESSION_MANAGER>        m_sessionManager;
+
+    /// Non-null only when the launcher is in multi-board mode. Owns the
+    /// currently-open `.kicad_multi` container. Sub-projects loaded via
+    /// LoadProject() are standalone and share their lifecycle with this.
+    std::unique_ptr<class MULTI_BOARD_PROJECT> m_multiBoardProject;
 public:
     SESSION_MANAGER* GetSessionManager() const { return m_sessionManager.get(); }
 };

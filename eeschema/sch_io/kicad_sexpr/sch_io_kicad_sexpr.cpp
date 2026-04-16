@@ -48,6 +48,8 @@
 #include <sch_io/kicad_sexpr/sch_io_kicad_sexpr_lib_cache.h>
 #include <sch_io/kicad_sexpr/sch_io_kicad_sexpr_parser.h>
 #include <sch_junction.h>
+#include <sch_module_block.h>
+#include <sch_module_pin.h>
 #include <sch_line.h>
 #include <sch_no_connect.h>
 #include <sch_pin.h>
@@ -441,6 +443,10 @@ void SCH_IO_KICAD_SEXPR::Format( SCH_SHEET* aSheet )
             saveSheet( static_cast<SCH_SHEET*>( item ), sheets );
             break;
 
+        case SCH_MODULE_BLOCK_T:
+            saveModuleBlock( static_cast<SCH_MODULE_BLOCK*>( item ) );
+            break;
+
         case SCH_JUNCTION_T:
             saveJunction( static_cast<SCH_JUNCTION*>( item ) );
             break;
@@ -571,6 +577,10 @@ void SCH_IO_KICAD_SEXPR::Format( SCH_SELECTION* aSelection, SCH_SHEET_PATH* aSel
 
         case SCH_SHEET_T:
             saveSheet( static_cast<SCH_SHEET*>( item ), sheets );
+            break;
+
+        case SCH_MODULE_BLOCK_T:
+            saveModuleBlock( static_cast<SCH_MODULE_BLOCK*>( item ) );
             break;
 
         case SCH_JUNCTION_T:
@@ -1175,6 +1185,55 @@ void SCH_IO_KICAD_SEXPR::saveSheet( SCH_SHEET* aSheet, const SCH_SHEET_LIST& aSh
     }
 
     m_out->Print( ")" );              // Closes sheet token.
+}
+
+
+void SCH_IO_KICAD_SEXPR::saveModuleBlock( SCH_MODULE_BLOCK* aModuleBlock )
+{
+    wxCHECK_RET( aModuleBlock != nullptr && m_out != nullptr, "" );
+
+    m_out->Print( "(module_block" );
+    m_out->Print( "(at %s %s)",
+                  EDA_UNIT_UTILS::FormatInternalUnits( schIUScale,
+                                                       aModuleBlock->GetPosition().x ).c_str(),
+                  EDA_UNIT_UTILS::FormatInternalUnits( schIUScale,
+                                                       aModuleBlock->GetPosition().y ).c_str() );
+
+    m_out->Print( "(size %s %s)",
+                  EDA_UNIT_UTILS::FormatInternalUnits( schIUScale,
+                                                       aModuleBlock->GetSize().x ).c_str(),
+                  EDA_UNIT_UTILS::FormatInternalUnits( schIUScale,
+                                                       aModuleBlock->GetSize().y ).c_str() );
+
+    if( !aModuleBlock->GetSubProjectPath().IsEmpty() )
+    {
+        m_out->Print( "(sub_project %s)",
+                      m_out->Quotew( aModuleBlock->GetSubProjectPath() ).c_str() );
+    }
+
+    m_out->Print( "(name %s)", m_out->Quotew( aModuleBlock->GetDisplayName() ).c_str() );
+
+    m_out->Print( "(uuid %s)",
+                  m_out->Quotew( aModuleBlock->m_Uuid.AsString() ).c_str() );
+
+    const VECTOR2I blockPos = aModuleBlock->GetPosition();
+
+    for( const SCH_MODULE_PIN* pin : aModuleBlock->GetPins() )
+    {
+        // Store position as block-relative offset for portability.
+        const VECTOR2I localPos = pin->GetPosition() - blockPos;
+
+        m_out->Print( "(pin" );
+        m_out->Print( "(uuid %s)", m_out->Quotew( pin->GetPinUuid().AsString() ).c_str() );
+        m_out->Print( "(number %s)", m_out->Quotew( pin->GetPinNumber() ).c_str() );
+        m_out->Print( "(name %s)", m_out->Quotew( pin->GetText() ).c_str() );
+        m_out->Print( "(at %s %s)",
+                      EDA_UNIT_UTILS::FormatInternalUnits( schIUScale, localPos.x ).c_str(),
+                      EDA_UNIT_UTILS::FormatInternalUnits( schIUScale, localPos.y ).c_str() );
+        m_out->Print( ")" );
+    }
+
+    m_out->Print( ")" );
 }
 
 

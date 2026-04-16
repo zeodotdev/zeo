@@ -1589,7 +1589,15 @@ bool SCH_EDIT_FRAME::SaveProject( bool aSaveAs )
 
 void SCH_EDIT_FRAME::syncCrossBoardNetsIfMbs()
 {
-    wxFileName schFn( Prj().AbsolutePath( Schematic().Root().GetFileName() ) );
+    SCH_SCREEN* rootScreen = Schematic().RootScreen();
+
+    if( !rootScreen )
+        return;
+
+    wxFileName schFn( rootScreen->GetFileName() );
+
+    if( !schFn.IsAbsolute() )
+        schFn.MakeAbsolute( Prj().GetProjectPath() );
 
     // Walk upward from the schematic's directory looking for a .kicad_multi file.
     wxFileName multiFile;
@@ -1626,13 +1634,7 @@ void SCH_EDIT_FRAME::syncCrossBoardNetsIfMbs()
     if( !expectedMbs.IsOk() || expectedMbs.GetFullPath() != schFn.GetFullPath() )
         return;
 
-    SCH_SCREEN* rootScreen = Schematic().RootScreen();
-
-    if( !rootScreen )
-        return;
-
-    std::vector<CROSS_BOARD_NET> nets = ExtractCrossBoardNets( *rootScreen, multi );
-    multi.SetCrossBoardNets( std::move( nets ) );
+    multi.SetCrossBoardNets( ExtractCrossBoardNets( *rootScreen, multi ) );
     multi.SaveToFile( multiFile.GetFullPath() );
 }
 

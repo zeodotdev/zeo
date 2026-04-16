@@ -186,9 +186,15 @@ std::vector<CROSS_BOARD_NET> ExtractCrossBoardNets( SCH_SCREEN& aMbsScreen,
         {
             CROSS_BOARD_NET_ENDPOINT endpoint;
             endpoint.subProjectUuid = subProjectUuidForBlock( *rec.block, aMultiBoard );
-            endpoint.componentRef   = rec.pin->GetComponentRef();
-            endpoint.pinNumber      = rec.pin->GetPinNumber();
-            endpoint.pinName        = rec.pin->GetText();
+
+            // v1 model: one connector symbol = one module pin, so the pin's
+            // stored number IS the connector reference. Fall back to that
+            // when no explicit componentRef is set on the pin.
+            endpoint.componentRef = rec.pin->GetComponentRef().IsEmpty()
+                                            ? rec.pin->GetPinNumber()
+                                            : rec.pin->GetComponentRef();
+            endpoint.pinNumber    = rec.pin->GetPinNumber();
+            endpoint.pinName      = rec.pin->GetText();
             net.endpoints.push_back( endpoint );
         }
 

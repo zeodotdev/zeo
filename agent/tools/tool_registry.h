@@ -92,6 +92,12 @@ public:
     void SetSupabaseAnonKey( const std::string& aKey )     { m_supabaseAnonKey = aKey; }
     const std::string& GetSupabaseAnonKey() const          { return m_supabaseAnonKey; }
 
+    /// Current active model display name (e.g. "Claude 4.7 Opus"). Used by
+    /// tool handlers to adapt behavior (e.g. higher screenshot resolution
+    /// for models that support it).
+    void SetCurrentModel( const std::string& aModel )      { m_currentModel = aModel; }
+    const std::string& GetCurrentModel() const             { return m_currentModel; }
+
     using ReloadSymbolLibFn = std::function<void( const std::string& )>;
     void SetReloadSymbolLibFn( ReloadSymbolLibFn aFn )     { m_reloadSymbolLibFn = std::move( aFn ); }
     void ReloadSymbolLib( const std::string& aLibName ) const
@@ -138,6 +144,7 @@ private:
     AGENT_AUTH*    m_auth = nullptr;
     std::string   m_supabaseUrl;
     std::string   m_supabaseAnonKey;
+    std::string   m_currentModel;
     ReloadSymbolLibFn m_reloadSymbolLibFn;
     ReloadFootprintLibFn m_reloadFootprintLibFn;
 };

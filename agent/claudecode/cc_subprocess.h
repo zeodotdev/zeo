@@ -29,12 +29,12 @@ public:
      * Start the Claude Code subprocess.
      * @param aWorkingDir  Working directory for the process
      * @param aMcpConfigPath  Path to MCP config JSON file (can be empty)
-     * @param aModel  Claude model to use (e.g. "claude-opus-4-6")
+     * @param aModel  Claude model to use (e.g. "claude-opus-4-7")
      * @param aSessionId  Optional session ID to resume
      * @return true if process started successfully
      */
     bool Start( const std::string& aWorkingDir, const std::string& aMcpConfigPath,
-                const std::string& aModel = "claude-opus-4-6",
+                const std::string& aModel = "claude-opus-4-7",
                 const std::string& aSessionId = "" );
 
     void Stop();

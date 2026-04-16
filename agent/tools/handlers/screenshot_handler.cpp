@@ -19,8 +19,29 @@
 #include <wx/utils.h>
 
 
-// Max image dimension in pixels per Claude API limits
-static const int MAX_IMAGE_DIMENSION = 1568;
+// Max image dimension in pixels per Claude API limits.
+// Opus 4.7 supports native 2576px long edge (high-res); earlier models
+// downsample to 1568px. Returning the correct ceiling for the active model
+// avoids wasting tokens on upscaled-then-downsampled pixels on older models
+// while preserving fidelity on 4.7.
+static const int MAX_IMAGE_DIMENSION_HIRES = 2576;
+static const int MAX_IMAGE_DIMENSION_DEFAULT = 1568;
+
+static int MaxImageDimensionForCurrentModel()
+{
+    const std::string& model = TOOL_REGISTRY::Instance().GetCurrentModel();
+
+    // Display names used in the UI (e.g. "Claude 4.7 Opus") and API IDs
+    // (e.g. "claude-opus-4-7") are both checked — handlers may see either
+    // depending on the code path.
+    if( model.find( "4.7" ) != std::string::npos
+        || model.find( "4-7" ) != std::string::npos )
+    {
+        return MAX_IMAGE_DIMENSION_HIRES;
+    }
+
+    return MAX_IMAGE_DIMENSION_DEFAULT;
+}
 
 // Shell metacharacters that are unsafe in quoted command arguments.
 // On Windows, backslash is a valid path separator and must be allowed.
@@ -532,13 +553,15 @@ bool SCREENSHOT_HANDLER::CropAndResize( const std::string& aPngPath,
         }
     }
 
+    const int maxDim = MaxImageDimensionForCurrentModel();
+
     // All-background image: just resize if needed
     if( maxX < 0 || maxY < 0 )
     {
-        if( width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION )
+        if( width > maxDim || height > maxDim )
         {
-            double scale = std::min( static_cast<double>( MAX_IMAGE_DIMENSION ) / width,
-                                     static_cast<double>( MAX_IMAGE_DIMENSION ) / height );
+            double scale = std::min( static_cast<double>( maxDim ) / width,
+                                     static_cast<double>( maxDim ) / height );
             image.Rescale( static_cast<int>( width * scale ),
                            static_cast<int>( height * scale ), wxIMAGE_QUALITY_HIGH );
         }
@@ -564,17 +587,17 @@ bool SCREENSHOT_HANDLER::CropAndResize( const std::string& aPngPath,
         height = image.GetHeight();
     }
 
-    // Resize so longest side <= MAX_IMAGE_DIMENSION
-    if( width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION )
+    // Resize so longest side <= model-specific max dimension
+    if( width > maxDim || height > maxDim )
     {
-        double scale = std::min( static_cast<double>( MAX_IMAGE_DIMENSION ) / width,
-                                 static_cast<double>( MAX_IMAGE_DIMENSION ) / height );
+        double scale = std::min( static_cast<double>( maxDim ) / width,
+                                 static_cast<double>( maxDim ) / height );
         image.Rescale( static_cast<int>( width * scale ),
                        static_cast<int>( height * scale ), wxIMAGE_QUALITY_HIGH );
     }
 
-    wxLogInfo( "SCREENSHOT: Cropped %dx%d -> %dx%d",
-               width, height, image.GetWidth(), image.GetHeight() );
+    wxLogInfo( "SCREENSHOT: Cropped %dx%d -> %dx%d (maxDim=%d)",
+               width, height, image.GetWidth(), image.GetHeight(), maxDim );
 
     return image.SaveFile( wxString::FromUTF8( aPngPath ), wxBITMAP_TYPE_PNG );
 }

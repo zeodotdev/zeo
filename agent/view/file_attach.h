@@ -23,9 +23,13 @@ namespace FileAttach
 
 /**
  * Maximum image dimension (width or height) for API submission.
- * Matches the Claude API limit used by the screenshot tool.
+ * Matches the Claude API limit used by the screenshot tool. Opus 4.7
+ * supports up to 2576px natively; earlier models downsample to 1568px.
+ * Use MaxImageDimensionForCurrentModel() in file_attach.cpp to get the
+ * per-model value.
  */
 static const int MAX_IMAGE_DIMENSION = 1568;
+static const int MAX_IMAGE_DIMENSION_HIRES = 2576;
 
 /**
  * Maximum image area in pixels (~12 megapixels).

@@ -74,6 +74,7 @@ public:
      */
     int RescueSymbols( const TOOL_EVENT& aEvent );
     int RemapSymbols( const TOOL_EVENT& aEvent );
+    int RefreshMbsFromSubProjects( const TOOL_EVENT& aEvent );
 
     bool RescueLegacyProject( bool aRunningOnDemand );
     bool RescueSymbolLibTableProject( bool aRunningOnDemand );

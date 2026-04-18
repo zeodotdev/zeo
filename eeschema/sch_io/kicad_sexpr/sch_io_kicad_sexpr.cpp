@@ -1211,6 +1211,12 @@ void SCH_IO_KICAD_SEXPR::saveModuleBlock( SCH_MODULE_BLOCK* aModuleBlock )
                       m_out->Quotew( aModuleBlock->GetSubProjectPath() ).c_str() );
     }
 
+    if( !aModuleBlock->GetComponentRef().IsEmpty() )
+    {
+        m_out->Print( "(component %s)",
+                      m_out->Quotew( aModuleBlock->GetComponentRef() ).c_str() );
+    }
+
     m_out->Print( "(name %s)", m_out->Quotew( aModuleBlock->GetDisplayName() ).c_str() );
 
     m_out->Print( "(uuid %s)",

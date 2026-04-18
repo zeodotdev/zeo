@@ -29,6 +29,8 @@
 
 #include <common.h>                         // for PAGE_INFO
 
+#include <project/multi_board_project.h>
+#include <wx/dir.h>
 #include <base_units.h>
 #include <board.h>
 #include <board_design_settings.h>
@@ -75,6 +77,65 @@ BOARD_NETLIST_UPDATER::BOARD_NETLIST_UPDATER( PCB_EDIT_FRAME* aFrame, BOARD* aBo
 
 BOARD_NETLIST_UPDATER::~BOARD_NETLIST_UPDATER()
 {
+}
+
+
+wxString BOARD_NETLIST_UPDATER::lookupCrossBoardNet( const wxString& aRef,
+                                                     const wxString& aPadNumber )
+{
+    if( !m_crossBoardNetsLoaded )
+    {
+        m_crossBoardNetsLoaded = true;
+
+        // Walk up from the board file looking for a .kicad_multi.
+        wxFileName boardFn( m_board->GetFileName() );
+
+        if( !boardFn.IsOk() || boardFn.GetFullPath().IsEmpty() )
+            return wxEmptyString;
+
+        wxFileName searchDir( boardFn );
+        searchDir.SetFullName( wxEmptyString );
+
+        wxFileName multiFile;
+
+        for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
+        {
+            wxArrayString files;
+            wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_multi" ),
+                                wxDIR_FILES );
+
+            if( !files.IsEmpty() )
+            {
+                multiFile = wxFileName( files[0] );
+                break;
+            }
+
+            searchDir.RemoveLastDir();
+        }
+
+        if( !multiFile.IsOk() || !multiFile.FileExists() )
+            return wxEmptyString;
+
+        MULTI_BOARD_PROJECT multi;
+
+        if( !multi.LoadFromFile( multiFile.GetFullPath() ) )
+            return wxEmptyString;
+
+        for( const MB_CROSS_BOARD_NET& net : multi.GetCrossBoardNets() )
+        {
+            for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
+            {
+                m_crossBoardNetByRefPad[{ ep.componentRef, ep.pinNumber }] = net.name;
+            }
+        }
+    }
+
+    auto it = m_crossBoardNetByRefPad.find( { aRef, aPadNumber } );
+
+    if( it == m_crossBoardNetByRefPad.end() )
+        return wxEmptyString;
+
+    return it->second;
 }
 
 
@@ -1102,7 +1163,43 @@ bool BOARD_NETLIST_UPDATER::updateComponentPadConnections( FOOTPRINT* aFootprint
         // Test if new footprint pad has no net (pads not on copper layers have no net).
         if( !net.IsValid() || !pad->IsOnCopperLayer() )
         {
-            if( !pad->GetNetname().IsEmpty() )
+            // Cross-board preservation: if this pad is registered as a
+            // cross-board endpoint in the enclosing .kicad_multi, keep its
+            // net assignment — the multi-board layer owns that pad's net.
+            wxString crossBoardNet = lookupCrossBoardNet( aFootprint->GetReference(),
+                                                          pad->GetNumber() );
+
+            if( !crossBoardNet.IsEmpty() && pad->IsOnCopperLayer() )
+            {
+                NETINFO_ITEM* netinfo = m_board->FindNet( crossBoardNet );
+
+                if( !netinfo && !m_isDryRun )
+                {
+                    netinfo = new NETINFO_ITEM( m_board, crossBoardNet );
+                    m_board->Add( netinfo );
+                    m_addedNets[crossBoardNet] = netinfo;
+                }
+
+                if( netinfo && !m_isDryRun )
+                {
+                    netinfo->SetIsCurrent( true );
+
+                    if( pad->GetNetname() != crossBoardNet )
+                    {
+                        changed = true;
+                        pad->SetNet( netinfo );
+                    }
+                }
+
+                cacheNetname( pad, crossBoardNet );
+
+                msg.Printf( _( "Preserved cross-board net '%s' on %s pad %s." ),
+                            EscapeHTML( crossBoardNet ),
+                            aFootprint->GetReference(),
+                            EscapeHTML( pad->GetNumber() ) );
+                m_reporter->Report( msg, RPT_SEVERITY_INFO );
+            }
+            else if( !pad->GetNetname().IsEmpty() )
             {
                 if( m_isDryRun )
                 {
@@ -1130,7 +1227,7 @@ bool BOARD_NETLIST_UPDATER::updateComponentPadConnections( FOOTPRINT* aFootprint
                 ++m_warningCount;
             }
 
-            if( !m_isDryRun )
+            if( !m_isDryRun && crossBoardNet.IsEmpty() )
             {
                 changed = true;
                 pad->SetNetCode( NETINFO_LIST::UNCONNECTED );
@@ -1141,7 +1238,7 @@ bool BOARD_NETLIST_UPDATER::updateComponentPadConnections( FOOTPRINT* aFootprint
                     pad->SetPinFunction( wxEmptyString );
 
             }
-            else
+            else if( crossBoardNet.IsEmpty() )
             {
                 cacheNetname( pad, wxEmptyString );
             }

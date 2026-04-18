@@ -73,6 +73,13 @@ public:
     const wxString& GetSubProjectPath() const { return m_subProjectPath; }
     void SetSubProjectPath( const wxString& aPath ) { m_subProjectPath = aPath; }
 
+    /**
+     * Connector reference that this block represents on the sub-project,
+     * e.g. "J1". Empty string for legacy blocks that wrap a whole sub-project.
+     */
+    const wxString& GetComponentRef() const { return m_componentRef; }
+    void SetComponentRef( const wxString& aRef ) { m_componentRef = aRef; }
+
     const wxString& GetDisplayName() const { return m_displayName; }
     void SetDisplayName( const wxString& aName ) { m_displayName = aName; }
 
@@ -170,7 +177,8 @@ private:
     VECTOR2I                     m_size;             ///< Width x Height
     KIID                         m_subProjectUuid;   ///< Sub-project reference
     wxString                     m_subProjectPath;   ///< Path relative to MBS dir
-    wxString                     m_displayName;      ///< "fc", "Flight Controller", etc.
+    wxString                     m_componentRef;     ///< Connector reference, e.g. "J1"
+    wxString                     m_displayName;      ///< "fc/J1", "Flight Controller", etc.
     std::vector<SCH_MODULE_PIN*> m_pins;             ///< Owned pin children
 };
 

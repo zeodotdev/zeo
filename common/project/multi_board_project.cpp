@@ -22,6 +22,7 @@
  */
 
 #include <project/multi_board_project.h>
+#include <project/multi_board_scan.h>
 
 #include <nlohmann/json.hpp>
 #include <wx/ffile.h>
@@ -133,7 +134,7 @@ bool MULTI_BOARD_PROJECT::LoadFromFile( const wxString& aPath )
         {
             for( const auto& entry : j.at( "cross_board_nets" ) )
             {
-                CROSS_BOARD_NET net;
+                MB_CROSS_BOARD_NET net;
 
                 if( entry.contains( "uuid" ) )
                     net.uuid = KIID( wxString::FromUTF8( entry.at( "uuid" ).get<std::string>() ) );
@@ -145,7 +146,7 @@ bool MULTI_BOARD_PROJECT::LoadFromFile( const wxString& aPath )
                 {
                     for( const auto& ep : entry.at( "endpoints" ) )
                     {
-                        CROSS_BOARD_NET_ENDPOINT endpoint;
+                        MB_CROSS_BOARD_NET_ENDPOINT endpoint;
 
                         if( ep.contains( "sub_project_uuid" ) )
                         {
@@ -217,7 +218,7 @@ bool MULTI_BOARD_PROJECT::SaveToFile( const wxString& aPath ) const
 
     json netsArray = json::array();
 
-    for( const CROSS_BOARD_NET& net : m_crossBoardNets )
+    for( const MB_CROSS_BOARD_NET& net : m_crossBoardNets )
     {
         json entry;
         entry["uuid"] = net.uuid.AsString().ToStdString();
@@ -225,7 +226,7 @@ bool MULTI_BOARD_PROJECT::SaveToFile( const wxString& aPath ) const
 
         json epArray = json::array();
 
-        for( const CROSS_BOARD_NET_ENDPOINT& endpoint : net.endpoints )
+        for( const MB_CROSS_BOARD_NET_ENDPOINT& endpoint : net.endpoints )
         {
             json ep;
             ep["sub_project_uuid"] = endpoint.subProjectUuid.AsString().ToStdString();
@@ -463,14 +464,14 @@ size_t findMatchingClose( const wxString& aText, size_t aStart )
 
 /**
  * Scan a .kicad_pcb file for connector footprints and return, per reference,
- * the ordered list of pad numbers. The pad numbers are strings (e.g. "1",
- * "A12", "GND") to accommodate non-integer pad names used by USB-C / edge
- * connectors. Order preserves the order they appear in the file.
+ * the ordered list of pad info (number + current net). The pad numbers are
+ * strings (e.g. "1", "A12", "GND") to accommodate non-integer pad names
+ * used by USB-C / edge connectors. Order preserves the order in the file.
  */
-std::map<wxString, std::vector<wxString>>
+std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>
 scanConnectorPads( const wxFileName& aPcbFile )
 {
-    std::map<wxString, std::vector<wxString>> out;
+    std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>> out;
 
     if( !aPcbFile.FileExists() )
         return out;
@@ -490,8 +491,9 @@ scanConnectorPads( const wxFileName& aPcbFile )
     static wxRegEx refRe( wxT( "\\(property\\s+\"Reference\"\\s+\"([^\"]*)\"" ),
                           wxRE_DEFAULT );
     static wxRegEx padRe( wxT( "\\(pad\\s+\"([^\"]*)\"" ), wxRE_DEFAULT );
+    static wxRegEx netRe( wxT( "\\(net\\s+\"([^\"]*)\"\\)" ), wxRE_DEFAULT );
 
-    if( !refRe.IsValid() || !padRe.IsValid() )
+    if( !refRe.IsValid() || !padRe.IsValid() || !netRe.IsValid() )
         return out;
 
     size_t pos = 0;
@@ -520,7 +522,7 @@ scanConnectorPads( const wxFileName& aPcbFile )
         if( !isConnectorRef( ref ) )
             continue;
 
-        std::vector<wxString>& pads = out[ref];
+        std::vector<MULTI_BOARD_PAD_INFO>& pads = out[ref];
 
         size_t scan = 0;
 
@@ -534,12 +536,33 @@ scanConnectorPads( const wxFileName& aPcbFile )
             size_t matchStart, matchLen;
             padRe.GetMatch( &matchStart, &matchLen, 0 );
 
-            wxString padNum = padRe.GetMatch( remaining, 1 );
+            size_t padAbsStart = scan + matchStart;
+            size_t padAbsEnd   = findMatchingClose( block, padAbsStart );
 
-            if( std::find( pads.begin(), pads.end(), padNum ) == pads.end() )
-                pads.push_back( padNum );
+            if( padAbsEnd == wxString::npos )
+                break;
 
-            scan += matchStart + matchLen;
+            wxString padBlock = block.Mid( padAbsStart, padAbsEnd - padAbsStart + 1 );
+            wxString padNum   = padRe.GetMatch( remaining, 1 );
+
+            // Deduplicate: multiple "(pad \"N\"" may appear if the footprint
+            // has several pads sharing a number (e.g. GND). Keep the first.
+            auto existing = std::find_if( pads.begin(), pads.end(),
+                                          [&]( const MULTI_BOARD_PAD_INFO& p )
+                                          { return p.padNumber == padNum; } );
+
+            if( existing == pads.end() )
+            {
+                MULTI_BOARD_PAD_INFO info;
+                info.padNumber = padNum;
+
+                if( netRe.Matches( padBlock ) )
+                    info.netName = netRe.GetMatch( padBlock, 1 );
+
+                pads.push_back( info );
+            }
+
+            scan = padAbsEnd + 1;
         }
     }
 
@@ -646,6 +669,81 @@ std::vector<wxString> scanConnectorReferences( const wxFileName& aSchFile )
 } // end anonymous namespace
 
 
+wxFileName MultiBoardMainSchematic( const wxFileName& aProFile )
+{
+    return mainSchematicForSubProject( aProFile );
+}
+
+
+wxFileName MultiBoardMainPcb( const wxFileName& aProFile )
+{
+    return mainPcbForSubProject( aProFile );
+}
+
+
+std::vector<wxString> MultiBoardScanConnectorReferences( const wxFileName& aSchFile )
+{
+    return scanConnectorReferences( aSchFile );
+}
+
+
+std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>
+MultiBoardScanConnectorPads( const wxFileName& aPcbFile )
+{
+    return scanConnectorPads( aPcbFile );
+}
+
+
+/**
+ * Heuristic matching the one in cross_board_pcb_sync.cpp — returns true
+ * for empty / KiCad auto-generated / unconnected- / our "Net-<hex>" names.
+ */
+static bool isAutoGeneratedNetName_local( const wxString& aName )
+{
+    if( aName.IsEmpty() )
+        return true;
+
+    if( aName.StartsWith( wxT( "Net-(" ) ) )
+        return true;
+
+    if( aName.StartsWith( wxT( "unconnected-" ) ) )
+        return true;
+
+    if( aName.StartsWith( wxT( "Net-" ) ) && aName.length() == 12 )
+    {
+        for( size_t i = 4; i < 12; ++i )
+        {
+            wxChar c = aName[i];
+
+            if( !( ( c >= '0' && c <= '9' ) || ( c >= 'a' && c <= 'f' )
+                   || ( c >= 'A' && c <= 'F' ) ) )
+                return false;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+
+/**
+ * Pick a human-friendly display label for an MBS pin: prefer the pad's
+ * local net name when it's meaningful; fall back to "<ref>.<padNum>" or
+ * just the ref if no pad number is known.
+ */
+wxString MultiBoardPinLabel( const wxString& aRef, const MULTI_BOARD_PAD_INFO& aPad )
+{
+    if( !isAutoGeneratedNetName_local( aPad.netName ) )
+        return aPad.netName;
+
+    if( aPad.padNumber.IsEmpty() )
+        return aRef;
+
+    return aRef + wxT( "." ) + aPad.padNumber;
+}
+
+
 wxFileName MULTI_BOARD_PROJECT::EnsureMbsFile( const wxString& aContainerBasename )
 {
     if( m_mbsFileName.IsEmpty() )
@@ -723,119 +821,116 @@ wxFileName MULTI_BOARD_PROJECT::EnsureMbsFile( const wxString& aContainerBasenam
     }
     else
     {
+        // One module_block per CONNECTOR (not per sub-project) so that each
+        // cross-board interface gets its own visual anchor. Blocks are
+        // grouped vertically: one row per sub-project, connectors in that
+        // sub-project lined up left-to-right within the row.
+        const double perPin      = 5 * grid;   // 6.35 mm per pin (on-grid)
+        const double padTop      = 8 * grid;   // 10.16 mm
+        const double padBot      = 8 * grid;   // 10.16 mm
+        const double minHeight   = 32 * grid;  // ~40.6 mm
+        const double rowSpacing  = 20 * grid;  // 25.4 mm between sub-project rows
+
+        double cursorY = startY;
+
         for( const SUB_PROJECT_INFO& info : m_subProjects )
         {
-            wxString blockName = info.displayName.IsEmpty() ? info.name : info.displayName;
+            wxString subName = info.displayName.IsEmpty() ? info.name : info.displayName;
 
-            // Scan the sub-project's main .kicad_sch for connector-class
-            // symbols. Each one becomes a group of pins on this block.
             wxFileName proFile = ResolveSubProjectPath( info );
             wxFileName schFile = mainSchematicForSubProject( proFile );
             wxFileName pcbFile = mainPcbForSubProject( proFile );
+
             std::vector<wxString> connectors = scanConnectorReferences( schFile );
-            std::map<wxString, std::vector<wxString>> pads = scanConnectorPads( pcbFile );
+            std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>> pads =
+                    scanConnectorPads( pcbFile );
 
-            // Flatten: one entry per connector-pad pair, preserving connector
-            // order (from schematic scan) and pad order (from PCB scan).
-            struct PinEntry
-            {
-                wxString componentRef;   ///< "J1"
-                wxString padNumber;      ///< "A1", "3", etc.
-            };
-
-            std::vector<PinEntry> pinEntries;
+            double rowCursorX  = startX;
+            double rowMaxHeight = 0;
 
             for( const wxString& ref : connectors )
             {
+                std::vector<MULTI_BOARD_PAD_INFO> padList;
+
                 auto it = pads.find( ref );
 
-                if( it == pads.end() || it->second.empty() )
-                {
-                    // Connector exists on schematic but has no footprint /
-                    // pads on PCB yet — emit a single placeholder pin so the
-                    // connector is still visible on the module block.
-                    pinEntries.push_back( { ref, wxEmptyString } );
-                    continue;
-                }
+                if( it != pads.end() )
+                    padList = it->second;
 
-                for( const wxString& padNum : it->second )
-                    pinEntries.push_back( { ref, padNum } );
+                if( padList.empty() )
+                    padList.push_back( MULTI_BOARD_PAD_INFO{} );  // placeholder pin
+
+                size_t pinCount   = padList.size();
+                size_t leftCount  = ( pinCount + 1 ) / 2;
+                size_t rightCount = pinCount - leftCount;
+                size_t maxSide    = std::max( leftCount, rightCount );
+
+                double thisHeight = padTop + padBot + perPin * std::max<size_t>( maxSide, 1 );
+                thisHeight        = std::max( thisHeight, minHeight );
+
+                wxString pinsSection;
+                auto emitPin =
+                        [&]( const MULTI_BOARD_PAD_INFO& aPad, double aLocalX, double aLocalY )
+                        {
+                            wxString label = MultiBoardPinLabel( ref, aPad );
+
+                            pinsSection += wxString::Format(
+                                    wxT( "\t\t(pin\n"
+                                         "\t\t\t(uuid \"%s\")\n"
+                                         "\t\t\t(component \"%s\")\n"
+                                         "\t\t\t(number \"%s\")\n"
+                                         "\t\t\t(name \"%s\")\n"
+                                         "\t\t\t(at %.2f %.2f)\n"
+                                         "\t\t)\n" ),
+                                    KIID().AsString(), ref, aPad.padNumber, label,
+                                    aLocalX, aLocalY );
+                        };
+
+                for( size_t i = 0; i < leftCount; ++i )
+                    emitPin( padList[i], 0.0, padTop + perPin * (double) i );
+
+                for( size_t i = 0; i < rightCount; ++i )
+                    emitPin( padList[leftCount + i], blockWidth,
+                             padTop + perPin * (double) i );
+
+                wxString blockDisplayName = subName + wxT( " / " ) + ref;
+
+                blocksSection += wxString::Format(
+                        wxT( "\t(module_block\n"
+                             "\t\t(at %.2f %.2f)\n"
+                             "\t\t(size %.2f %.2f)\n"
+                             "\t\t(sub_project \"%s\")\n"
+                             "\t\t(component \"%s\")\n"
+                             "\t\t(name \"%s\")\n"
+                             "\t\t(uuid \"%s\")\n"
+                             "%s"
+                             "\t)\n" ),
+                        rowCursorX, cursorY, blockWidth, thisHeight,
+                        info.relativePath, ref, blockDisplayName,
+                        KIID().AsString(), pinsSection );
+
+                rowCursorX += blockWidth + blockSpacing;
+                rowMaxHeight = std::max( rowMaxHeight, thisHeight );
             }
 
-            // Dynamically grow the block so tall pad lists fit.
-            double       thisHeight = blockHeight;
-            const double minHeight  = 32 * grid;   // ~40.6 mm
-            const double perPin     = 5 * grid;    // 6.35 mm per pin (on-grid)
-            const double padTop     = 8 * grid;    // 10.16 mm
-            const double padBot     = 8 * grid;    // 10.16 mm
-
-            // Half the pins go on the left edge, half on the right.
-            size_t pinCount   = pinEntries.size();
-            size_t leftCount  = ( pinCount + 1 ) / 2;
-            size_t rightCount = pinCount - leftCount;
-            size_t maxSide    = std::max( leftCount, rightCount );
-
-            double needed = padTop + padBot + perPin * std::max<size_t>( maxSide, 1 );
-            if( needed > thisHeight )
-                thisHeight = needed;
-            if( thisHeight < minHeight )
-                thisHeight = minHeight;
-
-            wxString pinsSection;
-            auto emitPin =
-                    [&]( const PinEntry& aEntry, double aLocalX, double aLocalY )
-                    {
-                        // Pin display name "J1.3" — number = pad, component = ref.
-                        wxString label = aEntry.padNumber.IsEmpty()
-                                                ? aEntry.componentRef
-                                                : aEntry.componentRef + wxT( "." )
-                                                          + aEntry.padNumber;
-
-                        pinsSection += wxString::Format(
-                                wxT( "\t\t(pin\n"
-                                     "\t\t\t(uuid \"%s\")\n"
-                                     "\t\t\t(component \"%s\")\n"
-                                     "\t\t\t(number \"%s\")\n"
-                                     "\t\t\t(name \"%s\")\n"
-                                     "\t\t\t(at %.2f %.2f)\n"
-                                     "\t\t)\n" ),
-                                KIID().AsString(),
-                                aEntry.componentRef,
-                                aEntry.padNumber,
-                                label,
-                                aLocalX, aLocalY );
-                    };
-
-            // Distribute pins evenly along the left edge (x=0) and right
-            // edge (x=width), top-to-bottom.
-            for( size_t i = 0; i < leftCount; ++i )
+            // If this sub-project has no connectors yet, drop a single
+            // placeholder so the sub-project is still visually represented.
+            if( connectors.empty() )
             {
-                double localY = padTop + perPin * (double) i;
-                emitPin( pinEntries[i], 0.0, localY );
+                blocksSection += wxString::Format(
+                        wxT( "\t(module_block\n"
+                             "\t\t(at %.2f %.2f)\n"
+                             "\t\t(size %.2f %.2f)\n"
+                             "\t\t(sub_project \"%s\")\n"
+                             "\t\t(name \"%s\")\n"
+                             "\t\t(uuid \"%s\")\n"
+                             "\t)\n" ),
+                        rowCursorX, cursorY, blockWidth, minHeight,
+                        info.relativePath, subName, KIID().AsString() );
+                rowMaxHeight = std::max( rowMaxHeight, minHeight );
             }
 
-            for( size_t i = 0; i < rightCount; ++i )
-            {
-                double localY = padTop + perPin * (double) i;
-                emitPin( pinEntries[leftCount + i], blockWidth, localY );
-            }
-
-            blocksSection += wxString::Format(
-                    wxT( "\t(module_block\n"
-                         "\t\t(at %.2f %.2f)\n"
-                         "\t\t(size %.2f %.2f)\n"
-                         "\t\t(sub_project \"%s\")\n"
-                         "\t\t(name \"%s\")\n"
-                         "\t\t(uuid \"%s\")\n"
-                         "%s"
-                         "\t)\n" ),
-                    cursorX, startY, blockWidth, thisHeight,
-                    info.relativePath,
-                    blockName,
-                    KIID().AsString(),
-                    pinsSection );
-
-            cursorX += blockWidth + blockSpacing;
+            cursorY += rowMaxHeight + rowSpacing;
         }
     }
 

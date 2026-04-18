@@ -44,6 +44,7 @@ SCH_MODULE_BLOCK::SCH_MODULE_BLOCK( const SCH_MODULE_BLOCK& aOther ) :
         m_size( aOther.m_size ),
         m_subProjectUuid( aOther.m_subProjectUuid ),
         m_subProjectPath( aOther.m_subProjectPath ),
+        m_componentRef( aOther.m_componentRef ),
         m_displayName( aOther.m_displayName )
 {
     copyPinsFrom( aOther );
@@ -61,6 +62,7 @@ SCH_MODULE_BLOCK& SCH_MODULE_BLOCK::operator=( const SCH_MODULE_BLOCK& aOther )
     m_size           = aOther.m_size;
     m_subProjectUuid = aOther.m_subProjectUuid;
     m_subProjectPath = aOther.m_subProjectPath;
+    m_componentRef   = aOther.m_componentRef;
     m_displayName    = aOther.m_displayName;
 
     clearPins();
@@ -279,6 +281,7 @@ bool SCH_MODULE_BLOCK::operator==( const SCH_ITEM& aOther ) const
 
     return m_pos == other.m_pos && m_size == other.m_size
            && m_subProjectUuid == other.m_subProjectUuid
+           && m_componentRef == other.m_componentRef
            && m_displayName == other.m_displayName;
 }
 
@@ -294,6 +297,7 @@ void SCH_MODULE_BLOCK::swapData( SCH_ITEM* aItem )
     std::swap( m_size, other->m_size );
     std::swap( m_subProjectUuid, other->m_subProjectUuid );
     std::swap( m_subProjectPath, other->m_subProjectPath );
+    std::swap( m_componentRef, other->m_componentRef );
     std::swap( m_displayName, other->m_displayName );
     std::swap( m_pins, other->m_pins );
 

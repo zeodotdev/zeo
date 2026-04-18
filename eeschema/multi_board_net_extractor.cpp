@@ -112,15 +112,41 @@ KIID subProjectUuidForBlock( const SCH_MODULE_BLOCK& aBlock,
 } // anonymous namespace
 
 
-std::vector<CROSS_BOARD_NET> ExtractCrossBoardNets( SCH_SCREEN& aMbsScreen,
+namespace {
+
+/**
+ * True if `aP` lies on the segment [aA, aB] (including endpoints). Handles
+ * orthogonal and diagonal segments; collinearity tested via 2D cross product,
+ * on-segment range tested via dot-product bounds.
+ */
+bool isPointOnSegment( const VECTOR2I& aP, const VECTOR2I& aA, const VECTOR2I& aB )
+{
+    VECTOR2I ab = aB - aA;
+    VECTOR2I ap = aP - aA;
+
+    int64_t cross = (int64_t) ab.x * ap.y - (int64_t) ab.y * ap.x;
+
+    if( cross != 0 )
+        return false;
+
+    int64_t dot    = (int64_t) ab.x * ap.x + (int64_t) ab.y * ap.y;
+    int64_t lenSq  = (int64_t) ab.x * ab.x + (int64_t) ab.y * ab.y;
+
+    return dot >= 0 && dot <= lenSq;
+}
+
+} // anonymous namespace
+
+
+std::vector<MB_CROSS_BOARD_NET> ExtractCrossBoardNets( SCH_SCREEN& aMbsScreen,
                                                     const MULTI_BOARD_PROJECT& aMultiBoard )
 {
     POS_UNION_FIND              uf;
     std::vector<PinRecord>      modulePins;
     std::vector<SCH_LABEL_BASE*> labels;
+    std::vector<SCH_LINE*>      wires;
 
-    // Pass 1: walk the screen, collect module pins, unite wire endpoints,
-    // and stash labels for net naming.
+    // Pass 1: walk the screen, collect module pins + wires + labels.
     for( SCH_ITEM* item : aMbsScreen.Items() )
     {
         if( item->Type() == SCH_MODULE_BLOCK_T )
@@ -138,13 +164,35 @@ std::vector<CROSS_BOARD_NET> ExtractCrossBoardNets( SCH_SCREEN& aMbsScreen,
             auto* line = static_cast<SCH_LINE*>( item );
 
             if( line->GetLayer() == LAYER_WIRE )
+            {
+                wires.push_back( line );
                 uf.Unite( line->GetStartPoint(), line->GetEndPoint() );
+            }
         }
         else if( item->Type() == SCH_LABEL_T
                  || item->Type() == SCH_GLOBAL_LABEL_T
                  || item->Type() == SCH_HIER_LABEL_T )
         {
             labels.push_back( static_cast<SCH_LABEL_BASE*>( item ) );
+        }
+    }
+
+    // Pass 1b: unite each label's position with the first wire it sits on.
+    // A label placed mid-segment (not at an endpoint) otherwise wouldn't
+    // share a union-find root with the wire — so the naming lookup would
+    // miss. This handles labels at wire endpoints (trivial) and mid-wire
+    // (segment test).
+    for( SCH_LABEL_BASE* label : labels )
+    {
+        VECTOR2I pos = label->GetPosition();
+
+        for( SCH_LINE* wire : wires )
+        {
+            if( isPointOnSegment( pos, wire->GetStartPoint(), wire->GetEndPoint() ) )
+            {
+                uf.Unite( pos, wire->GetStartPoint() );
+                break;
+            }
         }
     }
 
@@ -158,14 +206,14 @@ std::vector<CROSS_BOARD_NET> ExtractCrossBoardNets( SCH_SCREEN& aMbsScreen,
     }
 
     // Pass 3: for each group that spans 2+ pins, emit a cross-board net.
-    std::vector<CROSS_BOARD_NET> nets;
+    std::vector<MB_CROSS_BOARD_NET> nets;
 
     for( auto& [root, group] : groups )
     {
         if( group.size() < 2 )
             continue;
 
-        CROSS_BOARD_NET net;
+        MB_CROSS_BOARD_NET net;
         net.uuid = KIID();
 
         // Name: first label that lands on this group's root set.
@@ -184,15 +232,22 @@ std::vector<CROSS_BOARD_NET> ExtractCrossBoardNets( SCH_SCREEN& aMbsScreen,
 
         for( const PinRecord& rec : group )
         {
-            CROSS_BOARD_NET_ENDPOINT endpoint;
+            MB_CROSS_BOARD_NET_ENDPOINT endpoint;
             endpoint.subProjectUuid = subProjectUuidForBlock( *rec.block, aMultiBoard );
 
-            // v1 model: one connector symbol = one module pin, so the pin's
-            // stored number IS the connector reference. Fall back to that
-            // when no explicit componentRef is set on the pin.
-            endpoint.componentRef = rec.pin->GetComponentRef().IsEmpty()
-                                            ? rec.pin->GetPinNumber()
-                                            : rec.pin->GetComponentRef();
+            // Prefer the block-level componentRef (authoritative in the
+            // block-per-connector model). Fall back to the pin's field, then
+            // to pinNumber for legacy MBS files where each connector became a
+            // single pin.
+            wxString componentRef = rec.block->GetComponentRef();
+
+            if( componentRef.IsEmpty() )
+                componentRef = rec.pin->GetComponentRef();
+
+            if( componentRef.IsEmpty() )
+                componentRef = rec.pin->GetPinNumber();
+
+            endpoint.componentRef = componentRef;
             endpoint.pinNumber    = rec.pin->GetPinNumber();
             endpoint.pinName      = rec.pin->GetText();
             net.endpoints.push_back( endpoint );
@@ -203,7 +258,7 @@ std::vector<CROSS_BOARD_NET> ExtractCrossBoardNets( SCH_SCREEN& aMbsScreen,
 
     // Stable ordering by net name for deterministic output.
     std::sort( nets.begin(), nets.end(),
-               []( const CROSS_BOARD_NET& a, const CROSS_BOARD_NET& b )
+               []( const MB_CROSS_BOARD_NET& a, const MB_CROSS_BOARD_NET& b )
                {
                    return a.name < b.name;
                } );

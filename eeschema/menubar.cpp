@@ -308,6 +308,7 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
     toolsMenu->AppendSeparator();
     toolsMenu->Add( SCH_ACTIONS::rescueSymbols );
     toolsMenu->Add( SCH_ACTIONS::remapSymbols );
+    toolsMenu->Add( SCH_ACTIONS::refreshMbsFromSubProjects );
 
     toolsMenu->AppendSeparator();
     toolsMenu->Add( SCH_ACTIONS::editSymbolFields );

@@ -24,6 +24,9 @@
 
 #include "tools/sch_editor_control.h"
 
+#include "multi_board_mbs_refresh.h"
+#include <project/multi_board_project.h>
+#include <wx/dir.h>
 #include <wx/display.h>
 #include <clipboard.h>
 #include <core/base64.h>
@@ -606,6 +609,78 @@ int SCH_EDITOR_CONTROL::RemapSymbols( const TOOL_EVENT& aEvent )
     dlgRemap.ShowQuasiModal();
 
     m_frame->GetCanvas()->Refresh( true );
+
+    return 0;
+}
+
+
+int SCH_EDITOR_CONTROL::RefreshMbsFromSubProjects( const TOOL_EVENT& aEvent )
+{
+    // Locate the enclosing .kicad_multi by walking up from the schematic's
+    // directory — same logic as syncCrossBoardNetsIfMbs.
+    SCH_SCREEN* rootScreen = m_frame->Schematic().RootScreen();
+
+    if( !rootScreen )
+        return 0;
+
+    wxFileName schFn( rootScreen->GetFileName() );
+
+    if( !schFn.IsAbsolute() )
+        schFn.MakeAbsolute( m_frame->Prj().GetProjectPath() );
+
+    wxFileName multiFile;
+    wxFileName searchDir( schFn );
+    searchDir.SetFullName( wxEmptyString );
+
+    for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
+    {
+        wxArrayString files;
+        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_multi" ),
+                            wxDIR_FILES );
+
+        if( !files.IsEmpty() )
+        {
+            multiFile = wxFileName( files[0] );
+            break;
+        }
+
+        searchDir.RemoveLastDir();
+    }
+
+    if( !multiFile.IsOk() || !multiFile.FileExists() )
+    {
+        wxMessageBox( _( "This schematic is not the multi-board schematic of a "
+                         ".kicad_multi container." ),
+                      _( "Nothing to Refresh" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    MULTI_BOARD_PROJECT multi;
+
+    if( !multi.LoadFromFile( multiFile.GetFullPath() ) )
+    {
+        wxMessageBox( _( "Could not load the multi-board container." ),
+                      _( "Refresh Failed" ), wxOK | wxICON_ERROR, m_frame );
+        return 0;
+    }
+
+    wxFileName expectedMbs = multi.ResolveMbsPath();
+
+    if( !expectedMbs.IsOk() || expectedMbs.GetFullPath() != schFn.GetFullPath() )
+    {
+        wxMessageBox( _( "This schematic is not the registered multi-board "
+                         "schematic for its .kicad_multi container." ),
+                      _( "Not an MBS" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    MBS_REFRESH_RESULT res = ::RefreshMbsFromSubProjects( *rootScreen, multi );
+
+    m_frame->OnModify();
+    m_frame->GetCanvas()->Refresh( true );
+
+    wxMessageBox( res.summary, _( "Refresh Module Blocks" ),
+                  wxOK | wxICON_INFORMATION, m_frame );
 
     return 0;
 }
@@ -3615,6 +3690,8 @@ void SCH_EDITOR_CONTROL::setTransitions()
 
     Go( &SCH_EDITOR_CONTROL::RescueSymbols, SCH_ACTIONS::rescueSymbols.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::RemapSymbols, SCH_ACTIONS::remapSymbols.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::RefreshMbsFromSubProjects,
+        SCH_ACTIONS::refreshMbsFromSubProjects.MakeEvent() );
 
     Go( &SCH_EDITOR_CONTROL::CrossProbeToPcb, EVENTS::PointSelectedEvent );
     Go( &SCH_EDITOR_CONTROL::CrossProbeToPcb, EVENTS::SelectedEvent );

@@ -1163,6 +1163,13 @@ TOOL_ACTION SCH_ACTIONS::remapSymbols( TOOL_ACTION_ARGS()
         .Tooltip( _( "Remap library symbol references in legacy schematics to the symbol library table" ) )
         .Icon( BITMAPS::rescue ) );
 
+TOOL_ACTION SCH_ACTIONS::refreshMbsFromSubProjects( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.refreshMbsFromSubProjects" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Refresh Module Blocks from Sub-Projects" ) )
+        .Tooltip( _( "Scan each sub-project and add any new connectors or pads that aren't yet on this multi-board schematic" ) )
+        .Icon( BITMAPS::refresh ) );
+
 TOOL_ACTION SCH_ACTIONS::nextNetItem( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.nextNetItem" )
         .Scope( AS_GLOBAL )

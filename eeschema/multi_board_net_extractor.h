@@ -46,7 +46,7 @@ class SCH_SCREEN;
  * Only single-screen (flat) MBS schematics are considered. Hierarchical
  * sub-sheets inside the MBS are not traversed.
  */
-std::vector<CROSS_BOARD_NET> ExtractCrossBoardNets( SCH_SCREEN& aMbsScreen,
+std::vector<MB_CROSS_BOARD_NET> ExtractCrossBoardNets( SCH_SCREEN& aMbsScreen,
                                                     const MULTI_BOARD_PROJECT& aMultiBoard );
 
 #endif // MULTI_BOARD_NET_EXTRACTOR_H

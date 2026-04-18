@@ -176,6 +176,7 @@ public:
 
     static TOOL_ACTION rescueSymbols;
     static TOOL_ACTION remapSymbols;
+    static TOOL_ACTION refreshMbsFromSubProjects;
 
     static TOOL_ACTION nextNetItem;
     static TOOL_ACTION previousNetItem;

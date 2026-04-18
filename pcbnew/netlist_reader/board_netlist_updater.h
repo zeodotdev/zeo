@@ -144,6 +144,23 @@ private:
     std::map<ZONE*, std::vector<PAD*>> m_zoneConnectionsCache;
     std::map<wxString, wxString>       m_oldToNewNets;
     std::map<PAD*, wxString>           m_padNets;
+
+    /**
+     * Lazily-populated lookup of (componentRef, padNumber) -> cross-board
+     * net name pulled from the enclosing .kicad_multi container (if any).
+     * Used to preserve cross-board net assignments on pads that have no
+     * matching schematic pin (which would otherwise trip the
+     * "No net found..." warning and clear the pad's net).
+     */
+    bool                                             m_crossBoardNetsLoaded = false;
+    std::map<std::pair<wxString, wxString>, wxString> m_crossBoardNetByRefPad;
+
+    /**
+     * Return the cross-board net name for (ref, padNumber) if present, else
+     * an empty string. Loads and caches the enclosing .kicad_multi on first
+     * call.
+     */
+    wxString lookupCrossBoardNet( const wxString& aRef, const wxString& aPadNumber );
     std::map<PAD*, wxString>           m_padPinFunctions;
     std::vector<FOOTPRINT*>            m_addedFootprints;
     std::map<wxString, NETINFO_ITEM*>  m_addedNets;

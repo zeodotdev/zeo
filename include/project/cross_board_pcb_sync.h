@@ -26,19 +26,35 @@
 
 #include <wx/string.h>
 
+#include <vector>
 
-struct KICOMMON_API CROSS_BOARD_SYNC_RESULT
+
+/**
+ * One cross-board net where two or more endpoints had different meaningful
+ * local PCB net names. The resolver picks alphabetically first as the
+ * canonical name; the others are surfaced so the user can fix them.
+ */
+struct KICOMMON_API MB_NET_NAME_CONFLICT
+{
+    wxString              chosen;      ///< Canonical name adopted (alphabetical first)
+    std::vector<wxString> rejected;    ///< Other meaningful names we ignored
+};
+
+
+struct KICOMMON_API MB_CROSS_BOARD_SYNC_RESULT
 {
     int      subProjectsTouched = 0;  ///< Count of sub-project PCBs modified
     int      endpointsApplied   = 0;  ///< Count of (pad,net) assignments written
     int      endpointsMissing   = 0;  ///< Count of endpoints whose pad wasn't found
+    int      netsRenamed        = 0;  ///< Cross-board nets renamed from local PCB nets
+    std::vector<MB_NET_NAME_CONFLICT> conflicts;
     wxString summary;                 ///< Human-readable summary for UI display
 };
 
 
 /**
  * Apply the cross-board nets declared in a MULTI_BOARD_PROJECT to every
- * sub-project's .kicad_pcb. For each CROSS_BOARD_NET endpoint we locate
+ * sub-project's .kicad_pcb. For each MB_CROSS_BOARD_NET endpoint we locate
  * `footprint(componentRef).pad(pinNumber)` in the matching sub-project's PCB
  * and set its net name to the cross-board net name. Footprints / pads that
  * can't be found are counted and reported but don't abort the operation.
@@ -51,7 +67,7 @@ struct KICOMMON_API CROSS_BOARD_SYNC_RESULT
  *
  * Safe to call with an empty cross-board net list (no-op).
  */
-KICOMMON_API CROSS_BOARD_SYNC_RESULT
-ApplyCrossBoardNetsToSubProjectPCBs( const MULTI_BOARD_PROJECT& aProject );
+KICOMMON_API MB_CROSS_BOARD_SYNC_RESULT
+ApplyCrossBoardNetsToSubProjectPCBs( MULTI_BOARD_PROJECT& aProject );
 
 #endif // KICAD_CROSS_BOARD_PCB_SYNC_H

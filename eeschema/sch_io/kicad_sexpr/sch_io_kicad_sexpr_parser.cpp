@@ -4010,6 +4010,12 @@ SCH_MODULE_BLOCK* SCH_IO_KICAD_SEXPR_PARSER::parseModuleBlock()
             NeedRIGHT();
             break;
 
+        case T_component:
+            NeedSYMBOL();
+            block->SetComponentRef( FromUTF8() );
+            NeedRIGHT();
+            break;
+
         case T_name:
             NeedSYMBOL();
             block->SetDisplayName( FromUTF8() );
@@ -4080,7 +4086,7 @@ SCH_MODULE_BLOCK* SCH_IO_KICAD_SEXPR_PARSER::parseModuleBlock()
         }
 
         default:
-            Expecting( "uuid, at, size, sub_project, name, pin" );
+            Expecting( "uuid, at, size, sub_project, component, name, pin" );
         }
     }
 

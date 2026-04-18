@@ -771,6 +771,13 @@ int KICAD_MANAGER_CONTROL::SyncCrossBoardNets( const TOOL_EVENT& aEvent )
         return 0;
     }
 
+    // Reload from disk — eeschema may have written cross_board_nets during
+    // its save hook while our in-memory copy was held unchanged.
+    wxFileName multiFileForReload = multi->GetRootDir();
+    multiFileForReload.SetName( multi->GetName() );
+    multiFileForReload.SetExt( wxString::FromUTF8( FILEEXT::MultiBoardProjectFileExtension ) );
+    multi->LoadFromFile( multiFileForReload.GetFullPath() );
+
     if( multi->GetCrossBoardNets().empty() )
     {
         wxMessageBox( _( "No cross-board nets are defined yet.\n\n"
@@ -781,7 +788,13 @@ int KICAD_MANAGER_CONTROL::SyncCrossBoardNets( const TOOL_EVENT& aEvent )
         return 0;
     }
 
-    CROSS_BOARD_SYNC_RESULT result = ApplyCrossBoardNetsToSubProjectPCBs( *multi );
+    MB_CROSS_BOARD_SYNC_RESULT result = ApplyCrossBoardNetsToSubProjectPCBs( *multi );
+
+    // Persist any net-name changes the resolver adopted from local PCB nets.
+    wxFileName multiFile = multi->GetRootDir();
+    multiFile.SetName( multi->GetName() );
+    multiFile.SetExt( wxString::FromUTF8( FILEEXT::MultiBoardProjectFileExtension ) );
+    multi->SaveToFile( multiFile.GetFullPath() );
 
     wxMessageBox( result.summary, _( "Cross-Board Net Sync" ),
                   wxOK | wxICON_INFORMATION, m_frame );

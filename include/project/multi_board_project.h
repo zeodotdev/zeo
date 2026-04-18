@@ -66,14 +66,14 @@ struct KICOMMON_API SUB_PROJECT_INFO
  * One endpoint of a cross-board net: identifies a specific connector pin
  * on a sub-project.
  */
-struct KICOMMON_API CROSS_BOARD_NET_ENDPOINT
+struct KICOMMON_API MB_CROSS_BOARD_NET_ENDPOINT
 {
     KIID     subProjectUuid;    ///< Which sub-project (MULTI_BOARD_PROJECT::GetSubProject)
     wxString componentRef;      ///< Connector reference on that sub-project, e.g. "J1"
     wxString pinNumber;         ///< Pin number on that connector, e.g. "3"
     wxString pinName;           ///< Pin display name / net name, e.g. "UART_TX"
 
-    bool operator==( const CROSS_BOARD_NET_ENDPOINT& aOther ) const
+    bool operator==( const MB_CROSS_BOARD_NET_ENDPOINT& aOther ) const
     {
         return subProjectUuid == aOther.subProjectUuid
                && componentRef == aOther.componentRef
@@ -89,13 +89,13 @@ struct KICOMMON_API CROSS_BOARD_NET_ENDPOINT
  * Derived from the multi-board schematic (MBS) topology. Refreshed on MBS
  * save; consumed by cross-board ERC and the PCB netlist sync flows.
  */
-struct KICOMMON_API CROSS_BOARD_NET
+struct KICOMMON_API MB_CROSS_BOARD_NET
 {
     KIID     uuid;      ///< Stable identifier across re-extractions
     wxString name;      ///< Net name (label text or auto-generated)
-    std::vector<CROSS_BOARD_NET_ENDPOINT> endpoints;
+    std::vector<MB_CROSS_BOARD_NET_ENDPOINT> endpoints;
 
-    bool operator==( const CROSS_BOARD_NET& aOther ) const
+    bool operator==( const MB_CROSS_BOARD_NET& aOther ) const
     {
         return uuid == aOther.uuid && name == aOther.name && endpoints == aOther.endpoints;
     }
@@ -192,13 +192,13 @@ public:
 
     // Cross-board nets (extracted from MBS topology) --------------------------
 
-    const std::vector<CROSS_BOARD_NET>& GetCrossBoardNets() const { return m_crossBoardNets; }
+    const std::vector<MB_CROSS_BOARD_NET>& GetCrossBoardNets() const { return m_crossBoardNets; }
 
     /**
      * Replace the cross-board nets with the given list. Typically called
      * right after the MBS is saved, with the output of ExtractCrossBoardNets.
      */
-    void SetCrossBoardNets( std::vector<CROSS_BOARD_NET> aNets )
+    void SetCrossBoardNets( std::vector<MB_CROSS_BOARD_NET> aNets )
     {
         m_crossBoardNets = std::move( aNets );
     }
@@ -210,7 +210,7 @@ private:
     wxString    m_mbsFileName;
     wxString    m_3dAssemblyFileName;
     std::vector<SUB_PROJECT_INFO> m_subProjects;
-    std::vector<CROSS_BOARD_NET>  m_crossBoardNets;
+    std::vector<MB_CROSS_BOARD_NET>  m_crossBoardNets;
 };
 
 #endif // KICAD_MULTI_BOARD_PROJECT_H

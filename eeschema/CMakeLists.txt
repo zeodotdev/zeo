@@ -408,6 +408,7 @@ set( EESCHEMA_SRCS
     sch_line.cpp
     sch_marker.cpp
     multi_board_net_extractor.cpp
+    multi_board_mbs_refresh.cpp
     sch_module_block.cpp
     sch_module_pin.cpp
     sch_no_connect.cpp

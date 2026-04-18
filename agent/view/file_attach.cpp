@@ -1,4 +1,5 @@
 #include "file_attach.h"
+#include "../tools/tool_registry.h"
 
 #include <wx/image.h>
 #include <wx/mstream.h>
@@ -15,6 +16,24 @@
 
 #include <algorithm>
 #include <cmath>
+
+
+// Opus 4.7 natively supports a 2576px long edge (vs 1568px on prior models).
+// Returning the correct ceiling for the active model avoids wasting tokens
+// on upscaled-then-downsampled pixels on older models while preserving
+// fidelity on 4.7.
+static int MaxImageDimensionForCurrentModel()
+{
+    const std::string& model = TOOL_REGISTRY::Instance().GetCurrentModel();
+
+    if( model.find( "4.7" ) != std::string::npos
+        || model.find( "4-7" ) != std::string::npos )
+    {
+        return FileAttach::MAX_IMAGE_DIMENSION_HIRES;
+    }
+
+    return FileAttach::MAX_IMAGE_DIMENSION;
+}
 
 
 bool FileAttach::IsImageMediaType( const std::string& aMediaType )
@@ -51,11 +70,12 @@ bool FileAttach::LoadImageFromFile( const wxString& aPath, FILE_ATTACHMENT& aRes
         h = image.GetHeight();
     }
 
-    // Resize to fit API limits
-    if( w > MAX_IMAGE_DIMENSION || h > MAX_IMAGE_DIMENSION )
+    // Resize to fit API limits (per active model)
+    const int maxDim = MaxImageDimensionForCurrentModel();
+    if( w > maxDim || h > maxDim )
     {
-        double scale = std::min( (double) MAX_IMAGE_DIMENSION / w,
-                                 (double) MAX_IMAGE_DIMENSION / h );
+        double scale = std::min( (double) maxDim / w,
+                                 (double) maxDim / h );
         image.Rescale( (int)( w * scale ), (int)( h * scale ), wxIMAGE_QUALITY_HIGH );
     }
 
@@ -178,10 +198,11 @@ std::vector<FILE_ATTACHMENT> FileAttach::ParseAttachmentsFromJson( const nlohman
                         needsReencode = true;
                     }
 
-                    if( w > MAX_IMAGE_DIMENSION || h > MAX_IMAGE_DIMENSION )
+                    const int maxDim = MaxImageDimensionForCurrentModel();
+                    if( w > maxDim || h > maxDim )
                     {
-                        double scale = std::min( (double) MAX_IMAGE_DIMENSION / w,
-                                                 (double) MAX_IMAGE_DIMENSION / h );
+                        double scale = std::min( (double) maxDim / w,
+                                                 (double) maxDim / h );
                         image.Rescale( (int)( w * scale ), (int)( h * scale ),
                                        wxIMAGE_QUALITY_HIGH );
                         needsReencode = true;

@@ -177,9 +177,11 @@ void* LLM_REQUEST_THREAD::Entry()
     }
 
     // Map display name to API model ID
-    std::string apiModel = "claude-opus-4-6";
+    std::string apiModel = "claude-opus-4-7";
 
-    if( m_model == "Claude 4.6 Sonnet" )
+    if( m_model == "Claude 4.6 Opus" )
+        apiModel = "claude-opus-4-6";
+    else if( m_model == "Claude 4.6 Sonnet" )
         apiModel = "claude-sonnet-4-6";
 
     json requestBody;
@@ -188,7 +190,7 @@ void* LLM_REQUEST_THREAD::Entry()
     requestBody["stream"] = true;
 
     // Set max_tokens
-    if( apiModel.find( "claude-opus-4-6" ) == 0 )
+    if( apiModel.find( "claude-opus" ) == 0 )
         requestBody["max_tokens"] = 128000;
     else
         requestBody["max_tokens"] = 131072;

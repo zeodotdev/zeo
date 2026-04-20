@@ -60,7 +60,7 @@ For detailed process on adding/updating tools, see `/zeo-python/CLAUDE.md`
 
 ## LLM Models
 
-The agent supports multiple Claude models. **Opus (`claude-opus-4-6`) is the preferred model** — all testing and development is done against Opus. Sonnet (`claude-sonnet-4-6`) is available as a cheaper alternative but has not been fully validated for EDA tool-calling competency.
+The agent supports multiple Claude models. **Opus (`claude-opus-4-7`) is the preferred model** — all testing and development is done against Opus. Opus 4.6 (`claude-opus-4-6`) and Sonnet 4.6 (`claude-sonnet-4-6`) remain selectable as alternatives.
 
 ## Lint / LSP Errors
 

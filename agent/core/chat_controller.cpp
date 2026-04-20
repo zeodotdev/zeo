@@ -511,6 +511,10 @@ void CHAT_CONTROLLER::SetModel( const std::string& aModel )
 
     if( m_llmClient )
         m_llmClient->SetModel( aModel );
+
+    // Publish to the tool registry so handlers (e.g. screenshot) can adapt
+    // behavior to the active model's capabilities.
+    TOOL_REGISTRY::Instance().SetCurrentModel( aModel );
 }
 
 

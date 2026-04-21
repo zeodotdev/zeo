@@ -29,7 +29,7 @@
 
 #include <common.h>                         // for PAGE_INFO
 
-#include <project/multi_board_project.h>
+#include <project/project_file.h>
 #include <wx/dir.h>
 #include <base_units.h>
 #include <board.h>
@@ -87,7 +87,8 @@ wxString BOARD_NETLIST_UPDATER::lookupCrossBoardNet( const wxString& aRef,
     {
         m_crossBoardNetsLoaded = true;
 
-        // Walk up from the board file looking for a .kicad_multi.
+        // Walk up from the board file looking for a `.kicad_pro` with
+        // `multi_board.container = true`.
         wxFileName boardFn( m_board->GetFileName() );
 
         if( !boardFn.IsOk() || boardFn.GetFullPath().IsEmpty() )
@@ -101,14 +102,22 @@ wxString BOARD_NETLIST_UPDATER::lookupCrossBoardNet( const wxString& aRef,
         for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
         {
             wxArrayString files;
-            wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_multi" ),
+            wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_pro" ),
                                 wxDIR_FILES );
 
-            if( !files.IsEmpty() )
+            for( const wxString& candidate : files )
             {
-                multiFile = wxFileName( files[0] );
-                break;
+                PROJECT_FILE probe( candidate );
+
+                if( probe.LoadFromFile() && probe.IsMultiBoardContainer() )
+                {
+                    multiFile = wxFileName( candidate );
+                    break;
+                }
             }
+
+            if( multiFile.IsOk() )
+                break;
 
             searchDir.RemoveLastDir();
         }
@@ -116,9 +125,9 @@ wxString BOARD_NETLIST_UPDATER::lookupCrossBoardNet( const wxString& aRef,
         if( !multiFile.IsOk() || !multiFile.FileExists() )
             return wxEmptyString;
 
-        MULTI_BOARD_PROJECT multi;
+        PROJECT_FILE multi( multiFile.GetFullPath() );
 
-        if( !multi.LoadFromFile( multiFile.GetFullPath() ) )
+        if( !multi.LoadFromFile() )
             return wxEmptyString;
 
         for( const MB_CROSS_BOARD_NET& net : multi.GetCrossBoardNets() )

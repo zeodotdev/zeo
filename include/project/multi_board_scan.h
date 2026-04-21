@@ -64,6 +64,23 @@ KICOMMON_API std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>
 MultiBoardScanConnectorPads( const wxFileName& aPcbFile );
 
 
+class PROJECT_FILE;
+
+/**
+ * Ensure the MBS schematic file for this multi-board container exists.
+ *
+ * If `aContainer.GetMbsFileName()` is empty it will be populated
+ * (default: `<aContainerBasename>_mbs.kicad_sch`). If the file does not
+ * exist yet, a minimal valid KiCad s-expression schematic is generated
+ * with one module_block per sub-project connector so eeschema can open
+ * the file.
+ *
+ * @return absolute path to the MBS file on success, empty on failure.
+ */
+KICOMMON_API wxFileName EnsureMbsFile( PROJECT_FILE& aContainer,
+                                       const wxString& aContainerBasename );
+
+
 /**
  * Pick a human-friendly display label for an MBS pin: prefer the pad's
  * local net name when meaningful; fall back to "<ref>.<padNum>" or just

@@ -97,6 +97,9 @@
 
 #include <array>
 #include <atomic>
+#include <map>
+#include <mutex>
+#include <vector>
 #include <wx/defs.h>
 #include <wx/event.h>
 #include <import_export.h>
@@ -372,6 +375,27 @@ public:
     void PlayerDidClose( FRAME_T aFrameType );
 
     /**
+     * Register an additional KIWAY_PLAYER (a peer) for a FRAME_T.
+     *
+     * The primary frame cached by `Player()` is unaffected. Broadcasts
+     * via ExpressMail reach the primary *and* all peers. Used by
+     * multi-board workflows that spawn extra editor windows pointing at
+     * sub-project PROJECTs via SetPrjOverride.
+     */
+    void RegisterPeerPlayer( FRAME_T aFrameType, wxWindowID aFrameId );
+
+    /**
+     * Remove a previously-registered peer frame. Safe to call from
+     * wxEVT_CLOSE handlers.
+     */
+    void UnregisterPeerPlayer( FRAME_T aFrameType, wxWindowID aFrameId );
+
+    /**
+     * @return every open KIWAY_PLAYER matching aFrameType (primary + peers).
+     */
+    std::vector<KIWAY_PLAYER*> GetAllPlayerFrames( FRAME_T aFrameType );
+
+    /**
      * Send @a aPayload to @a aDestination from @a aSource.
      *
      * The recipient receives this in its #KIWAY_PLAYER::KiwayMailIn() function and can
@@ -495,6 +519,13 @@ private:
     // Call: wxWindow::FindWindowById( m_playerFrameId[aFrameType] )
     // to know if still exists (or GetPlayerFrame( FRAME_T aFrameType )
     std::atomic<wxWindowID> m_playerFrameId[KIWAY_PLAYER_COUNT];
+
+    /// Secondary/peer KIWAY_PLAYER frames, keyed by FRAME_T → list of
+    /// wxWindowIDs. Populated by RegisterPeerPlayer when multi-editor
+    /// code spawns additional frames bypassing the singleton `Player()`
+    /// cache. Mutex-protected; accessed from GUI + mail-dispatch paths.
+    std::map<FRAME_T, std::vector<wxWindowID>> m_peerPlayerFrames;
+    mutable std::mutex                         m_peerPlayerMutex;
 
     LOCAL_HISTORY* m_local_history;
 };

@@ -93,6 +93,7 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
 
     fileMenu->AppendSeparator();
     fileMenu->Add( KICAD_MANAGER_ACTIONS::switchSubBoard );
+    fileMenu->Add( KICAD_MANAGER_ACTIONS::spawnPeerSchematic );
     fileMenu->Add( KICAD_MANAGER_ACTIONS::manageSubBoards );
     fileMenu->Add( KICAD_MANAGER_ACTIONS::syncCrossBoardNets );
 

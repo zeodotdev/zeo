@@ -135,7 +135,6 @@ const std::string FILEEXT::VrmlFileExtension( "wrl" );
 
 const std::string FILEEXT::ProjectFileExtension( "kicad_pro" );
 const std::string FILEEXT::LegacyProjectFileExtension( "pro" );
-const std::string FILEEXT::MultiBoardProjectFileExtension( "kicad_multi" );
 const std::string FILEEXT::ProjectLocalSettingsFileExtension( "kicad_prl" );
 const std::string FILEEXT::LegacySchematicFileExtension( "sch" );
 const std::string FILEEXT::CadstarSchematicFileExtension( "csa" );
@@ -258,18 +257,10 @@ wxString FILEEXT::LegacyProjectFileWildcard()
 }
 
 
-wxString FILEEXT::MultiBoardProjectFileWildcard()
-{
-    return _( "KiCad multi-board project files" )
-            + AddFileExtListToFilter( { MultiBoardProjectFileExtension } );
-}
-
-
 wxString FILEEXT::AllProjectFilesWildcard()
 {
     return _( "All KiCad project files" )
-            + AddFileExtListToFilter( { ProjectFileExtension, LegacyProjectFileExtension,
-                                        MultiBoardProjectFileExtension } );
+            + AddFileExtListToFilter( { ProjectFileExtension, LegacyProjectFileExtension } );
 }
 
 

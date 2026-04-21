@@ -73,6 +73,19 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
     m_params.emplace_back( new PARAM_LIST<COMPONENT_BOARD_ASSIGNMENT>(
             "multi_board.component_assignments", &m_componentAssignments, {} ) );
 
+    // Altium-style multi-board CONTAINER project fields
+    m_params.emplace_back( new PARAM<bool>( "multi_board.container",
+            &m_isMultiBoardContainer, false ) );
+
+    m_params.emplace_back( new PARAM<wxString>( "multi_board.mbs_file",
+            &m_mbsFileName, wxEmptyString ) );
+
+    m_params.emplace_back( new PARAM_LIST<SUB_PROJECT_INFO>( "multi_board.sub_projects",
+            &m_subProjects, {} ) );
+
+    m_params.emplace_back( new PARAM_LIST<MB_CROSS_BOARD_NET>( "multi_board.cross_board_nets",
+            &m_crossBoardNets, {} ) );
+
     m_params.emplace_back( new PARAM_WXSTRING_MAP( "text_variables",
             &m_TextVars, {}, false, true /* array behavior, even though stored as a map */ ) );
 
@@ -1108,6 +1121,99 @@ void PROJECT_FILE::UnassignComponentFromBoard( const wxString& aReference, const
 
 
 // =============================================================================
+// Multi-board CONTAINER project management (sub-projects + cross-board nets)
+// =============================================================================
+
+SUB_PROJECT_INFO* PROJECT_FILE::GetSubProject( const KIID& aUuid )
+{
+    auto it = std::find_if( m_subProjects.begin(), m_subProjects.end(),
+                            [&aUuid]( const SUB_PROJECT_INFO& sp )
+                            { return sp.uuid == aUuid; } );
+
+    return ( it != m_subProjects.end() ) ? &( *it ) : nullptr;
+}
+
+
+const SUB_PROJECT_INFO* PROJECT_FILE::GetSubProject( const KIID& aUuid ) const
+{
+    auto it = std::find_if( m_subProjects.begin(), m_subProjects.end(),
+                            [&aUuid]( const SUB_PROJECT_INFO& sp )
+                            { return sp.uuid == aUuid; } );
+
+    return ( it != m_subProjects.end() ) ? &( *it ) : nullptr;
+}
+
+
+void PROJECT_FILE::AddSubProject( const SUB_PROJECT_INFO& aInfo )
+{
+    m_subProjects.push_back( aInfo );
+}
+
+
+wxFileName PROJECT_FILE::ResolveMbsPath() const
+{
+    if( m_mbsFileName.IsEmpty() )
+        return wxFileName();
+
+    wxFileName containerDir( GetFullFilename() );
+    containerDir.SetFullName( wxEmptyString );
+
+    return wxFileName( containerDir.GetPath(), m_mbsFileName );
+}
+
+
+wxFileName PROJECT_FILE::ResolveSubProjectPath( const SUB_PROJECT_INFO& aInfo ) const
+{
+    wxFileName containerDir( GetFullFilename() );
+    containerDir.SetFullName( wxEmptyString );  // strip the .kicad_pro filename
+
+    wxFileName resolved = containerDir;
+    resolved.AppendDir( wxEmptyString );  // ensure trailing separator
+    wxFileName rel( aInfo.relativePath );
+
+    if( rel.IsAbsolute() )
+        return rel;
+
+    // Combine container dir + relative sub-project path.
+    wxFileName full( containerDir.GetPath(), aInfo.relativePath );
+    full.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+    return full;
+}
+
+
+bool PROJECT_FILE::RemoveSubProject( const KIID& aUuid )
+{
+    auto it = std::find_if( m_subProjects.begin(), m_subProjects.end(),
+                            [&aUuid]( const SUB_PROJECT_INFO& sp )
+                            { return sp.uuid == aUuid; } );
+
+    if( it == m_subProjects.end() )
+        return false;
+
+    m_subProjects.erase( it );
+
+    // Clean up cross-board nets that reference the removed sub-project.
+    for( auto& net : m_crossBoardNets )
+    {
+        net.endpoints.erase(
+                std::remove_if( net.endpoints.begin(), net.endpoints.end(),
+                                [&aUuid]( const MB_CROSS_BOARD_NET_ENDPOINT& ep )
+                                { return ep.subProjectUuid == aUuid; } ),
+                net.endpoints.end() );
+    }
+
+    // Drop nets that now have fewer than 2 endpoints.
+    m_crossBoardNets.erase(
+            std::remove_if( m_crossBoardNets.begin(), m_crossBoardNets.end(),
+                            []( const MB_CROSS_BOARD_NET& net )
+                            { return net.endpoints.size() < 2; } ),
+            m_crossBoardNets.end() );
+
+    return true;
+}
+
+
+// =============================================================================
 // Multi-board design settings management
 // =============================================================================
 
@@ -1224,6 +1330,113 @@ void from_json( const nlohmann::json& aJson, COMPONENT_BOARD_ASSIGNMENT& aAssign
         {
             aAssignment.boardUuids.emplace_back(
                     wxString( uuid.get<std::string>().c_str(), wxConvUTF8 ) );
+        }
+    }
+}
+
+
+void to_json( nlohmann::json& aJson, const SUB_PROJECT_INFO& aInfo )
+{
+    aJson = nlohmann::json{
+        { "uuid",         aInfo.uuid.AsString().ToUTF8() },
+        { "name",         aInfo.name.ToUTF8() },
+        { "path",         aInfo.relativePath.ToUTF8() },
+        { "display_name", aInfo.displayName.ToUTF8() },
+        { "role",         aInfo.role.ToUTF8() }
+    };
+}
+
+
+void from_json( const nlohmann::json& aJson, SUB_PROJECT_INFO& aInfo )
+{
+    wxCHECK( aJson.is_object(), /* void */ );
+
+    if( aJson.contains( "uuid" ) )
+        aInfo.uuid = KIID( wxString::FromUTF8( aJson["uuid"].get<std::string>().c_str() ) );
+
+    if( aJson.contains( "name" ) )
+        aInfo.name = wxString::FromUTF8( aJson["name"].get<std::string>().c_str() );
+
+    if( aJson.contains( "path" ) )
+        aInfo.relativePath = wxString::FromUTF8( aJson["path"].get<std::string>().c_str() );
+
+    if( aJson.contains( "display_name" ) )
+        aInfo.displayName = wxString::FromUTF8( aJson["display_name"].get<std::string>().c_str() );
+
+    if( aJson.contains( "role" ) )
+        aInfo.role = wxString::FromUTF8( aJson["role"].get<std::string>().c_str() );
+}
+
+
+void to_json( nlohmann::json& aJson, const MB_CROSS_BOARD_NET_ENDPOINT& aEp )
+{
+    aJson = nlohmann::json{
+        { "sub_project_uuid", aEp.subProjectUuid.AsString().ToUTF8() },
+        { "component",        aEp.componentRef.ToUTF8() },
+        { "pin",              aEp.pinNumber.ToUTF8() },
+        { "pin_name",         aEp.pinName.ToUTF8() }
+    };
+}
+
+
+void from_json( const nlohmann::json& aJson, MB_CROSS_BOARD_NET_ENDPOINT& aEp )
+{
+    wxCHECK( aJson.is_object(), /* void */ );
+
+    if( aJson.contains( "sub_project_uuid" ) )
+    {
+        aEp.subProjectUuid =
+                KIID( wxString::FromUTF8( aJson["sub_project_uuid"].get<std::string>().c_str() ) );
+    }
+
+    if( aJson.contains( "component" ) )
+        aEp.componentRef = wxString::FromUTF8( aJson["component"].get<std::string>().c_str() );
+
+    if( aJson.contains( "pin" ) )
+        aEp.pinNumber = wxString::FromUTF8( aJson["pin"].get<std::string>().c_str() );
+
+    if( aJson.contains( "pin_name" ) )
+        aEp.pinName = wxString::FromUTF8( aJson["pin_name"].get<std::string>().c_str() );
+}
+
+
+void to_json( nlohmann::json& aJson, const MB_CROSS_BOARD_NET& aNet )
+{
+    nlohmann::json endpoints = nlohmann::json::array();
+
+    for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : aNet.endpoints )
+    {
+        nlohmann::json e;
+        to_json( e, ep );
+        endpoints.push_back( e );
+    }
+
+    aJson = nlohmann::json{
+        { "uuid",      aNet.uuid.AsString().ToUTF8() },
+        { "name",      aNet.name.ToUTF8() },
+        { "endpoints", endpoints }
+    };
+}
+
+
+void from_json( const nlohmann::json& aJson, MB_CROSS_BOARD_NET& aNet )
+{
+    wxCHECK( aJson.is_object(), /* void */ );
+
+    if( aJson.contains( "uuid" ) )
+        aNet.uuid = KIID( wxString::FromUTF8( aJson["uuid"].get<std::string>().c_str() ) );
+
+    if( aJson.contains( "name" ) )
+        aNet.name = wxString::FromUTF8( aJson["name"].get<std::string>().c_str() );
+
+    if( aJson.contains( "endpoints" ) && aJson["endpoints"].is_array() )
+    {
+        aNet.endpoints.clear();
+        for( const auto& ep : aJson["endpoints"] )
+        {
+            MB_CROSS_BOARD_NET_ENDPOINT endpoint;
+            from_json( ep, endpoint );
+            aNet.endpoints.push_back( endpoint );
         }
     }
 }

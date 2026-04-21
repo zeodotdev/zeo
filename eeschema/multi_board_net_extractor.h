@@ -21,7 +21,7 @@
 #ifndef MULTI_BOARD_NET_EXTRACTOR_H
 #define MULTI_BOARD_NET_EXTRACTOR_H
 
-#include <project/multi_board_project.h>
+#include <project/project_file.h>
 
 #include <vector>
 
@@ -47,6 +47,6 @@ class SCH_SCREEN;
  * sub-sheets inside the MBS are not traversed.
  */
 std::vector<MB_CROSS_BOARD_NET> ExtractCrossBoardNets( SCH_SCREEN& aMbsScreen,
-                                                    const MULTI_BOARD_PROJECT& aMultiBoard );
+                                                    const PROJECT_FILE& aMultiBoard );
 
 #endif // MULTI_BOARD_NET_EXTRACTOR_H

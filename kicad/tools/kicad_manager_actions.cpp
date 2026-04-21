@@ -90,6 +90,14 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::switchSubBoard( TOOL_ACTION_ARGS()
                                                            .Icon( BITMAPS::open_project ) );
 
 
+TOOL_ACTION KICAD_MANAGER_ACTIONS::spawnPeerSchematic( TOOL_ACTION_ARGS()
+                                                               .Name( "kicad.Control.spawnPeerSchematic" )
+                                                               .Scope( AS_GLOBAL )
+                                                               .FriendlyName( _( "Open Sub-Board Schematic in New Window" ) )
+                                                               .Tooltip( _( "Open the first sub-board's schematic in a new editor window alongside the current project. Container project stays active." ) )
+                                                               .Icon( BITMAPS::icon_eeschema ) );
+
+
 TOOL_ACTION KICAD_MANAGER_ACTIONS::editMultiBoardSchematic( TOOL_ACTION_ARGS()
                                                                     .Name( "kicad.Control.editMultiBoardSchematic" )
                                                                     .Scope( AS_GLOBAL )

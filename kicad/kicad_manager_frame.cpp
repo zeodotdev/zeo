@@ -95,7 +95,7 @@
 #include "kicad_manager_frame.h"
 #include "settings/kicad_settings.h"
 
-#include <project/multi_board_project.h>
+#include <project/multi_board_scan.h>
 #include <project/project_file.h>
 
 
@@ -965,10 +965,6 @@ bool KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
     if( !CloseProject( true ) )
         return false;
 
-    // Leaving any prior multi-board context by default. LoadMultiBoardProject
-    // re-establishes the state after calling us.
-    m_multiBoardProject.reset();
-
     m_active_project = true;
 
     // NB: when loading a legacy project SETTINGS_MANAGER::LoadProject() will convert it to
@@ -1062,77 +1058,50 @@ bool KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
 }
 
 
+PROJECT_FILE* KICAD_MANAGER_FRAME::GetMultiBoardProject() const
+{
+    if( !m_active_project )
+        return nullptr;
+
+    PROJECT_FILE& pf = const_cast<KICAD_MANAGER_FRAME*>( this )->Prj().GetProjectFile();
+    return pf.IsMultiBoardContainer() ? &pf : nullptr;
+}
+
+
 bool KICAD_MANAGER_FRAME::LoadMultiBoardProject( const wxFileName& aMultiProjectFile )
 {
+    // Y semantics: the multi-board container is a standard `.kicad_pro`
+    // with `multi_board.container = true`. Load it as Prj(); if it carries
+    // the container flag, pop the Setup dialog when the sub-project list
+    // is empty. No auto-load of a first sub-project — sub-projects open
+    // on demand via SpawnPeerSchematicEditor / tree interactions.
+    //
+    // If the loaded project is NOT a multi-board container, behave exactly
+    // like LoadProject — single code path for File → Open.
     if( !aMultiProjectFile.Exists() )
         return false;
 
-    auto container = std::make_unique<MULTI_BOARD_PROJECT>();
-
-    if( !container->LoadFromFile( aMultiProjectFile.GetFullPath() ) )
-    {
-        DisplayErrorMessage( this,
-                             _( "Failed to load multi-board project." ),
-                             aMultiProjectFile.GetFullPath() );
+    if( !LoadProject( aMultiProjectFile ) )
         return false;
-    }
 
-    if( container->GetName().IsEmpty() )
-        container->SetName( aMultiProjectFile.GetName() );
+    PROJECT_FILE& pf = Prj().GetProjectFile();
 
-    // NOTE: Do NOT create the MBS stub here — sub-projects aren't in the
-    // container yet. The MBS is scaffolded lazily when the user clicks the
-    // Multi-Board Schematic tile (KICAD_MANAGER_CONTROL::EditMultiBoardSchematic)
-    // so it can be generated with one module_block per sub-project.
-
-    // If the container has no sub-projects yet, run the Setup dialog so the
-    // user can populate it before we attempt to load a sub-project.
-    if( container->GetSubProjects().empty() )
-    {
-        DIALOG_MULTI_BOARD_SETUP setupDlg( this, container.get(), aMultiProjectFile );
-        setupDlg.ShowModal();
-
-        // Safety: persist in case the dialog's own save path didn't fire
-        container->SaveToFile( aMultiProjectFile.GetFullPath() );
-    }
-
-    if( container->GetSubProjects().empty() )
-    {
-        // Still empty after user had a chance to add boards; keep the
-        // multi-board state but don't try to load any sub-project.
-        m_multiBoardProject = std::move( container );
-        PrintPrjInfo();
+    if( !pf.IsMultiBoardContainer() )
         return true;
-    }
 
-    wxFileName firstPro =
-            container->ResolveSubProjectPath( container->GetSubProjects().front() );
-
-    if( !firstPro.Exists() )
+    if( pf.GetSubProjects().empty() )
     {
-        DisplayErrorMessage( this,
-                             _( "The first sub-project of this multi-board could not be found." ),
-                             firstPro.GetFullPath() );
-        return false;
+        DIALOG_MULTI_BOARD_SETUP setupDlg( this, &pf, aMultiProjectFile );
+        setupDlg.ShowModal();
+        pf.SaveToFile();
     }
 
-    if( !LoadProject( firstPro ) )
-        return false;
-
-    // LoadProject reset m_multiBoardProject; install container now that
-    // the sub-project has loaded successfully.
-    m_multiBoardProject = std::move( container );
-
-    // Refresh title and status with multi-board context
     PrintPrjInfo();
 
-    wxString title = m_multiBoardProject->GetName();
-    title += wxT( "  \u00B7  " );
-    title += firstPro.GetName();
-    title += wxT( "  \u2014  " ) + wxString( wxS( "Zeo" ) );
+    wxString title = aMultiProjectFile.GetName() + wxT( "  \u2014  " )
+                     + wxString( wxS( "Zeo" ) );
     SetTitle( title );
 
-    // Re-render launcher so the multi-board header appears
     if( m_launcher )
         m_launcher->CreateLaunchers();
 
@@ -1140,52 +1109,106 @@ bool KICAD_MANAGER_FRAME::LoadMultiBoardProject( const wxFileName& aMultiProject
 }
 
 
-bool KICAD_MANAGER_FRAME::SwitchActiveSubProject( const KIID& aSubProjectUuid )
+bool KICAD_MANAGER_FRAME::SpawnPeerSchematicEditor( const KIID& aSubProjectUuid )
 {
-    if( !m_multiBoardProject )
+    PROJECT_FILE* mbpf = GetMultiBoardProject();
+
+    if( !mbpf )
         return false;
 
-    const SUB_PROJECT_INFO* info = m_multiBoardProject->GetSubProject( aSubProjectUuid );
+    const SUB_PROJECT_INFO* info = mbpf->GetSubProject( aSubProjectUuid );
 
     if( !info )
         return false;
 
-    wxFileName targetPro = m_multiBoardProject->ResolveSubProjectPath( *info );
+    wxFileName proFile = mbpf->ResolveSubProjectPath( *info );
 
-    if( !targetPro.Exists() )
+    if( !proFile.Exists() )
+        return false;
+
+    // Load the sub-project as a peer (non-evicting) so the container
+    // stays active while the new editor frame holds the sub-project.
+    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+
+    if( !sm.LoadProject( proFile.GetFullPath(), /*aSetActive=*/false ) )
+        return false;
+
+    PROJECT* subProject = sm.GetProject( proFile.GetFullPath() );
+
+    if( !subProject )
+        return false;
+
+    // Block duplicate peer opens on the same sub-project. If a frame is
+    // already showing this sub-project's schematic, just focus it.
+    for( KIWAY_PLAYER* existing : Kiway().GetAllPlayerFrames( FRAME_SCH ) )
     {
-        DisplayErrorMessage( this, _( "Sub-project file not found." ),
-                             targetPro.GetFullPath() );
+        if( existing->GetPrjOverride() == subProject )
+        {
+            existing->Raise();
+            existing->SetFocus();
+            return true;
+        }
+    }
+
+    KIFACE* kiface = Kiway().KiFACE( KIWAY::FACE_SCH );
+
+    if( !kiface )
+        return false;
+
+    // C-style cast matches Kiway::Player()'s pattern — typeinfo has
+    // hidden visibility in the eeschema kiface DSO, making dynamic_cast
+    // from the main binary unreliable even though the hierarchy is
+    // correct.
+    KIWAY_PLAYER* player = (KIWAY_PLAYER*) kiface->CreateKiWindow(
+            this, FRAME_SCH, &Kiway(), 0 );
+
+    if( !player )
+        return false;
+
+    // Pin the new frame to this sub-project so every this->Prj() call
+    // resolves to it, irrespective of SETTINGS_MANAGER's active project.
+    player->SetPrjOverride( subProject );
+
+    // Register as a peer so Kiway broadcasts (ExpressMail) reach this
+    // frame too — critical for cross-probing from peer PCBs, etc.
+    Kiway().RegisterPeerPlayer( FRAME_SCH, player->GetId() );
+
+    // Unregister on close; without this the stale window ID stays in
+    // Kiway's peer list and future mails get a dead target.
+    wxWindowID playerId = player->GetId();
+
+    player->Bind( wxEVT_CLOSE_WINDOW,
+                  [this, playerId]( wxCloseEvent& aEvt )
+                  {
+                      Kiway().UnregisterPeerPlayer( FRAME_SCH, playerId );
+                      aEvt.Skip();
+                  } );
+
+    wxFileName schFile = proFile;
+    schFile.SetExt( wxT( "kicad_sch" ) );
+
+    std::vector<wxString> files{ schFile.GetFullPath() };
+
+    if( !player->OpenProjectFiles( files ) )
+    {
+        Kiway().UnregisterPeerPlayer( FRAME_SCH, playerId );
+        player->Destroy();
         return false;
     }
 
-    // Preserve container across LoadProject (which resets m_multiBoardProject)
-    std::unique_ptr<MULTI_BOARD_PROJECT> preserved = std::move( m_multiBoardProject );
-
-    if( !LoadProject( targetPro ) )
-    {
-        // Reinstall state so the user isn't stranded
-        m_multiBoardProject = std::move( preserved );
-        PrintPrjInfo();
-        return false;
-    }
-
-    m_multiBoardProject = std::move( preserved );
-    PrintPrjInfo();
-
-    // Update window title to reflect multi-board context (same pattern as
-    // LoadMultiBoardProject above)
-    wxString title = m_multiBoardProject->GetName();
-    title += wxT( "  \u00B7  " );
-    title += targetPro.GetName();
-    title += wxT( "  \u2014  " ) + wxString( wxS( "Zeo" ) );
-    SetTitle( title );
-
-    // Re-render launcher so the active-board marker follows the switch
-    if( m_launcher )
-        m_launcher->CreateLaunchers();
+    player->Show( true );
+    player->Raise();
+    player->SetFocus();
 
     return true;
+}
+
+
+bool KICAD_MANAGER_FRAME::SwitchActiveSubProject( const KIID& aSubProjectUuid )
+{
+    // Y semantics: container stays active; sub-projects open as peer
+    // editors rather than replacing Prj().
+    return SpawnPeerSchematicEditor( aSubProjectUuid );
 }
 
 
@@ -1424,12 +1447,11 @@ void KICAD_MANAGER_FRAME::ProjectChanged()
 
         title = fn.GetName();
 
-        if( m_multiBoardProject )
+        if( PROJECT_FILE* mbpf = GetMultiBoardProject() )
         {
-            // Show "subproject  ·  multi-board: parentName"
             title += wxT( "  \u00B7  " )
                    + wxString::Format( _( "Multi-Board: %s" ),
-                                       m_multiBoardProject->GetName() );
+                                       wxFileName( mbpf->GetFullFilename() ).GetName() );
         }
 
         if( Prj().IsReadOnly() )
@@ -1492,10 +1514,10 @@ void KICAD_MANAGER_FRAME::PrintPrjInfo()
 
     wxString status;
 
-    if( m_multiBoardProject )
+    if( PROJECT_FILE* mbpf = GetMultiBoardProject() )
     {
         status = wxString::Format( _( "Multi-Board: %s  \u00B7  Active: %s" ),
-                                   m_multiBoardProject->GetName(),
+                                   wxFileName( mbpf->GetFullFilename() ).GetName(),
                                    Prj().GetProjectFullName() );
     }
     else

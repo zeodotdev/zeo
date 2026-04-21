@@ -36,6 +36,7 @@ public:
     static TOOL_ACTION manageSubBoards;
     static TOOL_ACTION syncCrossBoardNets;
     static TOOL_ACTION switchSubBoard;
+    static TOOL_ACTION spawnPeerSchematic;
     static TOOL_ACTION editMultiBoardSchematic;
     static TOOL_ACTION newJobsetFile;
     static TOOL_ACTION openDemoProject;

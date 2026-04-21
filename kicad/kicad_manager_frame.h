@@ -197,13 +197,25 @@ public:
     bool SwitchActiveSubProject( const KIID& aSubProjectUuid );
 
     /**
-     * @return the active multi-board container, or nullptr if the current
-     * session is a plain single-board project.
+     * M4 spike: open a sub-project's schematic in a *new* SCH_EDIT_FRAME
+     * peered alongside whatever other editors are currently open. The
+     * container project stays loaded + active in SETTINGS_MANAGER; the
+     * new editor's Prj() is pinned to the sub-project via
+     * SetPrjOverride.
+     *
+     * Caveats (known, to be addressed in M4.3+):
+     * - Bypasses Kiway::Player()'s one-per-frame-type cache; cross-
+     *   probing via ExpressMail will only hit the first eeschema frame.
+     * - Closing this frame does not clean up the loaded sub-project
+     *   PROJECT from SETTINGS_MANAGER.
      */
-    class MULTI_BOARD_PROJECT* GetMultiBoardProject() const
-    {
-        return m_multiBoardProject.get();
-    }
+    bool SpawnPeerSchematicEditor( const KIID& aSubProjectUuid );
+
+    /**
+     * @return the PROJECT_FILE of the current session if it's a multi-board
+     * container, or nullptr for plain single-board projects.
+     */
+    class PROJECT_FILE* GetMultiBoardProject() const;
 
     PANEL_KICAD_LAUNCHER* GetLauncherPanel() const { return m_launcher; }
 
@@ -309,7 +321,8 @@ private:
     /// Non-null only when the launcher is in multi-board mode. Owns the
     /// currently-open `.kicad_multi` container. Sub-projects loaded via
     /// LoadProject() are standalone and share their lifecycle with this.
-    std::unique_ptr<class MULTI_BOARD_PROJECT> m_multiBoardProject;
+    // Multi-board state lives in the session's PROJECT_FILE — no
+    // side-stored instance needed. See GetMultiBoardProject().
 public:
     SESSION_MANAGER* GetSessionManager() const { return m_sessionManager.get(); }
 };

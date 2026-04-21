@@ -25,7 +25,7 @@
 #include "tools/sch_editor_control.h"
 
 #include "multi_board_mbs_refresh.h"
-#include <project/multi_board_project.h>
+#include <project/project_file.h>
 #include <wx/dir.h>
 #include <wx/display.h>
 #include <clipboard.h>
@@ -635,42 +635,49 @@ int SCH_EDITOR_CONTROL::RefreshMbsFromSubProjects( const TOOL_EVENT& aEvent )
     for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
     {
         wxArrayString files;
-        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_multi" ),
+        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_pro" ),
                             wxDIR_FILES );
 
-        if( !files.IsEmpty() )
+        for( const wxString& candidate : files )
         {
-            multiFile = wxFileName( files[0] );
-            break;
+            PROJECT_FILE probe( candidate );
+
+            if( !probe.LoadFromFile() )
+                continue;
+
+            if( !probe.IsMultiBoardContainer() )
+                continue;
+
+            wxFileName expected = probe.ResolveMbsPath();
+
+            if( expected.IsOk()
+                && expected.GetFullPath() == schFn.GetFullPath() )
+            {
+                multiFile = wxFileName( candidate );
+                break;
+            }
         }
+
+        if( multiFile.IsOk() )
+            break;
 
         searchDir.RemoveLastDir();
     }
 
     if( !multiFile.IsOk() || !multiFile.FileExists() )
     {
-        wxMessageBox( _( "This schematic is not the multi-board schematic of a "
-                         ".kicad_multi container." ),
+        wxMessageBox( _( "This schematic is not the multi-board schematic of "
+                         "any .kicad_pro container." ),
                       _( "Nothing to Refresh" ), wxOK | wxICON_INFORMATION, m_frame );
         return 0;
     }
 
-    MULTI_BOARD_PROJECT multi;
+    PROJECT_FILE multi( multiFile.GetFullPath() );
 
-    if( !multi.LoadFromFile( multiFile.GetFullPath() ) )
+    if( !multi.LoadFromFile() )
     {
         wxMessageBox( _( "Could not load the multi-board container." ),
                       _( "Refresh Failed" ), wxOK | wxICON_ERROR, m_frame );
-        return 0;
-    }
-
-    wxFileName expectedMbs = multi.ResolveMbsPath();
-
-    if( !expectedMbs.IsOk() || expectedMbs.GetFullPath() != schFn.GetFullPath() )
-    {
-        wxMessageBox( _( "This schematic is not the registered multi-board "
-                         "schematic for its .kicad_multi container." ),
-                      _( "Not an MBS" ), wxOK | wxICON_INFORMATION, m_frame );
         return 0;
     }
 

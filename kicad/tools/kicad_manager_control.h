@@ -49,6 +49,7 @@ public:
     int ManageSubBoards( const TOOL_EVENT& aEvent );
     int SyncCrossBoardNets( const TOOL_EVENT& aEvent );
     int SwitchSubBoard( const TOOL_EVENT& aEvent );
+    int SpawnPeerSchematic( const TOOL_EVENT& aEvent );
     int EditMultiBoardSchematic( const TOOL_EVENT& aEvent );
     int NewJobsetFile( const TOOL_EVENT& aEvent );
     int OpenProject( const TOOL_EVENT& aEvent );

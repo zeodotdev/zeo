@@ -92,7 +92,7 @@ struct PinRecord
  * Returns a nil KIID when no match is found.
  */
 KIID subProjectUuidForBlock( const SCH_MODULE_BLOCK& aBlock,
-                             const MULTI_BOARD_PROJECT& aMultiBoard )
+                             const PROJECT_FILE& aMultiBoard )
 {
     const wxString& path = aBlock.GetSubProjectPath();
 
@@ -139,7 +139,7 @@ bool isPointOnSegment( const VECTOR2I& aP, const VECTOR2I& aA, const VECTOR2I& a
 
 
 std::vector<MB_CROSS_BOARD_NET> ExtractCrossBoardNets( SCH_SCREEN& aMbsScreen,
-                                                    const MULTI_BOARD_PROJECT& aMultiBoard )
+                                                    const PROJECT_FILE& aMultiBoard )
 {
     POS_UNION_FIND              uf;
     std::vector<PinRecord>      modulePins;

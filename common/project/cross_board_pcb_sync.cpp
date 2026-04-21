@@ -309,7 +309,7 @@ scanPadCurrentNets( const wxString& aText )
  *
  * Mutates aProject in place. Returns the number of nets renamed.
  */
-int resolveCrossBoardNetNames( MULTI_BOARD_PROJECT& aProject,
+int resolveCrossBoardNetNames( PROJECT_FILE& aProject,
                                std::vector<MB_NET_NAME_CONFLICT>& aConflictsOut )
 {
     // Cache per-sub-project pad nets so we don't re-parse each PCB per endpoint.
@@ -528,7 +528,7 @@ std::pair<int, int> applyEndpointsToOnePcb(
 
 
 MB_CROSS_BOARD_SYNC_RESULT
-ApplyCrossBoardNetsToSubProjectPCBs( MULTI_BOARD_PROJECT& aProject )
+ApplyCrossBoardNetsToSubProjectPCBs( PROJECT_FILE& aProject )
 {
     MB_CROSS_BOARD_SYNC_RESULT result;
 

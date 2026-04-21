@@ -68,9 +68,25 @@ public:
     }
 
     /**
-     * Return a reference to the #PROJECT associated with this #KIWAY.
+     * Return a reference to the #PROJECT associated with this holder.
+     *
+     * By default this is `Kiway().Prj()` — the globally active project in
+     * the SETTINGS_MANAGER. A frame can override the project it resolves
+     * to via `SetPrjOverride()`, enabling multiple editors to coexist in
+     * one process with each pointing at a different loaded PROJECT.
      */
     PROJECT& Prj() const;
+
+    /**
+     * Pin this holder's `Prj()` to the given PROJECT. Pass `nullptr` to
+     * fall back to the global `Kiway().Prj()`.
+     *
+     * The pointer is not owned; caller ensures it stays loaded in
+     * SETTINGS_MANAGER for the holder's lifetime.
+     */
+    void SetPrjOverride( PROJECT* aProject ) { m_projectOverride = aProject; }
+
+    PROJECT* GetPrjOverride() const { return m_projectOverride; }
 
     /**
      * It is only used for debugging, since "this" is not a wxWindow*.  "this" is
@@ -85,6 +101,10 @@ private:
     // private, all setting is done through SetKiway().
     KIWAY*          m_kiway;            // no ownership.
     HOLDER_TYPE     m_type;
+
+    // When non-null, Prj() returns *m_projectOverride instead of
+    // `Kiway().Prj()`. Used by per-frame project context (M4).
+    PROJECT*        m_projectOverride = nullptr;
 };
 
 

@@ -25,7 +25,7 @@
 
 #include <env_vars.h>
 #include <pgm_base.h>
-#include <project/multi_board_project.h>
+#include <project/project_file.h>
 #include <project_template.h>
 #include <wildcards_and_files_ext.h>
 
@@ -42,7 +42,7 @@
 
 
 DIALOG_MULTI_BOARD_SETUP::DIALOG_MULTI_BOARD_SETUP( wxWindow*            aParent,
-                                                    MULTI_BOARD_PROJECT* aProject,
+                                                    PROJECT_FILE* aProject,
                                                     const wxFileName&    aMultiProjectPath ) :
         DIALOG_SHIM( aParent, wxID_ANY, _( "Multi-Board Project Setup" ), wxDefaultPosition,
                      wxSize( 560, 420 ),
@@ -62,6 +62,14 @@ DIALOG_MULTI_BOARD_SETUP::DIALOG_MULTI_BOARD_SETUP( wxWindow*            aParent
 
 DIALOG_MULTI_BOARD_SETUP::~DIALOG_MULTI_BOARD_SETUP()
 {
+}
+
+
+wxFileName DIALOG_MULTI_BOARD_SETUP::containerDir() const
+{
+    wxFileName dir( m_project->GetFullFilename() );
+    dir.SetFullName( wxEmptyString );
+    return dir;
 }
 
 
@@ -117,7 +125,7 @@ void DIALOG_MULTI_BOARD_SETUP::buildUI()
     Bind( wxEVT_BUTTON,
           [this]( wxCommandEvent& ) {
               if( m_project )
-                  m_project->SaveToFile( m_multiProjectPath.GetFullPath() );
+                  m_project->SaveToFile();
               EndModal( wxID_OK );
           },
           wxID_OK );
@@ -152,7 +160,7 @@ void DIALOG_MULTI_BOARD_SETUP::onSelectionChanged( wxListEvent& )
 
 wxFileName DIALOG_MULTI_BOARD_SETUP::ensureBoardsDir()
 {
-    wxFileName boardsDir = m_project->GetRootDir();
+    wxFileName boardsDir = containerDir();
     boardsDir.AppendDir( wxT( "boards" ) );
 
     if( !boardsDir.DirExists() )
@@ -164,7 +172,7 @@ wxFileName DIALOG_MULTI_BOARD_SETUP::ensureBoardsDir()
 
 wxString DIALOG_MULTI_BOARD_SETUP::uniquifyName( const wxString& aDesiredName ) const
 {
-    wxFileName boardsDir = m_project->GetRootDir();
+    wxFileName boardsDir = containerDir();
     boardsDir.AppendDir( wxT( "boards" ) );
 
     wxString candidate = aDesiredName;
@@ -269,7 +277,7 @@ bool DIALOG_MULTI_BOARD_SETUP::importExistingProject( const wxFileName& aSourceP
     wxFileName relProFile = targetDir;
     relProFile.SetName( aTargetName );
     relProFile.SetExt( wxString::FromUTF8( FILEEXT::ProjectFileExtension ) );
-    relProFile.MakeRelativeTo( m_project->GetRootDir().GetFullPath() );
+    relProFile.MakeRelativeTo( containerDir().GetFullPath() );
     info.relativePath = relProFile.GetFullPath( wxPATH_UNIX );
 
     m_project->AddSubProject( info );
@@ -351,7 +359,7 @@ bool DIALOG_MULTI_BOARD_SETUP::createNewSubProject( const wxString& aName )
     info.role = wxT( "standard" );
 
     wxFileName relProFile = targetDir;
-    relProFile.MakeRelativeTo( m_project->GetRootDir().GetFullPath() );
+    relProFile.MakeRelativeTo( containerDir().GetFullPath() );
     info.relativePath = relProFile.GetFullPath( wxPATH_UNIX );
 
     m_project->AddSubProject( info );

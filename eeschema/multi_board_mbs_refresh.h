@@ -24,7 +24,7 @@
 #include <wx/string.h>
 
 class SCH_SCREEN;
-class MULTI_BOARD_PROJECT;
+class PROJECT_FILE;
 
 
 struct MBS_REFRESH_RESULT
@@ -47,6 +47,6 @@ struct MBS_REFRESH_RESULT
  * Returns a stats summary suitable for display to the user.
  */
 MBS_REFRESH_RESULT RefreshMbsFromSubProjects( SCH_SCREEN& aMbsScreen,
-                                              const MULTI_BOARD_PROJECT& aMultiBoard );
+                                              const PROJECT_FILE& aMultiBoard );
 
 #endif // MULTI_BOARD_MBS_REFRESH_H

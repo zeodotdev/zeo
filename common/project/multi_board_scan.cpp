@@ -21,307 +21,17 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <project/multi_board_project.h>
 #include <project/multi_board_scan.h>
+#include <project/project_file.h>
 
-#include <nlohmann/json.hpp>
+#include <kiid.h>
+
 #include <wx/ffile.h>
 #include <wx/log.h>
 #include <wx/regex.h>
 
 #include <algorithm>
-#include <fstream>
 #include <set>
-#include <stdexcept>
-
-
-using nlohmann::json;
-
-
-MULTI_BOARD_PROJECT::MULTI_BOARD_PROJECT()
-{
-}
-
-
-bool MULTI_BOARD_PROJECT::LoadFromFile( const wxString& aPath )
-{
-    // Reset to a defined-empty state before attempting load
-    m_uuid = KIID();
-    m_name.clear();
-    m_mbsFileName.clear();
-    m_3dAssemblyFileName.clear();
-    m_subProjects.clear();
-
-    wxFileName fn( aPath );
-    m_rootDir = fn;
-    m_rootDir.SetFullName( wxEmptyString );
-
-    std::ifstream stream( aPath.ToStdString() );
-
-    if( !stream.is_open() )
-    {
-        wxLogWarning( wxT( "MULTI_BOARD_PROJECT: cannot open %s" ), aPath );
-        return false;
-    }
-
-    json j;
-
-    try
-    {
-        stream >> j;
-    }
-    catch( const std::exception& e )
-    {
-        wxLogError( wxT( "MULTI_BOARD_PROJECT: parse error in %s: %s" ),
-                    aPath, wxString::FromUTF8( e.what() ) );
-        return false;
-    }
-
-    try
-    {
-        if( j.contains( "uuid" ) )
-            m_uuid = KIID( wxString::FromUTF8( j.at( "uuid" ).get<std::string>() ) );
-
-        if( j.contains( "name" ) )
-            m_name = wxString::FromUTF8( j.at( "name" ).get<std::string>() );
-
-        if( j.contains( "multi_board_schematic" ) )
-        {
-            m_mbsFileName = wxString::FromUTF8(
-                    j.at( "multi_board_schematic" ).get<std::string>() );
-        }
-
-        if( j.contains( "3d_assembly" ) )
-        {
-            m_3dAssemblyFileName = wxString::FromUTF8(
-                    j.at( "3d_assembly" ).get<std::string>() );
-        }
-
-        if( j.contains( "sub_projects" ) && j.at( "sub_projects" ).is_array() )
-        {
-            for( const auto& entry : j.at( "sub_projects" ) )
-            {
-                SUB_PROJECT_INFO info;
-
-                if( entry.contains( "uuid" ) )
-                    info.uuid = KIID( wxString::FromUTF8( entry.at( "uuid" ).get<std::string>() ) );
-
-                if( entry.contains( "name" ) )
-                    info.name = wxString::FromUTF8( entry.at( "name" ).get<std::string>() );
-
-                if( entry.contains( "path" ) )
-                {
-                    info.relativePath =
-                            wxString::FromUTF8( entry.at( "path" ).get<std::string>() );
-                }
-
-                if( entry.contains( "display_name" ) )
-                {
-                    info.displayName =
-                            wxString::FromUTF8( entry.at( "display_name" ).get<std::string>() );
-                }
-
-                if( entry.contains( "role" ) )
-                    info.role = wxString::FromUTF8( entry.at( "role" ).get<std::string>() );
-
-                m_subProjects.push_back( info );
-            }
-        }
-
-        m_crossBoardNets.clear();
-
-        if( j.contains( "cross_board_nets" ) && j.at( "cross_board_nets" ).is_array() )
-        {
-            for( const auto& entry : j.at( "cross_board_nets" ) )
-            {
-                MB_CROSS_BOARD_NET net;
-
-                if( entry.contains( "uuid" ) )
-                    net.uuid = KIID( wxString::FromUTF8( entry.at( "uuid" ).get<std::string>() ) );
-
-                if( entry.contains( "name" ) )
-                    net.name = wxString::FromUTF8( entry.at( "name" ).get<std::string>() );
-
-                if( entry.contains( "endpoints" ) && entry.at( "endpoints" ).is_array() )
-                {
-                    for( const auto& ep : entry.at( "endpoints" ) )
-                    {
-                        MB_CROSS_BOARD_NET_ENDPOINT endpoint;
-
-                        if( ep.contains( "sub_project_uuid" ) )
-                        {
-                            endpoint.subProjectUuid = KIID(
-                                    wxString::FromUTF8( ep.at( "sub_project_uuid" )
-                                                                .get<std::string>() ) );
-                        }
-
-                        if( ep.contains( "component" ) )
-                        {
-                            endpoint.componentRef = wxString::FromUTF8(
-                                    ep.at( "component" ).get<std::string>() );
-                        }
-
-                        if( ep.contains( "pin" ) )
-                        {
-                            endpoint.pinNumber = wxString::FromUTF8(
-                                    ep.at( "pin" ).get<std::string>() );
-                        }
-
-                        if( ep.contains( "pin_name" ) )
-                        {
-                            endpoint.pinName = wxString::FromUTF8(
-                                    ep.at( "pin_name" ).get<std::string>() );
-                        }
-
-                        net.endpoints.push_back( endpoint );
-                    }
-                }
-
-                m_crossBoardNets.push_back( net );
-            }
-        }
-    }
-    catch( const std::exception& e )
-    {
-        wxLogError( wxT( "MULTI_BOARD_PROJECT: schema error in %s: %s" ),
-                    aPath, wxString::FromUTF8( e.what() ) );
-        return false;
-    }
-
-    return true;
-}
-
-
-bool MULTI_BOARD_PROJECT::SaveToFile( const wxString& aPath ) const
-{
-    json j;
-    j["version"] = CURRENT_VERSION;
-    j["uuid"] = m_uuid.AsString().ToStdString();
-    j["name"] = m_name.ToStdString();
-    j["multi_board_schematic"] = m_mbsFileName.ToStdString();
-    j["3d_assembly"] = m_3dAssemblyFileName.ToStdString();
-
-    json subArray = json::array();
-
-    for( const SUB_PROJECT_INFO& info : m_subProjects )
-    {
-        json entry;
-        entry["uuid"] = info.uuid.AsString().ToStdString();
-        entry["name"] = info.name.ToStdString();
-        entry["path"] = info.relativePath.ToStdString();
-        entry["display_name"] = info.displayName.ToStdString();
-        entry["role"] = info.role.ToStdString();
-        subArray.push_back( entry );
-    }
-
-    j["sub_projects"] = subArray;
-
-    json netsArray = json::array();
-
-    for( const MB_CROSS_BOARD_NET& net : m_crossBoardNets )
-    {
-        json entry;
-        entry["uuid"] = net.uuid.AsString().ToStdString();
-        entry["name"] = net.name.ToStdString();
-
-        json epArray = json::array();
-
-        for( const MB_CROSS_BOARD_NET_ENDPOINT& endpoint : net.endpoints )
-        {
-            json ep;
-            ep["sub_project_uuid"] = endpoint.subProjectUuid.AsString().ToStdString();
-            ep["component"]        = endpoint.componentRef.ToStdString();
-            ep["pin"]              = endpoint.pinNumber.ToStdString();
-            ep["pin_name"]         = endpoint.pinName.ToStdString();
-            epArray.push_back( ep );
-        }
-
-        entry["endpoints"] = epArray;
-        netsArray.push_back( entry );
-    }
-
-    j["cross_board_nets"] = netsArray;
-
-    std::ofstream stream( aPath.ToStdString() );
-
-    if( !stream.is_open() )
-    {
-        wxLogError( wxT( "MULTI_BOARD_PROJECT: cannot write %s" ), aPath );
-        return false;
-    }
-
-    stream << j.dump( 2 );
-    stream.close();
-
-    // Update root dir so subsequent path resolution works after save-as
-    wxFileName fn( aPath );
-    const_cast<MULTI_BOARD_PROJECT*>( this )->m_rootDir = fn;
-    const_cast<MULTI_BOARD_PROJECT*>( this )->m_rootDir.SetFullName( wxEmptyString );
-
-    return true;
-}
-
-
-SUB_PROJECT_INFO* MULTI_BOARD_PROJECT::GetSubProject( const KIID& aUuid )
-{
-    auto it = std::find_if( m_subProjects.begin(), m_subProjects.end(),
-            [&aUuid]( const SUB_PROJECT_INFO& sp ) { return sp.uuid == aUuid; } );
-
-    return ( it != m_subProjects.end() ) ? &( *it ) : nullptr;
-}
-
-
-const SUB_PROJECT_INFO* MULTI_BOARD_PROJECT::GetSubProject( const KIID& aUuid ) const
-{
-    auto it = std::find_if( m_subProjects.begin(), m_subProjects.end(),
-            [&aUuid]( const SUB_PROJECT_INFO& sp ) { return sp.uuid == aUuid; } );
-
-    return ( it != m_subProjects.end() ) ? &( *it ) : nullptr;
-}
-
-
-void MULTI_BOARD_PROJECT::AddSubProject( const SUB_PROJECT_INFO& aInfo )
-{
-    m_subProjects.push_back( aInfo );
-}
-
-
-bool MULTI_BOARD_PROJECT::RemoveSubProject( const KIID& aUuid )
-{
-    auto it = std::find_if( m_subProjects.begin(), m_subProjects.end(),
-            [&aUuid]( const SUB_PROJECT_INFO& sp ) { return sp.uuid == aUuid; } );
-
-    if( it == m_subProjects.end() )
-        return false;
-
-    m_subProjects.erase( it );
-    return true;
-}
-
-
-wxFileName MULTI_BOARD_PROJECT::ResolveSubProjectPath( const SUB_PROJECT_INFO& aInfo ) const
-{
-    wxFileName result( aInfo.relativePath );
-
-    if( result.IsRelative() )
-        result.MakeAbsolute( m_rootDir.GetFullPath() );
-
-    return result;
-}
-
-
-wxFileName MULTI_BOARD_PROJECT::ResolveMbsPath() const
-{
-    if( m_mbsFileName.IsEmpty() )
-        return wxFileName();
-
-    wxFileName result( m_mbsFileName );
-
-    if( result.IsRelative() )
-        result.MakeAbsolute( m_rootDir.GetFullPath() );
-
-    return result;
-}
 
 
 namespace
@@ -744,30 +454,27 @@ wxString MultiBoardPinLabel( const wxString& aRef, const MULTI_BOARD_PAD_INFO& a
 }
 
 
-wxFileName MULTI_BOARD_PROJECT::EnsureMbsFile( const wxString& aContainerBasename )
+wxFileName EnsureMbsFile( PROJECT_FILE& aContainer, const wxString& aContainerBasename )
 {
-    if( m_mbsFileName.IsEmpty() )
+    wxString mbsFileName = aContainer.GetMbsFileName();
+
+    if( mbsFileName.IsEmpty() )
     {
-        // Default: <basename>_mbs.kicad_sch (a regular s-expression schematic
-        // under a suggestive name; Phase B-2 may promote this to .kicad_mbs).
-        m_mbsFileName = aContainerBasename + wxT( "_mbs.kicad_sch" );
+        mbsFileName = aContainerBasename + wxT( "_mbs.kicad_sch" );
+        aContainer.SetMbsFileName( mbsFileName );
     }
 
-    wxFileName mbsPath = ResolveMbsPath();
+    wxFileName mbsPath = aContainer.ResolveMbsPath();
 
     if( mbsPath.FileExists() )
         return mbsPath;
 
-    // Write a minimal valid KiCad s-expression schematic so eeschema can
-    // open the file. UUID is intentionally random; version matches the
-    // current KiCad schematic format version used elsewhere in the tree.
     wxFFile out( mbsPath.GetFullPath(), wxT( "w" ) );
 
     if( !out.IsOpened() )
     {
-        wxLogError( wxT( "MULTI_BOARD_PROJECT: cannot create MBS file %s" ),
-                    mbsPath.GetFullPath() );
-        m_mbsFileName.clear();
+        wxLogError( wxT( "EnsureMbsFile: cannot create %s" ), mbsPath.GetFullPath() );
+        aContainer.SetMbsFileName( wxEmptyString );
         return wxFileName();
     }
 
@@ -805,10 +512,10 @@ wxFileName MULTI_BOARD_PROJECT::EnsureMbsFile( const wxString& aContainerBasenam
     wxString blocksSection;
     double   cursorX = startX;
 
-    if( m_subProjects.empty() )
+    const auto& subProjects = aContainer.GetSubProjects();
+
+    if( subProjects.empty() )
     {
-        // No sub-projects yet — drop in a single placeholder so the MBS
-        // isn't blank on first open.
         blocksSection += wxString::Format(
                 wxT( "\t(module_block\n"
                      "\t\t(at %.2f %.2f)\n"
@@ -833,11 +540,11 @@ wxFileName MULTI_BOARD_PROJECT::EnsureMbsFile( const wxString& aContainerBasenam
 
         double cursorY = startY;
 
-        for( const SUB_PROJECT_INFO& info : m_subProjects )
+        for( const SUB_PROJECT_INFO& info : subProjects )
         {
             wxString subName = info.displayName.IsEmpty() ? info.name : info.displayName;
 
-            wxFileName proFile = ResolveSubProjectPath( info );
+            wxFileName proFile = aContainer.ResolveSubProjectPath( info );
             wxFileName schFile = mainSchematicForSubProject( proFile );
             wxFileName pcbFile = mainPcbForSubProject( proFile );
 

@@ -173,7 +173,7 @@ set( KICOMMON_SRCS
     project/project_archiver.cpp
     project/project_file.cpp
     project/project_local_settings.cpp
-    project/multi_board_project.cpp
+    project/multi_board_scan.cpp
     project/cross_board_pcb_sync.cpp
     project/tuning_profiles.cpp
 

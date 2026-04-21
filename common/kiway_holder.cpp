@@ -35,6 +35,9 @@
 
 PROJECT& KIWAY_HOLDER::Prj() const
 {
+    if( m_projectOverride )
+        return *m_projectOverride;
+
     return Kiway().Prj();
 }
 

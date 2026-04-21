@@ -28,7 +28,7 @@
 
 #include <wx/filename.h>
 
-class MULTI_BOARD_PROJECT;
+class PROJECT_FILE;
 class wxButton;
 class wxListCtrl;
 class wxListEvent;
@@ -61,7 +61,7 @@ public:
      * @param aMultiProjectPath absolute path to the `.kicad_multi` file this
      *                          dialog should write back to when Done is clicked.
      */
-    DIALOG_MULTI_BOARD_SETUP( wxWindow* aParent, MULTI_BOARD_PROJECT* aProject,
+    DIALOG_MULTI_BOARD_SETUP( wxWindow* aParent, PROJECT_FILE* aProject,
                               const wxFileName& aMultiProjectPath );
 
     ~DIALOG_MULTI_BOARD_SETUP() override;
@@ -103,8 +103,12 @@ private:
      */
     wxString uniquifyName( const wxString& aDesiredName ) const;
 
-    MULTI_BOARD_PROJECT* m_project;
+    PROJECT_FILE* m_project;
     wxFileName           m_multiProjectPath;
+
+    /// Directory containing the container `.kicad_pro` (where
+    /// `boards/` subdirectory lives).
+    wxFileName containerDir() const;
 
     wxListCtrl*          m_listCtrl;
     wxButton*            m_importButton;

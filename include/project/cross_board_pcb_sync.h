@@ -22,7 +22,7 @@
 #define KICAD_CROSS_BOARD_PCB_SYNC_H
 
 #include <kicommon.h>
-#include <project/multi_board_project.h>
+#include <project/project_file.h>
 
 #include <wx/string.h>
 
@@ -68,6 +68,6 @@ struct KICOMMON_API MB_CROSS_BOARD_SYNC_RESULT
  * Safe to call with an empty cross-board net list (no-op).
  */
 KICOMMON_API MB_CROSS_BOARD_SYNC_RESULT
-ApplyCrossBoardNetsToSubProjectPCBs( MULTI_BOARD_PROJECT& aProject );
+ApplyCrossBoardNetsToSubProjectPCBs( PROJECT_FILE& aProject );
 
 #endif // KICAD_CROSS_BOARD_PCB_SYNC_H

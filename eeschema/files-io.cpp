@@ -36,7 +36,6 @@
 #include <kiface_base.h>
 #include <kiplatform/app.h>
 #include <multi_board_net_extractor.h>
-#include <project/multi_board_project.h>
 #include <wx/dir.h>
 #include <kiplatform/ui.h>
 #include <libraries/legacy_symbol_library.h>
@@ -1599,7 +1598,12 @@ void SCH_EDIT_FRAME::syncCrossBoardNetsIfMbs()
     if( !schFn.IsAbsolute() )
         schFn.MakeAbsolute( Prj().GetProjectPath() );
 
-    // Walk upward from the schematic's directory looking for a .kicad_multi file.
+    // Walk upward from the schematic's directory looking for a `.kicad_pro`
+    // with `multi_board.container = true`. When the MBS opens in its own
+    // PROJECT (Y semantics) we could simply read `Prj().GetProjectFile()`,
+    // but `Prj()` here is the MBS schematic's project and may or may not
+    // be the container — so a targeted walk remains the safe path until
+    // the container/MBS pairing is stored explicitly inside the `.kicad_mbs`.
     wxFileName multiFile;
     wxFileName searchDir( schFn );
     searchDir.SetFullName( wxEmptyString );
@@ -1607,14 +1611,31 @@ void SCH_EDIT_FRAME::syncCrossBoardNetsIfMbs()
     for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
     {
         wxArrayString files;
-        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_multi" ),
+        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_pro" ),
                             wxDIR_FILES );
 
-        if( !files.IsEmpty() )
+        for( const wxString& candidate : files )
         {
-            multiFile = wxFileName( files[0] );
-            break;
+            PROJECT_FILE probe( candidate );
+
+            if( !probe.LoadFromFile() )
+                continue;
+
+            if( !probe.IsMultiBoardContainer() )
+                continue;
+
+            wxFileName expectedMbs = probe.ResolveMbsPath();
+
+            if( expectedMbs.IsOk()
+                && expectedMbs.GetFullPath() == schFn.GetFullPath() )
+            {
+                multiFile = wxFileName( candidate );
+                break;
+            }
         }
+
+        if( multiFile.IsOk() )
+            break;
 
         searchDir.RemoveLastDir();
     }
@@ -1622,20 +1643,13 @@ void SCH_EDIT_FRAME::syncCrossBoardNetsIfMbs()
     if( !multiFile.IsOk() || !multiFile.FileExists() )
         return;
 
-    MULTI_BOARD_PROJECT multi;
+    PROJECT_FILE multi( multiFile.GetFullPath() );
 
-    if( !multi.LoadFromFile( multiFile.GetFullPath() ) )
-        return;
-
-    // Only sync if the schematic we just saved is the MBS file registered
-    // in the multi-board container.
-    wxFileName expectedMbs = multi.ResolveMbsPath();
-
-    if( !expectedMbs.IsOk() || expectedMbs.GetFullPath() != schFn.GetFullPath() )
+    if( !multi.LoadFromFile() )
         return;
 
     multi.SetCrossBoardNets( ExtractCrossBoardNets( *rootScreen, multi ) );
-    multi.SaveToFile( multiFile.GetFullPath() );
+    multi.SaveToFile();
 }
 
 

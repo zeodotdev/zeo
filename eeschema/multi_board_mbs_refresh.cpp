@@ -24,7 +24,7 @@
 #include "sch_module_pin.h"
 #include "sch_screen.h"
 
-#include <project/multi_board_project.h>
+#include <project/project_file.h>
 #include <project/multi_board_scan.h>
 
 #include <algorithm>
@@ -127,7 +127,7 @@ VECTOR2I nextFreeSlot( SCH_SCREEN& aScreen )
 
 
 MBS_REFRESH_RESULT RefreshMbsFromSubProjects( SCH_SCREEN& aMbsScreen,
-                                              const MULTI_BOARD_PROJECT& aMultiBoard )
+                                              const PROJECT_FILE& aMultiBoard )
 {
     MBS_REFRESH_RESULT result;
 

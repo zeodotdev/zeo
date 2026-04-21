@@ -22,7 +22,7 @@
 #include <kicad_manager_frame.h>
 #include <kiplatform/policy.h>
 #include <policy_keys.h>
-#include <project/multi_board_project.h>
+#include <project/project_file.h>
 #include <tool/tool_manager.h>
 #include <tools/kicad_manager_actions.h>
 #include <tools/kicad_manager_control.h>
@@ -151,7 +151,7 @@ void PANEL_KICAD_LAUNCHER::CreateLaunchers()
     // each sub-project and lets the user switch between them with one click.
     // The section is hidden for single-board sessions so the classic launcher
     // layout is unchanged.
-    MULTI_BOARD_PROJECT* multi = m_frame->GetMultiBoardProject();
+    PROJECT_FILE* multi = m_frame->GetMultiBoardProject();
 
     if( multi )
     {
@@ -162,7 +162,8 @@ void PANEL_KICAD_LAUNCHER::CreateLaunchers()
         m_scrolledWindow->SetFont( titleFont );
         wxStaticText* headerLbl = new wxStaticText(
                 m_scrolledWindow, wxID_ANY,
-                wxString::Format( _( "Multi-Board: %s" ), multi->GetName() ) );
+                wxString::Format( _( "Multi-Board: %s" ),
+                                  wxFileName( multi->GetFullFilename() ).GetName() ) );
         m_scrolledWindow->SetFont( helpFont );
         wxStaticText* headerHelp = new wxStaticText(
                 m_scrolledWindow, wxID_ANY,

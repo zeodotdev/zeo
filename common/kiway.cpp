@@ -511,26 +511,129 @@ bool KIWAY::PlayersClose( bool doForce )
 void KIWAY::PlayerDidClose( FRAME_T aFrameType )
 {
     m_playerFrameId[aFrameType] = wxID_NONE;
+
+    // Note: peer frames registered via RegisterPeerPlayer self-unregister
+    // through UnregisterPeerPlayer on their own close path; this function
+    // only handles the primary frame slot.
+}
+
+
+void KIWAY::RegisterPeerPlayer( FRAME_T aFrameType, wxWindowID aFrameId )
+{
+    if( aFrameId == wxID_NONE )
+        return;
+
+    std::lock_guard<std::mutex> lock( m_peerPlayerMutex );
+    auto& list = m_peerPlayerFrames[aFrameType];
+
+    // Idempotent — don't double-register.
+    if( std::find( list.begin(), list.end(), aFrameId ) == list.end() )
+        list.push_back( aFrameId );
+}
+
+
+void KIWAY::UnregisterPeerPlayer( FRAME_T aFrameType, wxWindowID aFrameId )
+{
+    std::lock_guard<std::mutex> lock( m_peerPlayerMutex );
+    auto it = m_peerPlayerFrames.find( aFrameType );
+
+    if( it == m_peerPlayerFrames.end() )
+        return;
+
+    auto& list = it->second;
+    list.erase( std::remove( list.begin(), list.end(), aFrameId ), list.end() );
+
+    if( list.empty() )
+        m_peerPlayerFrames.erase( it );
+}
+
+
+std::vector<KIWAY_PLAYER*> KIWAY::GetAllPlayerFrames( FRAME_T aFrameType )
+{
+    std::vector<KIWAY_PLAYER*> out;
+
+    if( KIWAY_PLAYER* primary = GetPlayerFrame( aFrameType ) )
+        out.push_back( primary );
+
+    std::vector<wxWindowID> peerIds;
+    {
+        std::lock_guard<std::mutex> lock( m_peerPlayerMutex );
+        auto it = m_peerPlayerFrames.find( aFrameType );
+
+        if( it != m_peerPlayerFrames.end() )
+            peerIds = it->second;
+    }
+
+    for( wxWindowID id : peerIds )
+    {
+        wxWindow* w = wxWindow::FindWindowById( id );
+
+        if( !w )
+        {
+            // Stale — purge on next GC cycle. (Lazy cleanup avoids
+            // recursive lock acquisition here.)
+            continue;
+        }
+
+        // Avoid duplicating the primary if it's also in the peer list
+        // (shouldn't happen but guards against racy registration).
+        auto* player = static_cast<KIWAY_PLAYER*>( w );
+
+        if( std::find( out.begin(), out.end(), player ) == out.end() )
+            out.push_back( player );
+    }
+
+    return out;
 }
 
 
 void KIWAY::ExpressMail( FRAME_T aDestination, MAIL_T aCommand, std::string& aPayload, wxWindow* aSource,
                          bool aFromOtherThread )
 {
-    std::unique_ptr<KIWAY_MAIL_EVENT> mail =
-            std::make_unique<KIWAY_MAIL_EVENT>( aDestination, aCommand, aPayload, aSource );
+    // Broadcast to every open player matching aDestination — primary
+    // frame plus any peer frames registered via RegisterPeerPlayer.
+    // Single-instance editors see identical behavior to before; peer
+    // frames now receive cross-probe / broadcast mail they'd otherwise
+    // miss.
+    std::vector<KIWAY_PLAYER*> recipients = GetAllPlayerFrames( aDestination );
 
-    if( aFromOtherThread )
+    if( recipients.empty() )
     {
-        QueueEvent( mail.release() );
+        // Preserve legacy behavior of routing to the KIWAY itself when
+        // no player is open (some recipients install handlers on KIWAY
+        // rather than on their own frame).
+        std::unique_ptr<KIWAY_MAIL_EVENT> mail =
+                std::make_unique<KIWAY_MAIL_EVENT>( aDestination, aCommand, aPayload, aSource );
+
+        if( aFromOtherThread )
+            QueueEvent( mail.release() );
+        else
+        {
+            ProcessEvent( *mail );
+            aPayload = mail->GetPayload();
+        }
+
+        return;
     }
-    else
-    {
-        ProcessEvent( *mail );
 
-        // The handler may have modified the payload (e.g. to return a response).
-        // Copy it back so callers see the updated value.
-        aPayload = mail->GetPayload();
+    for( KIWAY_PLAYER* recipient : recipients )
+    {
+        std::unique_ptr<KIWAY_MAIL_EVENT> mail =
+                std::make_unique<KIWAY_MAIL_EVENT>( aDestination, aCommand, aPayload, aSource );
+
+        if( aFromOtherThread )
+        {
+            recipient->GetEventHandler()->QueueEvent( mail.release() );
+        }
+        else
+        {
+            recipient->GetEventHandler()->ProcessEvent( *mail );
+
+            // Reflect any payload mutation (e.g. response data) back to
+            // the caller. Last recipient wins in the rare
+            // multi-response scenario.
+            aPayload = mail->GetPayload();
+        }
     }
 }
 

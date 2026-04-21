@@ -229,8 +229,7 @@ size_t PROJECT_TEMPLATE::GetDestinationFiles( const wxFileName& aNewProjectPath,
     for( wxFileName& file : srcFiles )
     {
         if( file.GetExt() == FILEEXT::ProjectFileExtension
-            || file.GetExt() == FILEEXT::LegacyProjectFileExtension
-            || file.GetExt() == FILEEXT::MultiBoardProjectFileExtension )
+            || file.GetExt() == FILEEXT::LegacyProjectFileExtension )
         {
             if( !basename.IsEmpty() && basename != file.GetName() )
                 multipleProjectFilesFound = true;
@@ -283,8 +282,7 @@ bool PROJECT_TEMPLATE::CreateProject( wxFileName& aNewProjectPath, wxString* aEr
     for( wxFileName& file : srcFiles )
     {
         if( file.GetExt() == FILEEXT::ProjectFileExtension
-            || file.GetExt() == FILEEXT::LegacyProjectFileExtension
-            || file.GetExt() == FILEEXT::MultiBoardProjectFileExtension )
+            || file.GetExt() == FILEEXT::LegacyProjectFileExtension )
         {
             if( !basename.IsEmpty() && basename != file.GetName() )
                 multipleProjectFilesFound = true;

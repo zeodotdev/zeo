@@ -1134,17 +1134,43 @@ void KICAD_MANAGER_FRAME::setMultiBoardContainer( PROJECT* aContainer )
 
 PROJECT_FILE* KICAD_MANAGER_FRAME::GetMultiBoardProject() const
 {
-    // m_multiBoardContainer is a raw pointer, but kept valid by a
-    // destroy hook installed in the setter below. If SETTINGS_MANAGER
-    // unloads the container the hook nulls this out, so we never
-    // dereference freed memory. Using the pointer avoids any path-
-    // match subtleties (symlinks, case, trailing separators) that a
-    // string lookup via SETTINGS_MANAGER::GetProject would suffer.
-    if( !m_multiBoardContainer )
-        return nullptr;
+    // m_multiBoardContainer is a raw pointer kept valid by a destroy
+    // hook installed in setMultiBoardContainer. When the container is
+    // unloaded the hook nulls it — avoiding any use-after-free.
+    //
+    // If the fast-path pointer is still live, use it. Otherwise fall
+    // back to scanning SETTINGS_MANAGER for any loaded PROJECT whose
+    // PROJECT_FILE has multi_board.container set. This makes routing
+    // resilient even when some code path we missed has forgotten to
+    // re-set our container pointer — the container's presence in the
+    // session, not our accounting of it, is what the tree cares about.
+    if( m_multiBoardContainer )
+    {
+        PROJECT_FILE& pf = m_multiBoardContainer->GetProjectFile();
 
-    PROJECT_FILE& pf = m_multiBoardContainer->GetProjectFile();
-    return pf.IsMultiBoardContainer() ? &pf : nullptr;
+        if( pf.IsMultiBoardContainer() )
+            return &pf;
+    }
+
+    for( const wxString& proPath : Pgm().GetSettingsManager().GetOpenProjects() )
+    {
+        if( PROJECT* prj = Pgm().GetSettingsManager().GetProject( proPath ) )
+        {
+            PROJECT_FILE& pf = prj->GetProjectFile();
+
+            if( pf.IsMultiBoardContainer() )
+            {
+                // Re-establish the fast-path pointer so subsequent
+                // lookups avoid the scan. Cast away const — the member
+                // is mutable in spirit; the data it points at is live.
+                const_cast<KICAD_MANAGER_FRAME*>( this )
+                        ->setMultiBoardContainer( prj );
+                return &pf;
+            }
+        }
+    }
+
+    return nullptr;
 }
 
 

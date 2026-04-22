@@ -52,6 +52,8 @@ public:
                         const PROJECT* aProject, const TITLE_BLOCK* aTitleBlock,
                         const std::map<wxString, wxString>* aProperties );
 
+    ~DS_PROXY_VIEW_ITEM();
+
     /**
      * Set the file name displayed in the title block.
      */

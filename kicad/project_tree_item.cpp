@@ -269,19 +269,57 @@ void PROJECT_TREE_ITEM::Activate( PROJECT_TREE_PANE* aTreePrjFrame )
     case TREE_FILE_TYPE::LEGACY_SCHEMATIC:
     case TREE_FILE_TYPE::SEXPR_SCHEMATIC:
     {
+        PROJECT_FILE* multi = frame->GetMultiBoardProject();
+
+        // Multi-board dispatch first — same reason as the PCB case
+        // below. The launcher's Prj()-derived paths (SchFileName(),
+        // rootSchematic) follow SETTINGS_MANAGER's active project,
+        // which MBSCH / peer editors can legitimately swap off the
+        // container.
+        if( multi )
+        {
+            wxFileName schFn( fullFileName );
+            schFn.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+            wxString schDir = schFn.GetPath( wxPATH_GET_SEPARATOR );
+
+            // Stray container-root `.kicad_sch` — treat as MBS alias.
+            wxFileName containerRoot( frame->GetProjectFileName() );
+            wxString containerBase = containerRoot.GetName();
+
+            if( schFn.GetName() == containerBase
+                && schFn.GetPath( wxPATH_GET_SEPARATOR )
+                           == containerRoot.GetPath( wxPATH_GET_SEPARATOR ) )
+            {
+                toolMgr->RunAction( KICAD_MANAGER_ACTIONS::editMultiBoardSchematic );
+                break;
+            }
+
+            for( const SUB_PROJECT_INFO& sp : multi->GetSubProjects() )
+            {
+                wxFileName proFile = multi->ResolveSubProjectPath( sp );
+                proFile.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+                wxString proDir = proFile.GetPath( wxPATH_GET_SEPARATOR );
+
+                if( schDir.StartsWith( proDir ) )
+                {
+                    frame->SpawnPeerSchematicEditor( sp.uuid );
+                    break;
+                }
+            }
+
+            // If no sub-project matched, schematic is an orphan at
+            // container scope. Zeo doesn't ship standalone eeschema,
+            // so silently ignore — nothing good can happen routing it
+            // to `editSchematic` / `editOtherSch`.
+            break;
+        }
+
         wxString rootSchematic = frame->SchFileName();
 
         if( rootSchematic.IsEmpty() )
             rootSchematic = frame->SchLegacyFileName();
 
-        // Multi-board containers have no root `.kicad_sch` of their own.
-        // If a stale file with the container's name exists, route to the
-        // MBS instead so the user doesn't silently edit an orphan file.
-        if( frame->GetMultiBoardProject() && fullFileName == rootSchematic )
-        {
-            toolMgr->RunAction( KICAD_MANAGER_ACTIONS::editMultiBoardSchematic );
-        }
-        else if( fullFileName == rootSchematic )
+        if( fullFileName == rootSchematic )
         {
             toolMgr->RunAction( KICAD_MANAGER_ACTIONS::editSchematic );
         }
@@ -313,36 +351,6 @@ void PROJECT_TREE_ITEM::Activate( PROJECT_TREE_PANE* aTreePrjFrame )
                     kiway.ExpressMail( FRAME_SCH, MAIL_SCH_NAVIGATE_TO_SHEET, packet );
                 }
             }
-            else if( PROJECT_FILE* multi = frame->GetMultiBoardProject() )
-            {
-                // Sub-project schematic inside a multi-board container.
-                // Open the owning sub-project as an in-process peer rather
-                // than spawning a standalone `eeschema` executable (Zeo
-                // doesn't ship one). For nested hierarchy sheets, open the
-                // enclosing sub-project's main schematic.
-                wxFileName schFn( fullFileName );
-                schFn.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
-                wxString schDir = schFn.GetPath( wxPATH_GET_SEPARATOR );
-
-                for( const SUB_PROJECT_INFO& sp : multi->GetSubProjects() )
-                {
-                    wxFileName proFile = multi->ResolveSubProjectPath( sp );
-                    proFile.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
-                    wxString proDir = proFile.GetPath( wxPATH_GET_SEPARATOR );
-
-                    if( schDir.StartsWith( proDir ) )
-                    {
-                        frame->SpawnPeerSchematicEditor( sp.uuid );
-                        break;
-                    }
-                }
-
-                // If no sub-project matched, it's an orphan schematic at
-                // container scope (e.g. a stray `.kicad_sch` left behind).
-                // Zeo has no external `eeschema` to spawn, so silently
-                // ignore — the user is better served by cleaning up the
-                // file than by a confusing "not found" dialog.
-            }
             else
             {
                 // Not in hierarchy, open as standalone schematic
@@ -355,11 +363,13 @@ void PROJECT_TREE_ITEM::Activate( PROJECT_TREE_PANE* aTreePrjFrame )
 
     case TREE_FILE_TYPE::LEGACY_PCB:
     case TREE_FILE_TYPE::SEXPR_PCB:
-        if( fullFileName == frame->PcbFileName() || fullFileName == frame->PcbLegacyFileName() )
-        {
-            toolMgr->RunAction( KICAD_MANAGER_ACTIONS::editPCB );
-        }
-        else if( PROJECT_FILE* multi = frame->GetMultiBoardProject() )
+        // Multi-board dispatch must run BEFORE the "this matches Prj()
+        // PCB" shortcut. When MBS or a peer editor swaps the
+        // SETTINGS_MANAGER active project to a sub-project, the
+        // launcher's Prj() (and therefore frame->PcbFileName()) follows
+        // it — so the match would incorrectly fire `editPCB` (which
+        // launches external pcbnew) on a sub-project PCB.
+        if( PROJECT_FILE* multi = frame->GetMultiBoardProject() )
         {
             // Sub-project PCB inside a multi-board container — route to
             // an in-process peer frame. Zeo has no external `pcbnew`
@@ -367,6 +377,8 @@ void PROJECT_TREE_ITEM::Activate( PROJECT_TREE_PANE* aTreePrjFrame )
             wxFileName pcbFn( fullFileName );
             pcbFn.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
             wxString pcbDir = pcbFn.GetPath( wxPATH_GET_SEPARATOR );
+
+            bool routed = false;
 
             for( const SUB_PROJECT_INFO& sp : multi->GetSubProjects() )
             {
@@ -377,9 +389,17 @@ void PROJECT_TREE_ITEM::Activate( PROJECT_TREE_PANE* aTreePrjFrame )
                 if( pcbDir.StartsWith( proDir ) )
                 {
                     frame->SpawnPeerPcbEditor( sp.uuid );
+                    routed = true;
                     break;
                 }
             }
+
+            if( !routed )
+                toolMgr->RunAction<wxString*>( KICAD_MANAGER_ACTIONS::editOtherPCB, &fullFileName );
+        }
+        else if( fullFileName == frame->PcbFileName() || fullFileName == frame->PcbLegacyFileName() )
+        {
+            toolMgr->RunAction( KICAD_MANAGER_ACTIONS::editPCB );
         }
         else
         {

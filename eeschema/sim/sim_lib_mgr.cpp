@@ -24,6 +24,7 @@
 
 #include <filename_resolver.h>
 #include <pgm_base.h>
+#include <project.h>
 #include <string>
 #include <string_utils.h>
 #include <common.h>
@@ -45,6 +46,15 @@ SIM_LIB_MGR::SIM_LIB_MGR( const PROJECT* aPrj ) :
         m_project( aPrj ),
         m_forceFullParse( false )
 {
+    if( m_project )
+        m_project->AddDestroyHook( this, [this]() { m_project = nullptr; } );
+}
+
+
+SIM_LIB_MGR::~SIM_LIB_MGR()
+{
+    if( m_project )
+        m_project->RemoveDestroyHook( this );
 }
 
 

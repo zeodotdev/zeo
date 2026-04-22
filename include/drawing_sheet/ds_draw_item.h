@@ -415,14 +415,9 @@ public:
         m_properties = nullptr;
     }
 
-    ~DS_DRAW_ITEM_LIST()
-    {
-        // Items in the m_graphicList are owned by their respective DS_DATA_ITEMs.
-        // for( DS_DRAW_ITEM_BASE* item : m_graphicList )
-        //     delete item;
-    }
+    ~DS_DRAW_ITEM_LIST();
 
-    void SetProject( const PROJECT* aProject ) { m_project = aProject; }
+    void SetProject( const PROJECT* aProject );
 
     /**
      * Set the title block (mainly for drawing sheet editor)

@@ -50,6 +50,7 @@
 
 #include <eda_draw_frame.h>
 #include <drawing_sheet/ds_draw_item.h>
+#include <project.h>
 #include <drawing_sheet/ds_data_item.h>
 #include <drawing_sheet/ds_data_model.h>
 #include <base_units.h>
@@ -542,6 +543,32 @@ const BOX2I DS_DRAW_ITEM_PAGE::GetBoundingBox() const
 
 
 // ====================== DS_DRAW_ITEM_LIST ==============================
+
+DS_DRAW_ITEM_LIST::~DS_DRAW_ITEM_LIST()
+{
+    // Items in the m_graphicList are owned by their respective
+    // DS_DATA_ITEMs so we don't delete them here. We do need to detach
+    // from the PROJECT's destroy-hook list so its ~PROJECT doesn't fire
+    // into freed list memory.
+    if( m_project )
+        m_project->RemoveDestroyHook( this );
+}
+
+
+void DS_DRAW_ITEM_LIST::SetProject( const PROJECT* aProject )
+{
+    if( m_project == aProject )
+        return;
+
+    if( m_project )
+        m_project->RemoveDestroyHook( this );
+
+    m_project = aProject;
+
+    if( m_project )
+        m_project->AddDestroyHook( this, [this]() { m_project = nullptr; } );
+}
+
 
 void DS_DRAW_ITEM_LIST::BuildDrawItemsList( const PAGE_INFO& aPageInfo,
                                             const TITLE_BLOCK& aTitleBlock )

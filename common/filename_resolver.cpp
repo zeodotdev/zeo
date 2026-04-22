@@ -29,6 +29,7 @@
 #include <wx/log.h>
 #include <wx/uri.h>
 #include <pgm_base.h>
+#include <project.h>
 #include <trace_helpers.h>
 
 #include <common.h>
@@ -59,6 +60,13 @@ FILENAME_RESOLVER::FILENAME_RESOLVER() :
 }
 
 
+FILENAME_RESOLVER::~FILENAME_RESOLVER()
+{
+    if( m_project )
+        m_project->RemoveDestroyHook( this );
+}
+
+
 bool FILENAME_RESOLVER::Set3DConfigDir( const wxString& aConfigDir )
 {
     if( aConfigDir.empty() )
@@ -80,7 +88,13 @@ bool FILENAME_RESOLVER::Set3DConfigDir( const wxString& aConfigDir )
 
 bool FILENAME_RESOLVER::SetProject( const PROJECT* aProject, bool* flgChanged )
 {
+    if( m_project )
+        m_project->RemoveDestroyHook( this );
+
     m_project = aProject;
+
+    if( m_project )
+        m_project->AddDestroyHook( this, [this]() { m_project = nullptr; } );
 
     if( !aProject )
         return false;

@@ -39,7 +39,7 @@ class SIM_LIB_MGR
 {
 public:
     SIM_LIB_MGR( const PROJECT* aPrj );
-    virtual ~SIM_LIB_MGR() = default;
+    virtual ~SIM_LIB_MGR();
 
     void SetForceFullParse() { m_forceFullParse = true; }
 

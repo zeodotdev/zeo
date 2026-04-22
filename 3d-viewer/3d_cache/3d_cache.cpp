@@ -133,6 +133,9 @@ S3D_CACHE::S3D_CACHE()
 
 S3D_CACHE::~S3D_CACHE()
 {
+    if( m_project )
+        m_project->RemoveDestroyHook( this );
+
     FlushCache();
 
     delete m_FNResolver;
@@ -478,7 +481,13 @@ bool S3D_CACHE::Set3DConfigDir( const wxString& aConfigDir )
 
 bool S3D_CACHE::SetProject( PROJECT* aProject )
 {
+    if( m_project )
+        m_project->RemoveDestroyHook( this );
+
     m_project = aProject;
+
+    if( m_project )
+        m_project->AddDestroyHook( this, [this]() { m_project = nullptr; } );
 
     bool hasChanged = false;
 

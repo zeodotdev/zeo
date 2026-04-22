@@ -58,6 +58,7 @@ class FILENAME_RESOLVER
 {
 public:
     FILENAME_RESOLVER();
+    ~FILENAME_RESOLVER();
 
     /**
      * Set the user's configuration directory for 3D models.

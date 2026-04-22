@@ -77,6 +77,9 @@ CONNECTIVITY_DATA::CONNECTIVITY_DATA( std::shared_ptr<CONNECTIVITY_DATA> aGlobal
 
 CONNECTIVITY_DATA::~CONNECTIVITY_DATA()
 {
+    if( m_multiBoardProject )
+        m_multiBoardProject->RemoveDestroyHook( this );
+
     for( RN_NET* net : m_nets )
         delete net;
 
@@ -1139,13 +1142,25 @@ const NET_SETTINGS* CONNECTIVITY_DATA::GetNetSettings() const
 
 void CONNECTIVITY_DATA::SetMultiBoardContext( BOARD* aBoard, PROJECT* aProject )
 {
+    if( m_multiBoardProject )
+        m_multiBoardProject->RemoveDestroyHook( this );
+
     m_multiBoardContext = aBoard;
     m_multiBoardProject = aProject;
+
+    if( m_multiBoardProject )
+    {
+        m_multiBoardProject->AddDestroyHook(
+                this, [this]() { m_multiBoardProject = nullptr; } );
+    }
 }
 
 
 void CONNECTIVITY_DATA::ClearMultiBoardContext()
 {
+    if( m_multiBoardProject )
+        m_multiBoardProject->RemoveDestroyHook( this );
+
     m_multiBoardContext = nullptr;
     m_multiBoardProject = nullptr;
 }

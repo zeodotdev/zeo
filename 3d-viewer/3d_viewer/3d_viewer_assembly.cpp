@@ -65,6 +65,8 @@ ASSEMBLY_3D_MANAGER::ASSEMBLY_3D_MANAGER() :
 
 ASSEMBLY_3D_MANAGER::~ASSEMBLY_3D_MANAGER()
 {
+    if( m_project )
+        m_project->RemoveDestroyHook( this );
 }
 
 
@@ -72,6 +74,9 @@ void ASSEMBLY_3D_MANAGER::LoadProjectBoards( PROJECT* aProject )
 {
     Clear();
     m_project = aProject;
+
+    if( m_project )
+        m_project->AddDestroyHook( this, [this]() { m_project = nullptr; } );
 
     if( !aProject )
         return;
@@ -99,6 +104,9 @@ void ASSEMBLY_3D_MANAGER::LoadProjectBoards( PROJECT* aProject )
 
 void ASSEMBLY_3D_MANAGER::Clear()
 {
+    if( m_project )
+        m_project->RemoveDestroyHook( this );
+
     m_boardInstances.clear();
     m_lastCollisions.clear();
     m_project = nullptr;

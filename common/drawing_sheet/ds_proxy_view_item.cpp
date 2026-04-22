@@ -50,6 +50,15 @@ DS_PROXY_VIEW_ITEM::DS_PROXY_VIEW_ITEM( const EDA_IU_SCALE& aIuScale, const PAGE
         m_colorLayer( LAYER_DRAWINGSHEET ),
         m_pageBorderColorLayer( LAYER_PAGE_LIMITS )
 {
+    if( m_project )
+        m_project->AddDestroyHook( this, [this]() { m_project = nullptr; } );
+}
+
+
+DS_PROXY_VIEW_ITEM::~DS_PROXY_VIEW_ITEM()
+{
+    if( m_project )
+        m_project->RemoveDestroyHook( this );
 }
 
 

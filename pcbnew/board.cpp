@@ -158,6 +158,11 @@ BOARD::BOARD() :
 
 BOARD::~BOARD()
 {
+    // If PROJECT outlives us, its destroy hook would fire against a
+    // dangling `this`. Deregister cleanly.
+    if( m_project )
+        m_project->RemoveDestroyHook( this );
+
     m_itemByIdCache.clear();
 
     // Clean up the owned elements
@@ -200,9 +205,23 @@ bool BOARD::BuildConnectivity( PROGRESS_REPORTER* aReporter )
 void BOARD::SetProject( PROJECT* aProject, bool aReferenceOnly )
 {
     if( m_project )
+    {
+        // Deregister from old project before we overwrite the pointer,
+        // otherwise a later ~PROJECT would fire our hook against freed
+        // BOARD memory.
+        m_project->RemoveDestroyHook( this );
         ClearProject();
+    }
 
     m_project = aProject;
+
+    // Register so a SETTINGS_MANAGER::UnloadProject() on our referenced
+    // PROJECT nulls m_project instead of leaving it dangling — paints
+    // on this board's canvas during a project-swap window then fall
+    // through BOARD::GetVisibleLayers()' null check rather than crashing
+    // dereferencing freed memory.
+    if( m_project )
+        m_project->AddDestroyHook( this, [this]() { m_project = nullptr; } );
 
     if( aProject && !aReferenceOnly )
     {

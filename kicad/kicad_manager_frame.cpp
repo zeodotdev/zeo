@@ -331,6 +331,9 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
 
 KICAD_MANAGER_FRAME::~KICAD_MANAGER_FRAME()
 {
+    // Deregister any destroy hook installed via setMultiBoardContainer.
+    setMultiBoardContainer( nullptr );
+
     Unbind( wxEVT_CHAR, &TOOL_DISPATCHER::DispatchWxEvent, m_toolDispatcher );
     Unbind( wxEVT_CHAR_HOOK, &TOOL_DISPATCHER::DispatchWxEvent, m_toolDispatcher );
 
@@ -823,6 +826,10 @@ bool KICAD_MANAGER_FRAME::CloseProject( bool aSave )
     if( !Kiway().PlayersClose( false ) )
         return false;
 
+    // Reset multi-board tracking at every close; the next LoadMultiBoardProject
+    // will re-set it if appropriate.
+    setMultiBoardContainer( nullptr );
+
     // Abort any in-progress background load, since the threads depend on the project not changing
     KIFACE *schface = Kiway().KiFACE( KIWAY::FACE_SCH );
     schface->CancelPreload();
@@ -1082,6 +1089,16 @@ bool KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
 
     wxPostEvent( this, cmd );
 
+    // If this project is a multi-board container, track the container
+    // PROJECT* directly so the tree and UI can distinguish sub-project
+    // clicks from single-board clicks even after a peer editor swaps
+    // the active project. Works for every entry point (File→Open, MRU,
+    // command-line) — not just the dedicated multi-board new flow.
+    if( Prj().GetProjectFile().IsMultiBoardContainer() )
+        setMultiBoardContainer( &Prj() );
+    else
+        setMultiBoardContainer( nullptr );
+
     PrintPrjInfo();
 
     KIPLATFORM::APP::RegisterApplicationRestart( aProjectFileName.GetFullPath() );
@@ -1097,12 +1114,36 @@ bool KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
 }
 
 
+void KICAD_MANAGER_FRAME::setMultiBoardContainer( PROJECT* aContainer )
+{
+    if( m_multiBoardContainer == aContainer )
+        return;
+
+    if( m_multiBoardContainer )
+        m_multiBoardContainer->RemoveDestroyHook( this );
+
+    m_multiBoardContainer = aContainer;
+
+    if( m_multiBoardContainer )
+    {
+        m_multiBoardContainer->AddDestroyHook(
+                this, [this]() { m_multiBoardContainer = nullptr; } );
+    }
+}
+
+
 PROJECT_FILE* KICAD_MANAGER_FRAME::GetMultiBoardProject() const
 {
-    if( !m_active_project )
+    // m_multiBoardContainer is a raw pointer, but kept valid by a
+    // destroy hook installed in the setter below. If SETTINGS_MANAGER
+    // unloads the container the hook nulls this out, so we never
+    // dereference freed memory. Using the pointer avoids any path-
+    // match subtleties (symlinks, case, trailing separators) that a
+    // string lookup via SETTINGS_MANAGER::GetProject would suffer.
+    if( !m_multiBoardContainer )
         return nullptr;
 
-    PROJECT_FILE& pf = const_cast<KICAD_MANAGER_FRAME*>( this )->Prj().GetProjectFile();
+    PROJECT_FILE& pf = m_multiBoardContainer->GetProjectFile();
     return pf.IsMultiBoardContainer() ? &pf : nullptr;
 }
 
@@ -1126,7 +1167,14 @@ bool KICAD_MANAGER_FRAME::LoadMultiBoardProject( const wxFileName& aMultiProject
     PROJECT_FILE& pf = Prj().GetProjectFile();
 
     if( !pf.IsMultiBoardContainer() )
+    {
+        setMultiBoardContainer( nullptr );
         return true;
+    }
+
+    // Remember the container PROJECT so GetMultiBoardProject() still
+    // finds it after a peer PCB/schematic editor activates a sub.
+    setMultiBoardContainer( &Prj() );
 
     if( pf.GetSubProjects().empty() )
     {

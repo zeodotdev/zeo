@@ -596,6 +596,15 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
     else
         setProject = Prj().GetProjectFullName().IsEmpty();
 
+    // When this PCB frame is a peer bound to a sub-project via
+    // SetPrjOverride, the frame's Prj() already points at the correct
+    // sub-project. Swapping the SETTINGS_MANAGER active project here
+    // would unload the launcher's multi-board container, which is still
+    // live in other frames (Project Manager, MBSCH editor) — suppress
+    // the swap in that case and let peer mode handle its own lifecycle.
+    if( GetPrjOverride() && pro.GetFullPath() == Prj().GetProjectFullName() )
+        setProject = false;
+
     if( setProject )
     {
         // calls SaveProject

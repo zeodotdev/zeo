@@ -278,6 +278,10 @@ void OPENGL_COMPOSITOR::SetBuffer( unsigned int aBufferHandle )
     // Either unbind the FBO for direct rendering, or bind the one with target textures
     bindFb( aBufferHandle == DIRECT_RENDERING ? DIRECT_RENDERING : m_mainFbo );
 
+    // bindFb may have marked us uninitialised on context loss — bail out
+    if( !m_initialized )
+        return;
+
     // Switch the target texture
     if( m_curFbo != DIRECT_RENDERING )
     {
@@ -385,7 +389,22 @@ void OPENGL_COMPOSITOR::bindFb( unsigned int aFb )
     if( m_curFbo != aFb )
     {
         glBindFramebuffer( GL_FRAMEBUFFER, aFb );
-        checkGlError( "switching framebuffer", __FILE__, __LINE__ );
+
+        int err = glGetError();
+
+        if( err != GL_NO_ERROR )
+        {
+            // GL context was likely lost (e.g. sleep/wake on macOS).
+            // Don't throw or show a dialog — this fires every frame and would
+            // flood the user with pop-ups.  Mark uninitialised so the next
+            // paint cycle recreates the context.
+            wxLogTrace( wxT( "KICAD_GAL_OPENGL_ERROR" ),
+                        wxT( "bindFb: glBindFramebuffer failed (0x%X), "
+                             "marking compositor for reinit" ), err );
+            m_initialized = false;
+            return;
+        }
+
         m_curFbo = aFb;
     }
 }
@@ -643,6 +662,13 @@ void OPENGL_COMPOSITOR::DrawBufferDifference( unsigned int aSourceHandle, unsign
 
     // Copy destination buffer to temp texture
     bindFb( m_mainFbo );
+
+    if( !m_initialized )
+    {
+        glDeleteTextures( 1, &dstTempTex );
+        return;
+    }
+
     GLenum destAttachment = m_buffers[aDestHandle - 1].attachmentPoint;
     wxLogTrace( traceGalXorMode, wxT( "DrawBufferDifference(): dest attachment point=0x%X" ), destAttachment );
 

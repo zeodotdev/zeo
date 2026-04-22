@@ -577,6 +577,11 @@ void OPENGL_GAL::BeginDrawing()
     glOrtho( 0, (GLint) m_screenSize.x, (GLsizei) m_screenSize.y, 0,
              -m_depthRange.x, -m_depthRange.y );
 
+    // If the compositor lost its GL context (e.g. sleep/wake on macOS),
+    // force full framebuffer reinitialisation on this paint cycle.
+    if( m_isFramebufferInitialized && !m_compositor->IsInitialized() )
+        m_isFramebufferInitialized = false;
+
     if( !m_isFramebufferInitialized )
     {
         // Prepare rendering target buffers

@@ -82,11 +82,17 @@ public:
      * fall back to the global `Kiway().Prj()`.
      *
      * The pointer is not owned; caller ensures it stays loaded in
-     * SETTINGS_MANAGER for the holder's lifetime.
+     * SETTINGS_MANAGER for the holder's lifetime. This method also
+     * registers a destroy hook on the target PROJECT so that if the
+     * PROJECT is unloaded out from under us (happens when another peer
+     * frame swaps projects in SETTINGS_MANAGER), m_projectOverride gets
+     * nulled automatically instead of left dangling.
      */
-    void SetPrjOverride( PROJECT* aProject ) { m_projectOverride = aProject; }
+    void SetPrjOverride( PROJECT* aProject );
 
     PROJECT* GetPrjOverride() const { return m_projectOverride; }
+
+    virtual ~KIWAY_HOLDER();
 
     /**
      * It is only used for debugging, since "this" is not a wxWindow*.  "this" is

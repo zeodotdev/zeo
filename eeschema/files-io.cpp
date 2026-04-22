@@ -187,6 +187,16 @@ bool SCH_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
 
     bool differentProject = pro.GetFullPath() != Prj().GetProjectFullName();
 
+    // Peer frames (MBSCH / peer SCH_EDIT_FRAME pinned via SetPrjOverride)
+    // already have Prj() pointing at the correct project — the launcher's
+    // SETTINGS_MANAGER may be active on a *different* project (e.g. a
+    // sub-project activated by a peer PCB editor). Don't unload that
+    // active project on behalf of this frame; it would yank the
+    // project out from under another open editor and dangle its BOARD
+    // or SCHEMATIC pointers.
+    if( GetPrjOverride() && pro.GetFullPath() == Prj().GetProjectFullName() )
+        differentProject = false;
+
     // This is for handling standalone mode schematic changes
     if( differentProject )
     {

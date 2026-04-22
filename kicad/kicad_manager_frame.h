@@ -320,11 +320,18 @@ private:
     std::unique_ptr<UPDATE_MANAGER>         m_updateManager;
     std::unique_ptr<SESSION_MANAGER>        m_sessionManager;
 
-    /// Non-null only when the launcher is in multi-board mode. Owns the
-    /// currently-open `.kicad_multi` container. Sub-projects loaded via
-    /// LoadProject() are standalone and share their lifecycle with this.
-    // Multi-board state lives in the session's PROJECT_FILE — no
-    // side-stored instance needed. See GetMultiBoardProject().
+    /// Multi-board container PROJECT currently open as the launcher's
+    /// "session", if any. Stored separately from Prj() because spawning
+    /// a peer PCB/schematic editor can swap the SETTINGS_MANAGER active
+    /// project to the sub-project; the launcher still needs to know the
+    /// container for actions like Manage Sub-Boards or Edit Multi-Board
+    /// Schematic. Nulled automatically via PROJECT::AddDestroyHook if
+    /// the container is unloaded.
+    PROJECT* m_multiBoardContainer = nullptr;
+
+    /// Swap m_multiBoardContainer, managing destroy-hook (re)registration.
+    void setMultiBoardContainer( PROJECT* aContainer );
+
 public:
     SESSION_MANAGER* GetSessionManager() const { return m_sessionManager.get(); }
 };

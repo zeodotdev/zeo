@@ -82,6 +82,11 @@ public:
     // @copydoc COMPOSITOR::Present()
     virtual void Present() override;
 
+    /// Return true if the compositor has been successfully initialised and its
+    /// GL resources are still valid.  Returns false after a context-loss event
+    /// (e.g. sleep/wake) so that the owning GAL can trigger re-initialisation.
+    bool IsInitialized() const { return m_initialized; }
+
     // Constant used by glBindFramebuffer to turn off rendering to framebuffers
     static const unsigned int DIRECT_RENDERING = 0;
 

@@ -652,6 +652,20 @@ int KICAD_MANAGER_CONTROL::EditMultiBoardSchematic( const TOOL_EVENT& aEvent )
         return -1;
     }
 
+    // Pin this MBSCH frame to the container PROJECT regardless of which
+    // sub-project SETTINGS_MANAGER currently has active. Without this,
+    // opening the MBS while a peer PCB editor is active on a sub-project
+    // would make SCH_EDIT_FRAME::OpenProjectFiles think the container is
+    // a "different project" and unload the sub-project out from under
+    // the PCB editor, dangling its BOARD::m_project.
+    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+
+    if( PROJECT* containerProject =
+                sm.GetProject( wxFileName( multi->GetFullFilename() ).GetFullPath() ) )
+    {
+        player->SetPrjOverride( containerProject );
+    }
+
     std::vector<wxString> file_list{ mbs.GetFullPath() };
 
     if( !player->OpenProjectFiles( file_list ) )

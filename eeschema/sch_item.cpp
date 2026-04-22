@@ -512,7 +512,12 @@ std::shared_ptr<NETCLASS> SCH_ITEM::GetEffectiveNetClass( const SCH_SHEET_PATH* 
 
     SCHEMATIC* schematic = Schematic();
 
-    if( schematic )
+    // IsValid() confirms both root sheet and owning PROJECT are present.
+    // Callers (paint, ERC, etc.) can fire during a project-swap window
+    // where the PROJECT has been unloaded via our destroy hook; in that
+    // case we must return a placeholder rather than deref a null
+    // m_project inside schematic->Project().
+    if( schematic && schematic->IsValid() )
     {
         std::shared_ptr<NET_SETTINGS>& netSettings = schematic->Project().GetProjectFile().m_NetSettings;
         SCH_CONNECTION* connection = Connection( aSheet );

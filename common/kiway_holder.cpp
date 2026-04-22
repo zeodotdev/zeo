@@ -42,6 +42,35 @@ PROJECT& KIWAY_HOLDER::Prj() const
 }
 
 
+void KIWAY_HOLDER::SetPrjOverride( PROJECT* aProject )
+{
+    if( m_projectOverride == aProject )
+        return;
+
+    if( m_projectOverride )
+        m_projectOverride->RemoveDestroyHook( this );
+
+    m_projectOverride = aProject;
+
+    // If the overridden PROJECT is unloaded while this holder is still
+    // alive, the destroy hook nulls our override — Prj() then falls
+    // back to Kiway().Prj() (or the caller's next SetPrjOverride) rather
+    // than dereferencing freed memory.
+    if( m_projectOverride )
+    {
+        m_projectOverride->AddDestroyHook(
+                this, [this]() { m_projectOverride = nullptr; } );
+    }
+}
+
+
+KIWAY_HOLDER::~KIWAY_HOLDER()
+{
+    if( m_projectOverride )
+        m_projectOverride->RemoveDestroyHook( this );
+}
+
+
 // this is not speed critical, hide it out of line.
 void KIWAY_HOLDER::SetKiway( wxWindow* aDest, KIWAY* aKiway )
 {

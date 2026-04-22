@@ -559,6 +559,14 @@ private:
 
     PROJECT* m_project;
 
+    /// True if this SCHEMATIC is the one that installed the ERC/SCHEMATIC
+    /// settings onto `m_project->GetProjectFile()` and should free them
+    /// when detaching. Multiple SCHEMATICs may share a PROJECT_FILE (one
+    /// schematic editor + a peer MBSCH editor on the same container); only
+    /// the installer owns destruction, so the others don't pull the rug
+    /// out from under the owner.
+    bool m_ownsProjectSettings = false;
+
     /// The virtual root sheet (has no screen, contains all top-level sheets)
     SCH_SHEET* m_rootSheet;
 

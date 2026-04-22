@@ -355,7 +355,8 @@ KIWAY::FACE_T KIWAY::KifaceType( FRAME_T aFrameType )
     case FRAME_SCH_VIEWER:
     case FRAME_SYMBOL_CHOOSER:
     case FRAME_SIMULATOR:
-    case FRAME_SCH_DIFF: return FACE_SCH;
+    case FRAME_SCH_DIFF:
+    case FRAME_MBSCH: return FACE_SCH;
 
     case FRAME_PCB_EDITOR:
     case FRAME_FOOTPRINT_EDITOR:

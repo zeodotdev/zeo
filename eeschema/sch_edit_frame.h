@@ -511,11 +511,18 @@ public:
     virtual bool SaveProject( bool aSaveAs = false );
 
     /**
-     * If this schematic is the multi-board schematic (MBS) referenced from an
-     * enclosing .kicad_multi container, extract its cross-board nets from
-     * topology and write them back to the .kicad_multi. No-op otherwise.
+     * Hook invoked after a successful schematic save. No-op here;
+     * MBSCH_EDIT_FRAME overrides this to extract cross-board nets from
+     * the multi-board topology and persist them back to the enclosing
+     * container's `.kicad_pro`.
      */
-    void syncCrossBoardNetsIfMbs();
+    virtual void onSchematicSaved() {}
+
+    /**
+     * Suffix appended to the window title after the filename.
+     * MBSCH_EDIT_FRAME overrides to distinguish itself.
+     */
+    virtual wxString windowTitleSuffix() const;
 
     bool OpenProjectFiles( const std::vector<wxString>& aFileSet, int aCtl = 0 ) override;
 

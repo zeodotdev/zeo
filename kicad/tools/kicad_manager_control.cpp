@@ -638,7 +638,7 @@ int KICAD_MANAGER_CONTROL::EditMultiBoardSchematic( const TOOL_EVENT& aEvent )
 
     try
     {
-        player = m_frame->Kiway().Player( FRAME_SCH, true );
+        player = m_frame->Kiway().Player( FRAME_MBSCH, true );
     }
     catch( const IO_ERROR& err )
     {

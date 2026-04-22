@@ -140,6 +140,7 @@ const std::string FILEEXT::LegacySchematicFileExtension( "sch" );
 const std::string FILEEXT::CadstarSchematicFileExtension( "csa" );
 const std::string FILEEXT::CadstarPartsLibraryFileExtension( "lib" );
 const std::string FILEEXT::KiCadSchematicFileExtension( "kicad_sch" );
+const std::string FILEEXT::MbsFileExtension( "kicad_mbs" );
 const std::string FILEEXT::SpiceFileExtension( "cir" );
 const std::string FILEEXT::SpiceModelFileExtension( "model" );
 const std::string FILEEXT::SpiceSubcircuitFileExtension( "sub" );
@@ -282,6 +283,13 @@ wxString FILEEXT::KiCadSchematicFileWildcard()
 {
     return _( "KiCad s-expression schematic files" )
             + AddFileExtListToFilter( { KiCadSchematicFileExtension } );
+}
+
+
+wxString FILEEXT::MbsFileWildcard()
+{
+    return _( "KiCad multi-board schematic files" )
+            + AddFileExtListToFilter( { MbsFileExtension } );
 }
 
 

@@ -30,8 +30,6 @@ set( KICAD_SRCS
     dialogs/dialog_template_selector.cpp
     dialogs/dialog_multi_board_setup.cpp
     dialogs/dialog_edit_cfg.cpp
-    dialogs/panel_kicad_launcher_base.cpp
-    dialogs/panel_kicad_launcher.cpp
     dialogs/dialog_ai_assistant.cpp
     dialogs/panel_jobset_base.cpp
     dialogs/panel_jobset.cpp

@@ -186,6 +186,7 @@ bool PROJECT_ARCHIVER::Archive( const wxString& aSrcDir, const wxString& aDestFi
     extensions.emplace( FILEEXT::ProjectFileExtension );
     extensions.emplace( FILEEXT::ProjectLocalSettingsFileExtension );
     extensions.emplace( FILEEXT::KiCadSchematicFileExtension );
+    extensions.emplace( FILEEXT::MbsFileExtension );
     extensions.emplace( FILEEXT::KiCadSymbolLibFileExtension );
     extensions.emplace( FILEEXT::KiCadPcbFileExtension );
     extensions.emplace( FILEEXT::KiCadFootprintFileExtension );

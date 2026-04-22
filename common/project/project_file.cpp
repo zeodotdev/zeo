@@ -710,8 +710,12 @@ bool PROJECT_FILE::LoadFromFile( const wxString& aDirectory )
 
     if( success )
     {
-        // Migrate from old single-root format to top_level_sheets format
-        if( m_topLevelSheets.empty() && m_project )
+        // Migrate from old single-root format to top_level_sheets format.
+        // Multi-board containers have no root schematic of their own — their
+        // MBS is referenced via multi_board.mbs_file — so leave the list empty
+        // on a container project; otherwise loaders would try to open a
+        // `<project>.kicad_sch` that never exists.
+        if( m_topLevelSheets.empty() && m_project && !m_isMultiBoardContainer )
         {
             // Create a default top-level sheet entry based on the project name
             wxString projectName = m_project->GetProjectName();
@@ -1164,20 +1168,21 @@ wxFileName PROJECT_FILE::ResolveMbsPath() const
 
 wxFileName PROJECT_FILE::ResolveSubProjectPath( const SUB_PROJECT_INFO& aInfo ) const
 {
-    wxFileName containerDir( GetFullFilename() );
-    containerDir.SetFullName( wxEmptyString );  // strip the .kicad_pro filename
-
-    wxFileName resolved = containerDir;
-    resolved.AppendDir( wxEmptyString );  // ensure trailing separator
     wxFileName rel( aInfo.relativePath );
 
     if( rel.IsAbsolute() )
         return rel;
 
-    // Combine container dir + relative sub-project path.
-    wxFileName full( containerDir.GetPath(), aInfo.relativePath );
-    full.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
-    return full;
+    // Container directory = directory of <container>.kicad_pro.
+    wxFileName containerDir( GetFullFilename() );
+    containerDir.SetFullName( wxEmptyString );
+
+    // MakeAbsolute preserves subdirectories embedded in the relative
+    // path. Constructing wxFileName(dir, name) with slashes in `name`
+    // is not well-defined — this avoids that trap.
+    rel.MakeAbsolute( containerDir.GetFullPath() );
+    rel.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+    return rel;
 }
 
 

@@ -621,6 +621,12 @@ SCH_EDIT_FRAME::~SCH_EDIT_FRAME()
 
     SetScreen( nullptr );
 
+    // Unregister the autosave saver before dropping m_schematic. doCloseWindow
+    // normally handles this, but frames destroyed via Destroy() bypass it —
+    // leaving a dangling pointer in LOCAL_HISTORY that fires on the next tick.
+    if( m_schematic )
+        Kiway().LocalHistory().UnregisterSaver( m_schematic );
+
     if( m_schematic )
         m_schematic->RemoveAllListeners();
 
@@ -2183,9 +2189,15 @@ void SCH_EDIT_FRAME::updateTitle()
         title = _( "[no schematic loaded]" );
     }
 
-    title += wxT( " \u2014 " ) + _( "Schematic Editor" );
+    title += wxT( " \u2014 " ) + windowTitleSuffix();
 
     SetTitle( title );
+}
+
+
+wxString SCH_EDIT_FRAME::windowTitleSuffix() const
+{
+    return _( "Schematic Editor" );
 }
 
 
@@ -3461,7 +3473,14 @@ void SCH_EDIT_FRAME::SetSchematic( SCHEMATIC* aSchematic )
     wxCHECK( aSchematic, /* void */ );
 
     if( m_schematic )
+    {
+        // LOCAL_HISTORY keys savers by SCHEMATIC pointer. If we don't
+        // unregister here, deleting m_schematic below leaves a dangling
+        // entry in the history — the next autosave tick crashes trying
+        // to call the dead schematic.
+        Kiway().LocalHistory().UnregisterSaver( m_schematic );
         m_schematic->SetProject( nullptr );
+    }
 
     aSchematic->SetProject( &Prj() );
     delete m_schematic;

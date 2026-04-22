@@ -31,7 +31,6 @@ class ACTION_TOOLBAR;
 class BITMAP_BUTTON;
 class EDA_BASE_FRAME;
 class KICAD_SETTINGS;
-class PANEL_KICAD_LAUNCHER;
 class PLUGIN_CONTENT_MANAGER;
 class PROJECT_TREE;
 class PROJECT_TREE_PANE;
@@ -212,12 +211,16 @@ public:
     bool SpawnPeerSchematicEditor( const KIID& aSubProjectUuid );
 
     /**
+     * Spawn a dedicated PCB editor frame bound to the given sub-project,
+     * mirroring SpawnPeerSchematicEditor for .kicad_pcb files.
+     */
+    bool SpawnPeerPcbEditor( const KIID& aSubProjectUuid );
+
+    /**
      * @return the PROJECT_FILE of the current session if it's a multi-board
      * container, or nullptr for plain single-board projects.
      */
     class PROJECT_FILE* GetMultiBoardProject() const;
-
-    PANEL_KICAD_LAUNCHER* GetLauncherPanel() const { return m_launcher; }
 
     void OpenJobsFile( const wxFileName& aFileName, bool aCreate = false,
                        bool aResaveProjectPreferences = true );
@@ -309,7 +312,6 @@ private:
     PROJECT_TREE_PANE*    m_projectTreePane;
     LOCAL_HISTORY_PANE*   m_historyPane;
     wxAuiNotebook*        m_notebook;
-    PANEL_KICAD_LAUNCHER* m_launcher;
     int                   m_lastToolbarIconSize;
 
     std::shared_ptr<PLUGIN_CONTENT_MANAGER> m_pcm;

@@ -238,8 +238,12 @@ bool PGM_KICAD::OnPgmInit()
 
     if( appType == KICAD_MAIN_FRAME_T )
     {
+        // Default size is a tall, narrow sidebar — the project manager
+        // is designed to live at the left edge next to the editors,
+        // like a file explorer in an IDE. User-resized dimensions are
+        // persisted and restored on subsequent launches.
         managerFrame = new KICAD_MANAGER_FRAME( nullptr, wxT( "Zeo" ), wxDefaultPosition,
-                                                wxWindow::FromDIP( wxSize( 775, -1 ), NULL ) );
+                                                wxWindow::FromDIP( wxSize( 320, 900 ), NULL ) );
         frame = managerFrame;
 
         STARTWIZARD startWizard;

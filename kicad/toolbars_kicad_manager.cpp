@@ -39,23 +39,24 @@ std::optional<TOOLBAR_CONFIGURATION> KICAD_MANAGER_TOOLBAR_SETTINGS::DefaultTool
         return std::nullopt;
 
     case TOOLBAR_LOC::LEFT:
-        config.AppendAction( KICAD_MANAGER_ACTIONS::newProject )
-              .AppendAction( KICAD_MANAGER_ACTIONS::openProject );
+        // IDE-sidebar layout: the tree handles per-project actions (open
+        // schematic/PCB, manage sub-boards) via double-click and right-
+        // click, so this bar is reserved for *global* library editors and
+        // utilities, plus the shell-integration group pinned at the
+        // bottom.
+        config.AppendAction( KICAD_MANAGER_ACTIONS::editSymbols )
+              .AppendAction( KICAD_MANAGER_ACTIONS::editFootprints )
+              .AppendAction( KICAD_MANAGER_ACTIONS::convertImage )
+              .AppendAction( KICAD_MANAGER_ACTIONS::showCalculator )
+              .AppendAction( KICAD_MANAGER_ACTIONS::editDrawingSheet )
+              .AppendAction( KICAD_MANAGER_ACTIONS::showPluginManager );
+
+        config.AppendStretchSpacer();
 
         config.AppendSeparator()
-              .AppendAction( KICAD_MANAGER_ACTIONS::archiveProject )
-              .AppendAction( KICAD_MANAGER_ACTIONS::unarchiveProject );
-
-        config.AppendSeparator()
-              .AppendAction( ACTIONS::zoomRedraw );
-
-        config.AppendSeparator()
-              .AppendAction( KICAD_MANAGER_ACTIONS::openProjectDirectory );
-
-        config.AppendStretchSpacer()
-              .AppendSpacer( -75 )
-              .AppendSeparator()
-              .AppendAction( KICAD_MANAGER_ACTIONS::showTerminal );
+              .AppendAction( KICAD_MANAGER_ACTIONS::openProjectDirectory )
+              .AppendAction( KICAD_MANAGER_ACTIONS::showTerminal )
+              .AppendAction( KICAD_MANAGER_ACTIONS::showVersionControl );
 
         break;
     }

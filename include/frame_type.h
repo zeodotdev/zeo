@@ -38,6 +38,7 @@ enum FRAME_T
     FRAME_SIMULATOR,
     FRAME_SCH_DIFF,
     FRAME_SYM_DIFF,
+    FRAME_MBSCH,       ///< Multi-board schematic editor (.kicad_mbs)
 
     FRAME_PCB_EDITOR,
     FRAME_FOOTPRINT_EDITOR,

@@ -82,6 +82,20 @@
 #include "kicad_id.h"
 #include "kicad_manager_frame.h"
 
+#include "project_template.h"
+
+#include <build_version.h>
+#include <kiid.h>
+#include <project/project_archiver.h>
+#include <project/project_file.h>
+#include <reporter.h>
+#include <sch_file_versions.h>
+#include <../pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.h>   // SEXPR_BOARD_FILE_VERSION
+#include <wx/dir.h>
+#include <wx/dirdlg.h>
+#include <wx/ffile.h>
+#include <wx/filedlg.h>
+
 #include "project_tree_pane.h"
 #include <widgets/kistatusbar.h>
 
@@ -142,6 +156,7 @@ static const wxChar* s_allowedExtensionsToList[] =
     wxT( "^.*\\.ps$" ),            // PostScript plot files
     wxT( "^.*\\.zip$" ),           // Zip archive files
     wxT( "^.*\\.kicad_jobset" ),   // KiCad jobs file
+    wxT( "^.*\\.kicad_mbs$" ),     // Multi-board schematic file
     nullptr                        // end of list
 };
 
@@ -158,7 +173,13 @@ enum project_tree_ids
     ID_PROJECT_TXTEDIT = 8700,  // Start well above wxIDs
     ID_PROJECT_SWITCH_TO_OTHER,
     ID_PROJECT_NEWDIR,
+    ID_PROJECT_NEW_SCH,
+    ID_PROJECT_NEW_PCB,
+    ID_PROJECT_NEW_BOARD,
+    ID_PROJECT_OPEN,
     ID_PROJECT_OPEN_DIR,
+    ID_PROJECT_ARCHIVE_DIR,
+    ID_PROJECT_UNARCHIVE_ZIP,
     ID_PROJECT_DELETE,
     ID_PROJECT_RENAME,
 
@@ -194,7 +215,13 @@ BEGIN_EVENT_TABLE( PROJECT_TREE_PANE, wxSashLayoutWindow )
     EVT_MENU( ID_PROJECT_TXTEDIT, PROJECT_TREE_PANE::onOpenSelectedFileWithTextEditor )
     EVT_MENU( ID_PROJECT_SWITCH_TO_OTHER, PROJECT_TREE_PANE::onSwitchToSelectedProject )
     EVT_MENU( ID_PROJECT_NEWDIR, PROJECT_TREE_PANE::onCreateNewDirectory )
+    EVT_MENU( ID_PROJECT_NEW_SCH, PROJECT_TREE_PANE::onCreateNewSchematic )
+    EVT_MENU( ID_PROJECT_NEW_PCB, PROJECT_TREE_PANE::onCreateNewPcb )
+    EVT_MENU( ID_PROJECT_NEW_BOARD, PROJECT_TREE_PANE::onCreateNewBoard )
+    EVT_MENU( ID_PROJECT_OPEN, PROJECT_TREE_PANE::onOpenFile )
     EVT_MENU( ID_PROJECT_OPEN_DIR, PROJECT_TREE_PANE::onOpenDirectory )
+    EVT_MENU( ID_PROJECT_ARCHIVE_DIR, PROJECT_TREE_PANE::onArchiveDirectory )
+    EVT_MENU( ID_PROJECT_UNARCHIVE_ZIP, PROJECT_TREE_PANE::onUnarchiveZip )
     EVT_MENU( ID_PROJECT_DELETE, PROJECT_TREE_PANE::onDeleteFile )
     EVT_MENU( ID_PROJECT_RENAME, PROJECT_TREE_PANE::onRenameFile )
 
@@ -362,6 +389,401 @@ void PROJECT_TREE_PANE::onCreateNewDirectory( wxCommandEvent& event )
 }
 
 
+namespace
+{
+
+/**
+ * Resolve the directory a new-file action should target given the tree
+ * item under the user's cursor. For a directory item we use that directory
+ * directly; for a project-root item we use the directory containing the
+ * `.kicad_pro`. Returns an invalid wxFileName if the item isn't suitable
+ * (e.g. a leaf file) or no project is loaded.
+ */
+wxFileName resolveTargetDir( PROJECT_TREE_ITEM* aItem, KICAD_MANAGER_FRAME* aFrame )
+{
+    if( !aItem )
+        return wxFileName();
+
+    wxString dir = aItem->GetDir();
+
+    if( dir.IsEmpty() )
+        dir = wxPathOnly( aFrame->GetProjectFileName() );
+
+    wxFileName result( dir, wxEmptyString );
+    result.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+    return result;
+}
+
+
+/**
+ * Prompt for a single-word file basename (no extension, no separators).
+ * Rejects empty input and separators so we don't accidentally write
+ * outside the target directory.
+ */
+wxString promptFileBasename( wxWindow* aParent, const wxString& aPromptMsg,
+                             const wxString& aPromptTitle )
+{
+    wxString name = wxGetTextFromUser( aPromptMsg, aPromptTitle, wxEmptyString, aParent );
+
+    if( name.IsEmpty() )
+        return wxEmptyString;
+
+    name.Trim( true ).Trim( false );
+
+    if( name.IsEmpty() || name.Contains( wxFileName::GetPathSeparator() )
+        || name.Contains( wxT( "/" ) ) || name.Contains( wxT( "\\" ) ) )
+    {
+        wxMessageBox( _( "Please enter a plain file name without path separators." ),
+                      aPromptTitle, wxOK | wxICON_WARNING, aParent );
+        return wxEmptyString;
+    }
+
+    return name;
+}
+
+}   // anonymous namespace
+
+
+void PROJECT_TREE_PANE::onCreateNewSchematic( wxCommandEvent& event )
+{
+    std::vector<PROJECT_TREE_ITEM*> selection = GetSelectedData();
+
+    if( selection.size() != 1 )
+        return;
+
+    wxFileName targetDir = resolveTargetDir( selection[0], m_Parent );
+
+    if( !targetDir.IsOk() || !targetDir.DirExists() )
+        return;
+
+    wxString name = promptFileBasename( this, _( "Schematic file name (without extension):" ),
+                                        _( "New Schematic" ) );
+
+    if( name.IsEmpty() )
+        return;
+
+    wxFileName schFn( targetDir.GetPath(),
+                      name + wxT( "." )
+                      + wxString::FromUTF8( FILEEXT::KiCadSchematicFileExtension ) );
+
+    if( schFn.FileExists() )
+    {
+        wxMessageBox( wxString::Format( _( "A file named '%s' already exists." ),
+                                        schFn.GetFullName() ),
+                      _( "New Schematic" ), wxOK | wxICON_WARNING, this );
+        return;
+    }
+
+    wxFFile file( schFn.GetFullPath(), "wb" );
+
+    if( !file.IsOpened() )
+    {
+        wxMessageBox( wxString::Format( _( "Could not create '%s'." ), schFn.GetFullPath() ),
+                      _( "New Schematic" ), wxOK | wxICON_ERROR, this );
+        return;
+    }
+
+    file.Write( wxString::Format( "(kicad_sch\n"
+                                  "\t(version %d)\n"
+                                  "\t(generator \"eeschema\")\n"
+                                  "\t(generator_version \"%s\")\n"
+                                  "\t(uuid %s)\n"
+                                  "\t(paper \"A4\")\n"
+                                  "\t(lib_symbols)\n"
+                                  "\t(sheet_instances\n"
+                                  "\t\t(path \"/\"\n"
+                                  "\t\t\t(page \"1\")\n"
+                                  "\t\t)\n"
+                                  "\t)\n"
+                                  "\t(embedded_fonts no)\n"
+                                  ")",
+                                  SEXPR_SCHEMATIC_FILE_VERSION,
+                                  GetMajorMinorVersion(),
+                                  KIID().AsString() ) );
+
+    file.Close();
+
+    addItemToProjectTree( schFn.GetFullPath(), selection[0]->GetId(), nullptr, false );
+}
+
+
+void PROJECT_TREE_PANE::onCreateNewPcb( wxCommandEvent& event )
+{
+    std::vector<PROJECT_TREE_ITEM*> selection = GetSelectedData();
+
+    if( selection.size() != 1 )
+        return;
+
+    wxFileName targetDir = resolveTargetDir( selection[0], m_Parent );
+
+    if( !targetDir.IsOk() || !targetDir.DirExists() )
+        return;
+
+    // One PCB per board directory. If the target dir already contains a
+    // `.kicad_pcb`, refuse — a second board in the same directory would
+    // confuse hierarchy detection and the project manager's single-PCB
+    // assumptions. User can create a subdirectory instead.
+    wxArrayString existingPcbs;
+    wxDir::GetAllFiles(
+            targetDir.GetPath(), &existingPcbs,
+            wxT( "*." ) + wxString::FromUTF8( FILEEXT::KiCadPcbFileExtension ),
+            wxDIR_FILES );
+
+    if( !existingPcbs.IsEmpty() )
+    {
+        wxMessageBox(
+                wxString::Format( _( "This directory already contains a PCB:\n%s\n\n"
+                                     "A board directory may hold at most one PCB. Create "
+                                     "a new subdirectory (or a new sub-board) for an "
+                                     "additional PCB." ),
+                                  wxFileName( existingPcbs[0] ).GetFullName() ),
+                _( "New PCB" ), wxOK | wxICON_WARNING, this );
+        return;
+    }
+
+    wxString name = promptFileBasename( this, _( "PCB file name (without extension):" ),
+                                        _( "New PCB" ) );
+
+    if( name.IsEmpty() )
+        return;
+
+    wxFileName pcbFn( targetDir.GetPath(),
+                      name + wxT( "." )
+                      + wxString::FromUTF8( FILEEXT::KiCadPcbFileExtension ) );
+
+    if( pcbFn.FileExists() )
+    {
+        wxMessageBox( wxString::Format( _( "A file named '%s' already exists." ),
+                                        pcbFn.GetFullName() ),
+                      _( "New PCB" ), wxOK | wxICON_WARNING, this );
+        return;
+    }
+
+    wxFFile file( pcbFn.GetFullPath(), "wb" );
+
+    if( !file.IsOpened() )
+    {
+        wxMessageBox( wxString::Format( _( "Could not create '%s'." ), pcbFn.GetFullPath() ),
+                      _( "New PCB" ), wxOK | wxICON_ERROR, this );
+        return;
+    }
+
+    file.Write( wxString::Format(
+            "(kicad_pcb (version %d) (generator \"pcbnew\") (generator_version \"%s\")\n)",
+            SEXPR_BOARD_FILE_VERSION, GetMajorMinorVersion() ) );
+
+    file.Close();
+
+    addItemToProjectTree( pcbFn.GetFullPath(), selection[0]->GetId(), nullptr, false );
+}
+
+
+void PROJECT_TREE_PANE::onCreateNewBoard( wxCommandEvent& event )
+{
+    // "New Board" is multi-board-only: it adds a new sub-project under
+    // the container's `boards/` directory and registers it with the
+    // container so Manage Sub-Boards sees it.
+    PROJECT_FILE* multi = m_Parent->GetMultiBoardProject();
+
+    if( !multi )
+    {
+        wxMessageBox( _( "This project is not a multi-board container. Open File → New "
+                         "Project and choose the Multi-Board template to create one." ),
+                      _( "New Board" ), wxOK | wxICON_INFORMATION, this );
+        return;
+    }
+
+    wxString name = promptFileBasename( this, _( "Board name:" ), _( "New Board" ) );
+
+    if( name.IsEmpty() )
+        return;
+
+    wxFileName containerDir( multi->GetFullFilename() );
+    containerDir.SetFullName( wxEmptyString );
+
+    wxFileName boardsDir = containerDir;
+    boardsDir.AppendDir( wxT( "boards" ) );
+
+    if( !boardsDir.DirExists() && !boardsDir.Mkdir( wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL ) )
+    {
+        wxMessageBox( wxString::Format( _( "Could not create boards directory:\n%s" ),
+                                        boardsDir.GetFullPath() ),
+                      _( "New Board" ), wxOK | wxICON_ERROR, this );
+        return;
+    }
+
+    wxFileName targetDir = boardsDir;
+    targetDir.AppendDir( name );
+
+    if( targetDir.DirExists() )
+    {
+        wxMessageBox( wxString::Format( _( "A board directory named '%s' already exists." ), name ),
+                      _( "New Board" ), wxOK | wxICON_WARNING, this );
+        return;
+    }
+
+    wxFileName proFile = targetDir;
+    proFile.SetName( name );
+    proFile.SetExt( wxString::FromUTF8( FILEEXT::ProjectFileExtension ) );
+
+    ENV_VAR_MAP_CITER envIt =
+            Pgm().GetLocalEnvVariables().find( wxT( "KICAD_USER_TEMPLATE_DIR" ) );
+
+    if( envIt == Pgm().GetLocalEnvVariables().end() || envIt->second.GetValue().IsEmpty() )
+    {
+        wxMessageBox( _( "Cannot locate the KiCad user template directory. "
+                         "Set KICAD_USER_TEMPLATE_DIR in Preferences." ),
+                      _( "New Board" ), wxOK | wxICON_ERROR, this );
+        return;
+    }
+
+    wxFileName templateDir;
+    templateDir.AssignDir( envIt->second.GetValue() );
+    templateDir.AppendDir( wxT( "default" ) );
+
+    if( !templateDir.DirExists() )
+    {
+        wxMessageBox( wxString::Format( _( "Default project template not found at:\n%s" ),
+                                        templateDir.GetFullPath() ),
+                      _( "New Board" ), wxOK | wxICON_ERROR, this );
+        return;
+    }
+
+    PROJECT_TEMPLATE tmpl( templateDir.GetFullPath() );
+    wxString         errorMsg;
+
+    if( !tmpl.CreateProject( proFile, &errorMsg ) )
+    {
+        wxMessageBox( wxString::Format( _( "Could not create new board from template:\n%s" ),
+                                        errorMsg ),
+                      _( "New Board" ), wxOK | wxICON_ERROR, this );
+        return;
+    }
+
+    SUB_PROJECT_INFO info;
+    info.uuid = KIID();
+    info.name = name;
+    info.displayName = name;
+    info.role = wxT( "standard" );
+
+    wxFileName relProFile = proFile;
+    relProFile.MakeRelativeTo( containerDir.GetFullPath() );
+    info.relativePath = relProFile.GetFullPath( wxPATH_UNIX );
+
+    multi->AddSubProject( info );
+    multi->SaveToFile();
+
+    // Refresh the tree so the new board shows up immediately.
+    m_Parent->RefreshProjectTree();
+}
+
+
+void PROJECT_TREE_PANE::onOpenFile( wxCommandEvent& event )
+{
+    // Route through Activate(), identical to a double-click. Each item
+    // type decides what "open" means (editor launch, folder toggle, or
+    // system default handler). Done lazily in the next idle tick so the
+    // menu tear-down has a chance to complete before a new frame grabs
+    // focus — matches the pattern in onSelect.
+    std::vector<PROJECT_TREE_ITEM*> selection = GetSelectedData();
+
+    if( selection.size() == 1 )
+        m_selectedItem = selection[0];
+}
+
+
+void PROJECT_TREE_PANE::onArchiveDirectory( wxCommandEvent& event )
+{
+    std::vector<PROJECT_TREE_ITEM*> selection = GetSelectedData();
+
+    if( selection.size() != 1 || !selection[0] )
+        return;
+
+    PROJECT_TREE_ITEM* item = selection[0];
+    wxString           srcDir = item->GetDir();
+
+    // Project-root item stores its path in GetFileName() rather than
+    // GetDir(); fall back accordingly.
+    if( srcDir.IsEmpty() )
+        srcDir = wxPathOnly( item->GetFileName() );
+
+    if( srcDir.IsEmpty() || !wxDirExists( srcDir ) )
+        return;
+
+    wxFileName srcDirFn( srcDir, wxEmptyString );
+    wxString   baseName = srcDirFn.GetDirs().IsEmpty()
+                                ? wxT( "archive" )
+                                : srcDirFn.GetDirs().Last();
+
+    wxString defaultZipName =
+            baseName + wxT( "-" ) + wxDateTime::Now().Format( wxT( "%Y-%m-%d_%H%M%S" ) )
+            + wxT( "." ) + wxString::FromUTF8( FILEEXT::ArchiveFileExtension );
+
+    wxFileDialog saveDlg( this, _( "Archive Directory" ), srcDirFn.GetPath(), defaultZipName,
+                          FILEEXT::ZipFileWildcard(),
+                          wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
+
+    if( saveDlg.ShowModal() != wxID_OK )
+        return;
+
+    WX_STRING_REPORTER reporter;
+
+    if( !PROJECT_ARCHIVER::Archive( srcDirFn.GetPath(), saveDlg.GetPath(), reporter, true,
+                                    /*aIncludeExtraFiles=*/true ) )
+    {
+        wxMessageBox(
+                _( "Archive failed:\n" ) + reporter.GetMessages(),
+                _( "Archive Directory" ), wxOK | wxICON_ERROR, this );
+        return;
+    }
+
+    // Surface the new archive next to the source directory if it landed
+    // inside the project tree — the file-system watcher should pick it
+    // up, but refreshing makes the result immediate.
+    m_Parent->RefreshProjectTree();
+}
+
+
+void PROJECT_TREE_PANE::onUnarchiveZip( wxCommandEvent& event )
+{
+    std::vector<PROJECT_TREE_ITEM*> selection = GetSelectedData();
+
+    if( selection.size() != 1 || !selection[0] )
+        return;
+
+    wxString zipPath = selection[0]->GetFileName();
+
+    if( zipPath.IsEmpty() || !wxFileExists( zipPath ) )
+        return;
+
+    wxFileName zipFn( zipPath );
+
+    wxDirDialog destDlg( this, _( "Select destination for unarchive" ),
+                         zipFn.GetPath(),
+                         wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST );
+
+    if( destDlg.ShowModal() != wxID_OK )
+        return;
+
+    wxString destDir = destDlg.GetPath();
+
+    if( !destDir.EndsWith( wxFileName::GetPathSeparator() ) )
+        destDir += wxFileName::GetPathSeparator();
+
+    WX_STRING_REPORTER reporter;
+
+    if( !PROJECT_ARCHIVER::Unarchive( zipPath, destDir, reporter ) )
+    {
+        wxMessageBox(
+                _( "Unarchive failed:\n" ) + reporter.GetMessages(),
+                _( "Unarchive" ), wxOK | wxICON_ERROR, this );
+        return;
+    }
+
+    m_Parent->RefreshProjectTree();
+}
+
+
 wxString PROJECT_TREE_PANE::GetFileExt( TREE_FILE_TYPE type )
 {
     switch( type )
@@ -395,6 +817,7 @@ wxString PROJECT_TREE_PANE::GetFileExt( TREE_FILE_TYPE type )
     case TREE_FILE_TYPE::DESIGN_RULES:          return FILEEXT::DesignRulesFileExtension;
     case TREE_FILE_TYPE::ZIP_ARCHIVE:           return FILEEXT::ArchiveFileExtension;
     case TREE_FILE_TYPE::JOBSET_FILE:           return FILEEXT::KiCadJobSetFileExtension;
+    case TREE_FILE_TYPE::SEXPR_MBS:             return FILEEXT::MbsFileExtension;
 
     case TREE_FILE_TYPE::ROOT:
     case TREE_FILE_TYPE::UNKNOWN:
@@ -820,6 +1243,9 @@ void PROJECT_TREE_PANE::onRight( wxTreeEvent& Event )
     bool can_rename = true;
     bool can_delete = true;
     bool run_jobs = false;
+    bool can_open = false;           ///< "Open" a file via its default editor
+    bool can_archive_dir = false;    ///< Create a zip of the selected directory
+    bool can_unarchive_zip = false;  ///< Extract the selected zip archive
 
     bool vcs_has_repo    = m_TreeProject->GetGitRepo() != nullptr;
     bool vcs_can_commit  = hasChangedFiles();
@@ -872,41 +1298,67 @@ void PROJECT_TREE_PANE::onRight( wxTreeEvent& Event )
             if( item->GetId() == m_TreeProject->GetRootItem() )
             {
                 can_switch_to_project = false;
+                // Project root behaves like a directory for archiving.
+                can_archive_dir = true;
             }
             else
             {
                 can_create_new_directory = false;
                 can_open_this_directory = false;
+                can_open = true;   // non-root project → Switch to Project via Open
             }
             break;
 
         case TREE_FILE_TYPE::DIRECTORY:
             can_switch_to_project = false;
             can_edit = false;
+            can_archive_dir = true;
             break;
 
         case TREE_FILE_TYPE::ZIP_ARCHIVE:
+            can_edit = false;
+            can_switch_to_project = false;
+            can_create_new_directory = false;
+            can_open_this_directory = false;
+            can_unarchive_zip = true;
+            can_open = true;   // "Open" a zip means extract/preview via system
+            break;
+
         case TREE_FILE_TYPE::PDF:
             can_edit = false;
             can_switch_to_project = false;
             can_create_new_directory = false;
             can_open_this_directory = false;
+            can_open = true;
             break;
 
         case TREE_FILE_TYPE::JOBSET_FILE:
             run_jobs = true;
             can_edit = false;
-            KI_FALLTHROUGH;
-
-        case TREE_FILE_TYPE::SEXPR_SCHEMATIC:
-        case TREE_FILE_TYPE::SEXPR_PCB:
-            KI_FALLTHROUGH;
-
-        default:
+            can_open = true;
             can_switch_to_project = false;
             can_create_new_directory = false;
             can_open_this_directory = false;
+            break;
 
+        case TREE_FILE_TYPE::SEXPR_SCHEMATIC:
+        case TREE_FILE_TYPE::SEXPR_PCB:
+        case TREE_FILE_TYPE::SEXPR_MBS:
+        case TREE_FILE_TYPE::LEGACY_SCHEMATIC:
+        case TREE_FILE_TYPE::LEGACY_PCB:
+            can_switch_to_project = false;
+            can_create_new_directory = false;
+            can_open_this_directory = false;
+            can_open = true;
+            break;
+
+        default:
+            // Generic file (txt, csv, gerber, etc.) — let the user open
+            // it via the system default handler.
+            can_switch_to_project = false;
+            can_create_new_directory = false;
+            can_open_this_directory = false;
+            can_open = true;
             break;
         }
     }
@@ -923,10 +1375,47 @@ void PROJECT_TREE_PANE::onRight( wxTreeEvent& Event )
         popup_menu.AppendSeparator();
     }
 
+    if( can_open )
+    {
+        if( selection.size() == 1 )
+            help_text = _( "Open the file in its default editor" );
+        else
+            help_text = _( "Open each file in its default editor" );
+
+        KIUI::AddMenuItem( &popup_menu, ID_PROJECT_OPEN, _( "Open" ), help_text,
+                           KiBitmap( BITMAPS::open_project ) );
+    }
+
     if( can_create_new_directory )
     {
-        KIUI::AddMenuItem( &popup_menu, ID_PROJECT_NEWDIR, _( "New Directory..." ),
-                           _( "Create a New Directory" ), KiBitmap( BITMAPS::directory ) );
+        // Build a "New" submenu so create actions group together like an
+        // IDE project explorer instead of cluttering the top level.
+        wxMenu* newSubmenu = new wxMenu();
+
+        KIUI::AddMenuItem( newSubmenu, ID_PROJECT_NEW_SCH, _( "Schematic..." ),
+                           _( "Create a new schematic (.kicad_sch) in this directory" ),
+                           KiBitmap( BITMAPS::add_document ) );
+
+        KIUI::AddMenuItem( newSubmenu, ID_PROJECT_NEW_PCB, _( "PCB..." ),
+                           _( "Create a new PCB (.kicad_pcb) in this directory" ),
+                           KiBitmap( BITMAPS::add_document ) );
+
+        // "New Board" only makes sense in a multi-board project where
+        // sub-boards live under `boards/`.
+        if( m_Parent->GetMultiBoardProject() )
+        {
+            newSubmenu->AppendSeparator();
+            KIUI::AddMenuItem( newSubmenu, ID_PROJECT_NEW_BOARD, _( "Board..." ),
+                               _( "Add a new sub-board to this multi-board project" ),
+                               KiBitmap( BITMAPS::module ) );
+        }
+
+        newSubmenu->AppendSeparator();
+        KIUI::AddMenuItem( newSubmenu, ID_PROJECT_NEWDIR, _( "Directory..." ),
+                           _( "Create a new subdirectory" ),
+                           KiBitmap( BITMAPS::directory ) );
+
+        popup_menu.AppendSubMenu( newSubmenu, _( "New" ) );
     }
 
     if( can_open_this_directory )
@@ -965,6 +1454,20 @@ void PROJECT_TREE_PANE::onRight( wxTreeEvent& Event )
 
         KIUI::AddMenuItem( &popup_menu, ID_PROJECT_TXTEDIT, _( "Edit in a Text Editor" ), help_text,
                            KiBitmap( BITMAPS::editor ) );
+    }
+
+    if( can_archive_dir && selection.size() == 1 )
+    {
+        KIUI::AddMenuItem( &popup_menu, ID_PROJECT_ARCHIVE_DIR, _( "Archive..." ),
+                           _( "Create a zip archive of this directory" ),
+                           KiBitmap( BITMAPS::zip ) );
+    }
+
+    if( can_unarchive_zip && selection.size() == 1 )
+    {
+        KIUI::AddMenuItem( &popup_menu, ID_PROJECT_UNARCHIVE_ZIP, _( "Unarchive..." ),
+                           _( "Extract this archive into a target directory" ),
+                           KiBitmap( BITMAPS::zip ) );
     }
 
     if( run_jobs && selection.size() == 1 )

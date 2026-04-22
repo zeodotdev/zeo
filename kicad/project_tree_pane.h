@@ -145,6 +145,49 @@ private:
     void onCreateNewDirectory( wxCommandEvent& event );
 
     /**
+     * Prompt for a name and create a `.kicad_sch` stub in the selected
+     * directory (or the directory containing the selected file).
+     */
+    void onCreateNewSchematic( wxCommandEvent& event );
+
+    /**
+     * Prompt for a name and create a `.kicad_pcb` stub in the selected
+     * directory. Warns and refuses if the directory already contains a
+     * `.kicad_pcb`, because a board directory is expected to hold at most
+     * one PCB.
+     */
+    void onCreateNewPcb( wxCommandEvent& event );
+
+    /**
+     * Add a new sub-board to the current multi-board container. Prompts
+     * for a board name, creates `boards/<name>/` with a stub project,
+     * schematic, and PCB, and registers the sub-project in the container.
+     */
+    void onCreateNewBoard( wxCommandEvent& event );
+
+    /**
+     * "Open" menu item — invokes the default activation for the selected
+     * tree items (same path as double-clicking the item). For editors
+     * this means opening the file in the relevant KiCad editor; for
+     * unknown formats this falls back to the system default handler.
+     */
+    void onOpenFile( wxCommandEvent& event );
+
+    /**
+     * "Archive..." for a directory. Prompts for a target `.zip` path and
+     * writes the full tree rooted at the selected directory. When the
+     * directory is the project root this mirrors the old Archive Project
+     * button.
+     */
+    void onArchiveDirectory( wxCommandEvent& event );
+
+    /**
+     * "Unarchive..." for a `.zip` archive. Prompts for a destination
+     * directory and extracts the archive there.
+     */
+    void onUnarchiveZip( wxCommandEvent& event );
+
+    /**
      * Switch to a other project selected from the tree project (by selecting an other .pro
      * file inside the current project folder)
      */

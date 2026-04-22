@@ -174,7 +174,16 @@ void SCHEMATIC::Reset()
 
 void SCHEMATIC::SetProject( PROJECT* aPrj )
 {
-    if( m_project )
+    // Fast path: same project, and we already installed settings — nothing
+    // to do. Avoids the legacy delete/recreate churn on every SetSchematic
+    // in single-editor flows.
+    if( m_project && m_project == aPrj && m_ownsProjectSettings )
+        return;
+
+    // Only tear down settings if we're the SCHEMATIC that installed them.
+    // A peer SCHEMATIC sharing the same PROJECT_FILE must not destroy
+    // settings still in use by the original schematic editor.
+    if( m_project && m_ownsProjectSettings )
     {
         PROJECT_FILE& project = m_project->GetProjectFile();
 
@@ -188,16 +197,28 @@ void SCHEMATIC::SetProject( PROJECT* aPrj )
     }
 
     m_project = aPrj;
+    m_ownsProjectSettings = false;
 
     if( m_project )
     {
         PROJECT_FILE& project = m_project->GetProjectFile();
-        project.m_ErcSettings = new ERC_SETTINGS( &project, "erc" );
-        project.m_SchematicSettings = new SCHEMATIC_SETTINGS( &project, "schematic" );
 
-        project.m_SchematicSettings->LoadFromFile();
-        project.m_SchematicSettings->m_NgspiceSettings->LoadFromFile();
-        project.m_ErcSettings->LoadFromFile();
+        if( !project.m_SchematicSettings )
+        {
+            // First SCHEMATIC binding to this project — we install and own
+            // the settings.
+            project.m_ErcSettings = new ERC_SETTINGS( &project, "erc" );
+            project.m_SchematicSettings =
+                    new SCHEMATIC_SETTINGS( &project, "schematic" );
+
+            project.m_SchematicSettings->LoadFromFile();
+            project.m_SchematicSettings->m_NgspiceSettings->LoadFromFile();
+            project.m_ErcSettings->LoadFromFile();
+
+            m_ownsProjectSettings = true;
+        }
+        // else: another SCHEMATIC owns settings on this project; we share
+        // them without touching lifetime.
 
         loadBusAliasesFromProject();
     }
@@ -532,13 +553,18 @@ wxString SCHEMATIC::GetFileName() const
 
 SCHEMATIC_SETTINGS& SCHEMATIC::Settings() const
 {
+    static SCHEMATIC_SETTINGS defaultSettings( nullptr, "schematic" );
+
     if( !m_project )
-    {
-        static SCHEMATIC_SETTINGS defaultSettings( nullptr, "schematic" );
         return defaultSettings;
-    }
-    wxASSERT( m_project );
-    return *m_project->GetProjectFile().m_SchematicSettings;
+
+    // Settings can legitimately be null during SCHEMATIC transitions
+    // (SetProject tearing down + reinstalling, SetSchematic swapping).
+    // Paint events triggered mid-transition would otherwise deref null
+    // and crash. Fall through to defaults — the view will repaint once
+    // the transition completes.
+    SCHEMATIC_SETTINGS* s = m_project->GetProjectFile().m_SchematicSettings;
+    return s ? *s : defaultSettings;
 }
 
 

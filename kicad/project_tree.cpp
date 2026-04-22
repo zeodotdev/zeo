@@ -138,6 +138,7 @@ void PROJECT_TREE::LoadIcons()
     images.push_back( getBundle( BITMAPS::editor, c_fileDefSize ) );                 // DESIGN_RULES
     images.push_back( getBundle( BITMAPS::zip, c_fileDefSize ) );                    // ZIP_ARCHIVE
     images.push_back( getBundle( BITMAPS::editor, c_fileDefSize ) );                 // JOBSET_FILE
+    images.push_back( getBundle( BITMAPS::icon_eeschema_24, c_fileDefSize ) );       // SEXPR_MBS (reuse .kicad_sch icon)
 
     SetImages( images );
 

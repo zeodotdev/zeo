@@ -399,6 +399,7 @@ set( EESCHEMA_SRCS
     sch_diff_frame.cpp
     sch_draw_panel.cpp
     sch_edit_frame.cpp
+    mbsch_edit_frame.cpp
     sch_field.cpp
     sch_group.cpp
     sch_item.cpp

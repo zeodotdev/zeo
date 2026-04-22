@@ -130,6 +130,7 @@ public:
     static const std::string CadstarSchematicFileExtension;
     static const std::string CadstarPartsLibraryFileExtension;
     static const std::string KiCadSchematicFileExtension;
+    static const std::string MbsFileExtension;
     static const std::string IbisFileExtension;
     static const std::string SpiceFileExtension;
     static const std::string SpiceModelFileExtension;
@@ -239,6 +240,7 @@ public:
     static wxString AllProjectFilesWildcard();
     static wxString AllSchematicFilesWildcard();
     static wxString KiCadSchematicFileWildcard();
+    static wxString MbsFileWildcard();
     static wxString LegacySchematicFileWildcard();
     static wxString BoardFileWildcard();
     static wxString OrCadPcb2NetlistFileWildcard();

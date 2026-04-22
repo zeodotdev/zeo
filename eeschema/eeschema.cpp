@@ -35,6 +35,7 @@
 #include "eeschema_helpers.h"
 #include <eeschema_settings.h>
 #include <sch_edit_frame.h>
+#include "mbsch_edit_frame.h"
 #include "sch_diff_frame.h"
 #include <libraries/symbol_library_adapter.h>
 #include <symbol_edit_frame.h>
@@ -197,6 +198,15 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
 
         case FRAME_SCH_DIFF:
             return new SCH_DIFF_FRAME( aKiway, aParent );
+
+        case FRAME_MBSCH:
+        {
+            MBSCH_EDIT_FRAME* frame = new MBSCH_EDIT_FRAME( aKiway, aParent );
+
+            EESCHEMA_HELPERS::SetSchEditFrame( frame );
+
+            return frame;
+        }
 
         case FRAME_SCH_SYMBOL_EDITOR:
             return new SYMBOL_EDIT_FRAME( aKiway, aParent );

@@ -44,6 +44,8 @@
 #include <wx/msgdlg.h>
 
 #include "kicad_manager_frame.h"
+
+#include <project/project_file.h>
 #include "project_tree.h"
 #include "pgm_kicad.h"
 #include "project_tree_pane.h"
@@ -257,6 +259,13 @@ void PROJECT_TREE_ITEM::Activate( PROJECT_TREE_PANE* aTreePrjFrame )
         m_parent->Toggle( id );
         break;
 
+    case TREE_FILE_TYPE::SEXPR_MBS:
+        // `.kicad_mbs` is the canonical multi-board schematic; route
+        // directly to the dedicated MBSCH editor regardless of whether
+        // this is a container file or a stray one the user copied in.
+        toolMgr->RunAction( KICAD_MANAGER_ACTIONS::editMultiBoardSchematic );
+        break;
+
     case TREE_FILE_TYPE::LEGACY_SCHEMATIC:
     case TREE_FILE_TYPE::SEXPR_SCHEMATIC:
     {
@@ -265,7 +274,14 @@ void PROJECT_TREE_ITEM::Activate( PROJECT_TREE_PANE* aTreePrjFrame )
         if( rootSchematic.IsEmpty() )
             rootSchematic = frame->SchLegacyFileName();
 
-        if( fullFileName == rootSchematic )
+        // Multi-board containers have no root `.kicad_sch` of their own.
+        // If a stale file with the container's name exists, route to the
+        // MBS instead so the user doesn't silently edit an orphan file.
+        if( frame->GetMultiBoardProject() && fullFileName == rootSchematic )
+        {
+            toolMgr->RunAction( KICAD_MANAGER_ACTIONS::editMultiBoardSchematic );
+        }
+        else if( fullFileName == rootSchematic )
         {
             toolMgr->RunAction( KICAD_MANAGER_ACTIONS::editSchematic );
         }
@@ -297,6 +313,36 @@ void PROJECT_TREE_ITEM::Activate( PROJECT_TREE_PANE* aTreePrjFrame )
                     kiway.ExpressMail( FRAME_SCH, MAIL_SCH_NAVIGATE_TO_SHEET, packet );
                 }
             }
+            else if( PROJECT_FILE* multi = frame->GetMultiBoardProject() )
+            {
+                // Sub-project schematic inside a multi-board container.
+                // Open the owning sub-project as an in-process peer rather
+                // than spawning a standalone `eeschema` executable (Zeo
+                // doesn't ship one). For nested hierarchy sheets, open the
+                // enclosing sub-project's main schematic.
+                wxFileName schFn( fullFileName );
+                schFn.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+                wxString schDir = schFn.GetPath( wxPATH_GET_SEPARATOR );
+
+                for( const SUB_PROJECT_INFO& sp : multi->GetSubProjects() )
+                {
+                    wxFileName proFile = multi->ResolveSubProjectPath( sp );
+                    proFile.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+                    wxString proDir = proFile.GetPath( wxPATH_GET_SEPARATOR );
+
+                    if( schDir.StartsWith( proDir ) )
+                    {
+                        frame->SpawnPeerSchematicEditor( sp.uuid );
+                        break;
+                    }
+                }
+
+                // If no sub-project matched, it's an orphan schematic at
+                // container scope (e.g. a stray `.kicad_sch` left behind).
+                // Zeo has no external `eeschema` to spawn, so silently
+                // ignore — the user is better served by cleaning up the
+                // file than by a confusing "not found" dialog.
+            }
             else
             {
                 // Not in hierarchy, open as standalone schematic
@@ -309,11 +355,36 @@ void PROJECT_TREE_ITEM::Activate( PROJECT_TREE_PANE* aTreePrjFrame )
 
     case TREE_FILE_TYPE::LEGACY_PCB:
     case TREE_FILE_TYPE::SEXPR_PCB:
-        // Boards not part of the project are opened in a separate process.
         if( fullFileName == frame->PcbFileName() || fullFileName == frame->PcbLegacyFileName() )
+        {
             toolMgr->RunAction( KICAD_MANAGER_ACTIONS::editPCB );
+        }
+        else if( PROJECT_FILE* multi = frame->GetMultiBoardProject() )
+        {
+            // Sub-project PCB inside a multi-board container — route to
+            // an in-process peer frame. Zeo has no external `pcbnew`
+            // executable to fall back to.
+            wxFileName pcbFn( fullFileName );
+            pcbFn.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+            wxString pcbDir = pcbFn.GetPath( wxPATH_GET_SEPARATOR );
+
+            for( const SUB_PROJECT_INFO& sp : multi->GetSubProjects() )
+            {
+                wxFileName proFile = multi->ResolveSubProjectPath( sp );
+                proFile.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+                wxString proDir = proFile.GetPath( wxPATH_GET_SEPARATOR );
+
+                if( pcbDir.StartsWith( proDir ) )
+                {
+                    frame->SpawnPeerPcbEditor( sp.uuid );
+                    break;
+                }
+            }
+        }
         else
+        {
             toolMgr->RunAction<wxString*>( KICAD_MANAGER_ACTIONS::editOtherPCB, &fullFileName );
+        }
 
         break;
 

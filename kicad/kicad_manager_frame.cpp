@@ -36,7 +36,6 @@
 #include <bitmaps.h>
 #include <build_version.h>
 #include <confirm.h>
-#include <dialogs/panel_kicad_launcher.h>
 #include <dialogs/panel_jobset.h>
 #include <dialogs/dialog_edit_cfg.h>
 #include <local_history.h>
@@ -152,7 +151,6 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
         m_showHistoryPanel( false ),
         m_projectTreePane( nullptr ),
         m_historyPane( nullptr ),
-        m_launcher( nullptr ),
         m_lastToolbarIconSize( 0 ),
         m_pcmButton( nullptr ),
         m_pcmUpdateCount( 0 )
@@ -234,22 +232,20 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
 
     m_auimgr.AddPane( m_tbLeft, EDA_PANE().VToolbar().Name( "TopMainToolbar" ).Left().Layer( 2 ) );
 
-    // There is no wxAUIPaneInfo::SetSize(), but a trick is to use MinSize() to set the required pane width,
-    // and after give a reasonable MinSize value.
-    m_auimgr.AddPane( m_projectTreePane,
-                      EDA_PANE().Palette().Name( "ProjectTree" ).Left().Layer( 1 )
-                                .Caption( PROJECT_FILES_CAPTION ).PaneBorder( false )
-                                .MinSize( m_leftWinWidth, -1 ).Floatable( false ).Movable( false ) );
-
     m_historyPane = new LOCAL_HISTORY_PANE( this );
     m_auimgr.AddPane( m_historyPane,
-                      EDA_PANE().Palette().Name( "LocalHistory" ).Left().Layer( 1 ).Position( 1 )
+                      EDA_PANE().Palette().Name( "LocalHistory" ).Left().Layer( 1 )
                                 .Caption( _( "Local History" ) ).PaneBorder( false )
                                 .Floatable( false ).Movable( false ).CloseButton( true ).Hide() );
 
     if( m_showHistoryPanel )
         m_auimgr.GetPane( m_historyPane ).Show();
 
+    // The notebook hosts transient editor pages (jobsets). The legacy
+    // launcher icon grid that used to live here has been retired — every
+    // action it offered is now surfaced on the left vertical toolbar.
+    // The notebook starts hidden and is only shown when something needs
+    // to open a tab.
     wxSize client_size = GetClientSize();
     m_notebook = new wxAuiNotebook( this, wxID_ANY, wxPoint( client_size.x, client_size.y ),
                                     FromDIP( wxSize( 700, 590 ) ),
@@ -260,20 +256,22 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
 
     m_notebook->Bind( wxEVT_AUINOTEBOOK_PAGE_CLOSE, &KICAD_MANAGER_FRAME::onNotebookPageCloseRequest, this );
     m_notebook->Bind( wxEVT_AUINOTEBOOK_PAGE_CLOSED, &KICAD_MANAGER_FRAME::onNotebookPageCountChanged, this );
-    m_launcher = new PANEL_KICAD_LAUNCHER( m_notebook );
 
-    m_notebook->Freeze();
-    m_launcher->SetClosable( false );
-    m_notebook->AddPage( m_launcher, EDITORS_CAPTION, false );
-    m_notebook->SetTabCtrlHeight( 0 );
-    m_notebook->Thaw();
+    m_auimgr.AddPane( m_notebook,
+                      EDA_PANE().Canvas().Name( "Editors" ).Right().Layer( 1 )
+                                .Caption( EDITORS_CAPTION ).PaneBorder( false )
+                                .MinSize( FromDIP( wxSize( 400, 300 ) ) )
+                                .Floatable( true ).CloseButton( true ).Hide() );
 
-    m_auimgr.AddPane( m_notebook, EDA_PANE().Canvas().Name( "Editors" ).Center().Caption( EDITORS_CAPTION )
-                                            .PaneBorder( false ).MinSize( m_notebook->GetBestSize() ) );
+    // Tree pane is the main surface: fills the center area once the
+    // launcher is gone.
+    m_auimgr.AddPane( m_projectTreePane,
+                      EDA_PANE().Canvas().Name( "ProjectTree" ).Center()
+                                .Caption( PROJECT_FILES_CAPTION ).PaneBorder( false )
+                                .CloseButton( false ).Floatable( false ).Movable( false ) );
 
     m_auimgr.Update();
 
-    // Now the actual m_projectTreePane size is set, give it a reasonable min width
     m_auimgr.GetPane( m_projectTreePane ).MinSize( defaultLeftWinWidth, FromDIP( 80 ) );
 
 
@@ -355,7 +353,7 @@ KICAD_MANAGER_FRAME::~KICAD_MANAGER_FRAME()
 
 void KICAD_MANAGER_FRAME::HideTabsIfNeeded()
 {
-    if( m_notebook->GetPageCount() == 1 )
+    if( m_notebook->GetPageCount() <= 1 )
         m_notebook->SetTabCtrlHeight( 0 );
     else
         m_notebook->SetTabCtrlHeight( -1 );
@@ -365,6 +363,22 @@ void KICAD_MANAGER_FRAME::HideTabsIfNeeded()
 void KICAD_MANAGER_FRAME::onNotebookPageCountChanged( wxAuiNotebookEvent& evt )
 {
     HideTabsIfNeeded();
+
+    // Show the notebook pane when there's content, hide it otherwise —
+    // we no longer host a launcher tab, so an empty notebook is dead space
+    // that would otherwise sit next to the tree.
+    wxAuiPaneInfo& notebookPane = m_auimgr.GetPane( m_notebook );
+
+    if( notebookPane.IsOk() )
+    {
+        const bool shouldShow = m_notebook->GetPageCount() > 0;
+
+        if( notebookPane.IsShown() != shouldShow )
+        {
+            notebookPane.Show( shouldShow );
+            m_auimgr.Update();
+        }
+    }
 }
 
 
@@ -496,6 +510,15 @@ void KICAD_MANAGER_FRAME::setupUIConditions()
     manager->SetConditions( KICAD_MANAGER_ACTIONS::archiveProject, activeProjectCond );
     manager->SetConditions( KICAD_MANAGER_ACTIONS::newJobsetFile,  activeProjectCond );
     manager->SetConditions( KICAD_MANAGER_ACTIONS::openJobsetFile, activeProjectCond );
+
+    auto multiBoardCond =
+            [this]( const SELECTION& )
+            {
+                return GetMultiBoardProject() != nullptr;
+            };
+
+    manager->SetConditions( KICAD_MANAGER_ACTIONS::manageSubBoards,
+                            ACTION_CONDITIONS().Enable( multiBoardCond ) );
 
     auto historyCond =
             [this]( const SELECTION& )
@@ -898,6 +921,16 @@ void KICAD_MANAGER_FRAME::OpenJobsFile( const wxFileName& aFileName, bool aCreat
         m_notebook->AddPage( jobPanel, aFileName.GetFullName(), true );
         HideTabsIfNeeded();
 
+        // AddPage doesn't fire the PAGE_COUNT_CHANGED event, so poke the
+        // visibility manually: the notebook pane starts hidden.
+        wxAuiPaneInfo& notebookPane = m_auimgr.GetPane( m_notebook );
+
+        if( notebookPane.IsOk() && !notebookPane.IsShown() )
+        {
+            notebookPane.Show( true );
+            m_auimgr.Update();
+        }
+
         if( aResaveProjectPreferences )
             SaveOpenJobSetsToLocalSettings();
     }
@@ -1049,11 +1082,6 @@ bool KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
     // project-specific symbol and footprint libraries into the manager
     PreloadAllLibraries();
 
-    // Refresh the launcher (removes any stale multi-board header when leaving
-    // multi-board mode; harmless when single-board → single-board)
-    if( m_launcher )
-        m_launcher->CreateLaunchers();
-
     return true;
 }
 
@@ -1096,14 +1124,20 @@ bool KICAD_MANAGER_FRAME::LoadMultiBoardProject( const wxFileName& aMultiProject
         pf.SaveToFile();
     }
 
+    // Guarantee the canonical `<container>.kicad_mbs` exists on disk as
+    // soon as the container is loaded. Opening the MBS from the tree or
+    // toolbar then doesn't need to synthesize the file on first click,
+    // and the tree shows the MBS alongside the sub-projects from the
+    // start. Also runs the one-time `.kicad_sch` → `.kicad_mbs`
+    // migration for projects that predate this convention.
+    ::EnsureMbsFile( pf, aMultiProjectFile.GetName() );
+    pf.SaveToFile();
+
     PrintPrjInfo();
 
     wxString title = aMultiProjectFile.GetName() + wxT( "  \u2014  " )
                      + wxString( wxS( "Zeo" ) );
     SetTitle( title );
-
-    if( m_launcher )
-        m_launcher->CreateLaunchers();
 
     return true;
 }
@@ -1192,6 +1226,88 @@ bool KICAD_MANAGER_FRAME::SpawnPeerSchematicEditor( const KIID& aSubProjectUuid 
     if( !player->OpenProjectFiles( files ) )
     {
         Kiway().UnregisterPeerPlayer( FRAME_SCH, playerId );
+        player->Destroy();
+        return false;
+    }
+
+    player->Show( true );
+    player->Raise();
+    player->SetFocus();
+
+    return true;
+}
+
+
+bool KICAD_MANAGER_FRAME::SpawnPeerPcbEditor( const KIID& aSubProjectUuid )
+{
+    PROJECT_FILE* mbpf = GetMultiBoardProject();
+
+    if( !mbpf )
+        return false;
+
+    const SUB_PROJECT_INFO* info = mbpf->GetSubProject( aSubProjectUuid );
+
+    if( !info )
+        return false;
+
+    wxFileName proFile = mbpf->ResolveSubProjectPath( *info );
+
+    if( !proFile.Exists() )
+        return false;
+
+    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+
+    if( !sm.LoadProject( proFile.GetFullPath(), /*aSetActive=*/false ) )
+        return false;
+
+    PROJECT* subProject = sm.GetProject( proFile.GetFullPath() );
+
+    if( !subProject )
+        return false;
+
+    // If a PCB editor frame is already bound to this sub-project, focus
+    // it instead of spawning a duplicate.
+    for( KIWAY_PLAYER* existing : Kiway().GetAllPlayerFrames( FRAME_PCB_EDITOR ) )
+    {
+        if( existing->GetPrjOverride() == subProject )
+        {
+            existing->Raise();
+            existing->SetFocus();
+            return true;
+        }
+    }
+
+    KIFACE* kiface = Kiway().KiFACE( KIWAY::FACE_PCB );
+
+    if( !kiface )
+        return false;
+
+    KIWAY_PLAYER* player = (KIWAY_PLAYER*) kiface->CreateKiWindow(
+            this, FRAME_PCB_EDITOR, &Kiway(), 0 );
+
+    if( !player )
+        return false;
+
+    player->SetPrjOverride( subProject );
+    Kiway().RegisterPeerPlayer( FRAME_PCB_EDITOR, player->GetId() );
+
+    wxWindowID playerId = player->GetId();
+
+    player->Bind( wxEVT_CLOSE_WINDOW,
+                  [this, playerId]( wxCloseEvent& aEvt )
+                  {
+                      Kiway().UnregisterPeerPlayer( FRAME_PCB_EDITOR, playerId );
+                      aEvt.Skip();
+                  } );
+
+    wxFileName pcbFile = proFile;
+    pcbFile.SetExt( wxT( "kicad_pcb" ) );
+
+    std::vector<wxString> files{ pcbFile.GetFullPath() };
+
+    if( !player->OpenProjectFiles( files ) )
+    {
+        Kiway().UnregisterPeerPlayer( FRAME_PCB_EDITOR, playerId );
         player->Destroy();
         return false;
     }
@@ -1362,13 +1478,6 @@ void KICAD_MANAGER_FRAME::ShowChangedLanguage()
 
     // tooltips in toolbars
     RecreateToolbars();
-    m_launcher->CreateLaunchers();
-
-    // update captions
-    int pageId = m_notebook->FindPage( m_launcher );
-
-    if( pageId != wxNOT_FOUND )
-        m_notebook->SetPageText( pageId, EDITORS_CAPTION );
 
     m_auimgr.GetPane( m_projectTreePane ).Caption( PROJECT_FILES_CAPTION );
     m_auimgr.Update();
@@ -1447,12 +1556,13 @@ void KICAD_MANAGER_FRAME::ProjectChanged()
 
         title = fn.GetName();
 
-        if( PROJECT_FILE* mbpf = GetMultiBoardProject() )
-        {
-            title += wxT( "  \u00B7  " )
-                   + wxString::Format( _( "Multi-Board: %s" ),
-                                       wxFileName( mbpf->GetFullFilename() ).GetName() );
-        }
+        // Title carries the *type* of project, not the name again — the
+        // name is already there and the container name is the same as
+        // the project name in multi-board containers, which made the
+        // previous format read "name · Multi-Board: name" and that's
+        // just noise. The full path lives in the status bar below.
+        if( GetMultiBoardProject() )
+            title += wxT( "  \u00B7  " ) + _( "Multi-Board Project" );
 
         if( Prj().IsReadOnly() )
             title += wxS( " " ) + _( "[Read Only]" );
@@ -1511,22 +1621,13 @@ void KICAD_MANAGER_FRAME::SaveSettings( APP_SETTINGS_BASE* aCfg )
 void KICAD_MANAGER_FRAME::PrintPrjInfo()
 {
     // wxStatusBar's wxELLIPSIZE_MIDDLE flag doesn't work (at least on Mac).
-
-    wxString status;
-
-    if( PROJECT_FILE* mbpf = GetMultiBoardProject() )
-    {
-        status = wxString::Format( _( "Multi-Board: %s  \u00B7  Active: %s" ),
-                                   wxFileName( mbpf->GetFullFilename() ).GetName(),
-                                   Prj().GetProjectFullName() );
-    }
-    else
-    {
-        status = wxString::Format( _( "Project: %s" ), Prj().GetProjectFullName() );
-    }
-
+    //
+    // The title bar already names the project and its type, so the
+    // status bar is reserved for the absolute path of the active
+    // `.kicad_pro` — useful when several projects are open or when the
+    // user needs to copy a path out of the app.
     KISTATUSBAR* statusBar = static_cast<KISTATUSBAR*>( GetStatusBar() );
-    statusBar->SetEllipsedTextField( status, 0 );
+    statusBar->SetEllipsedTextField( Prj().GetProjectFullName(), 0 );
 }
 
 

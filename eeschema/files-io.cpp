@@ -35,8 +35,6 @@
 #include <id.h>
 #include <kiface_base.h>
 #include <kiplatform/app.h>
-#include <multi_board_net_extractor.h>
-#include <wx/dir.h>
 #include <kiplatform/ui.h>
 #include <libraries/legacy_symbol_library.h>
 #include <libraries/symbol_library_adapter.h>
@@ -82,6 +80,7 @@
 #include <wx/log.h>
 #include <wx/richmsgdlg.h>
 #include <wx/stdpaths.h>
+#include <wx/wupdlock.h>
 #include <tools/sch_inspection_tool.h>
 #include <tools/sch_selection_tool.h>
 #include <paths.h>
@@ -279,6 +278,17 @@ bool SCH_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
 
         bool failedLoad = false;
 
+        // Suppress paints on the canvas for the entire parse phase. The
+        // progress reporter's KeepRefreshing() calls YieldFor, which pumps
+        // queued paint events. If a paint fires while SCH_SHEETs are being
+        // mutated (or while the frame's SCHEMATIC is in a transient state
+        // after SetProject/SetSchematic), the painter dereferences half-wired
+        // objects and crashes. The locker pairs Freeze/Thaw via RAII so an
+        // exception in the parser can't leave the canvas frozen.
+        std::unique_ptr<wxWindowUpdateLocker> canvasLock;
+        if( wxWindow* canvasWin = GetCanvas() )
+            canvasLock = std::make_unique<wxWindowUpdateLocker>( canvasWin );
+
         try
         {
             {
@@ -419,6 +429,9 @@ bool SCH_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
         }
 
         SetSchematic( newSchematic.release() );
+
+        // Parse done and schematic installed — safe to paint again.
+        canvasLock.reset();
 
         // Log the current sheet UUID after schematic is set
         wxLogTrace( "SCHEMATIC", "OpenProjectFiles: After SetSchematic, CurrentSheet size=%zu, Last UUID=%s",
@@ -1577,79 +1590,10 @@ bool SCH_EDIT_FRAME::SaveProject( bool aSaveAs )
     if( m_infoBar->GetMessageType() == WX_INFOBAR::MESSAGE_TYPE::OUTDATED_SAVE )
         m_infoBar->Dismiss();
 
-    // If this schematic is the MBS of an enclosing multi-board project,
-    // rebuild the cross-board net list and persist it to the .kicad_multi.
     if( success )
-        syncCrossBoardNetsIfMbs();
+        onSchematicSaved();
 
     return success;
-}
-
-
-void SCH_EDIT_FRAME::syncCrossBoardNetsIfMbs()
-{
-    SCH_SCREEN* rootScreen = Schematic().RootScreen();
-
-    if( !rootScreen )
-        return;
-
-    wxFileName schFn( rootScreen->GetFileName() );
-
-    if( !schFn.IsAbsolute() )
-        schFn.MakeAbsolute( Prj().GetProjectPath() );
-
-    // Walk upward from the schematic's directory looking for a `.kicad_pro`
-    // with `multi_board.container = true`. When the MBS opens in its own
-    // PROJECT (Y semantics) we could simply read `Prj().GetProjectFile()`,
-    // but `Prj()` here is the MBS schematic's project and may or may not
-    // be the container — so a targeted walk remains the safe path until
-    // the container/MBS pairing is stored explicitly inside the `.kicad_mbs`.
-    wxFileName multiFile;
-    wxFileName searchDir( schFn );
-    searchDir.SetFullName( wxEmptyString );
-
-    for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
-    {
-        wxArrayString files;
-        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_pro" ),
-                            wxDIR_FILES );
-
-        for( const wxString& candidate : files )
-        {
-            PROJECT_FILE probe( candidate );
-
-            if( !probe.LoadFromFile() )
-                continue;
-
-            if( !probe.IsMultiBoardContainer() )
-                continue;
-
-            wxFileName expectedMbs = probe.ResolveMbsPath();
-
-            if( expectedMbs.IsOk()
-                && expectedMbs.GetFullPath() == schFn.GetFullPath() )
-            {
-                multiFile = wxFileName( candidate );
-                break;
-            }
-        }
-
-        if( multiFile.IsOk() )
-            break;
-
-        searchDir.RemoveLastDir();
-    }
-
-    if( !multiFile.IsOk() || !multiFile.FileExists() )
-        return;
-
-    PROJECT_FILE multi( multiFile.GetFullPath() );
-
-    if( !multi.LoadFromFile() )
-        return;
-
-    multi.SetCrossBoardNets( ExtractCrossBoardNets( *rootScreen, multi ) );
-    multi.SaveToFile();
 }
 
 

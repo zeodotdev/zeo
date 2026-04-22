@@ -196,6 +196,26 @@ std::vector<MB_CROSS_BOARD_NET> ExtractCrossBoardNets( SCH_SCREEN& aMbsScreen,
         }
     }
 
+    // Pass 1c: unite each module pin's position with the first wire it
+    // touches. Without this step, two pins joined only by a wire keep
+    // separate union-find roots (the wire unites its own endpoints, but
+    // nothing connects the wire back to the pin) and Pass 2 groups each
+    // pin alone — Pass 3 then drops the singleton groups and no cross-
+    // board net is extracted. Mirrors the label→wire bridge above.
+    for( const PinRecord& rec : modulePins )
+    {
+        VECTOR2I pos = rec.pin->GetPosition();
+
+        for( SCH_LINE* wire : wires )
+        {
+            if( isPointOnSegment( pos, wire->GetStartPoint(), wire->GetEndPoint() ) )
+            {
+                uf.Unite( pos, wire->GetStartPoint() );
+                break;
+            }
+        }
+    }
+
     // Pass 2: group module pins by their UF root.
     std::map<VECTOR2I, std::vector<PinRecord>> groups;
 

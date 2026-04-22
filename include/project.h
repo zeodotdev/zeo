@@ -28,8 +28,10 @@
  * @file project.h
  */
 #include <array>
+#include <functional>
 #include <map>
 #include <mutex>
+#include <utility>
 #include <vector>
 #include <kiid.h>
 #include <wx_filename.h>
@@ -98,6 +100,17 @@ public:
 
     PROJECT();
     virtual ~PROJECT();
+
+    /**
+     * Register a callback to run when this PROJECT is destroyed. Lets
+     * consumers that hold a bare PROJECT pointer (e.g. SCHEMATIC) null
+     * out their cached reference before the memory is freed, instead
+     * of crashing on the next access. The caller-provided cookie (often
+     * `this` from the observer) is used to deregister the hook when the
+     * observer outlives the PROJECT but later points at a different one.
+     */
+    void AddDestroyHook( const void* aCookie, std::function<void()> aHook ) const;
+    void RemoveDestroyHook( const void* aCookie ) const;
 
     //-----<Cross Module API>----------------------------------------------------
 
@@ -500,6 +513,12 @@ private:
 
     /// Synchronise access to DesignBlockLibs()
     std::mutex m_designBlockLibsMutex;
+
+    /// Hooks invoked from ~PROJECT. Key is the caller's cookie (usually
+    /// `this`) so observers can deregister themselves without walking
+    /// the list. Mutable because registration happens from const PROJECT
+    /// references in some code paths.
+    mutable std::vector<std::pair<const void*, std::function<void()>>> m_destroyHooks;
 };
 
 

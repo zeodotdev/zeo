@@ -30,6 +30,7 @@
 #include <wx/tokenzr.h>
 #include <fmt/format.h>
 #include <array>
+#include <vector>
 #include <widgets/kistatusbar.h>
 #include <widgets/wx_html_report_box.h>
 #include <widgets/bitmap_button.h>
@@ -309,6 +310,9 @@ void KISTATUSBAR::ShowBackgroundProgressBar( bool aCancellable )
 
     if( m_backgroundStopButton )
         m_backgroundStopButton->Show( aCancellable );
+
+    m_bgJobActive = true;
+    rebuildFieldWidths();
 }
 
 
@@ -318,6 +322,9 @@ void KISTATUSBAR::HideBackgroundProgressBar()
 
     if( m_backgroundStopButton )
         m_backgroundStopButton->Hide();
+
+    m_bgJobActive = false;
+    rebuildFieldWidths();
 }
 
 
@@ -507,6 +514,86 @@ void KISTATUSBAR::onLoadWarningsIconClick( wxCommandEvent& aEvent )
     dlg.m_Reporter->Flush();
     dlg.ShowModal();
 }
+
+void KISTATUSBAR::SetFieldWeight( int aFieldId, int aWeight )
+{
+    const int count = GetFieldsCount();
+    wxCHECK_RET( aFieldId >= 0 && aFieldId < count, wxS( "Field id out of range" ) );
+    wxCHECK_RET( aWeight > 0, wxS( "Weight must be positive" ) );
+
+    m_primaryFieldId = aFieldId;
+    m_primaryFieldWeight = aWeight;
+    rebuildFieldWidths();
+}
+
+
+void KISTATUSBAR::rebuildFieldWidths()
+{
+    const int count = GetFieldsCount();
+
+    // Derive aNumberFields (user fields) from total minus extras.
+    int extraCount = 0;
+#ifdef __WXOSX__
+    extraCount += 3;
+#else
+    extraCount += 2;
+#endif
+
+    if( m_styleFlags & CANCEL_BUTTON )
+        extraCount++;
+    if( m_styleFlags & WARNING_ICON )
+        extraCount++;
+    if( m_styleFlags & NOTIFICATION_ICON )
+        extraCount++;
+    if( m_styleFlags & LABEL_BUTTON )
+        extraCount++;
+
+    const int userFields = count - extraCount;
+    wxCHECK_RET( userFields >= 0, wxS( "Corrupt field count" ) );
+
+    std::vector<int> widths( count, -1 );
+
+    for( int i = 0; i < userFields; ++i )
+        widths[i] = -1;
+
+    auto setExtra = [&]( FIELD aField, int aWidth )
+    {
+        std::optional<int> idx = fieldIndex( aField );
+
+        if( idx && *idx >= 0 )
+            widths[userFields + *idx] = aWidth;
+    };
+
+    // Background-job fields collapse to zero when idle so they stop
+    // hogging ~95 px of width during normal use. They re-expand when a
+    // job becomes active (Show/HideBackgroundProgressBar toggle this).
+    if( m_bgJobActive )
+    {
+        setExtra( FIELD::BGJOB_LABEL, -1 );
+        setExtra( FIELD::BGJOB_GAUGE, 75 );
+        setExtra( FIELD::BGJOB_CANCEL, 20 );
+    }
+    else
+    {
+        setExtra( FIELD::BGJOB_LABEL, 0 );
+        setExtra( FIELD::BGJOB_GAUGE, 0 );
+        setExtra( FIELD::BGJOB_CANCEL, 0 );
+    }
+
+    setExtra( FIELD::WARNING, 20 );
+    setExtra( FIELD::NOTIFICATION, 20 );
+    setExtra( FIELD::LABEL, 35 );
+
+#ifdef __WXOSX__
+    widths[count - 1] = 10;
+#endif
+
+    if( m_primaryFieldId >= 0 && m_primaryFieldId < count )
+        widths[m_primaryFieldId] = -m_primaryFieldWeight;
+
+    SetStatusWidths( count, widths.data() );
+}
+
 
 void KISTATUSBAR::SetEllipsedTextField( const wxString& aText, int aFieldId )
 {

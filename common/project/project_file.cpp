@@ -776,9 +776,19 @@ bool PROJECT_FILE::LoadFromFile( const wxString& aDirectory )
 
 bool PROJECT_FILE::SaveToFile( const wxString& aDirectory, bool aForce )
 {
-    wxASSERT( m_project );
+    // Standalone edit/save paths (e.g. the MBSCH save hook writing
+    // cross_board_nets into a sibling container) construct a
+    // PROJECT_FILE without routing through SETTINGS_MANAGER, so
+    // m_project is null. Fall back to deriving the project name from
+    // the JSON_SETTINGS filename instead of crashing in that case.
+    wxString projectName;
 
-    Set( "meta.filename", m_project->GetProjectName() + "." + FILEEXT::ProjectFileExtension );
+    if( m_project )
+        projectName = m_project->GetProjectName();
+    else
+        projectName = wxFileName( GetFilename() ).GetName();
+
+    Set( "meta.filename", projectName + "." + FILEEXT::ProjectFileExtension );
 
     // Even if parameters were not modified, we should resave after migration
     bool force = aForce || m_wasMigrated;

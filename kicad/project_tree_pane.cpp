@@ -1991,8 +1991,6 @@ void PROJECT_TREE_PANE::FileWatcherReset()
     wxString prj_dir = wxPathOnly( m_Parent->GetProjectFileName() );
 
 #if defined( _WIN32 )
-    KISTATUSBAR* statusBar = static_cast<KISTATUSBAR*>( m_Parent->GetStatusBar() );
-
     if( KIPLATFORM::ENV::IsNetworkPath( prj_dir ) )
     {
         // Due to a combination of a bug in SAMBA sending bad change event IDs and wxWidgets
@@ -2000,13 +1998,11 @@ void PROJECT_TREE_PANE::FileWatcherReset()
         // avoid spawning a filewatcher. Unfortunately this punishes corporate environments with
         // Windows Server shares :/
         m_Parent->m_FileWatcherInfo = _( "Network path: not monitoring folder changes" );
-        statusBar->SetEllipsedTextField( m_Parent->m_FileWatcherInfo, 1 );
         return;
     }
     else
     {
         m_Parent->m_FileWatcherInfo = _( "Local path: monitoring folder changes" );
-        statusBar->SetEllipsedTextField( m_Parent->m_FileWatcherInfo, 1 );
     }
 #endif
 

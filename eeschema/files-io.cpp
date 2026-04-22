@@ -1487,9 +1487,15 @@ bool SCH_EDIT_FRAME::SaveProject( bool aSaveAs )
         wxCHECK2( screen, continue );
 
         // Convert legacy schematics file name extensions for the new format.
+        // `.kicad_mbs` (multi-board schematic) shares the same s-expression
+        // container format as `.kicad_sch`, so it is NOT a legacy file —
+        // skip the rewrite here or every MBS save would ghost-rename the
+        // file to `.kicad_sch`.
         wxFileName tmpFn = filenameMap[screen];
 
-        if( tmpFn.IsOk() && tmpFn.GetExt() != FILEEXT::KiCadSchematicFileExtension )
+        if( tmpFn.IsOk()
+            && tmpFn.GetExt() != FILEEXT::KiCadSchematicFileExtension
+            && tmpFn.GetExt() != FILEEXT::MbsFileExtension )
         {
             updateFileHistory = true;
             tmpFn.SetExt( FILEEXT::KiCadSchematicFileExtension );

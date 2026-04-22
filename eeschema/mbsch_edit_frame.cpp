@@ -107,6 +107,15 @@ void MBSCH_EDIT_FRAME::onSchematicSaved()
     if( !multi.LoadFromFile() )
         return;
 
-    multi.SetCrossBoardNets( ExtractCrossBoardNets( *rootScreen, multi ) );
+    std::vector<MB_CROSS_BOARD_NET> nets = ExtractCrossBoardNets( *rootScreen, multi );
+    multi.SetCrossBoardNets( nets );
     multi.SaveToFile();
+
+    // Surface extraction outcomes in the status bar so a user wiring the
+    // MBS can immediately tell whether Sync will have anything to do —
+    // without opening the project manager or inspecting the .kicad_pro.
+    wxString msg = wxString::Format( _( "Multi-board: extracted %zu cross-board net(s)" ),
+                                     nets.size() );
+    SetStatusText( msg, 0 );
+    wxLogTrace( wxT( "MULTI_BOARD" ), wxS( "%s → %s" ), msg, multiFile.GetFullPath() );
 }

@@ -87,6 +87,20 @@ public:
     void SetEllipsedTextField( const wxString& aText, int aFieldId );
 
     /**
+     * Override the proportional weight of a variable-width text field
+     * created by the constructor. Variable fields share the leftover
+     * space in the ratio of their weights; the default is 1 : 1 : … : 1
+     * across every variable field, which leaves the primary field too
+     * compressed when several variable fields coexist. Call this after
+     * construction to bias the layout (e.g. weight 8 on the project
+     * path field to keep it readable on narrow sidebar windows).
+     *
+     * @param aFieldId the text field (0-based) whose weight to change.
+     * @param aWeight a positive integer; internally stored as `-aWeight`.
+     */
+    void SetFieldWeight( int aFieldId, int aWeight );
+
+    /**
      * Show the background progress bar.
      */
     void ShowBackgroundProgressBar( bool aCancellable = false );
@@ -172,6 +186,13 @@ private:
     std::optional<int> fieldIndex( FIELD aField ) const;
     void updateLabelFieldWidth( int aNewWidth );  ///< Dynamically resize the LABEL status field
 
+    /**
+     * Recompute and apply field widths based on current state —
+     * background-job visibility + the caller-configured primary field
+     * weight. Called whenever that state changes.
+     */
+    void rebuildFieldWidths();
+
 private:
     wxGauge*        m_backgroundProgressBar;
     wxButton*       m_backgroundStopButton;
@@ -186,6 +207,10 @@ private:
     int            m_normalFieldsCount;
     STYLE_FLAGS    m_styleFlags;
     wxString       m_savedStatusText;       ///< Saved text from adjacent field during background jobs
+
+    int            m_primaryFieldId     = -1;   ///< Text field biased by SetFieldWeight; -1 = none
+    int            m_primaryFieldWeight = 1;    ///< Proportional weight for primary field
+    bool           m_bgJobActive        = false;   ///< Gauge / cancel / label occupying space
 };
 
 #endif

@@ -167,14 +167,13 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
     // wxbase315u_xml_gcc_custom shared object when launching Kicad
     wxXmlDocument dummy;
 
-    // Create the status line (bottom of the frame).  Left half is for project name; right half
-    // is for Reporter (currently used by archiver/unarchiver and PCM).
-    // Note: this is a KISTATUSBAR status bar. Therefore the specified number of fields
-    // is the extra number of fields, not the full field count.
-    // We need here 2 fields: the extra fiels to display the project name, and another field
-    // to display a info (specific to Windows) using the FIELD_OFFSET_BGJOB_TEXT id offset (=1)
-    // So the extra field count is 1
-    CreateStatusBar( 2 );
+    // Create the status line. Only one user-visible field (field 0) —
+    // the active project path + type + version. The former file-watcher
+    // status field was dropped: it mostly reported "monitoring folder
+    // changes", which isn't worth the horizontal real estate when the
+    // launcher is docked as a narrow sidebar. KISTATUSBAR still appends
+    // its own background-job / notification / session fields past field 0.
+    CreateStatusBar( 1 );
     Pgm().GetBackgroundJobMonitor().RegisterStatusBar( (KISTATUSBAR*) GetStatusBar() );
     Pgm().GetNotificationsManager().RegisterStatusBar( (KISTATUSBAR*) GetStatusBar() );
     Pgm().RegisterLibraryLoadStatusBar( (KISTATUSBAR*) GetStatusBar() );
@@ -260,7 +259,7 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
     m_auimgr.AddPane( m_notebook,
                       EDA_PANE().Canvas().Name( "Editors" ).Right().Layer( 1 )
                                 .Caption( EDITORS_CAPTION ).PaneBorder( false )
-                                .MinSize( FromDIP( wxSize( 400, 300 ) ) )
+                                .MinSize( FromDIP( wxSize( 0, 0 ) ) )
                                 .Floatable( true ).CloseButton( true ).Hide() );
 
     // Tree pane is the main surface: fills the center area once the
@@ -272,7 +271,17 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
 
     m_auimgr.Update();
 
-    m_auimgr.GetPane( m_projectTreePane ).MinSize( defaultLeftWinWidth, FromDIP( 80 ) );
+    // Allow the tree pane to shrink to zero so the window can collapse
+    // down to just the toolbar (sidebar mode). Previously a 250-px min
+    // kept the frame uselessly wide even when the user only wanted the
+    // toolbar next to an editor.
+    m_auimgr.GetPane( m_projectTreePane ).MinSize( FromDIP( 0 ), FromDIP( 80 ) );
+
+    // Override the frame-level minimum so nothing past the toolbar pins
+    // the window at hundreds of pixels wide. Default min is derived
+    // from child sizer min sizes, which still includes caption bars and
+    // padding even after relaxing the AUI pane minimums.
+    SetMinClientSize( FromDIP( wxSize( 40, 200 ) ) );
 
 
     wxSizer* mainSizer = GetSizer();
@@ -413,6 +422,13 @@ wxStatusBar* KICAD_MANAGER_FRAME::OnCreateStatusBar( int number, long style, wxW
 {
     auto* statusBar = new KISTATUSBAR( number, this, id,
        static_cast<KISTATUSBAR::STYLE_FLAGS>( KISTATUSBAR::DEFAULT_STYLE | KISTATUSBAR::LABEL_BUTTON ) );
+
+    // Field 0 carries the active project path + type + version. Weight
+    // it heavily so it takes virtually all proportional space. The only
+    // other variable field that remains is the background-job label
+    // (weight 1), which is normally empty and only expands when a job
+    // is reporting progress.
+    statusBar->SetFieldWeight( 0, 32 );
 
     if( auto* btn = statusBar->GetLabelButton() )
     {
@@ -649,11 +665,6 @@ void KICAD_MANAGER_FRAME::OnSize( wxSizeEvent& event )
         m_auimgr.Update();
 
     PrintPrjInfo();
-
-#if defined( _WIN32 )
-    KISTATUSBAR* statusBar = static_cast<KISTATUSBAR*>( GetStatusBar() );
-    statusBar->SetEllipsedTextField( m_FileWatcherInfo, 1 );
-#endif
 
     event.Skip();
 }
@@ -1554,15 +1565,11 @@ void KICAD_MANAGER_FRAME::ProjectChanged()
     {
         wxFileName fn( file );
 
+        // Title shows only the project name; project type (multi-board
+        // vs. single-board) and the Zeo version live in the status bar
+        // so the title bar stays short and readable even when the
+        // window is docked as a narrow sidebar.
         title = fn.GetName();
-
-        // Title carries the *type* of project, not the name again — the
-        // name is already there and the container name is the same as
-        // the project name in multi-board containers, which made the
-        // previous format read "name · Multi-Board: name" and that's
-        // just noise. The full path lives in the status bar below.
-        if( GetMultiBoardProject() )
-            title += wxT( "  \u00B7  " ) + _( "Multi-Board Project" );
 
         if( Prj().IsReadOnly() )
             title += wxS( " " ) + _( "[Read Only]" );
@@ -1571,11 +1578,6 @@ void KICAD_MANAGER_FRAME::ProjectChanged()
     {
         title = _( "[no project loaded]" );
     }
-
-    if( ADVANCED_CFG::GetCfg().m_HideVersionFromTitle )
-        title += wxT( " \u2014 " ) + wxString( wxS( "Zeo" ) );
-    else
-        title += wxT( " \u2014 " ) + wxString( wxS( "Zeo " ) ) + GetZeoVersion();
 
     SetTitle( title );
 
@@ -1620,14 +1622,26 @@ void KICAD_MANAGER_FRAME::SaveSettings( APP_SETTINGS_BASE* aCfg )
 
 void KICAD_MANAGER_FRAME::PrintPrjInfo()
 {
-    // wxStatusBar's wxELLIPSIZE_MIDDLE flag doesn't work (at least on Mac).
-    //
-    // The title bar already names the project and its type, so the
-    // status bar is reserved for the absolute path of the active
-    // `.kicad_pro` — useful when several projects are open or when the
-    // user needs to copy a path out of the app.
+    // Status bar = everything about the project that isn't its name:
+    // absolute path, project type (multi- vs. single-board), and the
+    // Zeo version. The title bar only carries the project name so it
+    // stays short even when the manager is docked as a narrow sidebar.
+    // Full status text is mirrored into the window tooltip so narrow
+    // widths don't hide anything.
     KISTATUSBAR* statusBar = static_cast<KISTATUSBAR*>( GetStatusBar() );
-    statusBar->SetEllipsedTextField( Prj().GetProjectFullName(), 0 );
+    const wxString fullPath = Prj().GetProjectFullName();
+
+    wxString versionSuffix = ADVANCED_CFG::GetCfg().m_HideVersionFromTitle
+                                    ? wxString( wxS( "Zeo" ) )
+                                    : wxString( wxS( "Zeo " ) ) + GetZeoVersion();
+
+    wxString projectType = GetMultiBoardProject() ? _( "Multi-Board" ) : _( "Single-Board" );
+
+    wxString status = fullPath + wxT( "  \u00B7  " ) + projectType
+                      + wxT( "  \u00B7  " ) + versionSuffix;
+
+    statusBar->SetEllipsedTextField( status, 0 );
+    statusBar->SetToolTip( status );
 }
 
 

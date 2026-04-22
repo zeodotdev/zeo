@@ -78,7 +78,37 @@ void PROJECT::elemsClear()
 
 PROJECT::~PROJECT()
 {
+    // Invoke observer hooks while the object is still a valid PROJECT —
+    // e.g. SCHEMATIC::m_project clears itself here so subsequent paint
+    // events on any surviving frame hit a null pointer (handled) rather
+    // than a freed one (use-after-free).
+    for( auto& [cookie, hook] : m_destroyHooks )
+    {
+        if( hook )
+            hook();
+    }
+
+    m_destroyHooks.clear();
+
     elemsClear();
+}
+
+
+void PROJECT::AddDestroyHook( const void* aCookie, std::function<void()> aHook ) const
+{
+    m_destroyHooks.emplace_back( aCookie, std::move( aHook ) );
+}
+
+
+void PROJECT::RemoveDestroyHook( const void* aCookie ) const
+{
+    m_destroyHooks.erase(
+            std::remove_if( m_destroyHooks.begin(), m_destroyHooks.end(),
+                            [aCookie]( const auto& entry )
+                            {
+                                return entry.first == aCookie;
+                            } ),
+            m_destroyHooks.end() );
 }
 
 

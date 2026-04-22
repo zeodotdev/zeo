@@ -147,6 +147,11 @@ SCHEMATIC::~SCHEMATIC()
 {
     PROPERTY_MANAGER::Instance().UnregisterListeners( TYPE_HASH( SCH_FIELD ) );
 
+    // If the PROJECT outlives us, its destroy hook would fire with a
+    // dangling `this`. Remove ourselves cleanly now.
+    if( m_project )
+        m_project->RemoveDestroyHook( this );
+
     delete m_currentSheet;
     delete m_connectionGraph;
 
@@ -196,11 +201,23 @@ void SCHEMATIC::SetProject( PROJECT* aPrj )
         project.m_SchematicSettings = nullptr;
     }
 
+    // Deregister from the old project's destroy-hook list. If we don't,
+    // and we outlive this schematic binding, the destroy hook would
+    // null out an m_project pointer that has since been reassigned.
+    if( m_project )
+        m_project->RemoveDestroyHook( this );
+
     m_project = aPrj;
     m_ownsProjectSettings = false;
 
     if( m_project )
     {
+        // Register so that when SETTINGS_MANAGER unloads this PROJECT,
+        // our cached pointer is cleared before the memory is freed.
+        // SCHEMATIC::Settings() already falls back to defaults when
+        // m_project is null, so no paint after this point will crash.
+        m_project->AddDestroyHook( this, [this]() { m_project = nullptr; } );
+
         PROJECT_FILE& project = m_project->GetProjectFile();
 
         if( !project.m_SchematicSettings )

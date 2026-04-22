@@ -805,16 +805,19 @@ int KICAD_MANAGER_CONTROL::SyncCrossBoardNets( const TOOL_EVENT& aEvent )
         return 0;
     }
 
-    // Reload from disk — eeschema may have written cross_board_nets during
-    // its save hook while our in-memory copy was held unchanged.
+    // Reload from disk — eeschema writes cross_board_nets during its
+    // save hook, and the SyncCrossBoardNets action runs in the manager
+    // frame which doesn't share the eeschema kiface's in-memory copy.
     multi->LoadFromFile();
 
     if( multi->GetCrossBoardNets().empty() )
     {
         wxMessageBox( _( "No cross-board nets are defined yet.\n\n"
-                         "Open the multi-board schematic, wire pins between module "
-                         "blocks, then save — the nets will be extracted "
-                         "automatically." ),
+                         "Open the multi-board schematic, wire pins between "
+                         "module blocks, then save — the nets will be extracted "
+                         "automatically. If you already saved but still see this "
+                         "message, try saving the multi-board schematic again "
+                         "after the most recent Zeo update." ),
                       _( "Nothing to Sync" ), wxOK | wxICON_INFORMATION, m_frame );
         return 0;
     }

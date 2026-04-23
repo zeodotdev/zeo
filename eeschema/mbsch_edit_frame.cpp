@@ -19,11 +19,22 @@
  */
 
 #include "mbsch_edit_frame.h"
+#include "toolbars_mbsch_editor.h"
 
 #include <multi_board_net_extractor.h>
 #include <project/project_file.h>
 #include <schematic.h>
 #include <sch_screen.h>
+#include <kiface_base.h>
+#include <pgm_base.h>
+#include <settings/settings_manager.h>
+#include <tool/action_menu.h>
+#include <tool/tool_manager.h>
+#include <tool/actions.h>
+#include <tool/common_control.h>
+#include <tools/sch_actions.h>
+#include <tools/sch_selection_tool.h>
+#include <widgets/wx_menubar.h>
 
 #include <wx/dir.h>
 #include <wx/filename.h>
@@ -33,6 +44,27 @@ MBSCH_EDIT_FRAME::MBSCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         SCH_EDIT_FRAME( aKiway, aParent, FRAME_MBSCH )
 {
     m_aboutTitle = _HKI( "Zeo Multi-Board Schematic Editor" );
+
+    // Replace the toolbar config the SCH_EDIT_FRAME ctor installed with
+    // the trimmed MBS variant. Re-run the toolbar configure + recreate
+    // pipeline so the visible bars reflect the new config. Cheaper than
+    // adding a virtual hook in the base class for a single subclass.
+    m_toolbarSettings = GetToolbarSettings<MBSCH_EDIT_TOOLBAR_SETTINGS>( "mbsch-toolbars" );
+    configureToolbars();
+    RecreateToolbars();
+
+    // Swap the menu bar for the trimmed MBS menu.
+    ReCreateMenuBar();
+
+    // Hide the hierarchy pane — an MBS is a single flat sheet by design,
+    // so a sheet-hierarchy tree has no content to show and just takes
+    // space from the schematic canvas.
+    if( wxAuiPaneInfo& hierarchyPane = m_auimgr.GetPane( SchematicHierarchyPaneName() );
+        hierarchyPane.IsOk() )
+    {
+        hierarchyPane.Show( false );
+        m_auimgr.Update();
+    }
 }
 
 
@@ -44,6 +76,103 @@ MBSCH_EDIT_FRAME::~MBSCH_EDIT_FRAME()
 wxString MBSCH_EDIT_FRAME::windowTitleSuffix() const
 {
     return _( "Multi-Board Schematic Editor" );
+}
+
+
+void MBSCH_EDIT_FRAME::doReCreateMenuBar()
+{
+    SCH_SELECTION_TOOL* selTool = m_toolManager->GetTool<SCH_SELECTION_TOOL>();
+    COMMON_CONTROL*     commonControl = m_toolManager->GetTool<COMMON_CONTROL>();
+
+    wxMenuBar*  oldMenuBar = GetMenuBar();
+    WX_MENUBAR* menuBar    = new WX_MENUBAR();
+
+    // -- File menu --
+    ACTION_MENU* fileMenu = new ACTION_MENU( false, selTool );
+    fileMenu->Add( ACTIONS::save );
+    fileMenu->AppendSeparator();
+    fileMenu->Add( ACTIONS::pageSettings );
+    fileMenu->AppendSeparator();
+    fileMenu->Add( ACTIONS::print );
+    fileMenu->Add( ACTIONS::plot );
+    fileMenu->AppendSeparator();
+    fileMenu->AddQuitOrClose( &Kiface(), _( "Multi-Board Schematic Editor" ) );
+
+    // -- Edit menu --
+    ACTION_MENU* editMenu = new ACTION_MENU( false, selTool );
+    editMenu->Add( ACTIONS::undo );
+    editMenu->Add( ACTIONS::redo );
+    editMenu->AppendSeparator();
+    editMenu->Add( ACTIONS::cut );
+    editMenu->Add( ACTIONS::copy );
+    editMenu->Add( ACTIONS::paste );
+    editMenu->AppendSeparator();
+    editMenu->Add( ACTIONS::selectAll );
+    editMenu->AppendSeparator();
+    editMenu->Add( ACTIONS::find );
+    editMenu->Add( ACTIONS::findAndReplace );
+
+    // -- View menu --
+    ACTION_MENU* viewMenu = new ACTION_MENU( false, selTool );
+    viewMenu->Add( ACTIONS::zoomInCenter );
+    viewMenu->Add( ACTIONS::zoomOutCenter );
+    viewMenu->Add( ACTIONS::zoomFitScreen );
+    viewMenu->Add( ACTIONS::zoomFitObjects );
+    viewMenu->Add( ACTIONS::zoomTool );
+    viewMenu->AppendSeparator();
+    viewMenu->Add( ACTIONS::toggleGrid,     ACTION_MENU::CHECK );
+    viewMenu->Add( ACTIONS::gridProperties );
+    viewMenu->AppendSeparator();
+    viewMenu->Add( ACTIONS::showProperties, ACTION_MENU::CHECK );
+
+    // -- Place menu -- (restricted to what makes sense on an MBS)
+    ACTION_MENU* placeMenu = new ACTION_MENU( false, selTool );
+    placeMenu->Add( SCH_ACTIONS::drawWire );
+    placeMenu->Add( SCH_ACTIONS::drawBus );
+    placeMenu->Add( SCH_ACTIONS::placeBusWireEntry );
+    placeMenu->Add( SCH_ACTIONS::placeJunction );
+    placeMenu->AppendSeparator();
+    placeMenu->Add( SCH_ACTIONS::placeLabel );
+    placeMenu->Add( SCH_ACTIONS::placeGlobalLabel );
+    placeMenu->AppendSeparator();
+    placeMenu->Add( SCH_ACTIONS::placeSchematicText );
+    placeMenu->Add( SCH_ACTIONS::drawTextBox );
+    placeMenu->Add( SCH_ACTIONS::drawTable );
+    placeMenu->AppendSeparator();
+    placeMenu->Add( SCH_ACTIONS::drawRectangle );
+    placeMenu->Add( SCH_ACTIONS::drawCircle );
+    placeMenu->Add( SCH_ACTIONS::drawArc );
+    placeMenu->Add( SCH_ACTIONS::drawBezier );
+    placeMenu->Add( SCH_ACTIONS::drawLines );
+    placeMenu->Add( SCH_ACTIONS::placeImage );
+
+    // -- Tools menu -- (MBS-specific)
+    ACTION_MENU* toolsMenu = new ACTION_MENU( false, selTool );
+    toolsMenu->Add( SCH_ACTIONS::refreshMbsFromSubProjects );
+
+    // -- Preferences menu --
+    ACTION_MENU* prefsMenu = new ACTION_MENU( false, selTool );
+    prefsMenu->Add( ACTIONS::configurePaths );
+    prefsMenu->AppendSeparator();
+    prefsMenu->Add( ACTIONS::openPreferences );
+
+    // -- Help menu (standard) --
+    ACTION_MENU* helpMenu = new ACTION_MENU( false, commonControl );
+    helpMenu->Add( ACTIONS::help );
+    helpMenu->Add( ACTIONS::reportBug );
+    helpMenu->AppendSeparator();
+    helpMenu->Add( ACTIONS::about );
+
+    menuBar->Append( fileMenu,   _( "&File" ) );
+    menuBar->Append( editMenu,   _( "&Edit" ) );
+    menuBar->Append( viewMenu,   _( "&View" ) );
+    menuBar->Append( placeMenu,  _( "&Place" ) );
+    menuBar->Append( toolsMenu,  _( "&Tools" ) );
+    menuBar->Append( prefsMenu,  _( "P&references" ) );
+    menuBar->Append( helpMenu,   _( "&Help" ) );
+
+    SetMenuBar( menuBar );
+    delete oldMenuBar;
 }
 
 

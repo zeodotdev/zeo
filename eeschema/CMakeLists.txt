@@ -449,6 +449,7 @@ set( EESCHEMA_SRCS
     symbol_tree_synchronizing_adapter.cpp
     symbol_viewer_frame.cpp
     symb_transforms_utils.cpp
+    toolbars_mbsch_editor.cpp
     toolbars_sch_editor.cpp
     toolbars_symbol_viewer.cpp
 

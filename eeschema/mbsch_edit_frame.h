@@ -48,6 +48,14 @@ protected:
     void onSchematicSaved() override;
 
     wxString windowTitleSuffix() const override;
+
+    /**
+     * Rebuild the menu bar with the MBS-specific trimmed surface —
+     * drops annotation, ERC, simulator, BOM, assign-footprints,
+     * symbol/footprint editors, and other single-board features that
+     * don't apply to a cross-board wiring sheet.
+     */
+    void doReCreateMenuBar() override;
 };
 
 #endif // MBSCH_EDIT_FRAME_H

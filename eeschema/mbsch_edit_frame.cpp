@@ -107,7 +107,7 @@ void MBSCH_EDIT_FRAME::onSchematicSaved()
     if( !multi.LoadFromFile() )
         return;
 
-    std::vector<MB_CROSS_BOARD_NET> nets = ExtractCrossBoardNets( *rootScreen, multi );
+    std::vector<MB_CROSS_BOARD_NET> nets = ExtractCrossBoardNets( Schematic(), multi );
     multi.SetCrossBoardNets( nets );
     multi.SaveToFile();
 

@@ -41,6 +41,8 @@
 #include <sch_sheet.h>
 #include <sch_sheet_path.h>
 #include <sch_sheet_pin.h>
+#include <sch_module_block.h>
+#include <sch_module_pin.h>
 #include <sch_text.h>
 #include <schematic.h>
 #include <symbol.h>
@@ -427,6 +429,17 @@ wxString CONNECTION_SUBGRAPH::driverName( SCH_ITEM* aItem ) const
         return EscapeString( sheetPin->GetShownText( &path, false ), CTX_NETNAME );
     }
 
+    case SCH_MODULE_PIN_T:
+    {
+        // Module pins are hierarchical-label-derived, but their parent is
+        // an SCH_MODULE_BLOCK rather than an SCH_SHEET. Their text is the
+        // pin name chosen by the MBS generator (e.g. "/VBAT", "+BATT").
+        // Treat it as the default net name when no higher-priority label
+        // is attached to the subgraph — same semantics as sheet pins.
+        SCH_MODULE_PIN* modulePin = static_cast<SCH_MODULE_PIN*>( aItem );
+        return EscapeString( modulePin->GetShownText( &m_sheet, false ), CTX_NETNAME );
+    }
+
     default:
         wxFAIL_MSG( wxS( "Unhandled item type in GetNameForDriver" ) );
         return wxEmptyString;
@@ -594,6 +607,7 @@ CONNECTION_SUBGRAPH::PRIORITY CONNECTION_SUBGRAPH::GetDriverPriority( SCH_ITEM* 
     switch( aDriver->Type() )
     {
     case SCH_SHEET_PIN_T:     return PRIORITY::SHEET_PIN;
+    case SCH_MODULE_PIN_T:    return PRIORITY::SHEET_PIN;   // same tier as sheet pins
     case SCH_HIER_LABEL_T:    return PRIORITY::HIER_LABEL;
     case SCH_LABEL_T:         return PRIORITY::LOCAL_LABEL;
     case SCH_GLOBAL_LABEL_T:  return PRIORITY::GLOBAL;
@@ -826,6 +840,22 @@ void CONNECTION_GRAPH::Recalculate( const SCH_SHEET_LIST& aSheetList, bool aUnco
                 SCH_SHEET* sheetItem = static_cast<SCH_SHEET*>( item );
 
                 for( SCH_SHEET_PIN* pin : sheetItem->GetPins() )
+                {
+                    if( pin->IsConnectivityDirty() )
+                    {
+                        items.push_back( pin );
+                        dirty_items.insert( pin );
+                    }
+                }
+            }
+            else if( item->Type() == SCH_MODULE_BLOCK_T )
+            {
+                // Mirror the SCH_SHEET branch: when a module block has
+                // clean connectivity at the item level but its pins are
+                // individually dirty, surface the dirty pins directly.
+                SCH_MODULE_BLOCK* block = static_cast<SCH_MODULE_BLOCK*>( item );
+
+                for( SCH_MODULE_PIN* pin : block->GetPins() )
                 {
                     if( pin->IsConnectivityDirty() )
                     {
@@ -1331,6 +1361,25 @@ void CONNECTION_GRAPH::updateItemConnectivity( const SCH_SHEET_PATH& aSheet,
             {
                 pin->InitializeConnection( aSheet, this );
 
+                pin->ClearConnectedItems( aSheet );
+
+                connection_map[ pin->GetTextPos() ].push_back( pin );
+                m_items.emplace_back( pin );
+            }
+        }
+        else if( item->Type() == SCH_MODULE_BLOCK_T )
+        {
+            // Multi-board module blocks are structurally identical to
+            // hierarchical sheets — each block carries module pins that
+            // function as named connection points to a sub-project's
+            // schematic. Registering them with the connection graph here
+            // means labels, wire-drawn net naming, and ERC "just work"
+            // against module pins the same way they do against sheet
+            // pins. Cross-board net extraction is then a simple query
+            // over subgraphs that span multiple module blocks.
+            for( SCH_MODULE_PIN* pin : static_cast<SCH_MODULE_BLOCK*>( item )->GetPins() )
+            {
+                pin->InitializeConnection( aSheet, this );
                 pin->ClearConnectedItems( aSheet );
 
                 connection_map[ pin->GetTextPos() ].push_back( pin );

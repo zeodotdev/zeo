@@ -22,6 +22,7 @@
 #include "toolbars_mbsch_editor.h"
 
 #include <connection_graph.h>
+#include <fmt/format.h>
 #include <kiway.h>
 #include <kiway_mail.h>
 #include <mail_type.h>
@@ -368,12 +369,154 @@ void MBSCH_EDIT_FRAME::crossProbeHighlightPart( const wxString& aRef,
 
 void MBSCH_EDIT_FRAME::crossProbeHighlightNet( const wxString& aNetName )
 {
-    // SetHighlightedConnection invokes the standard SCH painter
-    // highlight pipeline (including m_highlightedConnChanged flag so
-    // the next Refresh repaints items whose resolved net matches).
-    // An empty net name clears the highlight.
-    SetHighlightedConnection( aNetName );
-    GetCanvas()->Refresh();
+    // The standard SCH painter only brightens items whose cached
+    // SCH_CONNECTION name matches m_highlightedConn. That name is
+    // produced by CONNECTION_GRAPH during RecalculateConnections — if
+    // the graph hasn't been rebuilt since the last edit, Connection()
+    // pointers may be stale or null and every item falls through to
+    // the "brighten when unconnected" fallback in UpdateNetHighlighting.
+    // Force a rebuild when anything is dirty so the match set is
+    // well-defined before we decide who gets brightened.
+    if( SCH_SCREEN* rootScreen = Schematic().RootScreen() )
+    {
+        for( SCH_ITEM* item : rootScreen->Items() )
+        {
+            if( item->IsConnectivityDirty() )
+            {
+                RecalculateConnections( nullptr, NO_CLEANUP );
+                break;
+            }
+        }
+    }
+
+    // Resolve the incoming name to whatever the local MBS connection
+    // graph actually calls the matching subgraph. Sub-projects tend to
+    // broadcast their canonical "/FOO" net name, while the MBS's own
+    // subgraphs are driven by module-pin or label text that typically
+    // lacks the leading slash. Pick whichever form resolves to a real
+    // subgraph on this MBS — that is the name `UpdateNetHighlighting`
+    // will compare against item->Connection()->Name() when deciding
+    // which wires to brighten.
+    CONNECTION_GRAPH* graph = Schematic().ConnectionGraph();
+    wxString          localName = aNetName;
+
+    if( graph && !aNetName.IsEmpty() )
+    {
+        auto nameResolves = [&]( const wxString& aCandidate ) -> bool
+        {
+            return graph->FindFirstSubgraphByName( aCandidate ) != nullptr;
+        };
+
+        if( !nameResolves( localName ) )
+        {
+            if( localName.StartsWith( wxT( "/" ) )
+                && nameResolves( localName.AfterFirst( '/' ) ) )
+            {
+                localName = localName.AfterFirst( '/' );
+            }
+            else if( !localName.StartsWith( wxT( "/" ) )
+                     && nameResolves( wxT( "/" ) + localName ) )
+            {
+                localName = wxT( "/" ) + localName;
+            }
+        }
+    }
+
+    SetHighlightedConnection( localName );
+
+    // SetHighlightedConnection only stores the net name; the painter
+    // still needs an explicit UpdateNetHighlighting pass to flip
+    // IsBrightened() on matching items. Without this the MBS canvas
+    // keeps its previous brightness state — including the "all wires
+    // lit" state when the previous highlight was "" (match everything).
+    m_toolManager->RunAction( SCH_ACTIONS::updateNetHighlighting );
+
+    if( aNetName.IsEmpty() )
+        return;
+
+    // Cross-board net propagation. Find the subgraph for this net in the
+    // MBS connection graph; its SCH_MODULE_PINs identify every connector
+    // endpoint that the user's cross-board wiring ties together. Emit a
+    // targeted `$PART: "ref" $PAD: "pin"` cross-probe per endpoint so
+    // each sub-project's PCB and schematic editor highlight their local
+    // connector regardless of whether the net names have been aligned
+    // by Sync yet — post-sync the standard $NET broadcast would also
+    // work, but pad-level probes remain correct pre-sync.
+    if( !graph )
+        return;
+
+    CONNECTION_SUBGRAPH* target = nullptr;
+
+    // Find a subgraph whose resolved name matches. Walk module pins
+    // instead of GetAllSubgraphs to avoid a full graph enumeration when
+    // a single pin lookup narrows it quickly.
+    SCH_SCREEN* screen = Schematic().RootScreen();
+
+    if( !screen )
+        return;
+
+    for( SCH_ITEM* item : screen->Items() )
+    {
+        if( item->Type() != SCH_MODULE_BLOCK_T )
+            continue;
+
+        for( SCH_MODULE_PIN* pin : static_cast<SCH_MODULE_BLOCK*>( item )->GetPins() )
+        {
+            CONNECTION_SUBGRAPH* sg = graph->GetSubgraphForItem( pin );
+
+            if( sg && ( graph->GetResolvedSubgraphName( sg ) == aNetName
+                        || graph->GetResolvedSubgraphName( sg ) == localName ) )
+            {
+                target = sg;
+                break;
+            }
+        }
+
+        if( target )
+            break;
+    }
+
+    if( !target )
+        return;
+
+    // Collect the (ref, pin-number) endpoints in the subgraph.
+    std::vector<std::pair<wxString, wxString>> endpoints;
+
+    for( SCH_ITEM* item : target->GetItems() )
+    {
+        if( item->Type() != SCH_MODULE_PIN_T )
+            continue;
+
+        SCH_MODULE_PIN*   pin   = static_cast<SCH_MODULE_PIN*>( item );
+        SCH_MODULE_BLOCK* block = pin->GetParent();
+
+        if( !block )
+            continue;
+
+        wxString ref = block->GetComponentRef();
+
+        if( ref.IsEmpty() )
+            ref = pin->GetComponentRef();
+
+        if( ref.IsEmpty() || pin->GetPinNumber().IsEmpty() )
+            continue;
+
+        endpoints.emplace_back( ref, pin->GetPinNumber() );
+    }
+
+    // Fire one cross-probe per endpoint. Using $PART + $PAD drives the
+    // sub-project PCB's `PCB_EDIT_FRAME::ExecuteRemoteCommand` to
+    // highlight the pad's actual net, which is correct whether the
+    // local net name still differs from the MBS net name (pre-sync) or
+    // matches it (post-sync). SCH editors receive the same packet and
+    // select the corresponding symbol pin.
+    for( const auto& [ref, pinNum] : endpoints )
+    {
+        std::string packet = fmt::format( "$PART: \"{}\" $PAD: \"{}\"",
+                                          TO_UTF8( ref ), TO_UTF8( pinNum ) );
+        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, packet, this );
+        Kiway().ExpressMail( FRAME_SCH,        MAIL_CROSS_PROBE, packet, this );
+    }
 }
 
 
@@ -423,6 +566,13 @@ void MBSCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
         if( tok.HasMoreTokens() )
             tok.GetNextToken();
 
+        // Recursion guard: selection changes we apply below fire
+        // EVENTS::SelectedEvent, which would normally invoke
+        // SCH_EDITOR_CONTROL::CrossProbeToPcb and re-broadcast. Setting
+        // the sync flag matches what SCH_EDIT_FRAME::KiwayMailIn does
+        // around its SyncSelection call. Restore in all exit paths.
+        SetSyncingSelection( true );
+
         bool cleared = false;
 
         while( tok.HasMoreTokens() )
@@ -462,6 +612,8 @@ void MBSCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
                                          spec.Mid( slash + 1 ) );
             }
         }
+
+        SetSyncingSelection( false );
 
         break;
     }

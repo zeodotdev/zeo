@@ -426,6 +426,14 @@ void SCH_EDIT_FRAME::SendSelectItemsToPcb( const std::vector<EDA_ITEM*>& aItems,
         // the selection across its module blocks. MBSCH is a distinct
         // FRAME_T so FRAME_PCB_EDITOR broadcasts don't reach it.
         Kiway().ExpressMail( FRAME_MBSCH, selType, command, this );
+
+        // When the SENDER is MBSCH, the sub-project schematic editors
+        // (FRAME_SCH) also need the selection to mirror the user's pick
+        // onto the matching connector symbol. Plain FRAME_SCH never
+        // sends to FRAME_SCH (that would loop back on itself), so this
+        // path is gated on the MBSCH-only case.
+        if( GetFrameType() == FRAME_MBSCH )
+            Kiway().ExpressMail( FRAME_SCH, selType, command, this );
     }
 }
 
@@ -449,6 +457,12 @@ void SCH_EDIT_FRAME::SendCrossProbeNetName( const wxString& aNetName )
             // side in place, we use that here.
             Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, packet, this );
             Kiway().ExpressMail( FRAME_MBSCH,      MAIL_CROSS_PROBE, packet, this );
+
+            // MBSCH needs to push net highlight onto sub-project SCH
+            // editors so clicks on MBS wires light the matching net in
+            // each sub-project schematic.
+            if( GetFrameType() == FRAME_MBSCH )
+                Kiway().ExpressMail( FRAME_SCH, MAIL_CROSS_PROBE, packet, this );
         }
     }
 }
@@ -501,6 +515,9 @@ void SCH_EDIT_FRAME::SetCrossProbeConnection( const SCH_CONNECTION* aConnection 
             // side in place, we use that here.
             Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, packet, this );
             Kiway().ExpressMail( FRAME_MBSCH,      MAIL_CROSS_PROBE, packet, this );
+
+            if( GetFrameType() == FRAME_MBSCH )
+                Kiway().ExpressMail( FRAME_SCH, MAIL_CROSS_PROBE, packet, this );
         }
     }
 }
@@ -521,6 +538,9 @@ void SCH_EDIT_FRAME::SendCrossProbeClearHighlight()
         // side in place, we use that here.
         Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, packet, this );
         Kiway().ExpressMail( FRAME_MBSCH,      MAIL_CROSS_PROBE, packet, this );
+
+        if( GetFrameType() == FRAME_MBSCH )
+            Kiway().ExpressMail( FRAME_SCH, MAIL_CROSS_PROBE, packet, this );
     }
 }
 

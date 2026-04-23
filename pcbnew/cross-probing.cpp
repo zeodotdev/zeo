@@ -235,6 +235,14 @@ void PCB_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
 
         NETINFO_ITEM* netinfo = pcb->FindNet( net_name );
 
+        // MBS subgraph names don't carry the leading '/' that KiCad's
+        // single-board PCB uses for sheet-path-anchored nets, so retry
+        // the lookup with a '/' prefix before giving up. This lets a
+        // `$NET: "BATTERY"` from the multi-board editor resolve to
+        // `/BATTERY` on the sub-project PCB.
+        if( !netinfo && !net_name.StartsWith( wxT( "/" ) ) )
+            netinfo = pcb->FindNet( wxT( "/" ) + net_name );
+
         if( netinfo )
         {
             netcode = netinfo->GetNetCode();
@@ -242,6 +250,56 @@ void PCB_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
             std::vector<MSG_PANEL_ITEM> items;
             netinfo->GetMsgPanelInfo( this, items );
             SetMsgPanel( items );
+        }
+
+        // fall through to highlighting section
+    }
+    else if( strcmp( idcmd, "$PART:" ) == 0 )
+    {
+        // `$PART: "ref" $PAD: "num"` used by the multi-board schematic
+        // editor to drive a net highlight on the sub-project PCB: we
+        // don't know the exact local net name (the MBS may still be
+        // un-synced) so we look up the pad and highlight whatever net
+        // it carries. The same packet format drives schematic cross-
+        // probes; the SCH side handles $PART on its own — here we only
+        // care about the pad-net derivation.
+        if( !crossProbingSettings.auto_highlight )
+            return;
+
+        wxString part_ref = From_UTF8( text );
+
+        char* nextTok = strtok( nullptr, " \n\r" );
+
+        if( nextTok && strcmp( nextTok, "$PAD:" ) == 0 )
+        {
+            char*    padText = strtok( nullptr, "\"\n\r" );
+            wxString padNum = padText ? From_UTF8( padText ) : wxString();
+
+            for( FOOTPRINT* fp : pcb->Footprints() )
+            {
+                if( fp->GetReference() != part_ref )
+                    continue;
+
+                for( PAD* p : fp->Pads() )
+                {
+                    if( p->GetNumber() == padNum )
+                    {
+                        if( NETINFO_ITEM* netinfo = p->GetNet() )
+                        {
+                            netcode = netinfo->GetNetCode();
+
+                            std::vector<MSG_PANEL_ITEM> items;
+                            netinfo->GetMsgPanelInfo( this, items );
+                            SetMsgPanel( items );
+                        }
+
+                        break;
+                    }
+                }
+
+                if( netcode > 0 )
+                    break;
+            }
         }
 
         // fall through to highlighting section

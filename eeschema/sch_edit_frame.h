@@ -853,6 +853,12 @@ public:
 
     bool IsSyncingSelection() { return m_syncingPcbToSchSelection; }
 
+    /// Set the recursion guard used by cross-probe tools to skip
+    /// re-broadcasting selection changes while a peer-initiated sync
+    /// is in progress. Exposed so MBSCH's KiwayMailIn override can set
+    /// the same guard the base-class handler uses around SyncSelection.
+    void SetSyncingSelection( bool aSyncing ) { m_syncingPcbToSchSelection = aSyncing; }
+
     /**
      * Update a schematic symbol from a LIB_SYMBOL.
      *

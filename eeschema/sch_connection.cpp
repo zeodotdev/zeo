@@ -411,6 +411,16 @@ void SCH_CONNECTION::recacheName()
             break;
         }
 
+        case SCH_MODULE_PIN_T:
+            // Module-pin text already embeds the sub-project's fully
+            // qualified net name (e.g. "/VBAT") since it's sourced from
+            // a sub-project connector pad. Re-prepending the MBS sheet
+            // path would produce "//VBAT" and break every downstream
+            // match against Connection()->Name(). Treat the pin text
+            // as authoritative.
+            prepend_path = false;
+            break;
+
         default:
             break;
         }

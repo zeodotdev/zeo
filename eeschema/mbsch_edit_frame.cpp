@@ -369,6 +369,9 @@ void MBSCH_EDIT_FRAME::crossProbeHighlightPart( const wxString& aRef,
 
 void MBSCH_EDIT_FRAME::crossProbeHighlightNet( const wxString& aNetName )
 {
+    wxLogTrace( wxT( "MULTI_BOARD" ),
+                wxT( "MBS crossProbeHighlightNet incoming='%s'" ), aNetName );
+
     // Reject placeholder names ("<NO NET>", bare "/", empty) — a net
     // name broadcast that matches every unnamed subgraph's display
     // would brighten every orphan wire on the MBS sheet. Treat as a
@@ -494,6 +497,10 @@ void MBSCH_EDIT_FRAME::crossProbeHighlightNet( const wxString& aNetName )
             }
         }
     }
+
+    wxLogTrace( wxT( "MULTI_BOARD" ),
+                wxT( "MBS crossProbeHighlightNet resolved localName='%s' target=%p" ),
+                localName, static_cast<void*>( target ) );
 
     SetHighlightedConnection( localName );
 

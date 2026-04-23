@@ -1,454 +1,520 @@
 # Multi-Board Architecture Refactor — Phase M
 
 Living plan for consolidating multi-board infrastructure around KiCad-native
-primitives, introducing a dedicated mbschema editor, redesigning the project
-manager launcher, and enabling concurrent multi-editor work.
+primitives, introducing a dedicated MBS editor, redesigning the project
+manager launcher, enabling concurrent multi-editor work, and building an
+Altium-grade multi-board 3D assembly viewer.
 
-## Current state
+## Current state (2026-04-23)
 
-### Working (verified by runtime testing)
-- `.kicad_multi` JSON load/save via `MULTI_BOARD_PROJECT`
-- Sub-project scanning (connectors + pads) for MBS auto-generation
-- MBS rendering via `SCH_MODULE_BLOCK` / `SCH_MODULE_PIN`
-- Wire-based union-find cross-board net extraction
-- Text-level PCB net sync with reverse propagation + conflict detection
-- MBS save hook triggering extraction + sync
-- **Multi-board netlist updater** (user-tested — exercised via normal workflow)
-- **Component assignment manager** (user-tested — 90% functional)
+### Landed + runtime-verified
+- Container topology unified under `PROJECT_FILE::multi_board`:
+  `multi_board.container` flag, `sub_projects[]` (SUB_PROJECT_INFO),
+  `cross_board_nets[]` (MB_CROSS_BOARD_NET), `mbs_file`. Legacy
+  `BOARD_INFO` / `CROSS_BOARD_CONNECTION` / `COMPONENT_BOARD_ASSIGNMENT`
+  arrays preserved for the tested single-project multi-PCB modules.
+- `MULTI_BOARD_PROJECT` class + `.kicad_multi` extension **removed**.
+- `.kicad_mbs` extension registered (`FILEEXT::MbsFileExtension`).
+- `FRAME_MBSCH` + `MBSCH_EDIT_FRAME` (subclass of `SCH_EDIT_FRAME`,
+  lives in `eeschema/`). Dispatches through `FACE_SCH`. Trimmed menubar,
+  custom cross-probe handling, saves trigger MBS net extraction.
+- Sub-project scanning (`multi_board_scan.h`) for connectors + pads.
+- MBS rendering via `SCH_MODULE_BLOCK` / `SCH_MODULE_PIN`.
+- Wire-based union-find cross-board net extraction (eeschema).
+- Text-level PCB net sync with reverse propagation + conflict detection.
+- MBS save hook triggering extraction + sync.
+- Multi-board netlist updater (exercised via normal workflow).
+- Component assignment manager (90% functional).
+- **M4 peer editors**: `KIWAY_HOLDER::SetPrjOverride`,
+  `RegisterPeerPlayer`, `SpawnPeerSchematicEditor`, File → Open
+  Sub-Board Schematic in New Window, peer lifecycle + ExpressMail
+  broadcast to all peers of a given FRAME_T.
 
-### Present but untested
-- **3D assembly viewer** — ~70% functional by code reading (rendering, collision,
-  connector mating implemented; STEP export stubbed). Has not been exercised by
-  the user. Completeness estimates are based on source inspection only.
-- **Cross-board DRC** (`pcbnew/drc/drc_engine_cross_board.{h,cpp}`) — ~50%
-  functional by code reading. `CheckConnectorMatching` partially implemented;
-  `CheckSignalIntegrity` and `CheckPowerDistribution` are TODOs. Critical
-  blocker: `GetBoardByUuid()` returns nullptr, so all checks fail at entry.
-  **Not tested.**
+### Landed but code-read only (never exercised at runtime)
+- **3D assembly viewer skeleton** — `ASSEMBLY_3D_MANAGER`
+  (`3d-viewer/3d_viewer/3d_viewer_assembly.{h,cpp}`) and
+  `PANEL_3D_ASSEMBLY` (`3d-viewer/dialogs/panel_3d_assembly.{h,cpp}`).
+  Compiled into the 3d-viewer library but **never instantiated or
+  referenced from `EDA_3D_VIEWER_FRAME`**. Uses the legacy `BOARD_INFO` /
+  `CROSS_BOARD_CONNECTION` data model — has not been ported to the
+  container topology. STEP export is a stub. See Phase M6.
+- **Cross-board DRC** (`pcbnew/drc/drc_engine_cross_board.{h,cpp}`) —
+  `CheckConnectorMatching` partially implemented; `CheckSignalIntegrity`
+  and `CheckPowerDistribution` are TODOs. Blocker:
+  `DRC_ENGINE_CROSS_BOARD::GetBoardByUuid()` returns `nullptr`.
 
 ### Incomplete or fragile
-- **Directory-walking MBS lookup** (`sch_editor_control.cpp:635`,
-  `files-io.cpp:1590`) walks up 6 levels for `.kicad_multi`; picks first
-  found, breaks on deeper nesting.
+- **Stale `.kicad_multi` / `MULTI_BOARD_PROJECT` references in comments
+  only** — files need a comment-only sweep:
+  `include/project/cross_board_pcb_sync.h:56`,
+  `kicad/kicad_manager_frame.h:168,177`,
+  `kicad/dialogs/dialog_multi_board_setup.h:45,47,61`,
+  `kicad/tools/kicad_manager_control.cpp:338-341` (legacy-stub cleanup,
+  already code-wise correct but mentions the old extension),
+  `eeschema/multi_board_net_extractor.cpp:37`,
+  `eeschema/multi_board_mbs_refresh.cpp:39`,
+  `eeschema/tools/sch_editor_control.cpp:621`,
+  `pcbnew/netlist_reader/board_netlist_updater.{h:150,160; cpp:1176}`.
+- **Directory-walking MBS lookup** (`sch_editor_control.cpp:~621`,
+  `files-io.cpp::syncCrossBoardNetsIfMbs`) walks up 6 levels for the
+  enclosing container `.kicad_pro`; picks first found, breaks on deeper
+  nesting. Replace with an explicit parent-project reference stored in
+  the `.kicad_mbs` file.
 - **Text-level PCB sync** is regex-based; fragile on escaped chars /
-  non-standard whitespace.
-- **Open-multi-board flow** in manager has no explicit handler.
-- **Shared scaffold blocker**: `GetBoardByUuid()` unimplemented everywhere —
-  modules assume boards are already in memory but never load them.
+  non-standard whitespace. Replace with BOARD-level edits via
+  `PCB_IO_KICAD_SEXPR::LoadBoard()`.
+- **Shared sub-project board loader missing**: `GetBoardByUuid()` is
+  stubbed to nullptr in `DRC_ENGINE_CROSS_BOARD` and to active-only in
+  `MULTI_BOARD_NETLIST_UPDATER`. The 3D viewer will need the same
+  loader — this is the Phase M6 precursor that unblocks M5 DRC
+  validation too.
+- **M4 sweep incomplete**: ~50-100 shallow `Prj()` call sites in dialogs
+  and tools still resolve via the global. Works for single-project use,
+  cross-talks when multiple projects are loaded.
 
-### Kiway constraint (narrowed)
-The essential blocker is two lines: `KIWAY::Prj()` delegates to
-`SETTINGS_MANAGER::Prj()`, which returns
-`*m_projects_list.begin()->get()` — the first project in an internal
-vector. No per-player or per-frame project context. Surrounding
-architecture (SCHEMATIC + BOARD `SetProject()`, multi-project
-`SETTINGS_MANAGER` storage, library adapters taking `PROJECT*` as
-parameters) is more accommodating than comments suggest.
-
----
-
-## Phase M0 — Pre-work (~0.25 day)
-
-1. **Branch snapshot** — tag the current state before the refactor so we
-   can diff cleanly and roll back if needed.
-2. **No migration needed.** Existing test projects (`test_board_56`,
-   `test_boards_50`, `test_boards_55`, `KiCAD_agent_test_board`) are
-   disposable and will be recreated fresh after the refactor.
+### Kiway constraint (unchanged)
+`KIWAY::Prj()` still delegates to `SETTINGS_MANAGER::Prj()`, which
+returns `*m_projects_list.begin()->get()`. Per-frame resolution is
+handled by `KIWAY_HOLDER::SetPrjOverride` (M4.2). The sweep to remove
+remaining global lookups is M4.2's optional cleanup phase.
 
 ---
 
-## Phase M4 status (2026-04-20)
+## Phase M0 — Pre-work ✓ done
+Branch snapshot tag + decision to discard test projects (no migration).
 
-**Landed** (build green):
-- M4.1 (de facto): `SETTINGS_MANAGER` already supports holding multiple
-  projects simultaneously. `LoadProject(path, aSetActive=false)` adds
-  without eviction. `GetProject(path)` returns any loaded project by
-  path. No changes needed.
-- M4.2: `KIWAY_HOLDER::SetPrjOverride(PROJECT*)` added. All frames /
-  dialogs / panels that derive from `KIWAY_HOLDER` (which is essentially
-  everything) resolve `this->Prj()` to the overridden project when set.
-  Default unchanged: falls back to `Kiway().Prj()`.
+## Phase M1 — File unification ✓ done
+Full port of the container model to `PROJECT_FILE::multi_board`. Class
+`MULTI_BOARD_PROJECT` and extension `.kicad_multi` are retired. Caller
+sweep completed (all active code uses `Prj().GetProjectFile()` +
+`IsMultiBoardContainer()`). Comment-level cleanup still pending
+(see Current state → Incomplete).
 
-**Consumption path** (example):
-```
-Pgm().GetSettingsManager().LoadProject(subPath, /*aSetActive=*/false);
-PROJECT* sub = Pgm().GetSettingsManager().GetProject(subPath);
+## Phase M2 — `.kicad_mbs` format + MBS editor ✓ done (as subclass)
 
-KIWAY_PLAYER* frame = Kiway().Player(FRAME_SCH, true);
-frame->SetPrjOverride(sub);
-frame->OpenProjectFiles({ subSchematicPath });   // uses frame's Prj()
-```
+**Chose subclass over separate kiface.** `MBSCH_EDIT_FRAME` is a
+`SCH_EDIT_FRAME` subclass in `eeschema/` (not a dedicated
+`mbschema/` kiface DSO). `FRAME_MBSCH` dispatches through `FACE_SCH`.
 
-**M4.0 spike succeeded** (2026-04-20):
+Rationale: `SCH_MODULE_BLOCK`, `SCH_MODULE_PIN`, painter, parser,
+connectivity, and the MBS net extractor already live in the eeschema
+kiface. A separate DSO would have forced a three-way split of that
+code without isolating any runtime state. The subclass pattern keeps
+the MBS feature surface trimmed (menubar, cross-probe, save hook) while
+sharing implementation with full eeschema.
 
-Verified by opening a multi-board project with two sub-boards, running
-the temporary "Open First Sub-Board Schematic (peer)" action. Result:
-- Fresh SCH_EDIT_FRAME launched alongside the existing project manager
-- Title bar, schematic hierarchy, library lookups all resolve to the
-  sub-project via `SetPrjOverride`
-- Two concurrent SCH_EDIT_FRAMEs viable in one process
-- `SCH_EDIT_FRAME` constructor binding to global `Prj()` at line 197
-  self-corrects when `OpenProjectFiles` calls `SetSchematic()` with a
-  new `SCHEMATIC(&Prj())` that picks up the override
+**Landed:**
+- `FILEEXT::MbsFileExtension = "kicad_mbs"`.
+- `FRAME_MBSCH` in `frame_type.h`; `KifaceType(FRAME_MBSCH) → FACE_SCH`.
+- `eeschema/mbsch_edit_frame.{h,cpp}` — overrides `onSchematicSaved`,
+  `doReCreateMenuBar`, `KiwayMailIn`.
+- `eeschema/eeschema.cpp::CreateKiWindow` handles `FRAME_MBSCH`.
+
+**Deferred** (may never be needed, revisit only if runtime state
+isolation becomes necessary):
+- Split into `mbschema/` kiface DSO.
+
+## Phase M3 — Launcher redesign (~2 days, low risk) — pending
+
+Unchanged from prior plan. `wxAuiManager` in `KICAD_MANAGER_FRAME`,
+project tree center pane, sidebar left pane with action buttons,
+multi-board-aware actions (Edit MBS / Manage Sub-Boards / Sync / 3D
+Assembly) shown only when `IsMultiBoardContainer()`, sub-project nodes
+rendered under the multi-board root.
+
+Tree-pane rendering of sub-projects is the one active usability bug
+blocking hands-on M1 validation; everything else is polish.
+
+## Phase M4 — Concurrent editor instances — MVP done
+
+**Landed** (M4.0 spike + M4.1–M4.5 MVP, see 2026-04-20 status block
+below for detail):
+- Peer-player registration, broadcast ExpressMail, File → Open
+  Sub-Board Schematic in New Window, duplicate protection, per-frame
+  title from overridden `Prj()`.
+
+**Still deferred** (M4.2 full cleanup, optional):
+- Sweep remaining global `Prj()` call sites to frame-local.
+- Per-frame library table caches.
+- ExpressMail routed on (project, frame-type) tuple, not just frame type.
+
+### Phase M4 status (2026-04-20) — preserved
+
+**M4.0 spike succeeded**: opened a multi-board container with two
+sub-boards, launched the "Open First Sub-Board Schematic (peer)"
+action. Result:
+- Fresh `SCH_EDIT_FRAME` alongside the project manager.
+- Title / hierarchy / library lookups resolve to the sub-project via
+  `SetPrjOverride`.
+- Two concurrent `SCH_EDIT_FRAME`s viable in one process.
 
 Root fix that unblocked the spike: C-style cast instead of
-`dynamic_cast` when casting `CreateKiWindow`'s return value. The eeschema
-kiface DSO has hidden typeinfo visibility; `dynamic_cast` from the
-manager binary fails even though the hierarchy is correct. This is
-consistent with `Kiway::Player()`'s own pattern.
+`dynamic_cast` when casting `CreateKiWindow`'s return value. The
+eeschema kiface DSO has hidden typeinfo visibility; `dynamic_cast` from
+the manager binary fails even though the hierarchy is correct.
+Consistent with `Kiway::Player()`'s own pattern.
 
-**M4.3 — Kiway peer-player support** ✓ landed.
+**M4.3 — Kiway peer-player support** ✓:
+- `KIWAY::RegisterPeerPlayer`, `UnregisterPeerPlayer`,
+  `GetAllPlayerFrames`.
+- Mutex-protected `m_peerPlayerFrames`.
+- `ExpressMail` broadcasts to primary + every peer.
+- Single-instance editors see unchanged behavior.
 
-- New APIs on `KIWAY`: `RegisterPeerPlayer(FRAME_T, wxWindowID)`,
-  `UnregisterPeerPlayer(FRAME_T, wxWindowID)`,
-  `GetAllPlayerFrames(FRAME_T)`.
-- Mutex-protected `std::map<FRAME_T, std::vector<wxWindowID>>
-  m_peerPlayerFrames` alongside the existing single-frame cache.
-- `ExpressMail` now broadcasts to the primary frame + every peer frame
-  matching `aDestination`. Single-instance editors see unchanged
-  behavior; peer editors now receive cross-probe / broadcast mail.
-- `SpawnPeerSchematicEditor` registers on create + unregisters on
-  `wxEVT_CLOSE_WINDOW`.
+**M4.4 — Sub-project open UX** ✓:
+- Menu entry, duplicate protection, self-unregister on close.
 
-**M4.4 — Sub-project open UX (minimum-viable)** ✓ landed.
+**M4.5 — frame identity**: achieved via `Prj()` basename in title.
 
-- Menu: File → Open Sub-Board Schematic in New Window
-- Duplicate-protection: if a peer frame is already open on the
-  requested sub-project, raise the existing frame.
-- Lifecycle: peer frames self-unregister on close.
-- Full tree context menu ("Open Schematic in Peer" on any sub-project
-  row) and PCB peer-open are deferred to the M3 launcher redesign.
-
-**M4.5 — frame identity**: partially achieved by peer editor already
-showing the sub-project name in its title (the SCH_EDIT_FRAME derives
-title from `Prj()`, which is now correctly the sub-project). Task-
-switcher entries already differentiate. No further work needed for MVP.
+### Phase M1 status (2026-04-20) — superseded
+All M1 items (M1.1–M1.5) landed between 2026-04-20 and 2026-04-23.
 
 ---
 
-## Phase M1 status (2026-04-20)
+## Phase M5 — Non-3D cleanup + follow-ons (~2-3 days) — pending
 
-**Landed** (build green):
-- M1.1: PROJECT_FILE schema extended with `multi_board.container`,
-  `multi_board.sub_projects[]`, `multi_board.cross_board_nets[]`,
-  `multi_board.mbs_file`. Full JSON round-trip.
-- M1.2: PROJECT_FILE accessors (`IsMultiBoardContainer`,
-  `Get/Set/Add/RemoveSubProject`, `Get/SetCrossBoardNets`, `GetMbsFileName`,
-  `ResolveSubProjectPath`). Shim in `multi_board_project.h` forwards its
-  struct typedefs to the PROJECT_FILE versions (single source of truth).
-
-**Deferred** (requires a dedicated session):
-- M1.3: semantic Y migration (container becomes `Prj()`). Attempted,
-  reverted. Blast radius was larger than a single-session budget:
-    - `EnsureMbsFile` (MBS s-expr generator) needs relocation.
-    - 10+ callers hold `MULTI_BOARD_PROJECT*` and read methods like
-      `GetName()`, `GetRootDir()`, `LoadFromFile(path)`, `SaveToFile(path)`
-      that have no PROJECT_FILE equivalent.
-    - `kicad_manager_frame::m_multiBoardProject` side-stored state has to
-      be replaced without breaking the existing sub-project switch flow.
-    - SETTINGS_MANAGER's single-active-project assumption means loading a
-      container as Prj() AND a sub-project as a second loaded PROJECT
-      requires the M4 work.
-- M1.4 (delete MULTI_BOARD_PROJECT) and M1.5 (retire `.kicad_multi`
-  extension) both depend on M1.3.
-
-## Phase M1 — File unification (~3 days, low-medium risk)
-
-**Goal:** eliminate `.kicad_multi` and `_mbs.kicad_pro`; use standard
-`.kicad_pro` with an extended `multi_board` section. Reconcile dual
-schemas without losing work from either side.
-
-### 1.1 Extend `PROJECT_FILE::multi_board` with new fields
-
-The pre-existing schema (`project_file.h:76-157`) has three arrays:
-`boards`, `cross_board_connections`, `component_assignments`.
-
-Extend to include:
-- `multi_board.container: bool` — distinguishes container project from
-  sub-project (every `.kicad_pro` serializes `multi_board` even empty,
-  so section presence is not a marker).
-- `multi_board.sub_projects: SUB_PROJECT_INFO[]` — our existing list of
-  sub-project references (uuid, relativePath, displayName, role).
-- `multi_board.cross_board_nets: MB_CROSS_BOARD_NET[]` — our pad-level
-  net model (uuid, name, endpoints[]). This is orthogonal to the
-  existing `cross_board_connections` which is point-to-point.
-
-### 1.2 Preserve existing structures
-
-`BOARD_INFO`, `CROSS_BOARD_CONNECTION`, `COMPONENT_BOARD_ASSIGNMENT` stay.
-They model a different topology (single-project multi-PCB) but their
-consumers include two tested modules:
-- **Multi-board netlist updater** — tested. Keep.
-- **Component assignment manager** — tested. Keep.
-
-For container projects, `boards[]` will typically be empty; sub-projects
-have their own `.kicad_pcb` in their own `.kicad_pro`. The structures are
-preserved for backward compatibility and for the untested modules.
-
-### 1.3 Retire `MULTI_BOARD_PROJECT` class
-
-Delete:
-- `include/project/multi_board_project.h`
-- `common/project/multi_board_project.cpp`
-
-Callers that read multi-board state (`kicad_manager_frame.cpp`,
-`kicad_manager_control.cpp`, `dialog_multi_board_setup.cpp`,
-`files-io.cpp::syncCrossBoardNetsIfMbs`, MBS refresh + extractor code,
-`cross_board_pcb_sync.cpp`) switch to `Prj().GetProjectFile()` and the
-new helpers.
-
-### 1.4 Registration cleanup
-
-- Remove `FILEEXT::MultiBoardProjectFileExtension` from
-  `common/wildcards_and_files_ext.cpp:138,264,272`.
-- Remove `MULTI_BOARD_PROJECT` enum from `kicad/tree_file_type.h:68`.
-- Update `kicad/project_template.cpp` — multi-board template emits
-  `<name>.kicad_pro` with `multi_board.container = true` populated.
-
-### 1.5 Testable outcome
-- Run migration script on all four test projects → silent conversion.
-- Open a migrated project → MBS opens, nets extract as before, PCB sync
-  unchanged.
-- Tested multi-board netlist updater + component assignment still work.
-- New multi-board project: only `<name>.kicad_pro` at top level
-  (no `.kicad_multi`, no `_mbs.kicad_pro`).
-
----
-
-## Phase M2 — `.kicad_mbs` format + mbschema editor (~4-5 days, medium risk)
-
-**Goal:** dedicated editor for multi-board schematics; MBS files use
-`.kicad_mbs` extension. Removes the eeschema toolbar noise by design.
-
-1. **New extension.** `FILEEXT::MbsFileExtension = "kicad_mbs"`. The on-disk
-   format is identical to `.kicad_sch` — existing `SCH_IO_KICAD_SEXPR`
-   parser/writer handle both. `_mbs.kicad_sch` files rename to
-   `.kicad_mbs` during migration (M0).
-2. **Create `mbschema/` directory.** Mirrors `eeschema/`:
-   - `mbschema.cpp` — KIFACE entry point, implementing `KIFACE_GETTER()`
-     and `CreateKiWindow()` dispatching `FRAME_MBSCH`.
-   - `mbschema/CMakeLists.txt` mirroring `eeschema/CMakeLists.txt:643-750`
-     (MACOSX_BUNDLE, `OSX_BUNDLE_BUILD_KIFACE_DIR`, install rules).
-   - `mbschema/mbsch_edit_frame.{h,cpp}` — `MBSCH_EDIT_FRAME :
-     SCH_BASE_FRAME`.
-   - `mbschema/tools/mbsch_actions.{h,cpp}` — explicit trimmed action
-     list: select, wire, label, place-module-block, refresh-interface,
-     sync-to-PCBs, manage-sub-boards, ERC. **Excludes** symbol-place,
-     component-edit, annotate, power-symbol, simulation.
-   - `mbschema/tools/mbsch_editor_control.{h,cpp}` — MBS-specific
-     handlers ported from `sch_editor_control.cpp`.
-   - `mbschema/mbsch_menu.cpp` — trimmed menubar.
-3. **Frame / KIFACE registration:**
-   - `include/frame_type.h` — add `FRAME_MBSCH`.
-   - `include/kiway.h` — add `FACE_MBSCH` to `FACE_T` enum.
-   - `common/kiway.cpp:131` — add DSO naming case (`_mbschema.kiface`).
-   - `common/kiway.cpp:~358` — `KifaceType()` maps `FRAME_MBSCH` →
-     `FACE_MBSCH`.
-   - Root `CMakeLists.txt` — `add_subdirectory(mbschema)`.
-4. **Shared code strategy.** SCH_MODULE_BLOCK, SCH_MODULE_PIN, painter,
-   connectivity, parser/writer all stay in `eeschema_kiface`. Mbschema
-   links against it. Revisit factoring into `common/sch_shared/` later if
-   we want hard separation.
-5. **Port MBS-specific state** from eeschema to mbschema:
-   - `eeschema/multi_board_net_extractor.{h,cpp}` → `mbschema/`
-   - `eeschema/multi_board_mbs_refresh.{h,cpp}` → `mbschema/`
-   - `RefreshMbsFromSubProjects` action → `mbschema/tools/`
-   - `syncCrossBoardNetsIfMbs` hook → `mbschema/mbsch_edit_frame.cpp::OnSave()`
-   - Remove corresponding declarations from `eeschema/sch_edit_frame.h`.
-6. **Kiway dispatch.** `kicad_manager_control.cpp::EditMultiBoardSchematic`
-   calls `Kiway().Player(FRAME_MBSCH, true)` instead of `FRAME_SCH`.
-   File-open dispatch: `.kicad_mbs` → FRAME_MBSCH; `.kicad_sch` → FRAME_SCH.
-
-**Testable:**
-- Post-M1 MBS opens in `MBSCH_EDIT_FRAME` showing only MBS-relevant tools.
-- Sub-project `.kicad_sch` still opens in eeschema (unchanged).
-- Net extraction + sync continue to work end-to-end.
-
----
-
-## Phase M3 — Launcher redesign (~2 days, low risk)
-
-**Goal:** project tree in main area, dockable sidebar on left with action
-buttons.
-
-1. **Layout rebuild:** introduce `wxAuiManager` in `KICAD_MANAGER_FRAME`.
-   `m_projectTreePane` becomes the center pane. New narrow sidebar
-   (~200px) on the left holds action buttons.
-2. **Retire `PANEL_KICAD_LAUNCHER`** icon grid (or repurpose as empty-state
-   pane when no project is loaded). Sidebar buttons invoke existing
-   `TOOL_ACTION`s — zero action API changes.
-3. **Multi-board awareness:** sidebar shows Edit MBS / Manage Sub-Boards /
-   Sync actions only when `Prj().GetProjectFile()` has
-   `multi_board.container = true`.
-4. **Tree pane renders sub-project nodes** as children of the multi-board
-   root (fix for "sub-projects not rendered in tree" audit finding).
-5. **AUI persistence:** dock positions stored in local settings.
-
-**Testable:** AUI docking works, all existing action flows unregressed,
-tree shows sub-projects under multi-board root.
-
----
-
-## Phase M4 — Concurrent editor instances (~2-3 weeks MVP, 4-6 weeks full)
-
-**Goal:** user can open multiple sub-project schematics / PCBs
-simultaneously, each tied to its own `PROJECT`.
-
-Revised scope based on deep-dive: **in-process is tractable**. The
-"~1-2 months" initial estimate was based on conservatively counting
-all 641 `Prj()` call sites; deep reading shows most are shallow
-(path resolution, cached settings, library adapters that already accept
-`PROJECT*`). Not separate-process.
-
-### M4.1 Minimum-viable path (~2-3 weeks)
-
-1. **Frame owns project.** Add `PROJECT* m_project` to `SCH_EDIT_FRAME`,
-   `PCB_EDIT_FRAME`, `MBSCH_EDIT_FRAME`. Populated at
-   `OpenProjectFiles()` time from the PROJECT instance owned by
-   SETTINGS_MANAGER.
-2. **Frame-local `Prj()`.** Override `KIWAY_PLAYER::Prj()` in each
-   frame to return `*m_project`. Removes dependency on
-   SETTINGS_MANAGER's "first in list."
-3. **SETTINGS_MANAGER active-by-path.** Replace `Prj()` →
-   `m_projects_list.front()` with a string field
-   `m_activeProjectPath`. `Prj()` returns
-   `*m_projects[m_activeProjectPath]`. `LoadProject(aPath,
-   aSetActive=true)` updates the path without evicting other loaded
-   projects.
-4. **Fix shallow Prj() sites.** Sample-and-sweep through dialogs
-   and tools that call global `Prj()` where a frame is in scope.
-   Replace with `m_frame->Prj()`. Approximate count: 50-100.
-5. **Library adapter smoothing.** Adapters
-   (`SYMBOL_LIBRARY_ADAPTER`, `FOOTPRINT_LIBRARY_ADAPTER`) already
-   take `PROJECT*`. Audit callers to ensure they pass the frame's
-   project, not the global.
-6. **Frame identity.** Titles include project basename (`<project> —
-   Schematic Editor`). Task-switcher distinguishes windows.
-7. **Sub-project switcher.** Current "Switch Sub-Board" action becomes
-   "Open Sub-Board" — spawns new frame rather than replacing current.
-
-### M4.2 Full production cleanup (2-3 additional weeks, optional)
-
-1. Sweep remaining `Prj()` call sites to use frame context where one
-   is available. Update dialogs to accept PROJECT explicitly where no
-   frame is in scope.
-2. Per-frame local library table caches (symbol/footprint) to avoid
-   cross-project pollution.
-3. Settings preloader per-project (already mostly correct; verify).
-4. ExpressMail routing — inter-frame messages keyed by (project, frame
-   type) tuple instead of just frame type.
-
-### M4.3 Spike first
-
-Before committing full scope, **half-day spike**: manually instantiate a
-second `SCH_EDIT_FRAME` pointing at a second `PROJECT` in a debug build.
-Catalog concrete failures. The 5-step MVP plan is based on inspection;
-the spike validates nothing unexpected breaks.
-
-**Testable:** fpv_drone.kicad_sch and zeo1.2_devboard.kicad_sch open
-simultaneously in two schematic editors, plus the MBS in mbschema, plus
-both PCBs in pcbnew — five independent windows, no cross-talk, closing
-one doesn't affect others.
-
----
-
-## Phase M5 — Cleanup + follow-ons (~2-3 days)
-
-1. **Replace directory-walk MBS lookup** with explicit parent-project
+1. **Shared sub-project board loader** — new helper (likely
+   `common/project/sub_project_board_loader.{h,cpp}` or
+   `pcbnew/board_utils/`) that takes a container `PROJECT&` and a
+   `SUB_PROJECT_INFO` or its UUID, resolves the sub-project's
+   `.kicad_pro`, reads its board filename, and loads the `.kicad_pcb`
+   via `PCB_IO_KICAD_SEXPR::LoadBoard`. Returns a `std::unique_ptr<BOARD>`
+   with owner-managed lifetime.
+   - Replaces the stub in `DRC_ENGINE_CROSS_BOARD::GetBoardByUuid`.
+   - Replaces the active-only path in
+     `MULTI_BOARD_NETLIST_UPDATER::GetBoardByUuid`.
+   - Consumed by Phase M6 (3D assembly viewer).
+2. **Replace directory-walk MBS lookup** with an explicit parent-project
    reference stored in the `.kicad_mbs` file (`(parent_project "...")`
-   s-expr or in the `(title_block)` metadata).
-2. **Replace text-level PCB sync** with BOARD-level edits via
+   s-expr or in the `(title_block)` metadata). Updates
+   `sch_editor_control.cpp:~621`, `files-io.cpp::syncCrossBoardNetsIfMbs`,
+   and the netlist-updater container probe.
+3. **Replace text-level PCB sync** with BOARD-level edits via
    `PCB_IO_KICAD_SEXPR::LoadBoard()`. Robust handling of quoted strings,
    whitespace, escape sequences.
-3. **Validate 3D assembly viewer** on a migrated multi-board project.
-   If it works: adapt to load sub-project PCBs via their `.kicad_pro`
-   paths instead of `BOARD_INFO`-by-UUID. If broken: decide whether to
-   invest in fixing or defer.
-4. **Validate cross-board DRC** similarly. The core blocker
-   (`GetBoardByUuid`) is easy to fix once we have a sub-project →
-   `BOARD` loader. But the check stubs (`CheckSignalIntegrity`,
-   `CheckPowerDistribution`) are a separate investment.
-5. **Evaluate CONNECTION_GRAPH integration** — register
-   `SCH_MODULE_BLOCK_T` / `SCH_MODULE_PIN_T`, retire our custom
+4. **Comment sweep** — eliminate remaining `.kicad_multi` /
+   `MULTI_BOARD_PROJECT` mentions in the files listed in Current state.
+5. **Validate cross-board DRC** on a migrated multi-board project once
+   the sub-project board loader is in place. The stubs
+   `CheckSignalIntegrity` and `CheckPowerDistribution` are a separate
+   investment decision, not blocked by this phase.
+6. **Evaluate CONNECTION_GRAPH integration** — register
+   `SCH_MODULE_BLOCK_T` / `SCH_MODULE_PIN_T`, retire the custom
    union-find extractor if the graph integration is cheap. ~4 hours if
    we go for it; skip if the graph API makes it harder.
-6. **Cross-board ERC rules** — walk `multi_board.cross_board_nets`,
+7. **Cross-board ERC rules** — walk `multi_board.cross_board_nets`,
    validate endpoint counts + pin directions + pad-count match between
    paired connectors.
+
+---
+
+## Phase M6 — 3D Multi-Board Assembly Viewer
+
+**Goal:** reach feature parity with Altium's MultiBoard Assembly
+view — load every sub-board into a single 3D scene with per-board
+transforms, snap mated connectors, detect mechanical collisions,
+and export the whole assembly as a STEP compound.
+
+### M6 current state
+
+Two unwired classes exist:
+
+- `ASSEMBLY_3D_MANAGER` (`3d-viewer/3d_viewer/3d_viewer_assembly.{h,cpp}`)
+  — vector of `BOARD_3D_INSTANCE` (UUID + transform + visibility), FLAT /
+  STACKED / CUSTOM layout modes, AABB-based collision check, stubbed
+  STEP export (`ExportAssemblySTEP` returns false).
+- `PANEL_3D_ASSEMBLY` (`3d-viewer/dialogs/panel_3d_assembly.{h,cpp}`)
+  — wxPanel with board list, XYZ position / rotation controls,
+  mate / collision / transparency / export buttons.
+
+Both are in `CMakeLists.txt` but neither is referenced by
+`EDA_3D_VIEWER_FRAME` or anything else in the tree. `ASSEMBLY_3D_MANAGER`
+calls `PROJECT_FILE::GetBoardInfos()` and `GetCrossBoardConnections()`
+— the legacy single-project multi-PCB model, not the container
+topology.
+
+### M6 rendering architecture (decision)
+
+**Multiple `BOARD_ADAPTER`s, one per sub-board, composited in the
+renderer with per-instance transforms.** (Approach "a" from the 3D
+rendering audit.)
+
+Why not the alternatives:
+- **One super-adapter with an instance list**: violates the existing
+  per-adapter geometry build; forces `InitSettings` to know about
+  multiple boards.
+- **Merged super-BOARD with offset footprints**: loses board isolation,
+  breaks per-board edge outlines, and the design-settings / layer-stack
+  divergence between sub-boards can't be represented.
+
+Key facts from the audit that make approach "a" the right fit:
+- `RENDER_3D_BASE` already takes `BOARD_ADAPTER&` — the plumbing is
+  reference-based.
+- OpenGL renderer iterates footprints at render time with per-footprint
+  transforms (`render_3d_opengl.cpp:1050-1118`) — wrap the outer loop
+  over instances, left-multiply the footprint matrix by the instance
+  transform.
+- Raytracer consumes prebuilt BVHs (`create_scene.cpp:347`) — instance
+  loop composes per-board BVHs with transforms before stitching into
+  the scene.
+- 3D model cache (`S3D_CACHE`) is already shared across adapters.
+
+### M6.A — Skeleton refactor to new MBS data model (~1 session)
+
+Make `ASSEMBLY_3D_MANAGER` compile and function against the container
+topology. No rendering changes yet.
+
+1. `BOARD_3D_INSTANCE` (`3d_viewer_assembly.h:41`):
+   - rename `boardUuid` → `subProjectUuid`;
+   - add `wxString pcbFilePath` (absolute `.kicad_pcb` path, resolved
+     via `PROJECT_FILE::ResolveSubProjectPath`);
+   - `board` pointer becomes `std::unique_ptr<BOARD>` so the manager
+     owns each loaded board's lifetime.
+2. `ASSEMBLY_3D_MANAGER::LoadProjectBoards` (`.cpp:73`):
+   - guard `Prj().GetProjectFile().IsMultiBoardContainer()`;
+   - iterate `GetSubProjects()` instead of `GetBoardInfos()`;
+   - for each sub-project, resolve its `.kicad_pro`, load it into a
+     transient PROJECT_FILE probe to read the board filename, then
+     load the sibling `.kicad_pcb` via the M5.1 helper.
+3. `MateConnectors` (`.cpp:279`): switch from `CROSS_BOARD_CONNECTION`
+   to `MB_CROSS_BOARD_NET`. For each net with ≥2 endpoints, resolve
+   each `MB_CROSS_BOARD_NET_ENDPOINT` (subProjectUuid + componentRef +
+   pinNumber) to a `PAD*` on the corresponding loaded `BOARD`.
+4. `CalculateMatingOffset` (`.cpp:459`): replace pad-KIID lookup with
+   `(componentRef, pinNumber)` lookup.
+5. `PANEL_3D_ASSEMBLY`: no structural change; handle the async
+   "boards still loading" state cleanly (the manager's board-load is
+   sync for now but will become async in M6.E).
+
+Deliverable: compiles; given a container project, `LoadProjectBoards`
+loads all sub-project BOARDs and `MateConnectors` resolves endpoints
+via the new model. No rendering yet. Depends on M5.1 shared loader.
+
+### M6.B — Launch + single-board rendering on the assembly frame (~1 session)
+
+Prove the manager / panel / frame wiring end-to-end before touching
+the renderer.
+
+1. `EDA_3D_VIEWER_FRAME` gains an "assembly mode" construction path:
+   constructor variant taking a container `PROJECT*` (no parent
+   `PCB_BASE_FRAME`). In this mode the frame owns an
+   `ASSEMBLY_3D_MANAGER` and the existing `m_boardAdapter` points at
+   the currently-selected instance's BOARD.
+2. Wire `PANEL_3D_ASSEMBLY` into the frame's AUI layout (right pane
+   alongside `APPEARANCE_CONTROLS_3D`). Panel's board-list selection
+   calls `SetBoard()` on the adapter + `NewDisplay()`.
+3. Menu entry in `KICAD_MANAGER_FRAME`: "Open 3D Assembly", visible
+   only when `Prj().GetProjectFile().IsMultiBoardContainer()`. Launches
+   via `Kiway().Player(FRAME_PCB_DISPLAY3D, …)` using the M4 peer-
+   player machinery so it lives alongside any existing per-sub-board
+   3D viewers.
+4. Window identity: title includes container basename; peer-register
+   so multiple 3D viewers can coexist in one process.
+
+Deliverable: "Open 3D Assembly" from the manager opens a 3D viewer
+that renders one sub-board at a time; the assembly panel switches
+which board is active. Single-board render pipeline unchanged.
+
+### M6.C — Multi-board composition in the renderer (~2 sessions)
+
+The core technical work — actual Altium-like view.
+
+1. `ASSEMBLY_3D_MANAGER` owns one `BOARD_ADAPTER` per
+   `BOARD_3D_INSTANCE`. Each adapter builds its own layer containers /
+   BVH in its local frame via `InitSettings`. Shared `S3D_CACHE`.
+2. Extend `RENDER_3D_BASE` (`render_3d_base.h:102`) to optionally hold
+   a list of `{BOARD_ADAPTER*, glm::mat4}` instead of a single adapter.
+   Prefer adding a second path rather than breaking the existing single-
+   adapter API — pcbnew's single-board 3D viewer must stay pristine.
+3. **OpenGL path** (`render_3d_opengl.cpp:1050-1118`): wrap footprint-
+   iteration and layer-draw blocks in an outer loop over instances;
+   left-multiply the footprint matrix by the instance transform.
+   Existing per-footprint matrix at line 1098-1118 is unchanged in form.
+4. **Raytracer path** (`create_scene.cpp:347`): apply per-instance
+   transform to the layer's BVH containers before compositing into the
+   raytracer scene. The BVH supports transform attach.
+5. Camera auto-frame uses `ASSEMBLY_3D_MANAGER::GetAssemblyBoundingBox()`
+   (already implemented; just needs to be consumed).
+6. Live transforms: panel position / rotation edits update the instance
+   transform and trigger `Redraw()` without rebuilding per-board
+   geometry (transforms are render-time).
+7. Visibility: per-instance `visible` flag skips its render pass; no
+   adapter teardown.
+
+Deliverable: boards arranged flat / stacked / mated in one scene, with
+live transformation, existing AABB collision highlighting, and
+transparency per board.
+
+### M6.D — Connector mating refinements (~1 session)
+
+The basic mating in M6.A aligns centres and stacks in Z by board
+thickness + 5 mm. This stage makes it plausible for real hardware.
+
+1. Mate along pad normals: for a connector pair, compute each pad's
+   surface normal (accounting for board flip) and rotate the second
+   board so the normals are anti-parallel.
+2. Respect board flip: if one sub-board has its connector on the
+   bottom layer, flip the second board 180° about X/Y before mating.
+3. Component-height-aware Z gap: read the connector's 3D model bounds
+   (when available) instead of the 5 mm fallback, so board-to-board
+   headers vs. FPC cables both mate correctly.
+4. Multi-endpoint nets: for nets with >2 endpoints (e.g. a GND plane
+   bridging three boards), mate the first pair and leave the third
+   as-is (user can custom-position, or we pick a heuristic later).
+
+### M6.E — Collision detection: real geometry (~1-2 sessions)
+
+Upgrade from axis-aligned board-outline bbox to per-component 3D
+collision. Reuses existing 3D model cache.
+
+1. For each footprint on each instance: collect its 3D model mesh
+   (from `S3D_CACHE`) transformed into world space.
+2. Broad phase: AABB overlap between instances, then AABB overlap
+   between components across overlapping board pairs.
+3. Narrow phase: OBB-vs-OBB first; if the user wants mesh-accurate
+   results, fall back to GJK/EPA on the convex hulls (libraries already
+   in thirdparty, verify).
+4. Collision results carry footprint refs so the panel can show
+   "U5 on MAIN vs J1 on IO ext" instead of just "MAIN vs IO".
+5. Highlight: render colliding components with an outline or tint in
+   the existing render passes (add a post-build highlight set).
+
+### M6.F — STEP assembly export (~1-2 sessions)
+
+Finish the stubbed `ExportAssemblySTEP`. KiCad already exports per-board
+STEP via OpenCASCADE (`pcbnew/exporters/step/`); the assembly export
+composes N of those into a single STEP compound.
+
+1. For each visible instance: drive the existing per-board STEP export
+   to an in-memory `TopoDS_Shape` (refactor the existing file-emitting
+   path to also support shape return).
+2. Build a STEP compound, add each shape with its assembly transform
+   applied as a `TopLoc_Location`.
+3. Write the compound with the existing STEP writer. Preserve
+   sub-board names in STEP product names so CAD tools show a tree.
+4. Progress reporter for multi-board exports (they're slow).
+
+### M6.G — Persistence + polish (~1 session)
+
+1. Persist assembly state (per-instance transform + visibility +
+   transparency) in the container `.kicad_pro` under
+   `multi_board.assembly_3d` — key by sub-project UUID so rename-safe.
+2. Restore on frame open.
+3. Default initial layout: FLAT with 20 mm gaps (matches current
+   `LoadProjectBoards` behaviour), overridden by persisted state.
+4. Explode view (animate layout from MATED to FLAT over ~0.5 s) —
+   inexpensive polish using existing camera-animation hooks.
+
+### M6 dependencies + order
+
+```
+M5.1 (sub-project board loader) ──► M6.A ──► M6.B ──► M6.C ──┬─► M6.D
+                                                              ├─► M6.E
+                                                              ├─► M6.F
+                                                              └─► M6.G
+```
+
+M6.A is blocked on M5.1 (the shared board loader). M6.D/E/F/G are
+independent after M6.C and can be scheduled by priority. M6.D is
+highest signal per unit effort — mates board-to-board headers, which
+is the single most visible Altium-parity feature.
+
+### M6 testable outcomes
+
+- Open a container project in the manager, click "Open 3D Assembly".
+- The 3D viewer opens showing every sub-board laid out flat, each
+  with its own 3D models / silkscreen / copper. (M6.C)
+- Toggle "Mate connectors": boards snap at connector pairs with
+  correct flip handling. (M6.D)
+- Run collision check: components overlapping show highlighted;
+  status panel lists the overlapping refs. (M6.E)
+- Export STEP: the resulting file opens in FreeCAD / SolidWorks with
+  sub-board assemblies as named children. (M6.F)
+- Close and re-open the project: assembly positions persist. (M6.G)
 
 ---
 
 ## Dependencies + schedule
 
 ```
-M0 (pre-work) ──► M1 (file unify) ─┬─► M2 (mbschema) ──┐
-                                   └─► M3 (launcher) ──┼─► M5 (cleanup)
-                                                       │
-M4 (multi-editor, can start after M2) ────────────────┘
+M0 ✓ ─► M1 ✓ ─┬─► M2 ✓ ──────────────┐
+              └─► M3 (pending) ───────┤
+                                      ├─► M5 (pending) ─► M6 (pending)
+M4 ✓ MVP ─────────────────────────────┘
 ```
 
 | Week | Focus |
 |---|---|
-| 0 | M0 (migration script, tag branch) |
-| 1 | M1 (file unify) |
-| 2 | M2 (mbschema) + M3 (launcher) parallel |
-| 3 | M4 spike + MVP start |
-| 4-5 | M4 MVP |
-| 6 | M5 (cleanup, validation of untested modules) |
+| 0 ✓ | M0, M1, M2 |
+| 1 ✓ | M4 MVP |
+| 2 (now) | M3 launcher + M5 (start with M5.1 board loader) |
+| 3 | M5 complete + M6.A/B |
+| 4-5 | M6.C (multi-board rendering) |
+| 6 | M6.D (mating) + M6.E (real collision) |
+| 7 | M6.F (STEP export) + M6.G (persistence) |
+| 8+ | M4.2 sweep, cross-board ERC, DRC stubs |
 
-Total: 6 weeks to MVP. Optional M4.2 full cleanup extends to weeks 7-8.
+Total to Altium-parity 3D assembly viewer: ~8 weeks from 2026-04-23.
 
 ---
 
-## Risks + open questions (all resolved)
+## Risks + open questions
 
-### R1 — Pre-existing PROJECT_FILE `multi_board` fields
+### R1 — Pre-existing PROJECT_FILE `multi_board` fields ✓ resolved
+Kept the existing `BOARD_INFO` / `CROSS_BOARD_CONNECTION` /
+`COMPONENT_BOARD_ASSIGNMENT` structures alongside the new container
+fields. Tested modules (netlist updater, component assignment) use the
+legacy structures; the 3D viewer will migrate off them in M6.A.
 
-**Resolution:** keep the existing structures (`BOARD_INFO`,
-`CROSS_BOARD_CONNECTION`, `COMPONENT_BOARD_ASSIGNMENT`) alongside new
-ones (`sub_projects`, `cross_board_nets`). The tested modules
-(multi-board netlist updater, component assignment) rely on them.
-Container projects typically leave `boards[]` empty since sub-projects
-manage their own PCBs; the structures remain for the tested-but-partial
-modules and for future uses.
+### R2 — Container vs sub-project distinction ✓ resolved
+`multi_board.container: bool` flag in PROJECT_FILE. Consumed by
+`IsMultiBoardContainer()`.
 
-### R2 — Container vs sub-project distinction
+### R3 — M4 effort revised ✓ resolved
+MVP landed in ~3 days, not 1-2 months. The essential blocker was two
+lines.
 
-**Resolution:** add `multi_board.container: bool` flag. Section
-presence alone is insufficient since every `.kicad_pro` serializes
-`multi_board` by default.
+### R4 — mbschema kiface linkage ✓ resolved
+Chose subclass over separate kiface; rationale in Phase M2.
 
-### R3 — M4 effort revised
+### R5 — Test project migration ✓ resolved
+Test projects discarded and recreated.
 
-**Resolution:** in-process multi-project is tractable (2-3 weeks MVP,
-not 1-2 months). The essential blocker is two lines in
-`settings_manager.cpp:1138` and `kiway.cpp:213`. Surrounding
-architecture (SCHEMATIC + BOARD already cache `PROJECT*`, library
-adapters take `PROJECT*`, SETTINGS_MANAGER can hold multiple projects
-in memory) is accommodating. Proceed with in-process path; spike
-first.
+### R6 — Untested module validation
+**Status:** the 3D viewer is still unwired and uses the legacy data
+model — M6 is the full answer. Cross-board DRC is blocked only on the
+sub-project board loader (M5.1); once landed, `CheckConnectorMatching`
+should work and the stubbed `CheckSignalIntegrity` /
+`CheckPowerDistribution` become a scoped investment.
 
-### R4 — Mbschema kiface linkage
+### R7 — 3D renderer divergence risk (new)
+**Risk:** extending `RENDER_3D_BASE` / `BOARD_ADAPTER` for multi-board
+could regress single-board rendering in pcbnew.
 
-**Resolution:** mechanical ~9-step recipe mirroring eeschema. No
-blockers.
+**Mitigation:** prefer a parallel code path gated by mode ("assembly
+mode" vs. "single-board mode") rather than refactoring the single-
+adapter API. Keep the existing `ReloadRequest(BOARD*)` signature
+intact; add new assembly-mode entry points alongside. Test pcbnew's
+3D viewer against every demo project after each M6.C change.
 
-### R5 — Test project migration
+### R8 — STEP export performance (new)
+**Risk:** exporting N sub-boards as STEP can take tens of seconds each.
 
-**Resolution:** none needed. Existing test projects discarded and
-recreated post-refactor.
+**Mitigation:** in M6.F wrap with progress reporter from the start;
+parallelise per-board export if possible (the existing STEP exporter
+is single-threaded per board).
 
-### R6 — Untested module validation (new)
+### R9 — Shared board loader cache invalidation (new)
+**Risk:** the M5.1 loader will be used from three different places
+(DRC, netlist, 3D viewer) with different lifetime assumptions. A
+sub-board edited in a peer PCB editor must not be seen as stale by the
+3D viewer.
 
-**Risk:** 3D assembly viewer and cross-board DRC are present in the
-code but have never been exercised by the user. Agent estimates of
-70% / 50% completeness are from source reading, not runtime. Their
-status post-refactor is unknown.
-
-**Mitigation:** preserve the code through M1-M4 unchanged. Validate in
-M5 on migrated test projects. If a module is functional with minor
-adaptation, keep it. If fundamentally broken, decide whether to fix
-(can be its own phase) or defer.
+**Mitigation:** loader returns `std::unique_ptr<BOARD>`, owner-managed.
+No shared cache in the loader; callers (3D viewer, DRC engine) cache
+their own copy. Peer editors broadcast a new `MAIL_RELOAD_SUB_PROJECT`
+ExpressMail on save that triggers the 3D viewer to reload the affected
+instance.
 
 ---
 
@@ -459,9 +525,19 @@ adaptation, keep it. If fundamentally broken, decide whether to fix
    is a `.kicad_pro` with `multi_board.container = true` and an MBS
    schematic (`.kicad_mbs`) at the same level. Matches Altium's peer
    model.
-2. **Dedicated mbschema editor.** Not a mode in eeschema.
-3. **In-process multi-project.** Not separate processes.
+2. **MBS editor as subclass of eeschema**, not a separate kiface.
+   Shares everything; overrides the trimmed surface + save hook +
+   cross-probe handling.
+3. **In-process multi-project**, not separate processes.
 4. **Tested modules preserved.** Multi-board netlist updater and
-   component assignment keep their current code paths.
-5. **Untested modules preserved for later validation.** 3D assembly
-   and cross-board DRC adapted in M5, not deleted.
+   component assignment keep their current data model.
+5. **3D viewer skeleton preserved + ported**, not rewritten from
+   scratch. `ASSEMBLY_3D_MANAGER` / `PANEL_3D_ASSEMBLY` are the
+   starting point — M6.A refactors them to the container topology
+   rather than introducing a new manager class.
+6. **Multi-board rendering: multiple `BOARD_ADAPTER`s composited**,
+   not a merged super-BOARD and not an extended single-adapter
+   instance list. Rationale in Phase M6.
+7. **Single shared sub-project board loader** (M5.1) used by the 3D
+   viewer, cross-board DRC, and the multi-board netlist updater.
+   Returns owner-managed `std::unique_ptr<BOARD>`, no shared cache.

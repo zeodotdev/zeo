@@ -56,6 +56,34 @@ protected:
      * don't apply to a cross-board wiring sheet.
      */
     void doReCreateMenuBar() override;
+
+    /**
+     * Intercept cross-probe and selection-sync mails so they can
+     * highlight / select the matching `SCH_MODULE_BLOCK` or subgraph
+     * rather than falling through to the standard SCH_EDIT_FRAME
+     * handlers (which look up `SCH_SYMBOL` items that don't exist
+     * in a multi-board schematic).
+     */
+    void KiwayMailIn( KIWAY_MAIL_EVENT& aEvent ) override;
+
+private:
+    /**
+     * Find and highlight the module block (and optionally pin) whose
+     * component reference matches `aRef`. If `aPadOrPin` is non-empty,
+     * select the specific pin on that block instead of the whole block.
+     * No-op when no matching block exists — every peer FRAME_MBSCH
+     * instance receives every cross-probe broadcast, so silently
+     * ignoring non-matches is the correct behavior.
+     */
+    void crossProbeHighlightPart( const wxString& aRef, const wxString& aPadOrPin );
+
+    /**
+     * Highlight the subgraph whose net name matches `aNetName` on this
+     * MBS. Uses the standard CONNECTION_GRAPH lookup, so labels placed
+     * on wires resolve to their canonical net name. Empty net name
+     * clears any active highlight.
+     */
+    void crossProbeHighlightNet( const wxString& aNetName );
 };
 
 #endif // MBSCH_EDIT_FRAME_H

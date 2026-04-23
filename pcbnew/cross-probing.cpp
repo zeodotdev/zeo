@@ -481,7 +481,13 @@ void PCB_EDIT_FRAME::SendSelectItemsToSch( const std::deque<EDA_ITEM*>& aItems, 
         // Typically ExpressMail is going to be s-expression packets, but since
         // we have existing interpreter of the selection packet on the other
         // side in place, we use that here.
-        Kiway().ExpressMail( FRAME_SCH, aForce ? MAIL_SELECTION_FORCE : MAIL_SELECTION, command, this );
+        MAIL_T selType = aForce ? MAIL_SELECTION_FORCE : MAIL_SELECTION;
+        Kiway().ExpressMail( FRAME_SCH,   selType, command, this );
+
+        // Multi-board schematic editor is a separate FRAME_T from FRAME_SCH,
+        // so broadcasts to FRAME_SCH don't reach it. Send a copy so module
+        // blocks / cross-board nets can mirror the selection.
+        Kiway().ExpressMail( FRAME_MBSCH, selType, command, this );
     }
 }
 
@@ -501,7 +507,8 @@ void PCB_EDIT_FRAME::SendCrossProbeNetName( const wxString& aNetName )
             // Typically ExpressMail is going to be s-expression packets, but since
             // we have existing interpreter of the cross probe packet on the other
             // side in place, we use that here.
-            Kiway().ExpressMail( FRAME_SCH, MAIL_CROSS_PROBE, packet, this );
+            Kiway().ExpressMail( FRAME_SCH,   MAIL_CROSS_PROBE, packet, this );
+            Kiway().ExpressMail( FRAME_MBSCH, MAIL_CROSS_PROBE, packet, this );
         }
     }
 }
@@ -522,7 +529,8 @@ void PCB_EDIT_FRAME::SendCrossProbeItem( BOARD_ITEM* aSyncItem )
             // Typically ExpressMail is going to be s-expression packets, but since
             // we have existing interpreter of the cross probe packet on the other
             // side in place, we use that here.
-            Kiway().ExpressMail( FRAME_SCH, MAIL_CROSS_PROBE, packet, this );
+            Kiway().ExpressMail( FRAME_SCH,   MAIL_CROSS_PROBE, packet, this );
+            Kiway().ExpressMail( FRAME_MBSCH, MAIL_CROSS_PROBE, packet, this );
         }
     }
 }

@@ -21,8 +21,14 @@
 #include "mbsch_edit_frame.h"
 #include "toolbars_mbsch_editor.h"
 
+#include <connection_graph.h>
+#include <kiway.h>
+#include <kiway_mail.h>
+#include <mail_type.h>
 #include <multi_board_net_extractor.h>
 #include <project/project_file.h>
+#include <sch_module_block.h>
+#include <sch_module_pin.h>
 #include <schematic.h>
 #include <sch_screen.h>
 #include <kiface_base.h>
@@ -38,6 +44,7 @@
 
 #include <wx/dir.h>
 #include <wx/filename.h>
+#include <wx/tokenzr.h>
 
 
 MBSCH_EDIT_FRAME::MBSCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
@@ -247,4 +254,220 @@ void MBSCH_EDIT_FRAME::onSchematicSaved()
                                      nets.size() );
     SetStatusText( msg, 0 );
     wxLogTrace( wxT( "MULTI_BOARD" ), wxS( "%s → %s" ), msg, multiFile.GetFullPath() );
+}
+
+
+// ── Cross-probe from sub-project editors ───────────────────────────────────
+//
+// Sub-project SCH/PCB editors broadcast MAIL_CROSS_PROBE / MAIL_SELECTION
+// packets when the user clicks a symbol, footprint, or net. The MBSCH
+// editor is a distinct FRAME_T, so those broadcasts reach it only because
+// the SCH/PCB senders explicitly add an ExpressMail(FRAME_MBSCH, ...) call
+// alongside their FRAME_SCH/FRAME_PCB_EDITOR broadcasts. We intercept the
+// mails here and map payload tokens to SCH_MODULE_BLOCK / CONNECTION_SUBGRAPH
+// highlights. The base SCH_EDIT_FRAME::KiwayMailIn handles other mail types
+// we still want (library reload, ngspice, etc.) so we fall through when we
+// don't handle a specific command.
+
+namespace
+{
+
+/**
+ * Extract the quoted string immediately following a `$KEY:` token.
+ * Returns wxEmptyString if the key is absent. Used for the legacy DDE
+ * payload format shared with SCH ↔ PCB cross-probing (`$PART: "J1"`,
+ * `$NET: "BATTERY"`, etc.).
+ */
+wxString extractQuotedParam( const wxString& aPayload, const wxString& aKey )
+{
+    int key = aPayload.Find( aKey );
+
+    if( key == wxNOT_FOUND )
+        return wxEmptyString;
+
+    int open = aPayload.find( '"', key + aKey.Length() );
+
+    if( open == wxNOT_FOUND )
+        return wxEmptyString;
+
+    int close = aPayload.find( '"', open + 1 );
+
+    if( close == wxNOT_FOUND )
+        return wxEmptyString;
+
+    return aPayload.Mid( open + 1, close - open - 1 );
+}
+
+}   // anonymous namespace
+
+
+void MBSCH_EDIT_FRAME::crossProbeHighlightPart( const wxString& aRef,
+                                                const wxString& aPadOrPin )
+{
+    if( aRef.IsEmpty() )
+        return;
+
+    SCH_SCREEN* screen = Schematic().RootScreen();
+
+    if( !screen )
+        return;
+
+    SCH_MODULE_BLOCK* matchedBlock = nullptr;
+    SCH_MODULE_PIN*   matchedPin   = nullptr;
+
+    for( SCH_ITEM* item : screen->Items() )
+    {
+        if( item->Type() != SCH_MODULE_BLOCK_T )
+            continue;
+
+        SCH_MODULE_BLOCK* block = static_cast<SCH_MODULE_BLOCK*>( item );
+
+        if( block->GetComponentRef() != aRef )
+            continue;
+
+        matchedBlock = block;
+
+        if( !aPadOrPin.IsEmpty() )
+        {
+            for( SCH_MODULE_PIN* pin : block->GetPins() )
+            {
+                if( pin->GetPinNumber() == aPadOrPin )
+                {
+                    matchedPin = pin;
+                    break;
+                }
+            }
+        }
+
+        break;
+    }
+
+    if( !matchedBlock )
+        return;
+
+    // Select via the standard selection tool so the painter + properties
+    // pane + whole selection machinery (copy, delete) stay consistent
+    // with clicks originating from the user.
+    SCH_SELECTION_TOOL* selTool = m_toolManager->GetTool<SCH_SELECTION_TOOL>();
+
+    if( !selTool )
+        return;
+
+    m_toolManager->RunAction( ACTIONS::selectionClear );
+
+    EDA_ITEM* target = matchedPin ? static_cast<EDA_ITEM*>( matchedPin )
+                                  : static_cast<EDA_ITEM*>( matchedBlock );
+    selTool->AddItemToSel( target );
+
+    // Re-center the canvas on the highlighted block so the user can see
+    // the context immediately; otherwise the highlight may sit off-screen.
+    FocusOnItem( target );
+    GetCanvas()->Refresh();
+}
+
+
+void MBSCH_EDIT_FRAME::crossProbeHighlightNet( const wxString& aNetName )
+{
+    // SetHighlightedConnection invokes the standard SCH painter
+    // highlight pipeline (including m_highlightedConnChanged flag so
+    // the next Refresh repaints items whose resolved net matches).
+    // An empty net name clears the highlight.
+    SetHighlightedConnection( aNetName );
+    GetCanvas()->Refresh();
+}
+
+
+void MBSCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
+{
+    const std::string& payloadStd = aEvent.GetPayload();
+    wxString           payload( payloadStd.c_str(), wxConvUTF8 );
+
+    switch( aEvent.Command() )
+    {
+    case MAIL_CROSS_PROBE:
+    {
+        if( payload.Contains( wxT( "$CLEAR" ) ) )
+        {
+            crossProbeHighlightNet( wxEmptyString );
+            break;
+        }
+
+        wxString part = extractQuotedParam( payload, wxT( "$PART:" ) );
+        wxString pad  = extractQuotedParam( payload, wxT( "$PAD:" ) );
+        wxString net  = extractQuotedParam( payload, wxT( "$NET:" ) );
+
+        if( !part.IsEmpty() )
+            crossProbeHighlightPart( part, pad );
+
+        if( !net.IsEmpty() )
+            crossProbeHighlightNet( net );
+
+        break;
+    }
+
+    case MAIL_SELECTION:
+    case MAIL_SELECTION_FORCE:
+    {
+        // $SELECT: <focus>,F<ref>,P<ref>/<pin>,... — for MBS we care only
+        // about the F<ref> entries (component references). Each is mapped
+        // to a SCH_MODULE_BLOCK with matching componentRef.
+        size_t start = payload.find( wxT( "$SELECT:" ) );
+
+        if( start == wxString::npos )
+            break;
+
+        wxString body = payload.Mid( start + 8 );   // strlen("$SELECT:")
+        wxStringTokenizer tok( body, wxT( "," ) );
+
+        // First token is the focus flag (0 or 1) — ignore.
+        if( tok.HasMoreTokens() )
+            tok.GetNextToken();
+
+        bool cleared = false;
+
+        while( tok.HasMoreTokens() )
+        {
+            wxString spec = tok.GetNextToken().Trim().Trim( false );
+
+            if( spec.IsEmpty() )
+                continue;
+
+            if( spec[0] == 'F' )
+            {
+                if( !cleared )
+                {
+                    m_toolManager->RunAction( ACTIONS::selectionClear );
+                    cleared = true;
+                }
+
+                // F<ref> — symbol reference. No per-pin data in this
+                // format; fall through to the part-only highlight path.
+                crossProbeHighlightPart( spec.Mid( 1 ), wxEmptyString );
+            }
+            else if( spec[0] == 'P' )
+            {
+                if( !cleared )
+                {
+                    m_toolManager->RunAction( ACTIONS::selectionClear );
+                    cleared = true;
+                }
+
+                // P<ref>/<pinNumber>
+                int slash = spec.Find( '/' );
+
+                if( slash == wxNOT_FOUND )
+                    continue;
+
+                crossProbeHighlightPart( spec.Mid( 1, slash - 1 ),
+                                         spec.Mid( slash + 1 ) );
+            }
+        }
+
+        break;
+    }
+
+    default:
+        SCH_EDIT_FRAME::KiwayMailIn( aEvent );
+        break;
+    }
 }

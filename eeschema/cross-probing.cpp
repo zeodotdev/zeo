@@ -31,6 +31,8 @@
 #include <kiway_mail.h>
 #include <eda_dde.h>
 #include <connection_graph.h>
+#include <sch_module_block.h>
+#include <sch_module_pin.h>
 #include <sch_sheet.h>
 #include <sch_symbol.h>
 #include <sch_reference_list.h>
@@ -356,6 +358,41 @@ void SCH_EDIT_FRAME::SendSelectItemsToPcb( const std::vector<EDA_ITEM*>& aItems,
             break;
         }
 
+        case SCH_MODULE_BLOCK_T:
+        {
+            // Cross-probe an MBS module block as a standard component
+            // reference so the sub-project editors can reuse their
+            // existing `F<ref>` parser. The ref matches the connector
+            // component on the sub-project PCB / schematic.
+            SCH_MODULE_BLOCK* block = static_cast<SCH_MODULE_BLOCK*>( item );
+
+            if( !block->GetComponentRef().IsEmpty() )
+                parts.push_back( wxT( "F" ) + EscapeString( block->GetComponentRef(), CTX_IPC ) );
+
+            break;
+        }
+
+        case SCH_MODULE_PIN_T:
+        {
+            // P<ref>/<pinNumber> using the pin's component + number
+            // metadata recorded when the MBS was generated. Drives a
+            // pad-level highlight in the sub-project PCB.
+            SCH_MODULE_PIN*   pin   = static_cast<SCH_MODULE_PIN*>( item );
+            SCH_MODULE_BLOCK* block = pin->GetParent();
+            wxString          ref   = block ? block->GetComponentRef() : wxString();
+
+            if( ref.IsEmpty() )
+                ref = pin->GetComponentRef();
+
+            if( !ref.IsEmpty() && !pin->GetPinNumber().IsEmpty() )
+            {
+                parts.push_back( wxT( "P" ) + EscapeString( ref, CTX_IPC ) + wxT( "/" )
+                                 + EscapeString( pin->GetPinNumber(), CTX_IPC ) );
+            }
+
+            break;
+        }
+
         default: break;
         }
     }
@@ -382,7 +419,13 @@ void SCH_EDIT_FRAME::SendSelectItemsToPcb( const std::vector<EDA_ITEM*>& aItems,
         // Typically ExpressMail is going to be s-expression packets, but since
         // we have existing interpreter of the selection packet on the other
         // side in place, we use that here.
-        Kiway().ExpressMail( FRAME_PCB_EDITOR, aForce ? MAIL_SELECTION_FORCE : MAIL_SELECTION, command, this );
+        MAIL_T selType = aForce ? MAIL_SELECTION_FORCE : MAIL_SELECTION;
+        Kiway().ExpressMail( FRAME_PCB_EDITOR, selType, command, this );
+
+        // Also notify the multi-board schematic editor so it can mirror
+        // the selection across its module blocks. MBSCH is a distinct
+        // FRAME_T so FRAME_PCB_EDITOR broadcasts don't reach it.
+        Kiway().ExpressMail( FRAME_MBSCH, selType, command, this );
     }
 }
 
@@ -405,6 +448,7 @@ void SCH_EDIT_FRAME::SendCrossProbeNetName( const wxString& aNetName )
             // we have existing interpreter of the cross probe packet on the other
             // side in place, we use that here.
             Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, packet, this );
+            Kiway().ExpressMail( FRAME_MBSCH,      MAIL_CROSS_PROBE, packet, this );
         }
     }
 }
@@ -456,6 +500,7 @@ void SCH_EDIT_FRAME::SetCrossProbeConnection( const SCH_CONNECTION* aConnection 
             // we have existing interpreter of the cross probe packet on the other
             // side in place, we use that here.
             Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, packet, this );
+            Kiway().ExpressMail( FRAME_MBSCH,      MAIL_CROSS_PROBE, packet, this );
         }
     }
 }
@@ -475,6 +520,7 @@ void SCH_EDIT_FRAME::SendCrossProbeClearHighlight()
         // we have existing interpreter of the cross probe packet on the other
         // side in place, we use that here.
         Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, packet, this );
+        Kiway().ExpressMail( FRAME_MBSCH,      MAIL_CROSS_PROBE, packet, this );
     }
 }
 

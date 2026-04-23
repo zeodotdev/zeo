@@ -369,6 +369,23 @@ void MBSCH_EDIT_FRAME::crossProbeHighlightPart( const wxString& aRef,
 
 void MBSCH_EDIT_FRAME::crossProbeHighlightNet( const wxString& aNetName )
 {
+    // Reject placeholder names ("<NO NET>", bare "/", empty) — a net
+    // name broadcast that matches every unnamed subgraph's display
+    // would brighten every orphan wire on the MBS sheet. Treat as a
+    // clear instead.
+    auto isPlaceholderName = []( const wxString& aName ) -> bool
+    {
+        return aName.IsEmpty() || aName == wxT( "/" )
+               || aName.Contains( wxT( "<NO NET>" ) );
+    };
+
+    if( isPlaceholderName( aNetName ) )
+    {
+        SetHighlightedConnection( wxEmptyString );
+        m_toolManager->RunAction( SCH_ACTIONS::updateNetHighlighting );
+        return;
+    }
+
     // The standard SCH painter only brightens items whose cached
     // SCH_CONNECTION name matches m_highlightedConn. That name is
     // produced by CONNECTION_GRAPH during RecalculateConnections — if
@@ -479,8 +496,23 @@ void MBSCH_EDIT_FRAME::crossProbeHighlightNet( const wxString& aNetName )
     if( !target )
         return;
 
-    // Collect the (ref, pin-number) endpoints in the subgraph.
-    std::vector<std::pair<wxString, wxString>> endpoints;
+    // Collect (ref, pin-number, sub-project-abs-path) endpoints.
+    // Sub-project scope is the sub-project's .kicad_pro absolute path
+    // (resolved from the block's relative sub-project path against the
+    // MBS container's project directory). Sub-project PCB/SCH frames
+    // compare their own Prj().GetProjectFullName() against this scope
+    // and ignore probes that don't target them — without this,
+    // FRAME_PCB_EDITOR broadcasts would hit every sibling board that
+    // happens to also have a footprint named e.g. "J2" on it.
+    struct Endpoint
+    {
+        wxString ref;
+        wxString pinNum;
+        wxString subProjAbsPath;   // empty if block has no sub-project path
+    };
+
+    std::vector<Endpoint> endpoints;
+    wxString              mbsProjectDir = Prj().GetProjectPath();
 
     for( SCH_ITEM* item : target->GetItems() )
     {
@@ -501,19 +533,41 @@ void MBSCH_EDIT_FRAME::crossProbeHighlightNet( const wxString& aNetName )
         if( ref.IsEmpty() || pin->GetPinNumber().IsEmpty() )
             continue;
 
-        endpoints.emplace_back( ref, pin->GetPinNumber() );
+        wxString absPath;
+
+        if( !block->GetSubProjectPath().IsEmpty() )
+        {
+            wxFileName fn( block->GetSubProjectPath() );
+
+            if( !fn.IsAbsolute() )
+                fn.MakeAbsolute( mbsProjectDir );
+
+            absPath = fn.GetFullPath();
+        }
+
+        endpoints.push_back( { ref, pin->GetPinNumber(), absPath } );
     }
 
-    // Fire one cross-probe per endpoint. Using $PART + $PAD drives the
-    // sub-project PCB's `PCB_EDIT_FRAME::ExecuteRemoteCommand` to
-    // highlight the pad's actual net, which is correct whether the
-    // local net name still differs from the MBS net name (pre-sync) or
-    // matches it (post-sync). SCH editors receive the same packet and
-    // select the corresponding symbol pin.
-    for( const auto& [ref, pinNum] : endpoints )
+    // Fire one cross-probe per endpoint, scoped to a single sub-project.
+    // The $PROJECT: token tells each sub-project PCB/SCH whether this
+    // probe is for them; non-matches skip silently without touching
+    // their existing highlight state.
+    for( const Endpoint& ep : endpoints )
     {
-        std::string packet = fmt::format( "$PART: \"{}\" $PAD: \"{}\"",
-                                          TO_UTF8( ref ), TO_UTF8( pinNum ) );
+        std::string packet;
+
+        if( !ep.subProjAbsPath.IsEmpty() )
+        {
+            packet = fmt::format( "$PART: \"{}\" $PAD: \"{}\" $PROJECT: \"{}\"",
+                                  TO_UTF8( ep.ref ), TO_UTF8( ep.pinNum ),
+                                  TO_UTF8( ep.subProjAbsPath ) );
+        }
+        else
+        {
+            packet = fmt::format( "$PART: \"{}\" $PAD: \"{}\"",
+                                  TO_UTF8( ep.ref ), TO_UTF8( ep.pinNum ) );
+        }
+
         Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, packet, this );
         Kiway().ExpressMail( FRAME_SCH,        MAIL_CROSS_PROBE, packet, this );
     }
@@ -560,6 +614,16 @@ void MBSCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
             break;
 
         wxString body = payload.Mid( start + 8 );   // strlen("$SELECT:")
+
+        // Strip trailing `$PROJECT: "..."` scope token if present —
+        // MBSCH sends it on outbound packets so sub-project PCB/SCH
+        // frames can filter, but we don't want it leaking into our
+        // comma-tokenized spec list.
+        size_t scopeCut = body.find( wxT( " $PROJECT:" ) );
+
+        if( scopeCut != wxString::npos )
+            body = body.Mid( 0, scopeCut );
+
         wxStringTokenizer tok( body, wxT( "," ) );
 
         // First token is the focus flag (0 or 1) — ignore.

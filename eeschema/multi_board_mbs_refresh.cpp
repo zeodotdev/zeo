@@ -131,13 +131,26 @@ MBS_REFRESH_RESULT RefreshMbsFromSubProjects( SCH_SCREEN& aMbsScreen,
 {
     MBS_REFRESH_RESULT result;
 
-    // Index existing blocks by (sub_project_path, componentRef).
-    std::map<std::pair<wxString, wxString>, SCH_MODULE_BLOCK*> existingByKey;
+    // Primary index: (sub_project_uuid, componentRef). UUIDs are stable
+    // across path renames, so reconciling by UUID prevents block
+    // identity from flipping when a sub-project's directory is moved.
+    std::map<std::pair<KIID, wxString>, SCH_MODULE_BLOCK*> existingByUuid;
+
+    // Fallback index: (sub_project_path, componentRef). Used only for
+    // legacy blocks saved before sub_project_uuid was persisted (their
+    // uuid field reads back as niluuid). When matched through this
+    // fallback, we upgrade the block by stamping the fresh UUID onto
+    // it so subsequent refreshes route through the UUID index.
+    std::map<std::pair<wxString, wxString>, SCH_MODULE_BLOCK*> existingByPath;
 
     for( SCH_ITEM* item : aMbsScreen.Items().OfType( SCH_MODULE_BLOCK_T ) )
     {
         SCH_MODULE_BLOCK* b = static_cast<SCH_MODULE_BLOCK*>( item );
-        existingByKey[{ b->GetSubProjectPath(), b->GetComponentRef() }] = b;
+
+        if( b->GetSubProjectUuid() != niluuid )
+            existingByUuid[{ b->GetSubProjectUuid(), b->GetComponentRef() }] = b;
+        else
+            existingByPath[{ b->GetSubProjectPath(), b->GetComponentRef() }] = b;
     }
 
     // Build plans: one per (sub_project, connector) found by scan.
@@ -168,10 +181,28 @@ MBS_REFRESH_RESULT RefreshMbsFromSubProjects( SCH_SCREEN& aMbsScreen,
             else
                 plan.expectedPads.push_back( MULTI_BOARD_PAD_INFO{} );  // placeholder
 
-            auto existIt = existingByKey.find( { info.relativePath, ref } );
+            // Prefer UUID lookup; fall back to path-based lookup for
+            // pre-uuid blocks. If the fallback hits, upgrade the block
+            // so future refreshes prefer UUID matching.
+            auto uuidIt = existingByUuid.find( { info.uuid, ref } );
 
-            if( existIt != existingByKey.end() )
-                plan.existing = existIt->second;
+            if( uuidIt != existingByUuid.end() )
+            {
+                plan.existing = uuidIt->second;
+                // Keep path in sync when it drifted relative to UUID.
+                if( plan.existing->GetSubProjectPath() != info.relativePath )
+                    plan.existing->SetSubProjectPath( info.relativePath );
+            }
+            else
+            {
+                auto pathIt = existingByPath.find( { info.relativePath, ref } );
+
+                if( pathIt != existingByPath.end() )
+                {
+                    plan.existing = pathIt->second;
+                    plan.existing->SetSubProjectUuid( info.uuid );
+                }
+            }
 
             plans.push_back( std::move( plan ) );
         }

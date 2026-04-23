@@ -1211,6 +1211,16 @@ void SCH_IO_KICAD_SEXPR::saveModuleBlock( SCH_MODULE_BLOCK* aModuleBlock )
                       m_out->Quotew( aModuleBlock->GetSubProjectPath() ).c_str() );
     }
 
+    // Persist the sub-project UUID so block identity survives path
+    // changes (rename / move). The refresh tool uses this as the
+    // primary key when reconciling existing blocks against a fresh
+    // sub-project scan; path is the display/fallback only.
+    if( aModuleBlock->GetSubProjectUuid() != niluuid )
+    {
+        m_out->Print( "(sub_project_uuid %s)",
+                      m_out->Quotew( aModuleBlock->GetSubProjectUuid().AsString() ).c_str() );
+    }
+
     if( !aModuleBlock->GetComponentRef().IsEmpty() )
     {
         m_out->Print( "(component %s)",

@@ -185,6 +185,48 @@ void PCB_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
     KIGFX::VIEW*            view = m_toolManager->GetView();
     KIGFX::RENDER_SETTINGS* renderSettings = view->GetPainter()->GetSettings();
 
+    // Scope gate: MBS-originated packets carry a trailing
+    // `$PROJECT: "<abs .kicad_pro path>"` token so each sub-project
+    // PCB editor can ignore probes that aren't meant for it. Extract
+    // before strtok wrecks the buffer. Absent token = legacy packet
+    // with no scope, handled as before (no filtering).
+    {
+        const char* scopeTok = strstr( cmdline, "$PROJECT:" );
+
+        if( scopeTok )
+        {
+            const char* openQ = strchr( scopeTok, '"' );
+
+            if( openQ )
+            {
+                const char* closeQ = strchr( openQ + 1, '"' );
+
+                if( closeQ )
+                {
+                    wxString requestedProject = From_UTF8(
+                            std::string( openQ + 1, closeQ - openQ - 1 ).c_str() );
+                    wxString ourProject = Prj().GetProjectFullName();
+
+                    // Compare via wxFileName so trailing separators,
+                    // case differences (macOS HFS+), and relative-path
+                    // components resolve the same way the settings
+                    // manager stored them.
+                    wxFileName reqFn( requestedProject );
+                    wxFileName ourFn( ourProject );
+                    reqFn.Normalize( FN_NORMALIZE_FLAGS );
+                    ourFn.Normalize( FN_NORMALIZE_FLAGS );
+
+                    wxLogTrace( wxT( "MULTI_BOARD" ),
+                                wxT( "PCB $PROJECT scope: want=%s ours=%s" ),
+                                reqFn.GetFullPath(), ourFn.GetFullPath() );
+
+                    if( !reqFn.SameAs( ourFn ) )
+                        return;
+                }
+            }
+        }
+    }
+
     strncpy( line, cmdline, sizeof( line ) - 1 );
     line[sizeof( line ) - 1] = 0;
 
@@ -301,6 +343,17 @@ void PCB_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
                     break;
             }
         }
+
+        // When the target footprint isn't on this board, skip silently
+        // instead of falling through to the "clear highlight" branch.
+        // The MBS fan-out broadcasts one $PART per sub-project endpoint
+        // and each arrives at every sub-project PCB — letting a
+        // non-match clear the highlight would erase the match just set
+        // by a sibling endpoint's packet (so BATTERY highlighted for J2
+        // on devboard would be wiped by the subsequent J7 packet that
+        // only devboard's fpv sibling can resolve).
+        if( netcode <= 0 )
+            return;
 
         // fall through to highlighting section
     }
@@ -1470,6 +1523,42 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 
     case MAIL_SELECTION_FORCE:
     {
+        // MBS-originated selection packets include a trailing
+        // `$PROJECT: "<abs .kicad_pro path>"` scope token so each
+        // sub-project PCB editor ignores selections that aren't for it.
+        // Absent token = unscoped packet, processed as before.
+        {
+            size_t scopePos = payload.find( " $PROJECT:" );
+
+            if( scopePos != std::string::npos )
+            {
+                size_t openQ = payload.find( '"', scopePos );
+
+                if( openQ != std::string::npos )
+                {
+                    size_t closeQ = payload.find( '"', openQ + 1 );
+
+                    if( closeQ != std::string::npos )
+                    {
+                        wxString requestedProject = From_UTF8(
+                                payload.substr( openQ + 1, closeQ - openQ - 1 ).c_str() );
+
+                        wxFileName reqFn( requestedProject );
+                        wxFileName ourFn( Prj().GetProjectFullName() );
+                        reqFn.Normalize( FN_NORMALIZE_FLAGS );
+                        ourFn.Normalize( FN_NORMALIZE_FLAGS );
+
+                        wxLogTrace( wxT( "MULTI_BOARD" ),
+                                    wxT( "PCB $SELECT scope: want=%s ours=%s" ),
+                                    reqFn.GetFullPath(), ourFn.GetFullPath() );
+
+                        if( !reqFn.SameAs( ourFn ) )
+                            break;
+                    }
+                }
+            }
+        }
+
         // $SELECT: <mode 0 - only footprints, 1 - with connections>,<spec1>,<spec2>,<spec3>
         std::string prefix = "$SELECT: ";
 
@@ -1490,7 +1579,15 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
                 wxFAIL;
             }
 
-            std::vector<BOARD_ITEM*> items = FindItemsFromSyncSelection( paramStr.substr( modeEnd + 1 ) );
+            // Strip the trailing scope token before feeding to the
+            // sync-selection parser so it doesn't try to match the
+            // project path as a spec.
+            std::string syncBody = paramStr.substr( modeEnd + 1 );
+
+            if( size_t scopeEnd = syncBody.find( " $PROJECT:" ); scopeEnd != std::string::npos )
+                syncBody.erase( scopeEnd );
+
+            std::vector<BOARD_ITEM*> items = FindItemsFromSyncSelection( syncBody );
 
             m_ProbingSchToPcb = true; // recursion guard
 

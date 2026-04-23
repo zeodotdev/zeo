@@ -224,6 +224,42 @@ void SCH_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
     SCH_EDITOR_CONTROL* editor = m_toolManager->GetTool<SCH_EDITOR_CONTROL>();
     char                line[1024];
 
+    // Scope gate: MBS-originated $PART/$PAD probes carry a trailing
+    // `$PROJECT: "<abs .kicad_pro path>"` token. Filter on our own
+    // PROJECT so sub-project SCH editors don't highlight a connector
+    // symbol that belongs to a different sibling board.
+    {
+        const char* scopeTok = strstr( cmdline, "$PROJECT:" );
+
+        if( scopeTok )
+        {
+            const char* openQ = strchr( scopeTok, '"' );
+
+            if( openQ )
+            {
+                const char* closeQ = strchr( openQ + 1, '"' );
+
+                if( closeQ )
+                {
+                    wxString requestedProject = From_UTF8(
+                            std::string( openQ + 1, closeQ - openQ - 1 ).c_str() );
+
+                    wxFileName reqFn( requestedProject );
+                    wxFileName ourFn( Prj().GetProjectFullName() );
+                    reqFn.Normalize( FN_NORMALIZE_FLAGS );
+                    ourFn.Normalize( FN_NORMALIZE_FLAGS );
+
+                    wxLogTrace( wxT( "MULTI_BOARD" ),
+                                wxT( "SCH $PART scope: want=%s ours=%s" ),
+                                reqFn.GetFullPath(), ourFn.GetFullPath() );
+
+                    if( !reqFn.SameAs( ourFn ) )
+                        return;
+                }
+            }
+        }
+    }
+
     strncpy( line, cmdline, sizeof( line ) - 1 );
     line[sizeof( line ) - 1] = '\0';
 
@@ -311,7 +347,31 @@ void SCH_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
     }
     else if( strcmp( idcmd, "$PAD:" ) == 0 )
     {
-        editor->FindSymbolAndItem( nullptr, &part_ref, true, HIGHLIGHT_PIN, msg );
+        SCH_ITEM* found = editor->FindSymbolAndItem( nullptr, &part_ref, true, HIGHLIGHT_PIN, msg );
+
+        // For cross-board probes originating from the multi-board
+        // schematic editor, the MBS only knows the connector's (ref,
+        // pin-number). The user expects the local net the pin is on to
+        // brighten fully — not just the connector pin itself. Resolve
+        // the pin's local SCH_CONNECTION and run net highlighting so
+        // every label, wire, and junction on the same subgraph lights
+        // up alongside the pin. Gated on auto_highlight so users who
+        // turned cross-probe net highlighting off keep the old
+        // pin-only behavior.
+        if( found && crossProbingSettings.auto_highlight )
+        {
+            if( SCH_CONNECTION* pinConn = found->Connection() )
+            {
+                wxString connName = pinConn->Name();
+
+                if( !connName.IsEmpty() )
+                {
+                    SetHighlightedConnection( connName );
+                    GetToolManager()->RunAction( SCH_ACTIONS::updateNetHighlighting );
+                    UpdateNetHighlightStatus();
+                }
+            }
+        }
     }
     else
     {
@@ -322,7 +382,34 @@ void SCH_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
 
 void SCH_EDIT_FRAME::SendSelectItemsToPcb( const std::vector<EDA_ITEM*>& aItems, bool aForce )
 {
+    // Regular (single-board) spec tokens — these aren't tied to any
+    // specific sub-project and broadcast to every reachable FRAME_T.
     std::vector<wxString> parts;
+
+    // Module-block / module-pin specs are grouped by the block's
+    // sub-project absolute path. Each sub-project receives its own
+    // $SELECT packet with a trailing $PROJECT: token so PCB / SCH
+    // editors for sibling boards ignore probes that aren't theirs.
+    // Without that scope, a PJ2/1 packet from the MBS would select J2
+    // on every board that happens to carry a J2 reference.
+    std::map<wxString, std::vector<wxString>> partsByProject;
+    wxString                                  mbsProjectDir;
+
+    if( GetFrameType() == FRAME_MBSCH )
+        mbsProjectDir = Prj().GetProjectPath();
+
+    auto resolveSubProjectAbsPath = [&mbsProjectDir]( const wxString& aRelPath ) -> wxString
+    {
+        if( aRelPath.IsEmpty() )
+            return wxEmptyString;
+
+        wxFileName fn( aRelPath );
+
+        if( !fn.IsAbsolute() && !mbsProjectDir.IsEmpty() )
+            fn.MakeAbsolute( mbsProjectDir );
+
+        return fn.GetFullPath();
+    };
 
     for( EDA_ITEM* item : aItems )
     {
@@ -367,7 +454,11 @@ void SCH_EDIT_FRAME::SendSelectItemsToPcb( const std::vector<EDA_ITEM*>& aItems,
             SCH_MODULE_BLOCK* block = static_cast<SCH_MODULE_BLOCK*>( item );
 
             if( !block->GetComponentRef().IsEmpty() )
-                parts.push_back( wxT( "F" ) + EscapeString( block->GetComponentRef(), CTX_IPC ) );
+            {
+                wxString scope = resolveSubProjectAbsPath( block->GetSubProjectPath() );
+                partsByProject[scope].push_back(
+                        wxT( "F" ) + EscapeString( block->GetComponentRef(), CTX_IPC ) );
+            }
 
             break;
         }
@@ -386,8 +477,11 @@ void SCH_EDIT_FRAME::SendSelectItemsToPcb( const std::vector<EDA_ITEM*>& aItems,
 
             if( !ref.IsEmpty() && !pin->GetPinNumber().IsEmpty() )
             {
-                parts.push_back( wxT( "P" ) + EscapeString( ref, CTX_IPC ) + wxT( "/" )
-                                 + EscapeString( pin->GetPinNumber(), CTX_IPC ) );
+                wxString scope = block ? resolveSubProjectAbsPath( block->GetSubProjectPath() )
+                                       : wxString();
+                partsByProject[scope].push_back( wxT( "P" ) + EscapeString( ref, CTX_IPC )
+                                                 + wxT( "/" )
+                                                 + EscapeString( pin->GetPinNumber(), CTX_IPC ) );
             }
 
             break;
@@ -397,35 +491,57 @@ void SCH_EDIT_FRAME::SendSelectItemsToPcb( const std::vector<EDA_ITEM*>& aItems,
         }
     }
 
-    if( parts.empty() )
+    if( parts.empty() && partsByProject.empty() )
         return;
 
-    std::string command = "$SELECT: 0,";
-
-    for( wxString part : parts )
+    auto buildCommand = [&]( const std::vector<wxString>& aSpecs, const wxString& aProjectScope )
+            -> std::string
     {
-        command += part;
-        command += ",";
-    }
+        std::string cmd = "$SELECT: 0";
 
-    command.pop_back();
+        for( const wxString& p : aSpecs )
+        {
+            cmd += ',';
+            cmd += TO_UTF8( p );
+        }
 
-    if( Kiface().IsSingle() )
+        if( !aProjectScope.IsEmpty() )
+        {
+            cmd += " $PROJECT: \"";
+            cmd += TO_UTF8( aProjectScope );
+            cmd += '"';
+        }
+
+        return cmd;
+    };
+
+    MAIL_T selType = aForce ? MAIL_SELECTION_FORCE : MAIL_SELECTION;
+    bool   isSingle = Kiface().IsSingle();
+
+    auto broadcast = [&]( std::string aCommand )
     {
-        SendCommand( MSG_TO_PCB, command );
-    }
-    else
-    {
-        // Typically ExpressMail is going to be s-expression packets, but since
-        // we have existing interpreter of the selection packet on the other
-        // side in place, we use that here.
-        MAIL_T selType = aForce ? MAIL_SELECTION_FORCE : MAIL_SELECTION;
-        Kiway().ExpressMail( FRAME_PCB_EDITOR, selType, command, this );
+        if( isSingle )
+        {
+            // SendCommand uses the legacy DDE path; strip the scope
+            // token since single-instance editors don't have sub-project
+            // siblings anyway.
+            size_t projTok = aCommand.find( " $PROJECT:" );
 
-        // Also notify the multi-board schematic editor so it can mirror
-        // the selection across its module blocks. MBSCH is a distinct
-        // FRAME_T so FRAME_PCB_EDITOR broadcasts don't reach it.
-        Kiway().ExpressMail( FRAME_MBSCH, selType, command, this );
+            if( projTok != std::string::npos )
+                aCommand.erase( projTok );
+
+            SendCommand( MSG_TO_PCB, aCommand );
+            return;
+        }
+
+        // ExpressMail takes the payload by non-const reference so it can
+        // propagate response mutations back to the caller. Each call
+        // gets its own copy to keep them independent.
+        std::string pcb = aCommand;
+        Kiway().ExpressMail( FRAME_PCB_EDITOR, selType, pcb, this );
+
+        std::string mbs = aCommand;
+        Kiway().ExpressMail( FRAME_MBSCH, selType, mbs, this );
 
         // When the SENDER is MBSCH, the sub-project schematic editors
         // (FRAME_SCH) also need the selection to mirror the user's pick
@@ -433,7 +549,22 @@ void SCH_EDIT_FRAME::SendSelectItemsToPcb( const std::vector<EDA_ITEM*>& aItems,
         // sends to FRAME_SCH (that would loop back on itself), so this
         // path is gated on the MBSCH-only case.
         if( GetFrameType() == FRAME_MBSCH )
-            Kiway().ExpressMail( FRAME_SCH, selType, command, this );
+        {
+            std::string sch = aCommand;
+            Kiway().ExpressMail( FRAME_SCH, selType, sch, this );
+        }
+    };
+
+    if( !parts.empty() )
+    {
+        std::string cmd = buildCommand( parts, wxEmptyString );
+        broadcast( cmd );
+    }
+
+    for( const auto& [projectScope, specs] : partsByProject )
+    {
+        std::string cmd = buildCommand( specs, projectScope );
+        broadcast( cmd );
     }
 }
 
@@ -1504,6 +1635,42 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 
     case MAIL_SELECTION_FORCE:
     {
+        // MBS-originated selection packets include a trailing
+        // `$PROJECT: "<abs .kicad_pro path>"` scope token so each
+        // sub-project SCH editor ignores selections that aren't for it.
+        // Absent token = unscoped packet, processed as before.
+        {
+            size_t scopePos = payload.find( " $PROJECT:" );
+
+            if( scopePos != std::string::npos )
+            {
+                size_t openQ = payload.find( '"', scopePos );
+
+                if( openQ != std::string::npos )
+                {
+                    size_t closeQ = payload.find( '"', openQ + 1 );
+
+                    if( closeQ != std::string::npos )
+                    {
+                        wxString requestedProject = From_UTF8(
+                                payload.substr( openQ + 1, closeQ - openQ - 1 ).c_str() );
+
+                        wxFileName reqFn( requestedProject );
+                        wxFileName ourFn( Prj().GetProjectFullName() );
+                        reqFn.Normalize( FN_NORMALIZE_FLAGS );
+                        ourFn.Normalize( FN_NORMALIZE_FLAGS );
+
+                        wxLogTrace( wxT( "MULTI_BOARD" ),
+                                    wxT( "SCH $SELECT scope: want=%s ours=%s" ),
+                                    reqFn.GetFullPath(), ourFn.GetFullPath() );
+
+                        if( !reqFn.SameAs( ourFn ) )
+                            break;
+                    }
+                }
+            }
+        }
+
         // $SELECT: 0,<spec1>,<spec2>,<spec3>
         // Try to select specified items.
 
@@ -1520,6 +1687,10 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
             break;
 
         std::string syncStr = paramStr.substr( 2 );
+
+        // Strip trailing `$PROJECT:` scope before feeding the parser.
+        if( size_t scopeEnd = syncStr.find( " $PROJECT:" ); scopeEnd != std::string::npos )
+            syncStr.erase( scopeEnd );
 
         bool focusOnFirst = ( paramStr[0] == '1' );
 

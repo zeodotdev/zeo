@@ -159,6 +159,7 @@ span
 start
 stroke
 sub_project
+sub_project_uuid
 symbol
 symbol_instances
 table

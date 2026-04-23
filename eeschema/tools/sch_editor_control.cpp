@@ -70,6 +70,8 @@
 #include <sch_shape.h>
 #include <sch_painter.h>
 #include <sch_sheet_pin.h>
+#include <sch_module_block.h>
+#include <sch_module_pin.h>
 #include <sch_table.h>
 #include <sch_tablecell.h>
 #include <sch_commit.h>
@@ -1186,7 +1188,29 @@ static bool highlightNet( TOOL_MANAGER* aToolMgr, const VECTOR2D& aPosition )
 
     wxString connName = ( conn ) ? conn->Name() : wxString( wxS( "" ) );
 
-    if( !conn )
+    // Treat as "no net" when the clicked item resolves to a placeholder
+    // connection — a subgraph with no driver caches its display as
+    // "<NO NET>" (or "/<NO NET>" with the sheet-path prefix) and its
+    // path-only form as "/". Highlighting on those would light every
+    // other unnamed subgraph on the sheet because UpdateNetHighlighting
+    // matches by display name. This is especially visible on the
+    // multi-board sheet where floating wires that miss a module-pin
+    // anchor aggregate into one common "<NO NET>" display bucket.
+    auto isPlaceholderName = []( const wxString& aName ) -> bool
+    {
+        if( aName.IsEmpty() )
+            return true;
+
+        if( aName == wxT( "/" ) )
+            return true;
+
+        if( aName.Contains( wxT( "<NO NET>" ) ) )
+            return true;
+
+        return false;
+    };
+
+    if( !conn || isPlaceholderName( connName ) )
     {
         editFrame->SetStatusText( wxT( "" ) );
         editFrame->SendCrossProbeClearHighlight();
@@ -1604,6 +1628,42 @@ int SCH_EDITOR_CONTROL::UpdateNetHighlighting( const TOOL_EVENT& aEvent )
                 {
                     pin->ClearBrightened();
                     redrawItem = sheet;
+                }
+            }
+        }
+        else if( item->Type() == SCH_MODULE_BLOCK_T )
+        {
+            // SCH_MODULE_PIN children aren't in screen->Items() — they
+            // live on the parent block, just like SCH_SHEET_PIN on a
+            // sheet. Mirror the sheet-pin iteration so connector pins
+            // on MBS module blocks brighten when their net matches the
+            // highlighted connection, including cross-board cases where
+            // the pin's subgraph is driven by a label on the MBS wire.
+            SCH_MODULE_BLOCK* block = static_cast<SCH_MODULE_BLOCK*>( item );
+
+            for( SCH_MODULE_PIN* pin : block->GetPins() )
+            {
+                wxCHECK2( pin, continue );
+
+                SCH_CONNECTION* pin_conn = pin->Connection();
+
+                if( pin_conn )
+                {
+                    if( !pin->IsBrightened() && connNames.count( pin_conn->Name() ) )
+                    {
+                        pin->SetBrightened();
+                        redrawItem = block;
+                    }
+                    else if( pin->IsBrightened() && !connNames.count( pin_conn->Name() ) )
+                    {
+                        pin->ClearBrightened();
+                        redrawItem = block;
+                    }
+                }
+                else if( pin->IsBrightened() )
+                {
+                    pin->ClearBrightened();
+                    redrawItem = block;
                 }
             }
         }

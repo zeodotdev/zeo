@@ -407,15 +407,31 @@ void MBSCH_EDIT_FRAME::crossProbeHighlightNet( const wxString& aNetName )
     }
 
     // Resolve the incoming name to whatever the local MBS connection
-    // graph actually calls the matching subgraph. Sub-projects tend to
-    // broadcast their canonical "/FOO" net name, while the MBS's own
-    // subgraphs are driven by module-pin or label text that typically
-    // lacks the leading slash. Pick whichever form resolves to a real
-    // subgraph on this MBS — that is the name `UpdateNetHighlighting`
-    // will compare against item->Connection()->Name() when deciding
-    // which wires to brighten.
-    CONNECTION_GRAPH* graph = Schematic().ConnectionGraph();
-    wxString          localName = aNetName;
+    // graph actually calls the matching subgraph.
+    //
+    // Three lookups, in order:
+    //
+    //   1. Exact match — works when the sub-project net name happens
+    //      to align with the MBS driver (e.g. both called "GND").
+    //
+    //   2. Slash toggle — sub-project PCB/SCH broadcast `/FOO` with a
+    //      sheet-path prefix; the MBS driver typically doesn't have
+    //      it. Try both forms.
+    //
+    //   3. Pin-text match — the reverse-direction case: sub-project
+    //      broadcasts its local net name (e.g. "/VBAT") but the MBS
+    //      subgraph is driven by a LABEL (e.g. "BATTERY") that
+    //      outranks module pins in driver priority. The pin whose
+    //      text equals "/VBAT" lives on that BATTERY subgraph, so we
+    //      resolve via the pin to the subgraph, then adopt the
+    //      subgraph's actual name as the local highlight target.
+    //
+    // Pin-text match also captures `target` as a side effect so the
+    // cross-board fan-out below doesn't need a second search.
+    CONNECTION_GRAPH*    graph  = Schematic().ConnectionGraph();
+    wxString             localName = aNetName;
+    CONNECTION_SUBGRAPH* target = nullptr;
+    SCH_SCREEN*          screen = Schematic().RootScreen();
 
     if( graph && !aNetName.IsEmpty() )
     {
@@ -435,6 +451,46 @@ void MBSCH_EDIT_FRAME::crossProbeHighlightNet( const wxString& aNetName )
                      && nameResolves( wxT( "/" ) + localName ) )
             {
                 localName = wxT( "/" ) + localName;
+            }
+            else if( screen )
+            {
+                // Pin-text fallback: find any module pin whose displayed
+                // text matches the requested name, then use its
+                // subgraph's resolved name as the local target.
+                wxString withoutSlash = localName.StartsWith( wxT( "/" ) )
+                                                ? localName.AfterFirst( '/' )
+                                                : localName;
+                wxString withSlash    = localName.StartsWith( wxT( "/" ) )
+                                                ? localName
+                                                : wxT( "/" ) + localName;
+
+                for( SCH_ITEM* item : screen->Items() )
+                {
+                    if( item->Type() != SCH_MODULE_BLOCK_T )
+                        continue;
+
+                    for( SCH_MODULE_PIN* pin :
+                         static_cast<SCH_MODULE_BLOCK*>( item )->GetPins() )
+                    {
+                        wxString pinText = pin->GetText();
+
+                        if( pinText != localName && pinText != withoutSlash
+                            && pinText != withSlash )
+                        {
+                            continue;
+                        }
+
+                        if( CONNECTION_SUBGRAPH* sg = graph->GetSubgraphForItem( pin ) )
+                        {
+                            target    = sg;
+                            localName = graph->GetResolvedSubgraphName( sg );
+                            break;
+                        }
+                    }
+
+                    if( target )
+                        break;
+                }
             }
         }
     }
@@ -462,35 +518,29 @@ void MBSCH_EDIT_FRAME::crossProbeHighlightNet( const wxString& aNetName )
     if( !graph )
         return;
 
-    CONNECTION_SUBGRAPH* target = nullptr;
-
-    // Find a subgraph whose resolved name matches. Walk module pins
-    // instead of GetAllSubgraphs to avoid a full graph enumeration when
-    // a single pin lookup narrows it quickly.
-    SCH_SCREEN* screen = Schematic().RootScreen();
-
-    if( !screen )
-        return;
-
-    for( SCH_ITEM* item : screen->Items() )
+    // Re-search by name if the pin-text fallback didn't set target.
+    if( !target && screen )
     {
-        if( item->Type() != SCH_MODULE_BLOCK_T )
-            continue;
-
-        for( SCH_MODULE_PIN* pin : static_cast<SCH_MODULE_BLOCK*>( item )->GetPins() )
+        for( SCH_ITEM* item : screen->Items() )
         {
-            CONNECTION_SUBGRAPH* sg = graph->GetSubgraphForItem( pin );
+            if( item->Type() != SCH_MODULE_BLOCK_T )
+                continue;
 
-            if( sg && ( graph->GetResolvedSubgraphName( sg ) == aNetName
-                        || graph->GetResolvedSubgraphName( sg ) == localName ) )
+            for( SCH_MODULE_PIN* pin : static_cast<SCH_MODULE_BLOCK*>( item )->GetPins() )
             {
-                target = sg;
-                break;
-            }
-        }
+                CONNECTION_SUBGRAPH* sg = graph->GetSubgraphForItem( pin );
 
-        if( target )
-            break;
+                if( sg && ( graph->GetResolvedSubgraphName( sg ) == aNetName
+                            || graph->GetResolvedSubgraphName( sg ) == localName ) )
+                {
+                    target = sg;
+                    break;
+                }
+            }
+
+            if( target )
+                break;
+        }
     }
 
     if( !target )

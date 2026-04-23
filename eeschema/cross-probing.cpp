@@ -288,15 +288,35 @@ void SCH_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
 
         wxString netName = From_UTF8( text );
 
-        if( auto sg = Schematic().ConnectionGraph()->FindFirstSubgraphByName( netName ) )
+        CONNECTION_GRAPH*    connGraph = Schematic().ConnectionGraph();
+        CONNECTION_SUBGRAPH* sg = connGraph ? connGraph->FindFirstSubgraphByName( netName ) : nullptr;
+
+        // Slash-toggle fallback — MBS subgraph names don't carry the
+        // leading sheet-path '/' that sub-project nets use, so try
+        // both forms before giving up.
+        if( !sg && connGraph )
+        {
+            if( netName.StartsWith( wxT( "/" ) ) )
+                sg = connGraph->FindFirstSubgraphByName( netName.AfterFirst( '/' ) );
+            else
+                sg = connGraph->FindFirstSubgraphByName( wxT( "/" ) + netName );
+        }
+
+        if( sg )
+        {
             m_highlightedConn = sg->GetDriverConnection()->Name();
-        else
-            m_highlightedConn = wxEmptyString;
+            GetToolManager()->RunAction( SCH_ACTIONS::updateNetHighlighting );
+            RefreshNetNavigator();
+            SetStatusText( _( "Highlighted net:" ) + wxS( " " ) + UnescapeString( netName ) );
+        }
+        // Else: no subgraph on this sub-project matches the broadcast
+        // net name. This is the common cross-board case — the MBS
+        // broadcasts "BATTERY" but the sub-project's local net is
+        // "/VBAT". Leave the existing highlight alone so a preceding
+        // $PART/$PAD probe (which resolves the pad to its local net)
+        // keeps its brightness instead of being clobbered by the $NET
+        // that arrived after it.
 
-        GetToolManager()->RunAction( SCH_ACTIONS::updateNetHighlighting );
-        RefreshNetNavigator();
-
-        SetStatusText( _( "Highlighted net:" ) + wxS( " " ) + UnescapeString( netName ) );
         return;
     }
     else if( strcmp( idcmd, "$CLEAR:" ) == 0 )

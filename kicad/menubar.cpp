@@ -91,11 +91,13 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
 
     wxMenuItem* item = fileMenu->Add( openRecentMenu->Clone() );
 
+    // Multi-board operations (switch/spawn/manage/sync) are now
+    // surfaced from inside the MBSCH editor's top toolbar, where
+    // they're contextually appropriate. The only entry point we
+    // still need from the project manager is the 3D assembly viewer,
+    // which is the one multi-board action that has no MBSCH analog.
     fileMenu->AppendSeparator();
-    fileMenu->Add( KICAD_MANAGER_ACTIONS::switchSubBoard );
-    fileMenu->Add( KICAD_MANAGER_ACTIONS::spawnPeerSchematic );
-    fileMenu->Add( KICAD_MANAGER_ACTIONS::manageSubBoards );
-    fileMenu->Add( KICAD_MANAGER_ACTIONS::syncCrossBoardNets );
+    fileMenu->Add( KICAD_MANAGER_ACTIONS::openAssemblyViewer );
 
     fileMenu->AppendSeparator();
     fileMenu->Add( KICAD_MANAGER_ACTIONS::newJobsetFile );

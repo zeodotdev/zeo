@@ -27,7 +27,7 @@
 
 #include <dialogs/dialog_template_selector_base.h>
 #include <widgets/webview_panel.h>
-#include "project_template.h"
+#include <project_template.h>
 
 #include <memory>
 #include <vector>

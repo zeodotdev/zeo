@@ -292,6 +292,17 @@ int EDA_3D_CONTROLLER::ToggleLayersManager( const TOOL_EVENT& aEvent )
 }
 
 
+int EDA_3D_CONTROLLER::ToggleAssemblyPanel( const TOOL_EVENT& aEvent )
+{
+    EDA_BASE_FRAME* frame = dynamic_cast<EDA_BASE_FRAME*>( m_toolMgr->GetToolHolder() );
+
+    if( frame && frame->GetFrameType() == FRAME_PCB_DISPLAY3D )
+        static_cast<EDA_3D_VIEWER_FRAME*>( frame )->ToggleAssemblyPanel();
+
+    return 0;
+}
+
+
 int EDA_3D_CONTROLLER::On3DGridSelection( const TOOL_EVENT& aEvent )
 {
     m_boardAdapter->m_Cfg->m_Render.grid_type = aEvent.Parameter<GRID3D_TYPE>();
@@ -482,6 +493,7 @@ void EDA_3D_CONTROLLER::setTransitions()
     Go( &EDA_3D_CONTROLLER::ToggleVisibility,   EDA_3D_ACTIONS::showNotInPosFile.MakeEvent() );
     Go( &EDA_3D_CONTROLLER::ToggleVisibility,   EDA_3D_ACTIONS::showDNP.MakeEvent() );
     Go( &EDA_3D_CONTROLLER::ToggleLayersManager,EDA_3D_ACTIONS::showLayersManager.MakeEvent() );
+    Go( &EDA_3D_CONTROLLER::ToggleAssemblyPanel,EDA_3D_ACTIONS::showAssemblyPanel.MakeEvent() );
     Go( &EDA_3D_CONTROLLER::ToggleVisibility, EDA_3D_ACTIONS::showNavigator.MakeEvent() );
 }
 

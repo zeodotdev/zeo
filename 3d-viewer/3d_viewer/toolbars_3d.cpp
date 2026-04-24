@@ -89,6 +89,7 @@ std::optional<TOOLBAR_CONFIGURATION> EDA_3D_VIEWER_TOOLBAR_SETTINGS::DefaultTool
               .AppendAction( EDA_3D_ACTIONS::toggleOrtho );
 
         config.AppendSeparator()
+              .AppendAction( EDA_3D_ACTIONS::showAssemblyPanel )
               .AppendAction( EDA_3D_ACTIONS::showLayersManager );
         break;
     }

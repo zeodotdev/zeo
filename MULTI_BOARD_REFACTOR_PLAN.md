@@ -335,35 +335,70 @@ Deliverable: "Open 3D Assembly" from the manager opens a 3D viewer
 that renders one sub-board at a time; the assembly panel switches
 which board is active. Single-board render pipeline unchanged.
 
-### M6.C — Multi-board composition in the renderer (~2 sessions)
+### M6.C — Multi-board composition in the renderer
 
-The core technical work — actual Altium-like view.
+#### M6.C-phase-1 ✓ landed (2026-04-23)
 
-1. `ASSEMBLY_3D_MANAGER` owns one `BOARD_ADAPTER` per
-   `BOARD_3D_INSTANCE`. Each adapter builds its own layer containers /
-   BVH in its local frame via `InitSettings`. Shared `S3D_CACHE`.
-2. Extend `RENDER_3D_BASE` (`render_3d_base.h:102`) to optionally hold
-   a list of `{BOARD_ADAPTER*, glm::mat4}` instead of a single adapter.
-   Prefer adding a second path rather than breaking the existing single-
-   adapter API — pcbnew's single-board 3D viewer must stay pristine.
-3. **OpenGL path** (`render_3d_opengl.cpp:1050-1118`): wrap footprint-
-   iteration and layer-draw blocks in an outer loop over instances;
-   left-multiply the footprint matrix by the instance transform.
-   Existing per-footprint matrix at line 1098-1118 is unchanged in form.
-4. **Raytracer path** (`create_scene.cpp:347`): apply per-instance
-   transform to the layer's BVH containers before compositing into the
-   raytracer scene. The BVH supports transform attach.
-5. Camera auto-frame uses `ASSEMBLY_3D_MANAGER::GetAssemblyBoundingBox()`
-   (already implemented; just needs to be consumed).
-6. Live transforms: panel position / rotation edits update the instance
-   transform and trigger `Redraw()` without rebuilding per-board
-   geometry (transforms are render-time).
-7. Visibility: per-instance `visible` flag skips its render pass; no
-   adapter teardown.
+OpenGL-path compositing with translation-only per-instance transforms.
 
-Deliverable: boards arranged flat / stacked / mated in one scene, with
-live transformation, existing AABB collision highlighting, and
-transparency per board.
+**What landed:**
+- `ASSEMBLY_3D_MANAGER` gained per-instance ownership:
+  `std::vector<std::unique_ptr<BOARD_ADAPTER>> m_instanceAdapters` +
+  `std::vector<std::unique_ptr<RENDER_3D_OPENGL>> m_instanceRenderers`,
+  aligned with `m_boardInstances`. New methods:
+  `InitRenderers(canvas, camera, s3dCache)` — lazy per-instance build;
+  `RedrawAll(isMoving, reporters)` — orchestrates the composite pass;
+  `RequestReload()` — invalidates every per-instance renderer's caches.
+- `RENDER_3D_OPENGL` gained two setters (default-off,
+  single-board mode untouched):
+  `SetAssemblyPose(glm::mat4)` — multiplied into the MODELVIEW after
+  the camera view is loaded; `SetSkipBufferClear(bool)` — skips glClear
+  of color/depth and the background gradient so subsequent instances
+  composite onto the framebuffer.
+- `EDA_3D_CANVAS::DoRePaint` routes through
+  `m_assemblyManager->RedrawAll(...)` when a manager is set and the
+  engine is OpenGL. Legacy single-board path unchanged when no manager.
+  New setter: `SetAssemblyManager(ASSEMBLY_3D_MANAGER*)`.
+- Assembly-mode frame constructor calls
+  `m_canvas->SetAssemblyManager(m_assemblyManager.get())` after
+  `setupFrame()`.
+- macOS `gl.h`-ordering fix: `3d_viewer_assembly.cpp` pre-includes
+  `<kicad_gl/kiglad.h>` to pre-empt system GL from being dragged in by
+  later headers.
+
+**Deliverable:** user opens a container in the manager → File → 3D
+Assembly Viewer → every sub-board renders at its flat-layout
+translation in one OpenGL scene. Visibility toggle skips a board's
+render pass. Panel position edits update instance translation and the
+next repaint shows the new position. 3D models load per-renderer
+(duplicated cache — acceptable for phase 1; deduped in phase 2).
+
+#### M6.C-phase-2 — deferred
+
+1. **Rotation / flip** — translation-only in phase 1. `BOARD_3D_INSTANCE.rotation`
+   is read but ignored by `RedrawAll`. Adding a rotation composition
+   to the pose matrix is a two-line change, but verifying it behaves
+   with the lighting/normal paths is its own small investment — land
+   together with M6.D connector-mating.
+2. **Raytracer multi-instance** — the raytracer path falls through to
+   rendering only the active instance (single-board via
+   `m_3d_render`). Full integration requires
+   `3d-viewer/3d_rendering/raytracing/create_scene.cpp` to compose
+   multiple BOARD_ADAPTERs' BVH containers with per-instance transform
+   attach. Scene-graph-level change, separate session.
+3. **3D model cache dedup** — each per-instance `RENDER_3D_OPENGL`
+   loads its own `m_3dModelMap`. For assemblies with many sub-boards
+   sharing 3D models (connectors, ICs), this duplicates the GPU
+   mesh cache. Share via a common cache keyed by model path.
+4. **Per-board reload throttling** — opening a 5-board container
+   currently blocks for ~5 × `BOARD_ADAPTER::InitSettings` (hundreds of
+   ms each). Load them in parallel or with a progress reporter.
+5. **Camera auto-frame on open** — wire `GetAssemblyBoundingBox()` into
+   the initial camera fit so the user sees the whole assembly instead
+   of whatever the default camera shows.
+6. **Visibility invalidation correctness** — when all instances are
+   hidden, the framebuffer is uncleared (no first pass runs). Add a
+   "nothing to render → still clear+background" branch.
 
 ### M6.D — Connector mating refinements (~1 session)
 

@@ -79,6 +79,7 @@
 #include "pcbnew_jobs_handler.h"
 
 #include <dialogs/panel_toolbar_customization.h>
+#include <3d_viewer/eda_3d_viewer_frame.h>
 #include <3d_viewer/toolbars_3d.h>
 #include <toolbars_footprint_editor.h>
 #include <toolbars_pcb_editor.h>
@@ -279,6 +280,25 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
 
         case FRAME_FOOTPRINT_PREVIEW:
             return FOOTPRINT_PREVIEW_PANEL::New( aKiway, aParent, this );
+
+        case FRAME_PCB_DISPLAY3D:
+        {
+            // Manager-driven launch of the multi-board 3D assembly viewer.
+            // The legacy single-board 3D viewer is created directly by
+            // PCB_BASE_FRAME::CreateAndShow3D_Frame() and bypasses this
+            // kiface dispatch, so this case fires only for the assembly
+            // path. Require a container project so we fail loudly rather
+            // than silently rendering the active sub-project instead.
+            PROJECT& prj = aKiway->Prj();
+
+            if( !prj.GetProjectFile().IsMultiBoardContainer() )
+            {
+                wxLogError( _( "3D Assembly viewer requires a multi-board container project." ) );
+                return nullptr;
+            }
+
+            return new EDA_3D_VIEWER_FRAME( aKiway, aParent, &prj, _( "3D Assembly" ) );
+        }
 
         case DIALOG_CONFIGUREPATHS:
         {

@@ -72,6 +72,23 @@ public:
     }
 
     /**
+     * Set a per-instance world transform applied between the camera view
+     * matrix and the layer/model draw passes. Used by the multi-board
+     * assembly orchestrator (M6.C) so one renderer can be drawn at
+     * different positions in a composite scene. Identity disables the
+     * offset. See also SetSkipBufferClear.
+     */
+    void SetAssemblyPose( const glm::mat4& aPose ) { m_assemblyPose = aPose; }
+
+    /**
+     * When true, Redraw skips the color+depth buffer clear so prior
+     * renderers' output survives into the composite. The first instance
+     * in an assembly render must clear; subsequent ones must not.
+     * Default false.
+     */
+    void SetSkipBufferClear( bool aSkip ) { m_skipBufferClear = aSkip; }
+
+    /**
      * Load footprint models if they are not already loaded, i.e. if m_3dModelMap is empty
      */
     void Load3dModelsIfNeeded();
@@ -291,6 +308,16 @@ private:
     SHAPE_POLY_SET m_antiBoardPolys; ///< The negative polygon representation of the board
                                      ///< outline.
     SPHERES_GIZMO* m_spheres_gizmo;
+
+    /// Per-instance world transform applied before layer/model draw.
+    /// Identity = no-op. Used by the multi-board assembly orchestrator
+    /// (M6.C). See SetAssemblyPose.
+    glm::mat4 m_assemblyPose = glm::mat4( 1.0f );
+
+    /// When true, Redraw skips the color/depth buffer clear so prior
+    /// renderers' output survives into the composite. See
+    /// SetSkipBufferClear.
+    bool      m_skipBufferClear = false;
 };
 
 #endif // RENDER_3D_OPENGL_H

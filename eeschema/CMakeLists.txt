@@ -34,6 +34,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/common/dialogs
     ${INC_AFTER}
     ./dialogs
+    ${CMAKE_SOURCE_DIR}/kicad
     ${CMAKE_SOURCE_DIR}/kicad/pcm
     ./libview
     ./symbol_editor

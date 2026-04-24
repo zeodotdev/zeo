@@ -32,7 +32,7 @@
 #include <unordered_map>
 
 #include <wildcards_and_files_ext.h>
-#include "project_template.h"
+#include <project_template.h>
 
 
 #define SEP wxFileName::GetPathSeparator()

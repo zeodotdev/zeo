@@ -36,7 +36,9 @@
 #include "3d_canvas/board_adapter.h"
 #include "3d_canvas/eda_3d_canvas.h"
 #include "3d_rendering/track_ball.h"
+#include <kiid.h>
 #include <kiway_player.h>
+#include <memory>
 #include <wx/colourdata.h>
 #include <dialogs/dialog_color_picker.h>  // for CUSTOM_COLORS_LIST definition
 
@@ -50,6 +52,9 @@ class SPNAV_VIEWER_PLUGIN;
 class NL_3D_VIEWER_PLUGIN;
 #endif
 class APPEARANCE_CONTROLS_3D;
+class ASSEMBLY_3D_MANAGER;
+class PANEL_3D_ASSEMBLY;
+class PROJECT;
 
 
 enum EDA_3D_VIEWER_STATUSBAR
@@ -75,14 +80,51 @@ enum class EDA_3D_VIEWER_EXPORT_FORMAT
 class EDA_3D_VIEWER_FRAME : public KIWAY_PLAYER
 {
 public:
+    /**
+     * Legacy single-board constructor. Parent is the pcbnew PCB_BASE_FRAME
+     * whose BOARD is rendered.
+     */
     EDA_3D_VIEWER_FRAME( KIWAY* aKiway, PCB_BASE_FRAME* aParent, const wxString& aTitle,
+                         long style = KICAD_DEFAULT_3D_DRAWFRAME_STYLE );
+
+    /**
+     * Multi-board assembly constructor. Parent is typically the
+     * KICAD_MANAGER_FRAME; @p aContainer is the multi-board container
+     * project (`IsMultiBoardContainer() == true`). The frame owns an
+     * ASSEMBLY_3D_MANAGER that loads every sub-project's BOARD and
+     * exposes them through PANEL_3D_ASSEMBLY.
+     *
+     * Per M6.B: multi-board rendering is still single-board at a time
+     * (the panel selects which sub-board is active). M6.C composites
+     * every instance in one scene.
+     */
+    EDA_3D_VIEWER_FRAME( KIWAY* aKiway, wxWindow* aParent, PROJECT* aContainer,
+                         const wxString& aTitle,
                          long style = KICAD_DEFAULT_3D_DRAWFRAME_STYLE );
 
     ~EDA_3D_VIEWER_FRAME();
 
-    PCB_BASE_FRAME* Parent() const { return (PCB_BASE_FRAME*)GetParent(); }
+    /// True iff the frame was constructed in multi-board assembly mode.
+    bool IsAssemblyMode() const { return m_assemblyManager != nullptr; }
 
-    BOARD* GetBoard() { return Parent()->GetBoard(); }
+    ASSEMBLY_3D_MANAGER* GetAssemblyManager() const { return m_assemblyManager.get(); }
+
+    /// Callback from PANEL_3D_ASSEMBLY when the user selects a different
+    /// sub-board. Retargets m_boardAdapter and triggers a rebuild.
+    void SetActiveAssemblyInstance( const KIID& aInstanceUuid );
+
+    /**
+     * Safe-cast accessor for the legacy PCB parent. Returns nullptr
+     * in assembly mode (where the parent is a KICAD_MANAGER_FRAME or
+     * other non-PCB wxWindow) so callers that depend on a PCB parent
+     * must branch on IsAssemblyMode() first.
+     */
+    PCB_BASE_FRAME* Parent() const
+    {
+        return IsAssemblyMode() ? nullptr : (PCB_BASE_FRAME*) GetParent();
+    }
+
+    BOARD* GetBoard();
 
     wxWindow* GetToolCanvas() const override { return m_canvas; }
 
@@ -133,6 +175,10 @@ public:
 
     void ToggleAppearanceManager();
 
+    /// Toggle visibility of PANEL_3D_ASSEMBLY (assembly-mode only).
+    /// No-op when the frame was constructed in single-board mode.
+    void ToggleAssemblyPanel();
+
     void OnDarkModeToggle();
 
     /**
@@ -152,6 +198,17 @@ protected:
     void setupUIConditions() override;
 
     void handleIconizeEvent( wxIconizeEvent& aEvent ) override;
+
+    /**
+     * Handle Kiway-routed mail. In assembly mode the frame is
+     * registered as a FRAME_PCB_DISPLAY3D peer, so MBSCH's cross-probe
+     * broadcasts (`$PART: "<ref>"` / `$PART: "<ref>" $PAD: "<pin>"`)
+     * land here. We auto-select the first sub-board instance that
+     * contains a footprint matching the referenced ref, via
+     * SetActiveAssemblyInstance. Single-board mode falls through to
+     * base default.
+     */
+    void KiwayMailIn( KIWAY_MAIL_EVENT& aEvent ) override;
 
 private:
     /// Called when user press the File->Exit
@@ -271,6 +328,11 @@ private:
     void saveImageToFile( const wxImage& screenshotImage, EDA_3D_VIEWER_EXPORT_FORMAT aFormat, const wxString& fullFileName );
 
 private:
+    /// Body shared by both constructors. Must be called after m_assemblyManager
+    /// is set (when entering assembly mode) so the initial GetBoard() call
+    /// from the tool environment / board adapter sees the right board.
+    void setupFrame();
+
     wxFileName                     m_defaultSaveScreenshotFileName;
 
     EDA_3D_CANVAS*                 m_canvas;
@@ -279,6 +341,17 @@ private:
     TRACK_BALL                     m_trackBallCamera;
 
     bool                           m_disable_ray_tracing;
+
+    /// Owned assembly manager. Non-null iff this frame is in multi-board
+    /// assembly mode; null for the legacy pcbnew single-board flow.
+    std::unique_ptr<ASSEMBLY_3D_MANAGER> m_assemblyManager;
+
+    /// Owned by the AUI manager; non-null iff in assembly mode.
+    PANEL_3D_ASSEMBLY*             m_assemblyPanel;
+
+    /// The assembly instance currently being rendered by m_boardAdapter.
+    /// Null KIID when no instance selected (e.g. empty container).
+    KIID                           m_activeInstanceUuid;
 
 #if defined(__linux__) || defined(__FreeBSD__)
     std::unique_ptr<SPNAV_VIEWER_PLUGIN> m_spaceMouse;

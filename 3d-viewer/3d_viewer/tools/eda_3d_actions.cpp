@@ -376,3 +376,11 @@ TOOL_ACTION EDA_3D_ACTIONS::showLayersManager( TOOL_ACTION_ARGS()
         .Icon( BITMAPS::layers_manager )
         .ToolbarState( TOOLBAR_STATE::TOGGLE ) );
 
+TOOL_ACTION EDA_3D_ACTIONS::showAssemblyPanel( TOOL_ACTION_ARGS()
+        .Name( "3DViewer.Control.showAssemblyPanel" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Show Assembly Panel" ) )
+        .Tooltip( _( "Show/hide the multi-board assembly panel" ) )
+        .Icon( BITMAPS::three_d )
+        .ToolbarState( TOOLBAR_STATE::TOGGLE ) );
+

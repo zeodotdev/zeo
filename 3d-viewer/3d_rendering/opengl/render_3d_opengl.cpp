@@ -597,16 +597,28 @@ bool RENDER_3D_OPENGL::Redraw( bool aIsMoving, REPORTER* aStatusReporter,
         glEnable( GL_MULTISAMPLE );
 
     // clear color and depth buffers
-    glClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
-    glClearDepth( 1.0f );
-    glClearStencil( 0x00 );
-    glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
+    //
+    // Assembly mode: the orchestrator sets SetSkipBufferClear(true) on
+    // all but the first instance so later instances composite onto the
+    // framebuffer left behind by the prior pass. Background draw is
+    // also skipped in that case — the first pass already painted it.
+    if( !m_skipBufferClear )
+    {
+        glClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
+        glClearDepth( 1.0f );
+        glClearStencil( 0x00 );
+        glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
 
-    OglResetTextureState();
+        OglResetTextureState();
 
-    // Draw the background ( rectangle with color gradient)
-    OglDrawBackground( premultiplyAlpha( m_boardAdapter.m_BgColorTop ),
-                       premultiplyAlpha( m_boardAdapter.m_BgColorBot ) );
+        // Draw the background ( rectangle with color gradient)
+        OglDrawBackground( premultiplyAlpha( m_boardAdapter.m_BgColorTop ),
+                           premultiplyAlpha( m_boardAdapter.m_BgColorBot ) );
+    }
+    else
+    {
+        OglResetTextureState();
+    }
 
     glEnable( GL_DEPTH_TEST );
 
@@ -616,6 +628,14 @@ bool RENDER_3D_OPENGL::Redraw( bool aIsMoving, REPORTER* aStatusReporter,
     glMatrixMode( GL_MODELVIEW );
     glLoadIdentity();
     glLoadMatrixf( glm::value_ptr( m_camera.GetViewMatrix() ) );
+
+    // Apply per-instance assembly pose (M6.C). Identity in single-board
+    // mode is a no-op. Multiplying into the modelview after the view
+    // matrix places this instance's geometry at its world position
+    // while keeping the camera global. Downstream footprint-model draw
+    // captures MODELVIEW into cameraViewMatrix (line ~780), so the pose
+    // flows through to 3D-model composition automatically.
+    glMultMatrixf( glm::value_ptr( m_assemblyPose ) );
 
     // Position the headlight
     setLightFront( true );

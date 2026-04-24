@@ -19,6 +19,7 @@
  */
 
 #include <wildcards_and_files_ext.h>
+#include <eda_base_frame.h>
 #include <env_vars.h>
 #include <executable_names.h>
 #include <pgm_base.h>
@@ -713,6 +714,109 @@ int KICAD_MANAGER_CONTROL::SpawnPeerSchematic( const TOOL_EVENT& aEvent )
                       _( "Open Failed" ), wxOK | wxICON_ERROR, m_frame );
         return 0;
     }
+
+    return 0;
+}
+
+
+int KICAD_MANAGER_CONTROL::OpenSubProjectSchematicById( const TOOL_EVENT& aEvent )
+{
+    KIID uuid = aEvent.Parameter<KIID>();
+
+    if( uuid == niluuid )
+        return 0;
+
+    if( !m_frame->SpawnPeerSchematicEditor( uuid ) )
+    {
+        wxMessageBox( _( "Failed to open the selected sub-board's schematic editor." ),
+                      _( "Open Failed" ), wxOK | wxICON_ERROR, m_frame );
+    }
+
+    return 0;
+}
+
+
+int KICAD_MANAGER_CONTROL::OpenSubProjectPcbById( const TOOL_EVENT& aEvent )
+{
+    KIID uuid = aEvent.Parameter<KIID>();
+
+    if( uuid == niluuid )
+        return 0;
+
+    if( !m_frame->SpawnPeerPcbEditor( uuid ) )
+    {
+        wxMessageBox( _( "Failed to open the selected sub-board's PCB editor." ),
+                      _( "Open Failed" ), wxOK | wxICON_ERROR, m_frame );
+    }
+
+    return 0;
+}
+
+
+int KICAD_MANAGER_CONTROL::OpenAssemblyViewer( const TOOL_EVENT& aEvent )
+{
+    PROJECT_FILE* multi = m_frame->GetMultiBoardProject();
+
+    if( !multi )
+    {
+        wxMessageBox( _( "The current session is not a multi-board project." ),
+                      _( "No Multi-Board Project" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    if( multi->GetSubProjects().empty() )
+    {
+        wxMessageBox( _( "This multi-board project has no sub-boards yet." ),
+                      _( "No Sub-Boards" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    // Reuse an existing assembly viewer launched from this manager if
+    // one is already open. Window name is qualified by the manager
+    // frame's name, distinct from any per-PCB 3D viewers that may also
+    // be open.
+    const wxString viewerName = QUALIFIED_VIEWER3D_FRAMENAME( m_frame );
+    wxWindow*      viewer     = wxWindow::FindWindowByName( viewerName );
+
+    if( !viewer )
+    {
+        // Dispatch through the pcbnew kiface (which already links against
+        // 3d-viewer) rather than instantiating EDA_3D_VIEWER_FRAME here.
+        // Bypasses Kiway's single-player cache so the manager-spawned
+        // assembly viewer doesn't collide with any concurrent single-
+        // board 3D viewer created from a PCB editor.
+        KIFACE* kiface = m_frame->Kiway().KiFACE( KIWAY::FACE_PCB, true );
+
+        if( !kiface )
+        {
+            wxLogError( _( "Could not load pcbnew kiface for 3D viewer." ) );
+            return -1;
+        }
+
+        viewer = dynamic_cast<wxWindow*>(
+                kiface->CreateKiWindow( m_frame, FRAME_PCB_DISPLAY3D, &m_frame->Kiway() ) );
+
+        if( !viewer )
+        {
+            wxLogError( _( "3D Assembly viewer could not be created." ) );
+            return -1;
+        }
+    }
+
+    // IsIconized/Iconize live on wxTopLevelWindow; the CreateKiWindow
+    // return is a wxWindow*, but the underlying object is always a
+    // frame. Cast up to reach the minimize-state API.
+    if( auto* tlw = dynamic_cast<wxTopLevelWindow*>( viewer ) )
+    {
+        if( tlw->IsIconized() )
+            tlw->Iconize( false );
+    }
+
+    viewer->Raise();
+    viewer->Show( true );
+
+    if( wxWindow::FindFocus() != viewer )
+        viewer->SetFocus();
 
     return 0;
 }
@@ -1481,8 +1585,14 @@ void KICAD_MANAGER_CONTROL::setTransitions()
     Go( &KICAD_MANAGER_CONTROL::SwitchSubBoard, KICAD_MANAGER_ACTIONS::switchSubBoard.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::SpawnPeerSchematic,
         KICAD_MANAGER_ACTIONS::spawnPeerSchematic.MakeEvent() );
+    Go( &KICAD_MANAGER_CONTROL::OpenSubProjectSchematicById,
+        KICAD_MANAGER_ACTIONS::openSubProjectSchematicById.MakeEvent() );
+    Go( &KICAD_MANAGER_CONTROL::OpenSubProjectPcbById,
+        KICAD_MANAGER_ACTIONS::openSubProjectPcbById.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::EditMultiBoardSchematic,
         KICAD_MANAGER_ACTIONS::editMultiBoardSchematic.MakeEvent() );
+    Go( &KICAD_MANAGER_CONTROL::OpenAssemblyViewer,
+        KICAD_MANAGER_ACTIONS::openAssemblyViewer.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::NewJobsetFile, KICAD_MANAGER_ACTIONS::newJobsetFile.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::OpenDemoProject, KICAD_MANAGER_ACTIONS::openDemoProject.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::OpenProject, KICAD_MANAGER_ACTIONS::openProject.MakeEvent() );

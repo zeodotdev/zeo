@@ -29,7 +29,7 @@
 #include "project_tree_pane.h"
 #include "local_history_pane.h"
 #include "widgets/bitmap_button.h"
-#include "dialogs/dialog_multi_board_setup.h"
+#include <dialogs/dialog_multi_board_setup.h>
 
 #include <advanced_config.h>
 #include <background_jobs_monitor.h>
@@ -537,6 +537,8 @@ void KICAD_MANAGER_FRAME::setupUIConditions()
             };
 
     manager->SetConditions( KICAD_MANAGER_ACTIONS::manageSubBoards,
+                            ACTION_CONDITIONS().Enable( multiBoardCond ) );
+    manager->SetConditions( KICAD_MANAGER_ACTIONS::openAssemblyViewer,
                             ACTION_CONDITIONS().Enable( multiBoardCond ) );
 
     auto historyCond =

@@ -105,9 +105,9 @@ set( QA_COMMON_SRCS
     # Graphics import tests
     test_graphics_importer_buffer.cpp
 
-    # Project template tests (source included directly since it's from kicad executable)
+    # Project template tests — project_template.cpp now lives in common
+    # and is pulled in transitively via the `common` link dep below.
     test_project_template.cpp
-    ${CMAKE_SOURCE_DIR}/kicad/project_template.cpp
 
     # Project file tests
     test_project_file.cpp

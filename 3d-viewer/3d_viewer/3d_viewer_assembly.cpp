@@ -21,8 +21,18 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+// kiglad must precede any other include that pulls in system gl.h,
+// otherwise glad refuses to load. render_3d_opengl.h transitively
+// includes kiglad, but other headers below (board.h, wx, etc.) may
+// drag system gl.h in first on macOS if we don't pre-empt them.
+#include <kicad_gl/kiglad.h>
+
 #include "3d_viewer_assembly.h"
 
+#include "3d_canvas/board_adapter.h"
+#include "3d_canvas/eda_3d_canvas.h"
+#include "3d_rendering/opengl/render_3d_opengl.h"
+#include <gal/3d/camera.h>
 #include <board.h>
 #include <board_design_settings.h>
 #include <footprint.h>
@@ -173,9 +183,19 @@ void ASSEMBLY_3D_MANAGER::Clear()
     if( m_project )
         m_project->RemoveDestroyHook( this );
 
+    // Tear down renderers BEFORE the instance BOARDs are destroyed —
+    // each renderer holds a BOARD_ADAPTER that references its BOARD.
+    m_instanceRenderers.clear();
+    m_instanceAdapters.clear();
+
     m_boardInstances.clear();
     m_lastCollisions.clear();
     m_project = nullptr;
+
+    // Camera cache is frame-owned; clear the pointer so a stale CAMERA*
+    // can't outlive its frame. Next InitRenderers re-caches.
+    m_camera = nullptr;
+    m_cameraFitPending = false;
 }
 
 
@@ -563,4 +583,221 @@ float ASSEMBLY_3D_MANAGER::GetBoardThickness( const BOARD* aBoard ) const
 
     const BOARD_DESIGN_SETTINGS& bds = aBoard->GetDesignSettings();
     return static_cast<float>( bds.GetBoardThickness() ) / 1000000.0f;
+}
+
+
+// ========== M6.C multi-instance rendering ==========
+
+void ASSEMBLY_3D_MANAGER::InitRenderers( EDA_3D_CANVAS* aCanvas, CAMERA& aCamera,
+                                          S3D_CACHE* a3DCache )
+{
+    if( !aCanvas )
+        return;
+
+    // Cache the camera for RedrawAll's post-reload fit override.
+    m_camera = &aCamera;
+
+    // The canvas's main BOARD_ADAPTER has already been wired up by the
+    // frame (LoadSettings → applySettings sets m_Cfg from
+    // GetAppSettings<EDA_3D_VIEWER_SETTINGS>). We share that same
+    // settings pointer with each per-instance adapter so layer
+    // visibility, colors, and render toggles stay consistent across
+    // the composite — and so the InitSettings call below has non-null
+    // m_Cfg to dereference.
+    EDA_3D_VIEWER_SETTINGS* sharedCfg = aCanvas->GetBoardAdapter().m_Cfg;
+
+    if( !sharedCfg )
+    {
+        // applySettings hasn't run yet. Skip this pass; DoRePaint will
+        // re-enter on the next paint, at which point cfg is available.
+        return;
+    }
+
+    // Grow per-instance vectors to match the instance list. Existing
+    // entries are preserved so already-initialized renderers stay warm
+    // across repeated calls (e.g. when Redraw re-enters on camera move).
+    m_instanceAdapters.resize( m_boardInstances.size() );
+    m_instanceRenderers.resize( m_boardInstances.size() );
+
+    for( size_t i = 0; i < m_boardInstances.size(); i++ )
+    {
+        BOARD_3D_INSTANCE& inst = m_boardInstances[i];
+
+        // Skip instances whose BOARD didn't load — they have nothing to
+        // render. Keeping the slot null lets the render loop skip.
+        if( !inst.board )
+            continue;
+
+        if( !m_instanceAdapters[i] )
+        {
+            m_instanceAdapters[i] = std::make_unique<BOARD_ADAPTER>();
+            m_instanceAdapters[i]->SetBoard( inst.board.get() );
+            m_instanceAdapters[i]->Set3dCacheManager( a3DCache );
+            m_instanceAdapters[i]->m_Cfg = sharedCfg;
+            // InitSettings builds layer polygons / BVH containers and is
+            // the expensive step (~100-500ms per board). We do it once
+            // per load, not per frame.
+            m_instanceAdapters[i]->InitSettings( nullptr, nullptr );
+        }
+
+        if( !m_instanceRenderers[i] )
+        {
+            m_instanceRenderers[i] = std::make_unique<RENDER_3D_OPENGL>(
+                    aCanvas, *m_instanceAdapters[i], aCamera );
+            m_instanceRenderers[i]->ReloadRequest();
+
+            // Fresh renderer → its reload() will call
+            // SetBoardLookAtPos with a local (sub-board) center, which
+            // is wrong for a composite. Mark the camera for re-fit
+            // after RedrawAll so we point at the assembly-wide center.
+            m_cameraFitPending = true;
+        }
+    }
+
+    // Compute the shared BIU→3D-unit factor once all per-instance
+    // adapters have initialized. Scope it to the LARGEST physical
+    // dimension across all instance boards in BIU, so the composite
+    // fits within RANGE_SCALE_3D units — matching how single-board
+    // rendering + camera defaults are tuned. Each per-instance pose
+    // (built in RedrawAll) scales its board's local 3D units into
+    // this shared space before applying the mm translation.
+    double maxDimBIU = 0.0;
+
+    for( const BOARD_3D_INSTANCE& inst : m_boardInstances )
+    {
+        if( !inst.board )
+            continue;
+
+        BOX2I bbox = inst.board->GetBoardEdgesBoundingBox();
+        double dimX = static_cast<double>( bbox.GetWidth() );
+        double dimY = static_cast<double>( bbox.GetHeight() );
+        maxDimBIU = std::max( { maxDimBIU, dimX, dimY } );
+    }
+
+    // Include the flat-layout X offset of the rightmost instance so
+    // the composite fits too. Positions are in mm; convert to BIU.
+    double maxRightEdgeBIU = 0.0;
+
+    for( const BOARD_3D_INSTANCE& inst : m_boardInstances )
+    {
+        if( !inst.board )
+            continue;
+
+        BOX2I  bbox = inst.board->GetBoardEdgesBoundingBox();
+        double posRightBIU =
+                static_cast<double>( inst.position.x ) * 1e6
+                + static_cast<double>( bbox.GetWidth() );
+        maxRightEdgeBIU = std::max( maxRightEdgeBIU, posRightBIU );
+    }
+
+    double assemblyExtentBIU = std::max( maxDimBIU, maxRightEdgeBIU );
+
+    if( assemblyExtentBIU > 0.0 )
+        m_sharedBiuTo3Dunits = RANGE_SCALE_3D / assemblyExtentBIU;
+    else
+        m_sharedBiuTo3Dunits = 1e-6;  // fallback: 1 unit = 1 mm
+}
+
+
+bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
+                                      REPORTER* aWarningReporter )
+{
+    bool requestAnother = false;
+    bool firstPass      = true;
+
+    for( size_t i = 0; i < m_boardInstances.size(); i++ )
+    {
+        const BOARD_3D_INSTANCE& inst = m_boardInstances[i];
+
+        if( !inst.visible || !inst.board )
+            continue;
+
+        if( i >= m_instanceRenderers.size() || !m_instanceRenderers[i] )
+            continue;
+
+        // Per-instance pose unifies the coordinate frame.
+        //
+        // Each BOARD_ADAPTER::InitSettings computes its own
+        // `biuTo3Dunits = RANGE_SCALE_3D / maxDim` to normalize that
+        // ONE board into ±4 local 3D units. So boards of different
+        // sizes live in incompatible scales — we can't just translate
+        // in mm and expect the geometry to line up.
+        //
+        // Fix: scale each instance from its local 3D frame into a
+        // shared frame (m_sharedBiuTo3Dunits), then translate by the
+        // instance's world position in shared units. Scale factor =
+        // shared/local_i; translation = pos_mm × 1e6 × shared.
+        const double localFactor = m_instanceAdapters[i]->BiuTo3dUnits();
+        const double scaleFactor = ( localFactor != 0.0 )
+                                       ? m_sharedBiuTo3Dunits / localFactor
+                                       : 1.0;
+        const float  sharedF     = static_cast<float>( m_sharedBiuTo3Dunits );
+        const float  biuPerMm    = 1.0e6f;
+
+        glm::mat4 pose = glm::mat4( 1.0f );
+        pose = glm::translate(
+                pose,
+                glm::vec3( inst.position.x * biuPerMm * sharedF,
+                           inst.position.y * biuPerMm * sharedF,
+                           inst.position.z * biuPerMm * sharedF ) );
+        pose = glm::scale( pose, glm::vec3( static_cast<float>( scaleFactor ) ) );
+
+        m_instanceRenderers[i]->SetAssemblyPose( pose );
+        m_instanceRenderers[i]->SetSkipBufferClear( !firstPass );
+
+        bool wants = m_instanceRenderers[i]->Redraw( aIsMoving, aStatusReporter,
+                                                      aWarningReporter );
+        requestAnother = requestAnother || wants;
+
+        firstPass = false;
+    }
+
+    // Nothing drew: the caller's framebuffer is untouched. That's
+    // visually empty but avoids a stale frame. The canvas still
+    // SwapsBuffers, so the user sees a blank viewport — expected when
+    // every instance is hidden or failed to load.
+
+    // Post-reload camera fit. Each per-instance reload() called
+    // SetBoardLookAtPos with its own local board center; the last
+    // one wins but is useless for a composite. Override with the
+    // assembly's shared-space bbox center.
+    if( m_cameraFitPending && m_camera && !firstPass )
+    {
+        SFVEC3F bboxMinMm, bboxMaxMm;
+        GetAssemblyBoundingBox( bboxMinMm, bboxMaxMm );
+
+        SFVEC3F centerMm = ( bboxMinMm + bboxMaxMm ) * 0.5f;
+        const float biuPerMm = 1.0e6f;
+        const float sharedF  = static_cast<float>( m_sharedBiuTo3Dunits );
+
+        SFVEC3F centerShared( centerMm.x * biuPerMm * sharedF,
+                              centerMm.y * biuPerMm * sharedF,
+                              centerMm.z * biuPerMm * sharedF );
+
+        m_camera->SetBoardLookAtPos( centerShared );
+        m_cameraFitPending = false;
+        requestAnother = true;
+    }
+
+    return requestAnother;
+}
+
+
+void ASSEMBLY_3D_MANAGER::RequestReload()
+{
+    for( auto& renderer : m_instanceRenderers )
+    {
+        if( renderer )
+            renderer->ReloadRequest();
+    }
+}
+
+
+void ASSEMBLY_3D_MANAGER::SetInstancesWindowSize( const wxSize& aSize )
+{
+    for( auto& renderer : m_instanceRenderers )
+    {
+        if( renderer )
+            renderer->SetCurWindowSize( aSize );
+    }
 }

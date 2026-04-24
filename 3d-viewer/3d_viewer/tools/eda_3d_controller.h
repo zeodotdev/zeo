@@ -82,6 +82,7 @@ public:
     int ToggleOrtho( const TOOL_EVENT& aEvent );
     int ToggleVisibility( const TOOL_EVENT& aEvent );
     int ToggleLayersManager( const TOOL_EVENT& aEvent );
+    int ToggleAssemblyPanel( const TOOL_EVENT& aEvent );
 
     int ReloadBoard( const TOOL_EVENT& aEvent );
     int ToggleRaytracing( const TOOL_EVENT& aEvent );

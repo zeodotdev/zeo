@@ -106,6 +106,30 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::editMultiBoardSchematic( TOOL_ACTION_ARGS()
                                                                     .Icon( BITMAPS::icon_eeschema ) );
 
 
+TOOL_ACTION KICAD_MANAGER_ACTIONS::openSubProjectSchematicById( TOOL_ACTION_ARGS()
+                                                                        .Name( "kicad.Control.openSubProjectSchematicById" )
+                                                                        .Scope( AS_GLOBAL )
+                                                                        .FriendlyName( _( "Open Sub-Board Schematic" ) )
+                                                                        .Tooltip( _( "Open a specific sub-board's schematic editor by UUID" ) )
+                                                                        .Icon( BITMAPS::icon_eeschema ) );
+
+
+TOOL_ACTION KICAD_MANAGER_ACTIONS::openSubProjectPcbById( TOOL_ACTION_ARGS()
+                                                                  .Name( "kicad.Control.openSubProjectPcbById" )
+                                                                  .Scope( AS_GLOBAL )
+                                                                  .FriendlyName( _( "Open Sub-Board PCB" ) )
+                                                                  .Tooltip( _( "Open a specific sub-board's PCB editor by UUID" ) )
+                                                                  .Icon( BITMAPS::icon_pcbnew ) );
+
+
+TOOL_ACTION KICAD_MANAGER_ACTIONS::openAssemblyViewer( TOOL_ACTION_ARGS()
+                                                               .Name( "kicad.Control.openAssemblyViewer" )
+                                                               .Scope( AS_GLOBAL )
+                                                               .FriendlyName( _( "3D Assembly Viewer" ) )
+                                                               .Tooltip( _( "Open the 3D assembly viewer for this multi-board project" ) )
+                                                               .Icon( BITMAPS::three_d ) );
+
+
 TOOL_ACTION KICAD_MANAGER_ACTIONS::openProject( TOOL_ACTION_ARGS()
                                                         .Name( "kicad.Control.openProject" )
                                                         .Scope( AS_GLOBAL )

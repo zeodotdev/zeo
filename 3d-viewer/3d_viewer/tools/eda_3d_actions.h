@@ -88,6 +88,7 @@ public:
     static TOOL_ACTION showBBoxes;
     static TOOL_ACTION showNavigator;
     static TOOL_ACTION showLayersManager;
+    static TOOL_ACTION showAssemblyPanel;
 };
 
 #endif

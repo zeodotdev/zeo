@@ -618,8 +618,14 @@ void MBSCH_EDIT_FRAME::crossProbeHighlightNet( const wxString& aNetName )
                                   TO_UTF8( ep.ref ), TO_UTF8( ep.pinNum ) );
         }
 
-        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, packet, this );
-        Kiway().ExpressMail( FRAME_SCH,        MAIL_CROSS_PROBE, packet, this );
+        Kiway().ExpressMail( FRAME_PCB_EDITOR,   MAIL_CROSS_PROBE, packet, this );
+        Kiway().ExpressMail( FRAME_SCH,          MAIL_CROSS_PROBE, packet, this );
+        // The 3D assembly viewer (when open alongside this MBSCH)
+        // registers itself as a FRAME_PCB_DISPLAY3D peer player.
+        // Single-board 3D viewers don't override KiwayMailIn, so they
+        // silently ignore this broadcast — only the assembly viewer
+        // acts on it.
+        Kiway().ExpressMail( FRAME_PCB_DISPLAY3D, MAIL_CROSS_PROBE, packet, this );
     }
 }
 

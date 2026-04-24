@@ -1170,6 +1170,43 @@ TOOL_ACTION SCH_ACTIONS::refreshMbsFromSubProjects( TOOL_ACTION_ARGS()
         .Tooltip( _( "Scan each sub-project and add any new connectors or pads that aren't yet on this multi-board schematic" ) )
         .Icon( BITMAPS::refresh ) );
 
+// Multi-board bridge actions — placeholder icons, swap later.
+
+TOOL_ACTION SCH_ACTIONS::mbsManageSubBoards( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.mbsManageSubBoards" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Manage Sub-Boards..." ) )
+        .Tooltip( _( "Add, remove, or inspect sub-boards in this multi-board project" ) )
+        .Icon( BITMAPS::new_project_from_template ) );
+
+TOOL_ACTION SCH_ACTIONS::mbsSyncCrossBoardNets( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.mbsSyncCrossBoardNets" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Sync Cross-Board Nets to PCBs" ) )
+        .Tooltip( _( "Write the multi-board schematic's cross-board nets into each sub-project's PCB connector pads" ) )
+        .Icon( BITMAPS::net_highlight ) );
+
+TOOL_ACTION SCH_ACTIONS::mbsOpenSubProjectSchematic( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.mbsOpenSubProjectSchematic" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Open Sub-Board Schematic..." ) )
+        .Tooltip( _( "Pick a sub-board from a list and open its schematic in a new editor window" ) )
+        .Icon( BITMAPS::icon_eeschema ) );
+
+TOOL_ACTION SCH_ACTIONS::mbsOpenSubProjectPcb( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.mbsOpenSubProjectPcb" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Open Sub-Board PCB..." ) )
+        .Tooltip( _( "Pick a sub-board from a list and open its PCB in a new editor window" ) )
+        .Icon( BITMAPS::icon_pcbnew ) );
+
+TOOL_ACTION SCH_ACTIONS::mbsOpen3DAssembly( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.mbsOpen3DAssembly" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "3D Assembly Viewer" ) )
+        .Tooltip( _( "Open the multi-board 3D assembly viewer alongside this MBSCH session" ) )
+        .Icon( BITMAPS::three_d ) );
+
 TOOL_ACTION SCH_ACTIONS::nextNetItem( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.nextNetItem" )
         .Scope( AS_GLOBAL )

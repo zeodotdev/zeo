@@ -28,7 +28,6 @@ set( KICAD_SRCS
     dialogs/dialog_update_notice.cpp
     dialogs/dialog_template_selector_base.cpp
     dialogs/dialog_template_selector.cpp
-    dialogs/dialog_multi_board_setup.cpp
     dialogs/dialog_edit_cfg.cpp
     dialogs/dialog_ai_assistant.cpp
     dialogs/panel_jobset_base.cpp
@@ -40,7 +39,6 @@ set( KICAD_SRCS
     kicad_manager_frame.cpp
     local_history_pane.cpp
     menubar.cpp
-    project_template.cpp
     project_tree_pane.cpp
     project_tree.cpp
     project_tree_item.cpp

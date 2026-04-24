@@ -136,11 +136,22 @@ std::optional<TOOLBAR_CONFIGURATION> MBSCH_EDIT_TOOLBAR_SETTINGS::DefaultToolbar
               .AppendAction( SCH_ACTIONS::mirrorV )
               .AppendAction( SCH_ACTIONS::mirrorH );
 
-        // MBS-specific: rescan sub-projects and add/update module
-        // blocks for newly-present connectors. Pulls any connector
-        // pin changes from the sub-project schematic into the MBS.
+        // Multi-board management group: surfaces the project-manager
+        // actions that make sense while the MBSCH is the active
+        // editor. Each delegates via SCH_EDITOR_CONTROL to the KiCad
+        // manager frame's tool manager so the handlers live in one
+        // place. Order: refresh pulls fresh pins in, sync pushes nets
+        // out, manage opens the setup dialog, and the Open SCH / PCB
+        // buttons show a picker for sub-board navigation (one board
+        // at a time — there's no Switch affordance because the
+        // active container is fixed for the MBSCH session).
         config.AppendSeparator()
-              .AppendAction( SCH_ACTIONS::refreshMbsFromSubProjects );
+              .AppendAction( SCH_ACTIONS::refreshMbsFromSubProjects )
+              .AppendAction( SCH_ACTIONS::mbsSyncCrossBoardNets )
+              .AppendAction( SCH_ACTIONS::mbsManageSubBoards )
+              .AppendAction( SCH_ACTIONS::mbsOpenSubProjectSchematic )
+              .AppendAction( SCH_ACTIONS::mbsOpenSubProjectPcb )
+              .AppendAction( SCH_ACTIONS::mbsOpen3DAssembly );
 
         break;
     }

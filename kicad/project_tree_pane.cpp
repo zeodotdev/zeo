@@ -82,7 +82,7 @@
 #include "kicad_id.h"
 #include "kicad_manager_frame.h"
 
-#include "project_template.h"
+#include <project_template.h>
 
 #include <build_version.h>
 #include <kiid.h>

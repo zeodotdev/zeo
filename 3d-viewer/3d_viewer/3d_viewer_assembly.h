@@ -26,13 +26,20 @@
 
 #include <kiid.h>
 #include <plugins/3dapi/xv3d_types.h>
+#include <wx/gdicmn.h>
 #include <wx/string.h>
 
 #include <memory>
 #include <vector>
 
 class BOARD;
+class BOARD_ADAPTER;
+class CAMERA;
+class EDA_3D_CANVAS;
 class PROJECT;
+class REPORTER;
+class RENDER_3D_OPENGL;
+class S3D_CACHE;
 
 
 /**
@@ -302,6 +309,50 @@ public:
      */
     void GetAssemblyBoundingBox( SFVEC3F& aMin, SFVEC3F& aMax ) const;
 
+    // ========== M6.C multi-instance rendering ==========
+
+    /**
+     * Lazily build a BOARD_ADAPTER + RENDER_3D_OPENGL pair per instance
+     * whose BOARD loaded successfully. Each adapter's InitSettings()
+     * runs once; geometry caches then stay warm across Redraws.
+     *
+     * Callable repeatedly — skips instances that already have renderers.
+     * Invoked by the canvas the first time it enters its assembly-mode
+     * render path and after Clear()/LoadProjectBoards().
+     */
+    void InitRenderers( EDA_3D_CANVAS* aCanvas, CAMERA& aCamera, S3D_CACHE* a3DCache );
+
+    /**
+     * Orchestrate a multi-instance render. For each visible instance
+     * whose renderer is built, applies an assembly pose matching the
+     * instance's position (translation only in M6.C-phase-1; rotation
+     * lands in M6.D), sets SetSkipBufferClear(false) on the first and
+     * (true) on subsequent instances, then calls each renderer's
+     * Redraw. Returns true if any renderer requested another redraw.
+     */
+    bool RedrawAll( bool aIsMoving, REPORTER* aStatusReporter, REPORTER* aWarningReporter );
+
+    /**
+     * Propagate the canvas's current window size to every per-instance
+     * renderer. RENDER_3D_OPENGL::Redraw uses m_windowSize for
+     * glViewport; without this each instance would render into a
+     * 0x0 viewport while the background still covers the full frame.
+     * Called by EDA_3D_CANVAS::DoRePaint before every composite.
+     */
+    void SetInstancesWindowSize( const wxSize& aSize );
+
+    /**
+     * Notify renderers that their underlying BOARD data changed and
+     * geometry caches must be rebuilt on next Redraw. Called after
+     * per-instance edits that affect rendering (e.g. mating snap).
+     * Pose changes do NOT require reload — they're applied at render
+     * time.
+     */
+    void RequestReload();
+
+    /// True iff at least one instance has a live renderer built.
+    bool HasRenderers() const { return !m_instanceRenderers.empty(); }
+
 private:
     /**
      * Calculate mating offset for a connector pair, addressed by
@@ -324,6 +375,34 @@ private:
     std::vector<COLLISION_RESULT>   m_lastCollisions;
     ASSEMBLY_STATE                  m_state;
     PROJECT*                        m_project;
+
+    // M6.C: per-instance render resources. Indices align with
+    // m_boardInstances. Entries are owned by the manager and destroyed
+    // via the out-of-line destructor in the .cpp so forward-declared
+    // BOARD_ADAPTER / RENDER_3D_OPENGL can be used here.
+    std::vector<std::unique_ptr<BOARD_ADAPTER>>     m_instanceAdapters;
+    std::vector<std::unique_ptr<RENDER_3D_OPENGL>>  m_instanceRenderers;
+
+    /// Non-owning. Cached from InitRenderers so RedrawAll can override
+    /// the per-instance reload's SetBoardLookAtPos calls with an
+    /// assembly-wide framing on first paint.
+    CAMERA*                         m_camera = nullptr;
+
+    /// One-shot: re-fit the camera to the assembly bbox after the next
+    /// full Redraw cycle. Set when renderers are freshly built (so the
+    /// per-instance reloads each call SetBoardLookAtPos); cleared after
+    /// we override with the assembly center.
+    bool                            m_cameraFitPending = false;
+
+    /// Shared BIU→3D-unit factor. Each BOARD_ADAPTER::InitSettings
+    /// computes its own per-board factor to fit that one board in
+    /// ±4 3D units; multi-board composite needs every instance to
+    /// share a consistent world scale. RedrawAll uses this to build a
+    /// per-instance pose = translate(worldPos_shared) *
+    /// scale(shared/local_i) which unifies the frames.
+    /// Initialized by InitRenderers once all per-instance adapters
+    /// have built their local factors.
+    double                          m_sharedBiuTo3Dunits = 1.0;
 };
 
 #endif // VIEWER_3D_ASSEMBLY_H

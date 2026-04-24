@@ -178,6 +178,17 @@ public:
     static TOOL_ACTION remapSymbols;
     static TOOL_ACTION refreshMbsFromSubProjects;
 
+    // Multi-board bridge actions — MBSCH-hosted buttons that delegate
+    // to the matching KICAD_MANAGER_ACTIONS on the KiCad manager frame.
+    // Kept under SCH_ACTIONS so they can be bound in SCH_EDITOR_CONTROL
+    // and surfaced from the MBSCH toolbar/menu without registering the
+    // project-manager tool inside eeschema.
+    static TOOL_ACTION mbsManageSubBoards;
+    static TOOL_ACTION mbsSyncCrossBoardNets;
+    static TOOL_ACTION mbsOpenSubProjectSchematic;
+    static TOOL_ACTION mbsOpenSubProjectPcb;
+    static TOOL_ACTION mbsOpen3DAssembly;
+
     static TOOL_ACTION nextNetItem;
     static TOOL_ACTION previousNetItem;
 

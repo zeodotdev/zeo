@@ -32,10 +32,16 @@
 #include <wx/dialog.h>
 #include "eda_3d_viewer_frame.h"
 #include "dialogs/appearance_controls_3D.h"
+#include "dialogs/panel_3d_assembly.h"
 #include <dialogs/eda_view_switcher.h>
 #include <eda_3d_viewer_settings.h>
 #include <3d_rendering/raytracing/render_3d_raytrace_ram.h>
+#include <3d_viewer/3d_viewer_assembly.h>
 #include <3d_viewer_id.h>
+#include <kiway.h>
+#include <kiway_mail.h>
+#include <mail_type.h>
+#include <footprint.h>
 #include <3d_viewer/tools/eda_3d_actions.h>
 #include <3d_viewer/tools/eda_3d_controller.h>
 #include <3d_viewer/tools/eda_3d_conditions.h>
@@ -100,9 +106,75 @@ EDA_3D_VIEWER_FRAME::EDA_3D_VIEWER_FRAME( KIWAY* aKiway, PCB_BASE_FRAME* aParent
                       wxDefaultSize, style, QUALIFIED_VIEWER3D_FRAMENAME( aParent ), unityScale ),
         m_canvas( nullptr ),
         m_currentCamera( m_trackBallCamera ),
-        m_trackBallCamera( 2 * RANGE_SCALE_3D )
+        m_trackBallCamera( 2 * RANGE_SCALE_3D ),
+        m_assemblyPanel( nullptr )
 {
-    wxLogTrace( m_logTrace, wxT( "EDA_3D_VIEWER_FRAME::EDA_3D_VIEWER_FRAME %s" ), aTitle );
+    setupFrame();
+}
+
+
+EDA_3D_VIEWER_FRAME::EDA_3D_VIEWER_FRAME( KIWAY* aKiway, wxWindow* aParent,
+                                          PROJECT* aContainer, const wxString& aTitle,
+                                          long style ) :
+        KIWAY_PLAYER( aKiway, aParent, FRAME_PCB_DISPLAY3D, aTitle, wxDefaultPosition,
+                      wxDefaultSize, style, QUALIFIED_VIEWER3D_FRAMENAME( aParent ), unityScale ),
+        m_canvas( nullptr ),
+        m_currentCamera( m_trackBallCamera ),
+        m_trackBallCamera( 2 * RANGE_SCALE_3D ),
+        m_assemblyPanel( nullptr )
+{
+    // Load sub-boards BEFORE setupFrame() so the initial GetBoard() call
+    // from the tool environment and the board adapter picks up the
+    // active instance's board.
+    m_assemblyManager = std::make_unique<ASSEMBLY_3D_MANAGER>();
+
+    if( aContainer )
+    {
+        m_assemblyManager->LoadProjectBoards( aContainer );
+
+        if( !m_assemblyManager->GetBoardInstances().empty() )
+            m_activeInstanceUuid = m_assemblyManager->GetBoardInstances().front().uuid;
+    }
+
+    setupFrame();
+
+    // Route the canvas's render path through the assembly manager
+    // (M6.C). The canvas owns the OpenGL context; the manager owns
+    // per-instance renderers. When the manager is set, the canvas
+    // iterates instances and composites them in a single frame.
+    m_canvas->SetAssemblyManager( m_assemblyManager.get() );
+
+    // Wire PANEL_3D_ASSEMBLY into the AUI layout on the left, distinct
+    // from the right-side appearance manager. Use "AssemblyPanel" as
+    // the pane name so layout state can be persisted per-frame.
+    m_assemblyPanel = new PANEL_3D_ASSEMBLY( this, m_assemblyManager.get() );
+    m_auimgr.AddPane( m_assemblyPanel, EDA_PANE().Name( "AssemblyPanel" )
+                      .Left().Layer( 4 )
+                      .Caption( _( "Assembly" ) ).PaneBorder( false )
+                      .MinSize( FromDIP( 220 ), -1 )
+                      .BestSize( FromDIP( 240 ), -1 ) );
+    m_auimgr.Update();
+
+    // Register as peer player so MBSCH's cross-probe broadcasts
+    // (Kiway().ExpressMail(FRAME_PCB_DISPLAY3D, ...)) actually reach
+    // this window. Without this, the assembly viewer is invisible to
+    // Kiway's mail router — the single-frame cache slot for
+    // FRAME_PCB_DISPLAY3D is taken (or unclaimed) by pcbnew's
+    // single-board viewer path, which bypasses Kiway entirely.
+    Kiway().RegisterPeerPlayer( FRAME_PCB_DISPLAY3D, GetId() );
+
+    Bind( wxEVT_CLOSE_WINDOW,
+          [this]( wxCloseEvent& aEvent )
+          {
+              Kiway().UnregisterPeerPlayer( FRAME_PCB_DISPLAY3D, GetId() );
+              aEvent.Skip();
+          } );
+}
+
+
+void EDA_3D_VIEWER_FRAME::setupFrame()
+{
+    wxLogTrace( m_logTrace, wxT( "EDA_3D_VIEWER_FRAME::setupFrame %s" ), GetTitle() );
 
     m_disable_ray_tracing = false;
     m_aboutTitle = _HKI( "Zeo 3D Viewer" );
@@ -230,6 +302,106 @@ EDA_3D_VIEWER_FRAME::~EDA_3D_VIEWER_FRAME()
 }
 
 
+BOARD* EDA_3D_VIEWER_FRAME::GetBoard()
+{
+    if( IsAssemblyMode() )
+    {
+        const BOARD_3D_INSTANCE* inst = m_assemblyManager->GetBoardInstance( m_activeInstanceUuid );
+        return inst ? inst->board.get() : nullptr;
+    }
+
+    PCB_BASE_FRAME* parent = Parent();
+    return parent ? parent->GetBoard() : nullptr;
+}
+
+
+void EDA_3D_VIEWER_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
+{
+    // Single-board mode: fall through to the default (no-op) base
+    // handler. Only the assembly viewer cares about cross-probe mail
+    // because only it has a concept of "which sub-board is active".
+    if( !IsAssemblyMode() || !m_assemblyManager )
+    {
+        KIWAY_PLAYER::KiwayMailIn( aEvent );
+        return;
+    }
+
+    if( aEvent.Command() != MAIL_CROSS_PROBE )
+    {
+        KIWAY_PLAYER::KiwayMailIn( aEvent );
+        return;
+    }
+
+    // MBSCH cross-probe payload format (see mbsch_edit_frame.cpp):
+    //   `$PART: "<ref>"`                — component highlight
+    //   `$PART: "<ref>" $PAD: "<pin>"`  — component + pad highlight
+    // The 3D viewer treats either as "focus the sub-board containing
+    // <ref>". Pad-level highlighting inside the board is M6.E.
+    const std::string& payload = aEvent.GetPayload();
+
+    const std::string partKey = "$PART: \"";
+    size_t partStart = payload.find( partKey );
+
+    if( partStart == std::string::npos )
+    {
+        KIWAY_PLAYER::KiwayMailIn( aEvent );
+        return;
+    }
+
+    partStart += partKey.size();
+    size_t partEnd = payload.find( '"', partStart );
+
+    if( partEnd == std::string::npos )
+    {
+        KIWAY_PLAYER::KiwayMailIn( aEvent );
+        return;
+    }
+
+    wxString ref = wxString::FromUTF8(
+            payload.substr( partStart, partEnd - partStart ).c_str() );
+
+    if( ref.IsEmpty() )
+        return;
+
+    // Find the first instance whose BOARD contains a footprint with
+    // this ref. Duplicate refs across sub-boards are an MBS-level
+    // error; we pick the first match deterministically.
+    for( const BOARD_3D_INSTANCE& inst : m_assemblyManager->GetBoardInstances() )
+    {
+        if( !inst.board )
+            continue;
+
+        if( inst.board->FindFootprintByReference( ref ) )
+        {
+            SetActiveAssemblyInstance( inst.uuid );
+            return;
+        }
+    }
+}
+
+
+void EDA_3D_VIEWER_FRAME::SetActiveAssemblyInstance( const KIID& aInstanceUuid )
+{
+    if( !IsAssemblyMode() )
+        return;
+
+    if( aInstanceUuid == m_activeInstanceUuid )
+        return;
+
+    m_activeInstanceUuid = aInstanceUuid;
+
+    // The OpenGL assembly path (M6.C) composites every visible instance
+    // every frame, so the "active" instance only matters for:
+    //   1. The raytracer fallback (renders just this one BOARD)
+    //   2. UI surfaces that read GetBoard() — layer manager, screenshot
+    //      default filename, etc.
+    // Repoint the legacy adapter at the new sub-board so those surfaces
+    // see the right data; the composite path doesn't use it.
+    m_canvas->ReloadRequest( GetBoard(), PROJECT_PCB::Get3DCacheManager( &Prj() ) );
+    NewDisplay( true );
+}
+
+
 void EDA_3D_VIEWER_FRAME::setupUIConditions()
 {
     EDA_BASE_FRAME::setupUIConditions();
@@ -313,6 +485,29 @@ void EDA_3D_VIEWER_FRAME::setupUIConditions()
 
     mgr->SetConditions( EDA_3D_ACTIONS::showLayersManager,
                         ACTION_CONDITIONS().Check( appearances ) );
+
+    // Assembly panel toggle: only enabled + visually meaningful in
+    // assembly mode. Check-state tracks pane visibility live so the
+    // toolbar button reflects hide/show correctly.
+    auto assemblyEnabled =
+            [this]( const SELECTION& )
+            {
+                return IsAssemblyMode() && m_assemblyPanel != nullptr;
+            };
+
+    auto assemblyPaneShown =
+            [this]( const SELECTION& )
+            {
+                if( !m_assemblyPanel )
+                    return false;
+
+                const wxAuiPaneInfo& pane = m_auimgr.GetPane( "AssemblyPanel" );
+                return pane.IsOk() && pane.IsShown();
+            };
+
+    mgr->SetConditions( EDA_3D_ACTIONS::showAssemblyPanel,
+                        ACTION_CONDITIONS().Enable( assemblyEnabled )
+                                           .Check( assemblyPaneShown ) );
 
 #undef GridSizeCheck
 }
@@ -662,6 +857,21 @@ void EDA_3D_VIEWER_FRAME::ToggleAppearanceManager()
 }
 
 
+void EDA_3D_VIEWER_FRAME::ToggleAssemblyPanel()
+{
+    if( !m_assemblyPanel )
+        return;
+
+    wxAuiPaneInfo& pane = m_auimgr.GetPane( "AssemblyPanel" );
+
+    if( !pane.IsOk() )
+        return;
+
+    pane.Show( !pane.IsShown() );
+    m_auimgr.Update();
+}
+
+
 void EDA_3D_VIEWER_FRAME::OnDarkModeToggle()
 {
     if( m_appearancePanel )
@@ -740,7 +950,7 @@ bool EDA_3D_VIEWER_FRAME::getExportFileName( EDA_3D_VIEWER_EXPORT_FORMAT& aForma
     const wxString wildcard = FILEEXT::JpegFileWildcard() + "|" + FILEEXT::PngFileWildcard();
 
     if( !m_defaultSaveScreenshotFileName.IsOk() )
-        m_defaultSaveScreenshotFileName = Parent()->Prj().GetProjectFullName();
+        m_defaultSaveScreenshotFileName = Prj().GetProjectFullName();
 
     // Set default extension based on current format
     const wxString defaultExt = ( aFormat == EDA_3D_VIEWER_EXPORT_FORMAT::JPEG ) ?

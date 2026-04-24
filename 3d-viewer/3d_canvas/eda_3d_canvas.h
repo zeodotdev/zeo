@@ -86,6 +86,19 @@ public:
     void ReloadRequest( BOARD* aBoard = nullptr, S3D_CACHE* aCachePointer = nullptr );
 
     /**
+     * Switch the canvas into multi-board assembly rendering mode
+     * (M6.C). When set, DoRePaint routes to
+     * ASSEMBLY_3D_MANAGER::RedrawAll instead of the single-board
+     * `m_3d_render->Redraw` path. Pass nullptr to revert.
+     *
+     * Caller retains ownership of @p aMgr; canvas holds a raw pointer.
+     * The frame guarantees the manager outlives the canvas.
+     */
+    void SetAssemblyManager( class ASSEMBLY_3D_MANAGER* aMgr ) { m_assemblyManager = aMgr; }
+
+    class ASSEMBLY_3D_MANAGER* GetAssemblyManager() const { return m_assemblyManager; }
+
+    /**
      * Query if there is a pending reload request.
      *
      * @return true if it wants to reload, false if there is no reload pending.
@@ -323,6 +336,12 @@ private:
 
     BOARD_ADAPTER&         m_boardAdapter;            // Pre-computed 3D info and settings
     RENDER_3D_BASE*        m_3d_render = nullptr;
+
+    /// Non-null when the canvas is in multi-board assembly mode (M6.C).
+    /// In that mode DoRePaint delegates rendering to the manager so it
+    /// can orchestrate per-instance Redraws with per-instance poses.
+    /// Raw pointer — the frame owns lifetime.
+    class ASSEMBLY_3D_MANAGER* m_assemblyManager = nullptr;
     RENDER_3D_RAYTRACE_GL* m_3d_render_raytracing;
     RENDER_3D_OPENGL*      m_3d_render_opengl;
 

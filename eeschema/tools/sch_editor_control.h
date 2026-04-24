@@ -76,6 +76,16 @@ public:
     int RemapSymbols( const TOOL_EVENT& aEvent );
     int RefreshMbsFromSubProjects( const TOOL_EVENT& aEvent );
 
+    // MBS bridge handlers: forward to the KiCad manager frame's tool
+    // manager so the multi-board actions surfaced in the MBSCH toolbar
+    // reuse the manager's existing handlers instead of duplicating
+    // them inside eeschema.
+    int MbsManageSubBoards( const TOOL_EVENT& aEvent );
+    int MbsSyncCrossBoardNets( const TOOL_EVENT& aEvent );
+    int MbsOpenSubProjectSchematic( const TOOL_EVENT& aEvent );
+    int MbsOpenSubProjectPcb( const TOOL_EVENT& aEvent );
+    int MbsOpen3DAssembly( const TOOL_EVENT& aEvent );
+
     bool RescueLegacyProject( bool aRunningOnDemand );
     bool RescueSymbolLibTableProject( bool aRunningOnDemand );
 

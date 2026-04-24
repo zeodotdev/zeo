@@ -479,6 +479,7 @@ set( COMMON_DLG_SRCS
     dialogs/dialog_hotkey_list.cpp
     dialogs/dialog_import_choose_project.cpp
     dialogs/dialog_import_choose_project_base.cpp
+    dialogs/dialog_multi_board_setup.cpp
     dialogs/dialog_multi_unit_entry.cpp
     dialogs/dialog_page_settings_base.cpp
     dialogs/dialog_paste_special.cpp
@@ -754,6 +755,7 @@ set( COMMON_SRCS
     remote_login_server.cpp
     status_popup.cpp
     stroke_params.cpp
+    project_template.cpp
     template_fieldnames.cpp
     textentry_tricks.cpp
     undo_redo_container.cpp
@@ -1015,6 +1017,8 @@ set( PCB_COMMON_SRCS
     ${CMAKE_SOURCE_DIR}/pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr_parser.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/pcb_io/eagle/pcb_io_eagle.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/pcb_io/geda/pcb_io_geda.cpp
+
+    ${CMAKE_SOURCE_DIR}/pcbnew/multi_board/sub_project_board_loader.cpp
 
     ${CMAKE_SOURCE_DIR}/pcbnew/tools/pcb_grid_helper.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/tools/pcb_actions.cpp

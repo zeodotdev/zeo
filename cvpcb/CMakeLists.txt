@@ -69,8 +69,8 @@ set_target_properties( cvpcb_kiface PROPERTIES
     SUFFIX          ${KIFACE_SUFFIX}
     )
 target_link_libraries( cvpcb_kiface
-    pcbcommon
     3d-viewer
+    pcbcommon
     gal
     common
     kimath

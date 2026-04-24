@@ -38,6 +38,15 @@ public:
     static TOOL_ACTION switchSubBoard;
     static TOOL_ACTION spawnPeerSchematic;
     static TOOL_ACTION editMultiBoardSchematic;
+
+    // Open a specific sub-project's SCH or PCB editor by UUID. Taken
+    // as a KIID parameter via aEvent.Parameter<KIID>(). Used by the
+    // MBSCH toolbar so the user can pick a sub-board from a list and
+    // delegate the actual editor-spawn to the manager, which owns the
+    // peer-frame registration and PROJECT override logic.
+    static TOOL_ACTION openSubProjectSchematicById;
+    static TOOL_ACTION openSubProjectPcbById;
+    static TOOL_ACTION openAssemblyViewer;
     static TOOL_ACTION newJobsetFile;
     static TOOL_ACTION openDemoProject;
     static TOOL_ACTION openProject;

@@ -25,7 +25,12 @@
 #include "tools/sch_editor_control.h"
 
 #include "multi_board_mbs_refresh.h"
+#include <eda_base_frame.h>
 #include <project/project_file.h>
+#include <project/cross_board_pcb_sync.h>
+#include <settings/settings_manager.h>
+#include <kiface_base.h>
+#include <dialogs/dialog_multi_board_setup.h>
 #include <wx/dir.h>
 #include <wx/display.h>
 #include <clipboard.h>
@@ -690,6 +695,333 @@ int SCH_EDITOR_CONTROL::RefreshMbsFromSubProjects( const TOOL_EVENT& aEvent )
 
     wxMessageBox( res.summary, _( "Refresh Module Blocks" ),
                   wxOK | wxICON_INFORMATION, m_frame );
+
+    return 0;
+}
+
+
+int SCH_EDITOR_CONTROL::MbsManageSubBoards( const TOOL_EVENT& aEvent )
+{
+    PROJECT_FILE& container = m_frame->Prj().GetProjectFile();
+
+    if( !container.IsMultiBoardContainer() )
+    {
+        wxMessageBox( _( "This session is not a multi-board project." ),
+                      _( "No Multi-Board Project" ), wxOK | wxICON_INFORMATION,
+                      m_frame );
+        return 0;
+    }
+
+    wxFileName containerFile( container.GetFullFilename() );
+
+    // Dialog now lives in common/dialogs so it's linkable from both
+    // the KiCad main binary and the eeschema kiface — previously it
+    // was compiled only into the manager, which left the MBSCH
+    // toolbar button nothing to call. Parented to MBSCH so it opens
+    // on top of the current editor without fighting for focus.
+    DIALOG_MULTI_BOARD_SETUP dlg( m_frame, &container, containerFile );
+    dlg.ShowModal();
+
+    // The dialog's Done handler saves, but do a safety save in case
+    // the user closed with the window chrome.
+    container.SaveToFile();
+
+    return 0;
+}
+
+
+int SCH_EDITOR_CONTROL::MbsSyncCrossBoardNets( const TOOL_EVENT& aEvent )
+{
+    PROJECT_FILE& container = m_frame->Prj().GetProjectFile();
+
+    if( !container.IsMultiBoardContainer() )
+    {
+        wxMessageBox( _( "This session is not a multi-board project." ),
+                      _( "No Multi-Board Project" ), wxOK | wxICON_INFORMATION,
+                      m_frame );
+        return 0;
+    }
+
+    // Reload cross-board nets from disk — they're written during the
+    // MBSCH save hook, but the in-memory PROJECT_FILE won't reflect
+    // them until a reload.
+    container.LoadFromFile();
+
+    if( container.GetCrossBoardNets().empty() )
+    {
+        wxMessageBox( _( "No cross-board nets are defined yet.\n\n"
+                         "Wire pins between module blocks on this sheet and "
+                         "save — the nets will be extracted automatically." ),
+                      _( "Nothing to Sync" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    MB_CROSS_BOARD_SYNC_RESULT result = ApplyCrossBoardNetsToSubProjectPCBs( container );
+
+    container.SaveToFile();
+
+    wxMessageBox( result.summary, _( "Cross-Board Net Sync" ),
+                  wxOK | wxICON_INFORMATION, m_frame );
+    return 0;
+}
+
+
+namespace
+{
+
+/**
+ * Show a sub-project picker rooted in the MBSCH frame. Returns the
+ * selected sub-project's UUID, or niluuid if the user cancelled or
+ * no sub-project could be resolved. Pulls the sub-project list off
+ * the container PROJECT_FILE (MBSCH's Prj() is pinned to the
+ * container by kicad_manager_control::EditMultiBoardSchematic).
+ */
+KIID pickSubProjectUuid( EDA_DRAW_FRAME* aFrame, const wxString& aTitle )
+{
+    PROJECT_FILE& prjFile  = aFrame->Prj().GetProjectFile();
+
+    if( !prjFile.IsMultiBoardContainer() )
+    {
+        wxMessageBox( _( "This session is not a multi-board project." ),
+                      _( "Multi-Board" ), wxOK | wxICON_INFORMATION, aFrame );
+        return niluuid;
+    }
+
+    const auto& subs = prjFile.GetSubProjects();
+
+    if( subs.empty() )
+    {
+        wxMessageBox( _( "This multi-board project has no sub-boards yet.\n"
+                         "Use 'Manage Sub-Boards...' to add one." ),
+                      _( "No Sub-Boards" ), wxOK | wxICON_INFORMATION, aFrame );
+        return niluuid;
+    }
+
+    wxArrayString     choices;
+    std::vector<KIID> uuids;
+
+    for( const SUB_PROJECT_INFO& info : subs )
+    {
+        wxString label = info.displayName.IsEmpty() ? info.name : info.displayName;
+        label += wxT( "   " );
+        label += info.relativePath;
+        choices.Add( label );
+        uuids.push_back( info.uuid );
+    }
+
+    wxSingleChoiceDialog dlg( aFrame, _( "Choose the sub-board to open:" ),
+                              aTitle, choices );
+
+    if( dlg.ShowModal() != wxID_OK )
+        return niluuid;
+
+    int picked = dlg.GetSelection();
+
+    if( picked < 0 || picked >= (int) uuids.size() )
+        return niluuid;
+
+    return uuids[picked];
+}
+
+} // anonymous namespace
+
+
+namespace
+{
+
+/**
+ * Open a sub-project's SCH or PCB editor as a peer frame, registered
+ * with the shared Kiway so cross-probes reach it. Zeo doesn't always
+ * run a KICAD_MANAGER_FRAME (the launcher is the Agent frame), so we
+ * can't delegate to the manager's SpawnPeerSchematicEditor /
+ * SpawnPeerPcbEditor. This replicates the same logic directly,
+ * usable from any frame that sits on the container PROJECT.
+ */
+bool spawnPeerEditor( EDA_DRAW_FRAME* aFrame, const KIID& aSubProjectUuid,
+                      bool aWantPcb )
+{
+    PROJECT_FILE& containerFile = aFrame->Prj().GetProjectFile();
+
+    if( !containerFile.IsMultiBoardContainer() )
+        return false;
+
+    const SUB_PROJECT_INFO* info = containerFile.GetSubProject( aSubProjectUuid );
+
+    if( !info )
+        return false;
+
+    wxFileName proFile = containerFile.ResolveSubProjectPath( *info );
+
+    if( !proFile.Exists() )
+        return false;
+
+    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+
+    if( !sm.LoadProject( proFile.GetFullPath(), /*aSetActive=*/false ) )
+        return false;
+
+    PROJECT* subProject = sm.GetProject( proFile.GetFullPath() );
+
+    if( !subProject )
+        return false;
+
+    FRAME_T targetFrameType = aWantPcb ? FRAME_PCB_EDITOR : FRAME_SCH;
+
+    // Focus an existing peer pinned to this sub-project rather than
+    // opening a duplicate.
+    for( KIWAY_PLAYER* existing : aFrame->Kiway().GetAllPlayerFrames( targetFrameType ) )
+    {
+        if( existing->GetPrjOverride() == subProject )
+        {
+            existing->Raise();
+            existing->SetFocus();
+            return true;
+        }
+    }
+
+    KIWAY::FACE_T face = aWantPcb ? KIWAY::FACE_PCB : KIWAY::FACE_SCH;
+    KIFACE*       kiface = aFrame->Kiway().KiFACE( face );
+
+    if( !kiface )
+        return false;
+
+    // C-style cast matches Kiway::Player()'s pattern — typeinfo has
+    // hidden visibility in kiface DSOs, making dynamic_cast from
+    // outside unreliable even though the hierarchy is correct.
+    KIWAY_PLAYER* player = (KIWAY_PLAYER*) kiface->CreateKiWindow(
+            aFrame, targetFrameType, &aFrame->Kiway(), 0 );
+
+    if( !player )
+        return false;
+
+    player->SetPrjOverride( subProject );
+    aFrame->Kiway().RegisterPeerPlayer( targetFrameType, player->GetId() );
+
+    wxWindowID playerId = player->GetId();
+    KIWAY*     kwPtr = &aFrame->Kiway();
+
+    player->Bind( wxEVT_CLOSE_WINDOW,
+                  [kwPtr, playerId, targetFrameType]( wxCloseEvent& aEvt )
+                  {
+                      kwPtr->UnregisterPeerPlayer( targetFrameType, playerId );
+                      aEvt.Skip();
+                  } );
+
+    wxFileName openFile = proFile;
+    openFile.SetExt( aWantPcb ? wxT( "kicad_pcb" ) : wxT( "kicad_sch" ) );
+
+    std::vector<wxString> files{ openFile.GetFullPath() };
+
+    if( !player->OpenProjectFiles( files ) )
+    {
+        aFrame->Kiway().UnregisterPeerPlayer( targetFrameType, playerId );
+        player->Destroy();
+        return false;
+    }
+
+    player->Show( true );
+    player->Raise();
+    player->SetFocus();
+    return true;
+}
+
+} // anonymous namespace
+
+
+int SCH_EDITOR_CONTROL::MbsOpenSubProjectSchematic( const TOOL_EVENT& aEvent )
+{
+    KIID uuid = pickSubProjectUuid( m_frame, _( "Open Sub-Board Schematic" ) );
+
+    if( uuid == niluuid )
+        return 0;
+
+    if( !spawnPeerEditor( m_frame, uuid, /*aWantPcb=*/false ) )
+    {
+        wxMessageBox( _( "Failed to open the selected sub-board's schematic." ),
+                      _( "Open Failed" ), wxOK | wxICON_ERROR, m_frame );
+    }
+
+    return 0;
+}
+
+
+int SCH_EDITOR_CONTROL::MbsOpenSubProjectPcb( const TOOL_EVENT& aEvent )
+{
+    KIID uuid = pickSubProjectUuid( m_frame, _( "Open Sub-Board PCB" ) );
+
+    if( uuid == niluuid )
+        return 0;
+
+    if( !spawnPeerEditor( m_frame, uuid, /*aWantPcb=*/true ) )
+    {
+        wxMessageBox( _( "Failed to open the selected sub-board's PCB." ),
+                      _( "Open Failed" ), wxOK | wxICON_ERROR, m_frame );
+    }
+
+    return 0;
+}
+
+
+int SCH_EDITOR_CONTROL::MbsOpen3DAssembly( const TOOL_EVENT& aEvent )
+{
+    PROJECT_FILE& container = m_frame->Prj().GetProjectFile();
+
+    if( !container.IsMultiBoardContainer() )
+    {
+        wxMessageBox( _( "This session is not a multi-board project." ),
+                      _( "No Multi-Board Project" ), wxOK | wxICON_INFORMATION,
+                      m_frame );
+        return 0;
+    }
+
+    if( container.GetSubProjects().empty() )
+    {
+        wxMessageBox( _( "This multi-board project has no sub-boards yet." ),
+                      _( "No Sub-Boards" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    // Reuse an existing assembly viewer spawned from this MBSCH frame,
+    // if any. QUALIFIED_VIEWER3D_FRAMENAME incorporates the parent
+    // window's name, so viewers launched from the manager vs. this
+    // MBSCH have distinct names and coexist.
+    const wxString viewerName = QUALIFIED_VIEWER3D_FRAMENAME( m_frame );
+    wxWindow*      viewer     = wxWindow::FindWindowByName( viewerName );
+
+    if( !viewer )
+    {
+        // Dispatch through the pcbnew kiface (which links 3d-viewer).
+        // eeschema's kiface does not, so we must not instantiate
+        // EDA_3D_VIEWER_FRAME directly here.
+        KIFACE* kiface = m_frame->Kiway().KiFACE( KIWAY::FACE_PCB, true );
+
+        if( !kiface )
+        {
+            wxLogError( _( "Could not load pcbnew kiface for 3D viewer." ) );
+            return -1;
+        }
+
+        viewer = dynamic_cast<wxWindow*>(
+                kiface->CreateKiWindow( m_frame, FRAME_PCB_DISPLAY3D, &m_frame->Kiway() ) );
+
+        if( !viewer )
+        {
+            wxLogError( _( "3D Assembly viewer could not be created." ) );
+            return -1;
+        }
+    }
+
+    if( wxTopLevelWindow* tlw = dynamic_cast<wxTopLevelWindow*>( viewer ) )
+    {
+        if( tlw->IsIconized() )
+            tlw->Iconize( false );
+    }
+
+    viewer->Raise();
+    viewer->Show( true );
+
+    if( wxWindow::FindFocus() != viewer )
+        viewer->SetFocus();
 
     return 0;
 }
@@ -3759,6 +4091,16 @@ void SCH_EDITOR_CONTROL::setTransitions()
     Go( &SCH_EDITOR_CONTROL::RemapSymbols, SCH_ACTIONS::remapSymbols.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::RefreshMbsFromSubProjects,
         SCH_ACTIONS::refreshMbsFromSubProjects.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::MbsManageSubBoards,
+        SCH_ACTIONS::mbsManageSubBoards.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::MbsSyncCrossBoardNets,
+        SCH_ACTIONS::mbsSyncCrossBoardNets.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::MbsOpenSubProjectSchematic,
+        SCH_ACTIONS::mbsOpenSubProjectSchematic.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::MbsOpen3DAssembly,
+        SCH_ACTIONS::mbsOpen3DAssembly.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::MbsOpenSubProjectPcb,
+        SCH_ACTIONS::mbsOpenSubProjectPcb.MakeEvent() );
 
     Go( &SCH_EDITOR_CONTROL::CrossProbeToPcb, EVENTS::PointSelectedEvent );
     Go( &SCH_EDITOR_CONTROL::CrossProbeToPcb, EVENTS::SelectedEvent );

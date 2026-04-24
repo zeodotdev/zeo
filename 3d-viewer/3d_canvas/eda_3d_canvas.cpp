@@ -33,6 +33,7 @@
 #include <eda_3d_viewer_frame.h>
 #include <3d_rendering/raytracing/render_3d_raytrace_gl.h>
 #include <3d_rendering/opengl/render_3d_opengl.h>
+#include <3d_viewer/3d_viewer_assembly.h>
 #include <3d_viewer_id.h>
 #include <advanced_config.h>
 #include <build_version.h>
@@ -519,8 +520,36 @@ void EDA_3D_CANVAS::DoRePaint()
                 reloadRaytracingForCalculations = true;
             }
 
-            requested_redraw = m_3d_render->Redraw( m_mouse_was_moved || m_camera_is_moving,
-                                                    &activityReporter, &warningReporter );
+            // M6.C: multi-board assembly rendering path. Only the
+            // OpenGL engine is composited at the moment — the raytracer
+            // falls through to its single-board path rendering the
+            // active instance (see SetActiveAssemblyInstance). Fleshing
+            // out the raytracer is M6.C-phase-2.
+            const bool assemblyComposite = m_assemblyManager
+                    && m_boardAdapter.m_Cfg->m_Render.engine == RENDER_ENGINE::OPENGL;
+
+            if( assemblyComposite )
+            {
+                m_assemblyManager->InitRenderers( this, m_camera,
+                                                  m_boardAdapter.Get3dCacheManager() );
+
+                // Each per-instance renderer needs the current window
+                // size — RENDER_3D_OPENGL::Redraw feeds m_windowSize
+                // into glViewport, and per-instance renderers were
+                // built fresh in InitRenderers with m_windowSize = (0,0).
+                // The main m_3d_render was already handled above but
+                // isn't consulted in the composite path.
+                m_assemblyManager->SetInstancesWindowSize( clientSize );
+
+                requested_redraw = m_assemblyManager->RedrawAll(
+                        m_mouse_was_moved || m_camera_is_moving,
+                        &activityReporter, &warningReporter );
+            }
+            else
+            {
+                requested_redraw = m_3d_render->Redraw( m_mouse_was_moved || m_camera_is_moving,
+                                                        &activityReporter, &warningReporter );
+            }
 
             // Raytracer renderer is responsible for some features also used by the OpenGL
             // renderer.
@@ -946,8 +975,15 @@ void EDA_3D_CANVAS::OnRotateGesture( wxRotateGestureEvent& aEvent )
 
 void EDA_3D_CANVAS::OnMouseMove( wxMouseEvent& event )
 {
-    if( m_3d_render && m_3d_render->IsReloadRequestPending() )
-        return; // Prevents using invalid m_3d_render_raytracing data
+    // The pending-reload gate guards against dereferencing half-
+    // initialized raytracer data during a reload. In assembly mode
+    // our per-instance renderers drive their own reload lifecycle;
+    // the main m_3d_render_opengl is never Redraw'd, so its
+    // m_reloadRequested flag stays true forever. Bypassing the gate
+    // here lets drag events reach the camera — the per-instance
+    // render path doesn't share the staleness concern.
+    if( !m_assemblyManager && m_3d_render && m_3d_render->IsReloadRequestPending() )
+        return;
 
     if( m_camera_is_moving )
         return;

@@ -284,6 +284,15 @@ void PANEL_3D_ASSEMBLY::onBoardSelected( wxCommandEvent& aEvent )
 {
     m_selectedBoardIndex = m_boardListBox->GetSelection();
     UpdateSelectedBoardControls();
+
+    // Repoint the frame's 3D adapter at the newly-selected sub-board.
+    // Pre-M6.C: only one instance renders at a time; selection drives
+    // which. Panel still tracks every instance for layout/mating.
+    if( m_frame && m_selectedBoardIndex != wxNOT_FOUND
+        && m_selectedBoardIndex < static_cast<int>( m_boardUuids.size() ) )
+    {
+        m_frame->SetActiveAssemblyInstance( m_boardUuids[m_selectedBoardIndex] );
+    }
 }
 
 

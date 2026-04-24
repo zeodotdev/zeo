@@ -50,7 +50,10 @@ public:
     int SyncCrossBoardNets( const TOOL_EVENT& aEvent );
     int SwitchSubBoard( const TOOL_EVENT& aEvent );
     int SpawnPeerSchematic( const TOOL_EVENT& aEvent );
+    int OpenSubProjectSchematicById( const TOOL_EVENT& aEvent );
+    int OpenSubProjectPcbById( const TOOL_EVENT& aEvent );
     int EditMultiBoardSchematic( const TOOL_EVENT& aEvent );
+    int OpenAssemblyViewer( const TOOL_EVENT& aEvent );
     int NewJobsetFile( const TOOL_EVENT& aEvent );
     int OpenProject( const TOOL_EVENT& aEvent );
     int OpenDemoProject( const TOOL_EVENT& aEvent );

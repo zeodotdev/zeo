@@ -705,6 +705,25 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
     bool requestAnother = false;
     bool firstPass      = true;
 
+    // Compute the assembly bbox center in shared-space coordinates and
+    // use it as an offset on every instance pose. This centres the
+    // full composite at world origin (where the camera's default
+    // look-at lives) — keeps rotation pivoting around the boards, no
+    // need to override SetBoardLookAtPos.
+    //
+    // Y is negated: BOARD_ADAPTER inverts Y when projecting BIU into
+    // 3D space (line 367 of board_adapter.cpp), so a KiCad +Y renders
+    // at 3D −Y. GetAssemblyBoundingBox + inst.position are in KiCad
+    // (mm) space, so we flip the sign here to get render-space.
+    SFVEC3F bboxMinMm, bboxMaxMm;
+    GetAssemblyBoundingBox( bboxMinMm, bboxMaxMm );
+    const SFVEC3F centerMm = ( bboxMinMm + bboxMaxMm ) * 0.5f;
+    const float   sharedF  = static_cast<float>( m_sharedBiuTo3Dunits );
+    const float   biuPerMm = 1.0e6f;
+    const glm::vec3 centerShared(  centerMm.x * biuPerMm * sharedF,
+                                  -centerMm.y * biuPerMm * sharedF,
+                                   centerMm.z * biuPerMm * sharedF );
+
     for( size_t i = 0; i < m_boardInstances.size(); i++ )
     {
         const BOARD_3D_INSTANCE& inst = m_boardInstances[i];
@@ -715,31 +734,30 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
         if( i >= m_instanceRenderers.size() || !m_instanceRenderers[i] )
             continue;
 
-        // Per-instance pose unifies the coordinate frame.
+        // Per-instance pose unifies coordinate frames.
         //
         // Each BOARD_ADAPTER::InitSettings computes its own
-        // `biuTo3Dunits = RANGE_SCALE_3D / maxDim` to normalize that
-        // ONE board into ±4 local 3D units. So boards of different
-        // sizes live in incompatible scales — we can't just translate
-        // in mm and expect the geometry to line up.
+        // `biuTo3Dunits = RANGE_SCALE_3D / maxDim` — boards of
+        // different sizes live in incompatible local scales.
         //
-        // Fix: scale each instance from its local 3D frame into a
-        // shared frame (m_sharedBiuTo3Dunits), then translate by the
-        // instance's world position in shared units. Scale factor =
-        // shared/local_i; translation = pos_mm × 1e6 × shared.
+        // We map each instance from its local 3D frame into the
+        // shared frame, then translate by its world position, minus
+        // the assembly-center offset so the whole composite sits at
+        // the origin (matching the camera's default look-at).
+        //
+        //   pose = translate(instancePosShared - assemblyCenterShared)
+        //        × scale(shared / local_i)
         const double localFactor = m_instanceAdapters[i]->BiuTo3dUnits();
         const double scaleFactor = ( localFactor != 0.0 )
                                        ? m_sharedBiuTo3Dunits / localFactor
                                        : 1.0;
-        const float  sharedF     = static_cast<float>( m_sharedBiuTo3Dunits );
-        const float  biuPerMm    = 1.0e6f;
+
+        const glm::vec3 instShared(  inst.position.x * biuPerMm * sharedF,
+                                    -inst.position.y * biuPerMm * sharedF,
+                                     inst.position.z * biuPerMm * sharedF );
 
         glm::mat4 pose = glm::mat4( 1.0f );
-        pose = glm::translate(
-                pose,
-                glm::vec3( inst.position.x * biuPerMm * sharedF,
-                           inst.position.y * biuPerMm * sharedF,
-                           inst.position.z * biuPerMm * sharedF ) );
+        pose = glm::translate( pose, instShared - centerShared );
         pose = glm::scale( pose, glm::vec3( static_cast<float>( scaleFactor ) ) );
 
         m_instanceRenderers[i]->SetAssemblyPose( pose );
@@ -757,26 +775,49 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
     // SwapsBuffers, so the user sees a blank viewport — expected when
     // every instance is hidden or failed to load.
 
-    // Post-reload camera fit. Each per-instance reload() called
-    // SetBoardLookAtPos with its own local board center; the last
-    // one wins but is useless for a composite. Override with the
-    // assembly's shared-space bbox center.
-    if( m_cameraFitPending && m_camera && !firstPass )
+    // Each per-instance reload() overwrites the camera look-at with
+    // its local board center. We centered the composite at world
+    // origin via the pose above, so force the look-at back to origin
+    // so rotation pivots around the boards (not wherever the last
+    // renderer's reload happened to set it).
+    if( m_camera && m_cameraFitPending && !firstPass )
     {
-        SFVEC3F bboxMinMm, bboxMaxMm;
-        GetAssemblyBoundingBox( bboxMinMm, bboxMaxMm );
-
-        SFVEC3F centerMm = ( bboxMinMm + bboxMaxMm ) * 0.5f;
-        const float biuPerMm = 1.0e6f;
-        const float sharedF  = static_cast<float>( m_sharedBiuTo3Dunits );
-
-        SFVEC3F centerShared( centerMm.x * biuPerMm * sharedF,
-                              centerMm.y * biuPerMm * sharedF,
-                              centerMm.z * biuPerMm * sharedF );
-
-        m_camera->SetBoardLookAtPos( centerShared );
+        m_camera->SetBoardLookAtPos( SFVEC3F( 0.0f, 0.0f, 0.0f ) );
         m_cameraFitPending = false;
         requestAnother = true;
+    }
+
+    // All-hidden case: nothing drew, so nothing cleared. Clear to the
+    // adapter's bg-bottom color so the viewport shows the normal
+    // background instead of a stale frame or a black flash.
+    if( firstPass )
+    {
+        const BOARD_ADAPTER* refAdapter = nullptr;
+
+        for( const auto& adapter : m_instanceAdapters )
+        {
+            if( adapter )
+            {
+                refAdapter = adapter.get();
+                break;
+            }
+        }
+
+        if( refAdapter )
+        {
+            glClearColor( refAdapter->m_BgColorBot.r,
+                          refAdapter->m_BgColorBot.g,
+                          refAdapter->m_BgColorBot.b,
+                          refAdapter->m_BgColorBot.a );
+        }
+        else
+        {
+            glClearColor( 0.25f, 0.25f, 0.35f, 1.0f );
+        }
+
+        glClearDepth( 1.0f );
+        glClearStencil( 0x00 );
+        glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
     }
 
     return requestAnother;

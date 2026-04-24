@@ -380,9 +380,31 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
         else
         {
             // We're well and truly banjaxed if we get here without a fallback.
-            DisplayErrorMessage( m_parent, _( "Graphics error" ), wxString( err.what() ) );
-
+            // After sleep/wake on macOS the GL context can be invalidated and
+            // every paint cycle throws — showing a modal dialog pumps the
+            // event loop, which fires another paint, which throws, which shows
+            // another dialog, and the user ends up stacking infinite pop-ups.
+            // Stop drawing immediately, then rate-limit the dialog so the
+            // cascade is broken even if paints keep firing.
             StopDrawing();
+
+            static wxLongLong s_lastGfxErrorMs = 0;
+            static const long GFX_ERROR_COOLDOWN_MS = 30000;  // 30 s
+            wxLongLong nowMs = wxGetUTCTimeMillis();
+
+            if( s_lastGfxErrorMs == 0
+                || ( nowMs - s_lastGfxErrorMs ).GetValue() > GFX_ERROR_COOLDOWN_MS )
+            {
+                s_lastGfxErrorMs = nowMs;
+                DisplayErrorMessage( m_parent, _( "Graphics error" ),
+                                     wxString( err.what() ) );
+            }
+            else
+            {
+                wxLogTrace( wxT( "KICAD_GAL_OPENGL_ERROR" ),
+                            wxT( "Suppressing graphics error dialog (cooldown): %s" ),
+                            err.what() );
+            }
         }
     }
 

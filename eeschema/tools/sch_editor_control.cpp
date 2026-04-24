@@ -25,6 +25,7 @@
 #include "tools/sch_editor_control.h"
 
 #include "multi_board_mbs_refresh.h"
+#include "dialogs/dialog_mbs_refresh.h"
 #include <eda_base_frame.h>
 #include <project/project_file.h>
 #include <project/cross_board_pcb_sync.h>
@@ -688,7 +689,24 @@ int SCH_EDITOR_CONTROL::RefreshMbsFromSubProjects( const TOOL_EVENT& aEvent )
         return 0;
     }
 
-    MBS_REFRESH_RESULT res = ::RefreshMbsFromSubProjects( *rootScreen, multi );
+    // Compute a diff first so we can show the user a preview with
+    // per-row checkboxes (add/remove/rename/drift) before anything on
+    // the MBS is mutated. Apply only the rows the user leaves checked.
+    std::vector<MBS_CHANGE> changes = ComputeMbsRefreshDiff( *rootScreen, multi );
+
+    DIALOG_MBS_REFRESH dlg( m_frame, changes );
+
+    if( dlg.ShowModal() != wxID_OK )
+        return 0;
+
+    MBS_REFRESH_RESULT res = ApplyMbsRefreshChanges( *rootScreen, changes );
+
+    if( res.blocksAdded == 0 && res.blocksRemoved == 0 && res.pinsAdded == 0
+        && res.pinsRemoved == 0 && res.pinsRenamed == 0 && res.pathsUpdated == 0
+        && res.uuidsStamped == 0 )
+    {
+        return 0;
+    }
 
     m_frame->OnModify();
     m_frame->GetCanvas()->Refresh( true );

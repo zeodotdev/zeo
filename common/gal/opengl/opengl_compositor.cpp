@@ -405,6 +405,27 @@ void OPENGL_COMPOSITOR::bindFb( unsigned int aFb )
             return;
         }
 
+        // After sleep/wake the FBO id can still be valid (so glBindFramebuffer
+        // succeeds) but the attachments may have been lost.  In that case the
+        // very next render call (glDrawBuffer/glClear/...) fails with
+        // GL_INVALID_FRAMEBUFFER_OPERATION and floods the user with dialogs.
+        // Catch that here and trigger reinit instead — but ONLY once buffers
+        // exist, since during Initialize()/CreateBuffer() the FBO is
+        // intentionally incomplete while attachments are being built up.
+        if( aFb != DIRECT_RENDERING && !m_buffers.empty() )
+        {
+            GLenum status = glCheckFramebufferStatus( GL_FRAMEBUFFER );
+
+            if( status != GL_FRAMEBUFFER_COMPLETE )
+            {
+                wxLogTrace( wxT( "KICAD_GAL_OPENGL_ERROR" ),
+                            wxT( "bindFb: framebuffer incomplete (status=0x%X), "
+                                 "marking compositor for reinit" ), status );
+                m_initialized = false;
+                return;
+            }
+        }
+
         m_curFbo = aFb;
     }
 }

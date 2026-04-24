@@ -190,6 +190,15 @@ void EDA_3D_CANVAS::releaseOpenGL()
         GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
         gl_mgr->LockCtx( m_glRC, this );
 
+        // Tear down the assembly manager's per-instance renderers
+        // while the context is current. Otherwise their destructors
+        // (glDeleteTextures + freeAllLists) run against whatever
+        // context happens to be current globally — corrupting OTHER
+        // OpenGL windows (GAL editors, MBS canvas). See M6.C teardown
+        // note in ASSEMBLY_3D_MANAGER::ReleaseOpenGL.
+        if( m_assemblyManager )
+            m_assemblyManager->ReleaseOpenGL();
+
         delete m_3d_render_raytracing;
         m_3d_render_raytracing = nullptr;
 

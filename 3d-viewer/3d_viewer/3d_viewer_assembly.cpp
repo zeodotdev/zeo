@@ -370,10 +370,11 @@ void ASSEMBLY_3D_MANAGER::MateConnectors()
     PROJECT_FILE& projectFile = m_project->GetProjectFile();
 
     // For each cross-board net with at least two endpoints, anchor the
-    // first endpoint's instance and snap the second endpoint's instance
-    // so the two pads coincide (with a connector-height gap in Z).
-    // Endpoints beyond the second are ignored at this stage; multi-way
-    // mating is M6.D's domain.
+    // first endpoint's instance (inst1) and snap the second (inst2)
+    // so the pads physically mate — with the right layer-aware flip
+    // so connectors face each other rather than both pointing the
+    // same way. Endpoints beyond the second are ignored for now;
+    // multi-way nets are M6.D+.
     for( const MB_CROSS_BOARD_NET& net : projectFile.GetCrossBoardNets() )
     {
         if( net.endpoints.size() < 2 )
@@ -396,12 +397,78 @@ void ASSEMBLY_3D_MANAGER::MateConnectors()
         if( !inst1 || !inst2 || !inst1->board || !inst2->board )
             continue;
 
-        SFVEC3F offset = CalculateMatingOffset( *inst1, *inst2,
-                                                ep1.componentRef, ep1.pinNumber,
-                                                ep2.componentRef, ep2.pinNumber );
+        FOOTPRINT* fp1 = findFootprintByRef( inst1->board.get(), ep1.componentRef );
+        FOOTPRINT* fp2 = findFootprintByRef( inst2->board.get(), ep2.componentRef );
 
-        // Snap inst2 relative to inst1.
-        inst2->position = inst1->position + offset;
+        if( !fp1 || !fp2 )
+            continue;
+
+        PAD* pad1 = findPadByNumber( fp1, ep1.pinNumber );
+        PAD* pad2 = findPadByNumber( fp2, ep2.pinNumber );
+
+        // Pad positions are in BIU (KiCad 2D space, before Y
+        // inversion). Prefer pad centers; fall back to footprint
+        // anchor when a specific pin can't be resolved.
+        VECTOR2I pos1 = pad1 ? pad1->GetPosition() : fp1->GetPosition();
+        VECTOR2I pos2 = pad2 ? pad2->GetPosition() : fp2->GetPosition();
+
+        // Layer detection: each connector's pad sits on F_Cu (top face
+        // of its board) or B_Cu (bottom face). The connector's
+        // "normal" points away from its board along that face.
+        //   pad1 on F_Cu → connector points +Z from inst1
+        //   pad1 on B_Cu → connector points −Z
+        //   (same for pad2 / inst2)
+        //
+        // For the connectors to physically meet, their normals must
+        // be anti-parallel. Two possibilities:
+        //
+        //   1. Pads on OPPOSITE copper sides already → no flip; stack
+        //      inst2 on the side pad1 points toward.
+        //
+        //   2. Pads on the SAME side → flip inst2 by 180° about X so
+        //      its connector normal inverts. After the flip, pad2's
+        //      local Y mirrors around the board centroid, so the XY
+        //      alignment formula changes sign on Y.
+        const bool pad1OnTop = pad1 ? !pad1->IsOnLayer( B_Cu ) : true;
+        const bool pad2OnTop = pad2 ? !pad2->IsOnLayer( B_Cu ) : true;
+        const bool sameSide  = ( pad1OnTop == pad2OnTop );
+
+        // Thickness + fallback 5 mm connector height. M6.D will read
+        // the connector's 3D-model height from S3D_CACHE.
+        const float thickness1      = GetBoardThickness( inst1->board.get() );
+        const float thickness2      = GetBoardThickness( inst2->board.get() );
+        const float connectorHeight = 5.0f;
+        const float zGap            = thickness1 * 0.5f + thickness2 * 0.5f + connectorHeight;
+
+        float dx = ( pos1.x - pos2.x ) / 1000000.0f;
+        float dy;
+        float dz;
+
+        if( sameSide )
+        {
+            // inst2 flipped 180° about X through its own centroid.
+            // After the flip, pad2's rendered Y uses +pad2.y instead
+            // of −pad2.y (see pose math in RedrawAll), so the XY
+            // alignment with pad1 reverses sign on the pad2 term.
+            dy = ( pos1.y + pos2.y ) / 1000000.0f;
+
+            // Z direction: put inst2 on the side pad1 faces. Because
+            // inst2 was flipped, its F_Cu now sits at the bottom of
+            // the flipped board; the connector on (originally) F_Cu
+            // now points −Z locally → after flip, +Z in world.
+            dz = pad1OnTop ? zGap : -zGap;
+
+            inst2->rotation = SFVEC3F( 180.0f, 0.0f, 0.0f );
+        }
+        else
+        {
+            // Opposite sides — connectors already face each other.
+            dy = ( pos1.y - pos2.y ) / 1000000.0f;
+            dz = pad1OnTop ? zGap : -zGap;
+            inst2->rotation = SFVEC3F( 0.0f, 0.0f, 0.0f );
+        }
+
+        inst2->position = inst1->position + SFVEC3F( dx, dy, dz );
     }
 
     m_state.mateConnectors = true;
@@ -756,8 +823,43 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
                                     -inst.position.y * biuPerMm * sharedF,
                                      inst.position.z * biuPerMm * sharedF );
 
+        // Local 3D centroid (Y already inverted inside BOARD_ADAPTER's
+        // m_boardCenter, which is m_boardPos * biuTo3Dunits). Shared
+        // centroid = local centroid scaled into shared space.
+        const SFVEC3F   localCenter       = m_instanceAdapters[i]->GetBoardCenter();
+        const glm::vec3 localCenterShared(
+                localCenter.x * static_cast<float>( scaleFactor ),
+                localCenter.y * static_cast<float>( scaleFactor ),
+                localCenter.z * static_cast<float>( scaleFactor ) );
+
+        // Build pose so:
+        //   1. Local vertex first scales into shared units.
+        //   2. Shifts so the board's local centroid sits at origin.
+        //   3. Rotates around the origin (= around the centroid).
+        //   4. Un-shifts so the centroid returns to its per-instance
+        //      world slot, then adds the final world offset.
+        // GL matrix order is right-to-left, so glm calls are written
+        // in REVERSE of the application order (last call → first
+        // applied to the vertex).
         glm::mat4 pose = glm::mat4( 1.0f );
+
+        // Outer: world positioning (current behaviour, identity
+        // rotation leaves this unchanged).
         pose = glm::translate( pose, instShared - centerShared );
+        pose = glm::translate( pose, localCenterShared );
+
+        // Euler rotation (degrees → radians). Apply Z, then Y, then
+        // X — matches BOARD_3D_INSTANCE::GetTransformMatrix so panel
+        // edits behave consistently with any other code that reads
+        // that helper.
+        pose = glm::rotate( pose, glm::radians( inst.rotation.z ),
+                            glm::vec3( 0.0f, 0.0f, 1.0f ) );
+        pose = glm::rotate( pose, glm::radians( inst.rotation.y ),
+                            glm::vec3( 0.0f, 1.0f, 0.0f ) );
+        pose = glm::rotate( pose, glm::radians( inst.rotation.x ),
+                            glm::vec3( 1.0f, 0.0f, 0.0f ) );
+
+        pose = glm::translate( pose, -localCenterShared );
         pose = glm::scale( pose, glm::vec3( static_cast<float>( scaleFactor ) ) );
 
         m_instanceRenderers[i]->SetAssemblyPose( pose );
@@ -841,4 +943,15 @@ void ASSEMBLY_3D_MANAGER::SetInstancesWindowSize( const wxSize& aSize )
         if( renderer )
             renderer->SetCurWindowSize( aSize );
     }
+}
+
+
+void ASSEMBLY_3D_MANAGER::ReleaseOpenGL()
+{
+    // Callers must hold the GL context lock. Clearing the vector runs
+    // each RENDER_3D_OPENGL's destructor in turn, which calls
+    // glDeleteTextures + freeAllLists — safe only with the context
+    // current. Adapters are preserved (CPU-side only).
+    m_instanceRenderers.clear();
+    m_cameraFitPending = false;
 }

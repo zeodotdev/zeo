@@ -342,6 +342,20 @@ public:
     void SetInstancesWindowSize( const wxSize& aSize );
 
     /**
+     * Destroy every per-instance RENDER_3D_OPENGL while the GL context
+     * is current. Called by EDA_3D_CANVAS::releaseOpenGL inside its
+     * LockCtx block — otherwise each renderer's destructor would call
+     * glDeleteTextures + freeAllLists against whatever context
+     * happens to be current globally, corrupting OTHER OpenGL windows
+     * (GAL editors, MBS canvas) that share the process-wide GL state.
+     *
+     * Leaves the BOARD_ADAPTERs intact; those own only CPU-side
+     * resources (BOARD unique_ptrs, layer polygons) and don't need
+     * a live context to tear down.
+     */
+    void ReleaseOpenGL();
+
+    /**
      * Notify renderers that their underlying BOARD data changed and
      * geometry caches must be rebuilt on next Redraw. Called after
      * per-instance edits that affect rendering (e.g. mating snap).

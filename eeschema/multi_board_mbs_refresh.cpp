@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <unordered_map>
 
 
 namespace
@@ -37,40 +38,23 @@ namespace
 
 // Layout knobs — mirror the initial-generation numbers in
 // MULTI_BOARD_PROJECT::EnsureMbsFile so regenerated blocks look the same.
-static constexpr double GRID_MM         = 1.27;
-static constexpr int    MM_TO_IU        = 10000;
+static constexpr double GRID_MM          = 1.27;
+static constexpr int    MM_TO_IU         = 10000;
 
-static constexpr int BLOCK_WIDTH_IU  = (int) ( 40 * GRID_MM * MM_TO_IU );
-static constexpr int PER_PIN_IU      = (int) ( 5 * GRID_MM * MM_TO_IU );
-static constexpr int PAD_TOP_IU      = (int) ( 8 * GRID_MM * MM_TO_IU );
-static constexpr int PAD_BOT_IU      = (int) ( 8 * GRID_MM * MM_TO_IU );
-static constexpr int MIN_HEIGHT_IU   = (int) ( 32 * GRID_MM * MM_TO_IU );
-static constexpr int BLOCK_SPACING_IU = (int) ( 12 * GRID_MM * MM_TO_IU );
-static constexpr int ROW_SPACING_IU  = (int) ( 20 * GRID_MM * MM_TO_IU );
-static constexpr int START_X_IU      = (int) ( 40 * GRID_MM * MM_TO_IU );
-
-
-struct PerBlockPlan
-{
-    SCH_MODULE_BLOCK*                 existing = nullptr;
-    wxString                          subProjectPath;
-    wxString                          subProjectName;
-    wxString                          componentRef;
-    KIID                              subProjectUuid;
-    std::vector<MULTI_BOARD_PAD_INFO> expectedPads;   ///< Ordered pads from the scan
-};
+static constexpr int BLOCK_WIDTH_IU   = (int) ( 40 * GRID_MM * MM_TO_IU );
+static constexpr int PER_PIN_IU       = (int) (  5 * GRID_MM * MM_TO_IU );
+static constexpr int PAD_TOP_IU       = (int) (  8 * GRID_MM * MM_TO_IU );
+static constexpr int PAD_BOT_IU       = (int) (  8 * GRID_MM * MM_TO_IU );
+static constexpr int MIN_HEIGHT_IU    = (int) ( 32 * GRID_MM * MM_TO_IU );
+static constexpr int ROW_SPACING_IU   = (int) ( 20 * GRID_MM * MM_TO_IU );
+static constexpr int START_X_IU       = (int) ( 40 * GRID_MM * MM_TO_IU );
 
 
-/**
- * Distribute the given pads evenly along the left (x=0) and right (x=width)
- * edges of a block of the given height, returning absolute pin positions
- * relative to block origin (0,0).
- */
 void layoutPinsOnBlock( const std::vector<MULTI_BOARD_PAD_INFO>& aPads, int aBlockHeight,
                         std::vector<std::pair<MULTI_BOARD_PAD_INFO, VECTOR2I>>& aPositions )
 {
-    size_t pinCount   = aPads.size();
-    size_t leftCount  = ( pinCount + 1 ) / 2;
+    size_t pinCount  = aPads.size();
+    size_t leftCount = ( pinCount + 1 ) / 2;
 
     for( size_t i = 0; i < leftCount; ++i )
     {
@@ -97,15 +81,10 @@ int computeBlockHeight( size_t aPinCount )
 }
 
 
-/**
- * Find the next available spot to place a new block so it doesn't overlap
- * existing blocks. Simple strategy: place at (START_X, maxBottomY + spacing)
- * where maxBottomY is the bottom edge of the lowest existing block.
- */
 VECTOR2I nextFreeSlot( SCH_SCREEN& aScreen )
 {
-    int maxBottom = 0;
-    int anyBlock  = false;
+    int  maxBottom = 0;
+    bool anyBlock  = false;
 
     for( SCH_ITEM* item : aScreen.Items().OfType( SCH_MODULE_BLOCK_T ) )
     {
@@ -123,39 +102,95 @@ VECTOR2I nextFreeSlot( SCH_SCREEN& aScreen )
 }
 
 
+/**
+ * Best-effort display label for a sub-project. Falls back to the path
+ * basename if no explicit display name was set in the container.
+ */
+wxString subProjectDisplay( const SUB_PROJECT_INFO& aInfo )
+{
+    if( !aInfo.displayName.IsEmpty() )
+        return aInfo.displayName;
+
+    if( !aInfo.name.IsEmpty() )
+        return aInfo.name;
+
+    return aInfo.relativePath;
+}
+
 } // anonymous namespace
 
 
-MBS_REFRESH_RESULT RefreshMbsFromSubProjects( SCH_SCREEN& aMbsScreen,
-                                              const PROJECT_FILE& aMultiBoard )
+wxString MBS_CHANGE::Describe() const
 {
-    MBS_REFRESH_RESULT result;
+    wxString boardLabel = subProjectDisplayName.IsEmpty() ? subProjectPath : subProjectDisplayName;
 
-    // Primary index: (sub_project_uuid, componentRef). UUIDs are stable
-    // across path renames, so reconciling by UUID prevents block
-    // identity from flipping when a sub-project's directory is moved.
-    std::map<std::pair<KIID, wxString>, SCH_MODULE_BLOCK*> existingByUuid;
+    switch( kind )
+    {
+    case KIND::ADD_BLOCK:
+        return wxString::Format( _( "Add block %s (%s, %zu pin(s))" ),
+                                 componentRef, boardLabel, blockAllPads.size() );
 
-    // Fallback index: (sub_project_path, componentRef). Used only for
-    // legacy blocks saved before sub_project_uuid was persisted (their
-    // uuid field reads back as niluuid). When matched through this
-    // fallback, we upgrade the block by stamping the fresh UUID onto
-    // it so subsequent refreshes route through the UUID index.
-    std::map<std::pair<wxString, wxString>, SCH_MODULE_BLOCK*> existingByPath;
+    case KIND::REMOVE_BLOCK:
+        return wxString::Format( _( "Remove block %s (%s) — no longer in sub-project" ),
+                                 componentRef, boardLabel );
+
+    case KIND::ADD_PIN:
+        return wxString::Format( _( "Add pin %s.%s (\"%s\") to %s" ),
+                                 componentRef, pinNumber, newLabel, boardLabel );
+
+    case KIND::REMOVE_PIN:
+        return wxString::Format( _( "Remove pin %s.%s from %s (pad vanished from PCB)" ),
+                                 componentRef, pinNumber, boardLabel );
+
+    case KIND::RENAME_PIN:
+        return wxString::Format( _( "Rename pin %s.%s on %s: \"%s\" → \"%s\"" ),
+                                 componentRef, pinNumber, boardLabel, oldLabel, newLabel );
+
+    case KIND::PATH_DRIFT:
+        return wxString::Format( _( "Update path on %s: %s → %s" ),
+                                 boardLabel, oldPath, newPath );
+
+    case KIND::UPGRADE_UUID:
+        return wxString::Format( _( "Stamp sub-project UUID onto legacy block %s (%s)" ),
+                                 componentRef, boardLabel );
+    }
+
+    return wxEmptyString;
+}
+
+
+std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
+                                               const PROJECT_FILE& aMultiBoard )
+{
+    std::vector<MBS_CHANGE> changes;
+
+    // --- Index existing blocks ---------------------------------------
+    //
+    // Primary: (sub_project_uuid, componentRef). Stable across path
+    // renames.
+    //
+    // Fallback: (sub_project_path, componentRef). Used for legacy
+    // blocks saved before sub_project_uuid was persisted. Matching a
+    // fallback also queues an UPGRADE_UUID change so subsequent
+    // refreshes take the UUID path.
+    std::map<std::pair<KIID, wxString>, SCH_MODULE_BLOCK*>     byUuid;
+    std::map<std::pair<wxString, wxString>, SCH_MODULE_BLOCK*> byPath;
 
     for( SCH_ITEM* item : aMbsScreen.Items().OfType( SCH_MODULE_BLOCK_T ) )
     {
         SCH_MODULE_BLOCK* b = static_cast<SCH_MODULE_BLOCK*>( item );
 
         if( b->GetSubProjectUuid() != niluuid )
-            existingByUuid[{ b->GetSubProjectUuid(), b->GetComponentRef() }] = b;
+            byUuid[{ b->GetSubProjectUuid(), b->GetComponentRef() }] = b;
         else
-            existingByPath[{ b->GetSubProjectPath(), b->GetComponentRef() }] = b;
+            byPath[{ b->GetSubProjectPath(), b->GetComponentRef() }] = b;
     }
 
-    // Build plans: one per (sub_project, connector) found by scan.
-    std::vector<PerBlockPlan> plans;
+    // Track which existing blocks got matched to something in the scan.
+    // Anything left un-matched is an orphan → REMOVE_BLOCK candidate.
+    std::set<SCH_MODULE_BLOCK*> matchedBlocks;
 
+    // --- Walk the scan, emit ADD / UPDATE / DRIFT / UPGRADE ----------
     for( const SUB_PROJECT_INFO& info : aMultiBoard.GetSubProjects() )
     {
         wxFileName proFile = aMultiBoard.ResolveSubProjectPath( info );
@@ -163,108 +198,312 @@ MBS_REFRESH_RESULT RefreshMbsFromSubProjects( SCH_SCREEN& aMbsScreen,
         wxFileName pcbFile = MultiBoardMainPcb( proFile );
 
         std::vector<wxString> connectors = MultiBoardScanConnectorReferences( schFile );
-        std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>> pads =
+        std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>> padsByRef =
                 MultiBoardScanConnectorPads( pcbFile );
+
+        wxString displayName = subProjectDisplay( info );
 
         for( const wxString& ref : connectors )
         {
-            PerBlockPlan plan;
-            plan.subProjectPath = info.relativePath;
-            plan.subProjectName = info.displayName.IsEmpty() ? info.name : info.displayName;
-            plan.componentRef   = ref;
-            plan.subProjectUuid = info.uuid;
+            std::vector<MULTI_BOARD_PAD_INFO> expectedPads;
 
-            auto it = pads.find( ref );
-
-            if( it != pads.end() )
-                plan.expectedPads = it->second;
+            if( auto it = padsByRef.find( ref ); it != padsByRef.end() )
+                expectedPads = it->second;
             else
-                plan.expectedPads.push_back( MULTI_BOARD_PAD_INFO{} );  // placeholder
+                expectedPads.push_back( MULTI_BOARD_PAD_INFO{} );   // placeholder
 
-            // Prefer UUID lookup; fall back to path-based lookup for
-            // pre-uuid blocks. If the fallback hits, upgrade the block
-            // so future refreshes prefer UUID matching.
-            auto uuidIt = existingByUuid.find( { info.uuid, ref } );
+            // Locate an existing block for this (subProject, ref) via
+            // UUID first, path second.
+            SCH_MODULE_BLOCK* existing = nullptr;
+            bool              upgradeUuid = false;
+            bool              pathDrifted = false;
 
-            if( uuidIt != existingByUuid.end() )
+            if( auto it = byUuid.find( { info.uuid, ref } ); it != byUuid.end() )
             {
-                plan.existing = uuidIt->second;
-                // Keep path in sync when it drifted relative to UUID.
-                if( plan.existing->GetSubProjectPath() != info.relativePath )
-                    plan.existing->SetSubProjectPath( info.relativePath );
+                existing = it->second;
+                pathDrifted = existing->GetSubProjectPath() != info.relativePath;
             }
-            else
+            else if( auto it2 = byPath.find( { info.relativePath, ref } ); it2 != byPath.end() )
             {
-                auto pathIt = existingByPath.find( { info.relativePath, ref } );
+                existing    = it2->second;
+                upgradeUuid = true;
+            }
 
-                if( pathIt != existingByPath.end() )
+            if( !existing )
+            {
+                // ADD_BLOCK
+                MBS_CHANGE ch;
+                ch.kind                  = MBS_CHANGE::KIND::ADD_BLOCK;
+                ch.subProjectUuid        = info.uuid;
+                ch.subProjectPath        = info.relativePath;
+                ch.subProjectDisplayName = displayName;
+                ch.componentRef          = ref;
+                ch.blockAllPads          = expectedPads;
+                changes.push_back( std::move( ch ) );
+                continue;
+            }
+
+            matchedBlocks.insert( existing );
+
+            if( upgradeUuid )
+            {
+                MBS_CHANGE ch;
+                ch.kind                  = MBS_CHANGE::KIND::UPGRADE_UUID;
+                ch.subProjectUuid        = info.uuid;
+                ch.subProjectPath        = info.relativePath;
+                ch.subProjectDisplayName = displayName;
+                ch.componentRef          = ref;
+                ch.existingBlock         = existing;
+                changes.push_back( std::move( ch ) );
+            }
+
+            if( pathDrifted )
+            {
+                MBS_CHANGE ch;
+                ch.kind                  = MBS_CHANGE::KIND::PATH_DRIFT;
+                ch.subProjectUuid        = info.uuid;
+                ch.subProjectPath        = info.relativePath;
+                ch.subProjectDisplayName = displayName;
+                ch.componentRef          = ref;
+                ch.oldPath               = existing->GetSubProjectPath();
+                ch.newPath               = info.relativePath;
+                ch.existingBlock         = existing;
+                changes.push_back( std::move( ch ) );
+            }
+
+            // Pin-level diff: map existing pins by pad number, compare
+            // against expected. Missing → ADD_PIN. Extra → REMOVE_PIN.
+            // Label mismatch → RENAME_PIN.
+            std::unordered_map<wxString, SCH_MODULE_PIN*> existingPinByNumber;
+
+            for( SCH_MODULE_PIN* pin : existing->GetPins() )
+                existingPinByNumber[pin->GetPinNumber()] = pin;
+
+            std::set<wxString> expectedNumbers;
+
+            for( const MULTI_BOARD_PAD_INFO& padInfo : expectedPads )
+            {
+                if( padInfo.padNumber.IsEmpty() )
+                    continue;   // placeholder, not a real pad
+
+                expectedNumbers.insert( padInfo.padNumber );
+
+                wxString expectedLabel = MultiBoardPinLabel( ref, padInfo );
+                auto     it            = existingPinByNumber.find( padInfo.padNumber );
+
+                if( it == existingPinByNumber.end() )
                 {
-                    plan.existing = pathIt->second;
-                    plan.existing->SetSubProjectUuid( info.uuid );
+                    MBS_CHANGE ch;
+                    ch.kind                  = MBS_CHANGE::KIND::ADD_PIN;
+                    ch.subProjectUuid        = info.uuid;
+                    ch.subProjectPath        = info.relativePath;
+                    ch.subProjectDisplayName = displayName;
+                    ch.componentRef          = ref;
+                    ch.pinNumber             = padInfo.padNumber;
+                    ch.newLabel              = expectedLabel;
+                    ch.existingBlock         = existing;
+                    ch.padInfo               = padInfo;
+                    changes.push_back( std::move( ch ) );
+                }
+                else if( it->second->GetText() != expectedLabel )
+                {
+                    MBS_CHANGE ch;
+                    ch.kind                  = MBS_CHANGE::KIND::RENAME_PIN;
+                    ch.subProjectUuid        = info.uuid;
+                    ch.subProjectPath        = info.relativePath;
+                    ch.subProjectDisplayName = displayName;
+                    ch.componentRef          = ref;
+                    ch.pinNumber             = padInfo.padNumber;
+                    ch.oldLabel              = it->second->GetText();
+                    ch.newLabel              = expectedLabel;
+                    ch.existingBlock         = existing;
+                    ch.existingPin           = it->second;
+                    changes.push_back( std::move( ch ) );
                 }
             }
 
-            plans.push_back( std::move( plan ) );
+            for( SCH_MODULE_PIN* pin : existing->GetPins() )
+            {
+                if( expectedNumbers.count( pin->GetPinNumber() ) )
+                    continue;
+
+                MBS_CHANGE ch;
+                ch.kind                  = MBS_CHANGE::KIND::REMOVE_PIN;
+                ch.subProjectUuid        = info.uuid;
+                ch.subProjectPath        = info.relativePath;
+                ch.subProjectDisplayName = displayName;
+                ch.componentRef          = ref;
+                ch.pinNumber             = pin->GetPinNumber();
+                ch.oldLabel              = pin->GetText();
+                ch.existingBlock         = existing;
+                ch.existingPin           = pin;
+                changes.push_back( std::move( ch ) );
+            }
         }
     }
 
-    // Apply each plan: add missing pins on existing blocks, create new blocks
-    // for pairs that weren't present.
-    for( const PerBlockPlan& plan : plans )
+    // --- Orphan blocks: REMOVE_BLOCK ---------------------------------
+    //
+    // Any block that didn't get matched above corresponds to a
+    // sub-project / connector no longer in the scan — either the
+    // sub-project was removed from the container, or the user renamed
+    // the connector on the sub-project PCB.
+    for( SCH_ITEM* item : aMbsScreen.Items().OfType( SCH_MODULE_BLOCK_T ) )
     {
-        if( plan.existing )
+        SCH_MODULE_BLOCK* b = static_cast<SCH_MODULE_BLOCK*>( item );
+
+        if( matchedBlocks.count( b ) )
+            continue;
+
+        MBS_CHANGE ch;
+        ch.kind                  = MBS_CHANGE::KIND::REMOVE_BLOCK;
+        ch.subProjectUuid        = b->GetSubProjectUuid();
+        ch.subProjectPath        = b->GetSubProjectPath();
+        ch.subProjectDisplayName = b->GetDisplayName().IsEmpty() ? b->GetSubProjectPath()
+                                                                 : b->GetDisplayName();
+        ch.componentRef          = b->GetComponentRef();
+        ch.existingBlock         = b;
+        changes.push_back( std::move( ch ) );
+    }
+
+    return changes;
+}
+
+
+MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
+                                           const std::vector<MBS_CHANGE>& aChanges )
+{
+    MBS_REFRESH_RESULT result;
+
+    // Apply in a deterministic order so deletes happen before adds —
+    // prevents e.g. a REMOVE_BLOCK from deleting a block that a
+    // subsequent ADD_PIN depends on when the user checks both.
+    auto kindOrder = []( MBS_CHANGE::KIND k ) -> int
+    {
+        switch( k )
         {
-            // Collect existing pin pad numbers on this block.
-            std::set<wxString> existingPadNumbers;
-
-            for( SCH_MODULE_PIN* pin : plan.existing->GetPins() )
-                existingPadNumbers.insert( pin->GetPinNumber() );
-
-            std::vector<std::pair<MULTI_BOARD_PAD_INFO, VECTOR2I>> fullLayout;
-            int blockHeight = computeBlockHeight( plan.expectedPads.size() );
-            layoutPinsOnBlock( plan.expectedPads, blockHeight, fullLayout );
-
-            for( const auto& [padInfo, localPos] : fullLayout )
-            {
-                if( existingPadNumbers.count( padInfo.padNumber ) )
-                    continue;
-
-                VECTOR2I absPos  = plan.existing->GetPosition() + localPos;
-                wxString label   = MultiBoardPinLabel( plan.componentRef, padInfo );
-
-                SCH_MODULE_PIN* pin = new SCH_MODULE_PIN( plan.existing, absPos, label );
-                pin->SetComponentRef( plan.componentRef );
-                pin->SetPinNumber( padInfo.padNumber );
-                pin->ConstrainOnEdge( absPos, true );
-
-                plan.existing->AddPin( pin );
-                result.pinsAdded++;
-            }
+        case MBS_CHANGE::KIND::UPGRADE_UUID:  return 0;
+        case MBS_CHANGE::KIND::PATH_DRIFT:    return 1;
+        case MBS_CHANGE::KIND::RENAME_PIN:    return 2;
+        case MBS_CHANGE::KIND::REMOVE_PIN:    return 3;
+        case MBS_CHANGE::KIND::REMOVE_BLOCK:  return 4;
+        case MBS_CHANGE::KIND::ADD_BLOCK:     return 5;
+        case MBS_CHANGE::KIND::ADD_PIN:       return 6;
         }
-        else
+
+        return 99;
+    };
+
+    std::vector<const MBS_CHANGE*> ordered;
+    ordered.reserve( aChanges.size() );
+
+    for( const MBS_CHANGE& ch : aChanges )
+    {
+        if( ch.checked )
+            ordered.push_back( &ch );
+    }
+
+    std::stable_sort( ordered.begin(), ordered.end(),
+                      [&]( const MBS_CHANGE* a, const MBS_CHANGE* b )
+                      {
+                          return kindOrder( a->kind ) < kindOrder( b->kind );
+                      } );
+
+    // Track blocks that got REMOVE_BLOCK'd so we skip any pin-level
+    // changes that targeted them. Pointers to freed blocks would UB.
+    std::set<SCH_MODULE_BLOCK*> deletedBlocks;
+
+    for( const MBS_CHANGE* ch : ordered )
+    {
+        // If the target block was just deleted upstream, skip.
+        if( ch->existingBlock && deletedBlocks.count( ch->existingBlock ) )
+            continue;
+
+        switch( ch->kind )
         {
-            // Create a new block.
+        case MBS_CHANGE::KIND::UPGRADE_UUID:
+        {
+            if( ch->existingBlock )
+            {
+                ch->existingBlock->SetSubProjectUuid( ch->subProjectUuid );
+                result.uuidsStamped++;
+            }
+
+            break;
+        }
+
+        case MBS_CHANGE::KIND::PATH_DRIFT:
+        {
+            if( ch->existingBlock )
+            {
+                ch->existingBlock->SetSubProjectPath( ch->newPath );
+                result.pathsUpdated++;
+            }
+
+            break;
+        }
+
+        case MBS_CHANGE::KIND::RENAME_PIN:
+        {
+            if( ch->existingPin )
+            {
+                ch->existingPin->SetText( ch->newLabel );
+                result.pinsRenamed++;
+            }
+
+            break;
+        }
+
+        case MBS_CHANGE::KIND::REMOVE_PIN:
+        {
+            if( ch->existingBlock && ch->existingPin )
+            {
+                ch->existingBlock->RemovePin( ch->existingPin );
+                result.pinsRemoved++;
+            }
+
+            break;
+        }
+
+        case MBS_CHANGE::KIND::REMOVE_BLOCK:
+        {
+            if( ch->existingBlock )
+            {
+                aMbsScreen.Remove( ch->existingBlock );
+                deletedBlocks.insert( ch->existingBlock );
+                delete ch->existingBlock;
+                result.blocksRemoved++;
+            }
+
+            break;
+        }
+
+        case MBS_CHANGE::KIND::ADD_BLOCK:
+        {
             VECTOR2I origin = nextFreeSlot( aMbsScreen );
+            auto*    block  = new SCH_MODULE_BLOCK( origin );
 
-            auto* block = new SCH_MODULE_BLOCK( origin );
-            block->SetSubProjectUuid( plan.subProjectUuid );
-            block->SetSubProjectPath( plan.subProjectPath );
-            block->SetComponentRef( plan.componentRef );
-            block->SetDisplayName( plan.subProjectName + wxT( " / " ) + plan.componentRef );
+            block->SetSubProjectUuid( ch->subProjectUuid );
+            block->SetSubProjectPath( ch->subProjectPath );
+            block->SetComponentRef( ch->componentRef );
 
-            int blockHeight = computeBlockHeight( plan.expectedPads.size() );
-            block->SetSize( VECTOR2I( BLOCK_WIDTH_IU, blockHeight ) );
+            wxString label = ch->subProjectDisplayName.IsEmpty() ? ch->subProjectPath
+                                                                 : ch->subProjectDisplayName;
+            block->SetDisplayName( label + wxT( " / " ) + ch->componentRef );
+
+            int height = computeBlockHeight( ch->blockAllPads.size() );
+            block->SetSize( VECTOR2I( BLOCK_WIDTH_IU, height ) );
 
             std::vector<std::pair<MULTI_BOARD_PAD_INFO, VECTOR2I>> layout;
-            layoutPinsOnBlock( plan.expectedPads, blockHeight, layout );
+            layoutPinsOnBlock( ch->blockAllPads, height, layout );
 
             for( const auto& [padInfo, localPos] : layout )
             {
-                VECTOR2I absPos = origin + localPos;
-                wxString label  = MultiBoardPinLabel( plan.componentRef, padInfo );
+                VECTOR2I absPos   = origin + localPos;
+                wxString pinLabel = MultiBoardPinLabel( ch->componentRef, padInfo );
 
-                SCH_MODULE_PIN* pin = new SCH_MODULE_PIN( block, absPos, label );
-                pin->SetComponentRef( plan.componentRef );
+                auto* pin = new SCH_MODULE_PIN( block, absPos, pinLabel );
+                pin->SetComponentRef( ch->componentRef );
                 pin->SetPinNumber( padInfo.padNumber );
                 pin->ConstrainOnEdge( absPos, true );
 
@@ -274,12 +513,72 @@ MBS_REFRESH_RESULT RefreshMbsFromSubProjects( SCH_SCREEN& aMbsScreen,
 
             aMbsScreen.Append( block );
             result.blocksAdded++;
+            break;
+        }
+
+        case MBS_CHANGE::KIND::ADD_PIN:
+        {
+            if( !ch->existingBlock )
+                break;
+
+            // Re-layout the block's existing pin set with the new pin
+            // inserted at the end of the list. We keep existing pin
+            // positions untouched and place the new one at the next
+            // free slot on the block's pin grid.
+            int      height   = ch->existingBlock->GetSize().y;
+            size_t   pinCount = ch->existingBlock->GetPins().size();
+            VECTOR2I origin   = ch->existingBlock->GetPosition();
+
+            // Append at bottom-right of whichever column is shorter.
+            size_t leftCount  = ( pinCount + 1 ) / 2;
+            size_t rightCount = pinCount - leftCount;
+
+            VECTOR2I localPos;
+
+            if( leftCount <= rightCount )
+                localPos = VECTOR2I( 0, PAD_TOP_IU + PER_PIN_IU * (int) leftCount );
+            else
+                localPos = VECTOR2I( BLOCK_WIDTH_IU,
+                                     PAD_TOP_IU + PER_PIN_IU * (int) rightCount );
+
+            VECTOR2I absPos = origin + localPos;
+            wxString label  = ch->newLabel.IsEmpty()
+                                     ? MultiBoardPinLabel( ch->componentRef, ch->padInfo )
+                                     : ch->newLabel;
+
+            auto* pin = new SCH_MODULE_PIN( ch->existingBlock, absPos, label );
+            pin->SetComponentRef( ch->componentRef );
+            pin->SetPinNumber( ch->pinNumber );
+            pin->ConstrainOnEdge( absPos, true );
+
+            ch->existingBlock->AddPin( pin );
+
+            // Grow the block if the new pin pushed us past the edge.
+            int newHeight = computeBlockHeight( pinCount + 1 );
+
+            if( newHeight > height )
+                ch->existingBlock->SetSize( VECTOR2I( BLOCK_WIDTH_IU, newHeight ) );
+
+            result.pinsAdded++;
+            break;
+        }
         }
     }
 
     result.summary = wxString::Format(
-            wxT( "Added %d module block(s) and %d pin(s) from sub-project scan." ),
-            result.blocksAdded, result.pinsAdded );
+            _( "Applied: +%d block(s), -%d block(s), +%d pin(s), -%d pin(s), "
+               "%d renamed, %d path(s) updated, %d UUID(s) stamped." ),
+            result.blocksAdded, result.blocksRemoved, result.pinsAdded,
+            result.pinsRemoved, result.pinsRenamed, result.pathsUpdated,
+            result.uuidsStamped );
 
     return result;
+}
+
+
+MBS_REFRESH_RESULT RefreshMbsFromSubProjects( SCH_SCREEN& aMbsScreen,
+                                              const PROJECT_FILE& aMultiBoard )
+{
+    std::vector<MBS_CHANGE> changes = ComputeMbsRefreshDiff( aMbsScreen, aMultiBoard );
+    return ApplyMbsRefreshChanges( aMbsScreen, changes );
 }

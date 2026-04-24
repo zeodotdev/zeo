@@ -26,8 +26,10 @@
 #include <board.h>
 #include <board_design_settings.h>
 #include <footprint.h>
+#include <multi_board/sub_project_board_loader.h>
 #include <pad.h>
 #include <project.h>
+#include <project/multi_board_scan.h>
 #include <project/project_file.h>
 
 #include <glm/glm.hpp>
@@ -38,6 +40,23 @@
 
 
 // ========== BOARD_3D_INSTANCE ==========
+
+BOARD_3D_INSTANCE::BOARD_3D_INSTANCE() :
+        position( 0, 0, 0 ),
+        rotation( 0, 0, 0 ),
+        visible( true ),
+        transparent( false ),
+        opacity( 1.0f )
+{
+}
+
+
+// Out-of-line so unique_ptr<BOARD>'s special members instantiate against
+// the complete BOARD type included above.
+BOARD_3D_INSTANCE::~BOARD_3D_INSTANCE() = default;
+BOARD_3D_INSTANCE::BOARD_3D_INSTANCE( BOARD_3D_INSTANCE&& ) noexcept = default;
+BOARD_3D_INSTANCE& BOARD_3D_INSTANCE::operator=( BOARD_3D_INSTANCE&& ) noexcept = default;
+
 
 glm::mat4 BOARD_3D_INSTANCE::GetTransformMatrix() const
 {
@@ -56,6 +75,43 @@ glm::mat4 BOARD_3D_INSTANCE::GetTransformMatrix() const
 
 
 // ========== ASSEMBLY_3D_MANAGER ==========
+
+namespace
+{
+
+/**
+ * Find the FOOTPRINT on @p aBoard whose reference matches @p aRef.
+ * Returns nullptr when no such footprint exists.
+ */
+FOOTPRINT* findFootprintByRef( BOARD* aBoard, const wxString& aRef )
+{
+    if( !aBoard )
+        return nullptr;
+
+    return aBoard->FindFootprintByReference( aRef );
+}
+
+
+/**
+ * Find the PAD on @p aFootprint addressed by pad number @p aPinNumber.
+ * Pad numbers are strings ("1", "A12", "GND") per KiCad convention.
+ */
+PAD* findPadByNumber( FOOTPRINT* aFootprint, const wxString& aPinNumber )
+{
+    if( !aFootprint )
+        return nullptr;
+
+    for( PAD* pad : aFootprint->Pads() )
+    {
+        if( pad->GetNumber() == aPinNumber )
+            return pad;
+    }
+
+    return nullptr;
+}
+
+} // namespace
+
 
 ASSEMBLY_3D_MANAGER::ASSEMBLY_3D_MANAGER() :
         m_project( nullptr )
@@ -82,22 +138,32 @@ void ASSEMBLY_3D_MANAGER::LoadProjectBoards( PROJECT* aProject )
         return;
 
     PROJECT_FILE& projectFile = aProject->GetProjectFile();
-    const auto& boardInfos = projectFile.GetBoardInfos();
 
-    // For each board in the project, create a 3D instance
-    for( const BOARD_INFO& info : boardInfos )
+    // Container-model only. Single-project multi-PCB (legacy
+    // BOARD_INFO) is not addressed here — those projects don't use the
+    // assembly viewer.
+    if( !projectFile.IsMultiBoardContainer() )
+        return;
+
+    for( const SUB_PROJECT_INFO& sub : projectFile.GetSubProjects() )
     {
         BOARD_3D_INSTANCE instance;
         instance.uuid = KIID();
-        instance.boardUuid = info.uuid;
-        instance.board = nullptr;  // Board needs to be loaded separately
-        instance.displayName = info.displayName;
-        instance.visible = true;
+        instance.subProjectUuid = sub.uuid;
+        instance.displayName = sub.displayName.IsEmpty() ? sub.name : sub.displayName;
 
-        m_boardInstances.push_back( instance );
+        wxFileName proFile = projectFile.ResolveSubProjectPath( sub );
+        instance.pcbFilePath = MultiBoardMainPcb( proFile ).GetFullPath();
+
+        // Best-effort load. A null `board` is tolerated downstream:
+        // layout / mating / collision checks all skip instances that
+        // failed to load. Logging is via the loader's wxLogTrace.
+        instance.board = LoadSubProjectBoard( *aProject, sub );
+
+        m_boardInstances.push_back( std::move( instance ) );
     }
 
-    // Arrange boards in flat layout by default
+    // Default flat layout; user can switch via PANEL_3D_ASSEMBLY.
     ArrangeBoards( BOARD_LAYOUT_MODE::FLAT, 20.0f );
 }
 
@@ -113,17 +179,19 @@ void ASSEMBLY_3D_MANAGER::Clear()
 }
 
 
-KIID ASSEMBLY_3D_MANAGER::AddBoardInstance( BOARD* aBoard, const wxString& aDisplayName )
+KIID ASSEMBLY_3D_MANAGER::AddBoardInstance( std::unique_ptr<BOARD> aBoard,
+                                             const wxString& aDisplayName,
+                                             const KIID& aSubProjectUuid )
 {
     BOARD_3D_INSTANCE instance;
     instance.uuid = KIID();
-    instance.boardUuid = aBoard ? aBoard->m_Uuid : KIID();
-    instance.board = aBoard;
+    instance.subProjectUuid = aSubProjectUuid;
+    instance.board = std::move( aBoard );
     instance.displayName = aDisplayName;
-    instance.visible = true;
 
-    m_boardInstances.push_back( instance );
-    return instance.uuid;
+    KIID instanceUuid = instance.uuid;
+    m_boardInstances.push_back( std::move( instance ) );
+    return instanceUuid;
 }
 
 
@@ -196,8 +264,7 @@ void ASSEMBLY_3D_MANAGER::ArrangeBoards( BOARD_LAYOUT_MODE aMode, float aSpacing
             inst.position = SFVEC3F( xOffset, 0.0f, 0.0f );
             inst.rotation = SFVEC3F( 0.0f, 0.0f, 0.0f );
 
-            // Estimate board width (would need actual board dimensions)
-            float boardWidth = 100.0f;  // Default 100mm
+            float boardWidth = 100.0f;  // Default 100mm if board didn't load
             if( inst.board )
             {
                 BOX2I bbox = inst.board->GetBoardEdgesBoundingBox();
@@ -218,8 +285,7 @@ void ASSEMBLY_3D_MANAGER::ArrangeBoards( BOARD_LAYOUT_MODE aMode, float aSpacing
             inst.position = SFVEC3F( 0.0f, 0.0f, zOffset );
             inst.rotation = SFVEC3F( 0.0f, 0.0f, 0.0f );
 
-            // Get board thickness
-            float boardThickness = GetBoardThickness( inst.board );
+            float boardThickness = GetBoardThickness( inst.board.get() );
             zOffset += boardThickness + aSpacingMm;
         }
         break;
@@ -282,30 +348,39 @@ void ASSEMBLY_3D_MANAGER::MateConnectors()
         return;
 
     PROJECT_FILE& projectFile = m_project->GetProjectFile();
-    const auto& connections = projectFile.GetCrossBoardConnections();
 
-    // For each cross-board connection, align the boards
-    for( const CROSS_BOARD_CONNECTION& conn : connections )
+    // For each cross-board net with at least two endpoints, anchor the
+    // first endpoint's instance and snap the second endpoint's instance
+    // so the two pads coincide (with a connector-height gap in Z).
+    // Endpoints beyond the second are ignored at this stage; multi-way
+    // mating is M6.D's domain.
+    for( const MB_CROSS_BOARD_NET& net : projectFile.GetCrossBoardNets() )
     {
-        // Find the two board instances
+        if( net.endpoints.size() < 2 )
+            continue;
+
+        const MB_CROSS_BOARD_NET_ENDPOINT& ep1 = net.endpoints[0];
+        const MB_CROSS_BOARD_NET_ENDPOINT& ep2 = net.endpoints[1];
+
         BOARD_3D_INSTANCE* inst1 = nullptr;
         BOARD_3D_INSTANCE* inst2 = nullptr;
 
         for( auto& inst : m_boardInstances )
         {
-            if( inst.boardUuid == conn.board1Uuid )
+            if( inst.subProjectUuid == ep1.subProjectUuid )
                 inst1 = &inst;
-            if( inst.boardUuid == conn.board2Uuid )
+            if( inst.subProjectUuid == ep2.subProjectUuid )
                 inst2 = &inst;
         }
 
         if( !inst1 || !inst2 || !inst1->board || !inst2->board )
             continue;
 
-        // Calculate mating offset
-        SFVEC3F offset = CalculateMatingOffset( *inst1, *inst2, conn.pad1Uuid, conn.pad2Uuid );
+        SFVEC3F offset = CalculateMatingOffset( *inst1, *inst2,
+                                                ep1.componentRef, ep1.pinNumber,
+                                                ep2.componentRef, ep2.pinNumber );
 
-        // Move inst2 relative to inst1
+        // Snap inst2 relative to inst1.
         inst2->position = inst1->position + offset;
     }
 
@@ -318,8 +393,7 @@ bool ASSEMBLY_3D_MANAGER::CanMateConnectors() const
     if( !m_project )
         return false;
 
-    PROJECT_FILE& projectFile = m_project->GetProjectFile();
-    return !projectFile.GetCrossBoardConnections().empty();
+    return !m_project->GetProjectFile().GetCrossBoardNets().empty();
 }
 
 
@@ -327,8 +401,8 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 {
     m_lastCollisions.clear();
 
-    // Simple bounding box collision detection
-    // Full 3D collision detection would require mesh intersection
+    // AABB-only check on board outlines + thickness. Mesh-accurate
+    // collision is M6.E.
     for( size_t i = 0; i < m_boardInstances.size(); i++ )
     {
         const BOARD_3D_INSTANCE& inst1 = m_boardInstances[i];
@@ -341,21 +415,18 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
             if( !inst2.visible || !inst2.board )
                 continue;
 
-            // Get bounding boxes
             BOX2I bbox1 = inst1.board->GetBoardEdgesBoundingBox();
             BOX2I bbox2 = inst2.board->GetBoardEdgesBoundingBox();
 
-            // Convert to 3D with positions
             float z1Min = inst1.position.z;
-            float z1Max = inst1.position.z + GetBoardThickness( inst1.board );
+            float z1Max = inst1.position.z + GetBoardThickness( inst1.board.get() );
             float z2Min = inst2.position.z;
-            float z2Max = inst2.position.z + GetBoardThickness( inst2.board );
+            float z2Max = inst2.position.z + GetBoardThickness( inst2.board.get() );
 
-            // Check Z overlap
             if( z1Max <= z2Min || z2Max <= z1Min )
-                continue;  // No Z overlap
+                continue;
 
-            // Check XY overlap (simplified - doesn't account for rotation)
+            // XY overlap (rotation not yet handled — M6.E)
             float x1Min = inst1.position.x + bbox1.GetLeft() / 1000000.0f;
             float x1Max = inst1.position.x + bbox1.GetRight() / 1000000.0f;
             float x2Min = inst2.position.x + bbox2.GetLeft() / 1000000.0f;
@@ -377,13 +448,11 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                 result.item1Desc = inst1.displayName;
                 result.item2Desc = inst2.displayName;
 
-                // Calculate collision point (center of overlap)
                 float cx = ( std::max( x1Min, x2Min ) + std::min( x1Max, x2Max ) ) / 2.0f;
                 float cy = ( std::max( y1Min, y2Min ) + std::min( y1Max, y2Max ) ) / 2.0f;
                 float cz = ( std::max( z1Min, z2Min ) + std::min( z1Max, z2Max ) ) / 2.0f;
                 result.collisionPoint = SFVEC3F( cx, cy, cz );
 
-                // Calculate penetration depth
                 float xPen = std::min( x1Max - x2Min, x2Max - x1Min );
                 float yPen = std::min( y1Max - y2Min, y2Max - y1Min );
                 float zPen = std::min( z1Max - z2Min, z2Max - z1Min );
@@ -400,15 +469,11 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 
 bool ASSEMBLY_3D_MANAGER::ExportAssemblySTEP( const wxString& aFilename )
 {
-    // TODO: Implement STEP assembly export using OpenCASCADE
-    // This would:
-    // 1. Create a STEP compound
-    // 2. For each visible board instance:
-    //    - Export board as STEP shape
-    //    - Apply transformation (position/rotation)
-    //    - Add to compound
-    // 3. Write compound to file
-
+    // M6.F deliverable — implement via OpenCASCADE STEP compound:
+    // 1. For each visible board instance, drive existing per-board STEP
+    //    export to an in-memory TopoDS_Shape.
+    // 2. Apply the instance transform as a TopLoc_Location.
+    // 3. Compose into a STEP compound and write.
     return false;
 }
 
@@ -423,7 +488,7 @@ void ASSEMBLY_3D_MANAGER::GetAssemblyBoundingBox( SFVEC3F& aMin, SFVEC3F& aMax )
             continue;
 
         BOX2I bbox = inst.board->GetBoardEdgesBoundingBox();
-        float thickness = GetBoardThickness( inst.board );
+        float thickness = GetBoardThickness( inst.board.get() );
 
         SFVEC3F instMin(
             inst.position.x + bbox.GetLeft() / 1000000.0f,
@@ -458,60 +523,33 @@ void ASSEMBLY_3D_MANAGER::GetAssemblyBoundingBox( SFVEC3F& aMin, SFVEC3F& aMax )
 
 SFVEC3F ASSEMBLY_3D_MANAGER::CalculateMatingOffset( const BOARD_3D_INSTANCE& aBoard1,
                                                      const BOARD_3D_INSTANCE& aBoard2,
-                                                     const KIID& aConnector1Uuid,
-                                                     const KIID& aConnector2Uuid )
+                                                     const wxString& aConnector1Ref,
+                                                     const wxString& aConnector1Pin,
+                                                     const wxString& aConnector2Ref,
+                                                     const wxString& aConnector2Pin )
 {
-    // Find connector footprints
-    FOOTPRINT* fp1 = nullptr;
-    FOOTPRINT* fp2 = nullptr;
-
-    if( aBoard1.board )
-    {
-        for( FOOTPRINT* fp : aBoard1.board->Footprints() )
-        {
-            for( PAD* pad : fp->Pads() )
-            {
-                if( pad->m_Uuid == aConnector1Uuid )
-                {
-                    fp1 = fp;
-                    break;
-                }
-            }
-            if( fp1 )
-                break;
-        }
-    }
-
-    if( aBoard2.board )
-    {
-        for( FOOTPRINT* fp : aBoard2.board->Footprints() )
-        {
-            for( PAD* pad : fp->Pads() )
-            {
-                if( pad->m_Uuid == aConnector2Uuid )
-                {
-                    fp2 = fp;
-                    break;
-                }
-            }
-            if( fp2 )
-                break;
-        }
-    }
+    FOOTPRINT* fp1 = findFootprintByRef( aBoard1.board.get(), aConnector1Ref );
+    FOOTPRINT* fp2 = findFootprintByRef( aBoard2.board.get(), aConnector2Ref );
 
     if( !fp1 || !fp2 )
         return SFVEC3F( 0, 0, 0 );
 
-    // Calculate offset to align connectors
-    VECTOR2I pos1 = fp1->GetPosition();
-    VECTOR2I pos2 = fp2->GetPosition();
+    PAD* pad1 = findPadByNumber( fp1, aConnector1Pin );
+    PAD* pad2 = findPadByNumber( fp2, aConnector2Pin );
+
+    // Prefer pad-center alignment when pads were resolved; fall back to
+    // footprint-anchor alignment otherwise. M6.D will replace this with
+    // pad-normal-aware mating that respects board flip.
+    VECTOR2I pos1 = pad1 ? pad1->GetPosition() : fp1->GetPosition();
+    VECTOR2I pos2 = pad2 ? pad2->GetPosition() : fp2->GetPosition();
 
     float dx = ( pos1.x - pos2.x ) / 1000000.0f;
     float dy = ( pos1.y - pos2.y ) / 1000000.0f;
 
-    // Offset in Z to stack boards with connector mating gap
-    float thickness1 = GetBoardThickness( aBoard1.board );
-    float connectorHeight = 5.0f;  // Assume 5mm connector height
+    // Stack with a connector-height Z gap. M6.D will replace the 5 mm
+    // fallback with the connector's actual 3D-model height.
+    float thickness1 = GetBoardThickness( aBoard1.board.get() );
+    float connectorHeight = 5.0f;
     float dz = thickness1 + connectorHeight;
 
     return SFVEC3F( dx, dy, dz );

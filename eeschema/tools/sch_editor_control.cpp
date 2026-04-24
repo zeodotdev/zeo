@@ -1188,10 +1188,6 @@ static bool highlightNet( TOOL_MANAGER* aToolMgr, const VECTOR2D& aPosition )
 
     wxString connName = ( conn ) ? conn->Name() : wxString( wxS( "" ) );
 
-    wxLogTrace( wxT( "MULTI_BOARD" ),
-                wxT( "highlightNet pick: item_type=%d conn=%p name='%s'" ),
-                item ? item->Type() : -1, static_cast<void*>( conn ), connName );
-
     // Treat as "no net" when the clicked item resolves to a placeholder
     // connection — a subgraph with no driver caches its display as
     // "<NO NET>" (or "/<NO NET>" with the sheet-path prefix) and its

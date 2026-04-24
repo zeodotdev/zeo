@@ -29,6 +29,7 @@
 #include <footprint.h>
 #include <pad.h>
 #include <multi_board/component_assignment.h>
+#include <multi_board/sub_project_board_loader.h>
 #include <pcb_edit_frame.h>
 #include <project.h>
 #include <project/project_file.h>
@@ -383,13 +384,14 @@ std::set<wxString> MULTI_BOARD_NETLIST_UPDATER::GetMultiBoardComponents() const
 
 BOARD* MULTI_BOARD_NETLIST_UPDATER::GetBoardByUuid( const KIID& aBoardUuid )
 {
-    // Check cache first
+    // Check cache first.
     auto it = m_boardCache.find( aBoardUuid );
     if( it != m_boardCache.end() )
         return it->second;
 
-    // For now, return the active board if it matches
-    // TODO: Implement proper multi-board loading from project
+    // Active-board fast path: matches the legacy single-project multi-PCB
+    // model where a project's BOARD_INFO entries refer to boards already
+    // loaded into the frame.
     if( m_frame && m_frame->GetBoard() )
     {
         BOARD* board = m_frame->GetBoard();
@@ -397,6 +399,21 @@ BOARD* MULTI_BOARD_NETLIST_UPDATER::GetBoardByUuid( const KIID& aBoardUuid )
         {
             m_boardCache[aBoardUuid] = board;
             return board;
+        }
+    }
+
+    // Container-model fallback: if aBoardUuid identifies a sub-project of
+    // the multi-board container project, load it from disk via the shared
+    // sub-project board loader. The loaded BOARD is owner-managed by this
+    // updater (R9 in MULTI_BOARD_REFACTOR_PLAN.md).
+    if( m_project )
+    {
+        if( std::unique_ptr<BOARD> loaded = LoadSubProjectBoard( *m_project, aBoardUuid ) )
+        {
+            BOARD* raw = loaded.get();
+            m_loadedSubBoards.push_back( std::move( loaded ) );
+            m_boardCache[aBoardUuid] = raw;
+            return raw;
         }
     }
 

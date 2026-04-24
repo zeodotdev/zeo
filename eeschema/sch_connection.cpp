@@ -328,6 +328,12 @@ bool SCH_CONNECTION::IsDriver() const
     case SCH_HIER_LABEL_T:
     case SCH_SHEET_PIN_T:
     case SCH_SHEET_T:
+    case SCH_MODULE_PIN_T:
+        // Module pins stand in for their sub-project's connector pad,
+        // so they drive subgraphs on the MBS the same way a sheet pin
+        // would. Without this, module-pin-only subgraphs resolve to
+        // "<NO NET>" and every cross-board highlight / net lookup
+        // against pin text fails.
         return true;
 
     case SCH_PIN_T:

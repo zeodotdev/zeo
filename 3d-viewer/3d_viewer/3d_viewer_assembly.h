@@ -36,32 +36,37 @@ class PROJECT;
 
 
 /**
- * Represents a single board instance in the 3D assembly view.
+ * Represents a single sub-project's PCB rendered in the 3D assembly
+ * view. Keyed by the container project's `SUB_PROJECT_INFO::uuid`,
+ * not by a `BOARD_INFO::uuid` (the legacy single-project multi-PCB
+ * model).
  */
 struct BOARD_3D_INSTANCE
 {
-    KIID            uuid;           ///< Unique ID for this instance
-    KIID            boardUuid;      ///< UUID of the source board in the project
-    BOARD*          board;          ///< Pointer to the loaded board (may be null)
-    wxString        displayName;    ///< Display name for the board
+    KIID                    uuid;             ///< Unique ID for this instance
+    KIID                    subProjectUuid;   ///< UUID of the source sub-project in the container
+    wxString                pcbFilePath;      ///< Absolute path to the loaded `.kicad_pcb`
+    std::unique_ptr<BOARD>  board;            ///< Loaded board (owned by the manager); may be null
+    wxString                displayName;      ///< Display name for the board
 
     // Transform
-    SFVEC3F         position;       ///< Position in mm (X, Y, Z)
-    SFVEC3F         rotation;       ///< Rotation in degrees (X, Y, Z)
+    SFVEC3F                 position;         ///< Position in mm (X, Y, Z)
+    SFVEC3F                 rotation;         ///< Rotation in degrees (X, Y, Z)
 
     // Visibility
-    bool            visible;        ///< Whether this board is visible
-    bool            transparent;    ///< Whether to render with transparency
-    float           opacity;        ///< Opacity level (0.0 - 1.0)
+    bool                    visible;          ///< Whether this board is visible
+    bool                    transparent;      ///< Whether to render with transparency
+    float                   opacity;          ///< Opacity level (0.0 - 1.0)
 
-    BOARD_3D_INSTANCE() :
-            board( nullptr ),
-            position( 0, 0, 0 ),
-            rotation( 0, 0, 0 ),
-            visible( true ),
-            transparent( false ),
-            opacity( 1.0f )
-    {}
+    // Movable, not copyable: BOARD ownership is unique per instance.
+    // Special members are out-of-line so unique_ptr<BOARD> can be
+    // instantiated against the complete BOARD type in the .cpp file.
+    BOARD_3D_INSTANCE();
+    ~BOARD_3D_INSTANCE();
+    BOARD_3D_INSTANCE( BOARD_3D_INSTANCE&& ) noexcept;
+    BOARD_3D_INSTANCE& operator=( BOARD_3D_INSTANCE&& ) noexcept;
+    BOARD_3D_INSTANCE( const BOARD_3D_INSTANCE& ) = delete;
+    BOARD_3D_INSTANCE& operator=( const BOARD_3D_INSTANCE& ) = delete;
 
     /**
      * Get the transformation matrix for this instance.
@@ -161,11 +166,18 @@ public:
 
     /**
      * Add a board instance to the assembly.
-     * @param aBoard The board to add
+     *
+     * The manager takes ownership of @p aBoard.
+     *
+     * @param aBoard The board to add (manager takes ownership)
      * @param aDisplayName Display name for the board
+     * @param aSubProjectUuid Sub-project this board belongs to (may be a
+     *                        null KIID for ad-hoc additions outside the
+     *                        container model)
      * @return The UUID of the created instance
      */
-    KIID AddBoardInstance( BOARD* aBoard, const wxString& aDisplayName );
+    KIID AddBoardInstance( std::unique_ptr<BOARD> aBoard, const wxString& aDisplayName,
+                           const KIID& aSubProjectUuid = KIID() );
 
     /**
      * Remove a board instance.
@@ -292,12 +304,16 @@ public:
 
 private:
     /**
-     * Calculate mating offset for a connector pair.
+     * Calculate mating offset for a connector pair, addressed by
+     * component reference + pin number on each side. Matches the
+     * `MB_CROSS_BOARD_NET_ENDPOINT` addressing scheme.
      */
     SFVEC3F CalculateMatingOffset( const BOARD_3D_INSTANCE& aBoard1,
                                     const BOARD_3D_INSTANCE& aBoard2,
-                                    const KIID& aConnector1Uuid,
-                                    const KIID& aConnector2Uuid );
+                                    const wxString& aConnector1Ref,
+                                    const wxString& aConnector1Pin,
+                                    const wxString& aConnector2Ref,
+                                    const wxString& aConnector2Pin );
 
     /**
      * Get the board thickness in mm.

@@ -235,8 +235,14 @@ private:
     bool m_deleteUnusedFootprints;
     bool m_lookupByTimestamp;
 
-    // Cached board pointers
-    std::map<KIID, BOARD*>          m_boardCache;
+    // Cached board pointers. Entries either alias the active frame's
+    // BOARD (owned by m_frame) or point into m_loadedSubBoards below
+    // (owned by this updater).
+    std::map<KIID, BOARD*>                m_boardCache;
+
+    // Sub-project boards loaded on demand via the multi-board sub-project
+    // loader. Owner-managed per R9 of MULTI_BOARD_REFACTOR_PLAN.md.
+    std::vector<std::unique_ptr<BOARD>>   m_loadedSubBoards;
 };
 
 #endif // MULTI_BOARD_NETLIST_UPDATER_H

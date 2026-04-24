@@ -25,6 +25,7 @@
 
 #include <board.h>
 #include <footprint.h>
+#include <multi_board/sub_project_board_loader.h>
 #include <pad.h>
 #include <project.h>
 #include <project/project_file.h>
@@ -322,13 +323,32 @@ void DRC_ENGINE_CROSS_BOARD::CheckNetCompleteness()
 
 BOARD* DRC_ENGINE_CROSS_BOARD::GetBoardByUuid( const KIID& aBoardUuid )
 {
-    // Check cache first
+    // Check cache first.
     auto it = m_boardCache.find( aBoardUuid );
     if( it != m_boardCache.end() )
         return it->second;
 
-    // TODO: Implement proper board loading from project
-    // For now, return nullptr - boards would need to be loaded separately
+    // Container-model fallback: if aBoardUuid identifies a sub-project of
+    // the multi-board container project, load it from disk via the shared
+    // sub-project board loader. The loaded BOARD is owner-managed by this
+    // engine (R9 in MULTI_BOARD_REFACTOR_PLAN.md).
+    //
+    // Note: the legacy single-project multi-PCB callers above pass a
+    // `BOARD_INFO::uuid`, which won't match any SUB_PROJECT_INFO::uuid —
+    // the loader returns nullptr in that case. Those callers need to be
+    // ported to the container topology (separate task in M5) before
+    // they can resolve cross-board boards through this path.
+    if( m_project )
+    {
+        if( std::unique_ptr<BOARD> loaded = LoadSubProjectBoard( *m_project, aBoardUuid ) )
+        {
+            BOARD* raw = loaded.get();
+            m_loadedSubBoards.push_back( std::move( loaded ) );
+            m_boardCache[aBoardUuid] = raw;
+            return raw;
+        }
+    }
+
     return nullptr;
 }
 

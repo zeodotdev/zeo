@@ -273,8 +273,13 @@ private:
     // Results
     std::vector<CROSS_BOARD_DRC_ITEM>   m_violations;
 
-    // Cached board pointers
-    std::map<KIID, BOARD*>              m_boardCache;
+    // Cached board pointers. Entries either alias an externally-owned
+    // BOARD or point into m_loadedSubBoards (owned by this engine).
+    std::map<KIID, BOARD*>                m_boardCache;
+
+    // Sub-project boards loaded on demand via the multi-board sub-project
+    // loader. Owner-managed per R9 of MULTI_BOARD_REFACTOR_PLAN.md.
+    std::vector<std::unique_ptr<BOARD>>   m_loadedSubBoards;
 
     // Current violation context
     KIID                                m_currentBoard1Uuid;

@@ -500,6 +500,7 @@ set( PCBNEW_CLASS_SRCS
 
     multi_board/component_assignment.cpp
     multi_board/panel_board.cpp
+    multi_board/sub_project_board_loader.cpp
 
     component_classes/component_class.cpp
     component_classes/component_class_cache_proxy.cpp

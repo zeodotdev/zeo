@@ -171,40 +171,60 @@ All M1 items (M1.1–M1.5) landed between 2026-04-20 and 2026-04-23.
 
 ---
 
-## Phase M5 — Non-3D cleanup + follow-ons (~2-3 days) — pending
+## Phase M5 — Non-3D cleanup + follow-ons (~2-3 days) — partially landed
 
-1. **Shared sub-project board loader** — new helper (likely
-   `common/project/sub_project_board_loader.{h,cpp}` or
-   `pcbnew/board_utils/`) that takes a container `PROJECT&` and a
-   `SUB_PROJECT_INFO` or its UUID, resolves the sub-project's
-   `.kicad_pro`, reads its board filename, and loads the `.kicad_pcb`
-   via `PCB_IO_KICAD_SEXPR::LoadBoard`. Returns a `std::unique_ptr<BOARD>`
-   with owner-managed lifetime.
-   - Replaces the stub in `DRC_ENGINE_CROSS_BOARD::GetBoardByUuid`.
-   - Replaces the active-only path in
-     `MULTI_BOARD_NETLIST_UPDATER::GetBoardByUuid`.
-   - Consumed by Phase M6 (3D assembly viewer).
-2. **Replace directory-walk MBS lookup** with an explicit parent-project
-   reference stored in the `.kicad_mbs` file (`(parent_project "...")`
-   s-expr or in the `(title_block)` metadata). Updates
-   `sch_editor_control.cpp:~621`, `files-io.cpp::syncCrossBoardNetsIfMbs`,
-   and the netlist-updater container probe.
-3. **Replace text-level PCB sync** with BOARD-level edits via
-   `PCB_IO_KICAD_SEXPR::LoadBoard()`. Robust handling of quoted strings,
-   whitespace, escape sequences.
-4. **Comment sweep** — eliminate remaining `.kicad_multi` /
-   `MULTI_BOARD_PROJECT` mentions in the files listed in Current state.
-5. **Validate cross-board DRC** on a migrated multi-board project once
-   the sub-project board loader is in place. The stubs
-   `CheckSignalIntegrity` and `CheckPowerDistribution` are a separate
-   investment decision, not blocked by this phase.
-6. **Evaluate CONNECTION_GRAPH integration** — register
-   `SCH_MODULE_BLOCK_T` / `SCH_MODULE_PIN_T`, retire the custom
-   union-find extractor if the graph integration is cheap. ~4 hours if
-   we go for it; skip if the graph API makes it harder.
-7. **Cross-board ERC rules** — walk `multi_board.cross_board_nets`,
-   validate endpoint counts + pin directions + pad-count match between
-   paired connectors.
+### M5.1 ✓ landed (2026-04-23)
+
+**Shared sub-project board loader** at
+`pcbnew/multi_board/sub_project_board_loader.{h,cpp}`. Two free
+functions: `LoadSubProjectBoard(PROJECT&, SUB_PROJECT_INFO)` and
+`LoadSubProjectBoard(PROJECT&, KIID)`. Resolves via
+`PROJECT_FILE::ResolveSubProjectPath` + `MultiBoardMainPcb`, loads via
+`PCB_IO_KICAD_SEXPR::LoadBoard`, returns `std::unique_ptr<BOARD>`.
+No shared cache (R9). Failures swallowed via `wxLogTrace MULTI_BOARD`.
+
+Wired into both legacy stubs as a fallback path:
+- `MULTI_BOARD_NETLIST_UPDATER::GetBoardByUuid` — first the cache,
+  then the frame's active board (legacy single-project multi-PCB
+  path), then the loader. Owns loaded boards in
+  `m_loadedSubBoards`.
+- `DRC_ENGINE_CROSS_BOARD::GetBoardByUuid` — first the cache, then
+  the loader. Owns loaded boards in `m_loadedSubBoards`.
+
+**Important caveat**: both engines still iterate
+`PROJECT_FILE::GetBoardInfos()` (legacy single-project multi-PCB
+model) at their call sites, so the loader fallback is currently
+unreachable from existing callers — it's there for the 3D viewer
+(M6.A onward) and for when those engines themselves are ported to
+the container topology (separate task, not yet scoped).
+
+### M5.2+ pending
+
+- **M5.2 Replace directory-walk MBS lookup** with an explicit
+  parent-project reference stored in the `.kicad_mbs` file
+  (`(parent_project "...")` s-expr or in the `(title_block)` metadata).
+  Updates `sch_editor_control.cpp:~621`,
+  `files-io.cpp::syncCrossBoardNetsIfMbs`, and the netlist-updater
+  container probe.
+- **M5.3 Replace text-level PCB sync** with BOARD-level edits via
+  `PCB_IO_KICAD_SEXPR::LoadBoard()`. Robust handling of quoted strings,
+  whitespace, escape sequences.
+- **M5.4 Comment sweep** — eliminate remaining `.kicad_multi` /
+  `MULTI_BOARD_PROJECT` mentions in the files listed in Current state.
+- **M5.5 Port DRC + netlist updater to container model** — both
+  engines currently iterate the legacy `BOARD_INFO` array. Container
+  projects leave it empty, so the engines silently no-op. Port to
+  `GetSubProjects()` + `GetCrossBoardNets()` so the M5.1 loader
+  fallback becomes useful and `CheckConnectorMatching` actually runs.
+- **M5.6 DRC stubs investment** — flesh out `CheckSignalIntegrity` and
+  `CheckPowerDistribution` once M5.5 is in place.
+- **M5.7 Evaluate CONNECTION_GRAPH integration** — register
+  `SCH_MODULE_BLOCK_T` / `SCH_MODULE_PIN_T`, retire the custom
+  union-find extractor if the graph integration is cheap. ~4 hours if
+  we go for it; skip if the graph API makes it harder.
+- **M5.8 Cross-board ERC rules** — walk `multi_board.cross_board_nets`,
+  validate endpoint counts + pin directions + pad-count match between
+  paired connectors.
 
 ---
 

@@ -303,7 +303,8 @@ wxString extractQuotedParam( const wxString& aPayload, const wxString& aKey )
 
 
 void MBSCH_EDIT_FRAME::crossProbeHighlightPart( const wxString& aRef,
-                                                const wxString& aPadOrPin )
+                                                const wxString& aPadOrPin,
+                                                const wxString& aSenderProjectPath )
 {
     if( aRef.IsEmpty() )
         return;
@@ -312,6 +313,35 @@ void MBSCH_EDIT_FRAME::crossProbeHighlightPart( const wxString& aRef,
 
     if( !screen )
         return;
+
+    // If the caller told us which sub-project originated this probe,
+    // resolve its .kicad_pro absolute path so we can match blocks that
+    // live on THAT sub-project only. Multiple blocks may carry the
+    // same local componentRef (e.g. both boards have a "J2"); without
+    // the scope filter, we'd pick whichever iterated first.
+    wxString   scopeAbsPath;
+    wxFileName scopeFn;
+
+    if( !aSenderProjectPath.IsEmpty() )
+    {
+        scopeFn.Assign( aSenderProjectPath );
+        scopeFn.Normalize( FN_NORMALIZE_FLAGS );
+        scopeAbsPath = scopeFn.GetFullPath();
+    }
+
+    auto blockSubProjectAbsPath = [this]( SCH_MODULE_BLOCK* aBlock ) -> wxString
+    {
+        if( aBlock->GetSubProjectPath().IsEmpty() )
+            return wxEmptyString;
+
+        wxFileName fn( aBlock->GetSubProjectPath() );
+
+        if( !fn.IsAbsolute() )
+            fn.MakeAbsolute( Prj().GetProjectPath() );
+
+        fn.Normalize( FN_NORMALIZE_FLAGS );
+        return fn.GetFullPath();
+    };
 
     SCH_MODULE_BLOCK* matchedBlock = nullptr;
     SCH_MODULE_PIN*   matchedPin   = nullptr;
@@ -325,6 +355,18 @@ void MBSCH_EDIT_FRAME::crossProbeHighlightPart( const wxString& aRef,
 
         if( block->GetComponentRef() != aRef )
             continue;
+
+        // When a sender scope is available, require the block's
+        // sub-project absolute path to match. Blocks with no path
+        // info (e.g. hand-created placeholders) always match so
+        // legacy workflows still work unscoped.
+        if( !scopeAbsPath.IsEmpty() )
+        {
+            wxString blockAbsPath = blockSubProjectAbsPath( block );
+
+            if( !blockAbsPath.IsEmpty() && blockAbsPath != scopeAbsPath )
+                continue;
+        }
 
         matchedBlock = block;
 
@@ -635,6 +677,23 @@ void MBSCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
     const std::string& payloadStd = aEvent.GetPayload();
     wxString           payload( payloadStd.c_str(), wxConvUTF8 );
 
+    // Two boards can legitimately share a connector ref (both have
+    // "J2"), so just matching F<ref> against componentRef produces the
+    // wrong block. The sender frame carries its own PROJECT — read it
+    // here and pass down as scope so the match becomes unambiguous.
+    // KIWAY_MAIL_EVENT stashes the sender wxWindow* via SetEventObject
+    // on construction; GetEventObject() hands it back. Cast up to
+    // EDA_BASE_FRAME so we can reach the sender's PROJECT binding.
+    auto senderProjectPath = [&aEvent]() -> wxString
+    {
+        wxObject* source = aEvent.GetEventObject();
+
+        if( auto* frame = dynamic_cast<EDA_BASE_FRAME*>( source ) )
+            return frame->Prj().GetProjectFullName();
+
+        return wxEmptyString;
+    };
+
     switch( aEvent.Command() )
     {
     case MAIL_CROSS_PROBE:
@@ -649,8 +708,15 @@ void MBSCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
         wxString pad  = extractQuotedParam( payload, wxT( "$PAD:" ) );
         wxString net  = extractQuotedParam( payload, wxT( "$NET:" ) );
 
+        // Packets we originate ourselves (MBSCH's own fan-out on net
+        // highlight) carry an explicit $PROJECT: token. If present,
+        // prefer it over the sender frame's PROJECT since the fan-out
+        // targets a specific sub-project's path, not MBSCH's own.
+        wxString explicitScope = extractQuotedParam( payload, wxT( "$PROJECT:" ) );
+        wxString scope         = explicitScope.IsEmpty() ? senderProjectPath() : explicitScope;
+
         if( !part.IsEmpty() )
-            crossProbeHighlightPart( part, pad );
+            crossProbeHighlightPart( part, pad, scope );
 
         if( !net.IsEmpty() )
             crossProbeHighlightNet( net );
@@ -663,7 +729,8 @@ void MBSCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
     {
         // $SELECT: <focus>,F<ref>,P<ref>/<pin>,... — for MBS we care only
         // about the F<ref> entries (component references). Each is mapped
-        // to a SCH_MODULE_BLOCK with matching componentRef.
+        // to a SCH_MODULE_BLOCK with matching componentRef + sub-project
+        // path so colliding refs across boards don't pick the wrong one.
         size_t start = payload.find( wxT( "$SELECT:" ) );
 
         if( start == wxString::npos )
@@ -671,14 +738,22 @@ void MBSCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
 
         wxString body = payload.Mid( start + 8 );   // strlen("$SELECT:")
 
-        // Strip trailing `$PROJECT: "..."` scope token if present —
-        // MBSCH sends it on outbound packets so sub-project PCB/SCH
-        // frames can filter, but we don't want it leaking into our
-        // comma-tokenized spec list.
-        size_t scopeCut = body.find( wxT( " $PROJECT:" ) );
+        // Strip trailing `$PROJECT: "..."` scope token (MBSCH stamps
+        // this on its own outbound packets) before comma tokenization.
+        // We re-read it as the preferred scope source below — it's
+        // authoritative when present since MBSCH-originated packets
+        // target a specific sub-project by absolute path rather than
+        // by sender Prj().
+        size_t   scopeCut = body.find( wxT( " $PROJECT:" ) );
+        wxString explicitScope;
 
         if( scopeCut != wxString::npos )
-            body = body.Mid( 0, scopeCut );
+        {
+            explicitScope = extractQuotedParam( body, wxT( "$PROJECT:" ) );
+            body          = body.Mid( 0, scopeCut );
+        }
+
+        wxString scope = explicitScope.IsEmpty() ? senderProjectPath() : explicitScope;
 
         wxStringTokenizer tok( body, wxT( "," ) );
 
@@ -712,7 +787,7 @@ void MBSCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
 
                 // F<ref> — symbol reference. No per-pin data in this
                 // format; fall through to the part-only highlight path.
-                crossProbeHighlightPart( spec.Mid( 1 ), wxEmptyString );
+                crossProbeHighlightPart( spec.Mid( 1 ), wxEmptyString, scope );
             }
             else if( spec[0] == 'P' )
             {
@@ -729,7 +804,7 @@ void MBSCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
                     continue;
 
                 crossProbeHighlightPart( spec.Mid( 1, slash - 1 ),
-                                         spec.Mid( slash + 1 ) );
+                                         spec.Mid( slash + 1 ), scope );
             }
         }
 

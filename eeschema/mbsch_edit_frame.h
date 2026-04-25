@@ -75,7 +75,8 @@ private:
      * instance receives every cross-probe broadcast, so silently
      * ignoring non-matches is the correct behavior.
      */
-    void crossProbeHighlightPart( const wxString& aRef, const wxString& aPadOrPin );
+    void crossProbeHighlightPart( const wxString& aRef, const wxString& aPadOrPin,
+                                  const wxString& aSenderProjectPath = wxEmptyString );
 
     /**
      * Highlight the subgraph whose net name matches `aNetName` on this

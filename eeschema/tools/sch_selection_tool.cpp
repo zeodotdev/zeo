@@ -172,7 +172,8 @@ SELECTION_CONDITION SCH_CONDITIONS::AllPins = []( const SELECTION& aSel )
 
 SELECTION_CONDITION SCH_CONDITIONS::AllPinsOrSheetPins = []( const SELECTION& aSel )
 {
-    return aSel.GetSize() >= 1 && aSel.OnlyContains( { SCH_PIN_T, SCH_SHEET_PIN_T } );
+    return aSel.GetSize() >= 1
+           && aSel.OnlyContains( { SCH_PIN_T, SCH_SHEET_PIN_T, SCH_MODULE_PIN_T } );
 };
 
 
@@ -219,7 +220,7 @@ SCH_SELECTION_TOOL::~SCH_SELECTION_TOOL()
 static std::vector<KICAD_T> connectedTypes = {
     SCH_SYMBOL_LOCATE_POWER_T, SCH_PIN_T,     SCH_ITEM_LOCATE_WIRE_T, SCH_ITEM_LOCATE_BUS_T, SCH_BUS_WIRE_ENTRY_T,
     SCH_BUS_BUS_ENTRY_T,       SCH_LABEL_T,   SCH_HIER_LABEL_T,       SCH_GLOBAL_LABEL_T,    SCH_SHEET_PIN_T,
-    SCH_DIRECTIVE_LABEL_T,     SCH_JUNCTION_T
+    SCH_MODULE_PIN_T,          SCH_DIRECTIVE_LABEL_T, SCH_JUNCTION_T
 };
 
 static std::vector<KICAD_T> connectedLineTypes = { SCH_ITEM_LOCATE_WIRE_T, SCH_ITEM_LOCATE_BUS_T };
@@ -236,6 +237,7 @@ static std::vector<KICAD_T> expandConnectionGraphTypes = { SCH_NO_CONNECT_T,
                                                            SCH_HIER_LABEL_T,
                                                            SCH_GLOBAL_LABEL_T,
                                                            SCH_SHEET_PIN_T,
+                                                           SCH_MODULE_PIN_T,
                                                            SCH_DIRECTIVE_LABEL_T,
                                                            SCH_JUNCTION_T,
                                                            SCH_ITEM_LOCATE_GRAPHIC_LINE_T,
@@ -873,7 +875,8 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
                 {
                     for( EDA_ITEM* item : m_selection )
                     {
-                        if( item->Type() != SCH_PIN_T && item->Type() != SCH_SHEET_PIN_T )
+                        if( item->Type() != SCH_PIN_T && item->Type() != SCH_SHEET_PIN_T
+                            && item->Type() != SCH_MODULE_PIN_T )
                             continue;
 
                         SCH_NO_CONNECT* nc = new SCH_NO_CONNECT( item->GetPosition() );
@@ -893,7 +896,8 @@ int SCH_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
 
                     for( EDA_ITEM* item : m_selection )
                     {
-                        if( item->Type() != SCH_PIN_T && item->Type() != SCH_SHEET_PIN_T )
+                        if( item->Type() != SCH_PIN_T && item->Type() != SCH_SHEET_PIN_T
+                            && item->Type() != SCH_MODULE_PIN_T )
                             continue;
 
                         SCH_LINE* wire = new SCH_LINE( item->GetPosition(), LAYER_WIRE );
@@ -1794,7 +1798,14 @@ void SCH_SELECTION_TOOL::GuessSelectionCandidates( SCH_COLLECTOR& collector, con
 
         if( exactHits.contains( item ) )
         {
-            if( item->Type() == SCH_PIN_T || item->Type() == SCH_JUNCTION_T )
+            // Prefer pins and junctions as the closest hit so clicking
+            // on a pin anchor selects the pin (not its parent block /
+            // sheet / symbol). Module pins live as children of a
+            // SCH_MODULE_BLOCK the same way sheet pins live on a
+            // sheet, so they follow the same rule.
+            if( item->Type() == SCH_PIN_T || item->Type() == SCH_JUNCTION_T
+                || item->Type() == SCH_SHEET_PIN_T
+                || item->Type() == SCH_MODULE_PIN_T )
             {
                 closest = item;
                 break;

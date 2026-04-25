@@ -3623,7 +3623,11 @@ bool CONNECTION_GRAPH::ercCheckBusToBusConflicts( const CONNECTION_SUBGRAPH* aSu
             break;
 
         case SCH_SHEET_PIN_T:
+        case SCH_MODULE_PIN_T:
         case SCH_HIER_LABEL_T:
+            // Module pins are SHEET_PIN-tier drivers that ported sub-project
+            // connector pads onto the MBS; for bus-topology ERC they play
+            // the same role as sheet pins / hier labels.
             if( !port && item->Connection( &sheet )->IsBus() )
                 port = item;
             break;

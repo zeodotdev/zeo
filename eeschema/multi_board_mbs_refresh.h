@@ -33,6 +33,11 @@ class SCH_MODULE_BLOCK;
 class SCH_MODULE_PIN;
 class PROJECT_FILE;
 
+namespace KIGFX
+{
+class VIEW;
+}
+
 
 /**
  * One planned change produced by `ComputeMbsRefreshDiff`.
@@ -118,9 +123,17 @@ std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
 /**
  * Apply the given (pre-filtered) list of changes to the MBS screen.
  * Changes with `checked == false` are skipped.
+ *
+ * When `aView` is non-null, added/removed blocks are also added to /
+ * removed from the GAL view, and blocks whose child pins changed get
+ * an Update() invalidation. Screen mutations alone don't refresh the
+ * canvas — skipping the view updates leaves stale pointers in the
+ * layer cache and newly-added blocks un-drawn until the MBS is
+ * reloaded from disk.
  */
 MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
-                                           const std::vector<MBS_CHANGE>& aChanges );
+                                           const std::vector<MBS_CHANGE>& aChanges,
+                                           KIGFX::VIEW* aView = nullptr );
 
 
 /**

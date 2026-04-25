@@ -611,9 +611,23 @@ bool RENDER_3D_OPENGL::Redraw( bool aIsMoving, REPORTER* aStatusReporter,
 
         OglResetTextureState();
 
-        // Draw the background ( rectangle with color gradient)
+        // Draw the background ( rectangle with color gradient).
+        //
+        // OglDrawBackground disables depth TEST but leaves depth
+        // WRITES on; it draws a full-screen quad at NDC Z=0 → depth
+        // 0.5 → writes 0.5 into the depth buffer everywhere. In
+        // single-board rendering this is overwritten by layer
+        // geometry and nobody notices; but in the M6.C multi-pass
+        // composite the *next* instance's geometry would have to
+        // beat the 0.5 floor (not the clear's 1.0) to pass GL_LESS,
+        // silently culling the second board wherever the first
+        // board's background covered empty screen. Mask depth writes
+        // around the background so the buffer retains its 1.0 clear
+        // value outside the first board's actual geometry.
+        glDepthMask( GL_FALSE );
         OglDrawBackground( premultiplyAlpha( m_boardAdapter.m_BgColorTop ),
                            premultiplyAlpha( m_boardAdapter.m_BgColorBot ) );
+        glDepthMask( GL_TRUE );
     }
     else
     {
@@ -894,8 +908,13 @@ bool RENDER_3D_OPENGL::Redraw( bool aIsMoving, REPORTER* aStatusReporter,
         glEnable( GL_LIGHTING );
     }
 
-    // Render 3D arrows
-    if( cfg.show_navigator )
+    // Render 3D arrows. SPHERES_GIZMO::render3dSpheresGizmo glClears
+    // GL_DEPTH_BUFFER_BIT to carve its own mini-viewport, which in a
+    // multi-instance composite would wipe the shared depth buffer and
+    // make every subsequent pass pass GL_LESS trivially. Skip on
+    // intermediate passes; the orchestrator (RedrawAll) only un-sets
+    // this flag on the last visible instance.
+    if( cfg.show_navigator && !m_skipGizmo )
         m_spheres_gizmo->render3dSpheresGizmo( m_camera.GetRotationMatrix() );
 
     // Return back to the original viewport (this is important if we want

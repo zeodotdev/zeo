@@ -26,6 +26,7 @@
 
 #include <project/project_file.h>
 #include <project/multi_board_scan.h>
+#include <view/view.h>
 
 #include <algorithm>
 #include <map>
@@ -81,6 +82,38 @@ int computeBlockHeight( size_t aPinCount )
 }
 
 
+/**
+ * Pick the next "B<N>" reference not already used by any block on the
+ * screen. Scan to the first numeric gap so freshly-annotated refs
+ * stay compact when the user has manually set some.
+ */
+wxString nextMbsReference( SCH_SCREEN& aScreen )
+{
+    std::set<int> used;
+
+    for( SCH_ITEM* item : aScreen.Items().OfType( SCH_MODULE_BLOCK_T ) )
+    {
+        SCH_MODULE_BLOCK* b     = static_cast<SCH_MODULE_BLOCK*>( item );
+        const wxString&   ref   = b->GetMbsReference();
+
+        if( ref.IsEmpty() || !ref.StartsWith( wxT( "B" ) ) )
+            continue;
+
+        long n = 0;
+
+        if( ref.Mid( 1 ).ToLong( &n ) && n > 0 )
+            used.insert( (int) n );
+    }
+
+    int candidate = 1;
+
+    while( used.count( candidate ) )
+        candidate++;
+
+    return wxString::Format( wxT( "B%d" ), candidate );
+}
+
+
 VECTOR2I nextFreeSlot( SCH_SCREEN& aScreen )
 {
     int  maxBottom = 0;
@@ -124,6 +157,15 @@ wxString MBS_CHANGE::Describe() const
 {
     wxString boardLabel = subProjectDisplayName.IsEmpty() ? subProjectPath : subProjectDisplayName;
 
+    // Block identity preferred for rows that touch an existing block:
+    // show the MBS-scoped annotation (e.g. "B1") since that's the
+    // unique identifier the user sees in the canvas. The sub-project
+    // componentRef (J2) follows as context.
+    wxString blockId = componentRef;
+
+    if( existingBlock && !existingBlock->GetMbsReference().IsEmpty() )
+        blockId = existingBlock->GetMbsReference() + wxT( " / " ) + componentRef;
+
     switch( kind )
     {
     case KIND::ADD_BLOCK:
@@ -132,19 +174,19 @@ wxString MBS_CHANGE::Describe() const
 
     case KIND::REMOVE_BLOCK:
         return wxString::Format( _( "Remove block %s (%s) — no longer in sub-project" ),
-                                 componentRef, boardLabel );
+                                 blockId, boardLabel );
 
     case KIND::ADD_PIN:
         return wxString::Format( _( "Add pin %s.%s (\"%s\") to %s" ),
-                                 componentRef, pinNumber, newLabel, boardLabel );
+                                 blockId, pinNumber, newLabel, boardLabel );
 
     case KIND::REMOVE_PIN:
         return wxString::Format( _( "Remove pin %s.%s from %s (pad vanished from PCB)" ),
-                                 componentRef, pinNumber, boardLabel );
+                                 blockId, pinNumber, boardLabel );
 
     case KIND::RENAME_PIN:
         return wxString::Format( _( "Rename pin %s.%s on %s: \"%s\" → \"%s\"" ),
-                                 componentRef, pinNumber, boardLabel, oldLabel, newLabel );
+                                 blockId, pinNumber, boardLabel, oldLabel, newLabel );
 
     case KIND::PATH_DRIFT:
         return wxString::Format( _( "Update path on %s: %s → %s" ),
@@ -152,7 +194,7 @@ wxString MBS_CHANGE::Describe() const
 
     case KIND::UPGRADE_UUID:
         return wxString::Format( _( "Stamp sub-project UUID onto legacy block %s (%s)" ),
-                                 componentRef, boardLabel );
+                                 blockId, boardLabel );
     }
 
     return wxEmptyString;
@@ -371,7 +413,8 @@ std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
 
 
 MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
-                                           const std::vector<MBS_CHANGE>& aChanges )
+                                           const std::vector<MBS_CHANGE>& aChanges,
+                                           KIGFX::VIEW* aView )
 {
     MBS_REFRESH_RESULT result;
 
@@ -448,6 +491,13 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
             if( ch->existingPin )
             {
                 ch->existingPin->SetText( ch->newLabel );
+
+                // Pin text is drawn as part of the parent block in
+                // SCH_PAINTER, so the block item itself needs an
+                // invalidation to repaint the new label.
+                if( aView && ch->existingBlock )
+                    aView->Update( ch->existingBlock, KIGFX::REPAINT );
+
                 result.pinsRenamed++;
             }
 
@@ -459,6 +509,10 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
             if( ch->existingBlock && ch->existingPin )
             {
                 ch->existingBlock->RemovePin( ch->existingPin );
+
+                if( aView )
+                    aView->Update( ch->existingBlock, KIGFX::REPAINT );
+
                 result.pinsRemoved++;
             }
 
@@ -469,6 +523,14 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
         {
             if( ch->existingBlock )
             {
+                // Remove from the view BEFORE deleting so the GAL
+                // layer cache doesn't end up with a dangling pointer.
+                // Append/Remove on SCH_SCREEN only mutates the RTree;
+                // the view has its own tracking that must be kept in
+                // sync explicitly here.
+                if( aView )
+                    aView->Remove( ch->existingBlock );
+
                 aMbsScreen.Remove( ch->existingBlock );
                 deletedBlocks.insert( ch->existingBlock );
                 delete ch->existingBlock;
@@ -486,6 +548,13 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
             block->SetSubProjectUuid( ch->subProjectUuid );
             block->SetSubProjectPath( ch->subProjectPath );
             block->SetComponentRef( ch->componentRef );
+
+            // Auto-assign an MBS-scoped annotation. Compute after the
+            // block is wired to its sub-project info but before
+            // Append, so nextMbsReference sees the accurate state of
+            // the screen (pre-insert) and any earlier adds in this
+            // apply pass contribute to the used-ref set.
+            block->SetMbsReference( nextMbsReference( aMbsScreen ) );
 
             wxString label = ch->subProjectDisplayName.IsEmpty() ? ch->subProjectPath
                                                                  : ch->subProjectDisplayName;
@@ -512,6 +581,13 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
             }
 
             aMbsScreen.Append( block );
+
+            // Screen's Append() only inserts into the RTree; the GAL
+            // view also needs to be told, otherwise the block won't
+            // draw until the MBS is closed + reopened.
+            if( aView )
+                aView->Add( block );
+
             result.blocksAdded++;
             break;
         }
@@ -558,6 +634,11 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
 
             if( newHeight > height )
                 ch->existingBlock->SetSize( VECTOR2I( BLOCK_WIDTH_IU, newHeight ) );
+
+            // Both GEOMETRY (block may have grown) and REPAINT (pin
+            // text render as child of block) — force a full refresh.
+            if( aView )
+                aView->Update( ch->existingBlock, KIGFX::GEOMETRY );
 
             result.pinsAdded++;
             break;

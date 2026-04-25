@@ -3759,25 +3759,55 @@ void SCH_PAINTER::draw( const SCH_MODULE_BLOCK* aBlock, int aLayer )
     if( drawingShadows )
         return;
 
-    // ---- Display name (above the block, bold) ----
+    // ---- Header: "B1 — <subproj>/J2" ----
+    //
+    // MBS ref is the primary identifier (annotation-scoped, unique on
+    // this MBS). If unset, fall back to the sub-project componentRef
+    // so legacy un-annotated blocks keep rendering a visible label.
+    // The sub-project context (displayName / componentRef) trails in
+    // the same line so the user can still tell which connector each
+    // block stands for.
     if( aLayer == LAYER_SHEETNAME )
     {
-        const wxString& name = aBlock->GetDisplayName();
+        const wxString& mbsRef = aBlock->GetMbsReference();
+        const wxString& local  = aBlock->GetComponentRef();
+        const wxString& display = aBlock->GetDisplayName();
 
-        if( !name.IsEmpty() )
+        wxString header;
+
+        if( !mbsRef.IsEmpty() )
+        {
+            header = mbsRef;
+
+            if( !local.IsEmpty() )
+                header += wxString::Format( wxT( " — %s" ), local );
+            else if( !display.IsEmpty() )
+                header += wxString::Format( wxT( " — %s" ), display );
+        }
+        else
+        {
+            // Legacy path: pre-annotation blocks fall back to the
+            // old "Module: <name>" presentation.
+            header = display.IsEmpty() ? local : display;
+
+            if( !header.IsEmpty() )
+                header = wxT( "Module: " ) + header;
+        }
+
+        if( !header.IsEmpty() )
         {
             const int textSize = schIUScale.MilsToIU( 60 );
 
             TEXT_ATTRIBUTES attrs;
-            attrs.m_Halign = GR_TEXT_H_ALIGN_LEFT;
-            attrs.m_Valign = GR_TEXT_V_ALIGN_BOTTOM;
-            attrs.m_Bold = true;
-            attrs.m_Size = VECTOR2I( textSize, textSize );
+            attrs.m_Halign      = GR_TEXT_H_ALIGN_LEFT;
+            attrs.m_Valign      = GR_TEXT_V_ALIGN_BOTTOM;
+            attrs.m_Bold        = true;
+            attrs.m_Size        = VECTOR2I( textSize, textSize );
             attrs.m_StrokeWidth = GetPenSizeForBold( textSize );
-            attrs.m_Color = m_schSettings.GetLayerColor( LAYER_SHEETNAME );
+            attrs.m_Color       = m_schSettings.GetLayerColor( LAYER_SHEETNAME );
 
             VECTOR2I anchor( (int) pos.x, (int) pos.y - schIUScale.MilsToIU( 20 ) );
-            KIFONT::FONT::GetFont()->Draw( m_gal, wxT( "Module: " ) + name, anchor, attrs,
+            KIFONT::FONT::GetFont()->Draw( m_gal, header, anchor, attrs,
                                            aBlock->GetFontMetrics() );
         }
     }

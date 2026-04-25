@@ -705,6 +705,24 @@ void ASSEMBLY_3D_MANAGER::InitRenderers( EDA_3D_CANVAS* aCanvas, CAMERA& aCamera
             // the expensive step (~100-500ms per board). We do it once
             // per load, not per frame.
             m_instanceAdapters[i]->InitSettings( nullptr, nullptr );
+
+            // M6.C DIAGNOSTIC: per-instance color + unit sanity log.
+            // Writes to ~/Library/Logs/Zeo/agent-*.log (macOS) via
+            // wxLogMessage. Compare the "copper" RGBA across indices:
+            // if idx=1+ is blue while idx=0 is gold, the per-adapter
+            // color init is picking something different for later
+            // boards despite shared m_Cfg/preset — points to stackup
+            // finish-match divergence or m_ColorOverrides contamination.
+            const SFVEC4F& c = m_instanceAdapters[i]->m_CopperColor;
+            const SFVEC4F& bb = m_instanceAdapters[i]->m_BoardBodyColor;
+            wxLogMessage( wxT( "[ASSEMBLY] inst[%zu] display='%s' ref=%s copper=(%.3f,%.3f,%.3f,%.3f) "
+                               "body=(%.3f,%.3f,%.3f,%.3f) biuTo3D=%g" ),
+                          i,
+                          inst.displayName,
+                          inst.subProjectUuid.AsString(),
+                          c.r, c.g, c.b, c.a,
+                          bb.r, bb.g, bb.b, bb.a,
+                          m_instanceAdapters[i]->BiuTo3dUnits() );
         }
 
         if( !m_instanceRenderers[i] )
@@ -791,6 +809,25 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
                                   -centerMm.y * biuPerMm * sharedF,
                                    centerMm.z * biuPerMm * sharedF );
 
+    // M6.C DIAGNOSTIC: log first ~3 frames only so logs don't flood.
+    static int s_frameLog = 0;
+    const bool doLog = s_frameLog < 3;
+
+    // Locate the LAST visible-and-rendered instance index. The gizmo
+    // render glClears the depth buffer (carves its own viewport) and
+    // would wipe the shared depth for any pass after it — so only the
+    // final pass is allowed to render the gizmo.
+    size_t lastRenderedIdx = static_cast<size_t>( -1 );
+    for( size_t i = 0; i < m_boardInstances.size(); i++ )
+    {
+        const BOARD_3D_INSTANCE& inst = m_boardInstances[i];
+        if( inst.visible && inst.board && i < m_instanceRenderers.size()
+            && m_instanceRenderers[i] )
+        {
+            lastRenderedIdx = i;
+        }
+    }
+
     for( size_t i = 0; i < m_boardInstances.size(); i++ )
     {
         const BOARD_3D_INSTANCE& inst = m_boardInstances[i];
@@ -864,13 +901,43 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
 
         m_instanceRenderers[i]->SetAssemblyPose( pose );
         m_instanceRenderers[i]->SetSkipBufferClear( !firstPass );
+        m_instanceRenderers[i]->SetSkipGizmo( i != lastRenderedIdx );
+
+        if( doLog )
+        {
+            GLboolean dTest = GL_FALSE, dMask = GL_FALSE;
+            GLint     dFunc = 0;
+            glGetBooleanv( GL_DEPTH_TEST, &dTest );
+            glGetBooleanv( GL_DEPTH_WRITEMASK, &dMask );
+            glGetIntegerv( GL_DEPTH_FUNC, &dFunc );
+            wxLogMessage( wxT( "[ASSEMBLY] frame=%d PRE[%zu] test=%d mask=%d func=0x%x "
+                               "pose.translate=(%.3f,%.3f,%.3f) skip=%d scale=%.3f" ),
+                          s_frameLog, i, (int) dTest, (int) dMask, dFunc,
+                          pose[3][0], pose[3][1], pose[3][2],
+                          (int) ( !firstPass ),
+                          static_cast<float>( scaleFactor ) );
+        }
 
         bool wants = m_instanceRenderers[i]->Redraw( aIsMoving, aStatusReporter,
                                                       aWarningReporter );
         requestAnother = requestAnother || wants;
 
+        if( doLog )
+        {
+            GLboolean dTest = GL_FALSE, dMask = GL_FALSE;
+            GLint     dFunc = 0;
+            glGetBooleanv( GL_DEPTH_TEST, &dTest );
+            glGetBooleanv( GL_DEPTH_WRITEMASK, &dMask );
+            glGetIntegerv( GL_DEPTH_FUNC, &dFunc );
+            wxLogMessage( wxT( "[ASSEMBLY] frame=%d POST[%zu] test=%d mask=%d func=0x%x" ),
+                          s_frameLog, i, (int) dTest, (int) dMask, dFunc );
+        }
+
         firstPass = false;
     }
+
+    if( doLog )
+        ++s_frameLog;
 
     // Nothing drew: the caller's framebuffer is untouched. That's
     // visually empty but avoids a stale frame. The canvas still

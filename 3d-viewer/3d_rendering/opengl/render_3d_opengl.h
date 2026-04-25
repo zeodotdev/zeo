@@ -89,6 +89,17 @@ public:
     void SetSkipBufferClear( bool aSkip ) { m_skipBufferClear = aSkip; }
 
     /**
+     * When true, Redraw skips the 3D-navigator gizmo draw. The gizmo's
+     * render path unconditionally glClears the depth buffer (to carve
+     * its own mini-viewport), which wipes every prior pass's depth
+     * data in the M6.C multi-instance composite — making all later
+     * passes pass GL_LESS trivially and always-draw-on-top. Only the
+     * last visible instance's pass should render the gizmo; everyone
+     * else sets this flag. Default false.
+     */
+    void SetSkipGizmo( bool aSkip ) { m_skipGizmo = aSkip; }
+
+    /**
      * Load footprint models if they are not already loaded, i.e. if m_3dModelMap is empty
      */
     void Load3dModelsIfNeeded();
@@ -318,6 +329,12 @@ private:
     /// renderers' output survives into the composite. See
     /// SetSkipBufferClear.
     bool      m_skipBufferClear = false;
+
+    /// When true, Redraw skips the 3D-navigator gizmo render. The
+    /// gizmo path glClears GL_DEPTH_BUFFER_BIT so it cannot run on
+    /// intermediate passes of a multi-instance composite without
+    /// destroying the depth buffer. See SetSkipGizmo.
+    bool      m_skipGizmo = false;
 };
 
 #endif // RENDER_3D_OPENGL_H

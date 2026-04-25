@@ -75,10 +75,21 @@ public:
 
     /**
      * Connector reference that this block represents on the sub-project,
-     * e.g. "J1". Empty string for legacy blocks that wrap a whole sub-project.
+     * e.g. "J1". Sourced from the sub-project's connector symbol and
+     * considered read-only in the MBS — renaming happens on the sub-
+     * project schematic, then flows in via RefreshMbsFromSubProjects.
      */
     const wxString& GetComponentRef() const { return m_componentRef; }
     void SetComponentRef( const wxString& aRef ) { m_componentRef = aRef; }
+
+    /**
+     * MBS-scoped annotation (e.g. "B1"). Unique across the multi-board
+     * schematic, assigned by the annotator. Gives cross-probing and
+     * display code a stable identifier that doesn't collide when two
+     * sub-projects happen to share a connector ref.
+     */
+    const wxString& GetMbsReference() const { return m_mbsReference; }
+    void SetMbsReference( const wxString& aRef ) { m_mbsReference = aRef; }
 
     const wxString& GetDisplayName() const { return m_displayName; }
     void SetDisplayName( const wxString& aName ) { m_displayName = aName; }
@@ -124,6 +135,16 @@ public:
 
     void RunOnChildren( const std::function<void( SCH_ITEM* )>& aFunction,
                         RECURSE_MODE aMode ) override;
+
+    /**
+     * Surface child pins to the inspector when requested, mirroring
+     * SCH_SHEET::Visit. Without this, the selection collector only
+     * ever sees the block itself (because pins aren't in the screen
+     * RTree as direct items) and pin-priority fall-through in
+     * GuessSelectionCandidates never fires for module pins.
+     */
+    INSPECT_RESULT Visit( INSPECTOR aInspector, void* testData,
+                          const std::vector<KICAD_T>& aScanTypes ) override;
 
     bool CanConnect( const SCH_ITEM* aItem ) const override
     {
@@ -177,7 +198,8 @@ private:
     VECTOR2I                     m_size;             ///< Width x Height
     KIID                         m_subProjectUuid;   ///< Sub-project reference
     wxString                     m_subProjectPath;   ///< Path relative to MBS dir
-    wxString                     m_componentRef;     ///< Connector reference, e.g. "J1"
+    wxString                     m_componentRef;     ///< Sub-project local connector ref, e.g. "J1"
+    wxString                     m_mbsReference;     ///< MBS-scoped annotation, e.g. "B1"
     wxString                     m_displayName;      ///< "fc/J1", "Flight Controller", etc.
     std::vector<SCH_MODULE_PIN*> m_pins;             ///< Owned pin children
 };

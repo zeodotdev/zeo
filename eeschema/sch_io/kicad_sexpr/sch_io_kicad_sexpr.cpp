@@ -1227,6 +1227,12 @@ void SCH_IO_KICAD_SEXPR::saveModuleBlock( SCH_MODULE_BLOCK* aModuleBlock )
                       m_out->Quotew( aModuleBlock->GetComponentRef() ).c_str() );
     }
 
+    if( !aModuleBlock->GetMbsReference().IsEmpty() )
+    {
+        m_out->Print( "(mbs_reference %s)",
+                      m_out->Quotew( aModuleBlock->GetMbsReference() ).c_str() );
+    }
+
     m_out->Print( "(name %s)", m_out->Quotew( aModuleBlock->GetDisplayName() ).c_str() );
 
     m_out->Print( "(uuid %s)",

@@ -699,7 +699,11 @@ int SCH_EDITOR_CONTROL::RefreshMbsFromSubProjects( const TOOL_EVENT& aEvent )
     if( dlg.ShowModal() != wxID_OK )
         return 0;
 
-    MBS_REFRESH_RESULT res = ApplyMbsRefreshChanges( *rootScreen, changes );
+    // Pass the canvas view so adds/removes are reflected on-screen —
+    // without it the GAL layer cache keeps stale pointers to deleted
+    // blocks and new blocks don't paint until a full reload.
+    KIGFX::VIEW* view = m_frame->GetCanvas() ? m_frame->GetCanvas()->GetView() : nullptr;
+    MBS_REFRESH_RESULT res = ApplyMbsRefreshChanges( *rootScreen, changes, view );
 
     if( res.blocksAdded == 0 && res.blocksRemoved == 0 && res.pinsAdded == 0
         && res.pinsRemoved == 0 && res.pinsRenamed == 0 && res.pathsUpdated == 0
